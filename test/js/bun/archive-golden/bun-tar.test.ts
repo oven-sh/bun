@@ -8,6 +8,9 @@ import {
   contents,
   differences,
   loadCases,
+  namesToCompose,
+  paxHeader,
+  paxRecord,
   readerArchives,
   tarHeader,
   tarPadded,
@@ -52,18 +55,8 @@ describe("the tar reader", () => {
   const end = Buffer.alloc(1024);
   const file = (name: string, body = "x") =>
     Buffer.concat([tarHeader(name, body.length), tarPadded(Buffer.from(body))]);
-  function pax(records: Record<string, string | string[]>, then: Buffer) {
-    const lines = Object.entries(records).flatMap(([key, values]) =>
-      [values].flat().map(value => {
-        const rest = Buffer.byteLength(` ${key}=${value}\n`);
-        let length = rest + 1;
-        while (String(length).length + rest !== length) length = String(length).length + rest;
-        return `${length} ${key}=${value}\n`;
-      }),
-    );
-    const body = Buffer.from(lines.join(""));
-    return Buffer.concat([tarHeader("PaxHeader/x", body.length, "x"), tarPadded(body), then]);
-  }
+  const pax = (records: Record<string, string>, then: Buffer) =>
+    Buffer.concat([paxHeader(...Object.entries(records).map(([key, value]) => paxRecord(key, value))), then]);
   const x = "  data 0+1\n  end 1 crc32=8cdc1683\n";
 
   test("reports entries of every type", () => {
@@ -189,6 +182,42 @@ describe("the tar writer", () => {
     const escaped = Array.from(Buffer.from(marks), byte => "\\x" + byte.toString(16)).join("");
     expect(written("x" + marks, true)).toEqual(["x" + escaped, "binary"]);
     expect(written("x" + marks.slice(0, -1), true)).toEqual(["x" + escaped.slice(0, -8), "utf8"]);
+  });
+});
+
+// libarchive read the same names.
+describe("the reader and the writer compose on Windows", () => {
+  const composed: Record<string, string> = {
+    "European marks": "379841 bytes crc32=243fa655",
+    "marks of other scripts": "43463 bytes crc32=72de80e0",
+    "class 7": "97181 bytes crc32=132ab45d",
+    "class 8": "97010 bytes crc32=f78f5f27",
+    "class 202": "67955 bytes crc32=32a1ef7e",
+    "class 216": "67949 bytes crc32=aa8cbffa",
+    "class 220": "68083 bytes crc32=0010de8b",
+    "class 230 in the first plane": "441650 bytes crc32=8d01ca63",
+    "class 230 in the second plane": "524259 bytes crc32=1f95bc1c",
+    "class 240": "77199 bytes crc32=70cdc340",
+    "Hangul consonants and vowels": "2184 bytes crc32=7a92fcc9",
+    "Hangul syllables and final consonants": "48881 bytes crc32=af722c7b",
+    "Hangul syllables": "77021 bytes crc32=cedcd6ca",
+  };
+  const withoutStart = (log: string) => log.replace(/".*"\.\.\. /, "");
+
+  test.each(Object.entries(namesToCompose()))("%s", (names, make) => {
+    const name = make();
+    const written = writeTar(
+      [{ size: 0, given: 0, perm: 0o644, mtime: 0 }],
+      Buffer.concat([name, Buffer.alloc(1)]),
+      Buffer.alloc(0),
+      { windows: true },
+    );
+    const archive = Buffer.concat([paxHeader(paxRecord("path", name)), tarHeader("short", 0), Buffer.alloc(1024)]);
+    const log = `file perm=644 size=0 mtime=0 path=${composed[names]}\n  end 0 crc32=00000000\nend\n`;
+    expect({
+      read: withoutStart(readTar(archive, { windows: true })),
+      written: withoutStart(readTar(Buffer.from(written))),
+    }).toEqual({ read: log, written: log });
   });
 });
 

@@ -10,6 +10,8 @@ import {
   observeExtract,
   observeFiles,
   observeTar,
+  paxHeader,
+  paxRecord,
   tarHeader,
   tarPadded,
   type Case,
@@ -56,16 +58,8 @@ describe("Bun.Archive reads archives the way it was recorded to", () => {
 
 const file = (name: Buffer | string, body = "x") =>
   Buffer.concat([tarHeader(name, body.length), tarPadded(Buffer.from(body))]);
-function record(key: string, value: Buffer) {
-  const rest = Buffer.concat([Buffer.from(` ${key}=`), value, Buffer.from("\n")]);
-  let length = rest.length + 1;
-  while (String(length).length + rest.length !== length) length = String(length).length + rest.length;
-  return Buffer.concat([Buffer.from(String(length)), rest]);
-}
-function pax(path: Buffer, before: Buffer[] = []) {
-  const body = Buffer.concat([...before, record("path", path)]);
-  return Buffer.concat([tarHeader("PaxHeader/x", body.length, "x"), tarPadded(body), file("short")]);
-}
+const pax = (path: Buffer, before: Buffer[] = []) =>
+  Buffer.concat([paxHeader(...before, paxRecord("path", path)), file("short")]);
 function gnuLongName(path: Buffer) {
   const body = Buffer.concat([path, Buffer.from([0])]);
   return Buffer.concat([tarHeader("././@LongLink", body.length, "L"), tarPadded(body), file("short")]);
@@ -96,7 +90,7 @@ describe("entry names", () => {
     expect({
       ustar: await read(file(name)),
       pax: await read(pax(name)),
-      binary: await read(pax(name, [record("hdrcharset", Buffer.from("BINARY"))])),
+      binary: await read(pax(name, [paxRecord("hdrcharset", "BINARY")])),
       gnu: await read(gnuLongName(name)),
     }).toEqual({
       ustar: [isWindows ? windowsBytes : posix],
@@ -267,7 +261,7 @@ describe("gzip inside gzip", () => {
     const cutHeader = Buffer.from([0x1f, 0x8b, 8, 4, 0, 0, 0, 0, 0, 255, 9, 0, 0]);
     using dir = tempDir("archive-golden-member", {});
     const archive = new Bun.Archive(gzip(Buffer.concat([gzip(block), cutHeader])));
-    await expect(archive.extract(String(dir))).rejects.toThrow();
+    await expect(archive.extract(String(dir))).rejects.toThrow("ReadError");
     expect(readdirSync(String(dir))).toEqual(["a"]);
   });
 });

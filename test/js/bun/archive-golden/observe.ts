@@ -83,6 +83,12 @@ export function paxRecord(key: string, value: string | Uint8Array) {
   return Buffer.concat([Buffer.from(String(length)), rest]);
 }
 
+/** Applies to the entry behind it. */
+export function paxHeader(...records: Uint8Array[]) {
+  const body = Buffer.concat(records);
+  return Buffer.concat([tarHeader("PaxHeader/x", body.length, "x"), tarPadded(body)]);
+}
+
 /** Archives that are made here and not stored: gzip in every state of repair, and what is at or over a limit of the reader. */
 function madeArchives() {
   const made: { name: string; archive: Buffer }[] = [];
@@ -187,10 +193,8 @@ function madeArchives() {
   }
   add("a tar whose first name looks like gzip", file("\x1f\x8b\x08"), end);
 
-  const pax = (records: Uint8Array[], then = file("short")) => {
-    const body = Buffer.concat(records);
-    return Buffer.concat([tarHeader("PaxHeader/x", body.length, "x"), tarPadded(body), then, file("after"), end]);
-  };
+  const pax = (records: Uint8Array[], then = file("short")) =>
+    Buffer.concat([paxHeader(...records), then, file("after"), end]);
   for (const [key, limit] of [
     ["path", 1048576],
     ["linkpath", 1048576],
@@ -302,12 +306,93 @@ function madeArchives() {
           String.fromCodePoint(...Array.from({ length: pick([0, 0, 1, 1, 2, 3, 4, 9, 10, 11]) }, () => pick(marks)));
         return random(12) === 0 ? Buffer.concat([Buffer.from(cluster), pick(notUtf8)]) : Buffer.from(cluster);
       });
-      const body = paxRecord("path", Buffer.concat(clusters));
-      return Buffer.concat([tarHeader("PaxHeader/x", body.length, "x"), tarPadded(body), tarHeader("short", 0)]);
+      return Buffer.concat([paxHeader(paxRecord("path", Buffer.concat(clusters))), tarHeader("short", 0)]);
     });
     add(`names to compose ${archive}`, ...entries, end);
   }
   return made;
+}
+
+/**
+ * Long names of short clusters with a "_" after each. Between them they hold every pair that Windows
+ * composes, beside many more that it does not, and sort the combining classes into nine groups.
+ */
+export function namesToCompose(): Record<string, () => Buffer> {
+  const range = (first: number, last: number) => Array.from({ length: last - first + 1 }, (_, i) => first + i);
+  // From the space on, without surrogates and without the backslash, which the writer makes a slash.
+  function blocks(...numbers: number[]) {
+    const characters: number[] = [];
+    for (const block of numbers) {
+      for (let c = Math.max(block << 8, 0x20); c <= ((block << 8) | 0xff); c++) {
+        if ((c < 0xd800 || c > 0xdfff) && c !== 0x5c) characters.push(c);
+      }
+    }
+    return characters;
+  }
+  function name(characters: Uint32Array) {
+    let text = "";
+    for (let at = 0; at < characters.length; at += 4096) {
+      text += String.fromCodePoint.apply(null, characters.subarray(at, at + 4096) as unknown as number[]);
+    }
+    return Buffer.from(text);
+  }
+  function pairs(firsts: number[], seconds: number[]) {
+    const characters = new Uint32Array(firsts.length * seconds.length * 3).fill(0x5f);
+    let at = 0;
+    for (const first of firsts) {
+      for (const second of seconds) {
+        characters[at] = first;
+        characters[at + 1] = second;
+        at += 3;
+      }
+    }
+    return name(characters);
+  }
+  // Whether the mark composes with the base depends on the class of what stands between them.
+  function between(base: number, mark: number, middles: number[]) {
+    const characters = new Uint32Array(middles.length * 4).fill(0x5f);
+    let at = 0;
+    for (const middle of middles) {
+      characters[at] = base;
+      characters[at + 1] = middle;
+      characters[at + 2] = mark;
+      at += 4;
+    }
+    return name(characters);
+  }
+
+  const european = [...range(0x300, 0x30c), 0x30f, 0x311, 0x313, 0x314, 0x31b, ...range(0x323, 0x328)].concat([
+    0x32d, 0x32e, 0x330, 0x331, 0x338, 0x342, 0x345,
+  ]);
+  const others = [0x653, 0x654, 0x655, 0x93c, 0x9be, 0x9d7, 0xb3e, 0xb56, 0xb57, 0xbbe, 0xbd7, 0xc56, 0xcc2].concat([
+    0xcd5, 0xcd6, 0xd3e, 0xd57, 0xdca, 0xdcf, 0xddf, 0x102e, 0x1b35, 0x3099, 0x309a, 0x110ba,
+  ]);
+  const withMarks = () =>
+    blocks(...range(0x03, 0x10), 0x13, ...range(0x17, 0x1d), 0x20, 0x2c, 0x2d, 0x30, 0xa6).concat(
+      blocks(...range(0xa8, 0xab), 0xfb, 0xfe, 0x101, 0x10a, 0x110, 0x1d1, 0x1d2),
+    );
+  // With the character on either side of them.
+  const syllables = range(0xabff, 0xd7a4);
+
+  return {
+    "European marks": () => pairs(blocks(0, 1, 2, 3, 4, 0x1e, 0x1f, 0x21, 0x22), european),
+    "marks of other scripts": () => Buffer.concat(others.map(mark => pairs(blocks(mark >> 8), [mark]))),
+    "class 7": () => between(0x928, 0x93c, withMarks()),
+    "class 8": () => between(0x304b, 0x3099, withMarks()),
+    "class 202": () => between(0x61, 0x328, withMarks()),
+    "class 216": () => between(0x6f, 0x31b, withMarks()),
+    "class 220": () => between(0x61, 0x323, withMarks()),
+    "class 230 in the first plane": () => between(0x61, 0x301, blocks(...range(0, 0xff))),
+    "class 230 in the second plane": () => between(0x61, 0x301, blocks(...range(0x100, 0x1ff))),
+    "class 240": () => between(0x3b1, 0x345, withMarks()),
+    "Hangul consonants and vowels": () => pairs(range(0x10ff, 0x1113), range(0x1160, 0x1176)),
+    "Hangul syllables and final consonants": () =>
+      pairs(
+        syllables.filter(syllable => (syllable - 0xac00) % 28 === 0),
+        range(0x11a7, 0x11c3),
+      ),
+    "Hangul syllables": () => pairs(syllables, [0x11a8]),
+  };
 }
 
 /** Every archive that `readTar` is tried on. */

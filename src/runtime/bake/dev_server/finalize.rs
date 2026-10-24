@@ -328,6 +328,19 @@ pub(super) fn finalize_bundle(
             }
             continue;
         }
+        // Only an entry makes a later build parse this barrel and keep its importers' requests.
+        debug_assert!(
+            !import_records[index.get() as usize]
+                .iter()
+                .any(|record| record
+                    .flags
+                    .contains(bun_ast::ImportRecordFlags::IS_BARREL_DEFERRED))
+                || dev.tracked_barrels.is_tracked(
+                    targets[index.get() as usize].bake_graph().side(),
+                    ctx.sources[index.get() as usize].path.text,
+                ),
+            "a barrel with a deferred record is not in tracked_barrels"
+        );
         let source_map: bun_sourcemap::Chunk = match compile_result.source_map_chunk() {
             Some(c) => c.clone(),
             None => 'brk: {

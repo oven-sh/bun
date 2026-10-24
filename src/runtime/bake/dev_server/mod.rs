@@ -504,15 +504,8 @@ pub(crate) struct DevServer {
     pub(crate) graph_safety_lock: ThreadLock,
     pub(crate) client_graph: IncrementalGraph<{ bake::Side::Client }>,
     pub(crate) server_graph: IncrementalGraph<{ bake::Side::Server }>,
-    /// Barrel files with deferred (is_unused) import records. These files must
-    /// be re-parsed on every incremental build because the set of needed exports
-    /// may have changed. Populated by applyBarrelOptimization.
-    pub(crate) barrel_files_with_deferrals: bun_collections::StringArrayHashMap<()>,
-    /// Accumulated barrel export requests across all builds. Maps barrel file
-    /// path → set of export names that have been requested. This ensures that
-    /// when a barrel is re-parsed in an incremental build, exports requested
-    /// by non-stale files (from previous builds) are still kept.
-    pub(crate) barrel_needed_exports: bun_collections::StringArrayHashMap<StringHashMap<()>>,
+    /// What every build requested from each barrel that has deferred a record.
+    pub(crate) tracked_barrels: bun_bundler::barrel_imports::TrackedBarrels,
     /// State populated during bundling and hot updates. Often cleared
     pub(crate) incremental_result: IncrementalResult,
     /// Quickly retrieve a framework route's index from its entry point file. These

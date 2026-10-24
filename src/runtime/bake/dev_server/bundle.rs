@@ -86,7 +86,7 @@ pub(crate) struct CacheEntry {
 impl DevServer {
     pub(crate) fn is_file_cached(&mut self, path: &[u8], side: bake::Graph) -> Option<CacheEntry> {
         // Barrel files with deferred records must always be re-parsed.
-        if self.barrel_files_with_deferrals.contains_key(path) {
+        if self.tracked_barrels.must_reparse(path) {
             return None;
         }
 
@@ -121,6 +121,21 @@ impl DevServer {
                         file.is_rsc
                     }
             }),
+        }
+    }
+
+    /// True if an earlier build can have bundled a copy of this file for `side`, stale or not.
+    pub(crate) fn has_file(&self, path: &[u8], side: bake::Side) -> bool {
+        let _g = self.graph_safety_lock.guard();
+        match side {
+            // A failure resets the kind of a client record, so every record counts.
+            bake::Side::Client => self.client_graph.bundled_files.contains_key(path),
+            // Only a bundled copy gives a server record this kind, and a failure keeps it.
+            bake::Side::Server => self
+                .server_graph
+                .bundled_files
+                .get(path)
+                .is_some_and(|file| file.file_kind() == FileKind::Js),
         }
     }
 

@@ -386,6 +386,15 @@ pub mod bv2_impl {
                 }
             }
         }
+        impl Graph {
+            /// The dev server keeps the server and SSR copies of a file in one graph.
+            pub fn side(self) -> Side {
+                match self {
+                    Graph::Client => Side::Client,
+                    Graph::Server | Graph::Ssr => Side::Server,
+                }
+            }
+        }
         /// The type of `CacheEntry.kind`.
         #[repr(u8)]
         #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -5942,6 +5951,8 @@ pub mod bv2_impl {
                     .current_bundle_start_data()
                     .cast::<DevServerInput>()
             };
+
+            barrel_imports::persist_requests_of_tracked_barrels(self, dev_server)?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 

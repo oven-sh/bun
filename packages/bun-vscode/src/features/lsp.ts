@@ -50,6 +50,10 @@ function getRuntime(): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : "bun";
 }
 
+function isEnabled(): boolean {
+  return vscode.workspace.getConfiguration("bun").get<boolean>("lsp.enable", true);
+}
+
 function parseVersion(text: string): number[] | undefined {
   const match = /(\d+)\.(\d+)\.(\d+)/.exec(text);
   return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : undefined;
@@ -154,7 +158,7 @@ function hasMarker(folder: vscode.WorkspaceFolder): Promise<boolean> {
 }
 
 async function qualifies(document: vscode.TextDocument): Promise<boolean> {
-  if (!vscode.workspace.getConfiguration("bun").get<boolean>("lsp.enable", true)) return false;
+  if (!isEnabled()) return false;
   if (document.uri.scheme !== "file" || !LSP_LANGUAGE_IDS.includes(document.languageId)) return false;
   const folder = vscode.workspace.getWorkspaceFolder(document.uri);
   return folder !== undefined && (await hasMarker(folder));
@@ -177,8 +181,14 @@ export function registerLanguageServer(context: vscode.ExtensionContext, options
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument(document => onDocument(document, options)),
     vscode.workspace.onDidChangeConfiguration(async event => {
-      if (!event.affectsConfiguration("bun.runtime")) return;
-      await stopLanguageServer();
+      const runtimeChanged = event.affectsConfiguration("bun.runtime");
+      const enableChanged = event.affectsConfiguration("bun.lsp.enable");
+      if (!runtimeChanged && !enableChanged) return;
+      if (!isEnabled()) {
+        await stopLanguageServer();
+        return;
+      }
+      if (runtimeChanged) await stopLanguageServer();
       failed = false;
       if (wanted) await ensureStarted(options);
     }),

@@ -279,8 +279,8 @@ use bun_alloc as allocators;
 use bun_ast::SideEffects;
 
 // ── Process-lifetime arenas for DirInfo-cached parses ─────────────────────
-// The DirInfo caches (`DirInfo::hash_map_for()`) are true process-lifetime
-// singletons; entries hold `&'static PackageJSON` / `&'static TSConfigJSON` and
+// The DirInfo cache (`DirInfo::hash_map_for()`) is a true process-lifetime
+// singleton; entries hold `&'static PackageJSON` / `&'static TSConfigJSON` and
 // borrow `&'static [u8]` source bytes. PORTING.md §Forbidden bars `Box::leak`/
 // `mem::forget` for this — process-lifetime storage must go through
 // `LazyLock`. These append-only arenas are that storage; the `Box<T>` heap
@@ -561,8 +561,7 @@ pub struct Resolver<'a> {
     // Deref through the `dir_cache()` accessor below.
     pub(crate) dir_cache: *mut DirInfo::HashMap,
 
-    /// Which configuration files `dir_info_uncached` reads. It selects
-    /// `dir_cache`, so only the constructors set the two.
+    /// The configuration files that `dir_info_uncached` reads. `dir_cache` is the map of this mode.
     load_mode: DirInfo::LoadMode,
 
     /// This is set to false for the runtime. The runtime should choose "main"
@@ -809,8 +808,7 @@ impl<'a> Resolver<'a> {
     /// allocation, so any `*mut DirInfo` previously projected from an earlier
     /// `dir_cache_mut()` borrow is popped. Slot pointers that must survive a
     /// subsequent map access are re-derived from the raw singleton via
-    /// `DirInfo::put_slot` / `DirInfo::slot_ptr_at`; refs from `at_index`
-    /// are only durable until the next map access.
+    /// `DirInfo::put_slot` / `DirInfo::slot_ptr_at`; an `at_index` ref lasts until the next access.
     #[inline(always)]
     pub(crate) fn dir_cache_mut(&mut self) -> &mut DirInfo::HashMap {
         // SAFETY: ARENA — `self.dir_cache` is the never-null
@@ -4680,9 +4678,7 @@ impl<'a> Resolver<'a> {
             let mut needs_iter = true;
             let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
 
-            // A resolver of another mode can have listed this directory long ago. Read it again,
-            // through the descriptor just opened for it, so that this fill records the
-            // package.json and tsconfig.json that are there now.
+            // A resolver of another mode can have listed this directory long ago, so list it again.
             let relist = another_mode_exists && !queue_top.fd.is_valid() && open_dir.is_valid();
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
@@ -6715,8 +6711,8 @@ impl<'a> Resolver<'a> {
     }
 
     /// `opts.tsconfig_override`, which this resolver and its workers read in place of the
-    /// configuration file of every directory. It is not in `DirInfo`, which the resolvers of one
-    /// `LoadMode` share: the runtime, and every `Bun.build`. `None`: there is none.
+    /// configuration file of every directory. It is not in `DirInfo`, which every resolver of the
+    /// same `LoadMode` shares: the runtime, and every `Bun.build`. `None`: there is none.
     fn tsconfig_override(&mut self) -> Option<Option<Arc<TSConfigJSON>>> {
         if !self.load_mode.tsconfig_json() {
             return None;

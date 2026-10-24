@@ -14,12 +14,7 @@ use allocators::{NOT_FOUND, UNASSIGNED};
 
 pub type Index = IndexType;
 
-/// Which of package.json and tsconfig.json (or jsconfig.json) the fill of a
-/// [`DirInfo`] reads. There is one [`HashMap`] per mode, and a resolver keeps
-/// the mode it is created with, so it never gets a `DirInfo` that a resolver of
-/// another mode filled. Only an input that is known when the resolver is
-/// created, and that forbids the read itself, belongs here: every other
-/// per-resolver setting is applied to what a shared `DirInfo` holds.
+/// The configuration files that the fill of a [`DirInfo`] reads. Each mode has its own [`HashMap`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct LoadMode(u8);
 
@@ -28,8 +23,7 @@ impl LoadMode {
     const TSCONFIG_JSON: u8 = 1 << 1;
     const COUNT: usize = 4;
 
-    /// Every resolver, except the ones of a `bun build --compile` executable's
-    /// own VMs: those read what its `--compile-autoload-*` flags name.
+    /// Every resolver, except those of a `bun build --compile` executable's own VMs.
     pub const ALL: LoadMode = LoadMode(Self::PACKAGE_JSON | Self::TSCONFIG_JSON);
 
     #[inline]
@@ -338,15 +332,15 @@ impl DirInfo {
 // `BSSMapInner<DirInfo, ..>` cannot host a
 // per-generic-instantiation static on stable, so the map pointers live here at
 // the use site and `bun_alloc::BSSMapInner::init()` hands back the storage.
-// PORTING.md §Global mutable state: lazy singletons, one per `LoadMode`.
-// `AtomicCell` over the `Option<NonNull<_>>` because resolver-pool threads race
-// on first access; the load/CAS below makes the publish itself data-race-free.
-// (The map's *contents* are still guarded by the resolver mutex.)
+// PORTING.md §Global mutable state: lazy singleton per `LoadMode`. `AtomicCell` over the
+// `Option<NonNull<_>>` because resolver-pool threads race on first access;
+// the load/CAS below makes the publish itself data-race-free. (The map's
+// *contents* are still guarded by the resolver mutex.)
 static DIR_INFO_MAPS: [bun_core::AtomicCell<Option<NonNull<HashMap>>>; LoadMode::COUNT] =
     [const { bun_core::AtomicCell::new(None) }; LoadMode::COUNT];
 
-/// Raw pointer to the lazy DirInfo BSSMap of the resolvers of `mode`. Callers
-/// reborrow per-access under the resolver mutex — PORTING.md §Global mutable state.
+/// Raw pointer to the lazy DirInfo BSSMap singleton of `mode`. Callers reborrow
+/// per-access under the resolver mutex — PORTING.md §Global mutable state.
 #[inline]
 pub(crate) fn hash_map_for(mode: LoadMode) -> *mut HashMap {
     if let Some(p) = DIR_INFO_MAPS[mode.0 as usize].load() {
@@ -376,15 +370,14 @@ pub(crate) fn created_hash_maps() -> impl Iterator<Item = *mut HashMap> {
         .filter_map(|map| Some(map.load()?.as_ptr()))
 }
 
-/// Slot pointer for `index` in `map`, derived from the raw map pointer so its
-/// provenance is rooted in the pointer `hash_map_for` published — it survives
-/// later `&mut HashMap` retags that would pop a pointer projected through a
-/// transient borrow. Returns `None` for the `NOT_FOUND` / `UNASSIGNED` sentinels.
+/// Slot pointer for `index`, derived from the raw singleton so its provenance
+/// is rooted in the `DIR_INFO_MAPS` static — it survives later `&mut HashMap`
+/// retags that would pop a pointer projected through a transient borrow.
+/// Returns `None` for the `NOT_FOUND` / `UNASSIGNED` sentinels.
 ///
 /// # Safety
-/// `map` must be a map of [`hash_map_for`]. A non-sentinel `index` must have
-/// been assigned by `put` on `map` (slot initialized), and the caller must hold
-/// the resolver mutex.
+/// A non-sentinel `index` must have been assigned by `put` on `map`, a [`hash_map_for`] map,
+/// and the caller must hold the resolver mutex.
 pub(crate) unsafe fn slot_ptr_at(map: *mut HashMap, index: Index) -> Option<*mut DirInfo> {
     if index.index() == NOT_FOUND.index() || index.index() == UNASSIGNED.index() {
         return None;
@@ -446,11 +439,11 @@ pub type HashMap = allocators::BSSMapInner<DirInfo, 2048, true>;
 /// Insert `value` at `result`'s slot and return a retag-durable slot pointer
 /// (see [`slot_ptr_at`]). Takes a raw map pointer, not `&mut self`: a
 /// protected `&mut` receiver would be invalidated when `slot_ptr_at` goes
-/// through the map pointer's root tag.
+/// through the singleton's root tag.
 ///
 /// # Safety
-/// `map` must be a map of [`hash_map_for`] and the caller must hold the
-/// resolver mutex.
+/// `map` must be a live `hash_map_for()` singleton and the caller must
+/// hold the resolver mutex.
 pub(crate) unsafe fn put_slot(
     map: *mut HashMap,
     result: &mut allocators::Result,

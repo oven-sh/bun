@@ -1087,8 +1087,7 @@ impl<'a> Transpiler<'a> {
         Self::init_with_load_mode(arena, log, opts, env_loader_, resolver::LoadMode::ALL)
     }
 
-    /// [`Self::init`] with a resolver that does not read both package.json and
-    /// tsconfig.json: the runtime of a `bun build --compile` executable.
+    /// [`Self::init`] for a VM of a `bun build --compile` executable, which has its own load mode.
     pub fn init_with_load_mode(
         arena: &'a Arena,
         log: *mut bun_ast::Log,

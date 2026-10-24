@@ -20,8 +20,7 @@ pub(crate) fn apply_standalone_runtime_flags(
         DotEnvBehavior::LoadAllWithoutInlining
     };
 
-    // `--compile-autoload-tsconfig` and `--compile-autoload-package-json` select the resolver's
-    // directory cache, so the VM gave them to the resolver when it created it.
+    // The autoload flags select the resolver's directory cache, so the VM passes them at creation.
     debug_assert!(b.resolver.load_mode() == bun_resolver::StandaloneModuleGraph::load_mode(graph));
 }
 

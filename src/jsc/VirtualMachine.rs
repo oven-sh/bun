@@ -96,9 +96,7 @@ pub struct InitOptions {
     /// Overrides `env_loader`. The VM owns it and frees it with its runtime state.
     pub owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-    /// `Some` for a VM of a `bun build --compile` executable: the configuration files its
-    /// resolver reads (`StandaloneModuleGraph::load_mode`). It selects the resolver's directory
-    /// cache, so the resolver needs it when it is created.
+    /// `Some` for a VM of a `bun build --compile` executable: `StandaloneModuleGraph::load_mode`.
     pub load_mode: Option<bun_resolver::LoadMode>,
     /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
     pub global_cache: bun_options_types::global_cache::GlobalCache,

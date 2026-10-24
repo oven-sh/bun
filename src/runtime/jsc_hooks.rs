@@ -483,8 +483,7 @@ unsafe fn init_runtime_state(
                             handler: bun_jsc::async_module::Queue::on_wake_handler,
                         }),
                     );
-                    // No auto-JSX step for a VM of a standalone executable: it
-                    // does not read the working directory to start.
+                    // A VM of a standalone executable does not read the working directory to start.
                     if opts.load_mode.is_some() {
                         t.configure_linker_with_auto_jsx(false);
                     } else {

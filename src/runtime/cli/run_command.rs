@@ -667,8 +667,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // Bundler-linker + JSX-runtime config: only callers that actually
         // transpile through this `Transpiler` need it. `configure_linker`'s
-        // auto-JSX step reads the cwd `DirInfo` (and its `tsconfig.json`)
-        // — keep it ahead of the `read_dir_info` below
+        // auto-JSX step reads the cwd `DirInfo` — keep it ahead of the `read_dir_info` below
         // so that read populates/uses the same cache entry.
         if with_linker {
             Self::configure_run_transpiler_linker(this_transpiler);

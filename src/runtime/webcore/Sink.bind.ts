@@ -6,8 +6,8 @@ const method = { returns: b.opaque, ...js } as const;
 /** `write` looks at whether the sink is closed before it throws for a `nullish` or `other` chunk. */
 export const SinkChunk = b.union({
   text: b.string.allowStringObject.view,
-  bytes: b.bufferSource.allowShared,
-  nullish: b.null,
+  buffer: b.bufferSource.allowShared,
+  missing: b.null,
   other: b.ignored,
 });
 

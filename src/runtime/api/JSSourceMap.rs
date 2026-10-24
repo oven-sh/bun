@@ -11,7 +11,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc}
 use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap, mapping};
 
 use crate::generated_bindgen::sourcemap::{
-    SourceMapMappings, SourceMapOptions, SourceMapPayload, SourcePosition, js_SourceMap as js,
+    SourceMapMappings, SourceMapOptions, SourceMapPayload, js_SourceMap as js,
 };
 
 pub(crate) struct JSSourceMap {
@@ -101,7 +101,7 @@ impl JSSourceMap {
     ) -> JsResult<JsWrapper<'a, Self>> {
         let global = cx.global();
 
-        global.validate_object("payload", payload.object(), Default::default())?;
+        global.validate_object("payload", payload.object().to_js(), Default::default())?;
 
         let mut line_lengths = None;
         if let Some(options) = options {
@@ -120,7 +120,7 @@ impl JSSourceMap {
                     "The \"mappings\" property must be of type string. Received a symbol"
                 )));
             }
-            SourceMapMappings::Absent | SourceMapMappings::Flag(false) => {
+            SourceMapMappings::Missing | SourceMapMappings::Flag(false) => {
                 return Err(global
                     .throw_invalid_arguments(format_args!("payload 'mappings' must be a string")));
             }
@@ -182,9 +182,9 @@ impl JSSourceMap {
         );
 
         let global = cx.global();
-        js::payload_set_cached(this_value.to_js(), global, payload.object());
+        js::payload_set_cached(this_value.to_js(), global, payload.object().to_js());
         if let Some(line_lengths) = line_lengths {
-            js::line_lengths_set_cached(this_value.to_js(), global, line_lengths);
+            js::line_lengths_set_cached(this_value.to_js(), global, line_lengths.to_js());
         }
 
         Ok(this_value)
@@ -221,11 +221,10 @@ impl JSSourceMap {
     pub(crate) fn find_origin(
         &self,
         cx: &mut JsScope<'_>,
-        line_number: SourcePosition<'_>,
-        column_number: SourcePosition<'_>,
+        line_number: i32,
+        column_number: i32,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let [line_number, column_number] = get_line_column(global, line_number, column_number)?;
         if line_number < 0 || column_number < 0 {
             return Ok(JSValue::create_empty_object(global, 0));
         }
@@ -255,11 +254,10 @@ impl JSSourceMap {
     pub(crate) fn find_entry(
         &self,
         cx: &mut JsScope<'_>,
-        line_offset: SourcePosition<'_>,
-        column_offset: SourcePosition<'_>,
+        line_offset: i32,
+        column_offset: i32,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let [line_offset, column_offset] = get_line_column(global, line_offset, column_offset)?;
         if line_offset < 0 || column_offset < 0 {
             return Ok(JSValue::create_empty_object(global, 0));
         }
@@ -288,24 +286,6 @@ impl JSSourceMap {
             )
         })
     }
-}
-
-fn get_line_column(
-    global: &JSGlobalObject,
-    line_number: SourcePosition<'_>,
-    column_number: SourcePosition<'_>,
-) -> JsResult<[i32; 2]> {
-    // Node.js does no validations.
-    fn to_i32(global: &JSGlobalObject, position: SourcePosition<'_>) -> JsResult<i32> {
-        match position {
-            SourcePosition::Bigint(bigint) => bigint.to_js().coerce_to_i32(global),
-            SourcePosition::Number(number) => Ok(number),
-        }
-    }
-    Ok([
-        to_i32(global, line_number)?,
-        to_i32(global, column_number)?,
-    ])
 }
 
 // Hand-written in `src/jsc/modules/NodeModuleModule.cpp`.

@@ -5,7 +5,7 @@ use bun_ast::{Expr, expr::Data as ExprData};
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope, ValueWalker};
+use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope};
 use bun_jsc::{
     JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsError, JsResult,
     MarkedArgumentBuffer, wtf,
@@ -21,15 +21,7 @@ pub(crate) fn stringify<'a>(
     space: StringifySpace<'a>,
 ) -> JsResult<Option<JSValue>> {
     let global = cx.global();
-    MarkedArgumentBuffer::new(|roots| {
-        stringify_impl(
-            global,
-            Stringifier::value_of(value),
-            replacer,
-            space,
-            roots,
-        )
-    })
+    MarkedArgumentBuffer::new(|roots| stringify_impl(global, value.to_js(), replacer, space, roots))
 }
 
 fn stringify_impl(
@@ -62,8 +54,6 @@ fn stringify_impl(
     stringifier.builder.to_string(global).map(Some)
 }
 
-impl ValueWalker for Stringifier<'_> {}
-
 struct Stringifier<'a> {
     stack_check: StackCheck,
     builder: wtf::StringBuilder,
@@ -88,7 +78,7 @@ enum Space {
 
 impl Space {
     fn init(global: &JSGlobalObject, space: StringifySpace<'_>) -> JsResult<Space> {
-        match space.unboxed(global)? {
+        match space.unwrap_boxed_primitive(global)? {
             StringifySpace::Number(num_f) => {
                 // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
                 // toInt32() wraps large values and Infinity to 0, which is wrong.
@@ -98,7 +88,7 @@ impl Space {
                 }
                 Ok(Space::Number(if num_f > 10.0 { 10 } else { num_f as u32 }))
             }
-            StringifySpace::String(str) => {
+            StringifySpace::Text(str) => {
                 if str.length() == 0 {
                     return Ok(Space::Minified);
                 }

@@ -15,7 +15,7 @@ use bun_jsc::{
 };
 use bun_threading::work_pool::WorkPool;
 
-use crate::generated_bindgen::node_zlib_binding::{WriteInput, WriteNumber};
+use crate::generated_bindgen::node_zlib_binding::{ZlibWriteInput, ZlibWriteNumber};
 
 bun_output::declare_scope!(zlib, hidden);
 
@@ -65,11 +65,11 @@ impl Error {
 }
 
 #[inline]
-fn jsv_to_u32(v: WriteNumber) -> u32 {
+fn jsv_to_u32(v: ZlibWriteNumber) -> u32 {
     match v {
-        WriteNumber::Number(number) => number as u32,
-        WriteNumber::Flag(flag) => u32::from(flag),
-        WriteNumber::Missing | WriteNumber::Other => 0,
+        ZlibWriteNumber::Number(number) => number as u32,
+        ZlibWriteNumber::Flag(flag) => u32::from(flag),
+        ZlibWriteNumber::Missing | ZlibWriteNumber::Other => 0,
     }
 }
 
@@ -237,17 +237,17 @@ pub(crate) trait CompressionStreamImpl:
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        flush: WriteNumber,
-        in_: WriteInput<'_>,
-        in_off: WriteNumber,
-        in_len: WriteNumber,
+        flush: ZlibWriteNumber,
+        in_: ZlibWriteInput<'_>,
+        in_off: ZlibWriteNumber,
+        in_len: ZlibWriteNumber,
         out: Option<JsLocal<'_, BufferSource>>,
-        out_off: WriteNumber,
-        out_len: WriteNumber,
+        out_off: ZlibWriteNumber,
+        out_len: ZlibWriteNumber,
     ) -> JsResult<()> {
         let (global_this, this_value) = (cx.global(), this_value.to_js());
 
-        if matches!(flush, WriteNumber::Missing) {
+        if matches!(flush, ZlibWriteNumber::Missing) {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
@@ -266,10 +266,10 @@ pub(crate) trait CompressionStreamImpl:
         }
 
         let in_js = match in_ {
-            WriteInput::Buffer(buffer) => Some(buffer.to_js()),
+            ZlibWriteInput::Buffer(buffer) => Some(buffer.to_js()),
             _ => None,
         };
-        let (in_off, in_len): (u32, u32) = if matches!(in_, WriteInput::FlushOnly) {
+        let (in_off, in_len): (u32, u32) = if matches!(in_, ZlibWriteInput::FlushOnly) {
             // just a flush
             (0, 0)
         } else {
@@ -473,17 +473,17 @@ pub(crate) trait CompressionStreamImpl:
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        flush: WriteNumber,
-        in_: WriteInput<'_>,
-        in_off: WriteNumber,
-        in_len: WriteNumber,
+        flush: ZlibWriteNumber,
+        in_: ZlibWriteInput<'_>,
+        in_off: ZlibWriteNumber,
+        in_len: ZlibWriteNumber,
         out: Option<JsLocal<'_, BufferSource>>,
-        out_off: WriteNumber,
-        out_len: WriteNumber,
+        out_off: ZlibWriteNumber,
+        out_len: ZlibWriteNumber,
     ) -> JsResult<()> {
         let (global_this, this_value) = (cx.global(), this_value.to_js());
 
-        if matches!(flush, WriteNumber::Missing) {
+        if matches!(flush, ZlibWriteNumber::Missing) {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
@@ -503,12 +503,12 @@ pub(crate) trait CompressionStreamImpl:
 
         // Hoisted so `in_` can borrow it past the `else` arm (mirrors `out_buf`).
         let in_buf: jsc::ArrayBuffer;
-        let in_: Option<&[u8]> = if matches!(in_, WriteInput::FlushOnly) {
+        let in_: Option<&[u8]> = if matches!(in_, ZlibWriteInput::FlushOnly) {
             // just a flush
             None
         } else {
             let in_js = match in_ {
-                WriteInput::Buffer(buffer) => Some(buffer.to_js()),
+                ZlibWriteInput::Buffer(buffer) => Some(buffer.to_js()),
                 _ => None,
             };
             in_buf = match in_js.and_then(|in_js| in_js.as_array_buffer(global_this)) {

@@ -440,6 +440,7 @@ pub(crate) fn inspect<'a>(
     let Some(value) = arg else {
         return Ok(Vec::new());
     };
+    let value = value.to_js();
 
     let mut format_options = ConsoleObject::FormatOptions {
         enable_colors: false,
@@ -458,7 +459,7 @@ pub(crate) fn inspect<'a>(
             format_options.set_depth(global_this, depth)?;
             format_options.enable_colors = colors.unwrap_or(false);
         }
-        InspectOptionsOrDepth::Ignored => format_options.enable_colors = colors.unwrap_or(false),
+        InspectOptionsOrDepth::Other => format_options.enable_colors = colors.unwrap_or(false),
     }
 
     // very stable memory address

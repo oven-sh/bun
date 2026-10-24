@@ -928,7 +928,7 @@ impl Value {
         let value = match value {
             BodyInit::Undefined | BodyInit::Null => return Ok(Value::Null),
 
-            BodyInit::String(str) => return Ok(Self::from_string(str)),
+            BodyInit::Text(str) => return Ok(Self::from_string(str)),
             BodyInit::StringObject(value) => {
                 return Ok(Self::from_string(value.to_js().to_bun_string(global_this)?));
             }
@@ -993,7 +993,10 @@ impl Value {
             BodyInit::DataView(value) | BodyInit::Object(value) => value.to_js(),
 
             BodyInit::Other(value) => {
-                return Ok(Value::Blob(Blob::get::<true, false>(global_this, value)?));
+                return Ok(Value::Blob(Blob::get::<true, false>(
+                    global_this,
+                    value.to_js(),
+                )?));
             }
         };
 

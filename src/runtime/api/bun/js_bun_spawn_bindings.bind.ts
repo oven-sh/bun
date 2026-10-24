@@ -1,13 +1,11 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
 import { Blob } from "../../webcore/Blob.bind.ts";
 import { Request, Response } from "../../webcore/response.bind.ts";
-import { Signal, Subprocess } from "./subprocess.bind.ts";
+import { KillSignal, Subprocess } from "./subprocess.bind.ts";
 import { TerminalOptions } from "./Terminal.bind.ts";
 
 export default b.module({ rustPath: "crate::api::js_bun_spawn_bindings" });
 
-/** Walked by `length` and index, so any object will do. `""` is missing. */
-export const SpawnCommandList = b.union({ missing: b.null, list: b.object, text: b.string, other: b.ignored });
 /** `null` is there: `stdin`, `stderr` and `stdout` are read only if `stdio` is `undefined`. */
 export const SpawnStdioList = b.union({ missing: b.undefined, none: b.null, list: b.jsArray, other: b.ignored });
 /** An element of `stdio`, or `stdin`, `stderr`, `stdout`. `stream` is a `ReadableStream`, or it is refused. */
@@ -17,10 +15,10 @@ export const StdioValue = b.union(
     ignore: b.null,
     name: b.string.allowStringObject,
     fd: b.f64,
-    blob: Blob,
-    request: Request,
-    response: Response,
-    bytes: b.bufferSource.allowShared,
+    blob: Blob.withValue,
+    request: Request.withValue,
+    response: Response.withValue,
+    buffer: b.bufferSource.allowShared,
     stream: b.object,
     other: b.ignored,
   },
@@ -33,25 +31,27 @@ export const SpawnCgroupTarget = b.union({
   path: b.string.allowStringObject.utf8.owned,
 });
 
+/** `options` is also a `Terminal`. */
+export const SpawnTerminal = b.union({ options: TerminalOptions, other: b.ignored });
 export const SpawnOptionsObject = b.dictionary(
   {
-    cmd: SpawnCommandList,
+    /** Walked by `length` and index. */
+    cmd: b.opaque.emptyStringAsNull,
     argv0: b.string.loose.emptyStringAsNull,
     cwd: b.string.loose.emptyStringAsNull,
     ipc: b.callable.otherAsNull,
     serialization: b.string.allowStringObject.emptyStringAsNull,
     signal: {
-      type: b.wrapped("WebCore::JSAbortSignal", "JSAbortSignal.h", { rustPath: "bun_jsc::AbortSignal" }).shared
-        .emptyStringAsNull,
+      type: b.abortSignal.shared.emptyStringAsNull,
       expected: ["AbortSignal"],
     },
     onDisconnect: b.callable.emptyStringAsNull,
     onExit: b.callable.emptyStringAsNull,
     env: b.object.emptyStringAsNull,
     stdio: SpawnStdioList,
-    stdin: b.opaque.optional,
-    stderr: b.opaque.optional,
-    stdout: b.opaque.optional,
+    stdin: StdioValue,
+    stderr: StdioValue,
+    stdout: StdioValue,
     lazy: b.bool.otherAsNull,
     detached: b.bool.otherAsNull,
     uid: id,
@@ -60,13 +60,9 @@ export const SpawnOptionsObject = b.dictionary(
     windowsHide: b.bool.otherAsNull,
     windowsVerbatimArguments: b.bool.otherAsNull,
     timeout: b.f64.nullable,
-    killSignal: Signal,
+    killSignal: KillSignal,
     maxBuffer: b.f64.otherAsNull,
-    /** Or a `Terminal`. */
-    terminal: {
-      type: TerminalOptions.emptyStringAsNull,
-      expected: "terminal must be a Terminal object or options object",
-    },
+    terminal: SpawnTerminal.emptyStringAsNull,
   },
   { deferred: true, reportedAs: "" },
 );

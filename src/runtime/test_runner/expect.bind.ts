@@ -2,16 +2,10 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 const js = { capability: "js", throws: true } as const;
 
-/** Not converted: a rope stays one. */
-/** Not converted: its `toString` is not called. */
 const regExp = b.cell("JSC::RegExpObject", "JavaScriptCore/RegExpObject.h", {
   rustPath: "bun_jsc::JSObject",
   reportedAs: "RegExp",
   tsType: "RegExp",
-});
-const dataView = b.cell("JSC::JSDataView", "JavaScriptCore/JSDataView.h", {
-  rustPath: "bun_jsc::JSObject",
-  tsType: "DataView",
 });
 const arrayBuffer = b.cell("JSC::JSArrayBuffer", "JavaScriptCore/JSArrayBuffer.h", {
   rustPath: "bun_jsc::JSObject",
@@ -24,31 +18,28 @@ const arrayBufferView = b.cell("JSC::JSArrayBufferView", "JavaScriptCore/JSArray
 
 export const NumberOrBigInt = b.union({ number: b.f64, bigInt: b.bigInt, other: b.ignored });
 export const ObjectOrOther = b.union({ object: b.object, other: b.ignored });
-export const StringValue = b.union(
-  { string: b.jsString, stringObject: b.stringObject, other: b.ignored },
-  { fromJS: true },
-);
-export const StringOrRegExp = b.union({ string: b.jsString, stringObject: b.stringObject, regExp, other: b.ignored });
+export const StringValue = b.union({ string: b.jsString, stringObject: b.stringObject, other: b.ignored });
+export const StringOrRegExp = b.union({ string: b.stringLike, regExp, other: b.ignored });
 /** What is walked by index, and what may be iterable. A `DataView` has no elements. */
-export const ArrayLike = b.union({
-  array: b.jsArray,
-  dataView,
+export const ExpectArrayLike = b.union({
+  list: b.jsArray,
+  dataView: b.dataView,
   arrayBuffer,
   typedArray: arrayBufferView,
   other: b.ignored,
 });
 /** A message, or an object: a pattern, a class, an asymmetric matcher or an error with the same message. */
 export const ExpectedError = b.union({
-  absent: b.undefined,
+  missing: b.undefined,
   string: b.jsString,
   object: b.object,
   other: b.ignored,
 });
 /** `undefined` is 2 digits. */
-export const Precision = b.union({ absent: b.undefined, digits: b.f64, other: b.ignored });
+export const ExpectPrecision = b.union({ missing: b.undefined, digits: b.f64, other: b.ignored });
 /** A `String` object is a string where a string fits, else an object. */
 export const SnapshotArgument = b.union({
-  absent: b.undefined,
+  missing: b.undefined,
   string: b.jsString,
   stringObject: b.stringObject,
   object: b.object,
@@ -59,7 +50,7 @@ export const SnapshotArgument = b.union({
 const matcher = { passThis: true, ...js } as const;
 /** `expect(received).toBe(expected)` */
 const matcherWithExpected = { ...matcher, args: { expected: b.opaque } } as const;
-const matcherWithExpectedString = { ...matcher, args: { expected: StringValue } } as const;
+const matcherWithExpectedString = { ...matcher, args: { expected: b.stringLike.otherAsNull }, length: 1 } as const;
 const matcherWithExpectedNumber = { ...matcher, args: { expected: b.f64.otherAsNull }, length: 1 } as const;
 const matcherWithExpectedOrdered = { ...matcher, args: { expected: NumberOrBigInt.withValue } } as const;
 const matcherWithExpectedError = { ...matcher, args: { expected: ExpectedError.withValue } } as const;
@@ -114,7 +105,7 @@ export const ExpectStringMatching = b.class({
   internalFields: ["testValue"],
 });
 
-export const ConstructorArgument = b.union({ absent: b.undefined, object: b.object, other: b.ignored });
+export const ConstructorArgument = b.union({ missing: b.undefined, object: b.object, other: b.ignored });
 
 /** `expect.any(Number)`, and the same after `expect.not`. */
 const asymmetricMatchers = {
@@ -122,13 +113,13 @@ const asymmetricMatchers = {
   anything: { returns: ExpectAnything, capability: "js", length: 1 },
   arrayContaining: { args: { array: b.jsArray.otherAsNull }, returns: ExpectArrayContaining, ...js, length: 1 },
   closeTo: {
-    args: { number: b.f64.otherAsNull.withValue, precision: Precision.withValue },
+    args: { number: b.f64.otherAsNull.withValue, precision: ExpectPrecision.withValue },
     returns: ExpectCloseTo,
     ...js,
     length: 1,
   },
   objectContaining: { args: { object: b.object.otherAsNull }, returns: ExpectObjectContaining, ...js, length: 1 },
-  stringContaining: { args: { string: StringValue }, returns: ExpectStringContaining, ...js },
+  stringContaining: { args: { string: b.stringLike.otherAsNull }, returns: ExpectStringContaining, ...js, length: 1 },
   stringMatching: { args: { test: StringOrRegExp }, returns: ExpectStringMatching, ...js },
 } as const;
 
@@ -150,18 +141,13 @@ export const ExpectStatic = b.class({
 });
 
 /** An object is the label if it has a `toString` method. */
-export const ExpectLabel = b.union({
-  string: b.jsString,
-  stringObject: b.stringObject,
-  object: b.object,
-  other: b.ignored,
-});
+export const ExpectLabel = b.union({ string: b.stringLike, object: b.object, other: b.ignored });
 
 /** `null` and `undefined` are the default message. What is not a string is thrown as it is. */
 export const UnreachableMessage = b.union({
   absent: b.undefined,
   none: b.null,
-  string: b.string.allowStringObject,
+  text: b.string.allowStringObject,
   thrown: b.opaque,
 });
 
@@ -197,7 +183,7 @@ export const Expect = b.class({
     toBeCalled: { ...matcherWithoutArgument, rustName: "to_have_been_called" },
     toBeCalledTimes: { ...matcherWithExpectedNumber, rustName: "to_have_been_called_times" },
     toBeCalledWith: { ...matcherWithCallArguments, rustName: "to_have_been_called_with" },
-    toBeCloseTo: { ...matcher, args: { expected: b.f64.otherAsNull, precision: Precision }, length: 1 },
+    toBeCloseTo: { ...matcher, args: { expected: b.f64.otherAsNull, precision: ExpectPrecision }, length: 1 },
     toBeDate: matcher,
     toBeDefined: matcher,
     toBeEmpty: matcher,
@@ -220,7 +206,7 @@ export const Expect = b.class({
     toBeNumber: matcher,
     toBeObject: chainableMatcher,
     toBeOdd: matcher,
-    toBeOneOf: { ...matcher, args: { expected: ArrayLike.withValue } },
+    toBeOneOf: { ...matcher, args: { expected: ExpectArrayLike.withValue } },
     toBePositive: matcher,
     toBeString: matcher,
     toBeSymbol: matcher,
@@ -258,7 +244,11 @@ export const Expect = b.class({
     toHaveReturnedTimes: matcherWithExpectedNumber,
     toHaveReturnedWith: matcherWithExpected,
     toInclude: matcherWithExpectedString,
-    toIncludeRepeated: { ...matcher, args: { substring: StringValue, count: b.f64.otherAsNull }, length: 2 },
+    toIncludeRepeated: {
+      ...matcher,
+      args: { substring: b.stringLike.otherAsNull, count: b.f64.otherAsNull },
+      length: 2,
+    },
     toMatch: { ...matcher, args: { expected: StringOrRegExp.withValue } },
     /** The snapshot is written over the call's arguments in the source, where `(undefined)` is not `()`. */
     toMatchInlineSnapshot: {

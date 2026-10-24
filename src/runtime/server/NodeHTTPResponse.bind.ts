@@ -16,16 +16,16 @@ const head = {
 const autoHeaders = { autoHeaderBits: b.u32.default(0), keepAliveTimeoutSecs: b.u32.default(0) };
 const method = { returns: b.opaque, capability: "js", throws: true } as const;
 
-/** What `encoding` is, if it is not falsy. A `callback` is in the place of the one after it. */
-export const ChunkEncoding = b.union(
-  { callback: b.callable, name: b.string.allowStringObject, other: b.opaque },
-  { fromJS: true },
-);
+/** A `callback` is in the place of the one after it. `name` is read only if there is a chunk. */
+export const ChunkEncoding = b.union({
+  callback: b.callable,
+  name: b.string.allowStringObject.deferred,
+  other: b.opaque,
+});
 
 const chunk = {
   chunk: b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle" }).nullable,
-  /** Read only if there is a chunk. */
-  encoding: b.opaque.falsyAsNull,
+  encoding: ChunkEncoding.falsyAsNull,
 };
 const expected = { chunk: ["string", "Buffer", "Uint8Array"] } as const;
 const strictContentLength = b.f64.optional;
@@ -60,7 +60,7 @@ export const NodeHTTPResponse = b.class({
     pauseReads: {},
     ref: { rustName: "js_ref" },
     resume: { returns: b.bool },
-    takeRawHeaders: { ...method, args: { headers: b.object.otherAsNull }, returns: b.jsArray.optional },
+    takeRawHeaders: { ...method, args: { headers: b.object.otherAsNull }, returns: b.jsArray.optional, length: 1 },
     takeRequestTrailers: {
       ...method,
       args: { useInsecureHTTPParser: b.bool.default(false) },
@@ -80,7 +80,7 @@ export const NodeHTTPResponse = b.class({
       length: 8,
     },
     writeInformational: {
-      args: { chunk: chunk.chunk, encoding: b.string.allowStringObject.otherAsNull },
+      args: { chunk: chunk.chunk, encoding: b.string.allowStringObject.otherAsNull.deferred },
       expected: { chunk: ["string", "Buffer", "TypedArray", "DataView"] },
       capability: "js",
       throws: true,

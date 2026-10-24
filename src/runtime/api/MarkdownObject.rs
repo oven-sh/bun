@@ -5,7 +5,7 @@ use crate::generated_bindgen::markdown_object::{
     MarkdownOptions, ReactOptions, RenderCallbacks,
 };
 use bun_core::StackCheck;
-use bun_jsc::bindgen::{AnyValue, JsBytes, JsLocal, JsScope};
+use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, PinnedArrayBuffer, RangeErrorOptions,
@@ -477,7 +477,7 @@ impl<'a, 'call> ParseRenderer<'a, 'call> {
         macro_rules! extract {
             ($($name:ident),* $(,)?) => {$(
                 let val = match components.$name {
-                    ComponentOverride::Absent | ComponentOverride::Ignored(_) => None,
+                    ComponentOverride::Missing | ComponentOverride::Flag(_) => None,
                     ComponentOverride::Text(val) => {
                         val.to_js().to_boolean().then_some(val.as_value())
                     }
@@ -485,7 +485,7 @@ impl<'a, 'call> ParseRenderer<'a, 'call> {
                 };
                 if let Some(val) = val {
                     self.components.$name = Some(val);
-                    self.marked_args.append(val);
+                    self.marked_args.append(val.to_js());
                 }
             )*};
         }
@@ -551,7 +551,7 @@ impl<'a, 'call> ParseRenderer<'a, 'call> {
     /// Creates an element node. In React mode, uses the C++ fast path with
     /// a cached Structure and putDirectOffset. In plain mode, creates a
     /// simple `{ type, props }` object.
-    fn create_element(&mut self, type_val: impl AnyValue, props: JSValue) -> JSValue {
+    fn create_element(&mut self, type_val: JSValue, props: JSValue) -> JSValue {
         if let Some(version) = self.react_version {
             let obj =
                 bun_jsc::cpp::JSReactElement__create(self.global_object, version, type_val, props);
@@ -709,7 +709,7 @@ impl<'a, 'call> ParseRenderer<'a, 'call> {
         }
 
         let obj = match component {
-            Some(component) => self.create_element(component, props),
+            Some(component) => self.create_element(component.to_js(), props),
             None => self.create_element(get_cached_tag_string(g, tag_index), props),
         };
 
@@ -853,7 +853,7 @@ impl<'a, 'call> ParseRenderer<'a, 'call> {
         }
 
         let obj = match component {
-            Some(component) => self.create_element(component, props),
+            Some(component) => self.create_element(component.to_js(), props),
             None => self.create_element(get_cached_tag_string(g, tag_index), props),
         };
 
@@ -889,7 +889,7 @@ impl<'a, 'call> ParseRenderer<'a, 'call> {
                 let empty_props = JSValue::create_empty_object(g, 0);
                 self.marked_args.append(empty_props);
                 let obj = match self.components.br {
-                    Some(br_component) => self.create_element(br_component, empty_props),
+                    Some(br_component) => self.create_element(br_component.to_js(), empty_props),
                     None => {
                         self.create_element(get_cached_tag_string(g, TagIndex::Br), empty_props)
                     }

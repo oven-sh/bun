@@ -57,7 +57,7 @@ impl ConnectionCtorArgs {
         let mut tls_config = SSLConfig::default();
         let mut secure: Option<OwnedSslCtx> = None;
         if ssl_mode != SSLMode::Disable {
-            tls_config = if matches!(tls_object, ConnectionTLS::Boolean(true)) {
+            tls_config = if matches!(tls_object, ConnectionTLS::Flag(true)) {
                 SSLConfig::default()
             } else if let ConnectionTLS::Object(tls_object) = tls_object {
                 match SSLConfig::from_js(global_object, tls_object.object().to_js()) {

@@ -1,15 +1,15 @@
 use core::ffi::c_void;
 
+use bun_core::strings;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, VM};
-use bun_core::strings;
 
 use super::{Expect, get_signature, throw};
 use crate::generated_bindgen::expect::StringValue;
 
-struct ExpectedEntry<'a, 'call> {
+struct ExpectedEntry<'a> {
     global_this: &'a JSGlobalObject,
-    expected: JsLocal<'call>,
+    expected: JSValue,
     pass: &'a mut bool,
 }
 
@@ -20,7 +20,7 @@ extern "C" fn deep_equals_iterator(
     item: JSValue,
 ) {
     // SAFETY: `entry_` is `&mut ExpectedEntry` passed through `for_each` below; non-null by contract.
-    let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry<'_, '_>>(entry_) };
+    let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry<'_>>(entry_) };
     let Ok(eq) = item.jest_deep_equals(entry.expected, entry.global_this) else {
         return;
     };
@@ -48,11 +48,7 @@ impl Expect {
         let mut pass = false;
 
         let value_type = value.js_type();
-        let expected_string = match expected_string {
-            StringValue::String(string) => Some((string.to_js(), false)),
-            StringValue::StringObject(object) => Some((object.to_js(), true)),
-            StringValue::Other => None,
-        };
+        let expected = expected.to_js();
 
         if value_type.is_array_like() {
             let mut itr = value.array_iterator(global)?;
@@ -62,14 +58,12 @@ impl Expect {
                     break;
                 }
             }
-        } else if let (true, Some((expected_string, is_string_object))) =
-            (value_type.is_string_like(), expected_string)
-        {
-            if is_string_object && value_type.is_string() {
+        } else if value_type.is_string_like() && !matches!(expected_string, StringValue::Other) {
+            if matches!(expected_string, StringValue::StringObject(_)) && value_type.is_string() {
                 pass = false;
             } else {
                 let value_string = value.to_utf8(global)?;
-                let expected_string = expected_string.to_utf8(global)?;
+                let expected_string = expected.to_utf8(global)?;
 
                 // jest does not have a `typeof === "string"` check here: it spreads the value into an array.
 

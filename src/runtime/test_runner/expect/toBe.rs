@@ -4,7 +4,6 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use super::DiffFormatter;
 use super::Expect;
 use super::throw;
-use crate::generated_bindgen::expect::StringValue;
 
 impl Expect {
     /// Object.is()
@@ -18,7 +17,7 @@ impl Expect {
         let (this, left, not) =
             self.matcher_prelude(global_this, this_value.to_js(), "toBe", "<green>expected<r>")?;
 
-        let right = expected;
+        let right = expected.to_js();
         let mut pass = right.is_same_value(left, global_this)?;
 
         if not {
@@ -75,11 +74,7 @@ impl Expect {
             }
         }
 
-        if left.is_string()
-            && StringValue::from_js(global_this, right, |right| {
-                Ok(!matches!(right, StringValue::Other))
-            })?
-        {
+        if right.is_string() && left.is_string() {
             let diff_format = DiffFormatter::new(global_this, left, right, not)?;
             return throw!(this, global_this, signature, "\n\n{}\n", diff_format);
         }

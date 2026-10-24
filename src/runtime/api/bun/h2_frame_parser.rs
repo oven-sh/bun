@@ -25,15 +25,16 @@ use bun_jsc::StringJsc as _;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::bindgen::{BufferSource, Callable, JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult, StrongOptional};
+use bun_jsc::{
+    GlobalRef, JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult, StrongOptional,
+};
 use bun_ptr::RefPtr;
 
 use crate::generated_bindgen::h2_frame_parser::{
     CustomSettingsRecord, FlagSetting, H2FrameCounters, H2FrameParserOptions, H2Handlers,
-    H2NativeSocket, H2SessionState, H2Settings, H2SettingsOption, H2StreamState, H2StringObject,
-    H2WriteResult, NumberSetting, OptionalStreamId, Origins, RequestHeaders,
-    RequestOptionsArgument, StreamContext, StreamResetBurst, WriteData, WriteEncoding,
-    js_H2FrameParser as js,
+    H2NativeSocket, H2Origins, H2SessionState, H2Settings, H2SettingsOption, H2StreamState,
+    H2StringObject, H2WriteData, H2WriteResult, NumberSetting, OptionalStreamId, RequestHeaders,
+    RequestOptionsArgument, StreamContext, StreamResetBurst, WriteEncoding, js_H2FrameParser as js,
 };
 
 bun_output::declare_scope!(H2FrameParser, visible);
@@ -752,7 +753,9 @@ impl Handlers {
                     js::$field(
                         this_value,
                         global_object,
-                        callback_value.with_async_context_if_needed(global_object),
+                        callback_value
+                            .to_js()
+                            .with_async_context_if_needed(global_object),
                     );
                 }
             }};
@@ -4735,10 +4738,10 @@ impl H2FrameParser {
             .throw(format_args!("Expected payload to be a Buffer")))
     }
 
-    pub(crate) fn origin(&self, cx: &mut JsScope<'_>, origin: Origins<'_>) -> JsResult<()> {
+    pub(crate) fn origin(&self, cx: &mut JsScope<'_>, origin: H2Origins<'_>) -> JsResult<()> {
         let global_object = cx.global();
         match origin {
-            Origins::None => {
+            H2Origins::Missing => {
                 // empty origin frame
                 let mut buffer = [0u8; FrameHeader::BYTE_SIZE];
                 let mut stream = FixedBufferStream::new(&mut buffer);
@@ -4753,7 +4756,7 @@ impl H2FrameParser {
                 let _ = self.write(&buffer);
             }
             // https://github.com/nodejs/node/blob/v26.3.0/src/node_http2.cc#L486-L489
-            Origins::One(origin) => {
+            H2Origins::One(origin) => {
                 let origin_bytes = header_value_bytes(&origin);
                 let slice: &[u8] = &origin_bytes;
                 if slice.len() + 2 > 16384 {
@@ -4781,7 +4784,7 @@ impl H2FrameParser {
                     let _ = self.write(slice);
                 }
             }
-            Origins::Many(origin) => {
+            H2Origins::List(origin) => {
                 let mut buffer = vec![0u8; FrameHeader::BYTE_SIZE + 16384];
                 // Heap-allocated to avoid a 16K stack frame.
                 let mut stream = FixedBufferStream::new(&mut buffer);
@@ -4821,7 +4824,7 @@ impl H2FrameParser {
                 let _ = frame.write(&mut stream, &self.frames_sent_legacy);
                 let _ = self.write(&buffer[0..total_length as usize]);
             }
-            Origins::Other => {}
+            H2Origins::Other => {}
         }
         Ok(())
     }
@@ -5730,7 +5733,7 @@ impl H2FrameParser {
         &self,
         cx: &mut JsScope<'a>,
         stream_id: Option<f64>,
-        data: WriteData<'a>,
+        data: H2WriteData<'a>,
         encoding: WriteEncoding<'_>,
         close: bool,
         callback: Option<JsLocal<'_, Callable>>,
@@ -5761,7 +5764,7 @@ impl H2FrameParser {
                 }
             },
             WriteEncoding::Other(encoding) => {
-                let found = match H2StringObject::from_js(global_object, encoding)? {
+                let found = match H2StringObject::from_js(global_object, encoding.to_js())? {
                     H2StringObject::Text(name) => Encoding::from_bun_string(&name),
                     H2StringObject::Other => None,
                 };
@@ -5769,7 +5772,7 @@ impl H2FrameParser {
                     return Err(global_object.throw_invalid_argument_type_value(
                         b"write",
                         b"encoding",
-                        encoding,
+                        encoding.to_js(),
                     ));
                 };
                 e
@@ -5797,15 +5800,16 @@ impl H2FrameParser {
             )
         };
         let (settled_state, callback_deferred) = match data {
-            WriteData::Bytes(bytes) => bytes.with_bytes(&cx.heap, send),
-            WriteData::Text(text) => send(encode(text).slice()),
-            WriteData::Other(data) => match H2StringObject::from_js(global_object, data)? {
+            H2WriteData::Bytes(bytes) => bytes.with_bytes(&cx.heap, send),
+            H2WriteData::Text(text) => send(encode(text).slice()),
+            H2WriteData::Other(data) => match H2StringObject::from_js(global_object, data.to_js())?
+            {
                 H2StringObject::Text(text) => send(encode(text).slice()),
                 H2StringObject::Other => {
                     return Err(global_object.throw_invalid_argument_type_value(
                         b"write",
                         b"Buffer or String",
-                        data,
+                        data.to_js(),
                     ));
                 }
             },
@@ -6215,7 +6219,7 @@ impl H2FrameParser {
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global_object,
-                this_arg,
+                this_arg.to_js(),
                 &[value],
             );
         }
@@ -7118,13 +7122,13 @@ impl H2FrameParser {
 
     pub(crate) fn set_native_socket(&self, _: &mut JsScope<'_>, socket: H2NativeSocket<'_>) {
         self.detach_native_socket();
-        if let H2NativeSocket::Tls(socket) = socket {
+        if let H2NativeSocket::Tls((socket, _)) = socket {
             bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
             self.native_socket.attach::<true>(socket, self.ref_guard());
             // if we started with non native and go to native we now control the backpressure internally
             self.has_nonnative_backpressure.set(false);
             let _ = self.flush();
-        } else if let H2NativeSocket::Tcp(socket) = socket {
+        } else if let H2NativeSocket::Tcp((socket, _)) = socket {
             bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
             self.native_socket.attach::<false>(socket, self.ref_guard());
             // if we started with non native and go to native we now control the backpressure internally
@@ -7265,24 +7269,22 @@ impl H2FrameParser {
             .set(Handlers::from_js(global_object, handler_js, js_value)?);
 
         // check if socket is provided, and if it is a valid native socket
-        if let Some(socket_js) = options.native(global_object)? {
-            match H2NativeSocket::from_local(global_object, socket_js)? {
-                H2NativeSocket::Tls(socket) => {
-                    bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
-                    this_ref
-                        .native_socket
-                        .attach::<true>(socket, this_ref.ref_guard());
-                    let _ = this_ref.flush();
-                }
-                H2NativeSocket::Tcp(socket) => {
-                    bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
-                    this_ref
-                        .native_socket
-                        .attach::<false>(socket, this_ref.ref_guard());
-                    let _ = this_ref.flush();
-                }
-                H2NativeSocket::Other => {}
+        match options.native(global_object)? {
+            H2NativeSocket::Tls((socket, _)) => {
+                bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
+                this_ref
+                    .native_socket
+                    .attach::<true>(socket, this_ref.ref_guard());
+                let _ = this_ref.flush();
             }
+            H2NativeSocket::Tcp((socket, _)) => {
+                bun_output::scoped_log!(H2FrameParser, "TCPSocket attached");
+                this_ref
+                    .native_socket
+                    .attach::<false>(socket, this_ref.ref_guard());
+                let _ = this_ref.flush();
+            }
+            H2NativeSocket::Other => {}
         }
         match options.settings(global_object)? {
             H2SettingsOption::Missing => {}
@@ -7385,7 +7387,7 @@ impl H2FrameParser {
         }
 
         this_ref.is_server.set(is_server);
-        js::context_set_cached(js_value, global_object, context_obj);
+        js::context_set_cached(js_value, global_object, context_obj.to_js());
 
         this_ref
             .strong_this

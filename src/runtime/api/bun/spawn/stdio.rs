@@ -486,7 +486,7 @@ impl Stdio {
                 *out_stdio = Stdio::Fd(fd);
                 return Ok(());
             }
-            StdioValue::Blob(blob) => {
+            StdioValue::Blob((blob, _)) => {
                 // `dupe()` only bumps the store refcount.
                 return out_stdio.extract_blob(
                     cx.global(),
@@ -494,10 +494,10 @@ impl Stdio {
                     i,
                 );
             }
-            StdioValue::Request(req) => {
+            StdioValue::Request((req, _)) => {
                 return Self::extract_body_value(out_stdio, cx, i, req.get_body_value(), is_sync);
             }
-            StdioValue::Response(res) => {
+            StdioValue::Response((res, _)) => {
                 return Self::extract_body_value(out_stdio, cx, i, res.get_body_value(), is_sync);
             }
             StdioValue::Stream(value) => {
@@ -542,25 +542,24 @@ impl Stdio {
                     return Ok(());
                 }
             }
-            StdioValue::Bytes(value) => {
-                if let Some(array_buffer) = value.to_js().as_array_buffer(cx.global()) {
-                    // Change in Bun v1.0.34: don't throw for empty ArrayBuffer
-                    if array_buffer.byte_slice().is_empty() {
-                        *out_stdio = Stdio::Ignore;
-                        return Ok(());
-                    }
-
-                    if i == 1 || i == 2 {
-                        return Err(cx.global().throw_invalid_arguments(format_args!(
-                            "ArrayBufferView cannot be used for stdout/stderr yet"
-                        )));
-                    }
-
-                    *out_stdio = Stdio::Blob(webcore::blob::Any::from_owned_slice(
-                        array_buffer.byte_slice().to_vec(),
-                    ));
+            StdioValue::Buffer(value) => {
+                let array_buffer = value.as_array_buffer(cx.global());
+                // Change in Bun v1.0.34: don't throw for empty ArrayBuffer
+                if array_buffer.byte_slice().is_empty() {
+                    *out_stdio = Stdio::Ignore;
                     return Ok(());
                 }
+
+                if i == 1 || i == 2 {
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
+                        "ArrayBufferView cannot be used for stdout/stderr yet"
+                    )));
+                }
+
+                *out_stdio = Stdio::Blob(webcore::blob::Any::from_owned_slice(
+                    array_buffer.byte_slice().to_vec(),
+                ));
+                return Ok(());
             }
             StdioValue::Other => {}
         }

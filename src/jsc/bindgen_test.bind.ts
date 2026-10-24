@@ -85,7 +85,7 @@ export const latin1 = b.fn({
   returns: b.string.local,
   capability: "heap",
 });
-export const TestTextOrBytes = b.union({ text: b.string.utf8, bytes: b.bufferSource, nothing: b.null });
+export const TestTextOrBytes = b.union({ text: b.string.utf8, buffer: b.bufferSource, missing: b.null });
 export const textOrBytes = b.fn({
   args: { text: b.string.utf8, as: b.u8 },
   returns: TestTextOrBytes,
@@ -242,6 +242,7 @@ export const TestCounter = b.class({
   },
   static: {
     starting: { args: { at: b.i32 }, returns: b.self, capability: "heap" },
+    isCounter: { args: { value: b.self.otherAsNull }, returns: b.bool, length: 1 },
     alive: { returns: b.usize },
     /** How many are alive. The prototype has a `count` too. */
     count: { getter: b.usize, rustName: "static_count" },
@@ -445,10 +446,6 @@ export const readPromisePtr = b.fn({
   args: { context: b.promisePtr("core::sync::atomic::AtomicI32") },
   returns: b.i32,
 });
-export const addToPromisePtr = b.fn({
-  args: { value: b.promiseResult, context: b.promisePtr("core::sync::atomic::AtomicI32") },
-  returns: b.i32,
-});
 /** A new `NativePromiseContext` cell with a pointer to the same static. */
 export const makeNativePromiseContext = b.fn({ returns: b.opaque, capability: "js" });
 export const readNativePromiseContext = b.fn({
@@ -540,7 +537,7 @@ export const TestHandle = b.union({
   text: b.string.loose.utf8,
 });
 export const describeHandle = b.fn({ args: { value: TestHandle }, returns: b.string.utf8 });
-export const TestObjectOrRest = b.union({ object: b.object, rest: b.opaque });
+export const TestObjectOrRest = b.union({ object: b.object, other: b.opaque });
 export const isObject = b.fn({ args: { value: TestObjectOrRest }, returns: b.bool });
 export const objectEcho = b.fn({ args: { value: b.object }, returns: b.object, capability: "heap" });
 export const TestAbsence = b.union({ missing: b.undefined, nothing: b.null, number: b.f64 });
@@ -603,7 +600,7 @@ export const wideIntegerOrBigInt = b.fn({ args: { value: b.u64.allowBigInt }, re
 
 /** An alternative for each kind of value. What `bytes` and `blob` refuse, and everything else, goes to `options`. */
 export const TestAnything = b.union({
-  nothing: b.null,
+  missing: b.null,
   flag: b.bool,
   integer: b.i32.allowBigInt,
   text: b.string,
@@ -647,13 +644,13 @@ export const TestInner = b.dictionary({
   b: b.i32.default(7),
   name: b.string.utf8.default("inner"),
 });
-export const TestChoice = b.union({ none: b.null, flag: b.bool });
+export const TestChoice = b.union({ missing: b.null, flag: b.bool });
 /** A string is a color. What `bytes` refuses, and everything else, is kept as it is. */
 export const TestColorOrRest = b.union({
   color: TestColor,
-  bytes: b.bufferSource,
-  absent: b.undefined,
-  rest: b.opaque,
+  buffer: b.bufferSource,
+  missing: b.undefined,
+  other: b.opaque,
 });
 export const TestOuter = b.dictionary({
   inner: TestInner.nullable,
@@ -699,8 +696,6 @@ export const TestKind = b.union(
   { fromJS: true },
 );
 export const kindOf = b.fn({ args: { value: b.opaque }, returns: b.string.utf8, capability: "js", throws: true });
-export const TestLevel = b.enumeration(["low", "high"], { fromJS: true, reportedAs: "level" });
-export const levelFromJS = b.fn({ args: { value: b.opaque }, returns: b.u32, capability: "js", throws: true });
 export const negateWide = b.fn({ args: { value: b.i64 }, returns: b.i64 });
 
 const URL = b.wrapped("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::DOMURL", reportedAs: "URL" });
@@ -720,7 +715,7 @@ export const countInRange = b.fn({
 export const TestRangeOptions = b.dictionary({ timeout: b.u64.validateIntegerRange().optional });
 export const timeoutOf = b.fn({ args: { options: TestRangeOptions }, returns: b.u64.nullable });
 
-export const partText = b.conversion(b.string.loose, { reportedAs: "part" });
+export const partText = b.conversion(b.string.loose);
 /** Throws for fewer than two parts, before any is converted. */
 export const joinParts = b.fn({
   args: { parts: b.rest(b.opaque) },
@@ -742,7 +737,7 @@ export const TestCountOrText = b.union({ count: b.i32.validateInteger(0, 10), te
 /** -1 for text. */
 export const countOrText = b.fn({ args: { value: TestCountOrText }, returns: b.i32 });
 
-export const TestLength = b.union({ number: b.f64, bigint: b.i64.asIntN, other: b.ignored });
+export const TestLength = b.union({ number: b.f64, bigInt: b.i64.asIntN, other: b.ignored });
 export const lengthOf = b.fn({ args: { length: TestLength }, returns: b.f64.nullable });
 export const returnsNull = b.fn({ args: {}, returns: b.null });
 
@@ -768,7 +763,7 @@ export const describeAbsentDeferred = b.fn({
 });
 
 /** Each member is read when the body asks for it. */
-export const TestStepOptions = b.dictionary(
+export const TestDeferredOptions = b.dictionary(
   {
     name: b.string,
     level: { type: b.i32.validateIntegerRange(0, 9).default(1), altNames: ["lvl"] },
@@ -779,18 +774,21 @@ export const TestStepOptions = b.dictionary(
   { deferred: true, reportedAs: "options" },
 );
 /** Reads `name`, refuses an empty one itself, and only then reads the others. */
-export const describeInSteps = b.fn({
-  args: { options: TestStepOptions },
+export const describeDeferred = b.fn({
+  args: { options: TestDeferredOptions },
   returns: b.string,
   capability: "js",
   throws: true,
 });
 /** A deferred dictionary as a member of a dictionary, of a deferred one, and as an alternative of a union. */
-export const TestStepsOrText = b.union({ text: b.string, steps: TestStepOptions });
-export const TestStepHolder = b.dictionary({ steps: TestStepOptions.optional, either: TestStepsOrText.optional });
-export const TestOuterSteps = b.dictionary({ inner: TestStepOptions.nullable }, { deferred: true });
-export const namesOfSteps = b.fn({
-  args: { lenient: TestStepOptions.otherAsNull, holder: TestStepHolder, outer: TestOuterSteps.optional },
+export const TestDeferredOrText = b.union({ text: b.string, options: TestDeferredOptions });
+export const TestDeferredHolder = b.dictionary({
+  options: TestDeferredOptions.optional,
+  either: TestDeferredOrText.optional,
+});
+export const TestOuterDeferred = b.dictionary({ inner: TestDeferredOptions.nullable }, { deferred: true });
+export const namesOfDeferred = b.fn({
+  args: { lenient: TestDeferredOptions.otherAsNull, holder: TestDeferredHolder, outer: TestOuterDeferred.optional },
   returns: b.string,
   capability: "js",
   throws: true,
@@ -813,6 +811,41 @@ export const deferredKeyByteLength = b.fn({
   capability: "js",
   throws: true,
 });
+/** Two deferred arguments of one name and one type whose defaults differ. */
+export const deferredCountOrOne = b.fn({
+  args: { count: b.i32.default(1).deferred },
+  returns: b.i32,
+  capability: "js",
+  throws: true,
+});
+export const deferredCountOrTwo = b.fn({
+  args: { count: b.i32.default(2).deferred },
+  returns: b.i32,
+  capability: "js",
+  throws: true,
+});
+/** The `toString` of a `String` object runs only if `convert`. */
+export const TestName = b.union({
+  text: b.string,
+  stringObject: b.string.allowStringObject.deferred,
+  other: b.ignored,
+});
+export const nameOrKind = b.fn({
+  args: { name: TestName, convert: b.bool },
+  returns: b.string,
+  capability: "js",
+  throws: true,
+});
+export const takeSymbol = b.fn({ args: { symbol: b.symbol }, returns: b.symbol, capability: "heap" });
+export const isStringLike = b.fn({ args: { value: b.stringLike.otherAsNull }, returns: b.bool });
+export const TestMaybeCounter = b.dictionary({ counter: TestCounter.withValue.otherAsNull });
+/** -1 without a counter. */
+export const countOfMaybe = b.fn({ args: { options: TestMaybeCounter }, returns: b.i32 });
+export const TestTextOrFlag = b.union({ text: b.string, flag: b.bool });
+export const TestCountOrNested = b.union({ count: b.i32, nested: TestTextOrFlag, other: b.ignored });
+export const describeNested = b.fn({ args: { value: TestCountOrNested }, returns: b.string.utf8 });
+export const echoNested = b.fn({ args: { value: TestCountOrNested }, returns: TestCountOrNested });
+export const wrapToInt32 = b.fn({ args: { value: b.i32.allowBigInt.wrap }, returns: b.i32 });
 /** A member only Bun's own JavaScript can set, in a dictionary and in a deferred one. */
 export const TestPrivateMember = b.dictionary({
   name: b.string.optional,
@@ -829,7 +862,7 @@ export const readsPrivateMember = b.fn({
   throws: true,
 });
 /** `""`, `null` and `undefined` are absent. Every other value goes to an alternative. */
-export const TestFlagOrRest = b.union({ enabled: b.bool, options: TestStepOptions, other: b.opaque });
+export const TestFlagOrRest = b.union({ enabled: b.bool, options: TestDeferredOptions, other: b.opaque });
 export const describeFlagOrRest = b.fn({ args: { value: TestFlagOrRest.emptyStringAsNull }, returns: b.string.utf8 });
 /** An own `undefined` is converted, and refused. Only a property the object does not have is absent. */
 export const TestOwnIfPassed = b.dictionary({ recursive: { type: b.bool.ifPassed, own: true } });

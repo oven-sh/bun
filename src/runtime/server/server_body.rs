@@ -13,7 +13,9 @@ use crate::generated_bindgen::server::{
     ServeOptions, ServerFetchInit, ServerFetchInput, ServerProtocol, TimeoutTarget, UpgradeHeaders,
     UpgradeOptionsArgument, WebSocketMessage,
 };
-use crate::generated_bindgen::server_body::{BunServe__onRejectPlugins, BunServe__onResolvePlugins};
+use crate::generated_bindgen::server_body::{
+    BunServe__onRejectPlugins, BunServe__onResolvePlugins,
+};
 use crate::node::types::PathLikeExt as _;
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
@@ -1175,14 +1177,14 @@ impl Drop for ServePlugins {
 
 pub(crate) fn on_resolve_plugins(
     _: &mut JsScope<'_>,
-    plugins_result: JSValue,
+    plugins_result: JsLocal<'_>,
     context: *mut ServePlugins,
 ) {
     ctx_log!("onResolve");
 
     // SAFETY: `context` was heap-allocated and ref()'d before .then(); this adopts that ref.
     let _guard = unsafe { RefPtr::from_raw(context) };
-    plugins_result.ensure_still_alive();
+    plugins_result.to_js().ensure_still_alive();
 
     // SAFETY: pointer was passed via .then() above
     unsafe { &mut *context }.handle_on_resolve();
@@ -1190,7 +1192,7 @@ pub(crate) fn on_resolve_plugins(
 
 pub(crate) fn on_reject_plugins(
     cx: &mut JsScope<'_>,
-    error_js: JSValue,
+    error_js: JsLocal<'_>,
     context: *mut ServePlugins,
 ) {
     ctx_log!("onReject");
@@ -1198,12 +1200,12 @@ pub(crate) fn on_reject_plugins(
     // SAFETY: `context` was heap-allocated and ref()'d before .then(); this adopts that ref.
     let _guard = unsafe { RefPtr::from_raw(context) };
     // SAFETY: pointer was passed via .then() above
-    unsafe { &mut *context }.handle_on_reject(cx.global(), error_js);
+    unsafe { &mut *context }.handle_on_reject(cx.global(), error_js.to_js());
 }
 
 /// The `options` argument of `server.upgrade(request, options)`. Each property is read once.
-struct UpgradeOptions<'a> {
-    data: Option<JsLocal<'a>>,
+struct UpgradeOptions {
+    data: JSValue,
     headers: Option<NonNull<FetchHeaders>>,
     /// `Sec-WebSocket-Protocol` from `headers`. An empty value rejects every protocol the
     /// client offered.
@@ -1214,10 +1216,10 @@ struct UpgradeOptions<'a> {
     _headers_converted: Option<HeadersRef>,
 }
 
-impl<'a> UpgradeOptions<'a> {
-    fn from_js(global: &JSGlobalObject, options: UpgradeOptionsArgument<'a>) -> JsResult<Self> {
+impl UpgradeOptions {
+    fn from_js(global: &JSGlobalObject, options: UpgradeOptionsArgument<'_>) -> JsResult<Self> {
         let mut this = Self {
-            data: None,
+            data: JSValue::ZERO,
             headers: None,
             protocol: None,
             _headers_object: jsc::EnsureStillAlive(JSValue::UNDEFINED),
@@ -1231,16 +1233,19 @@ impl<'a> UpgradeOptions<'a> {
                     .throw_invalid_arguments(format_args!("upgrade options must be an object")));
             }
         };
-        this.data = options.data(global)?;
+        if let Some(data) = options.data(global)? {
+            this.data = data.to_js();
+        }
         match options.headers(global)? {
             UpgradeHeaders::Missing => return Ok(this),
-            UpgradeHeaders::Headers(headers_value) => {
-                this.headers = FetchHeaders::cast_(headers_value.to_js(), global.vm());
+            UpgradeHeaders::Headers((headers, headers_value)) => {
+                this.headers = Some(NonNull::from(headers));
                 this._headers_object = jsc::EnsureStillAlive(headers_value.to_js());
             }
             UpgradeHeaders::Init(headers_value) => {
                 // `None` for an empty HeadersInit.
-                this._headers_converted = HeadersRef::create_from_js(global, headers_value)?;
+                this._headers_converted =
+                    HeadersRef::create_from_js(global, headers_value.to_js())?;
                 this.headers = this
                     ._headers_converted
                     .as_ref()
@@ -1741,11 +1746,13 @@ where
             unsafe { (*request_ptr).request_context = AnyRequestContext::NULL };
             upgrader.request_weakref.set(request::WeakRef::EMPTY);
 
-            let handler = &self.config.get().websocket.as_ref().unwrap().handler;
-            let ws = match options.data {
-                Some(data) => ServerWebSocket::init(handler, data, signal),
-                None => ServerWebSocket::init(handler, JSValue::ZERO, signal),
-            };
+            options.data.ensure_still_alive();
+            let ws = ServerWebSocket::init(
+                &self.config.get().websocket.as_ref().unwrap().handler,
+                options.data,
+                signal,
+            );
+            options.data.ensure_still_alive();
 
             resp.clear_aborted();
             resp.clear_on_data();
@@ -2013,25 +2020,20 @@ where
 
                     match init.headers(global)? {
                         HeadersInit::Missing => {}
-                        HeadersInit::Headers(headers_) => {
-                            if let Some(headers__) =
-                                FetchHeaders::cast_(headers_.to_js(), global.vm())
-                            {
-                                // Copy the headers like `new Request(url, { headers })` does.
-                                // S008: `FetchHeaders` is an opaque ZST FFI handle — safe deref.
-                                headers = bun_opaque::opaque_deref_mut(headers__.as_ptr())
-                                    .clone_this(global)?
-                                    // SAFETY: `clone_this` returns a +1 ref.
-                                    .map(|p| unsafe { HeadersRef::adopt(p) });
-                            }
+                        HeadersInit::Headers((headers__, _)) => {
+                            // Copy the headers like `new Request(url, { headers })` does.
+                            headers = headers__
+                                .clone_this(global)?
+                                // SAFETY: `clone_this` returns a +1 ref.
+                                .map(|p| unsafe { HeadersRef::adopt(p) });
                         }
                         HeadersInit::Init(headers_) => {
-                            headers = HeadersRef::create_from_js(global, headers_)?;
+                            headers = HeadersRef::create_from_js(global, headers_.to_js())?;
                         }
                     }
 
                     if let Some(body__) = init.body(global)? {
-                        match Blob::get::<true, false>(global, body__) {
+                        match Blob::get::<true, false>(global, body__.to_js()) {
                             Ok(new_blob) => body = BodyValue::Blob(new_blob),
                             Err(err) => {
                                 return Ok(JSPromise::rejected_promise_with_caught_exception(
@@ -2056,7 +2058,7 @@ where
                 let received = match other {
                     ServerFetchInput::Undefined => "Undefined",
                     ServerFetchInput::Null => "Null",
-                    ServerFetchInput::Boolean(_) => "Boolean",
+                    ServerFetchInput::Flag(_) => "Boolean",
                     ServerFetchInput::Number(_) => "Number",
                     ServerFetchInput::Symbol(_) => "Symbol",
                     ServerFetchInput::BigInt(_) => "BigInt",

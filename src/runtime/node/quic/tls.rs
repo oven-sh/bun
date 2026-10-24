@@ -4,7 +4,7 @@ use core::ptr::null_mut;
 use bun_boringssl_sys as ssl;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};
 
-use crate::generated_bindgen::quic::{PemSource, PemValue, TlsOptions};
+use crate::generated_bindgen::quic::{PemSource, PemValue, QuicTLSOptions};
 
 pub(super) struct TlsConfig {
     pub is_server: bool,
@@ -51,9 +51,11 @@ fn collect_pem(global: &JSGlobalObject, value: PemSource<'_>) -> JsResult<Vec<Ve
                 }
             }
         }
-        PemSource::Text(text) => out.push(text.to_owned_slice()),
-        PemSource::Buffer(buffer) => out.extend(value_to_bytes(global, buffer.to_js())?),
-        PemSource::Other => {}
+        PemSource::Value(PemValue::Text(text)) => out.push(text.to_owned_slice()),
+        PemSource::Value(PemValue::Buffer(buffer)) => {
+            out.extend(value_to_bytes(global, buffer.to_js())?);
+        }
+        PemSource::Value(PemValue::Other) => {}
     }
     Ok(out)
 }
@@ -92,7 +94,7 @@ fn tls13_policy_for_ciphers(ciphers: &[u8]) -> Option<c_int> {
 impl TlsConfig {
     pub(super) fn from_js(
         global: &JSGlobalObject,
-        tls: Option<TlsOptions<'_>>,
+        tls: Option<QuicTLSOptions<'_>>,
         is_server: bool,
     ) -> JsResult<Self> {
         let mut config = TlsConfig {

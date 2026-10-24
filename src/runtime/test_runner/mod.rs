@@ -223,7 +223,8 @@ pub(crate) mod expect {
             JestPrettyFormat::format(
                 MessageLevel::Debug,
                 global,
-                self,
+                core::slice::from_ref(&self),
+                1,
                 out,
                 fmt_options,
             )?;
@@ -350,24 +351,21 @@ pub(crate) mod expect {
             let value: JSValue =
                 this.get_value(global, this_value, name, "<green>expected<r>")?;
 
-            let other = match other {
-                NumberOrBigInt::Number(other) => Some(JSValue::js_double_number(other)),
-                NumberOrBigInt::BigInt(other) => Some(other.to_js()),
-                NumberOrBigInt::Other => None,
-            };
-            let Some(other) = other.filter(|_| value.is_number() || value.is_big_int()) else {
+            let other_value = other_value.to_js();
+            if (!value.is_number() && !value.is_big_int()) || matches!(other, NumberOrBigInt::Other)
+            {
                 return Err(global.throw(format_args!(
                     "Expected and actual values must be numbers or bigints"
                 )));
-            };
+            }
 
             let not = this.flags.get().not();
-            let mut pass = if !value.is_big_int() && !other.is_big_int() {
-                rel.cmp_f64(value.as_number(), other.as_number())
+            let mut pass = if !value.is_big_int() && !other_value.is_big_int() {
+                rel.cmp_f64(value.as_number(), other_value.as_number())
             } else if value.is_big_int() {
-                rel.cmp_bigint_fwd(JSValueTestExt::as_big_int_compare(value, other))
+                rel.cmp_bigint_fwd(JSValueTestExt::as_big_int_compare(value, other_value))
             } else {
-                rel.cmp_bigint_rev(JSValueTestExt::as_big_int_compare(other, value))
+                rel.cmp_bigint_rev(JSValueTestExt::as_big_int_compare(other_value, value))
             };
 
             if not { pass = !pass; }

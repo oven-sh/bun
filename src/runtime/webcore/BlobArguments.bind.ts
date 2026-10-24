@@ -1,12 +1,13 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import { Archive } from "../api/Archive.bind.ts";
+import { ReadableStream } from "./ByteStream.bind.ts";
 import { Request, Response } from "./response.bind.ts";
 
 /** A cached stream is returned whatever `chunkSize` is. */
 export const BlobChunkSize = b.union({ missing: b.null, size: b.f64, other: b.ignored });
-/** A string in place of `start` or `end` is the content type. */
+/** A string in place of `start` or `end` is the content type, and the strings after it are not read. */
 export const BlobSliceBound = b.union({
-  contentType: b.string.allowStringObject.view,
+  contentType: b.string.allowStringObject.deferred,
   offset: b.f64,
   other: b.ignored,
 });
@@ -21,10 +22,7 @@ export const BunWriteData = b.union(
     response: Response,
     request: Request,
     archive: Archive,
-    readableStream: b.cell("WebCore::JSReadableStream", "streams/JSReadableStream.h", {
-      rustPath: "crate::webcore::ReadableStream",
-      tsType: "ReadableStream",
-    }),
+    readableStream: ReadableStream,
     other: b.opaque,
   },
   { fromJS: true },

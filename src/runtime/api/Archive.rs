@@ -155,35 +155,34 @@ impl Archive {
         // Parse compression options
         let compress = parse_compression_options(global, options)?;
 
-        // For Blob/Archive, ref the existing store (zero-copy)
-        if let ArchiveData::Object(data) = data
-            && let Some(blob) = data.as_class_ref::<Blob>()
-        {
-            if let Some(store) = blob.store.get().as_ref() {
-                return Ok(Self {
-                    store: store.clone(),
-                    compress,
-                });
+        let files = match data {
+            // For ArrayBuffer/TypedArray, copy the data
+            ArchiveData::Buffer(data) => {
+                let data: Vec<u8> = data.as_array_buffer(global).slice().to_vec();
+                return Ok(create_archive(data, compress));
             }
-        }
-
-        // For ArrayBuffer/TypedArray, copy the data
-        if let ArchiveData::Buffer(data) = data
-            && let Some(array_buffer) = data.to_js().as_array_buffer(global)
-        {
-            let data: Vec<u8> = array_buffer.slice().to_vec();
-            return Ok(create_archive(data, compress));
-        }
+            ArchiveData::Object(object) => {
+                // For Blob/Archive, ref the existing store (zero-copy)
+                if let Some(blob) = object.to_js().as_class_ref::<Blob>()
+                    && let Some(store) = blob.store.get().as_ref()
+                {
+                    return Ok(Self {
+                        store: store.clone(),
+                        compress,
+                    });
+                }
+                object
+            }
+            ArchiveData::Other => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Expected an object, Blob, TypedArray, or ArrayBuffer"
+                )));
+            }
+        };
 
         // For plain objects, build a tarball
-        if let ArchiveData::Object(data) = data {
-            let data = build_tarball_from_object(global, data)?;
-            return Ok(create_archive(data, compress));
-        }
-
-        Err(global.throw_invalid_arguments(format_args!(
-            "Expected an object, Blob, TypedArray, or ArrayBuffer"
-        )))
+        let data = build_tarball_from_object(global, files)?;
+        Ok(create_archive(data, compress))
     }
 }
 
@@ -388,64 +387,60 @@ impl Archive {
         // Parse options for compression override
         let options_compress = parse_compression_options(global, options)?;
 
-        // For Archive instances, use options override or archive's compression settings
-        if let ArchiveData::Object(data_arg) = data_arg
-            && let Some(archive) = data_arg.as_class_ref::<Archive>()
-        {
-            let compress = if !matches!(options_compress, Compression::None) {
-                options_compress
-            } else {
-                archive.compress
-            };
-            return start_write_task(
-                &cx,
-                WriteData::Store(archive.store.clone()),
-                path_slice.slice(),
-                compress,
-            );
-        }
-
-        // For Blobs, use store reference with options compression
-        if let ArchiveData::Object(data_arg) = data_arg
-            && let Some(blob) = data_arg.as_class_ref::<Blob>()
-        {
-            if let Some(store) = blob.store.get().as_ref() {
+        let files = match data_arg {
+            // For ArrayBuffer/TypedArray, copy the data with options compression
+            ArchiveData::Buffer(data_arg) => {
+                let data = data_arg.as_array_buffer(global).slice().to_vec();
                 return start_write_task(
                     &cx,
-                    WriteData::Store(store.clone()),
+                    WriteData::Owned(data),
                     path_slice.slice(),
                     options_compress,
                 );
             }
-        }
-
-        // For ArrayBuffer/TypedArray, copy the data with options compression
-        if let ArchiveData::Buffer(data_arg) = data_arg
-            && let Some(array_buffer) = data_arg.to_js().as_array_buffer(global)
-        {
-            let data = array_buffer.slice().to_vec();
-            return start_write_task(
-                &cx,
-                WriteData::Owned(data),
-                path_slice.slice(),
-                options_compress,
-            );
-        }
+            ArchiveData::Object(object) => {
+                // For Archive instances, use options override or archive's compression settings
+                if let Some(archive) = object.to_js().as_class_ref::<Archive>() {
+                    let compress = if !matches!(options_compress, Compression::None) {
+                        options_compress
+                    } else {
+                        archive.compress
+                    };
+                    return start_write_task(
+                        &cx,
+                        WriteData::Store(archive.store.clone()),
+                        path_slice.slice(),
+                        compress,
+                    );
+                }
+                // For Blobs, use store reference with options compression
+                if let Some(blob) = object.to_js().as_class_ref::<Blob>()
+                    && let Some(store) = blob.store.get().as_ref()
+                {
+                    return start_write_task(
+                        &cx,
+                        WriteData::Store(store.clone()),
+                        path_slice.slice(),
+                        options_compress,
+                    );
+                }
+                object
+            }
+            ArchiveData::Other => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Expected an object, Blob, TypedArray, ArrayBuffer, or Archive"
+                )));
+            }
+        };
 
         // For plain objects, build a tarball with options compression
-        if let ArchiveData::Object(data_arg) = data_arg {
-            let data = build_tarball_from_object(global, data_arg)?;
-            return start_write_task(
-                &cx,
-                WriteData::Owned(data),
-                path_slice.slice(),
-                options_compress,
-            );
-        }
-
-        Err(global.throw_invalid_arguments(format_args!(
-            "Expected an object, Blob, TypedArray, ArrayBuffer, or Archive"
-        )))
+        let data = build_tarball_from_object(global, files)?;
+        start_write_task(
+            &cx,
+            WriteData::Owned(data),
+            path_slice.slice(),
+            options_compress,
+        )
     }
 
     /// Instance method: archive.extract(path, options?)

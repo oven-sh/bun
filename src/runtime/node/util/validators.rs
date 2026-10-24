@@ -1,6 +1,5 @@
 use core::fmt;
 
-use bun_jsc::bindgen::JsLocal;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
 
 #[cold]
@@ -32,24 +31,6 @@ pub(crate) fn throw_err_invalid_arg_type(
     name: impl fmt::Display,
     expected_type: &str,
     value: JSValue,
-) -> JsError {
-    let actual_type = value.type_name(global_this);
-    throw_err_invalid_arg_type_with_message(
-        global_this,
-        format_args!(
-            "The \"{}\" property must be of type {}, got {}",
-            name, expected_type, actual_type
-        ),
-    )
-}
-
-/// [`throw_err_invalid_arg_type`] for a value that no type of the schema took.
-#[cold]
-pub(crate) fn throw_err_invalid_arg_type_opaque(
-    global_this: &JSGlobalObject,
-    name: impl fmt::Display,
-    expected_type: &str,
-    value: JsLocal<'_>,
 ) -> JsError {
     let actual_type = value.type_name(global_this);
     throw_err_invalid_arg_type_with_message(

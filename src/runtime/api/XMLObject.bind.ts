@@ -4,7 +4,7 @@ import { StringifySpace } from "./JSON5Object.bind.ts";
 export default b.module({ rustPath: "crate::api::xml_object" });
 
 /** The error for anything else names what it is. */
-export const XMLCompact = b.union({ unset: b.undefined, flag: b.bool, other: b.opaque });
+export const XMLCompact = b.union({ missing: b.undefined, flag: b.bool, other: b.opaque });
 export const XMLParseOptions = b.dictionary({ compact: XMLCompact }, { allowArray: true, reportedAs: "options" });
 export const XMLReviverOrOptions = b.union({ reviver: b.callable, options: XMLParseOptions });
 

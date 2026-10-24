@@ -42,21 +42,17 @@ impl Expect {
         };
         let _ = &bun_test_strong;
 
-        let hint_string = match hint {
-            SnapshotArgument::String(string) => Some(string.to_js().to_js_string_view(global)?),
-            SnapshotArgument::StringObject(object) => {
-                Some(object.to_js().to_js_string_view(global)?)
-            }
-            SnapshotArgument::Absent => None,
-            SnapshotArgument::Object(_) | SnapshotArgument::Other => {
-                return throw!(
-                    this,
-                    global,
-                    "",
-                    "\n\nMatcher error: Expected first argument to be a string\n",
-                );
-            }
-        };
+        let mut hint_string = None;
+        if let Some(hint) = hint.as_string() {
+            hint_string = Some(hint.to_js_string_view(global)?);
+        } else if !matches!(hint, SnapshotArgument::Missing) {
+            return throw!(
+                this,
+                global,
+                "",
+                "\n\nMatcher error: Expected first argument to be a string\n",
+            );
+        }
 
         let hint = hint_string.as_ref().map_or(bun_core::Utf8Bytes::EMPTY, |s| s.to_utf8());
 

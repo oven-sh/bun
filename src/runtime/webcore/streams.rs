@@ -8,7 +8,6 @@ use crate::webcore::jsc::{
     JSPromise, JSPromiseStrong, JSType, JSValue, JsResult, SysErrorJsc, VirtualMachine,
 };
 use bun_collections::{ByteVecExt, VecExt};
-use bun_jsc::bindgen::{AnyValue, JsLocal};
 use bun_core::{FeatureFlags, strings};
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
@@ -743,7 +742,7 @@ impl PipeCell {
         js::take_pipe_done(self.0.get()?).as_promise()
     }
 
-    pub(crate) fn set_error(&self, error: impl AnyValue) {
+    pub(crate) fn set_error(&self, error: JSValue) {
         if let Some(cell) = self.0.get() {
             js::set_fail_reason(cell, error);
         }
@@ -2032,7 +2031,7 @@ impl<const SSL: bool> crate::webcore::sink::ControlledSink for HTTPServerWritabl
     unsafe fn close_with_error(
         this: *mut Self,
         _global: &JSGlobalObject,
-        _reason: JsLocal<'_>,
+        _reason: JSValue,
     ) -> bun_sys::Result<()> {
         // SAFETY: caller contract; `fail` does not free the sink.
         unsafe { (*this).fail() };
@@ -2346,7 +2345,7 @@ impl NetworkSink {
     ///
     /// Raw `*mut Self`: `task.fail()` synchronously fires
     /// `S3UploadStreamWrapper::resolve`, which re-borrows this sink.
-    pub(crate) fn fail_from_js_pump(this: *mut Self, global: &JSGlobalObject, reason: JsLocal<'_>) {
+    pub(crate) fn fail_from_js_pump(this: *mut Self, global: &JSGlobalObject, reason: JSValue) {
         // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; the
         // borrow ends before `fail` re-enters.
         let task_ref = unsafe {
@@ -2357,7 +2356,7 @@ impl NetworkSink {
             (*this).done = true;
             (*this).pending.result = Writable::Done;
             (*this).pending.run();
-            if let Some(reason) = reason.nullable() {
+            if !reason.is_undefined_or_null() {
                 (*this).upstream_error.set(global, reason);
             }
             // Our own ref: `fail` re-enters and may clear `(*this).task`.
@@ -2494,7 +2493,7 @@ impl crate::webcore::sink::ControlledSink for NetworkSink {
     unsafe fn close_with_error(
         this: *mut Self,
         global: &JSGlobalObject,
-        reason: JsLocal<'_>,
+        reason: JSValue,
     ) -> bun_sys::Result<()> {
         Self::fail_from_js_pump(this, global, reason);
         bun_sys::Result::Ok(())

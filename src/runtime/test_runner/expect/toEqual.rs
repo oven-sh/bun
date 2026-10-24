@@ -1,9 +1,9 @@
 use bun_jsc::JsResult;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 
-use super::throw;
 use super::DiffFormatter;
 use super::Expect;
+use super::throw;
 
 impl Expect {
     pub(crate) fn to_equal(
@@ -16,7 +16,7 @@ impl Expect {
         let (this, value, not) =
             self.matcher_prelude(global, this_value.to_js(), "toEqual", "<green>expected<r>")?;
 
-        let mut pass = value.jest_deep_equals(expected, global)?;
+        let mut pass = value.jest_deep_equals(expected.to_js(), global)?;
 
         if not {
             pass = !pass;
@@ -26,7 +26,7 @@ impl Expect {
         }
 
         // handle failure
-        let diff_formatter = DiffFormatter::new(global, value, expected, not)?;
+        let diff_formatter = DiffFormatter::new(global, value, expected.to_js(), not)?;
 
         if not {
             let signature: &str = Expect::get_signature("toEqual", "<green>expected<r>", true);

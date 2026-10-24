@@ -33,9 +33,7 @@ impl Crypto {
                     | JSType::BigUint64Array
             )
         });
-        let Some((array, mut array_buffer)) =
-            array.and_then(|array| Some((array, array.to_js().as_array_buffer(global)?)))
-        else {
+        let Some(array) = array else {
             return Err(global
                 .throw_dom_exception(
                     bun_jsc::DOMExceptionCode::TypeMismatchError,
@@ -44,7 +42,7 @@ impl Crypto {
                 .into());
         };
 
-        random_data(global, array_buffer.byte_slice_mut());
+        random_data(global, array.as_array_buffer(global).byte_slice_mut());
 
         Ok(array)
     }
@@ -127,7 +125,7 @@ pub(crate) fn random_uuid_v7<'a>(
         ),
         UUIDEncodingOrTimestamp::Clock => (Encoding::Hex, Some(UUIDTimestamp::Clock)),
         UUIDEncodingOrTimestamp::Time(time) => (Encoding::Hex, Some(UUIDTimestamp::Time(time))),
-        UUIDEncodingOrTimestamp::Ignored => (Encoding::Hex, None),
+        UUIDEncodingOrTimestamp::Other => (Encoding::Hex, None),
     };
     let Some(timestamp) = timestamp.or(alone) else {
         return Err(heap.invalid_arguments(format_args!("timestamp must be a number or Date")));
@@ -185,7 +183,7 @@ pub(crate) fn random_uuid_v7<'a>(
             );
             Ok(EncodedUUID::Text(str))
         }
-        Encoding::Buffer => Ok(EncodedUUID::Bytes(heap.create_buffer(&uuid.bytes)?)),
+        Encoding::Buffer => Ok(EncodedUUID::Buffer(heap.create_buffer(&uuid.bytes)?)),
         encoding => Ok(EncodedUUID::Text(crate::webcore::encoding::to_bun_string(
             &uuid.bytes,
             encoding,
@@ -240,7 +238,7 @@ pub(crate) fn random_uuid_v5<'a>(
             );
             Ok(EncodedUUID::Text(str))
         }
-        Encoding::Buffer => Ok(EncodedUUID::Bytes(
+        Encoding::Buffer => Ok(EncodedUUID::Buffer(
             heap.create_buffer_from_box(Box::from(uuid.bytes))?,
         )),
         encoding => Ok(EncodedUUID::Text(crate::webcore::encoding::to_bun_string(

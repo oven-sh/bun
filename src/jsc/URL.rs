@@ -13,11 +13,7 @@ pub trait URLJsc {
     /// Percent-encodes the URL, punycode-encodes the hostname, and returns the
     /// result. If it fails, the tag is marked Dead.
     #[track_caller]
-    fn href_from_js(
-        value: impl crate::bindgen::AnyValue,
-        global: &JSGlobalObject,
-    ) -> JsResult<String> {
-        let value = crate::bindgen::js_value_of(value);
+    fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<String> {
         crate::call_check_slow(global, || URL__getHrefFromJS(value, global))
     }
 }

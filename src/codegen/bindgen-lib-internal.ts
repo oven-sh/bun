@@ -140,6 +140,19 @@ const kindsOfClass: Record<string, readonly ValueKind[]> = {
   "JSC::JSDataView": ["dataView"],
 };
 
+const classes = new Map<string, JSClass>();
+/** One object for each class: kinds are compared by identity. */
+function kindsOfCell(cpp: string): readonly ValueKind[] {
+  if (!classes.has(cpp)) classes.set(cpp, { cpp });
+  return kindsOfClass[cpp] ?? [classes.get(cpp)!];
+}
+
+/** The kind that a class of JSC is only a part of. C++ tests the kind first, so an alternative that takes it hides the class. */
+function kindAroundClass({ cpp }: JSClass): ValueKind | undefined {
+  if (/^JSC::JS(Big)?(Ui|I)nt\d+(Clamped)?Array$|^JSC::JSFloat\d+Array$/.test(cpp)) return "typedArray";
+  if (/^JSC::(JS|Internal)Function$/.test(cpp)) return "callable";
+}
+
 /** `tests` of one outcome, with one test for the two kinds of view. */
 export function mergeViewTests(tests: readonly string[]): string[] {
   const views = [kindTests.typedArray.ofCell!, kindTests.dataView.ofCell!];
@@ -231,11 +244,14 @@ export abstract class Type {
   get ifPassed(): OptionalType {
     return new OptionalType(this, "ifPassed");
   }
-  /** Converted when the body says so: a `Deferred<'a, T>`. Only for an argument, and written last. */
+  /** Converted when the body says so: a `Deferred<'a, T>`. For an argument or an alternative of a union, and written last. */
   get deferred(): DeferredType {
     return new DeferredType(this);
   }
-  /** Also the argument itself: `(T, JsLocal<'a>)`. Only for an argument. */
+  /**
+   * Also the value itself: `(T, JsLocal<'a>)`. Written last and only for an argument, except on an instance that Rust
+   * takes as `&T`: there the value is the cell that keeps it alive, and the two go wherever a type goes.
+   */
   get withValue(): WithValueType {
     return new WithValueType(this);
   }
@@ -528,9 +544,10 @@ export class IntegerType extends PrimitiveType {
   }
   /** Also a BigInt that is in range, for an argument whose type is `number | bigint`. */
   get allowBigInt(): IntegerType {
+    if (this.#conversion === `WebCore::${this.info.webidl}`) return new IntegerType(this.info, "Strict", true).wrap;
     assert(
       this.#conversion === "Strict" || this.#conversion === "Loose",
-      ".allowBigInt is for the strict and the .loose conversion; the others are ToNumber, which refuses a BigInt",
+      ".allowBigInt is for the strict, the .loose and the .wrap conversion; the others refuse a BigInt",
     );
     return new IntegerType(this.info, this.#conversion, true);
   }
@@ -538,10 +555,10 @@ export class IntegerType extends PrimitiveType {
   get loose(): IntegerType {
     return new IntegerType(this.info, "Loose", this.#allowBigInt);
   }
-  /** WebIDL conversion: `ToNumber`, then wrap modulo the width. */
+  /** WebIDL conversion: `ToNumber`, then wrap modulo the width. With `.allowBigInt`, a BigInt wraps too. */
   get wrap(): IntegerType {
-    this.#refusesBigInt(".wrap");
-    return new IntegerType(this.info, `WebCore::${this.info.webidl}`);
+    const idl = `WebCore::${this.info.webidl}` as const;
+    return new IntegerType(this.info, this.#allowBigInt ? `Bun::Bindgen::IDLWrapOrBigInt<${idl}>` : idl);
   }
   /** WebIDL `[EnforceRange]` over `[min, max]`. */
   enforceRange(min = Number(this.info.min), max = Number(this.info.max)): RangeType {
@@ -1321,6 +1338,13 @@ export class LocalType extends Type {
 }
 export const objectType = new LocalType("Bun::Bindgen::IDLRawObject", "object", "bun_jsc::JSObject", "any", nonObjects);
 export const jsArrayType = new LocalType("Bun::Bindgen::IDLRawArray", "any[]", "bun_jsc::JSArray", ["array"], null);
+export const stringLikeType = new LocalType(
+  "Bun::Bindgen::IDLRawStringLike",
+  "string | String",
+  "bindgen::StringLike",
+  ["string", "stringObject"],
+  null,
+);
 /** A function, or a proxy of one, for the body to call or to store. */
 export const callableType = new LocalType(
   "Bun::Bindgen::IDLRawCallable",
@@ -1350,7 +1374,7 @@ export class CellType extends LocalType {
       `Bun::Bindgen::IDLRawCell<${cpp}, std::to_array("${reportedAs}")>`,
       options.tsType ?? "object",
       options.rustPath ?? "",
-      kindsOfClass[cpp] ?? [{ cpp }],
+      kindsOfCell(cpp),
       null,
     );
     this.cpp = cpp;
@@ -1410,7 +1434,7 @@ export class Conversion {
   readonly type: Type;
   readonly name: string;
   readonly expected: readonly string[] | string | undefined;
-  /** Of the C++ function. Conversions of a file that are alike share one. Set by the generator. */
+  /** Of the C++ function. Conversions of a file whose C++ source is the same share one. Set by the generator. */
   symbol?: string;
   /** Of the Rust function that calls it, in the file's module. Set by the generator. */
   rustName?: string;
@@ -1420,7 +1444,7 @@ export class Conversion {
   member?: { of: DeferredDictionaryType; index: number };
   constructor(type: Type, name: string, expected: readonly string[] | string | undefined) {
     assert(!type.borrowsFrame, `${name}: it is converted in another frame than the one it would borrow: write .owned`);
-    assert(!type.borrowsHeap, `${name}: held: "handle" borrows the bytes each time they are read`);
+    assert(!type.borrowsHeap, `${name}: b.bytes is only for an argument; b.bufferSource is the handle`);
     this.type = type;
     this.name = name;
     this.expected = expected;
@@ -1430,7 +1454,7 @@ export class Conversion {
 /** Passed on as it is, with the conversion for the body to call. */
 export abstract class ConvertedByBodyType extends Type {
   readonly inner: Type;
-  /** Absent until it is the type of an argument, which names it. */
+  /** Absent until it is the type of an argument or of an alternative, which names it. */
   readonly conversion: Conversion | null;
   constructor(inner: Type, conversion: Conversion | null) {
     super();
@@ -1471,7 +1495,7 @@ export class DeferredType extends ConvertedByBodyType {
     return this.inner.tsType;
   }
   get refusalOutsideArgument(): string {
-    return ".deferred is only for an argument";
+    return ".deferred is only for an argument or an alternative of a union";
   }
   get returnsValueUnchanged(): boolean {
     return true;
@@ -1481,6 +1505,9 @@ export class DeferredType extends ConvertedByBodyType {
   }
   get isOptional(): boolean {
     return this.inner.isOptional;
+  }
+  get valueKinds(): ValueKinds {
+    return this.inner.valueKinds;
   }
   layout(): Layout {
     return { size: 8, align: 8 };
@@ -1721,7 +1748,7 @@ export class OptionalType extends Type {
     super();
     assert(!(inner instanceof OptionalType), "already optional");
     assert(!(inner instanceof DefaultType), "put .default() last");
-    assert(!(inner instanceof WithValueType), "put .withValue last");
+    assert(!(inner instanceof WithValueType) || !inner.passesValue, "put .withValue last");
     assert(!(inner instanceof DeferredType), "put .deferred last");
     if (!inner.passesValue) refuseOutsideArgument(inner);
     if (modifier === "otherAsNull") {
@@ -1737,9 +1764,9 @@ export class OptionalType extends Type {
     }
     // `.ifPassed` does not claim `undefined`, so it goes on a type that takes it. So does a modifier on what takes every value.
     const ofUndefined = inner instanceof UnionType ? inner.alternativeOfUndefined?.type : inner;
-    const takesTheRest =
+    const takesEveryValue =
       ofUndefined instanceof OpaqueType || (ofUndefined instanceof UnitType && ofUndefined.unit === "ignored");
-    if (modifier !== "ifPassed" && !takesTheRest)
+    if (modifier !== "ifPassed" && !takesEveryValue)
       assert(!inner.takesUndefined, `${inner.tsType} already takes undefined`);
     assert(
       !(inner instanceof BytesType) || inner.canBe(modifier),
@@ -1869,21 +1896,7 @@ export class OptionalType extends Type {
   }
 }
 
-/** What the promise of a reaction settled with. No caller wrote it as an argument, so Rust reads it as it reads what a call returns. */
-export class PromiseResultType extends OpaqueType {
-  get refusalOutsideArgument(): string {
-    return "b.promiseResult is an argument of a promise reaction";
-  }
-  rustType(): string {
-    return "JSValue";
-  }
-  rustFromExtern(expr: string): string {
-    return expr;
-  }
-}
-
 export const opaqueType = new OpaqueType();
-export const promiseResultType = new PromiseResultType();
 
 export class WithValueType extends Type {
   readonly inner: Type;
@@ -1958,9 +1971,7 @@ export class WithValueType extends Type {
   rustExternType(scope: RustScope): string {
     return `bindgen::extern_types::ExternWithValue<${this.inner.rustExternType(scope)}>`;
   }
-  /** Of the value. The context of a reaction is what Rust gave the promise. */
   get #valueType(): Type {
-    if (this.inner instanceof PromisePtrType) return promiseResultType;
     return this.#isInstance ? objectType : opaqueType;
   }
   rustType(scope: RustScope): string {
@@ -2076,7 +2087,7 @@ export class ArrayType extends Type {
     super();
     assert(!(element instanceof DefaultType), "an element of an array is never absent, so it has no default");
     assert(
-      !namesItsValue(withoutModifiers(element)),
+      !reportsByName(withoutModifiers(element)),
       "the converter of a range takes the name of the value, and an element has none",
     );
     refuseOutsideArgument(element);
@@ -2211,12 +2222,9 @@ export abstract class NamedType extends Type {
 export type EnumerationValues =
   readonly (string | readonly string[])[] | Readonly<Record<string, string | readonly string[]>>;
 
-/** What `b.enumeration` and `b.union` take. */
-export interface FromJSOptions {
+export interface UnionOptions {
   /** Also generate `Name::from_js`, for Rust that holds a JS value and no typed signature. */
   fromJS?: boolean;
-  /** What an error of `from_js` calls the value. Defaults to the name of the type. */
-  reportedAs?: string;
 }
 
 export class EnumerationType extends NamedType {
@@ -2225,10 +2233,8 @@ export class EnumerationType extends NamedType {
   /** Index of the first canonical spelling in `Tables::enumerationValues`. Set by the generator. */
   firstEnumerationValueIndex = -1;
   readonly variants: readonly string[];
-  readonly options: FromJSOptions;
-  constructor(values: EnumerationValues, options: FromJSOptions = {}) {
+  constructor(values: EnumerationValues) {
     super();
-    this.options = options;
     const spellings: readonly (string | readonly string[])[] = Array.isArray(values) ? values : Object.values(values);
     assert(spellings.length > 0, "an enumeration needs at least one value");
     this.spellings = spellings.map(value => (typeof value === "string" ? [value] : value));
@@ -2244,9 +2250,6 @@ export class EnumerationType extends NamedType {
       `two values make the same identifier: ${this.variants.join(", ")}`,
     );
     for (const variant of this.variants) assert(/^[A-Z]/.test(rustIdent(variant)), `${variant} is not an identifier`);
-  }
-  get fromJS(): boolean {
-    return !!this.options.fromJS;
   }
   get valueKinds(): ValueKinds {
     return ["string"];
@@ -2561,33 +2564,65 @@ export class DeferredDictionaryType extends NamedType {
 }
 
 /** A value goes to the first alternative, in written order, that takes its kind. */
+export interface Alternative {
+  name: string;
+  variant: string;
+  type: Type;
+  /** It is `alternative` of a union that is itself the alternative `variant`. */
+  nested?: { union: UnionType; alternative: Alternative };
+}
+
 export class UnionType extends NamedType {
-  readonly alternatives: readonly { name: string; variant: string; type: Type }[];
-  readonly options: FromJSOptions;
-  constructor(alternatives: Record<string, Type>, options: FromJSOptions = {}) {
+  /** Those of a union that is an alternative take its place: C++ chooses among them all at once, and only the Rust enum nests. */
+  readonly alternatives: readonly Alternative[];
+  readonly options: UnionOptions;
+  constructor(alternatives: Record<string, Type>, options: UnionOptions = {}) {
     super();
     this.options = options;
-    this.alternatives = Object.entries(alternatives).map(([name, type]) => ({ name, variant: pascalCase(name), type }));
+    this.alternatives = Object.entries(alternatives).flatMap(([name, type]): Alternative[] => {
+      const variant = pascalCase(name);
+      if (!(type instanceof UnionType))
+        return [{ name, variant, type: type instanceof DeferredType ? type.ofArgument(name, undefined) : type }];
+      assert(type.conversions.length === 0, `${name}: the union that names a .deferred alternative converts it`);
+      return type.alternatives.map(alternative => ({
+        name: alternative.name,
+        variant,
+        type: alternative.type,
+        nested: { union: type, alternative },
+      }));
+    });
     assert(this.alternatives.length > 0, "a union needs at least one alternative");
+    assertDistinct(Object.keys(alternatives).map(pascalCase), "variants");
     assertDistinct(
-      this.alternatives.map(alternative => alternative.variant),
-      "variants",
+      this.alternatives.map(alternative => alternative.name),
+      "alternatives",
     );
     assert(
       !this.borrowsHeap,
       "the bytes of a buffer are only for an argument: they are read after everything else is converted",
     );
     for (const { name, type } of this.alternatives) {
-      assert(!(type instanceof UnionType), `${name}: list the alternatives of the other union here`);
       assert(
         !(type instanceof OptionalType),
         `${name}: add ${type instanceof OptionalType && type.modifier === "otherAsNull" ? "b.ignored" : "b.null"} as an alternative`,
       );
       assert(!(type instanceof DefaultType), `${name}: put .default() on the union`);
-      refuseOutsideArgument(type, name);
+      if (type instanceof DeferredType) {
+        assert(type.valueKinds !== "any", `${name}: it takes every value, so the union has nothing to choose by`);
+        assert(!type.inner.refuses, `${name}: ${type.inner.refuses} is known only once it is converted`);
+      } else refuseOutsideArgument(type, name);
       assert(/^[a-z][A-Za-z0-9]*$/.test(name), `${name}: an alternative is named in camelCase`);
       assert(name !== "tag", "tag: the generated struct has a member of that name");
       assert(!cppKeywords.has(name), `${name} is a C++ keyword, and JavaScript never sees the name: pick another`);
+    }
+    for (const { name, type } of this.alternatives) {
+      if (type.valueKinds === "any") continue;
+      for (const kind of type.valueKinds) {
+        const around = typeof kind === "object" && kindAroundClass(kind);
+        const hides =
+          around && this.alternatives.find(other => other.type.valueKinds !== "any" && takes(other.type, around));
+        assert(!hides, `${name} is never chosen: ${hides && hides.name} takes every ${around}`);
+      }
     }
     const chosen = new Set([...this.alternativesByKind.values()].flat());
     this.alternatives.forEach(({ name }, i) =>
@@ -2599,6 +2634,10 @@ export class UnionType extends NamedType {
   }
   get fromJS(): boolean {
     return !!this.options.fromJS;
+  }
+  /** Those of the `.deferred` alternatives. */
+  get conversions(): readonly Conversion[] {
+    return this.alternatives.flatMap(({ type }) => (type instanceof DeferredType ? [type.conversion!] : []));
   }
   /** As for a dictionary. */
   get needsLifetime(): boolean {
@@ -2624,7 +2663,12 @@ export class UnionType extends NamedType {
     return this.alternatives.some(a => a.type.takesUndefined);
   }
   get dependencies(): readonly Type[] {
-    return this.alternatives.map(a => a.type);
+    return this.alternatives.map(a => a.nested?.union ?? a.type);
+  }
+  /** `Name::Variant(held)`, or `Name::Variant` if it holds nothing. */
+  rustAlternative({ variant, nested }: Alternative, held: string, scope: RustScope): string {
+    if (nested) held = nested.union.rustAlternative(nested.alternative, held, scope);
+    return `${this.path(scope, this.name)}::${variant}${held && `(${held})`}`;
   }
   /** The alternative `null` or `undefined` goes to: `b.null`, `b.ignored` or `b.opaque`. */
   private alternativeOfAbsent(value: unknown) {
@@ -2643,8 +2687,9 @@ export class UnionType extends NamedType {
     return `${alternative.type.cppAssign(`${target}.${alternative.name}`, value)}\n${tag}`;
   }
   toRust(value: unknown, scope: RustScope): string {
-    const { type, variant } = this.alternativeOfAbsent(value);
-    return `${this.path(scope, this.name)}::${variant}${type instanceof UnitType ? "" : `(${type.toRust(value, scope)})`}`;
+    const alternative = this.alternativeOfAbsent(value);
+    const { type } = alternative;
+    return this.rustAlternative(alternative, type instanceof UnitType ? "" : type.toRust(value, scope), scope);
   }
   /** The one `undefined` goes to, if that needs no test of the value. */
   get alternativeOfUndefined() {
@@ -2659,9 +2704,9 @@ export class UnionType extends NamedType {
   rustOfUndefined(scope: RustScope): string | null {
     const alternative = this.alternativeOfUndefined;
     if (!alternative) return null;
-    const { type, variant } = alternative;
+    const { type } = alternative;
     const held = type instanceof UnitType ? "" : type.rustOfUndefined(scope);
-    return held === null ? null : `${this.path(scope, this.name)}::${variant}${held && `(${held})`}`;
+    return held === null ? null : this.rustAlternative(alternative, held, scope);
   }
   layout(): Layout {
     return taggedUnionLayout(this.alternatives.map(a => a.type.layout()));
@@ -2797,11 +2842,6 @@ export class Signature {
     for (const { name, type } of this.args.slice(0, this.requiredArguments))
       assert(!isIfPassed(type), `${name}: .ifPassed is never absent in one of the requiredArguments`);
     assert(
-      !this.args.some(arg => arg.type instanceof PromiseResultType) ||
-        this.args.some(({ type }) => (type instanceof WithValueType ? type.inner : type) instanceof PromisePtrType),
-      "b.promiseResult is for a promise reaction, which also takes b.promisePtr or b.nativePromiseContext",
-    );
-    assert(
       !this.returns.holdsJSValue || this.capability !== "none" || hasThisValue,
       'returning a JS value takes capability: "heap" or "js"',
     );
@@ -2834,8 +2874,8 @@ function refuseOutsideArgument(type: Type, name?: string): void {
   assert(!refusal, name ? `${name}: ${refusal}` : (refusal ?? ""));
 }
 
-const namesItsValue = (type: Type): boolean =>
-  type instanceof RangeType || (type instanceof UnionType && type.alternatives.some(({ type }) => namesItsValue(type)));
+const reportsByName = (type: Type): boolean =>
+  type instanceof RangeType || (type instanceof UnionType && type.alternatives.some(({ type }) => reportsByName(type)));
 
 /** The converter of a range takes no context. */
 function refuseExpectedOfRange(name: string, type: Type): void {
@@ -2853,25 +2893,15 @@ function refuseResultType(name: string, type: Type): void {
   assert(!result, `${name}: ${result?.refusal}`);
 }
 
-/** Call a signature, or look at the kind of one more argument. */
-export interface ConversionOptions {
-  /** What an error calls the value, if not what the conversion is exported as. */
-  reportedAs?: string;
-  expected?: readonly string[] | string;
-}
-
 /** `b.conversion(T)`: Rust converts a value that is not an argument. */
 export class ConversionDefinition {
   readonly type: Type;
-  readonly options: ConversionOptions;
-  constructor(type: Type, options: ConversionOptions) {
+  constructor(type: Type) {
     refuseOutsideArgument(type);
-    if (options.expected !== undefined) refuseExpectedOfRange("the type", type);
     this.type = type;
-    this.options = options;
   }
   exportedAs(name: string, origin: Origin): Conversion {
-    const conversion = new Conversion(this.type, this.options.reportedAs ?? name, this.options.expected);
+    const conversion = new Conversion(this.type, name, undefined);
     conversion.rustName = snakeCase(name);
     conversion.symbol = `Bun__Bindgen__${origin.namespace}__${name}`;
     conversion.exported = true;
@@ -2879,6 +2909,7 @@ export class ConversionDefinition {
   }
 }
 
+/** Call a signature, or look at the kind of one more argument. */
 export type OverloadDispatch = Signature | { argument: number; byKind: Map<ValueKind | "other", OverloadDispatch> };
 
 export class FunctionDefinition {
@@ -3318,6 +3349,10 @@ export type ClassMember = FunctionDefinition | Getter | InternalFieldAccessor | 
 class SelfType extends Type {
   readonly idlType = "";
   readonly tsType = "this";
+  /** The class that takes its place is told by its kind. */
+  get valueKinds(): ValueKinds {
+    return [];
+  }
   toCpp(): string {
     throw new TypeError(
       "b.self is an argument, a result or a getter of the class's own members, used directly or as .optional / .nullable: not in an array",

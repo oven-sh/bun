@@ -28,12 +28,12 @@ impl Expect {
 
         let expected_value: JSValue = 'brk: {
             match expected {
-                ExpectedError::Absent => JSValue::ZERO,
+                ExpectedError::Missing => JSValue::ZERO,
                 ExpectedError::Other => {
                     let mut fmt = Formatter::new(global).with_quote_strings(true);
                     return Err(global.throw(format_args!(
                         "Expected value must be string or Error: {}",
-                        expected_argument.to_fmt(&mut fmt),
+                        expected_argument.to_js().to_fmt(&mut fmt),
                     )));
                 }
                 ExpectedError::Object(object) => {

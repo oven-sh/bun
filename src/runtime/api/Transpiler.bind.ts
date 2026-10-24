@@ -1,9 +1,9 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
 const flag = b.bool.loose.optional;
-/** A `String` object is `other`: its `toString()` has to run after the code is copied, or after the options are read. */
-export const TranspilerLoader = b.union({ missing: b.null, name: b.string.view, other: b.opaque });
-export const TranspilerStringObject = b.union({ text: b.string.allowStringObject, other: b.ignored }, { fromJS: true });
+/** The `toString()` of a `String` object has to run after the code is copied, or after the options are read. */
+const stringObject = b.string.allowStringObject.deferred;
+export const TranspilerLoader = b.union({ missing: b.null, name: b.string.view, stringObject, other: b.ignored });
 const loader = TranspilerLoader;
 
 export const TranspilerExternal = b.union({
@@ -30,7 +30,7 @@ export const TranspilerExports = b.dictionary(
 );
 
 /** What is neither a string nor an array is stringified. */
-export const TranspilerTSConfig = b.union({ list: b.jsArray, text: b.string, other: b.opaque });
+export const TranspilerTSConfig = b.union({ list: b.jsArray, text: b.string, stringObject, other: b.opaque });
 export const TranspilerMacros = b.union({
   enabled: b.bool,
   text: b.string,
@@ -68,11 +68,14 @@ const code = b.bytes({ from: ["string", "buffer"], string: "asIs", held: "handle
 /** `scan` and `scanImports` make their result while the arena that holds its strings is alive. */
 const method = { returns: b.object, capability: "js", throws: true, length: 2 } as const;
 
-export const LoaderOrContext = b.union({ missing: b.null, name: b.string.view, number: b.f64, other: b.opaque });
-export const StringObjectOrContext = b.union(
-  { name: b.string.allowStringObject, context: b.object, other: b.ignored },
-  { fromJS: true },
-);
+export const LoaderOrContext = b.union({
+  missing: b.null,
+  name: b.string.view,
+  number: b.f64,
+  stringObject,
+  context: b.object,
+  other: b.ignored,
+});
 export const MacroContext = b.union({ missing: b.undefined, context: b.object, other: b.ignored });
 const expected = (name: string) => ({ code: `Expected code to be a string or Uint8Array for '${name}'.` });
 

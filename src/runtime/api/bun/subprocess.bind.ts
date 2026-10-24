@@ -7,16 +7,13 @@ export default b.module({ rustPath: "crate::api::bun::subprocess::testing_apis" 
 const stdio = { getter: b.opaque, capability: "js" } as const;
 
 /** A number or a name. `NaN` and `""` are the default too. */
-export const Signal = b.union({ number: b.f64, name: b.string, missing: b.null, other: b.ignored });
+export const KillSignal = b.union({ number: b.f64, name: b.string, missing: b.null, other: b.ignored });
 
 /** `send(message, handle?, options?, callback?)`, of a subprocess and of `process`. A function in place of `handle` or `options` is the callback. */
 export const IpcMessage = b.union({
   missing: b.undefined,
-  string: b.jsString,
-  object: b.object,
-  number: b.f64,
-  boolean: b.bool,
-  null: b.null,
+  symbol: b.symbol,
+  bigInt: b.bigInt,
   other: b.opaque,
 });
 export const IpcSendHandle = b.union({ missing: b.null, callback: b.callable, handle: b.opaque });
@@ -47,7 +44,7 @@ export const Subprocess = b.class({
     disconnect: {},
     exitCode: { getter: b.u8.nullable },
     exited: { getter: b.promise, capability: "js", passThis: true },
-    kill: { args: { signal: Signal }, capability: "js", throws: true, passThis: true },
+    kill: { args: { signal: KillSignal }, capability: "js", throws: true, passThis: true },
     killed: { getter: b.bool },
     pid: { getter: b.i32 },
     readable: { ...stdio, throws: true, cache: "stdout", rustName: "stdout" },

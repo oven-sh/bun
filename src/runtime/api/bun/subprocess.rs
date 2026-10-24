@@ -58,11 +58,14 @@ bun_output::declare_scope!(Subprocess, visible);
 bun_output::declare_scope!(IPC, visible);
 
 pub(crate) use crate::generated_bindgen::subprocess::js_Subprocess as js;
-use crate::generated_bindgen::subprocess::{IpcMessage, IpcSendHandle, IpcSendOptions, Signal};
+use crate::generated_bindgen::subprocess::{IpcMessage, IpcSendHandle, IpcSendOptions, KillSignal};
 
-pub(crate) fn signal_code(global_this: &JSGlobalObject, signal: Signal) -> JsResult<SignalCode> {
+pub(crate) fn signal_code(
+    global_this: &JSGlobalObject,
+    signal: KillSignal,
+) -> JsResult<SignalCode> {
     match signal {
-        Signal::Number(sig64) => {
+        KillSignal::Number(sig64) => {
             // Node does this:
             if sig64.is_nan() {
                 return Ok(SignalCode::DEFAULT);
@@ -87,7 +90,7 @@ pub(crate) fn signal_code(global_this: &JSGlobalObject, signal: Signal) -> JsRes
             // ctor instead of a transmute.
             Ok(SignalCode(sig64 as u8))
         }
-        Signal::Name(name) => {
+        KillSignal::Name(name) => {
             if name.length() == 0 {
                 return Ok(SignalCode::DEFAULT);
             }
@@ -110,8 +113,8 @@ pub(crate) fn signal_code(global_this: &JSGlobalObject, signal: Signal) -> JsRes
             }
             Err(global_this.throw_invalid_arguments(format_args!("signal must be one of {one_of}")))
         }
-        Signal::Missing => Ok(SignalCode::DEFAULT),
-        Signal::Other => Err(global_this.throw_invalid_arguments(format_args!(
+        KillSignal::Missing => Ok(SignalCode::DEFAULT),
+        KillSignal::Other => Err(global_this.throw_invalid_arguments(format_args!(
             "Invalid signal: must be a string or an integer"
         ))),
     }
@@ -698,7 +701,7 @@ impl Subprocess<'_> {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        signal: Signal,
+        signal: KillSignal,
     ) -> JsResult<()> {
         let global_this = cx.global();
         // Safe: this method can only be called while the object is alive (reachable from JS)

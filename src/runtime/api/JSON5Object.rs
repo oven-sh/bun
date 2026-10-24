@@ -2,17 +2,17 @@ use bun_collections::HashMap;
 use bun_core::StackCheck;
 use bun_core::String as BunString;
 use bun_js_parser::lexer;
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope, ValueWalker};
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::json5;
 
 use crate::generated_bindgen::json5_object::StringifySpace;
 
 impl StringifySpace<'_> {
-    pub(crate) fn unboxed(self, global: &JSGlobalObject) -> JsResult<Self> {
+    pub(crate) fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<Self> {
         Ok(match self {
             Self::NumberObject(object) => Self::Number(object.to_js().to_number(global)?),
-            Self::StringObject(object) => Self::String(object.to_js().to_bun_string(global)?),
+            Self::StringObject(object) => Self::Text(object.to_js().to_bun_string(global)?),
             space => space,
         })
     }
@@ -25,7 +25,7 @@ pub(crate) fn stringify<'a>(
     space: StringifySpace<'a>,
 ) -> JsResult<Option<JSValue>> {
     let global = cx.global();
-    let value = Stringifier::value_of(value);
+    let value = value.to_js();
 
     if value.is_undefined() || value.is_symbol() || value.is_function() {
         return Ok(None);
@@ -81,8 +81,6 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
     })
 }
 
-impl ValueWalker for Stringifier {}
-
 struct Stringifier {
     stack_check: StackCheck,
     builder: wtf::StringBuilder,
@@ -117,7 +115,7 @@ enum Space {
 
 impl Space {
     fn init(global: &JSGlobalObject, space: StringifySpace<'_>) -> JsResult<Space> {
-        match space.unboxed(global)? {
+        match space.unwrap_boxed_primitive(global)? {
             StringifySpace::Number(num_f) => {
                 // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
                 // toInt32() wraps large values and Infinity to 0, which is wrong.
@@ -127,7 +125,7 @@ impl Space {
                 }
                 Ok(Space::Number(if num_f > 10.0 { 10 } else { num_f as u32 }))
             }
-            StringifySpace::String(str) => {
+            StringifySpace::Text(str) => {
                 if str.length() == 0 {
                     return Ok(Space::Minified);
                 }

@@ -14,20 +14,12 @@ export const MessageTarget = b.union({
   subprocess: Subprocess,
   missing: b.undefined,
   thisProcess: b.null,
-  ignored: b.ignored,
+  other: b.ignored,
 });
 
 export const ReceivedObject = b.dictionary({ cmd: b.string.allowStringObject.otherAsNull }, { deferred: true });
-/** What the other process sent. A message without a value is `undefined`. */
-export const ReceivedMessage = b.union({
-  string: b.jsString,
-  bigint: b.bigInt,
-  object: ReceivedObject,
-  number: b.f64,
-  boolean: b.bool,
-  null: b.null,
-  undefined: b.ignored,
-});
+/** What the other process sent: any value. */
+export const ReceivedMessage = b.union({ object: ReceivedObject, primitive: b.opaque });
 /** `handle` is what `parseHandle` of `builtins/Ipc.ts` made of the descriptor. */
 export const emitHandleIPCMessage = b.fn({
   args: { target: MessageTarget, message: ReceivedMessage, handle: b.object },

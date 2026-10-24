@@ -40,21 +40,25 @@ fn sockaddr_from_js(
 ) -> JsResult<JsResult<sockaddr>> {
     let value = match value {
         BlockListAddress::Address(sa) => return Ok(Ok(sa._addr)),
-        BlockListAddress::Text(text) => text.as_value(),
-        BlockListAddress::StringObject(object) => object.as_value(),
+        BlockListAddress::Text(text) => text,
         BlockListAddress::Other(value) => {
-            return Err(validators::throw_err_invalid_arg_type_opaque(
-                global, name, "string", value,
+            return Err(validators::throw_err_invalid_arg_type(
+                global,
+                name,
+                "string",
+                value.to_js(),
             ));
         }
     };
     let family = match family {
         BlockListFamily::Ipv4 => None,
-        BlockListFamily::Text(text) => Some(text.as_value()),
-        BlockListFamily::StringObject(object) => Some(object.as_value()),
+        BlockListFamily::Text(text) => Some(text),
         BlockListFamily::Other(family) => {
-            return Err(validators::throw_err_invalid_arg_type_opaque(
-                global, "family", "string", family,
+            return Err(validators::throw_err_invalid_arg_type(
+                global,
+                "family",
+                "string",
+                family.to_js(),
             ));
         }
     };
@@ -121,8 +125,8 @@ impl BlockList {
             / (self.ref_count.get().max(1) as usize)
     }
 
-    pub(crate) fn is_block_list(value: JsLocal<'_>) -> bool {
-        value.as_class_ref::<Self>().is_some()
+    pub(crate) fn is_block_list(value: Option<&Self>) -> bool {
+        value.is_some()
     }
 
     pub(crate) fn add_address(
@@ -151,7 +155,7 @@ impl BlockList {
             if ord == Ordering::Greater {
                 return Err(global.throw_invalid_argument_value_custom(
                     b"start",
-                    start_js,
+                    start_js.to_js(),
                     b"must come before end",
                 ));
             }
@@ -172,8 +176,11 @@ impl BlockList {
         let prefix_js = match prefix {
             BlockListPrefix::Number(prefix) => JSValue::js_number(prefix),
             BlockListPrefix::Other(prefix) => {
-                return Err(validators::throw_err_invalid_arg_type_opaque(
-                    global, "prefix", "number", prefix,
+                return Err(validators::throw_err_invalid_arg_type(
+                    global,
+                    "prefix",
+                    "number",
+                    prefix.to_js(),
                 ));
             }
         };

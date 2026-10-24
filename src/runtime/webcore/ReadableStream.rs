@@ -3,7 +3,7 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::webcore::jsc::SysErrorJsc as _;
-use crate::webcore::jsc::bindgen::{BufferSource, JsLocal, JsScope, JsWrapper, Kind};
+use crate::webcore::jsc::bindgen::{BufferSource, JsLocal, JsScope, JsWrapper};
 use crate::webcore::jsc::{
     self as jsc, JSArray, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult,
 };
@@ -20,8 +20,6 @@ pub struct ReadableStream {
     pub value: JSValue,
     pub ptr: Source,
 }
-
-impl Kind for ReadableStream {}
 
 /// Outcome of [`ReadableStream::wire_native_sink`].
 pub enum NativeWireResult {

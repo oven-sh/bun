@@ -232,7 +232,7 @@ pub(crate) fn get_list_objects_options_from_js(
         });
     };
 
-    let members = ListObjectsOptions::from_js(global_this, list_options)?;
+    let members = ListObjectsOptions::from_js(global_this, list_options.to_js())?;
     // `new String("")` is as good as `""`.
     let non_empty = |text: Option<Utf8Bytes<'static>>| text.filter(|text| !text.is_empty());
     Ok(S3ListObjectsOptions {

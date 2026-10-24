@@ -53,7 +53,7 @@ impl TimeoutObject {
                 js::idle_start_set_cached(this_value.to_js(), cx.global(), JSValue::js_number(ms));
             }
             IdleStart::Other(other) => {
-                js::idle_start_set_cached(this_value.to_js(), cx.global(), other);
+                js::idle_start_set_cached(this_value.to_js(), cx.global(), other.to_js());
             }
         }
     }

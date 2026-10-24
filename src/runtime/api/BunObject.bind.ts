@@ -104,7 +104,7 @@ export const InspectOptions = b.dictionary(
   },
   { allowArray: true },
 );
-export const InspectOptionsOrDepth = b.union({ options: InspectOptions, depth: b.f64, ignored: b.ignored });
+export const InspectOptionsOrDepth = b.union({ options: InspectOptions, depth: b.f64, other: b.ignored });
 
 /**
  * `(arg, options)` or `(arg, depth, colors)`. `Bun.inspect()` is `""` and `Bun.inspect(undefined)` is

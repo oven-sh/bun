@@ -14,7 +14,6 @@ use bun_collections::{StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
 use bun_core::String as BunString;
-use bun_core::StringView;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
@@ -434,7 +433,7 @@ pub(crate) mod js_bundler {
             };
             match object.bytecode_order(global_this)? {
                 BytecodeOrder::Missing | BytecodeOrder::Flag(false) => {}
-                BytecodeOrder::Many(bytecode_order) => {
+                BytecodeOrder::List(bytecode_order) => {
                     let mut iter = bytecode_order.to_js().array_iterator(global_this)?;
                     while let Some(path) = iter.next()? {
                         if !path.is_string() {
@@ -933,7 +932,7 @@ pub(crate) mod js_bundler {
                 Some(BuildConditions::One(slice)) => {
                     this.conditions.insert(slice.slice())?;
                 }
-                Some(BuildConditions::Many(conditions_value)) => {
+                Some(BuildConditions::List(conditions_value)) => {
                     let mut iter = conditions_value.to_js().array_iterator(global_this)?;
                     while let Some(entry_point) = iter.next()? {
                         let slice = entry_point.to_utf8(global_this)?;
@@ -1977,12 +1976,12 @@ impl BuildArtifact {
         self.blob.array_buffer(cx)
     }
 
-    pub(crate) fn slice(
+    pub(crate) fn slice<'a>(
         &self,
-        cx: &mut JsScope<'_>,
-        start: BlobSliceBound<'_>,
-        end: BlobSliceBound<'_>,
-        content_type: Option<StringView<'_>>,
+        cx: &mut JsScope<'a>,
+        start: BlobSliceBound<'a>,
+        end: BlobSliceBound<'a>,
+        content_type: BlobSliceBound<'a>,
     ) -> JsResult<JSValue> {
         self.blob.slice(cx, start, end, content_type)
     }
@@ -1997,11 +1996,7 @@ impl BuildArtifact {
         self.blob.get_stream_with_cache(
             &cx.js_thread(),
             this_value.to_js(),
-            match chunk_size {
-                BlobChunkSize::Missing => Some(None),
-                BlobChunkSize::Size(size) => Some(Some(size)),
-                BlobChunkSize::Other => None,
-            },
+            chunk_size,
             js::stream_get_cached,
             js::stream_set_cached,
         )

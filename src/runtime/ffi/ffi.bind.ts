@@ -14,7 +14,7 @@ export const FFI = b.class({
 
 const method = { returns: b.opaque, capability: "js", throws: true } as const;
 
-export const FFIArgs = b.union({ array: b.jsArray, other: b.ignored });
+export const FFIArgs = b.union({ list: b.jsArray, other: b.ignored });
 /** The number of a type, or its name: anything else is converted to a string. */
 export const FFIReturnType = b.union({ number: b.f64, name: b.string.loose });
 /** What is wrong with a member is reported before the next one is read. */

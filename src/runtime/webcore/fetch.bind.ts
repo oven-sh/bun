@@ -1,6 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import { S3Options } from "./Blob.bind.ts";
-import { FetchTlsMember, FlagOrNumber, ProxyInit, UnixPath } from "./fetch/FetchSession.bind.ts";
+import { FetchSession, FetchTLSOption, FlagOrNumber, ProxyInit, UnixPath } from "./fetch/FetchSession.bind.ts";
 import { BodyInit, HeadersInit, OptionName, SignalInit } from "./response.bind.ts";
 
 export default b.module({ rustPath: "crate::webcore::fetch" });
@@ -25,7 +25,7 @@ export const CompressInit = b.union({
   other: b.opaque,
 });
 export const MaxRedirects = b.union({ missing: b.null, number: b.f64, other: b.ignored });
-export const Verbose = b.union({ name: b.string.allowStringObject, flag: b.bool, other: b.ignored });
+export const FetchVerbose = b.union({ name: b.string.allowStringObject, flag: b.bool, other: b.ignored });
 export const FetchInit = b.dictionary(
   {
     url: b.string.loose.optional,
@@ -33,15 +33,14 @@ export const FetchInit = b.dictionary(
     decompress: FlagOrNumber,
     compress: CompressInit,
     maxRedirects: MaxRedirects,
-    /** A `Bun.FetchSession`. */
-    session: b.opaque.nullable,
-    tls: FetchTlsMember,
+    session: { type: FetchSession.withValue.nullable, expected: "fetch: 'session' must be a Bun.FetchSession" },
+    tls: FetchTLSOption,
     unix: UnixPath,
     protocol: b.string.allowStringObject.otherAsNull,
     timeout: FlagOrNumber,
     redirect: OptionName,
     keepalive: FlagOrNumber,
-    verbose: Verbose,
+    verbose: FetchVerbose,
     proxy: ProxyInit,
     signal: SignalInit,
     body: BodyInit,
@@ -51,7 +50,7 @@ export const FetchInit = b.dictionary(
   { deferred: true },
 );
 /** An `object` that is neither a `Request` nor, after `ToString`, a URL is read as `init` is. */
-export const FetchInput = b.union({ string: b.string.allowStringObject, object: FetchInit, other: b.opaque });
+export const FetchInput = b.union({ text: b.string.allowStringObject, object: FetchInit, other: b.opaque });
 const request = {
   args: { input: FetchInput, init: FetchInit.otherAsNull },
   returns: b.promise,

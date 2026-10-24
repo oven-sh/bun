@@ -12,7 +12,6 @@ import {
   type ClassOptions,
   ClassType,
   ConversionDefinition,
-  type ConversionOptions,
   type DeferredDictionaryOptions,
   DeferredDictionaryType,
   type DictionaryOptions,
@@ -20,7 +19,6 @@ import {
   DoubleType,
   EnumerationType,
   type EnumerationValues,
-  type FromJSOptions,
   FunctionDefinition,
   type FunctionOptions,
   integers,
@@ -36,6 +34,7 @@ import {
   type SignatureOptions,
   StringType,
   type Type,
+  type UnionOptions,
   UnionType,
   UnitType,
   type ValueOptions,
@@ -49,7 +48,7 @@ export { null_ as null, undefined_ as undefined };
 /** Strict: only a boolean. `.loose` for `ToBoolean`. */
 export const bool = new BoolType();
 
-/** Strict: a number that is an integer in range. `.allowBigInt`, `.loose`, `.wrap`, `.enforceRange()`, `.validateInteger()`. As a result, `b.u64.asBigInt`. */
+/** Strict: a number that is an integer in range. `.allowBigInt`, `.loose`, `.wrap`, `.enforceRange()`, `.validateInteger()`, `.validateIntegerRange()`, `b.i64.asIntN`. As a result, `b.u64.asBigInt`. */
 export const { u8, u16, i32, u32, i64, u64, usize } = integers;
 
 /** Strict: only a number. `.loose` for `ToNumber`, then `.allowBigInt`. As a result, `b.f64.asDate`. */
@@ -69,6 +68,9 @@ export { objectType as object } from "./bindgen-lib-internal.ts";
 
 /** An array, as a `JsLocal<'a, JSArray>`: `b.array(T)` converts its elements. */
 export { jsArrayType as jsArray } from "./bindgen-lib-internal.ts";
+
+/** A string or a `String` object kept as a JS value, as a `JsLocal<'a, StringLike>`. Its text is `b.string.allowStringObject`. */
+export { stringLikeType as stringLike } from "./bindgen-lib-internal.ts";
 export { class_ as class };
 
 /** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.arrayBuffer`. */
@@ -89,6 +91,15 @@ export const promise = cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h", {
   tsType: "Promise<any>",
 });
 
+/** A `DataView`, as a `JsLocal<'a, JSObject>`. */
+export const dataView = cell("JSC::JSDataView", "JavaScriptCore/JSDataView.h", {
+  rustPath: "bun_jsc::JSObject",
+  tsType: "DataView",
+});
+
+/** An `AbortSignal`, as a `&'a AbortSignal`. */
+export const abortSignal = wrapped("WebCore::JSAbortSignal", "JSAbortSignal.h", { rustPath: "bun_jsc::AbortSignal" });
+
 /** A primitive string kept as a JS value, as a `JsLocal<'a, JSString>`. `b.string` is its text. */
 export const jsString = cell("JSC::JSString", "JavaScriptCore/JSString.h", {
   rustPath: "bun_jsc::JSString",
@@ -107,6 +118,7 @@ export const bigInt = cell("JSC::JSBigInt", "JavaScriptCore/JSBigInt.h", {
   reportedAs: "bigint",
   tsType: "bigint",
 });
+/** A symbol, as a `JsLocal<'a, Symbol>`. */
 export const symbol = cell("JSC::Symbol", "JavaScriptCore/Symbol.h", {
   rustPath: "bun_jsc::bindgen::Symbol",
   reportedAs: "symbol",
@@ -125,9 +137,6 @@ export const blob = new RefType(
   [{ cpp: "Bun::Bindgen::Generated::JSBlob" }],
   null,
 );
-
-/** What the promise of a reaction settled with: a `JSValue`. Only beside `b.promisePtr` or `b.nativePromiseContext`. */
-export { promiseResultType as promiseResult } from "./bindgen-lib-internal.ts";
 
 /** The context of a promise reaction that `JSValue::then` was given: a `*mut` of the type at `rustPath`. */
 export const promisePtr = (rustPath: string) => new PromisePtrType(rustPath);
@@ -153,7 +162,7 @@ export const record = (value: Type) => new RecordResultType(value);
 // A named type is called what it is exported as: `export const Formatter = b.enumeration([..])`.
 
 /** An array in place of a value lists several spellings of it; the first is the one given back to JS. `{ RgbArray: "[rgb]" }` names the variants. */
-export const enumeration = (values: EnumerationValues, options?: FromJSOptions) => new EnumerationType(values, options);
+export const enumeration = (values: EnumerationValues) => new EnumerationType(values);
 
 export function dictionary(
   members: Record<string, Type | MemberOptions>,
@@ -170,12 +179,8 @@ export function dictionary(
 }
 
 /** A value goes to the first alternative, in written order, that takes its kind. */
-export const union = (alternatives: Record<string, Type>, options?: FromJSOptions) =>
+export const union = (alternatives: Record<string, Type>, options?: UnionOptions) =>
   new UnionType(alternatives, options);
-
-/** For a union that takes what another does and more: `b.union({ fd: b.i32, ...b.alternativesOf(PathLike) })`. */
-export const alternativesOf = (union: UnionType): Record<string, Type> =>
-  Object.fromEntries(union.alternatives.map(({ name, type }) => [name, type]));
 
 /** A JS class whose state is the Rust struct at `options.rustPath`, stored inside the wrapper object. */
 const class_ = (options: ClassOptions) => new ClassType(options);
@@ -185,8 +190,8 @@ export { selfType as self } from "./bindgen-lib-internal.ts";
 
 export const fn = (options: FunctionOptions) => new FunctionDefinition([options], options);
 
-/** `export const fieldText = b.conversion(b.string.loose)`: `field_text(cx, value)` converts a value that is not an argument, when the body says so. A dictionary, a union or an enumeration has `fromJS` for that. */
-export const conversion = (type: Type, options: ConversionOptions = {}) => new ConversionDefinition(type, options);
+/** `export const fieldText = b.conversion(b.string.loose)`: `field_text(global, value)` converts a value that is not an argument, when the body says so. A dictionary or a union has `fromJS` for that. */
+export const conversion = (type: Type) => new ConversionDefinition(type);
 
 /** What a Rust function returns. `$bindgen` calls it. */
 export const value = (options: ValueOptions) => new FunctionDefinition([options], {}, true);

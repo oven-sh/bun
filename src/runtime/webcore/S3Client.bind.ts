@@ -3,28 +3,28 @@ import { PathLike } from "../node/node_fs_binding.bind.ts";
 import { Blob, PathOrBlob, S3Options } from "./Blob.bind.ts";
 import { BunWriteData } from "./BlobArguments.bind.ts";
 
-const method = { returns: b.promise, capability: "js", throws: true } as const;
+const method = { returns: b.promise, capability: "js", throws: true, length: 2 } as const;
 
 /** `missing` and `other` are not paths: each function reports them in its own words. */
-export const S3Path = b.union({ missing: b.undefined, ...b.alternativesOf(PathLike), other: b.ignored });
+export const S3Path = b.union({ missing: b.undefined, path: PathLike });
 
 /** Anything that is not an object is no options. */
 const options = S3Options.otherAsNull;
 /** `presign(path, undefined)` takes the ACL and the storage class of the file, `presign(path)` does not. */
 export const S3PresignOptions = b.union({ options: S3Options, other: b.ignored }, { fromJS: true });
-const looseText = b.string.utf8.owned.otherAsNull;
+const text = b.string.utf8.owned.otherAsNull;
 
 /** Read after the credentials are. */
 export const ListObjectsInput = b.union({ missing: b.null, options: b.object, other: b.ignored });
 export const ListObjectsOptions = b.dictionary(
   {
-    continuationToken: looseText,
-    delimiter: looseText,
-    encodingType: looseText,
+    continuationToken: text,
+    delimiter: text,
+    encodingType: text,
     fetchOwner: b.bool.loose.emptyStringAsNull,
     maxKeys: b.f64.otherAsNull,
-    prefix: looseText,
-    startAfter: looseText,
+    prefix: text,
+    startAfter: text,
   },
   { allowArray: true, fromJS: true },
 );
@@ -42,14 +42,13 @@ const methods = (prefix: "" | "static_") => {
       ...method,
       args: { path, options: S3PresignOptions.ifPassed },
       returns: b.string.local,
-      length: 2,
       rustName: `${prefix}presign`,
     },
     /** A number for a `Blob` that is not an S3 file. */
     size: { ...pathMethod, returns: b.opaque, rustName: `${prefix}size` },
     stat: { ...pathMethod, rustName: `${prefix}stat` },
     unlink: { ...pathMethod, rustName: `${prefix}unlink` },
-    write: { ...method, args: { path, data: BunWriteData, options }, length: 2, rustName: `${prefix}write` },
+    write: { ...method, args: { path, data: BunWriteData, options }, rustName: `${prefix}write` },
   } as const;
 };
 

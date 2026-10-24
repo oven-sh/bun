@@ -45,58 +45,41 @@ impl Expect {
 
         let mut hint_string = None;
         let mut property_matchers: Option<JSValue> = None;
-        if !matches!(second, SnapshotArgument::Absent) {
-            property_matchers = Some(match first {
-                SnapshotArgument::StringObject(object) => object.to_js(),
-                SnapshotArgument::Object(object) => object.to_js(),
-                SnapshotArgument::Absent
-                | SnapshotArgument::String(_)
-                | SnapshotArgument::Other => {
-                    let signature =
-                        get_signature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
-                    return throw!(
-                        this,
-                        global,
-                        signature,
-                        "\n\nMatcher error: Expected <green>properties<r> must be an object\n",
-                    );
-                }
-            });
-            hint_string = Some(match second {
-                SnapshotArgument::String(string) => string.to_js().to_js_string_view(global)?,
-                SnapshotArgument::StringObject(object) => {
-                    object.to_js().to_js_string_view(global)?
-                }
-                SnapshotArgument::Absent
-                | SnapshotArgument::Object(_)
-                | SnapshotArgument::Other => {
-                    return throw!(
-                        this,
-                        global,
-                        "",
-                        "\n\nMatcher error: Expected second argument to be a string\n",
-                    );
-                }
-            });
-        } else {
-            match first {
-                SnapshotArgument::String(string) => {
-                    hint_string = Some(string.to_js().to_js_string_view(global)?);
-                }
-                SnapshotArgument::StringObject(object) => {
-                    hint_string = Some(object.to_js().to_js_string_view(global)?);
-                }
-                SnapshotArgument::Object(object) => property_matchers = Some(object.to_js()),
-                SnapshotArgument::Absent => {}
-                SnapshotArgument::Other => {
-                    return throw!(
-                        this,
-                        global,
-                        "",
-                        "\n\nMatcher error: Expected first argument to be a string or object\n",
-                    );
-                }
+        if !matches!(second, SnapshotArgument::Missing) {
+            let Some(first) = first.as_object() else {
+                let signature =
+                    get_signature("toMatchSnapshot", "<green>properties<r><d>, <r>hint", false);
+                return throw!(
+                    this,
+                    global,
+                    signature,
+                    "\n\nMatcher error: Expected <green>properties<r> must be an object\n",
+                );
+            };
+
+            property_matchers = Some(first);
+
+            if let Some(second) = second.as_string() {
+                hint_string = Some(second.to_js_string_view(global)?);
+            } else {
+                return throw!(
+                    this,
+                    global,
+                    "",
+                    "\n\nMatcher error: Expected second argument to be a string\n",
+                );
             }
+        } else if let Some(first) = first.as_string() {
+            hint_string = Some(first.to_js_string_view(global)?);
+        } else if let Some(first) = first.as_object() {
+            property_matchers = Some(first);
+        } else if !matches!(first, SnapshotArgument::Missing) {
+            return throw!(
+                this,
+                global,
+                "",
+                "\n\nMatcher error: Expected first argument to be a string or object\n",
+            );
         }
 
         let hint = hint_string.as_ref().map_or(bun_core::Utf8Bytes::EMPTY, |s| s.to_utf8());

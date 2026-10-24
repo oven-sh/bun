@@ -5,7 +5,6 @@ use crate::EncodedSliceJsc as _;
 use crate::Error as JscError;
 use crate::ErrorCode as NodeErrorCode;
 use crate::StringJsc as _;
-use crate::bindgen::{AnyValue, js_value_of};
 use crate::bun_string_jsc::{ErrorKind, error_instance};
 use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
@@ -407,7 +406,7 @@ impl JSGlobalObject {
     }
 
     /// "The {argname} argument is invalid. Received {value}"
-    pub fn throw_invalid_argument_value(&self, argname: &[u8], value: impl AnyValue) -> JsError {
+    pub fn throw_invalid_argument_value(&self, argname: &[u8], value: JSValue) -> JsError {
         let actual_string_value = match Self::determine_specific_type(self, value) {
             Ok(s) => s,
             Err(e) => return e,
@@ -426,7 +425,7 @@ impl JSGlobalObject {
     pub fn throw_invalid_argument_value_custom(
         &self,
         argname: &[u8],
-        value: impl AnyValue,
+        value: JSValue,
         message: &[u8],
     ) -> JsError {
         let actual_string_value = match Self::determine_specific_type(self, value) {
@@ -453,7 +452,7 @@ impl JSGlobalObject {
         &self,
         argname: &[u8],
         expected: Option<&'static str>,
-        value: impl AnyValue,
+        value: JSValue,
     ) -> JsError {
         let actual_string_value = match Self::determine_specific_type(self, value) {
             Ok(s) => s,
@@ -484,11 +483,7 @@ impl JSGlobalObject {
     }
 
     /// Describes `value`'s type for error messages.
-    pub fn determine_specific_type(
-        global: &Self,
-        value: impl AnyValue,
-    ) -> JsResult<bun_core::String> {
-        let value = js_value_of(value);
+    pub fn determine_specific_type(global: &Self, value: JSValue) -> JsResult<bun_core::String> {
         // The C++ side opens a `DECLARE_THROW_SCOPE`; under
         // `BUN_JSC_validateExceptionChecks=1` its dtor sets `m_needExceptionCheck`, so we
         // must have a Rust-side scope live across the FFI call (and query it) rather than
@@ -501,12 +496,9 @@ impl JSGlobalObject {
 
     /// Renders `value` the way Node's `ERR_INVALID_ARG_VALUE` does (`util.inspect`
     /// quoting, via the same C++ formatter the C++ overloads use).
-    pub fn inspect_for_error_message(
-        global: &Self,
-        value: impl AnyValue,
-    ) -> JsResult<bun_core::String> {
+    pub fn inspect_for_error_message(global: &Self, value: JSValue) -> JsResult<bun_core::String> {
         crate::top_scope!(scope, global);
-        let str = Bun__ErrorCode__inspectForErrorMessage(global, js_value_of(value));
+        let str = Bun__ErrorCode__inspectForErrorMessage(global, value);
         scope.return_if_exception()?;
         Ok(str)
     }
@@ -560,7 +552,7 @@ impl JSGlobalObject {
         &self,
         argname: impl AsRef<[u8]>,
         typename: impl AsRef<[u8]>,
-        value: impl AnyValue,
+        value: JSValue,
     ) -> JsError {
         let actual_string_value = match Self::determine_specific_type(self, value) {
             Ok(s) => s,
@@ -582,7 +574,7 @@ impl JSGlobalObject {
         &self,
         argname: impl AsRef<[u8]>,
         typename: impl AsRef<[u8]>,
-        value: impl AnyValue,
+        value: JSValue,
     ) -> JsError {
         let actual_string_value = match Self::determine_specific_type(self, value) {
             Ok(s) => s,
@@ -607,9 +599,9 @@ impl JSGlobalObject {
         &self,
         name: impl AsRef<[u8]>,
         expected_type: &str,
-        value: impl AnyValue,
+        value: JSValue,
     ) -> JsError {
-        let actual_type = js_value_of(value).type_name(self);
+        let actual_type = value.type_name(self);
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
@@ -627,7 +619,7 @@ impl JSGlobalObject {
         &self,
         argname: impl AsRef<[u8]>,
         typename: impl AsRef<[u8]>,
-        value: impl AnyValue,
+        value: JSValue,
     ) -> JsError {
         let actual_string_value = match Self::determine_specific_type(self, value) {
             Ok(s) => s,
@@ -649,9 +641,9 @@ impl JSGlobalObject {
         &self,
         field: &[u8],
         typename: &[u8],
-        value: impl AnyValue,
+        value: JSValue,
     ) -> JsError {
-        let ty_str = js_value_of(value).js_type_string(self);
+        let ty_str = value.js_type_string(self);
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
@@ -837,8 +829,7 @@ impl JSGlobalObject {
         JSC__JSGlobalObject__queueMicrotaskJob(self, function, first, second)
     }
 
-    pub fn throw_value(&self, value: impl AnyValue) -> JsError {
-        let value = js_value_of(value);
+    pub fn throw_value(&self, value: JSValue) -> JsError {
         // A termination exception (e.g. stack overflow) may already be
         // pending. Don't try to override it — that would hit
         // releaseAssertNoException in VM.throwError.
@@ -1124,10 +1115,9 @@ impl JSGlobalObject {
     pub fn validate_object(
         &self,
         arg_name: &'static str,
-        value: impl AnyValue,
+        value: JSValue,
         opts: ValidateObjectOpts,
     ) -> JsResult<()> {
-        let value = js_value_of(value);
         if (!opts.nullable && value.is_null())
             || (!opts.allow_array && value.is_array())
             || (!value.is_object() && (!opts.allow_function || !value.is_function()))
@@ -1155,11 +1145,10 @@ impl JSGlobalObject {
 
     pub fn validate_integer_range<T: bun_core::Integer>(
         &self,
-        value: impl AnyValue,
+        value: JSValue,
         default: T,
         range: IntegerRange,
     ) -> JsResult<T> {
-        let value = js_value_of(value);
         if value.is_undefined() || value.is_empty() {
             return Ok(default);
         }

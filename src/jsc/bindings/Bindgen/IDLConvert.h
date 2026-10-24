@@ -76,6 +76,8 @@ template<> struct IDLHumanReadableName<Bindgen::IDLRawArray> : BaseIDLHumanReada
     static constexpr auto humanReadableName = std::to_array("array");
 };
 
+template<> struct IDLHumanReadableName<Bindgen::IDLRawStringLike> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
+
 template<> struct IDLHumanReadableName<Bindgen::IDLStrictUndefined> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("undefined");
 };
@@ -345,6 +347,22 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLRawArray> : Bun::DefaultTr
     }
 };
 
+template<> struct WebCore::Converter<Bun::Bindgen::IDLRawStringLike> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawStringLike> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<JSC::JSValue> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (!value.isString() && !value.inherits<JSC::StringObject>())
+            return std::nullopt;
+        return value;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwNotString(globalObject, scope);
+    }
+};
+
 template<typename JSClass, auto name>
 struct WebCore::Converter<Bun::Bindgen::IDLRawCell<JSClass, name>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawCell<JSClass, name>> {
     template<Bun::IDLConversionContext Ctx>
@@ -358,7 +376,8 @@ struct WebCore::Converter<Bun::Bindgen::IDLRawCell<JSClass, name>> : Bun::Defaul
     template<Bun::IDLConversionContext Ctx>
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
-        ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, Bun::idlHumanReadableName<Bun::Bindgen::IDLRawCell<JSClass, name>>()));
+        constexpr auto article = std::derived_from<JSClass, JSC::JSObject> ? "an instance of "_s : "a "_s;
+        ctx.throwTypeMustBe(globalObject, scope, WTF::makeString(article, Bun::idlHumanReadableName<Bun::Bindgen::IDLRawCell<JSClass, name>>()));
     }
 };
 

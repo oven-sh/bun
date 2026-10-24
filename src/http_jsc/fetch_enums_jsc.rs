@@ -2,8 +2,7 @@
 //! themselves stay in `http_types/`; only the JSC extern + wrapper live here
 //! so `http_types/` has no `JSValue`/`JSGlobalObject` references.
 //!
-//! The reverse direction (`FromJsEnum` impls powering
-//! `JSValue::get_optional_enum::<FetchRedirect>()` etc.) lives in `bun_jsc`
+//! The reverse direction (`FromJsEnum` impls) lives in `bun_jsc`
 //! itself — orphan rules require the impl in either the trait crate or the
 //! type crate, and `bun_http_types` is jsc-free.
 

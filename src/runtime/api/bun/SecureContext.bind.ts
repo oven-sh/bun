@@ -13,7 +13,7 @@ export const ParsedPkcs12 = b.dictionary({
 });
 
 /** What is not a buffer becomes a string once the passphrase has. */
-export const Pkcs12Source = b.union({ missing: b.undefined, bytes: b.bufferSource.allowShared, other: b.opaque });
+export const Pkcs12Source = b.union({ missing: b.undefined, buffer: b.bufferSource.allowShared, other: b.opaque });
 export const pkcs12Text = b.conversion(b.string.loose.utf8.owned);
 
 /** What `node:tls` hands out as `secureContext.context`. */

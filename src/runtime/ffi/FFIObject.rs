@@ -98,12 +98,12 @@ pub(crate) unsafe extern "C" fn Bun__FFI__CString__transcode(
 ) -> JSValue {
     let number = |value: JSValue| {
         if value.is_undefined_or_null() {
-            FFINumber::Absent
+            FFINumber::Missing
         } else if let Some(number) = value.get_number() {
             FFINumber::Number(number)
         } else {
             JsLocal::<jsc::JSBigInt>::from_js(global, value)
-                .map_or(FFINumber::Other, FFINumber::Bigint)
+                .map_or(FFINumber::Other, FFINumber::BigInt)
         }
     };
     jsc::to_js_host_fn_result(
@@ -533,7 +533,7 @@ fn get_ptr_slice(
     byte_length: FFINumber<'_>,
 ) -> JsResult<(*mut u8, usize)> {
     let num = match value {
-        FFINumber::Bigint(value) => {
+        FFINumber::BigInt(value) => {
             let value = value.to_js();
             if !value.is_big_int_in_uint64_range(0, usize::MAX as u64) {
                 return Err(
@@ -577,7 +577,7 @@ fn get_ptr_slice(
                     .throw_invalid_arguments(format_args!("ptr must be a finite number.")));
             }
         }
-        FFINumber::Absent => {}
+        FFINumber::Missing => {}
         _ => {
             return Err(
                 global_this.throw_invalid_arguments(format_args!("Expected number for byteOffset"))
@@ -592,7 +592,7 @@ fn get_ptr_slice(
     }
 
     match byte_length {
-        FFINumber::Absent => {}
+        FFINumber::Missing => {}
         FFINumber::Number(value_length) => {
             // NaN and every value in (-1, 1) truncate to 0 and fail this check too.
             let length_i = value_length as i64;
@@ -635,13 +635,13 @@ fn get_cptr(value: FFINumber<'_>) -> Option<usize> {
                 return Some(addr);
             }
         }
-        FFINumber::Bigint(value) => {
+        FFINumber::BigInt(value) => {
             let value = value.to_js();
             if value.is_big_int_in_uint64_range(1, usize::MAX as u64) {
                 return Some(value.to_uint64_no_truncate() as usize);
             }
         }
-        FFINumber::Absent | FFINumber::Other => {}
+        FFINumber::Missing | FFINumber::Other => {}
     }
 
     None
@@ -666,12 +666,12 @@ pub(crate) fn to_array_buffer<'a>(
 
             if let Some(ctx_ptr) = get_cptr(deallocator_context) {
                 ctx = Some(ctx_ptr as *mut c_void);
-            } else if !matches!(deallocator_context, FFINumber::Absent) {
+            } else if !matches!(deallocator_context, FFINumber::Missing) {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Expected user data to be a C pointer (number or BigInt)"
                 )));
             }
-        } else if !matches!(callback_value, FFINumber::Absent) {
+        } else if !matches!(callback_value, FFINumber::Missing) {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Expected callback to be a C pointer (number or BigInt)"
             )));
@@ -679,7 +679,7 @@ pub(crate) fn to_array_buffer<'a>(
     } else if let Some(callback_ptr) = get_cptr(deallocator_context) {
         // SAFETY: user-supplied raw fn pointer address.
         callback = unsafe { deallocator_from_addr(callback_ptr) };
-    } else if !matches!(deallocator_context, FFINumber::Absent) {
+    } else if !matches!(deallocator_context, FFINumber::Missing) {
         return Err(global_this.throw_invalid_arguments(format_args!(
             "Expected callback to be a C pointer (number or BigInt)"
         )));
@@ -719,12 +719,12 @@ pub(crate) fn to_buffer<'a>(
 
             if let Some(ctx_ptr) = get_cptr(deallocator_context) {
                 ctx = Some(ctx_ptr as *mut c_void);
-            } else if !matches!(deallocator_context, FFINumber::Absent) {
+            } else if !matches!(deallocator_context, FFINumber::Missing) {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Expected user data to be a C pointer (number or BigInt)"
                 )));
             }
-        } else if !matches!(callback_value, FFINumber::Absent) {
+        } else if !matches!(callback_value, FFINumber::Missing) {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "Expected callback to be a C pointer (number or BigInt)"
             )));
@@ -732,7 +732,7 @@ pub(crate) fn to_buffer<'a>(
     } else if let Some(callback_ptr) = get_cptr(deallocator_context) {
         // SAFETY: user-supplied raw fn pointer address.
         callback = unsafe { deallocator_from_addr(callback_ptr) };
-    } else if !matches!(deallocator_context, FFINumber::Absent) {
+    } else if !matches!(deallocator_context, FFINumber::Missing) {
         return Err(global_this.throw_invalid_arguments(format_args!(
             "Expected callback to be a C pointer (number or BigInt)"
         )));

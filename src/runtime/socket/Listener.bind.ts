@@ -35,9 +35,10 @@ const fromOptions = {
 export const connect = b.fn({ ...fromOptions, returns: b.promise, rustPath: "crate::socket::Listener::connect" });
 export const listen = b.fn({ ...fromOptions, returns: Listener, rustPath: "crate::socket::Listener::listen" });
 
-/** `tls` is a `SecureContext`, or is read as `TLSOptions`. */
+/** `options` is read as `TLSOptions`. */
+export const ServerNameTLS = b.union({ context: SecureContext, options: b.opaque });
 export const addServerName = b.fn({
-  args: { listener: Listener, hostname: b.string.utf8, tls: b.opaque },
+  args: { listener: Listener, hostname: b.string.utf8, tls: ServerNameTLS },
   capability: "js",
   throws: true,
   rustPath: "crate::socket::Listener::add_server_name",

@@ -20,7 +20,7 @@ pub(crate) fn set_config_plugins<'a>(
     if names.is_empty() {
         vm.bake_config_plugins.deinit();
     } else {
-        vm.bake_config_plugins.set(global, plugins);
+        vm.bake_config_plugins.set(global, plugins.to_js());
     }
     vm.bake_config_plugin_names = names.into_iter().map(|name| Box::from(&*name)).collect();
 }
@@ -76,7 +76,7 @@ pub(crate) fn set_pages<'a>(cx: &mut JsScope<'a>, framework: Option<JsLocal<'a>>
     let vm = global.bun_vm().as_mut();
     match framework {
         None => vm.bake_framework.deinit(),
-        Some(framework) => vm.bake_framework.set(global, framework),
+        Some(framework) => vm.bake_framework.set(global, framework.to_js()),
     }
     vm.bake_pages = true;
 }

@@ -77,7 +77,7 @@ pub(crate) fn upgrade_node_http_response_to_web_socket<'a>(
 
     response.upgrade_for_ws_package(
         global,
-        websocket,
+        websocket.to_js(),
         handlers,
         handshake,
         max_payload,

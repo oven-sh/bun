@@ -206,18 +206,7 @@ enum class CommonStringsForRust : uint8_t {
     quicDatagramLost = 18,
     base64 = 19,
     write = 20,
-    fetchOptionCompress = 21,
-    fetchOptionDecompress = 22,
-    fetchOptionKeepalive = 23,
-    fetchOptionMaxRedirects = 24,
-    fetchOptionProtocol = 25,
-    fetchOptionProxy = 26,
-    fetchOptionS3 = 27,
-    fetchOptionSession = 28,
-    fetchOptionTimeout = 29,
-    fetchOptionTls = 30,
-    fetchOptionUnix = 31,
-    fetchOptionVerbose = 32,
+    fetchOptionVerbose = 21,
 };
 
 static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust commonString)
@@ -266,28 +255,6 @@ static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust c
         return commonStrings.base64String();
     case CommonStringsForRust::write:
         return commonStrings.writeString();
-    case CommonStringsForRust::fetchOptionCompress:
-        return commonStrings.fetchOptionCompressString();
-    case CommonStringsForRust::fetchOptionDecompress:
-        return commonStrings.fetchOptionDecompressString();
-    case CommonStringsForRust::fetchOptionKeepalive:
-        return commonStrings.fetchOptionKeepaliveString();
-    case CommonStringsForRust::fetchOptionMaxRedirects:
-        return commonStrings.fetchOptionMaxRedirectsString();
-    case CommonStringsForRust::fetchOptionProtocol:
-        return commonStrings.fetchOptionProtocolString();
-    case CommonStringsForRust::fetchOptionProxy:
-        return commonStrings.fetchOptionProxyString();
-    case CommonStringsForRust::fetchOptionS3:
-        return commonStrings.fetchOptionS3String();
-    case CommonStringsForRust::fetchOptionSession:
-        return commonStrings.fetchOptionSessionString();
-    case CommonStringsForRust::fetchOptionTimeout:
-        return commonStrings.fetchOptionTimeoutString();
-    case CommonStringsForRust::fetchOptionTls:
-        return commonStrings.fetchOptionTlsString();
-    case CommonStringsForRust::fetchOptionUnix:
-        return commonStrings.fetchOptionUnixString();
     case CommonStringsForRust::fetchOptionVerbose:
         return commonStrings.fetchOptionVerboseString();
     default: {
@@ -300,21 +267,6 @@ static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust c
 extern "C" JSC::EncodedJSValue Bun__CommonStringsForRust__toJS(CommonStringsForRust commonString, Zig::GlobalObject* globalObject)
 {
     return JSValue::encode(toJS(globalObject, commonString));
-}
-
-// `object[commonString]`, without a StringImpl and an atom-table probe per call:
-// the JSString keeps the atom once it has been asked for its identifier.
-// Same return convention as JSC__JSValue__fastGet: empty for an exception,
-// the deleted value when the property does not exist.
-extern "C" JSC::EncodedJSValue Bun__CommonStringsForRust__getProperty(JSC::EncodedJSValue encodedObject, Zig::GlobalObject* globalObject, CommonStringsForRust commonString)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSObject* object = JSValue::decode(encodedObject).getObject();
-    ASSERT(object);
-    auto identifier = JSC::asString(toJS(globalObject, commonString))->toIdentifier(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, JSC::PropertyName(identifier))));
 }
 
 // Must be kept in sync with src/http_types/FetchCacheMode.rs

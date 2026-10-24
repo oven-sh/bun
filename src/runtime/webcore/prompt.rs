@@ -1,6 +1,5 @@
 //! Implements prompt, alert, and confirm Web API
 
-use crate::generated_bindgen::prompt::PromptDefault;
 use crate::webcore::jsc::{JSValue, JsResult};
 use bun_collections::VecExt as _;
 use bun_core::EncodedSlice;
@@ -219,11 +218,12 @@ pub(crate) fn prompt<'a>(
     cx: &mut JsScope<'a>,
     message: Option<&[u8]>,
     default_value: Option<JsLocal<'a>>,
-) -> JsResult<JsLocal<'a>> {
+) -> JsResult<JSValue> {
+    let global = cx.global();
     let output = Output::writer();
     // 4. Set default to the result of optionally truncating default.
     // *  We don't really need to do this.
-    let default = default_value;
+    let default = default_value.map(JsLocal::to_js);
 
     if let Some(message) = message {
         // 2. Set message to the result of normalizing newlines given message.
@@ -233,7 +233,7 @@ pub(crate) fn prompt<'a>(
         // *  Not necessary so we won't do it.
         if output.write_all(message).is_err() {
             // 1. If we cannot show simple dialogs for this, then return null.
-            return Ok(JsLocal::NULL);
+            return Ok(JSValue::NULL);
         }
     }
 
@@ -252,11 +252,11 @@ pub(crate) fn prompt<'a>(
         .is_err()
     {
         // 1. If we cannot show simple dialogs for this, then return false.
-        return Ok(JsLocal::new(&cx.heap, JSValue::FALSE));
+        return Ok(JSValue::FALSE);
     }
 
     if let Some(default) = default {
-        let PromptDefault::Text(default_string) = PromptDefault::from_js(cx.global(), default)?;
+        let default_string = default.to_utf8(global)?;
 
         if output
             .print(format_args!(
@@ -266,7 +266,7 @@ pub(crate) fn prompt<'a>(
             .is_err()
         {
             // 1. If we cannot show simple dialogs for this, then return false.
-            return Ok(JsLocal::new(&cx.heap, JSValue::FALSE));
+            return Ok(JSValue::FALSE);
         }
     }
 
@@ -293,20 +293,20 @@ pub(crate) fn prompt<'a>(
     let Ok(first_byte) = reader.read_byte() else {
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
-        return Ok(JsLocal::NULL);
+        return Ok(JSValue::NULL);
     };
 
     if first_byte == b'\n' {
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
-        return Ok(default.unwrap_or(JsLocal::NULL));
+        return Ok(default.unwrap_or(JSValue::NULL));
     } else if first_byte == b'\r' {
         let Ok(second) = reader.read_byte() else {
-            return Ok(JsLocal::NULL);
+            return Ok(JSValue::NULL);
         };
         second_byte = Some(second);
         if second == b'\n' {
-            return Ok(default.unwrap_or(JsLocal::NULL));
+            return Ok(default.unwrap_or(JSValue::NULL));
         }
     }
 
@@ -330,7 +330,7 @@ pub(crate) fn prompt<'a>(
         if !matches!(e, ReadError::StreamTooLong) {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
-            return Ok(JsLocal::NULL);
+            return Ok(JSValue::NULL);
         }
 
         input.ensure_total_capacity(4096);
@@ -344,13 +344,13 @@ pub(crate) fn prompt<'a>(
             if !matches!(e2, ReadError::StreamTooLong) {
                 // 8. Let result be null if the user aborts, or otherwise the string
                 //    that the user responded with.
-                return Ok(JsLocal::NULL);
+                return Ok(JSValue::NULL);
             }
 
             if read_until_delimiter_array_list_infinity(&mut *reader, &mut input, b'\n').is_err() {
                 // 8. Let result be null if the user aborts, or otherwise the string
                 //    that the user responded with.
-                return Ok(JsLocal::NULL);
+                return Ok(JSValue::NULL);
             }
         }
     }
@@ -370,6 +370,5 @@ pub(crate) fn prompt<'a>(
     // *  Too complex for server context.
 
     // 9. Return result.
-    let result = result.to_js(cx.global());
-    Ok(JsLocal::new(&cx.heap, result))
+    Ok(result.to_js(global))
 }

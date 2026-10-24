@@ -1,12 +1,10 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import { FrameworkRouterStyle } from "../api/filesystem_router.bind.ts";
 import { Blob } from "../webcore/Blob.bind.ts";
-import { HeadersInit, Request } from "../webcore/response.bind.ts";
+import { Headers, HeadersInit, Request } from "../webcore/response.bind.ts";
 import { NodeHTTPResponse } from "./NodeHTTPResponse.bind.ts";
 
 export const ServerProtocol = b.enumeration(["http", "https"]);
-
-const Headers = b.cell("WebCore::JSFetchHeaders", "JSFetchHeaders.h", { rustPath: "bun_jsc::JSObject" });
 
 /** The alternatives after `request` are what the error of `server.fetch` names. */
 export const ServerFetchInput = b.union({
@@ -14,11 +12,11 @@ export const ServerFetchInput = b.union({
   request: Request,
   undefined: b.undefined,
   null: b.null,
-  boolean: b.bool,
+  flag: b.bool,
   number: b.f64,
   symbol: b.symbol,
   bigInt: b.bigInt,
-  object: b.ignored,
+  other: b.ignored,
 });
 /** Read only if `input` is a URL. */
 export const ServerFetchInit = b.dictionary(
@@ -50,14 +48,13 @@ export const WebSocketMessage = b.union({
 });
 export const WebSocketTopic = b.union({ text: b.string.view, stringObject: b.stringObject, other: b.opaque });
 export const webSocketMessageText = b.conversion(b.string.loose);
-export const WebSocketCompress = b.union({ missing: b.undefined, value: b.bool, other: b.ignored });
+export const WebSocketCompress = b.union({ missing: b.undefined, flag: b.bool, other: b.ignored });
 export const WebSocketCloseCode = b.union({ missing: b.undefined, code: b.f64, other: b.ignored });
 
 /** Each option reports `other` in its own words. */
 export const OptionNumber = b.union({ missing: b.null, number: b.f64, other: b.ignored });
-export const OptionBool = b.union({ missing: b.null, value: b.bool, other: b.ignored });
+export const OptionBool = b.union({ missing: b.null, flag: b.bool, other: b.ignored });
 /** `""` is as good as missing. */
-export const OptionCallback = b.union({ missing: b.null, callback: b.callable, text: b.string, other: b.ignored });
 /** `false` is as good as missing. */
 export const Stringish = b.union({
   missing: b.null,
@@ -98,28 +95,22 @@ export const WebSocketOptions = b.dictionary(
   },
   { deferred: true },
 );
-/** `""` is as good as missing. */
-export const WebSocketOptionsMember = b.union({
-  missing: b.null,
-  options: WebSocketOptions,
-  text: b.string,
-  other: b.ignored,
-});
+const websocket = { type: WebSocketOptions.emptyStringAsNull, expected: "Expected websocket to be an object" };
 
 export const DevelopmentOptions = b.dictionary(
   {
-    hmr: b.bool.optional,
-    console: b.bool.optional,
-    chromeDevToolsAutomaticWorkspaceFolders: b.bool.optional,
+    hmr: { type: b.bool.optional, expected: ["boolean"] },
+    console: { type: b.bool.optional, expected: ["boolean"] },
+    chromeDevToolsAutomaticWorkspaceFolders: { type: b.bool.optional, expected: ["boolean"] },
   },
   { allowArray: true, reportedAs: "development" },
 );
-export const Development = b.union({ missing: b.undefined, options: DevelopmentOptions, flag: b.bool.loose });
+export const ServerDevelopment = b.union({ missing: b.undefined, options: DevelopmentOptions, flag: b.bool.loose });
 /** An array is as good as missing. */
-export const Routes = b.union({ missing: b.undefined, array: b.jsArray, routes: b.object, other: b.ignored });
+export const ServerRoutes = b.union({ missing: b.undefined, list: b.jsArray, routes: b.object, other: b.ignored });
 export const ServerId = b.union({ missing: b.undefined, null: b.null, id: b.string.loose.utf8.owned });
-/** `config`, and each element of `list`, is a `TLSOptions`. `other` says whether the value is truthy. */
-export const ServerTls = b.union({ missing: b.null, list: b.jsArray, config: b.object, other: b.bool.loose });
+/** `config`, and each element of `list`, is read as a `TLSOptions`. */
+export const ServerTLS = b.union({ missing: b.null, list: b.jsArray, config: b.opaque });
 
 // `Bake.Options` of bake.d.ts. `src/tsconfig.json` excludes `runtime/bake`, so this file cannot import a schema from there.
 
@@ -209,8 +200,8 @@ export const FileSystemRouterTypeOptions = b.dictionary(
     serverEntryPoint: text,
     clientEntryPoint: text,
     prefix: text,
-    ignoreUnderscores: b.bool.default(false),
-    layouts: b.bool.default(false),
+    ignoreUnderscores: { type: b.bool.default(false), expected: ["boolean"] },
+    layouts: { type: b.bool.default(false), expected: ["boolean"] },
     clientPages: ClientPagesValue,
     style: FrameworkRouterStyle.optional,
     extensions: RouterExtensions.optional,
@@ -255,12 +246,12 @@ export const BakeApp = b.union({ name: b.string, options: BakeOptions, other: b.
 /** The options of `Bun.serve` and `server.reload`. Without `tls` they are read as a `TLSOptions` too. */
 export const ServeOptions = b.dictionary(
   {
-    development: Development,
-    routes: Routes,
-    static: { type: Routes, rustName: "static_routes" },
+    development: ServerDevelopment,
+    routes: ServerRoutes,
+    static: { type: ServerRoutes, rustName: "static_routes" },
     idleTimeout: OptionNumber,
-    webSocket: WebSocketOptionsMember,
-    websocket: WebSocketOptionsMember,
+    webSocket: websocket,
+    websocket,
     port: b.f64.loose.emptyStringAsNull,
     baseURI: b.string.loose.utf8.owned.emptyStringAsNull,
     hostname: Stringish,
@@ -274,10 +265,13 @@ export const ServeOptions = b.dictionary(
     http2: b.bool.loose.optional,
     http1: b.bool.loose.optional,
     maxRequestBodySize: b.f64.otherAsNull,
-    error: OptionCallback,
-    onNodeHTTPRequest: OptionCallback,
-    fetch: OptionCallback,
-    tls: ServerTls,
+    error: { type: b.callable.emptyStringAsNull, expected: "Expected error to be a function" },
+    onNodeHTTPRequest: {
+      type: b.callable.emptyStringAsNull,
+      expected: "Expected onNodeHTTPRequest to be a function",
+    },
+    fetch: { type: b.callable.emptyStringAsNull, expected: "Expected fetch() to be a function" },
+    tls: ServerTLS,
   },
   { deferred: true },
 );
@@ -354,6 +348,7 @@ function server(name: string) {
         args: { closeActiveConnections: b.bool.otherAsNull },
         returns: b.promise,
         capability: "js",
+        length: 1,
         rustName: "do_stop",
       },
       subscriberCount: {
@@ -365,6 +360,7 @@ function server(name: string) {
         returns: b.opaque,
         capability: "heap",
         throws: true,
+        length: 2,
       },
       unref: { returns: b.self, passThis: true, rustName: "do_unref" },
       upgrade: {

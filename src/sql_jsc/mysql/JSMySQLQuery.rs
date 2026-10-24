@@ -8,7 +8,7 @@ use crate::jsc::{
 };
 use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args;
-use bun_jsc::bindgen::{AnyValue, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSArray, JSObject, JsCell};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_sql::mysql::MySQLQueryResult;
@@ -107,7 +107,7 @@ impl JSMySQLQuery {
         if self.is_completed() {
             return Ok(());
         }
-        js::target_set_cached(this_value.to_js(), global_object, query);
+        js::target_set_cached(this_value.to_js(), global_object, query.to_js());
         // Until it ends: the wrapper holds the target, the parameters and the rows.
         self.this_value.with_mut(|v| v.upgrade(global_object));
         connection.enqueue_request(self.ref_guard());
@@ -134,9 +134,11 @@ impl JSMySQLQuery {
             1 => SQLQueryResultMode::Values,
             2 => SQLQueryResultMode::Raw,
             _ => {
-                return Err(
-                    global_object.throw_invalid_argument_type_value(b"mode", b"Number", js_mode)
-                );
+                return Err(global_object.throw_invalid_argument_type_value(
+                    b"mode",
+                    b"Number",
+                    js_mode.to_js(),
+                ));
             }
         };
         self.query.with_mut(|q| q.set_result_mode(mode));
@@ -144,7 +146,7 @@ impl JSMySQLQuery {
     }
 
     pub fn set_pending_value_from_js(&self, value: JsLocal<'_>) {
-        self.set_pending_value(value);
+        self.set_pending_value(value.to_js());
     }
 
     fn last_insert_id_to_js(&self, value: u64) -> JsResult<JSValue> {
@@ -376,7 +378,7 @@ impl JSMySQLQuery {
     }
 
     #[inline]
-    pub(crate) fn set_pending_value(&self, result: impl AnyValue) {
+    pub(crate) fn set_pending_value(&self, result: JSValue) {
         if let Some(value) = self.this_value.get().try_get() {
             js::pending_value_set_cached(value, self.global_object(), result);
         }

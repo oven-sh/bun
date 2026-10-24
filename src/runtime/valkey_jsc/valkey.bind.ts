@@ -6,15 +6,18 @@ import { Blob } from "../webcore/Blob.bind.ts";
  * What goes on the wire as one bulk string. Each command refuses `other` in its own words, and refuses, skips or stops at `none`.
  * It only tells kinds apart: `toString` of a `String` object runs when the command gets to that argument.
  */
-export const RedisArgument = b.union({
-  none: b.null,
-  number: b.f64,
-  buffer: b.bufferSource.allowShared,
-  text: b.string,
-  object: b.stringObject,
-  blob: Blob,
-  other: b.ignored,
-});
+export const RedisArgument = b.union(
+  {
+    missing: b.null,
+    number: b.f64,
+    buffer: b.bufferSource.allowShared,
+    text: b.string,
+    object: b.stringObject,
+    blob: Blob,
+    other: b.ignored,
+  },
+  { fromJS: true },
+);
 
 /** `...name` is the rest. `rustName` only where the struct already has the snake_case name. */
 const commands: Record<string, readonly [args: readonly string[], length: number, rustName?: string]> = {
@@ -224,7 +227,7 @@ const key = RedisArgument;
 const text = b.string.loose.deferred;
 
 /** As itself: it is the key of the listeners too, and `toString` of a `String` object runs once the client has dialed. */
-export const RedisChannel = b.union({ many: b.jsArray, text: b.jsString, object: b.stringObject, other: b.ignored });
+export const RedisChannel = b.union({ list: b.jsArray, text: b.stringLike, other: b.ignored });
 
 const integerOption = b.u32.validateIntegerRange().nanAs(0).optional;
 export const RedisOptions = b.dictionary(
@@ -241,7 +244,7 @@ export const RedisOptions = b.dictionary(
 );
 
 /** What follows the key of `hset` and `hmset`: the pairs in an array, in an object, or the first of those that come one after the other. */
-export const HashFields = b.union({ array: b.jsArray, object: b.object, other: b.opaque });
+export const HashFields = b.union({ list: b.jsArray, object: b.object, other: b.opaque });
 /** One of the pairs that come one after the other, once their number has been checked. */
 export const hashText = b.conversion(b.string.loose.utf8.owned);
 const hashSet = { ...command, args: { key: text, fields: HashFields, more: b.rest(b.opaque) }, length: 2 } as const;

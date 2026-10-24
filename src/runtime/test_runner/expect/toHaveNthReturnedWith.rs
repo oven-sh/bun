@@ -4,7 +4,6 @@ use bun_jsc::{JSValue, JsResult};
 use super::DiffFormatter;
 use super::throw;
 use super::{Expect, get_signature};
-use crate::generated_bindgen::expect::StringValue;
 
 impl Expect {
     pub(crate) fn to_have_nth_returned_with(
@@ -16,7 +15,7 @@ impl Expect {
     ) -> JsResult<()> {
         let global = cx.global();
         bun_jsc::mark_binding!();
-
+        let expected = expected.to_js();
         let (this, returns, _) = self.mock_prologue(
             global,
             this_value.to_js(),
@@ -115,11 +114,7 @@ impl Expect {
         }
 
         // Diff if possible
-        if nth_return_value.is_string()
-            && StringValue::from_js(global, expected, |expected| {
-                Ok(!matches!(expected, StringValue::Other))
-            })?
-        {
+        if expected.is_string() && nth_return_value.is_string() {
             let diff_format = DiffFormatter::new(global, nth_return_value, expected, false)?;
             return throw!(
                 this,

@@ -47,8 +47,8 @@ test("Bun.serve({ app }) rejects wrong-typed framework options", async () => {
   expect(stdout).toMatchInlineSnapshot(`
     "root -> ERR_INVALID_ARG_TYPE: app.root must be a string
     fileSystemRouterTypes[].root -> ERR_INVALID_ARG_TYPE: fileSystemRouterTypes[n].root must be a string
-    fileSystemRouterTypes[].ignoreUnderscores -> ERR_INVALID_ARG_TYPE: fileSystemRouterTypes[n].ignoreUnderscores must be a boolean
-    fileSystemRouterTypes[].layouts -> ERR_INVALID_ARG_TYPE: fileSystemRouterTypes[n].layouts must be a boolean
+    fileSystemRouterTypes[].ignoreUnderscores -> ERR_INVALID_ARG_TYPE: The "fileSystemRouterTypes[n].ignoreUnderscores" property must be of type boolean. Received type string ('yes')
+    fileSystemRouterTypes[].layouts -> ERR_INVALID_ARG_TYPE: The "fileSystemRouterTypes[n].layouts" property must be of type boolean. Received type number (1)
     serverComponents.serverRuntimeImportSource -> ERR_INVALID_ARG_TYPE: framework.serverComponents.serverRuntimeImportSource must be a string
     plugins[].name -> ERR_INVALID_ARG_TYPE: name must be a string
     plugins[].setup -> ERR_INVALID_ARG_TYPE: setup must be a function

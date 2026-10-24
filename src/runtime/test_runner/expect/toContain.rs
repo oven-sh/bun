@@ -1,8 +1,8 @@
 use core::ffi::c_void;
 
+use bun_core::strings;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, VM};
-use bun_core::strings;
 
 use super::Expect;
 use super::get_signature;
@@ -20,12 +20,14 @@ impl Expect {
         let (this, value, not) =
             self.matcher_prelude(global, this_value.to_js(), "toContain", "<green>expected<r>")?;
 
+        let expected = expected.to_js();
         let mut pass = false;
 
-        // FFI/BACKREF: erased to *mut c_void for for_each userdata.
-        struct ExpectedEntry<'a> {
+        // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs
+        // avoid a struct lifetime param.
+        struct ExpectedEntry {
             global: *const JSGlobalObject,
-            expected: JsLocal<'a>,
+            expected: JSValue,
             pass: *mut bool,
         }
 
@@ -39,11 +41,9 @@ impl Expect {
                     break;
                 }
             }
-        } else if let (true, StringValue::String(expected_string)) =
-            (value.is_string_literal(), expected_string)
-        {
+        } else if value.is_string_literal() && matches!(expected_string, StringValue::String(_)) {
             let value_string = value.to_utf8(global)?;
-            let expected_string = expected_string.to_js().to_utf8(global)?;
+            let expected_string = expected.to_utf8(global)?;
 
             if expected_string.slice().is_empty() {
                 // edge case empty string is always contained
@@ -70,7 +70,7 @@ impl Expect {
                 debug_assert!(!entry_.is_null());
                 // SAFETY: entry_ is &mut ExpectedEntry on the caller's stack, threaded through
                 // for_each as opaque userdata; non-null asserted above.
-                let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry<'_>>(entry_) };
+                let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry>(entry_) };
                 // SAFETY: entry.global was set from `std::ptr::from_ref(global)` on the caller's
                 // stack frame, which outlives the synchronous for_each this callback runs inside.
                 let global = unsafe { &*entry.global };

@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::{AnyValue, JsScope, JsStructure, JsWrapper};
+use bun_jsc::bindgen::{JsScope, JsStructure, JsWrapper};
 use bun_jsc::{AbortSignal, GlobalRef};
 use bun_ptr::RefPtr;
 
@@ -65,7 +65,7 @@ impl HeadersRef {
     #[inline]
     pub(crate) fn create_from_js(
         global: &JSGlobalObject,
-        value: impl AnyValue,
+        value: JSValue,
     ) -> JsResult<Option<Self>> {
         // SAFETY: C++ returns a +1 ref or null.
         Ok(FetchHeaders::create_from_js(global, value)?.map(|p| unsafe { Self::adopt(p) }))
@@ -876,7 +876,7 @@ impl Response {
             // Use jsonStringifyFast which passes undefined for the space parameter,
             // triggering JSC's FastStringifier optimization. This is significantly faster
             // than jsonStringify which passes 0 for space and uses the slower Stringifier.
-            let str = json_value.json_stringify_fast(global_this)?;
+            let str = json_value.to_js().json_stringify_fast(global_this)?;
 
             if !str.is_empty() {
                 debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
@@ -1204,25 +1204,17 @@ impl Init {
 
         match response_init.headers(global_this)? {
             HeadersInit::Missing => {}
-            HeadersInit::Headers(headers) => {
-                // `JSValue::as_::<FetchHeaders>()` requires `JsClass`;
-                // FetchHeaders is a hand-bound opaque, so use its dedicated
-                // `cast()` (wraps `WebCore__FetchHeaders__cast_`).
-                if let Some(orig) = FetchHeaders::cast(headers.to_js()) {
-                    // `orig` is a live `WebCore::FetchHeaders*` borrowed from JS;
-                    // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                    let orig = bun_opaque::opaque_deref_mut(orig.as_ptr());
-                    if !orig.is_empty() {
-                        result.headers = orig.clone_this(global_this)?.map(|p| {
-                            // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
-                            // ownership of that ref is transferred into the `HeadersRef`.
-                            unsafe { HeadersRef::adopt(p) }
-                        });
-                    }
+            HeadersInit::Headers((orig, _)) => {
+                if !orig.is_empty() {
+                    result.headers = orig.clone_this(global_this)?.map(|p| {
+                        // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
+                        // ownership of that ref is transferred into the `HeadersRef`.
+                        unsafe { HeadersRef::adopt(p) }
+                    });
                 }
             }
             HeadersInit::Init(headers) => {
-                result.headers = HeadersRef::create_from_js(global_this, headers)?;
+                result.headers = HeadersRef::create_from_js(global_this, headers.to_js())?;
             }
         }
 

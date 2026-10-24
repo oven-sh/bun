@@ -1,5 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import { Image } from "../image/Image.bind.ts";
+import { ReadableStream } from "./ByteStream.bind.ts";
 
 const js = { capability: "js", throws: true } as const;
 const method = { returns: b.promise, ...js } as const;
@@ -24,8 +25,11 @@ const body = {
   textStream: { ...method, returns: b.object },
 } as const;
 
-const object = { rustPath: "bun_jsc::JSObject" } as const;
-const Headers = b.cell("WebCore::JSFetchHeaders", "JSFetchHeaders.h", object);
+export const JSDOMURL = b.cell("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::JSObject" });
+export const Headers = b.wrapped("WebCore::JSFetchHeaders", "JSFetchHeaders.h", {
+  rustPath: "bun_jsc::FetchHeaders",
+  reportedAs: "Headers",
+}).withValue;
 
 /** By name: their schemas import this one. */
 const Blob = b.wrapped("Bun::Bindgen::Generated::JSBlob", "GeneratedBlob.h", {
@@ -42,9 +46,9 @@ export const BodyInit = b.union(
   {
     undefined: b.undefined,
     null: b.null,
-    string: b.string,
+    text: b.string,
     stringObject: b.stringObject,
-    dataView: b.cell("JSC::JSDataView", "JavaScriptCore/JSDataView.h", object),
+    dataView: b.dataView,
     buffer: b.bufferSource.allowShared,
     formData: b.wrapped("WebCore::JSDOMFormData", "JSDOMFormData.h", {
       rustPath: "bun_jsc::DOMFormData",
@@ -56,10 +60,7 @@ export const BodyInit = b.union(
     blob: Blob.withValue,
     buildArtifact: BuildArtifact.withValue,
     image: Image.withValue,
-    readableStream: b.cell("WebCore::JSReadableStream", "streams/JSReadableStream.h", {
-      rustPath: "crate::webcore::ReadableStream",
-      tsType: "ReadableStream",
-    }),
+    readableStream: ReadableStream,
     object: b.object,
     other: b.opaque,
   },
@@ -90,16 +91,11 @@ export const ResponseInitOrStatus = b.union({ missing: b.null, status: b.f64, in
 export const SignalInit = b.union({
   missing: b.undefined,
   null: b.null,
-  signal: b.wrapped("WebCore::JSAbortSignal", "JSAbortSignal.h", { rustPath: "bun_jsc::AbortSignal" }).shared,
+  signal: b.abortSignal.shared,
   other: b.ignored,
 });
 /** The name of a value of one of the enumerations of `bun_http_types`. */
-export const OptionName = b.union({
-  missing: b.null,
-  text: b.jsString,
-  stringObject: b.stringObject,
-  other: b.ignored,
-});
+export const OptionName = b.union({ missing: b.null, text: b.stringLike, other: b.ignored });
 /** `response::Init` reads `headers` and `method`, as a `ResponseInit`. Here they only say whether they are there. */
 export const RequestInit = b.dictionary(
   {
@@ -116,9 +112,8 @@ export const RequestInit = b.dictionary(
   { deferred: true },
 );
 export const RequestInput = b.union({
-  string: b.jsString,
-  stringObject: b.stringObject,
-  url: b.cell("WebCore::JSDOMURL", "JSDOMURL.h", object),
+  string: b.stringLike,
+  url: JSDOMURL,
   symbol: b.symbol,
   bigInt: b.bigInt,
   object: RequestInit,

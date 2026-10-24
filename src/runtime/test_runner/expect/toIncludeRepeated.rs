@@ -1,15 +1,14 @@
-use bun_jsc::bindgen::{JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper, StringLike};
 use bun_jsc::{JSValue, JsResult};
 
 use super::{Expect, get_signature, throw};
-use crate::generated_bindgen::expect::StringValue;
 
 impl Expect {
     pub(crate) fn to_include_repeated(
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        substring: StringValue<'_>,
+        substring: Option<JsLocal<'_, StringLike>>,
         count: Option<f64>,
     ) -> JsResult<()> {
         let global = cx.global();
@@ -21,15 +20,12 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
-        let substring = match substring {
-            StringValue::String(string) => string.to_js(),
-            StringValue::StringObject(object) => object.to_js(),
-            StringValue::Other => {
-                return Err(global.throw(format_args!(
-                    "toIncludeRepeated() requires the first argument to be a string"
-                )));
-            }
+        let Some(substring) = substring else {
+            return Err(global.throw(format_args!(
+                "toIncludeRepeated() requires the first argument to be a string"
+            )));
         };
+        let substring = substring.to_js();
 
         let Some(count) = count
             .map(JSValue::js_double_number)

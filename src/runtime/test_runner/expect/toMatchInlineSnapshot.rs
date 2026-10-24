@@ -35,15 +35,12 @@ impl Expect {
         let mut property_matchers: Option<JSValue> = None;
         match (first, second) {
             (None, _) => {}
-            (Some(first), None) => match first {
-                SnapshotArgument::String(string) => {
-                    expected_string = Some(string.to_js().to_js_string_view(global)?);
-                }
-                SnapshotArgument::StringObject(object) => {
-                    expected_string = Some(object.to_js().to_js_string_view(global)?);
-                }
-                SnapshotArgument::Object(object) => property_matchers = Some(object.to_js()),
-                SnapshotArgument::Absent | SnapshotArgument::Other => {
+            (Some(first), None) => {
+                if let Some(first) = first.as_string() {
+                    expected_string = Some(first.to_js_string_view(global)?);
+                } else if let Some(first) = first.as_object() {
+                    property_matchers = Some(first);
+                } else {
                     return throw!(
                         this,
                         global,
@@ -51,37 +48,26 @@ impl Expect {
                         "\n\nMatcher error: Expected first argument to be a string or object\n",
                     );
                 }
-            },
+            }
             (Some(first), Some(second)) => {
-                property_matchers = Some(match first {
-                    SnapshotArgument::StringObject(object) => object.to_js(),
-                    SnapshotArgument::Object(object) => object.to_js(),
-                    SnapshotArgument::Absent
-                    | SnapshotArgument::String(_)
-                    | SnapshotArgument::Other => {
-                        let signature = Expect::get_signature(
-                            "toMatchInlineSnapshot",
-                            "<green>properties<r><d>, <r>hint",
-                            false,
-                        );
-                        return throw!(
-                            this,
-                            global,
-                            signature,
-                            "\n\nMatcher error: Expected <green>properties<r> must be an object\n",
-                        );
-                    }
-                });
-                match second {
-                    SnapshotArgument::String(string) => {
-                        expected_string = Some(string.to_js().to_js_string_view(global)?);
-                    }
-                    SnapshotArgument::StringObject(object) => {
-                        expected_string = Some(object.to_js().to_js_string_view(global)?);
-                    }
-                    SnapshotArgument::Absent
-                    | SnapshotArgument::Object(_)
-                    | SnapshotArgument::Other => {}
+                let Some(first) = first.as_object() else {
+                    let signature = Expect::get_signature(
+                        "toMatchInlineSnapshot",
+                        "<green>properties<r><d>, <r>hint",
+                        false,
+                    );
+                    return throw!(
+                        this,
+                        global,
+                        signature,
+                        "\n\nMatcher error: Expected <green>properties<r> must be an object\n",
+                    );
+                };
+
+                property_matchers = Some(first);
+
+                if let Some(second) = second.as_string() {
+                    expected_string = Some(second.to_js_string_view(global)?);
                 }
             }
         }

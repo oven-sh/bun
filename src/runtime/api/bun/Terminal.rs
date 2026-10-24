@@ -173,7 +173,6 @@ impl From<TerminalSize> for i32 {
     fn from(size: TerminalSize) -> i32 {
         match size {
             TerminalSize::Number(n) => n as i32,
-            TerminalSize::Bigint(n) => n as i32,
             TerminalSize::Other(n) => n,
         }
     }
@@ -1371,7 +1370,7 @@ impl Terminal {
             }
             TerminalData::Text(text) => Some(StringOrBuffer::Utf8(text.to_utf8())),
             TerminalData::Object(data) => StringOrBuffer::from_js(global_object, data.to_js())?,
-            TerminalData::Bytes(data) => StringOrBuffer::from_js(global_object, data.to_js())?,
+            TerminalData::Buffer(data) => StringOrBuffer::from_js(global_object, data.to_js())?,
             TerminalData::Other => None,
         };
         let Some(string_or_buffer) = string_or_buffer else {

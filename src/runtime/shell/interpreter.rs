@@ -2965,8 +2965,8 @@ pub(crate) fn create_shell_interpreter<'a>(
     let this_value = interpreter.into_js(&cx.heap);
     let js_value = this_value.to_js();
     let global = cx.global();
-    js::resolve_set_cached(js_value, global, resolve);
-    js::reject_set_cached(js_value, global, reject);
+    js::resolve_set_cached(js_value, global, resolve.to_js());
+    js::reject_set_cached(js_value, global, reject.to_js());
     if let Some(jsobjs) = parsed_shell_script::js::jsobjs_get_cached(parsed_shell_script_js.to_js())
     {
         js::jsobjs_set_cached(js_value, global, jsobjs);

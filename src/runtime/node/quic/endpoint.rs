@@ -15,7 +15,9 @@ use bun_jsc::{
 use bun_lsquic_sys as lsquic;
 use bun_uws as uws;
 
-use crate::generated_bindgen::quic::{EndpointOptions, SessionOptions, TlsOptions, Uint64Option};
+use crate::generated_bindgen::quic::{
+    EndpointOptions, QuicTLSOptions, SessionOptions, Uint64Option,
+};
 use crate::jsc_hooks::timer_all_mut as timer_all;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
@@ -906,7 +908,7 @@ pub(super) fn read_u64_option(value: Uint64Option) -> Option<u64> {
     match value {
         Uint64Option::Number(v) => Some(v.max(0.0) as u64),
         Uint64Option::BigInt(v) => Some(v as u64),
-        Uint64Option::None | Uint64Option::Other => None,
+        Uint64Option::Missing | Uint64Option::Other => None,
     }
 }
 
@@ -944,14 +946,11 @@ fn apply_transport_params(
         // u16 port. IPs are wire order; ports are HOST order.
         let mut pref = [0u8; 24];
         let mut have_pref = false;
-        for (addr_js, is_v4) in [
+        for (addr, is_v4) in [
             (tp.preferred_address_ipv4(global)?, true),
             (tp.preferred_address_ipv6(global)?, false),
         ] {
-            let Some(addr_js) = addr_js else {
-                continue;
-            };
-            let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() else {
+            let Some((addr, _)) = addr else {
                 continue;
             };
             let stored = session::StoredAddr::from_socket_address(addr);
@@ -1178,47 +1177,45 @@ impl QuicEndpoint {
             (*raw).vtable.set(Some(vt));
         }
 
-        if let Some(addr_js) = options.address {
-            if let Some(addr) = addr_js.as_class_ref::<crate::socket::SocketAddress>() {
-                let stored = StoredAddr::from_socket_address(addr);
-                if let Some((_, port, ip)) = stored.decode() {
-                    use core::fmt::Write;
-                    let mut host = String::new();
-                    match ip.len() {
-                        4 => {
-                            let _ = write!(host, "{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]);
-                        }
-                        16 => {
-                            let segs: [u16; 8] = core::array::from_fn(|i| {
-                                u16::from_be_bytes([ip[2 * i], ip[2 * i + 1]])
-                            });
-                            let _ = write!(host, "{}", std::net::Ipv6Addr::from(segs));
-                        }
-                        _ => {}
+        if let Some((addr, _)) = options.address {
+            let stored = StoredAddr::from_socket_address(addr);
+            if let Some((_, port, ip)) = stored.decode() {
+                use core::fmt::Write;
+                let mut host = String::new();
+                match ip.len() {
+                    4 => {
+                        let _ = write!(host, "{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]);
                     }
-                    let mut host_nul = host.into_bytes();
-                    host_nul.push(0);
-                    // SAFETY: `raw` is uniquely owned here.
-                    unsafe {
-                        (*raw).bind_config.set(BindConfig {
-                            host: host_nul,
-                            port,
-                        })
-                    };
+                    16 => {
+                        let segs: [u16; 8] = core::array::from_fn(|i| {
+                            u16::from_be_bytes([ip[2 * i], ip[2 * i + 1]])
+                        });
+                        let _ = write!(host, "{}", std::net::Ipv6Addr::from(segs));
+                    }
+                    _ => {}
                 }
+                let mut host_nul = host.into_bytes();
+                host_nul.push(0);
+                // SAFETY: `raw` is uniquely owned here.
+                unsafe {
+                    (*raw).bind_config.set(BindConfig {
+                        host: host_nul,
+                        port,
+                    })
+                };
             }
         }
-        if let Some(bl_js) = options.block_list.map(JsLocal::to_js) {
-            if let Some(bl) = crate::generated_bindgen::block_list::js_BlockList::from_js(bl_js) {
-                // SAFETY: `raw` is uniquely owned here; the Strong keeps
-                // the BlockList wrapper (and thus the native object)
-                // alive for the endpoint's lifetime.
-                unsafe {
-                    (*raw).block_list.set(Some(bl.as_ptr()));
-                    (*raw)
-                        .block_list_js
-                        .with_mut(|s| *s = Some(bun_jsc::Strong::create(bl_js, global)));
-                }
+        if let Some((bl, bl_js)) = options.block_list {
+            // SAFETY: `raw` is uniquely owned here; the Strong keeps
+            // the BlockList wrapper (and thus the native object)
+            // alive for the endpoint's lifetime.
+            unsafe {
+                (*raw)
+                    .block_list
+                    .set(Some(core::ptr::from_ref(bl).cast_mut()));
+                (*raw)
+                    .block_list_js
+                    .with_mut(|s| *s = Some(bun_jsc::Strong::create(bl_js.to_js(), global)));
             }
         }
         if let Some(policy) = &options.block_list_policy {
@@ -2175,7 +2172,10 @@ impl QuicEndpoint {
         }
         if self.server_engine.get().is_null() {
             self.server_session_options
-                .set(Some(bun_jsc::Strong::create(options.object(), global)));
+                .set(Some(bun_jsc::Strong::create(
+                    options.object().to_js(),
+                    global,
+                )));
             let tls = options.tls(global)?;
             // Authoritative origins for the HTTP/3 ORIGIN frame (RFC 9412
             // sec 2): each Origin-Entry is a 16-bit length prefix followed
@@ -2553,7 +2553,7 @@ impl QuicEndpoint {
             if !value.is_object() {
                 continue;
             }
-            let tls = JsLocal::<JSObject>::from_js(global, value).map(TlsOptions::new);
+            let tls = JsLocal::<JSObject>::from_js(global, value).map(QuicTLSOptions::new);
             let mut config = TlsConfig::from_js(global, tls, true)?;
             if config.alpn.is_empty() {
                 config.alpn = alpn.to_vec();

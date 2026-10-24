@@ -4,12 +4,12 @@ use core::fmt;
 
 use bun_core::Output;
 use bun_core::strings;
-use bun_jsc::bindgen::{self, AnyValue, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, StringLike};
 use bun_jsc::js_promise;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     ConsoleObject, JSArray, JSFunction, JSGlobalObject, JSObject, JSPropertyIterator, JSValue,
-    JsError, JsResult, MarkedArgumentBuffer,
+    JsError, JsResult,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
 use bun_ptr::RefPtr;
@@ -21,13 +21,30 @@ use super::expect::{FormatterTestExt, JSValueTestExt, make_formatter};
 use super::jest::Jest;
 use crate::expect_throw as throw;
 use crate::generated_bindgen::expect::{
-    Bun__Expect__applyCustomMatcher, ConstructorArgument, ExpectLabel, MatcherHintOptionsOrOther,
-    Precision, StringOrRegExp, StringValue, UnreachableMessage, js_ExpectAny,
+    Bun__Expect__applyCustomMatcher, ConstructorArgument, ExpectLabel, ExpectPrecision,
+    MatcherHintOptionsOrOther, SnapshotArgument, StringOrRegExp, UnreachableMessage, js_ExpectAny,
     js_ExpectArrayContaining, js_ExpectCloseTo, js_ExpectCustomAsymmetricMatcher,
     js_ExpectObjectContaining, js_ExpectStringContaining, js_ExpectStringMatching,
 };
 
 use bun_jsc::js_error_to_write_error;
+
+impl SnapshotArgument<'_> {
+    pub(crate) fn as_string(self) -> Option<JSValue> {
+        match self {
+            Self::String(string) => Some(string.to_js()),
+            Self::StringObject(object) => Some(object.to_js()),
+            Self::Missing | Self::Object(_) | Self::Other => None,
+        }
+    }
+
+    pub(crate) fn as_object(self) -> Option<JSValue> {
+        match self {
+            Self::StringObject(object) | Self::Object(object) => Some(object.to_js()),
+            Self::Missing | Self::String(_) | Self::Other => None,
+        }
+    }
+}
 
 // Matcher submodules are declared in `super::expect` (mod.rs); this file
 // provides only the `Expect` payload + helpers they extend.
@@ -698,7 +715,6 @@ impl Expect {
 
         let custom_label = match message {
             ExpectLabel::String(string) => string.to_js().to_bun_string(global_this)?,
-            ExpectLabel::StringObject(object) => object.to_js().to_bun_string(global_this)?,
             ExpectLabel::Object(object) if object.to_js().implements_to_string(global_this)? => {
                 object.to_js().to_bun_string(global_this)?
             }
@@ -722,7 +738,7 @@ impl Expect {
             parent: active_execution_entry_ref,
         };
         let expect_js_value = expect.to_js(global_this);
-        super::expect::js::captured_value_set_cached(expect_js_value, global_this, value);
+        super::expect::js::captured_value_set_cached(expect_js_value, global_this, value.to_js());
         global_this.bun_vm().auto_garbage_collect();
         Ok(expect_js_value)
     }
@@ -1249,7 +1265,7 @@ impl Expect {
     pub(crate) fn close_to(
         cx: &mut JsScope<'_>,
         number: (Option<f64>, JsLocal<'_>),
-        precision: (Precision, JsLocal<'_>),
+        precision: (ExpectPrecision, JsLocal<'_>),
     ) -> JsResult<JSValue> {
         ExpectCloseTo::create(cx.global(), Flags::default(), number, precision)
     }
@@ -1263,7 +1279,7 @@ impl Expect {
 
     pub(crate) fn string_containing(
         cx: &mut JsScope<'_>,
-        string: StringValue<'_>,
+        string: Option<JsLocal<'_, StringLike>>,
     ) -> JsResult<JSValue> {
         ExpectStringContaining::create(cx.global(), Flags::default(), string)
     }
@@ -1394,7 +1410,7 @@ impl Expect {
         global_this: &JSGlobalObject,
         matcher_name: &bun_core::String,
         matcher_fn: JSValue,
-        args: &MarkedArgumentBuffer,
+        args: &[JSValue],
         flags: Flags,
         silent: bool,
     ) -> JsResult<bool> {
@@ -1403,8 +1419,7 @@ impl Expect {
         matcher_context_jsvalue.ensure_still_alive();
 
         // call the custom matcher implementation
-        let mut result =
-            matcher_fn.call_with_arguments(global_this, matcher_context_jsvalue, args)?;
+        let mut result = matcher_fn.call(global_this, matcher_context_jsvalue, args)?;
         // support for async matcher results
         if let Some(promise) = result.as_any_promise() {
             let vm = global_this.vm();
@@ -1514,6 +1529,8 @@ impl Expect {
         matcher_fn.ensure_still_alive();
 
         // try to retrieve the Expect instance
+        let this_value: JSValue = this_value.to_js();
+        let args = JsLocal::to_js_slice(args);
         let Some(expect) = this_value.as_class_ref::<Expect>() else {
             // if no Expect instance, assume it is a static call (`expect.myMatcher()`), so create an ExpectCustomAsymmetricMatcher instance
             return ExpectCustomAsymmetricMatcher::create(
@@ -1523,8 +1540,6 @@ impl Expect {
                 matcher_fn,
             );
         };
-        // SAFETY: `expect` is the payload of `this_value`.
-        let this_value = unsafe { expect.wrapper_value() };
 
         // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
         // so now execute the symmetric matching
@@ -1557,21 +1572,22 @@ impl Expect {
         expect.increment_expect_call_counter();
 
         // prepare the args array
-        MarkedArgumentBuffer::new(|matcher_args| {
-            matcher_args.append(value);
-            for arg in args {
-                matcher_args.append(*arg);
-            }
+        // MarkedArgumentBuffer::new is scoped (closure-borrow); collect into a Vec
+        // since execute_custom_matcher takes &[JSValue].
+        let mut matcher_args: Vec<JSValue> = Vec::with_capacity(args.len() + 1);
+        matcher_args.push(value);
+        for arg in args {
+            matcher_args.push(*arg);
+        }
 
-            Self::execute_custom_matcher(
-                global_this,
-                &matcher_name,
-                matcher_fn,
-                matcher_args,
-                expect.flags.get(),
-                false,
-            )
-        })?;
+        let _ = Self::execute_custom_matcher(
+            global_this,
+            &matcher_name,
+            matcher_fn,
+            &matcher_args,
+            expect.flags.get(),
+            false,
+        )?;
 
         Ok(this_value)
     }
@@ -1612,7 +1628,7 @@ impl Expect {
             let mut fmt = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
             return Err(global_this.throw(format_args!(
                 "Expected value must be a non-negative integer: {}",
-                expected.to_fmt(&mut fmt),
+                expected.to_js().to_fmt(&mut fmt),
             )));
         };
         if expected_assertions.round() != expected_assertions
@@ -1624,7 +1640,7 @@ impl Expect {
             let mut fmt = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
             return Err(global_this.throw(format_args!(
                 "Expected value must be a non-negative integer: {}",
-                expected.to_fmt(&mut fmt),
+                expected.to_js().to_fmt(&mut fmt),
             )));
         }
 
@@ -1684,8 +1700,8 @@ impl Expect {
             UnreachableMessage::Absent | UnreachableMessage::None => {
                 global_this.create_error_instance(format_args!("reached unreachable code"))
             }
-            UnreachableMessage::String(message) => message.to_error_instance(global_this),
-            UnreachableMessage::Thrown(value) => return Err(global_this.throw_value(value)),
+            UnreachableMessage::Text(message) => message.to_error_instance(global_this),
+            UnreachableMessage::Thrown(value) => return Err(global_this.throw_value(value.to_js())),
         };
         error_value.put(
             global_this,
@@ -1835,7 +1851,7 @@ impl ExpectStatic {
         &self,
         cx: &mut JsScope<'_>,
         number: (Option<f64>, JsLocal<'_>),
-        precision: (Precision, JsLocal<'_>),
+        precision: (ExpectPrecision, JsLocal<'_>),
     ) -> JsResult<JSValue> {
         ExpectCloseTo::create(cx.global(), self.flags, number, precision)
     }
@@ -1851,7 +1867,7 @@ impl ExpectStatic {
     pub(crate) fn string_containing(
         &self,
         cx: &mut JsScope<'_>,
-        string: StringValue<'_>,
+        string: Option<JsLocal<'_, StringLike>>,
     ) -> JsResult<JSValue> {
         ExpectStringContaining::create(cx.global(), self.flags, string)
     }
@@ -1917,22 +1933,19 @@ impl Expect {
         &self,
         global: &JSGlobalObject,
         this_value: JSValue,
-        expected: StringValue<'_>,
+        expected: Option<JsLocal<'_, StringLike>>,
         matcher_name: &'static str,
         verb: &'static str,
         pred: fn(&[u8], &[u8]) -> bool,
     ) -> JsResult<()> {
         let this = self.post_match_guard(global);
 
-        let expected = match expected {
-            StringValue::String(string) => string.to_js(),
-            StringValue::StringObject(object) => object.to_js(),
-            StringValue::Other => {
-                return Err(global.throw(format_args!(
-                    "{matcher_name}() requires the first argument to be a string"
-                )));
-            }
+        let Some(expected) = expected else {
+            return Err(global.throw(format_args!(
+                "{matcher_name}() requires the first argument to be a string"
+            )));
         };
+        let expected = expected.to_js();
 
         let value = this.get_value(global, this_value, matcher_name, "<green>expected<r>")?;
         this.increment_expect_call_counter();
@@ -2081,7 +2094,7 @@ impl Expect {
                 this, global, signature,
                 "\n\nExpected to not {}: <green>{}<r>\nReceived: <red>{}<r>\n",
                 msgs.not_verb,
-                expected.to_fmt(&mut f1),
+                expected.to_js().to_fmt(&mut f1),
                 received.to_fmt(&mut f2),
             )
         } else {
@@ -2089,7 +2102,7 @@ impl Expect {
                 this, global, signature,
                 "\n\nExpected to {}: <green>{}<r>\nReceived: <red>{}<r>\n",
                 msgs.verb,
-                expected.to_fmt(&mut f1),
+                expected.to_js().to_fmt(&mut f1),
                 received.to_fmt(&mut f2),
             )
         }
@@ -2129,7 +2142,6 @@ impl ExpectStringMatching {
     ) -> JsResult<JSValue> {
         let test_value = match test_value {
             StringOrRegExp::String(string) => string.to_js(),
-            StringOrRegExp::StringObject(object) => object.to_js(),
             StringOrRegExp::RegExp(reg_exp) => reg_exp.to_js(),
             StringOrRegExp::Other => {
                 return Err(crate::throw_pretty_static!(
@@ -2156,7 +2168,7 @@ impl ExpectCloseTo {
         global_this: &JSGlobalObject,
         flags: Flags,
         (number, number_value): (Option<f64>, JsLocal<'_>),
-        (precision, precision_value): (Precision, JsLocal<'_>),
+        (precision, precision_value): (ExpectPrecision, JsLocal<'_>),
     ) -> JsResult<JSValue> {
         if number.is_none() {
             return Err(crate::throw_pretty_static!(
@@ -2165,7 +2177,7 @@ impl ExpectCloseTo {
             ));
         }
 
-        if matches!(precision, Precision::Other) {
+        if matches!(precision, ExpectPrecision::Other) {
             return Err(crate::throw_pretty_static!(
                 global_this,
                 "<d>expect.<r>closeTo<d>(number, <r>precision?<d>)<r>\n\nPrecision must be a number or undefined",
@@ -2173,8 +2185,12 @@ impl ExpectCloseTo {
         }
 
         let instance_jsvalue = ExpectCloseTo { flags }.to_js(global_this);
-        js_ExpectCloseTo::number_value_set_cached(instance_jsvalue, global_this, number_value);
-        if matches!(precision, Precision::Absent) {
+        js_ExpectCloseTo::number_value_set_cached(
+            instance_jsvalue,
+            global_this,
+            number_value.to_js(),
+        );
+        if matches!(precision, ExpectPrecision::Missing) {
             // default value from jest
             js_ExpectCloseTo::digits_value_set_cached(
                 instance_jsvalue,
@@ -2185,7 +2201,7 @@ impl ExpectCloseTo {
             js_ExpectCloseTo::digits_value_set_cached(
                 instance_jsvalue,
                 global_this,
-                precision_value,
+                precision_value.to_js(),
             );
         }
 
@@ -2212,7 +2228,11 @@ impl ExpectObjectContaining {
         };
 
         let instance_jsvalue = ExpectObjectContaining { flags }.to_js(global_this);
-        js_ExpectObjectContaining::object_value_set_cached(instance_jsvalue, global_this, object_value);
+        js_ExpectObjectContaining::object_value_set_cached(
+            instance_jsvalue,
+            global_this,
+            object_value.to_js(),
+        );
 
         global_this.bun_vm().auto_garbage_collect();
         Ok(instance_jsvalue)
@@ -2227,18 +2247,15 @@ impl ExpectStringContaining {
     fn create(
         global_this: &JSGlobalObject,
         flags: Flags,
-        string_value: StringValue<'_>,
+        string_value: Option<JsLocal<'_, StringLike>>,
     ) -> JsResult<JSValue> {
-        let string_value = match string_value {
-            StringValue::String(string) => string.to_js(),
-            StringValue::StringObject(object) => object.to_js(),
-            StringValue::Other => {
-                return Err(crate::throw_pretty_static!(
-                    global_this,
-                    "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string\n",
-                ));
-            }
+        let Some(string_value) = string_value else {
+            return Err(crate::throw_pretty_static!(
+                global_this,
+                "<d>expect.<r>stringContaining<d>(<r>string<d>)<r>\n\nExpected a string\n",
+            ));
         };
+        let string_value = string_value.to_js();
 
         let string_containing_js_value = ExpectStringContaining { flags }.to_js(global_this);
         js_ExpectStringContaining::string_value_set_cached(string_containing_js_value, global_this, string_value);
@@ -2259,7 +2276,7 @@ impl ExpectAny {
         constructor: ConstructorArgument<'_>,
     ) -> JsResult<JSValue> {
         let constructor = match constructor {
-            ConstructorArgument::Absent => {
+            ConstructorArgument::Missing => {
                 return Err(global_this.throw2(
                     "any() expects to be passed a constructor function. Please pass one or use anything() to match any object.",
                     (),
@@ -2309,7 +2326,11 @@ impl ExpectArrayContaining {
         };
 
         let array_containing_js_value = ExpectArrayContaining { flags }.to_js(global_this);
-        js_ExpectArrayContaining::array_value_set_cached(array_containing_js_value, global_this, array_value);
+        js_ExpectArrayContaining::array_value_set_cached(
+            array_containing_js_value,
+            global_this,
+            array_value.to_js(),
+        );
 
         global_this.bun_vm().auto_garbage_collect();
         Ok(array_containing_js_value)
@@ -2337,8 +2358,8 @@ impl ExpectCustomAsymmetricMatcher {
     /// This will not run the matcher, but just capture the args etc.
     pub(crate) fn create(
         global_this: &JSGlobalObject,
-        this_value: JsLocal<'_>,
-        args: &[JsLocal<'_>],
+        this_value: JSValue,
+        args: &[JSValue],
         matcher_fn: JSValue,
     ) -> JsResult<JSValue> {
         // try to retrieve the ExpectStatic instance (to get the flags)
@@ -2369,7 +2390,7 @@ impl ExpectCustomAsymmetricMatcher {
         &self,
         this_value: JSValue,
         global_this: &JSGlobalObject,
-        received: impl AnyValue,
+        received: JSValue,
     ) -> JsResult<bool> {
         // retrieve the user-provided matcher implementation function (the function passed to expect.extend({ ... }))
         let Some(matcher_fn) = js_ExpectCustomAsymmetricMatcher::matcher_fn_get_cached(this_value) else {
@@ -2401,21 +2422,21 @@ impl ExpectCustomAsymmetricMatcher {
 
         // prepare the args array as `[received, ...captured_args]`
         let args_count = captured_args.get_length(global_this)?;
-        MarkedArgumentBuffer::new(|matcher_args| {
-            matcher_args.append(received);
-            for i in 0..args_count {
-                matcher_args.append(captured_args.get_index(global_this, i as u32)?);
-            }
+        let mut matcher_args: Vec<JSValue> =
+            Vec::with_capacity((args_count as usize).saturating_add(1));
+        matcher_args.push(received);
+        for i in 0..args_count {
+            matcher_args.push(captured_args.get_index(global_this, i as u32)?);
+        }
 
-            Expect::execute_custom_matcher(
-                global_this,
-                &matcher_name,
-                matcher_fn,
-                matcher_args,
-                self.flags,
-                true,
-            )
-        })
+        Expect::execute_custom_matcher(
+            global_this,
+            &matcher_name,
+            matcher_fn,
+            &matcher_args,
+            self.flags,
+            true,
+        )
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
@@ -2440,7 +2461,7 @@ impl ExpectCustomAsymmetricMatcher {
         cx: &mut JsScope<'_>,
         received: JsLocal<'_>,
     ) -> JsResult<bool> {
-        self.execute_impl(this_value.to_js(), cx.global(), received)
+        self.execute_impl(this_value.to_js(), cx.global(), received.to_js())
     }
 
     fn maybe_clear(global_this: &JSGlobalObject, err: JsError, dont_throw: bool) -> crate::Result<bool> {
@@ -2537,7 +2558,7 @@ impl ExpectMatcherContext {
         a: JsLocal<'_>,
         b: JsLocal<'_>,
     ) -> JsResult<bool> {
-        a.jest_deep_equals(b, cx.global())
+        a.to_js().jest_deep_equals(b.to_js(), cx.global())
     }
 }
 
@@ -2552,7 +2573,7 @@ impl ExpectMatcherUtils {
 
     fn print_value(
         global_this: &JSGlobalObject,
-        value: JsLocal<'_>,
+        value: JSValue,
         color_or_null: Option<&'static str>,
     ) -> JsResult<Vec<u8>> {
         let mut mutable_string = bun_core::MutableString::init_2048()?;
@@ -2576,7 +2597,7 @@ impl ExpectMatcherUtils {
     }
 
     pub(crate) fn stringify(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) -> JsResult<Vec<u8>> {
-        Self::print_value(cx.global(), value, None)
+        Self::print_value(cx.global(), value.to_js(), None)
     }
 
     pub(crate) fn print_expected(
@@ -2584,7 +2605,7 @@ impl ExpectMatcherUtils {
         cx: &mut JsScope<'_>,
         value: JsLocal<'_>,
     ) -> JsResult<Vec<u8>> {
-        Self::print_value(cx.global(), value, Some("<green>"))
+        Self::print_value(cx.global(), value.to_js(), Some("<green>"))
     }
 
     pub(crate) fn print_received(
@@ -2592,7 +2613,7 @@ impl ExpectMatcherUtils {
         cx: &mut JsScope<'_>,
         value: JsLocal<'_>,
     ) -> JsResult<Vec<u8>> {
-        Self::print_value(cx.global(), value, Some("<red>"))
+        Self::print_value(cx.global(), value.to_js(), Some("<red>"))
     }
 
     pub(crate) fn matcher_hint(
@@ -2621,7 +2642,7 @@ impl ExpectMatcherUtils {
 
         if let Some(options) = options {
             let MatcherHintOptionsOrOther::Options(options) =
-                MatcherHintOptionsOrOther::from_js(global_this, options)?
+                MatcherHintOptionsOrOther::from_js(global_this, options.to_js())?
             else {
                 return Err(
                     global_this.throw2("matcherHint: options must be an object (or undefined)", ())
@@ -2632,11 +2653,11 @@ impl ExpectMatcherUtils {
 
         let diff_formatter = match (received, expected) {
             (Some(received), Some(expected)) => {
-                DiffFormatter::new(global_this, received, expected, is_not)?
+                DiffFormatter::new(global_this, received.to_js(), expected.to_js(), is_not)?
             }
             (Some(received), None) => DiffFormatter::new(
                 global_this,
-                received,
+                received.to_js(),
                 bun_core::String::static_("expected").to_js(global_this)?,
                 is_not,
             )?,

@@ -32,12 +32,12 @@ JSValue DictionaryMemberReader::get(const Identifier& name)
 JSValue DictionaryMemberReader::getOwn(unsigned index)
 {
     auto scope = DECLARE_THROW_SCOPE(m_vm);
-    JSValue value = getOwnIfPresent(index);
+    JSValue value = getOwnIfPropertyExists(index);
     RETURN_IF_EXCEPTION(scope, {});
     return value ? value : jsUndefined();
 }
 
-JSValue DictionaryMemberReader::getOwnIfPresent(unsigned index)
+JSValue DictionaryMemberReader::getOwnIfPropertyExists(unsigned index)
 {
     auto scope = DECLARE_THROW_SCOPE(m_vm);
     PropertySlot slot(m_object, PropertySlot::InternalMethodType::GetOwnProperty);

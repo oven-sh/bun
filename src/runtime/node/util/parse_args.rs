@@ -911,10 +911,10 @@ fn parse_args_impl(
     // Phase 0.A: Get and validate type of input args
     let config_args = match config {
         Some(c) => c.args(global)?,
-        None => ParseArgsList::Unset,
+        None => ParseArgsList::Missing,
     };
     let args: ArgsSlice = match config_args {
-        ParseArgsList::Array(config_args) => {
+        ParseArgsList::List(config_args) => {
             let config_args = config_args.to_js();
             ArgsSlice {
                 array: config_args,
@@ -922,13 +922,13 @@ fn parse_args_impl(
                 end: u32::try_from(config_args.get_length(global)?).expect("int cast"),
             }
         }
-        ParseArgsList::Unset => get_default_args(global)?,
+        ParseArgsList::Missing => get_default_args(global)?,
         ParseArgsList::Other(config_args) => {
             return Err(validators::throw_err_invalid_arg_type_with_message(
                 global,
                 format_args!(
                     "The \"args\" property must be an instance of Array, got {}",
-                    config_args.type_name(global)
+                    config_args.to_js().type_name(global)
                 ),
             ));
         }
@@ -938,32 +938,35 @@ fn parse_args_impl(
 
     let config_strict = match config {
         Some(c) => c.strict(global)?,
-        None => ParseArgsFlag::Unset,
+        None => ParseArgsFlag::Missing,
     };
     let config_allow_positionals = match config {
         Some(c) => c.allow_positionals(global)?,
-        None => ParseArgsFlag::Unset,
+        None => ParseArgsFlag::Missing,
     };
     let config_return_tokens = match config {
         Some(c) => c.tokens(global)?,
-        None => ParseArgsFlag::Unset,
+        None => ParseArgsFlag::Missing,
     };
     let config_allow_negative = match config {
         Some(c) => c.allow_negative(global)?,
-        None => ParseArgsFlag::Unset,
+        None => ParseArgsFlag::Missing,
     };
     let config_options = match config {
         Some(c) => c.options(global)?,
-        None => ParseArgsOptions::Unset,
+        None => ParseArgsOptions::Missing,
     };
 
     // Node coalesces each top-level flag with `?? default`, so an explicit `null`
     // behaves like an absent key.
     let validate_boolean = |value: ParseArgsFlag<'_>, name: &str, default: bool| match value {
-        ParseArgsFlag::Unset => Ok(default),
+        ParseArgsFlag::Missing => Ok(default),
         ParseArgsFlag::Flag(flag) => Ok(flag),
-        ParseArgsFlag::Other(value) => Err(validators::throw_err_invalid_arg_type_opaque(
-            global, name, "boolean", value,
+        ParseArgsFlag::Other(value) => Err(validators::throw_err_invalid_arg_type(
+            global,
+            name,
+            "boolean",
+            value.to_js(),
         )),
     };
     let strict = validate_boolean(config_strict, "strict", true)?;
@@ -975,7 +978,7 @@ fn parse_args_impl(
     // Phase 0.C: Parse the options definitions
 
     let options_iter = match config_options {
-        ParseArgsOptions::Unset => None,
+        ParseArgsOptions::Missing => None,
         ParseArgsOptions::Object(config_options) => {
             let config_options = config_options.to_js();
             validators::validate_object(global, config_options, "options", Default::default())?;
@@ -986,11 +989,11 @@ fn parse_args_impl(
             )?)
         }
         ParseArgsOptions::Other(config_options) => {
-            return Err(validators::throw_err_invalid_arg_type_opaque(
+            return Err(validators::throw_err_invalid_arg_type(
                 global,
                 "options",
                 "object",
-                config_options,
+                config_options.to_js(),
             ));
         }
     };

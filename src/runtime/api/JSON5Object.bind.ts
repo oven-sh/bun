@@ -5,7 +5,7 @@ export default b.module({ rustPath: "crate::api::json5_object" });
 /** As `JSON.stringify` takes it: a number or a string, which an object may box. Anything else is no indentation. */
 export const StringifySpace = b.union({
   number: b.f64,
-  string: b.string,
+  text: b.string,
   numberObject: b.cell("JSC::NumberObject", "JavaScriptCore/NumberObject.h", { rustPath: "bun_jsc::JSObject" }),
   stringObject: b.stringObject,
   other: b.ignored,

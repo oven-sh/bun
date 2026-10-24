@@ -16,14 +16,14 @@ use bun_jsc::{
 use bun_jsc::virtual_machine::VirtualMachine;
 
 use bun_collections::ByteVecExt;
-use bun_jsc::bindgen::{self, AnyValue, Callable, JsHeap, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, Callable, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_ptr::{BackRef, CellRefCounted, DetachablePtr, RawSlice, RefPtr};
 use bun_sys::Error as SysError;
 
 use crate::api::native_promise_context;
 use crate::generated_bindgen::html_rewriter::{
     AttributeIteratorResult, ContentOptions, DocumentHandlers, ElementHandlers, RewriterInput,
-    assigned_text, js_HTMLRewriter, js_HTMLRewriterTransform,
+    js_HTMLRewriter, js_HTMLRewriterTransform,
 };
 use crate::generated_bindgen::html_rewriter_internals::{
     Bun__HTMLRewriter__onHandlerReject, Bun__HTMLRewriter__onHandlerResolve,
@@ -148,7 +148,7 @@ impl HandlerList {
     }
 
     /// `put_index` defines an own property, so an `Array.prototype` setter never sees a handler.
-    fn append(self, global: &JSGlobalObject, value: impl AnyValue) -> JsResult<HandlerSlot> {
+    fn append(self, global: &JSGlobalObject, value: JSValue) -> JsResult<HandlerSlot> {
         let index = self.0.get_length(global)? as u32;
         self.0.put_index(global, index, value)?;
         Ok(HandlerSlot(index))
@@ -159,7 +159,9 @@ impl HandlerList {
         global: &JSGlobalObject,
         value: Option<JsLocal<'_, Callable>>,
     ) -> JsResult<Option<HandlerSlot>> {
-        value.map(|value| self.append(global, value)).transpose()
+        value
+            .map(|value| self.append(global, value.to_js()))
+            .transpose()
     }
 
     /// `Err` while an exception (a termination) is pending.
@@ -356,8 +358,12 @@ impl HTMLRewriter {
         cx: &mut JsScope<'a>,
         (handlers, handlers_value): (DocumentHandlers<'a>, JsLocal<'a>),
     ) -> JsResult<JsWrapper<'a, Self>> {
-        let handler =
-            DocumentHandler::init(cx.global(), this_value.to_js(), handlers_value, &handlers)?;
+        let handler = DocumentHandler::init(
+            cx.global(),
+            this_value.to_js(),
+            handlers_value.to_js(),
+            &handlers,
+        )?;
         self.context
             .borrow_mut()
             .document_handlers
@@ -427,7 +433,7 @@ impl HTMLRewriter {
                 ResponseKind::ArrayBuffer,
                 webcore::body::Value::from_js(cx.global(), BodyInit::DataView(view))?,
             )),
-            RewriterInput::Bytes(bytes) => Some((
+            RewriterInput::Buffer(bytes) => Some((
                 ResponseKind::ArrayBuffer,
                 webcore::body::Value::from_js(cx.global(), BodyInit::Buffer(bytes))?,
             )),
@@ -1983,7 +1989,7 @@ impl crate::webcore::sink::ControlledSink for RewriterPipe {
     unsafe fn close_with_error(
         this: *mut Self,
         global: &JSGlobalObject,
-        reason: JsLocal<'_>,
+        reason: JSValue,
     ) -> bun_sys::Result<()> {
         // SAFETY: caller contract; `end_from_stream` pins the pipe itself.
         unsafe { &*this }.end_from_stream(Some(StreamError::JSValue(
@@ -2034,7 +2040,7 @@ pub(crate) fn on_handler_reject(
     pipe.end_suspension();
     // Fails the output stream: delivers the error to its reader (script may run).
     pipe.fail(webcore::body::ValueError::JSValue(
-        jsc::strong::Optional::create(reason, global),
+        jsc::strong::Optional::create(reason.to_js(), global),
     ));
     // Balances the `ref_()` in `begin_suspension`.
     RewriterPipe::deref_nn(pipe.into());
@@ -2089,7 +2095,7 @@ impl DocumentHandler {
     pub(crate) fn init(
         global: &JSGlobalObject,
         rewriter: JSValue,
-        this_object: JsLocal<'_>,
+        this_object: JSValue,
         handlers: &DocumentHandlers<'_>,
     ) -> JsResult<DocumentHandler> {
         let list = HandlerList::of_rewriter(rewriter, global)?;
@@ -2415,7 +2421,7 @@ impl ElementHandler {
 
         let list = HandlerList::of_rewriter(rewriter, global)?;
         Ok(ElementHandler {
-            this_object: list.append(global, this_object.object())?,
+            this_object: list.append(global, this_object.object().to_js())?,
             on_element_callback: list.append_optional(global, element)?,
             on_comment_callback: list.append_optional(global, comments)?,
             on_text_callback: list.append_optional(global, text)?,
@@ -2540,8 +2546,8 @@ fn utf8_or_error<'a, 'b>(heap: &JsHeap<'a>, bytes: &'b [u8]) -> bindgen::Result<
 /// ToString (user `toString()`/`[Symbol.toPrimitive]`), so callers MUST do
 /// this BEFORE `DetachablePtr::get_mut`: the re-entered JS would alias its
 /// exclusive `&mut`.
-fn setter_utf8_arg(global: &JSGlobalObject, value: JsLocal<'_>) -> JsResult<String> {
-    let slice = assigned_text(global, value)?;
+fn setter_utf8_arg(global: &JSGlobalObject, value: JSValue) -> JsResult<String> {
+    let slice = value.to_utf8(global)?;
     Ok(utf8_or_throw(global, slice.slice())?.to_owned())
 }
 
@@ -2735,7 +2741,7 @@ impl Comment {
         if self.comment.is_detached() {
             return Ok(());
         }
-        let text = setter_utf8_arg(global, value)?;
+        let text = setter_utf8_arg(global, value.to_js())?;
         let Some(comment) = self.comment.get_mut() else {
             return Ok(());
         };
@@ -2809,7 +2815,7 @@ impl EndTag {
         if self.end_tag.is_detached() {
             return Ok(());
         }
-        let name = setter_utf8_arg(global, value)?;
+        let name = setter_utf8_arg(global, value.to_js())?;
         let Some(end_tag) = self.end_tag.get_mut() else {
             return Ok(());
         };
@@ -3108,7 +3114,7 @@ impl Element {
         if self.element.is_detached() {
             return Ok(());
         }
-        let name = setter_utf8_arg(global, value)?;
+        let name = setter_utf8_arg(global, value.to_js())?;
         let Some(el) = self.element.get_mut() else {
             return Ok(());
         };
@@ -3216,6 +3222,6 @@ pub(crate) fn on_reject_input_stream(
 ) {
     context.js_pump_reaction_pending.set(false);
     context.end_from_stream(Some(crate::webcore::streams::StreamError::JSValue(
-        jsc::strong::Optional::create(reason, cx.global()),
+        jsc::strong::Optional::create(reason.to_js(), cx.global()),
     )));
 }

@@ -7,9 +7,9 @@ use std::io::Write as _;
 
 use crate::Error;
 use crate::generated_bindgen::transpiler::{
-    LoaderOrContext, MacroContext, StringObjectOrContext, TranspilerExternal, TranspilerList,
-    TranspilerLoader, TranspilerMacros, TranspilerMinify, TranspilerOptions, TranspilerRecord,
-    TranspilerSourcemap, TranspilerStringObject, TranspilerTSConfig,
+    LoaderOrContext, MacroContext, TranspilerExternal, TranspilerList, TranspilerLoader,
+    TranspilerMacros, TranspilerMinify, TranspilerOptions, TranspilerRecord, TranspilerSourcemap,
+    TranspilerTSConfig,
 };
 use crate::node::types::Buffer;
 use crate::node::{Encoding, StringOrBuffer, ThreadIsolated};
@@ -122,12 +122,10 @@ fn loader_from_js<'a>(
     match loader.borrow() {
         TranspilerLoader::Missing => Ok(None),
         TranspilerLoader::Name(name) => loader_from_name(global, name),
-        TranspilerLoader::Other(other) => match TranspilerStringObject::from_js(global, *other)? {
-            TranspilerStringObject::Text(name) => loader_from_name(global, &name),
-            TranspilerStringObject::Other => {
-                Err(global.throw_invalid_arguments(format_args!("loader must be a string")))
-            }
-        },
+        TranspilerLoader::StringObject(name) => loader_from_name(global, &name.convert(global)?),
+        TranspilerLoader::Other => {
+            Err(global.throw_invalid_arguments(format_args!("loader must be a string")))
+        }
     }
 }
 
@@ -314,14 +312,13 @@ impl Config {
                         )));
                     }
                     TranspilerTSConfig::Text(text) => text,
+                    TranspilerTSConfig::StringObject(text) => {
+                        stringified = text.convert(global)?;
+                        &stringified
+                    }
                     TranspilerTSConfig::Other(tsconfig) => {
-                        stringified = match TranspilerStringObject::from_js(global, *tsconfig)? {
-                            TranspilerStringObject::Text(text) => text,
-                            // Use jsonStringifyFast for SIMD-optimized serialization
-                            TranspilerStringObject::Other => {
-                                tsconfig.json_stringify_fast(global)?
-                            }
-                        };
+                        // Use jsonStringifyFast for SIMD-optimized serialization
+                        stringified = tsconfig.to_js().json_stringify_fast(global)?;
                         &stringified
                     }
                 };
@@ -1391,16 +1388,14 @@ impl JSTranspiler {
             LoaderOrContext::Number(_) => {
                 return Err(global.throw_invalid_arguments(format_args!("loader must be a string")));
             }
-            LoaderOrContext::Other(arg) => {
-                StringObjectOrContext::from_js(global, arg, |arg| match arg {
-                    StringObjectOrContext::Name(name) => loader_from_name(global, &name),
-                    StringObjectOrContext::Context(context) => {
-                        js_ctx_value = context.to_js();
-                        Ok(None)
-                    }
-                    StringObjectOrContext::Other => Ok(None),
-                })?
+            LoaderOrContext::StringObject(name) => {
+                loader_from_name(global, &name.convert(global)?)?
             }
+            LoaderOrContext::Context(context) => {
+                js_ctx_value = context.to_js();
+                None
+            }
+            LoaderOrContext::Other => None,
         };
 
         match context {

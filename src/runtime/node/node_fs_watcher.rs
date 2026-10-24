@@ -22,7 +22,7 @@ use bun_ptr::{ParentRef, RefPtr, ThreadSafeRefCount};
 use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;
 
-use crate::generated_bindgen::node_fs_binding as schema;
+use crate::generated_bindgen::node_fs_binding as generated;
 use crate::generated_bindgen::node_fs_watcher::js_FSWatcher as js;
 use crate::node::types::{Encoding, Flavor, Parsing, PathLikeExt};
 use crate::webcore::encoding as Encoder;
@@ -635,8 +635,8 @@ pub(crate) struct Arguments<'a> {
 impl<'a> Arguments<'a> {
     pub(crate) fn from_js(
         cx: &bun_jsc::JsThread<'a>,
-        filename: schema::PathLike<'_>,
-        options: Option<schema::WatchOptions<'_>>,
+        filename: generated::PathLike<'_>,
+        options: Option<generated::WatchOptions<'_>>,
         listener: Option<JsLocal<'_, Callable>>,
     ) -> JsResult<Arguments<'a>> {
         let Ok(path) = PathLike::from_js(cx.global(), filename, &mut Parsing::new(Flavor::Sync))?

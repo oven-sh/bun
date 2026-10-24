@@ -4,7 +4,6 @@
 
 use core::ptr::NonNull;
 
-use crate::bindgen::{AnyValue, js_value_of};
 use crate::{JSGlobalObject, JSValue};
 
 // Note: field renamed from `impl` (Rust keyword) to `handle`.
@@ -17,8 +16,7 @@ pub struct Strong {
 
 impl Strong {
     /// Hold a strong reference to a JavaScript value. Released on `Drop`.
-    pub fn create(value: impl AnyValue, global: &JSGlobalObject) -> Strong {
-        let value = js_value_of(value);
+    pub fn create(value: JSValue, global: &JSGlobalObject) -> Strong {
         debug_assert!(!value.is_empty());
         Strong {
             handle: Impl::init(global, value),
@@ -32,8 +30,7 @@ impl Strong {
     }
 
     /// Set a new value for the strong reference.
-    pub fn set(&mut self, global: &JSGlobalObject, new_value: impl AnyValue) {
-        let new_value = js_value_of(new_value);
+    pub fn set(&mut self, global: &JSGlobalObject, new_value: JSValue) {
         debug_assert!(!new_value.is_empty());
         Impl::set(self.handle, global, new_value);
     }
@@ -64,8 +61,7 @@ impl Optional {
     }
 
     /// Hold a strong reference to a JavaScript value. Released on `Drop` or `clear`.
-    pub fn create(value: impl AnyValue, global: &JSGlobalObject) -> Optional {
-        let value = js_value_of(value);
+    pub fn create(value: JSValue, global: &JSGlobalObject) -> Optional {
         if !value.is_empty() {
             Optional {
                 handle: Some(Impl::init(global, value)),
@@ -123,8 +119,7 @@ impl Optional {
         unsafe { Impl::destroy(r) };
     }
 
-    pub fn set(&mut self, global: &JSGlobalObject, value: impl AnyValue) {
-        let value = js_value_of(value);
+    pub fn set(&mut self, global: &JSGlobalObject, value: JSValue) {
         let Some(r) = self.handle else {
             if value.is_empty() {
                 return;

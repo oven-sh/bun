@@ -12,7 +12,7 @@ use crate::generated_bindgen::bun_test::{
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_collections::LinearFifo;
 use bun_core::{Output, Timespec};
-use bun_jsc::bindgen::{AnyValue, JsLocal, JsScope};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
@@ -742,7 +742,7 @@ impl BunTest {
 
     fn bun_test_then_or_catch(
         global_this: &JSGlobalObject,
-        result: JsLocal<'_>,
+        result: JSValue,
         raw_ref: *mut RefData,
         is_catch: bool,
     ) -> JsResult<()> {
@@ -786,7 +786,7 @@ impl BunTest {
         value: JsLocal<'_>,
         context: *mut RefData,
     ) -> JsResult<()> {
-        Self::bun_test_then_or_catch(cx.global(), value, context, false)
+        Self::bun_test_then_or_catch(cx.global(), value.to_js(), context, false)
     }
 
     pub(crate) fn bun_test_catch(
@@ -794,7 +794,7 @@ impl BunTest {
         value: JsLocal<'_>,
         context: *mut RefData,
     ) -> JsResult<()> {
-        Self::bun_test_then_or_catch(cx.global(), value, context, true)
+        Self::bun_test_then_or_catch(cx.global(), value.to_js(), context, true)
     }
 
     pub(crate) fn bun_test_done_callback(
@@ -805,7 +805,7 @@ impl BunTest {
         let _g = group_begin!();
 
         let global_this = cx.global();
-        let Some(this) = this_value.as_class_ref::<DoneCallback>() else {
+        let Some(this) = this_value.to_js().as_class_ref::<DoneCallback>() else {
             return Err(global_this.throw(format_args!("Expected callee to be DoneCallback")));
         };
 
@@ -817,10 +817,11 @@ impl BunTest {
         } else {
             // error is only reported for the first done() call
             if let Some(error) = error {
-                let _ = global_this
-                    .bun_vm()
-                    .as_mut()
-                    .uncaught_exception(global_this, error, false);
+                let _ = global_this.bun_vm().as_mut().uncaught_exception(
+                    global_this,
+                    error.to_js(),
+                    false,
+                );
             }
         }
         this.called.set(true);
@@ -1263,7 +1264,7 @@ impl BunTest {
     pub(crate) fn on_uncaught_exception(
         &mut self,
         global_this: &JSGlobalObject,
-        exception: Option<impl AnyValue>,
+        exception: Option<JSValue>,
         is_rejection: bool,
         user_data: &RefDataValue,
     ) {
@@ -1349,7 +1350,7 @@ impl BunTest {
 pub(crate) fn print_error(
     vm: &mut VirtualMachine,
     global_this: &JSGlobalObject,
-    error: impl AnyValue,
+    error: JSValue,
     exception_list: Option<&mut bun_jsc::virtual_machine::ExceptionList>,
 ) {
     vm.run_error_handler(error, exception_list);

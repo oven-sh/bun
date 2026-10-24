@@ -85,12 +85,12 @@ it("length counts the arguments up to the last that is not optional, or is what 
 itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.i32.enforceRange(0, 5).loose).toThrow(".loose is another way");
   expect(() => b.i32.validateInteger().wrap).toThrow(".wrap is another way");
-  for (const refuses of [() => b.i32.wrap, () => b.i32.enforceRange(0, 5), () => b.i32.validateInteger()]) {
+  for (const refuses of [() => b.i32.enforceRange(0, 5), () => b.i32.validateInteger()]) {
     expect(() => refuses().allowBigInt).toThrow(
-      ".allowBigInt is for the strict and the .loose conversion; the others are ToNumber, which refuses a BigInt",
+      ".allowBigInt is for the strict, the .loose and the .wrap conversion; the others refuse a BigInt",
     );
   }
-  expect(() => b.i32.allowBigInt.wrap).toThrow(".wrap refuses a BigInt, which .allowBigInt asked for");
+  expect(b.i32.wrap.allowBigInt.idlType).toBe(b.i32.allowBigInt.wrap.idlType);
   expect(() => b.i32.allowBigInt.enforceRange(0, 5)).toThrow(".enforceRange() refuses a BigInt");
   expect(() => b.i32.loose.allowBigInt.validateInteger()).toThrow(".validateInteger() refuses a BigInt");
   expect(b.u16.allowBigInt.loose.idlType).toBe(b.u16.loose.allowBigInt.idlType);
@@ -126,7 +126,6 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     [b.string.owned, ".owned is only for an argument"],
     [b.promisePtr("T"), "the context of a promise reaction is an argument, alone or with .withValue"],
     [b.nativePromiseContext("T"), "the context of a promise reaction is an argument, alone or with .withValue"],
-    [b.promiseResult, "b.promiseResult is an argument of a promise reaction"],
   ] as const) {
     expect(() => b.array(type)).toThrow(reason);
     expect(() => b.dictionary({ member: type })).toThrow(`member: ${reason}`);
@@ -173,9 +172,6 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.union({ number: b.f64.otherAsNull })).toThrow("number: add b.ignored as an alternative");
   expect(() => b.fn({ args: { context: b.nativePromiseContext("T"), value: b.i32 }, export: "Bun__reaction" })).toThrow(
     "b.nativePromiseContext takes the pointer out of the cell",
-  );
-  expect(() => b.fn({ args: { value: b.promiseResult }, export: "Bun__reaction" })).toThrow(
-    "b.promiseResult is for a promise reaction, which also takes b.promisePtr or b.nativePromiseContext",
   );
   expect(() => b.overloads({ args: { a: b.i32.ifPassed } }, { args: { a: b.string } })).toThrow(
     ".ifPassed is not for overloads",
@@ -906,16 +902,13 @@ describe(".deferred", () => {
   itAlways("is written last, on an argument, of a body that can run JavaScript", () => {
     expect(() => b.string.deferred.optional).toThrow("put .deferred last");
     expect(() => b.dictionary({ text: b.string.deferred })).toThrow("text: .deferred is only for an argument");
-    expect(() => b.union({ text: b.string.deferred, other: b.null })).toThrow(
-      "text: .deferred is only for an argument",
-    );
     expect(() => b.fn({ returns: b.string.deferred })).toThrow(".deferred is only for an argument");
     expect(() => b.fn({ args: { text: b.string.deferred } })).toThrow(
       'text: the body converts it, which takes capability: "js"',
     );
   });
 
-  itAlways("cannot borrow what is gone once the conversion returns", () => {
+  itAlways("refuses a type that borrows from the conversion", () => {
     expect(() => b.fn({ args: { text: b.string.utf8.deferred }, capability: "js" })).toThrow(
       "text: it is converted in",
     );
@@ -972,7 +965,7 @@ describe("privateSymbol", () => {
 });
 
 describe(".emptyStringAsNull on a union that takes every value", () => {
-  it("claims the absent values first", () => {
+  it("undefined, null and the empty string are None", () => {
     for (const absent of [undefined, null, ""]) expect(bindgen.describeFlagOrRest(absent)).toBe("absent");
     expect(bindgen.describeFlagOrRest(true)).toBe("on");
     expect(bindgen.describeFlagOrRest(false)).toBe("off");
@@ -982,7 +975,7 @@ describe(".emptyStringAsNull on a union that takes every value", () => {
 });
 
 describe("a string view", () => {
-  it("is absent for another kind with .otherAsNull", () => {
+  it("with .otherAsNull, a value that is not a string is None", () => {
     expect(bindgen.viewLengthOrNone("abc")).toBe(3);
     expect(bindgen.viewLengthOrNone(new String("ab"))).toBe(2);
     expect(bindgen.viewLengthOrNone(5)).toBe(-1);
@@ -991,7 +984,7 @@ describe("a string view", () => {
 });
 
 describe(".validateInteger of b.i64", () => {
-  it("takes what does not fit 32 bits", () => {
+  it("accepts an integer above 32 bits", () => {
     expect(bindgen.viewLengthOrNone("", 2 ** 32 - 1)).toBe(2 ** 32 - 1);
     expect(bindgen.viewLengthOrNone("", -1)).toBe(-1);
     expect(() => bindgen.viewLengthOrNone("", 2 ** 32)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));
@@ -1004,49 +997,49 @@ describe("a deferred dictionary", () => {
     const read: string[] = [];
     const options = (values: Record<string, unknown>) =>
       new Proxy(values, { get: (target, key) => (read.push(String(key)), Reflect.get(target, key)) });
-    expect(bindgen.describeInSteps(options({ name: "a", lvl: 3, nested: { x: 2 } }))).toBe("a 3 false false Some(2)");
+    expect(bindgen.describeDeferred(options({ name: "a", lvl: 3, nested: { x: 2 } }))).toBe("a 3 false false Some(2)");
     expect(read).toEqual(["name", "level", "lvl", "callback", "nested"]);
 
     read.length = 0;
-    expect(() => bindgen.describeInSteps(options({ name: "", level: "bad" }))).toThrow("name is empty");
+    expect(() => bindgen.describeDeferred(options({ name: "", level: "bad" }))).toThrow("name is empty");
     expect(read).toEqual(["name"]);
 
     read.length = 0;
-    expect(() => bindgen.describeInSteps(options({ name: "a", level: 10, callback: 1 }))).toThrow(
+    expect(() => bindgen.describeDeferred(options({ name: "a", level: 10, callback: 1 }))).toThrow(
       'The value of "options.level" is out of range. It must be >= 0 and <= 9. Received 10',
     );
     expect(read).toEqual(["name", "level"]);
   });
 
-  it("names the member, takes every object and gives the object itself", () => {
-    expect(() => bindgen.describeInSteps({})).toThrow("options.name");
-    expect(() => bindgen.describeInSteps({ name: "a", callback: 1 })).toThrow("options.callback");
-    expect(() => bindgen.describeInSteps(1)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
-    expect(bindgen.describeInSteps(Object.assign([], { name: "a" }))).toBe("a 1 false false None");
+  it("reports a member by its name, accepts an array, and hands the body the object", () => {
+    expect(() => bindgen.describeDeferred({})).toThrow("options.name");
+    expect(() => bindgen.describeDeferred({ name: "a", callback: 1 })).toThrow("options.callback");
+    expect(() => bindgen.describeDeferred(1)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(bindgen.describeDeferred(Object.assign([], { name: "a" }))).toBe("a 1 false false None");
     expect(
-      bindgen.describeInSteps({
+      bindgen.describeDeferred({
         name: "a",
         callback() {
           return this;
         },
       }),
     ).toBe("a 1 true false None");
-    expect(bindgen.describeInSteps(Object.create({ name: "a", mine: true }))).toBe("a 1 false false None");
-    expect(bindgen.describeInSteps({ name: "a", mine: true })).toBe("a 1 false true None");
+    expect(bindgen.describeDeferred(Object.create({ name: "a", mine: true }))).toBe("a 1 false false None");
+    expect(bindgen.describeDeferred({ name: "a", mine: true })).toBe("a 1 false true None");
   });
 
-  it("is a member, an alternative, and absent as any other type is", () => {
-    const steps = (name: string) => ({ name });
-    expect(bindgen.namesOfSteps(1, {})).toBe("- - - -");
-    expect(bindgen.namesOfSteps(steps("a"), { steps: steps("b"), either: steps("c") }, { inner: steps("d") })).toBe(
-      "a b c d",
-    );
-    expect(bindgen.namesOfSteps(null, { either: "text" }, { inner: null })).toBe("- - text -");
-    expect(() => bindgen.namesOfSteps(1, { steps: 1 })).toThrow("TestStepHolder.steps");
-    expect(() => bindgen.namesOfSteps(1, {}, { inner: 1 })).toThrow("TestOuterSteps.inner");
+  it("works as a member, as an alternative, and with .optional", () => {
+    const options = (name: string) => ({ name });
+    expect(bindgen.namesOfDeferred(1, {})).toBe("- - - -");
+    expect(
+      bindgen.namesOfDeferred(options("a"), { options: options("b"), either: options("c") }, { inner: options("d") }),
+    ).toBe("a b c d");
+    expect(bindgen.namesOfDeferred(null, { either: "text" }, { inner: null })).toBe("- - text -");
+    expect(() => bindgen.namesOfDeferred(1, { options: 1 })).toThrow("TestDeferredHolder.options");
+    expect(() => bindgen.namesOfDeferred(1, {}, { inner: 1 })).toThrow("TestOuterDeferred.inner");
   });
 
-  itAlways("holds nothing that borrows, and is not returned", () => {
+  itAlways("refuses a member that borrows, and refuses to be a result", () => {
     expect(() => b.dictionary({ text: b.string.utf8 }, { deferred: true })).toThrow(
       "text: it is converted in another frame than the one it would borrow: write .owned",
     );
@@ -1059,10 +1052,35 @@ describe(".deferred on two arguments of one name", () => {
     expect(bindgen.deferredKeyLength("é")).toBe(1);
     expect(bindgen.deferredKeyByteLength("é")).toBe(2);
   });
+
+  it("gives each the default its schema says", () => {
+    expect(bindgen.deferredCountOrOne()).toBe(1);
+    expect(bindgen.deferredCountOrTwo()).toBe(2);
+  });
+});
+
+describe(".deferred on an alternative", () => {
+  it("is chosen with the other arguments and converted by the body", () => {
+    let calls = 0;
+    const name = new String("a");
+    name.toString = () => (calls++, "b");
+    expect(bindgen.nameOrKind("a", true)).toBe("a");
+    expect(bindgen.nameOrKind(name, false)).toBe("a String object");
+    expect(calls).toBe(0);
+    expect(bindgen.nameOrKind(name, true)).toBe("b");
+    expect(calls).toBe(1);
+    expect(bindgen.nameOrKind(1, true)).toBe("other");
+  });
+
+  itAlways("is refused on a type that takes every value", () => {
+    expect(() => b.union({ number: b.f64, other: b.i32.wrap.deferred })).toThrow(
+      "other: it takes every value, so the union has nothing to choose by",
+    );
+  });
 });
 
 describe(".deferred of undefined", () => {
-  it("converts to what it does when it is not deferred", () => {
+  it("converts the same as without .deferred", () => {
     for (const args of [
       [],
       [undefined, undefined, undefined, undefined],
@@ -1093,12 +1111,6 @@ describe("b.opaque", () => {
     expect(bindgen.kindOf([])).toBe("list");
     expect(bindgen.kindOf(() => {})).toBe("callback");
     for (const value of [undefined, null, {}, 1n, Symbol(), true]) expect(bindgen.kindOf(value)).toBe("other");
-  });
-
-  it("an enumeration with fromJS reports the value as it says", () => {
-    expect(bindgen.levelFromJS("low")).toBe(0);
-    expect(bindgen.levelFromJS("high")).toBe(1);
-    expect(() => bindgen.levelFromJS("middle")).toThrow('level must be "low" or "high"');
   });
 });
 
@@ -1144,7 +1156,7 @@ describe("b.conversion", () => {
     expect(() => bindgen.joinParts("a", Symbol())).toThrow(TypeError);
   });
 
-  itAlways("takes what a dictionary member can be", () => {
+  itAlways("refuses .ifPassed, .deferred and .withValue", () => {
     expect(() => b.conversion(b.string.ifPassed)).toThrow(".ifPassed is only for an argument");
     expect(() => b.conversion(b.string.deferred)).toThrow(".deferred is only for an argument");
     expect(() => b.conversion(b.f64.withValue)).toThrow("b.bytes and .withValue are only for an argument");
@@ -1173,21 +1185,44 @@ describe("b.cell", () => {
       expect(() => bindgen.takePromise(value)).toThrow(new TypeError("promise must be an instance of Promise"));
   });
 
-  it("goes by the kind of a value", () => {
+  it("with .otherAsNull, a value of another class is None", () => {
     expect(bindgen.isPromise(Promise.resolve())).toBe(true);
     for (const value of [undefined, null, {}, { then() {} }]) expect(bindgen.isPromise(value)).toBe(false);
   });
 
-  it("of the class of a kind takes that kind", () => {
+  it("b.cell(JSDataView) before b.bufferSource gets the DataViews", () => {
     expect(bindgen.describeViewOrBuffer(new DataView(new ArrayBuffer(1)))).toBe("DataView");
     for (const value of [new ArrayBuffer(1), new Uint8Array(1), new Float64Array(1), Buffer.alloc(1)])
       expect(bindgen.describeViewOrBuffer(value)).toBe("another buffer");
     for (const value of [undefined, {}, []]) expect(bindgen.describeViewOrBuffer(value)).toBe("other");
   });
 
-  itAlways("of the class of a kind is never chosen after a type that takes the kind", () => {
+  itAlways("b.cell(JSDataView) after b.bufferSource is refused", () => {
     const dataView = b.cell("JSC::JSDataView", "JavaScriptCore/JSDataView.h", { rustPath: "bun_jsc::JSObject" });
     expect(() => b.union({ buffer: b.bufferSource.allowShared, dataView })).toThrow("dataView is never chosen");
+  });
+
+  itAlways("b.cell(JSUint8Array) beside b.bufferSource is refused", () => {
+    const bytes = b.cell("JSC::JSUint8Array", "JavaScriptCore/JSTypedArrays.h", { rustPath: "bun_jsc::JSObject" });
+    expect(() => b.union({ bytes, buffer: b.bufferSource })).toThrow(
+      "bytes is never chosen: buffer takes every typedArray",
+    );
+  });
+
+  itAlways("two alternatives of one class are refused", () => {
+    const promise = b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h", { rustPath: "bun_jsc::JSPromise" });
+    expect(() => b.union({ first: b.promise, promise })).toThrow("promise is never chosen");
+  });
+
+  it('a value that is not a symbol "must be a symbol", not an instance of one', () => {
+    const symbol = Symbol();
+    expect(bindgen.takeSymbol(symbol)).toBe(symbol);
+    expect(() => bindgen.takeSymbol("a")).toThrow(new TypeError("symbol must be a symbol"));
+  });
+
+  it("b.stringLike is a string or a String object", () => {
+    for (const value of ["a", new String("a")]) expect(bindgen.isStringLike(value)).toBe(true);
+    for (const value of [undefined, 1, {}, Symbol()]) expect(bindgen.isStringLike(value)).toBe(false);
   });
 
   itAlways("without a rustPath is only an internal field of C++", () => {
@@ -1199,7 +1234,7 @@ describe("b.cell", () => {
 
 describe("b.wrapped", () => {
   it("gives what an instance of the C++ class wraps", () => {
-    expect(bindgen.fileSystemPath(new URL("file:///tmp/a"))).toBe("/tmp/a");
+    expect(bindgen.fileSystemPath(Bun.pathToFileURL(import.meta.path))).toBe(import.meta.path);
     expect(bindgen.fileSystemPath(new URL("https://example.com/"))).toBe(null);
     for (const value of [undefined, "file:///tmp/a", {}, URL])
       expect(() => bindgen.fileSystemPath(value)).toThrow(new TypeError("url must be an instance of URL"));
@@ -1207,7 +1242,7 @@ describe("b.wrapped", () => {
 
   it("is an alternative of a union", () => {
     expect(bindgen.pathOf("/tmp/a")).toBe("/tmp/a");
-    expect(bindgen.pathOf(new URL("file:///tmp/b"))).toBe("/tmp/b");
+    expect(bindgen.pathOf(Bun.pathToFileURL(import.meta.path))).toBe(import.meta.path);
     expect(() => bindgen.pathOf(5)).toThrow(TypeError);
   });
 
@@ -1222,7 +1257,7 @@ describe("b.wrapped", () => {
     );
   });
 
-  itAlways("borrowed, it is only for an argument", () => {
+  itAlways("refuses &T anywhere but an argument", () => {
     const url = b.wrapped("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::DOMURL", reportedAs: "URL" });
     expect(() => b.dictionary({ url })).toThrow("only an argument's slot in the frame keeps it alive");
     b.dictionary({ url: url.shared });
@@ -1277,7 +1312,7 @@ describe(".validateIntegerRange", () => {
 });
 
 describe("a range in a union", () => {
-  it("one that validates takes the numbers, under its own name or that of the argument", () => {
+  it("reports a bad number under .reportedAs, or under the name of the argument", () => {
     expect(bindgen.describePathOrFd(3)).toBe("fd 3");
     expect(bindgen.describePathOrFd("a")).toBe("path a");
     expect(bindgen.describePathOrFd(true)).toBe("mode 1");
@@ -1293,7 +1328,7 @@ describe("a range in a union", () => {
     expect(bindgen.countOrText("a")).toBe(-1);
   });
 
-  itAlways("is not an element of an array, which has no name", () => {
+  itAlways("is refused as an element of an array", () => {
     const count = b.union({ count: b.i32.validateInteger(0, 1), text: b.string });
     expect(() => b.array(count)).toThrow("the converter of a range takes the name of the value");
     expect(() => b.i32.enforceRange(0, 1).reportedAs("x")).toThrow(".enforceRange() does not name the value");
@@ -1321,16 +1356,55 @@ describe("b.null", () => {
   });
 });
 
-describe("b.alternativesOf", () => {
-  itAlways("gives the alternatives of a union, in order, for another to take", () => {
+describe("a union as an alternative", () => {
+  it("is a variant that holds the inner enum", () => {
+    expect(bindgen.describeNested(1)).toBe("count 1");
+    expect(bindgen.describeNested("a")).toBe("text a");
+    expect(bindgen.describeNested(true)).toBe("flag true");
+    expect(bindgen.describeNested(null)).toBe("other");
+  });
+
+  it("as a result, gives back the value it holds", () => {
+    for (const value of [1, "a", true]) expect(bindgen.echoNested(value)).toBe(value);
+  });
+
+  itAlways("refuses an alternative name that the outer union also has", () => {
     const text = b.union({ text: b.string, flag: b.bool });
-    const more = b.union({ count: b.i32, ...b.alternativesOf(text) });
-    expect(more.alternatives.map(({ name }) => name)).toEqual(["count", "text", "flag"]);
+    expect(() => b.union({ text: b.i32, nested: text })).toThrow("two alternatives are both text");
+  });
+
+  itAlways("refuses an inner union with a .deferred alternative", () => {
+    const text = b.union({ text: b.string.deferred, other: b.ignored });
+    expect(() => b.union({ count: b.i32, nested: text })).toThrow(
+      "nested: the union that names a .deferred alternative converts it",
+    );
+  });
+});
+
+describe(".allowBigInt.wrap", () => {
+  it("wraps a number and a BigInt modulo the width", () => {
+    expect(bindgen.wrapToInt32(2 ** 32 + 5)).toBe(5);
+    expect(bindgen.wrapToInt32(2n ** 32n + 5n)).toBe(5);
+    expect(bindgen.wrapToInt32(-1n)).toBe(-1);
+    expect(bindgen.wrapToInt32("7")).toBe(7);
+    expect(() => bindgen.wrapToInt32({ valueOf: () => 1n })).toThrow(TypeError);
+  });
+});
+
+describe(".otherAsNull on an instance", () => {
+  it("after .withValue", () => {
+    expect(bindgen.countOfMaybe({ counter: new bindgen.TestCounter(3) })).toBe(3);
+    for (const counter of [undefined, 1, {}]) expect(bindgen.countOfMaybe({ counter })).toBe(-1);
+  });
+
+  it("after b.self", () => {
+    expect(bindgen.TestCounter.isCounter(new bindgen.TestCounter(1))).toBe(true);
+    for (const value of [undefined, 1, {}]) expect(bindgen.TestCounter.isCounter(value)).toBe(false);
   });
 });
 
 describe(".nanAs", () => {
-  it("is what NaN converts to, and undefined is absent as ever", () => {
+  it("replaces NaN, and undefined is still None", () => {
     expect(bindgen.countInRange(NaN)).toBe(-1);
     expect(bindgen.countInRange(undefined)).toBe(3);
     expect(bindgen.countInRange()).toBe(3);
@@ -1382,12 +1456,6 @@ describe("functions", () => {
     const cell = bindgen.makeNativePromiseContext();
     expect(bindgen.readNativePromiseContext(cell)).toBe(42);
     expect(bindgen.readNativePromiseContext(cell)).toBeNull();
-  });
-
-  it("promiseResult is a value the reaction tests itself", () => {
-    expect(bindgen.addToPromisePtr(8, bindgen.promisePtrContext)).toBe(50);
-    for (const other of [undefined, "8", {}])
-      expect(bindgen.addToPromisePtr(other, bindgen.promisePtrContext)).toBe(42);
   });
 
   it("$bindgen gives what a b.value returns", () => {
@@ -2029,7 +2097,6 @@ describe("unions", () => {
     expect(() => b.union({ text: b.string.loose, flag: b.bool })).toThrow("flag is never chosen");
     expect(() => b.union({ text: b.string.utf8, other: b.string })).toThrow("other is never chosen");
     expect(() => b.union({ integer: b.i32, number: b.f64 })).toThrow("number is never chosen");
-    expect(() => b.union({ none: b.null, inner: b.union({ text: b.string }) })).toThrow("list the alternatives");
     expect(() => b.union({ text: b.string.nullable, flag: b.bool })).toThrow("add b.null as an alternative");
     expect(() => b.union({ tag: b.bool, text: b.string })).toThrow("has a member of that name");
     const mode = b.enumeration(["on", "off"]);
@@ -2798,6 +2865,7 @@ describe("classes", () => {
       "length",
       "name",
       "starting",
+      "isCounter",
       "alive",
       "count",
       "limit",

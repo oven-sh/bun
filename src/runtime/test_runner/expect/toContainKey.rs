@@ -22,7 +22,10 @@ impl Expect {
                     return Err(g.throw_invalid_arguments(format_args!(
                         "Expected value must be an object\nReceived: {}", value.to_fmt(&mut f))));
                 }
-                Ok(ContainOutcome::pass(value.has_own_property_value(g, expected)?))
-            })
+                Ok(ContainOutcome::pass(
+                    value.has_own_property_value(g, expected.to_js())?,
+                ))
+            },
+        )
     }
 }

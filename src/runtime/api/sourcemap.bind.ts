@@ -4,12 +4,12 @@ export default b.module({ rustPath: "crate::api::js_source_map" });
 
 const find = { returns: b.object, capability: "js", throws: true } as const;
 
-/** `ToInt32`, and the low 32 bits of a BigInt. */
-export const SourcePosition = b.union({ bigint: b.bigInt, number: b.i32.wrap });
+/** Node.js does no validations. */
+const position = b.i32.allowBigInt.wrap;
 
 /** `undefined`, `null` and `false` are no string. Anything else but a symbol is converted to one. */
 export const SourceMapMappings = b.union({
-  absent: b.null,
+  missing: b.null,
   flag: b.bool,
   symbol: b.symbol,
   text: b.string.loose,
@@ -39,8 +39,8 @@ export const SourceMap = b.class({
   },
   internalFields: ["lineLengths", "payload"],
   proto: {
-    findEntry: { ...find, args: { lineOffset: SourcePosition, columnOffset: SourcePosition } },
-    findOrigin: { ...find, args: { lineNumber: SourcePosition, columnNumber: SourcePosition } },
+    findEntry: { ...find, args: { lineOffset: position, columnOffset: position } },
+    findOrigin: { ...find, args: { lineNumber: position, columnNumber: position } },
     lineLengths: { internalField: "lineLengths" },
     payload: { internalField: "payload" },
   },

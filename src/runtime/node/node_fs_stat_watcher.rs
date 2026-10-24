@@ -20,7 +20,7 @@ use bun_resolver::fs;
 use bun_sys::{self, PosixStat};
 use bun_threading::{Guarded, UnboundedQueue};
 
-use crate::generated_bindgen::node_fs_binding as schema;
+use crate::generated_bindgen::node_fs_binding as generated;
 use crate::generated_bindgen::node_fs_stat_watcher::js_StatWatcher as js;
 use crate::node::stat::{StatsBig, StatsSmall};
 use crate::node::types::{Flavor, Parsing, PathLikeExt};
@@ -889,8 +889,8 @@ pub(crate) struct Arguments {
 impl Arguments {
     pub(crate) fn from_js(
         cx: &bun_jsc::JsThread<'_>,
-        filename: schema::PathLike<'_>,
-        options: Deferred<'_, schema::WatchFileOptions>,
+        filename: generated::PathLike<'_>,
+        options: Deferred<'_, generated::WatchFileOptions>,
         listener: Option<JsLocal<'_, Callable>>,
     ) -> JsResult<Arguments> {
         let Ok(path) = PathLike::from_js(cx.global(), filename, &mut Parsing::new(Flavor::Sync))?

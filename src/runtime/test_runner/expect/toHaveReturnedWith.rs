@@ -5,7 +5,6 @@ use super::DiffFormatter;
 use super::Expect;
 use super::mock;
 use super::throw;
-use crate::generated_bindgen::expect::StringValue;
 
 impl Expect {
     pub(crate) fn to_have_returned_with(
@@ -19,7 +18,7 @@ impl Expect {
                 self,
                 cx.global(),
                 this_value.to_js(),
-                expected,
+                expected.to_js(),
                 return_roots,
             )
         })
@@ -30,7 +29,7 @@ fn to_have_returned_with_impl(
     this: &Expect,
     global: &JSGlobalObject,
     this_value: JSValue,
-    expected: JsLocal<'_>,
+    expected: JSValue,
     return_roots: &mut MarkedArgumentBuffer,
 ) -> JsResult<()> {
     let (this, returns, _) = this.mock_prologue(
@@ -103,11 +102,7 @@ fn to_have_returned_with_impl(
     // Case: Only one successful return, no errors
     if calls_count == 1 && successful_returns_count == 1 {
         let received = successful_returns[0];
-        if received.is_string()
-            && StringValue::from_js(global, expected, |expected| {
-                Ok(!matches!(expected, StringValue::Other))
-            })?
-        {
+        if expected.is_string() && received.is_string() {
             let diff_format = DiffFormatter::new(global, received, expected, false)?;
             return throw!(this, global, signature, "\n\n{}\n", diff_format);
         }

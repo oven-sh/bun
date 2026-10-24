@@ -112,7 +112,7 @@ impl SecureContext {
         // view when one exists.
         let ok = match pfx {
             Pkcs12Source::Missing => None,
-            Pkcs12Source::Bytes(view) => view.with_bytes(&cx.heap, |pfx_bytes| {
+            Pkcs12Source::Buffer(view) => view.with_bytes(&cx.heap, |pfx_bytes| {
                 (!pfx_bytes.is_empty()).then(|| parse(pfx_bytes))
             }),
             Pkcs12Source::Other(other) => {

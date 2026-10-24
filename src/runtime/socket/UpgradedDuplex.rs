@@ -806,9 +806,9 @@ pub(crate) fn on_received_data<'a>(
         let _keep_alive = this.keep_alive();
         if !this.origin.get().is_empty() {
             match data {
-                DuplexChunk::None => {}
+                DuplexChunk::Missing => {}
                 // The bytes are copied before a handler of the socket runs.
-                DuplexChunk::Bytes(buffer) => buffer.with_bytes(&cx.heap, |payload| {
+                DuplexChunk::Buffer(buffer) => buffer.with_bytes(&cx.heap, |payload| {
                     this.on_internal_receive_data(payload);
                 }),
                 DuplexChunk::Other => {

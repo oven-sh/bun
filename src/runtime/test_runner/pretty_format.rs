@@ -3,11 +3,11 @@ use core::ffi::c_void;
 
 use bun_collections::HashMap;
 use bun_core::fmt as bun_fmt;
+use bun_core::{EncodedSlice, Utf8Bytes, strings};
 use bun_jsc::{
     self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
     JSPropertyIterator, JSType, JSValue, JsError, JsResult, VM,
 };
-use bun_core::{strings, EncodedSlice, Utf8Bytes};
 
 use super::expect;
 use crate::generated_bindgen::expect::{
@@ -85,13 +85,11 @@ impl JestPrettyFormat {
     pub(crate) fn format<W: bun_io::Write>(
         level: MessageLevel,
         global: &JSGlobalObject,
-        value: impl bun_jsc::bindgen::AnyValue,
+        vals: &[JSValue],
+        len: usize,
         writer: &mut W,
         options: FormatOptions,
     ) -> JsResult<()> {
-        let vals = [<Formatter<'_> as bun_jsc::bindgen::ValueWalker>::value_of(
-            value,
-        )];
         // Nested values re-enter the formatter through `ConsoleFormatter::print_as`
         // with a `FmtAdapter<AsFmt>` sink; adapt the caller's writer to that same
         // type up front so the whole `Formatter` tree is instantiated once.
@@ -99,7 +97,7 @@ impl JestPrettyFormat {
         let result = {
             let mut bridge = AsFmt::new(&mut *writer);
             let mut adapted = bun_io::write::FmtAdapter::new(&mut bridge);
-            Self::format_adapted(level, global, &vals, vals.len(), &mut adapted, options)
+            Self::format_adapted(level, global, vals, len, &mut adapted, options)
         };
         // `FmtAdapter::flush` can't reach `writer`; do the requested flush here.
         if flush {
@@ -2574,8 +2572,6 @@ impl<'a> Formatter<'a> {
 /// test-runner-specific dispatch. Mirrors the `bun_jsc::console_object`
 /// `Formatter` impl (`src/jsc/lib.rs`) one-for-one, mapping the
 /// `bun_jsc::FormatTag` enum onto this file's smaller `Tag` set.
-impl bun_jsc::bindgen::ValueWalker for Formatter<'_> {}
-
 impl bun_jsc::ConsoleFormatter for Formatter<'_> {
     #[inline]
     fn global_this(&self) -> &JSGlobalObject { self.global_this }

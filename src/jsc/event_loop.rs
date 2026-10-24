@@ -491,20 +491,7 @@ impl EventLoop {
     /// that context (a stopped one is called for nobody: `JSValue::call`). [`ContextId::NONE`](crate::ContextId::NONE): no context of
     /// the caller's to enter (nothing owns the callback, or it carries its own: one stored with
     /// `with_async_context_if_needed`).
-    #[inline]
     pub fn run_callback(
-        &mut self,
-        context: crate::ContextId,
-        callback: JSValue,
-        global_object: &JSGlobalObject,
-        this_value: impl crate::bindgen::AnyValue,
-        arguments: &[JSValue],
-    ) {
-        let this_value = crate::bindgen::js_value_of(this_value);
-        self.run_callback_impl(context, callback, global_object, this_value, arguments);
-    }
-
-    fn run_callback_impl(
         &mut self,
         context: crate::ContextId,
         callback: JSValue,

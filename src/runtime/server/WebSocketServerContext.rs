@@ -326,7 +326,7 @@ pub(crate) fn on_create(
 
     match object.close_on_backpressure_limit(global_object)? {
         OptionBool::Missing => {}
-        OptionBool::Value(value) => {
+        OptionBool::Flag(value) => {
             server.close_on_backpressure_limit = value;
         }
         OptionBool::Other => {
@@ -338,7 +338,7 @@ pub(crate) fn on_create(
 
     match object.send_pings(global_object)? {
         OptionBool::Missing => {}
-        OptionBool::Value(value) => {
+        OptionBool::Flag(value) => {
             server.send_pings_automatically = value;
         }
         OptionBool::Other => {
@@ -350,7 +350,7 @@ pub(crate) fn on_create(
 
     match object.publish_to_self(global_object)? {
         OptionBool::Missing => {}
-        OptionBool::Value(value) => {
+        OptionBool::Flag(value) => {
             server
                 .handler
                 .flags

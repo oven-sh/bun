@@ -10,13 +10,13 @@ export const BunTestOptions = b.dictionary(
 
 /** A function here is the callback if none follows it, and else what the test is named after. */
 export const DescriptionOrCallback = b.union({
-  none: b.null,
-  function: b.callable,
+  missing: b.null,
+  callback: b.callable,
   text: b.string.utf8.owned,
   number: b.f64,
 });
 export const CallbackOrOptions = b.union({
-  none: b.null,
+  missing: b.null,
   callback: b.callable,
   timeout: b.f64,
   options: BunTestOptions,

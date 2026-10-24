@@ -22,7 +22,6 @@ const contentOp = (returns: b.Type) =>
 /** After the handler returns, the setter returns before `ToString`. */
 const assignable = (getter: b.Type) =>
   ({ getter, setter: { type: b.opaque, capability: "js" }, throws: true }) as const;
-export const assignedText = b.conversion(b.string.loose.utf8.owned);
 
 export const TextChunk = b.class({
   rustPath: "crate::api::html_rewriter::TextChunk",
@@ -161,8 +160,8 @@ export const ElementHandlers = b.dictionary(
 export const RewriterInput = b.union({
   response: Response,
   text: b.string.allowStringObject,
-  dataView: b.cell("JSC::JSDataView", "JavaScriptCore/JSDataView.h", { rustPath: "bun_jsc::JSObject" }),
-  bytes: b.bufferSource.allowShared,
+  dataView: b.dataView,
+  buffer: b.bufferSource.allowShared,
   other: b.ignored,
 });
 

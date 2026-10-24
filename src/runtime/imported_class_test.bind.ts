@@ -17,5 +17,5 @@ export const portAfterCallback = b.fn({
 export const AddressOrList = b.union({ address: SocketAddress, list: BlockList });
 export const describeAddressOrList = b.fn({ args: { value: AddressOrList }, returns: b.string.utf8 });
 
-export const AddressOrAnything = b.union({ address: SocketAddress, ignored: b.ignored });
+export const AddressOrAnything = b.union({ address: SocketAddress, other: b.ignored });
 export const isAddress = b.fn({ args: { value: AddressOrAnything }, returns: b.bool });

@@ -9,10 +9,10 @@ export const OptionalStreamId = b.union({ missing: b.null, id: b.f64, other: b.i
 /** `null` and `undefined` release the one the stream has. */
 export const StreamContext = b.union({ release: b.null, context: b.object, other: b.ignored });
 /** The elements of `many` are strings. */
-export const Origins = b.union({
-  none: b.null,
+export const H2Origins = b.union({
+  missing: b.null,
   one: b.string.allowStringObject.view,
-  many: b.jsArray,
+  list: b.jsArray,
   other: b.ignored,
 });
 
@@ -43,7 +43,7 @@ export const H2StreamState = b.dictionary({
 export const RequestHeaders = b.union({ rawPairs: b.jsArray, record: b.object, other: b.ignored });
 
 /** `options` of `request()`. */
-export const RequestOptions = b.dictionary(
+export const H2RequestOptions = b.dictionary(
   {
     paddingStrategy: b.f64.otherAsNull,
     waitForTrailers: b.bool.otherAsNull,
@@ -53,21 +53,20 @@ export const RequestOptions = b.dictionary(
     parent: { type: b.f64.optional, expected: ["number"] },
     weight: { type: b.f64.optional, expected: ["number"] },
     signal: {
-      type: b.wrapped("WebCore::JSAbortSignal", "JSAbortSignal.h", { rustPath: "bun_jsc::AbortSignal" }).shared
-        .optional,
+      type: b.abortSignal.shared.optional,
       expected: ["AbortSignal"],
     },
   },
   { deferred: true, reportedAs: "options" },
 );
-export const RequestOptionsArgument = b.union({ missing: b.null, options: RequestOptions, other: b.ignored });
+export const RequestOptionsArgument = b.union({ missing: b.null, options: H2RequestOptions, other: b.ignored });
 
 /** A `String` object is `other`: its `toString()` runs once the stream is known to take data. */
-export const WriteData = b.union({ bytes: b.bufferSource.allowShared, text: b.string, other: b.opaque });
+export const H2WriteData = b.union({ bytes: b.bufferSource.allowShared, text: b.string, other: b.opaque });
 export const WriteEncoding = b.union({ utf8: b.undefined, name: b.string.view, other: b.opaque });
 export const H2StringObject = b.union({ text: b.string.allowStringObject, other: b.ignored }, { fromJS: true });
 
-export const H2NativeSocket = b.union({ tls: TLSSocket, tcp: TCPSocket, other: b.ignored }, { fromJS: true });
+export const H2NativeSocket = b.union({ tls: TLSSocket.withValue, tcp: TCPSocket.withValue, other: b.ignored });
 
 export const NumberSetting = b.union({ missing: b.null, number: b.f64, other: b.ignored });
 export const FlagSetting = b.union({ missing: b.undefined, flag: b.bool, other: b.ignored });
@@ -135,8 +134,7 @@ export const H2FrameParserOptions = b.dictionary(
   {
     context: b.opaque.optional,
     handlers: H2Handlers.otherAsNull,
-    /** An `H2NativeSocket`. */
-    native: b.opaque.optional,
+    native: H2NativeSocket,
     settings: H2SettingsOption,
     type: b.f64.otherAsNull,
   },
@@ -212,7 +210,7 @@ export const H2FrameParser = b.class({
       length: 3,
     },
     noTrailers: stream,
-    origin: { ...js, args: { origin: Origins } },
+    origin: { ...js, args: { origin: H2Origins } },
     ping: { ...js, args: { payload: b.bufferSource.allowShared.otherAsNull }, returns: b.bool, length: 0 },
     pushPromise: {
       ...js,
@@ -258,7 +256,7 @@ export const H2FrameParser = b.class({
       ...js,
       args: {
         streamId,
-        data: WriteData,
+        data: H2WriteData,
         encoding: WriteEncoding,
         close: b.bool.loose,
         callback: b.callable.otherAsNull,

@@ -250,12 +250,7 @@ pub(super) fn payload_from_js<'a>(
             WebSocketMessage::Buffer(buffer),
             Accept::Any | Accept::AnyOrNullish | Accept::Binary | Accept::Control,
         ) => {
-            return Ok(Payload::Buffer(
-                buffer
-                    .to_js()
-                    .as_array_buffer(global_this)
-                    .expect("infallible: a BufferSource"),
-            ));
+            return Ok(Payload::Buffer(buffer.as_array_buffer(global_this)));
         }
         (
             WebSocketMessage::Blob(blob),
@@ -309,7 +304,11 @@ fn topic_from_js<'a>(
             Payload::Converted(web_socket_message_text(global_this, value)?)
         }
         WebSocketTopic::Other(value) => {
-            return Err(global_this.throw_invalid_argument_type_value(b"topic", b"string", value));
+            return Err(global_this.throw_invalid_argument_type_value(
+                b"topic",
+                b"string",
+                value.to_js(),
+            ));
         }
     };
     if topic.is_empty() && matches!(empty, EmptyTopic::Reject) {
@@ -332,7 +331,7 @@ fn compress_from_js(
 ) -> JsResult<bool> {
     match value {
         WebSocketCompress::Missing => Ok(false),
-        WebSocketCompress::Value(compress) => Ok(compress),
+        WebSocketCompress::Flag(compress) => Ok(compress),
         WebSocketCompress::Other => {
             Err(global_this.throw(format_args!("{fn_name} expects compress to be a boolean")))
         }
@@ -555,7 +554,7 @@ impl ServerWebSocket {
     /// The signal will not be ref'd inside the ServerWebSocket init function, but will unref itself when the ServerWebSocket is destroyed.
     pub(crate) fn init(
         handler: &WebSocketServerHandler,
-        data_value: impl bindgen::AnyValue,
+        data_value: JSValue,
         signal: Option<NonNull<AbortSignal>>,
     ) -> *mut ServerWebSocket {
         let global_object = handler.global_object();
@@ -590,7 +589,7 @@ impl ServerWebSocket {
     /// called with `websocket` as `this`.
     pub(crate) fn init_for_ws_package(
         handler: &WebSocketServerHandler,
-        websocket: JsLocal<'_>,
+        websocket: JSValue,
     ) -> *mut ServerWebSocket {
         let this = Self::init(handler, websocket, None);
         // SAFETY: `init` just made it. See the SAFETY comments there.
@@ -1119,11 +1118,9 @@ impl ServerWebSocket {
 
         let code: i32 = match code {
             WebSocketCloseCode::Missing => 1000,
-            // ToInt32
-            WebSocketCloseCode::Code(code) if code.is_finite() => {
-                (code.trunc() % 4294967296.0) as i64 as i32
+            WebSocketCloseCode::Code(code) => {
+                JSValue::js_number(code).coerce_to_i32(cx.global())?
             }
-            WebSocketCloseCode::Code(_) => 0,
             WebSocketCloseCode::Other => {
                 return Err(cx.heap.invalid_arguments(format_args!(
                     "close requires a numeric code or undefined"

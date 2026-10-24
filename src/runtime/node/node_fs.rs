@@ -154,7 +154,7 @@ use super::types::{
     PathLikeExt as _, PathOrFdExt as _, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg,
     VectorArrayBuffer,
 };
-use crate::generated_bindgen::node_fs_binding as schema;
+use crate::generated_bindgen::node_fs_binding as generated;
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
 // canonical path used by `cli/build_command.rs` et al., and `node_fs::Flavor`
 // by every caller that runs an operation directly (`read_file(.., Flavor::Sync)`).
@@ -171,7 +171,7 @@ mod node {
     #[inline]
     pub(super) fn mode_from_js(
         ctx: &bun_jsc::JSGlobalObject,
-        mode: super::schema::Mode<'_>,
+        mode: super::generated::FileMode<'_>,
     ) -> bun_jsc::JsResult<bun_sys::Mode> {
         super::super::types::mode_from_js(ctx, mode)
     }
@@ -2763,14 +2763,14 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            old_path: schema::PathLike<'_>,
-            new_path: Deferred<'_, schema::PathLike<'_>>,
+            old_path: generated::PathLike<'_>,
+            new_path: Deferred<'_, generated::PathLike<'_>>,
         ) -> JsResult<Self> {
             let old_path = PathLike::from_js(ctx, old_path, parsing)?.map_err(|value| {
                 ctx.throw_invalid_argument_type_value(
                     b"oldPath",
                     b"string or an instance of Buffer or URL",
-                    value,
+                    value.to_js(),
                 )
             })?;
             // `Drop for PathLike` runs on early return.
@@ -2779,7 +2779,7 @@ pub(crate) mod args {
                 ctx.throw_invalid_argument_type_value(
                     b"newPath",
                     b"string or an instance of Buffer or URL",
-                    value,
+                    value.to_js(),
                 )
             })?;
             Ok(Rename { old_path, new_path })
@@ -2797,7 +2797,7 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathOrFileDescriptor<'_>,
+            path: generated::PathOrFileDescriptor<'_>,
             len: Deferred<'_, i64>,
         ) -> JsResult<Self> {
             let path = PathOrFileDescriptor::from_js(ctx, path, parsing)?.map_err(|_| {
@@ -2872,7 +2872,7 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathLike<'_>,
+            path: generated::PathLike<'_>,
             uid: Deferred<'_, i64>,
             gid: Deferred<'_, i64>,
         ) -> JsResult<Self> {
@@ -2925,9 +2925,9 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathLike<'_>,
-            atime: schema::TimeLike<'_>,
-            mtime: schema::TimeLike<'_>,
+            path: generated::PathLike<'_>,
+            atime: generated::TimeLike<'_>,
+            mtime: generated::TimeLike<'_>,
         ) -> JsResult<Self> {
             // `Drop for PathLike` covers the
             // `time_like_from_js` throws below.
@@ -2950,8 +2950,8 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathLike<'_>,
-            mode: Deferred<'_, schema::Mode<'_>>,
+            path: generated::PathLike<'_>,
+            mode: Deferred<'_, generated::FileMode<'_>>,
         ) -> JsResult<Self> {
             // `Drop for PathLike` covers the
             // `mode_from_js` throw below.
@@ -2969,7 +2969,7 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             fd: i32,
-            mode: schema::Mode<'_>,
+            mode: generated::FileMode<'_>,
         ) -> JsResult<FChmod> {
             let mode = node::mode_from_js(ctx, mode)?;
             Ok(FChmod {
@@ -2989,8 +2989,8 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathLike<'_>,
-            options: Deferred<'_, schema::BigIntOptions>,
+            path: generated::PathLike<'_>,
+            options: Deferred<'_, generated::BigIntOptions>,
         ) -> JsResult<Self> {
             // `Drop for PathLike` covers the
             // `options` throw below.
@@ -3009,8 +3009,8 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathLike<'_>,
-            options: Deferred<'_, schema::StatOptions>,
+            path: generated::PathLike<'_>,
+            options: Deferred<'_, generated::StatOptions>,
         ) -> JsResult<Self> {
             // `Drop for PathLike` covers the error returns below.
             let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
@@ -3040,7 +3040,7 @@ pub(crate) mod args {
         pub(crate) big_int: bool,
     }
     impl Fstat {
-        pub(crate) fn from_js(fd: i32, options: &schema::BigIntOptions) -> Fstat {
+        pub(crate) fn from_js(fd: i32, options: &generated::BigIntOptions) -> Fstat {
             Fstat {
                 fd: FD::from_uv(fd),
                 big_int: options.bigint,
@@ -3064,8 +3064,8 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            old_path: schema::PathLike<'_>,
-            new_path: Deferred<'_, schema::PathLike<'_>>,
+            old_path: generated::PathLike<'_>,
+            new_path: Deferred<'_, generated::PathLike<'_>>,
         ) -> JsResult<Self> {
             let old_path = PathLike::from_js_required(ctx, old_path, parsing, "oldPath")?;
             // `Drop for PathLike` runs on early return.
@@ -3096,9 +3096,9 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            target: schema::PathLike<'_>,
-            path: Deferred<'_, schema::PathLike<'_>>,
-            link_type: Deferred<'_, schema::SymlinkType>,
+            target: generated::PathLike<'_>,
+            path: Deferred<'_, generated::PathLike<'_>>,
+            link_type: Deferred<'_, generated::SymlinkType>,
         ) -> JsResult<Self> {
             // `Drop for PathLike` covers the error returns below.
             let old_path = PathLike::from_js_required(ctx, target, parsing, "target")?;
@@ -3112,8 +3112,8 @@ pub(crate) mod args {
             // be absolute. When using 'junction', the target argument
             // will automatically be normalized to absolute path.
             let link_type: SymlinkLinkType = match link_type.convert(ctx)? {
-                schema::SymlinkType::None => SymlinkLinkType::Unspecified,
-                schema::SymlinkType::Name(str) => {
+                generated::SymlinkType::Missing => SymlinkLinkType::Unspecified,
+                generated::SymlinkType::Name(str) => {
                     if str.eq_ascii(b"dir") {
                         SymlinkLinkType::Dir
                     } else if str.eq_ascii(b"file") {
@@ -3124,7 +3124,7 @@ pub(crate) mod args {
                         return Err(ctx.err(bun_jsc::ErrorCode::ERR_INVALID_ARG_VALUE, format_args!("Symlink type must be one of \"dir\", \"file\", or \"junction\". Received \"{}\"", str)).throw());
                     }
                 }
-                schema::SymlinkType::Other => {
+                generated::SymlinkType::Other => {
                     // not a string. fallthrough to auto detect.
                     return Err(ctx
                         .err(
@@ -3155,8 +3155,8 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathLike<'_>,
-            options: Deferred<'_, schema::EncodingOrOptions>,
+            path: generated::PathLike<'_>,
+            options: Deferred<'_, generated::EncodingOrOptions>,
         ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
             let encoding = parse_encoding_arg(ctx, options, Encoding::Utf8)?;
@@ -3172,8 +3172,8 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathLike<'_>,
-            options: Deferred<'_, schema::EncodingOrOptions>,
+            path: generated::PathLike<'_>,
+            options: Deferred<'_, generated::EncodingOrOptions>,
         ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
             let encoding = parse_encoding_arg(ctx, options, Encoding::Utf8)?;
@@ -3188,17 +3188,17 @@ pub(crate) mod args {
     /// Shared by `Readlink`/`Realpath`/`MkdirTemp::from_js`.
     fn parse_encoding_arg(
         ctx: &JSGlobalObject,
-        options: Deferred<'_, schema::EncodingOrOptions>,
+        options: Deferred<'_, generated::EncodingOrOptions>,
         default: Encoding,
     ) -> JsResult<Encoding> {
         Ok(match options.convert(ctx)? {
-            schema::EncodingOrOptions::Encoding(name) => {
+            generated::EncodingOrOptions::Encoding(name) => {
                 Encoding::from_name_with_default_on_empty(&name, ctx, default)?
             }
-            schema::EncodingOrOptions::Options(options) => {
+            generated::EncodingOrOptions::Options(options) => {
                 Encoding::assert(options.encoding, ctx, default)?
             }
-            schema::EncodingOrOptions::Other => default,
+            generated::EncodingOrOptions::Other => default,
         })
     }
 
@@ -3209,7 +3209,7 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathLike<'_>,
+            path: generated::PathLike<'_>,
         ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
             Ok(Unlink { path })
@@ -3241,8 +3241,8 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathLike<'_>,
-            options: Deferred<'_, schema::RmOptionsArgument>,
+            path: generated::PathLike<'_>,
+            options: Deferred<'_, generated::RmOptionsArgument>,
         ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
             let options = options.convert(ctx)?;
@@ -3267,8 +3267,8 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathLike<'_>,
-            options: Deferred<'_, schema::RmdirOptions>,
+            path: generated::PathLike<'_>,
+            options: Deferred<'_, generated::RmdirOptions>,
         ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
             let options = options.convert(ctx)?;
@@ -3311,8 +3311,8 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathLike<'_>,
-            options: Deferred<'_, schema::MkdirOptionsOrMode<'_>>,
+            path: generated::PathLike<'_>,
+            options: Deferred<'_, generated::MkdirOptionsOrMode<'_>>,
         ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
             let mut recursive = false;
@@ -3320,19 +3320,16 @@ pub(crate) mod args {
             match options.convert(ctx)? {
                 // Node branches on `typeof options === 'object'`, so a `String`
                 // wrapper is an options bag, never a positional mode.
-                schema::MkdirOptionsOrMode::Options(options) => {
+                generated::MkdirOptionsOrMode::Options(options) => {
                     recursive = options.recursive;
                     if let Some(mode_) = options.mode {
                         mode = node::mode_from_js(ctx, mode_)?;
                     }
                 }
-                schema::MkdirOptionsOrMode::Number(number) => {
-                    mode = node::mode_from_js(ctx, schema::Mode::Number(number))?;
+                generated::MkdirOptionsOrMode::Mode(mode_) => {
+                    mode = node::mode_from_js(ctx, mode_)?
                 }
-                schema::MkdirOptionsOrMode::String(string) => {
-                    mode = node::mode_from_js(ctx, schema::Mode::String(string))?;
-                }
-                schema::MkdirOptionsOrMode::Other => {}
+                generated::MkdirOptionsOrMode::Other => {}
             }
             Ok(Mkdir {
                 path,
@@ -3351,11 +3348,15 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            prefix: schema::PathLike<'_>,
-            options: Deferred<'_, schema::EncodingOrOptions>,
+            prefix: generated::PathLike<'_>,
+            options: Deferred<'_, generated::EncodingOrOptions>,
         ) -> JsResult<Self> {
             let prefix = PathLike::from_js(ctx, prefix, parsing)?.map_err(|value| {
-                ctx.throw_invalid_argument_type_value(b"prefix", b"string, Buffer, or URL", value)
+                ctx.throw_invalid_argument_type_value(
+                    b"prefix",
+                    b"string, Buffer, or URL",
+                    value.to_js(),
+                )
             })?;
             let encoding = parse_encoding_arg(ctx, options, Encoding::Utf8)?;
             Ok(MkdirTemp { prefix, encoding })
@@ -3386,18 +3387,18 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathLike<'_>,
-            options: Deferred<'_, schema::EncodingOrReaddirOptions<'_>>,
+            path: generated::PathLike<'_>,
+            options: Deferred<'_, generated::EncodingOrReaddirOptions<'_>>,
         ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
             let mut encoding = Encoding::Utf8;
             let mut with_file_types = false;
             let mut recursive = false;
             match options.convert(ctx)? {
-                schema::EncodingOrReaddirOptions::Encoding(name) => {
+                generated::EncodingOrReaddirOptions::Encoding(name) => {
                     encoding = Encoding::from_name_with_default_on_empty(&name, ctx, encoding)?;
                 }
-                schema::EncodingOrReaddirOptions::Options(val) => {
+                generated::EncodingOrReaddirOptions::Options(val) => {
                     encoding = Encoding::assert(val.encoding(ctx)?, ctx, encoding)?;
                     if let Some(r) = val.recursive(ctx)? {
                         recursive = r;
@@ -3406,7 +3407,7 @@ pub(crate) mod args {
                         with_file_types = w;
                     }
                 }
-                schema::EncodingOrReaddirOptions::Other => {}
+                generated::EncodingOrReaddirOptions::Other => {}
             }
             Ok(Readdir {
                 path,
@@ -3437,9 +3438,9 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathLike<'_>,
-            flags: Deferred<'_, Option<schema::Flags<'_>>>,
-            mode: Deferred<'_, Option<schema::Mode<'_>>>,
+            path: generated::PathLike<'_>,
+            flags: Deferred<'_, Option<generated::FileFlags<'_>>>,
+            mode: Deferred<'_, Option<generated::FileMode<'_>>>,
         ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
             // Node has no options-object form here: the second argument is
@@ -3472,8 +3473,8 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             fd: i32,
-            atime: schema::TimeLike<'_>,
-            mtime: schema::TimeLike<'_>,
+            atime: generated::TimeLike<'_>,
+            mtime: generated::TimeLike<'_>,
         ) -> JsResult<Futimes> {
             let atime = node::time_like_from_js(ctx, atime)?.ok_or_else(|| {
                 ctx.throw_invalid_arguments(format_args!("atime must be a number or a Date"))
@@ -3538,8 +3539,8 @@ pub(crate) mod args {
             parsing: &Parsing,
             fd: i32,
             buffer: JsLocal<'_, BufferSource>,
-            offset: schema::WriteOffset<'_>,
-            length: schema::WriteLength,
+            offset: generated::WriteOffset<'_>,
+            length: generated::WriteLength,
             position: Option<f64>,
         ) -> JsResult<Self> {
             let bv = buffer.to_js();
@@ -3559,7 +3560,7 @@ pub(crate) mod args {
                 ..Default::default()
             };
             'parse: {
-                let schema::WriteOffset::Number(offset) = offset else {
+                let generated::WriteOffset::Number(offset) = offset else {
                     break 'parse;
                 };
                 args.offset = offset;
@@ -3578,9 +3579,9 @@ pub(crate) mod args {
                     ));
                 }
                 let length = match length {
-                    schema::WriteLength::Number(number) => number as i64,
-                    schema::WriteLength::Bigint(bigint) => bigint,
-                    schema::WriteLength::Other => break 'parse,
+                    generated::WriteLength::Number(number) => number as i64,
+                    generated::WriteLength::BigInt(bigint) => bigint,
+                    generated::WriteLength::Other => break 'parse,
                 };
                 let max_len = ((buf_len as u64 - args.offset) as i64).min(i32::MAX as i64);
                 if length > max_len || length < 0 {
@@ -3614,15 +3615,15 @@ pub(crate) mod args {
             ctx: &JSGlobalObject,
             parsing: &Parsing,
             fd: i32,
-            (buffer, bv): (schema::WriteString, JsLocal<'_>),
+            (buffer, bv): (generated::WriteString, JsLocal<'_>),
             position: Option<f64>,
             encoding: Deferred<'_, Option<BunString>>,
         ) -> JsResult<Self> {
-            let schema::WriteString::String(buffer) = buffer else {
+            let generated::WriteString::Text(buffer) = buffer else {
                 return Err(ctx.throw_invalid_argument_type_value(
                     b"buffer",
                     b"string or TypedArray",
-                    bv,
+                    bv.to_js(),
                 ));
             };
             let encoding = match encoding.convert(ctx)? {
@@ -3684,7 +3685,7 @@ pub(crate) mod args {
             buffer: JsLocal<'_, BufferSource>,
             mut offset: u64,
             length: Option<f64>,
-            position: Deferred<'_, schema::ReadPosition>,
+            position: Deferred<'_, generated::ReadPosition>,
         ) -> JsResult<Read> {
             // About half of the normalization has already been done. The second half is done in the native code.
             // fs_binding.read(fd, buffer, offset, length, position)
@@ -3787,9 +3788,9 @@ pub(crate) mod args {
             //   validatePosition(position, 'position', length);
             // }
             let position_int: i64 = match position.convert(ctx)? {
-                schema::ReadPosition::None => -1,
-                schema::ReadPosition::Number(position) => position,
-                schema::ReadPosition::Bigint(position) => {
+                generated::ReadPosition::Missing => -1,
+                generated::ReadPosition::Number(position) => position,
+                generated::ReadPosition::BigInt(position) => {
                     let position = position.as_big_int();
                     // const maxPosition = 2n ** 63n - 1n - BigInt(length)
                     let max_position = i64::MAX - length_int;
@@ -3873,8 +3874,8 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathOrFileDescriptor<'_>,
-            options: Deferred<'_, schema::EncodingOrReadFileOptions<'_>>,
+            path: generated::PathOrFileDescriptor<'_>,
+            options: Deferred<'_, generated::EncodingOrReadFileOptions<'_>>,
         ) -> JsResult<Self> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
@@ -3891,10 +3892,10 @@ pub(crate) mod args {
                 }
             });
             match options.convert(ctx)? {
-                schema::EncodingOrReadFileOptions::Encoding(name) => {
+                generated::EncodingOrReadFileOptions::Encoding(name) => {
                     encoding = Encoding::from_name_with_default_on_empty(&name, ctx, encoding)?;
                 }
-                schema::EncodingOrReadFileOptions::Options(arg) => {
+                generated::EncodingOrReadFileOptions::Options(arg) => {
                     encoding = Encoding::assert(arg.encoding(ctx)?, ctx, encoding)?;
                     flag = FileSystemFlags::from_js(ctx, arg.flag(ctx)?)?.unwrap_or(flag);
                     if let Some(signal) = arg.signal(ctx)? {
@@ -3902,7 +3903,7 @@ pub(crate) mod args {
                         *abort_signal = Some(signal);
                     }
                 }
-                schema::EncodingOrReadFileOptions::Other => {}
+                generated::EncodingOrReadFileOptions::Other => {}
             }
             let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
             Ok(ReadFile {
@@ -3946,18 +3947,18 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathOrFileDescriptor<'_>,
-            data: schema::WriteFileData<'_>,
-            options: Deferred<'_, schema::EncodingOrWriteFileOptions<'_>>,
+            path: generated::PathOrFileDescriptor<'_>,
+            data: generated::WriteFileData<'_>,
+            options: Deferred<'_, generated::EncodingOrWriteFileOptions<'_>>,
         ) -> JsResult<Self> {
             Self::from_js_with_default_flag(ctx, parsing, path, data, options, FileSystemFlags::W)
         }
         pub(crate) fn from_js_with_default_flag(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathOrFileDescriptor<'_>,
-            data: schema::WriteFileData<'_>,
-            options: Deferred<'_, schema::EncodingOrWriteFileOptions<'_>>,
+            path: generated::PathOrFileDescriptor<'_>,
+            data: generated::WriteFileData<'_>,
+            options: Deferred<'_, generated::EncodingOrWriteFileOptions<'_>>,
             default_flag: FileSystemFlags,
         ) -> JsResult<Self> {
             // `Drop` on `path` covers every
@@ -3978,15 +3979,15 @@ pub(crate) mod args {
             let mut flush = false;
             if matches!(
                 data,
-                schema::WriteFileData::String(_) | schema::WriteFileData::StringObject(_)
+                generated::WriteFileData::String(_) | generated::WriteFileData::StringObject(_)
             ) {
                 encoding = Encoding::Utf8;
             }
             match options.convert(ctx)? {
-                schema::EncodingOrWriteFileOptions::Encoding(name) => {
+                generated::EncodingOrWriteFileOptions::Encoding(name) => {
                     encoding = Encoding::from_name_with_default_on_empty(&name, ctx, encoding)?;
                 }
-                schema::EncodingOrWriteFileOptions::Options(arg) => {
+                generated::EncodingOrWriteFileOptions::Options(arg) => {
                     encoding = Encoding::assert(arg.encoding(ctx)?, ctx, encoding)?;
                     flag = FileSystemFlags::from_js(ctx, arg.flag(ctx)?)?.unwrap_or(flag);
                     if let Some(mode_) = arg.mode(ctx)? {
@@ -3998,15 +3999,15 @@ pub(crate) mod args {
                     }
                     flush = arg.flush(ctx)?;
                 }
-                schema::EncodingOrWriteFileOptions::Other => {}
+                generated::EncodingOrWriteFileOptions::Other => {}
             }
             let data = match data {
-                schema::WriteFileData::Buffer(buffer) => Some(StringOrBuffer::buffer_from_js(
+                generated::WriteFileData::Buffer(buffer) => Some(StringOrBuffer::buffer_from_js(
                     ctx,
                     buffer.to_js(),
                     parsing.flavor,
                 )?),
-                schema::WriteFileData::String(string) => Some(StringOrBuffer::from_bun_string(
+                generated::WriteFileData::String(string) => Some(StringOrBuffer::from_bun_string(
                     ctx,
                     string,
                     encoding,
@@ -4014,14 +4015,14 @@ pub(crate) mod args {
                 )),
                 // String objects not allowed (typeof new String("hi") === "object")
                 // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
-                schema::WriteFileData::StringObject(object) if encoding != Encoding::Utf8 => {
+                generated::WriteFileData::StringObject(object) if encoding != Encoding::Utf8 => {
                     Some(BunString::from_js(object.to_js(), ctx)?)
                         .filter(|string| !string.is_empty())
                         .map(|string| {
                             StringOrBuffer::from_bun_string(ctx, string, encoding, parsing.flavor)
                         })
                 }
-                schema::WriteFileData::StringObject(_) | schema::WriteFileData::Other => None,
+                generated::WriteFileData::StringObject(_) | generated::WriteFileData::Other => None,
             }
             .ok_or_else(|| validators::throw_err_invalid_arg_type_with_message(ctx, format_args!("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView")))?;
             let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
@@ -4057,7 +4058,7 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathLike<'_>,
+            path: generated::PathLike<'_>,
         ) -> JsResult<Self> {
             Ok(Exists {
                 path: PathLike::from_js(ctx, path, parsing)?.ok(),
@@ -4073,7 +4074,7 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            path: schema::PathLike<'_>,
+            path: generated::PathLike<'_>,
             mode: Deferred<'_, Option<f64>>,
         ) -> JsResult<Self> {
             let path = PathLike::from_js_required(ctx, path, parsing, "path")?;
@@ -4106,8 +4107,8 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            src: schema::PathLike<'_>,
-            dest: Deferred<'_, schema::PathLike<'_>>,
+            src: generated::PathLike<'_>,
+            dest: Deferred<'_, generated::PathLike<'_>>,
             mode: Deferred<'_, Option<f64>>,
         ) -> JsResult<Self> {
             let src = PathLike::from_js_required(ctx, src, parsing, "src")?;
@@ -4141,8 +4142,8 @@ pub(crate) mod args {
         pub(crate) fn from_js(
             ctx: &JSGlobalObject,
             parsing: &mut Parsing,
-            src: schema::PathLike<'_>,
-            dest: Deferred<'_, schema::PathLike<'_>>,
+            src: generated::PathLike<'_>,
+            dest: Deferred<'_, generated::PathLike<'_>>,
             recursive: bool,
             error_on_exist: bool,
             force: Option<bool>,

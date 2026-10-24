@@ -17,9 +17,9 @@ export const OptionText = b.union({
   other: b.opaque,
 });
 /** `other` is `ToNumber`. */
-export const S3Size = b.union({ missing: b.null, bigInt: b.i64.asIntN, number: b.f64, other: b.f64.loose });
-/** `number` saturates and `other` is `ToInt32`. */
-export const S3Count = b.union({ missing: b.null, bigInt: b.i64.asIntN, number: b.f64, other: b.i32.wrap });
+export const S3Size = b.union({ missing: b.null, bigInt: b.i64.asIntN, other: b.f64.loose });
+/** `number` saturates and `other` wraps. */
+export const S3Count = b.union({ missing: b.null, number: b.f64, other: b.i32.allowBigInt.wrap });
 export const S3Name = b.union({ missing: b.null, name: b.string.utf8.owned, other: b.ignored });
 /** What a function that reads or writes a file reads of its options when the file is in S3. */
 export const S3Options = b.dictionary(
@@ -29,7 +29,7 @@ export const S3Options = b.dictionary(
     region: OptionText,
     endpoint: OptionText,
     bucket: OptionText,
-    virtualHostedStyle: b.bool.optional,
+    virtualHostedStyle: { type: b.bool.optional, expected: ["boolean"] },
     sessionToken: OptionText,
     pageSize: S3Size,
     partSize: S3Size,
@@ -40,7 +40,7 @@ export const S3Options = b.dictionary(
     contentDisposition: OptionText,
     type: OptionText,
     contentEncoding: OptionText,
-    requestPayer: b.bool.optional,
+    requestPayer: { type: b.bool.optional, expected: ["boolean"] },
     /** `presign` */
     method: b.string.loose.emptyStringAsNull,
     expiresIn: S3Count,
@@ -56,7 +56,7 @@ export const WriteOptionsArgument = b.union({ missing: b.null, options: S3Option
 export const BlobParts = b.union({
   undefined: b.undefined,
   null: b.null,
-  array: b.jsArray,
+  list: b.jsArray,
   buffer: b.bufferSource.allowShared,
   other: b.ignored,
 });
@@ -101,7 +101,7 @@ export const Blob = b.class({
     size: { getter: b.f64 },
     slice: {
       ...method,
-      args: { start: BlobSliceBound, end: BlobSliceBound, contentType: b.string.allowStringObject.view.otherAsNull },
+      args: { start: BlobSliceBound, end: BlobSliceBound, contentType: BlobSliceBound },
       returns: b.self,
       length: 2,
     },
@@ -119,7 +119,7 @@ export const Blob = b.class({
 export const BlobOrBuildArtifact = b.union({ blob: Blob, buildArtifact: BuildArtifact });
 
 /** Anything but a string is ignored, and so is `""`. `new String("")` sets the type to `""`. */
-export const BlobType = b.union({ text: b.string, stringObject: b.string.allowStringObject, ignored: b.ignored });
+export const BlobType = b.union({ text: b.string, stringObject: b.string.allowStringObject, other: b.ignored });
 /** What `Bun.file` reads of its options, unless the path is `s3://`. */
 export const BunFileOptions = b.dictionary(
   { type: BlobType, lastModified: b.f64.loose.optional },
@@ -131,7 +131,7 @@ export const file = b.fn({
   returns: Blob,
 });
 
-export const PathOrBlob = b.union({ blob: Blob, ...b.alternativesOf(PathOrFileDescriptor) }, { fromJS: true });
+export const PathOrBlob = b.union({ blob: Blob, path: PathOrFileDescriptor }, { fromJS: true });
 
 /** What `Bun.write` itself reads of its options. */
 export const BunWriteOptions = b.dictionary(

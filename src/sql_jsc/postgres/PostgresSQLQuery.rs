@@ -411,7 +411,7 @@ impl PostgresSQLQuery {
         cx: &mut JsScope<'_>,
         value: JsLocal<'_>,
     ) {
-        js::pending_value_set_cached(this_value.to_js(), cx.global(), value);
+        js::pending_value_set_cached(this_value.to_js(), cx.global(), value.to_js());
     }
 
     pub fn set_mode(
@@ -425,9 +425,11 @@ impl PostgresSQLQuery {
             1 => PostgresSQLQueryResultMode::Values,
             2 => PostgresSQLQueryResultMode::Raw,
             _ => {
-                return Err(
-                    global_object.throw_invalid_argument_type_value(b"mode", b"Number", js_mode)
-                );
+                return Err(global_object.throw_invalid_argument_type_value(
+                    b"mode",
+                    b"Number",
+                    js_mode.to_js(),
+                ));
             }
         };
         self.update_flags(|f| f.result_mode = result_mode);
@@ -517,7 +519,7 @@ impl PostgresSQLQuery {
             ))
         });
         self.this_value.with_mut(|r| r.upgrade(global_object));
-        js::target_set_cached(this_value, global_object, query);
+        js::target_set_cached(this_value, global_object, query.to_js());
 
         connection.advance();
         connection.flush_data_and_reset_timeout();

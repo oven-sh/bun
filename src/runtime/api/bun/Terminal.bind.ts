@@ -9,12 +9,12 @@ export const TerminalData = b.union({
   missing: b.null,
   text: b.string.view,
   object: b.stringObject,
-  bytes: b.bufferSource.allowShared,
+  buffer: b.bufferSource.allowShared,
   other: b.ignored,
 });
 
-/** `number` saturates. `bigint` and `other` wrap. */
-export const TerminalSize = b.union({ number: b.f64, bigint: b.i64.asIntN, other: b.i32.wrap });
+/** `number` saturates and `other` wraps. */
+export const TerminalSize = b.union({ number: b.f64, other: b.i32.allowBigInt.wrap });
 export const TerminalOptions = b.dictionary(
   {
     cols: TerminalSize.nullable,

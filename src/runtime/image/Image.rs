@@ -20,7 +20,7 @@ use bun_core::ZBox;
 use bun_core::base64;
 use bun_core::zstr;
 use bun_core::{EncodedSlice, ZStr, strings};
-use bun_jsc::bindgen::{AnyValue, Deferred, JsLocal, JsScope, JsStructure, JsWrapper};
+use bun_jsc::bindgen::{Deferred, JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, ArrayBuffer, EncodedSliceJsc as _, JSGlobalObject, JSPromise, JSValue, JsCell,
@@ -252,12 +252,13 @@ impl Image {
             )));
         }
         let mut img = Image::default();
-        img.source.set(source_from_js(global, input, input_value)?);
+        img.source
+            .set(source_from_js(global, input, input_value.to_js())?);
         apply_options(&mut img, &options.convert(global)?);
         let borrows_input = matches!(img.source.get(), Source::JsBuffer);
         let this_value = structure.create(&cx.heap, img);
         if borrows_input {
-            js::source_js_set_cached(this_value.to_js(), cx.global(), input_value);
+            js::source_js_set_cached(this_value.to_js(), cx.global(), input_value.to_js());
         }
         Ok(this_value)
     }
@@ -306,7 +307,7 @@ fn apply_options(img: &mut Image, options: &ImageOptions) {
 fn source_from_js(
     global: &JSGlobalObject,
     input: ImageInput<'_>,
-    value: impl AnyValue,
+    value: JSValue,
 ) -> JsResult<Source> {
     // String → file path or data:/base64 URL. Everything else → bytes.
     match input {
@@ -343,23 +344,22 @@ fn source_from_js(
             return Ok(Source::Path(ZBox::from_bytes(s)));
         }
         ImageInput::Buffer(buffer) => {
-            if let Some(ab) = buffer.to_js().as_array_buffer(global) {
-                // A resizable/growable buffer can shrink or reallocate underneath any
-                // slice we'd take; a SharedArrayBuffer can be mutated by another
-                // thread while the worker decodes (the codec layer parses the same
-                // bytes twice — header then body — so a TOCTOU swap can resize the
-                // implied output behind a guard that's already passed). The worker
-                // *borrows* the slice (see `pin_for_task`), so this rejection is
-                // load-bearing — `buf.slice()` is the obvious workaround.
-                if ab.resizable || ab.shared {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                "Image(): resizable / shared ArrayBuffer is not supported; pass a fixed-length view (e.g. buf.slice())",
-            )));
-                }
-                // Just remember the JS object — see Source::JsBuffer for why we don't
-                // cache the pointer or pin here.
-                return Ok(Source::JsBuffer);
+            let ab = buffer.as_array_buffer(global);
+            // A resizable/growable buffer can shrink or reallocate underneath any
+            // slice we'd take; a SharedArrayBuffer can be mutated by another
+            // thread while the worker decodes (the codec layer parses the same
+            // bytes twice — header then body — so a TOCTOU swap can resize the
+            // implied output behind a guard that's already passed). The worker
+            // *borrows* the slice (see `pin_for_task`), so this rejection is
+            // load-bearing — `buf.slice()` is the obvious workaround.
+            if ab.resizable || ab.shared {
+                return Err(global.throw_invalid_arguments(format_args!(
+            "Image(): resizable / shared ArrayBuffer is not supported; pass a fixed-length view (e.g. buf.slice())",
+        )));
             }
+            // Just remember the JS object — see Source::JsBuffer for why we don't
+            // cache the pointer or pin here.
+            return Ok(Source::JsBuffer);
         }
         ImageInput::Blob(blob) => {
             // In-memory blob: dupe its bytes (the store may be sliced/replaced
@@ -1053,7 +1053,7 @@ impl Image {
             &cx,
             this_value.to_js(),
             Kind::Encode(output),
-            Deliver::WriteDest(Strong::create(dest, global)),
+            Deliver::WriteDest(Strong::create(dest.to_js(), global)),
         )
     }
 }

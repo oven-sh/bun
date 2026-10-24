@@ -1,8 +1,8 @@
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSValue, JsResult};
 use super::DiffFormatter;
 use super::Expect;
 use super::throw;
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 
 impl Expect {
     pub(crate) fn to_have_been_nth_called_with(
@@ -57,7 +57,9 @@ impl Expect {
             } else {
                 let mut itr = nth_call_value.array_iterator(global)?;
                 while let Some(call_arg) = itr.next()? {
-                    if !call_arg.jest_deep_equals(expected[(itr.i - 1) as usize], global)? {
+                    if !call_arg
+                        .jest_deep_equals((expected[(itr.i - 1) as usize]).to_js(), global)?
+                    {
                         pass = false;
                         break;
                     }
@@ -72,7 +74,8 @@ impl Expect {
         // handle failure
         let mut formatter = super::make_formatter(global);
 
-        let expected_args_js_array = JSValue::create_array_from_slice(global, expected)?;
+        let expected_args_js_array =
+            JSValue::create_array_from_slice(global, JsLocal::to_js_slice(expected))?;
         expected_args_js_array.ensure_still_alive();
 
         if this.flags.get().not() {

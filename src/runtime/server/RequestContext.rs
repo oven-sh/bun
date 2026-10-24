@@ -7,7 +7,7 @@ use bun_sys::FdExt as _;
 use bun_core::String as BunString;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::JsScope;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult};
@@ -652,12 +652,13 @@ where
 
     pub(crate) fn on_resolve(
         cx: &mut JsScope<'_>,
-        result: JSValue,
+        result: JsLocal<'_>,
         context: Option<NonNull<Self>>,
     ) {
         ctx_log!("onResolve");
 
         let global = cx.global();
+        let result = result.to_js();
         let Some(ctx) = context else {
             // A termination path (abort, end, upgrade) reclaimed the cell's
             // claim; the context may already be gone.
@@ -1058,24 +1059,24 @@ where
 
     pub(crate) fn on_reject(
         cx: &mut JsScope<'_>,
-        reason: JSValue,
-        (context, cell): (Option<NonNull<Self>>, JSValue),
+        reason: JsLocal<'_>,
+        (context, cell): (Option<NonNull<Self>>, JsLocal<'_>),
     ) {
         ctx_log!("onReject");
 
         // Pass the rejection reason through verbatim (including `null` and
         // `undefined`) so `error()` sees the same value the already-settled
         // path delivers. Only an empty JSValue is normalized.
-        let err = if reason.is_empty() {
+        let err = if reason.to_js().is_empty() {
             JSValue::UNDEFINED
         } else {
-            reason
+            reason.to_js()
         };
         let Some(ctx) = context else {
             // A termination path (abort, end, upgrade) reclaimed the cell's
             // claim; the context may already be gone. Only an upgrade leaves
             // the server wrapper in the cell to report the error through.
-            let server_js = NativePromiseContext::take_held(cell);
+            let server_js = NativePromiseContext::take_held(cell.to_js());
             if !server_js.is_empty() {
                 Self::report_error_after_upgrade(cx.global(), server_js, err);
             }
@@ -2935,7 +2936,7 @@ where
 
     pub(crate) fn on_resolve_stream(
         _: &mut JsScope<'_>,
-        _: JSValue,
+        _: JsLocal<'_>,
         context: Option<NonNull<Self>>,
     ) {
         stream_log!("onResolveStream");
@@ -2949,7 +2950,7 @@ where
 
     pub(crate) fn on_reject_stream(
         cx: &mut JsScope<'_>,
-        err: JSValue,
+        err: JsLocal<'_>,
         context: Option<NonNull<Self>>,
     ) {
         stream_log!("onRejectStream");
@@ -2959,7 +2960,7 @@ where
         let req = RequestContextRef::adopt(req.as_ptr());
         req.ctx().promise_cell.set(JSValue::ZERO);
 
-        req.ctx().handle_reject_stream(cx.global(), err);
+        req.ctx().handle_reject_stream(cx.global(), err.to_js());
     }
 
     pub(crate) fn handle_reject_stream(&self, global_this: &JSGlobalObject, err: JSValue) {

@@ -10,7 +10,6 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
-use crate::bindgen::{AnyValue, js_value_of};
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
     JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult,
@@ -290,15 +289,6 @@ impl JSValue {
     pub fn is_big_int(self) -> bool {
         JSC__JSValue__isBigInt(self)
     }
-    /// `JSValue.isHeapBigInt()` — true iff this is a
-    /// heap-allocated `JSBigInt` cell, as every BigInt is.
-    #[inline]
-    pub fn is_heap_big_int(self) -> bool {
-        unsafe extern "C" {
-            safe fn JSC__JSValue__isHeapBigInt(this: JSValue) -> bool;
-        }
-        JSC__JSValue__isHeapBigInt(self)
-    }
     /// `JSValue.isBigIntInInt64Range` — `self` must already be
     /// known to be a BigInt; checks `min <= self <= max` without truncation.
     #[inline]
@@ -530,9 +520,9 @@ impl JSValue {
     #[track_caller]
     pub fn create_array_from_slice(
         global: &JSGlobalObject,
-        items: &[impl AnyValue],
+        items: &[JSValue],
     ) -> JsResult<JSValue> {
-        Self::create_array_from_iter(global, items.iter().copied().map(js_value_of), Ok)
+        Self::create_array_from_iter(global, items.iter().copied(), Ok)
     }
     /// `JSValue.createBufferFromLength` — allocates a Node.js
     /// `Buffer` (the `JSBufferSubclassStructure` Uint8Array subclass) of `len`
@@ -1031,22 +1021,6 @@ impl JSValue {
         }
     }
 
-    /// `get` for a key that is one of `BunCommonStrings.h`'s, without the
-    /// per-call `StringImpl` and atom-table probe.
-    pub fn get_common_string(
-        self,
-        global: &JSGlobalObject,
-        key: crate::CommonString,
-    ) -> JsResult<Option<JSValue>> {
-        debug_assert!(self.is_object());
-        let v = host_fn::from_js_host_call_generic(global, || key.get_property(self, global))?;
-        if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 || v.is_undefined() {
-            Ok(None)
-        } else {
-            Ok(Some(v))
-        }
-    }
-
     /// Safe to use on any JSValue.
     /// Returns true iff the value is an object whose `toString` property is a callable cell.
     pub fn implements_to_string(self, global: &JSGlobalObject) -> JsResult<bool> {
@@ -1090,13 +1064,6 @@ impl JSValue {
             Ok(Some(v))
         }
     }
-    pub fn get_if_property_exists(
-        self,
-        global: &JSGlobalObject,
-        property: impl AsRef<[u8]>,
-    ) -> JsResult<Option<JSValue>> {
-        self.get(global, property)
-    }
     pub fn get_truthy(
         self,
         global: &JSGlobalObject,
@@ -1107,19 +1074,6 @@ impl JSValue {
             .get(global, property)?
             .filter(|v| !v.is_empty_or_undefined_or_null() && !(v.is_string() && !v.to_boolean())))
     }
-    /// `fast_get` (precached `JSC::Identifier`,
-    /// no StringImpl alloc / atom-table probe) followed by the same `truthyPropertyValue`
-    /// filter as `get_truthy`. Use this when the property name is a `BuiltinName`.
-    pub fn fast_get_truthy(
-        self,
-        global: &JSGlobalObject,
-        builtin_name: BuiltinName,
-    ) -> JsResult<Option<JSValue>> {
-        // Filters undef/null AND empty strings.
-        Ok(self
-            .fast_get(global, builtin_name)?
-            .filter(|v| !v.is_empty_or_undefined_or_null() && !(v.is_string() && !v.to_boolean())))
-    }
     /// Missing/undefined → `None`; otherwise
     /// truthy-coerce the property value (never throws on the coercion itself).
     pub fn get_boolean_loose(
@@ -1128,42 +1082,6 @@ impl JSValue {
         property: impl AsRef<[u8]>,
     ) -> JsResult<Option<bool>> {
         Ok(self.get(global, property)?.map(|v| v.to_boolean()))
-    }
-    pub fn get_stringish(
-        self,
-        global: &JSGlobalObject,
-        property: impl AsRef<[u8]>,
-    ) -> JsResult<Option<bun_core::String>> {
-        Ok(self
-            .get_stringish_allow_empty(global, property)?
-            .filter(|s| !s.is_empty()))
-    }
-    /// `get_stringish`, for a property that "" is a value of.
-    pub fn get_stringish_allow_empty(
-        self,
-        global: &JSGlobalObject,
-        property: impl AsRef<[u8]>,
-    ) -> JsResult<Option<bun_core::String>> {
-        let property = property.as_ref();
-        // `get(prop)`, filter null/false → None,
-        // reject symbols, otherwise coerce via `toBunString`.
-        let Some(prop) = self.get(global, property)? else {
-            return Ok(None);
-        };
-        if prop.is_null() || prop == JSValue::FALSE {
-            return Ok(None);
-        }
-        if prop.is_symbol() {
-            // `throwInvalidPropertyTypeValue(property, "string", prop)`
-            // (Node-style ERR_INVALID_ARG_TYPE TypeError including received value's type).
-            // Note: routed via `throw_invalid_arguments` until
-            // `JSGlobalObject::throw_invalid_property_type_value` is ported.
-            return Err(global.throw_invalid_arguments(format_args!(
-                "The \"{}\" property must be of type string. Received a symbol",
-                bstr::BStr::new(property),
-            )));
-        }
-        Ok(Some(prop.to_bun_string(global)?))
     }
     /// Own/prototype lookup,
     /// `null`/`undefined` → `None`, non-string → `ERR_INVALID_ARG_TYPE`,
@@ -1205,25 +1123,6 @@ impl JSValue {
         }
         Ok(Some(v))
     }
-    /// Missing/undefined → `None`;
-    /// boolean → `Some(b)`; anything else throws `ERR_INVALID_ARG_TYPE`.
-    pub fn get_boolean_strict(
-        self,
-        global: &JSGlobalObject,
-        property: impl AsRef<[u8]>,
-    ) -> JsResult<Option<bool>> {
-        let property = property.as_ref();
-        let Some(prop) = self.get(global, property)? else {
-            return Ok(None);
-        };
-        if prop.is_undefined() {
-            return Ok(None);
-        }
-        if prop.is_boolean() {
-            return Ok(Some(prop == JSValue::TRUE));
-        }
-        Err(global.throw_invalid_property_type(property, "boolean", prop))
-    }
     /// Validates `is_string`, looks up via the supplied string map, throws
     /// "must be one of …" on miss. Callers pass `one_of` as a `'static`
     /// literal.
@@ -1248,43 +1147,6 @@ impl JSValue {
                 "{} must be one of {}",
                 property_name, one_of
             ))),
-        }
-    }
-    /// `get(prop)`, filter
-    /// undefined/null → `None`, otherwise `toEnum` (dispatches via
-    /// `FromJsEnum`).
-    pub fn get_optional_enum<E: FromJsEnum>(
-        self,
-        global: &JSGlobalObject,
-        property_name: &'static str,
-    ) -> JsResult<Option<E>> {
-        match self.get(global, property_name)? {
-            Some(v) if !v.is_empty_or_undefined_or_null() => {
-                Ok(Some(v.to_enum::<E>(global, property_name)?))
-            }
-            _ => Ok(None),
-        }
-    }
-    /// `get(prop)`, filter
-    /// undefined/null → `None`, otherwise `toEnum` (via `to_enum_from_map`).
-    pub fn get_optional_enum_from_map<
-        E: Copy,
-        M: bun_core::comptime_string_map::ComptimeStringMap<Value = E>,
-    >(
-        self,
-        global: &JSGlobalObject,
-        property_name: &'static str,
-        map: &'static M,
-        one_of: &'static str,
-    ) -> JsResult<Option<E>> {
-        match self.get(global, property_name)? {
-            Some(v) if !v.is_empty_or_undefined_or_null() => Ok(Some(v.to_enum_from_map(
-                global,
-                property_name,
-                map,
-                one_of,
-            )?)),
-            _ => Ok(None),
         }
     }
     pub fn get_array(
@@ -1317,12 +1179,7 @@ impl JSValue {
     /// `uncheckedDowncast`s. `key.toPropertyKey()` and Proxy `ownKeys` traps
     /// can throw, so this is routed through `from_js_host_call_generic`.
     #[track_caller]
-    pub fn has_own_property_value(
-        self,
-        global: &JSGlobalObject,
-        key: impl AnyValue,
-    ) -> JsResult<bool> {
-        let key = js_value_of(key);
+    pub fn has_own_property_value(self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__hasOwnPropertyValue(self, global, key)
         })
@@ -1378,8 +1235,7 @@ impl JSValue {
     }
     /// Set a property. Key dispatch goes through the [`PutKey`] trait so
     /// callers may pass `&[u8]`, `EncodedSlice`, `String`, or `&String`.
-    pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: impl AnyValue) {
-        let value = js_value_of(value);
+    pub fn put<K: PutKey>(self, global: &JSGlobalObject, key: K, value: JSValue) {
         key.put(self, global, value)
     }
     /// [`put`] with `PropertyAttribute::DontEnum`.
@@ -1459,8 +1315,7 @@ impl JSValue {
         })
     }
     #[track_caller]
-    pub fn put_index(self, global: &JSGlobalObject, i: u32, out: impl AnyValue) -> JsResult<()> {
-        let out = js_value_of(out);
+    pub fn put_index(self, global: &JSGlobalObject, i: u32, out: JSValue) -> JsResult<()> {
         crate::call_check_slow(global, || JSC__JSValue__putIndex(self, global, i, out))
     }
     /// `JSValue.putBunStringOneOrArray` — put `key`/`value` into
@@ -1479,17 +1334,14 @@ impl JSValue {
 
     /// `JSValue.push` — append to an array-typed JS value.
     #[track_caller]
-    pub fn push(self, global: &JSGlobalObject, out: impl AnyValue) -> JsResult<()> {
-        let out = js_value_of(out);
+    pub fn push(self, global: &JSGlobalObject, out: JSValue) -> JsResult<()> {
         crate::call_check_slow(global, || JSC__JSValue__push(self, global, out))
     }
 
     /// `JSValue.getOptional` — loose, coercing property fetch.
     /// Absent / `undefined` / `null` → `None`; anything else is run through
     /// [`coerce`](Self::coerce) (ToNumber for integer `T`, the value itself
-    /// for `JSValue`). Distinct from
-    /// [`get_optional_int`], which validates the property is already an
-    /// in-range integer and throws otherwise.
+    /// for `JSValue`).
     pub fn get_optional<T: CoerceTo>(
         self,
         global: &JSGlobalObject,
@@ -1502,30 +1354,6 @@ impl JSValue {
             return Ok(None);
         }
         Ok(Some(prop.coerce::<T>(global)?))
-    }
-
-    /// `JSValue.getOptionalInt` — typed integer property
-    /// fetch with `validateIntegerRange` clamping. Returns `None` if the
-    /// property is absent.
-    pub fn get_optional_int<T: bun_core::Integer>(
-        self,
-        global: &JSGlobalObject,
-        property_name: &'static str,
-    ) -> JsResult<Option<T>> {
-        let Some(value) = self.get(global, property_name)? else {
-            return Ok(None);
-        };
-        let min: i128 = T::MIN_I128.max(i128::from(crate::MIN_SAFE_INTEGER));
-        let max: i128 = T::MAX_I128.min(i128::from(crate::MAX_SAFE_INTEGER));
-        Ok(Some(global.validate_integer_range::<T>(
-            value,
-            T::ZERO,
-            crate::IntegerRange {
-                min,
-                max,
-                field_name: property_name.as_bytes(),
-            },
-        )?))
     }
 
     pub fn array_iterator<'a>(self, global: &'a JSGlobalObject) -> JsResult<JSArrayIterator<'a>> {
@@ -1662,22 +1490,6 @@ impl JSValue {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid
             // JSValues for the duration of the call.
             unsafe { Bun__JSValue__call(global, self, this_value, args.len(), args.as_ptr()) }
-        })
-    }
-
-    /// [`call`](Self::call) with arguments that are already in a list.
-    #[track_caller]
-    pub fn call_with_arguments(
-        self,
-        global: &JSGlobalObject,
-        this_value: impl AnyValue,
-        args: &crate::MarkedArgumentBuffer,
-    ) -> JsResult<JSValue> {
-        if self.has_nobody_to_call(global) {
-            return Ok(JSValue::UNDEFINED);
-        }
-        host_fn::from_js_host_call(global, || {
-            Bun__JSValue__callWithArguments(global, self, js_value_of(this_value), args)
         })
     }
 
@@ -2112,12 +1924,6 @@ unsafe extern "C" {
         args_len: usize,
         args_ptr: *const JSValue,
     ) -> JSValue;
-    safe fn Bun__JSValue__callWithArguments(
-        global: &JSGlobalObject,
-        function: JSValue,
-        this_value: JSValue,
-        args: &crate::MarkedArgumentBuffer,
-    ) -> JSValue;
     safe fn Bun__JSValue__protect(this: JSValue);
     safe fn Bun__JSValue__unprotect(this: JSValue);
     safe fn Bun__JSValue__isFromRetiredTestIsolationRealm(this: JSValue) -> bool;
@@ -2229,8 +2035,7 @@ impl JSValue {
     ///
     /// Differs from IsStrictlyEqual by treating all NaN values as equivalent
     /// and by differentiating +0 from -0. Can throw (rope-string resolution).
-    pub fn is_same_value(self, other: impl AnyValue, global: &JSGlobalObject) -> JsResult<bool> {
-        let other = js_value_of(other);
+    pub fn is_same_value(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
         // Identity fast-path: same encoded bits ⇒ same value.
         if self == other {
             return Ok(true);
@@ -2243,8 +2048,7 @@ impl JSValue {
     ///
     /// Differs from SameValue: `NaN !== NaN` and `-0 === +0`.
     /// Can throw (rope-string resolution).
-    pub fn is_strict_equal(self, other: impl AnyValue, global: &JSGlobalObject) -> JsResult<bool> {
-        let other = js_value_of(other);
+    pub fn is_strict_equal(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
         // No encoded-bits fast path: two NaNs share an encoding but NaN !== NaN.
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__isStrictEqual(self, other, global)
@@ -2338,48 +2142,6 @@ impl JSValue {
             Some(prop) if !prop.is_undefined() => Ok(Some(prop)),
             _ => Ok(None),
         }
-    }
-    /// `JSValue.getOwnObject` — own-property lookup; throws "{prop} must be an
-    /// object" when the own-truthy value is not an object.
-    pub fn get_own_object(
-        self,
-        global: &JSGlobalObject,
-        property_name: impl AsRef<[u8]>,
-    ) -> JsResult<Option<*mut JSObject>> {
-        let property_name = property_name.as_ref();
-        match self.get_own_truthy(global, property_name)? {
-            Some(v) => match v.get_object() {
-                Some(obj) => Ok(Some(obj)),
-                None => Err(global.throw_invalid_arguments(format_args!(
-                    "{} must be an object",
-                    bstr::BStr::new(property_name),
-                ))),
-            },
-            None => Ok(None),
-        }
-    }
-    /// `JSValue.getOwnArray` — own-property lookup (no prototype walk) routed
-    /// through `coerceToArray`: non-array truthy → throw
-    /// "{prop} must be an array"; empty array → `None`.
-    pub fn get_own_array(
-        self,
-        global: &JSGlobalObject,
-        property_name: impl AsRef<[u8]>,
-    ) -> JsResult<Option<JSValue>> {
-        let property_name = property_name.as_ref();
-        let Some(v) = self.get_own_truthy(global, property_name)? else {
-            return Ok(None);
-        };
-        if !(v.is_cell() && v.js_type().is_array()) {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "{} must be an array",
-                bstr::BStr::new(property_name),
-            )));
-        }
-        if v.get_length(global)? == 0 {
-            return Ok(None);
-        }
-        Ok(Some(v))
     }
     /// `JSValue.isClass` — true if the callable is a class constructor.
     pub fn is_class(self, global: &JSGlobalObject) -> bool {
@@ -2736,8 +2498,7 @@ impl JSValue {
     // ── Jest deep-equality. ───────────────────────
     /// `JSValue.jestDeepEquals` — Jest's recursive `expect(a).toEqual(b)`
     /// semantics (asymmetric matchers, undefined-equals-missing, etc.).
-    pub fn jest_deep_equals(self, other: impl AnyValue, global: &JSGlobalObject) -> JsResult<bool> {
-        let other = js_value_of(other);
+    pub fn jest_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__jestDeepEquals(self, other, global)
         })
@@ -2745,10 +2506,9 @@ impl JSValue {
     /// `JSValue.jestStrictDeepEquals` — `expect(a).toStrictEqual(b)`.
     pub fn jest_strict_deep_equals(
         self,
-        other: impl AnyValue,
+        other: JSValue,
         global: &JSGlobalObject,
     ) -> JsResult<bool> {
-        let other = js_value_of(other);
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__jestStrictDeepEquals(self, other, global)
         })
@@ -2842,9 +2602,8 @@ impl JSValue {
     pub fn get_if_property_exists_from_path(
         self,
         global: &JSGlobalObject,
-        path: impl AnyValue,
+        path: JSValue,
     ) -> JsResult<JSValue> {
-        let path = js_value_of(path);
         crate::top_scope!(scope, global);
         let result = JSC__JSValue__getIfPropertyExistsFromPath(self, global, path);
         scope.return_if_exception()?;

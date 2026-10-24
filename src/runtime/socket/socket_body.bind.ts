@@ -16,23 +16,22 @@ const certificate = { ...js, returns: b.object.optional } as const;
 
 export const looseString = b.conversion(b.string.loose);
 
-/** What a socket writes. A `String` object is converted after the encoding. */
-export const SocketData = b.union({
-  none: b.undefined,
+/** A `String` object is converted after the encoding. */
+export const TextOrBytes = b.union({
+  missing: b.undefined,
   text: b.string,
-  bytes: b.bufferSource.allowShared,
-  blob: Blob,
-  request: Request,
-  response: Response,
+  buffer: b.bufferSource.allowShared,
   stringObject: b.stringObject,
   other: b.ignored,
 });
+/** What a socket writes. */
+export const SocketData = b.union({ blob: Blob, request: Request, response: Response, data: TextOrBytes });
 /**
  * `byteOffset`, `byteLength` or `encoding`. A string or a `String` object in the place of the first two is the encoding.
  * `stringObject` and `other` are converted only as the encoding of data that an open socket writes.
  */
 export const SocketWriteOption = b.union({
-  none: b.undefined,
+  missing: b.undefined,
   number: b.f64,
   text: b.string,
   stringObject: b.stringObject,
@@ -53,19 +52,13 @@ const writeBuffered = { ...js, args: { data: SocketData.withValue, encoding: Soc
 /** Whether all of it was written, or the negative errno of a fatal send. */
 export const BufferedWrite = b.union({ flushed: b.bool, errno: b.i32 });
 
-export const TextOrBytes = b.union({
-  none: b.undefined,
-  text: b.string,
-  bytes: b.bufferSource.allowShared,
-  stringObject: b.stringObject,
-  other: b.ignored,
-});
-export const OptionalBool = b.union({ none: b.undefined, value: b.bool, other: b.ignored });
-/** Both wrap to an `i32`. */
-export const CoercedInt32 = b.union({ bigInt: b.i64.asIntN, other: b.i32.wrap }, { fromJS: true });
+export const OptionalBool = b.union({ missing: b.undefined, flag: b.bool, other: b.ignored });
+export const coercedInt32 = b.i32.allowBigInt.wrap;
+export const timeoutSeconds = b.conversion(coercedInt32);
 /** A number saturates. `other` is converted once the socket is known to be open. */
 export const TimeoutSeconds = b.union({ number: b.f64, other: b.opaque });
 
+const secureContext = { type: SecureContext.withValue.emptyStringAsNull, expected: ["SecureContext"] } as const;
 /** `secureContext` can also be in `tls`. */
 export const UpgradeTLSOptions = b.dictionary(
   {
@@ -75,7 +68,7 @@ export const UpgradeTLSOptions = b.dictionary(
     socket: b.opaque.optional,
     /** Bytes of the handshake that were already read. */
     initialData: TextOrBytes,
-    secureContext: b.opaque.emptyStringAsNull,
+    secureContext,
     tls: UpgradeTLS.emptyStringAsNull,
     data: b.opaque.optional,
   },
@@ -207,7 +200,7 @@ export const TLSSocket = socket(true);
 
 export const BunSocket = b.union({ tcp: TCPSocket, tls: TLSSocket });
 /** The `_handle` of a `net.Socket`: `new net.Socket({ handle })` keeps any object. */
-export const SocketHandle = b.union({ tcp: TCPSocket, tls: TLSSocket, ignored: b.ignored });
+export const SocketHandle = b.union({ tcp: TCPSocket, tls: TLSSocket, other: b.ignored });
 
 export const upgradeTLSDeferred = b.fn({
   ...upgradeTLS,
@@ -223,7 +216,7 @@ export const getBufferedAmount = b.fn({ args: { socket: SocketHandle }, returns:
 export const DuplexTLSOptions = b.dictionary({
   socket: SocketHandler,
   isServer: b.bool.loose.default(false),
-  secureContext: b.opaque.emptyStringAsNull,
+  secureContext,
   tls: UpgradeTLS.emptyStringAsNull,
   data: b.opaque.optional,
 });

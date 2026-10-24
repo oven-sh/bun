@@ -24,7 +24,7 @@ bun_core::define_scoped_log!(log, IPC, visible);
 // (`BunProcess.cpp`); declared here per the same convention as
 // `node_cluster_binding.rs`.
 unsafe extern "C" {
-    safe fn Process__emitErrorEvent(global: &JSGlobalObject, value: JsLocal<'_>);
+    safe fn Process__emitErrorEvent(global: &JSGlobalObject, value: JSValue);
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -54,7 +54,7 @@ pub(crate) fn attach_windows_socket_payload(
 }
 
 pub(crate) fn emit_process_error_event<'a>(cx: &mut JsScope<'a>, error: JsLocal<'a>) {
-    Process__emitErrorEvent(cx.global(), error);
+    Process__emitErrorEvent(cx.global(), error.to_js());
 }
 
 fn do_send_err(
@@ -109,14 +109,18 @@ pub(crate) fn do_send<'a>(
             }
             IpcSendOptions::Missing => {}
             IpcSendOptions::Options(options) => {
-                global_object.validate_object("options", options.object(), Default::default())?;
+                global_object.validate_object(
+                    "options",
+                    options.object().to_js(),
+                    Default::default(),
+                )?;
                 if options.internal(global_object)? {
                     is_internal = IsInternal::Internal;
                 }
                 options_ = Some(options);
             }
             IpcSendOptions::Other(options) => {
-                global_object.validate_object("options", options, Default::default())?;
+                global_object.validate_object("options", options.to_js(), Default::default())?;
             }
         }
     }
@@ -141,22 +145,20 @@ pub(crate) fn do_send<'a>(
 
     let ipc_data = ipc.unwrap();
 
+    let refuse = |message: JSValue| {
+        global_object.throw_invalid_argument_type_value_one_of(
+            b"message",
+            b"string, object, number, or boolean",
+            message,
+        )
+    };
     let mut message = match message {
         IpcMessage::Missing => {
             return Err(global_object.throw_missing_arguments_value(&["message"]));
         }
-        IpcMessage::String(message) => message.to_js(),
-        IpcMessage::Object(message) => message.to_js(),
-        IpcMessage::Number(message) => JSValue::js_number(message),
-        IpcMessage::Boolean(message) => JSValue::from(message),
-        IpcMessage::Null => JSValue::NULL,
-        IpcMessage::Other(message) => {
-            return Err(global_object.throw_invalid_argument_type_value_one_of(
-                b"message",
-                b"string, object, number, or boolean",
-                message,
-            ));
-        }
+        IpcMessage::Symbol(message) => return Err(refuse(message.to_js())),
+        IpcMessage::BigInt(message) => return Err(refuse(message.to_js())),
+        IpcMessage::Other(message) => message.to_js(),
     };
 
     let original_message = message;
@@ -165,7 +167,7 @@ pub(crate) fn do_send<'a>(
         let serialized_array: JSValue = IPC::ipc_serialize(
             global_object,
             message,
-            sent_handle,
+            sent_handle.to_js(),
             options_.map_or(JSValue::UNDEFINED, |options_| options_.object().to_js()),
         )?;
         if !serialized_array.is_undefined_or_null() {
@@ -326,18 +328,13 @@ pub(crate) fn emit_handle_ipc_message<'a>(
     let received = message;
     let message = match received {
         ReceivedMessage::Object(object) => object.object().to_js(),
-        ReceivedMessage::String(string) => string.to_js(),
-        ReceivedMessage::Number(number) => JSValue::js_number(number),
-        ReceivedMessage::Boolean(boolean) => JSValue::from(boolean),
-        ReceivedMessage::Null => JSValue::NULL,
-        ReceivedMessage::Bigint(bigint) => bigint.to_js(),
-        ReceivedMessage::Undefined => JSValue::UNDEFINED,
+        ReceivedMessage::Primitive(primitive) => primitive.to_js(),
     };
     match target {
         MessageTarget::Subprocess(subprocess) => {
             subprocess.handle_ipc_message(&DecodedIPCMessage::Data(message), handle)?;
         }
-        MessageTarget::Missing | MessageTarget::Ignored => {}
+        MessageTarget::Missing | MessageTarget::Other => {}
         MessageTarget::ThisProcess => {
             // Cluster-internal replies that carried a descriptor (shared dgram
             // sockets) are marked with cmd: "NODE_CLUSTER"; hand them straight to

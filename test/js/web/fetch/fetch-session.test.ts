@@ -334,7 +334,7 @@ describe("Bun.FetchSession", () => {
     );
     expect(construct({ proxy: "not a url" })).toThrow("fetch() proxy URL is invalid");
     expect(construct({ proxy: { url: "http://p", respectNoProxy: 1 } })).toThrow(
-      'The "respectNoProxy" property must be of type boolean',
+      'The "proxy.respectNoProxy" property must be of type boolean',
     );
     expect(construct({ unix: "/tmp/x.sock", proxy: "http://p" })).toThrow(
       "FetchSession: cannot use a proxy with a unix socket",

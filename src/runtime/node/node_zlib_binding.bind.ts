@@ -13,9 +13,9 @@ export const crc32 = b.fn({
 
 const method = { capability: "js", throws: true, passThis: true, length: 0 } as const;
 /** A number saturates to a `u32`, `true` is 1 and anything else is 0. Only `flush` refuses `undefined`. */
-export const WriteNumber = b.union({ number: b.f64, flag: b.bool, missing: b.undefined, other: b.ignored });
+export const ZlibWriteNumber = b.union({ number: b.f64, flag: b.bool, missing: b.undefined, other: b.ignored });
 /** `null` is a write that only flushes. */
-export const WriteInput = b.union({
+export const ZlibWriteInput = b.union({
   buffer: b.bufferSource.allowShared,
   missing: b.undefined,
   flushOnly: b.null,
@@ -24,13 +24,13 @@ export const WriteInput = b.union({
 const write = {
   ...method,
   args: {
-    flush: WriteNumber,
-    in_: WriteInput,
-    inOff: WriteNumber,
-    inLen: WriteNumber,
+    flush: ZlibWriteNumber,
+    in_: ZlibWriteInput,
+    inOff: ZlibWriteNumber,
+    inLen: ZlibWriteNumber,
     out: b.bufferSource.allowShared.otherAsNull,
-    outOff: WriteNumber,
-    outLen: WriteNumber,
+    outOff: ZlibWriteNumber,
+    outLen: ZlibWriteNumber,
   },
 } as const;
 const int32 = b.i32.validateInteger();
@@ -42,8 +42,8 @@ export const Uint32ArrayArgument = b.union({
   }),
   other: b.opaque,
 });
-export const ProcessCallback = b.union({ callable: b.callable, other: b.opaque });
-export const Dictionary = b.union({ none: b.undefined, buffer: b.bufferSource.allowShared, other: b.opaque });
+export const ZlibProcessCallback = b.union({ callback: b.callable, other: b.opaque });
+export const ZlibDictionary = b.union({ missing: b.undefined, buffer: b.bufferSource.allowShared, other: b.opaque });
 
 /** The native handle of a `node:zlib` stream: `kHandle` in `src/js/node/zlib.ts`. */
 const compressionStream = <Init extends object, Params extends object>(
@@ -80,8 +80,8 @@ export const NativeZlib = compressionStream(
       memLevel: int32,
       strategy: int32,
       writeState: Uint32ArrayArgument,
-      processCallback: ProcessCallback,
-      dictionary: Dictionary,
+      processCallback: ZlibProcessCallback,
+      dictionary: ZlibDictionary,
     },
   },
   { ...method, args: { level: int32, strategy: int32 } },
@@ -94,8 +94,8 @@ export const NativeBrotli = compressionStream(
     args: {
       initParamsArray: Uint32ArrayArgument,
       writeState: Uint32ArrayArgument,
-      processCallback: ProcessCallback,
-      dictionary: Dictionary,
+      processCallback: ZlibProcessCallback,
+      dictionary: ZlibDictionary,
     },
     returns: b.bool,
   },
@@ -110,8 +110,8 @@ export const NativeZstd = compressionStream(
       initParamsArray: Uint32ArrayArgument,
       pledgedSrcSize: b.f64.otherAsNull,
       writeState: Uint32ArrayArgument,
-      processCallback: ProcessCallback,
-      dictionary: Dictionary,
+      processCallback: ZlibProcessCallback,
+      dictionary: ZlibDictionary,
     },
     returns: b.bool,
   },

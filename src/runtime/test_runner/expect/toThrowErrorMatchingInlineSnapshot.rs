@@ -32,15 +32,12 @@ impl Expect {
         }
 
         let mut expected_string = None;
-        match (snapshot, extra) {
+        match (snapshot.map(SnapshotArgument::as_string), extra) {
             (None, _) => {}
-            (Some(SnapshotArgument::String(string)), None) => {
-                expected_string = Some(string.to_js().to_js_string_view(global)?);
+            (Some(Some(expected)), None) => {
+                expected_string = Some(expected.to_js_string_view(global)?);
             }
-            (Some(SnapshotArgument::StringObject(object)), None) => {
-                expected_string = Some(object.to_js().to_js_string_view(global)?);
-            }
-            (Some(_), None) => {
+            (Some(None), None) => {
                 return throw!(
                     this,
                     global,

@@ -50,39 +50,8 @@ fn require_subscriber(this: &JSValkeyClient, function_name: &str) -> JsResult<()
     Ok(())
 }
 
-impl RedisChannel<'_> {
-    /// One channel, primitive or boxed.
-    fn string(self) -> Option<JSValue> {
-        match self {
-            Self::Text(text) => Some(text.to_js()),
-            Self::Object(object) => Some(object.to_js()),
-            Self::Many(_) | Self::Other => None,
-        }
-    }
-}
-
 fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgument>> {
-    if value.is_undefined_or_null() {
-        return Ok(None);
-    }
-
-    if value.is_number() {
-        // Allow numbers to be passed as strings.
-        let str = value.to_js_string(global)?;
-        return JSArgument::from_js_maybe_file(global, str.to_js(), FileBlobs::Reject);
-    }
-
-    // Copy the bytes. A later argument's `toString()` can detach this buffer before the command is serialized.
-    if let Some(buffer) = value.as_array_buffer(global) {
-        let Some(copy) = buffer.try_copy_bytes() else {
-            return Err(global.throw_out_of_memory());
-        };
-        return Ok(Some(JSArgument::StringOrBuffer(StringOrBuffer::owned(
-            copy,
-        ))));
-    }
-
-    JSArgument::from_js_maybe_file(global, value, FileBlobs::Allow)
+    RedisArgument::from_js(global, value, |value| from_argument(global, value))
 }
 
 fn from_argument(
@@ -90,15 +59,24 @@ fn from_argument(
     value: RedisArgument<'_>,
 ) -> JsResult<Option<JSArgument>> {
     Ok(Some(match value {
-        RedisArgument::None | RedisArgument::Other => return Ok(None),
+        RedisArgument::Missing | RedisArgument::Other => return Ok(None),
+        // Allow numbers to be passed as strings.
         RedisArgument::Number(number) => JSArgument::StringOrBuffer(StringOrBuffer::owned(
             bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], number).to_vec(),
         )),
-        RedisArgument::Buffer(buffer) => return from_js(global, buffer.to_js()),
+        // Copy the bytes. A later argument's `toString()` can detach this buffer before the command is serialized.
+        RedisArgument::Buffer(buffer) => {
+            let Some(copy) = buffer.as_array_buffer(global).try_copy_bytes() else {
+                return Err(global.throw_out_of_memory());
+            };
+            JSArgument::StringOrBuffer(StringOrBuffer::owned(copy))
+        }
         RedisArgument::Text(text) => {
             JSArgument::StringOrBuffer(StringOrBuffer::String(text.into_utf8_with_string()))
         }
-        RedisArgument::Object(object) => return from_js(global, object.to_js()),
+        RedisArgument::Object(object) => {
+            return JSArgument::from_js_maybe_file(global, object.to_js(), FileBlobs::Allow);
+        }
         RedisArgument::Blob(blob) => JSArgument::Blob(Box::new(blob.dupe())),
     }))
 }
@@ -249,7 +227,7 @@ macro_rules! cmd_key_varargs {
 
             for (index, arg) in arguments.iter().enumerate() {
                 let arg = arg.convert(global)?;
-                if matches!(arg, RedisArgument::None) {
+                if matches!(arg, RedisArgument::Missing) {
                     if index == 0 {
                         return Err(global.throw_missing_arguments_value(&[$arg0_name]));
                     }
@@ -336,7 +314,7 @@ macro_rules! cmd_key_value_varargs {
 
             for arg in arguments.iter() {
                 let arg = arg.convert(global)?;
-                if matches!(arg, RedisArgument::None) {
+                if matches!(arg, RedisArgument::Missing) {
                     continue;
                 }
 
@@ -485,7 +463,7 @@ impl JSValkeyClient {
 
         for arg in options.iter() {
             let arg = arg.convert(global)?;
-            if matches!(arg, RedisArgument::None) {
+            if matches!(arg, RedisArgument::Missing) {
                 break;
             }
             let Some(v) = from_argument(global, arg)? else {
@@ -656,7 +634,7 @@ impl JSValkeyClient {
 
         for arg in members.iter() {
             let arg = arg.convert(global)?;
-            if matches!(arg, RedisArgument::None) {
+            if matches!(arg, RedisArgument::Missing) {
                 break;
             }
             let Some(value) = from_argument(global, arg)? else {
@@ -702,7 +680,7 @@ impl JSValkeyClient {
         args.push(key);
 
         // Optional count argument
-        if !matches!(count, RedisArgument::None) {
+        if !matches!(count, RedisArgument::Missing) {
             let Some(count_arg) = from_argument(global, count)? else {
                 return Err(global.throw_invalid_argument_type(
                     "srandmember",
@@ -766,7 +744,7 @@ impl JSValkeyClient {
         args.push(key);
 
         // Optional count argument
-        if !matches!(count, RedisArgument::None) {
+        if !matches!(count, RedisArgument::Missing) {
             let Some(count_arg) = from_argument(global, count)? else {
                 return Err(global.throw_invalid_argument_type(
                     "spop",
@@ -811,7 +789,7 @@ impl JSValkeyClient {
 
         for arg in members.iter() {
             let arg = arg.convert(global)?;
-            if matches!(arg, RedisArgument::None) {
+            if matches!(arg, RedisArgument::Missing) {
                 break;
             }
             let Some(value) = from_argument(global, arg)? else {
@@ -890,7 +868,7 @@ impl JSValkeyClient {
 
         for arg in fields.iter() {
             let arg = arg.convert(global)?;
-            if matches!(arg, RedisArgument::None) {
+            if matches!(arg, RedisArgument::Missing) {
                 break;
             }
             let Some(field) = from_argument(global, arg)? else {
@@ -1062,7 +1040,7 @@ impl JSValkeyClient {
                     args.push(value.to_utf8(global)?);
                 }
             }
-            HashFields::Array(second_arg) => {
+            HashFields::List(second_arg) => {
                 // Pattern 3: Array - hmset(key, [field, value, ...])
                 let mut iter = second_arg.to_js().array_iterator(global)?;
                 if iter.len % 2 != 0 {
@@ -1232,7 +1210,7 @@ impl JSValkeyClient {
         message: RedisArgument<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let message: Option<JSArgument> = if !matches!(message, RedisArgument::None) {
+        let message: Option<JSArgument> = if !matches!(message, RedisArgument::Missing) {
             // Only use the first argument if provided, ignore any additional arguments
             let Some(m) = from_argument(global, message)? else {
                 return Err(global.throw_invalid_argument_type(
@@ -1611,7 +1589,7 @@ impl JSValkeyClient {
         }
 
         // The first argument given is the channel or may be an array of channels.
-        if let RedisChannel::Many(many) = channel {
+        if let RedisChannel::List(many) = channel {
             let channel_or_many = many.to_js();
             if channel_or_many.get_length(global)? == 0 {
                 return Err(global.throw_invalid_arguments(format_args!(
@@ -1639,7 +1617,8 @@ impl JSValkeyClient {
                 // handler.
                 self.upsert_receive_handler(global, channel_arg, handler_callback)?;
             }
-        } else if let Some(channel_or_many) = channel.string() {
+        } else if let RedisChannel::Text(channel) = channel {
+            let channel_or_many = channel.to_js();
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
                 return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
@@ -1727,7 +1706,7 @@ impl JSValkeyClient {
         if let (Some(listener_cb), 1) = (listener.iter().next(), listener.len()) {
             // In this case, the first argument is a channel string and the second
             // argument is the handler to remove.
-            let Some(channel) = channel_or_many.string() else {
+            let RedisChannel::Text(channel) = channel_or_many else {
                 return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             };
 
@@ -1743,13 +1722,13 @@ impl JSValkeyClient {
             // unsubscribe from. This s important since this list is used to send
             // the UNSUBSCRIBE command to redis. Without this, we would end up
             // unsubscribing from all channels.
-            let Some(ch) = from_js(global, channel)? else {
+            let Some(ch) = from_js(global, channel.to_js())? else {
                 return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             };
             redis_channels.push(ch);
 
             let remaining_listeners =
-                match self.remove_receive_handler(global, channel, listener_cb.to_js()) {
+                match self.remove_receive_handler(global, channel.to_js(), listener_cb.to_js()) {
                     Ok(Some(n)) => n,
                     Ok(None) => {
                         // Listeners weren't present in the first place, so we can return a
@@ -1780,7 +1759,7 @@ impl JSValkeyClient {
             ));
         }
 
-        if let RedisChannel::Many(many) = channel_or_many {
+        if let RedisChannel::List(many) = channel_or_many {
             let channel_or_many = many.to_js();
             if channel_or_many.get_length(global)? == 0 {
                 return Err(global.throw_invalid_arguments(format_args!(
@@ -1805,7 +1784,8 @@ impl JSValkeyClient {
                 // Clear the handlers for this channel
                 self.clear_receive_handlers(global, channel_arg)?;
             }
-        } else if let Some(channel_or_many) = channel_or_many.string() {
+        } else if let RedisChannel::Text(channel) = channel_or_many {
+            let channel_or_many = channel.to_js();
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
                 return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));

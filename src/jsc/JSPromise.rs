@@ -1,6 +1,5 @@
 use core::ffi::c_void;
 
-use crate::bindgen::{AnyValue, js_value_of};
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, VM};
 // `jsc.Strong.Optional` collides with this module's own `Strong`, so import it under an alias.
 use crate::strong::Optional as JscStrong;
@@ -98,8 +97,7 @@ impl Strong {
         self.swap().reject(global, Ok(err))
     }
 
-    pub fn resolve(&mut self, global: &JSGlobalObject, val: impl AnyValue) -> JsResult<()> {
-        let val = js_value_of(val);
+    pub fn resolve(&mut self, global: &JSGlobalObject, val: JSValue) -> JsResult<()> {
         self.swap().resolve(global, val)
     }
 
@@ -254,24 +252,21 @@ impl JSPromise {
     /// Create a new resolved promise resolving to a given value.
     ///
     /// Note: If you want the result as a `JSValue`, use `resolved_promise_value` instead.
-    pub fn resolved_promise(global: &JSGlobalObject, value: impl AnyValue) -> &mut JSPromise {
-        let value = js_value_of(value);
+    pub fn resolved_promise(global: &JSGlobalObject, value: JSValue) -> &mut JSPromise {
         // FFI returns a non-null GC-managed cell tied to `global`'s VM.
         JSPromise::opaque_mut(JSC__JSPromise__resolvedPromise(global, value))
     }
 
     /// Create a new promise with an already fulfilled value.
     /// This is the faster function for doing that.
-    pub fn resolved_promise_value(global: &JSGlobalObject, value: impl AnyValue) -> JSValue {
-        let value = js_value_of(value);
+    pub fn resolved_promise_value(global: &JSGlobalObject, value: JSValue) -> JSValue {
         JSC__JSPromise__resolvedPromiseValue(global, value)
     }
 
     /// Create a new rejected promise rejecting to a given value.
     ///
     /// Note: If you want the result as a `JSValue`, use `rejected_promise().to_js()` instead.
-    pub fn rejected_promise(global: &JSGlobalObject, value: impl AnyValue) -> &mut JSPromise {
-        let value = js_value_of(value);
+    pub fn rejected_promise(global: &JSGlobalObject, value: JSValue) -> &mut JSPromise {
         // FFI returns a non-null GC-managed cell tied to `global`'s VM.
         JSPromise::opaque_mut(JSC__JSPromise__rejectedPromise(global, value))
     }
@@ -303,8 +298,7 @@ impl JSPromise {
     // conversion threw and left the exception pending; it becomes "reject with that exception",
     // except a pending termination, which is not an outcome to record: it stays pending and unwinds.
 
-    pub fn resolve(&mut self, global: &JSGlobalObject, value: impl AnyValue) -> JsResult<()> {
-        let value = js_value_of(value);
+    pub fn resolve(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if value.is_empty() {
             debug_assert!(
                 global.has_exception(),
@@ -359,12 +353,7 @@ impl JSPromise {
         crate::cpp::JSC__JSPromise__reject(self, global, err)
     }
 
-    pub fn reject_as_handled(
-        &mut self,
-        global: &JSGlobalObject,
-        value: impl AnyValue,
-    ) -> JsResult<()> {
-        let value = js_value_of(value);
+    pub fn reject_as_handled(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if value.is_empty() {
             self.set_handled();
             return self.reject(global, Ok(value));

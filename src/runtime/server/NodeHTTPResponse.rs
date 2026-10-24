@@ -9,7 +9,7 @@ use bun_collections::VecExt;
 use bun_core::scoped_log;
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper, StringOrJsBytes};
+use bun_jsc::bindgen::{Callable, Deferred, JsLocal, JsScope, JsWrapper, StringOrJsBytes};
 use bun_ptr::AsCtxPtr;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -560,7 +560,7 @@ impl NodeHTTPResponse {
     pub(crate) fn upgrade_for_ws_package(
         &self,
         global: &JSGlobalObject,
-        websocket: JsLocal<'_>,
+        websocket: JSValue,
         handlers: Option<JsLocal<'_, JSObject>>,
         handshake: &[u8],
         max_payload_length: u32,
@@ -1001,7 +1001,7 @@ impl NodeHTTPResponse {
         status_message: Option<&[u8]>,
         headers: Option<JsLocal<'_, JSObject>>,
         chunk: Option<StringOrJsBytes<'_>>,
-        encoding: Option<JsLocal<'_>>,
+        encoding: Option<ChunkEncoding<'_>>,
         strict_content_length: Option<f64>,
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
@@ -1122,13 +1122,14 @@ impl NodeHTTPResponse {
         &self,
         cx: &mut JsScope<'_>,
         chunk: Option<StringOrJsBytes<'_>>,
-        encoding: Option<bun_core::String>,
+        encoding: Deferred<'_, Option<bun_core::String>>,
     ) -> JsResult<()> {
         let global_object = cx.global();
         let Some(chunk) = chunk else {
             return Ok(());
         };
         let encoding = encoding
+            .convert(global_object)?
             .and_then(|encoding| Encoding::from_bun_string(&encoding))
             .unwrap_or(Encoding::Utf8);
 
@@ -1473,7 +1474,7 @@ pub(crate) fn on_reject(
         this.on_request_complete();
     }
 
-    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err, true);
+    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err.to_js(), true);
     if had_promise {
         this.deref();
     }
@@ -1768,14 +1769,11 @@ impl NodeHTTPResponse {
         this_value: JSValue,
         global_object: &JSGlobalObject,
         chunk: Option<StringOrJsBytes<'_>>,
-        encoding: Option<JsLocal<'_>>,
+        encoding: Option<ChunkEncoding<'_>>,
         callback: JSValue,
         strict_content_length: Option<f64>,
     ) -> JsResult<JSValue> {
-        let encoding_value = encoding
-            .map(|encoding| ChunkEncoding::from_local(global_object, encoding))
-            .transpose()?;
-        let callback_value: JSValue = match encoding_value {
+        let callback_value: JSValue = match encoding {
             Some(ChunkEncoding::Callback(callback)) => callback.to_js(),
             _ => callback,
         };
@@ -1788,19 +1786,23 @@ impl NodeHTTPResponse {
             _ => None,
         };
         let mut string_or_buffer = if let Some(chunk) = chunk {
+            let encoding_value = encoding;
             let mut encoding = Encoding::Utf8;
             // Like Writable.prototype.write: a falsy encoding means the default.
             let unknown = match encoding_value {
                 None | Some(ChunkEncoding::Callback(_)) => None,
-                Some(ChunkEncoding::Name(name)) => match Encoding::from_bun_string(&name) {
-                    Some(known) => {
-                        encoding = known;
-                        None
+                Some(ChunkEncoding::Name(name)) => {
+                    let name = name.convert(global_object)?;
+                    match Encoding::from_bun_string(&name) {
+                        Some(known) => {
+                            encoding = known;
+                            None
+                        }
+                        None => Some(name),
                     }
-                    None => Some(name),
-                },
+                }
                 Some(ChunkEncoding::Other(value)) => Some(
-                    JSGlobalObject::inspect_for_error_message(global_object, value)?,
+                    JSGlobalObject::inspect_for_error_message(global_object, value.to_js())?,
                 ),
             };
             if let Some(name) = unknown {
@@ -2046,7 +2048,7 @@ impl NodeHTTPResponse {
             js::on_writable_set_cached(
                 this_value,
                 global_object,
-                value.with_async_context_if_needed(global_object),
+                value.to_js().with_async_context_if_needed(global_object),
             );
             // A corked write reports WantMore and disarms the drain. The uncork can still leave its bytes in the uWS buffer.
             if self.has_unflushed_write() {
@@ -2095,7 +2097,7 @@ impl NodeHTTPResponse {
             js::on_aborted_set_cached(
                 this_value,
                 global_object,
-                value.with_async_context_if_needed(global_object),
+                value.to_js().with_async_context_if_needed(global_object),
             );
         } else {
             js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
@@ -2158,7 +2160,7 @@ impl NodeHTTPResponse {
         js::on_data_set_cached(
             this_value,
             global_object,
-            value.with_async_context_if_needed(global_object),
+            value.to_js().with_async_context_if_needed(global_object),
         );
         self.armed_this_value.set(this_value);
         if let Some(raw_response) = self.reader() {
@@ -2173,7 +2175,7 @@ impl NodeHTTPResponse {
         &self,
         cx: &mut JsScope<'_>,
         chunk: Option<StringOrJsBytes<'_>>,
-        encoding: Option<JsLocal<'_>>,
+        encoding: Option<ChunkEncoding<'_>>,
         callback: Option<JsLocal<'_, Callable>>,
         strict_content_length: Option<f64>,
     ) -> JsResult<JSValue> {
@@ -2251,7 +2253,7 @@ impl NodeHTTPResponse {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         chunk: Option<StringOrJsBytes<'_>>,
-        encoding: Option<JsLocal<'_>>,
+        encoding: Option<ChunkEncoding<'_>>,
         callback: Option<JsLocal<'_, Callable>>,
         strict_content_length: Option<f64>,
     ) -> JsResult<JSValue> {

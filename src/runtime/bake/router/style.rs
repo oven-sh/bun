@@ -39,7 +39,7 @@ impl Style {
                     return Ok(*style);
                 }
             }
-            FrameworkRouterStyle::Function(_) => return Ok(Style::JavascriptDefined),
+            FrameworkRouterStyle::Callback(_) => return Ok(Style::JavascriptDefined),
             FrameworkRouterStyle::Other => {}
         }
 

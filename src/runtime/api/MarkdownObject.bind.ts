@@ -72,8 +72,8 @@ export const RenderCallbacks = b.dictionary(
 
 /** An empty `text` is no override. */
 export const ComponentOverride = b.union({
-  absent: b.null,
-  ignored: b.bool,
+  missing: b.null,
+  flag: b.bool,
   text: b.jsString,
   other: b.opaque,
 });

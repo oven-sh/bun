@@ -13,7 +13,7 @@ mod _impl {
     use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
 
     use crate::generated_bindgen::node_zlib_binding::{
-        Dictionary, ProcessCallback, Uint32ArrayArgument,
+        Uint32ArrayArgument, ZlibDictionary, ZlibProcessCallback,
     };
     use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive, Error};
     use crate::node::util::validators;
@@ -116,8 +116,8 @@ mod _impl {
             init_params_array: Uint32ArrayArgument<'_>,
             pledged_src_size: Option<f64>,
             write_state: Uint32ArrayArgument<'_>,
-            process_callback: ProcessCallback<'_>,
-            dictionary: Dictionary<'_>,
+            process_callback: ZlibProcessCallback<'_>,
+            dictionary: ZlibDictionary<'_>,
         ) -> JsResult<bool> {
             let global = cx.global();
             let this_value = this_value.to_js();
@@ -131,7 +131,7 @@ mod _impl {
                     return Err(global.throw_invalid_argument_type_value(
                         "writeState",
                         "Uint32Array",
-                        value,
+                        value.to_js(),
                     ));
                 }
             };
@@ -151,14 +151,14 @@ mod _impl {
             js::write_result_set_cached(this_value, global, write_state_value);
 
             let write_js_callback = match process_callback {
-                ProcessCallback::Callable(callback) => {
+                ZlibProcessCallback::Callback(callback) => {
                     validators::validate_function(global, "processCallback", callback.to_js())?
                 }
-                ProcessCallback::Other(value) => {
+                ZlibProcessCallback::Other(value) => {
                     return Err(global.throw_invalid_argument_type_value(
                         "processCallback",
                         "function",
-                        value,
+                        value.to_js(),
                     ));
                 }
             };
@@ -181,13 +181,13 @@ mod _impl {
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
             // outlives the `stream.init` call below (E0716 otherwise).
             let dictionary_buf = match dictionary {
-                Dictionary::None => None,
-                Dictionary::Buffer(buffer) => Some(buffer.as_array_buffer(global)),
-                Dictionary::Other(value) => {
+                ZlibDictionary::Missing => None,
+                ZlibDictionary::Buffer(buffer) => Some(buffer.as_array_buffer(global)),
+                ZlibDictionary::Other(value) => {
                     return Err(global.throw_invalid_argument_type_value(
                         "dictionary",
                         "Buffer, TypedArray, or DataView",
-                        value,
+                        value.to_js(),
                     ));
                 }
             };
@@ -207,7 +207,7 @@ mod _impl {
                     return Err(global.throw_invalid_argument_type_value(
                         "initParamsArray",
                         "Uint32Array",
-                        value,
+                        value.to_js(),
                     ));
                 }
             };

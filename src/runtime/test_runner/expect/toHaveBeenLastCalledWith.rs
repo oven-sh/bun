@@ -44,7 +44,7 @@ impl Expect {
             } else {
                 let mut itr = last_call_value.array_iterator(global)?;
                 while let Some(call_arg) = itr.next()? {
-                    if !call_arg.jest_deep_equals(expected[itr.i as usize - 1], global)? {
+                    if !call_arg.jest_deep_equals((expected[itr.i as usize - 1]).to_js(), global)? {
                         pass = false;
                         break;
                     }
@@ -59,7 +59,8 @@ impl Expect {
         // handle failure
         let mut formatter = super::make_formatter(global);
 
-        let expected_args_js_array = JSValue::create_array_from_slice(global, expected)?;
+        let expected_args_js_array =
+            JSValue::create_array_from_slice(global, JsLocal::to_js_slice(expected))?;
         expected_args_js_array.ensure_still_alive();
 
         if this.flags.get().not() {

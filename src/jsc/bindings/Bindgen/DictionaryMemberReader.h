@@ -24,7 +24,7 @@ public:
     // As `get`, of the object's own properties.
     JSC::JSValue getOwn(unsigned index);
     // Empty also if the object has no such own property.
-    JSC::JSValue getOwnIfPresent(unsigned index);
+    JSC::JSValue getOwnIfPropertyExists(unsigned index);
 
 private:
     JSC::VM& m_vm;

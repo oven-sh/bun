@@ -21,6 +21,9 @@ impl Expect {
 
         this.increment_expect_call_counter();
 
+        let expected_property_path = expected_property_path.to_js();
+        let expected_property = expected_property.map(JsLocal::to_js);
+
         let value: JSValue = this.get_value(
             global,
             this_value,

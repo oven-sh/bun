@@ -20,7 +20,7 @@ export const BuildArtifact = b.class({
     /** Returns a `Blob`, whose schema imports this one. */
     slice: {
       ...method,
-      args: { start: BlobSliceBound, end: BlobSliceBound, contentType: b.string.allowStringObject.view.otherAsNull },
+      args: { start: BlobSliceBound, end: BlobSliceBound, contentType: BlobSliceBound },
       returns: b.object,
       length: 2,
     },
@@ -59,7 +59,7 @@ export const BuildMinifyParts = b.dictionary(
   { allowArray: true, reportedAs: "minify" },
 );
 export const BuildMinify = b.union({ all: b.bool, parts: BuildMinifyParts });
-export const BuildConditions = b.union({ one: b.string.allowStringObject.utf8.owned, many: b.jsArray });
+export const BuildConditions = b.union({ one: b.string.allowStringObject.utf8.owned, list: b.jsArray });
 export const BuildNamingTemplates = b.dictionary(
   { entry: text, chunk: text, asset: text },
   { deferred: true, reportedAs: "naming" },
@@ -93,7 +93,7 @@ export const BytecodeOrder = b.union({
   missing: b.null,
   flag: b.bool,
   one: b.string.allowStringObject.utf8.owned,
-  many: b.jsArray,
+  list: b.jsArray,
 });
 export const BuildCompileOptions = b.dictionary(
   {

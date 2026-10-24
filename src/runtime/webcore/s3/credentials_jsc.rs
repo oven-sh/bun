@@ -1,11 +1,11 @@
 //! `S3Credentials.getCredentialsWithOptions` — parses a JS options object into
-//! `S3CredentialsWithOptions`. Lives in `runtime/webcore/s3/` because it walks
-//! a `jsc.JSValue`; `s3_signing/` is JSC-free.
+//! `S3CredentialsWithOptions`. Lives in `runtime/webcore/s3/` because
+//! `s3_signing/` is JSC-free.
 
 use core::sync::atomic::Ordering;
 
 use bun_core::comptime_string_map::ComptimeStringMap;
-use bun_core::{Tag as BunStringTag, strings};
+use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JsResult, RangeErrorOptions, bun_string_jsc};
 
 use bun_s3_signing::{
@@ -25,17 +25,14 @@ fn truthy_string_utf8(
     key: &[u8],
     value: OptionText<'_>,
 ) -> JsResult<Option<bun_core::Utf8Bytes<'static>>> {
-    let str = match value {
-        OptionText::Missing => return Ok(None),
-        OptionText::Text(str) | OptionText::StringObject(str) => str,
-        OptionText::Other(js_value) => {
-            return Err(global.throw_invalid_argument_type_value(key, b"string", js_value));
+    match crate::webcore::blob::truthy_string(value) {
+        Ok(str) => Ok(str
+            .filter(|str| !str.is_empty())
+            .map(bun_core::String::into_utf8)),
+        Err(js_value) => {
+            Err(global.throw_invalid_argument_type_value(key, b"string", js_value.to_js()))
         }
-    };
-    if str.tag() == BunStringTag::Empty || str.tag() == BunStringTag::Dead {
-        return Ok(None);
     }
-    Ok(Some(str.into_utf8()))
 }
 
 const ACL_ONE_OF: &str = "\"private\", \"public-read\", \"public-read-write\", \"aws-exec-read\", \
@@ -264,14 +261,13 @@ fn size_from_js(size: S3Size) -> Option<i64> {
     match size {
         S3Size::Missing => None,
         S3Size::BigInt(size) => Some(size),
-        S3Size::Number(size) | S3Size::Other(size) => Some(size as i64),
+        S3Size::Other(size) => Some(size as i64),
     }
 }
 
 pub(crate) fn count_from_js(count: S3Count) -> Option<i32> {
     match count {
         S3Count::Missing => None,
-        S3Count::BigInt(count) => Some(count as i32),
         S3Count::Number(count) => Some(count as i32),
         S3Count::Other(count) => Some(count),
     }

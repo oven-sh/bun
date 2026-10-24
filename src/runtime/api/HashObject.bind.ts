@@ -8,7 +8,7 @@ const data = b.bytes({
   refuse: ["undefined", "null"],
 });
 /** A seed that is neither a number nor a BigInt is not converted: it is 0. */
-export const HashSeed = b.union({ number: b.f64, bigint: b.bigInt, other: b.ignored });
+export const HashSeed = b.union({ number: b.f64, bigInt: b.bigInt, other: b.ignored });
 const seed = HashSeed;
 const unseeded32 = { args: { data }, returns: b.u32 };
 const seeded32 = { args: { data, seed }, returns: b.u32, length: 1 };

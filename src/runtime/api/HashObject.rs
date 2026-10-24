@@ -6,7 +6,7 @@ use crate::generated_bindgen::hash_object::HashSeed;
 fn seed_of(seed: HashSeed<'_>) -> u64 {
     match seed {
         HashSeed::Number(number) => JSValue::js_number(number).to_uint64_no_truncate(),
-        HashSeed::Bigint(bigint) => bigint.to_js().to_uint64_no_truncate(),
+        HashSeed::BigInt(bigint) => bigint.to_js().to_uint64_no_truncate(),
         HashSeed::Other => 0,
     }
 }

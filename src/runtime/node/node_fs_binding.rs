@@ -93,7 +93,7 @@ fn parse_async_args<A: FsArgument>(
 ) -> JsResult<ParsedAsyncArgs<A>> {
     let mut parsing = Parsing::new(Flavor::Async);
     let args = from_js(global, &mut parsing)?;
-    // SAFETY: parsed under `Flavor::Async`.
+    // SAFETY: parsed under [`Flavor::Async`]: its strings are thread-safe and its buffers pinned.
     let args = unsafe { ThreadIsolated::new(args) };
 
     if A::HAVE_ABORT_SIGNAL {
@@ -354,10 +354,10 @@ node_fs_bindings! {
         (path: schema::PathLike<'_>, uid: Deferred<'_, i64>, gid: Deferred<'_, i64>),
         |global, parsing| args::Chown::from_js(global, parsing, path, uid, gid);
     chmod_sync / chmod / chmod_cb => Chmod, args::Chmod<'static>, ret::Chmod,
-        (path: schema::PathLike<'_>, mode: Deferred<'_, schema::Mode<'_>>),
+        (path: schema::PathLike<'_>, mode: Deferred<'_, schema::FileMode<'_>>),
         |global, parsing| args::Chmod::from_js(global, parsing, path, mode);
     fchmod_sync / fchmod / fchmod_cb => Fchmod, args::FChmod, ret::Fchmod,
-        (fd: i32, mode: schema::Mode<'_>),
+        (fd: i32, mode: schema::FileMode<'_>),
         |global, _| args::FChmod::from_js(global, fd, mode);
     fchown_sync / fchown / fchown_cb => Fchown, args::Fchown, ret::Fchown,
         (fd: i32, uid: i64, gid: i64),
@@ -375,7 +375,7 @@ node_fs_bindings! {
         (fd: i32, atime: schema::TimeLike<'_>, mtime: schema::TimeLike<'_>),
         |global, _| args::Futimes::from_js(global, fd, atime, mtime);
     lchmod_sync / lchmod / lchmod_cb => Lchmod, args::LCHmod<'static>, ret::Lchmod,
-        (path: schema::PathLike<'_>, mode: Deferred<'_, schema::Mode<'_>>),
+        (path: schema::PathLike<'_>, mode: Deferred<'_, schema::FileMode<'_>>),
         |global, parsing| args::LCHmod::from_js(global, parsing, path, mode);
     lchown_sync / lchown / lchown_cb => Lchown, args::LChown<'static>, ret::Lchown,
         (path: schema::PathLike<'_>, uid: Deferred<'_, i64>, gid: Deferred<'_, i64>),
@@ -393,7 +393,7 @@ node_fs_bindings! {
         (prefix: schema::PathLike<'_>, options: Deferred<'_, schema::EncodingOrOptions>),
         |global, parsing| args::MkdirTemp::from_js(global, parsing, prefix, options);
     open_sync / open / open_cb => Open, args::Open<'static>, ret::Open,
-        (path: schema::PathLike<'_>, flags: Deferred<'_, Option<schema::Flags<'_>>>, mode: Deferred<'_, Option<schema::Mode<'_>>>),
+        (path: schema::PathLike<'_>, flags: Deferred<'_, Option<schema::FileFlags<'_>>>, mode: Deferred<'_, Option<schema::FileMode<'_>>>),
         |global, parsing| args::Open::from_js(global, parsing, path, flags, mode);
     read_sync / read / read_cb => Read, args::Read, ret::Read,
         (fd: i32, buffer: JsLocal<'_, BufferSource>, offset: u64, length: Option<f64>, position: Deferred<'_, schema::ReadPosition>),
@@ -513,7 +513,7 @@ pub(crate) fn rm_options_for_testing(
 /// `internal/fs/utils` `stringToFlags` tests can assert the production mapping.
 pub(crate) fn string_to_flags_for_testing(
     cx: &mut JsScope<'_>,
-    flags: Option<schema::Flags<'_>>,
+    flags: Option<schema::FileFlags<'_>>,
 ) -> JsResult<i32> {
     use crate::node::types::FileSystemFlags;
     let flags = FileSystemFlags::from_js(cx.global(), flags)?.unwrap_or(FileSystemFlags::R);

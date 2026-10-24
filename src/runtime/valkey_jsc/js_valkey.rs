@@ -1012,7 +1012,7 @@ impl JSValkeyClient {
         js::onconnect_set_cached(
             this_value.to_js(),
             global,
-            value.with_graph_context_if_needed(global),
+            value.to_js().with_graph_context_if_needed(global),
         );
     }
     pub(crate) fn get_onclose(&self, this_value: JsWrapper<'_, Self>) -> JSValue {
@@ -1029,7 +1029,7 @@ impl JSValkeyClient {
         js::onclose_set_cached(
             this_value.to_js(),
             global,
-            value.with_graph_context_if_needed(global),
+            value.to_js().with_graph_context_if_needed(global),
         );
     }
 
@@ -1969,8 +1969,8 @@ impl Options {
         }
 
         match options.tls {
-            SocketOptionsTLS::None => {}
-            SocketOptionsTLS::Boolean(enabled) => {
+            SocketOptionsTLS::Missing => {}
+            SocketOptionsTLS::Flag(enabled) => {
                 this.tls = if enabled {
                     valkey::TLS::Enabled
                 } else {

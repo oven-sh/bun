@@ -15,7 +15,7 @@ use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
     JsResult, SystemError,
 };
-use bun_jsc::{JsCell, StringJsc as _, SysErrorJsc as _};
+use bun_jsc::{JsCell, SysErrorJsc as _};
 #[cfg(unix)]
 use bun_sys::Fd;
 use bun_sys::UV_E;
@@ -38,7 +38,7 @@ use crate::api::bun_terminal_body::{
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use crate::generated_bindgen::js_bun_spawn_bindings::SpawnCgroupTarget;
 use crate::generated_bindgen::js_bun_spawn_bindings::{
-    SpawnCommand, SpawnCommandList, SpawnOptionsObject, SpawnStdioList, StdioValue,
+    SpawnCommand, SpawnOptionsObject, SpawnStdioList, SpawnTerminal, StdioValue,
 };
 use crate::webcore as WebCore;
 
@@ -406,17 +406,12 @@ fn spawn_maybe_sync<'a>(
                 args = options;
             }
             SpawnCommand::Options(options) => {
-                cmd_value = match options.cmd(cx.global())? {
-                    SpawnCommandList::List(list) => list.to_js(),
-                    SpawnCommandList::Text(text) if !text.is_empty() => text.to_js(cx.global())?,
-                    // Refused by `get_argv`, once `env` is read.
-                    SpawnCommandList::Other => JSValue::UNDEFINED,
-                    SpawnCommandList::Missing | SpawnCommandList::Text(_) => {
-                        return Err(cx
-                            .global()
-                            .throw_invalid_arguments(format_args!("cmd must be an array")));
-                    }
+                let Some(cmd_value_) = options.cmd(cx.global())? else {
+                    return Err(cx
+                        .global()
+                        .throw_invalid_arguments(format_args!("cmd must be an array")));
                 };
+                cmd_value = cmd_value_.to_js();
                 args = Some(options);
             }
             SpawnCommand::Other => {
@@ -595,20 +590,9 @@ fn spawn_maybe_sync<'a>(
                         .throw_invalid_arguments(format_args!("stdio must be an array")));
                 }
                 SpawnStdioList::Missing => {
-                    if let Some(value) = args.stdin(cx.global())? {
-                        let value = StdioValue::from_local(cx.global(), value)?;
-                        Stdio::extract(&mut stdio[0], cx, 0, value, is_sync)?;
-                    }
-
-                    if let Some(value) = args.stderr(cx.global())? {
-                        let value = StdioValue::from_local(cx.global(), value)?;
-                        Stdio::extract(&mut stdio[2], cx, 2, value, is_sync)?;
-                    }
-
-                    if let Some(value) = args.stdout(cx.global())? {
-                        let value = StdioValue::from_local(cx.global(), value)?;
-                        Stdio::extract(&mut stdio[1], cx, 1, value, is_sync)?;
-                    }
+                    Stdio::extract(&mut stdio[0], cx, 0, args.stdin(cx.global())?, is_sync)?;
+                    Stdio::extract(&mut stdio[2], cx, 2, args.stderr(cx.global())?, is_sync)?;
+                    Stdio::extract(&mut stdio[1], cx, 1, args.stdout(cx.global())?, is_sync)?;
                 }
             }
 
@@ -708,7 +692,12 @@ fn spawn_maybe_sync<'a>(
             }
 
             if !is_sync {
-                if let Some(terminal_val) = args.terminal(cx.global())? {
+                if let Some(terminal) = args.terminal(cx.global())? {
+                    let SpawnTerminal::Options(terminal_val) = terminal else {
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
+                            "terminal must be a Terminal object or options object",
+                        )));
+                    };
                     // Check if it's an existing Terminal object
                     if let Some(terminal) =
                         terminal_body::js::from_js(terminal_val.object().to_js())

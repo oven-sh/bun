@@ -946,7 +946,7 @@ impl StringArray {
                 return Err(global_this.throw_invalid_argument_type_value(
                     property.as_bytes(),
                     b"array of strings",
-                    value,
+                    value.to_js(),
                 ));
             }
         };
@@ -995,7 +995,7 @@ impl FFI {
                 return Err(global_this.throw_invalid_argument_type_value(
                     b"symbols",
                     b"object",
-                    symbols_object,
+                    symbols_object.to_js(),
                 ));
             }
         };
@@ -1055,7 +1055,7 @@ impl FFI {
                 return Err(global_this.throw_invalid_argument_type_value(
                     b"flags",
                     b"string",
-                    flags_value,
+                    flags_value.to_js(),
                 ));
             }
         }
@@ -1107,7 +1107,7 @@ impl FFI {
                 if files.is_empty() {
                     return Err(global_this.throw_invalid_argument_value_custom(
                         b"source",
-                        source_value,
+                        source_value.to_js(),
                         b"must have at least one file",
                     ));
                 }
@@ -1117,7 +1117,7 @@ impl FFI {
                 return Err(global_this.throw_invalid_argument_type_value(
                     b"source",
                     b"string",
-                    source_value,
+                    source_value.to_js(),
                 ));
             }
             Some(CCStrings::Text(source_value)) => {
@@ -1223,10 +1223,10 @@ impl FFI {
 
     pub(crate) fn close_callback(callback: JsLocal<'_>) {
         unsafe extern "C" {
-            fn Bun__JSCFFICallbackClose(callback: JsLocal<'_>);
+            fn Bun__JSCFFICallbackClose(callback: JSValue);
         }
         // SAFETY: thin FFI wrapper; the C++ side type-checks the cell (jsDynamicCast) before use.
-        unsafe { Bun__JSCFFICallbackClose(callback) };
+        unsafe { Bun__JSCFFICallbackClose(callback.to_js()) };
     }
 
     pub(crate) fn callback<'a>(
@@ -1697,7 +1697,7 @@ pub(super) fn generate_symbol_for_function(
     let mut abi_types: Vec<ABIType> = Vec::new();
 
     if let Some(args) = value.args(global)? {
-        let FFIArgs::Array(args) = args else {
+        let FFIArgs::List(args) = args else {
             return Ok(Some(global.create_error_instance(format_args!(
                 "Expected an object with \"args\" as an array"
             ))));
@@ -1810,7 +1810,7 @@ pub(super) fn generate_symbol_for_function(
                 function.symbol_from_dynamic_library = Some(num as *mut c_void);
             }
         }
-        FFINumber::Bigint(ptr) => {
+        FFINumber::BigInt(ptr) => {
             let ptr = ptr.to_js();
             if !ptr.is_big_int_in_uint64_range(1, usize::MAX as u64) {
                 return Ok(Some(
@@ -1820,7 +1820,7 @@ pub(super) fn generate_symbol_for_function(
             function.symbol_from_dynamic_library =
                 Some(ptr.to_uint64_no_truncate() as usize as *mut c_void);
         }
-        FFINumber::Absent | FFINumber::Other => {}
+        FFINumber::Missing | FFINumber::Other => {}
     }
 
     Ok(None)

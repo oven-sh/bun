@@ -53,8 +53,8 @@ pub(crate) fn on_internal_message_child<'a>(
     let global = cx.global();
     let singleton = child_singleton();
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
-    singleton.worker = StrongOptional::create(worker, global);
-    singleton.cb = StrongOptional::create(callback, global);
+    singleton.worker = StrongOptional::create(worker.to_js(), global);
+    singleton.cb = StrongOptional::create(callback.to_js(), global);
     singleton.flush(global)
 }
 
@@ -199,8 +199,8 @@ pub(crate) fn on_internal_message_primary<'a>(
     let global = cx.global();
     // TODO: remove these strongs.
     ipc_data.internal_msg_queue.with_mut(|q| {
-        q.worker = StrongOptional::create(worker, global);
-        q.cb = StrongOptional::create(callback, global);
+        q.worker = StrongOptional::create(worker.to_js(), global);
+        q.cb = StrongOptional::create(callback.to_js(), global);
     });
 }
 
@@ -320,7 +320,7 @@ pub(crate) fn cluster_raw_bind<'a>(
             BindAddressType::Family(family) if family == -1.0 => {
                 return Ok(BindResult::Errno(-bun_sys::UV_E::NOTSUP));
             }
-            BindAddressType::Family(_) | BindAddressType::Ignored => {}
+            BindAddressType::Family(_) | BindAddressType::Other => {}
         }
 
         let (host_owned, fallback_host): (Vec<u8>, Option<&[u8]>) = match address {
@@ -389,7 +389,7 @@ pub(crate) fn cluster_raw_bind<'a>(
             BindAddressType::Udp(name) => (true, if name == b"udp6" { 6 } else { 4 }),
             BindAddressType::Family(6.0) => (false, 6),
             BindAddressType::Family(-1.0) => (false, -1),
-            BindAddressType::Family(_) | BindAddressType::Ignored => (false, 4),
+            BindAddressType::Family(_) | BindAddressType::Other => (false, 4),
         };
 
         fn last_neg_errno() -> BindResult {
@@ -410,9 +410,11 @@ pub(crate) fn cluster_raw_bind<'a>(
             let path_bytes = match address {
                 BindAddress::Text(path) => path,
                 BindAddress::Other(value) => {
-                    return Err(cx
-                        .global()
-                        .throw_invalid_argument_type_value("address", "string", value));
+                    return Err(cx.global().throw_invalid_argument_type_value(
+                        "address",
+                        "string",
+                        value.to_js(),
+                    ));
                 }
             };
             // SAFETY: sockaddr_un is plain C data; all-zero is a valid value.

@@ -3,7 +3,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 export default b.module({ rustPath: "crate::webcore::crypto" });
 
 /** `bytes` is a `Buffer`, for the encoding "buffer". */
-export const EncodedUUID = b.union({ text: b.string, bytes: b.bufferSource });
+export const EncodedUUID = b.union({ text: b.string, buffer: b.bufferSource });
 
 export const randomUUIDv5 = b.fn({
   args: {
@@ -27,7 +27,7 @@ export const UUIDEncodingOrTimestamp = b.union({
   label: b.string.utf8,
   clock: b.undefined,
   time: b.f64.allowDate,
-  ignored: b.ignored,
+  other: b.ignored,
 });
 
 /** `randomUUIDv7(timestamp)` takes the timestamp. `randomUUIDv7(timestamp, undefined)` takes the clock's. */
@@ -64,6 +64,7 @@ export const Crypto = b.class({
       returns: b.bufferSource,
       capability: "js",
       throws: true,
+      length: 1,
     },
     randomUUID: { returns: b.string },
     timingSafeEqual: equal,

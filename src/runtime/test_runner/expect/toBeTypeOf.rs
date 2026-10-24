@@ -1,9 +1,8 @@
 use super::Expect;
 use super::get_signature;
 use super::throw;
-use crate::generated_bindgen::expect::StringValue;
 use bun_jsc::JsResult;
-use bun_jsc::bindgen::{JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper, StringLike};
 
 bun_core::comptime_string_map! {
     static JS_TYPE_OF_MAP: &'static [u8] = {
@@ -23,20 +22,16 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: StringValue<'_>,
+        expected: Option<JsLocal<'_, StringLike>>,
     ) -> JsResult<()> {
         let global = cx.global();
         let (this, value, not) = self.matcher_prelude(global, this_value.to_js(), "toBeTypeOf", "")?;
 
-        let expected = match expected {
-            StringValue::String(string) => string.to_js(),
-            StringValue::StringObject(object) => object.to_js(),
-            StringValue::Other => {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "toBeTypeOf() requires a string argument"
-                )));
-            }
+        let Some(expected) = expected else {
+            return Err(global
+                .throw_invalid_arguments(format_args!("toBeTypeOf() requires a string argument")));
         };
+        let expected = expected.to_js();
 
         let expected_type = expected.to_bun_string(global)?;
 

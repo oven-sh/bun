@@ -14,7 +14,7 @@ use bun_collections::HashMap;
 use bun_core::String as BunString;
 use bun_core::{StackCheck, strings};
 use bun_js_parser_jsc::ExprJsc;
-use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes, ValueWalker};
+use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::xml::{self, XML};
 
@@ -30,10 +30,14 @@ pub(crate) fn parse<'a>(
     let compact = match options {
         None => true,
         Some(XMLReviverOrOptions::Options(options)) => match options.compact {
-            XMLCompact::Unset => true,
+            XMLCompact::Missing => true,
             XMLCompact::Flag(compact) => compact,
             XMLCompact::Other(other) => {
-                return Err(global.throw_invalid_property_type("compact", "boolean", other));
+                return Err(global.throw_invalid_property_type(
+                    "compact",
+                    "boolean",
+                    other.to_js(),
+                ));
             }
         },
         // A function here is reserved for a reviver; reject it rather than read
@@ -129,7 +133,7 @@ pub(crate) fn stringify<'a>(
     space: StringifySpace<'a>,
 ) -> JsResult<Option<JSValue>> {
     let global = cx.global();
-    let value = Stringifier::value_of(value);
+    let value = value.to_js();
 
     if skipped(value) {
         return Ok(None);
@@ -224,14 +228,14 @@ enum Space {
 impl Space {
     /// Same interpretation as `JSON.stringify`'s `space`.
     fn init(global: &JSGlobalObject, space: StringifySpace<'_>) -> JsResult<Space> {
-        match space.unboxed(global)? {
+        match space.unwrap_boxed_primitive(global)? {
             StringifySpace::Number(n) => {
                 if n.is_nan() || n < 1.0 {
                     return Ok(Space::Minified);
                 }
                 Ok(Space::Number(if n > 10.0 { 10 } else { n as u32 }))
             }
-            StringifySpace::String(str) => {
+            StringifySpace::Text(str) => {
                 if str.length() == 0 {
                     return Ok(Space::Minified);
                 }
@@ -254,8 +258,6 @@ enum Scalar {
     Empty,
     Text(bun_core::String),
 }
-
-impl ValueWalker for Stringifier {}
 
 struct Stringifier {
     stack_check: StackCheck,

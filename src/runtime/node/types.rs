@@ -16,7 +16,7 @@ use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
 use crate::generated_bindgen::blob;
-use crate::generated_bindgen::node_fs_binding as schema;
+use crate::generated_bindgen::node_fs_binding as generated;
 use crate::node::util::validators;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::{Blob, Request, Response};
@@ -566,7 +566,7 @@ impl From<bun_core::NodeEncoding> for Encoding {
 
 pub(crate) fn assert_encoding_valid(
     cx: &mut JsScope<'_>,
-    encoding: Option<schema::EncodingName>,
+    encoding: Option<generated::EncodingName>,
 ) -> JsResult<()> {
     Encoding::assert(encoding, cx.global(), Encoding::Utf8)?;
     Ok(())
@@ -596,16 +596,16 @@ impl Encoding {
     }
 
     pub(crate) fn assert(
-        value: Option<schema::EncodingName>,
+        value: Option<generated::EncodingName>,
         global_object: &JSGlobalObject,
         default: Encoding,
     ) -> JsResult<Encoding> {
         match value {
             None => Ok(default),
-            Some(schema::EncodingName::Name(name)) => {
+            Some(generated::EncodingName::Name(name)) => {
                 Self::from_name_with_default_on_empty(&name, global_object, default)
             }
-            Some(schema::EncodingName::Other(value)) => {
+            Some(generated::EncodingName::Other(value)) => {
                 Err(Self::throw_encoding_error(global_object, &value))
             }
         }
@@ -720,7 +720,7 @@ pub(crate) trait PathLikeExt {
     /// `Err` is the value when it is not a path, for the caller's own error.
     fn from_js<'a>(
         ctx: &JSGlobalObject,
-        path: schema::PathLike<'a>,
+        path: generated::PathLike<'a>,
         parsing: &mut Parsing,
     ) -> JsResult<Result<PathLike<'static>, JsLocal<'a>>>
     where
@@ -733,7 +733,7 @@ pub(crate) trait PathLikeExt {
     #[inline]
     fn from_js_required(
         ctx: &JSGlobalObject,
-        path: schema::PathLike<'_>,
+        path: generated::PathLike<'_>,
         parsing: &mut Parsing,
         name: &str,
     ) -> JsResult<PathLike<'static>>
@@ -760,7 +760,7 @@ pub(crate) trait PathOrFdExt {
     /// As [`PathLikeExt::from_js`].
     fn from_js<'a>(
         ctx: &JSGlobalObject,
-        path: schema::PathOrFileDescriptor<'a>,
+        path: generated::PathOrFileDescriptor<'a>,
         parsing: &mut Parsing,
     ) -> JsResult<Result<PathOrFileDescriptor<'static>, JsLocal<'a>>>
     where
@@ -981,12 +981,12 @@ impl PathLikeExt for PathLike<'_> {
 
     fn from_js<'a>(
         ctx: &JSGlobalObject,
-        path: schema::PathLike<'a>,
+        path: generated::PathLike<'a>,
         parsing: &mut Parsing,
     ) -> JsResult<Result<PathLike<'static>, JsLocal<'a>>> {
         use jsc::JSType;
         let path = match path {
-            schema::PathLike::Buffer(buffer) => {
+            generated::PathLike::Buffer(buffer) => {
                 let arg = buffer.to_js();
                 if !matches!(
                     arg.js_type(),
@@ -1010,10 +1010,10 @@ impl PathLikeExt for PathLike<'_> {
                 PathLike::Buffer(buffer)
             }
 
-            schema::PathLike::String(str) => {
+            generated::PathLike::String(str) => {
                 path_like_from_string(ctx, str, parsing.flavor == Flavor::Async)?
             }
-            schema::PathLike::Url(domurl) => {
+            generated::PathLike::Url(domurl) => {
                 use jsc::dom_url::ToFileSystemPathError;
                 let str = match domurl.file_system_path() {
                     Ok(s) => s,
@@ -1052,7 +1052,7 @@ impl PathLikeExt for PathLike<'_> {
                 }
                 path_like_from_string(ctx, str, parsing.flavor == Flavor::Async)?
             }
-            schema::PathLike::Other(value) => return Ok(Err(value)),
+            generated::PathLike::Other(value) => return Ok(Err(value)),
         };
 
         Valid::path_length(path, ctx, parsing).map(Ok)
@@ -1362,10 +1362,10 @@ impl VectorArrayBuffer {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn mode_from_js(ctx: &JSGlobalObject, mode: schema::Mode<'_>) -> JsResult<Mode> {
+pub(crate) fn mode_from_js(ctx: &JSGlobalObject, mode: generated::FileMode<'_>) -> JsResult<Mode> {
     let mode_int: u32 = match mode {
-        schema::Mode::Number(number) => number,
-        schema::Mode::String(string) => {
+        generated::FileMode::Number(number) => number,
+        generated::FileMode::String(string) => {
             let value = string.to_js();
 
             // An easier method of constructing the mode is to use a sequence of
@@ -1419,19 +1419,17 @@ pub(crate) use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
 impl PathOrFdExt for PathOrFileDescriptor<'_> {
     fn from_js<'a>(
         ctx: &JSGlobalObject,
-        path: schema::PathOrFileDescriptor<'a>,
+        path: generated::PathOrFileDescriptor<'a>,
         parsing: &mut Parsing,
     ) -> JsResult<Result<PathOrFileDescriptor<'static>, JsLocal<'a>>> {
-        let path = match path {
-            schema::PathOrFileDescriptor::Fd(fd) => {
-                return Ok(Ok(PathOrFileDescriptor::Fd(Fd::from_uv(fd))));
+        match path {
+            generated::PathOrFileDescriptor::Fd(fd) => {
+                Ok(Ok(PathOrFileDescriptor::Fd(Fd::from_uv(fd))))
             }
-            schema::PathOrFileDescriptor::String(str) => schema::PathLike::String(str),
-            schema::PathOrFileDescriptor::Buffer(buffer) => schema::PathLike::Buffer(buffer),
-            schema::PathOrFileDescriptor::Url(url) => schema::PathLike::Url(url),
-            schema::PathOrFileDescriptor::Other(value) => schema::PathLike::Other(value),
-        };
-        Ok(PathLike::from_js(ctx, path, parsing)?.map(PathOrFileDescriptor::Path))
+            generated::PathOrFileDescriptor::Path(path) => {
+                Ok(PathLike::from_js(ctx, path, parsing)?.map(PathOrFileDescriptor::Path))
+            }
+        }
     }
 }
 
@@ -1472,7 +1470,7 @@ impl FileSystemFlags {
 impl FileSystemFlags {
     pub(crate) fn from_js(
         ctx: &JSGlobalObject,
-        flags: Option<schema::Flags<'_>>,
+        flags: Option<generated::FileFlags<'_>>,
     ) -> JsResult<Option<FileSystemFlags>> {
         let val = match flags {
             // Match Node's stringToFlags, which runs validateInt32 on a numeric
@@ -1481,7 +1479,7 @@ impl FileSystemFlags {
             // `syscall/js` bridge reads arguments out of wasm memory with
             // getFloat64, so valid flags like 578 (O_RDWR|O_CREAT|O_TRUNC)
             // arrive double-boxed and must not be rejected.
-            Some(schema::Flags::Number(number)) => {
+            Some(generated::FileFlags::Number(number)) => {
                 let flags = number.max(0);
                 // On Windows, numeric flags from fs.constants (e.g. O_CREAT=0x100)
                 // use the platform's native MSVC/libuv values which differ from the
@@ -1501,7 +1499,7 @@ impl FileSystemFlags {
 
             // Node switches on the value with strict equality, so only primitive
             // strings can match; `new String("w")` and every other object throw.
-            Some(schema::Flags::String(string)) => {
+            Some(generated::FileFlags::String(string)) => {
                 let str = string.to_js().to_js_string_view(ctx)?;
                 // The longest valid flag string is 3 bytes ("as+" etc).
                 if str.length() >= 1 && str.length() <= 3 {
@@ -1512,10 +1510,10 @@ impl FileSystemFlags {
                 }
                 string.as_value()
             }
-            Some(schema::Flags::Other(value)) => value,
+            Some(generated::FileFlags::Other(value)) => value,
         };
 
-        let actual = JSGlobalObject::inspect_for_error_message(ctx, val)?;
+        let actual = JSGlobalObject::inspect_for_error_message(ctx, val.to_js())?;
         Err(ctx
             .err(
                 jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -1678,11 +1676,7 @@ impl PathOrBlob {
             blob::PathOrBlob::Blob(blob) => {
                 return Ok(PathOrBlob::Blob(Box::new(blob.borrowed_view())));
             }
-            blob::PathOrBlob::Fd(fd) => schema::PathOrFileDescriptor::Fd(fd),
-            blob::PathOrBlob::String(str) => schema::PathOrFileDescriptor::String(str),
-            blob::PathOrBlob::Buffer(buffer) => schema::PathOrFileDescriptor::Buffer(buffer),
-            blob::PathOrBlob::Url(url) => schema::PathOrFileDescriptor::Url(url),
-            blob::PathOrBlob::Other(value) => schema::PathOrFileDescriptor::Other(value),
+            blob::PathOrBlob::Path(path) => path,
         };
         PathOrFileDescriptor::from_js(ctx, path, &mut Parsing::new(Flavor::Sync))?
             .map(PathOrBlob::Path)
@@ -1690,7 +1684,7 @@ impl PathOrBlob {
                 ctx.throw_invalid_argument_type_value(
                     b"destination",
                     b"path, file descriptor, or Blob",
-                    value,
+                    value.to_js(),
                 )
             })
     }

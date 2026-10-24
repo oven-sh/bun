@@ -24,7 +24,7 @@ import {
   type Origin,
   pascalCase,
   snakeCase,
-  type Type,
+  Type,
 } from "./bindgen-lib-internal.ts";
 import { argParse, writeIfNotChanged } from "./helpers.ts";
 
@@ -69,7 +69,7 @@ async function load(source: string): Promise<SchemaFile> {
       value.name = name;
       value.origin = origin;
       result.types.push(value);
-    } else {
+    } else if (!(value instanceof Type)) {
       throw new TypeError(
         `${stem}.bind.ts: export ${name} is not a type, a function, a namespace, a conversion or b.module()`,
       );

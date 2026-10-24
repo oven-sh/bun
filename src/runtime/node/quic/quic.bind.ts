@@ -1,6 +1,7 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
+import { coercedInt32 } from "../../socket/socket_body.bind.ts";
 import { SocketAddress } from "../../socket/SocketAddress.bind.ts";
-import { CoercedInt32 } from "../../socket/socket_body.bind.ts";
+import { BlockList } from "../net/BlockList.bind.ts";
 
 const js = { capability: "js", throws: true } as const;
 
@@ -10,18 +11,18 @@ const flag = b.bool.otherAsNull;
 const truthy = b.bool.loose.optional;
 const object = b.object.otherAsNull;
 /** A negative number is 0 and a BigInt wraps to 64 bits. */
-export const Uint64Option = b.union({ none: b.null, number: b.f64, bigInt: b.i64.asIntN, other: b.ignored });
+export const Uint64Option = b.union({ missing: b.null, number: b.f64, bigInt: b.i64.asIntN, other: b.ignored });
 
-export const StreamError = b.dictionary({ code: Uint64Option }, { deferred: true });
+export const QuicStreamError = b.dictionary({ code: Uint64Option }, { deferred: true });
 /** `true` if the session is closing every stream. A destroyed stream does not read the `code` of `error`. */
 export const StreamDestroyReason = b.union({
   cascading: b.bool,
   number: b.f64,
   bigInt: b.i64.asIntN,
-  error: StreamError,
+  error: QuicStreamError,
   other: b.ignored,
 });
-export const StreamSource = b.union({ none: b.null, buffer: b.bufferSource.allowShared, other: b.ignored });
+export const StreamSource = b.union({ missing: b.null, buffer: b.bufferSource.allowShared, other: b.ignored });
 /** In `chunks`, what is not a buffer is skipped. */
 export const StreamBatch = b.union({ chunks: b.jsArray, buffer: b.bufferSource.allowShared, other: b.ignored });
 
@@ -43,10 +44,10 @@ export const QuicStream = b.class({
      */
     sendHeaders: {
       ...js,
-      args: { kind: CoercedInt32.deferred, headers: object, flags: CoercedInt32.deferred },
+      args: { kind: coercedInt32.deferred, headers: object, flags: coercedInt32.deferred },
       returns: b.bool,
     },
-    setPriority: { args: { priority: CoercedInt32 } },
+    setPriority: { args: { priority: coercedInt32 } },
     setWakeup: { args: { callback: b.opaque.nullable }, capability: "js" },
     stopSending: { args: { code: Uint64Option }, capability: "js" },
     write: { ...js, args: { batch: StreamBatch }, returns: b.f64.optional },
@@ -55,7 +56,7 @@ export const QuicStream = b.class({
 
 export const EphemeralKey = b.dictionary({ type: b.string, name: b.string.optional, size: b.u32 });
 
-export const CloseOptions = b.dictionary(
+export const QuicCloseOptions = b.dictionary(
   { type: b.string.loose.optional, code: Uint64Option, reason: text },
   { deferred: true },
 );
@@ -64,7 +65,7 @@ export const QuicSession = b.class({
   rustPath: "crate::node::quic::QuicSession",
   proto: {
     applicationOptions: { ...js, returns: b.object },
-    destroy: { ...js, args: { options: CloseOptions.otherAsNull } },
+    destroy: { ...js, args: { options: QuicCloseOptions.otherAsNull } },
     getCertificate: { returns: b.bufferSource.optional, capability: "heap", throws: true },
     getEphemeralKey: { returns: EphemeralKey.optional },
     /** A `SocketAddress`, or `undefined` for no address. */
@@ -72,7 +73,7 @@ export const QuicSession = b.class({
     getPeerCertificate: { returns: b.bufferSource.optional, capability: "heap", throws: true },
     /** A `SocketAddress`, or `undefined` for no address. */
     getRemoteAddress: { returns: b.opaque, capability: "js" },
-    gracefulClose: { ...js, args: { options: CloseOptions.otherAsNull } },
+    gracefulClose: { ...js, args: { options: QuicCloseOptions.otherAsNull } },
     localTransportParams: { ...js, returns: b.object.optional },
     openStream: {
       ...js,
@@ -88,10 +89,8 @@ export const QuicSession = b.class({
 
 export const EndpointOptions = b.dictionary(
   {
-    /** A `SocketAddress`. */
-    address: object,
-    /** A `BlockList`. */
-    blockList: object,
+    address: SocketAddress.withValue.otherAsNull,
+    blockList: BlockList.withValue.otherAsNull,
     blockListPolicy: text,
     disableStatelessReset: flag,
     statelessResetBurst: b.f64.otherAsNull,
@@ -106,8 +105,8 @@ export const PemValue = b.union({
   other: b.ignored,
 });
 /** What in `list` is not a string or a buffer is skipped. */
-export const PemSource = b.union({ list: b.jsArray, ...b.alternativesOf(PemValue) });
-export const TlsOptions = b.dictionary(
+export const PemSource = b.union({ list: b.jsArray, value: PemValue });
+export const QuicTLSOptions = b.dictionary(
   {
     alpn: PemValue,
     servername: text,
@@ -124,16 +123,15 @@ export const TlsOptions = b.dictionary(
     groups: text,
     /** What is not a string is skipped. */
     origins: b.jsArray.otherAsNull,
-    /** Each own enumerable string key is a host name, whose value is a `TlsOptions`. */
+    /** Each own enumerable string key is a host name, whose value is a `QuicTLSOptions`. */
     sni: object,
   },
   { deferred: true },
 );
 export const TransportParams = b.dictionary(
   {
-    /** Each is a `SocketAddress`. */
-    preferredAddressIpv4: object,
-    preferredAddressIpv6: object,
+    preferredAddressIpv4: SocketAddress.withValue.otherAsNull,
+    preferredAddressIpv6: SocketAddress.withValue.otherAsNull,
     initialMaxStreamDataBidiLocal: Uint64Option,
     initialMaxStreamDataBidiRemote: Uint64Option,
     initialMaxStreamDataUni: Uint64Option,
@@ -156,7 +154,7 @@ export const SessionOptions = b.dictionary(
   {
     version: Uint64Option,
     minVersion: Uint64Option,
-    tls: TlsOptions.otherAsNull,
+    tls: QuicTLSOptions.otherAsNull,
     handshakeTimeout: Uint64Option,
     keepAlive: Uint64Option,
     transportParams: TransportParams.otherAsNull,
@@ -191,7 +189,7 @@ export const QuicEndpoint = b.class({
     listen: { ...js, args: { options: SessionOptions.otherAsNull }, passThis: true },
     markBusy: { args: { busy: b.bool.loose } },
     releaseSocket: { capability: "js" },
-    /** `entries` is what `TlsOptions.sni` is. */
+    /** `entries` is what `QuicTLSOptions.sni` is. */
     setSNIContexts: { ...js, args: { entries: object, replace: b.bool.loose } },
   },
 });

@@ -50,7 +50,7 @@ pub(crate) fn from_js(
             return Err(global.throw_invalid_argument_type_value(
                 b"compress",
                 b"boolean, string, or object",
-                value,
+                value.to_js(),
             ));
         }
     };
@@ -69,7 +69,7 @@ pub(crate) fn from_js(
             return Err(global.throw_invalid_argument_type_value(
                 b"compress.encoding",
                 b"string",
-                other,
+                other.to_js(),
             ));
         }
     };
@@ -87,7 +87,7 @@ pub(crate) fn from_js(
                 CompressEncoding::Zstd => (1, 22, DEFAULT_ZSTD_LEVEL),
             };
             Some(global.validate_integer_range::<i32>(
-                lvl,
+                lvl.to_js(),
                 default,
                 bun_jsc::IntegerRange {
                     min: i128::from(min),

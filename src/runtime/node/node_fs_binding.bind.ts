@@ -7,7 +7,6 @@ export default b.module({ rustPath: "crate::node::node_fs_binding" });
 const Fd = b.i32.validateInteger(0, 2 ** 31 - 1);
 /** -1 leaves it as it is. */
 const Id = b.i64.validateInteger(-1, 2 ** 32 - 1);
-/** A string as the JS value: what refuses one prints it. */
 
 /**
  * Of the views, `PathLike::from_js` takes a `Uint8Array` and a `DataView`.
@@ -19,12 +18,12 @@ export const PathLike = b.union({
   url: b.wrapped("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::DOMURL", reportedAs: "URL" }),
   other: b.opaque,
 });
-export const PathOrFileDescriptor = b.union({ fd: Fd.reportedAs("fd"), ...b.alternativesOf(PathLike) });
+export const PathOrFileDescriptor = b.union({ fd: Fd.reportedAs("fd"), path: PathLike });
 
 /** `string` is octal digits. */
-export const Mode = b.union({ number: b.u32.validateInteger().reportedAs("mode"), string: b.jsString });
+export const FileMode = b.union({ number: b.u32.validateInteger().reportedAs("mode"), string: b.jsString });
 /** `string` is one of Node's `stringToFlags`. */
-export const Flags = b.union({
+export const FileFlags = b.union({
   number: b.i32.validateInteger().reportedAs("flags"),
   string: b.jsString,
   other: b.opaque,
@@ -38,18 +37,17 @@ export const TimeLike = b.union({ number: b.f64, date: b.f64.allowDate, string: 
 
 const options = { allowArray: true, reportedAs: "options" } as const;
 /** The body checks the value of a member before the next member is read. */
-const inSteps = { deferred: true, reportedAs: "options" } as const;
+const deferred = { deferred: true, reportedAs: "options" } as const;
 const boolean = (value: boolean) => ({ type: b.bool.default(value), expected: ["boolean"] });
 const optionalBoolean = { type: b.bool.optional, expected: ["boolean"] };
 
 /** `other` is `ToString` of what is not a string, for the error that names it. */
 export const EncodingName = b.union({ name: b.string.allowStringObject, other: b.string.loose });
 const encoding = EncodingName.falsyAsNull;
-const flag = Flags.emptyStringAsNull;
-const mode = { type: Mode.emptyStringAsNull, expected: ["number"] };
+const flag = FileFlags.emptyStringAsNull;
+const mode = { type: FileMode.emptyStringAsNull, expected: ["number"] };
 const signal = {
-  type: b.wrapped("WebCore::JSAbortSignal", "JSAbortSignal.h", { rustPath: "bun_jsc::AbortSignal" }).shared
-    .emptyStringAsNull,
+  type: b.abortSignal.shared.emptyStringAsNull,
   expected: ["AbortSignal"],
 };
 const encodingOr = (options: b.Type) => b.union({ encoding: b.string.allowStringObject, options, other: b.ignored });
@@ -58,14 +56,14 @@ export const EncodingOptions = b.dictionary({ encoding }, options);
 export const EncodingOrOptions = encodingOr(EncodingOptions);
 export const ReaddirOptions = b.dictionary(
   { encoding, recursive: optionalBoolean, withFileTypes: optionalBoolean },
-  inSteps,
+  deferred,
 );
 export const EncodingOrReaddirOptions = encodingOr(ReaddirOptions);
-export const ReadFileOptions = b.dictionary({ encoding, flag, signal }, inSteps);
+export const ReadFileOptions = b.dictionary({ encoding, flag, signal }, deferred);
 export const EncodingOrReadFileOptions = encodingOr(ReadFileOptions);
 export const WriteFileOptions = b.dictionary(
   { encoding, flag, mode, signal, flush: { type: b.bool.nullable.default(false), expected: ["boolean"] } },
-  inSteps,
+  deferred,
 );
 export const EncodingOrWriteFileOptions = encodingOr(WriteFileOptions);
 
@@ -75,10 +73,10 @@ export const BigIntOptions = b.dictionary({ bigint: boolean(false) }, statOption
 export const StatOptions = b.dictionary({ throwIfNoEntry: boolean(true), bigint: boolean(false) }, statOptions);
 
 export const MkdirOptions = b.dictionary(
-  { recursive: boolean(false), mode: { type: Mode.nullable, expected: ["number"] } },
+  { recursive: boolean(false), mode: { type: FileMode.nullable, expected: ["number"] } },
   options,
 );
-export const MkdirOptionsOrMode = b.union({ ...b.alternativesOf(Mode), options: MkdirOptions, other: b.ignored });
+export const MkdirOptionsOrMode = b.union({ mode: FileMode, options: MkdirOptions, other: b.ignored });
 
 /** A `String` object is refused, unless the encoding is not UTF-8: only then is it converted. */
 export const WriteFileData = b.union({
@@ -113,27 +111,29 @@ export const RmOptionsArgument = b.dictionary(
 );
 const rmdirExpected = { options: 'The "options" argument must be of type object.' };
 
-export const SymlinkType = b.union({ none: b.null, name: b.string.allowStringObject, other: b.ignored });
+export const SymlinkType = b.union({ missing: b.null, name: b.string.allowStringObject, other: b.ignored });
 
 export const ReadPosition = b.union({
-  none: b.null,
+  missing: b.null,
   number: b.i64.validateInteger(-1),
-  bigint: b.bigInt,
+  bigInt: b.bigInt,
 });
 const cell = (name: string) => b.cell(`JSC::${name}`, `JavaScriptCore/${name}.h`, { rustPath: "bun_jsc::JSObject" });
 /** `fs.write(fd, buffer, callback)` passes the callback on. */
 export const WriteOffset = b.union({
-  none: b.null,
+  missing: b.null,
   function: cell("JSFunction"),
   internalFunction: cell("InternalFunction"),
   number: b.u64.validateInteger(),
 });
 /** A `String` object is converted, and then refused by the body. */
-export const WriteString = b.union({ string: b.string, stringObject: b.string.allowStringObject });
+export const WriteString = b.union({ text: b.string, stringObject: b.string.allowStringObject });
 /** `number` is truncated by the body. */
-export const WriteLength = b.union({ number: b.f64, bigint: b.i64.asIntN, other: b.ignored });
+export const WriteLength = b.union({ number: b.f64, bigInt: b.i64.asIntN, other: b.ignored });
 /** A whole number that is not negative. Anything else is the current position. */
 const position = b.f64.otherAsNull;
+/** Either overload of `write` refuses another `buffer` in these words. */
+const writeBuffer = ["string", "Buffer", "TypedArray", "DataView"] as const;
 
 const watchFlag = (name: string) => ({ type: b.bool.emptyStringAsNull, expected: `${name} must be a boolean` });
 export const WatchOptions = b.dictionary(
@@ -148,8 +148,12 @@ export const WatchOptions = b.dictionary(
 );
 /** `interval` is truncated by the body. */
 export const WatchFileOptions = b.dictionary(
-  { persistent: b.bool.default(true), bigint: b.bool.default(false), interval: b.f64.default(5007) },
-  { ...options, reportedAs: "", nonObjectAsEmpty: true },
+  {
+    persistent: boolean(true),
+    bigint: boolean(false),
+    interval: { type: b.f64.default(5007), expected: "interval must be a number" },
+  },
+  { ...options, nonObjectAsEmpty: true },
 );
 
 interface Signature {
@@ -171,7 +175,7 @@ const writeFile = { path: PathOrFileDescriptor, data: WriteFileData, options: En
 const operations: Record<string, Operation> = {
   access: { args: { ...path, mode: accessMode.deferred }, expected: { mode: accessModeExpected }, length: [3, 2] },
   appendFile: { args: writeFile, length: [4, 3] },
-  chmod: { args: { ...path, mode: Mode.deferred }, expected: { mode: ["number"] }, length: [3, 2] },
+  chmod: { args: { ...path, mode: FileMode.deferred }, expected: { mode: ["number"] }, length: [3, 2] },
   chown: { args: { ...path, uid: Id.deferred, gid: Id.deferred }, length: [4, 3] },
   close: { args: fd, length: [1, 1] },
   copyFile: {
@@ -180,14 +184,14 @@ const operations: Record<string, Operation> = {
     length: [4, 3],
   },
   exists: { args: path, length: [2, 1] },
-  fchmod: { args: { ...fd, mode: Mode }, expected: { mode: ["number"] }, length: [3, 2] },
+  fchmod: { args: { ...fd, mode: FileMode }, expected: { mode: ["number"] }, length: [3, 2] },
   fchown: { args: { ...fd, uid: Id, gid: Id }, length: [4, 3] },
   fdatasync: { args: fd, length: [2, 1] },
   fstat: { args: { ...fd, options: BigIntOptions }, length: [1, 1] },
   fsync: { args: fd, length: [2, 1] },
   ftruncate: { args: { ...fd, len: b.i64.validateInteger(-(2 ** 51), 2 ** 52 - 1).default(0) }, length: [1, 1] },
   futimes: { args: { ...fd, ...times }, length: [4, 3] },
-  lchmod: { args: { ...path, mode: Mode.deferred }, expected: { mode: ["number"] }, length: [3, 2] },
+  lchmod: { args: { ...path, mode: FileMode.deferred }, expected: { mode: ["number"] }, length: [3, 2] },
   lchown: { args: { ...path, uid: Id.deferred, gid: Id.deferred }, length: [4, 3] },
   link: { args: paths("oldPath", "newPath"), length: [3, 2] },
   lstat: { args: { ...path, options: StatOptions.default({}).deferred }, length: [1, 1] },
@@ -195,7 +199,7 @@ const operations: Record<string, Operation> = {
   mkdir: { args: { ...path, options: MkdirOptionsOrMode.deferred }, length: [3, 2] },
   mkdtemp: { args: { prefix: PathLike, options: EncodingOrOptions.deferred }, length: [3, 2] },
   open: {
-    args: { ...path, flags: Flags.nullable.deferred, mode: Mode.nullable.deferred },
+    args: { ...path, flags: FileFlags.nullable.deferred, mode: FileMode.nullable.deferred },
     expected: { mode: ["number"] },
     length: [4, 3],
   },
@@ -235,7 +239,7 @@ const operations: Record<string, Operation> = {
       {
         rustName: "write_buffer",
         args: { ...fd, buffer: b.bufferSource.allowShared, offset: WriteOffset, length: WriteLength, position },
-        expected: { buffer: ["string", "Buffer", "TypedArray", "DataView"], offset: ["number"] },
+        expected: { buffer: writeBuffer, offset: ["number"] },
       },
       {
         rustName: "write_string",
@@ -245,6 +249,7 @@ const operations: Record<string, Operation> = {
           position,
           encoding: b.string.allowStringObject.otherAsNull.deferred,
         },
+        expected: { buffer: writeBuffer },
       },
     ],
     length: [6, 5],
@@ -342,7 +347,7 @@ export const rmOptionsForTesting = b.fn({
   returns: RmOptions,
   length: 2,
 });
-export const stringToFlagsForTesting = b.fn({ ...js, args: { flags: Flags.nullable }, returns: b.i32 });
+export const stringToFlagsForTesting = b.fn({ ...js, args: { flags: FileFlags.nullable }, returns: b.i32, length: 1 });
 /** Without `size` it makes nothing. */
 export const createMemfdForTesting = b.fn({
   args: { size: b.f64.optional },

@@ -61,6 +61,9 @@ template<std::integral T, AllowBigInt = AllowBigInt::No>
 struct IDLStrictInteger : WebCore::IDLInteger<T> {};
 // `BigInt.asIntN(64, value)` of a BigInt.
 struct IDLBigIntAsInt64 : WebCore::IDLInteger<int64_t> {};
+// As `IDL`, which wraps a number modulo its width, and a BigInt wraps too.
+template<typename IDL>
+struct IDLWrapOrBigInt : IDL {};
 struct IDLStrictDouble : WebCore::IDLUnrestrictedDouble {};
 // A Date is its time value.
 struct IDLStrictDoubleOrDate : WebCore::IDLUnrestrictedDouble {};
@@ -177,6 +180,9 @@ struct IDLRawObject : IDLRawAny {};
 
 // An array as the `JSValue` itself. See IDLRawAny.
 struct IDLRawArray : IDLRawAny {};
+
+// A string or a `String` object as the `JSValue` itself. See IDLRawAny.
+struct IDLRawStringLike : IDLRawAny {};
 
 // An instance of a `JSCell` subclass as the `JSValue` itself. See IDLRawAny.
 template<typename JSClass, auto name>

@@ -958,7 +958,7 @@ enum Fields {
     Url,
 }
 
-/// What `JSValue::get_optional_enum` makes of a member.
+/// `None` if the member is missing. Throws unless it is one of the names of `E`.
 pub(crate) fn optional_enum<E: bun_jsc::FromJsEnum>(
     global: &JSGlobalObject,
     name: OptionName<'_>,
@@ -967,7 +967,6 @@ pub(crate) fn optional_enum<E: bun_jsc::FromJsEnum>(
     let name = match name {
         OptionName::Missing => return Ok(None),
         OptionName::Text(name) => name.to_js(),
-        OptionName::StringObject(name) => name.to_js(),
         OptionName::Other => {
             return Err(
                 global.throw_invalid_arguments(format_args!("{} must be a string", property_name))
@@ -1039,7 +1038,7 @@ impl Request {
 
         let (url, object) = match url_or_object {
             RequestInput::String(url) => (Some(url.to_js()), None),
-            RequestInput::StringObject(url) | RequestInput::Url(url) => (Some(url.to_js()), None),
+            RequestInput::Url(url) => (Some(url.to_js()), None),
             RequestInput::Object(object) => (None, Some(object)),
             RequestInput::Symbol(_) | RequestInput::BigInt(_) => {
                 bail!(Err(cx.global().throw(format_args!(

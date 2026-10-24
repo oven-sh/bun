@@ -2,7 +2,7 @@ use bun_collections::HashMap;
 use bun_collections::smallvec::SmallVec;
 use bun_core::StackCheck;
 use bun_core::String as BunString;
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope, ValueWalker};
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, TemporalType, wtf};
 use bun_parsers::toml::TOML;
 
@@ -46,7 +46,7 @@ pub(crate) fn stringify<'a>(
     replacer: Option<JsLocal<'a>>,
 ) -> JsResult<Option<JSValue>> {
     let global = cx.global();
-    let value = Stringifier::value_of(value);
+    let value = value.to_js();
 
     if value.is_undefined() || value.is_symbol() || value.is_function() {
         return Ok(None);
@@ -118,8 +118,6 @@ enum Layout {
     Skip,
 }
 
-impl ValueWalker for Stringifier {}
-
 struct Stringifier {
     stack_check: StackCheck,
     builder: wtf::StringBuilder,
@@ -160,7 +158,7 @@ impl Stringifier {
         Ok(())
     }
 
-    /// Decides the layout of one (already unboxed) property value. Reads
+    /// Decides the layout of one (already unwrap_boxed_primitive) property value. Reads
     /// array elements when classifying arrays.
     fn layout_of(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<Layout> {
         if value.is_undefined() || value.is_symbol() || value.is_function() {
@@ -294,7 +292,7 @@ impl Stringifier {
     }
 
     /// One value on the right-hand side of `=` (or inside an inline
-    /// array/table). `value` is already unboxed; `known_temporal` is the
+    /// array/table). `value` is already unwrap_boxed_primitive; `known_temporal` is the
     /// classification `layout_of` already computed for it, if any.
     fn stringify_inline_value(
         &mut self,

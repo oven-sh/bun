@@ -2607,7 +2607,7 @@ pub(crate) mod IPCHandlers {
 pub(crate) fn ipc_serialize(
     global_object: &JSGlobalObject,
     message: JSValue,
-    handle: impl bun_jsc::bindgen::AnyValue,
+    handle: JSValue,
     options: JSValue,
 ) -> JsResult<JSValue> {
     // `[[ZIG_EXPORT(zero_is_throw)]]`

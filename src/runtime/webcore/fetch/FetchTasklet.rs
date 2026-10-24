@@ -16,7 +16,7 @@ use bun_http::{
     Signals, ThreadSafeStreamBuffer,
 };
 use bun_io::KeepAlive;
-use bun_jsc::bindgen::JsScope;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional};
@@ -2718,7 +2718,7 @@ impl FetchTasklet {
 
 pub(crate) fn on_resolve_request_stream(
     _: &mut JsScope<'_>,
-    _: JSValue,
+    _: JsLocal<'_>,
     context: *mut FetchTasklet,
 ) {
     // SAFETY: `context` is the `*mut FetchTasklet` stashed by
@@ -2735,7 +2735,7 @@ pub(crate) fn on_resolve_request_stream(
 
 pub(crate) fn on_reject_request_stream(
     _: &mut JsScope<'_>,
-    err: JSValue,
+    err: JsLocal<'_>,
     context: *mut FetchTasklet,
 ) {
     // SAFETY: `context` is the `*mut FetchTasklet` stashed by
@@ -2746,7 +2746,7 @@ pub(crate) fn on_reject_request_stream(
         if let Some(sink) = (*context).sink_mut() {
             sink.task = None;
         }
-        (*context).write_end_request(Some(err));
+        (*context).write_end_request(Some(err.to_js()));
     }
 }
 

@@ -26,7 +26,7 @@ impl Expect {
             _ => {
                 return Err(global.throw(format_args!(
                     "Expected value must be a function: {}",
-                    expected.to_fmt(&mut formatter),
+                    expected.to_js().to_fmt(&mut formatter),
                 )));
             }
         };
@@ -44,7 +44,7 @@ impl Expect {
         }
 
         let mut formatter2 = super::make_formatter(global);
-        let expected_fmt = expected.to_fmt(&mut formatter);
+        let expected_fmt = expected.to_js().to_fmt(&mut formatter);
         let value_fmt = value.to_fmt(&mut formatter2);
         if not {
             let signature = get_signature("toBeInstanceOf", "<green>expected<r>", true);

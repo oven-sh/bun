@@ -2,9 +2,9 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSValue, JsResult};
 
 use super::DiffFormatter;
+use super::Expect;
 use super::mock;
 use super::throw;
-use super::Expect;
 
 impl Expect {
     pub(crate) fn to_have_been_called_with(
@@ -44,7 +44,9 @@ impl Expect {
                 let mut call_itr = call_item.array_iterator(global)?;
                 let mut matched = true;
                 while let Some(call_arg) = call_itr.next()? {
-                    if !call_arg.jest_deep_equals(expected[call_itr.i as usize - 1], global)? {
+                    if !call_arg
+                        .jest_deep_equals((expected[call_itr.i as usize - 1]).to_js(), global)?
+                    {
                         matched = false;
                         break;
                     }
@@ -64,7 +66,8 @@ impl Expect {
         // handle failure
         let mut formatter = super::make_formatter(global);
 
-        let expected_args_js_array = JSValue::create_array_from_slice(global, expected)?;
+        let expected_args_js_array =
+            JSValue::create_array_from_slice(global, JsLocal::to_js_slice(expected))?;
         expected_args_js_array.ensure_still_alive();
 
         if this.flags.get().not() {

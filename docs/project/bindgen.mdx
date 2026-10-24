@@ -82,8 +82,8 @@ To reach the function:
   `crate::generated_bindgen::cron::Bun__CronJob__onPromiseResolve`, for `JSFunction::create` and `JSValue::then`. What makes
   the function gives its `.length`, so `length` is refused.
 
-`passThis: true` adds `this_value: JsLocal<'a>` after the capability, and `passCallee: true` adds `callee: JsLocal<'a>`, the
-function that was called, after it.
+`passThis: true` adds `this_value: JsLocal<'a>` after the capability, and `passCallee: true` adds
+`callee: JsLocal<'a, JSObject>`, the function that was called, after it.
 
 `b.value({ returns: b.i32 })` is for what `src/js` reads once: `$bindgen` calls the Rust function and gives what it returns,
 and no JS function is made.
@@ -244,6 +244,7 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.promise`                              | `JsLocal<'a, JSPromise>`         | a promise, as itself                                          |
 | `b.jsString`                             | `JsLocal<'a, JSString>`          | a primitive string, as itself; `b.string` is its text         |
 | `b.stringObject`                         | `JsLocal<'a, JSObject>`          | a `String` object, not converted: that runs its `toString`    |
+| `b.stringLike`                           | `JsLocal<'a, StringLike>`        | either of the two, as itself                                  |
 | `b.bigInt`                               | `JsLocal<'a, JSBigInt>`          | a BigInt, as itself                                           |
 | `b.symbol`                               | `JsLocal<'a, Symbol>`            | a symbol, as itself                                           |
 | `b.cell(class, header, options)`         | `JsLocal<'a, T>`                 | an instance of that `JSCell` class, as itself                 |
@@ -255,7 +256,6 @@ any other: nothing looks at how many there are, except `.ifPassed`, `requiredArg
 | `b.ignored`                              | `()`                             | anything; only the last alternative of a union                |
 | `b.promisePtr("crate::T")`               | `*mut T`                         | the context of a promise reaction; see below                  |
 | `b.nativePromiseContext("crate::T")`     | `Option<NonNull<T>>`             | the same, when it is a `NativePromiseContext` cell            |
-| `b.promiseResult`                        | `JSValue`                        | what the promise of a reaction settled with; see below        |
 | `b.array(T)`                             | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
 | `b.enumeration(values)`                  | a generated `enum`               | one of the strings                                            |
 | `b.dictionary(members)`                  | `&` a generated `struct`         | an object that is not an array                                |
@@ -274,16 +274,16 @@ Only the promise calls a reaction, with the context it was given, so nothing tes
 `b.promisePtr` is the `*mut T` that `JSValue::then` was given. `b.nativePromiseContext` is what `take` of the cell
 returns: `None` if the pointer was taken back before the promise settled. No argument after it has a conversion that
 throws: nothing would release the pointer. A generic `T` is written as its instantiation.
-What the promise settled with is not an argument that a caller chose the type of, so `b.promiseResult` is a `JSValue`
-the body tests itself. Only a function that also takes one of the two contexts takes it; a reaction that only hands the
-value on takes `b.opaque`.
 
 `b.cell("JSC::RegExpObject", "JavaScriptCore/RegExpObject.h", { rustPath: "bun_jsc::RegExp" })` names the C++ class, its
-header and the Rust type that marks the handle. `reportedAs` is what an error calls it, if not the class without its `JS`.
+header and the Rust type that marks the handle. `reportedAs` is what an error calls it, if not the class without its `JS`,
+and `tsType` what the generated `.d.ts` does, if not `object`. `b.dataView` is one.
 `b.wrapped("WebCore::JSDOMURL", "JSDOMURL.h", { rustPath: "bun_jsc::DOMURL", reportedAs: "URL" })` gives what `wrapped()`
 of the instance returns. The argument keeps it alive, so it is an argument or an alternative of one; `.shared` is a
 reference on it, `ExternalShared<T>`, which a dictionary can hold and a body can store. It also names a generated class
-whose schema imports this one.
+whose schema imports this one. `b.abortSignal` is one.
+
+A schema exports a type without a name for others to import: `export const Headers = b.wrapped(..).withValue`.
 
 These come last, in this order:
 
@@ -291,8 +291,8 @@ These come last, in this order:
 - `.nullable`: `null` or `undefined` means absent; `Option<T>`.
 - `.falsyAsNull`: every falsy value means absent; `Option<T>`.
 - `.emptyStringAsNull`: `undefined`, `null` or `""` means absent, as for `JSValue::get_truthy`; `Option<T>`.
-- `.otherAsNull`: a value of a [kind](#unions-and-kinds) the type does not take, or that it refuses (what is not an object, a shared buffer), means absent and nothing is thrown, as if the type were in a union with `b.ignored` after it; `Option<T>`. It is for an argument or a member that is ignored unless it is of the type. What is inside a value is still reported: the members of a dictionary, the elements of an array. It is not for a type that throws for a value of a kind it takes: an integer for `1.5` (`b.f64.otherAsNull` takes every number), an enumeration for an unknown string (`b.string.allowStringObject.otherAsNull` takes every string), a dictionary without `allowArray` for an array. Nor is it for a type that takes every kind, like a `.loose` one or a `nonObjectAsEmpty` dictionary. A union writes `ignored: b.opaque` as its last alternative.
-- `.ifPassed`: absent only if the call has no such argument, and `undefined` is converted like any other value; `Option<T>`. It is for a function where `f()` and `f(undefined)` both work and differ, like `alert`. Where `f()` is an error, see [`requiredArguments`](#too-few-arguments-requiredarguments). It also goes on a type that takes `undefined`, like `b.opaque`. It is only for an argument, and not for one of an overload.
+- `.otherAsNull`: a value of a [kind](#unions-and-kinds) the type does not take, or that it refuses (what is not an object, a shared buffer), means absent and nothing is thrown, as if the type were in a union with `b.ignored` after it; `Option<T>`. It is for an argument or a member that is ignored unless it is of the type. What is inside a value is still reported: the members of a dictionary, the elements of an array. It is not for a type that throws for a value of a kind it takes: an integer for `1.5` (`b.f64.otherAsNull` takes every number), an enumeration for an unknown string (`b.string.allowStringObject.otherAsNull` takes every string), a dictionary without `allowArray` for an array. Nor is it for a type that takes every kind, like a `.loose` one or a `nonObjectAsEmpty` dictionary. A union writes `other: b.ignored` as its last alternative.
+- `.ifPassed`: absent only if the call has no such argument, and `undefined` is converted like any other value; `Option<T>`. It is for a function where `f()` and `f(undefined)` both work and differ, like `alert`. Where `f()` is an error, see [`requiredArguments`](#too-few-arguments-requiredarguments). It also goes on a type that takes `undefined`, like `b.opaque`. It is for an argument, not one of an overload, and for an `own` member of a dictionary.
 - `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`.
 
 `.withValue` on an argument also gives the body the argument itself, `(T, JsLocal<'a>)`: for a body that reads the
@@ -302,6 +302,7 @@ class, `JSValue` beside the context of a reaction.
 
 Beside an instance, of a class or of `b.wrapped`, the value is the object that keeps the instance alive. So
 `Blob.withValue` is also a member of a dictionary, or an alternative of a union that is one: `(&'a Blob, JsLocal<'a, JSObject>)`.
+The modifiers that make an `Option` follow it: `Blob.withValue.otherAsNull`.
 
 As results, `b.string.utf8` is anything that is `AsRef<[u8]>`, `b.array(T)` anything that
 is `IntoIterator`, and `b.array(b.string)` anything that is `AsRef<[bun_core::String]>`: one call makes the array. `b.bufferSource` as a result is what
@@ -325,21 +326,20 @@ object is `heap.create_empty_object()`.
 
 ### Opaque values
 
-Rust looks inside a JS value only through a type that a schema declares. `b.opaque` is a value whose type the function
-does not depend on: `JsLocal<'a>` has no `to_js()` and no test. A body can return it, store it (`Strong::create`, an
-internal field, a `JsRef`), pass it to a call, resolve or reject a promise with it, throw it, put it in an object or an
-array, compare it with another as a whole, or print it. What takes one is written `impl bindgen::AnyValue`, which a
-`JSValue` and every handle are.
+`b.opaque` is a value whose type the function does not depend on. The body returns it, stores it (`Strong::create`, an
+internal field, a `JsRef`), passes it to a call, resolves or rejects a promise with it, throws it, puts it in an object
+or an array, compares it with another as a whole, or prints it. All of those take a `JSValue`, which is
+`value.to_js()`. So does what walks all of a value: the formatters, the YAML, JSON5, TOML and XML stringifiers, the
+parts of a `Blob`.
 
-The modifiers are the tests there are: `b.opaque.optional` is `None` for `undefined`, `.nullable` for `null` too.
-`value.nullable()` is the second in Rust, for a value that is handed on either way.
+A body that tests a value or converts it declares what it looks for instead: a union, a class, `.deferred`. The
+compiler does not hold a body to that, since every handle has `to_js()`. It is what a review of a schema looks for.
 
-What takes any value and walks all of it (the two formatters, the YAML, JSON5, TOML and XML stringifiers, and the parts of a `Blob`) implements
-`bindgen::ValueWalker`, whose `value_of` is the one way from a handle to a `JSValue`. Nothing else implements it.
+`b.opaque.optional` is `None` for `undefined`, `.nullable` for `null` too.
 
 A value that was not an argument is a `JSValue`, and the body tests it as before: an element of an array, a property
-read while walking, an internal field. `JsLocal::<JSObject>::from_js(global, value)` and
-`JsLocal::<Callable>::from_js(global, value)` make a handle of one, for what takes a handle.
+read while walking, an internal field. `JsLocal::new(&cx.heap, value)` makes a handle of one, for what takes a handle,
+and `JsLocal::<JSObject>::from_js(global, value)` one of an object.
 
 A body that tells kinds of value apart says which in a union, and matches on it:
 
@@ -350,9 +350,9 @@ export const Expected = b.union(
 );
 ```
 
-With `fromJS: true` a dictionary, a union or an enumeration also converts a value that was not an argument, such as an
-element of an array the body walks: `Expected::from_local(global, value)?`, or `Level::from_js(global, value)?` for a
-type that holds no JS value. `reportedAs` is what an error calls the value. For a type without a name,
+With `fromJS: true` a dictionary or a union also converts a value that was not an argument, such as an element of an
+array the body walks: `Expected::from_local(global, value)?`, or `Size::from_js(global, value)?` for a type that holds
+no JS value. For a type without a name,
 `export const fieldText = b.conversion(b.string.loose)` makes `field_text(global, value)?` in the schema's module.
 
 ### Conversion in the body: `.deferred` and `b.rest`
@@ -380,8 +380,12 @@ Only what JavaScript can see is worth deferring. A union that tells kinds apart 
 runs nothing and refuses nothing, so it is converted with the other arguments and the body throws where it always did.
 
 `.deferred` is written last, on an argument, and takes `capability: "js"`. The conversion returns before the body goes on, so
-the type cannot borrow from it: a UTF-8 string is `.owned`, bytes are `held: "handle"`. An argument that needs no
-such order is not deferred: that is one call into C++ fewer.
+the type cannot borrow from it: a UTF-8 string is `.owned`, and in place of `b.bytes` there is `b.bufferSource`. An
+argument that needs no such order is not deferred: that is one call into C++ fewer.
+
+It is also an alternative of a union, for a kind whose conversion JavaScript can see. The union is chosen with the other
+arguments and the body converts that one alternative:
+`b.union({ name: b.string, stringObject: b.string.allowStringObject.deferred, other: b.ignored })`.
 
 `b.rest(T)` is the arguments from there on, converted the same way:
 
@@ -402,13 +406,12 @@ A BigInt is refused unless the schema says `.allowBigInt`, which is for an argum
 type is `number | bigint`. `b.f64.loose.allowBigInt` is `ToNumeric`, and a BigInt becomes the
 double nearest to it. `b.f64.allowDate` also takes a `Date`, as its time value, which is NaN for an invalid one. On an integer:
 
-- `.allowBigInt`: a BigInt in the same range too. It is how a `b.u64` above 2<sup>53</sup> gets in. It goes with the strict conversion and with `.loose`; the others refuse a BigInt.
+- `.allowBigInt`: a BigInt in the same range too. It is how a `b.u64` above 2<sup>53</sup> gets in. It goes with the strict conversion, with `.loose` and with `.wrap`; the others refuse a BigInt.
 - `.loose`: `ToNumber` first, or `ToNumeric` with `.allowBigInt`, then as strict as the default.
-- `.wrap`: the WebIDL conversion, `ToNumber` then wrap modulo the width.
+- `.wrap`: the WebIDL conversion, `ToNumber` then wrap modulo the width. In `b.i32.allowBigInt.wrap` a BigInt wraps too.
 - `.enforceRange(min, max)`: WebIDL `[EnforceRange]`.
 - `.validateInteger(min, max)`: Node's `validateInteger`, with its exact errors. Use it when implementing Node.js APIs.
 - `.validateIntegerRange(min, max)`: as strict over that range, except that a fraction is `ERR_INVALID_ARG_TYPE`, as what is not a number is. It is what options of Bun's own APIs throw. NaN is a fraction to it, unless `.nanAs(value)` says what it converts to.
-
 - `b.i64.asIntN`: a BigInt and nothing else, wrapped to 64 bits as `BigInt.asIntN(64, value)` does. It is an alternative of a union whose other alternatives take the numbers.
 
 The two that validate name the value in their errors: the argument or the member, or what `.reportedAs("fd")` says.
@@ -555,8 +558,9 @@ place they end up in.
 A union is returned as what the alternative it holds is. One that is only returned owns its
 strings: `b.string.utf8` in it is a `Vec<u8>`.
 
-A union that takes what another takes, and more, spreads its alternatives:
-`b.union({ fd: Fd, ...b.alternativesOf(PathLike) })`.
+A union that takes what another takes, and more, has it as an alternative: `b.union({ fd: Fd, path: PathLike })` is
+`Fd(i32)` or `Path(PathLike<'a>)`. Only the Rust enum nests. C++ chooses among `fd` and the alternatives of `PathLike`
+at once, in that order, so their names differ.
 
 ### Buffers
 
@@ -665,8 +669,8 @@ than `.nullable` of `"asIs"`.
 A JS value in Rust is a `JsLocal<'a>`: a `JSValue` tied to the host call it belongs
 to. It is `Copy`, one register, and not rooted, because JavaScriptCore scans the
 stack. The lifetime is what stops it from being stored in a struct, captured by a
-task or sent to a thread. `JsLocal<'a, T>` is one known to be a `JSString`,
-`JSObject`, `Callable` or `BufferSource`. `value.to_js()` gives the `JSValue`;
+task or sent to a thread. `JsLocal<'a, T>` is one known to be a `T`: a `JSString`,
+`JSObject`, `Callable`, `BufferSource` and the others under [Types](#types). `value.to_js()` gives the `JSValue`;
 `JsLocal::new(heap, value)` goes the other way.
 
 What outlives a call:
@@ -806,8 +810,8 @@ writable, configurable and not enumerable, like the built-in ones, whatever the 
 A native function throws `ERR_INVALID_THIS` when `this` is not an instance. With `invalidThis: "undefined"` it returns
 `undefined` instead, as some of Node's methods do.
 
-`b.self` is the class itself as an argument, a result or a getter of its own members. It can also be `.optional` or
-`.nullable`. A result that is an instance is a `JsWrapper`, a `JsLocal` or a `JSValue`.
+`b.self` is the class itself as an argument, a result or a getter of its own members. It can also be `.optional`,
+`.nullable` or `.otherAsNull`. A result that is an instance is a `JsWrapper`, a `JsLocal` or a `JSValue`.
 
 The constructor has a `PropertyCallback`, in the namespace of the file, for the static property
 table of the object that has the class:

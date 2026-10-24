@@ -4,7 +4,7 @@ export default b.module({ rustPath: "crate::webcore::__s3_client" });
 
 const reaction = {
   args: {
-    value: b.promiseResult,
+    value: b.opaque,
     context: b.nativePromiseContext("crate::webcore::s3::client::S3UploadStreamWrapper"),
   },
   capability: "js",

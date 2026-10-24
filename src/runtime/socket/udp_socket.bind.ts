@@ -1,5 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { CoercedInt32 } from "./socket_body.bind.ts";
+import { coercedInt32 } from "./socket_body.bind.ts";
 
 export default b.module({ rustPath: "crate::socket::udp_socket" });
 
@@ -19,13 +19,13 @@ export const dgramCloseFd = b.fn({ args: { fd: b.i32 }, throws: true });
 
 const js = { capability: "js", throws: true } as const;
 /** `other` is converted to a string where the address is parsed. */
-export const UDPAddress = b.union({ none: b.undefined, text: b.string, other: b.opaque });
+export const UDPAddress = b.union({ missing: b.undefined, text: b.string, other: b.opaque });
 /** `other` is converted to a number where the port is checked. */
-export const UDPPort = b.union({ none: b.undefined, number: b.f64, other: b.opaque });
+export const UDPPort = b.union({ missing: b.undefined, number: b.f64, other: b.opaque });
 export const looseNumber = b.conversion(b.f64.loose);
 /** A `String` object is converted after the destination. */
 export const UDPPayload = b.union({
-  bytes: b.bufferSource.allowShared,
+  buffer: b.bufferSource.allowShared,
   text: b.string,
   stringObject: b.stringObject,
   other: b.ignored,
@@ -42,7 +42,7 @@ const sourceSpecificMembership = {
 } as const;
 /** Returns `enabled` as it was passed. */
 const flag = { ...js, args: { enabled: b.bool.loose.withValue }, returns: b.opaque } as const;
-const ttl = { ...js, args: { ttl: CoercedInt32.deferred }, returns: b.i32 } as const;
+const ttl = { ...js, args: { ttl: coercedInt32.deferred }, returns: b.i32 } as const;
 
 const callback = (name: string) => ({
   type: b.callable.emptyStringAsNull,
@@ -64,9 +64,9 @@ export const UDPConnectOptions = b.dictionary(
 export const UDPSocketOptions = b.dictionary(
   {
     port: b.f64.loose.emptyStringAsNull,
-    flags: b.i32.validateInteger().emptyStringAsNull,
+    flags: b.i32.validateInteger().reportedAs("options.flags").emptyStringAsNull,
     /** An already created socket to adopt. */
-    fd: b.i32.validateInteger().nullable,
+    fd: b.i32.validateInteger().reportedAs("options.fd").nullable,
     hostname: { type: b.string.allowStringObject.emptyStringAsNull, expected: 'Expected "hostname" to be a string' },
     /** node:dgram sets it for a descriptor that cluster workers share. */
     sharedFd: { type: b.bool.loose.default(false), privateSymbol: "sharedFd" },

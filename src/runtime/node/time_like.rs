@@ -1,6 +1,6 @@
 use bun_jsc::{JSGlobalObject, JsResult};
 
-use crate::generated_bindgen::node_fs_binding as schema;
+use crate::generated_bindgen::node_fs_binding as generated;
 
 /// On windows, this is what libuv expects
 /// On unix it is what the utimens api expects
@@ -22,11 +22,11 @@ const NS_PER_MS: f64 = bun_core::time::NS_PER_MS as f64;
 // > If the value can not be converted to a number, or is NaN, Infinity, or -Infinity, an Error will be thrown.
 pub(crate) fn from_js(
     global_object: &JSGlobalObject,
-    value: schema::TimeLike<'_>,
+    value: generated::TimeLike<'_>,
 ) -> JsResult<Option<TimeLike>> {
     match value {
         // Number is most common case
-        schema::TimeLike::Number(seconds) => {
+        generated::TimeLike::Number(seconds) => {
             if seconds.is_finite() {
                 if seconds < 0.0 {
                     return Ok(Some(from_now()));
@@ -34,18 +34,18 @@ pub(crate) fn from_js(
                 return Ok(Some(from_seconds(seconds)));
             }
         }
-        schema::TimeLike::Date(milliseconds) => {
+        generated::TimeLike::Date(milliseconds) => {
             if milliseconds.is_finite() {
                 return Ok(Some(from_milliseconds(milliseconds)));
             }
         }
-        schema::TimeLike::String(string) => {
+        generated::TimeLike::String(string) => {
             let seconds = string.to_js().to_number(global_object)?;
             if seconds.is_finite() {
                 return Ok(Some(from_seconds(seconds)));
             }
         }
-        schema::TimeLike::Other => {}
+        generated::TimeLike::Other => {}
     }
     Ok(None)
 }

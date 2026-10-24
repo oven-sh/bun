@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { SecureContext } from "../api/bun/SecureContext.bind.ts";
 import { TLSOptions } from "./SSLConfig.bind.ts";
 
 export const SocketHandlerBinaryType = b.enumeration([
@@ -8,7 +9,7 @@ export const SocketHandlerBinaryType = b.enumeration([
 ]);
 
 /** `other` is refused after every member was read. */
-export const SocketCallback = b.union({ none: b.null, callback: b.callable, other: b.ignored });
+export const SocketCallback = b.union({ missing: b.null, callback: b.callable, other: b.ignored });
 
 export const SocketHandler = b.dictionary(
   {
@@ -31,8 +32,8 @@ export const SocketHandler = b.dictionary(
 );
 
 export const SocketOptionsTLS = b.union({
-  none: b.null,
-  boolean: b.bool,
+  missing: b.null,
+  flag: b.bool,
   object: TLSOptions,
 });
 
@@ -61,7 +62,10 @@ export const SocketOptions = b.dictionary(
 export const SocketReloadOptions = b.dictionary({ socket: b.opaque.optional }, { deferred: true });
 
 /** The `tls` object, read for the `SecureContext` in it. `TLSOptions` reads the rest. */
-export const PrebuiltTLSOptions = b.dictionary({ secureContext: b.opaque.emptyStringAsNull }, { deferred: true });
+export const PrebuiltTLSOptions = b.dictionary(
+  { secureContext: { type: SecureContext.withValue.emptyStringAsNull, expected: ["SecureContext"] } },
+  { deferred: true, reportedAs: "tls" },
+);
 /** `TLSOptions` refuses `other`. */
 export const UpgradeTLS = b.union({ enabled: b.bool, options: PrebuiltTLSOptions, other: b.opaque });
 

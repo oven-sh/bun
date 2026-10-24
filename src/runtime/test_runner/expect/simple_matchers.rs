@@ -3,10 +3,10 @@
 //! file.
 
 use super::{Expect, OrderingRelation};
-use crate::generated_bindgen::expect::{NumberOrBigInt, StringValue};
+use crate::generated_bindgen::expect::NumberOrBigInt;
 use bun_core::strings;
 use bun_jsc::JsResult;
-use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper, StringLike};
 
 // ── unary predicates: expect(x).toBe<Kind>() ───────────────────────────────
 crate::unary_predicate_matcher!(to_be_array, "toBeArray", |v| v.js_type().is_array());
@@ -108,7 +108,7 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: StringValue<'_>,
+        expected: Option<JsLocal<'_, StringLike>>,
     ) -> JsResult<()> {
         self.run_string_affix_matcher(
             cx.global(),
@@ -123,7 +123,7 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: StringValue<'_>,
+        expected: Option<JsLocal<'_, StringLike>>,
     ) -> JsResult<()> {
         self.run_string_affix_matcher(
             cx.global(),
@@ -138,7 +138,7 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        expected: StringValue<'_>,
+        expected: Option<JsLocal<'_, StringLike>>,
     ) -> JsResult<()> {
         self.run_string_affix_matcher(
             cx.global(),

@@ -28,7 +28,7 @@ impl Expect {
             let mut fmt = super::make_formatter(global);
             return Err(global.throw(format_args!(
                 "Expected value must be a non-negative integer: {}",
-                expected.to_fmt(&mut fmt),
+                expected.to_js().to_fmt(&mut fmt),
             )));
         };
         if expected_length.round() != expected_length
@@ -39,7 +39,7 @@ impl Expect {
             let mut fmt = super::make_formatter(global);
             return Err(global.throw(format_args!(
                 "Expected value must be a non-negative integer: {}",
-                expected.to_fmt(&mut fmt),
+                expected.to_js().to_fmt(&mut fmt),
             )));
         }
 

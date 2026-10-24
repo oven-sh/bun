@@ -13,15 +13,19 @@ use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult, StringJsc as _};
+use bun_jsc::{
+    self as jsc, JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult, StringJsc as _,
+};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
-use crate::generated_bindgen::listener::js_Listener as js;
+use crate::generated_bindgen::listener::{ServerNameTLS, js_Listener as js};
 use crate::generated_bindgen::socket_config::{SocketOptionsObject, SocketReloadOptions};
-use crate::socket::{Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket};
+use crate::socket::{
+    Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
+};
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 
 #[cfg(windows)]
@@ -122,7 +126,8 @@ impl Listener {
 
     pub(crate) fn set_data(&self, cx: &mut JsScope<'_>, value: JsLocal<'_>) {
         log!("setData()");
-        self.strong_data.with_mut(|s| s.set(cx.global(), value));
+        self.strong_data
+            .with_mut(|s| s.set(cx.global(), value.to_js()));
     }
 }
 
@@ -131,21 +136,14 @@ fn prebuilt_ssl_ctx(
     vm: &VirtualMachine,
     global: &JSGlobalObject,
     opts: SocketOptionsObject<'_>,
-    config: &mut SocketConfig<'_>,
+    config: &mut SocketConfig,
     is_server: bool,
 ) -> JsResult<Option<boring_sys::OwnedSslCtx>> {
     let Some(tls_js) = opts.tls(global)? else {
         return Ok(None);
     };
-    let Some(sc_js) = tls_js.secure_context(global)? else {
+    let Some((sc, _)) = tls_js.secure_context(global)? else {
         return Ok(None);
-    };
-    let Some(sc) = sc_js.as_class_ref::<SecureContext>() else {
-        return Err(global.throw_invalid_argument_type_value(
-            b"secureContext",
-            b"SecureContext",
-            sc_js,
-        ));
     };
     // The context is served as it is: its trust store would not be the `ca` written next to `requestCert`.
     if is_server
@@ -201,7 +199,7 @@ impl Listener {
         // updates the callbacks of the existing cell in place, so the
         // listener and every live socket sharing it pick them up with no swap
         // of the `Handlers` itself.
-        let reloaded = Handlers::prepare_reload(global, socket_obj)?;
+        let reloaded = Handlers::prepare_reload(global, socket_obj.to_js())?;
         self.handlers.apply_reload(global, &reloaded);
 
         Ok(())
@@ -364,7 +362,7 @@ impl Listener {
                     }
                 }
 
-                if let Some(default_data) = default_data {
+                if !default_data.is_empty() {
                     this_ref
                         .strong_data
                         .set(Strong::create(default_data, cx.global()));
@@ -585,7 +583,7 @@ impl Listener {
         // reads `connection`).
         unsafe { (*this).connection = connection };
         this_ref.listener.set(ListenerType::Uws(listen_socket));
-        if let Some(default_data) = default_data {
+        if !default_data.is_empty() {
             this_ref
                 .strong_data
                 .set(Strong::create(default_data, cx.global()));
@@ -741,7 +739,7 @@ impl Listener {
         cx: &mut JsScope<'a>,
         this: &Self,
         server_name_bytes: &[u8],
-        tls: JsLocal<'a>,
+        tls: ServerNameTLS<'a>,
     ) -> JsResult<()> {
         let global = cx.global();
         if !this.ssl {
@@ -768,14 +766,15 @@ impl Listener {
         // Both real callers (node:tls addContext, node:net) pass a native
         // SecureContext; enforcement policy stays server-level, like Node's.
         // The dict branch is defensive for the internal binding's raw form.
-        let sni_ctx: boring_sys::OwnedSslCtx = if let Some(sc) = tls.as_class_ref::<SecureContext>()
-        {
+        let sni_ctx: boring_sys::OwnedSslCtx = if let ServerNameTLS::Context(sc) = tls {
             sc.ctx.clone()
-        } else if let Some(ssl_config) = {
-            // SAFETY: per-thread VM; valid for program lifetime.
-            let vm = VirtualMachine::get().as_mut();
-            SSLConfig::from_js(vm, global, tls, true)?
-        } {
+        } else if let ServerNameTLS::Options(tls) = tls
+            && let Some(ssl_config) = {
+                // SAFETY: per-thread VM; valid for program lifetime.
+                let vm = VirtualMachine::get().as_mut();
+                SSLConfig::from_js(vm, global, tls.to_js(), true)?
+            }
+        {
             // Note: `cfg` cleanup handled by Drop on SSLConfig
             let mut create_err = uws::create_bun_socket_error_t::none;
             match with_ssl_ctx_cache(|cache| cache.get_or_create(&ssl_config, &mut create_err)) {
@@ -973,7 +972,7 @@ impl Listener {
         let port = socket_config.port;
         let mut owned_ssl_ctx = prebuilt_ssl_ctx(vm, cx.global(), opts, &mut socket_config, false)?;
         let ssl_enabled = socket_config.ssl.is_some();
-        let default_data = socket_config.default_data.unwrap_or(JsLocal::UNDEFINED);
+        let default_data = socket_config.default_data;
 
         vm.event_loop_ref().ensure_waker();
 
@@ -1067,6 +1066,8 @@ impl Listener {
                 _ => false,
             };
             if is_named_pipe {
+                default_data.ensure_still_alive();
+
                 let mut ssl_taken = socket_config.ssl.take();
 
                 let promise = jsc::JSPromise::create(cx.global());
@@ -1285,6 +1286,8 @@ impl Listener {
                 }
             }
         }
+        default_data.ensure_still_alive();
+
         let allow_half_open = socket_config.allow_half_open;
         let pause_on_connect = socket_config.pause_on_connect;
         let mut ssl_taken = socket_config.ssl.take();
@@ -1384,7 +1387,13 @@ impl Listener {
             None => JSValue::UNDEFINED,
         };
 
-        bun_jsc::cpp::JSSocketAddressDTO__assign(global, out, address_js, port_js, is_ipv6)?;
+        bun_jsc::cpp::JSSocketAddressDTO__assign(
+            global,
+            out.to_js(),
+            address_js,
+            port_js,
+            is_ipv6,
+        )?;
         Ok(())
     }
 }
@@ -1437,7 +1446,7 @@ fn connect_finish<const IS_SSL: bool>(
     local_binding: Option<(Box<[u8]>, u16)>,
     mut ssl: Option<&mut SSLConfig>,
     owned_ssl_ctx: Option<boring_sys::OwnedSslCtx>,
-    default_data: JsLocal<'_>,
+    default_data: JSValue,
     allow_half_open: bool,
     pause_on_connect: bool,
     port: Option<u16>,

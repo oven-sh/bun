@@ -28,7 +28,7 @@ use libc::sockaddr_storage;
 use libc::{IF_NAMESIZE, if_indextoname, if_nametoindex};
 
 use crate::api::SocketAddress;
-use crate::generated_bindgen::socket_body::{CoercedInt32, loose_string};
+use crate::generated_bindgen::socket_body::loose_string;
 use crate::generated_bindgen::udp_socket::{
     UDPAddress, UDPConnectHostname, UDPPayload, UDPPort, UDPSocketOptions, js_UDPSocket as js,
     loose_number,
@@ -424,7 +424,7 @@ impl UDPSocketConfig {
             macro_rules! handler {
                 ($name:ident, $set:path) => {
                     if let Some(value) = socket.$name(global_this)? {
-                        let callback = value.with_async_context_if_needed(global_this);
+                        let callback = value.to_js().with_async_context_if_needed(global_this);
                         $set(this_value, global_this, callback);
                     }
                 };
@@ -1049,18 +1049,14 @@ impl UDPSocket {
         Ok(true)
     }
 
-    pub(crate) fn set_ttl(
-        &self,
-        cx: &mut JsScope<'_>,
-        ttl: Deferred<'_, CoercedInt32>,
-    ) -> JsResult<i32> {
+    pub(crate) fn set_ttl(&self, cx: &mut JsScope<'_>, ttl: Deferred<'_, i32>) -> JsResult<i32> {
         self.set_any_ttl(cx.global(), ttl, uws::udp::Socket::set_unicast_ttl)
     }
 
     pub(crate) fn set_multicast_ttl(
         &self,
         cx: &mut JsScope<'_>,
-        ttl: Deferred<'_, CoercedInt32>,
+        ttl: Deferred<'_, i32>,
     ) -> JsResult<i32> {
         self.set_any_ttl(cx.global(), ttl, uws::udp::Socket::set_multicast_ttl)
     }
@@ -1068,17 +1064,14 @@ impl UDPSocket {
     fn set_any_ttl(
         &self,
         global_this: &JSGlobalObject,
-        ttl: Deferred<'_, CoercedInt32>,
+        ttl: Deferred<'_, i32>,
         function: fn(&mut uws::udp::Socket, i32) -> c_int,
     ) -> JsResult<i32> {
         if self.closed.get() {
             return Err(global_this.throw_value(bad_fd().to_js(global_this)));
         }
 
-        let ttl = match ttl.convert(global_this)? {
-            CoercedInt32::BigInt(ttl) => ttl as i32,
-            CoercedInt32::Other(ttl) => ttl,
-        };
+        let ttl = ttl.convert(global_this)?;
         let Some(socket) = self.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
@@ -1289,7 +1282,7 @@ impl UDPSocket {
             return Err(global_this.throw(format_args!("Socket is closed")));
         }
         let dst = if self.connect_info.get().is_some() {
-            if !matches!(port, UDPPort::None) || !matches!(address, UDPAddress::None) {
+            if !matches!(port, UDPPort::Missing) || !matches!(address, UDPAddress::Missing) {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Cannot specify destination on connected socket"
                 )));
@@ -1310,7 +1303,7 @@ impl UDPSocket {
         let addr_ptr: *const c_void = 'brk: {
             if let Some(dest) = dst {
                 let port = match dest.port {
-                    UDPPort::None => f64::NAN,
+                    UDPPort::Missing => f64::NAN,
                     UDPPort::Number(port) => port,
                     UDPPort::Other(port) => loose_number(global_this, port)?,
                 };
@@ -1328,8 +1321,8 @@ impl UDPSocket {
 
         // The backing store is kept alive by `data` on the JS stack.
         let (array_buffer, payload_text) = match data {
-            UDPPayload::Bytes(bytes) => {
-                (bytes.to_js().as_array_buffer(global_this), BunString::EMPTY)
+            UDPPayload::Buffer(bytes) => {
+                (Some(bytes.as_array_buffer(global_this)), BunString::EMPTY)
             }
             UDPPayload::Text(text) => (None, text),
             // A boxed `StringObject`/`DerivedStringObject` is resolved
@@ -1388,7 +1381,7 @@ impl UDPSocket {
     ) -> JsResult<bool> {
         let _ = self;
         let str = match address_val {
-            UDPAddress::None => return Ok(false),
+            UDPAddress::Missing => return Ok(false),
             UDPAddress::Text(text) => text,
             UDPAddress::Other(value) => loose_string(global_this, value)?,
         };

@@ -10,7 +10,7 @@ use core::mem;
 
 use bun_cares_sys::c_ares as ares;
 use bun_core::{String as BunString, ZStr, strings};
-use bun_jsc::bindgen::{self, AnyValue, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, StringLike};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     CommonString, JSGlobalObject, JSObject, JSString, JSValue, JsClass, JsError, JsResult,
@@ -21,7 +21,6 @@ use bun_ptr::JsCell;
 use crate::generated_bindgen::socket_address::{
     SocketAddressFamily, SocketAddressJSON, SocketAddressNumber, SocketAddressOptions,
 };
-use crate::generated_bindgen::socket_body::loose_string;
 
 pub(crate) struct SocketAddress {
     // NOTE: not C.sockaddr_storage b/c it's _huge_. we need >= 28 bytes for sockaddr_in6,
@@ -69,7 +68,7 @@ impl Options {
         let address_str: Option<BunString> = obj.address(global)?;
 
         let _family: AF = match obj.family(global)? {
-            SocketAddressFamily::None => AF::INET,
+            SocketAddressFamily::Missing => AF::INET,
             // "ipv4" or "ipv6", ignoring case
             SocketAddressFamily::Name(name) => AF::from_name(global, &name)?,
             SocketAddressFamily::Number(number) => AF::from_number(global, number)?,
@@ -77,14 +76,14 @@ impl Options {
                 return Err(global.throw_invalid_argument_property_value(
                     b"options.family",
                     Some("a string or number"),
-                    fam,
+                    fam.to_js(),
                 ));
             }
         };
 
         // required. Validated by `validatePort`.
         let _port: u16 = match obj.port(global)? {
-            SocketAddressNumber::None => 0,
+            SocketAddressNumber::Missing => 0,
             SocketAddressNumber::Number(number) => {
                 let p = JSValue::js_double_number(number);
                 if !number.is_finite() {
@@ -96,11 +95,11 @@ impl Options {
                 }
                 u16::try_from(port32).expect("int cast")
             }
-            SocketAddressNumber::Other(p) => return Err(Self::throw_bad_port(global, p)),
+            SocketAddressNumber::Other(p) => return Err(Self::throw_bad_port(global, p.to_js())),
         };
 
         let _flowlabel = match obj.flowlabel(global)? {
-            SocketAddressNumber::None => None,
+            SocketAddressNumber::Missing => None,
             SocketAddressNumber::Number(number) => {
                 let fl = JSValue::js_double_number(number);
                 if !fl.is_uint32_as_any_int() {
@@ -120,7 +119,7 @@ impl Options {
                 return Err(global.throw_invalid_argument_type_value(
                     b"options.flowlabel",
                     b"number",
-                    fl,
+                    fl.to_js(),
                 ));
             }
         };
@@ -133,7 +132,7 @@ impl Options {
         })
     }
 
-    fn throw_bad_port(global: &JSGlobalObject, port_: impl AnyValue) -> JsError {
+    fn throw_bad_port(global: &JSGlobalObject, port_: JSValue) -> JsError {
         let Ok(ty) = JSGlobalObject::determine_specific_type(global, port_) else {
             return global
                 .err(
@@ -297,15 +296,17 @@ impl SocketAddress {
         SocketAddress::init_js(global, options)
     }
 
-    /// `address_js` and `family_js` are strings or `String` objects. No family is IPv4.
+    /// No family is IPv4.
     pub(crate) fn init_from_addr_family(
         global: &JSGlobalObject,
-        address_js: JsLocal<'_>,
-        family_js: Option<JsLocal<'_>>,
+        address_js: JsLocal<'_, StringLike>,
+        family_js: Option<JsLocal<'_, StringLike>>,
     ) -> JsResult<SocketAddress> {
-        let address_: BunString = loose_string(global, address_js)?;
+        let address_: BunString = BunString::from_js(address_js.to_js(), global)?;
         let family_: AF = match family_js {
-            Some(family_js) => AF::from_name(global, &loose_string(global, family_js)?)?,
+            Some(family_js) => {
+                AF::from_name(global, &BunString::from_js(family_js.to_js(), global)?)?
+            }
             None => AF::INET,
         };
         Self::init_js(

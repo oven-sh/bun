@@ -14,7 +14,7 @@ export const ArchiveExtractOptions = b.dictionary(
   { allowArray: true },
 );
 
-/** `object` is a `Blob`, an `Archive`, or the files by their paths. */
+/** `object` is a `Blob`, an `Archive`, or the files by their paths. The schema of `Blob` imports this one. */
 export const ArchiveData = b.union({ buffer: b.bufferSource.allowShared, object: b.object, other: b.ignored });
 /** `level` is only read with `compress`. */
 export const ArchiveOptions = b.dictionary(

@@ -404,8 +404,8 @@ impl TLSSocket {
         let global = cx.global();
 
         let abbreviated = match abbreviated {
-            OptionalBool::None => true,
-            OptionalBool::Value(abbreviated) => abbreviated,
+            OptionalBool::Missing => true,
+            OptionalBool::Flag(abbreviated) => abbreviated,
             OptionalBool::Other => {
                 return Err(global.throw(format_args!("Expected abbreviated to be a boolean")));
             }
@@ -884,8 +884,8 @@ impl TLSSocket {
         // Converting `context` can run user JS (toString / Symbol.toPrimitive)
         // that closes the socket, so do it before fetching the SSL*.
         let context = match context {
-            TextOrBytes::None => None,
-            context => match string_or_buffer(global, context)? {
+            TextOrBytes::Missing => None,
+            context => match string_or_buffer(global, context, Encoding::Utf8)? {
                 Some(sb) => Some(sb),
                 None => {
                     return Err(global.throw(format_args!(
@@ -1045,7 +1045,7 @@ impl TLSSocket {
             return Ok(());
         }
 
-        if let Some(sb) = string_or_buffer(global, session)? {
+        if let Some(sb) = string_or_buffer(global, session, Encoding::Utf8)? {
             let session_slice = sb.slice();
             let Some(ssl_ptr) = self.socket.get().ssl() else {
                 return Ok(());
@@ -1199,23 +1199,24 @@ extern "C" fn always_allow_ssl_verify_callback(
     1
 }
 
-/// `None` for what is neither a string nor a buffer.
+/// A string is encoded as `encoding`. `None` for what is neither a string nor a buffer.
 pub(super) fn string_or_buffer(
     global: &JSGlobalObject,
     value: TextOrBytes<'_>,
+    encoding: Encoding,
 ) -> JsResult<Option<StringOrBuffer<'static>>> {
     let text = match value {
         TextOrBytes::Text(text) => text,
         TextOrBytes::StringObject(text) => loose_string(global, text)?,
-        TextOrBytes::Bytes(bytes) => {
+        TextOrBytes::Buffer(bytes) => {
             return StringOrBuffer::buffer_from_js(global, bytes.to_js(), Flavor::Sync).map(Some);
         }
-        TextOrBytes::None | TextOrBytes::Other => return Ok(None),
+        TextOrBytes::Missing | TextOrBytes::Other => return Ok(None),
     };
     Ok(Some(StringOrBuffer::from_bun_string(
         global,
         text,
-        Encoding::Utf8,
+        encoding,
         Flavor::Sync,
     )))
 }

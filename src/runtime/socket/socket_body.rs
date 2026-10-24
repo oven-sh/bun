@@ -5,16 +5,16 @@ use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
 use crate::generated_bindgen::socket_body::{
-    ALPNProtocol, AnySocket, BufferedWrite, BunSocket, CipherInfo, CoercedInt32, DuplexTLSOptions,
+    ALPNProtocol, AnySocket, BufferedWrite, BunSocket, CipherInfo, DuplexTLSOptions,
     EphemeralKeyInfo, OptionalBool, SocketData, SocketHandle, SocketWriteOption, TextOrBytes,
-    TimeoutSeconds, UpgradeTLSOptions, js_TCPSocket, js_TLSSocket, loose_string,
+    TimeoutSeconds, UpgradeTLSOptions, js_TCPSocket, js_TLSSocket, loose_string, timeout_seconds,
 };
 use crate::generated_bindgen::socket_config::{SocketReloadOptions, UpgradeTLS};
 use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::{self, AnyValue, Deferred, JsHeap, JsLocal, JsScope};
+use bun_jsc::bindgen::{self, Deferred, JsHeap, JsLocal, JsScope};
 use bun_ptr::RefPtr;
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
@@ -31,7 +31,6 @@ use bun_jsc::{
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
 use super::upgraded_duplex::{Handlers as UpgradedDuplexHandlers, UpgradedDuplex};
 use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
-use crate::node::types::Flavor;
 use crate::node::{BlobOrStringOrBuffer, Encoding, StringOrBuffer};
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl_sys;
@@ -539,7 +538,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
         value
     }
-    pub(crate) fn data_set_cached(this: JSValue, global: &JSGlobalObject, value: impl AnyValue) {
+    pub(crate) fn data_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
         jsc::mark_binding!();
         if SSL {
             js_TLSSocket::data_set_cached(this, global, value);
@@ -2313,10 +2312,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         let t = match seconds {
             TimeoutSeconds::Number(seconds) => seconds as i32,
-            TimeoutSeconds::Other(seconds) => match CoercedInt32::from_js(global, seconds)? {
-                CoercedInt32::BigInt(seconds) => seconds as i32,
-                CoercedInt32::Other(seconds) => seconds,
-            },
+            TimeoutSeconds::Other(seconds) => timeout_seconds(global, seconds)?,
         };
         if t < 0 {
             return Err(global.throw(format_args!("Timeout must be a positive integer")));
@@ -2642,14 +2638,18 @@ impl<const SSL: bool> NewSocket<SSL> {
             return self.write_or_end::<IS_END>(
                 global,
                 (data, data_value),
-                SocketWriteOption::None,
-                SocketWriteOption::None,
+                SocketWriteOption::Missing,
+                SocketWriteOption::Missing,
                 encoding_value,
                 true,
             );
         }
 
-        let has_data = !matches!(data, SocketData::None);
+        let data = match data {
+            SocketData::Data(data) => data,
+            _ => TextOrBytes::Other,
+        };
+        let has_data = !matches!(data, TextOrBytes::Missing);
         let buffer: StringOrBuffer = if !has_data {
             StringOrBuffer::EMPTY
         } else {
@@ -2660,7 +2660,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         let _ = global.throw_invalid_argument_type_value(
                             b"data",
                             b"string, buffer, or blob",
-                            data_value,
+                            data_value.to_js(),
                         );
                     }
                     return WriteResult::Fail;
@@ -2801,7 +2801,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         encoding: SocketWriteOption<'a>,
         buffer_unwritten_data: bool,
     ) -> WriteResult {
-        if matches!(data, SocketData::None) {
+        if matches!(data, SocketData::Data(TextOrBytes::Missing)) {
             if !self.flags.get().contains(Flags::END_AFTER_FLUSH) && IS_END {
                 self.update_flags(|f| f.insert(Flags::END_AFTER_FLUSH));
             }
@@ -2817,16 +2817,16 @@ impl<const SSL: bool> NewSocket<SSL> {
             )
         };
         let (offset_value, length_value, encoding_value) = if is_string(&byte_length) {
-            (byte_offset, SocketWriteOption::None, byte_length)
+            (byte_offset, SocketWriteOption::Missing, byte_length)
         } else if is_string(&byte_offset) {
-            (SocketWriteOption::None, byte_length, byte_offset)
+            (SocketWriteOption::Missing, byte_length, byte_offset)
         } else {
             (byte_offset, byte_length, encoding)
         };
 
-        if !matches!(encoding_value, SocketWriteOption::None)
-            && (!matches!(offset_value, SocketWriteOption::None)
-                || !matches!(length_value, SocketWriteOption::None))
+        if !matches!(encoding_value, SocketWriteOption::Missing)
+            && (!matches!(offset_value, SocketWriteOption::Missing)
+                || !matches!(length_value, SocketWriteOption::Missing))
         {
             let _ = global.throw_todo(b"Support encoding with offset and length altogether. Only either encoding or offset, length is supported, but not both combinations yet.");
             return WriteResult::Fail;
@@ -2840,7 +2840,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             SocketData::Response(response) => {
                 BlobOrStringOrBuffer::from_body_value(global, response.get_body_value()).map(Some)
             }
-            data => string_or_buffer_to_write(global, data, encoding_value)
+            SocketData::Data(data) => string_or_buffer_to_write(global, data, encoding_value)
                 .map(|buffer| buffer.map(BlobOrStringOrBuffer::StringOrBuffer)),
         };
         let buffer = match buffer {
@@ -2850,7 +2850,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     let _ = global.throw_invalid_argument_type_value(
                         b"data",
                         b"string, buffer, or blob",
-                        data_value,
+                        data_value.to_js(),
                     );
                 }
                 return WriteResult::Fail;
@@ -2871,7 +2871,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let byte_offset: usize = 'brk: {
             let i = match offset_value {
-                SocketWriteOption::None => break 'brk 0,
+                SocketWriteOption::Missing => break 'brk 0,
                 SocketWriteOption::Number(i) if JSValue::js_double_number(i).is_any_int() => {
                     i as i64
                 }
@@ -2897,7 +2897,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let byte_length: usize = 'brk: {
             let l = match length_value {
-                SocketWriteOption::None => break 'brk buffer.slice().len(),
+                SocketWriteOption::Missing => break 'brk buffer.slice().len(),
                 SocketWriteOption::Number(l) if JSValue::js_double_number(l).is_any_int() => {
                     l as i64
                 }
@@ -3228,7 +3228,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         // Parse and validate first: the option getters run user JS that can
         // close this socket and repoint its `Handlers`.
-        let reloaded = Handlers::prepare_reload(global, socket_obj)?;
+        let reloaded = Handlers::prepare_reload(global, socket_obj.to_js())?;
         if !self.handlers_are(&handlers) {
             return Ok(());
         }
@@ -3314,15 +3314,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Bytes already consumed from the wire before the upgrade (e.g. the
         // ClientHello sitting in the readable buffer of the socket being
         // wrapped); fed into the TLS engine once the upgrade is wired up.
-        let initial_data: Vec<u8> =
-            tls_socket_functions::string_or_buffer(global, opts.initial_data(global)?)?
-                .map(|data| data.slice().to_vec())
-                .unwrap_or_default();
+        let initial_data: Vec<u8> = tls_socket_functions::string_or_buffer(
+            global,
+            opts.initial_data(global)?,
+            Encoding::Utf8,
+        )?
+        .map(|data| data.slice().to_vec())
+        .unwrap_or_default();
         // Client mode: a standalone `new TLSSocket(socket, { isServer })` is NOT
         // a SocketListener, so these handlers have no listener to release. The
         // server-ness lives in the SSL accept state (adopt_tls
         // is_client=!is_server) + the ServerHandlers JS table, not here.
-        let handlers = Handlers::from_js(global, socket_obj, super::SocketMode::Client)?;
+        let handlers = Handlers::from_js(global, socket_obj.to_js(), super::SocketMode::Client)?;
         // Nothing holds the callback cell until the TLS wrapper below does.
         let _cell_root = handlers.root_cell(global);
 
@@ -3339,7 +3342,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // node:net wraps the result of `[buntls]` as `opts.tls`, so the
         // SecureContext arrives as `opts.tls.secureContext`. Bun.connect
         // userland may also pass it top-level. Check both.
-        let sc_js: Option<JsLocal<'_>> = 'blk: {
+        let sc = 'blk: {
             if let Some(v) = opts.secure_context(global)? {
                 break 'blk Some(v);
             }
@@ -3350,14 +3353,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             None
         };
-        if let Some(sc_js) = sc_js {
-            let Some(sc) = sc_js.as_class_ref::<SecureContext>() else {
-                return Err(global.throw_invalid_argument_type_value(
-                    b"secureContext",
-                    b"SecureContext",
-                    sc_js,
-                ));
-            };
+        if let Some((sc, _)) = sc {
             owned_ctx = Some(sc.ctx.clone());
             // servername / ALPN still come from the surrounding tls config.
             if let Some(t) = opts.tls(global)? {
@@ -3366,7 +3362,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                         // SAFETY: per-thread VM singleton.
                         VirtualMachine::get().as_mut(),
                         global,
-                        t,
+                        t.to_js(),
                         is_server,
                     )?;
                 }
@@ -3377,7 +3373,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     // SAFETY: per-thread VM singleton.
                     VirtualMachine::get().as_mut(),
                     global,
-                    tls_js,
+                    tls_js.to_js(),
                     is_server,
                 )?;
             } else if matches!(tls_js, UpgradeTLS::Enabled(true)) {
@@ -3418,7 +3414,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Err(global.throw(format_args!("Expected \"tls\" option")));
         }
 
-        let default_data = opts.data(global)?.unwrap_or(JsLocal::UNDEFINED);
+        let mut default_data = JSValue::ZERO;
+        if let Some(v) = opts.data(global)? {
+            default_data = v.to_js();
+            default_data.ensure_still_alive();
+        }
 
         // An option getter can close this socket, or re-enter upgradeTLS and adopt its fd.
         let uws::InternalSocket::Connected(raw_socket) = self.socket.get().socket else {
@@ -3796,11 +3796,11 @@ enum WriteResult {
 /// `data` that is a string or a buffer, a string encoded as `encoding`. `None` for anything else.
 fn string_or_buffer_to_write<'a>(
     global: &JSGlobalObject,
-    data: SocketData<'a>,
+    data: TextOrBytes<'a>,
     encoding: SocketWriteOption<'a>,
 ) -> JsResult<Option<StringOrBuffer<'static>>> {
     let encoding = match encoding {
-        SocketWriteOption::None | SocketWriteOption::Number(_) => None,
+        SocketWriteOption::Missing | SocketWriteOption::Number(_) => None,
         SocketWriteOption::Text(name) => Encoding::from_bun_string(&name),
         SocketWriteOption::StringObject(name) => {
             Encoding::from_bun_string(&loose_string(global, name)?)
@@ -3808,20 +3808,7 @@ fn string_or_buffer_to_write<'a>(
         SocketWriteOption::Other(name) => Encoding::from_bun_string(&loose_string(global, name)?),
     }
     .unwrap_or(Encoding::Utf8);
-    let text = match data {
-        SocketData::Bytes(bytes) => {
-            return StringOrBuffer::buffer_from_js(global, bytes.to_js(), Flavor::Sync).map(Some);
-        }
-        SocketData::Text(text) => text,
-        SocketData::StringObject(text) => loose_string(global, text)?,
-        _ => return Ok(None),
-    };
-    Ok(Some(StringOrBuffer::from_bun_string(
-        global,
-        text,
-        encoding,
-        Flavor::Sync,
-    )))
+    tls_socket_functions::string_or_buffer(global, data, encoding)
 }
 
 pub(crate) struct StoredVerifyError {
@@ -4429,7 +4416,7 @@ pub(crate) fn release_held_flight(socket: SocketHandle<'_>) {
         // The raw half of an `upgradeTLS` pair shares the socket of its TLS half.
         SocketHandle::Tcp(this) => this.socket.get().release_held_flight(),
         SocketHandle::Tls(this) => this.socket.get().release_held_flight(),
-        SocketHandle::Ignored => {}
+        SocketHandle::Other => {}
     }
 }
 
@@ -4485,7 +4472,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
     // node:net wraps `[buntls]`'s return as `opts.tls.secureContext`; userland
     // may also pass it top-level. Same lookup as `upgradeTLS` above.
     let mut owned_ctx: Option<boringssl_sys::OwnedSslCtx> = None;
-    let sc_js: Option<JsLocal<'_>> = 'blk: {
+    let sc = 'blk: {
         if let Some(v) = options.secure_context {
             break 'blk Some(v);
         }
@@ -4496,14 +4483,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
         }
         None
     };
-    if let Some(sc_js) = sc_js {
-        let Some(sc) = sc_js.as_class_ref::<SecureContext>() else {
-            return Err(global.throw_invalid_argument_type_value(
-                b"secureContext",
-                b"SecureContext",
-                sc_js,
-            ));
-        };
+    if let Some((sc, _)) = sc {
         owned_ctx = Some(sc.ctx.clone());
     }
 
@@ -4513,7 +4493,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
     // Drop frees ssl_opts on error.
     if let Some(tls) = options.tls {
         if let Some(tls) = tls_options_value(tls) {
-            ssl_opts = SSLConfig::from_js(handlers.vm, global, tls, is_server)?;
+            ssl_opts = SSLConfig::from_js(handlers.vm, global, tls.to_js(), is_server)?;
         } else if matches!(tls, UpgradeTLS::Enabled(true)) {
             ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm, is_server));
         }
@@ -4523,7 +4503,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
     }
     let socket_config: Option<&SSLConfig> = ssl_opts.as_ref();
 
-    let default_data = options.data.unwrap_or(JsLocal::UNDEFINED);
+    let default_data = options.data.map_or(JSValue::ZERO, JsLocal::to_js);
 
     let reject_unauthorized = upgrade_reject_policy(
         handlers.vm,
@@ -4714,7 +4694,7 @@ pub(crate) fn is_named_pipe_socket(socket: SocketHandle<'_>) -> bool {
     match socket {
         SocketHandle::Tcp(this) => this.socket.get().is_named_pipe(),
         SocketHandle::Tls(this) => this.socket.get().is_named_pipe(),
-        SocketHandle::Ignored => false,
+        SocketHandle::Other => false,
     }
 }
 
@@ -4722,7 +4702,7 @@ pub(crate) fn get_buffered_amount(socket: SocketHandle<'_>) -> usize {
     match socket {
         SocketHandle::Tcp(this) => this.buffered_data_for_node_net.get().len(),
         SocketHandle::Tls(this) => this.buffered_data_for_node_net.get().len(),
-        SocketHandle::Ignored => 0,
+        SocketHandle::Other => 0,
     }
 }
 
@@ -4756,7 +4736,7 @@ pub(crate) fn create_socket_pair(cx: &mut JsScope<'_>) -> JsResult<[c_int; 2]> {
 unsafe extern "C" {
     /// The socket of a `WebSocket` or of a node:http server socket's native handle. Null for
     /// anything else, and for one that isn't connected.
-    safe fn Bun__usSocketForTesting(value: JsLocal<'_>) -> *mut uws::us_socket_t;
+    safe fn Bun__usSocketForTesting(value: JSValue) -> *mut uws::us_socket_t;
 }
 
 /// `setSocketOptions(socket, 1 | 2, size)` of `bun:internal-for-testing`: SO_SNDBUF (1) or
@@ -4773,7 +4753,7 @@ pub(crate) fn set_socket_options(
         AnySocket::Tls(socket) => socket.socket.get().socket.get(),
         AnySocket::ServerWebSocket(websocket) => websocket.us_socket(),
         AnySocket::Other(other) => {
-            NonNull::new(Bun__usSocketForTesting(other)).map(NonNull::as_ptr)
+            NonNull::new(Bun__usSocketForTesting(other.to_js())).map(NonNull::as_ptr)
         }
     };
     let Some(socket) = socket else {

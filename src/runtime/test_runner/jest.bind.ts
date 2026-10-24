@@ -22,7 +22,7 @@ export const DoneCallback = b.class({ rustPath: "crate::test_runner::DoneCallbac
 const modifier = { getter: b.callable, cache: true, ...js } as const;
 const conditionalModifier = { args: { condition: b.bool.loose }, returns: b.callable, ...js } as const;
 
-export const EachTable = b.union({ array: b.jsArray, other: b.opaque });
+export const EachTable = b.union({ list: b.jsArray, other: b.opaque });
 
 /** The bound `this` of `test`, `describe` and what their modifiers give, such as `test.skip`. */
 export const ScopeFunctions = b.class({

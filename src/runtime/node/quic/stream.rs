@@ -13,10 +13,7 @@ use bun_lsquic_sys as lsquic;
 use super::endpoint::{alloc_exposed_array_buffer, read_u64_option};
 use super::ffi::lsquic_callback;
 use super::session::{H3_INTERNAL_ERROR, QuicSession, SessionEvent};
-use crate::generated_bindgen::quic::{
-    StreamBatch, StreamDestroyReason, StreamSource, Uint64Option,
-};
-use crate::generated_bindgen::socket_body::CoercedInt32;
+use crate::generated_bindgen::quic::{StreamBatch, StreamDestroyReason, StreamSource, Uint64Option};
 
 const QUIC_STREAM_HEADERS_KIND_HINTS: u32 = 0;
 const QUIC_STREAM_HEADERS_KIND_INITIAL: u32 = 1;
@@ -664,7 +661,7 @@ impl QuicStream {
     pub(crate) fn set_wakeup(&self, cx: &mut JsScope<'_>, callback: Option<JsLocal<'_>>) {
         let global = cx.global();
         self.wakeup
-            .set(callback.map(|cb| Strong::create(cb, global)));
+            .set(callback.map(|cb| Strong::create(cb.to_js(), global)));
     }
 
     pub(crate) fn pull(
@@ -718,7 +715,7 @@ impl QuicStream {
             return Ok(());
         }
         let bytes = match source {
-            StreamSource::None => Vec::new(),
+            StreamSource::Missing => Vec::new(),
             StreamSource::Buffer(buf) => buf.with_bytes(&cx.heap, <[u8]>::to_vec),
             StreamSource::Other => {
                 return Err(cx.global().throw(format_args!(
@@ -905,9 +902,10 @@ impl QuicStream {
         if self.destroyed.get() {
             return;
         }
-        let stop = (!matches!(stop_sending_code, Uint64Option::None))
+        let stop = (!matches!(stop_sending_code, Uint64Option::Missing))
             .then(|| error_code_arg(stop_sending_code));
-        let reset = (!matches!(reset_code, Uint64Option::None)).then(|| error_code_arg(reset_code));
+        let reset =
+            (!matches!(reset_code, Uint64Option::Missing)).then(|| error_code_arg(reset_code));
         if let Some(code) = stop {
             self.inbound.with_mut(|i| i.ended = true);
             self.with_state(|s| {
@@ -944,8 +942,8 @@ impl QuicStream {
         self.kick_write();
     }
 
-    pub(crate) fn set_priority(&self, priority: CoercedInt32) {
-        let packed = coerce_to_i32(priority) as u32;
+    pub(crate) fn set_priority(&self, priority: i32) {
+        let packed = priority as u32;
         let (urgency, incremental) = ((packed >> 1) as u8, packed & 1 != 0);
         let previous = self.priority.replace((urgency, incremental));
         // Only an actual change goes on the wire: set_http_prio writes a
@@ -967,9 +965,9 @@ impl QuicStream {
     pub(crate) fn send_headers(
         &self,
         cx: &mut JsScope<'_>,
-        kind: Deferred<'_, CoercedInt32>,
+        kind: Deferred<'_, i32>,
         headers: Option<JsLocal<'_, JSObject>>,
-        flags: Deferred<'_, CoercedInt32>,
+        flags: Deferred<'_, i32>,
     ) -> JsResult<bool> {
         let global = cx.global();
         if self.destroyed.get() {
@@ -986,11 +984,9 @@ impl QuicStream {
         use crate::webcore::encoding::BunStringEncode as _;
         let bytes = bun_core::String::from_js(header_string, global)?
             .encode(crate::node::types::Encoding::Latin1);
-        let is_trailing =
-            coerce_to_i32(kind.convert(global)?) as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
+        let is_trailing = kind.convert(global)? as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
         let eos = is_trailing
-            || coerce_to_i32(flags.convert(global)?) & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32)
-                != 0;
+            || flags.convert(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
         let Some(s) = self.ls() else {
             self.pending_headers
                 .with_mut(|q| q.push((bytes, header_count, eos)));
@@ -1022,13 +1018,6 @@ impl QuicStream {
 
 fn error_code_arg(value: Uint64Option) -> u64 {
     read_u64_option(value).unwrap_or(0)
-}
-
-fn coerce_to_i32(value: CoercedInt32) -> i32 {
-    match value {
-        CoercedInt32::BigInt(value) => value as i32,
-        CoercedInt32::Other(value) => value,
-    }
 }
 
 pub(super) unsafe extern "C" fn on_new_stream(

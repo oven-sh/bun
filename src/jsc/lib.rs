@@ -210,7 +210,7 @@ pub use self::thread_isolated::{ThreadIsolated, ThreadIsolatedArg};
 /// …). Callers only ever touch `globalThis` and `printAs`, so the trait
 /// exposes just those two and the `bun_jsc::Formatter` struct provides the
 /// canonical impl.
-pub trait ConsoleFormatter: bindgen::ValueWalker {
+pub trait ConsoleFormatter {
     fn global_this(&self) -> &JSGlobalObject;
     fn print_as<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
@@ -287,8 +287,6 @@ impl<F: ConsoleFormatter + ?Sized> Drop for IndentScope<'_, F> {
         self.0.indent_dec();
     }
 }
-
-impl bindgen::ValueWalker for self::console_object::Formatter<'_> {}
 
 impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
     #[inline]
@@ -988,9 +986,7 @@ pub use self::call_frame::CallFrame;
 
 // `FromJsEnum` impls for the `bun_http_types` Fetch* enums. Orphan rule forces
 // these here (the trait crate) — `bun_http_types` is jsc-free and `bun_http_jsc`
-// owns neither the trait nor the type. Powers
-// `JSValue::get_optional_enum::<FetchRedirect>()` in `Request::construct_into`
-// / `fetch.rs`. The `to_js` direction stays in `bun_http_jsc::fetch_enums_jsc`.
+// owns neither the trait nor the type. The `to_js` direction stays in `bun_http_jsc::fetch_enums_jsc`.
 impl FromJsEnum for bun_http_types::FetchRedirect::FetchRedirect {
     fn from_js_value(
         v: JSValue,

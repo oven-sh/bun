@@ -2,7 +2,6 @@ use bstr::BStr;
 
 use crate::generated_bindgen::blob::{PathOrBlob, S3Options};
 use crate::generated_bindgen::blob_arguments::BunWriteData;
-use crate::generated_bindgen::node_fs_binding as fs_schema;
 use crate::generated_bindgen::s3_client::{ListObjectsInput, S3Path, S3PresignOptions};
 use crate::node::PathLike;
 use crate::node::types::{Flavor, Parsing, PathLikeExt as _};
@@ -93,13 +92,12 @@ enum MissingPathError {
 }
 
 fn path_from_js(global: &JSGlobalObject, path: S3Path<'_>) -> JsResult<Option<PathLike<'static>>> {
-    let path = match path {
-        S3Path::Missing | S3Path::Other => return Ok(None),
-        S3Path::String(string) => fs_schema::PathLike::String(string),
-        S3Path::Buffer(buffer) => fs_schema::PathLike::Buffer(buffer),
-        S3Path::Url(url) => fs_schema::PathLike::Url(url),
-    };
-    Ok(PathLike::from_js(global, path, &mut Parsing::new(Flavor::Sync))?.ok())
+    match path {
+        S3Path::Missing => Ok(None),
+        S3Path::Path(path) => {
+            Ok(PathLike::from_js(global, path, &mut Parsing::new(Flavor::Sync))?.ok())
+        }
+    }
 }
 
 pub(crate) fn write_format_credentials<F, W, const ENABLE_ANSI_COLORS: bool>(

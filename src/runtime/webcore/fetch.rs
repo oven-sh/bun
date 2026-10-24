@@ -23,20 +23,8 @@ pub(crate) mod proxy_testing;
 // fetch() implementation
 // ──────────────────────────────────────────────────────────────────────────
 
-use crate::webcore::jsc::{
-    self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
-};
-use bun_core::{String as BunString, Tag as BunStringTag};
-use bun_http::http_request_body::StreamFraming;
-use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
-use bun_http_types::Method::Method;
-use bun_jsc::bindgen::{AnyValue, JsLocal, JsScope};
-use bun_jsc::{HTTPHeaderName, SysErrorJsc as _, URLJsc as _};
-use bun_sys::FdExt as _;
-// `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
-// brings the trait impl into scope for `JSValue::get_optional_enum::<FetchRedirect>`.
-use crate::generated_bindgen::fetch::{CompressInit, FetchInit, FetchInput, MaxRedirects, Verbose};
-use crate::generated_bindgen::fetch_session::{FetchTlsMember, FlagOrNumber, UnixPath};
+use crate::generated_bindgen::fetch::{CompressInit, FetchInit, FetchInput, FetchVerbose, MaxRedirects};
+use crate::generated_bindgen::fetch_session::{FetchTLSOption, FlagOrNumber, UnixPath};
 use crate::generated_bindgen::response::{BodyInit, HeadersInit, SignalInit};
 use crate::node;
 use crate::node::types::PathLikeExt as _;
@@ -44,18 +32,26 @@ use crate::node::types::{Encoding, PathOrFileDescriptor};
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::body::{Action as BodyValueLockedAction, InternalBlob, Value as BodyValue};
 use crate::webcore::headers_ref::any_blob_content_type_opt;
+use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine};
 use crate::webcore::response::HeadersRef;
 use crate::webcore::s3::client as s3;
 use crate::webcore::{Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response};
 use crate::webcore::{blob, readable_stream, response};
+use bun_core::{String as BunString, Tag as BunStringTag};
+use bun_http::http_request_body::StreamFraming;
+use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc as _;
 use bun_http_jsc::headers_jsc::from_fetch_headers;
+use bun_http_types::Method::Method;
 use bun_jsc::AbortSignalRef;
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{HTTPHeaderName, SysErrorJsc as _, URLJsc as _};
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;
 use bun_resolver::data_url::DataURL;
 use bun_s3_signing::{SignOptions, SignResult};
+use bun_sys::FdExt as _;
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
@@ -269,7 +265,7 @@ pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: &BunString) -> JsResult<()> 
 struct StringOrURL;
 
 impl StringOrURL {
-    fn from_js(value: impl AnyValue, global_this: &JSGlobalObject) -> JsResult<Option<BunString>> {
+    fn from_js(value: JSValue, global_this: &JSGlobalObject) -> JsResult<Option<BunString>> {
         let out = jsc::URL::href_from_js(value, global_this)?;
         if out.tag() == BunStringTag::Dead {
             return Ok(None);
@@ -298,7 +294,7 @@ pub(crate) fn session_fetch<'a>(
     input: FetchInput<'a>,
     init: Option<FetchInit<'a>>,
 ) -> JsResult<JSValue> {
-    fetch_impl::<false>(cx.global(), input, init, Some(this_value))
+    fetch_impl::<false>(cx.global(), input, init, Some(this_value.to_js()))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -337,7 +333,7 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
     input: FetchInput<'a>,
     options_object: Option<FetchInit<'a>>,
     // `session.fetch()`: the session, which a `session` in the init does not replace.
-    bound_session: Option<JsLocal<'_>>,
+    bound_session: Option<JSValue>,
 ) -> JsResult<JSValue> {
     let context = ctx.bun_vm().context_of_caller();
     // What script of a disposed `Bun.ModuleGraph` starts does not start, and reports nothing: no
@@ -426,10 +422,10 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
 
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
     let url_str_optional = match input {
-        FetchInput::String(url) => Some(url),
+        FetchInput::Text(url) => Some(url),
         FetchInput::Object(_) if request.is_some() => None,
-        FetchInput::Object(object) => StringOrURL::from_js(object.object(), global_this)?,
-        FetchInput::Other(value) => StringOrURL::from_js(value, global_this)?,
+        FetchInput::Object(object) => StringOrURL::from_js(object.object().to_js(), global_this)?,
+        FetchInput::Other(value) => StringOrURL::from_js(value.to_js(), global_this)?,
     };
 
     let request_init_object: Option<FetchInit<'_>> = 'brk: {
@@ -571,11 +567,8 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
         }
         let objects_to_try = [options_object, request_init_object];
         for obj in objects_to_try.into_iter().flatten() {
-            if let Some(value) = obj.session(global_this)? {
-                break 'extract_session Some(fetch_session::SessionHold::from_js(
-                    global_this,
-                    value,
-                )?);
+            if let Some((session, _)) = obj.session(global_this)? {
+                break 'extract_session Some(fetch_session::SessionHold::new(global_this, session));
             }
         }
         break 'extract_session None;
@@ -588,7 +581,7 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
         let objects_to_try = [options_object, request_init_object];
 
         for obj in objects_to_try.into_iter().flatten() {
-            if let FetchTlsMember::Options(tls) = obj.tls(global_this)? {
+            if let FetchTLSOption::Options(tls) = obj.tls(global_this)? {
                 request_has_tls = true;
                 let parsed = fetch_session::parse_tls(vm, global_this, tls)?;
                 if let Some(reject) = parsed.reject_unauthorized {
@@ -730,19 +723,19 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
 
         for obj in objects_to_try.into_iter().flatten() {
             match obj.verbose(global_this)? {
-                Verbose::Name(verb) => {
+                FetchVerbose::Name(verb) => {
                     if verb.eq_ascii(b"curl") {
                         break 'extract_verbose http::HTTPVerboseLevel::Curl;
                     }
                 }
-                Verbose::Flag(verb) => {
+                FetchVerbose::Flag(verb) => {
                     break 'extract_verbose if verb {
                         http::HTTPVerboseLevel::Headers
                     } else {
                         http::HTTPVerboseLevel::None
                     };
                 }
-                Verbose::Other => {}
+                FetchVerbose::Other => {}
             }
         }
         break 'extract_verbose verbose;
@@ -968,19 +961,16 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
             if let Some(options) = options_object {
                 match options.headers(global_this)? {
                     HeadersInit::Missing => {}
-                    HeadersInit::Headers(headers_value) => {
-                        if let Some(headers__) = FetchHeaders::cast(headers_value.to_js()) {
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
-                                break 'brk None;
-                            }
-                            break 'brk Some(headers__.as_ptr());
+                    HeadersInit::Headers((headers__, _)) => {
+                        if headers__.is_empty() {
+                            break 'brk None;
                         }
-
-                        break 'brk None;
+                        break 'brk Some(core::ptr::from_ref(headers__).cast_mut());
                     }
                     HeadersInit::Init(headers_value) => {
-                        if let Some(headers__) = HeadersRef::create_from_js(ctx, headers_value)? {
+                        if let Some(headers__) =
+                            HeadersRef::create_from_js(ctx, headers_value.to_js())?
+                        {
                             break 'brk Some(created_headers.insert(headers__).as_ptr());
                         }
 
@@ -999,19 +989,16 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
             if let Some(options) = request_init_object {
                 match options.headers(global_this)? {
                     HeadersInit::Missing => {}
-                    HeadersInit::Headers(headers_value) => {
-                        if let Some(headers__) = FetchHeaders::cast(headers_value.to_js()) {
-                            // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-                            if bun_opaque::opaque_deref_mut(headers__.as_ptr()).is_empty() {
-                                break 'brk None;
-                            }
-                            break 'brk Some(headers__.as_ptr());
+                    HeadersInit::Headers((headers__, _)) => {
+                        if headers__.is_empty() {
+                            break 'brk None;
                         }
-
-                        break 'brk None;
+                        break 'brk Some(core::ptr::from_ref(headers__).cast_mut());
                     }
                     HeadersInit::Init(headers_value) => {
-                        if let Some(headers__) = HeadersRef::create_from_js(ctx, headers_value)? {
+                        if let Some(headers__) =
+                            HeadersRef::create_from_js(ctx, headers_value.to_js())?
+                        {
                             break 'brk Some(created_headers.insert(headers__).as_ptr());
                         }
 

@@ -2,13 +2,13 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 /** `"ipv4"` or `"ipv6"` in any case, or the number of the address family. An error shows what is neither. */
 export const SocketAddressFamily = b.union({
-  none: b.undefined,
+  missing: b.undefined,
   name: b.string.allowStringObject,
   number: b.f64,
   other: b.opaque,
 });
 /** An error shows what is not a number. */
-export const SocketAddressNumber = b.union({ none: b.undefined, number: b.f64, other: b.opaque });
+export const SocketAddressNumber = b.union({ missing: b.undefined, number: b.f64, other: b.opaque });
 export const SocketAddressOptions = b.dictionary(
   {
     address: { type: b.string.allowStringObject.optional, expected: ["string"] },

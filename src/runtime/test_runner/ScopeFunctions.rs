@@ -1,16 +1,16 @@
-use core::fmt;
 use crate::test_runner::expect::JSValueTestExt;
+use core::fmt;
 
+use bun_core::String as BunString;
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
-use bun_core::String as BunString;
 
 use crate::generated_bindgen::jest::{EachTable, js_ScopeFunctions as js};
 use crate::generated_bindgen::scope_functions::{
     Bun__ScopeFunctions__callAsFunction, CallbackOrOptions, DescriptionOrCallback,
 };
-use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
 use crate::test_runner::bun_test::js_fns::Signature;
+use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
 use crate::test_runner::jest;
 
 // `group_log` wraps `test_runner::debug::group` (a begin/end/log tracer) as an RAII guard
@@ -110,12 +110,12 @@ impl ScopeFunctions {
 
         let global = cx.global();
         let array = match table {
-            EachTable::Array(array) => array.to_js(),
+            EachTable::List(array) => array.to_js(),
             EachTable::Other(other) => {
                 let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
                 return Err(global.throw(format_args!(
                     "Expected array, got {}",
-                    other.to_fmt(&mut formatter)
+                    other.to_js().to_fmt(&mut formatter)
                 )));
             }
         };
@@ -137,7 +137,7 @@ pub(crate) fn call_as_function<'a>(
     let _g = group_log::begin();
 
     let global = cx.global();
-    let Some(this) = this_value.as_class_ref::<ScopeFunctions>() else {
+    let Some(this) = this_value.to_js().as_class_ref::<ScopeFunctions>() else {
         return Err(global.throw(format_args!("Expected callee to be ScopeFunctions")));
     };
     let line_no = jest::capture_test_line_number(global);
@@ -551,22 +551,32 @@ pub(crate) fn parse_arguments<'a>(
         // callback
         // callback, options
         (
-            DescriptionOrCallback::Function(callback),
-            options @ (CallbackOrOptions::None | CallbackOrOptions::Timeout(_) | CallbackOrOptions::Options(_)),
-            CallbackOrOptions::None,
-        ) => (DescriptionOrCallback::None, CallbackOrOptions::Callback(callback), options),
+            DescriptionOrCallback::Callback(callback),
+            options @ (CallbackOrOptions::Missing
+            | CallbackOrOptions::Timeout(_)
+            | CallbackOrOptions::Options(_)),
+            CallbackOrOptions::Missing,
+        ) => (
+            DescriptionOrCallback::Missing,
+            CallbackOrOptions::Callback(callback),
+            options,
+        ),
         // description
         // description, callback
         // description, callback, options
         (description, callback @ CallbackOrOptions::Callback(_), options)
-        | (description, callback, options @ CallbackOrOptions::None) => (description, callback, options),
+        | (description, callback, options @ CallbackOrOptions::Missing) => {
+            (description, callback, options)
+        }
         // description, options, callback
         (description, options, callback) => (description, callback, options),
     };
 
     let result_callback: Option<JSValue> = match callback {
-        CallbackOrOptions::Callback(callback) => Some(callback.to_js().with_async_context_if_needed(global)),
-        CallbackOrOptions::None if cfg.callback != CallbackMode::Require => None,
+        CallbackOrOptions::Callback(callback) => {
+            Some(callback.to_js().with_async_context_if_needed(global))
+        }
+        CallbackOrOptions::Missing if cfg.callback != CallbackMode::Require => None,
         _ => {
             let ordinal = if cfg.kind == FunctionKind::Hook { "first" } else { "second" };
             return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));
@@ -582,7 +592,7 @@ pub(crate) fn parse_arguments<'a>(
     let mut timeout_option: Option<f64> = None;
 
     match options {
-        CallbackOrOptions::None => {}
+        CallbackOrOptions::Missing => {}
         CallbackOrOptions::Timeout(timeout) => timeout_option = Some(timeout),
         CallbackOrOptions::Callback(_) => {
             return Err(global.throw(format_args!(
@@ -604,8 +614,10 @@ pub(crate) fn parse_arguments<'a>(
     }
 
     result.description = match description {
-        DescriptionOrCallback::None => None,
-        DescriptionOrCallback::Function(callable) => Some(name_of_callable(global, callable, signature)?),
+        DescriptionOrCallback::Missing => None,
+        DescriptionOrCallback::Callback(callable) => {
+            Some(name_of_callable(global, callable, signature)?)
+        }
         DescriptionOrCallback::Text(text) => Some(text.into_vec()),
         DescriptionOrCallback::Number(number) => Some(bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], number).to_vec()),
     };
@@ -704,6 +716,6 @@ pub(crate) fn create_bound(
 
 // These enum types live on `bun_test::BaseScopeCfg` (`self_mode`, `self_concurrent`).
 // bun_test.rs names them `ScopeMode`/`ConcurrentMode`; alias here for brevity.
-use crate::test_runner::bun_test::{ScopeMode as SelfMode, ConcurrentMode as SelfConcurrent};
+use crate::test_runner::bun_test::{ConcurrentMode as SelfConcurrent, ScopeMode as SelfMode};
 // `TestReporterKind` in the spec is `bun_jsc::debugger::TestType` (Test/Describe).
 use bun_jsc::debugger::TestType as TestReporterKind;

@@ -13,7 +13,7 @@ use bun_jsc::{
 
 use bun_lsquic_sys as lsquic;
 
-use crate::generated_bindgen::quic::{CloseOptions, EphemeralKey, SessionOptions};
+use crate::generated_bindgen::quic::{EphemeralKey, QuicCloseOptions, SessionOptions};
 
 use super::callbacks;
 use super::endpoint::{MS_PER_SEC, QuicEndpoint, alloc_exposed_array_buffer};
@@ -635,7 +635,7 @@ impl QuicSession {
         }
         if let Some(app) = options.application(global)? {
             self.application_options_js
-                .set(Some(Strong::create(app.object(), global)));
+                .set(Some(Strong::create(app.object().to_js(), global)));
         }
         Ok(())
     }
@@ -1865,7 +1865,7 @@ impl QuicSession {
     fn parse_close_options(
         &self,
         global: &JSGlobalObject,
-        options: Option<CloseOptions<'_>>,
+        options: Option<QuicCloseOptions<'_>>,
     ) -> JsResult<(bool, u64, Vec<u8>)> {
         let mut app = false;
         let mut code = 0u64;
@@ -1938,7 +1938,7 @@ impl QuicSession {
     fn close_with_options(
         &self,
         global: &JSGlobalObject,
-        options: CloseOptions<'_>,
+        options: QuicCloseOptions<'_>,
     ) -> JsResult<()> {
         let (app, code, reason) = self.parse_close_options(global, Some(options))?;
         self.apply_close(app, code, &reason);
@@ -1980,7 +1980,7 @@ impl QuicSession {
     pub(crate) fn graceful_close(
         &self,
         cx: &mut JsScope<'_>,
-        options: Option<CloseOptions<'_>>,
+        options: Option<QuicCloseOptions<'_>>,
     ) -> JsResult<()> {
         let global = cx.global();
         if !self.destroyed.get() {
@@ -2013,7 +2013,7 @@ impl QuicSession {
     pub(crate) fn destroy(
         &self,
         cx: &mut JsScope<'_>,
-        options: Option<CloseOptions<'_>>,
+        options: Option<QuicCloseOptions<'_>>,
     ) -> JsResult<()> {
         let global = cx.global();
         if self.destroyed.get() {

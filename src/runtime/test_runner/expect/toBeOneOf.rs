@@ -6,7 +6,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult, VM};
 use super::Expect;
 use super::get_signature;
 use super::throw;
-use crate::generated_bindgen::expect::ArrayLike;
+use crate::generated_bindgen::expect::ExpectArrayLike;
 
 struct ExpectedEntry<'a> {
     global_this: &'a JSGlobalObject,
@@ -37,10 +37,10 @@ impl Expect {
         &self,
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
-        (list, list_value): (ArrayLike<'_>, JsLocal<'_>),
+        (list, list_value): (ExpectArrayLike<'_>, JsLocal<'_>),
     ) -> JsResult<()> {
         let global_this = cx.global();
-
+        let list_value = list_value.to_js();
         let (this, expected, not) = self.matcher_prelude(
             global_this,
             this_value.to_js(),
@@ -50,14 +50,8 @@ impl Expect {
 
         let mut pass = false;
 
-        let array_like = match list {
-            ArrayLike::Array(array) => Some(array.to_js()),
-            ArrayLike::ArrayBuffer(buffer) => Some(buffer.to_js()),
-            ArrayLike::TypedArray(array) => Some(array.to_js()),
-            ArrayLike::DataView(_) | ArrayLike::Other => None,
-        };
-        if let Some(array_like) = array_like {
-            let mut itr = array_like.array_iterator(global_this)?;
+        if !matches!(list, ExpectArrayLike::DataView(_) | ExpectArrayLike::Other) {
+            let mut itr = list_value.array_iterator(global_this)?;
             while let Some(item) = itr.next()? {
                 // Confusingly, jest-extended uses `deepEqual`, instead of `toBe`
                 if item.jest_deep_equals(expected, global_this)? {

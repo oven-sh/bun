@@ -4,7 +4,7 @@ use bun_jsc::{JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
 use super::throw;
-use crate::generated_bindgen::expect::Precision;
+use crate::generated_bindgen::expect::ExpectPrecision;
 
 impl Expect {
     pub(crate) fn to_be_close_to(
@@ -12,7 +12,7 @@ impl Expect {
         this_value: JsWrapper<'_, Self>,
         cx: &mut JsScope<'_>,
         expected: Option<f64>,
-        precision: Precision,
+        precision: ExpectPrecision,
     ) -> JsResult<()> {
         let global = cx.global();
         let this = self.post_match_guard(global);
@@ -27,9 +27,9 @@ impl Expect {
         let expected_value = JSValue::js_double_number(expected);
 
         let precision: f64 = match precision {
-            Precision::Absent => 2.0,
-            Precision::Digits(digits) => digits,
-            Precision::Other => {
+            ExpectPrecision::Missing => 2.0,
+            ExpectPrecision::Digits(digits) => digits,
+            ExpectPrecision::Other => {
                 return Err(global.throw_invalid_argument_type(
                     "toBeCloseTo",
                     "precision",

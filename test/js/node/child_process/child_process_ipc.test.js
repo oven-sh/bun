@@ -258,6 +258,20 @@ describe("a 'message' that arrives while there is no 'message' listener is not l
       });
     });
 
+    // The messages that wait are emitted on the tick after a listener is added, so not to one that is gone by then.
+    test("a listener removed in the tick it was added gets nothing", async () => {
+      const child = ipcChild(`${burst} process.on("message", () => process.send("pong"));`);
+      await withChild(child, async () => {
+        await ready(child);
+        const removed = [];
+        const listener = m => removed.push(m);
+        child.on("message", listener);
+        child.off("message", listener);
+        await new Promise(resolve => setImmediate(resolve));
+        expect({ removed, later: await untilPong(child) }).toEqual({ removed: [], later: [...three, "pong"] });
+      });
+    });
+
     test("a listener added after disconnect() gets nothing", async () => {
       const child = ipcChild(`${burst} process.on("disconnect", () => {});`);
       await ready(child);
@@ -267,6 +281,20 @@ describe("a 'message' that arrives while there is no 'message' listener is not l
       await once(child, "close");
       expect({ got, connected: child.connected }).toEqual({ got: [], connected: false });
     });
+  });
+
+  // `Bun.spawn` has no 'message' listeners: its callback takes every message, whatever it returns.
+  test("Bun.spawn({ ipc }) gets every message at once", async () => {
+    const got = [];
+    const { promise, resolve } = Promise.withResolvers();
+    await using child = Bun.spawn({
+      cmd: [bunExe(), "-e", `for (let i = 0; i < 3; i++) process.send({ i });`],
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      ipc: m => (got.push(m) === 3 && resolve(), 0),
+    });
+    await promise;
+    expect(got).toEqual(three);
   });
 
   test("child: a ref() of the channel does not outlive the channel", async () => {

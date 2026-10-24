@@ -55,6 +55,39 @@ Bun.serve({
 });
 ```
 
+### Client certificates (mTLS)
+
+A server asks clients for a certificate only when `requestCert` is `true`. `ca` on its own does not: it names the CAs that client certificates are verified against.
+
+```ts
+Bun.serve({
+  tls: {
+    key: Bun.file("./key.pem"),
+    cert: Bun.file("./cert.pem"),
+    ca: Bun.file("./client-ca.pem"), // CA that issues the client certificates
+    requestCert: true, // [!code ++]
+  },
+});
+```
+
+With `requestCert: true`, the server refuses a client that sends no certificate or one that `ca` does not verify. Set `rejectUnauthorized: false` to accept those clients too. The `NODE_TLS_REJECT_UNAUTHORIZED` environment variable does not change this for a server.
+
+### Certificate revocation lists
+
+Pass `crl` to refuse peer certificates that a CA has revoked. It takes the PEM contents of one or more CRLs, in the same value types as `ca`. On a server it applies to client certificates, so use it with `requestCert`.
+
+```ts
+Bun.serve({
+  tls: {
+    key: Bun.file("./key.pem"),
+    cert: Bun.file("./cert.pem"),
+    ca: Bun.file("./client-ca.pem"),
+    requestCert: true,
+    crl: Bun.file("./client-ca.crl.pem"), // [!code ++]
+  },
+});
+```
+
 ### Diffie-Hellman
 
 To override Diffie-Hellman parameters:
@@ -99,3 +132,5 @@ Bun.serve({
   ],
 });
 ```
+
+If two entries share a `serverName`, the later entry replaces the earlier one. This matches `tls.Server#addContext()`. A trailing dot is ignored, so `my-server1.com.` and `my-server1.com` name the same host. Names are compared case-insensitively, and a `*` stands for exactly one label on every transport: `*.my-server1.com` matches `a.my-server1.com` but not `a.b.my-server1.com`.

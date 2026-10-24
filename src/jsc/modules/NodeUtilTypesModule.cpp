@@ -1,4 +1,5 @@
 #include "BunClientData.h"
+#include "GeneratedResolveMessage.h"
 #include "JSDOMURL.h"
 #include "JSDOMWrapper.h"
 #include "node/crypto/JSKeyObject.h"
@@ -30,7 +31,6 @@
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SymbolObject.h>
-#include "ZigGeneratedClasses.h"
 #include "JSKeyObject.h"
 
 #include "NodeUtilTypesModule.h"
@@ -937,7 +937,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsNativeError,
         // They have code that does
         //      assert(util.types.isNativeError(resolveMessage))
         // FIXME: delete this once ResolveMessage and BuildMessage extend Error
-        if (cell->inherits<WebCore::JSResolveMessage>() || cell->inherits<WebCore::JSBuildMessage>())
+        if (cell->inherits<Bun::Bindgen::Generated::JSResolveMessage>() || cell->inherits<Bun::Bindgen::Generated::JSBuildMessage>())
             return JSValue::encode(jsBoolean(true));
     }
 
@@ -1077,7 +1077,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsSharedArrayBuffer,
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsProxy, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     GET_FIRST_CELL
-    return JSValue::encode(jsBoolean(cell->type() == GlobalProxyType || cell->type() == ProxyObjectType));
+    return JSValue::encode(jsBoolean(cell->type() == ProxyObjectType));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleNamespaceObject,
     (JSC::JSGlobalObject * globalObject,

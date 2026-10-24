@@ -37,6 +37,7 @@ import { getEventLoopStats } from "bun:internal-for-testing";
 import net from "node:net";
 import tls from "node:tls";
 import { tls as certs, bunEnv, bunExe } from "harness";
+import { listen } from "./tls-fixture-transport";
 
 const N = 64;
 // Well inside the test's own timeout, so a stalled step still gets to print
@@ -126,28 +127,31 @@ async function captureClientHello(): Promise<Buffer> {
 const clientHello = await captureClientHello();
 
 // The child reads one command per line on stdin:
-//   connect <n> <port> -> connects n sockets, writes ONLY the ClientHello to
-//                         each, answers `hellos <n>` once every write callback
-//                         has fired, and later `closed <n> <flights>` once all
-//                         n sockets have closed, where <flights> is how many
-//                         of them received any bytes first
-//   exit               -> exits 0
+//   connect <n> <address> -> connects n sockets to the port or the unix socket
+//                            path (see tls-fixture-transport.ts), writes ONLY
+//                            the ClientHello to each, answers `hellos <n>` once
+//                            every write callback has fired, and later
+//                            `closed <n> <flights>` once all n sockets have
+//                            closed, where <flights> is how many of them
+//                            received any bytes first
+//   exit                  -> exits 0
 const clientSrc = `
 const net = require("node:net");
 const readline = require("node:readline");
 const hello = Buffer.from(process.env.REPRO_HELLO, "hex");
 const say = line => process.stdout.write(line + "\\n");
 readline.createInterface({ input: process.stdin }).on("line", line => {
-  const [cmd, arg, arg2] = line.split(" ");
+  const [cmd, arg, ...rest] = line.split(" ");
   if (cmd === "connect") {
     const n = Number(arg);
+    const address = rest.join(" ");
     let connected = 0;
     let written = 0;
     let closed = 0;
     let flights = 0;
     const socks = [];
     for (let i = 0; i < n; i++) {
-      const c = net.connect(Number(arg2), "127.0.0.1");
+      const c = /^\\d+$/.test(address) ? net.connect(Number(address), "127.0.0.1") : net.connect(address);
       c.setNoDelay(true);
       let gotData = false;
       c.on("error", () => {});
@@ -246,9 +250,7 @@ async function scenario(kind: Scenario["kind"]) {
     other.end();
   }
 
-  const server = Bun.listen({
-    hostname: "127.0.0.1",
-    port: 0,
+  const { server, address } = listen(kind, {
     tls: { key: certs.key, cert: certs.cert },
     socket: {
       open(s) {
@@ -288,7 +290,7 @@ async function scenario(kind: Scenario["kind"]) {
   });
 
   try {
-    send(`connect ${N} ${server.port}`);
+    send(`connect ${N} ${address}`);
     await withDeadline(allOpen.promise, `${N} opens`);
     await expectLine(`hellos ${N}`);
     if (kind === "parked") {

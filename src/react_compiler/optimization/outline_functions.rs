@@ -11,7 +11,7 @@
 //!
 //! Conditional on `env.config.enable_function_outlining`.
 
-use std::collections::HashSet;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::hir::environment::Environment;
 use crate::hir::{
@@ -27,6 +27,10 @@ pub(crate) fn outline_functions(
     env: &mut Environment,
     fbt_operands: &HashSet<IdentifierId>,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     // Collect per-instruction actions to maintain depth-first name allocation order.
     // Each entry: (instr index, function_id to recurse into, should_outline)
     enum Action {

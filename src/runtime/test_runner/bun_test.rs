@@ -1788,6 +1788,15 @@ impl DescribeScope {
         }
     }
 
+    /// Node's focus: an `only` entry marks its ancestors when it is declared, with or without a test to run in it.
+    pub(crate) fn focus_entry(&mut self, index: usize) {
+        let Some(entry) = self.entries.get_mut(index) else {
+            return;
+        };
+        entry.base().only = Only::Yes;
+        self.mark_contains_only();
+    }
+
     /// Infallible: `Vec::push` aborts on OOM.
     pub(crate) fn append_describe(
         &mut self,

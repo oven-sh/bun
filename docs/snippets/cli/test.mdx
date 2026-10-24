@@ -48,6 +48,11 @@ bun test <patterns>
   Include tests that are marked with <code>test.todo()</code>
 </ParamField>
 
+<ParamField path="--only" type="boolean">
+  Run only tests that are marked with <code>test.only()</code> or <code>describe.only()</code>. Alias:
+  <code>--test-only</code>
+</ParamField>
+
 <ParamField path="--test-name-pattern" type="string">
   Run only tests with a name that matches the given regex. Alias: <code>-t</code>
 </ParamField>

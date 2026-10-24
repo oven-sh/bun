@@ -191,6 +191,8 @@ The following command runs only tests #2 and #3.
 bun test --only
 ```
 
+`--test-only` is another name for `--only`. In a file that uses `node:test`, the flag makes `test.only()`, `describe.only()`, the `only` option and `t.runOnly()` filter the run, as they do under `node --test --test-only`. Without the flag, a `node:test` file runs all of its tests. The [`node:test` entry](/runtime/nodejs-compat#node-test) lists the cases that differ from Node.js.
+
 ### test.if
 
 To run a test conditionally, use `test.if()`. The test runs if the condition is truthy. Use it for tests that should only run on a specific architecture or operating system.

@@ -521,6 +521,35 @@ pub(crate) fn file_generation() -> u32 {
     })
 }
 
+/// Reached only from `node:test`, which reads it once when the module loads. A Worker cannot register a test, so it reads false.
+pub(crate) fn node_test_only() -> bool {
+    if VirtualMachine::get().worker_ref().is_some() {
+        return false;
+    }
+    // SAFETY: not a Worker, so this is the JS thread that owns RUNNER.
+    Jest::runner_ptr().is_some_and(|p| unsafe { (*p.as_ptr()).test_options.only })
+}
+
+/// Reached only from `internal/test_runner/only`, which a Worker never loads: the number of entries in the scope that collects.
+pub(crate) fn node_test_entry_count() -> u32 {
+    let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        return 0;
+    };
+    // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
+    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+    u32::try_from(buntest.collection.active_scope().entries.len()).unwrap_or(u32::MAX)
+}
+
+/// Reached only from `internal/test_runner/only`: node's focus for the entry that a registration appended at `index`, if it appended one.
+pub(crate) fn node_test_focus_entry(index: u32) {
+    let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        return;
+    };
+    // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
+    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+    buntest.collection.active_scope_mut().focus_entry(index as usize);
+}
+
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides
 /// the running sequence's result so bun:test reports skip/todo instead of pass.
 /// `done`'s bound `DoneCallback.r#ref.phase` names the intended sequence so a

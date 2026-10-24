@@ -322,7 +322,6 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   if (opts.isolation === "none") throwNotImplemented("run({ isolation: 'none' })", 5090);
   if (opts.globPatterns?.length > 0) throwNotImplemented("run({ globPatterns })", 5090);
   if (opts.globalSetupPath != null) throwNotImplemented("run({ globalSetupPath })", 5090);
-  if (opts.only) throwNotImplemented("run({ only: true })", 5090);
   if (opts.testNamePatterns != null) throwNotImplemented("run({ testNamePatterns })", 5090);
   if (opts.testSkipPatterns != null) throwNotImplemented("run({ testSkipPatterns })", 5090);
   if (opts.forceExit) throwNotImplemented("run({ forceExit: true })", 5090);
@@ -453,7 +452,9 @@ async function runOneFile(
   // Node's getRunArgs builds [...execArgv, path, ...argv] so runtime flags land
   // in the child's process.execArgv; bun's CLI likewise takes runtime flags
   // before the `test` keyword and user args after the path.
-  const args = [process.execPath, ...(opts.execArgv as string[]), "test", absolute, ...(opts.argv as string[])];
+  const args = [process.execPath];
+  if (opts.only) args.push("--test-only");
+  args.push(...(opts.execArgv as string[]), "test", absolute, ...(opts.argv as string[]));
   const fileStarted = Date.now();
   const fileCounts = makeRunCounts();
 
@@ -1745,8 +1746,8 @@ class TestContext {
     return node.mockTracker;
   }
 
-  runOnly(_value?: boolean) {
-    throwNotImplemented("runOnly()", 5090, "Use `bun:test` in the interim.");
+  runOnly(value?: unknown) {
+    onlyFilter?.setRunOnlySubtests(this.#node, !!value);
   }
 
   skip(message?: string) {
@@ -1825,11 +1826,11 @@ class TestContext {
   test(arg0: unknown, arg1: unknown, arg2: unknown) {
     const node = this.#node;
     planCount(node);
-    return addTest(arg0, arg1, arg2, node);
+    return registerTest(arg0, arg1, arg2, node);
   }
 
   describe(arg0: unknown, arg1: unknown, arg2: unknown) {
-    return addSuite(arg0, arg1, arg2, this.#node);
+    return registerSuite(arg0, arg1, arg2, this.#node);
   }
 }
 
@@ -2569,7 +2570,7 @@ function addTest(
   arg1: unknown,
   arg2: unknown,
   executionParent: TestNode | undefined,
-  mode?: "skip" | "todo",
+  mode?: "skip" | "todo" | "only",
 ): Promise<undefined> {
   const { name, options, fn } = parseTestArgs(arg0, arg1, arg2);
   const { ownTags } = validateTestOptions(options);
@@ -2647,9 +2648,7 @@ function addTest(
     return Promise.resolve(undefined);
   }
 
-  // Node's `only` (the option and the test.only()/describe.only() spellings)
-  // is a no-op unless --test-only is passed, so it registers an ordinary
-  // test/suite; bun:test's only() would skip siblings and is rejected in CI.
+  // Without --test-only, node's `only` does nothing but a diagnostic, which is not ported. With it, internal/test_runner/only decides around this function.
   const runner = createTopLevelTestRunner(node, fn);
   if (passOptions !== undefined) {
     test(name, runner, passOptions);
@@ -2669,7 +2668,7 @@ function addSuite(
   arg1: unknown,
   arg2: unknown,
   executionParent?: TestNode,
-  mode?: "skip" | "todo",
+  mode?: "skip" | "todo" | "only",
 ): Promise<undefined> {
   const { name, options, fn } = parseTestArgs(arg0, arg1, arg2);
   const { ownTags } = validateTestOptions(options);
@@ -2755,40 +2754,55 @@ function addSuite(
   return Promise.resolve(undefined);
 }
 
+// Loaded only in a run with --test-only, or --only. The runner exists before a test file or a preload can load node:test.
+const onlyFilter = $bindgen("jest.bind.ts", "nodeTestOnly")
+  ? require("internal/test_runner/only").createOnlyFilter({
+      addTest,
+      addSuite,
+      parseTestArgs,
+      validateTestOptions,
+      parseExpectFailure,
+      currentNode,
+      currentCollectionParent,
+    })
+  : undefined;
+const registerTest = onlyFilter !== undefined ? onlyFilter.registerTest : addTest;
+const registerSuite = onlyFilter !== undefined ? onlyFilter.registerSuite : addSuite;
+
 // -----------------------------------------------------------------------------
 // Public API
 // -----------------------------------------------------------------------------
 
 function test(arg0: unknown, arg1: unknown, arg2: unknown) {
-  return addTest(arg0, arg1, arg2, undefined);
+  return registerTest(arg0, arg1, arg2, undefined);
 }
 
 test.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  return addTest(arg0, arg1, arg2, undefined, "skip");
+  return registerTest(arg0, arg1, arg2, undefined, "skip");
 };
 
 test.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  return addTest(arg0, arg1, arg2, undefined, "todo");
+  return registerTest(arg0, arg1, arg2, undefined, "todo");
 };
 
 test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  return addTest(arg0, arg1, arg2, undefined);
+  return registerTest(arg0, arg1, arg2, undefined, "only");
 };
 
 function describe(arg0: unknown, arg1: unknown, arg2: unknown) {
-  return addSuite(arg0, arg1, arg2, undefined);
+  return registerSuite(arg0, arg1, arg2, undefined);
 }
 
 describe.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  return addSuite(arg0, arg1, arg2, undefined, "skip");
+  return registerSuite(arg0, arg1, arg2, undefined, "skip");
 };
 
 describe.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  return addSuite(arg0, arg1, arg2, undefined, "todo");
+  return registerSuite(arg0, arg1, arg2, undefined, "todo");
 };
 
 describe.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  return addSuite(arg0, arg1, arg2, undefined);
+  return registerSuite(arg0, arg1, arg2, undefined, "only");
 };
 
 function hookOwner(): TestNode {

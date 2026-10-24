@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExeAtLeast, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -157,6 +157,353 @@ describe("node:test", () => {
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 0,
       stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  describe("--test-only", () => {
+    const fixture = (name: string) => join(import.meta.dirname, "fixtures", name);
+    const upstream = (name: string) =>
+      join(import.meta.dirname, "..", "test", "fixtures", "test-runner", "output", name);
+    const run = async (cmd: string[], env: Record<string, string> = {}, cwd?: string) => {
+      await using proc = spawn({ cmd, env: { ...bunEnv, ...env }, cwd, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    // A fixture asserts its own output. `stderr` is in the result only to show why a run failed.
+    const runFixtures = async (args: string[], names: string[], env: Record<string, string> = {}) => {
+      const { stderr, exitCode } = await run([bunExe(), "test", ...args, ...names.map(fixture)], env);
+      return { counts: counts(stderr), exitCode, stderr: exitCode === 0 ? "" : stderr };
+    };
+    const all = { NODE_TEST_ONLY_FIXTURE: "all" };
+
+    for (const flag of ["--test-only", "--only"]) {
+      test.concurrent(
+        `${flag} selects what node selects among the tests that bun:test collects`,
+        async () => {
+          // bun:test's .only throws when CI is detected. Node has no such rule for --test-only.
+          expect(await runFixtures([flag], ["30-only-filter.js"], { CI: "1" })).toEqual({
+            counts: { pass: 8, skip: 2, todo: 2, fail: 0 },
+            exitCode: 0,
+            stderr: "",
+          });
+        },
+        30_000,
+      );
+    }
+
+    test.concurrent(
+      "without the flag, only and { only: false } have no effect",
+      async () => {
+        expect(await runFixtures([], ["30-only-filter.js"], all)).toEqual({
+          counts: { pass: 16, skip: 2, todo: 2, fail: 0 },
+          exitCode: 0,
+          stderr: "",
+        });
+      },
+      30_000,
+    );
+
+    test.concurrent(
+      "filters the subtests of a running test: creation order, runOnly(), { only: false }, plan, hooks",
+      async () => {
+        expect(await runFixtures(["--test-only"], ["31-only-subtests.mjs"])).toEqual({
+          counts: { pass: 9, fail: 0 },
+          exitCode: 0,
+          stderr: "",
+        });
+      },
+      30_000,
+    );
+
+    test.concurrent(
+      "without the flag, every subtest runs and runOnly() does not throw",
+      async () => {
+        expect(await runFixtures([], ["31-only-subtests.mjs"], all)).toEqual({
+          counts: { pass: 10, fail: 0 },
+          exitCode: 0,
+          stderr: "",
+        });
+      },
+      30_000,
+    );
+
+    const node = nodeExeAtLeast("26.3.0");
+    test.skipIf(!node).concurrent(
+      "the fixtures pass as they are under node",
+      async () => {
+        const runs = await Promise.all(
+          ["30-only-filter.js", "31-only-subtests.mjs"].flatMap(name => [
+            run([node!, "--test", "--test-only", fixture(name)]),
+            run([node!, "--test", fixture(name)], all),
+          ]),
+        );
+        expect(runs.map(({ exitCode, stdout }) => (exitCode === 0 ? 0 : stdout))).toEqual([0, 0, 0, 0]);
+      },
+      30_000,
+    );
+
+    test.concurrent(
+      "BUN_OPTIONS carries the flag",
+      async () => {
+        expect(await runFixtures([], ["30-only-filter.js"], { BUN_OPTIONS: "--test-only" })).toEqual({
+          counts: { pass: 8, skip: 2, todo: 2, fail: 0 },
+          exitCode: 0,
+          stderr: "",
+        });
+      },
+      30_000,
+    );
+
+    test.concurrent(
+      "--parallel workers get the flag",
+      async () => {
+        expect(
+          await runFixtures(["--test-only", "--parallel=2"], ["30-only-filter.js", "31-only-subtests.mjs"]),
+        ).toEqual({
+          counts: { pass: 17, skip: 2, todo: 2, fail: 0 },
+          exitCode: 0,
+          stderr: "",
+        });
+      },
+      30_000,
+    );
+
+    test.concurrent(
+      "--rerun-each filters every run",
+      async () => {
+        expect(await runFixtures(["--test-only", "--rerun-each=2"], ["31-only-subtests.mjs"])).toEqual({
+          counts: { pass: 18, fail: 0 },
+          exitCode: 0,
+          stderr: "",
+        });
+      },
+      30_000,
+    );
+
+    test.concurrent(
+      "a declaration that registers nothing does not select another test",
+      async () => {
+        const { stdout, stderr, exitCode } = await run([
+          bunExe(),
+          "test",
+          "--test-only",
+          "--rerun-each=2",
+          fixture("37-only-late-declaration.mjs"),
+        ]);
+        expect({
+          ran: stdout.split("\n").filter(line => line.startsWith("RAN ")),
+          counts: counts(stderr),
+          exitCode,
+        }).toEqual({
+          ran: ["RAN marked", "RAN marked"],
+          counts: { pass: 2, fail: 0 },
+          exitCode: 0,
+        });
+      },
+      30_000,
+    );
+
+    test.concurrent(
+      "a Worker cannot declare a test under the flag",
+      async () => {
+        expect(await runFixtures(["--test-only"], ["36-only-worker.js"])).toEqual({
+          counts: { pass: 1, fail: 0 },
+          exitCode: 0,
+          stderr: "",
+        });
+      },
+      30_000,
+    );
+
+    test.concurrent(
+      "t.describe() is not filtered",
+      async () => {
+        expect(await runFixtures(["--test-only"], ["38-only-t-describe.js"])).toEqual({
+          counts: { pass: 1, fail: 0 },
+          exitCode: 0,
+          stderr: "",
+        });
+      },
+      30_000,
+    );
+
+    describe("node's own fixtures", () => {
+      test.concurrent(
+        "only_tests.js",
+        async () => {
+          const { stderr, exitCode } = await run([bunExe(), "test", "--test-only", upstream("only_tests.js")]);
+          expect({ counts: counts(stderr), exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+            counts: { pass: 13, skip: 2, fail: 0 },
+            exitCode: 0,
+            stderr: "",
+          });
+        },
+        30_000,
+      );
+
+      test.concurrent(
+        "name_pattern_with_only.js",
+        async () => {
+          const { stderr, exitCode } = await run([
+            bunExe(),
+            "test",
+            "--test-only",
+            "--test-name-pattern=enabled",
+            upstream("name_pattern_with_only.js"),
+          ]);
+          expect({ counts: counts(stderr), exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+            counts: { pass: 1, fail: 0 },
+            exitCode: 0,
+            stderr: "",
+          });
+        },
+        30_000,
+      );
+
+      test.concurrent(
+        "filtered-suite-order.mjs",
+        async () => {
+          const { stdout, exitCode } = await run([
+            bunExe(),
+            "test",
+            "--test-only",
+            upstream("filtered-suite-order.mjs"),
+          ]);
+          const snapshot = await Bun.file(upstream("filtered-suite-order.snapshot")).text();
+          const order = (text: string) =>
+            text.split("\n").filter(line => /^( \* |Execution order|with global)/.test(line));
+          expect({ order: order(stdout), exitCode }).toEqual({
+            order: order(snapshot.split("TAP version")[0]),
+            exitCode: 0,
+          });
+        },
+        30_000,
+      );
+    });
+
+    // Prints the events of the tests, and of the suites that have a directive, as `run()` reports them.
+    const printRunEvents = `
+      const { run } = require("node:test");
+      (async () => {
+        for await (const { type, data } of run({ files: [process.env.FIXTURE], only: true })) {
+          if (type === "test:stdout") console.log("child " + data.message.trimEnd());
+          if (type !== "test:pass" && type !== "test:fail") continue;
+          const directive = data.skip !== undefined ? " # SKIP" : data.todo !== undefined ? " # TODO" : "";
+          if (data.details.type === "test" || directive !== "") console.log(type, data.details.type, data.name + directive);
+        }
+      })();
+    `;
+    const runEvents = async (name: string) => {
+      const { stdout, stderr, exitCode } = await run([bunExe(), "-e", printRunEvents], { FIXTURE: fixture(name) });
+      const lines = stdout.trim().split("\n");
+      return {
+        tests: lines.filter(line => /^test:(pass|fail) test /.test(line)),
+        suites: lines.filter(line => /^test:(pass|fail) suite /.test(line)).sort(),
+        stderr,
+        exitCode,
+      };
+    };
+
+    test.concurrent(
+      "run({ only: true }) filters the file it runs",
+      async () => {
+        // Recorded from the same script under node v26.12.1. Node reports the suite after its tests.
+        expect(await runEvents("30-only-filter.js")).toEqual({
+          tests: [
+            "test:pass test only modifier",
+            "test:pass test only option",
+            "test:pass test it.only alias",
+            "test:pass test modifier beats only false",
+            "test:pass test only todo # TODO",
+            "test:pass test only skip # SKIP",
+            "test:pass test inherits",
+            "test:pass test inherits",
+            "test:pass test narrows",
+            "test:pass test focused child",
+            "test:pass test marked skip # SKIP",
+            "test:pass test marked todo # TODO",
+          ],
+          suites: ["test:pass suite marked skipped suite # SKIP"],
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      30_000,
+    );
+
+    test.concurrent(
+      "run({ only: true }) puts the flag in the process.execArgv of the child",
+      async () => {
+        using dir = tempDir("node-test-only-execargv", {
+          "child.test.js": `
+            const { test } = require("node:test");
+            test.only("child", () => console.log("execArgv " + JSON.stringify(process.execArgv)));
+          `,
+        });
+        const { stdout, stderr, exitCode } = await run([bunExe(), "-e", printRunEvents], {
+          FIXTURE: join(String(dir), "child.test.js"),
+        });
+        const lines = stdout.split("\n").filter(line => /^(child execArgv|test:)/.test(line));
+        expect({ lines, stderr, exitCode }).toEqual({
+          lines: ['child execArgv ["--test-only"]', "test:pass test child"],
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      30_000,
+    );
+
+    test.concurrent(
+      "the flag is --only, so it also focuses a bun:test file of the same run",
+      async () => {
+        using dir = tempDir("node-test-only-mixed", {
+          "node.test.js": `
+            const { test } = require("node:test");
+            test.only("node focused", () => {});
+            test("node plain", () => {});
+          `,
+          "bun.test.js": `
+            import { test } from "bun:test";
+            test("bun plain 1", () => {});
+            test("bun plain 2", () => {});
+          `,
+        });
+        const mixed = async (args: string[]) => {
+          const { stderr, exitCode } = await run([bunExe(), "test", ...args], {}, String(dir));
+          return { counts: counts(stderr), exitCode };
+        };
+        expect({ flag: await mixed(["--test-only"]), noFlag: await mixed([]) }).toEqual({
+          flag: { counts: { pass: 1, fail: 0 }, exitCode: 0 },
+          noFlag: { counts: { pass: 4, fail: 0 }, exitCode: 0 },
+        });
+      },
+      30_000,
+    );
+
+    // Each fixture below passes as it is under `node --test --test-only` (v26.3.0 and v26.12.1) and fails under Bun.
+    test.todo("a suite that a running test declares is filtered", async () => {
+      // Bun runs all four tests of the fixture. Node runs one.
+      expect((await runFixtures(["--test-only"], ["32-only-inline-suite.mjs"])).exitCode).toBe(0);
+    });
+    test.todo("a selected suite with no test to run still runs its before and after hooks", async () => {
+      // Bun runs none of the four hooks of the fixture: a focused run schedules hooks only where a test runs.
+      expect((await runFixtures(["--test-only"], ["33-only-suite-hooks.js"])).exitCode).toBe(0);
+    });
+    test.todo("runOnly() on the context of the file changes what runs", async () => {
+      // Bun runs 0 of the three tests: bun:test focuses the file from the flag before the hook runs.
+      expect((await runFixtures(["--test-only"], ["34-only-root-run-only.js"])).exitCode).toBe(0);
+    });
+    test.todo("without the flag, a file that uses only gets node's diagnostic", async () => {
+      // Bun reports no test:diagnostic event.
+      expect((await run([bunExe(), fixture("35-only-diagnostic.mjs")])).exitCode).toBe(0);
+    });
+    test.todo("run({ only: true }) reports no directive for a suite that is not selected", async () => {
+      // Bun also reports `todo suite # TODO` and `nested skipped suite in a narrowed suite # SKIP`.
+      expect((await runEvents("39-only-directives.js")).suites).toEqual([
+        "test:pass suite marked skipped suite # SKIP",
+        "test:pass suite nested skipped suite # SKIP",
+        "test:pass suite nested todo suite # TODO",
+      ]);
     });
   });
 
@@ -324,6 +671,12 @@ describe("node:test", () => {
     });
   });
 });
+
+function counts(stderr: string) {
+  const result: Record<string, number> = {};
+  for (const [, count, kind] of stderr.matchAll(/^ *(\d+) (pass|skip|todo|fail)$/gm)) result[kind] = Number(count);
+  return result;
+}
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {
   const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));

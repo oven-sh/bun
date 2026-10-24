@@ -2198,6 +2198,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if self.options.bundle
             && (opts.assign_target() != js_ast::AssignTarget::None || opts.is_delete_target())
             && self.symbols[ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Import
+            && self.raises_bundle_only_errors()
         {
             let r = js_lexer::range_of_identifier(self.source, loc);
             // SAFETY: original_name is an arena-owned slice valid for 'a.
@@ -4866,7 +4867,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[inline]
     pub(crate) fn is_strict_mode_output_format(&self) -> bool {
-        self.options.bundle && self.options.output_format.is_esm()
+        self.raises_bundle_only_errors() && self.options.output_format.is_esm()
+    }
+
+    /// Bundle-only errors protect linked or printed code, and a graph scan does neither.
+    #[inline]
+    pub(crate) fn raises_bundle_only_errors(&self) -> bool {
+        self.options.bundle && !self.options.features.graph_scan
     }
 
     /// Declare an ambient symbol resolvable BY NAME via [`Self::find_symbol`]

@@ -2519,8 +2519,10 @@ pub mod parse_worker {
         opts.package_version = task.package_version.slice();
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
-        opts.features.unwrap_commonjs_to_esm =
-            output_format == options::Format::Esm && FeatureFlags::UNWRAP_COMMONJS_TO_ESM;
+        // A graph scan prints nothing, and the unwrap refuses a top-level `return`: https://github.com/oven-sh/bun/issues/8908
+        opts.features.unwrap_commonjs_to_esm = output_format == options::Format::Esm
+            && FeatureFlags::UNWRAP_COMMONJS_TO_ESM
+            && !worker_ctx.scan_only;
         opts.features.top_level_await = output_format == options::Format::Esm
             || output_format == options::Format::InternalBakeDev;
         opts.features.auto_import_jsx = task.jsx.parse && topts.auto_import_jsx;
@@ -2548,6 +2550,7 @@ pub mod parse_worker {
             || !(task.experimental_decorators || task.emit_decorator_metadata);
         opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
         opts.features.no_macros = topts.no_macros;
+        opts.features.graph_scan = worker_ctx.scan_only;
         // Modeled as
         // `Option<Box<StringSet>>` on both sides, so we deep-clone (small —
         // CLI-supplied flag set). PERF: retype

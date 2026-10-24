@@ -10,6 +10,7 @@ use bun_lint::fix::Fix;
 use bun_lint::linter::{LintMessage, RuleId};
 use bun_lint::options::Json;
 use bun_lint::rule::{Meta, Plugin};
+use bun_lint::source::LineBreaks;
 
 pub(crate) const QUICK_FIX: &[u8] = b"quickfix";
 pub(crate) const FIX_ALL: &[u8] = b"source.fixAll.bun";
@@ -54,7 +55,7 @@ fn tag_of(meta: &Meta) -> Option<Tag> {
 
 fn meta_of(message: &LintMessage) -> Option<&'static Meta> {
     match message.rule_id.as_ref()? {
-        RuleId::Known(meta) | RuleId::Named(meta, _) => Some(meta),
+        RuleId::Known(meta) | RuleId::Named(meta, _) => Some(*meta),
         RuleId::Js(_) | RuleId::Unknown(_) => None,
     }
 }
@@ -85,7 +86,7 @@ impl<'t> Places<'t> {
             path,
             text,
             lines,
-            offsets: Offsets::new(text, None),
+            offsets: Offsets::new(text, LineBreaks::EcmaScript.line_starts(text)),
             has_versioned_edits,
         }
     }

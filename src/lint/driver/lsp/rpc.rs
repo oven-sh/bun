@@ -118,17 +118,20 @@ fn take(entries: &mut Vec<(Vec<u8>, Json)>, key: &[u8]) -> Option<Json> {
 
 impl Incoming {
     pub(crate) fn parse(message: &[u8]) -> Incoming {
-        let mut entries = match bun_lint::json::parse(message) {
-            Some(Json::Object(entries)) => entries,
-            Some(_) => return Incoming::Invalid { id: Json::Null },
-            None => return Incoming::Unreadable,
+        let Some(parsed) = bun_lint::json::parse(message) else {
+            return Incoming::Unreadable;
+        };
+        let Some(mut entries) = parsed.into_object() else {
+            return Incoming::Invalid { id: Json::Null };
         };
         let id =
             take(&mut entries, b"id").filter(|it| matches!(it, Json::Number(_) | Json::String(_)));
         let params = take(&mut entries, b"params").unwrap_or(Json::Null);
-        match (take(&mut entries, b"method"), id) {
-            (Some(Json::String(method)), Some(id)) => Incoming::Request { id, method, params },
-            (Some(Json::String(method)), None) => Incoming::Notification { method, params },
+        // `Some(None)`: a method that is not a string.
+        let method = take(&mut entries, b"method").map(Json::into_string);
+        match (method, id) {
+            (Some(Some(method)), Some(id)) => Incoming::Request { id, method, params },
+            (Some(Some(method)), None) => Incoming::Notification { method, params },
             (None, Some(_)) => Incoming::Response,
             (_, id) => Incoming::Invalid {
                 id: id.unwrap_or(Json::Null),

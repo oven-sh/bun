@@ -6,9 +6,10 @@ use crate::configs::{Flavor, Loader};
 use crate::inferred::Inferred;
 use crate::lint::Context;
 use crate::results::FileResult;
-use crate::run::{Environment, Fatal, Pool, Run, Timing, lint_again};
+use crate::run::{Environment, Fatal, Pool, Run, Timing};
 use crate::{Linter, discover, paths};
 use bun_lint::js_plugin::Host;
+use bun_lint::linter::Registry;
 use bun_threading::Guarded;
 
 /// How a text is linted.
@@ -16,7 +17,7 @@ use bun_threading::Guarded;
 pub(crate) struct How {
     /// The rules that need types run, if the configuration asks for them.
     pub(crate) with_types: bool,
-    /// As `--fix-dry-run`: [`FileResult::written`] is the text with all fixes.
+    /// As `--fix-dry-run`: [`FileResult::fixed_text`] or [`FileResult::text`] is the text with all fixes.
     pub(crate) fixes: bool,
 }
 
@@ -43,13 +44,35 @@ pub(crate) fn with_session<R>(
     environment: &Environment,
     then: impl FnOnce(&Session) -> R,
 ) -> R {
-    let registry = crate::rules::registry();
-    let linter = Linter::new(registry.answering_for(options.native_plugin_rules.clone()));
-    bun_sema_driver::use_a_pool_of_their_own("Bun Lint");
+    let registry = Registry::new(&[
+        bun_lint_eslint::RULES,
+        bun_lint_typescript::RULES,
+        bun_lint_plugins::RULES,
+        bun_lint_unicorn::RULES,
+        bun_lint_react::RULES,
+        bun_lint_jest::RULES,
+        bun_lint_json::RULES,
+        bun_lint_markdown::RULES,
+    ])
+    .with_languages(crate::rules::LANGUAGES);
+    let linter = Linter::new(registry.with_native_plugins(options.native_plugin_rules.clone()));
+    bun_sema_driver::use_dedicated_pool("Bun Lint");
     let pool = Pool::new(options.threads);
     let cwd = paths::to_native(environment.cwd.clone());
     let js_plugins = Host::with_engine(environment.js_engine, &cwd);
     let loader = Loader::new(&linter, options, environment, &js_plugins);
+    if let Some((eslint_path, oxlint_path)) = loader.ignored_eslint_config() {
+        loader.advise(
+            [
+                b"Using ",
+                &oxlint_path[..],
+                b". ",
+                &eslint_path[..],
+                b" is ignored. Use --config to pick it.",
+            ]
+            .concat(),
+        );
+    }
     then(&Session {
         options,
         environment,
@@ -63,19 +86,6 @@ pub(crate) fn with_session<R>(
 impl Session<'_> {
     /// Why nothing can be linted in the folder.
     pub(crate) fn refusal(&self) -> Option<Vec<u8>> {
-        if let Some((of_eslint, of_oxlint)) = self.loader.undecided() {
-            let (of_eslint, of_oxlint) = (paths::basename(of_eslint), paths::basename(of_oxlint));
-            return Some(
-                [
-                    b"Found both ",
-                    of_eslint,
-                    b" and ",
-                    of_oxlint,
-                    b"\n  Choose one with flavor = \"eslint\" or flavor = \"oxlint\" under [lint] in bunfig.toml",
-                ]
-                .concat(),
-            );
-        }
         let _ = self.loader.for_directory(&self.environment.cwd);
         self.loader.refused().map(<[u8]>::to_vec)
     }
@@ -111,6 +121,7 @@ impl Session<'_> {
         how: How,
     ) -> Result<Option<FileResult>, Fatal> {
         let (environment, loader, pool) = (self.environment, self.loader, self.pool);
+        let (linter, js_plugins) = (self.linter, self.js_plugins);
         let options = &Options {
             stdin: true,
             stdin_filename: Some(paths::to_native(path.to_vec())),
@@ -123,7 +134,7 @@ impl Session<'_> {
         let store = bun_lint_graph::Store::new(&environment.cwd);
         let modules = bun_lint_graph::Graph::new(&store);
         modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
-            let of_the_run = (self.linter, environment, self.js_plugins);
+            let of_the_run = (linter, environment, js_plugins);
             discover::list_as_eslint_8(of_the_run, pool, patterns, extensions)
         }));
         // Every name that is ever typed would stay in one that is kept.
@@ -132,10 +143,12 @@ impl Session<'_> {
         let memory = bun_sema::session::Session::new();
         let (skipped_in_comments, out_of_stack) =
             (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
+        let (without_include, needs_eslint) = (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
         let (broken_fixes, handed_back) = (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
         let (unread, invalid_tsconfigs) =
             (Guarded::new(Vec::new()), Guarded::new(Default::default()));
-        let formatter = crate::fmt::ForRules::new(environment, options.of_bun_format.as_deref());
+        let formatter =
+            crate::fmt::ForRules::new(environment, options.bun_format_defaults.as_deref());
         let by_options = options.infer_globals.is_none() && options.infers_globals_by_options;
         let inferred = (options.infer_globals == Some(true) || by_options)
             .then(|| Inferred::new(environment, pool.threads(), by_options));
@@ -143,24 +156,27 @@ impl Session<'_> {
         let context = Context {
             skipped_in_comments: &skipped_in_comments,
             out_of_stack: &out_of_stack,
+            without_include: &without_include,
             broken_fixes: &broken_fixes,
             handed_back: &handed_back,
             unread: &unread,
+            needs_eslint: &needs_eslint,
             invalid_tsconfigs: &invalid_tsconfigs,
             memory: &memory,
             atoms: &atoms,
-            linter: self.linter,
+            linter,
             options,
             cwd: &environment.cwd,
-            of_oxlint: (of_cwd.as_deref()).filter(|it| it.flavor == Flavor::Oxlint),
+            only: None,
+            oxlint_config: (of_cwd.as_deref()).filter(|it| it.flavor == Flavor::Oxlint),
             checks_types: false,
             keeps_text: false,
             reads_fixes: true,
-            reads_texts_of_fixes: true,
+            reads_fix_texts: true,
             reads_help: false,
             help_on_demand: false,
             reads_suppressions: false,
-            js_plugins: self.js_plugins,
+            js_plugins,
             modules: &modules,
             formatter: &formatter,
             inferred: inferred.as_ref(),
@@ -170,7 +186,13 @@ impl Session<'_> {
         let mut results = run
             .lint_text(loader, &context, text, how.with_types)?
             .results;
-        lint_again(&context, pool, &mut results)?;
+        // Rules that look at several files now revisit the text, as `Run::execute` does with the files.
+        let again = modules.complete(&|count, work| pool.for_each(count, 1, work));
+        for result in &mut results {
+            if again.contains(&paths::from_native(&result.path)) {
+                context.lint_again(result)?;
+            }
+        }
         match results.iter_mut().find_map(|it| it.thrown.take()) {
             Some(thrown) => Err(Fatal(thrown)),
             None => Ok(results.pop()),

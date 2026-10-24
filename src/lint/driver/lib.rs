@@ -32,6 +32,7 @@ mod gitignore;
 mod inferred;
 mod init;
 mod lint;
+pub mod lsp;
 mod native;
 mod print_config;
 mod processor;

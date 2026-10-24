@@ -1056,7 +1056,9 @@ dependencies = [
  "bun_sema_parser",
  "bun_semver",
  "bun_sys",
+ "bun_text_diff",
  "bun_threading",
+ "bun_url",
  "bun_zstd",
 ]
 

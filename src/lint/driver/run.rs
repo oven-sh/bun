@@ -331,7 +331,7 @@ fn is_ordered_by_bytes(path: &[u8]) -> bool {
     path.iter().all(|&byte| byte < 0xEE)
 }
 
-struct Run<'r> {
+pub(crate) struct Run<'r> {
     options: &'r Options,
     environment: &'r Environment<'r>,
     out: Outcome,
@@ -353,11 +353,24 @@ struct Suppressed {
     updated: Option<bool>,
 }
 
-struct Linted {
-    results: Vec<FileResult>,
+pub(crate) struct Linted {
+    pub(crate) results: Vec<FileResult>,
     files: usize,
     /// `--list-files`
     listed: Option<Vec<Vec<u8>>>,
+}
+
+impl<'r> Run<'r> {
+    pub(crate) fn new(options: &'r Options, environment: &'r Environment<'r>) -> Run<'r> {
+        Run {
+            options,
+            environment,
+            out: Outcome::default(),
+            began: Instant::now(),
+            emulates_oxlint: None,
+            modules: None,
+        }
+    }
 }
 
 impl Run<'_> {
@@ -504,12 +517,13 @@ impl Run<'_> {
         Some(text.to_vec())
     }
 
-    /// ESLint's `lintText`.
-    fn lint_text(
+    /// ESLint's `lintText`. `with_types`: the rules that need types run, if the configuration asks for them.
+    pub(crate) fn lint_text(
         &self,
         loader: &Loader,
         context: &Context,
         text: Vec<u8>,
+        with_types: bool,
     ) -> Result<Linted, Fatal> {
         let cwd = &self.environment.cwd;
         let name = self
@@ -597,7 +611,8 @@ impl Run<'_> {
             inferred.files(vec![path.clone()]);
         }
         let has_rules_with_types = config.has_enabled(|it| it.triggers_type_check());
-        let needs_types = name.is_some()
+        let needs_types = with_types
+            && name.is_some()
             && loader.wants_types(&loaded, config)
             && (has_rules_with_types || context.checks_types);
         if needs_types {
@@ -1143,7 +1158,7 @@ impl Run<'_> {
         let mut phases = Phases::default();
         let linted = match options.stdin {
             true => match fs::read_stdin() {
-                Ok(text) => self.lint_text(&loader, &context, text),
+                Ok(text) => self.lint_text(&loader, &context, text, true),
                 Err(error) => Err(Fatal(
                     [&b"Cannot read standard input: "[..], &fs::describe(&error)].concat(),
                 )),

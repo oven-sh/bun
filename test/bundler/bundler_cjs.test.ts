@@ -793,6 +793,81 @@ describe("bundler", () => {
     },
   });
 
+  // ============================================================================
+  // `import()` of a bundled CommonJS file that the linker marks async
+  //
+  // The linker marks a file async when a module with top-level await is on its
+  // chain of static imports, also when tree shaking removes that import. The
+  // `__commonJS` wrapper of the file still returns `module.exports`, not a
+  // promise, so `import()` builds the namespace as for any other CommonJS file.
+  // ============================================================================
+
+  // Tree shaking removes this package when nothing reads its exports.
+  const unusedAsyncPackage = {
+    "/node_modules/async-pkg/package.json": `{ "name": "async-pkg", "main": "index.js", "sideEffects": false }`,
+    "/node_modules/async-pkg/index.js": `await 0;\nexport const unused = 1;`,
+  };
+
+  // `await import()`
+  itBundled("cjs/__toESM_dynamic_import_of_file_marked_async", {
+    files: {
+      "/entry.js": `const ns = await import("./c.js");\nconsole.log(ns.default.t, ns.t);`,
+      "/c.js": `import { unused } from "async-pkg";\nmodule.exports = { t: 5 };`,
+      ...unusedAsyncPackage,
+    },
+    run: {
+      stdout: "5 5",
+    },
+  });
+
+  // `import().then()`
+  itBundled("cjs/__toESM_dynamic_import_then_of_file_marked_async", {
+    files: {
+      "/entry.js": `import("./c.js").then(ns => console.log(ns.default.t));`,
+      "/c.js": `import { unused } from "async-pkg";\nmodule.exports = { t: 5 };`,
+      ...unusedAsyncPackage,
+    },
+    run: {
+      stdout: "5",
+    },
+  });
+
+  // The promise is for the namespace, not for `module.exports`.
+  itBundled("cjs/__toESM_dynamic_import_of_function_marked_async", {
+    files: {
+      "/entry.js": `const ns = await import("./c.js");\nconsole.log(typeof ns, typeof ns.default, ns.default());`,
+      "/c.js": `import { unused } from "async-pkg";\nmodule.exports = function () { return 5; };`,
+      ...unusedAsyncPackage,
+    },
+    run: {
+      stdout: "object function 5",
+    },
+  });
+
+  // The file runs in a microtask, after the code that follows `import()`.
+  itBundled("cjs/__toESM_dynamic_import_order_of_file_marked_async", {
+    files: {
+      "/entry.js": `console.log("before");\nconst promise = import("./c.js");\nconsole.log("after");\nconsole.log((await promise).default.t);`,
+      "/c.js": `import { unused } from "async-pkg";\nconsole.log("c runs");\nmodule.exports = { t: 5 };`,
+      ...unusedAsyncPackage,
+    },
+    run: {
+      stdout: "before\nafter\nc runs\n5",
+    },
+  });
+
+  // `export *` of a module with top-level await marks the file async too.
+  itBundled("cjs/__toESM_dynamic_import_of_file_with_export_star_marked_async", {
+    files: {
+      "/entry.js": `const ns = await import("./c.js");\nconsole.log(typeof ns.default, ns.default.a);`,
+      "/c.js": `export * from "./async.js";\nexports.a = 1;\nObject.keys(exports);`,
+      "/async.js": `await 0;\nexport const t = 1;`,
+    },
+    run: {
+      stdout: "object 1",
+    },
+  });
+
   const externalImportLog = /* js */ `
     import d, { named } from "ext";
     console.log(typeof d, named);

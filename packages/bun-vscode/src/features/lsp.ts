@@ -1,12 +1,5 @@
-import { execFile } from "node:child_process";
 import * as vscode from "vscode";
-import {
-  CloseAction,
-  ErrorAction,
-  LanguageClient,
-  RevealOutputChannelOn,
-  TransportKind,
-} from "vscode-languageclient/node";
+import { CloseAction, ErrorAction, LanguageClient, RevealOutputChannelOn, State } from "vscode-languageclient/node";
 
 export const LSP_LANGUAGE_IDS: readonly string[] = (
   "javascript javascriptreact typescript typescriptreact json jsonc json5 css scss less html " +
@@ -15,10 +8,8 @@ export const LSP_LANGUAGE_IDS: readonly string[] = (
 
 export const MARKER_GLOB = "**/{bunfig.toml,bun.lock,bun.lockb}";
 
-// Placeholder until the release that ships `bun fmt --lsp` is known.
-const MIN_BUN_VERSION = "1.4.4";
-
 export interface LanguageClientLike {
+  readonly state: State;
   start(): Promise<void>;
   stop(): Promise<void>;
 }
@@ -31,7 +22,6 @@ export interface ServerSpec {
 
 export interface LanguageServerOptions {
   createClient?: (server: ServerSpec) => LanguageClientLike;
-  checkRuntime?: (runtime: string) => Promise<string | undefined>;
 }
 
 let output: vscode.OutputChannel | undefined;
@@ -54,28 +44,12 @@ function isEnabled(): boolean {
   return vscode.workspace.getConfiguration("bun").get<boolean>("lsp.enable", true);
 }
 
-function parseVersion(text: string): number[] | undefined {
-  const match = /(\d+)\.(\d+)\.(\d+)/.exec(text);
-  return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : undefined;
-}
-
-function isAtLeast(actual: number[], minimum: number[]): boolean {
-  for (let i = 0; i < minimum.length; i++) {
-    if (actual[i] !== minimum[i]) return actual[i] > minimum[i];
+// vscode-languageclient forces a popup when start() fails, even with
+// revealOutputChannelOn: Never. The output channel already has the details.
+class QuietLanguageClient extends LanguageClient {
+  override error(message: string, data?: unknown, _showNotification?: boolean | "force"): void {
+    super.error(message, data, false);
   }
-  return true;
-}
-
-function defaultCheckRuntime(runtime: string): Promise<string | undefined> {
-  return new Promise(resolve => {
-    execFile(runtime, ["--version"], (error, stdout) => {
-      if (error) return resolve(`could not run ${runtime} --version: ${error.message}`);
-      const actual = parseVersion(String(stdout));
-      if (!actual) return resolve(`could not parse the output of ${runtime} --version: ${String(stdout).trim()}`);
-      if (isAtLeast(actual, parseVersion(MIN_BUN_VERSION)!)) return resolve(undefined);
-      resolve(`bun fmt --lsp needs Bun ${MIN_BUN_VERSION} or later, found ${actual.join(".")}`);
-    });
-  });
 }
 
 function defaultCreateClient(server: ServerSpec): LanguageClientLike {
@@ -85,13 +59,14 @@ function defaultCreateClient(server: ServerSpec): LanguageClientLike {
     const value = bun.get(key);
     if (value !== undefined) initializationOptions[key] = value;
   }
-  return new LanguageClient(
+  return new QuietLanguageClient(
     "bun",
     "Bun",
+    // No `transport`: vscode-languageclient talks stdio by default and, unlike
+    // TransportKind.stdio, does not append a `--stdio` flag that bun fmt would reject.
     {
       command: server.command,
       args: server.args,
-      transport: TransportKind.stdio,
       options: { cwd: server.cwd },
     },
     {
@@ -105,7 +80,7 @@ function defaultCreateClient(server: ServerSpec): LanguageClientLike {
       revealOutputChannelOn: RevealOutputChannelOn.Never,
       initializationFailedHandler: () => false,
       errorHandler: {
-        error: () => ({ action: ErrorAction.Shutdown, handled: true }),
+        error: () => ({ action: ErrorAction.Continue, handled: true }),
         closed: () => ({ action: CloseAction.DoNotRestart, handled: true }),
       },
     },
@@ -120,11 +95,11 @@ async function startLanguageServer(options: LanguageServerOptions): Promise<void
     cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
   };
   try {
-    const problem = await (options.checkRuntime ?? defaultCheckRuntime)(runtime);
-    if (problem !== undefined) throw new Error(problem);
     const next = (options.createClient ?? defaultCreateClient)(spec);
     client = next;
     await next.start();
+    // start() resolves instead of rejecting when the server exits before answering initialize.
+    if (next.state !== State.Running) throw new Error("the server exited during startup");
   } catch (error) {
     client = undefined;
     failed = true;

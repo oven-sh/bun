@@ -60,7 +60,7 @@ Once the server is running, VS Code's own formatting and code action settings wo
 
   // Apply lint fixes on save.
   "editor.codeActionsOnSave": {
-    "source.fixAll": "explicit",
+    "source.fixAll.bun": "explicit",
   },
 }
 ```
@@ -69,7 +69,11 @@ You can also run "Format Document" or "Format Selection" from the command palett
 
 This feature requires Bun 1.4.4 or later. If the `bun` executable on your `PATH` (or the one set in `bun.runtime`) is older or cannot be started, the language server is skipped and a message is written to the "Bun" output channel. The server is started again after `bun.runtime` changes.
 
+Formatting works on stable releases of Bun. Lint diagnostics and the `source.fixAll.bun` code action need a canary build of Bun (`bun upgrade --canary`); on a stable build the server only advertises formatting.
+
 To turn the formatter and linter off, set `bun.lsp.enable` to `false` in your settings.
+
+Other editors can run `bun fmt --no-script --lsp` directly as a stdio language server. Earlier formatter work for this extension was contributed in [#46571](https://github.com/oven-sh/bun/pull/46571) (cayank) and [#45253](https://github.com/oven-sh/bun/pull/45253) (Ghosty920).
 
 ## Configuration
 

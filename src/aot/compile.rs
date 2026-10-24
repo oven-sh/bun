@@ -26,6 +26,7 @@ pub(crate) use self::lower_stage::collect_file_inputs;
 use self::import_graph::ImportGraph;
 use self::module_list::ListedModules;
 use self::program_reach::LeftOutCode;
+use self::runtime_reach::loads_modules_by_computed_names;
 use crate::builtins::{BuiltinId, BuiltinNames, Platforms, RuntimeModule, table};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{Diagnostic, Diagnostics, InternalError, LoadMessages, ProgramView};
@@ -46,6 +47,7 @@ use crate::package_diagnostics::PackageView;
 use crate::report::SourceTexts;
 use crate::statistics::{LimitValues, Stage, StageClock, StatisticId, Statistics};
 use bun_ast::{Kind, Loader, Log, Msg};
+use bun_core::ZBox;
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::BuiltinTypeSymbols;
 use bun_sema::program::{FileId, Files};
@@ -106,8 +108,6 @@ pub struct Compilation {
     /// Of a build whose entry points begin programs of their own: the program of each entry point behind the first, in their order.
     /// `summary.entry_points` lists all of them then, and `engine` is the program of the first.
     pub further_programs: Vec<EngineResult>,
-    holds_all_entry_points: bool,
-    writes_preload: bool,
 }
 
 pub struct BuildFailed {
@@ -116,8 +116,8 @@ pub struct BuildFailed {
     pub statistics: Statistics,
     pub compilation: Option<Box<Compilation>>,
     pub refused_entry_points: Option<Vec<u32>>,
-    /// No failure: the program of the first of several entry points names nothing that starts a Worker, so the build has one program.
-    pub begins_no_other_global: bool,
+    /// No failure: see `compile_program_at_each_entry_point`.
+    pub is_one_program: bool,
 }
 
 impl fmt::Debug for BuildFailed {
@@ -153,7 +153,7 @@ pub(crate) struct Build<'a> {
     /// What `report_rejected_versions` returned.
     full_types_refused_at_load: BTreeSet<Vec<u8>>,
     pub(crate) place: ProgramPlace,
-    begins_no_other_global: bool,
+    is_one_program: bool,
 }
 
 pub(crate) struct LoadedProject<'b, 's> {
@@ -467,31 +467,6 @@ fn loads_modules_by_name(engine: &EngineResult) -> bool {
     })
 }
 
-// `holds_all`: the others are further entry points of the program, as they are of a program that may load any of them by a name.
-fn compile_program_beginning_at(
-    options: &Options<'_>,
-    first: usize,
-    holds_all: bool,
-    provider: &dyn SourceProvider,
-    log: &mut Log,
-) -> Result<Compilation, BuildFailed> {
-    let place = ProgramPlace::OneOfSeveral(first);
-    if !holds_all {
-        let entry_points = options_with_entry_points(options, &[first]);
-        let alone = compile_program(&entry_points, place, provider, log)?;
-        if !loads_modules_by_name(&alone.engine) {
-            return Ok(alone);
-        }
-    }
-    let others = (0..options.entry_points.len()).filter(|&index| index != first);
-    let all: Vec<usize> = core::iter::once(first).chain(others).collect();
-    let entry_points = options_with_entry_points(options, &all);
-    let mut with_all = compile_program(&entry_points, place, provider, log)?;
-    with_all.summary.entry_points.truncate(1);
-    with_all.holds_all_entry_points = true;
-    Ok(with_all)
-}
-
 // By what the program names. Text that it evaluates, and a constructor that it finds under a computed name, are not asked.
 fn names(program: &Compilation, feature: Feature) -> bool {
     let mut uses = program.engine.features_used().iter();
@@ -509,37 +484,55 @@ pub fn compile(
         return compile_program(options, ProgramPlace::Only, provider, log);
     }
     let said_before = (log.msgs.len(), log.warnings, log.errors);
-    let first = compile_program_beginning_at(options, 0, false, provider, log);
-    if matches!(&first, Err(failure) if failure.begins_no_other_global) {
-        log.msgs.truncate(said_before.0);
-        (log.warnings, log.errors) = (said_before.1, said_before.2);
-        return compile_program(options, ProgramPlace::Only, provider, log);
+    if let Some(compiled) = compile_program_at_each_entry_point(options, provider, log) {
+        return compiled;
     }
-    let mut programs = vec![first?];
-    for index in 1..options.entry_points.len() {
+    log.msgs.truncate(said_before.0);
+    (log.warnings, log.errors) = (said_before.1, said_before.2);
+    remove_program_files_of_further_entry_points(options);
+    compile_program(options, ProgramPlace::Only, provider, log)
+}
+
+fn remove_program_files_of_further_entry_points(options: &Options<'_>) {
+    if let Some(path) = options.aot.ir_output_path.as_deref() {
+        for index in 1..options.entry_points.len() {
+            let _ = bun_sys::unlink(&ZBox::from_bytes(&numbered_program_file(path, index)));
+        }
+    }
+}
+
+fn numbered_program_file(path: &[u8], index: usize) -> Vec<u8> {
+    [path, b".", index.to_string().as_bytes()].concat()
+}
+
+// `None`: the build has one program. Either nothing starts a Worker, so there is one global. Or entry points can meet in one global:
+// its program has to hold them all, with everything that they lead to, and an executable holds nothing twice.
+fn compile_program_at_each_entry_point(
+    options: &Options<'_>,
+    provider: &dyn SourceProvider,
+    log: &mut Log,
+) -> Option<Result<Compilation, BuildFailed>> {
+    let mut programs = Vec::with_capacity(options.entry_points.len());
+    for index in 0..options.entry_points.len() {
         let said_before = log.msgs.len();
-        let compiled = compile_program_beginning_at(options, index, false, provider, log);
+        let entry_point = options_with_entry_points(options, &[index]);
+        let place = ProgramPlace::OneOfSeveral(index);
+        let compiled = compile_program(&entry_point, place, provider, log);
         forget_repeated_messages(log, said_before);
-        programs.push(compiled?);
+        match compiled {
+            Err(failure) if failure.is_one_program => return None,
+            Err(failure) => return Some(Err(failure)),
+            Ok(program) if loads_modules_by_name(&program.engine) => return None,
+            Ok(program) => programs.push(program),
+        }
     }
-    // The host loads what `preload` names into the global of the Worker, and node:worker_threads into that of a Worker of that module.
-    // An object has that option only in a program that writes a property of its name.
-    let preloads = programs
-        .iter()
-        .any(|program| program.writes_preload && names(program, Feature::WorkerConstructor));
+    // The host loads node:worker_threads into the global of a Worker of that module.
     let starts_node_workers = programs
         .iter()
         .any(|program| names(program, Feature::NodeWorker));
-    for index in 1..programs.len() {
-        let program = &programs[index];
-        let lacks_modules =
-            preloads || (starts_node_workers && !names(program, Feature::WorkerConstructor));
-        if lacks_modules && !program.holds_all_entry_points {
-            let said_before = log.msgs.len();
-            let compiled = compile_program_beginning_at(options, index, true, provider, log);
-            forget_repeated_messages(log, said_before);
-            programs[index] = compiled?;
-        }
+    let lacks_module = |program: &Compilation| !names(program, Feature::WorkerConstructor);
+    if starts_node_workers && programs[1..].iter().any(lacks_module) {
+        return None;
     }
     let mut programs = programs.into_iter();
     let mut first = programs.next().expect("it was pushed");
@@ -557,7 +550,7 @@ pub fn compile(
     }
     first.summary.folders.shared_sort_unstable();
     first.summary.folders.dedup();
-    Ok(first)
+    Some(Ok(first))
 }
 
 // A file that several programs hold is listed once, with the code that all of them have made of it.
@@ -659,9 +652,9 @@ fn compile_program(
     let (bytes, mut output) = match emitted {
         Ok(emitted) => emitted,
         Err(stage) => {
-            let begins_no_other_global = build.begins_no_other_global;
+            let is_one_program = build.is_one_program;
             let mut failure = build.finish::<()>(Err(stage), log).unwrap_err();
-            failure.begins_no_other_global = begins_no_other_global;
+            failure.is_one_program = is_one_program;
             return Err(failure);
         }
     };
@@ -676,14 +669,11 @@ fn compile_program(
     let is_internal_error = build.diagnostics.has_internal_errors();
     let refused_entry_points = build.find_refused_entry_points();
     let statistics = build.finish_writing_messages(log);
-    let writes_preload = output.writes_preload;
     let (_, summary) = output.into_parts(statistics.clone());
     let compilation = Compilation {
         engine,
         summary,
         further_programs: Vec::new(),
-        holds_all_entry_points: false,
-        writes_preload,
     };
     match has_errors {
         false => Ok(compilation),
@@ -693,7 +683,7 @@ fn compile_program(
             statistics,
             compilation: Some(Box::new(compilation)),
             refused_entry_points,
-            begins_no_other_global: false,
+            is_one_program: false,
         }),
     }
 }
@@ -713,7 +703,7 @@ fn fail(
         statistics,
         compilation: None,
         refused_entry_points,
-        begins_no_other_global: false,
+        is_one_program: false,
     }
 }
 
@@ -747,7 +737,7 @@ impl<'a> Build<'a> {
             checked_elsewhere: Vec::new(),
             full_types_refused_at_load: BTreeSet::new(),
             place: ProgramPlace::Only,
-            begins_no_other_global: false,
+            is_one_program: false,
         }
     }
 
@@ -767,13 +757,22 @@ impl<'a> Build<'a> {
     fn run_front_end(&mut self) -> Result<FrontEndOutput, Stage> {
         let mut linked_at = None;
         let output = self.with_loaded_projects_before_assets(|build, loaded| {
-            if build.place == ProgramPlace::OneOfSeveral(0) && !mentions_worker_constructor(&loaded)
-            {
-                build.begins_no_other_global = true;
+            let starts_workers =
+                build.place != ProgramPlace::Only && mentions_worker_constructor(&loaded);
+            if build.place == ProgramPlace::OneOfSeveral(0) && !starts_workers {
+                build.is_one_program = true;
                 return Err(Stage::Load);
             }
             let bound = build.bind_modules(&loaded)?;
             build.stop_if_errors(Stage::BindModules)?;
+            // What the engine finds out about such names comes a whole program later.
+            let application = loaded.project(ProjectId::Application).loaded.files();
+            if build.place != ProgramPlace::Only
+                && loads_modules_by_computed_names(application, &bound.projects.application.graph)
+            {
+                build.is_one_program = true;
+                return Err(Stage::BindModules);
+            }
             let units = build.check_and_lower(&loaded, &bound);
             if !(loaded.finish_asset_reads)() {
                 return Err(Stage::Load);
@@ -782,6 +781,12 @@ impl<'a> Build<'a> {
             build.stop_if_errors(Stage::Lower)?;
             let output = build.link(loaded, bound, units);
             linked_at = Some(Instant::now());
+            // The host loads what `preload` names into the global of the Worker. An object has that option only in a program that
+            // writes a property of its name.
+            if starts_workers && matches!(&output, Ok(output) if output.writes_preload) {
+                build.is_one_program = true;
+                return Err(Stage::LinkAndEmit);
+            }
             output
         });
         drop_thread_caches(self.caches);
@@ -864,7 +869,7 @@ impl<'a> Build<'a> {
         let path = match self.place {
             ProgramPlace::Only | ProgramPlace::OneOfSeveral(0) => path,
             ProgramPlace::OneOfSeveral(index) => {
-                numbered = [path, b".", index.to_string().as_bytes()].concat();
+                numbered = numbered_program_file(path, index);
                 &numbered[..]
             }
         };

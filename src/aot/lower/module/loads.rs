@@ -1319,15 +1319,19 @@ fn emit_require_failure(
         }
         ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => {}
     }
-    emit_module_failure(lowering, failure)
+    emit_module_failure(lowering, failure, true)
 }
 
+// Where the host's resolver finds at run time what the build did not, the error bears the code of `require` or that of `import`.
 pub(super) fn emit_module_failure(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     failure: ModuleFailureId,
+    is_for_require: bool,
 ) -> ValueId {
     let failure = lowering.file.fragment.declare_module_failure(failure);
-    lowering.builder.throw_module_failure(failure);
+    lowering
+        .builder
+        .throw_module_failure(failure, is_for_require);
     lowering.builder.unreachable();
     lowering.begin_unreachable_block();
     lowering.builder.undefined()
@@ -1379,7 +1383,7 @@ fn emit_rejected_import(
 ) -> ValueId {
     let failure = lowering.file.fragment.declare_module_failure(failure);
     let handler = control::begin_handler(lowering, BlockRole::CatchHandler, None);
-    lowering.builder.throw_module_failure(failure);
+    lowering.builder.throw_module_failure(failure, false);
     lowering.builder.unreachable();
     lowering.begin_unreachable_block();
     control::end_handler(lowering, handler);

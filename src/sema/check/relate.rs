@@ -4522,23 +4522,16 @@ impl<'p, 's> Checker<'p, 's> {
     /// types between the source stack and the target stack. tsgo creates an instantiation when a comparison first
     /// reaches it, and the target's before the source's, so the type that was pushed first is the older one. Push
     /// numbers grow with every level, and a level's target has a lower one than its source. No two entries share one,
-    /// so of two different types with the same height, exactly one is newer. A lower type is older if `last` is built from
-    /// it: a walk into a finite type meets its parts, and they don't count. A lower type that was pushed later and that
-    /// `last` isn't built from is an instantiation the comparison made after `last`, such as `Exclude<A, 3>` for the
-    /// constraint of `Exclude<Exclude<A, 2>, 3>`.
+    /// so this is a total order: of two different types, exactly one is newer.
     fn is_at_least_as_new(&self, t: TypeId, last: TypeId, stacks: [&[(TypeId, u32)]; 2]) -> bool {
         let pushed = |t: TypeId| {
             let first = |stack: &[(TypeId, u32)]| Some(stack.iter().find(|it| it.0 == t)?.1);
             stacks.into_iter().filter_map(first).min()
         };
         t == last
-            || match self.types().nesting_order(t, last) {
-                std::cmp::Ordering::Greater => true,
-                std::cmp::Ordering::Equal => pushed(t) >= pushed(last),
-                std::cmp::Ordering::Less => {
-                    pushed(t) > pushed(last) && !self.types().is_built_from(last, t)
-                }
-            }
+            || (self.types().nesting_order(t, last))
+                .then_with(|| pushed(t).cmp(&pushed(last)))
+                .is_ge()
     }
 
     /// `is_deeply_nested_type` of the last entry of the stack, at depth 3. `identities` has an `OnStack` for

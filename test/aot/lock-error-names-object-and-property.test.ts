@@ -112,19 +112,11 @@ test("in strict code every attempt is refused, at its line", async () => {
   );
 }, 120_000);
 
-// TODO: Object.defineProperty() and __defineGetter__() of a new name say "Attempting to define property on object that is not extensible."
-const saysTheEnginesSentence = ["defines a new name", "adds a getter the old way"];
-const namesWhatIsRefused = async (kind: string) => {
-  expect((await ran).strict[kinds.indexOf(kind)]).toEqual(refusal(kind));
-};
-test.each(kinds.filter(kind => !saysTheEnginesSentence.includes(kind)))(
+test.each(kinds)(
   "the refusal names the built-in and the property and says why: %s",
-  namesWhatIsRefused,
-  120_000,
-);
-test.todo.each(saysTheEnginesSentence)(
-  "the refusal names the built-in and the property and says why: %s",
-  namesWhatIsRefused,
+  async kind => {
+    expect((await ran).strict[kinds.indexOf(kind)]).toEqual(refusal(kind));
+  },
   120_000,
 );
 

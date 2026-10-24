@@ -2836,6 +2836,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue EncodedSlice__toJSO
             scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2147483647 characters"_s));
             return {};
         }
+        return Bun::ERR::MEMORY_ALLOCATION_FAILED(scope, globalObject);
     }
 
     JSValue result = JSONParseWithException(globalObject, str, compiledParser);

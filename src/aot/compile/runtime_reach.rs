@@ -929,6 +929,23 @@ struct RegionText {
     targets: Vec<(ImportSiteKind, Option<RuntimeModule>)>,
 }
 
+// A load under a name that is put together at run time finds every module that the program holds, whole.
+pub(super) fn loads_modules_by_computed_names(
+    application: &Files<'_>,
+    graph: &ModuleGraph,
+) -> bool {
+    application.compiled_files().iter().any(|&file| {
+        !graph.has_record(file)
+            || parsed_source(application, file).is_none_or(|it| it.builtins.loads_unknown_modules())
+            || application.analysis(file).import_sites.iter().any(|site| {
+                matches!(
+                    graph.find_site_answer(file, site.kind),
+                    Some(SiteAnswer::Computed(_))
+                )
+            })
+    })
+}
+
 pub(crate) fn find_reached_runtime_code(
     input: &ReachInput<'_, '_>,
     in_parallel: InParallel<'_>,
@@ -1020,20 +1037,8 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
-    // A load under a name that is put together at run time finds every module that the program holds, whole.
     fn loads_modules_by_computed_names(&self) -> bool {
-        let (application, graph) = (self.input.application, self.input.application_graph);
-        application.compiled_files().iter().any(|&file| {
-            !graph.has_record(file)
-                || parsed_source(application, file)
-                    .is_none_or(|it| it.builtins.loads_unknown_modules())
-                || application.analysis(file).import_sites.iter().any(|site| {
-                    matches!(
-                        graph.find_site_answer(file, site.kind),
-                        Some(SiteAnswer::Computed(_))
-                    )
-                })
-        })
+        loads_modules_by_computed_names(self.input.application, self.input.application_graph)
     }
 
     // `import { a, b } from "node:x"` reads `a` and `b` off the module, and nothing else.

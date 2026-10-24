@@ -187,10 +187,14 @@ describe.concurrent(
         `try { new Function(""); } catch {}\nconsole.log(typeof require(process.argv[2]));`,
       ],
       ["import() of a computed name", `const name: string = process.argv[2]; import(name);`],
-      ["a Worker", `new Worker("./worker.ts");`],
       ["node:vm", `import vm from "node:vm";\nconsole.log(vm.runInNewContext("1"));`],
     ])("the report is still open with %s", async (_, text) => {
       expect((await withFlag(text)).whyOpen).not.toEqual([]);
+    });
+
+    // A Worker has a global of its own and starts with an entry point of the build, and the report holds what every entry point uses.
+    test("the report stays closed with a Worker", async () => {
+      expect((await withFlag(`new Worker("./worker.ts");`)).lines[0]).toBe(closed.first);
     });
 
     test.each([

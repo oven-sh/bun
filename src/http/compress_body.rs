@@ -134,9 +134,16 @@ fn compress_libdeflate_fast(
     (result.status == Status::Success).then_some(result.written)
 }
 
+/// The highest level at which libdeflate compresses a body that doesn't fit the
+/// shared buffer. Above it libdeflate takes longer than zlib at its highest
+/// level, several times longer from 10 on, and every request of the process
+/// waits for the HTTP thread.
+const MAX_SPILLED_LIBDEFLATE_LEVEL: i32 = 8;
+
 /// libdeflate one-shot into `spill` when the bound exceeds the shared buffer.
 /// Reserves half the input rather than the worst-case bound. Returns `false`
-/// with `spill` empty when that allocation fails or the output doesn't fit.
+/// with `spill` empty when the level is above [`MAX_SPILLED_LIBDEFLATE_LEVEL`],
+/// that allocation fails or the output doesn't fit.
 fn compress_libdeflate_spilled(
     state: &mut LibdeflateState,
     input: &[u8],
@@ -146,6 +153,9 @@ fn compress_libdeflate_spilled(
 ) -> bool {
     use bun_libdeflate_sys::libdeflate::{Compressor, OwnedCompressor, Status};
 
+    if level.is_some_and(|level| level > MAX_SPILLED_LIBDEFLATE_LEVEL) {
+        return false;
+    }
     let Some(cached) = state.compressor.as_mut() else {
         return false;
     };

@@ -1,6 +1,7 @@
 // `bun build --compile --aot main.ts worker.ts ..`: a global begins at an entry point, the process at the first and a Worker at the one that it names. What the compiler proves holds for
 // one global, so each entry point begins a program of its own: it is compiled as it is when it is built alone, and nothing that another entry point does costs it anything.
-// An entry point that loads a module by a name that the build does not know may load any of the others, so its program holds them all.
+// An entry point that loads a module by a name that the build does not know may load any of the others, so its program has to hold them all. An executable holds nothing twice: the
+// build has one program then, as it has where nothing starts a Worker.
 import { afterAll, expect } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -166,7 +167,7 @@ describe("compile/aot/entry points begin programs of their own", () => {
   test("an entry point that loads by a name nobody knows finds the others", async () => {
     const folder = write(join(root, "by-name"), files);
     const executable = await build(folder, ["./starter-of-workers.ts", "./lib/third.ts"], "by-name");
-    expect(existsSync(join(folder, "by-name.ir.1"))).toBe(true);
+    expect(existsSync(join(folder, "by-name.ir.1"))).toBe(false);
     const ran = await spawned([executable], root, { ...bunEnv, NAME_OF_MODULE: "./lib/third.ts" });
     expect({ stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
       stdout: "loaded by a name: third is in the main thread\nthird began a global\n",
@@ -194,7 +195,11 @@ describe("compile/aot/entry points begin programs of their own", () => {
       ["./preloads.ts", false, "third began a global\n"],
     ] as const) {
       const executable = await build(folder, [main, "./worker.ts", "./lib/third.ts"], "with-options");
-      expect({ main, isAsAlone: areEqual(programOf(folder, "with-options", 1), alone) }).toEqual({ main, isAsAlone });
+      const hasProgramOfItsOwn = existsSync(join(folder, "with-options.ir.1"));
+      expect({ main, isAsAlone: hasProgramOfItsOwn && areEqual(programOf(folder, "with-options", 1), alone) }).toEqual({
+        main,
+        isAsAlone,
+      });
       const ran = await spawned([executable], root, bunEnv);
       expect({ main, stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
         main,

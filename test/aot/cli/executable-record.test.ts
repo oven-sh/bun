@@ -161,7 +161,6 @@ test(
     expect(fileIndexes[0]!).toBeLessThan(fileIndexes[1]!);
     expect(fileIndexes[1]!).toBeLessThan(fileIndexes[2]!);
     expect(fileIndexes[2]!).toBeLessThan(fileCount);
-    expect(new Set(entries.map(entry => entry.moduleId)).size).toBe(3);
 
     const sourcePaths = entries.map(({ sourcePath: { offset, length } }) =>
       original.latin1Slice(base + offset, base + offset + length).replaceAll("\\", "/"),
@@ -179,7 +178,10 @@ test(
     const imageAt = base + image.offset;
     expect(imageAt).toBe(findImage(original));
     expect((8 + image.offset) % 4096).toBe(0);
-    expect(BigInt(image.length)).toBe(original.readBigUInt64LE(imageAt + imageHeader.size));
+    // The main program starts Workers, so each entry point begins a program of its own. Their images lie one behind the other.
+    let end = imageAt;
+    for (const _ of entries) end += Number(original.readBigUInt64LE(end + imageHeader.size));
+    expect(image.length).toBe(end - imageAt);
 
     expect(readRecord(bundled).flags & hasCompiledProgram).toBe(0);
     const ran = await spawned([executablePath(folder, "bundled")], folder, bunEnv);

@@ -96,7 +96,7 @@ fn lower_es_module_body(file: &mut FileLowering<'_, '_, '_, '_>, function: Funct
     let mut lowering = FunctionLowering::begin(file, function);
     scope::enter_scope(&mut lowering, scope);
     if let Some(failure) = load_failure {
-        loads::emit_module_failure(&mut lowering, failure);
+        loads::emit_module_failure(&mut lowering, failure, false);
     }
     commonjs::initialize_path_variables(&mut lowering);
     statement::lower_file_statements(&mut lowering);

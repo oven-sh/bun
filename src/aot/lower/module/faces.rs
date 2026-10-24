@@ -101,7 +101,7 @@ pub(crate) fn lower_check_body(file: &mut FileLowering<'_, '_, '_, '_>, function
             .set_frequency(split.taken, BlockFrequency::Unlikely);
         lowering.builder.switch_to(split.taken);
         let failure = lowering.file.fragment.declare_module_failure(failure);
-        lowering.builder.throw_module_failure(failure);
+        lowering.builder.throw_module_failure(failure, false);
         lowering.builder.unreachable();
         lowering.builder.switch_to(split.not_taken);
     }

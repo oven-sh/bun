@@ -128,6 +128,7 @@ calls/a-function-is-promisified-and-called-at-every-level-on-the-way-up-from-the
 calls/a-function-that-ends-only-by-a-throw-hands-its-rest-parameter-on
 calls/a-generator-method-is-looped-over-and-what-is-no-function-is-called
 calls/a-list-too-long-for-the-stack-fails-inside-the-try-around-the-call
+calls/a-number-bound-to-a-plain-function-is-there-when-it-is-called-and-when-it-is-constructed
 calls/a-spread-call-of-a-method-that-returns-this
 calls/a-spread-resolved-behind-the-last-round
 calls/a-worker-is-terminated-inside-a-loop-that-calls-nothing
@@ -293,6 +294,7 @@ commonjs/symbols-of-a-module-that-is-seen-half-evaluated
 commonjs/the-children-are-stored-under-a-key-made-at-run-time
 commonjs/top-level-this-is-the-receiver
 const-and-dead-zones/a-large-var-read-only-where-a-parameter-has-another-type-than-the-written-one
+const-and-dead-zones/texts-joined-from-constants-that-are-read-in-their-dead-zones
 copied-properties/a-copy-born-in-the-cell-of-its-holder
 copied-properties/a-literal-with-members-takes-the-spread-of-its-own-kind-from-text-made-at-run-time
 copied-properties/a-setter-of-a-class-takes-an-object-that-the-source-got-by-a-spread
@@ -661,6 +663,8 @@ objects/a-required-field-that-one-of-two-literals-leaves-out-is-filled-on-demand
 objects/a-required-field-that-one-of-two-literals-leaves-out-is-returned
 objects/a-required-field-that-one-of-two-literals-leaves-out-is-returned-through-two-functions
 objects/a-typed-literal-stands-above-what-object-create-makes-while-it-changes
+objects/accessors-of-every-make-are-read-and-stored-once-and-often
+objects/accessors-of-every-make-are-read-and-stored-once-and-often-untyped
 objects/dictionaries-are-built-anew-from-the-same-names-between-collections
 objects/every-way-an-allocation-site-meets-its-record
 objects/extra-property-reads-avoid-runtime
@@ -669,6 +673,7 @@ objects/literals-with-computed-index-keys
 objects/object-constructed-or-called-without-arguments-makes-what-an-empty-literal-makes
 objects/objects-given-names-by-key-are-as-if-each-name-were-written-out
 objects/objects-with-many-names-across-collections
+objects/objects-with-many-optional-numbers-are-filled-in-two-arms-of-a-switch
 objects/own-accessors-whose-getters-nobody-can-list
 objects/property-descriptors-only-taken-apart
 objects/the-list-of-own-keys-is-the-same-however-it-is-used

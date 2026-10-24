@@ -98,17 +98,19 @@ const somePlaces = ["once", "often", "moduleLoop", "loop", "handlerInALoop", "co
 
 export const oneIn = 400;
 
+/** Dealt by the names, so that what is added to a list later leaves the other programs as they are. */
+const dealt = (name: string, among: number, skip = 1): number => Number((BigInt(Bun.hash(name)) / BigInt(skip)) % BigInt(among));
+
 export function programs(isTyped?: boolean) {
   const all: Stretch[] = [];
   const [wayNames, useNames, textNames] = [Object.keys(ways), Object.keys(uses), Object.keys(texts)];
-  let at = 0;
   // What fits, in every text, read in every way; the uses take turns.
   for (const member in members)
-    for (const text of textNames) for (const way of wayNames) all.push(stretch(member, members[member].fits, "fits", text, way, useNames[at++ % useNames.length]));
+    for (const text of textNames) for (const way of wayNames) all.push(stretch(member, members[member].fits, "fits", text, way, useNames[dealt(`${member}-${text}-${way}`, useNames.length)]));
   // What does not fit, in some texts, for every use; the ways take turns.
   for (const member in members)
     members[member].others.forEach((other, index) => {
-      for (const text of ["asDeclared", "inAnotherOrder", "withOneMoreAtTheEnd", "spacesEverywhere"]) for (const use of useNames) all.push(stretch(member, other, `other${index}`, text, wayNames[at++ % wayNames.length], use));
+      for (const text of ["asDeclared", "inAnotherOrder", "withOneMoreAtTheEnd", "spacesEverywhere"]) for (const use of useNames) all.push(stretch(member, other, `other${index}`, text, wayNames[dealt(`${member}-${index}-${text}-${use}`, wayNames.length)], use));
     });
   return inEveryPlace(all, isTyped, somePlaces);
 }

@@ -1,43 +1,43 @@
 {
   "everyday-a-text-in-place-of-what-a-pattern-finds/a-line-is-trimmed-by-one-pattern": {
     "typed": 2467.5,
-    "untyped": 2467.3
+    "untyped": 2467.6
   },
   "everyday-a-text-in-place-of-what-a-pattern-finds/a-word-is-replaced-once": {
     "typed": 1041.6,
-    "untyped": 1041.4
+    "untyped": 1041.5
   },
   "everyday-a-text-in-place-of-what-a-pattern-finds/every-address-of-a-line-is-listed": {
-    "typed": 3998.8,
-    "untyped": 3998.5
+    "typed": 1309.4,
+    "untyped": 1309.4
   },
   "everyday-a-text-in-place-of-what-a-pattern-finds/every-dash-becomes-another-sign": {
-    "typed": 2091.1,
-    "untyped": 2091.1
+    "typed": 2091.4,
+    "untyped": 2091.4
   },
   "everyday-a-text-in-place-of-what-a-pattern-finds/every-match-where-the-one-lies-far-behind-the-start": {
-    "typed": 944.6,
+    "typed": 944.7,
     "untyped": 944.6
   },
   "everyday-a-text-in-place-of-what-a-pattern-finds/every-number-is-put-in-brackets": {
-    "typed": 7441.4,
-    "untyped": 7441.4
+    "typed": 7441.3,
+    "untyped": 7441.2
   },
   "everyday-a-text-in-place-of-what-a-pattern-finds/every-run-of-spaces-becomes-one-sign": {
-    "typed": 4846.6,
-    "untyped": 4846.3
+    "typed": 4846.4,
+    "untyped": 4846.5
   },
   "everyday-a-text-in-place-of-what-a-pattern-finds/every-vowel-is-removed": {
-    "typed": 6821.9,
+    "typed": 6821.8,
     "untyped": 6821.9
   },
   "everyday-a-text-in-place-of-what-a-pattern-finds/groups-of-the-one-match-change-places": {
-    "typed": 4756.7,
-    "untyped": 4756.7
+    "typed": 1771.8,
+    "untyped": 1771.9
   },
   "everyday-a-text-in-place-of-what-a-pattern-finds/the-end-of-a-line-is-replaced": {
     "typed": 760,
-    "untyped": 760.1
+    "untyped": 759.9
   },
   "everyday-arrays/array-from-a-set": {
     "typed": 814.1,
@@ -739,6 +739,10 @@
     "typed": 7,
     "untyped": 7
   },
+  "everyday-functions/partial-application-by-bind": {
+    "typed": 7,
+    "untyped": 7
+  },
   "everyday-functions/rest-handed-on-by-spread": {
     "typed": 6,
     "untyped": 6
@@ -995,6 +999,10 @@
     "typed": 30.3,
     "untyped": 41.4
   },
+  "everyday-objects/setter-in-a-literal": {
+    "typed": 11,
+    "untyped": 12
+  },
   "everyday-objects/shorthand-properties": {
     "typed": 10,
     "untyped": 10
@@ -1035,6 +1043,14 @@
     "typed": 977,
     "untyped": 977
   },
+  "everyday-patterns-out-of-run-time-text/a-name-and-its-number-far-behind-the-start-of-a-line": {
+    "typed": 5208.6,
+    "untyped": 5208.5
+  },
+  "everyday-patterns-out-of-run-time-text/an-address-far-behind-the-start-of-a-line": {
+    "typed": 1851.1,
+    "untyped": 1851
+  },
   "everyday-patterns-out-of-run-time-text/letters-and-digits-of-any-script-in-greek": {
     "typed": 857,
     "untyped": 857
@@ -1058,6 +1074,22 @@
   "everyday-reads-that-expect-a-layout/rules-whose-one-property-is-defined-after-birth-beside-a-payload-with-a-layout": {
     "typed": 555,
     "untyped": 580
+  },
+  "everyday-small-objects-run-by-a-loop/a-member-under-a-key-joined-from-constants": {
+    "typed": 31.2,
+    "untyped": 31.1
+  },
+  "everyday-small-objects-run-by-a-loop/a-method-under-a-key-joined-from-constants": {
+    "typed": 16.0,
+    "untyped": 16.0
+  },
+  "everyday-small-objects-run-by-a-loop/a-stack-popped-until-an-entry-has-the-key": {
+    "typed": 90.0,
+    "untyped": 89.0
+  },
+  "everyday-small-objects-run-by-a-loop/steps-of-four-kinds-run-until-one-is-the-last": {
+    "typed": 1000.5,
+    "untyped": 1008.7
   },
   "everyday-small-programs/caesar-cipher": {
     "typed": 1993.9,
@@ -1094,6 +1126,14 @@
   "everyday-small-programs/visitor-over-a-syntax-tree": {
     "typed": 178,
     "untyped": 310
+  },
+  "everyday-spellings/accessor.define-property": {
+    "typed": 8,
+    "untyped": 8
+  },
+  "everyday-spellings/accessor.literal-getter-setter": {
+    "typed": 8,
+    "untyped": 10
   },
   "everyday-spellings/append.concat": {
     "typed": 7,
@@ -1344,8 +1384,8 @@
     "untyped": 287.0
   },
   "everyday-texts-that-every-match-holds/a-line-that-holds-the-text-far-behind-its-start": {
-    "typed": 2939.9,
-    "untyped": 2939.7
+    "typed": 1156.6,
+    "untyped": 1156.5
   },
   "everyday-texts-that-every-match-holds/a-line-with-the-character-and-without-the-long-text": {
     "typed": 364.5,
@@ -1363,9 +1403,13 @@
     "typed": 307.0,
     "untyped": 307.0
   },
+  "everyday-texts-that-every-match-holds/a-name-and-its-number-far-behind-the-start-of-a-line": {
+    "typed": 1519.5,
+    "untyped": 1519.5
+  },
   "everyday-texts-that-every-match-holds/an-alternative-tried-at-the-start-alone-matches-beside-one-that-holds-a-text": {
-    "typed": 1455,
-    "untyped": 1455
+    "typed": 1456,
+    "untyped": 1456
   },
   "everyday-texts-that-every-match-holds/forty-patterns-out-of-run-time-text-over-a-short-label": {
     "typed": 15148.6,

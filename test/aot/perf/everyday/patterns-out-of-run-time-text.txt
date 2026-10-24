@@ -234,3 +234,17 @@ const subjects: string[] = ["Post /api/items HTTP/1.1" + nothing, "PATCH /api/it
 function turn(i: number): number {
   return pattern.test(subjects[i & 1]!) ? 1 : 2;
 }
+//// an-address-far-behind-the-start-of-a-line
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("\\b([a-z0-9-]{1,64}@[a-z0-9-]+\\.example\\.invalid)\\b" + nothing, "i");
+const subjects: string[] = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok, told ann@host.example.invalid" + nothing, "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west, told bob-2@host.example.invalid" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// a-name-and-its-number-far-behind-the-start-of-a-line
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("[a-z_]+\\s*=\\s*\\d+" + nothing);
+const subjects: string[] = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok and retries_left = 3" + nothing, "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west while queue_length=12" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}

@@ -217,8 +217,8 @@ const noticedBy: Record<string, Row | Row[]> = {
   ),
   BirthsEndWithoutALook: ofFamily(
     "objects-filled-field-by-field",
-    "untyped/theSameNamesStandAbove-aStoredFieldIsDeletedThroughAProxy-addsThemUp-once",
-    "untyped/constructorStores-aStoredFieldIsDeletedThroughAProxy-addsThemUp-once",
+    "typed/initialValues-aStoredFieldIsDeleted-asksForNames-handlerInALoop",
+    "untyped/initialValues-aStoredFieldIsDeleted-asksForNames-handlerInALoop",
   ),
   HoistedReadsAreStoredInTheirLoops: ofFamily(
     "variables-of-enclosing-code-in-loops",
@@ -227,18 +227,18 @@ const noticedBy: Record<string, Row | Row[]> = {
   ),
   CarriedVariablesAreWrittenByOthers: ofFamily(
     "variables-of-enclosing-code-in-loops",
-    "typed/functionAbove-list-stores-aWriterOnOneTurn-testedBehind-moduleLoop",
-    "typed/functionAbove-wholeAtItsBorder-readsThenStores-aWriterUnderAProxy-testedBehind-module",
+    "typed/moduleLet-object-storesOnBothSides-aWriterUnderAProxy-overAList-loop",
+    "untyped/moduleVar-text-readsThenStores-aWriterUnderANative-overAList-method",
   ),
   DelayedStoresAreLeftOut: ofFamily(
     "variables-of-enclosing-code-in-loops",
-    "typed/moduleLet-wholeAtItsBorder-stores-aWriterUnderABuiltIn-counted-module",
-    "untyped/moduleLet-whole-stores-aHandlerInTheTurn-tested-copiedIntoItsCaller",
+    "typed/sameFunction-object-storesOnBothSides-aWriterOnOneTurn-testedBehind-inAClosure",
+    "untyped/sameFunction-object-storesOnBothSides-aWriterOnOneTurn-testedBehind-inAClosure",
   ),
   DelayedStoresPassWhatMayThrow: ofFamily(
     "variables-of-enclosing-code-in-loops",
-    "untyped/twoFunctionsAbove-text-storesOnBothSides-aBuiltInThatThrowsOutOfTheFunction-overAList-loopUnderAHandler",
-    "untyped/twoFunctionsAbove-text-storesOnBothSides-aBuiltInThatThrowsOutOfTheFunction-overAList-handler",
+    "untyped/twoFunctionsAbove-text-storesOnSomeTurns-aBuiltInThatThrowsOutOfTheFunction-overAList-awaitUnderAHandler",
+    "untyped/twoFunctionsAbove-text-storesOnSomeTurns-aBuiltInThatThrowsOutOfTheFunction-overAList-handler",
   ),
   TailCallsSwapTheirLastArguments: ofFamily(
     "functions-whose-last-act-is-to-call-themselves",
@@ -262,8 +262,8 @@ const noticedBy: Record<string, Row | Row[]> = {
   ),
   ParsedMembersComeOnce: ofFamily(
     "texts-read-as-records",
-    "typed/anything-fits-theFirstTwice-parsedByAHelper-copiesIt-moduleLoop",
-    "typed/anything-fits-theFirstTwice-outOfAResponse-writesItBack-aroundAnAwait",
+    "typed/anything-fits-theMemberTwice-parsedByAHelper-copiesIt-loop",
+    "typed/record-fits-theFirstTwice-parsedAsPartOfAList-listsTheKeys-loop",
   ),
   GrowingTextsAreHeldInOneState: ofFamily(
     "texts-put-together-piece-by-piece",

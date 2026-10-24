@@ -117,15 +117,17 @@ const fewPlaces = ["once", "often", "loop", "handlerInALoop", "loopUnderAHandler
 
 export const oneIn = 165;
 
+/** Dealt by the names, so that what is added to a list later leaves the other programs as they are. */
+const dealt = (name: string, among: number, skip = 1): number => Number((BigInt(Bun.hash(name)) / BigInt(skip)) % BigInt(among));
+
 export function programs(isTyped?: boolean) {
   const [kindNames, loopNames] = [Object.keys(kinds), Object.keys(loops)];
   const everywhere: Stretch[] = [];
-  let at = 0;
   for (const home in homes)
     for (const access in accesses)
       for (const observer in observers) {
-        const made = stretch(home, kindNames[at % kindNames.length], access, observer, loopNames[Math.floor(at / kindNames.length) % loopNames.length]);
-        at++;
+        const pairing = `${home}-${access}-${observer}`;
+        const made = stretch(home, kindNames[dealt(pairing, kindNames.length)], access, observer, loopNames[dealt(pairing, loopNames.length, 1009)]);
         if (made) everywhere.push(made);
       }
   const names = new Set(everywhere.map(each => each.name));

@@ -98,18 +98,20 @@ const somePlaces = ["once", "often", "moduleLoop", "loop", "twoLoops", "loopWith
 
 export const oneIn = 700;
 
+/** Dealt by the names, so that what is added to a list later leaves the other programs as they are. */
+const dealt = (name: string, among: number, skip = 1): number => Number((BigInt(Bun.hash(name)) / BigInt(skip)) % BigInt(among));
+
 export function programs(isTyped?: boolean) {
   const all = new Map<string, Stretch>();
   const names = { source: Object.keys(sources), start: Object.keys(starts), limit: Object.keys(limits), relation: Object.keys(relations), use: Object.keys(uses) };
-  let at = 0;
   const add = (made: Stretch) => all.set(made.name, made);
   // Every region, step, start and limit; the rest takes turns.
   for (const region in regions)
     for (const step in steps)
       for (const start of names.start)
         for (const limit of names.limit) {
-          at++;
-          add(stretch(region, step, names.source[at % names.source.length], start, limit, names.relation[at % names.relation.length], names.use[at % names.use.length]));
+          const pairing = `${region}-${step}-${start}-${limit}`;
+          add(stretch(region, step, names.source[dealt(pairing, names.source.length)], start, limit, names.relation[dealt(pairing, names.relation.length, 1009)], names.use[dealt(pairing, names.use.length, 1000003)]));
         }
   // Every region, source, relation and use, three steps to either side of the region.
   for (const region in regions)

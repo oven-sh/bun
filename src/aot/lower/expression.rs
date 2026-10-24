@@ -466,9 +466,27 @@ fn lower_unless_constant(
     expression: ExprId,
     lower: fn(&mut FunctionLowering<'_, '_, '_, '_, '_>, ExprId) -> ValueId,
 ) -> ValueId {
-    match find_constant(lowering.file, expression) {
+    if let Some(constant) = find_constant(lowering.file, expression) {
+        return emit_constant(lowering, constant);
+    }
+    let computed = lower(lowering, expression);
+    match find_constant_outside_dead_zone(lowering.file, expression) {
         Some(constant) => emit_constant(lowering, constant),
-        None => lower(lowering, expression),
+        None => computed,
+    }
+}
+
+// Such an expression throws for a variable in its dead zone or has this value, and does nothing else: behind its operations the value is known.
+fn find_constant_outside_dead_zone(
+    file: &FileLowering<'_, '_, '_, '_>,
+    expression: ExprId,
+) -> Option<Constant> {
+    let inner = skip_type_syntax(file, expression);
+    match file.decisions().constant(file.hir, inner) {
+        FoldedValue::ConstantOutsideDeadZone(constant) => {
+            passes_every_assertion(file, expression, constant).then_some(constant)
+        }
+        FoldedValue::Constant(_) | FoldedValue::Unknown => None,
     }
 }
 

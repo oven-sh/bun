@@ -75,7 +75,6 @@ export const knownInLibrary: Readonly<Record<string, string>> = {
 /** accesses free | tested | by name, calls direct | guarded | unknown, bytes of code of the program; alone: 66 | 15 | 9, 35 | 0 | 0, 8,715 */
 export const knownInProgram: Readonly<Record<string, string>> = {
   "write-unknown-key": "53 | 21 | 18, 28 | 0 | 7, 11,865",
-  "write-unknown-key-vec": "62 | 15 | 16, 32 | 0 | 3, 10,172",
   "set-prototype-instance": "62 | 18 | 12, 32 | 0 | 4, 9,956",
   "set-prototype-null": "62 | 18 | 11, 32 | 0 | 4, 9,947",
   "proto-assign": "62 | 18 | 13, 31 | 0 | 4, 9,977",
@@ -87,7 +86,6 @@ export const knownInProgram: Readonly<Record<string, string>> = {
   "assign-onto-body-unknown": "42 | 32 | 18, 29 | 1 | 7, 13,670",
   "reflect-construct": "45 | 27 | 24, 32 | 0 | 5, 16,513",
   "push-unknown": "56 | 21 | 15, 32 | 3 | 2, 11,129",
-  "push-number": "58 | 20 | 13, 34 | 0 | 2, 11,342",
   "world-write-unknown-index": "54 | 24 | 14, 34 | 1 | 0, 18,912",
   "subclass-factory": "54 | 23 | 22, 39 | 0 | 2, 13,609",
   "eval-direct": "8 | 60 | 23, 7 | 23 | 6, 29,322",
@@ -103,7 +101,6 @@ export const knownInProgram: Readonly<Record<string, string>> = {
   "async-throw-body": "54 | 24 | 13, 36 | 0 | 0, 18,361",
   "native-addon-body": "31 | 39 | 24, 24 | 5 | 8, 20,989",
   "native-addon-vec": "50 | 25 | 18, 33 | 2 | 3, 15,167",
-  "push-other-layout": "unknown calls 0 -> 3",
 };
 
 /** the same for program.ts; alone: 69 | 17 | 10, 39 | 0 | 0, 8,167 */
@@ -150,7 +147,6 @@ export const knownInTypedProgram: Readonly<Record<string, string>> = {
 export const knownBesideLibrary: Readonly<Record<string, string>> = {
   "read-unknown-key": "32 | 39 | 24, 24 | 4 | 9, 20,511",
   "write-unknown-key": "31 | 39 | 24, 23 | 4 | 9, 21,034",
-  "write-unknown-key-vec": "52 | 26 | 17, 31 | 1 | 4, 14,460",
   "call-unknown-key": "31 | 39 | 24, 23 | 4 | 10, 20,533",
   "set-prototype-instance": "63 | 18 | 13, 32 | 0 | 5, 9,689",
   "set-prototype-null": "63 | 18 | 12, 32 | 0 | 5, 9,699",
@@ -189,18 +185,28 @@ export const knownBesideLibrary: Readonly<Record<string, string>> = {
   "timeout-body-await": "33 | 40 | 23, 25 | 4 | 9, 21,394",
   "unlisted-global-called-with-body": "31 | 40 | 23, 23 | 4 | 10, 21,074",
   "unlisted-global-member-called-with-body": "31 | 40 | 24, 23 | 4 | 10, 21,082",
-  "push-other-layout": "unknown calls 1 -> 4",
-  "class-to-unknown": "free accesses 44 -> 24, accesses by name 9 -> 14, direct calls 35 -> 24, unknown calls 1 -> 8, bytes of code of the program 7186 -> 13378",
-  "constructor-new": "free accesses 44 -> 27, accesses by name 9 -> 17, direct calls 35 -> 24, unknown calls 1 -> 7, bytes of code of the program 7186 -> 12860",
-  "log-world": "free accesses 44 -> 23, accesses by name 9 -> 13, direct calls 35 -> 23, unknown calls 1 -> 9, bytes of code of the program 7186 -> 15683",
-  "world-named-property": "free accesses 44 -> 23, accesses by name 9 -> 14, direct calls 35 -> 22, unknown calls 1 -> 9, bytes of code of the program 7186 -> 15687",
-  "method-to-unknown": "free accesses 44 -> 37, accesses by name 9 -> 14, direct calls 35 -> 32, unknown calls 1 -> 5, bytes of code of the program 7186 -> 13084",
-  "world-unknown-index": "free accesses 44 -> 23, accesses by name 9 -> 14, direct calls 35 -> 23, unknown calls 1 -> 9, bytes of code of the program 7186 -> 15706",
-  "body-to-unknown": "free accesses 44 -> 25, accesses by name 9 -> 14, direct calls 35 -> 24, unknown calls 1 -> 9, bytes of code of the program 7186 -> 14558",
-  "constructor-read-2": "free accesses 44 -> 25, accesses by name 9 -> 14, direct calls 35 -> 24, unknown calls 1 -> 6, bytes of code of the program 7186 -> 12715",
-  "class-unknown-static-read": "free accesses 44 -> 24, accesses by name 9 -> 14, direct calls 35 -> 24, unknown calls 1 -> 7, bytes of code of the program 7186 -> 13353",
-  "log-class": "free accesses 44 -> 24, accesses by name 9 -> 13, direct calls 35 -> 24, unknown calls 1 -> 7, bytes of code of the program 7186 -> 13333",
-  "world-to-unknown": "free accesses 44 -> 23, accesses by name 9 -> 14, direct calls 35 -> 23, unknown calls 1 -> 10, bytes of code of the program 7186 -> 15728",
+  "class-to-unknown":
+    "free accesses 44 -> 24, accesses by name 9 -> 14, direct calls 35 -> 24, unknown calls 1 -> 8, bytes of code of the program 7186 -> 13378",
+  "constructor-new":
+    "free accesses 44 -> 27, accesses by name 9 -> 17, direct calls 35 -> 24, unknown calls 1 -> 7, bytes of code of the program 7186 -> 12860",
+  "log-world":
+    "free accesses 44 -> 23, accesses by name 9 -> 13, direct calls 35 -> 23, unknown calls 1 -> 9, bytes of code of the program 7186 -> 15683",
+  "world-named-property":
+    "free accesses 44 -> 23, accesses by name 9 -> 14, direct calls 35 -> 22, unknown calls 1 -> 9, bytes of code of the program 7186 -> 15687",
+  "method-to-unknown":
+    "free accesses 44 -> 37, accesses by name 9 -> 14, direct calls 35 -> 32, unknown calls 1 -> 5, bytes of code of the program 7186 -> 13084",
+  "world-unknown-index":
+    "free accesses 44 -> 23, accesses by name 9 -> 14, direct calls 35 -> 23, unknown calls 1 -> 9, bytes of code of the program 7186 -> 15706",
+  "body-to-unknown":
+    "free accesses 44 -> 25, accesses by name 9 -> 14, direct calls 35 -> 24, unknown calls 1 -> 9, bytes of code of the program 7186 -> 14558",
+  "constructor-read-2":
+    "free accesses 44 -> 25, accesses by name 9 -> 14, direct calls 35 -> 24, unknown calls 1 -> 6, bytes of code of the program 7186 -> 12715",
+  "class-unknown-static-read":
+    "free accesses 44 -> 24, accesses by name 9 -> 14, direct calls 35 -> 24, unknown calls 1 -> 7, bytes of code of the program 7186 -> 13353",
+  "log-class":
+    "free accesses 44 -> 24, accesses by name 9 -> 13, direct calls 35 -> 24, unknown calls 1 -> 7, bytes of code of the program 7186 -> 13333",
+  "world-to-unknown":
+    "free accesses 44 -> 23, accesses by name 9 -> 14, direct calls 35 -> 23, unknown calls 1 -> 10, bytes of code of the program 7186 -> 15728",
 };
 
 export const typedAgainstUntyped = "typed 69 | 17 | 10, 0 unknown calls, 8,167 bytes; untyped 66 | 15 | 9, 0, 8,715";

@@ -13,7 +13,8 @@ const program = `
   if (isMainThread) new Worker(new URL(import.meta.url));
 `;
 const launches = 6;
-const rangesInFourTerabytes = 128;
+const gigabytesInARange: Record<string, number> = { "first thread": 32, "structures": 4, "worker": 32 };
+const gigabytesInFourTerabytes = 4096;
 
 test.skipIf(!!unsupported)(
   "every launch places its heaps anew",
@@ -31,8 +32,7 @@ test.skipIf(!!unsupported)(
       exitCode: 0,
     });
 
-    const ranges: Record<string, number[]> = { "first thread": [], "worker": [] };
-    const structures = new Set<string>();
+    const ranges: Record<string, number[]> = { "first thread": [], "structures": [], "worker": [] };
     for (let launch = 0; launch < launches; launch++) {
       await using proc = Bun.spawn({
         cmd: [join(String(dir), isWindows ? "program.exe" : "program")],
@@ -46,18 +46,16 @@ test.skipIf(!!unsupported)(
         stderr: "",
         exitCode: 0,
       });
-      for (const [, what, range] of stdout.matchAll(/^(.+) (\d+)$/gm))
-        what === "structures" ? structures.add(range) : ranges[what].push(Number(range));
+      for (const [, what, range] of stdout.matchAll(/^(.+) (\d+)$/gm)) ranges[what].push(Number(range));
     }
 
-    const seen = Object.entries(ranges).map(([thread, of]) => ({
-      thread,
+    const seen = Object.entries(ranges).map(([what, of]) => ({
+      what,
       of,
       different: new Set(of).size >= launches - 1,
-      farApart: Math.max(...of) - Math.min(...of) > rangesInFourTerabytes,
+      farApart: (Math.max(...of) - Math.min(...of)) * gigabytesInARange[what] > gigabytesInFourTerabytes,
     }));
     expect(seen).toEqual(seen.map(row => ({ ...row, different: true, farApart: true })));
-    expect(structures.size).toBeGreaterThan(1);
   },
   300_000,
 );

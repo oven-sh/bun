@@ -107,7 +107,7 @@ fn mark_failed_require(throws_in_body: bool) -> bool {
         let mut unit = TestUnit::new(main);
         let failure = unit.fragment.declare_module_failure(ModuleFailureId(0));
         let thrower = unit.define_function(1, |builder| {
-            builder.throw_module_failure(failure);
+            builder.throw_module_failure(failure, false);
         });
         unit.define_body(|builder| {
             if throws_in_body {

@@ -140,6 +140,11 @@ fn write_product(
             entry_point.image_index = index;
         }
     }
+    pair_embedded_copies(
+        &mut entry_points,
+        &build.entry_points,
+        &mut build.output_files,
+    )?;
     let further_images: Vec<&[u8]> = build
         .further_programs
         .iter()
@@ -625,6 +630,35 @@ pub(super) fn pair_entry_points<'b>(
             image_index: 0,
         })
         .collect())
+}
+
+/// A file can be an entry point and be embedded with the `file` loader as well. Whoever starts the embedded copy by its
+/// path, as a Worker does, gets the compiled program.
+pub(super) fn pair_embedded_copies<'b>(
+    pairs: &mut Vec<CompiledEntryPointInput<'b>>,
+    entry_points: &[AotEntryPoint],
+    output_files: &mut [OutputFile],
+) -> Result<(), CompileFailure> {
+    let copies = output_files.iter_mut().filter(|file| {
+        file.entry_point_index.is_none() && file.output_kind == options::OutputKind::Asset
+    });
+    for copy in copies {
+        let is_source =
+            |entry_point: &AotEntryPoint| *entry_point.source_path == *copy.src_path.text;
+        let Some(position) = entry_points.iter().position(is_source) else {
+            continue;
+        };
+        let compiled = pairs.get(position).ok_or_else(corrupted_program)?;
+        let pair = CompiledEntryPointInput {
+            module_id: compiled.module_id,
+            source_path: compiled.source_path,
+            module_path: compiled.module_path,
+            image_index: compiled.image_index,
+        };
+        copy.entry_point_index = Some(u32::try_from(pairs.len()).map_err(|_| corrupted_program())?);
+        pairs.push(pair);
+    }
+    Ok(())
 }
 
 /// The run time holds what any program of the executable uses. A witness is a position in the records of the first program.

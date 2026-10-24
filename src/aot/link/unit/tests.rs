@@ -241,7 +241,7 @@ fn records_are_listed_by_kind() {
         builder.call(value, None, &[], None, None, expected, false, false);
         builder.data(DataId::new(6));
         builder.prop_get(value, PropertyKeyId::new(7), false, false);
-        builder.throw_module_failure(WireModuleFailureId::new(8));
+        builder.throw_module_failure(WireModuleFailureId::new(8), false);
         builder.return_value(None);
     });
     let references = list_references(&[function]);
@@ -300,11 +300,11 @@ fn builtin_references_are_dropped() {
 #[test]
 fn definitions_that_share_a_record_share_their_lists() {
     let own = Arc::new(build_function(&[], |builder| {
-        builder.throw_module_failure(WireModuleFailureId::new(8));
+        builder.throw_module_failure(WireModuleFailureId::new(8), false);
         builder.return_value(None);
     }));
     let shared = Arc::new(build_function(&[], |builder| {
-        builder.throw_module_failure(WireModuleFailureId::new(3));
+        builder.throw_module_failure(WireModuleFailureId::new(3), false);
         builder.return_value(None);
     }));
     let records = [&own, &shared, &shared, &own, &shared];

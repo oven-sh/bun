@@ -1,4 +1,5 @@
 import { expect } from "bun:test";
+import { mkdirSync, writeFileSync } from "fs";
 import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { run as spawned } from "./harness/run";
@@ -81,4 +82,28 @@ console.log(cjs.nearby());
   expect(aot.stdout).toContain(join("lib", "deep", "asks.cjs"));
   expect(aot.exitCode).toBe(0);
   expect((await spawned([bunExe(), "run", "late.mjs"], String(dir))).stdout).toBe("beside the file that requires it\n");
+});
+
+test("an executable gives the error for a package that appears later the code of a load that finds nothing", async () => {
+  using dir = tempDir("module-not-found", {
+    "main.cjs": `function optional() {
+  try { return require("optional-thing"); } catch (e) { if (e.code !== "MODULE_NOT_FOUND") throw e; return null; }
+}
+console.log("require:", optional());
+try { require.resolve("optional-thing"); } catch (e) { console.log("require.resolve:", e.code); }
+import("optional-thing").catch(e => console.log("import:", e.code));
+`,
+  });
+  const built = await spawned(
+    [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", "program"],
+    String(dir),
+  );
+  expect(built.exitCode).toBe(0);
+  const expected = "require: null\nrequire.resolve: MODULE_NOT_FOUND\nimport: ERR_MODULE_NOT_FOUND\n";
+  const before = await spawned([join(String(dir), "program")], String(dir));
+  expect({ stdout: before.stdout, exitCode: before.exitCode }).toEqual({ stdout: expected, exitCode: 0 });
+  mkdirSync(join(String(dir), "node_modules", "optional-thing"), { recursive: true });
+  writeFileSync(join(String(dir), "node_modules", "optional-thing", "index.js"), "module.exports = 'here';");
+  const after = await spawned([join(String(dir), "program")], String(dir));
+  expect({ stdout: after.stdout, exitCode: after.exitCode }).toEqual({ stdout: expected, exitCode: 0 });
 });

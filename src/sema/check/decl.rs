@@ -3049,16 +3049,22 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `Types::mark_from_type_node`, except for the declared type of a class or interface, which `T[]` is in `interface Array<T>`.
+    /// Outside a build a published type keeps the flags of its first request, as in `createTypeReferenceEx`: how deep a
+    /// comparison goes before it is deeply nested, and so what is printed below an error, follows from the flag.
     fn mark_from_type_node(&self, ty: TypeId, first_new_type_id: NewTypes) {
         if self.types().is_from_type_node(ty) {
             return;
         }
-        if let TypeData::Ref { target, .. } = self.data(ty)
-            && !ty.is_local()
-            && let Some((declared, _)) = self.p.declared_types.get(&self.task, target)
-            && declared == ty
-        {
-            return;
+        if !ty.is_local() {
+            if !self.files.is_compile_build() {
+                return;
+            }
+            if let TypeData::Ref { target, .. } = self.data(ty)
+                && let Some((declared, _)) = self.p.declared_types.get(&self.task, target)
+                && declared == ty
+            {
+                return;
+            }
         }
         self.types().mark_from_type_node(ty, first_new_type_id);
     }
@@ -3091,7 +3097,9 @@ impl<'p, 's> Checker<'p, 's> {
         let ty = (self.types()).as_first_request(FirstRequest::FROM_TYPE_NODE, || {
             self.deferred_type_reference(reference, alias)
         });
-        self.types().mark_from_type_node(ty, first_new_type_id);
+        if ty.is_local() || self.files.is_compile_build() {
+            self.types().mark_from_type_node(ty, first_new_type_id);
+        }
         ty
     }
 

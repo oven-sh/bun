@@ -88,11 +88,13 @@ const somePlaces = ["once", "often", "loop", "loopThatStartsAnew", "twoLoops", "
 
 export const oneIn = 60;
 
+/** Dealt by the names, so that what is added to a list later leaves the other programs as they are. */
+const dealt = (name: string, among: number, skip = 1): number => Number((BigInt(Bun.hash(name)) / BigInt(skip)) % BigInt(among));
+
 export function programs(isTyped?: boolean) {
   const tagNames = Object.keys(tagKinds);
   const all = new Map<string, Stretch>();
-  let at = 0;
-  for (const maker in makers) for (const birth in births) for (const use in uses) { if (births[birth].only?.includes(maker) === false) continue; const made = stretch(maker, tagNames[at++ % tagNames.length], birth, use); all.set(made.name, made); }
+  for (const maker in makers) for (const birth in births) for (const use in uses) { if (births[birth].only?.includes(maker) === false) continue; const made = stretch(maker, tagNames[dealt(`${maker}-${birth}-${use}`, tagNames.length)], birth, use); all.set(made.name, made); }
   for (const tag in tagKinds)
     for (const birth in births)
       for (const maker of ["stores", "plainFunction"])

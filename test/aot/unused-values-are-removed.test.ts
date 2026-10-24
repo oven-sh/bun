@@ -22,6 +22,8 @@ const removed = {
   "an array spread": `const a = [1, 2, 3]; const u = [...a];`,
   "an object spread": `const a = { x: 1 }; const u = { ...a, y: 2 };`,
   "an array pattern": `const [p, q] = [1, 2];`,
+  "an object rest pattern": `const { a, ...rest } = { a: 1, b: 2 };`,
+  "for-of over a literal": `for (const x of [1, 2, 3]) { x + 1; }`,
   "new Map of constants": `const u = new Map([[1, 2]]);`,
   "new Set of constants": `const u = new Set([1, 2]);`,
   "new WeakMap": `const u = new WeakMap();`,
@@ -53,14 +55,6 @@ const stillThere = {
   "a read of a literal under a key nobody knows": [
     `const u = { a: 1 }; u[process.argv[9]];`,
     "the read of process.argv is unknown code",
-  ],
-  "an object rest pattern": [
-    `const { a, ...rest } = { a: 1, b: 2 };`,
-    "CopyDataProperties is unknown code whatever it copies",
-  ],
-  "for-of over a literal": [
-    `for (const x of [1, 2, 3]) { x + 1; }`,
-    "a loop without effects whose bound is visible stays",
   ],
   "map with a callback without effects": [
     `const u = [1, 2, 3].map((x) => x * 2);`,

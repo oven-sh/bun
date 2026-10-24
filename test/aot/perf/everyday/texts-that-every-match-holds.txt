@@ -114,3 +114,9 @@ const subjects: string[] = ["packages/app/src/components/button/primary/index.te
 function turn(i: number): number {
   return pattern.test(subjects[i & 1]!) ? 1 : 2;
 }
+//// a-name-and-its-number-far-behind-the-start-of-a-line
+const lines = ["2026-01-02 10:11:12 info worker-7 finished job 8123 in 41 ms with status ok and retries_left = 3", "2026-01-02 10:11:13 warn cache-2 evicted 17 entries of region eu-west while queue_length=12"];
+const setting = /[a-z_]+\s*=\s*\d+/;
+function turn(i: number): number {
+  return setting.test(lines[i & 1]!) ? 1 : 0;
+}

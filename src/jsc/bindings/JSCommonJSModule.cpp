@@ -1665,9 +1665,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(JSCommonJSModule* modul
                 auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
                 auto& vm = JSC::getVM(globalObject);
                 auto scope = DECLARE_THROW_SCOPE(vm);
-                // The record that runs this generator keeps the module alive (the owner, below).
                 JSCommonJSModule* moduleObject = module->get();
-                ASSERT(moduleObject);
 
                 // Nothing evaluates in a disposed Bun.ModuleGraph: a module that had not run yet never does.
                 // (The graph's loader, which is evaluating this, keeps the graph alive.)
@@ -1677,8 +1675,9 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(JSCommonJSModule* modul
                 // the module's code runs in its graph's (what it opens is the graph's).
                 ModuleGraphContextScope graphContext(globalObject, graph.get());
 
-                // An ES module that ran first require()d the module, and it threw.
-                if (moduleObject->failedToEvaluate) [[unlikely]] {
+                // The module threw for a require() from an ES module that ran first. Or it is gone: the record keeps it
+                // alive (the owner, below) from when the loader makes the record, and only the require map does before.
+                if (!moduleObject || moduleObject->failedToEvaluate) [[unlikely]] {
                     throwException(globalObject, scope, createError(globalObject, "Failed to evaluate module"_s));
                     return;
                 }

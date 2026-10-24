@@ -394,6 +394,46 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The scan follows the file that the run loads. A test runs in bun, so a "browser" field of
+  // package.json, as a main field or as a map, does not send the scan to another file.
+  test.each([
+    ["a main field", `"./browser.js"`],
+    ["a map", `{ "./node.js": "./browser.js" }`],
+  ])('package.json "browser" as %s does not redirect the module graph', async (_, browser) => {
+    using dir = tempDir("test-changed-browser-field", {
+      "package.json": `{ "name": "own", "main": "./node.js", "browser": ${browser} }`,
+      "node.js": `module.exports = "node";\n`,
+      "browser.js": `module.exports = "browser";\n`,
+      "tests/directory.test.ts": `import { test, expect } from "bun:test";\nimport own from "..";\ntest("directory", () => expect(own).toBe("node"));\n`,
+      "tests/file.test.ts": `import { test, expect } from "bun:test";\nimport own from "../node.js";\ntest("file", () => expect(own).toBe("node"));\n`,
+      "tests/unrelated.test.ts": `import { test, expect } from "bun:test";\ntest("unrelated", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "node.js"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    const testNames = ["directory.test.ts", "file.test.ts", "unrelated.test.ts"];
+    expect(ranFiles(stderr, testNames)).toEqual(["directory.test.ts", "file.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // A test can set the variable before the branch runs, so the scan does not use its value now.
+  test("an import in a branch that the environment turns off is in the module graph", async () => {
+    using dir = tempDir("test-changed-env-branch", {
+      "package.json": JSON.stringify({ name: "env-branch", type: "module" }),
+      ".env": `TEST_CHANGED_GUARD=off\n`,
+      "src/guarded.ts": `export const guarded = 1;\n`,
+      "guarded.test.ts": `import { test, expect } from "bun:test";\ntest("guarded", async () => {\n  if (process.env.TEST_CHANGED_GUARD !== "off") await import("./src/guarded");\n  expect(1).toBe(1);\n});\n`,
+      "unrelated.test.ts": `import { test, expect } from "bun:test";\ntest("unrelated", () => expect(1).toBe(1));\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "src", "guarded.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, ["guarded.test.ts", "unrelated.test.ts"])).toEqual(["guarded.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("a node:vm timeout can interrupt a hot loop", async () => {
     using dir = tempDir("test-changed-vm-timeout", {
       "package.json": JSON.stringify({ name: "vm-timeout", type: "module" }),

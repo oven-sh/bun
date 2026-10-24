@@ -279,20 +279,21 @@ pub(crate) fn filter<'a>(
     // reshaped for borrowck — capture len before re-borrowing test_files
     let total = test_files.len();
     debug_assert_eq!(test_files.len(), slot_to_source.len());
-    // Without --preserve-symlinks the run loads a file once, whatever the number of paths to it.
-    let one_module_per_file = !vm.transpiler.resolver.opts.preserve_symlinks;
+    // When several test paths name one file, (a) holds for one of them only.
+    let kept = if slot_to_source.iter().any(|slot| slot.is_duplicate) {
+        kept_paths(test_files, &slot_to_source, sources)
+    } else {
+        Vec::new()
+    };
     for i in 0..total {
         let tf = test_files[i];
-        let slot = slot_to_source[i];
-        let by_path = changed_files.contains(tf.as_bytes());
-        let by_graph = slot
-            .source_index
-            .is_some_and(|src| affected.is_set(src as usize));
-        let keep = if slot.is_duplicate && one_module_per_file {
-            by_path && !by_graph
-        } else {
-            by_path || by_graph
-        };
+        let keep = changed_files.contains(tf.as_bytes())
+            || slot_to_source[i].source_index.is_some_and(|src| {
+                affected.is_set(src as usize)
+                    && kept
+                        .get(src as usize)
+                        .is_none_or(|path| *path == tf.as_bytes())
+            });
 
         if keep {
             test_files[write] = tf;
@@ -320,6 +321,30 @@ pub(crate) fn filter<'a>(
         total_tests: total,
         module_graph_files: graph_files,
     })
+}
+
+/// For each source, the one test path that the module graph can select.
+#[cold]
+fn kept_paths(
+    test_files: &[Interned],
+    scanned: &[ScannedEntryPoint],
+    sources: &[bun_ast::Source],
+) -> Vec<&'static [u8]> {
+    let mut paths: Vec<&'static [u8]> = vec![b""; sources.len()];
+    for (tf, slot) in test_files.iter().zip(scanned) {
+        let Some(src) = slot.source_index else {
+            continue;
+        };
+        let (path, graph_path) = (tf.as_bytes(), sources[src as usize].path.text);
+        let kept = &mut paths[src as usize];
+        // The path that the graph has, or else the smallest: the order of discovery does not decide.
+        if kept.is_empty()
+            || (*kept != graph_path && (path == graph_path || strings::order(path, kept).is_lt()))
+        {
+            *kept = path;
+        }
+    }
+    paths
 }
 
 #[cfg(not(windows))]

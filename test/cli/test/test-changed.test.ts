@@ -394,6 +394,16 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a test file named twice is selected twice", async () => {
+    using dir = tempDir("test-changed-twice", fixture);
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "src", "other.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir), ["./b.test.ts", "./b.test.ts"]);
+    expect(stderr).toContain("1 changed file, running 2/2 test files");
+    expect(exitCode).toBe(0);
+  });
+
   test("a node:vm timeout can interrupt a hot loop", async () => {
     using dir = tempDir("test-changed-vm-timeout", {
       "package.json": JSON.stringify({ name: "vm-timeout", type: "module" }),
@@ -415,8 +425,7 @@ test("hot", () => {
 
   // `bun test` finds a test file behind a symbolic link under the path of its
   // walk. The module graph, like git, names the file by its real path. The
-  // file header names the real path too, except with --parallel and with
-  // --preserve-symlinks.
+  // file header names the real path too, except with --parallel.
   describe("symbolic links", () => {
     const limitTest = (from: string) =>
       `import { test, expect } from "bun:test";\nimport { limit } from "${from}";\ntest("limit", () => expect(limit).toBeNumber());\n`;
@@ -439,6 +448,8 @@ test("hot", () => {
       /** Basenames that can show in a file header, and the ones that must. */
       headers: string[];
       ran: string[];
+      /** How `ran` divides between shard 1 of 2 and shard 2 of 2. `--shard` sorts the selected paths. */
+      shards?: [string[], string[]];
       status: string;
     };
 
@@ -531,7 +542,7 @@ test("hot", () => {
         status: "1 changed file, running 2/3 test files",
       },
       // The walk from the root finds each shared test under its real path and
-      // through packages/a. The run loads the file once, so one of the two is selected.
+      // through packages/a. The graph selects it once, under its real path.
       "a test found under its real path and through a link runs once": {
         ...suite,
         cwd: ".",
@@ -557,11 +568,40 @@ test("hot", () => {
         ran: ["contract.test.ts"],
         status: "1 changed file, running 1/3 test files",
       },
-      // With --preserve-symlinks the run loads the two paths as two modules.
-      "a test found under its real path and through a link with --preserve-symlinks": {
-        ...suite,
-        cwd: ".",
-        args: () => ["--changed", "--preserve-symlinks"],
+      // A walk finds a/ before deep/z/, whatever the order of a listing. The real path
+      // is the selected one, and it sorts after c.test.ts.
+      "a test found through a link and then under its real path is in the shard of its real path": {
+        files: {
+          "package.json": pkg("shard"),
+          "limits.ts": limit(1),
+          "c.test.ts": limitTest("./limits"),
+          "deep/z/limit.test.ts": limitTest("../../limits"),
+        },
+        links: [["a", "deep/z"]],
+        change: "limits.ts",
+        headers: ["c.test.ts", "limit.test.ts"],
+        ran: ["c.test.ts", "limit.test.ts"],
+        shards: [["c.test.ts"], ["limit.test.ts"]],
+        status: "1 changed file, running 2/3 test files",
+      },
+      // The real directory is outside the walk. The walk finds zz/ before aa/deep/, and
+      // the smallest path is the selected one: it sorts before m.test.ts.
+      "a test found through two links is selected once, under the smallest path": {
+        files: {
+          "package.json": pkg("two-links"),
+          "shared/limits.ts": limit(1),
+          "shared/contract.test.ts": limitTest("./limits"),
+          "packages/m.test.ts": limitTest("../shared/limits"),
+        },
+        links: [
+          ["packages/zz", "../shared"],
+          ["packages/aa/deep", "../../shared"],
+        ],
+        change: "shared/limits.ts",
+        cwd: "packages",
+        headers: ["contract.test.ts", "m.test.ts"],
+        ran: ["contract.test.ts", "m.test.ts"],
+        shards: [["contract.test.ts"], ["m.test.ts"]],
         status: "1 changed file, running 2/3 test files",
       },
     };
@@ -622,6 +662,25 @@ test("hot", () => {
       },
     };
 
+    // `gitEnv` names the author, so the repository needs no configuration.
+    async function commitAll(repo: string) {
+      for (const args of [
+        ["init", "-q"],
+        ["add", "-A"],
+        ["commit", "-q", "-m", "initial"],
+      ]) {
+        await using proc = Bun.spawn({
+          cmd: ["git", ...args],
+          cwd: repo,
+          env: gitEnv,
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed in ${repo}:\n${stderr}`);
+      }
+    }
+
     async function run(c: LinkCase) {
       using dir = tempDir("test-changed-link", c.files);
       const root = String(dir);
@@ -638,7 +697,7 @@ test("hot", () => {
         if (at.startsWith(repo + sep))
           appendFileSync(join(repo, ".gitignore"), `/${relative(repo, at).replaceAll(sep, "/")}\n`);
       }
-      initRepo(repo);
+      await commitAll(repo);
       if (typeof c.change === "string") {
         touch(repo, c.change);
       } else {
@@ -646,18 +705,21 @@ test("hot", () => {
         symlinkSync(c.change[1], join(repo, c.change[0]));
       }
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", ...(c.args?.(root) ?? ["--changed"])],
-        cwd: join(repo, c.cwd ?? "."),
-        env: gitEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-        stdin: "ignore",
-      });
-      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(ranFiles(stderr, c.headers)).toEqual(c.ran.toSorted());
-      expect(stderr).toContain(c.status);
-      expect(exitCode).toBe(0);
+      const runs = await Promise.all(
+        (c.shards ? [["--shard=1/2"], ["--shard=2/2"]] : [[]]).map(async shard => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "test", ...(c.args?.(root) ?? ["--changed"]), ...shard],
+            cwd: join(repo, c.cwd ?? "."),
+            env: gitEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+            stdin: "ignore",
+          });
+          const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return { status: /^--changed: (.*?)\r?$/m.exec(stderr)?.[1], ran: ranFiles(stderr, c.headers), exitCode };
+        }),
+      );
+      expect(runs).toEqual((c.shards ?? [c.ran]).map(ran => ({ status: c.status, ran: ran.toSorted(), exitCode: 0 })));
     }
 
     test.each(Object.entries(directoryLinks))("%s", (_, c) => run(c));

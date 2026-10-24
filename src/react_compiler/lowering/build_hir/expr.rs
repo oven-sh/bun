@@ -1418,7 +1418,13 @@ fn is_reorderable_expression(
                     }
                 }
             }
-            stmts.is_empty()
+            // A directive or a comment is not a statement in upstream's tree.
+            stmts.iter().all(|stmt| {
+                matches!(
+                    stmt.data,
+                    ast::stmt::Data::SDirective(_) | ast::stmt::Data::SComment(_)
+                )
+            })
         }
         Data::ECall(call)
             if call.was_jsx_element && !builder.environment().config.jsx_can_be_reordered =>

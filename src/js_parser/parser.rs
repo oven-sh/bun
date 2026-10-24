@@ -1507,7 +1507,12 @@ pub struct ParseStatementOptions<'a> {
     pub(crate) is_name_optional: bool,
     pub(crate) is_typescript_declare: bool,
     pub(crate) is_for_loop_init: bool,
+    /// The statement list is a module, function or namespace body, so it can start with a
+    /// directive prologue. `parse_stmts_up_to` reads it and does not pass it on.
+    pub(crate) allow_directive_prologue: bool,
 }
+
+const _: () = assert!(core::mem::size_of::<ParseStatementOptions>() == 32);
 
 impl<'a> ParseStatementOptions<'a> {
     pub(crate) fn has_decorators(&self) -> bool {

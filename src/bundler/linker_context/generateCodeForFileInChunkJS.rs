@@ -78,6 +78,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
             let hmr_api_ref = ast.wrapper_ref;
 
+            // The prologue of the module is the prologue of its closure.
+            for directive in ast.directives.slice() {
+                stmts.inside_wrapper_prefix.append_directive(*directive);
+            }
+
             // SAFETY: see `parts` raw-pointer note above.
             for part in unsafe { (*parts).iter() } {
                 let part_stmts: &[Stmt] = part.stmts.slice();
@@ -254,24 +259,22 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
 
     let output_format = c.options.output_format;
 
-    // The top-level directive must come first (the non-wrapped case is handled
-    // by the chunk generation code, although only for the entry point)
+    // The top-level directives must come first (the non-wrapped case is handled
+    // by the chunk generation code, although only for the entry point of this
+    // chunk). An ES module without a wrapper symbol prints no closure to hold them.
     if flags.wrap != WrapKind::None
-        && ast
-            .flags
-            .contains(AstFlags::HAS_EXPLICIT_USE_STRICT_DIRECTIVE)
-        && !chunk.is_entry_point()
-        && !output_format.is_always_strict_mode()
+        && !chunk.is_entry_point_file(source_index as u32)
+        && !ast.wrapper_ref.is_empty()
     {
-        stmts
-            .inside_wrapper_prefix
-            .append_non_dependency(Stmt::alloc(
-                S::Directive {
-                    value: bun_ast::StoreStr::new(b"use strict"),
-                },
-                bun_ast::Loc::EMPTY,
-            ))
-            .expect("unreachable");
+        for directive in ast.directives.slice() {
+            // Every ES module is already in strict mode
+            if output_format.is_always_strict_mode()
+                && matches!(directive.data, StmtData::SDirective(d) if d.value.slice() == b"use strict")
+            {
+                continue;
+            }
+            stmts.inside_wrapper_prefix.append_directive(*directive);
+        }
     }
 
     // `convert_stmts_for_chunk` takes `&mut c` inside the loop body, so capture
@@ -280,7 +283,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     let parts_live: bun_ptr::BackRef<bun_collections::AutoBitSet> =
         bun_ptr::BackRef::new(&c.graph.parts_live[source_index]);
 
-    // TODO: handle directive
     if namespace_export_part_index >= part_range.part_index_begin
         && namespace_export_part_index < part_range.part_index_end
         && parts_live.is_set(namespace_export_part_index as usize)

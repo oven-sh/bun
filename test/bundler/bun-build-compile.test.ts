@@ -531,7 +531,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
 
       // A name is a wyhash (seed 0) of bytes that say what is written, which for these two can be written down by hand.
       // A change to them changes what every order file recorded so far calls every function: if that is what a change
-      // means to do, it changes the order file's version line ("v2") too.
+      // means to do, it changes the order file's version line ("v3") too.
       test("the bytes a name is a hash of", () => {
         const u64 = (value: number) => [...new Uint8Array(new BigUint64Array([BigInt(value)]).buffer)];
         const f64 = (value: number) => [...new Uint8Array(new Float64Array([value]).buffer)];
@@ -881,7 +881,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           const { order, plain } = shared;
           // Nothing but the five kinds of lines: a recording says so, in a line of another kind, when something the run
           // decoded could not be named.
-          expect(order.split("\n").filter(line => !/^(v2|[FSMNK] [0-9a-f]{16}|)$/.test(line))).toEqual([]);
+          expect(order.split("\n").filter(line => !/^(v3|[FSMNK] [0-9a-f]{16}|)$/.test(line))).toEqual([]);
           expect(plain).toEqual({
             stdout: "APPAPP 2a4a6 AA/a+/3-a 2b4b6 BB/b+/3-b 2c4c6 CC/c+/3-c\n",
             cacheHits: expect.any(Number),
@@ -889,7 +889,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           });
           // The entry point's chunk, the shared one, and a, b, c.
           expect(plain.cacheHits).toBe(5);
-          expect(order).toStartWith("v2\n");
+          expect(order).toStartWith("v3\n");
           for (const kind of ["F", "S", "M", "N", "K"])
             expect(order).toMatch(new RegExp(`^${kind} [0-9a-f]{16}$`, "m"));
           expect(hasLinkedPayload(exe("plain"))).toBe(false);
@@ -1133,7 +1133,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           const lines = (await Bun.file(join(workerCwd, out)).text()).split("\n");
           const of = (kind: string) =>
             new Set(lines.filter(line => line.startsWith(kind + " ")).map(line => line.slice(2)));
-          const other = lines.filter(line => !/^(v2|[FSMNK] [0-9a-f]{16}|)$/.test(line));
+          const other = lines.filter(line => !/^(v3|[FSMNK] [0-9a-f]{16}|)$/.test(line));
           return {
             stdout,
             exitCode,
@@ -1311,13 +1311,13 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           ).toThrow("compile.jitPolicy");
         }
         // Lines that are not hints (unknown kinds, bad or reserved hashes) are skipped: nothing is left, so nothing changes.
-        await Bun.write(join(cwd(), "junk.order"), "v2\nX 0123456789abcdef\nF nothex\nF ffffffffffffffff\n\n");
+        await Bun.write(join(cwd(), "junk.order"), "v3\nX 0123456789abcdef\nF nothex\nF ffffffffffffffff\n\n");
         // Nor is a file of another version, whose names are names of something else, or one that is no order file.
-        await Bun.write(join(cwd(), "older.order"), shared.order.replace(/^v2\n/, "v1\n"));
+        await Bun.write(join(cwd(), "older.order"), shared.order.replace(/^v3\n/, "v1\n"));
         await Bun.write(join(cwd(), "utf16.order"), Buffer.from("\ufeff" + shared.order, "utf16le"));
         await Bun.write(
           join(cwd(), "not-recorded.order"),
-          "v2\n# not recorded: none of the program's code has names\n",
+          "v3\n# not recorded: none of the program's code has names\n",
         );
         await Bun.write(join(cwd(), "not-one.order"), "F 0123456789abcdef\n");
         // The two builds that succeed, at the same time.
@@ -1542,7 +1542,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
             .filter(file => file.startsWith("pid-"))
             .sort();
           expect(written).toEqual([`pid-${proc.pid}.digest`, `pid-${proc.pid}.order`]);
-          expect((await Bun.file(join(cwd(), `pid-${proc.pid}.order`)).text()).startsWith("v2\n")).toBe(true);
+          expect((await Bun.file(join(cwd(), `pid-${proc.pid}.order`)).text()).startsWith("v3\n")).toBe(true);
         },
         60_000,
       );
@@ -1551,7 +1551,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       test("an order file of another program", async () => {
         const { plain, orderedStderr } = shared;
         const hashes = Array.from({ length: 64 }, (_, i) => `F ${(i + 1).toString(16).padStart(16, "0")}`).join("\n");
-        await Bun.write(join(cwd(), "other-program.order"), `v2\n${hashes}\n`);
+        await Bun.write(join(cwd(), "other-program.order"), `v3\n${hashes}\n`);
         const other = await compile(exe("other-program"), ["--bytecode-order=other-program.order"]);
         expect(other.stderr).toContain("none of the 64 functions the bytecode order files list is in this build");
         expect(other.exitCode).toBe(0);
@@ -1665,7 +1665,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
             proc.terminal?.close();
             expect(proc.signalCode).toBe(signal);
             const lines = (await Bun.file(out).text()).split("\n");
-            expect(lines[0]).toBe("v2");
+            expect(lines[0]).toBe("v3");
             expect(lines.filter(line => line.startsWith("F ")).length).toBeGreaterThan(0);
             expect(lines.filter(line => line.startsWith("M ")).length).toBeGreaterThan(0);
           },

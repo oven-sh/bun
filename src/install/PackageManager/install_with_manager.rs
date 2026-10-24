@@ -1086,8 +1086,7 @@ pub fn install_with_manager(
     } else if removes_collapsed_copies {
         crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
     }
-    // An install that created, re-linked or dropped something can leave a store entry without a
-    // link. One that left out a dependency group or a workspace did not re-point their links.
+    // Only a full install re-points every link, so only it knows which entries lost theirs.
     if isolated
         && install_summary.fail == 0
         && !install_summary.fresh_store

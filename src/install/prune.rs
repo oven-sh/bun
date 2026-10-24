@@ -1939,12 +1939,8 @@ fn links_package(
     link.st_ino == target.st_ino && link.st_dev == target.st_dev
 }
 
-/// Removes the entries of `node_modules/.bun` that no install of the saved lockfile names, and the
-/// links into them. Only for an install that laid out every dependency of every workspace, so that
-/// every link into a kept entry was re-pointed.
-///
-/// `installed` is that install's store. Its entries stay even if the saved lockfile names them
-/// differently: a tarball's integrity is recorded while it installs and is part of the name.
+/// Removes the store entries that no install of the saved lockfile names, and the links into them.
+/// The entries of `installed` stay: a tarball's integrity, part of the name, is recorded mid-install.
 pub(crate) fn remove_unreferenced_store_entries(manager: &mut PackageManager, installed: &Store) {
     let mut plan = Plan::default();
     // Nothing is removed from behind a symlinked `node_modules`. `bun prune` says why.

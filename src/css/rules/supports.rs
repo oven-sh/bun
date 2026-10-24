@@ -402,7 +402,7 @@ impl<R> SupportsRule<R> {
     where
         R: for<'b> crate::generics::DeepClone<'b>,
     {
-        // The nested rules
+        // The condition-merge/dedup port is still pending, but the nested rules
         // must be minified so compiling nesting away for the targets stays
         // bounded by `MAX_SELECTOR_EXPANSION`. `@supports` preserves the `&`
         // resolution context at print time (`to_css` below recurses into

@@ -530,12 +530,6 @@ impl<R> CssRuleList<R> {
                         if supp.rules.v.is_empty() {
                             break 'arm;
                         }
-                        if let Some(CssRule::Supports(last_rule)) = rules.last_mut()
-                            && last_rule.condition.eql(&supp.condition)
-                        {
-                            last_rule.rules.v.append(&mut supp.rules.v);
-                            break 'arm;
-                        }
                     }
                     CssRule::Container(cont) => {
                         // The condition-merge/dedup port is still pending, but the

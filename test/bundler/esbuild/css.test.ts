@@ -2292,8 +2292,8 @@ c {
     },
   });
 
-  // Adjacent `@supports` rules with one condition merge into one rule, and no
-  // declaration is lost. With the default targets, nesting is compiled away.
+  // Adjacent `@supports` rules with one condition all stay, and no declaration
+  // is lost. With the default targets, nesting is compiled away.
   const sameConditionSupports = {
     // https://github.com/oven-sh/bun/issues/24770
     "/issue-24770.css": /* css */ `
@@ -2329,10 +2329,18 @@ c {
     "/important.css": /* css */ `
       .a { @supports (color: red) { color: red !important } @supports (color: red) { color: blue } }
     `,
+    // The same rule in an `@media` rule that merges with the `@media` rule after it.
+    "/in-merged-media.css": /* css */ `
+      @media (min-width: 640px) {
+        .a { @supports (color: red) { color: red !important } @supports (color: red) { color: blue } }
+      }
+      @media (min-width: 640px) { .b { color: green } }
+    `,
   };
+  const sameConditionSupportsEntryPoints = Object.keys(sameConditionSupports);
   itBundled("css/CSSAtSupportsSameConditionKeepsAllRules", {
     files: sameConditionSupports,
-    entryPoints: ["/issue-24770.css", "/issue-45258.css", "/important.css"],
+    entryPoints: sameConditionSupportsEntryPoints,
     outdir: "/out",
     minifyWhitespace: true,
     minifySyntax: true,
@@ -2340,15 +2348,24 @@ c {
       api
         .expectFile("/out/issue-24770.css")
         .toBe(
-          ".test{box-shadow:none;border:1px solid red}@supports (color: blue){.test{border-top:1px solid #00f}.test{border-left:1px solid #00f}.test{border-bottom:1px solid #00f}.test{border-right:1px solid #00f}.test{box-shadow:0 0 10px #00f}}\n",
+          ".test{box-shadow:none;border:1px solid red}@supports (color: blue){.test{border-top:1px solid #00f}}@supports (color: blue){.test{border-left:1px solid #00f}}@supports (color: blue){.test{border-bottom:1px solid #00f}}@supports (color: blue){.test{border-right:1px solid #00f}}@supports (color: blue){.test{box-shadow:0 0 10px #00f}}\n",
         );
-      api.expectFile("/out/issue-45258.css").toBe(".a{--x:1;--y:1}@supports (color: red){.a{--x:2}.a{--y:2}}\n");
-      api.expectFile("/out/important.css").toBe("@supports (color: red){.a{color:red!important}.a{color:#00f}}\n");
+      api
+        .expectFile("/out/issue-45258.css")
+        .toBe(".a{--x:1;--y:1}@supports (color: red){.a{--x:2}}@supports (color: red){.a{--y:2}}\n");
+      api
+        .expectFile("/out/important.css")
+        .toBe("@supports (color: red){.a{color:red!important}}@supports (color: red){.a{color:#00f}}\n");
+      api
+        .expectFile("/out/in-merged-media.css")
+        .toBe(
+          "@media (min-width:640px){@supports (color: red){.a{color:red!important}}@supports (color: red){.a{color:#00f}}.b{color:green}}\n",
+        );
     },
   });
   itBundled("css/CSSAtSupportsSameConditionKeepsAllRulesTargetBun", {
     files: sameConditionSupports,
-    entryPoints: ["/issue-24770.css", "/issue-45258.css", "/important.css"],
+    entryPoints: sameConditionSupportsEntryPoints,
     outdir: "/out",
     target: "bun",
     minifyWhitespace: true,
@@ -2357,10 +2374,19 @@ c {
       api
         .expectFile("/out/issue-24770.css")
         .toBe(
-          ".test{box-shadow:none;border:1px solid red;@supports (color: blue){&{border-top:1px solid #00f}&{border-left:1px solid #00f}&{border-bottom:1px solid #00f}&{border-right:1px solid #00f}&{box-shadow:0 0 10px #00f}}}\n",
+          ".test{box-shadow:none;border:1px solid red;@supports (color: blue){&{border-top:1px solid #00f}}@supports (color: blue){&{border-left:1px solid #00f}}@supports (color: blue){&{border-bottom:1px solid #00f}}@supports (color: blue){&{border-right:1px solid #00f}}@supports (color: blue){&{box-shadow:0 0 10px #00f}}}\n",
         );
-      api.expectFile("/out/issue-45258.css").toBe(".a{--x:1;--y:1;@supports (color: red){&{--x:2}&{--y:2}}}\n");
-      api.expectFile("/out/important.css").toBe(".a{@supports (color: red){&{color:red!important}&{color:#00f}}}\n");
+      api
+        .expectFile("/out/issue-45258.css")
+        .toBe(".a{--x:1;--y:1;@supports (color: red){&{--x:2}}@supports (color: red){&{--y:2}}}\n");
+      api
+        .expectFile("/out/important.css")
+        .toBe(".a{@supports (color: red){&{color:red!important}}@supports (color: red){&{color:#00f}}}\n");
+      api
+        .expectFile("/out/in-merged-media.css")
+        .toBe(
+          "@media (width>=640px){.a{@supports (color: red){&{color:red!important}}@supports (color: red){&{color:#00f}}}.b{color:green}}\n",
+        );
     },
   });
 

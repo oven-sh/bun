@@ -68,9 +68,16 @@ declare module "bun" {
       set(index: number, value?: any): void;
     }
 
+    /**
+     * The address type of a memory or table. `"i64"` selects the Memory64
+     * proposal: sizes and indices are `bigint`.
+     */
+    type AddressType = "i32" | "i64";
+
     interface MemoryDescriptor {
-      initial: number;
-      maximum?: number;
+      address?: AddressType;
+      initial: number | bigint;
+      maximum?: number | bigint;
       shared?: boolean;
     }
 
@@ -86,9 +93,10 @@ declare module "bun" {
     }
 
     interface TableDescriptor {
+      address?: AddressType;
       element: TableKind;
-      initial: number;
-      maximum?: number;
+      initial: number | bigint;
+      maximum?: number | bigint;
     }
 
     interface WebAssemblyInstantiatedSource {
@@ -149,7 +157,16 @@ declare namespace WebAssembly {
     }
   >["Instance"];
 
-  interface Memory extends Bun.WebAssembly.Memory {}
+  interface Memory extends Bun.WebAssembly.Memory {
+    /**
+     * Grows the memory by `delta` pages and returns the previous size in pages.
+     * An `i64`-addressed memory (`address: "i64"`) takes and returns `bigint`.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Memory/grow)
+     */
+    grow(delta: number): number;
+    grow(delta: bigint): bigint;
+  }
   var Memory: {
     prototype: Memory;
     new (descriptor: MemoryDescriptor): Memory;
@@ -172,7 +189,22 @@ declare namespace WebAssembly {
     }
   >["Module"];
 
-  interface Table extends Bun.WebAssembly.Table {}
+  interface Table extends Bun.WebAssembly.Table {
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Table/get) */
+    get(index: number): any;
+    get(index: bigint): any;
+    /**
+     * Grows the table by `delta` elements and returns the previous length.
+     * An `i64`-addressed table (`address: "i64"`) takes and returns `bigint`.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Table/grow)
+     */
+    grow(delta: number, value?: any): number;
+    grow(delta: bigint, value?: any): bigint;
+    /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Table/set) */
+    set(index: number, value?: any): void;
+    set(index: bigint, value?: any): void;
+  }
   var Table: {
     prototype: Table;
     new (descriptor: TableDescriptor, value?: any): Table;

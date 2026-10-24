@@ -8,6 +8,7 @@
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/MathCommon.h>
 
 ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Value)
 
@@ -162,12 +163,22 @@ MaybeLocal<Int32> Value::ToInt32(Local<Context> context) const
 
 Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const
 {
-    auto js_value = localToJSValue();
-    uint32_t value;
-    if (js_value.getUInt32(value)) {
-        return Just(value);
-    }
-    return Nothing<uint32_t>();
+    JSC::JSValue value = localToJSValue();
+    // V8 does not use the context when the value is already a number.
+    if (value.isInt32()) [[likely]]
+        return Just(static_cast<uint32_t>(value.asInt32()));
+    if (value.isNumber())
+        return Just(JSC::toUInt32(value.asNumber()));
+
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    // Node 26.12.1 returns 0 for "-1" here, a V8 bug: https://github.com/v8/v8/commit/42bc03b82e4792fc618e1ba41c7e8646184eaa6c
+    uint32_t result = value.toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, Nothing<uint32_t>());
+
+    return Just(result);
 }
 
 bool Value::StrictEquals(Local<Value> that) const

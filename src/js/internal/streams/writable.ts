@@ -12,6 +12,7 @@ const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const { getHighWaterMark, getDefaultHighWaterMark } = require("internal/streams/state");
 const {
   kOnConstructed,
+  kWriteOperation,
   kState,
   kObjectMode,
   kErrorEmitted,
@@ -437,6 +438,15 @@ function _write(stream, chunk, encoding, cb?) {
     }
   }
 
+  return writeOrError(stream, state, chunk, encoding, cb);
+}
+
+// Internal byte-counted operations share the byte stream's queue and lifecycle.
+Writable.prototype[kWriteOperation] = function (operation, callback) {
+  return writeOrError(this, this._writableState, operation, kWriteOperation, callback ?? nop) === true;
+};
+
+function writeOrError(stream, state, chunk, encoding, cb) {
   let err;
   if ((state[kState] & kEnding) !== 0) {
     err = $ERR_STREAM_WRITE_AFTER_END();

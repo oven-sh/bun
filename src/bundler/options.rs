@@ -1193,6 +1193,8 @@ pub struct TypeChecked<'a, 'i> {
     /// The path, the text and the loader of each JavaScript, TypeScript and JSON file of the
     /// bundle, which the type checker takes instead of reading the file again.
     pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader)>,
+    /// The path of each file of the bundle that has the name of an HTML page and is loaded in another way.
+    pub not_pages: &'i mut dyn Iterator<Item = &'a [u8]>,
 }
 
 /// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns

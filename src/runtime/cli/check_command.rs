@@ -242,19 +242,10 @@ struct Entries<'a> {
     script_kinds: &'a [(Vec<u8>, ScriptKind)],
     script_kinds_by_extension: &'a [(Vec<u8>, ScriptKind)],
     conditions: &'a [Box<[u8]>],
-    pages: Pages<'a>,
-}
-
-/// Who names the scripts of the pages that the paths import. See `Request::loaders`.
-#[derive(Clone, Copy, Default)]
-enum Pages<'a> {
-    /// The check, by the loader that has the name of each extension: `bun check` takes no `--loader`.
-    #[default]
-    ByName,
-    /// The check, by these loaders: what is run or transpiled has no module graph.
-    ByLoaders(&'a bun_ast::LoaderHashTable),
-    /// The bundle, which has those scripts among its own paths.
-    InBundle,
+    /// `None`: the loader that has the name of each extension, because `bun check` takes no `--loader`.
+    loaders: Option<&'a bun_ast::LoaderHashTable>,
+    /// `TypeChecked::not_pages`, as `Host::scripts_of_page` is given a path.
+    not_pages: &'a [Vec<u8>],
 }
 
 fn run<R>(
@@ -323,17 +314,25 @@ fn run_quietly<R>(
         threads,
         progress,
     );
-    bun_sema_driver::check_provided_then(&request, with_pages(cwd, provided), then)
+    let not_pages = match *paths {
+        Paths::Arguments(_) => Vec::new(),
+        Paths::EntryPoints(entries) => entries.not_pages.to_vec(),
+    };
+    let provided = with_pages(cwd, not_pages, provided);
+    bun_sema_driver::check_provided_then(&request, provided, then)
 }
 
-/// Returns `provided` with `Provided::scripts_of_page` set.
-fn with_pages(cwd: &[u8], provided: Provided) -> Provided {
+/// Returns `provided` with `Provided::scripts_of_page` set. `not_pages`: see `Entries`.
+fn with_pages(cwd: &[u8], not_pages: Vec<Vec<u8>>, provided: Provided) -> Provided {
     use bun_sema_driver::host::{from_native, to_native};
     // One thread at a time, because the first call initializes the `FileSystem` that the scanner
     // reads.
     let (cwd, turn) = (cwd.to_vec(), bun_threading::Guarded::new(()));
     Provided {
         scripts_of_page: Some(Box::new(move |page| {
+            if not_pages.iter().any(|it| it == page) {
+                return Vec::new();
+            }
             let _turn = turn.lock();
             let scripts = imports_of_page(&cwd, to_native(page)).into_iter();
             let scripts = scripts.filter(|path| has_types(path));
@@ -343,7 +342,7 @@ fn with_pages(cwd: &[u8], provided: Provided) -> Provided {
     }
 }
 
-/// `no_loaders`: an empty table, for `Pages::ByName`.
+/// `no_loaders`: an empty table, for `Entries::loaders`.
 fn request<'a>(
     cwd: &'a [u8],
     project: Option<&'a [u8]>,
@@ -374,11 +373,7 @@ fn request<'a>(
         script_kinds: entries.script_kinds,
         script_kinds_by_extension: entries.script_kinds_by_extension,
         conditions: entries.conditions,
-        loaders: match entries.pages {
-            Pages::ByName => Some(no_loaders),
-            Pages::ByLoaders(loaders) => Some(loaders),
-            Pages::InBundle => None,
-        },
+        loaders: Some(entries.loaders.unwrap_or(no_loaders)),
         compiler_options,
         threads,
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
@@ -594,7 +589,8 @@ pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<Befo
         script_kinds: &script_kinds,
         script_kinds_by_extension: &by_extension,
         conditions: args.map_or(&[][..], |args| &args.conditions[..]),
-        pages: Pages::ByLoaders(&loaders),
+        loaders: Some(&loaders),
+        not_pages: &[],
     };
     check_and_report(&Paths::EntryPoints(entries), provided)
 }
@@ -658,36 +654,19 @@ fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -
 
 /// `BundleOptions::type_check` for `bun build --check`.
 pub(crate) fn check_for_build_command(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
-    check_for_build(checked, log, true, Built::Bundle)
+    check_for_build(checked, log, true)
 }
 
 /// `BundleOptions::type_check` for `Bun.build({ check: true })`. Prints nothing.
 pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
-    check_for_build(checked, log, false, Built::Bundle)
-}
-
-/// `bun build --no-bundle --check`: `checked` has the entry points as they are written, and no sources.
-pub(crate) fn check_for_no_bundle_command(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
-    check_for_build(checked, log, true, Built::EachFile)
-}
-
-/// What `check_for_build` checks.
-#[derive(Clone, Copy)]
-enum Built {
-    /// The module graph of a bundle, which has every file that Bun loads for it.
-    Bundle,
-    /// Each entry point by itself. Nothing is resolved.
-    EachFile,
+    check_for_build(checked, log, false)
 }
 
 /// Doesn't reread the bundle's files (`sources`). Adds the errors to `log`, which the build reports
 /// like its own. Runs on the bundler's thread.
-fn check_for_build(
-    checked: TypeChecked,
-    log: &mut bun_ast::Log,
-    shows_progress: bool,
-    built: Built,
-) -> bool {
+fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress: bool) -> bool {
+    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
+    use bun_sema_driver::host::from_native;
     let TypeChecked {
         cwd,
         tsconfig,
@@ -695,6 +674,7 @@ fn check_for_build(
         loaders,
         entry_points,
         sources,
+        not_pages,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     // The bundler knows each file's loader. Files in `node_modules` always go by their extension.
@@ -721,15 +701,15 @@ fn check_for_build(
     if paths.is_empty() {
         return true;
     }
+    let as_given = |path| join_abs_string::<Auto>(cwd, &[path]);
+    let not_pages: Vec<Vec<u8>> = not_pages.map(|it| from_native(as_given(it))).collect();
     let paths = Paths::EntryPoints(Entries {
         paths: &paths,
         script_kinds: &script_kinds,
         script_kinds_by_extension: &by_extension,
         conditions,
-        pages: match built {
-            Built::Bundle => Pages::InBundle,
-            Built::EachFile => Pages::ByLoaders(loaders),
-        },
+        loaders: Some(loaders),
+        not_pages: &not_pages,
     });
     let then = |report| report;
     let report = match shows_progress {

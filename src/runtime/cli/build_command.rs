@@ -161,8 +161,9 @@ impl BuildCommand {
                 loaders: &this_transpiler.options.loaders,
                 entry_points: &mut entry_points.map(|path| &**path),
                 sources: &mut core::iter::empty(),
+                not_pages: &mut core::iter::empty(),
             };
-            if !crate::cli::check_command::check_for_no_bundle_command(checked, log_ref) {
+            if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
                 log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
                     Output::error_writer(),
                 ))?;

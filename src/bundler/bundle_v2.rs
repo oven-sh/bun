@@ -2581,6 +2581,17 @@ pub mod bv2_impl {
                     loaders[index].is_javascript_like() && sources[index].path.is_file()
                 })
                 .map(|index| sources[index].path.text);
+            // A plugin read the file, or the first import of it named another loader.
+            let by_name = &self.transpiler.options.loaders;
+            let stands_for_a_page = &self.graph.html_imports.server_source_indices;
+            let mut not_pages = (0..sources.len())
+                .filter(|&index| {
+                    !loaders[index].is_javascript_like_or_json() || is_loaded_by_plugin(index)
+                })
+                .filter(|&index| loaders[index] != Loader::Html && sources[index].path.is_file())
+                .filter(|&index| sources[index].path.loader(by_name) == Some(Loader::Html))
+                .filter(|&index| !stands_for_a_page.contains(&(index as u32)))
+                .map(|index| sources[index].path.text);
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
             // of it. What only a plugin provides is written nowhere else.
             let mut sources = (sources.iter().zip(loaders).zip(flags))
@@ -2598,6 +2609,7 @@ pub mod bv2_impl {
                 loaders: &self.transpiler.options.loaders,
                 entry_points: &mut entry_points,
                 sources: &mut sources,
+                not_pages: &mut not_pages,
             };
             if type_check(checked, self.transpiler.log_mut()) {
                 return Ok(());

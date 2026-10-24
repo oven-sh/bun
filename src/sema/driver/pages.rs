@@ -34,8 +34,8 @@ struct Import {
 /// The `with` clauses and the `import()` options of one file, by the position of their specifier. Made on first use.
 #[derive(Default)]
 struct Attributes {
-    /// Each `import` declaration, from its first token to its end. Sorted.
-    declarations: Option<Vec<(u32, u32)>>,
+    /// Each `import` declaration, from its first token to its end, and whether it is `import type`. Sorted.
+    declarations: Option<Vec<(u32, u32, bool)>>,
     /// The second argument of each `import()` that has one, by the position of the first. Sorted.
     options: Option<Vec<(u32, ExprId)>>,
 }
@@ -119,8 +119,14 @@ impl<'a, 's> Pages<'a, 's> {
             };
             // Bun reads attributes after `import .. from` and in the options of `import()`, not after `export .. from`.
             let clause = match specifier_use.kind {
+                SpecifierKind::ImportType => continue,
                 SpecifierKind::Import | SpecifierKind::SideEffect => {
-                    attributes.of_declaration(hir, specifier_use.pos)
+                    match attributes.of_declaration(hir, specifier_use.pos) {
+                        Some((false, clause)) => clause,
+                        None if !is_in_comment(hir, specifier_use.pos) => None,
+                        // `import type` and a JSDoc `@import` name a type, for which Bun loads nothing.
+                        _ => continue,
+                    }
                 }
                 SpecifierKind::ImportCall => attributes
                     .of_import_call(hir, specifier_use.pos)
@@ -153,9 +159,15 @@ impl<'a, 's> Pages<'a, 's> {
         };
         let attributes = attributes.iter().rev().map(|it| hir[it]);
         let mut types = attributes.filter(|it| self.is_named(it.key, b"type"));
-        types.find_map(|it| match hir[skip_assertions(hir, it.value)].kind {
-            ExprKind::String(name) => Loader::from_string(self.files.atoms.bytes(name)),
-            _ => None,
+        types.find_map(|it| {
+            let name = match hir[skip_assertions(hir, it.value)].kind {
+                ExprKind::String(name) => name,
+                ExprKind::Template { exprs } if exprs.is_empty() => {
+                    hir.id_at(hir.template_texts(exprs), 0)
+                }
+                _ => return None,
+            };
+            Loader::from_string(self.files.atoms.bytes(name))
         })
     }
 
@@ -165,26 +177,27 @@ impl<'a, 's> Pages<'a, 's> {
 }
 
 impl Attributes {
-    /// The `with` clause of the `import` declaration whose specifier is at `specifier`.
-    fn of_declaration(&mut self, hir: &hir::File, specifier: u32) -> Option<ExprId> {
-        let clauses = &hir.import_attributes[..];
-        if clauses.is_empty() {
-            return None;
-        }
+    /// Whether the `import` declaration whose specifier is at `specifier` is `import type`, and its `with` clause.
+    fn of_declaration(
+        &mut self,
+        hir: &hir::File,
+        specifier: u32,
+    ) -> Option<(bool, Option<ExprId>)> {
         let declarations = self.declarations.get_or_insert_with(|| {
             let declarations = hir.imports.iter().filter(|it| it.stmt.is_some());
-            let mut ranges: Vec<(u32, u32)> = declarations
-                .map(|it| (hir[it.stmt].start, hir[it.stmt].loc.end))
+            let mut ranges: Vec<(u32, u32, bool)> = declarations
+                .map(|it| (hir[it.stmt].start, hir[it.stmt].loc.end, it.type_only))
                 .collect();
             ranges.shared_sort_unstable_by_key(|it| it.0);
             ranges
         });
         let before = declarations.partition_point(|it| it.0 <= specifier);
-        let &(_, end) = declarations[..before]
+        let &(_, end, is_type_only) = declarations[..before]
             .last()
             .filter(|it| specifier < it.1)?;
-        let clause = clauses.get(clauses.partition_point(|it| it.0 <= specifier))?;
-        (clause.0 < end).then_some(clause.1)
+        let clauses = &hir.import_attributes[..];
+        let clause = clauses.get(clauses.partition_point(|it| it.0 <= specifier));
+        Some((is_type_only, clause.filter(|it| it.0 < end).map(|it| it.1)))
     }
 
     fn options(&mut self, hir: &hir::File) -> &[(u32, ExprId)] {
@@ -208,4 +221,10 @@ impl Attributes {
         let at = options.binary_search_by_key(&specifier, |it| it.0).ok()?;
         Some(options[at].1)
     }
+}
+
+/// True if `pos` is in a comment, as the specifier of a JSDoc `@import` is.
+fn is_in_comment(hir: &hir::File, pos: u32) -> bool {
+    let before = hir.comments.partition_point(|it| it.pos <= pos);
+    hir.comments[..before].last().is_some_and(|it| pos < it.end)
 }

@@ -23960,8 +23960,6 @@ describe.concurrent("--check", () => {
       errors: string[];
       // What `bun check server.ts` reports, where it differs.
       checked?: string[];
-      // What `bun build --check --target=bun` reports, if its module graph says otherwise.
-      bundled?: string[];
       // What the program prints, if it isn't `ran string`. A command that reports no error runs it.
       ran?: string;
     };
@@ -24017,6 +24015,27 @@ describe.concurrent("--check", () => {
         },
         errors: [],
         ran: "ran string string",
+      },
+      // Bun loads nothing for a type.
+      "an import of a type, and a type of the module": {
+        files: {
+          "template.html": template,
+          "server.ts":
+            `import type it from "./template.html";\n` +
+            `export type Page = typeof it | typeof import("./template.html");\nconsole.log("ran");\n`,
+        },
+        errors: [],
+        ran: "ran",
+      },
+      'a type of the module beside an import `with { type: "text" }`': {
+        files: {
+          "template.html": template,
+          "server.ts": server(
+            `import it from "./template.html" with { type: "text" };\n` +
+              `export type Same = typeof import("./template.html");`,
+          ),
+        },
+        errors: [],
       },
       "a file under `--loader .html:text`": {
         files: { "template.html": template, "server.ts": server(`import it from "./template.html";`) },
@@ -24182,7 +24201,7 @@ describe.concurrent("--check", () => {
         },
         errors: ["main.ts(1,14) TS2322", "routes.js(1,34) TS2857"],
       },
-      // A bundle holds no page that it does not load. The check of a bundle follows the bundle.
+      // A bundle does not hold these two pages. Its check follows them like a check without a bundle.
       "a page whose import nothing reads": {
         files: {
           "index.html": page("./main.ts"),
@@ -24190,16 +24209,6 @@ describe.concurrent("--check", () => {
           "server.ts": server(`import it from "./index.html";`, []),
         },
         errors: ["main.ts(1,14) TS2322"],
-        bundled: [],
-      },
-      "a page that is imported for its type": {
-        files: {
-          "index.html": page("./main.ts"),
-          "main.ts": wrong,
-          "server.ts": `import type it from "./index.html";\nexport type Page = typeof it;\nconsole.log("ran");\n`,
-        },
-        errors: ["main.ts(1,14) TS2322"],
-        bundled: [],
       },
       "a page that is external to the bundle": {
         files: {
@@ -24209,9 +24218,7 @@ describe.concurrent("--check", () => {
         },
         external: "./index.html",
         errors: ["main.ts(1,14) TS2322"],
-        bundled: [],
       },
-      // Nor does a bundle check what is installed for the sake of a page.
       "a page whose script is in node_modules": {
         files: {
           "index.html": page("./node_modules/lib/index.ts"),
@@ -24219,7 +24226,6 @@ describe.concurrent("--check", () => {
           "server.ts": server(`import it from "./index.html";`),
         },
         errors: ["node_modules/lib/index.ts(1,14) TS2322"],
-        bundled: [],
       },
     };
 
@@ -24230,7 +24236,7 @@ describe.concurrent("--check", () => {
     ])("%s", (_, fixtures) => {
       test.each(Object.keys(fixtures))("%s", async name => {
         const { files, loader, external, errors } = fixtures[name];
-        const { checked = errors, bundled = errors, ran = "ran string" } = fixtures[name];
+        const { checked = errors, ran = "ran string" } = fixtures[name];
         using dir = project({ ...shared, ...files });
         const flags = loader ? ["--loader", loader] : [];
         const outside = external ? ["--external", external] : [];
@@ -24240,7 +24246,7 @@ describe.concurrent("--check", () => {
           [["--check", ...flags, "server.ts"], errors, ran],
           [["test", "--check", ...flags, "server.test.ts"], errors, ran],
           [["build", "--no-bundle", "--check", ...flags, "server.ts"], errors],
-          [["build", "--check", ...flags, ...outside, "--target=bun", "server.ts", "--outdir", "out"], bundled],
+          [["build", "--check", ...flags, ...outside, "--target=bun", "server.ts", "--outdir", "out"], errors],
         ];
         const results = await Promise.all(commands.map(([cmd]) => run(String(dir), cmd)));
         const found = results.map((it, at) => [
@@ -24413,6 +24419,8 @@ describe.concurrent("--check", () => {
         `export const it = (await import("${file}", <const>{ with: { type: "text" } })).default;\n`,
       "dynamic-name-as-const": file =>
         `export const it = (await import("${file}", { with: { type: "text" as const } })).default;\n`,
+      "dynamic-template-name": file =>
+        'export const it = (await import("' + file + '", { with: { type: `text` } })).default;\n',
       "dynamic-no-attributes": file => `export const it = (await import("${file}", {})).default;\n`,
       "dynamic-assert": file => `export const it = (await import("${file}", { assert: { type: "text" } })).default;\n`,
       "dynamic-variable": file =>
@@ -24522,7 +24530,7 @@ describe.concurrent("--check", () => {
       expect([errorsOf(stderr), stdout.trim(), exitCode]).toEqual([[], "ran string", 0]);
     });
 
-    // A bundle has the loader of each file, also the one that a plugin names. The check asks nothing else.
+    // A bundle has the loader of each of its files, also the one that a plugin names. The check asks for no other.
     test("Bun.build({ check: true }) follows the pages of its bundle", async () => {
       using dir = project({
         "html.d.ts": pattern("*.html"),
@@ -24571,7 +24579,7 @@ describe.concurrent("--check", () => {
         outputs: 0,
         logs: [ts2322("main.ts", `export const c: number = '1';`)],
       });
-      expect(external.result).toEqual({ success: true, outputs: 1, logs: [] });
+      expect(external.result).toEqual(aPage.result);
       expect(JSON.parse(byPlugin.stdout)).toEqual({ success: true, logs: [] });
     });
 

@@ -521,7 +521,7 @@ describe.concurrent("bun fmt", () => {
       expect(result.exitCode).toBe(0);
     });
 
-    // A file name can have at most 255 bytes. On Windows the path would also be too long.
+    // A file name can have at most 255 bytes.
     test("can have the longest possible name, and is still replaced rather than written in place", async () => {
       const name = `${Buffer.alloc(252, "a")}.ts`;
       using dir = tempDir("bun-format", { [name]: ugly });

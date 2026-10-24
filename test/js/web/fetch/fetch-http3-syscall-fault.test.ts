@@ -14,11 +14,11 @@
  */
 import { socketFaultInjection as fault, type SocketFaultRule } from "bun:internal-for-testing";
 import { afterEach, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tls } from "harness";
 import { constants } from "node:os";
 import { join } from "node:path";
 
-const skip = !fault.available();
+const skip = !fault.available() || isWindows;
 
 // clear() throws on a build without fault injection, and one test below runs on every build.
 if (fault.available()) afterEach(() => fault.clear());
@@ -173,13 +173,15 @@ test.skipIf(skip)(
 // socket to be writable, which it already is, and the event loop spins.
 
 // Not on Windows: its dual-stack socket sends this datagram.
-test("a datagram the kernel refuses to send is dropped without spinning the HTTP thread", async () => {
-  // No fault injection here, so this runs on release builds too. sendmsg() to
-  // the limited broadcast address fails at once and every time on a socket
-  // without SO_BROADCAST (EACCES, or ENETUNREACH with no default route). As an
-  // IP literal it skips DNS and the connect-time route probe, so packets_out
-  // is the first to see the error.
-  const client = `
+test.skipIf(isWindows)(
+  "a datagram the kernel refuses to send is dropped without spinning the HTTP thread",
+  async () => {
+    // No fault injection here, so this runs on release builds too. sendmsg() to
+    // the limited broadcast address fails at once and every time on a socket
+    // without SO_BROADCAST (EACCES, or ENETUNREACH with no default route). As an
+    // IP literal it skips DNS and the connect-time route probe, so packets_out
+    // is the first to see the error.
+    const client = `
       await using server = Bun.serve({
         port: 0, hostname: "127.0.0.1",
         ...${JSON.stringify({ tls, http3: true, http1: false })},
@@ -195,23 +197,24 @@ test("a datagram the kernel refuses to send is dropped without spinning the HTTP
       const { user, system } = process.cpuUsage(cpu);
       console.log(JSON.stringify({ warmup, outcome, cpuMs: (user + system) / 1000, wallMs: performance.now() - start }));
     `;
-  // A proxy from the environment would make fetch refuse HTTP/3 up front.
-  const { HTTP_PROXY, HTTPS_PROXY, http_proxy, https_proxy, ...env } = bunEnv;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", client],
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const { cpuMs, wallMs, ...rest }: CpuReport & Record<string, string> = JSON.parse(stdout);
-  // Nothing can answer, so the request is pending for the whole second.
-  expect(rest).toEqual({ warmup: "ok", outcome: "TimeoutError" });
-  // A spinning thread uses as much CPU time as wall time. An idle one uses close to none.
-  expect(cpuMs).toBeLessThan(wallMs / 2);
-  expect(exitCode).toBe(0);
-});
+    // A proxy from the environment would make fetch refuse HTTP/3 up front.
+    const { HTTP_PROXY, HTTPS_PROXY, http_proxy, https_proxy, ...env } = bunEnv;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", client],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const { cpuMs, wallMs, ...rest }: CpuReport & Record<string, string> = JSON.parse(stdout);
+    // Nothing can answer, so the request is pending for the whole second.
+    expect(rest).toEqual({ warmup: "ok", outcome: "TimeoutError" });
+    // A spinning thread uses as much CPU time as wall time. An idle one uses close to none.
+    expect(cpuMs).toBeLessThan(wallMs / 2);
+    expect(exitCode).toBe(0);
+  },
+);
 
 test.skipIf(skip)("Bun.serve: a send error on every datagram does not spin the server's event loop", async () => {
   const report = await withServer(

@@ -3033,7 +3033,6 @@ describe("a package in node_modules", () => {
     });
   });
 
-  // On Windows the entry is no link, so it does not say whose it is.
   it.concurrent.each([[["@corp/tool"]], [["-p", "@corp/tool", "tool"]]])(
     "bunx %j runs the bin of that package where another one has the entry in .bin",
     async args => {

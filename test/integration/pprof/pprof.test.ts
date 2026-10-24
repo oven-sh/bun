@@ -6,8 +6,7 @@ import { join } from "node:path";
 // from source with node-gyp, the same way test/v8 builds its module. Unlike
 // @datadog/pprof, it drives v8::CpuProfiler through the title-keyed
 // StartProfiling()/StopProfiling() overloads and CpuProfile::GetTitle()
-// (#19678). The source build is skipped on Windows; test/v8 covers those
-// overloads on every platform.
+// (#19678).
 describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("pprof", () => {
   test("time.profile() returns a profile with samples", async () => {
     using dir = tempDir("pprof", {

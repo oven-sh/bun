@@ -6,8 +6,6 @@ import { bunEnv, isWindows, tempDir } from "harness";
 // See: https://github.com/oven-sh/bun/issues/24329
 
 test("bun npm placeholder script should exit with error if postinstall hasn't run", async () => {
-  // Skip on Windows as the placeholder is a shell script
-
   // This is the placeholder script content that gets written to bin/bun.exe
   // during npm package build (see packages/bun-release/scripts/upload-npm.ts)
   // Note: no shebang — a #!/bin/sh shebang breaks Windows because npm's cmd-shim

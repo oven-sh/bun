@@ -35,10 +35,9 @@ for (let s = 0; s < spellings; s++) {
 console.log("resolved-ok");
 `;
 
-// Skipped on Windows (dir symlinks need privileges) and macOS (resolving through
-// ~500 symlinks exhausts its low default fd limit, so `Bun.resolveSync` throws).
-// The overflowing code path is in the libc/arch-independent allocator, so Linux
-// (glibc + musl, x64 + aarch64) coverage is sufficient.
+// Skipped on macOS: resolving through ~500 symlinks exhausts its low default fd
+// limit, so `Bun.resolveSync` throws. The overflowing code path is in the
+// libc/arch-independent allocator, so coverage elsewhere is sufficient.
 test.skipIf(isMacOS)(
   "resolver filename store survives interning >270k long names (#31503)",
   async () => {

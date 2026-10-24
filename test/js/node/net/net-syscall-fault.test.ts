@@ -1,11 +1,12 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
+import { isWindows } from "harness";
 import { once } from "node:events";
 import net from "node:net";
 
 // Windows uses the libuv eventing backend; bsd_recv/bsd_send are still the
 // chokepoints there but errno semantics differ. Land POSIX coverage first.
-const skip = !fault.available();
+const skip = !fault.available() || isWindows;
 
 afterEach(() => fault.clear());
 

@@ -4,7 +4,6 @@ import assert from "node:assert";
 import url from "node:url";
 
 describe("url.pathToFileURL", () => {
-  // TODO: Fix these asserts on Windows.
   test("dangling slashes and percent sign", () => {
     {
       const fileURL = url.pathToFileURL("test/").href;

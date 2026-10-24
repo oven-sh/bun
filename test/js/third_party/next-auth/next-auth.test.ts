@@ -3,7 +3,6 @@ import { cpSync } from "fs";
 import { bunEnv, bunRun, runBunInstall, tmpdirSync } from "harness";
 import { join } from "path";
 describe("next-auth", () => {
-  // This test OOMs on Windows.
   it("should be able to call server action multiple times using auth middleware #18977", async () => {
     const testDir = tmpdirSync("next-auth-" + Date.now());
 

@@ -40,6 +40,9 @@ test("tty.ReadStream should have ref/unref methods when opened on /dev/tty", () 
 
 test("tty.ReadStream ref/unref should behave like Node.js", async () => {
   // Skip on Windows - no /dev/tty
+  if (process.platform === "win32") {
+    return;
+  }
 
   // Create a test script that uses tty.ReadStream with ref/unref
   const script = `

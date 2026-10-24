@@ -600,7 +600,7 @@ describe.skipIf(isWindows).each(["cp", "cpSync"] as const)(
 // freed the parent while other subtasks were still dereferencing it
 // (heap-use-after-free under ASAN).
 //
-// POSIX-only: uses a pre-existing directory at the destination path of one
+// Uses a pre-existing directory at the destination path of one
 // file so that its SingleTask fails with EISDIR. This works even when running
 // as root. On macOS the pre-existing dst/ makes clonefile() fail with EEXIST
 // and fall through to the per-file SingleTask path being tested.

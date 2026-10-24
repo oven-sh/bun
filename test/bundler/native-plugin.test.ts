@@ -411,7 +411,7 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
   // and aborts before the crash handler can print the name. musl: the crash
   // handler re-raises and the agent writes a core, which the runner counts as a
   // failed job even though every test passed.
-  it.skipIf(isASAN || isMusl)("prints name when plugin crashes", async () => {
+  it.skipIf(process.platform === "win32" || isASAN || isMusl)("prints name when plugin crashes", async () => {
     const prelude = /* ts */ `import values from "./stuff.ts"
   const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
       `;

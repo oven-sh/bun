@@ -1,9 +1,9 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as certs, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, tls as certs, isLinux, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
-const skip = !fault.available();
+const skip = !fault.available() || isWindows;
 
 // Bun.serve is the server; faults are armed inside the server subprocess so
 // only the server's bsd_* calls are affected.

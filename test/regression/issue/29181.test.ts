@@ -1,11 +1,11 @@
 // https://github.com/oven-sh/bun/issues/29181
 import { expect, test } from "bun:test";
-import { getFDCount, tempDir } from "harness";
+import { getFDCount, isPosix, tempDir } from "harness";
 import { join } from "node:path";
 
 // getFDCount reads /proc/self/fd (Linux) or /dev/fd (macOS). On Windows
 // we don't have a stable way to query per-process fds, so skip there.
-test("Bun.serve static file route does not leak fds on 304 / HEAD", async () => {
+test.skipIf(!isPosix)("Bun.serve static file route does not leak fds on 304 / HEAD", async () => {
   using dir = tempDir("issue-29181-fds", { "file.txt": "Hello, world!\n" });
   const tmpFile = join(String(dir), "file.txt");
 

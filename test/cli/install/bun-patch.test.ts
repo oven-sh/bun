@@ -1070,9 +1070,10 @@ describe.concurrent.each([
     const repo = join(String(dir), "gitrepo");
     // The checkout in the cache has the symlinks, and the copies in node_modules don't. That used to end up in the
     // patch as `deleted file mode 120000`, which no install can apply.
-
-    symlinkSync("index.js", join(repo, "main.js"));
-    symlinkSync("v2", join(repo, "docs", "latest"));
+    
+      symlinkSync("index.js", join(repo, "main.js"));
+      symlinkSync("v2", join(repo, "docs", "latest"));
+    
 
     // keep git away from the machine's global/system config (autocrlf, gpgsign)
     const gitEnv = { ...bunEnv, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: join(String(dir), "no-gitconfig") };
@@ -2649,7 +2650,7 @@ describe.concurrent("isolated linker: a package that the project links", () => {
 
   // A patch that adds a symlink does not apply (`bad_file_mode`). Windows is skipped: git records
   // a symlink as mode 120000 only with `core.symlinks`, which is off there by default.
-  test("the edits are kept when the patch doesn't apply", async () => {
+  test.skipIf(isWindows)("the edits are kept when the patch doesn't apply", async () => {
     await using project = await installedProject({ dependencies }, { linker: "isolated" });
     const { dir, env } = project;
     await expectPrepared(dir, env, "has-bin-entries", "has-bin-entries", folder);
@@ -3221,7 +3222,7 @@ describe.concurrent("isolated linker with the global store", () => {
   );
 
   // A patch that adds a symlink does not apply. Windows is skipped as in the test without the global store.
-  test("the copy is kept when the patch doesn't apply", async () => {
+  test.skipIf(isWindows)("the copy is kept when the patch doesn't apply", async () => {
     await using project = await twoVersions();
     const { dir, env } = project;
     const folder = join(dir, "node_modules", "two-range-deps");

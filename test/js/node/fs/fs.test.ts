@@ -5365,7 +5365,6 @@ describe("utimesSync", () => {
     expect(finalStats.atime).toEqual(prevAccessTime);
   });
 
-  // TODO: make this work on Windows
   it("works after 2038", () => {
     const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
     writeFileSync(tmp, "test");

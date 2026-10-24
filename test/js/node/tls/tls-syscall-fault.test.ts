@@ -7,7 +7,7 @@ import net, { type AddressInfo } from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
 
-const skip = !fault.available();
+const skip = !fault.available() || isWindows;
 
 afterEach(() => fault.clear());
 

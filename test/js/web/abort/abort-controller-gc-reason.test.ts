@@ -5,8 +5,6 @@ import { bunEnv, bunExe } from "harness";
 // AbortController.signal.reason is lost after garbage collection
 describe("AbortController GC", () => {
   // https://bugs.webkit.org/show_bug.cgi?id=236353
-  // verifyGC + collectContinuously is prohibitively slow under Windows CI and
-  // the code path under test is platform-independent.
   test("reason is marked across concurrent GC (write barrier / output constraint)", async () => {
     // verifyGC asserts on reachable cells the concurrent collector missed.
     // Before the fix, abort() after the controller was scanned stored the
@@ -148,8 +146,6 @@ describe("AbortController GC", () => {
     });
   });
 
-  // collectContinuously is very slow on Windows CI; the code under test is
-  // identical across platforms.
   test("AbortSignal.abort()'s default reason survives GC for fetch / throwIfAborted / any", async () => {
     // The default DOMException for AbortSignal.abort() was stored in
     // m_reason (a JSC::Weak) before the JSAbortSignal wrapper existed, so a

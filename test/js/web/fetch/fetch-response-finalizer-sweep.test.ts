@@ -83,8 +83,6 @@ const fixture = /* js */ `
   console.log("ok");
 `;
 
-// collectContinuously is slow under Windows CI and the code path is identical
-// across platforms; the assertion this guards is platform-independent.
 describe("fetch Response Weak finalizer during GC sweep", () => {
   test("dropping an unconsumed streaming-upload Response does not touch JSCells in the finalizer", async () => {
     await using proc = Bun.spawn({

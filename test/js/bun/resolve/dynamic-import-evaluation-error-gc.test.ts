@@ -21,10 +21,6 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // and GC cycles of a long loop; a single iteration does not fire, 100 fire on
 // about 1 run in 6, 300 on essentially every run of the unfixed assert build.
 // The fixture runs twice and a single crash fails the test.
-//
-// Skipped on Windows: two runs of a 300-iteration loop that writes 2100 files
-// and evaluates 1200 module graphs are several times slower under
-// Windows + ASAN in CI, and the fixed C++ path is not platform-specific.
 test("import() of a module whose evaluation throws survives a GC stack-trace finalizer", async () => {
   const fixture = `
     import { mkdirSync, writeFileSync } from "node:fs";

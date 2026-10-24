@@ -378,7 +378,6 @@ describe.concurrent("bun run", () => {
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
         expect(stderr).toContain(`Could not change directory to "${cwdArg}"`);
-        // Windows leaves the verdict on a path this long to SetCurrentDirectoryW.
         expect(stderr).toContain("ENAMETOOLONG");
         expect(stdout).toBe("");
         expect(proc.signalCode).toBeNull();

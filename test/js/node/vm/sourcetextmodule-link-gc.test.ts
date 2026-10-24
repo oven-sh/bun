@@ -14,8 +14,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// collectContinuously is very slow under Windows + ASAN in CI; the code path
-// is identical on Linux/macOS, so skip Windows to keep duration reasonable.
 test("vm.SourceTextModule link() m_resolveCache survives concurrent GC", async () => {
   const fixture = `
       const vm = require("node:vm");
@@ -169,7 +167,7 @@ test("vm.SourceTextModule evaluation error survives a concurrent-GC stack-trace 
 // Run the GC-churn fixture inside a Worker and terminate it mid-run, 20 times.
 // Every run of the build with the suspend scope but without the deferral
 // asserted; this guards that pairing rather than the original crash (it passes
-// on a build with neither). Windows: same reason as above.
+// on a build with neither).
 test("terminate() while the stack-trace finalizer runs keeps the exception and trap state in sync", async () => {
   using dir = tempDir("vm-module-eval-error-gc-terminate", {
     "fixture.mjs": evaluationErrorFixture(600),

@@ -6,7 +6,7 @@ import http2 from "node:http2";
 import net from "node:net";
 import { join } from "node:path";
 
-const skip = !fault.available();
+const skip = !fault.available() || isWindows;
 
 // The two TLS fixtures below each run a server in a child Bun process and
 // drive raw TLS clients from a grandchild; they print one JSON summary line

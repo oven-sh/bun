@@ -130,7 +130,7 @@ test("active TCP socket wrapper survives GC until closed", async () => {
 // memory"); on Windows 11 aarch64 the residual count is higher and varies,
 // making a tight GC bound unreliable there. The Strong-release path this
 // guards is platform-independent, so Linux/macOS coverage suffices.
-test("upgradeTLS raw + tls wrappers are both collectable after close", async () => {
+test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after close", async () => {
   // upgradeTLS produces two TLSSocket wrappers (the raw passthrough and the
   // TLS socket) sharing one underlying connection. When the connection closes,
   // the raw socket is cleaned up via WrappedHandler.onClose which must release

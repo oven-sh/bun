@@ -31,7 +31,6 @@ describe("fake node cli", () => {
     });
     expect(fakeNodeRun(temp, "run").stdout).toBe("pass");
   });
-  // A Windows command line is too short for a path longer than the path buffer.
   test("reports module not found for a relative script path longer than PATH_MAX", () => {
     const long = Array(21).fill(Buffer.alloc(200, "a").toString()).join("/") + ".js";
     using temp = tempDir("fake-node-long", {});

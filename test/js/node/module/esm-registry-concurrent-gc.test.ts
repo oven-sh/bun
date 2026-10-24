@@ -17,9 +17,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// collectContinuously is very slow on Windows in CI and the code path is
-// identical across platforms; skip there (same rationale as
-// module-children-concurrent-gc.test.ts).
 test("ESM registry removeEntry/clearAll under concurrent GC", async () => {
   const files: Record<string, string> = {
     "dep.mjs": `export const value = 1;\n`,

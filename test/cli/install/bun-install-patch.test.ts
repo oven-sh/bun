@@ -1312,11 +1312,7 @@ describe("patchedDependencies path longer than the path buffer", () => {
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // The path is handed to the OS as is. POSIX rejects anything longer than
-    // PATH_MAX with ENAMETOOLONG; Windows may report it as missing instead.
-
     expect(stderr).toContain("error: failed to read patch file: ENAMETOOLONG: ");
-
     expect(stderr).toContain(`${longName}.patch`);
     expect(exitCode).toBe(1);
   });

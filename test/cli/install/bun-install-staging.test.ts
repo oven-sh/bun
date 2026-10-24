@@ -566,79 +566,82 @@ const failOnceLinkingStarts = [
 ].join("; ");
 
 // The script is POSIX sh; on Windows lifecycle scripts run in bun's own shell.
-test("isolated linker: a lifecycle script that fails mid-link leaves no partial package", async () => {
-  const scripts = { install: failOnceLinkingStarts };
-  const manyFiles: RegistryPackage = { tgz: await new Bun.Archive(archiveEntries, { compress: "gzip" }).bytes() };
-  const failingScript: RegistryPackage = {
-    tgz: await new Bun.Archive(
-      { "package/package.json": JSON.stringify({ name: "failing-script", version: "1.0.0", scripts }) },
-      { compress: "gzip" },
-    ).bytes(),
-    scripts,
-  };
-  using registry = serveRegistry({ "many-files": manyFiles, "failing-script": failingScript });
+test.skipIf(isWindows)(
+  "isolated linker: a lifecycle script that fails mid-link leaves no partial package",
+  async () => {
+    const scripts = { install: failOnceLinkingStarts };
+    const manyFiles: RegistryPackage = { tgz: await new Bun.Archive(archiveEntries, { compress: "gzip" }).bytes() };
+    const failingScript: RegistryPackage = {
+      tgz: await new Bun.Archive(
+        { "package/package.json": JSON.stringify({ name: "failing-script", version: "1.0.0", scripts }) },
+        { compress: "gzip" },
+      ).bytes(),
+      scripts,
+    };
+    using registry = serveRegistry({ "many-files": manyFiles, "failing-script": failingScript });
 
-  const dependencies = { "many-files": "1.0.0" };
-  const rootPackageJson = { name: "app", private: true, workspaces: ["packages/*"] };
-  using dir = tempDir("staging-script-failure", {
-    "package.json": JSON.stringify({ ...rootPackageJson, trustedDependencies: ["failing-script"] }),
-    "packages/a/package.json": JSON.stringify({
-      name: "pkg-a",
-      version: "1.0.0",
-      dependencies: { ...dependencies, "failing-script": "1.0.0" },
-    }),
-    "packages/b/package.json": JSON.stringify({ name: "pkg-b", version: "1.0.0", dependencies }),
-    "bunfig.toml": ({ root }) =>
-      Bun.TOML.stringify({
-        install: { registry: registry.url.href, cache: join(root, ".bun-cache"), linker: "isolated" },
+    const dependencies = { "many-files": "1.0.0" };
+    const rootPackageJson = { name: "app", private: true, workspaces: ["packages/*"] };
+    using dir = tempDir("staging-script-failure", {
+      "package.json": JSON.stringify({ ...rootPackageJson, trustedDependencies: ["failing-script"] }),
+      "packages/a/package.json": JSON.stringify({
+        name: "pkg-a",
+        version: "1.0.0",
+        dependencies: { ...dependencies, "failing-script": "1.0.0" },
       }),
-  });
-  const root = String(dir);
-  const installed = packageDirs.isolated(root);
-  const installedParent = join(installed, "..");
-
-  const lockfileOnly = await install(root, ["--lockfile-only"]);
-  expect(lockfileOnly.stderr).not.toContain("error");
-  expect(lockfileOnly.exitCode).toBe(0);
-
-  const scriptStarted = Promise.withResolvers<void>();
-  manyFiles.release = scriptStarted.promise;
-  const watcher = watch(root, (_, filename) => {
-    if (filename === "script-started") scriptStarted.resolve();
-  });
-  try {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: root,
-      env: {
-        ...installEnv,
-        STAGING_TEST_SCRIPT_STARTED: join(root, "script-started"),
-        STAGING_TEST_LINK_DIR: installedParent,
-      },
-      stdout: "pipe",
-      stderr: "pipe",
+      "packages/b/package.json": JSON.stringify({ name: "pkg-b", version: "1.0.0", dependencies }),
+      "bunfig.toml": ({ root }) =>
+        Bun.TOML.stringify({
+          install: { registry: registry.url.href, cache: join(root, ".bun-cache"), linker: "isolated" },
+        }),
     });
-    // An install that ends without running the script must not leave the registry waiting.
-    proc.exited.then(() => scriptStarted.resolve());
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain('install script from "failing-script" exited with 1');
-    expect(exitCode).toBe(1);
-  } finally {
-    watcher.close();
-  }
-  // Either the package is not at its final path yet, or all of it is.
-  if (existsSync(installed)) {
-    expect(compareWithExpectedTree(installed)).toEqual(completeTree);
-  }
+    const root = String(dir);
+    const installed = packageDirs.isolated(root);
+    const installedParent = join(installed, "..");
 
-  // This is what the reporter did next: remove the trust and install again.
-  writeFileSync(join(root, "package.json"), JSON.stringify(rootPackageJson));
-  const second = await install(root);
-  expect(second.stderr).not.toContain("error");
-  expect(second.exitCode).toBe(0);
-  expect(compareWithExpectedTree(installed)).toEqual(completeTree);
-  expect(entriesOf(installedParent)).toEqual(["many-files"]);
-});
+    const lockfileOnly = await install(root, ["--lockfile-only"]);
+    expect(lockfileOnly.stderr).not.toContain("error");
+    expect(lockfileOnly.exitCode).toBe(0);
+
+    const scriptStarted = Promise.withResolvers<void>();
+    manyFiles.release = scriptStarted.promise;
+    const watcher = watch(root, (_, filename) => {
+      if (filename === "script-started") scriptStarted.resolve();
+    });
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: root,
+        env: {
+          ...installEnv,
+          STAGING_TEST_SCRIPT_STARTED: join(root, "script-started"),
+          STAGING_TEST_LINK_DIR: installedParent,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // An install that ends without running the script must not leave the registry waiting.
+      proc.exited.then(() => scriptStarted.resolve());
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain('install script from "failing-script" exited with 1');
+      expect(exitCode).toBe(1);
+    } finally {
+      watcher.close();
+    }
+    // Either the package is not at its final path yet, or all of it is.
+    if (existsSync(installed)) {
+      expect(compareWithExpectedTree(installed)).toEqual(completeTree);
+    }
+
+    // This is what the reporter did next: remove the trust and install again.
+    writeFileSync(join(root, "package.json"), JSON.stringify(rootPackageJson));
+    const second = await install(root);
+    expect(second.stderr).not.toContain("error");
+    expect(second.exitCode).toBe(0);
+    expect(compareWithExpectedTree(installed)).toEqual(completeTree);
+    expect(entriesOf(installedParent)).toEqual(["many-files"]);
+  },
+);
 
 // A workspace that other packages depend on under a second name is linked into
 // node_modules under both names, and the hoisted linker walks the packages
@@ -789,26 +792,29 @@ for (const linker of ["hoisted", "isolated"]) {
 // It replaces a link at node_modules/@scope by a directory now, and the isolated
 // linker moves a node_modules it did not make aside first.
 for (const linker of ["hoisted", "isolated"]) {
-  test.concurrent(`${linker} linker: a dangling node_modules/@scope symlink does not hang the install`, async () => {
-    const depTarball = await new Bun.Archive(
-      { "package/package.json": JSON.stringify({ name: "@scope/dep", version: "1.0.0" }) },
-      { compress: "gzip" },
-    ).bytes();
-    using dir = tempDir(`staging-dangling-scope-${linker}`, {
-      "package.json": JSON.stringify({ name: "app", dependencies: { "@scope/dep": "file:./dep-1.0.0.tgz" } }),
-      "dep-1.0.0.tgz": Buffer.from(depTarball),
-      "node_modules": {},
-      "bunfig.toml": ({ root }) => Bun.TOML.stringify({ install: { cache: join(root, ".bun-cache"), linker } }),
-    });
-    const root = String(dir);
-    symlinkSync(join(root, "does-not-exist"), join(root, "node_modules", "@scope"));
+  test.concurrent(
+    `${linker} linker: a dangling node_modules/@scope symlink does not hang the install`,
+    async () => {
+      const depTarball = await new Bun.Archive(
+        { "package/package.json": JSON.stringify({ name: "@scope/dep", version: "1.0.0" }) },
+        { compress: "gzip" },
+      ).bytes();
+      using dir = tempDir(`staging-dangling-scope-${linker}`, {
+        "package.json": JSON.stringify({ name: "app", dependencies: { "@scope/dep": "file:./dep-1.0.0.tgz" } }),
+        "dep-1.0.0.tgz": Buffer.from(depTarball),
+        "node_modules": {},
+        "bunfig.toml": ({ root }) => Bun.TOML.stringify({ install: { cache: join(root, ".bun-cache"), linker } }),
+      });
+      const root = String(dir);
+      symlinkSync(join(root, "does-not-exist"), join(root, "node_modules", "@scope"));
 
-    const { stderr, exitCode } = await install(root);
-    expect(stderr).not.toContain("error");
-    expect(readdirSync(join(root, "node_modules", "@scope"))).toEqual(["dep"]);
-    expect(lstatSync(join(root, "node_modules", "@scope")).isDirectory()).toBe(true);
-    expect(exitCode).toBe(0);
-  });
+      const { stderr, exitCode } = await install(root);
+      expect(stderr).not.toContain("error");
+      expect(readdirSync(join(root, "node_modules", "@scope"))).toEqual(["dep"]);
+      expect(lstatSync(join(root, "node_modules", "@scope")).isDirectory()).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+  );
 }
 
 // When linking fails midway, bun sees the error itself instead of being killed,

@@ -499,9 +499,6 @@ describe.concurrent("Bun.resolve() rejections are tracked", () => {
 // collectContinuously keeps an end phase always imminent. The unfixed debug
 // build panics after 2500 to 8500 iterations. Not concurrent with the tests
 // above: a busy machine starves the collector and hides the race.
-//
-// Skipped on Windows: collectContinuously is several times slower under
-// Windows + ASAN in CI, and the fixed C++ path is not platform-specific.
 it("Bun.resolve() rejection survives a GC stack-trace finalizer", async () => {
   using dir = tempDir("bun-resolve-rejection-gc", {
     "fixture.mjs": `

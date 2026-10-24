@@ -2903,8 +2903,6 @@ it("onread: a swallowed throw does not drop the rest of the current native read"
   expect(exitCode).toBe(0);
 });
 
-// On Windows the native layer does not report fatal send errors yet (the WSA
-// error translation is a follow-up), so the write error never surfaces there.
 it("a write after the peer reset the connection fails with a write error", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
   // resetAndDestroy() sends an RST (not a FIN); allowHalfOpen keeps the client's
@@ -3063,8 +3061,7 @@ describe("a write that fails at once", () => {
 // libuv's uv__tcp_bind always sets SO_REUSEADDR on Unix, so Node can bind a
 // client localPort that still has earlier connections in TIME_WAIT. Bun used
 // to call bind() bare here and fail with EADDRINUSE, which made
-// sequential/test-net-localport.js order-dependent in CI. Windows is skipped
-// because libuv intentionally does not set SO_REUSEADDR there.
+// sequential/test-net-localport.js order-dependent in CI.
 it("connect({ localPort }) succeeds when the local port has TIME_WAIT sockets", async () => {
   // Reserve a port and release it so nothing else is listening on it.
   const probe = createServer();

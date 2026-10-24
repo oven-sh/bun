@@ -22,8 +22,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// collectContinuously is very slow on Windows in CI and the code path is
-// identical across platforms; skip there (same rationale as issue 29519).
 test("JSCommonJSModule m_children mutation under concurrent GC", async () => {
   const files: Record<string, string> = {
     "c.cjs": `module.exports = 1;\n`,

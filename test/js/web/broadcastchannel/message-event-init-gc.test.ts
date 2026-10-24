@@ -17,9 +17,6 @@ import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 // accumulate every received event in `all` so each GC cycle has progressively
 // more memoryCost() visits, and each round supplies a fresh batch whose
 // initMessageEvent() call performs the racy variant reassignment.
-//
-// collectContinuously is prohibitively slow on Windows CI; the m_data race is
-// platform-agnostic C++ so POSIX coverage is sufficient.
 test(
   "MessageEvent.initMessageEvent does not race GC visitor on m_data",
   async () => {

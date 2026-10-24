@@ -390,7 +390,6 @@ describe("symbol-keyed methods", () => {
 });
 
 describe.each(["with", "without"])("setImmediate %s timers running", mode => {
-  // TODO(@190n) #17901 did not fix this for Windows
   it("has reasonable performance when nested", async () => {
     const process = Bun.spawn({
       cmd: [bunExe(), path.join(__dirname, "setImmediate-fixture.ts"), mode + "-interval"],

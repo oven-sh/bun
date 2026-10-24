@@ -1470,7 +1470,6 @@ describe.concurrent(() => {
       ).toThrow("The property 'prevValue.system' is invalid. Received -1");
     });
 
-    // Skipped on Windows because it seems UV returns { user: 15000, system: 0 } constantly
     it("works with diff", () => {
       const init = process.cpuUsage();
       init.system = 0;

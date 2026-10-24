@@ -905,8 +905,11 @@ impl<'p> Checker<'p, '_> {
         callback.deferred = Some(Deferred::NonexistentProperty(missing));
         self.add_deferred_diagnostic(callback);
         // The first callback for a node reports. If it was added while analyzing a loop, it has the types collected so
-        // far, and the walk's callback with the final type reports nothing.
-        if self.is_in_flow_loop() {
+        // far, and the walk's callback with the final type reports nothing. Likewise if it was added while the type
+        // arguments of a call were inferred.
+        if self.is_in_flow_loop()
+            || self.is_rechecking() && self.inference_contexts.len() != self.context_free_level
+        {
             self.log_reported_in_flow_loop(reported, at.0, missing.access);
             self.non_existent_properties.insert(node, false);
         }

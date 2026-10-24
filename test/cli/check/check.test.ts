@@ -17355,6 +17355,33 @@ declare const other: Box<number> & Box<string>;
       expect(exitCode).toBe(1);
     });
 
+    // `reportNonexistentProperty` reports once for each name, so the first check of the name decides which type the error names. The expected output is tsc's.
+    test("TS2339 names the type that `this` has while the type arguments are inferred, with a type parameter in scope too", async () => {
+      using dir = project({
+        "a.ts": `declare function gobj<T, U>(o: { v: T; cb: (x: T) => U }): U;
+declare function key<T extends string>(x: T, m: { [K in T]: (k: K) => void }): T;
+gobj({ v: 1, cb(x) { return this.zz; } });
+export function plain() { gobj({ v: 1, cb(x) { return this.zz; } }); }
+export function generic<Q>() { gobj({ v: 1, cb(x) { return this.zz; } }); }
+export class Generic<Q> { m() { gobj({ v: 1, cb() { return this.zz; } }); } }
+export function statement<Q>() { gobj({ v: 1, cb(x) { this.zz; return 1; } }); }
+export function mapped<Q>() { return key("x", { x(k) { return this.zz; } }); }
+export function parameter<Q>(q: Q) { gobj({ v: q, cb: x => x.zz }); }
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n")).toEqual([
+        `a.ts(3,34): error TS2339: Property 'zz' does not exist on type '{ v: T; cb: (x: T) => U; }'.`,
+        `a.ts(4,60): error TS2339: Property 'zz' does not exist on type '{ v: T; cb: (x: T) => U; }'.`,
+        `a.ts(5,65): error TS2339: Property 'zz' does not exist on type '{ v: T; cb: (x: T) => U; }'.`,
+        `a.ts(6,65): error TS2339: Property 'zz' does not exist on type '{ v: T; cb: (x: T) => U; }'.`,
+        `a.ts(7,60): error TS2339: Property 'zz' does not exist on type '{ v: number; cb: (x: number) => number; }'.`,
+        `a.ts(8,68): error TS2339: Property 'zz' does not exist on type '{ [K in T]: (k: K) => void; }'.`,
+        `a.ts(9,62): error TS2339: Property 'zz' does not exist on type 'Q'.`,
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS2775 only for the CommonJS-exported assertion functions that tsc rejects", async () => {
       using dir = project({
         "tsconfig.json": `{"compilerOptions": {"strict": true, "noEmit": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "skipLibCheck": true, "allowJs": true, "checkJs": true}}`,

@@ -2348,6 +2348,17 @@ describe("Bun.Archive", () => {
           glob: { settled: `rejected ${isWindows ? "ENOENT" : "ENOTDIR"} open d/a.txt`, files: ["d"] },
         },
         {
+          name: "a file holds the name of a directory above an entry",
+          tar: tarOf(file("s/sub/a.txt"), file("z.txt")),
+          prepare: dest => writeFileSync(join(dest, "s"), "in the way"),
+          plain: { settled: "rejected ReadError", files: ["s"] },
+          // Windows answers ENOENT for the open, and then cannot make `s/sub`.
+          glob: {
+            settled: isWindows ? "rejected ENOENT mkdir s/sub" : "rejected ENOTDIR open s/sub/a.txt",
+            files: ["s"],
+          },
+        },
+        {
           name: "a directory holds the name of a file entry",
           tar: nestedThenTopLevel,
           prepare: dest => mkdirSync(join(dest, "b.txt")),

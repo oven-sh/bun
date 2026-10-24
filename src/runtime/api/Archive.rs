@@ -1253,6 +1253,15 @@ pub(crate) fn match_glob_patterns(patterns: &[GlobPattern], pathname: &[u8]) -> 
     !has_positive_patterns || matches_positive
 }
 
+/// The error of a mkdir of `dir`. On Windows it names an open call and carries no path.
+fn mkdir_error(mut err: bun_sys::Error, dir: &[u8]) -> bun_sys::Error {
+    err.syscall = bun_sys::Tag::mkdir;
+    if err.path.is_empty() {
+        err.path = dir.into();
+    }
+    err
+}
+
 /// Extract archive to disk with glob pattern filtering.
 /// Supports negative patterns with "!" prefix (e.g., "!node_modules/**").
 fn extract_to_disk_filtered(
@@ -1359,9 +1368,8 @@ fn extract_to_disk_filtered(
                     }
                     made => made,
                 };
-                if let Err(mut err) = made {
-                    // Windows makes a directory with an open call, and names that call in the error.
-                    err.syscall = bun_sys::Tag::mkdir;
+                if let Err(err) = made {
+                    let err = mkdir_error(err, name.as_bytes());
                     return ExtractResult::refused(&err, root, name.as_bytes());
                 }
                 count += 1;
@@ -1387,9 +1395,10 @@ fn extract_to_disk_filtered(
                 };
                 let opened = open().or_else(|err| match bun_core::dirname(pathname) {
                     // The parent directory is missing.
-                    Some(parent) if err.get_errno() == bun_sys::E::ENOENT => {
-                        dir_fd.make_path(parent).and_then(|()| open())
-                    }
+                    Some(parent) if err.get_errno() == bun_sys::E::ENOENT => dir_fd
+                        .make_path(parent)
+                        .map_err(|err| mkdir_error(err, parent))
+                        .and_then(|()| open()),
                     _ => Err(err),
                 });
                 let file_fd: Fd = match opened {

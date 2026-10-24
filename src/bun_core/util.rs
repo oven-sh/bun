@@ -37,13 +37,6 @@ pub unsafe fn bytes_as_slice_mut<T>(bytes: &mut [u8]) -> &mut [T] {
 pub struct Unaligned<T: Copy>(T);
 
 impl<T: Copy> Unaligned<T> {
-    #[inline(always)]
-    pub fn get(self) -> T {
-        // `self` is by-value (already moved into an aligned local), so a plain
-        // field read is fine; the `packed` repr only affects in-place borrows.
-        self.0
-    }
-
     #[inline]
     pub fn slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T] {
         if slice.is_empty() {

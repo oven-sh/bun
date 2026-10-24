@@ -558,7 +558,7 @@ impl JSType {
     /// Covers every `is_typed_array_or_array_buffer()` variant + `DataView`.
     /// The `_ => "TypedArray"` arm is unreachable for any real
     /// `ArrayBuffer.typed_array_type` (always one of the 14).
-    pub fn typed_array_name(self) -> &'static [u8] {
+    pub(crate) fn typed_array_name(self) -> &'static [u8] {
         match self {
             JSType::ArrayBuffer => b"ArrayBuffer",
             JSType::Int8Array => b"Int8Array",

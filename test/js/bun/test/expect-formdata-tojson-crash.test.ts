@@ -25,6 +25,12 @@ test("failing matcher on FormData without a callable toJSON does not abort the t
         Object.defineProperty(fd, "toJSON", { value: 42 });
         expect(fd).toEqual(1 as any);
       });
+
+      test("toJSON returns a primitive", () => {
+        const fd = new FormData();
+        Object.defineProperty(fd, "toJSON", { value: () => 5 });
+        expect(fd).toEqual(1 as any);
+      });
     `,
   });
 
@@ -42,6 +48,6 @@ test("failing matcher on FormData without a callable toJSON does not abort the t
   // The non-callable toJSON is printed as a property rather than being called.
   expect(stderr).toContain(`"toJSON": 42`);
   expect(stderr).not.toContain("is not a function");
-  expect(stderr).toContain("3 fail");
+  expect(stderr).toContain("4 fail");
   expect(exitCode).toBe(1);
 });

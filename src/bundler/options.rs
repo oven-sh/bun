@@ -1277,8 +1277,6 @@ pub struct BundleOptions<'a> {
     pub transform_options: std::sync::Arc<api::TransformOptions>,
     pub(crate) polyfill_node_globals: bool,
     pub transform_only: bool,
-    pub load_tsconfig_json: bool,
-    pub(crate) load_package_json: bool,
 
     pub rewrite_jest_for_tests: bool,
 
@@ -1516,8 +1514,6 @@ impl<'a> BundleOptions<'a> {
             transform_options: std::sync::Arc::clone(&self.transform_options),
             polyfill_node_globals: self.polyfill_node_globals,
             transform_only: self.transform_only,
-            load_tsconfig_json: self.load_tsconfig_json,
-            load_package_json: self.load_package_json,
             rewrite_jest_for_tests: self.rewrite_jest_for_tests,
             macro_remap: clone_macro_remap(&self.macro_remap),
             no_macros: self.no_macros,
@@ -1774,8 +1770,6 @@ impl<'a> BundleOptions<'a> {
             defines_loaded: false,
             polyfill_node_globals: false,
             transform_only: false,
-            load_tsconfig_json: true,
-            load_package_json: true,
             rewrite_jest_for_tests: false,
             macro_remap: MacroRemap::default(),
             no_macros: false,

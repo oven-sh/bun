@@ -116,6 +116,10 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// so `process.execArgv` (lower-tier `bun_jsc` callers holding only the
     /// trait object) can read it without downcasting to the concrete graph.
     fn compile_exec_argv(&self) -> &[u8];
+    /// Which configuration files the resolvers of the executable's own VMs
+    /// read: the `--compile-autoload-package-json` and
+    /// `--compile-autoload-tsconfig` it was built with.
+    fn load_mode(&self) -> crate::LoadMode;
     /// Ahead-of-time bytecode for InternalModuleRegistry module `id` embedded by `bun build --compile`, if any.
     /// A raw pointer because JSC reads (and may patch) it in place; the bytes live for the process.
     /// The payload internal module `id`'s ahead-of-time bytecode is in, and where in it its cache entry starts.

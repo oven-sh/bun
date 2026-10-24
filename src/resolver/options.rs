@@ -178,8 +178,6 @@ pub struct BundleOptions {
     // projects this from its own `Option<NonNull<api::BunInstall>>` field
     // (CLI-owned `Box<BunInstall>`, process-lifetime).
     pub install: Option<core::ptr::NonNull<bun_options_types::schema::api::BunInstall>>,
-    pub load_package_json: bool,
-    pub load_tsconfig_json: bool,
     pub main_field_extension_order: Box<[Box<[u8]>]>,
     pub main_fields: Box<[Box<[u8]>]>,
     /// `auto_main` compares the *pointer* of

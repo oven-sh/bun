@@ -20,11 +20,9 @@ pub(crate) fn apply_standalone_runtime_flags(
         DotEnvBehavior::LoadAllWithoutInlining
     };
 
-    b.resolver.opts.load_tsconfig_json =
-        !graph.flags.contains(GraphFlags::DISABLE_AUTOLOAD_TSCONFIG);
-    b.resolver.opts.load_package_json = !graph
-        .flags
-        .contains(GraphFlags::DISABLE_AUTOLOAD_PACKAGE_JSON);
+    // `--compile-autoload-tsconfig` and `--compile-autoload-package-json` select the resolver's
+    // directory cache, so the VM gave them to the resolver when it created it.
+    debug_assert!(b.resolver.load_mode() == bun_resolver::StandaloneModuleGraph::load_mode(graph));
 }
 
 #[cold]

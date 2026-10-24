@@ -455,6 +455,9 @@ impl Macro {
                 transform_options,
                 log: Some(NonNull::from(&mut *log)),
                 owned_env_loader,
+                // It runs macros for a build, so it reads package.json and tsconfig.json
+                // like the build, also in a standalone executable.
+                load_mode: None,
                 is_main_thread: false,
                 ..Default::default()
             })?;

@@ -279,8 +279,8 @@ use bun_alloc as allocators;
 use bun_ast::SideEffects;
 
 // ── Process-lifetime arenas for DirInfo-cached parses ─────────────────────
-// The DirInfo cache (`DirInfo::hash_map_instance()`) is a true process-lifetime
-// singleton; entries hold `&'static PackageJSON` / `&'static TSConfigJSON` and
+// The DirInfo caches (`DirInfo::hash_map_for()`) are true process-lifetime
+// singletons; entries hold `&'static PackageJSON` / `&'static TSConfigJSON` and
 // borrow `&'static [u8]` source bytes. PORTING.md §Forbidden bars `Box::leak`/
 // `mem::forget` for this — process-lifetime storage must go through
 // `LazyLock`. These append-only arenas are that storage; the `Box<T>` heap
@@ -555,11 +555,15 @@ pub struct Resolver<'a> {
     /// all parent directories. When interacting with this structure, make sure
     /// to validate your keys with `Resolver.assertValidCacheKey`
     // NOTE: a raw aliasing pointer to the
-    // `DirInfo::hash_map_instance()` singleton. Modeled as `*mut` (not `&'static mut`)
+    // `DirInfo::hash_map_for(load_mode)` singleton. Modeled as `*mut` (not `&'static mut`)
     // for the same reason as `fs`/`log` above — every per-worker `Resolver` shares the
     // singleton, so a `&'static mut` here would manufacture aliased unique refs (UB).
     // Deref through the `dir_cache()` accessor below.
     pub(crate) dir_cache: *mut DirInfo::HashMap,
+
+    /// Which configuration files `dir_info_uncached` reads. It selects
+    /// `dir_cache`, so only the constructors set the two.
+    load_mode: DirInfo::LoadMode,
 
     /// This is set to false for the runtime. The runtime should choose "main"
     /// over "module" in package.json
@@ -644,6 +648,7 @@ impl<'a> Resolver<'a> {
             },
             mutex: from.mutex,
             dir_cache: from.dir_cache,
+            load_mode: from.load_mode,
             prefer_module_field: from.prefer_module_field,
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
@@ -778,14 +783,20 @@ impl<'a> Resolver<'a> {
     }
 
     /// NOTE (Stacked Borrows): returns RAW `*mut` (see `fs()` note). ARENA —
-    /// `DirInfo::hash_map_instance()` singleton; never freed. Caller
+    /// `DirInfo::hash_map_for(load_mode)` singleton; never freed. Caller
     /// `unsafe { &mut *r.dir_cache() }` at each use site.
     #[inline(always)]
     pub(crate) fn dir_cache(&self) -> *mut DirInfo::HashMap {
         self.dir_cache
     }
 
-    /// Unique-borrow of the `DirInfo` BSSMap singleton.
+    /// Which configuration files this resolver reads.
+    #[inline]
+    pub fn load_mode(&self) -> DirInfo::LoadMode {
+        self.load_mode
+    }
+
+    /// Unique-borrow of this resolver's `DirInfo` BSSMap singleton.
     ///
     /// Centralizes the `unsafe { &mut *self.dir_cache() }` retag that every
     /// call site previously open-coded. `&mut self` ensures no two coexisting
@@ -798,12 +809,12 @@ impl<'a> Resolver<'a> {
     /// allocation, so any `*mut DirInfo` previously projected from an earlier
     /// `dir_cache_mut()` borrow is popped. Slot pointers that must survive a
     /// subsequent map access are re-derived from the raw singleton via
-    /// `DirInfo::put_slot` / `DirInfo::slot_ptr_at`; refs from `at_index` /
-    /// `ref_at_index` are only durable until the next map access.
+    /// `DirInfo::put_slot` / `DirInfo::slot_ptr_at`; refs from `at_index`
+    /// are only durable until the next map access.
     #[inline(always)]
     pub(crate) fn dir_cache_mut(&mut self) -> &mut DirInfo::HashMap {
         // SAFETY: ARENA — `self.dir_cache` is the never-null
-        // `DirInfo::hash_map_instance()` static (set in `init1`, never
+        // `DirInfo::hash_map_for(load_mode)` static (set in `init1`, never
         // reassigned, never freed). Resolver mutex serializes all mutation
         // across worker clones; `&mut self` rules out intra-instance aliasing.
         unsafe { &mut *self.dir_cache }
@@ -940,15 +951,16 @@ impl<'a> Resolver<'a> {
         log: NonNull<bun_ast::Log>,
         _fs: *mut Fs::FileSystem,
         opts: options::BundleOptions,
+        load_mode: DirInfo::LoadMode,
     ) -> Self {
         // resolver_Mutex_loaded check elided; static is const-inited in Rust.
 
         let care_about_browser_field = opts.target == options::Target::Browser;
         Resolver {
             // allocator dropped
-            // Route through the per-monomorphization singleton so this field and
-            // `DirInfo::get_parent()` / `get_enclosing_browser_scope()` share storage.
-            dir_cache: DirInfo::hash_map_instance(),
+            // One map per mode: a `DirInfo` holds what a fill of that mode read.
+            dir_cache: DirInfo::hash_map_for(load_mode),
+            load_mode,
             mutex: &RESOLVER_MUTEX,
             caches: CacheSet::init(),
             opts,
@@ -2480,7 +2492,12 @@ impl<'a> Resolver<'a> {
         let path = strings::without_trailing_slash_windows_path(path);
         Self::assert_valid_cache_key(path);
         let first_bust = self.fs_mut().fs.bust_entries_cache(path);
-        let second_bust = self.dir_cache_mut().remove(path);
+        // The listing is shared, so the directory leaves the map of every mode.
+        let mut second_bust = false;
+        for map in DirInfo::created_hash_maps() {
+            // SAFETY: ARENA — a process-lifetime BSSMap; `remove` takes its lock.
+            second_bust |= unsafe { (*map).remove(path) };
+        }
         bun_core::scoped_log!(
             ResolverDev,
             "Bust {} = {}, {}",
@@ -3416,8 +3433,10 @@ impl<'a> Resolver<'a> {
             // SAFETY: `Exists` index was assigned by `put`; resolver mutex held.
             // The slot pointer is rooted at the singleton, so the returned ref
             // survives the caller's later map reborrows.
-            return Ok(unsafe { DirInfo::slot_ptr_at(dir_cache_info_result.index) }
-                .map(|p| unsafe { DirInfoRef::from_raw(p) }));
+            return Ok(unsafe {
+                DirInfo::slot_ptr_at(self.dir_cache(), dir_cache_info_result.index)
+            }
+            .map(|p| unsafe { DirInfoRef::from_raw(p) }));
         }
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
         // field via `addr_of_mut!` so later `&mut *self.log()` / `&mut *self.dir_cache()`
@@ -3571,12 +3590,10 @@ impl<'a> Resolver<'a> {
             dir_entries_dir,
             // already `*mut EntriesOption` — pass raw, no intermediate `&mut` retag
             dir_entries_option,
-            dir_cache_info_result,
             cached_dir_entry_result.index,
             // Packages in the global disk cache are top-level, we shouldn't try
             // to check for a parent package.json
             None,
-            allocators::NOT_FOUND,
             open_dir,
             Some(package_id),
         )?;
@@ -4473,6 +4490,8 @@ impl<'a> Resolver<'a> {
         // - remember
         let mut _safe_path: Option<&'static [u8]> = None;
 
+        let another_mode_exists = DirInfo::created_hash_maps().nth(1).is_some();
+
         // Start at the top.
         while queue_slice_len > 0 {
             // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
@@ -4661,9 +4680,14 @@ impl<'a> Resolver<'a> {
             let mut needs_iter = true;
             let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
 
+            // A resolver of another mode can have listed this directory long ago. Read it again,
+            // through the descriptor just opened for it, so that this fill records the
+            // package.json and tsconfig.json that are there now.
+            let relist = another_mode_exists && !queue_top.fd.is_valid();
+
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
                 if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    if entries.generation >= self.generation {
+                    if entries.generation >= self.generation && !relist {
                         dir_entries_option = cached_entry;
                         needs_iter = false;
                     } else {
@@ -4773,18 +4797,17 @@ impl<'a> Resolver<'a> {
             }?;
             // SAFETY: `top_parent.index` is a sentinel or a slot assigned by
             // `put`; resolver mutex held.
-            let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
-                .map(|p| unsafe { DirInfoRef::from_raw(p) });
+            let parent_dir_ptr =
+                unsafe { DirInfo::slot_ptr_at(self.dir_cache(), top_parent.index) }
+                    .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
             self.dir_info_uncached(
                 dir_info_ptr,
                 dir_path,
                 // SAFETY: ARENA — `dir_entries_option` is a slot in `rfs.entries` (BSSMap) and outlives the resolver.
                 dir_entries_option,
-                queue_top.result,
                 cached_dir_entry_result.index,
                 parent_dir_ptr,
-                top_parent.index,
                 open_dir,
                 None,
             )?;
@@ -6158,15 +6181,11 @@ impl<'a> Resolver<'a> {
         info: *mut DirInfo::DirInfo,
         path: &'static [u8],
         _entries: *mut Fs::file_system::real_fs::EntriesOption,
-        _result: allocators::Result,
         dir_entry_index: allocators::IndexType,
         parent: Option<DirInfoRef>,
-        parent_index: allocators::IndexType,
         fd: FD,
         package_id: Option<Install::PackageID>,
     ) -> crate::CrateResult<()> {
-        let result = _result;
-
         // SAFETY: RealFS is the process-global ARENA singleton. `Entry::kind` /
         // `Entry::symlink` take it by raw pointer and reborrow only internally,
         // so the interleaved `&mut self` calls below cannot invalidate `rfs_ptr`
@@ -6195,11 +6214,13 @@ impl<'a> Resolver<'a> {
         }
 
         // SAFETY: info is a slot in the BSSMap-backed dir_cache
+        let this_dir = unsafe { DirInfoRef::from_raw(info) };
+        // SAFETY: as above
         let info = unsafe { &mut *info };
         *info = DirInfo::DirInfo {
             abs_path: path,
             // .abs_real_path = path,
-            parent: parent_index,
+            parent,
             entries: dir_entry_index,
             ..Default::default()
         };
@@ -6321,7 +6342,6 @@ impl<'a> Resolver<'a> {
         if let Some(parent_) = parent {
             // Propagate the browser scope into child directories
             info.enclosing_browser_scope = parent_.enclosing_browser_scope;
-            info.package_json_for_browser_field = parent_.package_json_for_browser_field;
             info.enclosing_tsconfig_json = parent_.enclosing_tsconfig_json;
 
             if let Some(parent_package_json) = parent_.package_json() {
@@ -6423,7 +6443,7 @@ impl<'a> Resolver<'a> {
         }
 
         // Record if this directory has a package.json file
-        if self.opts.load_package_json {
+        if self.load_mode.package_json() {
             if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
                 // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                 // dies (NLL) before any later `&mut` to this slot.
@@ -6464,8 +6484,7 @@ impl<'a> Resolver<'a> {
 
                     if let Some(pkg) = info.package_json() {
                         if pkg.browser_map.count() > 0 {
-                            info.enclosing_browser_scope = result.index;
-                            info.package_json_for_browser_field = Some(pkg);
+                            info.enclosing_browser_scope = Some(this_dir);
                         }
 
                         if !pkg.name.is_empty() || self.care_about_bin_folder {
@@ -6495,7 +6514,7 @@ impl<'a> Resolver<'a> {
             .or_else(|| parent.and_then(|parent_| parent_.package_json_for_module_type));
 
         // Record if this directory has a tsconfig.json or jsconfig.json file
-        if self.opts.load_tsconfig_json {
+        if self.load_mode.tsconfig_json() {
             let mut tsconfig_path: Option<&[u8]> = None;
             if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
                 // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
@@ -6696,10 +6715,10 @@ impl<'a> Resolver<'a> {
     }
 
     /// `opts.tsconfig_override`, which this resolver and its workers read in place of the
-    /// configuration file of every directory. It is not in `DirInfo`, which every resolver of the
-    /// process shares: the runtime, and every `Bun.build`. `None`: there is none.
+    /// configuration file of every directory. It is not in `DirInfo`, which the resolvers of one
+    /// `LoadMode` share: the runtime, and every `Bun.build`. `None`: there is none.
     fn tsconfig_override(&mut self) -> Option<Option<Arc<TSConfigJSON>>> {
-        if !self.opts.load_tsconfig_json {
+        if !self.load_mode.tsconfig_json() {
             return None;
         }
         let path = self.opts.tsconfig_override.as_deref()?;

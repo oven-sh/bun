@@ -179,6 +179,8 @@ impl Default for File {
 pub(crate) struct CurrentChunkSourceMapData {
     pub(crate) file_index: ServerFileIndex,
     pub(crate) source_map: packed_map::Shared,
+    /// The bundler's index of the source that the part was printed from. Valid only in the bundle that made the part.
+    pub(crate) source_index: bun_ast::Index,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -795,6 +797,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         .push(CurrentChunkSourceMapData {
                             file_index: ServerFileIndex::init(file_index.get()),
                             source_map: packed,
+                            source_index: index,
                         });
                 }
             }
@@ -1793,7 +1796,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(chunk)
     }
 
-    /// One part of the chunk as its own program. It starts with `0,` because JSC misreports an error after a leading `(`.
+    /// One part of the chunk as its own program. A program that starts with `(` gets JSC's error for arrow parameters.
     pub(crate) fn current_chunk_part_alone(&self, part: usize) -> Vec<u8> {
         debug_assert!(matches!(SIDE, Side::Server));
         const START: &[u8] = b"0,{";

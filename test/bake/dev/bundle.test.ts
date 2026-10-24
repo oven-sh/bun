@@ -1984,6 +1984,55 @@ devTest("recovers from an unresolved css url() and html script src longer than t
         }
       `,
     },
+    {
+      // The token after the expression is on the next line.
+      name: "an invalid regular expression at the end of a line",
+      bad: `
+        export {};
+        globalThis.value = [
+          /ok/,
+          /+/
+        ].length;
+      `,
+      error: "lib.ts:4:3: error: Invalid regular expression: nothing to repeat",
+    },
+    {
+      name: "new.target outside a function",
+      bad: `globalThis.value = new.target; export {};`,
+      error: "lib.ts:1:20: error: new.target is not valid inside arrow functions in global code.",
+    },
+    {
+      name: "a using declaration directly in a case clause",
+      bad: `
+        export {};
+        switch (globalThis.value) {
+          case 1:
+            using resource = null;
+        }
+      `,
+      error: "lib.ts:4:5: error: 'using' declaration is not allowed directly in a switch case or default clause.",
+    },
+    {
+      name: "two constructors in a class",
+      bad: `
+        export {};
+        globalThis.value = class {
+          constructor() {}
+          constructor(value) {}
+        };
+      `,
+      error: "lib.ts:5:1: error: Cannot declare multiple constructors in a single class.",
+    },
+    {
+      // A valid file. Bun names the namespace of the export `await`, which an async function cannot declare.
+      // #34361 makes Bun print another name, and then this file loads.
+      name: "a binding that Bun names await in a module with top-level await",
+      bad: `
+        globalThis.value = await "top-level await";
+        export * as await from "node:path";
+      `,
+      error: "lib.ts:2:1: error: Cannot use 'await' as a variable name in an async function.",
+    },
   ]) {
     devTest(`a server file that JSC rejects is a build error (${name})`, {
       framework: minimalFramework,
@@ -2013,7 +2062,7 @@ devTest("recovers from an unresolved css url() and html script src longer than t
         await dev.fetch("/").equals("value: fixed again");
 
         expect(dev.output.lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "")).toContain(
-          "note: Bun's parser accepted this file, and JavaScriptCore rejected it when the dev server loaded it",
+          "note: JavaScriptCore rejected the code that Bun generated for this file. If the file is valid, this is a bug in Bun's bundler.",
         );
       },
     });
@@ -2093,6 +2142,125 @@ devTest("recovers from an unresolved css url() and html script src longer than t
       await dev.write("bad.ts", `export const bad = "bad v2";`);
       await dev.fetch("/").equals("bad v2, good v2");
       await dev.fetch("/other").equals("other good v2");
+    },
+  });
+  // JSC does not run a program while a Proxy is in the prototype chain of the global object. No module explains that.
+  devTest("a server chunk that throws when JSC loads it is a build error of each of its files", {
+    framework: minimalFramework,
+    files: {
+      "routes/index.ts": `
+        export default function () {
+          return new Response("index");
+        }
+      `,
+      "routes/prototype.ts": `
+        const prototype = Object.getPrototypeOf(globalThis);
+        export default function (req) {
+          const restore = new URL(req.url).searchParams.has("restore");
+          Object.setPrototypeOf(globalThis, restore ? prototype : new Proxy(prototype, {}));
+          return new Response(restore ? "restored" : "proxied");
+        }
+      `,
+      "message.ts": `export const message = "other";`,
+      "routes/other.ts": `
+        import { message } from "../message";
+        export default function () {
+          return new Response(message);
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("index");
+      await dev.fetch("/prototype").equals("proxied");
+      {
+        const error =
+          "error: The server code of this bundle did not load: Proxy is not allowed in the global prototype chain.";
+        await using c = await dev.client("/other", {
+          errors: [`message.ts: ${error}`, `routes/other.ts: ${error}`],
+        });
+      }
+      // A route that loaded before still works.
+      await dev.fetch("/").equals("index");
+      await dev.fetch("/prototype?restore").equals("restored");
+      await dev.fetch("/other").equals("other");
+    },
+  });
+  // JSC's parser has the stack budget of this option. Bun's parser has the stack of its thread, so it accepts a file
+  // that is too deep for JSC.
+  devTest("a server file that is too deep for JSC's parser is a build error", {
+    framework: minimalFramework,
+    env: { BUN_JSC_maxPerThreadStackUsage: String(512 * 1024) },
+    files: {
+      "deep.ts": `export {};`,
+      "routes/index.ts": `
+        import "../deep";
+        export default function () {
+          return new Response("index");
+        }
+      `,
+      // The first depth of nested blocks that JSC's parser does not take in this build, with this budget.
+      "routes/depth.ts": `
+        export default function () {
+          for (let depth = 8; ; depth = Math.ceil(depth * 1.25)) {
+            try {
+              new Function(Buffer.alloc(depth, "{").toString() + Buffer.alloc(depth, "}").toString());
+            } catch {
+              return new Response(String(depth));
+            }
+          }
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("index");
+      const depth = 2 * Number(await dev.fetch("/depth").text());
+      const blocks = Buffer.alloc(depth, "{").toString() + Buffer.alloc(depth, "}").toString();
+      await dev.write("deep.ts", `${blocks}\nexport {};\n`, { errors: null });
+      {
+        await using c = await dev.client("/", {
+          // The column is the depth where JSC stopped.
+          errors: [expect.stringMatching(/^deep\.ts:1:\d+: error: Maximum call stack size exceeded\.$/) as any],
+        });
+      }
+      await dev.write("deep.ts", `export {};`);
+      await dev.fetch("/").equals("index");
+    },
+  });
+  // A plugin can give the client and the server different text for one file. The file then has a source for each.
+  devTest("a file that JSC rejects is reported at its place in the text that the server got", {
+    framework: {
+      fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], clientEntryPoint: "./client.ts" }],
+      serverComponents: separateSSRGraph,
+    },
+    pluginFile: `
+      export default [
+        {
+          name: "text-by-side",
+          setup(build) {
+            build.onLoad({ filter: /Comp[.]ts$/ }, args => ({
+              loader: "ts",
+              contents:
+                args.side === "client"
+                  ? '"use client"; export function Button() {}'
+                  : '"use client";\\n\\n\\nexport function Button() { return /+/; }',
+            }));
+          },
+        },
+      ];
+    `,
+    files: {
+      "Comp.ts": `"use client"; export function Button() {}`,
+      "client.ts": `import { Button } from "./Comp"; Button();`,
+      "routes/index.ts": `
+        export default function () {
+          return new Response("page");
+        }
+      `,
+    },
+    async test(dev) {
+      await using c = await dev.client("/", {
+        errors: ["Comp.ts:4:35: error: Invalid regular expression: nothing to repeat"],
+      });
     },
   });
   // `receive_chunk` lists a client component before JSC sees its code.

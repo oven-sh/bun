@@ -90,21 +90,13 @@ extern "C" bool BakeFindServerCodeSyntaxError(JSC::JSGlobalObject* global, BunSt
   JSC::ParserError error;
   if (JSC::checkSyntax(vm, sourceCode, error)) return false;
 
-  String message;
-  if (error.type() == JSC::ParserError::SyntaxError) {
-    message = error.message();
-  } else if (error.type() == JSC::ParserError::StackOverflow) {
-    // The parser gives this one no message.
-    message = "Maximum call stack size exceeded."_s;
-  } else {
-    return false;
-  }
-
   int offset = error.token().m_startPosition.offset;
-  JSC::LineColumn position = sourceCode.provider()->lineColumnInTextForOffset(offset < 0 ? 0 : offset);
+  ASSERT(offset >= 0);
+  JSC::LineColumn position = sourceCode.provider()->lineColumnInTextForOffset(offset);
   *errorLine = position.line;
   *errorColumn = position.column;
-  *errorMessage = Bun::toStringRef(message);
+  // The parser gives a stack overflow no message.
+  *errorMessage = Bun::toStringRef(error.type() == JSC::ParserError::StackOverflow ? String("Maximum call stack size exceeded."_s) : error.message());
   return true;
 }
 

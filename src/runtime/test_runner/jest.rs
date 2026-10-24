@@ -130,8 +130,6 @@ pub(crate) struct TestRunner<'a> {
     /// `test_command.rs` where this is populated.
     pub(crate) concurrent_test_glob: Option<&'a [bun_glob::Prepared<&'a [u8]>]>,
     pub(crate) bail: u32,
-    /// `--bail` ends the run before the tail of `exec`. From here on, the exit code is not 0.
-    pub(crate) ended_early: bool,
     pub(crate) max_concurrency: u32,
 
     pub(crate) snapshots: Snapshots,

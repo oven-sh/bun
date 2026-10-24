@@ -970,22 +970,6 @@ pub(crate) struct CommandLineReporter {
     pub(crate) timings: Option<Timings>,
 }
 
-/// `Bun__Process__exit` on the main thread of `bun test`.
-#[cold]
-pub(crate) fn on_process_exit(
-    runner: core::ptr::NonNull<jest::TestRunner<'static>>,
-    vm: &mut VirtualMachine,
-) {
-    // SAFETY: `RUNNER` is only accessed on the main thread, which the caller checked. `run_all_tests`, `run`
-    // or `bail_out` hold `&mut CommandLineReporter` below this call. None of them runs again: the caller ends
-    // in `global_exit()`.
-    let ended_early = unsafe { (*runner.as_ptr()).ended_early };
-    // One of the 'exit' listeners that `--bail` runs calls `process.exit(0)`.
-    if ended_early && vm.exit_handler.exit_code == 0 {
-        vm.exit_handler.exit_code = 1;
-    }
-}
-
 #[derive(Default)]
 pub(crate) struct ReportersConfig {
     pub(crate) dots: bool,
@@ -1451,8 +1435,8 @@ impl CommandLineReporter {
         self.write_junit_report_if_needed();
         self.write_timings_if_needed();
 
-        self.jest.ended_early = true;
         vm.exit_handler.exit_code = 1;
+        vm.exit_handler.exits_nonzero = true;
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);
         vm.exit_handler.requested = true;
         let vm_ptr: *mut VirtualMachine = vm;
@@ -1898,7 +1882,6 @@ impl TestCommand {
                 run_todo: ctx.test_options.run_todo,
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
-                ended_early: false,
                 max_concurrency: ctx.test_options.max_concurrency,
                 // `test_filter_regex` is an erased `*mut RegularExpression` (see
                 // options_types::context); cast back to a typed `NonNull` —

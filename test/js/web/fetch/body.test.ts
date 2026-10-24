@@ -1534,8 +1534,7 @@ describe.concurrent("a fetch() Response that cannot have a body", () => {
   });
 });
 
-// The size of an S3 object is not known before the download. A body made from
-// one reads the whole object, or the whole slice, whatever asked for its size first.
+// A body made from an S3 file reads the whole object, or the whole slice, whatever asked for its size first.
 describe("a body made from an S3 file", () => {
   const payload = Buffer.alloc(100, "0123456789").toString();
   let server: S3Server;
@@ -1598,7 +1597,7 @@ describe("a body made from an S3 file", () => {
         });
       });
 
-      // Before, the read asked for `bytes=0-0`, and S3 rejects that range for an empty object.
+      // S3 rejects `Range: bytes=0-0` for an empty object.
       test("an object of 0 bytes reads as empty", async () => {
         const object = await store("");
         const body = await Bun.readableStreamToText((await make(object.file())).body!);
@@ -1626,7 +1625,8 @@ describe("a body made from an S3 file", () => {
 
       const prints: Record<string, (subject: Request | Response) => unknown> = {
         "Bun.inspect()": subject => Bun.inspect(subject),
-        "the message of a failed expect()": subject => expect(() => expect(subject).toBeNull()).toThrow(),
+        // The message prints the subject. Its first line has no size.
+        "the message of a failed expect()": subject => expect(() => expect(subject).toBeNull()).toThrow(`${name} {\n`),
       };
       for (const [how, print] of Object.entries(prints)) {
         test(`${how} does not change what the body reads`, async () => {
@@ -1677,7 +1677,6 @@ describe("a body made from an S3 file", () => {
     },
   );
 
-  // GET sends none of the object for a Response whose body is an S3 blob. A slice knows its size, and HEAD has to agree with GET.
   test.concurrent("Bun.serve: HEAD for a slice of an S3 file reports the length that GET sends", async () => {
     const object = await store(payload);
     await using app = Bun.serve({
@@ -1748,9 +1747,8 @@ describe("a body made from an S3 file", () => {
     }).toEqual({ compiled: [], instantiated: [], ranges: [null, null] });
   });
 
-  // These streams carried one byte of an S3 object before. This object takes many chunks.
   // The fill is 251 bytes long, a prime, so chunks in a wrong order do not line up with it.
-  test("an object of 1 MiB arrives whole through each stream", async () => {
+  test.concurrent("an object of 1 MiB arrives whole through each stream", async () => {
     const html = "<p>" + Buffer.alloc(1024 * 1024, Buffer.alloc(251, "a line of the object\n")).toString() + "</p>";
     const object = await store(html);
     const digest = (text: string) => ({ length: text.length, hash: Bun.hash(text) });
@@ -1776,7 +1774,7 @@ describe("a body made from an S3 file", () => {
     });
   });
 
-  test("a module of 1 MiB arrives whole through WebAssembly.compileStreaming()", async () => {
+  test.concurrent("a module of 1 MiB arrives whole through WebAssembly.compileStreaming()", async () => {
     // The header, then one custom section with the name "pad".
     const pad = Buffer.alloc(1024 * 1024, Buffer.from(Array.from({ length: 251 }, (_, index) => index + 1)));
     const name = [3, 0x70, 0x61, 0x64];

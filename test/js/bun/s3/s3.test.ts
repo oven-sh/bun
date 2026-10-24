@@ -2172,9 +2172,7 @@ describe("presigned url signature", () => {
   });
 });
 
-// The size of an S3 object is not known before the download. A call that asks
-// for the size has to leave it unknown. A file whose size became 0 asked for one
-// byte (`Range: bytes=0-0`) on each later read, and a copy of it stored that byte.
+// The size of an S3 object is not known before the download, and a call that asks for it leaves it unknown.
 describe("an S3 file after a call that asks for its size", () => {
   const payload = Buffer.alloc(100, "0123456789").toString();
   // In this process, because only this server has a log of its requests.
@@ -2197,13 +2195,6 @@ describe("an S3 file after a call that asks for its size", () => {
     server.requests
       .filter(request => request.key === key)
       .map(request => [request.operation, request.headers.get("range")]);
-
-  /** Makes the call. Whether it throws is not the subject of these tests: the file afterwards is. */
-  async function attempt(call: () => unknown) {
-    try {
-      await call();
-    } catch {}
-  }
 
   /** Reads the blob and copies it, in each way. */
   async function readAndCopy(blob: Blob) {
@@ -2237,9 +2228,12 @@ describe("an S3 file after a call that asks for its size", () => {
   ];
 
   const calls: Record<string, (file: S3File) => unknown> = {
-    "expect().toHaveLength()": file => expect(file).toHaveLength(0),
-    "expect().toBeEmpty()": file => expect(file).toBeEmpty(),
-    "structuredClone()": file => structuredClone(file),
+    "expect().toHaveLength()": file => {
+      expect(() => expect(file).toHaveLength(0)).toThrow("Received length");
+      expect(file.slice(10, 30)).toHaveLength(20);
+    },
+    "expect().toBeEmpty()": file => expect(() => expect(file).toBeEmpty()).toThrow("Expected value to be empty"),
+    "structuredClone()": file => expect(() => structuredClone(file)).toThrow(Error),
     "MessagePort.postMessage()": file => {
       const { port1, port2 } = new MessageChannel();
       try {
@@ -2249,14 +2243,14 @@ describe("an S3 file after a call that asks for its size", () => {
         port2.close();
       }
     },
-    "serialize() of bun:jsc": file => serialize(file),
+    "serialize() of bun:jsc": file => expect(serialize(file)).toBeInstanceOf(SharedArrayBuffer),
   };
   for (const [name, call] of Object.entries(calls)) {
     it.concurrent(`${name}, two times`, async () => {
       const key = await store();
       const file = client.file(key);
-      await attempt(() => call(file));
-      await attempt(() => call(file));
+      call(file);
+      call(file);
       const before = requests(key);
       expect({ before, ...(await readAndCopy(file)), requests: requests(key).slice(before.length) }).toEqual({
         before: [["PutObject", null]],
@@ -2270,7 +2264,7 @@ describe("an S3 file after a call that asks for its size", () => {
     const key = await store();
     const form = new FormData();
     form.append("file", client.file(key));
-    await attempt(() => new Response(form).arrayBuffer());
+    await new Response(form).arrayBuffer();
     const before = requests(key);
     const entry = form.get("file") as Blob;
     expect({ before, ...(await readAndCopy(entry)), requests: requests(key).slice(before.length) }).toEqual({
@@ -2278,12 +2272,5 @@ describe("an S3 file after a call that asks for its size", () => {
       ...whole,
       requests: requestsOfWhole,
     });
-  });
-
-  it.concurrent("expect() does not take the unknown length for 0", async () => {
-    const file = client.file(await store());
-    expect(() => expect(file).toHaveLength(0)).toThrow("Received length");
-    expect(() => expect(file).toBeEmpty()).toThrow("Expected value to be empty");
-    expect(file.slice(10, 30)).toHaveLength(20);
   });
 });

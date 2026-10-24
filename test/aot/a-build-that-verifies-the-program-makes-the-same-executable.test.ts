@@ -29,7 +29,20 @@ describe("compile/aot/a build that verifies the program makes the same executabl
         // One path for both: the executable may hold its own name.
         const executable = join(root, isWindows ? "program.exe" : "program");
         rmSync(executable, { force: true });
-        built(await spawned([bunExe(), ...compileCommand, ...withoutDebugInformation(), join(import.meta.dir, program), "--outfile", executable], root, env));
+        built(
+          await spawned(
+            [
+              bunExe(),
+              ...compileCommand,
+              ...withoutDebugInformation(),
+              join(import.meta.dir, program),
+              "--outfile",
+              executable,
+            ],
+            root,
+            env,
+          ),
+        );
         executables.push(readFileSync(executable));
       }
       expect(executables[0]!.length).toBe(executables[1]!.length);

@@ -456,7 +456,10 @@ const cases: Record<string, Case> = {
       `tool.config.cjs {"mode":"cjs","plugins":[{"name":"inline"}]} inline:xx\n.toolrc.json {"mode":"json"} undefined\n`,
   },
   "a program that loads files takes the options that load a file in front of it": {
-    program: { "main.ts": prelude + `await shown("plugin", () => import(at("plain.js")));\nconsole.log((globalThis as any).order);` },
+    program: {
+      "main.ts":
+        prelude + `await shown("plugin", () => import(at("plain.js")));\nconsole.log((globalThis as any).order);`,
+    },
     env: { BUN_OPTIONS: "--preload ./first.ts -r ./second.cjs --import ./third.mjs" },
     disk: {
       ...kinds,
@@ -467,7 +470,10 @@ const cases: Record<string, Case> = {
     prints: `plugin: {"kind":"js"} js\n[ "preload", "require", "import" ]\n`,
   },
   "so it does without the text of its functions": {
-    program: { "main.ts": prelude + `await shown("plugin", () => import(at("plain.js")));\nconsole.log((globalThis as any).order);` },
+    program: {
+      "main.ts":
+        prelude + `await shown("plugin", () => import(at("plain.js")));\nconsole.log((globalThis as any).order);`,
+    },
     aotFlags: ["--no-compile-function-source"],
     env: { BUN_OPTIONS: "--preload ./first.ts" },
     disk: { ...kinds, "first.ts": `(globalThis as any).order = ["preload"];` },
@@ -527,11 +533,10 @@ describe.concurrent("code from disk", () => {
           const disk = join(folder, "disk");
           mkdirSync(dirname(join(disk, "x")), { recursive: true });
           const run = async (executable: string) => {
-            const { stdout, stderr, exitCode, signal } = await spawned(
-              [executable, disk.replaceAll("\\", "/")],
-              disk,
-              { ...bunEnv, ...it.env },
-            );
+            const { stdout, stderr, exitCode, signal } = await spawned([executable, disk.replaceAll("\\", "/")], disk, {
+              ...bunEnv,
+              ...it.env,
+            });
             return { stdout, stderr: exitCode === 0 ? "" : stderr, exitCode, signal };
           };
           const plain = await run(await build(folder, "plain", it, []));

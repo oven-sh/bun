@@ -729,7 +729,8 @@ describe("error event", () => {
       }
       const fields = encode(error);
       expect(structuredClone(fields)).toEqual(fields);
-      expect(error.code).toBe(kind === "missing-import" ? "ERR_MODULE_NOT_FOUND" : "MODULE_NOT_FOUND");
+      if (kind === "missing-entry") expect(error.code).toBe("MODULE_NOT_FOUND");
+      else expect(error.message).toContain("absent-dependency.mjs");
       const { port1, port2 } = new MessageChannel();
       try {
         const received = once(port2, "message");

@@ -277,6 +277,10 @@ impl JSValue {
     pub fn is_array(self) -> bool {
         self.is_cell() && self.js_type().is_array()
     }
+    /// `Array.isArray(self)`: sees through a Proxy, and throws for a revoked one.
+    pub fn is_array_or_proxy_of_array(self, global: &JSGlobalObject) -> JsResult<bool> {
+        crate::cpp::JSC__JSValue__isArrayOrProxyOfArray(self, global)
+    }
     #[inline]
     pub fn is_date(self) -> bool {
         self.is_cell() && self.js_type() == JSType::JSDate
@@ -1523,6 +1527,20 @@ impl JSValue {
         JSArrayIterator::init(self, global)
     }
 
+    /// What `JSON.parse` does with its `reviver`, which is callable, once it has parsed `self`.
+    /// The reviver gets no `context` argument.
+    pub fn json_revive(self, global: &JSGlobalObject, reviver: JSValue) -> JsResult<JSValue> {
+        debug_assert!(reviver.is_callable());
+        crate::cpp::JSC__JSValue__jsonRevive(self, global, reviver)
+    }
+
+    /// The names that `JSON.stringify` takes from a `replacer` that is an array or a Proxy of
+    /// one: a new array of strings without duplicates.
+    pub fn json_property_list(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        debug_assert!(self.is_object());
+        crate::cpp::JSC__JSValue__jsonPropertyList(self, global)
+    }
+
     /// `JSValue.jsonStringify`.
     pub fn json_stringify(
         self,
@@ -2293,6 +2311,16 @@ impl JSValue {
         let v = JSC__JSValue__getOwn(self, global, property_name);
         scope.return_if_exception()?;
         if v.is_empty() { Ok(None) } else { Ok(Some(v)) }
+    }
+    /// `self[property_name]`: walks the prototype chain, takes an index, and is `undefined` for
+    /// what is not there. Throws if `self` is `undefined` or `null`.
+    pub fn get_bun_string(
+        self,
+        global: &JSGlobalObject,
+        property_name: &bun_core::String,
+    ) -> JsResult<JSValue> {
+        // SAFETY: `property_name` is live for the call.
+        unsafe { crate::cpp::JSC__JSValue__getBunString(self, global, property_name) }
     }
     /// `JSValue.getOwnTruthy` — own-property lookup, filtered to non-undefined.
     pub fn get_own_truthy(

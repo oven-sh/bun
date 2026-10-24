@@ -272,6 +272,31 @@ function emitListenErrorNextTick(self, err) {
   self.emit("error", err);
 }
 
+function formatListenError(err, port, host, socketPath) {
+  const description =
+    err?.code === "EADDRINUSE"
+      ? "address already in use"
+      : err?.code === "EACCES"
+        ? "permission denied"
+        : err?.code === "EADDRNOTAVAIL"
+          ? "address not available"
+          : err?.code === "EINVAL"
+            ? "invalid argument"
+            : undefined;
+  if (!description) {
+    return err;
+  }
+  const address = socketPath ?? host ?? "::";
+  err.syscall = "listen";
+  err.address = address;
+  if (port) {
+    err.port = port;
+  }
+  const location = port ? `${address}:${port}` : address;
+  err.message = `listen ${err.code}: ${description}${location ? ` ${location}` : ""}`;
+  return err;
+}
+
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1367-L1368
 function normalizeServerTls(tls) {
   tls.requestCert = tls.requestCert === true;
@@ -701,7 +726,7 @@ Server.prototype.listen = function () {
 
     server[kRealListen](tls, port, host, socketPath, true);
   } catch (err) {
-    process.nextTick(emitListenErrorNextTick, server, err);
+    process.nextTick(emitListenErrorNextTick, server, formatListenError(err, port, host, socketPath));
   }
 
   return this;

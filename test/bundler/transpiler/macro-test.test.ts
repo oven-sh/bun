@@ -788,37 +788,46 @@ describe.concurrent("a file-backed Blob returned from a macro", () => {
   });
 
   // With a limit, the file reader stops at the size that the file reports. For this read it goes on to the
-  // end of the window.
+  // end of the window. /proc/self/environ reports no size, and the test decides how long it is.
   test.skipIf(!isLinux)("keeps its window when it reports no size", async () => {
     const version = readFileSync("/proc/version", "utf8");
-    const symbols = readFileSync("/proc/kallsyms");
     // More than the 256 KB that the first read asks for.
     const [start, end] = [16, 300_016];
-    expect(symbols.length).toBeGreaterThan(end);
-    const sha256 = (bytes: string | Uint8Array) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
-    const { lastLine, stderr, exitCode } = await run({
-      "m.ts": [
-        `import fs from "node:fs";`,
-        `const text = { type: "text/plain" };`,
-        `export const long = () => Bun.file("/proc/kallsyms", text).slice(${start}, ${end});`,
-        `export const pastTheEnd = () => Bun.file("/proc/version", text).slice(100_000, 100_010);`,
-        `export const twoOfOneDescriptor = () => {`,
-        `  const file = Bun.file(fs.openSync("/proc/version", "r"), text);`,
-        `  return [file.slice(0, 5), file.slice(6, 13)];`,
-        `};`,
-        ``,
-      ].join("\n"),
-      "index.ts": [
-        `import { long, pastTheEnd, twoOfOneDescriptor } from "./m.ts" with { type: "macro" };`,
-        `const symbols = long();`,
-        `const sha256 = new Bun.CryptoHasher("sha256").update(symbols).digest("hex");`,
-        `console.log(JSON.stringify({ long: [symbols.length, sha256], pastTheEnd: pastTheEnd(), twoOfOneDescriptor: twoOfOneDescriptor() }));`,
-        ``,
-      ].join("\n"),
-    });
+    const { lastLine, stderr, exitCode } = await run(
+      {
+        "m.ts": [
+          `import fs from "node:fs";`,
+          `const text = { type: "text/plain" };`,
+          `export const long = () => Bun.file("/proc/self/environ", { type: "application/octet-stream" }).slice(${start}, ${end});`,
+          `export const pastTheEnd = () => Bun.file("/proc/version", text).slice(100_000, 100_010);`,
+          `export const twoOfOneDescriptor = () => {`,
+          `  const file = Bun.file(fs.openSync("/proc/version", "r"), text);`,
+          `  return [file.slice(0, 5), file.slice(6, 13)];`,
+          `};`,
+          ``,
+        ].join("\n"),
+        "index.ts": [
+          `import { readFileSync } from "node:fs";`,
+          `import { long, pastTheEnd, twoOfOneDescriptor } from "./m.ts" with { type: "macro" };`,
+          `const inlined = Buffer.from(long().slice("data:application/octet-stream;base64,".length), "base64");`,
+          `const expected = readFileSync("/proc/self/environ").subarray(${start}, ${end});`,
+          `console.log(JSON.stringify({`,
+          `  long: [inlined.length, inlined.equals(expected)],`,
+          `  pastTheEnd: pastTheEnd(),`,
+          `  twoOfOneDescriptor: twoOfOneDescriptor(),`,
+          `}));`,
+          ``,
+        ].join("\n"),
+      },
+      ["run", "index.ts"],
+      // Four values, because one value cannot be longer than 128 KB.
+      Object.fromEntries(
+        [0, 1, 2, 3].map(i => [`MACRO_TEST_FILL_${i}`, Buffer.alloc(100_000, "0123456789abcdef").toString()]),
+      ),
+    );
     expect({ value: JSON.parse(lastLine || "null"), stderr }).toEqual({
       value: {
-        long: [end - start, sha256(symbols.subarray(start, end))],
+        long: [end - start, true],
         pastTheEnd: "",
         twoOfOneDescriptor: [version.slice(0, 5), version.slice(6, 13)],
       },

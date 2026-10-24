@@ -3594,13 +3594,14 @@ describe("stdin redirect from a zero-length buffer delivers EOF to the spawned c
 
 describe("stdin redirect from a Response", () => {
   // `< ${response}` hands the command the whole body when the command starts.
-  // A body that is not in memory by then (a ReadableStream, a fetch() body that
+  // A body with no bytes to give by then (a ReadableStream, a fetch() body that
   // is still arriving) used to become empty input: the command read zero bytes
   // and exited 0. So did a body that was already used.
   const payload = "hello from a response body\n";
   const encoder = new TextEncoder();
   const readStdin = "process.stdout.write(await Bun.stdin.text())";
-  const unsupported = "A Response with a ReadableStream body is not supported as a shell redirect yet";
+  const unsupported =
+    "A Response with a ReadableStream body is not supported as a shell redirect yet. Buffer it first, e.g. `< ${await response.blob()}`, or use Bun.spawn({ stdin: response })";
 
   const streamOf = (...chunks: string[]) =>
     new ReadableStream({
@@ -3659,7 +3660,7 @@ describe("stdin redirect from a Response", () => {
   describe("a ReadableStream body rejects", () => {
     test.concurrent.each(commands)("%s", async (_name, run) => {
       const response = new Response(streamOf(payload));
-      expect(await rejection(run(response))).toStartWith(unsupported);
+      expect(await rejection(run(response))).toBe(unsupported);
       // The body is left unread, so the fix that the message names still works.
       expect(response.bodyUsed).toBe(false);
       expect(await $`cat < ${await response.blob()}`.text()).toBe(payload);
@@ -3696,13 +3697,13 @@ describe("stdin redirect from a Response", () => {
       ],
     ];
     test.concurrent.each(bodies)("%s", async (_name, body) => {
-      expect(await rejection($`cat < ${new Response(body())}`)).toStartWith(unsupported);
+      expect(await rejection($`cat < ${new Response(body())}`)).toBe(unsupported);
     });
 
     test("a fetch() body that is still arriving", async () => {
       await using held = serveHeldBody();
       const response = await fetch(held.url);
-      expect(await rejection($`cat < ${response}`)).toStartWith(unsupported);
+      expect(await rejection($`cat < ${response}`)).toBe(unsupported);
       expect(response.bodyUsed).toBe(false);
       held.sendRest();
       expect(await $`cat < ${await response.blob()}`.text()).toBe("first second");
@@ -3804,7 +3805,8 @@ describe("stdin redirect from a Response", () => {
   describe("an S3-backed body rejects", () => {
     // An S3-backed Blob has no bytes until a request reads them. A spawned
     // command never saw the end of its stdin, and a builtin read zero bytes.
-    const unsupportedS3 = "A Response with an S3-backed body is not supported as a shell redirect yet";
+    const unsupportedS3 =
+      "A Response with an S3-backed body is not supported as a shell redirect yet. To redirect from it, pass its bytes: `< ${await response.bytes()}`";
 
     // A server on the loopback stands in for S3 and records each request.
     function serveS3() {
@@ -3830,11 +3832,11 @@ describe("stdin redirect from a Response", () => {
       };
     }
 
-    // `new Response(s3file)` is a redirect to the object and has no body. An array keeps the S3File as the body.
+    // An array keeps the S3File as the body.
     test.concurrent.each(commands)("%s", async (_name, run) => {
       await using s3 = serveS3();
       const response = new Response([s3.file()] as unknown as Bun.BodyInit);
-      expect(await rejection(run(response))).toStartWith(unsupportedS3);
+      expect(await rejection(run(response))).toBe(unsupportedS3);
       // The shell sent no request and left the body unread, so the fix that the message names still works.
       expect({ requests: s3.requests, bodyUsed: response.bodyUsed }).toEqual({ requests: [], bodyUsed: false });
       expect(await $`cat < ${await response.bytes()}`.text()).toBe(payload);
@@ -3846,25 +3848,40 @@ describe("stdin redirect from a Response", () => {
       const url = URL.createObjectURL(s3.file());
       try {
         const response = await fetch(url);
-        expect(await rejection($`cat < ${response}`)).toStartWith(unsupportedS3);
-        expect(await rejection($`echo hi < ${response}`)).toStartWith(unsupportedS3);
+        expect(await rejection($`cat < ${response}`)).toBe(unsupportedS3);
+        expect(await rejection($`echo hi < ${response}`)).toBe(unsupportedS3);
         expect(s3.requests).toEqual([]);
       } finally {
         URL.revokeObjectURL(url);
       }
     });
+
+    test("new Response(s3file) is a redirect with no body, so the command reads nothing", async () => {
+      await using s3 = serveS3();
+      const response = new Response(s3.file());
+      expect({ status: response.status, body: response.body }).toEqual({ status: 302, body: null });
+      const output = await $`cat < ${response}`.quiet();
+      expect({ stdout: output.stdout.toString(), exitCode: output.exitCode, requests: s3.requests }).toEqual({
+        stdout: "",
+        exitCode: 0,
+        requests: [],
+      });
+    });
   });
 
-  test("a file-backed body still reaches a spawned command", async () => {
-    using dir = tempDir("shell-response-redirect", { "body.txt": payload });
-    const file = () => Bun.file(join(String(dir), "body.txt"));
-    for (const response of [new Response(file()), new Response([file()] as unknown as Bun.BodyInit)]) {
-      const output = await $`${BUN} -e ${readStdin} < ${response}`.quiet();
+  describe("a file-backed body still reaches a spawned command", () => {
+    const fileBacked: Array<[string, (path: string) => Response]> = [
+      ["new Response(file)", path => new Response(Bun.file(path))],
+      ["new Response([file])", path => new Response([Bun.file(path)] as unknown as Bun.BodyInit)],
+    ];
+    test.concurrent.each(fileBacked)("%s", async (_name, make) => {
+      using dir = tempDir("shell-response-redirect", { "body.txt": payload });
+      const output = await $`${BUN} -e ${readStdin} < ${make(join(String(dir), "body.txt"))}`.quiet();
       expect({ stdout: output.stdout.toString(), exitCode: output.exitCode }).toEqual({
         stdout: payload,
         exitCode: 0,
       });
-    }
+    });
   });
 
   describe("a body that is in memory still reaches the command", () => {

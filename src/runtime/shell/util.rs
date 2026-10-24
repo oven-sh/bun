@@ -10,12 +10,15 @@ pub(crate) enum OutKind {
 // `bun_spawn` *crate* re-exports under the same name.
 pub(crate) use crate::api::bun_spawn::stdio::Stdio;
 
-/// A `< ${response}` redirect takes the whole body when the command starts, so
-/// the body has to be bytes in memory or a file by then. For a stream, a used
-/// or a failed body, `use_as_any_blob()` and `use_()` hand back an empty
-/// `Blob`, and an S3-backed `Blob` has no bytes to read: the command reads
-/// zero bytes and exits 0, or never sees the end of its stdin. Throws for such
-/// a body and leaves it unread.
+/// A `< ${response}` redirect takes the whole body when the command starts.
+/// For a stream, a used or a failed body, `use_as_any_blob()` and `use_()`
+/// hand back an empty `Blob`, and an S3-backed `Blob` has no bytes to read:
+/// the command reads zero bytes and exits 0, or never sees the end of its
+/// stdin. Throws for such a body and leaves it unread.
+///
+/// A file-backed `Blob` passes: a spawned command gets its path or its fd. A
+/// builtin reads zero bytes from it (`Builtin::read_stdin_no_io`), as it does
+/// for `< ${Bun.file(fd)}`.
 pub(crate) fn throw_if_body_unavailable(
     global: &crate::jsc::JSGlobalObject,
     body: &mut crate::webcore::body::Value,

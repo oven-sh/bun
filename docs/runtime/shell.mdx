@@ -179,7 +179,7 @@ You can redirect from these JavaScript objects:
 - `Blob` (reads from the blob)
 - `Response` (reads from the body)
 
-Bun takes the whole `Response` body when the command starts, so the whole body must be available by then. A `Response` whose body is a `ReadableStream` throws an error. So does a `fetch()` response that is still downloading ([#42785](https://github.com/oven-sh/bun/issues/42785) tracks support for both). Buffer the body into a `Blob` first:
+Bun takes the whole `Response` body when the command starts. A body that is in memory works with every command. A body that is still streaming throws an error, for example a `ReadableStream` from your code or a `fetch()` response that is still downloading. Buffer the body into a `Blob` first:
 
 ```js
 import { $ } from "bun";
@@ -188,6 +188,8 @@ const response = await fetch("https://example.com");
 
 await $`cat < ${await response.blob()} | wc -c`;
 ```
+
+A `Response` whose body is an S3-backed `Blob`, such as `new Response([s3file])`, also throws. Read that body with `await response.bytes()` first.
 
 ### Example: Redirect stdin -> file
 

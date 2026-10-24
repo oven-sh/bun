@@ -38,8 +38,8 @@ pub(crate) struct TimerObjectInternals {
     pub(crate) generation: u32,
 }
 
-// Putting `interval` between `id` and `this_value` would pad this to 48 bytes.
-const _: () = assert!(core::mem::size_of::<TimerObjectInternals>() == 40);
+// Keep `interval` after `this_value` to avoid alignment padding.
+const _: () = assert!(core::mem::size_of::<TimerObjectInternals>() == 48);
 
 impl TimerObjectInternals {
     /// Read-modify-write `self.flags` through the `Cell` (R-2: `flags` is

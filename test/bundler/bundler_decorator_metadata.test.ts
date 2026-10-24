@@ -1218,6 +1218,7 @@ describe("bundler", () => {
                 "compilerOptions": {
                     "experimentalDecorators": true,
                     "emitDecoratorMetadata": true,
+                    "strictNullChecks": false,
                 }
             }
         `,

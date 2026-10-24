@@ -976,7 +976,7 @@ test.concurrent.each([
     base: { experimentalDecorators: true },
     middle: {},
     last: {},
-    stdout: 'String\nlegacy\n[ "x" ]\n',
+    stdout: 'Object\nlegacy\n[ "x" ]\n',
   },
   {
     base: { experimentalDecorators: true },

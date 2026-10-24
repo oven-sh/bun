@@ -2954,7 +2954,7 @@ declare module "bun" {
       /**
        * If `true`, the `design:type` of `string | null` is `Object`, and if `false` it is `String`.
        *
-       * @default the value of `strict`, or else false
+       * @default the value of `strict`, or else true
        */
       strictNullChecks?: boolean;
       importsNotUsedAsValues?: "remove" | "preserve" | "error";

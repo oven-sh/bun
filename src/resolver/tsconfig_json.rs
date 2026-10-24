@@ -226,9 +226,9 @@ impl TSConfigJSON {
             .unwrap_or(true)
     }
 
-    /// Effective `strictNullChecks`. `strict` is off unless it's set, which is the default before TypeScript 6.
+    /// Effective `strictNullChecks`. `strict` is on unless it's set, which is the default since TypeScript 6.
     pub fn strict_null_checks(&self) -> bool {
-        self.strict_null_checks.or(self.strict).unwrap_or(false)
+        self.strict_null_checks.or(self.strict).unwrap_or(true)
     }
 
     pub fn emit_decorator_metadata(&self) -> bool {

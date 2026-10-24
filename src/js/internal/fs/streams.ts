@@ -18,7 +18,13 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
   path: string | null | undefined;
   _write: import("node:fs").WriteStream["_write"] | null;
   _writev: import("node:fs").WriteStream["_writev"] | null;
-  _writableState?: { ending: boolean; destroyed: boolean };
+  _writableState?: {
+    ending: boolean;
+    destroyed: boolean;
+    finished: boolean;
+    emitClose: boolean;
+    errored: Error | null;
+  };
   flags: string;
   mode: number;
   start: number;
@@ -33,6 +39,8 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
    * sink = FileSink
    */
   [kWriteStreamFastPath]?: undefined | true | FileSink;
+  /** null once destroy() has found writes parked on the sink, then the error the first of them was called back with. */
+  [kCanceledWrite]?: Error | null;
 };
 type FD = number;
 
@@ -43,6 +51,7 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
+const kCanceledWrite = Symbol("kCanceledWrite");
 const kFs = Symbol("kFs");
 
 const {
@@ -602,6 +611,26 @@ function _write(data, encoding, cb) {
 }
 writeStreamPrototype._write = _write;
 
+let ecanceled: number | undefined;
+
+// Node's error for a write that uv_close() canceled.
+function newCanceledWriteError(): Error {
+  const { ErrnoException } = require("internal/shared");
+  ecanceled ??= $bindgen("node_util_binding.bind.ts", "ecanceledErrorCode");
+  return new ErrnoException(ecanceled, "write");
+}
+
+// As in node: the first write destroy() canceled gets `write ECANCELED`, those queued behind it the stream's error.
+function canceledWriteError(stream: FSStream, err: any) {
+  const canceled = stream[kCanceledWrite];
+  if (canceled === undefined || err?.code !== "ECANCELED") return err;
+  const state = stream._writableState!;
+  if (canceled !== null) return state.errored;
+  const first = (stream[kCanceledWrite] = newCanceledWriteError());
+  state.errored ??= first;
+  return first;
+}
+
 function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) {
   let fileSink = this[kWriteStreamFastPath];
   if (!fileSink) {
@@ -624,6 +653,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
           emitDrain(this);
         },
         err => {
+          err = canceledWriteError(this, err);
           if (cb) cb(err);
           require("internal/streams/destroy").errorOrDestroy(this, err);
         },
@@ -692,6 +722,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
           cb(null);
         },
         err => {
+          err = canceledWriteError(this, err);
           cb(err);
           // Node.js onwriteError: callback AND destroy are both invoked; the
           // callback is additive, not a replacement for the 'error' event.
@@ -827,6 +858,41 @@ function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: any) {
   }
 }
 
+let destroyFileSink: ((sink: FileSink) => Promise<unknown> | Error | undefined) | undefined;
+
+// child.stdin: destroy() closes the pipe now and cancels the writes that wait for it, as node's net.Socket does.
+function destroySinkStream(this: FSStream, err: Error | null, cb: (err?: Error | null) => void) {
+  const state = this._writableState!;
+  if (state.finished) {
+    // After 'finish' nothing is canceled: the sink closes the pipe once it has sent what it holds.
+    writeStreamPrototype._destroy.$call(this, err, cb);
+    return;
+  }
+  destroyFileSink ??= $bindgen("FileSink.bind.ts", "destroy");
+  const outcome = destroyFileSink!(this[kWriteStreamFastPath] as FileSink);
+  // 'close' comes from here and not from destroy(): after the callbacks of the parked writes, as from node's handle.
+  state.emitClose = false;
+  if ($isPromise(outcome)) {
+    this[kCanceledWrite] = null;
+    const afterWrites = emitCloseNextTick.bind(undefined, this);
+    outcome.$then(afterWrites, afterWrites);
+  } else {
+    // write() acknowledged bytes the pipe did not take. No callback is left to tell: the stream keeps the error.
+    if (outcome !== undefined) state.errored ??= outcome.code === "ECANCELED" ? newCanceledWriteError() : outcome;
+    // Two ticks, where it was before this _destroy: after a queued 'finish', and for a listener added one tick late.
+    process.nextTick(emitCloseNextTick, this);
+  }
+  cb(err);
+}
+
+function emitCloseNextTick(stream: FSStream) {
+  process.nextTick(emitCloseNT, stream);
+}
+
+function emitCloseNT(stream: FSStream) {
+  stream.emit("close");
+}
+
 function writableFromFileSink(fileSink: any) {
   $assert(typeof fileSink === "object", "fileSink is not an object");
   $assert(typeof fileSink.write === "function", "fileSink.write is not a function");
@@ -834,6 +900,7 @@ function writableFromFileSink(fileSink: any) {
   const w = new WriteStream("", { $fastPath: true });
   $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
   w[kWriteStreamFastPath] = fileSink;
+  w._destroy = destroySinkStream;
   w.path = undefined;
   return w;
 }

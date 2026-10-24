@@ -520,6 +520,10 @@ impl LinkerContext<'_> {
             let exp = resolved_exports.get_mut(alias).unwrap();
             let mut exp_data = exp.data;
 
+            if let Some(statement) = self.graph.export_star_statement(id, exp_data.import_ref) {
+                ns_export_dependencies.push(statement);
+            }
+
             // If this is an export of an import, reference the symbol that the import
             // was eventually resolved to. We need to do this because imports have
             // already been resolved by this point, so we can't generate a new import

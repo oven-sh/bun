@@ -3850,6 +3850,7 @@ impl<'a> LinkerContext<'a> {
                         .slice(),
                 ),
                 default_alias_of,
+                exporter: crate::Index::init(other_id),
             };
         }
 
@@ -4231,6 +4232,15 @@ impl<'a> LinkerContext<'a> {
                                 source_index: bun_ast::Index::init(tracker.source_index.get()),
                             });
                         }
+                    }
+
+                    // An export that came through `export *` from a lazily initialized
+                    // module also depends on the statement that initializes that module
+                    if let Some(statement) = self
+                        .graph
+                        .export_star_statement(advanced.exporter.get(), next_tracker.import_ref)
+                    {
+                        re_exports.push(statement);
                     }
 
                     // If this is a re-export of another import, continue for another

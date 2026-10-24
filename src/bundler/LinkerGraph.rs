@@ -258,7 +258,16 @@ pub struct LinkerGraph<'a> {
     /// This is for cross-module inlining of TypeScript enum constants
     pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
     pub(crate) import_member_bindings: bun_ast::ast_result::ImportMemberBindings,
+    /// `(file, export symbol)` -> the `export *` statement that initializes
+    /// the module the symbol is declared in. Only for an export that `file`
+    /// has through an `export *` path that enters a lazily initialized ES
+    /// module: that statement prints the `init_*()` call, so whatever binds to
+    /// the export depends on it, like on a named re-export statement.
+    /// Step 3 of `scan_imports_and_exports` writes it. It is read-only after.
+    pub(crate) export_star_statements: ExportStarStatements,
 }
+
+pub(crate) type ExportStarStatements = bun_collections::HashMap<(u32, Ref), Dependency>;
 
 // SAFETY: `LinkerGraph` is shared read-mostly across worker threads during
 // linking. What makes `&LinkerGraph`
@@ -268,8 +277,9 @@ pub struct LinkerGraph<'a> {
 //   (no new allocations) for the duration of any worker-pool fan-out that
 //   holds `&LinkerGraph`.
 // - `files_live` / `parts_live` / `is_scb_bitset` / `reachable_files` /
-//   `stable_source_indices` / `code_splitting` / `ts_enums` are populated
-//   before fan-out and only read by workers.
+//   `stable_source_indices` / `code_splitting` / `ts_enums` /
+//   `export_star_statements` are populated before fan-out and only read by
+//   workers.
 // - `ast` / `meta` / `files` columns that workers mutate are split out via
 //   `split_mut()` into disjoint `&mut [_]` *before* the pool runs (see
 //   `compute_cross_chunk_dependencies`); workers never reach those columns
@@ -298,6 +308,16 @@ impl<'a> LinkerGraph<'a> {
         // lifetime of the link step that constructed this LinkerGraph.
         self.bump.get()
     }
+
+    /// See `export_star_statements`. `symbol` is the export's `import_ref` in
+    /// `file`'s resolved exports.
+    #[inline]
+    pub(crate) fn export_star_statement(&self, file: u32, symbol: Ref) -> Option<Dependency> {
+        if self.export_star_statements.is_empty() {
+            return None;
+        }
+        self.export_star_statements.get(&(file, symbol)).copied()
+    }
 }
 
 impl Default for LinkerGraph<'_> {
@@ -319,6 +339,7 @@ impl Default for LinkerGraph<'_> {
             is_scb_bitset: BitSet::default(),
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
             import_member_bindings: bun_ast::ast_result::ImportMemberBindings::default(),
+            export_star_statements: ExportStarStatements::default(),
         }
     }
 }

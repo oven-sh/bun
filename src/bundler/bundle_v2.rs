@@ -8447,7 +8447,13 @@ pub mod bv2_impl {
         /// `Found` an `export default X` where `X` is an import in that file
         /// (`Ast::export_default_alias_of_import`).
         pub(crate) default_alias_of: bun_ast::Ref,
+        /// `Found` in the resolved exports of this file. `value.source_index`
+        /// is another file if the export came through `export *`
+        /// (`LinkerGraph::export_star_statement`). Invalid otherwise.
+        pub(crate) exporter: Index,
     }
+
+    const _: () = assert!(core::mem::size_of::<ImportTrackerIterator>() == 48);
 
     impl Default for ImportTrackerIterator {
         fn default() -> Self {
@@ -8456,6 +8462,7 @@ pub mod bv2_impl {
                 value: crate::ImportTracker::default(),
                 import_data: bun_ptr::BackRef::new(&[] as &[crate::ImportData]),
                 default_alias_of: bun_ast::Ref::NONE,
+                exporter: Index::INVALID,
             }
         }
     }

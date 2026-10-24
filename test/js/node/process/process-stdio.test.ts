@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, nodeExeAtLeast, tempDir } from "harness";
 import { release } from "node:os";
 import path from "path";
 import { isatty } from "tty";
@@ -187,8 +187,12 @@ describe.concurrent("process-stdio", () => {
 });
 
 // A FileSink writes a string as UTF-8, so process.stdout/stderr decode every other encoding before the sink. Each row
-// is statements run with `w` as the stream, then what node v26.3.0 does with them: the bytes on the fd in hex, or the
-// code thrown.
+// is statements run with `w` as the stream, then what Node.js does with them: the bytes on the fd in hex, or the code
+// thrown. The "in node" tests run the same rows in Node.js, so they check the table itself.
+const stdioWriteRuntimes = [
+  ["bun", bunExe()],
+  ["node", nodeExeAtLeast("26.3.0")],
+] as const;
 describe.concurrent.each(["stdout", "stderr"] as const)("process.%s.write(chunk, encoding)", name => {
   const rows: [statements: string, expected: string][] = [
     [`w.write("0001ff", "hex")`, "0001ff"],
@@ -260,56 +264,58 @@ describe.concurrent.each(["stdout", "stderr"] as const)("process.%s.write(chunk,
     ${rows
       .map(
         ([statements], i) =>
-          `try { ${statements}; } catch (e) { threw[${i}] = e.code; } w.setDefaultEncoding("utf8"); w.write(separator);`,
+          `try { ${statements}; } catch (e) { threw[${i}] = e?.code ?? "no code: " + e; } w.setDefaultEncoding("utf8"); w.write(separator);`,
       )
       .join("\n    ")}
     w.write("41", "hex"); w.write("42", "hex"); w.write("c"); process.exit(0);
   `;
 
-  test.each(["pipe", "file"] as const)("to a %s", async target => {
-    using dir = tempDir(`process-${name}-write-encoding`, {});
-    const file = path.join(String(dir), "out");
-    const stdio = (stream: "stdout" | "stderr") => (stream === name && target === "file" ? Bun.file(file) : "pipe");
-    await using proc = spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: stdio("stdout"),
-      stderr: stdio("stderr"),
-    });
-    const piped = (stream: "stdout" | "stderr") =>
-      stream === name && target === "file" ? undefined : (proc[stream] as ReadableStream<Uint8Array>).bytes();
-    const [stdout, stderr, exitCode] = await Promise.all([piped("stdout"), piped("stderr"), proc.exited]);
-    const [mine, other] = name === "stdout" ? [stdout, stderr] : [stderr, stdout];
-    const written = Buffer.from(target === "file" ? await Bun.file(file).bytes() : mine!);
+  describe.each(stdioWriteRuntimes)("in %s", (_runtime, exe) => {
+    test.skipIf(!exe).each(["pipe", "file"] as const)("to a %s", async target => {
+      using dir = tempDir(`process-${name}-write-encoding`, {});
+      const file = path.join(String(dir), "out");
+      const stdio = (stream: "stdout" | "stderr") => (stream === name && target === "file" ? Bun.file(file) : "pipe");
+      await using proc = spawn({
+        cmd: [exe!, "-e", script],
+        env: bunEnv,
+        stdout: stdio("stdout"),
+        stderr: stdio("stderr"),
+      });
+      const piped = (stream: "stdout" | "stderr") =>
+        stream === name && target === "file" ? undefined : (proc[stream] as ReadableStream<Uint8Array>).bytes();
+      const [stdout, stderr, exitCode] = await Promise.all([piped("stdout"), piped("stderr"), proc.exited]);
+      const [mine, other] = name === "stdout" ? [stdout, stderr] : [stderr, stdout];
+      const written = Buffer.from(target === "file" ? await Bun.file(file).bytes() : mine!);
 
-    const reported = Buffer.from(other!).toString();
-    let report: { threw: Record<number, string>; callbacks: number };
-    try {
-      report = JSON.parse(reported);
-    } catch {
-      throw new Error(`the child did not report on the other stream: ${JSON.stringify(reported)}`);
-    }
-    // latin1 maps each byte to one char and back, so this splits the bytes at each separator.
-    const segments = written
-      .toString("latin1")
-      .split(";")
-      .map(segment => Buffer.from(segment, "latin1").toString("hex"));
-    const actual = rows.map(([statements], i) => [
-      statements,
-      i in report.threw ? [report.threw[i], segments[i]].filter(Boolean).join(" after writing ") : segments[i],
-    ]);
+      const reported = Buffer.from(other!).toString();
+      let report: { threw: Record<number, string>; callbacks: number };
+      try {
+        report = JSON.parse(reported);
+      } catch {
+        throw new Error(`the child did not report on the other stream: ${JSON.stringify(reported)}`);
+      }
+      // latin1 maps each byte to one char and back, so this splits the bytes at each separator.
+      const segments = written
+        .toString("latin1")
+        .split(";")
+        .map(segment => Buffer.from(segment, "latin1").toString("hex"));
+      const actual = rows.map(([statements], i) => [
+        statements,
+        i in report.threw ? [report.threw[i], segments[i]].filter(Boolean).join(" after writing ") : segments[i],
+      ]);
 
-    expect({
-      rows: Object.fromEntries(actual),
-      beforeExit: segments.slice(rows.length),
-      callbacks: report.callbacks,
-      exitCode,
-    }).toEqual({
-      rows: Object.fromEntries(rows),
-      // "41" and "42" as hex, then "c": the decoded chunks leave in call order, and process.exit() does not drop them.
-      beforeExit: ["414263"],
-      callbacks: 0,
-      exitCode: 0,
+      expect({
+        rows: Object.fromEntries(actual),
+        beforeExit: segments.slice(rows.length),
+        callbacks: report.callbacks,
+        exitCode,
+      }).toEqual({
+        rows: Object.fromEntries(rows),
+        // "41" and "42" as hex, then "c": the decoded chunks leave in call order, and process.exit() does not drop them.
+        beforeExit: ["414263"],
+        callbacks: 0,
+        exitCode: 0,
+      });
     });
   });
 });

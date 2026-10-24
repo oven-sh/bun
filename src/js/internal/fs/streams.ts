@@ -664,7 +664,7 @@ function finalFast(this: FSStream, cb: (err?: any) => void) {
   cb(null);
 }
 
-// Writable.prototype.write's chunk and encoding checks, in its order. The FileSink would write a string as UTF-8.
+// Writable.prototype.write's null and encoding checks, in its order. The FileSink would write a string as UTF-8.
 function decodeChunk(state: FSStream["_writableState"], chunk: any, encoding: any) {
   if (chunk === null) throw $ERR_STREAM_NULL_VALUES();
   if (!encoding) {

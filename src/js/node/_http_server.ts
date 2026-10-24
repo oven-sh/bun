@@ -3598,11 +3598,12 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       headerState === NodeHTTPHeaderState.sent &&
       !(this._hasBody && willBeChunked(this))
     ) {
-      // Not with bytes of an earlier write unsent: in Node.js that write has failed the socket.
-      // A large one still waits for its drain, a small one was left in the socket's own buffer.
+      // Node's condition also has `writableLength`: bytes of earlier writes that never left. There those writes have
+      // failed the socket, or end() never calls back. A closed native handle counts none: a large write still waits
+      // for its drain, a small one was left in the socket's buffer. Any other socket counts its own.
       const socket = this[kSocket];
       const unsent =
-        this[kNeedDrain] || socket?.[kClosedWithUnsentData]
+        this[kNeedDrain] || socket?.[kClosedWithUnsentData] || socket?.writableLength > 0
           ? (socket?.errored ?? $ERR_STREAM_DESTROYED("write"))
           : undefined;
       process.nextTick(finishResponse, this, unsent);

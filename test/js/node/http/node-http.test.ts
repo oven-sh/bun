@@ -8034,6 +8034,37 @@ it("a socket from emit('connection') with another defaultEncoding gets the bytes
   expect({ length: /^Content-Length: (\d+)$/m.exec(head)?.[1], body }).toEqual({ length: "2", body: "\xc3\xa9" });
 });
 
+// Node.js never calls back here: its end() leaves 'finish' to a write that a destroyed socket drops.
+it.each([
+  [
+    "still holds a write gets an error, and there is no 'finish'",
+    false,
+    ["end: Cannot call write after a stream was destroyed"],
+  ],
+  ["has taken every write gets null, then 'finish'", true, ["end: null", "finish"]],
+])("end(cb) after a socket from emit('connection') closed that %s", async (_, completes, expected) => {
+  const socket = new Duplex({ read() {}, write: (_chunk, _encoding, callback) => void (completes && callback()) });
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const events: string[] = [];
+  const server = http.createServer((req, res) => {
+    res.on("finish", () => events.push("finish"));
+    res.setHeader("Content-Length", 5);
+    res.write("hello");
+    socket.on("close", () => {
+      res.end((err?: Error | null) => {
+        events.push(`end: ${err ? err.message : err}`);
+        // 'finish' follows the callbacks in the same tick.
+        process.nextTick(resolve);
+      });
+    });
+    setImmediate(() => socket.destroy());
+  });
+  server.emit("connection", socket);
+  socket.push("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+  await promise;
+  expect(events).toEqual(expected);
+});
+
 // Node.js calls neither callback here: a write that never completes holds both back.
 it("a socket from emit('connection') that closes with a write in flight fails write() and end() callbacks by name", async () => {
   const socket = new Duplex({ read() {}, write() {} });

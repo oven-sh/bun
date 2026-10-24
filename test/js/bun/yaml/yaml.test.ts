@@ -305,6 +305,59 @@ development:
           sharedArray.set(bytes);
           expect(YAML.parse(sharedArray)).toEqual({ type: "shared", value: 123 });
         });
+
+        test("a Blob whose bytes are not in memory is refused, and does not parse as nothing", () => {
+          const s3 = new Bun.S3Client({ accessKeyId: "id", secretAccessKey: "secret", bucket: "bucket" });
+          for (const file of [Bun.file(import.meta.path), s3.file("key")]) {
+            expect(() => YAML.parse(file)).toThrow("File blob cannot be used here");
+          }
+        });
+
+        test("an asset of Bun.build() parses as its bytes, and one written to outdir is refused", async () => {
+          using dir = tempDir("yaml-build-output", {
+            "entry.js": `import doc from "./doc.yaml" with { type: "file" };\nconsole.log(doc);`,
+            "doc.yaml": "name: test\ncount: 5",
+          });
+          const entrypoints = [join(String(dir), "entry.js")];
+          const assetOf = (build: Bun.BuildOutput) => build.outputs.find(output => output.kind === "asset")!;
+          expect(YAML.parse(assetOf(await Bun.build({ entrypoints })))).toEqual({ name: "test", count: 5 });
+          const written = assetOf(await Bun.build({ entrypoints, outdir: join(String(dir), "out") }));
+          expect(() => YAML.parse(written)).toThrow("File blob cannot be used here");
+        });
+
+        test("parses a SharedArrayBuffer that another thread is writing", async () => {
+          await using proc = Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              /* js */ `
+                const { Worker } = require("node:worker_threads");
+                const bytes = new Uint8Array(new SharedArrayBuffer(1 << 14)).fill("\\n".charCodeAt(0));
+                const writer = new Worker(
+                  \`const { workerData: bytes, parentPort } = require("node:worker_threads");
+                   parentPort.postMessage("ready");
+                   // Each pass over the buffer flips every byte, so that a byte the parser reads twice differs.
+                   for (let i = 0; ; i++) bytes[i % bytes.length] = (Math.floor(i / bytes.length) % 2 ? "-" : "\\\\n").charCodeAt(0);\`,
+                  { eval: true, workerData: bytes },
+                );
+                writer.once("message", () => {
+                  for (let i = 0; i < 200; i++) {
+                    try {
+                      Bun.YAML.parse(bytes);
+                    } catch {}
+                  }
+                  console.log("done");
+                  process.exit(0);
+                });
+              `,
+            ],
+            env: bunEnv,
+            stderr: "inherit",
+          });
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          expect(stdout).toBe("done\n");
+          expect(exitCode).toBe(0);
+        });
       }
 
       test("handles File (which is a Blob)", () => {
@@ -1188,6 +1241,15 @@ folded: >
 
         test("? with multiline plain key in flow", () => {
           expect(YAML.parse("[\n? foo\n bar : baz\n]\n")).toEqual([{ "foo bar": "baz" }]);
+        });
+      });
+
+      describe("a key that cannot be converted to a string", () => {
+        test("throws what the conversion throws", () => {
+          expect(() => YAML.parse("? {toString: x}\n: 1\n")).toThrow(new TypeError("No default value"));
+          expect(() => YAML.parse("a: 1\n? [b, {toString: x, valueOf: y}]\n: 2\n")).toThrow(
+            new TypeError("No default value"),
+          );
         });
       });
 
@@ -5651,4 +5713,39 @@ test("parse rejects an input of 2**31 bytes or more instead of panicking", () =>
   expect(err?.message).toBe(
     'The value of "input.byteLength" is out of range. It must be <= 2147483647. Received 2147483650',
   );
+});
+
+// With Malloc=1 the builder's buffer comes from the system allocator, so ASAN's allocation cap makes it fail to grow.
+describe.concurrent.skipIf(!isASAN)("stringify throws when the string builder can't grow", () => {
+  test.each([
+    ["before a capacity reservation", `Bun.YAML.stringify([big, 1], null, 2)`],
+    ["before a UTF-16 key", `Bun.YAML.stringify({ a: big, "日本": 1 })`],
+  ])("%s", async (_name, expression) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const big = Buffer.alloc(3 * 1024 * 1024, "x").toString("latin1");
+          try {
+            console.log("returned", ${expression}.length);
+          } catch (e) {
+            console.log("threw", e.name, e.message);
+          }
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        Malloc: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=4", "detect_leaks=0"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("threw RangeError Out of memory\n");
+    expect(exitCode).toBe(0);
+  });
 });

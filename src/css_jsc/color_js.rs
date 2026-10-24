@@ -4,101 +4,56 @@ use bun_alloc::Arena;
 use bun_ast::Log;
 use bun_core::String as BunString;
 use bun_core::output::{ColorDepth, Source as OutputSource};
-use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
+use bun_css::values::color::RGBA;
+use bun_jsc::bindgen::{self, JsHeap, JsScope, to_js};
+use bun_jsc::{JSGlobalObject, JSType, JSValue};
 
 use crate::JsResult;
+use crate::generated_bindgen::color_js::{
+    ColorChannels, ColorInput, ColorOutput, ColorOutputChannels, OutputColorFormat,
+};
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum OutputColorFormat {
-    Ansi,
-    Ansi16,
-    Ansi16m,
-    Ansi256,
-    Css,
-    Hex,
-    HexUpper,
-    Hsl,
-    Lab,
-    Number,
-    Rgb,
-    Rgba,
-    RgbArray,
-    RgbaArray,
-    RgbObject,
-    RgbaObject,
-}
-
-impl bun_jsc::FromJsEnum for OutputColorFormat {
-    fn from_js_value(
-        v: JSValue,
-        global: &JSGlobalObject,
-        property_name: &'static str,
-    ) -> JsResult<Self> {
-        use bun_jsc::ComptimeStringMapExt as _;
-        match OUTPUT_COLOR_FORMAT_MAP.from_js(global, v)? {
-            Some(e) => Ok(e),
-            None => {
-                // List the accepted spellings straight from the lookup map so the
-                // error message can't drift from what the parser actually accepts.
-                let n = OUTPUT_COLOR_FORMAT_MAP.len();
-                let mut one_of = std::string::String::from("'");
-                for (i, key) in OUTPUT_COLOR_FORMAT_MAP.keys().enumerate() {
-                    one_of.push_str(std::str::from_utf8(key).expect("map keys are ASCII"));
-                    one_of.push('\'');
-                    if i + 2 < n {
-                        one_of.push_str(", '");
-                    } else if i + 2 == n {
-                        one_of.push_str(" or '");
-                    }
-                }
-                Err(global.throw_invalid_arguments(format_args!(
-                    "{property_name} must be one of {one_of}"
-                )))
-            }
-        }
-    }
-}
-
-bun_core::comptime_string_map! {
-    pub(crate) static OUTPUT_COLOR_FORMAT_MAP: OutputColorFormat = {
-        b"[r,g,b,a]" => OutputColorFormat::RgbaArray,
-        b"[rgb]" => OutputColorFormat::RgbArray,
-        b"[rgba]" => OutputColorFormat::RgbaArray,
-        b"{r,g,b}" => OutputColorFormat::RgbObject,
-        b"{rgb}" => OutputColorFormat::RgbObject,
-        b"{rgba}" => OutputColorFormat::RgbaObject,
-        b"ansi_256" => OutputColorFormat::Ansi256,
-        b"ansi-256" => OutputColorFormat::Ansi256,
-        b"ansi_16" => OutputColorFormat::Ansi16,
-        b"ansi-16" => OutputColorFormat::Ansi16,
-        b"ansi_16m" => OutputColorFormat::Ansi16m,
-        b"ansi-16m" => OutputColorFormat::Ansi16m,
-        b"ansi-24bit" => OutputColorFormat::Ansi16m,
-        b"ansi-truecolor" => OutputColorFormat::Ansi16m,
-        b"ansi" => OutputColorFormat::Ansi,
-        b"ansi256" => OutputColorFormat::Ansi256,
-        b"css" => OutputColorFormat::Css,
-        b"hex" => OutputColorFormat::Hex,
-        b"HEX" => OutputColorFormat::HexUpper,
-        b"hsl" => OutputColorFormat::Hsl,
-        b"lab" => OutputColorFormat::Lab,
-        b"number" => OutputColorFormat::Number,
-        b"rgb" => OutputColorFormat::Rgb,
-        b"rgba" => OutputColorFormat::Rgba,
-    };
+/// CSS spec says to clamp values to their valid range so we'll respect that here
+fn clamp_to_u8(value: f64) -> u8 {
+    value as u8
 }
 
 fn color_int_from_js(
     global: &JSGlobalObject,
     input: JSValue,
     property: &'static str,
-) -> JsResult<i32> {
+) -> JsResult<u8> {
     if input.is_empty() || input.is_undefined() || !input.is_number() {
         return Err(global.throw_invalid_argument_type("color", property, "integer"));
     }
-    // CSS spec says to clamp values to their valid range so we'll respect that here
-    Ok(input.coerce::<i32>(global)?.clamp(0, 255))
+    Ok(clamp_to_u8(input.as_number()))
+}
+
+/// `list` is an array, a typed array or an `ArrayBuffer`.
+fn rgba_from_list(global: &JSGlobalObject, list: JSValue) -> JsResult<RGBA> {
+    let length = list.get_length(global)?;
+    if !matches!(length, 3 | 4) {
+        return Err(global.throw(format_args!("Expected array length 3 or 4")));
+    }
+    Ok(RGBA {
+        red: color_int_from_js(global, list.get_index(global, 0)?, "[0]")?,
+        green: color_int_from_js(global, list.get_index(global, 1)?, "[1]")?,
+        blue: color_int_from_js(global, list.get_index(global, 2)?, "[2]")?,
+        alpha: if length == 4 {
+            color_int_from_js(global, list.get_index(global, 3)?, "[3]")?
+        } else {
+            255
+        },
+    })
+}
+
+fn rgba_from_channels(channels: &ColorChannels) -> RGBA {
+    RGBA {
+        red: clamp_to_u8(channels.r),
+        green: clamp_to_u8(channels.g),
+        blue: clamp_to_u8(channels.b),
+        alpha: channels.a.map_or(255, |a| clamp_to_u8(a * 255.0)),
+    }
 }
 
 // https://github.com/tmux/tmux/blob/dae2868d1227b95fd076fb4a5efa6256c7245943/colour.c#L44-L55
@@ -210,44 +165,38 @@ fn zero_if_none(component: f32) -> f32 {
     if component.is_nan() { 0.0 } else { component }
 }
 
-pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn channel_list<'a, const N: usize>(
+    heap: &JsHeap<'a>,
+    channels: [u8; N],
+) -> bindgen::Result<'a, Option<ColorOutput<'a>>> {
+    Ok(Some(ColorOutput::List(
+        heap.create_array(channels, to_js::u8)?,
+    )))
+}
+
+pub(crate) fn color<'a>(
+    cx: &mut JsScope<'a>,
+    input: ColorInput<'a>,
+    output_format: OutputColorFormat,
+) -> bindgen::Result<'a, Option<ColorOutput<'a>>> {
     use bun_ast::symbol::Map as SymbolMap;
-    use bun_core::Utf8Bytes;
     use bun_css as css;
     use bun_css::CssColor;
-    use bun_css::values::color::{HSL, LAB, RGBA, SRGB};
-    use bun_jsc::StringJsc as _;
-
-    let args = frame.arguments_as_array::<2>();
-    if args[0].is_undefined() {
-        return Err(global.throw_invalid_argument_type(
-            "color",
-            "input",
-            "string, number, or object",
-        ));
-    }
+    use bun_css::values::color::{HSL, LAB, SRGB};
 
     let log = Log::init();
 
-    let unresolved_format: OutputColorFormat = 'brk: {
-        if !args[1].is_empty_or_undefined_or_null() {
-            if !args[1].is_string() {
-                return Err(global.throw_invalid_argument_type("color", "format", "string"));
-            }
-
-            break 'brk args[1].to_enum::<OutputColorFormat>(global, "format")?;
+    let parsed_color: css::CssColorParseResult = match input {
+        ColorInput::Missing => {
+            return Err(cx
+                .global()
+                .throw_invalid_argument_type("color", "input", "string, number, or object")
+                .into());
         }
-
-        break 'brk OutputColorFormat::Css;
-    };
-    let input: Utf8Bytes;
-
-    let parsed_color: css::CssColorParseResult = 'brk: {
-        if args[0].is_number() {
-            let number: i64 = args[0].to_int64();
+        ColorInput::Number(number) => {
             // The color is the low 32 bits, LSB-first: blue, green, red,
             // alpha (one byte each).
-            let int: u32 = number as u32;
+            let int: u32 = (number as i64) as u32;
             let blue = (int & 0xff) as u8;
             let green = ((int >> 8) & 0xff) as u8;
             let red = ((int >> 16) & 0xff) as u8;
@@ -259,88 +208,43 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 255
             };
 
-            break 'brk Ok(CssColor::Rgba(RGBA {
+            Ok(CssColor::Rgba(RGBA {
                 alpha,
                 red,
                 green,
                 blue,
-            }));
-        } else if args[0].js_type().is_array_like() {
-            match args[0].get_length(global)? {
-                3 => {
-                    let r = color_int_from_js(global, args[0].get_index(global, 0)?, "[0]")?;
-                    let g = color_int_from_js(global, args[0].get_index(global, 1)?, "[1]")?;
-                    let b = color_int_from_js(global, args[0].get_index(global, 2)?, "[2]")?;
-                    break 'brk Ok(CssColor::Rgba(RGBA {
-                        alpha: 255,
-                        red: u8::try_from(r).expect("int cast"),
-                        green: u8::try_from(g).expect("int cast"),
-                        blue: u8::try_from(b).expect("int cast"),
-                    }));
-                }
-                4 => {
-                    let r = color_int_from_js(global, args[0].get_index(global, 0)?, "[0]")?;
-                    let g = color_int_from_js(global, args[0].get_index(global, 1)?, "[1]")?;
-                    let b = color_int_from_js(global, args[0].get_index(global, 2)?, "[2]")?;
-                    let a = color_int_from_js(global, args[0].get_index(global, 3)?, "[3]")?;
-                    break 'brk Ok(CssColor::Rgba(RGBA {
-                        alpha: u8::try_from(a).expect("int cast"),
-                        red: u8::try_from(r).expect("int cast"),
-                        green: u8::try_from(g).expect("int cast"),
-                        blue: u8::try_from(b).expect("int cast"),
-                    }));
-                }
-                _ => {
-                    return Err(global.throw(format_args!("Expected array length 3 or 4")));
-                }
-            }
-        } else if args[0].is_object() {
-            let r = color_int_from_js(global, args[0].get(global, b"r")?.unwrap_or_default(), "r")?;
-            let g = color_int_from_js(global, args[0].get(global, b"g")?.unwrap_or_default(), "g")?;
-            let b = color_int_from_js(global, args[0].get(global, b"b")?.unwrap_or_default(), "b")?;
-
-            let a: Option<u8> = if let Some(a_value) = args[0].get_truthy(global, b"a")? {
-                'brk2: {
-                    if a_value.is_number() {
-                        // CSS spec says to clamp values to their valid range so we'll respect that here
-                        break 'brk2 Some(
-                            u8::try_from(((a_value.as_number() * 255.0) as i64).clamp(0, 255))
-                                .unwrap(),
-                        );
-                    }
-                    break 'brk2 None;
-                }
-            } else {
-                None
-            };
-
-            break 'brk Ok(CssColor::Rgba(RGBA {
-                alpha: a.unwrap_or(255),
-                red: u8::try_from(r).expect("int cast"),
-                green: u8::try_from(g).expect("int cast"),
-                blue: u8::try_from(b).expect("int cast"),
-            }));
+            }))
         }
-
-        input = args[0].to_utf8(global)?;
-
-        // MimallocArena::new() calls mi_heap_new(), so defer creation to the
-        // paths that actually allocate.
-        let arena = Arena::new();
-        let mut parser_input = css::ParserInput::new(input.slice(), &arena);
-        let mut parser = css::Parser::new(
-            &mut parser_input,
-            None,
-            css::css_parser::ParserOpts::default(),
-            None,
-        );
-        break 'brk CssColor::parse(&mut parser);
+        ColorInput::List(list) => Ok(CssColor::Rgba(rgba_from_list(cx.global(), list.to_js())?)),
+        ColorInput::Buffer(buffer) => {
+            let (global, buffer) = (cx.global(), buffer.to_js());
+            Ok(CssColor::Rgba(if buffer.js_type() == JSType::DataView {
+                rgba_from_channels(&ColorChannels::from_js(global, buffer)?)
+            } else {
+                rgba_from_list(global, buffer)?
+            }))
+        }
+        ColorInput::Channels(channels) => Ok(CssColor::Rgba(rgba_from_channels(&channels))),
+        ColorInput::Text(text) => {
+            // MimallocArena::new() calls mi_heap_new(), so defer creation to the
+            // paths that actually allocate.
+            let arena = Arena::new();
+            let mut parser_input = css::ParserInput::new(text, &arena);
+            let mut parser = css::Parser::new(
+                &mut parser_input,
+                None,
+                css::css_parser::ParserOpts::default(),
+                None,
+            );
+            CssColor::parse(&mut parser)
+        }
     };
+    let heap = &cx.heap;
 
     match parsed_color {
         Err(err) => {
             if log.msgs.is_empty() {
-                return Ok(JSValue::NULL);
+                return Ok(None);
             }
 
             let kind_name = match err.basic().kind {
@@ -350,19 +254,19 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 css::BasicParseErrorKind::at_rule_body_invalid => "at_rule_body_invalid",
                 css::BasicParseErrorKind::qualified_rule_invalid => "qualified_rule_invalid",
             };
-            return Err(global.throw(format_args!("color() failed to parse {}", kind_name)));
+            return Err(heap.error(format_args!("color() failed to parse {}", kind_name)));
         }
         Ok(result) => {
-            let format: OutputColorFormat = if unresolved_format == OutputColorFormat::Ansi {
+            let format: OutputColorFormat = if output_format == OutputColorFormat::Ansi {
                 match OutputSource::color_depth() {
                     // No color terminal, therefore return an empty string
-                    ColorDepth::None => return Ok(JSValue::js_empty_string(global)),
+                    ColorDepth::None => return Ok(Some(ColorOutput::Text(BunString::EMPTY))),
                     ColorDepth::C16 => OutputColorFormat::Ansi16,
                     ColorDepth::C16m => OutputColorFormat::Ansi16m,
                     ColorDepth::C256 => OutputColorFormat::Ansi256,
                 }
             } else {
-                unresolved_format
+                output_format
             };
 
             'formatted: {
@@ -398,73 +302,36 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                             let rgba = srgba.into_rgba();
                             match tag {
                                 OutputColorFormat::RgbaObject => {
-                                    let object = JSValue::create_empty_object(global, 4);
-                                    object.put(global, b"r", JSValue::js_number(rgba.red as f64));
-                                    object.put(global, b"g", JSValue::js_number(rgba.green as f64));
-                                    object.put(global, b"b", JSValue::js_number(rgba.blue as f64));
-                                    object.put(
-                                        global,
-                                        b"a",
-                                        JSValue::js_number(rgba.alpha_f32() as f64),
-                                    );
-                                    return Ok(object);
+                                    return Ok(Some(ColorOutput::Channels(ColorOutputChannels {
+                                        r: rgba.red,
+                                        g: rgba.green,
+                                        b: rgba.blue,
+                                        a: Some(rgba.alpha_f32() as f64),
+                                    })));
                                 }
                                 OutputColorFormat::RgbObject => {
-                                    let object = JSValue::create_empty_object(global, 3);
-                                    object.put(global, b"r", JSValue::js_number(rgba.red as f64));
-                                    object.put(global, b"g", JSValue::js_number(rgba.green as f64));
-                                    object.put(global, b"b", JSValue::js_number(rgba.blue as f64));
-                                    return Ok(object);
+                                    return Ok(Some(ColorOutput::Channels(ColorOutputChannels {
+                                        r: rgba.red,
+                                        g: rgba.green,
+                                        b: rgba.blue,
+                                        a: None,
+                                    })));
                                 }
                                 OutputColorFormat::RgbArray => {
-                                    let object = JSValue::create_empty_array(global, 3)?;
-                                    object.put_index(
-                                        global,
-                                        0,
-                                        JSValue::js_number(rgba.red as f64),
-                                    )?;
-                                    object.put_index(
-                                        global,
-                                        1,
-                                        JSValue::js_number(rgba.green as f64),
-                                    )?;
-                                    object.put_index(
-                                        global,
-                                        2,
-                                        JSValue::js_number(rgba.blue as f64),
-                                    )?;
-                                    return Ok(object);
+                                    return channel_list(heap, [rgba.red, rgba.green, rgba.blue]);
                                 }
                                 OutputColorFormat::RgbaArray => {
-                                    let object = JSValue::create_empty_array(global, 4)?;
-                                    object.put_index(
-                                        global,
-                                        0,
-                                        JSValue::js_number(rgba.red as f64),
-                                    )?;
-                                    object.put_index(
-                                        global,
-                                        1,
-                                        JSValue::js_number(rgba.green as f64),
-                                    )?;
-                                    object.put_index(
-                                        global,
-                                        2,
-                                        JSValue::js_number(rgba.blue as f64),
-                                    )?;
-                                    object.put_index(
-                                        global,
-                                        3,
-                                        JSValue::js_number(rgba.alpha as f64),
-                                    )?;
-                                    return Ok(object);
+                                    return channel_list(
+                                        heap,
+                                        [rgba.red, rgba.green, rgba.blue, rgba.alpha],
+                                    );
                                 }
                                 OutputColorFormat::Number => {
                                     let mut int: u32 = 0;
                                     int |= (rgba.red as u32) << 16;
                                     int |= (rgba.green as u32) << 8;
                                     int |= rgba.blue as u32;
-                                    return Ok(JSValue::js_number(int as f64));
+                                    return Ok(Some(ColorOutput::Number(int)));
                                 }
                                 OutputColorFormat::Hex => {
                                     break 'color BunString::create_format(format_args!(
@@ -595,7 +462,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                     }
                 };
 
-                return str.into_js(global);
+                return Ok(Some(ColorOutput::Text(str)));
             }
 
             // Fallback to CSS string output
@@ -614,11 +481,11 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             );
 
             if let Err(err) = result.to_css(&mut printer) {
-                return Err(global.throw(format_args!("color() internal error: {}", err.name())));
+                return Err(heap.error(format_args!("color() internal error: {}", err.name())));
             }
             drop(printer);
 
-            return bun_string_jsc::create_utf8_for_js(global, &dest);
+            return Ok(Some(ColorOutput::Css(dest)));
         }
     }
 }

@@ -536,7 +536,8 @@ declare module "bun:ffi" {
      *
      * Once called, the library is no longer usable.
      *
-     * Calling a function from a library that has been closed is undefined behavior.
+     * Calling a symbol from a closed {@link cc} library throws a `TypeError`.
+     * Calling a symbol from a closed {@link dlopen} or {@link linkSymbols} library is undefined behavior.
      */
     close(): void;
   }

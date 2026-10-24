@@ -15,7 +15,7 @@ const NO_DUPLICATE_PROPS: Message = Message::new("noDuplicateProps", "No duplica
 const JSX_NO_DUPLICATE_PROPS: Message =
     Message::new("", "No duplicate props allowed. The prop \"{{prop_name}}\" is duplicated.");
 
-/// With more attributes than this, the names are looked up in a table.
+/// With more attributes than this, the names go into a hash set.
 const FEW: usize = 8;
 
 #[derive(Copy, Clone)]
@@ -48,7 +48,7 @@ impl Rule for JsxNoDuplicateProps {
             return;
         }
         let is_oxlint = cx.language().is_oxlint;
-        // oxlint has no such option.
+        // oxlint doesn't have this option.
         if self.ignore_case && !is_oxlint {
             let mut props: FxHashSet<Cow<'a, [u8]>> = FxHashSet::default();
             for attribute in attributes.iter().filter_map(identifier) {
@@ -60,7 +60,7 @@ impl Rule for JsxNoDuplicateProps {
             return;
         }
         let report = |old: Attribute<'a>, new: Attribute<'a>| {
-            // oxlint points at the name of the one of the same name before it.
+            // oxlint reports the name of the earlier attribute with the same name.
             if is_oxlint {
                 let (first, second) = (old.key.span(cx.file()), new.key.span(cx.file()));
                 cx.report(first, JSX_NO_DUPLICATE_PROPS).data("prop_name", new.name).label(second, "");
@@ -86,14 +86,14 @@ impl Rule for JsxNoDuplicateProps {
     }
 }
 
-/// The name of an attribute, unless it has a namespace.
+/// Returns an attribute's name, unless it's namespaced.
 fn identifier(prop: Prop<'_>) -> Option<Attribute<'_>> {
     let key = prop.key()?;
     let name = key.name()?;
     (!strings::contains_char(name.bytes(), b':')).then_some(Attribute { name, key, prop })
 }
 
-/// Upstream keeps the names as the properties of an object, where an assignment to `__proto__` makes none.
+/// Upstream stores the names as an object's properties, and assigning to `__proto__` doesn't create one.
 fn is_own_property(name: &[u8]) -> bool {
     name != b"__proto__"
 }

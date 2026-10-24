@@ -17,6 +17,7 @@ import { chmod, exists, lstat, readdir, rm, symlink, truncate, writeFile } from 
 import {
   bunEnv,
   bunExe,
+  DirectoryTree,
   isASAN,
   isDebug,
   isLinux,
@@ -405,8 +406,8 @@ describe.concurrent("package.json names and versions", () => {
     expect(tarballEntries(join(dir, tarball))).toEqual(["package/package.json", "package/index.js"]);
   });
 
-  // As for `JSON.parse`, which is how everybody else reads the package.json in the tarball.
-  test("of two equal keys the last one counts", async () => {
+  // Same as `JSON.parse`, which is how every other tool reads the package.json in the tarball.
+  test("the last of two equal keys wins", async () => {
     using dir = tempDir("pack-equal-keys", {
       "package.json": `{
   "name": "first-name",
@@ -1200,7 +1201,7 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
   });
 });
 
-describe.concurrent("what is at the tarball's destination already", () => {
+describe.concurrent("something already exists at the tarball's destination", () => {
   const files = {
     "pkg/package.json": JSON.stringify({ name: "pack-over", version: "1.0.0", files: ["index.js"] }),
     "pkg/index.js": indexJs,
@@ -1229,7 +1230,7 @@ describe.concurrent("what is at the tarball's destination already", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a symlink that --filename names stays one", async () => {
+  test("a symlink that --filename points to stays a symlink", async () => {
     using dir = tempDir("pack-over-typed-link", { ...files, "pkg/artifacts/earlier.tgz": "an earlier tarball" });
     const link = join(dir, "pkg", "latest.tgz");
     await symlink(join("artifacts", "earlier.tgz"), link, "file");
@@ -1242,7 +1243,7 @@ describe.concurrent("what is at the tarball's destination already", () => {
   });
 
   // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
-  test.serial.skipIf(isWindows)("a file that may be written, in a folder that may not", async () => {
+  test.serial.skipIf(isWindows)("a writable file in a read-only folder", async () => {
     using dir = tempDir("pack-over-locked", { ...files, "pkg/out/pack-over-1.0.0.tgz": "an earlier tarball" });
     using unprivileged = unprivilegedSpawnOptions(String(dir));
     await chmod(join(dir, "pkg", "out"), 0o555);
@@ -1279,7 +1280,7 @@ describe.concurrent("what is at the tarball's destination already", () => {
 });
 
 // A pack that is killed cannot tidy up.
-test.concurrent.each([{}, { files: ["*"] }])("what a killed pack leaves behind is not packed (%j)", async fields => {
+test.concurrent.each([{}, { files: ["*"] }])("leftovers of a killed pack aren't packed (%j)", async fields => {
   using dir = tempDir("pack-killed", {
     "package.json": JSON.stringify({ name: "pack-killed", version: "1.0.0", ...fields }),
     "index.js": indexJs,
@@ -1311,7 +1312,7 @@ test.concurrent.each([{}, { files: ["*"] }])("what a killed pack leaves behind i
   expect(exitCode).toBe(0);
 });
 
-// What a watcher does to its output: truncate it, then write it again. /proc tells how far pack has read.
+// This is what a watcher does to its output: truncate it, then write it again. /proc shows how far pack has read.
 test.concurrent.skipIf(!isLinux)("a file that gets shorter while it is read fails the pack", async () => {
   using dir = tempDir("pack-shorter", {
     "package.json": JSON.stringify({ name: "pack-shorter", version: "1.0.0" }),
@@ -2782,8 +2783,8 @@ describe.concurrent("bundledDependencies", () => {
     expect(tarballEntries(join(dir, "pack-bundled-dep-not-dir-4.5.6.tgz"))).toEqual(["package/package.json"]);
   });
 
-  // No key is `name` or `@scope/name`. Without the check, each of the first eight opens a directory
-  // that is there. `\` is a separator on Windows only, and a NUL ends the path that the OS gets.
+  // No key is `name` or `@scope/name`. Without the check, each of the first eight opens a directory that exists. `\` is
+  // only a separator on Windows, and a NUL ends the path that the OS gets.
   test.each([
     "../../outside",
     "other/lib",
@@ -2890,7 +2891,7 @@ describe.concurrent("bundledDependencies", () => {
     },
   );
 
-  // The tarball's package.json keeps the field, so whoever installs the tarball does not install the package.
+  // The tarball's package.json keeps the field, so whoever installs the tarball doesn't install the package.
   test.each([{ args: [] }, { args: ["--dry-run"] }])(
     "a bundled dependency that is not installed is an error (args: $args)",
     async ({ args }) => {
@@ -2912,7 +2913,7 @@ describe.concurrent("bundledDependencies", () => {
     },
   );
 
-  // What an install may leave out, such as an optional dependency for another platform. npm and pnpm do the same.
+  // Packages that an install may skip, such as an optional dependency for another platform. npm and pnpm do the same.
   test.each([
     ["an optional dependency", { optionalDependencies: { absent: "1.0.0" } }],
     [
@@ -2945,7 +2946,7 @@ describe.concurrent("bundledDependencies", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a workspace bundles what is in the node_modules of the workspace root", async () => {
+  test("a workspace bundles packages from the node_modules of the workspace root", async () => {
     using dir = tempDir("pack-bundled-hoisted-workspace", {
       "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
       "packages/lib/package.json": JSON.stringify({
@@ -2981,8 +2982,8 @@ describe.concurrent("bundledDependencies", () => {
     ]);
   });
 
-  // What the isolated linker lays: node_modules holds links into a store, where the dependencies of a package are
-  // links next to it. `y` goes next to `x`, unless the packed package has a `y` of its own that it does not bundle.
+  // The isolated linker's layout: node_modules has links into a store, where a package's dependencies are links next to
+  // it. `y` goes next to `x`, unless the packed package has its own `y` that it doesn't bundle.
   test.skipIf(isWindows).each([
     { name: "x", own: {}, y: "node_modules/y" },
     { name: "@s/x", own: {}, y: "node_modules/y" },
@@ -3080,6 +3081,268 @@ describe.concurrent("bundledDependencies", () => {
     expect(JSON.parse(tarball.entries.at(-1)!.contents).dependencies).toEqual({ lib: "1.0.0", y: "1.0.0" });
   });
 
+  // The ignore files of a bundled linked folder still apply when the folder's package.json does not load. A folder that
+  // has a package.json entry is packed as a package, and a folder that has none as a directory.
+  describe("a bundled linked folder whose package.json does not load", () => {
+    const notJson = '{ "name": "other", oops';
+
+    // A package that bundles `name`, which is a link to the folder `vendor/other`. `link` is the target of a link at
+    // the folder's package.json.
+    async function bundlesLinkedFolder(folder: DirectoryTree, name = "other", link?: string) {
+      const dir = tempDir("pack-bundled-linked", {
+        "package.json": JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          files: ["index.js"],
+          dependencies: { [name]: "1.0.0" },
+          bundledDependencies: [name],
+        }),
+        "index.js": indexJs,
+        "vendor/other": folder,
+        "vendor/not.json": notJson,
+        "node_modules/@s": {},
+      });
+      if (link) await symlink(link, join(dir, "vendor", "other", "package.json"), "file");
+      // A junction on Windows. Elsewhere, "junction" is ignored and a plain symlink is created.
+      await symlink(join(dir, "vendor", "other"), join(dir, "node_modules", name), "junction");
+      return dir;
+    }
+
+    // The paths, inside the bundled package `name`, of its files in the tarball.
+    async function bundledFiles(dir: string, name = "other") {
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      expect(exitCode).toBe(0);
+      const prefix = `package/node_modules/${name}/`;
+      return tarballEntries(join(dir, "lib-1.0.0.tgz"))
+        .filter(entry => entry.startsWith(prefix))
+        .map(entry => entry.slice(prefix.length));
+    }
+
+    // The ignore file names a file at every depth, a directory of the folder only, and two documents. README and
+    // LICENSE are always in a package, and the lockfiles of its root never are. In a directory they are files like any
+    // other.
+    const folder = {
+      "index.js": indexJs,
+      "secret.txt": "secret",
+      "lib/secret.txt": "secret",
+      "build/out.js": indexJs,
+      "lib/build/out.js": indexJs,
+      "README.md": "# other",
+      "LICENSE": "MIT",
+      "package-lock.json": "{}",
+      "yarn.lock": "",
+      ".npmignore": "secret.txt\n/build\nREADME.md\nLICENSE\n",
+    };
+    const asPackage = ["LICENSE", "README.md", "index.js", "lib/build/out.js"];
+    const asDirectory = ["index.js", "lib/build/out.js", "package-lock.json", "yarn.lock"];
+
+    // Every list is what `npm pack` 11.16.0 packs for the same folder.
+    test.each([
+      { state: "is missing", name: "other", expected: asDirectory },
+      { state: "is missing", name: "@s/other", expected: asDirectory },
+      { state: "is a dangling link", name: "other", link: "nowhere.json", expected: asPackage },
+      { state: "is a link to itself", name: "other", link: "package.json", expected: asPackage },
+      {
+        state: "is a directory",
+        name: "other",
+        manifest: { "inner.js": indexJs },
+        expected: [...asPackage, "package.json/inner.js"],
+      },
+      // The file is packed as it is.
+      { state: "does not parse", name: "other", manifest: notJson, expected: [...asPackage, "package.json"] },
+      { state: "is a link to a file that does not parse", name: "other", link: "../not.json", expected: asPackage },
+    ])("package.json $state, bundled as $name", async ({ name, manifest, link, expected }) => {
+      const tree = manifest === undefined ? folder : { ...folder, "package.json": manifest };
+      using dir = await bundlesLinkedFolder(tree, name, link);
+
+      expect(await bundledFiles(dir, name)).toEqual(expected);
+    });
+
+    const sources = {
+      "index.js": indexJs,
+      "secret.txt": "secret",
+      "lib/a.js": indexJs,
+      "lib/secret.txt": "secret",
+      "build/out.js": indexJs,
+      "lib/build/out.js": indexJs,
+    };
+    const ignored = { ".npmignore": "secret.txt\n/build\n" };
+    const kept = ["index.js", "lib/a.js", "lib/build/out.js"];
+    const whole = Object.keys(sources).sort();
+
+    // Every list is what `npm pack` 11.16.0 packs for the same folder.
+    test.each([
+      { what: "only a .gitignore", ignores: { ".gitignore": ignored[".npmignore"] }, expected: kept },
+      {
+        what: "an .npmignore beside a .gitignore",
+        ignores: { ...ignored, ".gitignore": "index.js\n" },
+        expected: kept,
+      },
+      {
+        what: "an .npmignore in a subdirectory",
+        ignores: { "lib/.npmignore": ignored[".npmignore"] },
+        expected: ["build/out.js", "index.js", "lib/a.js", "secret.txt"],
+      },
+      {
+        what: "a negated pattern",
+        ignores: { ".npmignore": "secret.txt\n!lib/secret.txt\n" },
+        expected: ["build/out.js", "index.js", "lib/a.js", "lib/build/out.js", "lib/secret.txt"],
+      },
+      // A folder of build output can have such a file. Nothing of the folder is packed then.
+      { what: "a .gitignore that names every file", ignores: { ".gitignore": "*\n" }, expected: [] },
+      // An .npmignore, also an empty one, is read in place of the .gitignore.
+      {
+        what: "an empty .npmignore beside a .gitignore that names every file",
+        ignores: { ".gitignore": "*\n", ".npmignore": "" },
+        expected: whole,
+      },
+    ])("no package.json and $what", async ({ ignores, expected }) => {
+      using dir = await bundlesLinkedFolder({ ...sources, ...ignores });
+
+      expect(await bundledFiles(dir)).toEqual(expected);
+    });
+
+    // Unlike npm, which packs it. The packages in the node_modules of a bundled package are packed as its dependencies.
+    test("no package.json: the folder's own node_modules is not packed", async () => {
+      using dir = await bundlesLinkedFolder({
+        "index.js": indexJs,
+        "node_modules/y/package.json": JSON.stringify({ name: "y", version: "1.0.0" }),
+      });
+
+      expect(await bundledFiles(dir)).toEqual(["index.js"]);
+    });
+
+    // The patterns of the ignore file are anchored at the folder, at every depth in the tarball.
+    test("no package.json, as the dependency of a bundled linked folder and of an installed package", async () => {
+      const inner = { ...sources, ...ignored };
+      using dir = tempDir("pack-bundled-linked-transitive", {
+        "package.json": JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          files: ["index.js"],
+          dependencies: { host: "1.0.0", installed: "1.0.0" },
+          bundledDependencies: true,
+        }),
+        "index.js": indexJs,
+        "vendor/host/package.json": JSON.stringify({
+          name: "host",
+          version: "1.0.0",
+          dependencies: { nested: "1.0.0" },
+        }),
+        "vendor/host/node_modules": {},
+        "vendor/nested": inner,
+        "vendor/hoisted": inner,
+        "node_modules/installed/package.json": JSON.stringify({
+          name: "installed",
+          version: "1.0.0",
+          dependencies: { hoisted: "1.0.0" },
+        }),
+      });
+      // Junctions on Windows, plain symlinks elsewhere.
+      await symlink(join(dir, "vendor", "host"), join(dir, "node_modules", "host"), "junction");
+      await symlink(join(dir, "vendor", "nested"), join(dir, "vendor", "host", "node_modules", "nested"), "junction");
+      await symlink(join(dir, "vendor", "hoisted"), join(dir, "node_modules", "hoisted"), "junction");
+
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      expect(exitCode).toBe(0);
+
+      expect(tarballEntries(join(dir, "lib-1.0.0.tgz"))).toEqual([
+        "package/package.json",
+        "package/index.js",
+        ...kept.map(file => `package/node_modules/hoisted/${file}`),
+        ...kept.map(file => `package/node_modules/host/node_modules/nested/${file}`),
+        "package/node_modules/host/package.json",
+        "package/node_modules/installed/package.json",
+      ]);
+    });
+
+    test.each(["pm pack --dry-run", "publish --dry-run"])("no package.json: bun %s", async command => {
+      using dir = await bundlesLinkedFolder({ ...sources, ...ignored });
+
+      await using proc = spawn({
+        cmd: [bunExe(), ...command.split(" ")],
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        // `bun publish` stops early when it has no credentials. Nothing listens on port 1.
+        env: { ...bunEnv, npm_config_registry: "http://user:password@127.0.0.1:1/" },
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).toBe("");
+      // package.json, index.js, and the three files of the folder
+      expect(out).toContain("\nTotal files: 5\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // `bun install` makes the link for a `link:` folder, which needs no package.json.
+    test.each([
+      { spec: "link:./vendor/other", folder: "app/vendor/other", expected: kept },
+      { spec: "link:../other", folder: "other", expected: kept },
+      // The real path of these two has a `node_modules` component, so each is taken for an installed copy, which is
+      // packed whole. npm packs them by their ignore file.
+      { spec: "link:./packages/node_modules/other", folder: "app/packages/node_modules/other", expected: whole },
+      { spec: "link:../node_modules/ws/other", folder: "node_modules/ws/other", expected: whole },
+    ])("no package.json, linked by bun install as $spec", async ({ spec, folder, expected }) => {
+      using dir = tempDir("pack-bundled-link-protocol", {
+        "app/package.json": JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          files: ["index.js"],
+          dependencies: { other: spec },
+          bundledDependencies: ["other"],
+        }),
+        "app/index.js": indexJs,
+        [folder]: { ...sources, ...ignored },
+      });
+      const app = join(dir, "app");
+      await runBunInstall(bunEnv, app);
+
+      expect(await bundledFiles(app)).toEqual(expected);
+    });
+
+    // The files that it would have named must not be packed.
+    test("no package.json, and an .npmignore that can't be read stops the pack", async () => {
+      using dir = await bundlesLinkedFolder({ ...sources, ".npmignore": {} });
+
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe('EISDIR: failed to read .npmignore at: "<dir>/vendor/other/.npmignore"');
+      expect(exitCode).toBe(1);
+      expect(await sortedNames(dir)).toEqual(["index.js", "node_modules", "package.json", "vendor"]);
+    });
+  });
+
+  // A copy below `node_modules`, for example of a `file:` folder, is packed whole in every state of its package.json.
+  // No ignore file in it is read.
+  test.each([
+    { state: "loads", manifest: JSON.stringify({ name: "dep", version: "1.0.0" }) },
+    { state: "is missing", manifest: undefined },
+  ])("an installed package whose package.json $state is packed whole", async ({ manifest }) => {
+    using dir = tempDir("pack-bundled-installed-ignore", {
+      "package.json": JSON.stringify({
+        name: "lib",
+        version: "1.0.0",
+        dependencies: { dep: "1.0.0" },
+        bundledDependencies: ["dep"],
+      }),
+      ...(manifest === undefined ? {} : { "node_modules/dep/package.json": manifest }),
+      "node_modules/dep/secret.txt": "secret",
+      "node_modules/dep/.npmignore": "secret.txt\n",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(tarballEntries(join(dir, "lib-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      ...(manifest === undefined ? [] : ["package/node_modules/dep/package.json"]),
+      "package/node_modules/dep/secret.txt",
+    ]);
+  });
+
   test.each([
     ["does not parse", '{ "name": "fixture", oops'],
     ["has the same name", JSON.stringify({ name: "app", version: "9.0.0" })],
@@ -3126,7 +3389,7 @@ describe.concurrent("bundledDependencies", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("for what a bundled dependency depends on", async () => {
+    test("for the dependencies of a bundled dependency", async () => {
       using dir = tempDir("pack-bundled-above-nested", {
         ...above,
         "project/package.json": JSON.stringify({
@@ -3152,7 +3415,7 @@ describe.concurrent("bundledDependencies", () => {
     });
   });
 
-  // The layout of pnpm and of the isolated linker: each package beside links to what it depends on.
+  // The layout of pnpm and of the isolated linker: each package is next to links to its dependencies.
   describe.skipIf(isWindows)("two versions of two packages that depend on each other", () => {
     async function packLinked(graph: Record<string, Record<string, string>>) {
       const tree: Record<string, string> = {
@@ -3201,14 +3464,14 @@ describe.concurrent("bundledDependencies", () => {
       expect(await packLinked({ ...chain, "b@2.0.0": {} })).toEqual({ bundled: 4, err: "", exitCode: 0 });
     });
 
-    test("in a ring, which no node_modules can hold", async () => {
+    test("in a cycle, which no node_modules layout can represent", async () => {
       const { err, exitCode } = await packLinked({ ...chain, "b@2.0.0": { a: "1.0.0" } });
       expect(err).toStartWith("error: bundled dependencies form a cycle: ");
       expect(exitCode).toBe(1);
     });
   });
 
-  test("a dependency of a bundled dependency that is not there is left out", async () => {
+  test("a missing dependency of a bundled dependency is skipped", async () => {
     using dir = tempDir("pack-bundled-dep-absent", {
       "package.json": JSON.stringify({
         name: "pack-bundled-dep-absent",
@@ -3273,7 +3536,7 @@ describe.concurrent("bundledDependencies", () => {
     ]);
   });
 
-  // What `bun install` makes of a workspace that is a dependency.
+  // This is what `bun install` creates for a workspace that's a dependency.
   test.skipIf(isWindows)("a scoped bundled dependency that is a link is followed", async () => {
     using dir = tempDir("pack-bundled-dep-scoped-link", {
       "package.json": JSON.stringify({
@@ -3759,6 +4022,47 @@ describe.concurrent("files", () => {
     ]);
   });
 
+  // npm reads the `!` of `!(a).txt` as a negation and the parentheses as plain characters.
+  // Every list is what `npm pack` 11.16.0 packs for the same `files`.
+  test.each([
+    [
+      ["*.txt", "!(a).txt"],
+      ["a.txt", "b.txt"],
+    ],
+    [
+      ["*.txt", "!/(a).txt"],
+      ["a.txt", "b.txt"],
+    ],
+    // the entry also applies inside a directory that `files` includes
+    [
+      ["*.txt", "sub", "!(a).txt"],
+      ["a.txt", "b.txt", "sub/b.txt"],
+    ],
+    // this spelling packed the same before
+    [
+      ["*.txt", "![(]a).txt"],
+      ["a.txt", "b.txt"],
+    ],
+  ])("an excluded name that begins with `(`: %j", async (files, expected) => {
+    using dir = tempDir("pack-files-excluded-paren", {
+      "package.json": JSON.stringify({ name: "pack-files-excluded-paren", version: "1.0.0", files }),
+      "(a).txt": "x",
+      "a.txt": "x",
+      "b.txt": "x",
+      "index.js": indexJs,
+      "sub/(a).txt": "x",
+      "sub/b.txt": "x",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(tarballEntries(join(dir, "pack-files-excluded-paren-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      ...expected.map(name => `package/${name}`),
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("an entry longer than the path buffer is still matched", async () => {
     // A brace group of 1000 names that do not exist, then "dist". ~100KB, longer
     // than the path buffer on every platform (98302 bytes on Windows).
@@ -4111,7 +4415,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
     // The directory is excluded by a rule that does not match its files. npm forgets that rule once a negation makes
     // it walk the directory, and packs every token.txt below. git never looks below an excluded directory, so
     // negations like these sit in real .gitignore files without effect. Only what a negation names is packed.
-    describe.each([".npmignore", ".gitignore"])("the rest of the directory stays excluded (%s)", ignoreFile => {
+    describe.each([".npmignore", ".gitignore"])("the rest of the directory is still excluded (%s)", ignoreFile => {
       test.each([
         ["secrets/\n!secrets/keep.js\n", ["secrets/keep.js"]],
         ["secrets\n!secrets/keep.js\n", ["secrets/keep.js"]],
@@ -4166,7 +4470,7 @@ describe.concurrent(".gitignore/.npmignore", () => {
       expect(exitCode).toBe(0);
     });
 
-    test(".git and .npmrc stay out", async () => {
+    test(".git and .npmrc are never packed", async () => {
       expect(
         await packed(".npmignore", "conf/\n!conf/**\n", {
           "index.js": indexJs,
@@ -4176,10 +4480,36 @@ describe.concurrent(".gitignore/.npmignore", () => {
         }),
       ).toEqual(["package.json", "conf/a.json", "index.js"]);
     });
+
+    // npm and git read the `!` of `!(a).txt` as a negation and the parentheses as plain characters.
+    // Every list is what `npm pack` 11.16.0 packs for the same ignore file.
+    describe.each([".npmignore", ".gitignore"])("a negated name that begins with `(` (%s)", ignoreFile => {
+      const files = {
+        "(a).txt": "x",
+        "(group)/page.js": "x",
+        "a.txt": "x",
+        "b.txt": "x",
+        "index.js": indexJs,
+        "other/page.js": "x",
+      };
+      const all = Object.keys(files);
+
+      test.each([
+        ["*.txt\n!(a).txt\n", ["(a).txt", "(group)/page.js", "index.js", "other/page.js"]],
+        ["*.txt\n!/(a).txt\n", ["(a).txt", "(group)/page.js", "index.js", "other/page.js"]],
+        ["!(a).txt\n", all],
+        ["*\n!(group)/**\n", ["(group)/page.js"]],
+        ["(group)\n!(group)/page.js\n", all],
+        // this spelling packed the same before
+        ["*.txt\n!\\(a).txt\n", ["(a).txt", "(group)/page.js", "index.js", "other/page.js"]],
+      ])("%j", async (ignore, expected) => {
+        expect(await packed(ignoreFile, ignore, files)).toEqual(["package.json", ...expected]);
+      });
+    });
   });
 
   // The usual monorepo: one .gitignore, at the root, that names the folder its packages build into.
-  test.each([".gitignore", ".npmignore"])("the %s of the workspace root does not count for a workspace", async name => {
+  test.each([".gitignore", ".npmignore"])("the %s of the workspace root doesn't apply to a workspace", async name => {
     using dir = tempDir("pack-ignore-root", {
       "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] }),
       [name]: "node_modules\ndist\n",
@@ -4564,7 +4894,7 @@ describe.concurrent("bins", () => {
       ),
       write(join(pkgDir, "index.js"), "console.log('index')"),
     ]);
-    // A junction on Windows, where "junction" is ignored elsewhere and makes a plain symlink.
+    // A junction on Windows. Elsewhere, "junction" is ignored and a plain symlink is created.
     await symlink(join(outside, "bins"), join(pkgDir, "bins"), "junction");
 
     await pack(pkgDir, bunEnv);
@@ -4785,7 +5115,7 @@ describe.concurrent("bins", () => {
     expect(tarball.entries.filter(entry => (entry.perm & 0o111) !== 0).map(entry => entry.pathname)).toEqual(bins);
   });
 
-  // Nothing re-includes `.git` and `.npmrc`: not "files", and not a bin either.
+  // Nothing can re-include `.git` and `.npmrc`: not "files", and not a bin either.
   test.each([
     { bin: ".npmrc" },
     { bin: { a: "./conf/.npmrc" } },
@@ -4866,7 +5196,7 @@ describe.concurrent("bins", () => {
 
 // `chmod 000` keeps the user that packs out of one entry that the scan looks for. The entry is
 // there, so the scan must not continue as if it was not.
-describe.concurrent.skipIf(isWindows)("an entry that is there and does not open", () => {
+describe.concurrent.skipIf(isWindows)("an entry that exists but can't be opened", () => {
   // Runs `bun ...cmd` in `cwd` while `locked` has no permission bits. Restores them so that the tree can be removed.
   async function runWithout(dir: string, locked: string, cmd: string[], cwd: string = dir) {
     using unprivileged = unprivilegedSpawnOptions(dir);

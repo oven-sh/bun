@@ -1,7 +1,6 @@
-//! `/** @type {T} */ (e)`: a type cast of the Closure Compiler and of TypeScript in JavaScript. It
-//! only is one with the parentheses, so they stay: Prettier keeps the `ParenthesizedExpression` that
-//! Babel has for them. What looks at the kind of an expression to lay something out sees that node
-//! and not what is in it: it asks [`is_cast_target`].
+//! `/** @type {T} */ (e)`: a type cast in the Closure Compiler and in TypeScript's JavaScript support. It's only a cast
+//! with the parentheses, so they stay: Prettier keeps the `ParenthesizedExpression` that Babel has for them. Layout
+//! code that checks an expression's kind sees that node and not its content, so it calls [`is_cast_target`].
 
 use super::suppressed::FormatSuppressedNode;
 use crate::js::comments::OwnedComments;
@@ -10,7 +9,7 @@ use crate::prelude::*;
 use crate::{format_args, write};
 use smallvec::SmallVec;
 
-/// Whether `e` is in parentheses that stay.
+/// True if `e` is in parentheses that stay.
 #[inline]
 pub(crate) fn is_cast_target<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     f.comments().has_type_cast_comments()
@@ -18,14 +17,14 @@ pub(crate) fn is_cast_target<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         && !cast_parentheses(e, f).is_empty()
 }
 
-/// The same, where only Prettier takes the parentheses for what is there. oxfmt looks at what is in them: in the
+/// The same, for the places where only Prettier sees the parentheses as the node. oxfmt looks inside them: in the
 /// argument of `return` and `throw`, in a branch of a conditional expression, in the object of a member access.
 #[inline]
 pub(crate) fn is_cast_target_that_hides_its_kind<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     is_cast_target(e, f) && !f.options().flavor.is_oxfmt()
 }
 
-/// The parentheses around `e` that stay, from the outside in.
+/// The parentheses around `e` that stay, outermost first.
 pub(crate) fn cast_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> SmallVec<[Span; 2]> {
     e.parens()
         .rev()
@@ -33,9 +32,9 @@ pub(crate) fn cast_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> SmallVec<[
         .collect()
 }
 
-/// The comments that are written before and after `e`. If `e` is in type cast parentheses, they are those of the outermost
-/// `ParenthesizedExpression`. If `e` is an optional chain, they are those of the member access or the call, also where Prettier
-/// has a `ChainExpression` around that. To ask what Prettier's `hasComment(node)` asks, use [`comments_of_outermost_node`].
+/// The comments printed before and after `e`. If `e` is in type cast parentheses, they're the outermost
+/// `ParenthesizedExpression`'s. If `e` is an optional chain, they're the member access's or the call's, even where
+/// Prettier has a `ChainExpression` around that. For Prettier's `hasComment(node)`, use [`comments_of_outermost_node`].
 pub(crate) fn comments_of_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> OwnedComments<'a> {
     if f.comments().has_type_cast_comments()
         && e.is_parenthesized()
@@ -46,25 +45,26 @@ pub(crate) fn comments_of_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Owne
     f.comments().of_node(e.as_chain_element())
 }
 
-/// typescript-estree wraps an optional chain in a `ChainExpression`. Prettier attaches comments to the member access or the
-/// call in it, so `hasComment(node)` is false for the node in the place of `e`. For oxfmt the comments count as those of `e`.
+/// typescript-estree wraps an optional chain in a `ChainExpression`. Prettier attaches comments to the member access or
+/// the call in it, so `hasComment(node)` is false for the node that corresponds to `e`. In oxfmt the comments count as
+/// `e`'s.
 pub(crate) fn is_chain_expression_without_comments<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     e.is_chain_root()
-        && !f.context().has_tree_of_babel()
+        && !f.context().has_babel_tree()
         && !f.options().flavor.is_oxfmt()
         && !is_cast_target(e, f)
 }
 
 /// Prettier's `hasComment(node)`.
 ///
-/// This and the functions below can be asked about the expression that is being written. Its leading and trailing comments
-/// are outside of it, so [`Formatter::is_quiet`] says nothing about them.
+/// This and the functions below can be called for the expression that's being printed. Its leading and trailing
+/// comments are outside it, so [`Formatter::is_quiet`] doesn't cover them.
 pub(crate) fn has_comments<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     !comments_of_outermost_node(e, f).is_empty()
 }
 
-/// `node.comments` of the node that Prettier has in the place of `e`. The same as [`comments_of_expression`], except for an
-/// optional chain with typescript-estree: the node is a `ChainExpression` then, which has no comments.
+/// `node.comments` of the node that Prettier has in place of `e`. The same as [`comments_of_expression`], except for an
+/// optional chain with typescript-estree: the node is then a `ChainExpression`, which has no comments.
 pub(crate) fn comments_of_outermost_node<'a>(e: Expr<'a>, f: &Formatter<'a>) -> OwnedComments<'a> {
     match is_chain_expression_without_comments(e, f) {
         true => OwnedComments::NONE,
@@ -72,13 +72,13 @@ pub(crate) fn comments_of_outermost_node<'a>(e: Expr<'a>, f: &Formatter<'a>) -> 
     }
 }
 
-/// `!a(/* comment */)`: the comment is in `a()`. For Prettier `a()` has a comment. oxfmt only looks at the comments before and
-/// after it.
+/// `!a(/* comment */)`: the comment is inside `a()`. To Prettier `a()` has a comment. oxfmt only looks at the comments
+/// before and after it.
 fn comments_inside_count(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
-/// Prettier's `hasComment(node)`, where oxfmt asks for less: see [`comments_inside_count`].
+/// Prettier's `hasComment(node)`, where oxfmt checks less: see [`comments_inside_count`].
 pub(crate) fn has_comments_that_count<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let comments = comments_of_outermost_node(e, f);
     !comments.leading.is_empty()
@@ -86,8 +86,8 @@ pub(crate) fn has_comments_that_count<'a>(e: Expr<'a>, f: &Formatter<'a>) -> boo
         || (!comments.dangling.is_empty() && comments_inside_count(f))
 }
 
-/// Prettier's `hasLeadingOwnLineComment`: whether a leading comment of `e` is the last thing on its line. A JSX element
-/// writes parentheses around its comments itself, unless it is ignored.
+/// Prettier's `hasLeadingOwnLineComment`: true if a leading comment of `e` is the last thing on its line. A JSX element
+/// wraps its own comments in parentheses, unless it's ignored.
 pub(crate) fn has_leading_own_line_comment<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     if e.tag() == ExprTag::Jsx && !is_cast_target(e, f) {
         return ignored_jsx_gets_no_parentheses(f) && f.comments().is_ignored(e.as_ast_nodes());
@@ -96,8 +96,8 @@ pub(crate) fn has_leading_own_line_comment<'a>(e: Expr<'a>, f: &Formatter<'a>) -
     comments.iter().any(|comment| comment.has_newline_after())
 }
 
-/// If `e` is in parentheses that stay, writes them with the comments they own, and `e` in them with `write_target`.
-/// Returns whether it has.
+/// If `e` is in parentheses that stay, prints them with the comments they own, and `e` inside them with `write_target`.
+/// Returns true if it did.
 pub(crate) fn write_type_casts<'a>(
     e: Expr<'a>,
     f: &mut Formatter<'a>,
@@ -119,7 +119,7 @@ pub(crate) fn write_type_casts<'a>(
     true
 }
 
-/// Prettier's `ParenthesizedExpression`s around `target`, from the outside in, each with the comments it owns.
+/// Prettier's `ParenthesizedExpression`s around `target`, outermost first, each with the comments it owns.
 struct FormatParenthesizedExpression<'a, 'b> {
     target: Expr<'a>,
     parentheses: &'b [Span],
@@ -131,7 +131,7 @@ impl<'a> Format<'a> for FormatParenthesizedExpression<'a, '_> {
         let Some((&span, inner)) = self.parentheses.split_first() else {
             return (self.write_target)(f);
         };
-        // The parentheses in it are not written by way of `Expr`.
+        // The parentheses inside aren't printed through `Expr`, so the stack check has to happen here.
         if !f.context_mut().has_stack_left() {
             return;
         }

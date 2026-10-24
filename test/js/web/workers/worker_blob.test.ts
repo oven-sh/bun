@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { S3Client } from "bun";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("Worker from a Blob", async () => {
@@ -227,4 +228,89 @@ test("object URL created in one worker is usable and revocable across threads", 
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe('{"count":100,"ok":true}\na exited 0');
   expect(exitCode).toBe(0);
+});
+
+describe("blob: URL of an S3File in a Worker", () => {
+  // Stands in for S3 on the loopback, and records each request.
+  function s3StandIn() {
+    const requests: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(request) {
+        requests.push(`${request.method} ${new URL(request.url).pathname}`);
+        return new Response(`postMessage("from-s3");`);
+      },
+    });
+    const client = new S3Client({
+      endpoint: server.url.href,
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      bucket: "bucket",
+    });
+    return {
+      file: (key: string) => client.file(key),
+      // A request that an earlier call started reaches the stand-in before this one is answered.
+      async requestsAfterOneRead() {
+        expect(await client.file("after").text()).toBe(`postMessage("from-s3");`);
+        return requests;
+      },
+      [Symbol.dispose]: () => void server.stop(true),
+    };
+  }
+  const refusal = (url: string) =>
+    `Cannot load a module from "${url}": the Blob is S3-backed or file-descriptor-backed, so its bytes are not in memory. Read it first: URL.createObjectURL(new File([await blob.bytes()], blob.name ?? "", { type: blob.type }))`;
+
+  test.each(["worker.mjs", "worker.css"])(
+    "as the entry point, a %s key gives the Worker an error event and sends no request",
+    async key => {
+      using s3 = s3StandIn();
+      const url = URL.createObjectURL(s3.file(key));
+      const worker = new Worker(url);
+      const { promise, resolve } = Promise.withResolvers<Event>();
+      worker.onerror = worker.onmessage = resolve;
+      worker.addEventListener("close", resolve);
+      const event = await promise;
+      URL.revokeObjectURL(url);
+
+      // The message of the event is the printed error. Its first line has the name and the message.
+      expect({ type: event.type, message: (event as ErrorEvent).message?.split("\n")[0] }).toEqual({
+        type: "error",
+        message: `TypeError: ${refusal(url)}`,
+      });
+      expect(await s3.requestsAfterOneRead()).toEqual(["GET /bucket/after"]);
+    },
+  );
+
+  test("import() in a Worker refuses it and sends no request", async () => {
+    using s3 = s3StandIn();
+    const url = URL.createObjectURL(s3.file("module.mjs"));
+    const worker = new Worker(
+      URL.createObjectURL(
+        new Blob(
+          [
+            `self.onmessage = async ({ data: url }) => {
+              postMessage(
+                await import(url).then(
+                  module => ({ loaded: { ...module } }),
+                  error => ({ name: error.name, code: error.code, message: error.message }),
+                ),
+              );
+            };`,
+          ],
+          { type: "application/javascript" },
+        ),
+      ),
+    );
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    worker.onmessage = event => resolve(event.data);
+    worker.onerror = event => reject(new Error(event.message));
+    worker.postMessage(url);
+    const outcome = await promise;
+    worker.terminate();
+    URL.revokeObjectURL(url);
+
+    expect(outcome).toEqual({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: refusal(url) });
+    expect(await s3.requestsAfterOneRead()).toEqual(["GET /bucket/after"]);
+  });
 });

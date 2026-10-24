@@ -4029,10 +4029,17 @@ unsafe fn get_loader_and_virtual_source<'a>(
                             core::slice::from_raw_parts(filename.as_ptr(), filename.len())
                         });
                     }
+                } else if blob.needs_to_read_file() {
+                    // A `Bun.file(fd)` has no path to read the module from.
+                    return Err(crate::Error::BlobNotInMemory);
                 }
 
                 if !blob.needs_to_read_file() {
-                    // SAFETY: same lifetime erasure as above — `shared_view()`
+                    // An S3-backed Blob has no bytes in memory.
+                    let Some(view) = blob.in_memory_view() else {
+                        return Err(crate::Error::BlobNotInMemory);
+                    };
+                    // SAFETY: same lifetime erasure as above — `in_memory_view()`
                     // borrows the blob's backing store (held in the caller's
                     // `blob_to_deinit` slot for the synchronous transpile).
                     // `bun_ast::Source` stores `&'static [u8]` (see
@@ -4040,9 +4047,8 @@ unsafe fn get_loader_and_virtual_source<'a>(
                     // `'static`; sound because the blob outlives the
                     // synchronous `transpile_source_code_inner` call.
                     let (contents, path_text): (&'static [u8], &'static [u8]) = unsafe {
-                        let v = blob.shared_view();
                         (
-                            core::slice::from_raw_parts(v.as_ptr(), v.len()),
+                            core::slice::from_raw_parts(view.as_ptr(), view.len()),
                             core::slice::from_raw_parts(path.text.as_ptr(), path.text.len()),
                         )
                     };
@@ -4164,6 +4170,21 @@ fn intern_transpile_path(value: &[u8]) -> &'static [u8] {
 /// Modules that must always transpile on-thread (see [`Bun__transpileFile`]).
 const ALWAYS_SYNC_MODULES: &[&[u8]] = &[b"reflect-metadata"];
 
+/// What a module load from a `blob:` URL throws when the Blob is not in memory.
+#[cold]
+#[inline(never)]
+fn blob_not_in_memory_error(global: &JSGlobalObject, specifier: &[u8]) -> JSValue {
+    global
+        .err(
+            bun_jsc::ErrCode::ERR_INVALID_ARG_TYPE,
+            format_args!(
+                "Cannot load a module from {}: the Blob is S3-backed or file-descriptor-backed, so its bytes are not in memory. Read it first: URL.createObjectURL(new File([await blob.bytes()], blob.name ?? \"\", {{ type: blob.type }}))",
+                bun_core::fmt::quote(specifier),
+            ),
+        )
+        .to_js()
+}
+
 /// Concurrent-transpiler entry. Returns the in-flight `JSInternalPromise*`
 /// when `allow_promise && async`, else null (result is in `*ret`).
 ///
@@ -4216,6 +4237,11 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         )
     } {
         Ok(lr) => lr,
+        Err(crate::Error::BlobNotInMemory) => {
+            *ret =
+                ErrorableResolvedSource::err(blob_not_in_memory_error(global, _specifier.slice()));
+            return ptr::null_mut();
+        }
         Err(_) => {
             let js = global
                 .err(

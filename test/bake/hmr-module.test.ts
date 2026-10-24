@@ -775,22 +775,28 @@ describe("an import made by require() or import()", () => {
   test("a save of a lazily imported module runs the module that holds the import() again, each time", async () => {
     const { log, take, define, load, save } = await loader("client");
     let open!: () => Promise<void>;
+    const lazy = (version: string) =>
+      esm([], hmr => {
+        log("x ran " + version);
+        hmr.dispose(() => log("x " + version + " is disposed of"));
+        hmr.exports = { x: version };
+      });
     define({
       app: esm([], hmr => {
         hmr.accept();
         log("app ran");
         open = () => hmr.dynamicImport("x").then((next: any) => log("opened " + next.x));
       }),
-      x: x(log, "x1"),
+      x: lazy("x1"),
     });
     await load("app");
     await open();
     expect(take()).toEqual(["app ran", "x ran x1", "opened x1"]);
-    // The new body of `app` has not called import() again when `x` is saved the second time.
-    await save({ x: x(log, "x2") });
-    await save({ x: x(log, "x3") });
-    expect(take()).toEqual(["app ran", "app ran"]);
-    // `x` runs at the next import().
+    // The first save disposes of `x`. The new body of `app` has not called import() again when `x` is saved the second time.
+    await save({ x: lazy("x2") });
+    await save({ x: lazy("x3") });
+    expect(take()).toEqual(["x x1 is disposed of", "app ran", "app ran"]);
+    // The next copy of `x` runs at the next import().
     await open();
     expect(take()).toEqual(["x ran x3", "opened x3"]);
   });

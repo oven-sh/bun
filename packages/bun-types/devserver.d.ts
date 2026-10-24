@@ -141,7 +141,8 @@ interface ImportMeta {
      * Attach a callback that Bun calls:
      * - Just before the module is replaced with another copy (before the next is loaded).
      *   This includes a module that Bun re-evaluates because a file that it imports was saved.
-     *   A module that only an earlier `import()` call reached gets its next copy at the next import,
+     *   Bun calls the callback during the update. A module that only an earlier `import()` call
+     *   reached is disposed of then too, and gets its next copy later, at the next import,
      *   unless it accepts itself or the update calls an `accept("./dep", cb)` callback for it.
      * - After the module is detached (removing all imports to this module)
      *

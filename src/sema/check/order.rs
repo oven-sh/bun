@@ -23,11 +23,7 @@ impl Checker<'_, '_> {
     /// Returns true if anything may have been computed.
     pub(super) fn prepare_query_for_expr(&mut self, file: FileId, e: ExprId) -> bool {
         // If the expression is rejected, so are the calls around it.
-        if !self.is_top_level_query()
-            || e.is_none()
-            || self.reached_by_walk == (file, e)
-            || self.is_rejected(Query::Expr(file, e))
-        {
+        if !self.is_top_level_query() || e.is_none() || self.is_rejected(Query::Expr(file, e)) {
             return false;
         }
         // Every computation starts with a query, and every query increments `work`.

@@ -57,20 +57,6 @@ pub(super) struct LeftOfPropertyAccess {
     pub(super) any_like: Option<TypeId>,
 }
 
-/// True if the receiver of `call` has a call in it, as in `a.b().c()`.
-fn has_call_in_receiver(hir: &File, call: CallId) -> bool {
-    let mut at = hir[call].callee;
-    while at.is_some() {
-        at = match hir[at].kind {
-            ExprKind::Call(_) => return true,
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-            ExprKind::NonNull(x) => x,
-            _ => return false,
-        };
-    }
-    false
-}
-
 impl<'p, 's> Checker<'p, 's> {
     /// `getQuickTypeOfExpression`
     pub(super) fn quick_type_of_expr(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
@@ -439,12 +425,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let hir = self.hir(file);
         match hir[e].kind {
-            ExprKind::Binary { left, .. }
-                if left.is_some() && matches!(hir[left].kind, ExprKind::Binary { .. }) =>
-            {
-                self.resolve_chain_innermost_first(file, e);
-            }
-            ExprKind::Call(call) if has_call_in_receiver(hir, call) => {
+            ExprKind::Binary { .. } | ExprKind::Call(_) => {
                 self.resolve_chain_innermost_first(file, e);
             }
             // `checkNonNullExpression(expr)`: the object is checked in `CheckModeNormal`.

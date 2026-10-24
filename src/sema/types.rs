@@ -1314,7 +1314,7 @@ pub mod tf {
 }
 
 bitflags::bitflags! {
-    /// The `ObjectFlags` that are derived from a type's constituents, plus six that are specific
+    /// The `ObjectFlags` that are derived from a type's constituents, plus five that are specific
     /// to this checker.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct ObjectFlags: u16 {
@@ -1361,8 +1361,6 @@ bitflags::bitflags! {
         /// a mapped type with type variables, which `getResolvedApparentTypeOfMappedType` may replace. They don't all
         /// have the same apparent type (`can_become_one_reference`).
         const HAS_ONLY_OWN_APPARENT_TYPES = 1024;
-        /// The type of an enum used as a value.
-        const IS_ENUM_OBJECT = 2048;
     }
 }
 
@@ -3783,15 +3781,7 @@ impl<'p, 's> Types<'p, 's> {
                 flags |= ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL;
             }
         }
-        // Unlike the other flags, these three aren't propagated from the type's constituents.
-        let is_enum_object = matches!(
-            data,
-            TypeData::Anon {
-                origin: Origin::EnumObject(_),
-                ..
-            }
-        );
-        flags.set(ObjectFlags::IS_ENUM_OBJECT, is_enum_object);
+        // Unlike the other flags, these two aren't propagated from the type's constituents.
         flags.set(ObjectFlags::MAY_BE_REDUCED, may_be_reduced);
         flags.set(
             ObjectFlags::HAS_ONLY_OWN_APPARENT_TYPES,

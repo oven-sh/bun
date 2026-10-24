@@ -8329,9 +8329,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isConstEnumObjectType`
     #[inline(always)]
     pub(super) fn is_const_enum_object(&self, ty: TypeId) -> bool {
-        // This runs for every expression.
-        (self.types().object_flags(ty)).contains(ObjectFlags::IS_ENUM_OBJECT)
-            && self.is_const_enum_object_by_record(ty)
+        // This runs for every expression. Most have a type that isn't an object type, which can be read from a column.
+        if !self.types().is_plain_object(ty) {
+            return false;
+        }
+        self.is_const_enum_object_by_record(ty)
     }
 
     #[inline(never)]

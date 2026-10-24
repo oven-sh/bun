@@ -655,8 +655,7 @@ pub(super) fn pair_embedded_copies<'b>(
         if !is_first || !is_held || !is_copy {
             continue;
         }
-        let is_source =
-            |entry_point: &AotEntryPoint| *entry_point.source_path == *copy.src_path.text;
+        let is_source = |entry_point: &AotEntryPoint| entry_point.is_source_of(copy, cfg!(windows));
         let Some(position) = entry_points.iter().position(is_source) else {
             continue;
         };

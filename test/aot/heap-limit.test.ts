@@ -33,6 +33,20 @@ console.log("kept", parts.reduce((sum, part) => sum + part.length, 0));
 // No error is thrown at an allocation in a function that has a try of its own: a loop there that calls nothing goes on until nothing is left.
 const insideTry = (program: string) => `try {\n${program}} finally {\n  console.log("finally");\n}\n`;
 
+// It catches every error and keeps what it has.
+const isToldAndGoesOnFilling = (say: string) => `type Entry = { id: number; next: Entry | null };
+let head: Entry | null = null;
+for (;;) {
+  try {
+    for (let i = 0; ; i++) head = { id: i, next: head };
+  } catch (error) {
+    let entries = 0;
+    for (let entry: Entry | null = head; entry; entry = entry.next) entries++;
+    ${say}("told " + (error as Error).name + " " + (entries > 100_000));
+  }
+}
+`;
+
 // A function that calls itself tests the stack at its entry, and there a full range ends in an error.
 const treeBuilder = `type Tree = { left: Tree | null; right: Tree | null; id: number };
 function build(depth: number, id: number): Tree | null {
@@ -172,16 +186,100 @@ if (isASAN)
     expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
   }, 120_000);
 
-  test("where no error can be thrown it stops and says why", async () => {
+  test("inside a try it ends with the same error, and the finally runs", async () => {
     using folder = tempDir("aot-heap-limit", { "program.ts": insideTry(keepsEverything) });
+    const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+    expect(stderr).toContain("RangeError: Out of memory: " + limitOf64MB);
+    expect(stderr).not.toContain("FATAL");
+    expect({ stdout, exitCode }).toEqual({ stdout: "finally\n", exitCode: 1 });
+  }, 120_000);
+
+  test("a program that is told and goes on filling stops and says why", async () => {
+    using folder = tempDir("aot-heap-limit", { "program.ts": isToldAndGoesOnFilling("console.log") });
     const program = await build(String(folder));
     const { stdout, stderr, exitCode } = await run(withoutCoreDump([program]), String(folder), smallHeap);
     expect(stderr).toContain("FATAL: out of memory. Each thread of a compiled executable can use 64 MB");
     expect(stderr).toMatch(/Bun (has run|ran) out of memory/);
     expect(stderr).not.toContain("This indicates a bug in Bun");
-    expect(stdout).toBe("");
+    expect(stdout).toMatch(/^(told RangeError true\n)+$/);
     expect(exitCode).not.toBe(0);
   }, 120_000);
+
+  // The function that fills the range has the handler. Nothing in its loop but the built-in makes anything, and a loop that ends with its list makes records.
+  test("a loop inside a try that fills the range gets the RangeError in its own catch, whatever it fills the range with", async () => {
+    const made: Record<string, string> = {
+      listsOfFractions: "[i + 0.5, i + 1.5, i + 2.5, i + 3.5]",
+      records: "{ a: i, b: i, c: i, d: i }",
+      keys: "Object.keys(source)",
+      padded: 'String(i).padStart(40, "-")',
+      matches: '/a(b)c/.exec("abc")',
+      dates: "new Date(i)",
+      symbols: 'Symbol("s")',
+      fixed: "(i / 3).toFixed(8)",
+      boxed: "new Number(i)",
+      bound: "fill_keys.bind(null)",
+      promises: "Promise.resolve(i)",
+      sets: "new Set(list)",
+      slices: "list.slice(1)",
+      bytes: "new Uint8Array(8)",
+      whatACallMakes: "make(i)",
+    };
+    using folder = tempDir("aot-heap-limit", {
+      "program.ts": `const source: Record<string, number> = {};
+for (let i = 0; i < 24; i++) source["name" + i] = 1;
+const list = [1, 2, 3, 4, 5, 6, 7, 8];
+const many: number[] = [];
+for (let i = 0; i < 4_000_000; i++) many.push(i);
+let caught = 0;
+// Too large to become a part of its caller. It has no loop, no handler, and nothing in it throws by the rules of the language.
+function make(n: number) {
+  return { ${["a", "b", "c"].map(part => `${part}: { ${Array.from({ length: 40 }, (_, index) => `${part}${index}: n + ${index}`).join(", ")} }`).join(", ")} };
+}
+${Object.entries(made)
+  .map(
+    ([name, expression]) => `function fill_${name}(): boolean {
+  const keep: unknown[] = [];
+  try {
+    for (let i = 0; ; i++) keep.push(${expression});
+  } catch (error) {
+    caught++;
+    return error instanceof RangeError && keep.length > 1000;
+  }
+}
+`,
+  )
+  .join("")}function fill_aRecordForEachOfAList(): boolean {
+  const keep: unknown[] = [];
+  try {
+    for (let i = 0; i < many.length; i++) keep.push({ a: many[i], b: i, c: i + 1, d: i + 2 });
+  } catch (error) {
+    caught++;
+    return error instanceof RangeError && keep.length > 1000;
+  }
+  return false;
+}
+for (const fill of [${Object.keys(made)
+        .map(name => "fill_" + name)
+        .join(", ")}, fill_aRecordForEachOfAList]) {
+  caught = 0;
+  let escaped = 0;
+  let answer = false;
+  try {
+    answer = fill();
+  } catch {
+    escaped++;
+  }
+  console.log(fill.name, answer, caught, escaped);
+}
+`,
+    });
+    const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: [...Object.keys(made), "aRecordForEachOfAList"].map(name => `fill_${name} true 1 0\n`).join(""),
+      stderr: "",
+      exitCode: 0,
+    });
+  }, 240_000);
 
   // Where functions are entered, the error comes at the next entry that tests the stack, in a try or not.
   test("a program that fills the range in functions that call themselves catches a RangeError and goes on", async () => {
@@ -406,8 +504,8 @@ for (;;) keep.push(build(10, 1));
     });
   }, 120_000);
 
-  // On the main thread such a loop ends the process ("where no error can be thrown it stops and says why"). A Worker's thread can end alone, so it does: the poll of the loop ends it while the last of the memory is used.
-  test("where no error can be thrown in a Worker, the Worker ends alone", async () => {
+  // A Worker that catches the error goes on, one that does not ends alone, and one that is told and goes on filling ends alone too, where the main thread would end the process.
+  test("a Worker that fills its range inside a try catches the error, and one that does not catch it ends alone", async () => {
     using folder = tempDir("aot-heap-limit", {
       "program.ts": `import { Worker as NodeWorker } from "node:worker_threads";
 type Entry = { id: number };
@@ -416,7 +514,7 @@ function some(): number {
   for (let i = 0; i < 100_000; i++) list.push({ id: i });
   return list.length;
 }
-for (const way of ["objects in a try", "objects in a finally", "objects in an async function with a try", "a list in a try", "texts in a try", "closures in a try"]) {
+for (const way of ["objects in a try", "objects in a finally", "objects in an async function with a try", "told and goes on filling", "a list in a try", "texts in a try", "closures in a try"]) {
   await new Promise<void>(resolve => {
     const worker = new NodeWorker("./worker.ts", { workerData: way });
     worker.on("message", (said: string) => console.log(way + ": the Worker says:", said));
@@ -457,6 +555,16 @@ if (way === "objects in a try") {
     } catch {}
     for (let i = 0; ; i++) head = { id: i, next: head };
   })();
+} else if (way === "told and goes on filling") {
+  for (;;) {
+    try {
+      for (let i = 0; ; i++) head = { id: i, next: head };
+    } catch {
+      let entries = 0;
+      for (let entry: Entry | null = head; entry; entry = entry.next) entries++;
+      if (entries < 100_000) parentPort!.postMessage("few");
+    }
+  }
 } else if (way === "a list in a try") {
   const list: Entry[] = [];
   try {
@@ -492,6 +600,7 @@ if (way === "objects in a try") {
     expect(stderr).not.toContain("FATAL");
     // A push may be what finds the memory gone, and it throws: then the Worker catches the error. Either way it is a RangeError, the Worker ends with 1 and nothing else does.
     const lines = stdout
+      .replaceAll(": " + limitOf64MB, "")
       .split("\n")
       .filter(
         line =>
@@ -505,14 +614,17 @@ if (way === "objects in a try") {
     const aloneOrCaught = (way: string) => (lines.includes(alone(way)[0]) ? alone(way) : alone(way).slice(1));
     expect({ lines, exitCode }).toEqual({
       lines: [
-        ...alone("objects in a try"),
+        "objects in a try: the Worker says: caught RangeError: Out of memory",
+        "objects in a try: exit 0 and the main thread goes on: 100000",
+        "objects in a finally: the Worker says: the finally ran",
         ...alone("objects in a finally"),
         ...alone("objects in an async function with a try"),
+        ...alone("told and goes on filling"),
         ...aloneOrCaught("a list in a try"),
         ...aloneOrCaught("texts in a try"),
         ...aloneOrCaught("closures in a try"),
-        "on the web: the Worker ends with: RangeError: Out of memory",
-        "on the web: close 1 and the main thread goes on: 100000",
+        "on the web: the Worker says: caught RangeError: Out of memory",
+        "on the web: close 0 and the main thread goes on: 100000",
         "",
       ],
       exitCode: 0,
@@ -532,17 +644,12 @@ const worker = new Worker("./child.ts");
 worker.on("error", (error: Error) => parentPort!.postMessage("the child ends with: " + error.name + " " + error.message));
 worker.on("exit", (code: number) => parentPort!.postMessage("the child: exit " + code));
 `,
-      "child.ts": `type Entry = { id: number; next: Entry | null };
-let head: Entry | null = null;
-try {
-  for (let i = 0; ; i++) head = { id: i, next: head };
-} catch {}
-`,
+      "child.ts": isToldAndGoesOnFilling("String"),
     });
     const program = await build(String(folder), "parent.ts", "child.ts");
     const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
     expect(stderr).not.toContain("FATAL");
-    expect({ stdout, exitCode }).toEqual({
+    expect({ stdout: stdout.replaceAll(": " + limitOf64MB, ""), exitCode }).toEqual({
       stdout: "the child ends with: RangeError Out of memory\nthe child: exit 1\nthe parent: exit 0\n",
       exitCode: 0,
     });
@@ -573,8 +680,13 @@ const fills: [string, (turns: number, most: number) => void][] = [
   ["strings", (turns, most) => { for (let i = 0; i < turns; i++) { keep.push("text " + i + " and " + i * 3); if (keep.length >= most) keep = []; } }],
   ["matches", (turns, most) => { for (let i = 0; i < turns; i++) { keep.push(/a(b)c/.exec("abc")); if (keep.length >= most) keep = []; } }],
 ];
+// The collector takes every word of the stack for a reference, also what calls that have returned left there, and that may name the list that was let go.
+function overwrite(depth: number): number {
+  return depth > 0 ? overwrite(depth - 1) + 1 : 0;
+}
 function run(fill: (turns: number, most: number) => void, turns: number, most: number): number | string {
   keep = [];
+  if (overwrite(2000) !== 2000) return "";
   try {
     fill(turns, most);
     return "no error";
@@ -664,18 +776,16 @@ try {
 }
 `;
 
-  test("where it cannot be told it stops and says why", async () => {
+  test("inside a try it is told as well", async () => {
     using folder = tempDir("aot-heap-limit", { "program.ts": keepsAFullRangeAndGoesOnInATry("console.log") });
-    const program = await build(String(folder));
-    const { stdout, stderr, exitCode } = await run(withoutCoreDump([program]), String(folder), smallHeap);
-    expect(stderr).toContain("FATAL: out of memory. Each thread of a compiled executable can use 64 MB");
-    expect(stderr).toMatch(/Bun (has run|ran) out of memory/);
-    expect(stderr).not.toContain("This indicates a bug in Bun");
-    expect(stdout).toBe("full RangeError\n");
-    expect(exitCode).not.toBe(0);
+    const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+    expect(stderr).toContain("RangeError: Out of memory: " + limitOf64MB);
+    expect(stderr).not.toContain("FATAL");
+    expect(stdout).toMatch(/^full RangeError\nfinished \d+ true\n$/);
+    expect(exitCode).toBe(1);
   }, 120_000);
 
-  test("a Worker that cannot be told ends alone", async () => {
+  test("a Worker that is told so and does not catch it ends alone", async () => {
     using folder = tempDir("aot-heap-limit", {
       "program.ts": `import { Worker } from "node:worker_threads";
 type Entry = { id: number };
@@ -697,9 +807,9 @@ ${keepsAFullRangeAndGoesOnInATry("parentPort!.postMessage")}`,
     const program = await build(String(folder), "worker.ts");
     const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
     expect(stderr).not.toContain("FATAL");
-    expect({ stdout, exitCode }).toEqual({
+    expect({ stdout: stdout.replace(/finished \d+/, "finished"), exitCode }).toEqual({
       stdout:
-        "the Worker says: full RangeError\nthe Worker ends with: RangeError Out of memory\nexit 1 and the main thread goes on: 100000\n",
+        "the Worker says: full RangeError\nthe Worker says: finished true\nthe Worker ends with: RangeError Out of memory\nexit 1 and the main thread goes on: 100000\n",
       exitCode: 0,
     });
   }, 120_000);

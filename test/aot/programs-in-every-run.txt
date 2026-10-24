@@ -115,6 +115,7 @@ builtin-modules/the-process-object-is-whole-at-the-first-statement
 builtin-modules/the-text-of-a-buffer-with-every-kind-of-receiver-encoding-and-bound
 bundler-features/build-constants-across-modules
 bundler-features/namespace-import-of-primitive-module
+calls-fast-paths/a-callee-taken-in-makes-an-object-of-the-shape-that-the-caller-has-tested
 calls-fast-paths/class-as-value
 calls-fast-paths/class-members-created-on-first-inspection
 calls-fast-paths/constructors-inlined-inside-try
@@ -261,6 +262,7 @@ closed-world/script-declarations-over-every-global-validated
 closed-world/the-parent-that-a-package-outside-sees-outlives-collections
 collector/a-field-stored-on-two-paths-behind-a-call
 collector/a-number-that-looks-like-the-header-of-an-object-in-a-frame-is-held-while-the-collector-runs
+collector/accessors-of-host-classes-are-read-while-other-accessor-functions-come-and-go
 collector/an-operation-that-throws-allocates-what-it-throws
 collector/collector-runs-beside-every-kind-of-allocation
 collector/flags-kept-out-of-line-are-read-by-the-last-holder-of-their-object-in-a-loop-that-makes-texts
@@ -273,6 +275,8 @@ collector/workers-allocate-beside-each-other
 collector/workers-make-their-first-request-while-the-collector-runs
 commonjs/a-child-is-listed-once-the-require-has-returned
 commonjs/a-class-required-by-a-file-that-asks-whether-it-has-a-parent-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file
+commonjs/a-commonjs-file-catches-what-requiring-the-entry-point-throws
+commonjs/a-commonjs-file-lets-pass-what-requiring-the-entry-point-throws
 commonjs/a-commonjs-file-requires-the-entry-point-that-hands-on-all-its-names
 commonjs/a-commonjs-file-requires-the-es-module-that-an-import-call-is-loading
 commonjs/a-commonjs-file-requires-the-es-module-that-hands-on-all-its-names
@@ -648,6 +652,7 @@ native-callbacks/callbacks-finalization-registry-what-the-function-gets-as-this
 native-callbacks/callbacks-html-rewriter-handlers
 native-callbacks/callbacks-html-rewriter-handlers-in-a-program-that-also-makes-a-custom-event
 native-callbacks/callbacks-web-stream-sources-and-sinks
+native-callbacks/getters-that-are-functions-bound-twice-beside-a-load-of-a-file-named-at-run-time
 native-callbacks/what-code-of-an-operand-hands-back-is-used
 nothing-throws-because-of-a-type/a-test-that-only-null-and-undefined-should-fail-is-failed-by-other-values
 nothing-throws-because-of-a-type/tests-that-a-declared-type-would-decide-are-met-by-other-values

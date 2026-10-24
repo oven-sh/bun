@@ -62,6 +62,5 @@ try { console.log((await import(process.cwd() + "/plugin.mjs")).default); } catc
 //@ file cwd/config.json "{\"a\": 1}"
 try { console.log(require(process.cwd() + "/config.json")); } catch (error) { say(error); }
 //// literal-absolute-path-present
-//@ build-error TS1005
 //@ ext cjs
 try { console.log(typeof require("/etc/hosts")); } catch (error) { console.log(error.name); }

@@ -182,4 +182,26 @@ describe.concurrent("compile/aot/narrow references and the collector", () => {
       }),
     600_000,
   );
+
+  // Where nothing is inlined the object that the program stores into lies in the frame of the module, and the numbers in its fields are all that names the objects stored last.
+  test.each([["--aot-heat=everything-is-cold"], ["--aot-limit=MaxWarmCodeValues:1"]])(
+    "the fields of an object in a frame keep objects alive: %s",
+    flag =>
+      slot(async () => {
+        const source = join(import.meta.dir, "programs", "collector", "a-field-stored-on-two-paths-behind-a-call.ts");
+        using dir = tempDir("aot-narrow-references-in-a-frame", { "main.ts": await Bun.file(source).text() });
+        const built = await build(String(dir), "in-a-frame", ["--aot-check=validate-reference-guards", flag]);
+        expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+        for (const env of [{}, scanKnowsNoNumbers]) {
+          const ran = await spawned(withoutCoreDump([built.executable]), String(dir), { ...bunEnv, ...env });
+          expect({ env, stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+            env,
+            stdout: "every field holds what was stored\n360 4320 link44 other44\n",
+            exitCode: 0,
+            signal: null,
+          });
+        }
+      }),
+    600_000,
+  );
 });

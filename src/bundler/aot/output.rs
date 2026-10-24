@@ -5,6 +5,7 @@ use crate::output_file::{IndexOptional, Options, OptionsData};
 use bun_aot::Compilation;
 use bun_aot::compile::{EntryPointPaths, ProgramSummary};
 use bun_ast::Loader;
+use bun_paths::is_sep_any;
 
 /// Entry point `i` is shown as `shown[i]`, the path of its source, and is a file of the executable under `embedded[i]`, the name that `bun build --compile` gives it.
 pub(crate) struct EntryPointNames<'a> {
@@ -37,6 +38,17 @@ fn is_shown_as(name: &[u8], shown: &[u8]) -> bool {
         }
     });
     segments.eq(bun_core::strings::split(shown, b"/"))
+}
+
+impl AotEntryPoint {
+    /// The path of an entry point has the separators of the host, `C:\a\b.ts`. That of an embedded file is as the compiler writes it, `C:/a/b.ts`.
+    pub fn is_source_of(&self, embedded: &OutputFile, is_windows: bool) -> bool {
+        let is_same = |(&left, &right): (&u8, &u8)| {
+            left == right || (is_windows && is_sep_any(left) && is_sep_any(right))
+        };
+        let (entry, copy) = (&self.source_path[..], embedded.src_path.text);
+        entry.len() == copy.len() && entry.iter().zip(copy).all(is_same)
+    }
 }
 
 pub(crate) fn finish_build(
@@ -276,6 +288,23 @@ mod tests {
         assert_eq!(files[2].output_kind, OutputKind::Asset);
         assert_eq!(files[2].source_map_index, 1);
         assert_eq!(entries[1].module_path, b"/$bunfs/root/worker-1a2b.js");
+    }
+
+    #[test]
+    fn entry_point_is_the_source_of_its_embedded_copy() {
+        let entry_point = |source_path: &[u8]| AotEntryPoint {
+            source_path: source_path.to_vec(),
+            module_path: Vec::new(),
+        };
+        let copy = |source_path: &[u8]| create_entry_file(b"worker-1a2b.js", source_path, 0);
+        let on_windows = entry_point(b"C:\\project\\worker.js");
+        assert!(on_windows.is_source_of(&copy(b"C:/project/worker.js"), true));
+        assert!(on_windows.is_source_of(&copy(b"C:\\project\\worker.js"), true));
+        assert!(!on_windows.is_source_of(&copy(b"C:/project/other.js"), true));
+        assert!(!on_windows.is_source_of(&copy(b"C:/project/worker.jsx"), true));
+        let elsewhere = entry_point(b"/project/a\\b.js");
+        assert!(elsewhere.is_source_of(&copy(b"/project/a\\b.js"), false));
+        assert!(!elsewhere.is_source_of(&copy(b"/project/a/b.js"), false));
     }
 
     #[test]

@@ -406,7 +406,7 @@ const cases: Record<string, Case> = {
         prelude +
         `const path = at("counts.cjs");
         console.log(require(path).n, require(path).n, Object.keys(require.cache).filter(key => key.endsWith("counts.cjs")).length);
-        delete require.cache[path];
+        delete require.cache[require.resolve(path)];
         console.log(require(path).n, (await import(at("once.mjs"))).n, (await import(at("once.mjs"))).n);`,
     },
     disk: {
@@ -563,7 +563,9 @@ export function codeFromDisk(part: number, parts: number) {
               return { stdout, stderr: exitCode === 0 ? "" : stderr, exitCode, signal };
             };
             const plain = await run(await build(folder, "plain", it, []));
-            expect(plain).toEqual({ stdout: it.prints || expect.any(String), stderr: "", exitCode: 0, signal: null });
+            // What is printed names files, and Windows spells them otherwise: there the build without --aot alone says what is right.
+            const prints = (!isWindows && it.prints) || expect.any(String);
+            expect(plain).toEqual({ stdout: prints, stderr: "", exitCode: 0, signal: null });
             const expected = it.differs === undefined ? plain : { ...plain, stdout: it.differs };
             expect(await run(await build(folder, "compiled", it, [...allowed, ...(it.aotFlags ?? [])]))).toEqual(
               expected,

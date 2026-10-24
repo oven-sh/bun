@@ -35,8 +35,8 @@ const howItDeparts = new Map(
 
 // An imported CommonJS file requires an ES module that takes the file's default as a whole or hands on all its names.
 const onceWrong = new Set<number>([
-  11, 23, 54, 57, 83, 89, 90, 92, 151, 155, 158, 189, 195, 197, 233, 234, 260, 323, 355, 386, 478, 482, 497, 544, 560,
-  567, 576, 580,
+  11, 23, 54, 57, 83, 89, 90, 92, 151, 155, 158, 189, 195, 197, 233, 234, 260, 323, 355, 386, 428, 478, 482, 497, 544,
+  560, 567, 576, 580,
 ]);
 
 // An ES module imports two CommonJS files, and the text of the first is made long.

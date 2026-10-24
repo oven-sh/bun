@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { join } from "node:path";
 import { run as runCommand } from "../aot/harness/run";
 import { withoutCoreDump, withoutCrashReport } from "../aot/run-programs";
@@ -40,7 +40,7 @@ describe.concurrent("--aot-huge-heap", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: printed, exitCode: 0 });
   }, 120_000);
 
-  // A loop in a function with a try of its own gets no RangeError where it allocates: there the process ends and says what to do.
+  // The error says what to do, also where the loop stands in a try. A Bun built with AddressSanitizer may have nothing left to make the error of: then the process ends and says the same.
   test("an executable built without it stops at the limit", async () => {
     using folder = tempDir("aot-huge-heap", {
       "program.ts": `try {\n${program}} finally {\n  console.log("finally");\n}\n`,
@@ -55,10 +55,15 @@ describe.concurrent("--aot-huge-heap", () => {
       ...smallHeap,
       ...withoutCrashReport,
     });
-    expect(stderr).toContain("FATAL: out of memory. Each thread of a compiled executable can use");
+    expect(stderr).toMatch(
+      isASAN
+        ? /(RangeError: Out of memory:|FATAL: out of memory\.) Each thread of a compiled executable can use/
+        : /RangeError: Out of memory: Each thread of a compiled executable can use/,
+    );
     expect(stderr).toContain("--aot-huge-heap");
     expect(stdout).not.toContain("kept");
     expect(exitCode).not.toBe(0);
+    if (!isASAN) expect({ stdout, exitCode }).toEqual({ stdout: "finally\n", exitCode: 1 });
   }, 120_000);
 
   test("bun run --debug-aot, which builds, takes it too", async () => {

@@ -1,4 +1,4 @@
-// A program keeps objects alive until no more fit, lets all or half of them go, and at once calls one built-in that makes things, thousands of times, with nothing else between. There is room again: no call may fail.
+// A program keeps objects alive until no more fit, lets all of them or the older half go (every other one would leave no room for objects of another size), and at once calls one built-in that makes things, thousands of times, with nothing else between. There is room again: no call may fail.
 //
 //   kept       records, lists, closures, texts, numbers with a fraction, instances, maps
 //   let go     everything, by a new list, by a length of zero, by leaving the function that held it; or every second one
@@ -124,7 +124,7 @@ ${acts.map(act => `      sum = fold(sum, ${act});`).join("\n")}
     letGo === "left" ? `const filled${n} = fill${n}();`
     : letGo === "new list" ? `const filled${n} = fill${n}(held);\nheld = [];`
     : letGo === "length" ? `const filled${n} = fill${n}(held);\nheld.length = 0;`
-    : `const filled${n} = fill${n}(held);\nfor (let at = 0; at < held.length; at += 2) held[at] = null;`; // prettier-ignore
+    : `const filled${n} = fill${n}(held);\nfor (let at = 0; at < held.length / 2; at++) held[at] = null;`; // prettier-ignore
   return `${fill}\n${works}\n${go}\nconst worked${n} = work${n}();\nconsole.log("${n} filled", filled${n}, "work", worked${n});${letGo === "half" ? "\nheld = [];" : ""}`;
 }
 

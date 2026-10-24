@@ -199,8 +199,9 @@ const known: Record<string, number> = {
 };
 
 // TODO: each of these spells one name more than its number: Opcode::HasInPrototypeChain (the two of AOTFoldConstants.cpp), Opcode::PropDelete (interpretedStores, neverFolds),
-// Opcode::GetStringCodeUnit (interpretedReads), Opcode::FindSourcePlan (isRequestOf). They grew while this test read the text of an older engine. The question that each name answers goes into the schema, and its line out of here.
+// Opcode::GetStringCodeUnit (interpretedReads), Opcode::FindSourcePlan (isRequestOf), Opcode::LoopHint (opcodesThrowingOnlyForLackOfMemory). They grew while this test read the text of an older engine. The question that each name answers goes into the schema, and its line out of here.
 for (const list of [
+  "ir/AOTEffectsDeclared.h opcodesThrowingOnlyForLackOfMemory",
   "passes/AOTFoldConstants.cpp foldOnce",
   "passes/AOTFoldConstants.cpp opcodesWithOwnFoldingRule",
   "passes/AOTSinkAllocationsCandidates.cpp AllocationPrefilter::neverFolds",

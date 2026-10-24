@@ -33,6 +33,7 @@ const needNoCompiler = [
   "aot/every-threshold-of-the-compiler-is-declared-as-one.test.ts",
   "aot/every-field-of-flows-results-is-written-and-read.test.ts",
   "aot/what-is-only-expected-of-a-position-is-widened-in-one-place.test.ts",
+  "aot/what-states-that-nothing-was-thrown-puts-the-end-of-a-worker-off.test.ts",
   "aot/host-object-accessors.test.ts",
   "aot/mockable-function-arguments.test.ts",
   "aot/many-modules-in-place.test.ts",

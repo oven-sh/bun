@@ -2,7 +2,7 @@ import { fileURLToPath, Loader } from "bun";
 import { describe, expect } from "bun:test";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
-import { itBundled } from "./expectBundled";
+import { BundlerTestInput, itBundled } from "./expectBundled";
 
 describe("bundler", async () => {
   for (let target of ["bun", "node"] as const) {
@@ -590,6 +590,356 @@ describe("bundler", async () => {
         },
       });
     }
+  });
+
+  // The default export of a data file is its parsed value, whatever else in
+  // the bundle loads the file. The value here has the two keys that CommonJS
+  // interop reads off `module.exports`: `__esModule` and `default`.
+  describe("data file default export", () => {
+    const whole = '{"__esModule":true,"default":5,"x":1}';
+    const dataFiles = {
+      json: `{ "__esModule": true, "default": 5, "x": 1 }`,
+      jsonc: `// comment\n{ "__esModule": true, "default": 5, "x": 1, }`,
+      json5: `{ __esModule: true, default: 5, x: 1 }`,
+      toml: `__esModule = true\ndefault = 5\nx = 1\n`,
+      yaml: `__esModule: true\ndefault: 5\nx: 1\n`,
+    };
+    // What makes the linker give the data file its CommonJS form. `loads` are
+    // the other ways the entry reads the value: each is the same object.
+    const shapes = {
+      "require": { loads: ["require(DATA)"] },
+      "import": { loads: ["(await import(DATA)).default"] },
+      "split-import": { loads: ["(await import(DATA)).default", "require(DATA)"], splitting: true },
+      "cjs-entry": { loads: [], dataIsEntry: true, format: "cjs" },
+      "iife-entry": { loads: [], dataIsEntry: true, format: "iife" },
+    } as const;
+    type Ext = keyof typeof dataFiles;
+    type Shape = keyof typeof shapes;
+
+    function fixture(ext: Ext, shape: Shape): BundlerTestInput {
+      const { loads, dataIsEntry, ...options } = { dataIsEntry: false, ...shapes[shape] };
+      // Every ES view of `default`, read directly and through a re-exporting file.
+      const views = ["named", "ns.default", "reexported", "renamed", "star.default", ...loads];
+      const multipleOutputs = dataIsEntry || "splitting" in options;
+      return {
+        files: {
+          "/entry.js": /* js */ `
+            import json, { default as named } from "./data.${ext}";
+            import * as ns from "./data.${ext}";
+            import reexported, { renamed, star } from "./reexport.js";
+            (async () => {
+              const views = [${views.join(", ").replaceAll("DATA", `"./data.${ext}"`)}];
+              console.log(JSON.stringify(json), ...views.map(view => view === json));
+            })();
+          `,
+          "/reexport.js": /* js */ `
+            export { default, default as renamed } from "./data.${ext}";
+            export * as star from "./data.${ext}";
+          `,
+          [`/data.${ext}`]: dataFiles[ext],
+        },
+        ...options,
+        ...(dataIsEntry && { entryPoints: [`/data.${ext}`, "/entry.js"] }),
+        ...(multipleOutputs && { outdir: "/out", outputPaths: ["/out/entry.js"] }),
+        run: {
+          file: multipleOutputs ? "/out/entry.js" : undefined,
+          stdout: [whole, ...views.map(() => "true")].join(" "),
+        },
+      };
+    }
+
+    for (const ext of Object.keys(dataFiles) as Ext[]) {
+      itBundled(`bun/loader-data-default-require-${ext}`, fixture(ext, "require"));
+    }
+    for (const shape of ["import", "split-import", "cjs-entry", "iife-entry"] as const) {
+      itBundled(`bun/loader-data-default-${shape}`, fixture("json", shape));
+    }
+    itBundled("bun/loader-data-default-require-cjs-node", {
+      ...fixture("json", "require"),
+      format: "cjs",
+      target: "node",
+    });
+    itBundled("bun/loader-data-default-import-iife-bun", {
+      ...fixture("json", "import"),
+      format: "iife",
+      target: "bun",
+    });
+
+    // require() of the file still returns the data: its `default` key is 5.
+    itBundled("bun/loader-data-default-beside-required-value", {
+      files: {
+        "/entry.js": /* js */ `
+          import json, { default as named } from "./data.json";
+          export { default } from "./data.json";
+          export { json, named };
+          const required = require("./data.json");
+          console.log(JSON.stringify({ json }), typeof json, json === named, json === required);
+          console.log(required.default, require("./data.json").default, required.x);
+        `,
+        "/data.json": dataFiles.json,
+      },
+      run: { stdout: `{"json":${whole}} object true true\n5 5 1` },
+    });
+    itBundled("bun/loader-data-default-minified", {
+      files: {
+        "/entry.js": /* js */ `
+          import json from "./data.json";
+          console.log(JSON.stringify(json), json === require("./data.json"));
+        `,
+        "/data.json": dataFiles.json,
+      },
+      minifyIdentifiers: true,
+      minifySyntax: true,
+      minifyWhitespace: true,
+      run: { stdout: `${whole} true` },
+    });
+
+    // A statement that also reads a name or the namespace.
+    for (const [name, imports, reads] of [
+      ["named", `import json, { x } from "./data.json";`, "x"],
+      ["star", `import json, * as ns from "./data.json";`, "ns.x, ns.default === json"],
+      ["named-in-other-statement", `import json from "./data.json"; import { x } from "./data.json";`, "x"],
+    ] as const) {
+      itBundled(`bun/loader-data-default-with-${name}`, {
+        files: {
+          "/entry.js": /* js */ `
+            ${imports}
+            console.log(JSON.stringify(json), json === require("./data.json"), ${reads});
+          `,
+          "/data.json": dataFiles.json,
+        },
+        run: { stdout: `${whole} true 1${name === "star" ? " true" : ""}` },
+      });
+    }
+
+    // The default re-exported through two files, then imported.
+    itBundled("bun/loader-data-default-reexport-chain", {
+      files: {
+        "/entry.js": /* js */ `
+          import json, { renamed, local } from "./outer.js";
+          console.log(JSON.stringify(json), json === renamed, json === local, json === require("./data.json"));
+        `,
+        "/outer.js": /* js */ `
+          export { default, renamed, local } from "./inner.js";
+        `,
+        "/inner.js": /* js */ `
+          import json from "./data.json";
+          export { default, default as renamed } from "./data.json";
+          export const local = json;
+        `,
+        "/data.json": dataFiles.json,
+      },
+      run: { stdout: `${whole} true true true` },
+    });
+
+    // The re-exporting file is in a chunk that two entry points share.
+    itBundled("bun/loader-data-default-reexport-across-chunks", {
+      files: {
+        "/a.js": /* js */ `
+          import json from "./shared.js";
+          console.log("a", JSON.stringify(json), json === require("./data.json"));
+        `,
+        "/b.js": /* js */ `
+          import json, { renamed } from "./shared.js";
+          console.log("b", JSON.stringify(json), json === renamed);
+        `,
+        "/shared.js": /* js */ `
+          export { default, default as renamed } from "./data.json";
+        `,
+        "/data.json": dataFiles.json,
+      },
+      entryPoints: ["/a.js", "/b.js"],
+      splitting: true,
+      outdir: "/out",
+      run: [
+        { file: "/out/a.js", stdout: `a ${whole} true` },
+        { file: "/out/b.js", stdout: `b ${whole} true` },
+      ],
+    });
+
+    // The importer is itself wrapped (`__esm`) because the entry require()s it.
+    itBundled("bun/loader-data-default-wrapped-esm-importer", {
+      files: {
+        "/entry.js": /* js */ `
+          const { json, read } = require("./importer.js");
+          console.log(JSON.stringify(json), json === read(), json === require("./data.json"));
+        `,
+        "/importer.js": /* js */ `
+          import json from "./data.json";
+          export { json };
+          export const read = () => json;
+        `,
+        "/data.json": dataFiles.json,
+      },
+      run: { stdout: `${whole} true true` },
+    });
+
+    // The importer has an import statement and is a CommonJS module.
+    itBundled("bun/loader-data-default-commonjs-importer", {
+      files: {
+        "/entry.js": /* js */ `
+          const { json, required } = require("./importer.js");
+          console.log(JSON.stringify(json), json === required);
+        `,
+        "/importer.js": /* js */ `
+          import json from "./data.json";
+          module.exports = { json, required: require("./data.json") };
+        `,
+        "/data.json": dataFiles.json,
+      },
+      run: { stdout: `${whole} true` },
+    });
+
+    // The entry point exports the default and its output is an ES module or a
+    // CommonJS module.
+    for (const format of ["esm", "cjs"] as const) {
+      itBundled(`bun/loader-data-default-entry-reexport-${format}`, {
+        files: {
+          "/entry.js": /* js */ `
+            export { default, default as renamed } from "./data.json";
+            export const required = require("./data.json");
+          `,
+          "/data.json": dataFiles.json,
+        },
+        format,
+        target: "bun",
+        outdir: "/out",
+        runtimeFiles: {
+          "/test.js": /* js */ `
+            const { default: json, renamed, required } = ${format === "esm" ? `await import("./out/entry.js")` : `require("./out/entry.js")`};
+            console.log(JSON.stringify(json), json === renamed, json === required);
+          `,
+        },
+        run: { file: "/test.js", stdout: `${whole} true true` },
+      });
+    }
+
+    // Two importers of one data file, one an ES module by type and one not,
+    // in two chunks: both get the same object.
+    itBundled("bun/loader-data-default-importers-of-both-module-types", {
+      files: {
+        "/a.js": /* js */ `
+          import json from "./data.json";
+          import { fromMjs } from "./b.mjs";
+          console.log(JSON.stringify(json), json === fromMjs, json === require("./data.json"));
+        `,
+        "/b.mjs": /* js */ `
+          import json from "./data.json";
+          export const fromMjs = json;
+          console.log(JSON.stringify(json));
+        `,
+        "/data.json": dataFiles.json,
+      },
+      entryPoints: ["/a.js", "/b.mjs"],
+      splitting: true,
+      outdir: "/out",
+      outputPaths: ["/out/a.js", "/out/b.js"],
+      run: [
+        { file: "/out/a.js", stdout: `${whole}\n${whole} true true` },
+        { file: "/out/b.js", stdout: whole },
+      ],
+    });
+
+    // A CommonJS module whose exports have the same two keys keeps CommonJS
+    // interop, also when its exports are the data.
+    itBundled("bun/loader-data-default-commonjs-module-keeps-interop", {
+      files: {
+        "/entry.js": /* js */ `
+          import json from "./data.json";
+          import literal from "./literal.cjs";
+          import required from "./required.cjs";
+          console.log(JSON.stringify(json), literal, required, JSON.stringify(require("./data.json")));
+        `,
+        "/literal.cjs": `module.exports = { __esModule: true, default: 5, x: 1 };`,
+        "/required.cjs": `const data = require("./data.json"); module.exports = data;`,
+        "/data.json": dataFiles.json,
+      },
+      run: { stdout: `${whole} 5 5 ${whole}` },
+    });
+
+    // A file that is only `module.exports = require(x)` is linked as `x` in
+    // ES module output, so an import of it is an import of the data file.
+    itBundled("bun/loader-data-default-through-redirect-file", {
+      files: {
+        "/entry.js": /* js */ `
+          import json from "./redirect.cjs";
+          console.log(JSON.stringify(json), json === require("./data.json"));
+        `,
+        "/redirect.cjs": `module.exports = require("./data.json");`,
+        "/data.json": dataFiles.json,
+      },
+      run: { stdout: `${whole} true` },
+    });
+
+    // import(): the namespace object has the named keys of the data, and its
+    // `default` is the whole value.
+    itBundled("bun/loader-data-default-import-call", {
+      files: {
+        "/entry.js": /* js */ `
+          import json from "./data.json";
+          (async () => {
+            const { default: destructured } = await import("./data.json");
+            const ns = await import("./data.json");
+            const escaped = await import("./data.json").then(ns => [ns][0]);
+            console.log(JSON.stringify(json), json === destructured, json === ns.default, ns.x, json === escaped.default, escaped.x);
+          })();
+        `,
+        "/data.json": dataFiles.json,
+      },
+      run: { stdout: `${whole} true true 1 true 1` },
+    });
+    itBundled("bun/loader-data-default-import-call-from-commonjs", {
+      files: {
+        "/entry.cjs": /* js */ `
+          import("./data.json").then(ns => {
+            console.log(JSON.stringify(ns.default), ns.default === require("./data.json"), ns.x);
+          });
+        `,
+        "/data.json": dataFiles.json,
+      },
+      run: { stdout: `${whole} true 1` },
+    });
+    itBundled("bun/loader-data-default-split-import-call", {
+      files: {
+        "/entry.js": /* js */ `
+          (async () => {
+            const { default: json } = await import("./data.json");
+            const ns = await import("./data.json");
+            console.log(JSON.stringify(json), json === require("./data.json"), json === ns.default, ns.x);
+          })();
+        `,
+        "/data.json": dataFiles.json,
+      },
+      splitting: true,
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: `${whole} true true 1` },
+    });
+
+    // A data file in a package on the CommonJS unwrap list. A default import
+    // alone gives it the CommonJS form. A require() of it is an import there,
+    // and keeps the namespace object it has.
+    itBundled("bun/loader-data-default-in-unwrapped-package", {
+      files: {
+        "/entry.js": /* js */ `
+          import json from "react/data.json";
+          console.log(JSON.stringify(json));
+        `,
+        "/node_modules/react/data.json": dataFiles.json,
+      },
+      run: { stdout: whole },
+    });
+    itBundled("bun/loader-data-default-require-in-unwrapped-package", {
+      files: {
+        "/entry.js": /* js */ `
+          import json from "react/data.json";
+          import { required } from "react";
+          console.log(JSON.stringify(json), required.default, required.x);
+        `,
+        "/node_modules/react/index.js": `exports.required = require("./data.json");`,
+        "/node_modules/react/data.json": dataFiles.json,
+      },
+      run: { stdout: `${whole} 5 1` },
+    });
   });
 
   // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the

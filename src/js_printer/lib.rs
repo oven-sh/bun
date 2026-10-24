@@ -2804,7 +2804,7 @@ pub(crate) mod __gated_printer {
                             }
                             self.print_symbol(meta.exports_ref);
                             if wrap_with_to_esm {
-                                self.print_to_esm_suffix();
+                                self.print_to_esm_suffix(record);
                             }
                         }
                         self.print_dot_then_suffix();
@@ -2899,7 +2899,7 @@ pub(crate) mod __gated_printer {
                     self.print(b")");
                 }
                 if wrap_with_to_esm {
-                    self.print_to_esm_suffix();
+                    self.print_to_esm_suffix(record);
                 }
                 if record.kind == ImportKind::Dynamic && has_side_effects {
                     self.print_dot_then_suffix();
@@ -2992,7 +2992,7 @@ pub(crate) mod __gated_printer {
                 }
 
                 if wrap_with_to_esm {
-                    self.print_to_esm_suffix();
+                    self.print_to_esm_suffix(record);
                 }
                 if wrap {
                     self.print(b")");
@@ -3047,7 +3047,7 @@ pub(crate) mod __gated_printer {
                 self.print(b".then((m)=>");
                 self.print_symbol(self.options.to_esm_ref);
                 self.print(b"(m.default");
-                if self.options.input_module_type == bundle_opts::ModuleType::Esm {
+                if self.to_esm_is_node_mode(record) {
                     self.print(b",1");
                 }
                 self.print(b"))");
@@ -3058,10 +3058,16 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// Closes a `__toESM(` call: `, 1` (`isNodeMode`) for an ES module by
-        /// type, then `)`.
-        fn print_to_esm_suffix(&mut self) {
-            if self.options.input_module_type == bundle_opts::ModuleType::Esm {
+        /// `__toESM` gets `isNodeMode` when the importer is an ES module by
+        /// type, or the importee is a data file.
+        fn to_esm_is_node_mode(&self, record: &ImportRecord) -> bool {
+            self.options.input_module_type == bundle_opts::ModuleType::Esm
+                || record.flags.contains(ImportRecordFlags::TO_ESM_NODE_MODE)
+        }
+
+        /// Closes a `__toESM(` call: `, 1` for `isNodeMode`, then `)`.
+        fn print_to_esm_suffix(&mut self, record: &ImportRecord) {
+            if self.to_esm_is_node_mode(record) {
                 self.print(b",");
                 self.print_space();
                 self.print(b"1");

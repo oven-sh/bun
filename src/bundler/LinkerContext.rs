@@ -4434,6 +4434,65 @@ impl<'a> LinkerContext<'a> {
             && exports.contains(b"default")
     }
 
+    /// A data file in the CommonJS form (`module.exports = value`) is a value,
+    /// not a CommonJS module: its default export is the whole value whatever
+    /// keys it has, as in `bun run` and Node. (esbuild applies the
+    /// `__esModule` interop to it.)
+    fn is_commonjs_data_file(&self, source_index: crate::IndexInt) -> bool {
+        let id = source_index as usize;
+        if id >= self.graph.ast.len() || self.graph.ast.items_exports_kind()[id] != ExportsKind::Cjs
+        {
+            return false;
+        }
+        match self.parse_graph().input_files.items_loader()[id] {
+            Loader::Json
+            | Loader::Jsonc
+            | Loader::Json5
+            | Loader::Toml
+            | Loader::Yaml
+            | Loader::Xml => true,
+            // A string: both modes give the same namespace.
+            Loader::Text
+            | Loader::Md
+            | Loader::File
+            | Loader::Wasm
+            | Loader::Base64
+            | Loader::Dataurl
+            | Loader::Bunsh => false,
+            // A module, or an object that is not parsed data.
+            Loader::Jsx
+            | Loader::Js
+            | Loader::Ts
+            | Loader::Tsx
+            | Loader::Napi
+            | Loader::Css
+            | Loader::Html
+            | Loader::Sqlite
+            | Loader::SqliteEmbedded => false,
+        }
+    }
+
+    /// The flags step 6 gives the record of an ES import of `importee`, a
+    /// file in the CommonJS form.
+    pub(crate) fn to_esm_flags(
+        &self,
+        source_index: crate::IndexInt,
+        part_index: usize,
+        importee: crate::IndexInt,
+    ) -> bun_ast::ImportRecordFlags {
+        use bun_ast::ImportRecordFlags as Flags;
+        // A `require()` that the parser turned into `import * as ns` keeps the
+        // namespace it has today.
+        if self.is_commonjs_data_file(importee)
+            && self.graph.ast.items_parts()[source_index as usize].as_slice()[part_index].tag
+                != bun_ast::PartTag::ImportToConvertFromRequire
+        {
+            Flags::WRAP_WITH_TO_ESM | Flags::TO_ESM_NODE_MODE
+        } else {
+            Flags::WRAP_WITH_TO_ESM
+        }
+    }
+
     /// `const { a } = ns` where `ns` is an import namespace. The parser
     /// keeps such a part because a pattern over an arbitrary object can run
     /// getters, but the linker knows `ns` is a module namespace, so every

@@ -375,6 +375,12 @@ _Runtime helper usage examples_:
 import utils from "./commonjs-module.js";
 // Generates: __toESM(require('./commonjs-module.js'))
 
+// A data file (JSON, TOML, YAML, XML) that something also require()s gets the
+// CommonJS form, but it is a value, not a CommonJS module. `isNodeMode` makes
+// its `default` the whole value, whatever keys the value has.
+import data from "./data.json";
+// Generates: __toESM(require_data(), 1)
+
 // __toCommonJS: Used when requiring ES6 module
 const utils = require("./es6-module.js");
 // Generates: __toCommonJS(es6_module_exports)

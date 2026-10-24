@@ -969,36 +969,33 @@ describe("spawn stdin ReadableStream", () => {
   // Bun.write() locks the process's stdin stream without starting its lazy source. A call that fails on that lock
   // must not start the source either. Nothing reads the child's stdout until the child reports, so its write is
   // still paused at that point.
-  test(
-    "process.stdin throws when Bun.write() has locked the stdin stream, and doesn't consume any bytes",
-    async () => {
-      using dir = tempDir("spawn-stdin-lazy", { "in": Buffer.alloc(1 << 20, "a").toString() });
-      await using proc = spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `
+  test("process.stdin throws when Bun.write() has locked the stdin stream, and doesn't consume any bytes", async () => {
+    using dir = tempDir("spawn-stdin-lazy", { "in": Buffer.alloc(1 << 20, "a").toString() });
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         const written = Bun.write(Bun.stdout, Bun.stdin.stream());
         let code;
         try { process.stdin.resume(); } catch (error) { code = error.code; }
         await Bun.write(Bun.stderr, String(code));
         await written;
       `,
-        ],
-        env: bunEnv,
-        stdin: Bun.file(path.join(String(dir), "in")),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const report = await proc.stderr.getReader().read();
-      const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
-      expect({ report: new TextDecoder().decode(report.value), length: stdout.length, exitCode }).toEqual({
-        report: "ERR_INVALID_STATE",
-        length: 1 << 20,
-        exitCode: 0,
-      });
-    },
-  );
+      ],
+      env: bunEnv,
+      stdin: Bun.file(path.join(String(dir), "in")),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const report = await proc.stderr.getReader().read();
+    const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+    expect({ report: new TextDecoder().decode(report.value), length: stdout.length, exitCode }).toEqual({
+      report: "ERR_INVALID_STATE",
+      length: 1 << 20,
+      exitCode: 0,
+    });
+  });
 
   test("ReadableStream object type count", async () => {
     const iterations = isASAN

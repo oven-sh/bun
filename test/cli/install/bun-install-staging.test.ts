@@ -792,29 +792,26 @@ for (const linker of ["hoisted", "isolated"]) {
 // It replaces a link at node_modules/@scope by a directory now, and the isolated
 // linker moves a node_modules it did not make aside first.
 for (const linker of ["hoisted", "isolated"]) {
-  test.concurrent(
-    `${linker} linker: a dangling node_modules/@scope symlink does not hang the install`,
-    async () => {
-      const depTarball = await new Bun.Archive(
-        { "package/package.json": JSON.stringify({ name: "@scope/dep", version: "1.0.0" }) },
-        { compress: "gzip" },
-      ).bytes();
-      using dir = tempDir(`staging-dangling-scope-${linker}`, {
-        "package.json": JSON.stringify({ name: "app", dependencies: { "@scope/dep": "file:./dep-1.0.0.tgz" } }),
-        "dep-1.0.0.tgz": Buffer.from(depTarball),
-        "node_modules": {},
-        "bunfig.toml": ({ root }) => Bun.TOML.stringify({ install: { cache: join(root, ".bun-cache"), linker } }),
-      });
-      const root = String(dir);
-      symlinkSync(join(root, "does-not-exist"), join(root, "node_modules", "@scope"));
+  test.concurrent(`${linker} linker: a dangling node_modules/@scope symlink does not hang the install`, async () => {
+    const depTarball = await new Bun.Archive(
+      { "package/package.json": JSON.stringify({ name: "@scope/dep", version: "1.0.0" }) },
+      { compress: "gzip" },
+    ).bytes();
+    using dir = tempDir(`staging-dangling-scope-${linker}`, {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "@scope/dep": "file:./dep-1.0.0.tgz" } }),
+      "dep-1.0.0.tgz": Buffer.from(depTarball),
+      "node_modules": {},
+      "bunfig.toml": ({ root }) => Bun.TOML.stringify({ install: { cache: join(root, ".bun-cache"), linker } }),
+    });
+    const root = String(dir);
+    symlinkSync(join(root, "does-not-exist"), join(root, "node_modules", "@scope"));
 
-      const { stderr, exitCode } = await install(root);
-      expect(stderr).not.toContain("error");
-      expect(readdirSync(join(root, "node_modules", "@scope"))).toEqual(["dep"]);
-      expect(lstatSync(join(root, "node_modules", "@scope")).isDirectory()).toBe(true);
-      expect(exitCode).toBe(0);
-    },
-  );
+    const { stderr, exitCode } = await install(root);
+    expect(stderr).not.toContain("error");
+    expect(readdirSync(join(root, "node_modules", "@scope"))).toEqual(["dep"]);
+    expect(lstatSync(join(root, "node_modules", "@scope")).isDirectory()).toBe(true);
+    expect(exitCode).toBe(0);
+  });
 }
 
 // When linking fails midway, bun sees the error itself instead of being killed,

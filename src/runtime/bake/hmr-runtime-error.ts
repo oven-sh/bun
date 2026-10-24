@@ -41,6 +41,8 @@ const ws = initWebSocket({
       location.reload();
     }
     ws.send("se"); // IncomingMessageId.subscribe with errors
+    // IncomingMessageId.set_url: the server then says when the route of this page reaches no failure.
+    ws.send("n" + location.pathname);
   },
 
   [MessageId.errors]: onServerErrorPayload,

@@ -466,6 +466,28 @@ impl DevServer {
         }
     }
 
+    /// Sends an errors frame to the tabs that named `route` with `IncomingMessageId::SetUrl`. The build failure page hears errors only.
+    pub(super) fn send_errors_to_viewers(
+        &self,
+        route: route_bundle::Index,
+        frame: &[u8],
+        only_build_failure_page: bool,
+    ) {
+        for socket in self.active_websocket_connections.keys() {
+            // SAFETY: `*socket` is a live HmrSocket owned by the connection map; shared read.
+            let socket = unsafe { &**socket };
+            if socket.active_route != Some(route)
+                || !socket.is_subscribed(HmrTopic::Errors)
+                || (only_build_failure_page && socket.is_subscribed(HmrTopic::HotUpdate))
+            {
+                continue;
+            }
+            if let Some(ws) = &socket.underlying {
+                let _ = ws.send(frame, Opcode::Binary, false, true);
+            }
+        }
+    }
+
     pub(crate) fn num_subscribers(&self, topic: HmrTopic) -> u32 {
         if let Some(s) = &self.server {
             s.num_subscribers(&topic.uws_topic())

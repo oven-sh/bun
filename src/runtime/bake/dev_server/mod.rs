@@ -178,6 +178,7 @@ impl IncrementalResult {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct GraphTraceState {
     pub(crate) client_bits: DynamicBitSet,
     pub(crate) server_bits: DynamicBitSet,

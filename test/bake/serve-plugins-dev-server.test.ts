@@ -498,3 +498,82 @@ test.skipIf(isWindows)("responds to a framework request queued behind the reload
   expect(stdout, stderr).toBe("index\nafter\nafter\n");
   expect(exitCode).toBe(0);
 });
+
+// The requests wait for a bundle that builds no file that fails: routes/other.ts takes pkg.ts from the cache, and
+// the import of bad.ts in pkg.ts failed in the bundle of "/". "0" is the default of a release build.
+test.concurrent.each(["0", "1"])(
+  "answers each framework request that waits for one bundle from its own route (BUN_ASSUME_PERFECT_INCREMENTAL=%s)",
+  async flag => {
+    using dir = tempDir("serve-plugins-devserver-waiters", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "plugin.ts": `
+        export default {
+          name: "park-page",
+          setup(build) {
+            build.onLoad({ filter: /parked\\.ts$/ }, async () => {
+              globalThis.loadParked.resolve();
+              await globalThis.releaseLoad.promise;
+            });
+          },
+        };
+      `,
+      "render.ts": `export function render(request, meta) { return new Response(meta.pageModule.default); }`,
+      "routes/index.ts": `import "../pkg.ts"; export default "index";`,
+      "routes/other.ts": `import "../pkg.ts"; export default "other";`,
+      "routes/fine.ts": `export default "fine";`,
+      "routes/park.ts": `import "../parked.ts"; export default "park";`,
+      "pkg.ts": `import "./bad.ts";`,
+      "bad.ts": `export const bad = ;`,
+      "parked.ts": `export {};`,
+      "server.ts": `
+        globalThis.loadParked = Promise.withResolvers();
+        globalThis.releaseLoad = Promise.withResolvers();
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./render.ts" };
+        const server = Bun.serve({ port: 0, development: true, app: { framework: { fileSystemRouterTypes: [fsr] } } });
+        const get = (path, init) => fetch(new URL(path, server.url), init);
+        // The text of a page. For the build failure page, the status and whether the page names bad.ts.
+        const answer = async path => {
+          const response = await get(path);
+          const text = await response.text();
+          if (response.ok) return text;
+          const failures = atob(text.match(/atob\\("([^"]*)"\\)/)?.[1] ?? "");
+          return response.status + (failures.includes("bad.ts") ? " bad.ts" : "");
+        };
+
+        console.log(await answer("/"));
+        const parked = answer("/park");
+        await globalThis.loadParked.promise;
+        const controller = new AbortController();
+        const waiting = [
+          answer("/other"),
+          answer("/fine"),
+          answer("/other"),
+          get("/other", { signal: controller.signal }).then(
+            response => response.status,
+            error => error.name,
+          ),
+        ];
+        // The server has read the four requests by the time it responds to this one.
+        await get("/no-such-route");
+        controller.abort();
+        // The server has seen the disconnect by the time it responds to this one.
+        await get("/no-such-route");
+        globalThis.releaseLoad.resolve();
+        console.log(JSON.stringify(await Promise.all(waiting)), await parked, server.pendingRequests);
+        await server.stop();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: { ...bunEnv, BUN_ASSUME_PERFECT_INCREMENTAL: flag },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout, stderr).toBe(`500 bad.ts\n["500 bad.ts","fine","500 bad.ts","AbortError"] park 0\n`);
+    expect(exitCode).toBe(0);
+  },
+);

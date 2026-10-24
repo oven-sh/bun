@@ -61,6 +61,19 @@ impl DeferredRequest {
         }
     }
 
+    /// The response that gets the build failure page, or `None` when the client is gone. `deref_` still frees the request.
+    pub(super) fn failure_response(&mut self) -> Option<AnyResponse> {
+        match &mut self.handler {
+            Handler::Aborted => None,
+            Handler::ServerHandler(saved) => {
+                let resp = saved.response;
+                saved.deinit();
+                Some(resp)
+            }
+            Handler::BundledHtmlPage(ram) => Some(ram.response),
+        }
+    }
+
     /// Ends the response before the deref because until then uWS has an abort callback that points to this node.
     pub(super) fn abort_and_deref(&mut self) {
         if let Handler::ServerHandler(saved) = &self.handler {

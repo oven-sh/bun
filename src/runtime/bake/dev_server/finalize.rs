@@ -650,7 +650,7 @@ pub(super) fn finalize_bundle(
     {
         had_sent_hmr_event.set(true);
     }
-    dev.index_failures()?;
+    dev.index_failures(ctx.gts)?;
 
     dev.client_graph.ensure_stale_bit_capacity(false)?;
     dev.server_graph.ensure_stale_bit_capacity(false)?;
@@ -1103,14 +1103,8 @@ pub(super) fn finalize_bundle(
             let rb = dev.route_bundle_ptr(req.route_bundle_index);
             rb.server_state = route_bundle::State::PossibleBundlingFailures;
 
-            let resp: AnyResponse = match &mut req.handler {
-                Handler::Aborted => continue,
-                Handler::ServerHandler(saved) => 'brk: {
-                    let resp = saved.response;
-                    saved.deinit();
-                    break 'brk resp;
-                }
-                Handler::BundledHtmlPage(ram) => ram.response,
+            let Some(resp) = req.failure_response() else {
+                continue;
             };
 
             // SAFETY: see Note on `failures` above; `dev_ptr` is live and
@@ -1240,13 +1234,8 @@ pub(super) fn finalize_bundle(
         }
     }
 
-    // Release the lock because the underlying handler may acquire one.
-    dev.graph_safety_lock.unlock();
-    // SAFETY: `dev_ptr` is live for the entire fn body; runs before `_lock` (LIFO),
-    // so the outer unlock guard sees a locked state again.
-    scopeguard::defer! { unsafe { (*dev_ptr).graph_safety_lock.lock() } };
-
-    // Set all the deferred routes to the .loaded state up front
+    // Set the state of all the deferred routes up front. A route can reach an older failure through a file that this bundle did not build.
+    let mut failed_routes: Vec<(route_bundle::Index, Vec<SerializedFailure>)> = Vec::new();
     {
         let mut node = current_bundle!().requests.first;
         while !node.is_null() {
@@ -1254,11 +1243,27 @@ pub(super) fn finalize_bundle(
             // `data` was initialized by `defer_request`.
             let n = unsafe { &*node };
             // SAFETY: `data` was initialized by `defer_request` before being linked.
-            let rb = dev.route_bundle_ptr(unsafe { n.data.assume_init_ref() }.route_bundle_index);
-            rb.server_state = route_bundle::State::Loaded;
+            let route_bundle_index = unsafe { n.data.assume_init_ref() }.route_bundle_index;
             node = n.next;
+            // Several requests can wait for one route.
+            if dev.route_bundle_ptr(route_bundle_index).server_state == route_bundle::State::Loaded
+                || failed_routes
+                    .iter()
+                    .any(|(index, _)| *index == route_bundle_index)
+            {
+                continue;
+            }
+            if !dev.verify_route(route_bundle_index, ctx.gts)? {
+                failed_routes.push((route_bundle_index, ::core::mem::take(&mut ctx.gts.failures)));
+            }
         }
     }
+
+    // Release the lock because the underlying handler may acquire one.
+    dev.graph_safety_lock.unlock();
+    // SAFETY: `dev_ptr` is live for the entire fn body; runs before `_lock` (LIFO),
+    // so the outer unlock guard sees a locked state again.
+    scopeguard::defer! { unsafe { (*dev_ptr).graph_safety_lock.lock() } };
 
     while let Some(node) = current_bundle!().requests.pop_first() {
         // SAFETY: `pop_first` hands back ownership of the intrusive node;
@@ -1268,8 +1273,15 @@ pub(super) fn finalize_bundle(
         // SAFETY: the node stays alive until `deref_()` releases it below.
         scopeguard::defer! { unsafe { (*req_ptr).deref_() } };
 
-        let rb = dev.route_bundle_ptr(req.route_bundle_index);
-        rb.server_state = route_bundle::State::Loaded;
+        if let Some((_, failures)) = failed_routes
+            .iter()
+            .find(|(index, _)| *index == req.route_bundle_index)
+        {
+            if let Some(resp) = req.failure_response() {
+                dev.send_serialized_failures(resp, failures, None)?;
+            }
+            continue;
+        }
 
         // Note: `SavedRequest` is move-only (`Strong` field). Take the
         // handler by value so the `Saved` payload moves into the union; the

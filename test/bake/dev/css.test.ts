@@ -811,6 +811,33 @@ devTest("css import before create project relative", {
   },
 });
 
+// The first bundle of /other takes main.css from the cache, and an earlier bundle recorded the failure of its @import.
+for (const assumePerfectIncremental of ["0", "1"]) {
+  devTest(
+    `a route that imports a bundled stylesheet with a failed @import gets the build error (BUN_ASSUME_PERFECT_INCREMENTAL=${assumePerfectIncremental})`,
+    {
+      env: { BUN_ASSUME_PERFECT_INCREMENTAL: assumePerfectIncremental },
+      files: {
+        "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+        "other.html": emptyHtmlFile({ scripts: ["other.ts"] }),
+        "index.ts": `import "./main.css";`,
+        "other.ts": `import "./main.css";`,
+        "main.css": `@import "./child.css";\n.main { color: red; }\n`,
+        "child.css": `.child {\n color`,
+      },
+      async test(dev) {
+        const failures = { "child.css": ["Unexpected end of input"] };
+        await dev.fetch("/index").expectBuildError(failures);
+        await dev.fetch("/other").expectBuildError(failures);
+        await dev.fetch("/other").expectBuildError(failures);
+        await dev.write("child.css", `.child { color: blue; }\n`, { dedent: false });
+        await using c = await dev.client("/other");
+        await c.style(".child").color.expect.toBe("#00f");
+      },
+    },
+  );
+}
+
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);
   if (!url) {

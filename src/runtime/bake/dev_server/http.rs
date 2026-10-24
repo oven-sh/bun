@@ -258,9 +258,7 @@ fn on_not_found_corked(resp: AnyResponse) {
 }
 
 pub(super) fn on_outdated_js_corked(resp: AnyResponse) {
-    // Send a payload to instantly reload the page. This only happens when the
-    // client bundle is invalidated while the page is loading, aka when you
-    // perform many file updates that cannot be hot-updated.
+    // Reloads the page: its client bundle is outdated, or its route reaches a build failure and the reload gets the build failure page.
     resp.write_status(b"200 OK");
     resp.write_header(b"Content-Type", &MimeType::JAVASCRIPT.value);
     resp.end(

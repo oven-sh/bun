@@ -4,7 +4,7 @@ import { MAX_PATH_BYTES } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { decodeSerializedFailures, Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -913,6 +913,754 @@ devTest("build error in a file imported by a 'use client' component", {
     await dev.fetch("/").equals("object");
   },
 });
+// A file that failed to build has no bundled copy, and a bundle takes every file that did not change
+// from the cache. A route that reaches the failed file through such a file must answer the build
+// error, not run without the module.
+{
+  const pkgThatImportsBad = `
+    import { bad } from "./bad";
+    export { bad };
+  `;
+  const badSource = `export const bad = ;`;
+  const failures = { "bad.ts": ["Unexpected ;"] };
+  const page = (text: string) => `
+    export default function () {
+      return new Response(${JSON.stringify(text)});
+    }
+  `;
+  const pageThatImportsPkg = (name: string) => `
+    import { bad } from "../pkg";
+    export default function () {
+      return new Response("${name}: " + bad);
+    }
+  `;
+  const render = `
+    export function render(req, meta) {
+      return meta.pageModule.default(req, meta);
+    }
+  `;
+  const withLayouts = {
+    ...minimalFramework,
+    fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes[0], layouts: true }],
+  };
+  // "#dep" is dep-browser.ts in the browser build and dep-server.ts in the server builds.
+  const depThatFailsInTheBrowser = {
+    "package.json": JSON.stringify({
+      imports: { "#dep": { browser: "./dep-browser.ts", default: "./dep-server.ts" } },
+    }),
+    "dep-browser.ts": `export const dep = ;`,
+    "dep-server.ts": `export const dep = "server";`,
+    "pkg.ts": `
+      import { dep } from "#dep";
+      export { dep };
+    `,
+  };
+  const browserFailures = { "dep-browser.ts": ["Unexpected ;"] };
+  // The pages of this router are also in the browser build, so a file that a page imports can fail in two builds.
+  const clientPages = {
+    framework: {
+      fileSystemRouterTypes: [
+        {
+          root: "routes",
+          style: "nextjs-pages",
+          serverEntryPoint: "./server.ts",
+          clientEntryPoint: "./client.ts",
+          clientPages: true,
+        },
+      ],
+    },
+    files: {
+      "server.ts": `
+        export function render(req, meta) {
+          return Response.json({ page: meta.pageModule.default(), modules: meta.modules });
+        }
+      `,
+      "client.ts": `
+        import { route } from "bun:bake/client";
+        route.page();
+      `,
+    },
+    page: (text: string) => `export default () => ${JSON.stringify(text)};`,
+    pageThatImportsPkg: (name: string) => `
+      import * as pkg from "../pkg";
+      export default () => "${name}: " + Object.values(pkg);
+    `,
+  } as const;
+  const failuresOfBothBuilds = { "bad.ts": ["Unexpected ;", "Unexpected ;"] };
+  const isReloadScript = (script: string) => script.startsWith("try{location.reload()}");
+
+  // What an open tab does: it subscribes to topics and names its route. "she" is hot updates and errors.
+  async function openTab(dev: Dev, route: string, topics = "she") {
+    const frames: Uint8Array[] = [];
+    let awaited: { id: number; resolve: () => void } | undefined;
+    const next = (id: string) => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      awaited = { id: id.charCodeAt(0), resolve };
+      return promise;
+    };
+    const connected = next("V");
+    const ws = new WebSocket(dev.baseUrl + "/_bun/hmr");
+    ws.binaryType = "arraybuffer";
+    ws.onmessage = event => {
+      const frame = new Uint8Array(event.data as ArrayBuffer);
+      frames.push(frame);
+      if (awaited?.id === frame[0]) awaited.resolve();
+    };
+    await connected;
+    const routeSet = next("n");
+    ws.send("s" + topics);
+    ws.send("n" + route);
+    await routeSet;
+    return {
+      /** The frames that `save` sends the tab, up to the first one with the id `last`. */
+      async framesOf(last: "e" | "u", save: () => Promise<unknown>) {
+        frames.length = 0;
+        const seen = next(last);
+        await save();
+        await seen;
+        return frames.map(frame => {
+          const id = String.fromCharCode(frame[0]);
+          if (id !== "e") return { id };
+          // An errors frame is its id, the owners of the failures to remove, then the failures to show.
+          const removed = new DataView(frame.buffer, frame.byteOffset).getUint32(1, true);
+          return { id, removed, failures: decodeSerializedFailures(frame.subarray(5 + 4 * removed)) };
+        });
+      },
+      [Symbol.dispose]: () => ws.close(),
+    };
+  }
+  const hotUpdate = { id: "u" };
+  const errorsFrame = (failures: Record<string, string[]>, removed = 0) => ({ id: "e", removed, failures });
+
+  // A request for a route that reaches a failure answers from the record of the failure, or builds
+  // the route again when the flag is "0", the default of release builds.
+  for (const assumePerfectIncremental of ["0", "1"]) {
+    const env = { BUN_ASSUME_PERFECT_INCREMENTAL: assumePerfectIncremental };
+    const flag = `BUN_ASSUME_PERFECT_INCREMENTAL=${assumePerfectIncremental}`;
+    devTest(`a failed file fails the build again when a framework route imports it again (${flag})`, {
+      env,
+      framework: minimalFramework,
+      files: {
+        "routes/index.ts": pageThatImportsPkg("index"),
+        "pkg.ts": pkgThatImportsBad,
+        "bad.ts": badSource,
+      },
+      async test(dev) {
+        await dev.fetch("/").expectBuildError(failures);
+        await dev.write("routes/index.ts", page("no import"));
+        await dev.fetch("/").equals("no import");
+        // This bundle takes pkg.ts from the cache, so it does not parse bad.ts.
+        await dev.write("routes/index.ts", pageThatImportsPkg("index"));
+        await dev.fetch("/").expectBuildError(failures);
+        await dev.fetch("/").expectBuildError(failures);
+        await dev.write("bad.ts", `export const bad = "fixed";`);
+        await dev.fetch("/").equals("index: fixed");
+      },
+    });
+    devTest(`a framework route does not run the old code of a file that failed while no route imported it (${flag})`, {
+      env,
+      framework: minimalFramework,
+      files: {
+        "routes/index.ts": pageThatImportsPkg("index"),
+        "pkg.ts": pkgThatImportsBad,
+        "bad.ts": `export const bad = "good";`,
+      },
+      async test(dev) {
+        await dev.fetch("/").equals("index: good");
+        await dev.write("routes/index.ts", page("no import"));
+        await dev.write("bad.ts", badSource);
+        await dev.fetch("/").equals("no import");
+        await dev.write("routes/index.ts", pageThatImportsPkg("index"));
+        await dev.fetch("/").expectBuildError(failures);
+        await dev.write("bad.ts", `export const bad = "fixed";`);
+        await dev.fetch("/").equals("index: fixed");
+      },
+    });
+    devTest(
+      `the first bundle of a route does not build its layout again, and the layout imports a failed file (${flag})`,
+      {
+        env,
+        framework: withLayouts,
+        files: {
+          "routes/_layout.ts": `
+          import { bad } from "../pkg";
+          export default function () {
+            return bad;
+          }
+        `,
+          "routes/index.ts": page("index"),
+          "routes/other.ts": page("other"),
+          "pkg.ts": pkgThatImportsBad,
+          "bad.ts": badSource,
+        },
+        async test(dev) {
+          await dev.fetch("/").expectBuildError(failures);
+          await dev.fetch("/other").expectBuildError(failures);
+          await dev.fetch("/other").expectBuildError(failures);
+          await dev.write("bad.ts", `export const bad = "fixed";`);
+          await dev.fetch("/other").equals("other");
+          await dev.fetch("/").equals("index");
+        },
+      },
+    );
+    devTest(`a failure below the server entry point of a router fails each request for its routes (${flag})`, {
+      env,
+      framework: {
+        fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" }],
+      },
+      files: {
+        "server.ts": `import "./pkg";` + render,
+        "routes/index.ts": page("index"),
+        "pkg.ts": pkgThatImportsBad,
+        "bad.ts": badSource,
+      },
+      async test(dev) {
+        await dev.fetch("/").expectBuildError(failures);
+        await dev.fetch("/").expectBuildError(failures);
+        await dev.write("bad.ts", `export const bad = "fixed";`);
+        await dev.fetch("/").equals("index");
+      },
+    });
+    // The first bundle of /other has no file left to build: the bundle of / built its page.
+    devTest(`a route whose files another route built gets the failure that it reaches (${flag})`, {
+      env,
+      framework: {
+        fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" }],
+      },
+      files: {
+        "server.ts": `import "./pkg";` + render,
+        "routes/index.ts": `
+          import other from "./other";
+          export default function () {
+            return new Response("index: " + typeof other);
+          }
+        `,
+        "routes/other.ts": page("other"),
+        "pkg.ts": pkgThatImportsBad,
+        "bad.ts": badSource,
+      },
+      async test(dev) {
+        await dev.fetch("/").expectBuildError(failures);
+        await dev.fetch("/other").expectBuildError(failures);
+        await dev.fetch("/other").expectBuildError(failures);
+        await dev.write("bad.ts", `export const bad = "fixed";`);
+        await dev.fetch("/other").equals("other");
+      },
+    });
+    devTest(`a failed file fails the routes of a router when its client entry point imports it again (${flag})`, {
+      env,
+      framework: {
+        fileSystemRouterTypes: [
+          { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" },
+        ],
+      },
+      files: {
+        "server.ts": render,
+        "client.ts": `import "./pkg";`,
+        "routes/index.ts": page("index"),
+        "pkg.ts": pkgThatImportsBad,
+        "bad.ts": badSource,
+      },
+      async test(dev) {
+        await dev.fetch("/").expectBuildError(failures);
+        await dev.write("client.ts", `console.log("no import");`);
+        await dev.fetch("/").equals("index");
+        await dev.write("client.ts", `import "./pkg";`);
+        await dev.fetch("/").expectBuildError(failures);
+      },
+    });
+    // No route is found from a file below the client entry point, so the failure does not name the route.
+    devTest(`a file below the client entry point that starts to fail fails the loaded routes of the router (${flag})`, {
+      env,
+      framework: {
+        fileSystemRouterTypes: [
+          { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" },
+        ],
+      },
+      files: {
+        "server.ts": `
+          export function render(req, meta) {
+            return Response.json({ page: meta.pageModule.default, modules: meta.modules });
+          }
+        `,
+        "client.ts": `
+          import { dep } from "./dep";
+          console.log(dep);
+        `,
+        "dep.ts": `export const dep = 1;`,
+        "routes/index.ts": `export default "index";`,
+      },
+      async test(dev) {
+        const { page, modules } = await dev.fetch("/").json();
+        expect({ page, isReloadScript: isReloadScript(await dev.fetch(modules[0]).text()) }).toEqual({
+          page: "index",
+          isReloadScript: false,
+        });
+        await dev.write("dep.ts", `export const dep = ;`);
+        // A tab that has the page and asks for its script now reloads, and the reload gets the build error.
+        expect(isReloadScript(await dev.fetch(modules[0]).text())).toBe(true);
+        await dev.fetch("/").expectBuildError({ "dep.ts": ["Unexpected ;"] });
+        await dev.fetch("/").expectBuildError({ "dep.ts": ["Unexpected ;"] });
+        await dev.write("dep.ts", `export const dep = 2;`);
+        expect((await dev.fetch("/").json()).page).toBe("index");
+      },
+    });
+    // No route is found from a stylesheet that a server file imports.
+    devTest(`a framework route gets the build error when an @import of its stylesheet starts to fail (${flag})`, {
+      env,
+      framework: minimalFramework,
+      files: {
+        "routes/index.ts": `
+          import "../main.css";
+          export default function (req, meta) {
+            return new Response("styles: " + meta.styles.length);
+          }
+        `,
+        "main.css": `
+          @import "./child.css";
+          .main { color: red; }
+        `,
+        "child.css": `.child { color: blue; }`,
+      },
+      async test(dev) {
+        await dev.fetch("/").equals("styles: 1");
+        await dev.write("child.css", `.child {\n color`, { dedent: false });
+        await dev.fetch("/").expectBuildError({ "child.css": ["Unexpected end of input"] });
+        await dev.write("child.css", `.child { color: green; }`);
+        await dev.fetch("/").equals("styles: 1");
+      },
+    });
+    for (const [graphs, serverComponents] of [
+      ["one server graph", oneServerGraph],
+      ["a separate SSR graph", separateSSRGraph],
+    ] as const) {
+      // No route is found from a "use client" file before the failures of a bundle are indexed.
+      devTest(`a failed file fails the build again when a "use client" file imports it again (${graphs}, ${flag})`, {
+        env,
+        framework: { ...minimalFramework, serverComponents },
+        files: {
+          ...depThatFailsInTheBrowser,
+          "routes/index.ts": `
+            import * as Comp from "../Comp";
+            export default function () {
+              return new Response("index: " + typeof Comp.Button);
+            }
+          `,
+          "routes/other.ts": `
+            import * as Comp from "../Comp";
+            export default function () {
+              return new Response("other: " + typeof Comp.Button);
+            }
+          `,
+          "Comp.ts": `
+            "use client";
+            import { dep } from "./pkg";
+            export function Button() { return dep; }
+          `,
+        },
+        async test(dev) {
+          await dev.fetch("/").expectBuildError(browserFailures);
+          // The first bundle of this route takes Comp.ts from the cache.
+          await dev.fetch("/other").expectBuildError(browserFailures);
+          await dev.write("Comp.ts", `"use client";\nexport function Button() {}`);
+          await dev.fetch("/").equals("index: object");
+          // This bundle takes pkg.ts from the cache, so it does not parse dep-browser.ts.
+          await dev.write(
+            "Comp.ts",
+            `"use client";\nimport { dep } from "./pkg";\nexport function Button() { return dep; }`,
+          );
+          await dev.fetch("/").expectBuildError(browserFailures);
+          await dev.fetch("/").expectBuildError(browserFailures);
+          await dev.write("dep-browser.ts", `export const dep = "browser";`);
+          await dev.fetch("/").equals("index: object");
+        },
+      });
+    }
+    devTest(`a failed file fails the build again when a page that the browser also gets imports it again (${flag})`, {
+      env,
+      framework: clientPages.framework,
+      files: {
+        ...clientPages.files,
+        "routes/index.ts": clientPages.pageThatImportsPkg("index"),
+        "pkg.ts": pkgThatImportsBad,
+        "bad.ts": badSource,
+      },
+      async test(dev) {
+        await dev.fetch("/").expectBuildError(failuresOfBothBuilds);
+        await dev.write("routes/index.ts", clientPages.page("no import"));
+        const { page, modules } = await dev.fetch("/").json();
+        expect({ page, isReloadScript: isReloadScript(await dev.fetch(modules[0]).text()) }).toEqual({
+          page: "no import",
+          isReloadScript: false,
+        });
+        await dev.write("routes/index.ts", clientPages.pageThatImportsPkg("index"));
+        await dev.fetch("/").expectBuildError(failuresOfBothBuilds);
+        await dev.fetch("/").expectBuildError(failuresOfBothBuilds);
+        await dev.write("bad.ts", `export const bad = "fixed";`);
+        const fixed = await dev.fetch("/").json();
+        const script = await dev.fetch(fixed.modules[0]).text();
+        expect({
+          page: fixed.page,
+          scriptHasTheFixedFile: script.includes(`"fixed"`),
+          oldScriptReloads: isReloadScript(await dev.fetch(modules[0]).text()),
+        }).toEqual({ page: "index: fixed", scriptHasTheFixedFile: true, oldScriptReloads: true });
+      },
+    });
+    devTest(
+      `a file that failed in the browser build only fails the build again when a page imports it again (${flag})`,
+      {
+        env,
+        framework: clientPages.framework,
+        files: {
+          ...clientPages.files,
+          ...depThatFailsInTheBrowser,
+          "routes/index.ts": clientPages.pageThatImportsPkg("index"),
+        },
+        async test(dev) {
+          await dev.fetch("/").expectBuildError(browserFailures);
+          await dev.write("routes/index.ts", clientPages.page("no import"));
+          expect((await dev.fetch("/").json()).page).toBe("no import");
+          await dev.write("routes/index.ts", clientPages.pageThatImportsPkg("index"));
+          await dev.fetch("/").expectBuildError(browserFailures);
+          await dev.fetch("/").expectBuildError(browserFailures);
+          await dev.write("dep-browser.ts", `export const dep = "browser";`);
+          expect((await dev.fetch("/").json()).page).toBe("index: server");
+        },
+      },
+    );
+    // With the flag at "1" the build error comes from the failure that the first bundle recorded.
+    devTest(`the files that a route parses when it imports a failed file again (${flag})`, {
+      env,
+      framework: minimalFramework,
+      pluginFile: countLoads("(index|pkg|bad)[.]ts$"),
+      files: {
+        "routes/index.ts": pageThatImportsPkg("index"),
+        "routes/loads.ts": `
+          export default function () {
+            return Response.json(globalThis.loads);
+          }
+        `,
+        "pkg.ts": pkgThatImportsBad,
+        "bad.ts": badSource,
+      },
+      async test(dev) {
+        await dev.fetch("/").expectBuildError(failures);
+        await dev.write("routes/index.ts", page("no import"));
+        await dev.fetch("/").equals("no import");
+        // Only index.ts changed.
+        await dev.write("routes/index.ts", pageThatImportsPkg("index"));
+        await dev.fetch("/").expectBuildError(failures);
+        expect(await dev.fetch("/loads").json()).toEqual(
+          assumePerfectIncremental === "1"
+            ? { "index.ts": 3, "pkg.ts": 1, "bad.ts": 1 }
+            : { "index.ts": 4, "pkg.ts": 2, "bad.ts": 2 },
+        );
+      },
+    });
+    // / has no tab and no request between the first bundle of /third and the save, so nothing traced it.
+    devTest(`a tab that names its route after the bundle of another route ended gets the errors frame (${flag})`, {
+      env,
+      framework: minimalFramework,
+      files: {
+        "routes/index.ts": page("index"),
+        "routes/other.ts": pageThatImportsPkg("other"),
+        "routes/third.ts": page("third"),
+        "pkg.ts": pkgThatImportsBad,
+        "bad.ts": badSource,
+      },
+      async test(dev) {
+        await dev.fetch("/other").expectBuildError(failures);
+        await dev.fetch("/").equals("index");
+        await dev.fetch("/third").equals("third");
+        using tab = await openTab(dev, "/");
+        expect(await tab.framesOf("u", () => dev.write("routes/index.ts", pageThatImportsPkg("index")))).toEqual([
+          errorsFrame(failures),
+          hotUpdate,
+        ]);
+      },
+    });
+  }
+
+  // The server entry point of a router type renders every route of that type, so a route has
+  // the build errors and the client components of that file, as it has those of its page and layouts.
+  const localServerEntryRouterType = {
+    ...minimalFramework.fileSystemRouterTypes![0],
+    serverEntryPoint: "./framework.server.ts",
+  };
+  // Each file gives one word of the response: "<entry> <shared> <layout> <page>".
+  const buildErrorSources = {
+    entry: {
+      file: "framework.server.ts",
+      source: (word: string) => `
+        import shared from "./shared";
+        export function render(req, meta) {
+          return new Response(["${word}", shared, meta.layouts[0].default, meta.pageModule.default].join(" "));
+        }
+      `,
+    },
+    // "/" reaches this file through the server entry point and through its page, "/other" only through the first.
+    shared: { file: "shared.ts", source: (word: string) => `export default "${word}";` },
+    layout: { file: "routes/_layout.ts", source: (word: string) => `export default "${word}";` },
+    index: { file: "routes/index.ts", source: (word: string) => `import "../shared"; export default "${word}";` },
+    other: { file: "routes/other.ts", source: (word: string) => `export default "${word}";` },
+  };
+  type BuildErrorSource = keyof typeof buildErrorSources;
+  for (const assumePerfectIncremental of ["0", "1"]) {
+    devTest(
+      `a build error stays on its routes until a save fixes it (BUN_ASSUME_PERFECT_INCREMENTAL=${assumePerfectIncremental})`,
+      {
+        framework: { ...minimalFramework, fileSystemRouterTypes: [{ ...localServerEntryRouterType, layouts: true }] },
+        env: { BUN_ASSUME_PERFECT_INCREMENTAL: assumePerfectIncremental },
+        files: Object.fromEntries(
+          Object.entries(buildErrorSources).map(([word, { file, source }]) => [file, source(word)]),
+        ),
+        async test(dev) {
+          const words = Object.fromEntries(Object.keys(buildErrorSources).map(key => [key, key]));
+          const text = (name: "index" | "other") => [words.entry, words.shared, words.layout, words[name]].join(" ");
+          function save(key: BuildErrorSource, word: string) {
+            words[key] = word;
+            return dev.write(buildErrorSources[key].file, buildErrorSources[key].source(word));
+          }
+          await dev.fetch("/").equals(text("index"));
+          await dev.fetch("/other").equals(text("other"));
+
+          const rows: [broken: BuildErrorSource, breaksOther: boolean][] = [
+            ["entry", true],
+            ["shared", true],
+            ["layout", true],
+            ["index", false],
+          ];
+          for (const [broken, breaksOther] of rows) {
+            const buildError = { [buildErrorSources[broken].file]: ["Unexpected ;"] };
+            await dev.write(buildErrorSources[broken].file, "export default ;");
+            // Every request gets the error page, not only the first one after the save.
+            await dev.fetch("/").expectBuildError(buildError);
+            await dev.fetch("/").expectBuildError(buildError);
+            // A good build of another file does not hide the error.
+            await save("other", `other after ${broken}`);
+            await dev.fetch("/").expectBuildError(buildError);
+            if (breaksOther) await dev.fetch("/other").expectBuildError(buildError);
+            else await dev.fetch("/other").equals(text("other"));
+
+            await save(broken, `${broken} fixed`);
+            await dev.fetch("/").equals(text("index"));
+            await dev.fetch("/other").equals(text("other"));
+          }
+        },
+      },
+    );
+  }
+  devTest("a client component that the server entry point imports is in the client bundle of a route", {
+    framework: {
+      ...minimalFramework,
+      fileSystemRouterTypes: [{ ...localServerEntryRouterType, clientEntryPoint: "./framework.client.ts" }],
+    },
+    files: {
+      "framework.server.ts": `
+        import * as Frame from "./components/Frame";
+        import * as Shared from "./components/Shared";
+        export function render(req, meta) {
+          meta.pageModule.default();
+          return Response.json({ modules: meta.modules, frame: typeof Frame.frame, shared: typeof Shared.shared });
+        }
+      `,
+      "framework.client.ts": `console.log("client entry point");`,
+      "components/Frame.ts": `
+        "use client";
+        export const frame = "only the server entry point imports this";
+      `,
+      "components/Shared.ts": `
+        "use client";
+        export const shared = "the server entry point and the page import this";
+      `,
+      "routes/index.ts": `
+        import * as Shared from "../components/Shared";
+        export default () => typeof Shared.shared;
+      `,
+    },
+    async test(dev) {
+      const { modules } = await (await dev.fetch("/")).json();
+      expect(modules).toHaveLength(1);
+      const clientBundle = await (await dev.fetch(modules[0])).text();
+      expect({
+        clientEntryPoint: clientBundle.includes("client entry point"),
+        frame: clientBundle.includes("only the server entry point imports this"),
+        shared: clientBundle.includes("the server entry point and the page import this"),
+      }).toEqual({ clientEntryPoint: true, frame: true, shared: true });
+    },
+  });
+  // /b has nothing left to bundle when its turn comes: the bundle of /a built routes/b.ts.
+  devTest("a route deferred to the next bundle with no stale files left ignores the failure of another route", {
+    framework: minimalFramework,
+    files: {
+      "routes/a.ts": `
+        import { b } from "./b";
+        export default function () {
+          return new Response("a: " + b);
+        }
+      `,
+      "routes/b.ts": `
+        export const b = "B";
+        export default function () {
+          return new Response("b: " + b);
+        }
+      `,
+      "routes/c.ts": pageThatImportsPkg("c"),
+      "pkg.ts": pkgThatImportsBad,
+      "bad.ts": badSource,
+    },
+    async test(dev) {
+      await dev.fetch("/c").expectBuildError(failures);
+      await Promise.all([dev.fetch("/a").equals("a: B"), dev.fetch("/b").equals("b: B")]);
+    },
+  });
+
+  // The frames of a bundle do not depend on BUN_ASSUME_PERFECT_INCREMENTAL, which a request for a failed route reads.
+  const tabFiles = {
+    "routes/index.ts": page("index"),
+    "routes/other.ts": pageThatImportsPkg("other"),
+    "routes/third.ts": page("third"),
+    "pkg.ts": pkgThatImportsBad,
+    "bad.ts": badSource,
+    "bad-too.ts": `export const badToo = ;`,
+  };
+  devTest("the tab of a framework route gets the failure of a file that a save makes the route import", {
+    framework: minimalFramework,
+    files: tabFiles,
+    async test(dev) {
+      await dev.fetch("/other").expectBuildError(failures);
+      await dev.fetch("/").equals("index");
+      await dev.fetch("/third").equals("third");
+      using tab = await openTab(dev, "/");
+      // The failure of /other is on record. A tab that hears hot updates keeps the failures of other routes.
+      expect(await tab.framesOf("u", () => dev.write("routes/index.ts", page("index again")))).toEqual([hotUpdate]);
+      expect(await tab.framesOf("u", () => dev.write("routes/index.ts", pageThatImportsPkg("index")))).toEqual([
+        errorsFrame(failures),
+        hotUpdate,
+      ]);
+    },
+  });
+  devTest(
+    "the tab of a route that failed and was fixed gets the failure of a file that a save makes the route import",
+    {
+      framework: minimalFramework,
+      files: tabFiles,
+      async test(dev) {
+        await dev.fetch("/other").expectBuildError(failures);
+        await dev.fetch("/").equals("index");
+        using tab = await openTab(dev, "/");
+        const typo = { "routes/index.ts": ["Unexpected ;"] };
+        expect(await tab.framesOf("u", () => dev.write("routes/index.ts", `export default ;`))).toEqual([
+          errorsFrame(typo),
+          hotUpdate,
+        ]);
+        expect(await tab.framesOf("u", () => dev.write("routes/index.ts", page("fixed")))).toEqual([
+          errorsFrame({}, 1),
+          hotUpdate,
+        ]);
+        expect(await tab.framesOf("u", () => dev.write("routes/index.ts", pageThatImportsPkg("index")))).toEqual([
+          errorsFrame(failures),
+          hotUpdate,
+        ]);
+      },
+    },
+  );
+  devTest("the errors frame for the tabs of one route has only the failures that the bundle did not add", {
+    framework: minimalFramework,
+    files: tabFiles,
+    async test(dev) {
+      await dev.fetch("/other").expectBuildError(failures);
+      await dev.fetch("/").equals("index");
+      using tab = await openTab(dev, "/");
+      const importsBoth = `
+        import { bad } from "../pkg";
+        import { badToo } from "../bad-too";
+        export default function () {
+          return new Response(bad + badToo);
+        }
+      `;
+      // Every tab gets the first frame. The tabs of / also get the second one.
+      expect(await tab.framesOf("u", () => dev.write("routes/index.ts", importsBoth))).toEqual([
+        errorsFrame({ "bad-too.ts": ["Unexpected ;"] }),
+        errorsFrame(failures),
+        hotUpdate,
+      ]);
+    },
+  });
+  // The build failure page subscribes to errors only, and it reloads when it has no failure left.
+  devTest("the build failure page of a route is told when the route reaches no failure", {
+    framework: minimalFramework,
+    files: {
+      "routes/index.ts": pageThatImportsPkg("index"),
+      "routes/other.ts": page("other"),
+      "pkg.ts": pkgThatImportsBad,
+      "bad.ts": badSource,
+    },
+    async test(dev) {
+      await dev.fetch("/").expectBuildError(failures);
+      await dev.fetch("/other").equals("other");
+      using tab = await openTab(dev, "/", "e");
+      expect(await tab.framesOf("e", () => dev.write("routes/other.ts", page("other again")))).toEqual([
+        errorsFrame(failures),
+      ]);
+      // bad.ts is not built again, so its failure stays on record: the frame removes it for this page only.
+      expect(await tab.framesOf("e", () => dev.write("routes/index.ts", page("no import")))).toEqual([
+        errorsFrame({}, 1),
+      ]);
+    },
+  });
+  devTest("the tab of a page that the browser also gets has the failures of both builds", {
+    framework: clientPages.framework,
+    files: {
+      ...clientPages.files,
+      "routes/index.ts": clientPages.page("index"),
+      "routes/other.ts": clientPages.pageThatImportsPkg("other"),
+      "pkg.ts": pkgThatImportsBad,
+      "bad.ts": badSource,
+    },
+    async test(dev) {
+      await dev.fetch("/other").expectBuildError(failuresOfBothBuilds);
+      expect((await dev.fetch("/").json()).page).toBe("index");
+      using tab = await openTab(dev, "/");
+      expect(
+        await tab.framesOf("u", () => dev.write("routes/index.ts", clientPages.pageThatImportsPkg("index"))),
+      ).toEqual([errorsFrame(failuresOfBothBuilds), hotUpdate]);
+      expect(await tab.framesOf("u", () => dev.write("bad.ts", `export const bad = "fixed";`))).toEqual([
+        errorsFrame({}, 2),
+        hotUpdate,
+      ]);
+    },
+  });
+  devTest("a route that was never bundled is bundled after a failure of its layout is fixed", {
+    framework: withLayouts,
+    files: {
+      "routes/_layout.ts": `
+        import { dep } from "../dep";
+        export default function () {
+          return dep;
+        }
+      `,
+      "routes/index.ts": page("index"),
+      "routes/other.ts": page("other"),
+      "dep.ts": `export const dep = 1;`,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("index");
+      // A tab that navigates to /other in the browser names the route to the dev server. The route has no bundle yet.
+      const { promise: routeSet, resolve } = Promise.withResolvers<void>();
+      const onFrame = (frame: Uint8Array) => {
+        if (frame[0] === "n".charCodeAt(0)) resolve();
+      };
+      dev.on("hmr", onFrame);
+      dev.socket!.send("n/other");
+      await routeSet;
+      dev.off("hmr", onFrame);
+      await dev.write("dep.ts", `export const dep = ;`);
+      await dev.write("dep.ts", `export const dep = 2;`);
+      await dev.fetch("/other").equals("other");
+    },
+  });
+}
 devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),

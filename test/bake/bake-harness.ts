@@ -760,6 +760,28 @@ class DevFetchPromise extends Promise<Response> {
     });
   }
 
+  /**
+   * Expects the "Build Failed" page, which the dev server answers while a file
+   * that the route reaches fails to build, and the messages the page lists for
+   * each failed file.
+   * @example await dev.fetch("/").expectBuildError({ "bad.ts": ["Unexpected ;"] });
+   */
+  expectBuildError(failures: Record<string, string[]>) {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      const res = await this;
+      const html = await res.text();
+      const encoded = html.match(/let error=Uint8Array\.from\(atob\("([^"]*)"\)/)?.[1];
+      expect({
+        status: res.status,
+        // Any other page shows its title in the diff.
+        failures:
+          encoded === undefined
+            ? (html.match(/<title>(.*?)<\/title>/)?.[1] ?? html)
+            : decodeSerializedFailures(Buffer.from(encoded, "base64")),
+      }).toEqual({ status: 500, failures });
+    });
+  }
+
   expectFile(expected: Buffer) {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       const res = await this;
@@ -785,6 +807,47 @@ class DevFetchPromise extends Promise<Response> {
       }
     });
   }
+}
+
+/**
+ * Decodes build failures from the dev server's wire format (`SerializedFailure`)
+ * into the messages of each failed file. The "Build Failed" page embeds them,
+ * and an errors frame of the HMR socket carries them after its header.
+ */
+export function decodeSerializedFailures(bytes: Uint8Array): Record<string, string[]> {
+  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let offset = 0;
+  const u32 = () => {
+    const value = buffer.readUInt32LE(offset);
+    offset += 4;
+    return value;
+  };
+  const string32 = () => {
+    const length = u32();
+    offset += length;
+    return buffer.toString("utf8", offset - length, offset);
+  };
+  // A location is a line number, or 0 for none, then the column, the length and the line's text.
+  const skipLocation = () => {
+    if (u32() === 0) return;
+    offset += 8;
+    string32();
+  };
+  const failures: Record<string, string[]> = {};
+  while (offset < buffer.length) {
+    u32(); // owner
+    const messages = (failures[string32()] ??= []);
+    for (let count = u32(); count > 0; count--) {
+      offset += 1; // level
+      messages.push(string32());
+      skipLocation();
+      for (let notes = u32(); notes > 0; notes--) {
+        string32();
+        skipLocation();
+      }
+    }
+  }
+  return failures;
 }
 
 class StylePromise extends Promise<Record<string, string>> {

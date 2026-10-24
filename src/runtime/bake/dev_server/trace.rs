@@ -18,6 +18,14 @@ impl DevServer {
             failures: Vec::new(),
         })
     }
+
+    /// Clears `gts` for a new trace over the graphs as they are now.
+    pub(super) fn reset_graph_trace_state(&self, gts: &mut GraphTraceState) -> crate::Result<()> {
+        gts.resize(bake::Side::Server, self.server_graph.bundled_files.len())?;
+        gts.resize(bake::Side::Client, self.client_graph.bundled_files.len())?;
+        gts.clear();
+        Ok(())
+    }
 }
 
 impl DevServer {
@@ -41,7 +49,7 @@ impl DevServer {
                 self.server_graph.trace_imports(
                     from_opaque_file_id::<{ bake::Side::Server }>(rt_server_file),
                     gts,
-                    TraceImportGoal::FindCss,
+                    goal,
                 )?;
                 if let Some(id) = rt_client_file {
                     self.client_graph.trace_imports(

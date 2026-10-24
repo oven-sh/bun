@@ -200,10 +200,11 @@ impl DevServer {
         Ok(())
     }
 
-    pub(super) fn index_failures(&mut self) -> crate::Result<()> {
-        // After inserting failures into the IncrementalGraphs, they are traced to their routes.
-
-        if !self.incremental_result.failures_added.is_empty() {
+    /// Sends the HMR sockets the failures that the bundle added and removed, and updates the state of each loaded route.
+    pub(super) fn index_failures(&mut self, gts: &mut GraphTraceState) -> crate::Result<()> {
+        if !self.incremental_result.failures_added.is_empty()
+            || !self.incremental_result.failures_removed.is_empty()
+        {
             let mut total_len: usize =
                 ::core::mem::size_of::<MessageId>() + ::core::mem::size_of::<u32>();
 
@@ -213,8 +214,6 @@ impl DevServer {
 
             total_len +=
                 self.incremental_result.failures_removed.len() * ::core::mem::size_of::<u32>();
-
-            let mut gts = self.init_graph_trace_state(0)?;
 
             let mut payload: Vec<u8> = Vec::with_capacity(total_len);
             payload.push(MessageId::Errors.char());
@@ -230,6 +229,11 @@ impl DevServer {
                 removed.deinit(self);
             }
 
+            if !self.incremental_result.failures_added.is_empty() {
+                // After inserting failures into the IncrementalGraphs, they are traced to their routes.
+                self.reset_graph_trace_state(gts)?;
+            }
+
             for added in &self.incremental_result.failures_added {
                 payload.extend_from_slice(&added.data);
 
@@ -240,7 +244,7 @@ impl DevServer {
                     serialized_failure::Owner::Server(index) => {
                         self.server_graph.trace_dependencies(
                             index,
-                            &mut gts,
+                            gts,
                             incremental_graph::TraceDependencyGoal::NoStop,
                             index,
                         )?
@@ -248,7 +252,7 @@ impl DevServer {
                     serialized_failure::Owner::Client(index) => {
                         self.client_graph.trace_dependencies(
                             index,
-                            &mut gts,
+                            gts,
                             incremental_graph::TraceDependencyGoal::NoStop,
                             index,
                         )?
@@ -256,57 +260,61 @@ impl DevServer {
                 }
             }
 
-            // Note: iterate by index — the loop bodies need
-            // `&mut self.route_bundles` / `&mut self.router`, which conflicts
-            // with the `&self.incremental_result` iterator borrow.
-            for i in 0..self.incremental_result.framework_routes_affected.len() {
-                let entry = self.incremental_result.framework_routes_affected[i];
-                if let Some(index) = self.router.route_ptr(entry.route_index()).bundle {
-                    self.route_bundle_ptr(index).server_state =
-                        route_bundle::State::PossibleBundlingFailures;
-                }
-                if entry.should_recurse_when_visiting() {
-                    self.mark_all_route_children_failed(entry.route_index());
-                }
-            }
-
-            for i in 0..self.incremental_result.html_routes_soft_affected.len() {
-                let index = self.incremental_result.html_routes_soft_affected[i];
-                self.route_bundle_ptr(index).server_state =
-                    route_bundle::State::PossibleBundlingFailures;
-            }
-
-            for i in 0..self.incremental_result.html_routes_hard_affected.len() {
-                let index = self.incremental_result.html_routes_hard_affected[i];
-                self.route_bundle_ptr(index).server_state =
-                    route_bundle::State::PossibleBundlingFailures;
-            }
-
-            self.publish(HmrTopic::Errors, &payload, Opcode::BINARY);
-        } else if !self.incremental_result.failures_removed.is_empty() {
-            let mut payload: Vec<u8> = Vec::with_capacity(
-                ::core::mem::size_of::<MessageId>()
-                    + ::core::mem::size_of::<u32>()
-                    + self.incremental_result.failures_removed.len()
-                        * ::core::mem::size_of::<u32>(),
-            );
-            payload.push(MessageId::Errors.char());
-
-            payload.extend_from_slice(
-                &u32::try_from(self.incremental_result.failures_removed.len())
-                    .unwrap()
-                    .to_le_bytes(),
-            );
-
-            for removed in &self.incremental_result.failures_removed {
-                payload.extend_from_slice(&removed.get_owner().encode().bits().to_le_bytes());
-                removed.deinit(self);
-            }
-
             self.publish(HmrTopic::Errors, &payload, Opcode::BINARY);
         }
 
         self.incremental_result.failures_removed.clear();
+
+        // A failure stays on record until its file builds again, and any bundle can give a route a path to one through a file from the cache.
+        if !self.bundling_failures.is_empty() {
+            for i in 0..self.route_bundles.len() {
+                let route_bundle = &self.route_bundles[i];
+                let was_loaded = match route_bundle.server_state {
+                    route_bundle::State::Loaded => true,
+                    route_bundle::State::PossibleBundlingFailures => false,
+                    _ => continue,
+                };
+                if route_bundle.active_viewers == 0 {
+                    // The next request for the route or for its script runs the trace.
+                    self.route_bundles[i].server_state =
+                        route_bundle::State::PossibleBundlingFailures;
+                    continue;
+                }
+                let index = route_bundle::Index::init(u32::try_from(i).expect("int cast"));
+                let loaded = self.verify_route(index, gts)?;
+                if loaded && was_loaded {
+                    continue;
+                }
+                let mut frame: Vec<u8> = vec![MessageId::Errors.char()];
+                if loaded {
+                    // The build failure page reloads when it has no failure left, and it can have any failure on record.
+                    let on_record = self.bundling_failures.values();
+                    frame.extend_from_slice(&u32::try_from(on_record.len()).unwrap().to_le_bytes());
+                    for failure in on_record {
+                        frame.extend_from_slice(&failure.get_owner().encode().bits().to_le_bytes());
+                    }
+                } else {
+                    frame.extend_from_slice(&0u32.to_le_bytes());
+                    let header_len = frame.len();
+                    // The tabs have the failures of this bundle from the frame above. They can lack an older one.
+                    for failure in &gts.failures {
+                        let owner = failure.get_owner().encode().bits();
+                        let is_owner =
+                            |added: &SerializedFailure| added.get_owner().encode().bits() == owner;
+                        if !self.incremental_result.failures_added.iter().any(is_owner) {
+                            frame.extend_from_slice(&failure.data);
+                        }
+                    }
+                    if frame.len() == header_len {
+                        continue;
+                    }
+                }
+                // A tab that hears hot updates keeps the failures of other routes in its overlay.
+                let only_build_failure_page = loaded;
+                self.send_errors_to_viewers(index, &frame, only_build_failure_page);
+            }
+        }
+
         Ok(())
     }
 
@@ -406,20 +414,5 @@ impl DevServer {
             *gop.value_ptr = Log::init();
         }
         Ok(gop.value_ptr)
-    }
-
-    fn mark_all_route_children_failed(&mut self, route_index: router::RouteIndex) {
-        let mut next = self.router.route_ptr(route_index).first_child;
-        while let Some(child_index) = next {
-            let route = self.router.route_ptr(child_index);
-            let bundle = route.bundle;
-            let next_sibling = route.next_sibling;
-            if let Some(index) = bundle {
-                self.route_bundle_ptr(index).server_state =
-                    route_bundle::State::PossibleBundlingFailures;
-            }
-            self.mark_all_route_children_failed(child_index);
-            next = next_sibling;
-        }
     }
 }

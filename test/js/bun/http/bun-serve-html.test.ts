@@ -1202,6 +1202,14 @@ describe("requests while a dev server bundle is in flight", () => {
     "broken.ts": `const = ;`,
     "bad.ts": `let = ;`,
     "parked.ts": `export {};`,
+    // The first bundle of "/cached" fails bad.ts and keeps pkg.ts. A later bundle takes pkg.ts from the cache.
+    "cached.html": htmlPage("./cached.ts"),
+    "cached.ts": `import "./pkg.ts";`,
+    "cached-too.html": htmlPage("./cached-too.ts"),
+    "cached-too.ts": `import "./pkg.ts";`,
+    "pkg.ts": `import "./bad.ts";`,
+    "fine.html": htmlPage("./fine.ts"),
+    "fine.ts": `console.log("fine");`,
     "plugin.ts": /*ts*/ `
       import { join } from "node:path";
       export default {
@@ -1221,6 +1229,7 @@ describe("requests while a dev server bundle is in flight", () => {
       import bare from "./bare.html";
       import other from "./other.html";
       import broken from "./broken.html";
+      import cached from "./cached.html";
 
       globalThis.bundleParked = Promise.withResolvers();
       globalThis.releaseBundle = Promise.withResolvers();
@@ -1228,7 +1237,7 @@ describe("requests while a dev server bundle is in flight", () => {
       using server = Bun.serve({
         port: 0,
         development: true,
-        routes: { "/": index, "/bare": bare, "/other": other, "/broken": broken },
+        routes: { "/": index, "/bare": bare, "/other": other, "/broken": broken, "/cached": cached },
         fetch: () => new Response("barrier"),
       });
       const get = path => fetch(new URL(path, server.url));
@@ -1256,8 +1265,26 @@ describe("requests while a dev server bundle is in flight", () => {
           start: () => writeFileSync("app.ts", 'import "./bad.ts";\\nimport "./parked.ts";\\n'),
           whileParked: () => status("/broken"),
         },
+        // The failure of "/broken" is on record, and "/" does not reach it.
+        "first bundle of another route, with the failure of a third route on record": {
+          route: "/",
+          before: () => status("/broken"),
+          start: () => status("/other"),
+        },
+        "script request after the first bundle of another route, with the failure of a third route on record": {
+          route: "/",
+          before: () => status("/broken"),
+          start: () => status("/other"),
+          scriptAfterBundle: true,
+        },
+        // The bundle does not build pkg.ts again, so it adds no failure.
+        "rebuild that imports a file from the cache whose import failed": {
+          route: "/",
+          before: () => status("/cached"),
+          start: () => writeFileSync("app.ts", 'import "./pkg.ts";\\nimport "./parked.ts";\\n'),
+        },
       };
-      const { route, before, start, whileParked } = scenarios[process.env.BUNDLE_IN_FLIGHT];
+      const { route, before, start, whileParked, scriptAfterBundle } = scenarios[process.env.BUNDLE_IN_FLIGHT];
 
       await before?.();
       // The tab loaded the page but hasn't requested the script yet.
@@ -1270,12 +1297,14 @@ describe("requests while a dev server bundle is in flight", () => {
       await get("/barrier");
       const otherPage = whileParked?.();
 
-      const script = fetch(scriptUrl).then(response => response.text());
+      const requestScript = () => fetch(scriptUrl).then(response => response.text());
+      const script = scriptAfterBundle ? undefined : requestScript();
       // The server has read both requests by the time it responds to this one.
       await get("/barrier");
       globalThis.releaseBundle.resolve();
 
-      const text = await script;
+      // The bundle has ended when the server answers the request that started it.
+      const text = await (script ?? started.then(requestScript));
       console.log(
         JSON.stringify({
           script: text.startsWith("try{location.reload()}")
@@ -1302,6 +1331,99 @@ describe("requests while a dev server bundle is in flight", () => {
     using dir = tempDir("bun-serve-html-script-during-bundle", fixture);
     const { stdout, stderr, exitCode } = await runServeFixture(dir, { BUNDLE_IN_FLIGHT: scenario });
     expect({ stdout, exitCode }, stderr).toEqual({ stdout: JSON.stringify(expected), exitCode: 0 });
+  });
+
+  // Requests for routes that have no bundle wait for the bundle after the one in flight.
+  const waitersServe = /*ts*/ `
+    import other from "./other.html";
+    import cached from "./cached.html";
+    import cachedToo from "./cached-too.html";
+    import fine from "./fine.html";
+
+    globalThis.bundleParked = Promise.withResolvers();
+    globalThis.releaseBundle = Promise.withResolvers();
+
+    using server = Bun.serve({
+      port: 0,
+      development: true,
+      routes: { "/other": other, "/cached": cached, "/cached-too": cachedToo, "/fine": fine },
+      fetch: () => new Response("barrier"),
+    });
+    const get = (path, init) => fetch(new URL(path, server.url), init);
+    // The status. For the build failure page, also whether the page names bad.ts.
+    const answer = async path => {
+      const response = await get(path);
+      const failures = atob((await response.text()).match(/atob\\("([^"]*)"\\)/)?.[1] ?? "");
+      return response.ok ? response.status : response.status + (failures.includes("bad.ts") ? " bad.ts" : "");
+    };
+
+    await answer("/cached");
+    const parked = answer("/other");
+    await globalThis.bundleParked.promise;
+    const controller = new AbortController();
+    const waiting = [
+      answer("/cached-too"),
+      answer("/fine"),
+      answer("/cached-too"),
+      get("/cached-too", { signal: controller.signal }).then(
+        response => response.status,
+        error => error.name,
+      ),
+    ];
+    // The server has read the four requests by the time it responds to this one.
+    await get("/barrier");
+    controller.abort();
+    // The server has seen the disconnect by the time it responds to this one.
+    await get("/barrier");
+    globalThis.releaseBundle.resolve();
+    console.log(
+      JSON.stringify({
+        waiting: await Promise.all(waiting),
+        parked: await parked,
+        pendingRequests: server.pendingRequests,
+      }),
+    );
+  `;
+
+  // A failure is on record when the bundle starts, and the bundle adds none. A request for a failed route builds
+  // the route again when the flag is "0", the default of release builds, and answers from the record when it is "1".
+  describe.each(["0", "1"])("BUN_ASSUME_PERFECT_INCREMENTAL=%s", flag => {
+    const env = { BUN_ASSUME_PERFECT_INCREMENTAL: flag };
+
+    test.concurrent.each([
+      // The route reaches no failure, so its script is not a reload.
+      [
+        "first bundle of another route, with the failure of a third route on record",
+        { script: ["index.html", "app.ts"], pageAfterwards: 200, otherPage: 200 },
+      ],
+      [
+        "script request after the first bundle of another route, with the failure of a third route on record",
+        { script: ["index.html", "app.ts"], pageAfterwards: 200, otherPage: 200 },
+      ],
+      // The script reloads the page, which then shows the error page.
+      [
+        "rebuild that imports a file from the cache whose import failed",
+        { script: "reloads the page", pageAfterwards: 500 },
+      ],
+    ])("%s", async (scenario, expected) => {
+      using dir = tempDir("bun-serve-html-script-during-bundle", fixture);
+      const { stdout, stderr, exitCode } = await runServeFixture(dir, { ...env, BUNDLE_IN_FLIGHT: scenario });
+      expect({ stdout, exitCode }, stderr).toEqual({ stdout: JSON.stringify(expected), exitCode: 0 });
+    });
+
+    // "/cached-too" takes pkg.ts from the cache, and the import of bad.ts in pkg.ts failed in the bundle of "/cached".
+    test.concurrent("each request that waits for one bundle gets the answer of its own route", async () => {
+      using dir = tempDir("bun-serve-html-waiters", { ...fixture, "serve.ts": waitersServe });
+      const { stdout, stderr, exitCode } = await runServeFixture(dir, env);
+      expect({ stdout, exitCode }, stderr).toEqual({
+        stdout: JSON.stringify({
+          waiting: ["500 bad.ts", 200, "500 bad.ts", "AbortError"],
+          parked: 200,
+          pendingRequests: 0,
+        }),
+        exitCode: 0,
+      });
+    });
   });
 });
 

@@ -516,3 +516,170 @@ devTest("editing a file imported from outside the project root hot-reloads", {
     await c.expectMessage("three");
   },
 });
+
+// A file that failed to build has no bundled copy, and a bundle takes every file that did not change
+// from the cache. A route that reaches the failed file through such a file must answer the build
+// error, not a page that cannot load the module.
+const pkgThatImportsBad = `
+  import { bad } from "./bad";
+  export { bad };
+`;
+const importsPkg = (name: string) => `
+  import { bad } from "./pkg";
+  console.log("${name}: " + bad);
+`;
+const syntaxError = { source: `export const bad = ;`, failures: { "bad.ts": ["Unexpected ;"] } };
+const unresolvedImport = {
+  source: `
+    import "not-installed-peer";
+    export const bad = 1;
+  `,
+  failures: { "bad.ts": [`Could not resolve: "not-installed-peer". Maybe you need to "bun install"?`] },
+};
+// A request for a route that reaches a failure answers from the record of the failure, or builds the
+// route again when the flag is "0", the default of release builds.
+for (const assumePerfectIncremental of ["0", "1"]) {
+  const env = { BUN_ASSUME_PERFECT_INCREMENTAL: assumePerfectIncremental };
+  const flag = `BUN_ASSUME_PERFECT_INCREMENTAL=${assumePerfectIncremental}`;
+  for (const [kind, bad] of [
+    ["a syntax error", syntaxError],
+    ["an unresolved import", unresolvedImport],
+  ] as const) {
+    devTest(`a file with ${kind} fails the build again when a route imports it again (${flag})`, {
+      env,
+      files: {
+        "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+        "index.ts": importsPkg("index"),
+        "pkg.ts": pkgThatImportsBad,
+        "bad.ts": bad.source,
+      },
+      async test(dev) {
+        await dev.fetch("/").expectBuildError(bad.failures);
+        await dev.write("index.ts", `console.log("no import");`);
+        expect((await dev.fetch("/")).status).toBe(200);
+        // This bundle takes pkg.ts from the cache, so it does not parse bad.ts.
+        await dev.write("index.ts", importsPkg("index"));
+        await dev.fetch("/").expectBuildError(bad.failures);
+        await dev.fetch("/").expectBuildError(bad.failures);
+        await dev.write("bad.ts", `export const bad = "fixed";`);
+        expect((await dev.fetch("/")).status).toBe(200);
+      },
+    });
+  }
+  devTest(`the first bundle of a route takes the importer of a failed file from the cache (${flag})`, {
+    env,
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "other.html": emptyHtmlFile({ scripts: ["other.ts"] }),
+      "unrelated.html": emptyHtmlFile({ scripts: ["unrelated.ts"] }),
+      "index.ts": importsPkg("index"),
+      "other.ts": importsPkg("other"),
+      "unrelated.ts": `console.log("unrelated");`,
+      "pkg.ts": pkgThatImportsBad,
+      "bad.ts": syntaxError.source,
+    },
+    async test(dev) {
+      await dev.fetch("/index").expectBuildError(syntaxError.failures);
+      await dev.fetch("/other").expectBuildError(syntaxError.failures);
+      await dev.fetch("/other").expectBuildError(syntaxError.failures);
+      // A route that does not reach the failed file still loads, also after the end of another bundle.
+      expect((await dev.fetch("/unrelated")).status).toBe(200);
+      await dev.write("other.ts", importsPkg("other again"));
+      expect((await dev.fetch("/unrelated")).status).toBe(200);
+      {
+        await using c = await dev.client("/unrelated");
+        await c.expectMessage("unrelated");
+      }
+      await dev.write("bad.ts", `export const bad = "fixed";`);
+      expect((await dev.fetch("/other")).status).toBe(200);
+    },
+  });
+  // A tab asks for the page and then for its script. A bundle can end between the two requests.
+  devTest(`the script of a route that reaches no failure is served while another route has a failure (${flag})`, {
+    env,
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "other.html": emptyHtmlFile({ scripts: ["other.ts"] }),
+      "unrelated.html": emptyHtmlFile({ scripts: ["unrelated.ts"] }),
+      "index.ts": importsPkg("index"),
+      "other.ts": `console.log("other");`,
+      "unrelated.ts": `console.log("unrelated");`,
+      "pkg.ts": pkgThatImportsBad,
+      "bad.ts": syntaxError.source,
+    },
+    async test(dev) {
+      await dev.fetch("/index").expectBuildError(syntaxError.failures);
+      const page = await dev.fetch("/unrelated").text();
+      const script = page.match(/src="(\/_bun\/client\/[^"]+)"/)![1];
+      const scriptHasTheModule = async () => (await dev.fetch(script).text()).includes(`console.log("unrelated")`);
+      expect(await scriptHasTheModule()).toBe(true);
+      // The first bundle of another route.
+      expect((await dev.fetch("/other")).status).toBe(200);
+      expect(await scriptHasTheModule()).toBe(true);
+      // With the flag at "0", a request for the failed route is a bundle.
+      await dev.fetch("/index").expectBuildError(syntaxError.failures);
+      expect(await scriptHasTheModule()).toBe(true);
+    },
+  });
+  devTest(`a file that fails while no route imports it fails the route that imports it later (${flag})`, {
+    env,
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "index.ts": importsPkg("index"),
+      "pkg.ts": pkgThatImportsBad,
+      "bad.ts": `export const bad = "good";`,
+    },
+    async test(dev) {
+      expect((await dev.fetch("/")).status).toBe(200);
+      await dev.write("index.ts", `console.log("no import");`);
+      await dev.write("bad.ts", syntaxError.source);
+      // The failure is on record, and no route reaches it.
+      {
+        await using c = await dev.client("/");
+        await c.expectMessage("no import");
+      }
+      await dev.write("index.ts", importsPkg("index"));
+      await dev.fetch("/").expectBuildError(syntaxError.failures);
+    },
+  });
+  devTest(`an open tab gets the build error of a failed file that its route starts to import (${flag})`, {
+    env,
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "other.html": emptyHtmlFile({ scripts: ["other.ts"] }),
+      "index.ts": `console.log("no import");`,
+      "other.ts": importsPkg("other"),
+      "pkg.ts": pkgThatImportsBad,
+      "bad.ts": syntaxError.source,
+    },
+    async test(dev) {
+      await dev.fetch("/other").expectBuildError(syntaxError.failures);
+      await using c = await dev.client("/index");
+      await c.expectMessage("no import");
+      await c.expectReload(async () => {
+        await dev.write("index.ts", importsPkg("index"), { errors: ["bad.ts:1:20: error: Unexpected ;"] });
+      });
+      await c.expectReload(async () => {
+        await dev.write("bad.ts", `export const bad = "fixed";`);
+      });
+      await c.expectMessage("index: fixed");
+    },
+  });
+  devTest(`the build failure page reloads when its route no longer imports the failed file (${flag})`, {
+    env,
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+      "index.ts": importsPkg("index"),
+      "pkg.ts": pkgThatImportsBad,
+      "bad.ts": syntaxError.source,
+    },
+    async test(dev) {
+      await using c = await dev.client("/", { errors: ["bad.ts:1:20: error: Unexpected ;"] });
+      // bad.ts is not built again, so its failure stays on record.
+      await c.expectReload(async () => {
+        await dev.write("index.ts", `console.log("no import");`, { errors: null });
+      });
+      await c.expectMessage("no import");
+    },
+  });
+}

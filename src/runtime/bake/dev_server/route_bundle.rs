@@ -21,7 +21,9 @@ pub(crate) enum State {
     Unqueued,
     Bundling,
     DeferredToNextBundle,
+    /// Bundled, but not known to be free of build failures: `verify_route` decides before the route is served.
     PossibleBundlingFailures,
+    /// The route reaches no failed file. `verify_route` is the only writer, and `index_failures` checks or removes this state when a bundle ends.
     Loaded,
 }
 

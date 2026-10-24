@@ -203,17 +203,10 @@ pub(super) fn ensure_route_is_bundled(
                 // then no entry points will be queued up here. That does
                 // not mean the route is ready for presentation.
                 if entry_points.set.is_empty() {
-                    if !dev.bundling_failures.is_empty() {
-                        dev.route_bundle_ptr(route_bundle_index).server_state =
-                            route_bundle::State::PossibleBundlingFailures;
-                        state = route_bundle::State::PossibleBundlingFailures;
-                        continue 'sw;
-                    } else {
-                        dev.route_bundle_ptr(route_bundle_index).server_state =
-                            route_bundle::State::Loaded;
-                        state = route_bundle::State::Loaded;
-                        continue 'sw;
-                    }
+                    dev.route_bundle_ptr(route_bundle_index).server_state =
+                        route_bundle::State::PossibleBundlingFailures;
+                    state = route_bundle::State::PossibleBundlingFailures;
+                    continue 'sw;
                 }
 
                 // A bundle moves a route out of `Bundling` only through the requests that wait for it.
@@ -244,20 +237,15 @@ pub(super) fn ensure_route_is_bundled(
                 return Ok(());
             }
             route_bundle::State::PossibleBundlingFailures => {
-                if !dev.bundling_failures.is_empty() {
-                    // Trace the graph to see if there are any failures that are
-                    // reachable by this route.
-                    match check_route_failures(dev, route_bundle_index, ctx.to_dev_response())? {
-                        CheckResult::Stop => return Ok(()),
-                        CheckResult::Ok => {} // Errors were cleared or not in the way.
-                        CheckResult::Rebuild => {
-                            state = route_bundle::State::Unqueued;
-                            continue 'sw;
-                        }
+                match check_route_failures(dev, route_bundle_index, ctx.to_dev_response())? {
+                    CheckResult::Stop => return Ok(()),
+                    CheckResult::Ok => {} // Errors were cleared or not in the way.
+                    CheckResult::Rebuild => {
+                        state = route_bundle::State::Unqueued;
+                        continue 'sw;
                     }
                 }
 
-                dev.route_bundle_ptr(route_bundle_index).server_state = route_bundle::State::Loaded;
                 state = route_bundle::State::Loaded;
                 continue 'sw;
             }
@@ -409,24 +397,17 @@ enum CheckResult {
     Rebuild,
 }
 
+// Out of line, or the compiler runs part of its setup ahead of the state dispatch of every request.
+#[cold]
+#[inline(never)]
 fn check_route_failures(
     dev: &mut DevServer,
     route_bundle_index: route_bundle::Index,
     resp: AnyResponse,
 ) -> crate::Result<CheckResult> {
-    let mut gts = dev.init_graph_trace_state(0)?;
+    let mut gts = GraphTraceState::default();
     let _lock_guard = dev.graph_safety_lock.guard();
-    let route_bundle = std::ptr::from_mut::<RouteBundle>(dev.route_bundle_ptr(route_bundle_index));
-    // SAFETY: `trace_all_route_imports` reads `route_bundle.data` but never
-    // mutates `route_bundles`; the raw-pointer reborrow sidesteps the
-    // overlapping `&mut self`.
-    dev.trace_all_route_imports(
-        // SAFETY: see above; `route_bundle` points into `dev.route_bundles`, not resized here.
-        unsafe { &*route_bundle },
-        &mut gts,
-        TraceImportGoal::FindErrors,
-    )?;
-    if !gts.failures.is_empty() {
+    if !dev.verify_route(route_bundle_index, &mut gts)? {
         // See comment on this field for information
         if !dev.assume_perfect_incremental_bundling {
             // Cache bust EVERYTHING reachable
@@ -450,6 +431,38 @@ fn check_route_failures(
     } else {
         // Failures are unreachable by this route, so it is OK to load.
         Ok(CheckResult::Ok)
+    }
+}
+
+impl DevServer {
+    /// The only writer of `State::Loaded`. Leaves in `gts` the failures that the route reaches and the files that the trace visited.
+    pub(super) fn verify_route(
+        &mut self,
+        route_bundle_index: route_bundle::Index,
+        gts: &mut GraphTraceState,
+    ) -> crate::Result<bool> {
+        self.graph_safety_lock.assert_locked();
+        if self.bundling_failures.is_empty() {
+            gts.failures.clear();
+        } else {
+            self.reset_graph_trace_state(gts)?;
+            let route_bundle = std::ptr::from_ref::<RouteBundle>(
+                &self.route_bundles[route_bundle_index.get() as usize],
+            );
+            self.trace_all_route_imports(
+                // SAFETY: `route_bundle` points into `self.route_bundles`, which the trace reads and never resizes.
+                unsafe { &*route_bundle },
+                gts,
+                TraceImportGoal::FindErrors,
+            )?;
+        }
+        let loaded = gts.failures.is_empty();
+        self.route_bundle_ptr(route_bundle_index).server_state = if loaded {
+            route_bundle::State::Loaded
+        } else {
+            route_bundle::State::PossibleBundlingFailures
+        };
+        Ok(loaded)
     }
 }
 

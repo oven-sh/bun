@@ -498,6 +498,28 @@ impl DevServer {
         Ok(array.into_boxed_slice())
     }
 
+    /// A route that the end of a bundle left in `PossibleBundlingFailures` gets its trace here. Out of line, so the script of a loaded route pays nothing for it.
+    #[cold]
+    #[inline(never)]
+    fn serve_client_script_of_unverified_route(
+        &mut self,
+        bundle_index: route_bundle::Index,
+        generation: u32,
+        resp: AnyResponse,
+        method: Method,
+    ) {
+        let state = self.route_bundles[bundle_index.get() as usize].server_state;
+        let loaded = state == route_bundle::State::PossibleBundlingFailures && {
+            let _lock = self.graph_safety_lock.guard();
+            self.verify_route(bundle_index, &mut GraphTraceState::default())
+                .expect("oom")
+        };
+        if !loaded {
+            return resp.corked(move || on_outdated_js_corked(resp));
+        }
+        self.serve_client_script(bundle_index, generation, resp, method);
+    }
+
     /// Serves `/_bun/client/<route>-<generation>.js`.
     pub(super) fn serve_client_script(
         &mut self,
@@ -507,10 +529,16 @@ impl DevServer {
         method: Method,
     ) {
         let route_bundle = &self.route_bundles[bundle_index.get() as usize];
-        if route_bundle.client_script_generation != generation
-            || route_bundle.server_state != route_bundle::State::Loaded
-        {
+        if route_bundle.client_script_generation != generation {
             return resp.corked(move || on_outdated_js_corked(resp));
+        }
+        if route_bundle.server_state != route_bundle::State::Loaded {
+            return self.serve_client_script_of_unverified_route(
+                bundle_index,
+                generation,
+                resp,
+                method,
+            );
         }
 
         // The in-flight bundle already freed the code of every file that failed in it, so wait for it to finish.

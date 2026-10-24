@@ -1781,9 +1781,24 @@ impl<S: Storage> BoundIn<S> {
             }
             ExprKind::Binary {
                 op: BinOp::Or | BinOp::Nullish,
-                left,
-                right,
-            } => self.is_context_sensitive(hir, left) || self.is_context_sensitive(hir, right),
+                ..
+            } => {
+                // The parser builds `a || b || c` in a loop, so nothing limits how deep the left
+                // operands nest.
+                let mut e = e;
+                while let ExprKind::Binary {
+                    op: BinOp::Or | BinOp::Nullish,
+                    left,
+                    right,
+                } = hir[e].kind
+                {
+                    if self.is_context_sensitive(hir, right) {
+                        return true;
+                    }
+                    e = left;
+                }
+                self.is_context_sensitive(hir, e)
+            }
             _ => false,
         }
     }

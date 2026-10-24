@@ -1628,6 +1628,17 @@ describe("bundler", () => {
             return <div>{status}</div>;
           }
 
+          // What the function returns does not depend on the props. Whether it throws does.
+          function ThrowInCalledFunctionInTry(props) {
+            let status = "ok";
+            try {
+              (() => (globalThis.staticText ? (parse(props.text), 1) : 0))();
+            } catch {
+              status = "failed";
+            }
+            return <div>{status}</div>;
+          }
+
           // No try: the test of the break is not reactive, but how often it runs is.
           function StaticBreakInReactiveLoop(props) {
             let count = 0;
@@ -1659,13 +1670,14 @@ describe("bundler", () => {
             return <div>{state}</div>;
           }
 
-          // The function expression is the only reactive read in this try statement. It cannot throw, so the
-          // throw of the static load behind it in the same block is not reactive.
+          // The only reactive read in this try block is the function that \`read\` is declared with. Neither
+          // the function expression nor the declaration can throw, so no throw in the block is reactive.
           function ReactiveReadThatCannotThrow(props) {
             let staticLabel = "ok";
             try {
-              if (globalThis.stop) return [() => props.title, parse(globalThis.staticText)];
+              const read = () => props.title;
               parse(globalThis.staticText);
+              if (globalThis.stop) return { read: () => read() };
             } catch {
               staticLabel = "failed";
             }
@@ -1734,6 +1746,7 @@ describe("bundler", () => {
           ];
           renders(TernaryInCalledFunctionInTry, ...strict);
           renders(IfInCalledFunctionInTry, ...texts);
+          renders(ThrowInCalledFunctionInTry, ...texts);
           renders(StaticBreakInReactiveLoop, { items: [1] }, { items: [1, 2] }, { items: [] });
           renders(LabeledBreakUnderReactiveIf, { on: true }, { on: false }, { on: true });
           renders(ReactiveReadThatCannotThrow, { title: "a" }, { title: "b" });
@@ -1778,6 +1791,7 @@ describe("bundler", () => {
           ThrowThatALaterStatementMakesReactive (memoized): 3, 1, 3
           TernaryInCalledFunctionInTry (memoized): failed, ok, ok, failed
           IfInCalledFunctionInTry (memoized): failed, ok, failed, ok
+          ThrowInCalledFunctionInTry (memoized): failed, ok, failed, ok
           StaticBreakInReactiveLoop (memoized): 1, 2, 0
           LabeledBreakUnderReactiveIf (memoized): on, off, on
           ReactiveReadThatCannotThrow (memoized): ok, ok

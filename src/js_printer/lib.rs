@@ -1327,6 +1327,9 @@ impl<'a> SourceMapHandler<'a> {
 // ───────────────────────────────────────────────────────────────────────────
 use js_ast::{CommonJSNamedExports, TsEnumsMap};
 
+/// The property of `Options::require_store_ref` that reads and writes `require_ref`.
+pub const REQUIRE_STORE_PROPERTY: &[u8] = b"v";
+
 pub struct Options<'a> {
     pub bundling: bool,
     pub to_commonjs_ref: Ref,
@@ -1334,6 +1337,8 @@ pub struct Options<'a> {
     /// `__preload`: when set, an `import()` of a chunk is printed as `(__preload(chunkId), import(path))`.
     pub module_preload_ref: Ref,
     pub require_ref: Option<Ref>,
+    /// In a chunk that imports `require_ref`, `ERequireStoreTarget` prints as `<this accessor>.v`.
+    pub require_store_ref: Ref,
     pub import_meta_ref: Ref,
     pub hmr_ref: Ref,
     pub indent: Indentation,
@@ -1421,6 +1426,7 @@ impl<'a> Default for Options<'a> {
             to_esm_ref: Ref::NONE,
             module_preload_ref: Ref::NONE,
             require_ref: None,
+            require_store_ref: Ref::NONE,
             import_meta_ref: Ref::NONE,
             hmr_ref: Ref::NONE,
             indent: Indentation::default(),
@@ -1552,6 +1558,7 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
         | ExprData::ECommonjsExportIdentifier(_)
         | ExprData::ESpecial(_)
         | ExprData::ERequireCallTarget
+        | ExprData::ERequireStoreTarget
         | ExprData::ERequireResolveCallTarget
         | ExprData::ERequireMain
         | ExprData::EImportMeta(_)
@@ -3580,6 +3587,25 @@ pub(crate) mod __gated_printer {
                         self.print(b".require");
                     } else {
                         self.print(b"require");
+                    }
+                }
+                ExprData::ERequireStoreTarget => {
+                    if self.options.require_store_ref.is_valid() {
+                        self.print_space_before_identifier();
+                        self.add_source_mapping(expr.loc);
+                        self.print_symbol(self.options.require_store_ref);
+                        self.print(b".");
+                        self.print(REQUIRE_STORE_PROPERTY);
+                    } else {
+                        // The store can reach the `require` that reads go to.
+                        self.print_expr(
+                            Expr {
+                                data: ExprData::ERequireCallTarget,
+                                loc: expr.loc,
+                            },
+                            level,
+                            in_flags,
+                        );
                     }
                 }
                 ExprData::ERequireResolveCallTarget => {

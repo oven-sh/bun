@@ -1013,6 +1013,7 @@ pub enum Tag {
     ESpecial,
     EInlinedEnum,
     ENameOfSymbol,
+    ERequireStoreTarget,
 }
 
 impl Tag {
@@ -1361,6 +1362,9 @@ pub enum Data {
     EInlinedEnum(StoreRef<E::InlinedEnum>),
 
     ENameOfSymbol(StoreRef<E::NameOfSymbol>),
+
+    /// `ERequireCallTarget` as the target of a store into the runtime's `__require` (`Options::require_store_ref`).
+    ERequireStoreTarget,
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
@@ -2240,6 +2244,7 @@ impl Data {
             }
             // no data
             Data::ERequireCallTarget
+            | Data::ERequireStoreTarget
             | Data::ERequireResolveCallTarget
             | Data::EMissing(_)
             | Data::EThis(_)

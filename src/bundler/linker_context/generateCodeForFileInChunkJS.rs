@@ -226,6 +226,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 Ref::NONE,
                 Ref::NONE,
                 None,
+                Ref::NONE,
                 part_range.source_index,
                 source,
                 module_info,
@@ -974,6 +975,28 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         });
     }
 
+    let require_store_ref = if chunk
+        .flags
+        .contains(crate::chunk::Flags::IMPORTS_REQUIRE_STORE)
+    {
+        c.require_store_ref
+    } else {
+        Ref::NONE
+    };
+    // No chunk assigns the `__require` that it imports.
+    debug_assert!(
+        require_store_ref.is_valid()
+            || !c.graph.code_splitting
+            || chunk
+                .files_with_parts_in_chunk
+                .contains(&Index::RUNTIME.get())
+            // SAFETY: see `parts` raw-pointer note above.
+            || !unsafe { (*parts).iter() }.enumerate().any(|(i, part)| {
+                part.stores_free_require
+                    && parts_live.is_set(part_range.part_index_begin as usize + i)
+            })
+    );
+
     // `get_source` returns `&'static Source` (parse_graph SoA is append-only and
     // outlives the link step), so it does not borrow `c` — no split-borrow needed
     // across the `&mut self` call below.
@@ -988,6 +1011,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         to_esm_ref,
         to_common_js_ref,
         runtime_require_ref,
+        require_store_ref,
         part_range.source_index,
         source,
         module_info,

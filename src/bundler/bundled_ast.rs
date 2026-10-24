@@ -157,7 +157,9 @@ bitflags::bitflags! {
         const HAS_IMPORT_META = 1 << 8;
         /// See `Ast::commonjs_lifted_to_esm`.
         const COMMONJS_LIFTED_TO_ESM = 1 << 9;
-        // _padding: u6 fills the rest
+        /// See `Ast::stores_free_require`.
+        const STORES_FREE_REQUIRE = 1 << 10;
+        // _padding: u5 fills the rest
     }
 }
 
@@ -252,6 +254,7 @@ impl<'arena> BundledAst<'arena> {
             uses_exports_ref: self.flags.contains(Flags::USES_EXPORTS_REF),
             uses_module_ref: self.flags.contains(Flags::USES_MODULE_REF),
             // uses_require_ref: ast.uses_require_ref,
+            stores_free_require: self.flags.contains(Flags::STORES_FREE_REQUIRE),
             export_keyword: bun_ast::Range {
                 len: if self.flags.contains(Flags::USES_EXPORT_KEYWORD) {
                     1
@@ -284,6 +287,7 @@ impl<'arena> BundledAst<'arena> {
         flags.set(Flags::USES_EXPORTS_REF, ast.uses_exports_ref);
         flags.set(Flags::USES_MODULE_REF, ast.uses_module_ref);
         // flags.set(Flags::USES_REQUIRE_REF, ast.uses_require_ref);
+        flags.set(Flags::STORES_FREE_REQUIRE, ast.stores_free_require);
         flags.set(Flags::USES_EXPORT_KEYWORD, ast.export_keyword.len > 0);
         flags.set(Flags::FORCE_CJS_TO_ESM, ast.force_cjs_to_esm);
         flags.set(Flags::COMMONJS_LIFTED_TO_ESM, ast.commonjs_lifted_to_esm);

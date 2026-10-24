@@ -4911,4 +4911,423 @@ describe("bundler", () => {
       await expectUtilCallToBeMapped(onDisk.code, onDisk.map);
     });
   });
+
+  // A store into the free `require` is a store into the runtime's `__require`.
+  // Code splitting can put `__require` in another chunk. There it is an
+  // import, and an import cannot be assigned: the output threw `TypeError:
+  // Assignment to constant variable.` So the chunk that declares `__require`
+  // also exports an accessor for it, and the store goes through that.
+  {
+    // `id()` keeps the bundler from resolving the argument at build time, so
+    // the call goes through the bundle's `require` at run time.
+    const storesRequire = {
+      "/writer.cjs": /* js */ `
+        const id = x => x;
+        exports.storeInWriter = fn => {
+          require = fn;
+        };
+        exports.readInWriter = name => require(id(name));
+      `,
+      "/shared.js": /* js */ `
+        const id = x => x;
+        export const storeInShared = fn => {
+          require = fn;
+        };
+        export const readInShared = name => require(id(name));
+      `,
+      "/lazy.js": /* js */ `
+        const id = x => x;
+        export const storeInLazy = fn => {
+          require = fn;
+        };
+        export const readInLazy = name => require(id(name));
+      `,
+      "/b.js": /* js */ `
+        import { readInShared } from "./shared.js";
+        console.log("b", typeof readInShared);
+      `,
+    };
+    // No file of the output assigns a name that it imports from another chunk.
+    const expectNoStoreIntoImport = (api: BundlerTestBundleAPI) => {
+      for (const file of jsFilesIn(api)) {
+        const code = api.readFile("/out/" + file);
+        const imported = [...code.matchAll(/import\s*\{([^}]*)\}\s*from/g)].flatMap(m =>
+          m[1].split(",").map(name => name.trim()),
+        );
+        for (const name of imported.filter(Boolean)) {
+          const escaped = name.replaceAll("$", "\\$");
+          expect(code).not.toMatch(new RegExp(`(?<![\\w$.])${escaped}\\s*(=(?![=>])|\\|\\|=|&&=|\\?\\?=|\\+\\+|--)`));
+        }
+      }
+    };
+
+    // For a browser the files of a bundle share one `require`. /shared.js is
+    // in the chunk of both entry points, which declares `__require`.
+    // /writer.cjs is in the chunk of /a.js, and /lazy.js in a chunk that
+    // loads later. A store in any of the three reaches all three.
+    for (const backend of ["api", "cli"] as const) {
+      itBundled(`splitting/RequireStoreReachesEveryChunk-${backend}`, {
+        files: {
+          ...storesRequire,
+          "/a.js": /* js */ `
+            import { storeInWriter, readInWriter } from "./writer.cjs";
+            import { storeInShared, readInShared } from "./shared.js";
+            import("./lazy.js").then(({ storeInLazy, readInLazy }) => {
+              const read = () => [readInWriter("a"), readInShared("b"), readInLazy("c")].join("|");
+              storeInWriter(name => "writer " + name);
+              console.log(read());
+              storeInLazy(name => "lazy " + name);
+              console.log(read());
+              storeInShared(name => "shared " + name);
+              console.log(read());
+            });
+          `,
+        },
+        entryPoints: ["/a.js", "/b.js"],
+        splitting: true,
+        target: "browser",
+        format: "esm",
+        outdir: "/out",
+        backend,
+        onAfterBundle(api) {
+          expectNoStoreIntoImport(api);
+          // The chunk that declares `__require` assigns it directly.
+          expect(chunkContaining(api, "storeInShared =")).toBe(chunkContaining(api, "var __require ="));
+          expect(api.readFile("/out/" + chunkContaining(api, "storeInShared ="))).toContain("__require = fn;");
+          api.expectFile("/out/a.js").toContain("__requireStore.v = fn;");
+          expect(jsOutput(api, "lazy")).toContain("__requireStore.v = fn;");
+        },
+        run: [
+          {
+            file: "/out/a.js",
+            stdout: "writer a|writer b|writer c\nlazy a|lazy b|lazy c\nshared a|shared b|shared c",
+          },
+          { file: "/out/b.js", stdout: "b function" },
+        ],
+      });
+    }
+
+    // Node and Bun give each CommonJS module its own `require`, so these only
+    // read the stored value in the file that stored it.
+    for (const target of ["node", "bun"] as const) {
+      itBundled(`splitting/RequireStoreInOtherChunk-${target}`, {
+        files: {
+          ...storesRequire,
+          "/a.js": /* js */ `
+            import { storeInWriter, readInWriter } from "./writer.cjs";
+            storeInWriter(name => "writer " + name);
+            console.log(readInWriter("a"));
+          `,
+        },
+        entryPoints: ["/a.js", "/b.js"],
+        splitting: true,
+        target,
+        format: "esm",
+        outdir: "/out",
+        onAfterBundle: expectNoStoreIntoImport,
+        run: [
+          { file: "/out/a.js", stdout: "writer a" },
+          { file: "/out/b.js", stdout: "b function" },
+        ],
+      });
+    }
+
+    // Every form of store, and the forms that also read. `stub(tag)` is a
+    // `require` that names itself, so each line shows which store ran last.
+    const storeForms = /* js */ `
+      const id = x => x;
+      const stub = tag => Object.assign(name => tag + ":" + name, { tag });
+      exports.run = function () {
+        const seen = [];
+        require = stub("assign");
+        seen.push(require(id("a")));
+        require ||= stub("or");
+        seen.push(require.tag);
+        require &&= stub("and");
+        seen.push(require.tag);
+        require = null;
+        require ??= stub("nullish");
+        seen.push(require.tag);
+        [require] = [stub("array")];
+        seen.push(require.tag);
+        [require = stub("default")] = [];
+        seen.push(require.tag);
+        ({ require } = { require: stub("shorthand") });
+        seen.push(require.tag);
+        ({ key: require } = { key: stub("property") });
+        seen.push(require.tag);
+        ({ ...require } = { tag: "rest" });
+        seen.push(require.tag);
+        for (require of [stub("of")]) {}
+        seen.push(require.tag);
+        for (require in { in: 1 }) {}
+        seen.push(require);
+        require = 1;
+        require++;
+        ++require;
+        require += 2;
+        require--;
+        seen.push(require);
+        require = stub("last");
+        return seen.join(",");
+      };
+    `;
+    const storeFormsSeen = "assign:a,assign,and,nullish,array,default,shorthand,property,rest,of,in,4";
+    for (const target of ["browser", "node", "bun"] as const) {
+      for (const minify of [false, true]) {
+        itBundled(`splitting/RequireStoreForms-${target}${minify ? "-minify" : ""}`, {
+          files: {
+            "/writer.cjs": storeForms,
+            "/shared.js": `export const lastTag = () => require.tag;`,
+            "/a.js":
+              target === "browser"
+                ? /* js */ `
+                  import { run } from "./writer.cjs";
+                  import { lastTag } from "./shared.js";
+                  console.log(run());
+                  console.log(lastTag());
+                `
+                : /* js */ `
+                  import { run } from "./writer.cjs";
+                  console.log(run());
+                `,
+            "/b.js": /* js */ `
+              import { lastTag } from "./shared.js";
+              console.log("b", typeof lastTag);
+            `,
+          },
+          entryPoints: ["/a.js", "/b.js"],
+          splitting: true,
+          target,
+          format: "esm",
+          outdir: "/out",
+          minifyIdentifiers: minify,
+          minifySyntax: minify,
+          minifyWhitespace: minify,
+          run: [
+            { file: "/out/a.js", stdout: target === "browser" ? storeFormsSeen + "\nlast" : storeFormsSeen },
+            { file: "/out/b.js", stdout: "b function" },
+          ],
+        });
+      }
+    }
+
+    // The accessor and the parameter of its setter get their names at link
+    // time. Bindings with the same names in the chunk that declares them, in
+    // the chunk that stores, and in the scopes around the store keep their
+    // own values.
+    for (const minify of [false, true]) {
+      itBundled(`splitting/RequireStoreNames${minify ? "-minify" : ""}`, {
+        files: {
+          "/a.js": /* js */ `
+            import { publish, read } from "./writer.cjs";
+            import { shared } from "./shared.js";
+            var __requireStore = "a";
+            var value = "a value";
+            const stub = Object.assign(name => "published " + name, { tag: "stub" });
+            console.log(publish(stub), read("x"), __requireStore, value, shared());
+          `,
+          "/b.js": /* js */ `
+            import { shared } from "./shared.js";
+            console.log("b", shared());
+          `,
+          "/shared.js": /* js */ `
+            var __requireStore = { v: "shared" };
+            var value = "shared value";
+            ${Array.from({ length: 60 }, (_, i) => `var top${i} = ${i};`).join("\n")}
+            export const shared = () =>
+              [__requireStore.v, value, require.tag, ${Array.from({ length: 60 }, (_, i) => `top${i}`).join(" + ")}].join("/");
+          `,
+          "/writer.cjs": /* js */ `
+            const id = x => x;
+            var __requireStore = { v: "writer" };
+            ${Array.from({ length: 60 }, (_, i) => `var local${i} = ${i};`).join("\n")}
+            exports.publish = function (fn) {
+              var seen = [];
+              {
+                let __requireStore = { v: "block" };
+                let value = "block value";
+                require = fn;
+                seen.push(__requireStore.v, value);
+              }
+              (function (__requireStore, value) {
+                require = fn;
+                seen.push(__requireStore, value);
+              })("parameter", "parameter value");
+              return seen.join("/") + "/" + (${Array.from({ length: 60 }, (_, i) => `local${i}`).join(" + ")});
+            };
+            exports.read = name => require(id(name)) + "/" + __requireStore.v;
+          `,
+        },
+        entryPoints: ["/a.js", "/b.js"],
+        splitting: true,
+        target: "browser",
+        format: "esm",
+        outdir: "/out",
+        minifyIdentifiers: minify,
+        minifySyntax: minify,
+        onAfterBundle: expectNoStoreIntoImport,
+        run: [
+          {
+            file: "/out/a.js",
+            stdout:
+              "block/block value/parameter/parameter value/1770 published x/writer a a value shared/shared value/stub/1770",
+          },
+          { file: "/out/b.js", stdout: "b shared/shared value//1770" },
+        ],
+      });
+    }
+
+    // With one entry point the file that stores is in the chunk that declares
+    // `__require`. The store is a plain assignment, as without splitting.
+    itBundled("splitting/RequireStoreInDeclaringChunkIsPlain", {
+      files: {
+        "/writer.cjs": storesRequire["/writer.cjs"],
+        "/a.js": /* js */ `
+          import { storeInWriter, readInWriter } from "./writer.cjs";
+          storeInWriter(name => "writer " + name);
+          console.log(readInWriter("a"));
+        `,
+      },
+      entryPoints: ["/a.js"],
+      splitting: true,
+      target: "browser",
+      format: "esm",
+      outdir: "/out",
+      onAfterBundle(api) {
+        expect(jsFilesIn(api)).toEqual(["a.js"]);
+        api.expectFile("/out/a.js").toContain("__require = fn;");
+        api.expectFile("/out/a.js").not.toContain("__requireStore");
+      },
+      run: { file: "/out/a.js", stdout: "writer a" },
+    });
+
+    // Tree shaking removes the only function that stores: no chunk gets the accessor.
+    itBundled("splitting/RequireStoreRemovedByTreeShaking", {
+      files: {
+        "/lib.js": /* js */ `
+          export function unused(fn) {
+            require = fn;
+          }
+          export const used = () => typeof require;
+        `,
+        "/a.js": `import { used } from "./lib.js";\nconsole.log("a", used());`,
+        "/b.js": `import { used } from "./lib.js";\nconsole.log("b", used());`,
+      },
+      entryPoints: ["/a.js", "/b.js"],
+      splitting: true,
+      target: "browser",
+      format: "esm",
+      outdir: "/out",
+      onAfterBundle(api) {
+        for (const file of jsFilesIn(api)) api.expectFile("/out/" + file).not.toContain("__requireStore");
+      },
+      run: { file: "/out/a.js", stdout: "a function" },
+    });
+
+    // The chunk of an entry point with [hash] in its name takes the runtime,
+    // so it declares `__require`. The accessor joins the `export {}` clause
+    // at the end of that chunk, and the chunk of /lazy.js imports it from there.
+    const storesInLazyChunk = {
+      "/main.js": /* js */ `
+        import { id } from "./id.js";
+        import("./lazy.js").then(({ publish }) => {
+          publish(name => "published " + name);
+          console.log(require(id("x")));
+        });
+      `,
+      "/id.js": `export const id = x => x;`,
+      "/lazy.js": /* js */ `
+        export function publish(fn) {
+          require = fn;
+        }
+      `,
+    };
+    const expectLazyChunkImportsAccessorFrom = (api: BundlerTestBundleAPI, entry: string) => {
+      const lazy = jsOutput(api, "lazy");
+      expect(lazy).toContain("__requireStore.v = fn;");
+      expect(lazy).toMatch(new RegExp(`import\\s*\\{[^}]*\\b__requireStore\\b[^}]*\\}\\s*from\\s*"\\./${entry}"`));
+      expect(api.readFile("/out/" + entry)).toMatch(/export\s*\{[^}]*\b__requireStore\b[^}]*\};?\s*$/);
+      expectNoStoreIntoImport(api);
+    };
+    itBundled("splitting/RequireStoreExportedByHashedEntry", {
+      files: storesInLazyChunk,
+      entryPoints: ["/main.js"],
+      entryNaming: "[name].entry-[hash].[ext]",
+      splitting: true,
+      target: "browser",
+      format: "esm",
+      outdir: "/out",
+      onAfterBundle(api) {
+        expectLazyChunkImportsAccessorFrom(
+          api,
+          jsFilesIn(api).find(f => f.startsWith("main.entry-"))!,
+        );
+        launchHashedEntry(api, "main");
+      },
+      run: { file: "/out/main.js", stdout: "published x" },
+    });
+    itBundled("splitting/RequireStoreExportedByHtmlEntry", {
+      files: {
+        ...storesInLazyChunk,
+        "/index.html": `<!DOCTYPE html><html><body><script type="module" src="./main.js"></script></body></html>`,
+      },
+      entryPoints: ["/index.html"],
+      splitting: true,
+      target: "browser",
+      outdir: "/out",
+      onAfterBundle(api) {
+        const script = api.readFile("/out/index.html").match(/<script[^>]*\bsrc="\.\/([^"]+)"/)![1];
+        expectLazyChunkImportsAccessorFrom(api, script);
+        api.writeFile("/out/launch.js", `import "./${script}";`);
+      },
+      run: { file: "/out/launch.js", stdout: "published x" },
+    });
+
+    // With target bun a `require()` of an ES module loads its chunk while the
+    // calling chunk runs. /writer.ts stores as it loads and again when called.
+    itBundled("splitting/RequireStoreInSplitRequireChunk", {
+      files: {
+        "/main.ts": /* ts */ `
+          import { id } from "./id.ts";
+          const { publish, atLoad } = require("./writer.ts");
+          publish((name: string) => "published " + name);
+          console.log(atLoad, require(id("x")));
+        `,
+        "/id.ts": `export const id = (x: string) => x;`,
+        "/writer.ts": /* ts */ `
+          import { id } from "./id.ts";
+          require = (name: string) => "stored at load " + name;
+          export const atLoad = require(id("w"));
+          export function publish(fn: (name: string) => string) {
+            require = fn;
+          }
+        `,
+      },
+      entryPoints: ["/main.ts"],
+      splitting: true,
+      target: "bun",
+      format: "esm",
+      outdir: "/out",
+      onAfterBundle(api) {
+        api.expectFile("/out/main.js").toContain(`import.meta.require("./${chunkContaining(api, "stored at load")}")`);
+        expectNoStoreIntoImport(api);
+      },
+      run: { file: "/out/main.js", stdout: "stored at load w published x" },
+    });
+
+    // A standalone executable embeds the chunks. With --bytecode the module
+    // record of each chunk also has to list the accessor.
+    for (const bytecode of [false, true]) {
+      itBundled(`splitting/RequireStoreInCompiledExecutable${bytecode ? "-bytecode" : ""}`, {
+        compile: true,
+        splitting: true,
+        bytecode,
+        format: "esm",
+        files: storesInLazyChunk,
+        entryPoints: ["/main.js"],
+        run: { stdout: "published x" },
+      });
+    }
+  }
 });

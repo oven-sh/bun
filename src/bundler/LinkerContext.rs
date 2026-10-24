@@ -101,6 +101,8 @@ pub struct LinkerContext<'a> {
     /// `__preload` / `__chunks`: modulepreload for split browser `import()`s.
     pub(crate) preload_runtime_ref: Ref,
     pub(crate) chunks_runtime_ref: Ref,
+    /// The accessor that `export_require_store` declares, if a chunk stores into a `__require` that it imports.
+    pub(crate) require_store_ref: Ref,
 
     pub(crate) options: LinkerOptions,
 
@@ -167,6 +169,7 @@ impl<'a> Default for LinkerContext<'a> {
             promise_all_runtime_ref: Ref::NONE,
             preload_runtime_ref: Ref::NONE,
             chunks_runtime_ref: Ref::NONE,
+            require_store_ref: Ref::NONE,
             options: Default::default(),
             r#loop: None,
             unique_key_buf: Box::default(),
@@ -1823,6 +1826,8 @@ pub struct ChunkMeta {
     /// Split `require()` targets, kept apart from `dynamic_imports`
     /// only so the metafile labels them `require-call`.
     pub(crate) require_imports: ArrayHashMap<crate::IndexInt, ()>,
+    /// A live part of the chunk has `Part::stores_free_require`.
+    pub(crate) stores_free_require: bool,
 }
 
 pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
@@ -2394,6 +2399,7 @@ impl<'a> LinkerContext<'a> {
         to_esm_ref: Ref,
         to_commonjs_ref: Ref,
         runtime_require_ref: Option<Ref>,
+        require_store_ref: Ref,
         source_index: Index,
         source: &Source,
         module_info: Option<&mut crate::analyze_transpiled_module::ModuleInfo>,
@@ -2473,6 +2479,7 @@ impl<'a> LinkerContext<'a> {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
+            require_store_ref,
             require_or_import_meta_for_source_callback:
                 js_printer::RequireOrImportMetaCallback::init(self),
             line_offset_tables: Some(line_offset_table),

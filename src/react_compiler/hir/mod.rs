@@ -1453,7 +1453,9 @@ impl NonLocalBinding {
             NonLocalKind::BunOpaque(e) => {
                 use bun_ast::expr::Tag;
                 match e.data.tag() {
-                    Tag::ERequireString | Tag::ERequireCallTarget => b"require",
+                    Tag::ERequireString | Tag::ERequireCallTarget | Tag::ERequireStoreTarget => {
+                        b"require"
+                    }
                     Tag::ERequireResolveString | Tag::ERequireResolveCallTarget => {
                         b"require.resolve"
                     }

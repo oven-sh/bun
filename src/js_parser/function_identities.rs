@@ -1394,6 +1394,7 @@ impl<'p, 'a> Walker<'p, 'a> {
             | Data::ERequireString(_)
             | Data::ERequireResolveString(_)
             | Data::ERequireCallTarget
+            | Data::ERequireStoreTarget
             | Data::ERequireResolveCallTarget
             | Data::EImportMetaMain(_)
             | Data::ERequireMain

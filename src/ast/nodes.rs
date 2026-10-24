@@ -1046,6 +1046,9 @@ pub struct Part {
     /// tree shaking isn't enabled.
     pub force_tree_shaking: bool,
 
+    /// The visit pass made an `ERequireStoreTarget` in this part.
+    pub stores_free_require: bool,
+
     // Liveness moved out to a sidecar `LinkerGraph::parts_live` bitset so the
     // tree-shaking recursion's hot "already visited?" check touches a few KB
     // of bitset words instead of striding across every 272-byte `Part`.
@@ -1096,6 +1099,7 @@ impl Default for Part {
             dependencies: Vec::new_in(bun_alloc::AstAlloc),
             can_be_removed_if_unused: false,
             force_tree_shaking: false,
+            stores_free_require: false,
             tag: PartTag::None,
         }
     }

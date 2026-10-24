@@ -319,6 +319,7 @@ pub(crate) fn lower_expression(
             loc,
         }),
         Data::ERequireCallTarget
+        | Data::ERequireStoreTarget
         | Data::ERequireResolveCallTarget
         | Data::ERequireString(_)
         | Data::ERequireResolveString(_)

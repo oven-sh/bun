@@ -306,6 +306,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) has_called_runtime: bool,
 
+    /// `Part::stores_free_require` of the part being visited.
+    pub(crate) part_stores_free_require: bool,
+    /// Some part has one (`Ast::stores_free_require`).
+    pub(crate) stores_free_require: bool,
+
     /// The current part's symbol uses, built from `part_uses` when the part
     /// is done (`take_symbol_uses`); empty while visiting.
     pub(crate) symbol_uses: SymbolUseMap,
@@ -5471,6 +5476,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.import_symbol_property_uses.clear_retaining_capacity();
 
         self.had_commonjs_named_exports_this_visit = false;
+        self.part_stores_free_require = false;
 
         let arena = self.arena;
         let mut opts = PrependTempRefsOpts::default();
@@ -5557,6 +5563,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .into_bump_slice_mut(),
                 ),
                 can_be_removed_if_unused,
+                stores_free_require: self.part_stores_free_require,
                 tag: if self.had_commonjs_named_exports_this_visit {
                     bun_ast::PartTag::CommonjsNamedExport
                 } else {
@@ -5564,6 +5571,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
                 ..Default::default()
             });
+            self.stores_free_require |= self.part_stores_free_require;
             // `symbol_uses` / `import_symbol_property_uses` were already reset
             // to empty by `core::mem::take` above; no second assignment needed.
             self.had_commonjs_named_exports_this_visit = false;
@@ -6004,6 +6012,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         debug_assert!(!self.is_source_runtime());
         Expr {
             data: js_ast::ExprData::ERequireCallTarget,
+            loc,
+        }
+    }
+
+    /// `value_for_require` for the target of a store that can run, into the runtime's `__require`.
+    #[cold]
+    pub(crate) fn value_for_require_store(&mut self, loc: bun_ast::Loc) -> Expr {
+        debug_assert!(!self.is_source_runtime());
+        debug_assert!(self.options.features.auto_polyfill_require);
+        self.part_stores_free_require = true;
+        Expr {
+            data: js_ast::ExprData::ERequireStoreTarget,
             loc,
         }
     }
@@ -9382,6 +9402,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             uses_module_ref,
             uses_exports_ref,
             uses_require_ref,
+            stores_free_require: self.stores_free_require,
             commonjs_module_exports_assigned_deoptimized: self
                 .commonjs_module_exports_assigned_deoptimized,
             top_level_await_keyword: self.top_level_await_keyword,
@@ -9734,6 +9755,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_top_level_function_merged_with_var: false,
             is_file_considered_to_have_esm_exports: false,
             has_called_runtime: false,
+            part_stores_free_require: false,
+            stores_free_require: false,
             symbol_uses,
             part_uses: Vec::new(),
             part_use_slot: Vec::new(),

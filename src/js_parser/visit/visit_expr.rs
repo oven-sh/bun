@@ -330,7 +330,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.record_usage_of_runtime_require();
                 }
 
-                *e = p.value_for_require(expr.loc);
+                *e = if in_.assign_target != js_ast::AssignTarget::None
+                    && !p.is_control_flow_dead
+                    && p.options.features.auto_polyfill_require
+                {
+                    p.value_for_require_store(expr.loc)
+                } else {
+                    p.value_for_require(expr.loc)
+                };
                 return;
             }
         }

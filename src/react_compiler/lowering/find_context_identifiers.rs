@@ -533,6 +533,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
             | Data::ERequireString(_)
             | Data::ERequireResolveString(_)
             | Data::ERequireCallTarget
+            | Data::ERequireStoreTarget
             | Data::ERequireResolveCallTarget
             | Data::ERegExp(_)
             | Data::EMissing(_)

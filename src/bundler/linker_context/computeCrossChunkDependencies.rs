@@ -3,6 +3,7 @@ use bun_alloc::ArenaVecExt as _;
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 
 use crate::LinkerContext;
+use crate::bundled_ast::Flags as AstFlags;
 use crate::js_meta;
 use crate::linker_context_mod::{ChunkMeta, ChunkMetaMap, debug};
 use crate::{
@@ -26,6 +27,7 @@ pub(crate) fn compute_cross_chunk_dependencies(
             exports: ChunkMetaMap::default(),
             dynamic_imports: ArrayHashMap::<IndexInt, ()>::default(),
             require_imports: ArrayHashMap::<IndexInt, ()>::default(),
+            stores_free_require: false,
         })
         .collect();
 
@@ -80,7 +82,186 @@ pub(crate) fn compute_cross_chunk_dependencies(
         }
     }
 
+    if chunk_metas.iter().any(|meta| meta.stores_free_require) {
+        export_require_store(c, chunks, &mut chunk_metas)?;
+    }
+
     compute_cross_chunk_dependencies_with_chunk_metas(c, chunks, &mut chunk_metas)
+}
+
+/// A chunk cannot assign the `__require` that it imports: its stores go through an accessor that the declaring chunk exports.
+#[cold]
+#[inline(never)]
+fn export_require_store(
+    c: &mut LinkerContext,
+    chunks: &mut [Chunk],
+    chunk_metas: &mut [ChunkMeta],
+) -> Result<(), bun_alloc::AllocError> {
+    let require_ref = c
+        .graph
+        .symbols
+        .follow(c.graph.runtime_function(b"__require"));
+    let declaring_chunk = c
+        .graph
+        .symbols
+        .get_const(require_ref)
+        .and_then(|symbol| symbol.chunk_index())
+        .expect("infallible: a part that stores into `require` uses `__require`");
+
+    let mut accessor = Ref::NONE;
+    for (chunk_index, chunk) in chunks.iter_mut().enumerate() {
+        if !chunk_metas[chunk_index].stores_free_require || chunk_index as u32 == declaring_chunk {
+            continue;
+        }
+        if !accessor.is_valid() {
+            accessor = declare_require_store(c, require_ref, declaring_chunk)?;
+        }
+        chunk_metas[chunk_index].imports.put(accessor, ())?;
+        chunk.flags.insert(chunk::Flags::IMPORTS_REQUIRE_STORE);
+
+        // An unscoped use keeps the nested scopes of the file from taking the accessor's name.
+        let ast = c.graph.ast.split_mut();
+        for &source_index in chunk.files_with_parts_in_chunk.keys() {
+            if !ast.flags[source_index as usize].contains(AstFlags::STORES_FREE_REQUIRE) {
+                continue;
+            }
+            let parts_live = &c.graph.parts_live[source_index as usize];
+            for (part_index, part) in ast.parts[source_index as usize].iter_mut().enumerate() {
+                if part.stores_free_require && parts_live.is_set(part_index) {
+                    part.symbol_uses
+                        .put(accessor, bun_ast::symbol::Use::unscoped(1))?;
+                }
+            }
+        }
+    }
+    c.require_store_ref = accessor;
+    Ok(())
+}
+
+/// `var __requireStore = { get v() { return __require }, set v(value) { __require = value } }`, right after `__require`.
+fn declare_require_store(
+    c: &mut LinkerContext,
+    require_ref: Ref,
+    declaring_chunk: u32,
+) -> Result<Ref, bun_alloc::AllocError> {
+    use bun_ast::expr::IntoExprData;
+    use bun_ast::stmt::StatementData;
+    use bun_ast::{B, Binding, E, Expr, G, S, Stmt};
+
+    let runtime = Index::RUNTIME.get();
+    let accessor =
+        c.graph
+            .generate_new_symbol(runtime, bun_ast::symbol::Kind::Other, b"__requireStore");
+    // The setter's parameter is a top-level symbol for the renamer, like `lifted_setter_param`.
+    let value = c
+        .graph
+        .generate_new_symbol(runtime, bun_ast::symbol::Kind::Other, b"value");
+    let part_index = c.graph.top_level_symbol_to_parts(runtime, require_ref)[0];
+
+    // A copy of the backref, so `c.graph.ast` can be borrowed below.
+    let bump = c.graph.bump;
+    let arena = bump.get();
+    let loc = bun_ast::Loc::EMPTY;
+    let key = || Expr {
+        data: E::String::init(bun_js_printer::REQUIRE_STORE_PROPERTY).into_data_alloc(arena),
+        loc,
+    };
+    let method = |args: bun_ast::StoreSlice<G::Arg>, body: Stmt| Expr {
+        data: E::Function {
+            func: G::Fn {
+                args,
+                body: G::FnBody {
+                    loc,
+                    stmts: bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_with(1, |_| body)),
+                },
+                ..Default::default()
+            },
+        }
+        .into_data_alloc(arena),
+        loc,
+    };
+
+    let getter = method(
+        bun_ast::StoreSlice::EMPTY,
+        Stmt {
+            data: S::Return {
+                value: Some(Expr::init_identifier(require_ref, loc)),
+            }
+            .arena_alloc(arena),
+            loc,
+        },
+    );
+    let setter = method(
+        bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_with(1, |_| G::Arg {
+            binding: Binding::alloc(arena, B::Identifier { r#ref: value }, loc),
+            ..Default::default()
+        })),
+        Stmt {
+            data: S::SExpr {
+                value: Expr {
+                    data: E::Binary {
+                        op: bun_ast::OpCode::BinAssign,
+                        left: Expr::init_identifier(require_ref, loc),
+                        right: Expr::init_identifier(value, loc),
+                    }
+                    .into_data_alloc(arena),
+                    loc,
+                },
+                ..Default::default()
+            }
+            .arena_alloc(arena),
+            loc,
+        },
+    );
+
+    let mut properties = G::PropertyList::init_capacity(2);
+    for (kind, function) in [
+        (G::PropertyKind::Get, getter),
+        (G::PropertyKind::Set, setter),
+    ] {
+        properties.push(G::Property {
+            kind,
+            flags: bun_ast::Flags::Property::IsMethod.into(),
+            key: Some(key()),
+            value: Some(function),
+            ..Default::default()
+        });
+    }
+    let declaration = Stmt {
+        data: S::Local {
+            decls: G::DeclList::init_one(G::Decl {
+                binding: Binding::alloc(arena, B::Identifier { r#ref: accessor }, loc),
+                value: Some(Expr {
+                    data: E::Object {
+                        properties,
+                        ..Default::default()
+                    }
+                    .into_data_alloc(arena),
+                    loc,
+                }),
+            }),
+            ..Default::default()
+        }
+        .arena_alloc(arena),
+        loc,
+    };
+
+    let part =
+        &mut c.graph.ast.items_parts_mut()[runtime as usize].as_mut_slice()[part_index as usize];
+    let stmts = part.stmts.slice();
+    part.stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_with(stmts.len() + 1, |i| {
+        stmts.get(i).copied().unwrap_or(declaration)
+    }));
+    for ref_ in [accessor, value] {
+        part.declared_symbols.append(bun_ast::DeclaredSymbol {
+            ref_,
+            is_top_level: true,
+        })?;
+    }
+    c.graph
+        .symbols
+        .assign_chunk_index(&part.declared_symbols, declaring_chunk);
+    Ok(accessor)
 }
 
 struct CrossChunkDependencies<'a, 'bump> {
@@ -157,6 +338,13 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
             let imports_to_bind = &deps.imports_to_bind[source_index as usize];
             let wrap = deps.flags[source_index as usize].wrap;
             let wrapper_ref = deps.wrapper_refs[source_index as usize];
+            if deps.ast_flags[source_index as usize].contains(AstFlags::STORES_FREE_REQUIRE)
+                && parts.iter().enumerate().any(|(part_index, part)| {
+                    part.stores_free_require && parts_live.is_set(part_index)
+                })
+            {
+                chunk_meta.stores_free_require = true;
+            }
 
             for (part_index, part) in parts.iter().enumerate() {
                 if !parts_live.is_set(part_index) {

@@ -66,11 +66,10 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
       ["tag=a&tag=b", "tag=a&tag=b"],
       ["a=1&b=2&a=3", "a=1&b=2&a=3"],
       ["a=1&a", "a=1&a="],
-      // The order of distinct names does not count. The values of each name keep their order.
+      // The order does not count if no name holds two different values.
       ["a=1&b=2", "b=2&a=1"],
-      ["a=1&b=2&a=3", "b=2&a=1&a=3"],
-      ["a=1&b=2&a=3", "a=1&a=3&b=2"],
       ["x=0&a=1&b=2", "x=0&b=2&a=1"],
+      ["a=1&b=2&a=1", "b=2&a=1&a=1"],
     ])("%p equals %p", (a, b) => {
       expect(deepEquals(new URLSearchParams(a), new URLSearchParams(b))).toBe(true);
       expect(deepEquals(new URLSearchParams(b), new URLSearchParams(a))).toBe(true);
@@ -86,9 +85,12 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
       // The two have the same size, and get() returns the same value for each name.
       ["a=1&a=1&b=2", "a=1&b=2&b=2"],
       ["a=1&a=1", "a=1&b=1"],
-      ["a=1&b=2&a=3", "b=2&a=3&a=1"],
       ["a=1&b=2&c=3", "a=9&c=3&b=2"],
       ["a=1&b=2&c=3", "a=1&c=3&b=9"],
+      // The entries are in another order, and a name holds two different values.
+      ["a=1&b=2&a=3", "b=2&a=1&a=3"],
+      ["a=1&b=2&a=3", "a=1&a=3&b=2"],
+      ["a=1&b=2&a=3", "b=2&a=3&a=1"],
     ])("%p does not equal %p", (a, b) => {
       expect(deepEquals(new URLSearchParams(a), new URLSearchParams(b))).toBe(false);
       expect(deepEquals(new URLSearchParams(b), new URLSearchParams(a))).toBe(false);
@@ -128,10 +130,10 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     });
 
     it("does not change the order of the entries", () => {
-      const a = new URLSearchParams("b=2&a=1&b=3");
-      const b = new URLSearchParams("a=1&b=2&b=3");
+      const a = new URLSearchParams("b=2&a=1&c=3");
+      const b = new URLSearchParams("a=1&c=3&b=2");
       expect(deepEquals(a, b)).toBe(true);
-      expect([a.toString(), b.toString()]).toEqual(["b=2&a=1&b=3", "a=1&b=2&b=3"]);
+      expect([a.toString(), b.toString()]).toEqual(["b=2&a=1&c=3", "a=1&c=3&b=2"]);
     });
 
     it("compares the own properties when the entries are equal", () => {
@@ -286,13 +288,16 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
       return { seed, int, pick, other };
     };
 
-    it("URLSearchParams: the same answer as getAll() for each name", () => {
+    it("URLSearchParams: the same answer as their entries and getAll()", () => {
       const { seed, int, pick, other } = random();
       const names = ["a", "b", "c", "A", ""];
       const values = ["1", "2", ""];
       const fresh = () => Array.from({ length: int(6) }, () => [pick(names), pick(values)]);
-      const view = (params: URLSearchParams) =>
+      const inOrder = (params: URLSearchParams) => JSON.stringify([...params]);
+      const byName = (params: URLSearchParams) =>
         JSON.stringify([...new Set(params.keys())].sort().map(name => [name, params.getAll(name)]));
+      const oneValuePerName = (params: URLSearchParams) =>
+        [...new Set(params.keys())].every(name => new Set(params.getAll(name)).size === 1);
 
       const disagreements: object[] = [];
       let equal = 0;
@@ -300,7 +305,8 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
         const entries = fresh();
         const a = new URLSearchParams(entries);
         const b = new URLSearchParams(other(entries, fresh, names, values));
-        const expected = view(a) === view(b);
+        // The same entries in the same order, or in another order if no name holds two different values.
+        const expected = inOrder(a) === inOrder(b) || (byName(a) === byName(b) && oneValuePerName(a));
         equal += Number(expected);
         const actual = [deepEquals(a, b), deepEquals(b, a)];
         if (actual[0] !== expected || actual[1] !== expected)

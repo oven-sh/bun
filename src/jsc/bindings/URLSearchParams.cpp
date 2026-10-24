@@ -170,12 +170,19 @@ bool URLSearchParams::entriesEqual(const URLSearchParams& other) const
     if (sameNames == size)
         return true;
 
-    // A stable sort by name keeps the values of each name in their order.
+    // The names are in another order. The two are then equal only if they hold the same entries
+    // and no name holds two different values.
     auto sorted = m_pairs;
     auto otherSorted = other.m_pairs;
     stableSortByName(sorted);
     stableSortByName(otherSorted);
-    return sorted == otherSorted;
+    if (sorted != otherSorted)
+        return false;
+    for (size_t i = 1; i < size; i++) {
+        if (sorted[i].key == sorted[i - 1].key && sorted[i].value != sorted[i - 1].value)
+            return false;
+    }
+    return true;
 }
 
 ExceptionOr<void> URLSearchParams::set(const String& name, const String& value)

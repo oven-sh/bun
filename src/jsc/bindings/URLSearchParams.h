@@ -56,7 +56,7 @@ public:
     ExceptionOr<void> updateFromAssociatedURL();
     void sort();
     size_t size() const { return m_pairs.size(); }
-    // Every name holds the same values in the same order. The order of distinct names does not count.
+    // The same entries in the same order. The order does not count if no name holds two different values.
     bool entriesEqual(const URLSearchParams&) const;
     size_t memoryCost() const;
 

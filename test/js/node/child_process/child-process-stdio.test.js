@@ -169,6 +169,7 @@ describe("child.stdin", () => {
     });
   });
 
+  // Not concurrent: each case starts a bun child, and ten debug-build children at once push the cases past the timeout.
   describe("destroy() while the child does not read", () => {
     const MB = () => Buffer.alloc(1 << 20, 97);
     const turn = () => new Promise(resolve => setImmediate(resolve));
@@ -478,13 +479,16 @@ describe("child.stdin", () => {
       ]);
       const childExited = existsSync(join(String(dir), "child-exited"));
       const pid = Number(stdout);
+      let childAlive = false;
       if (pid > 0) {
         try {
+          // Signal 0 sends nothing: it tests that the process is there.
+          childAlive = process.kill(pid, 0);
           process.kill(pid, "SIGKILL");
         } catch {}
       }
       expect(stderr).toBe("");
-      expect({ childExited, exitCode }).toEqual({ childExited: false, exitCode: 0 });
+      expect({ childAlive, childExited, exitCode }).toEqual({ childAlive: true, childExited: false, exitCode: 0 });
     });
 
     // The child exits while another process holds the pipe. Node: the callback gets `write ECANCELED`, no 'error'.

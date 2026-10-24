@@ -241,6 +241,90 @@ describe("WriteStream end()", () => {
   });
 });
 
+describe("WriteStream write(chunk, encoding)", () => {
+  test("decodes the chunk when process.stdout is a TTY", async () => {
+    let output = "";
+    const decoder = new TextDecoder();
+    const done = Promise.withResolvers<void>();
+    const eof = Promise.withResolvers<void>();
+
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const hex = text => Buffer.from(text).toString("hex");
+          let thrown;
+          try {
+            process.stdout.write("x", "nope");
+          } catch (e) {
+            thrown = e.code;
+          }
+          process.stdout.write(hex("ARGUMENT" + JSON.stringify({ isTTY: process.stdout.isTTY, thrown })), "hex");
+          process.stdout.setDefaultEncoding("hex");
+          process.stdout.write(hex("DEFAULT{}"));
+        `,
+      ],
+      env: bunEnv,
+      terminal: {
+        // Wide enough that ConPTY does not hard-wrap the output.
+        cols: 200,
+        rows: 24,
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          if (output.includes("DEFAULT{}")) done.resolve();
+        },
+        exit() {
+          eof.resolve();
+        },
+      },
+    });
+
+    await Promise.race([done.promise, eof.promise]);
+    proc.kill();
+    await proc.exited;
+    proc.terminal?.close();
+    output += decoder.decode();
+
+    // ConPTY puts VT escape sequences and CR around the payload. It can also draw a space between two writes as a
+    // cursor move, so the payload has no spaces.
+    const stripped = Bun.stripANSI(output).replace(/[\r\n]/g, "");
+    const match = stripped.match(/ARGUMENT(\{[^}]*\})DEFAULT\{\}/);
+    if (!match) {
+      throw new Error("the child did not write the decoded text; terminal output was: " + JSON.stringify(output));
+    }
+    expect(JSON.parse(match[1])).toEqual({ isTTY: true, thrown: "ERR_UNKNOWN_ENCODING" });
+  });
+
+  test("decodes the chunk on a WriteStream made from a fd", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { WriteStream } = require("node:tty");
+         const out = new WriteStream(1);
+         try {
+           out.write(Buffer.from("x"), "nope");
+         } catch (e) {
+           console.error(e.code);
+         }
+         out.write("ff00", "hex");
+         out.setDefaultEncoding("base64");
+         out.write("AQI=");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: Buffer.from(stdout).toString("hex"), stderr, exitCode }).toEqual({
+      stdout: "ff000102",
+      stderr: "ERR_UNKNOWN_ENCODING\n",
+      exitCode: 0,
+    });
+  });
+});
+
 describe("WriteStream.prototype.getColorDepth", () => {
   const getColorDepth = (env: Record<string, string>) => WriteStream.prototype.getColorDepth.call(undefined, env);
 

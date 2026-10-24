@@ -386,6 +386,9 @@ $toClass(Writable, "Writable", Stream);
 
 Writable.WritableState = WritableState;
 
+// "$data" is a private name: internal/fs/streams tests these bits in its write(), user code cannot reach them.
+Writable.$data = { kEnding, kDefaultUTF8Encoding };
+
 ObjectDefineProperty(Writable, SymbolHasInstance, {
   __proto__: null,
   value: function (object) {

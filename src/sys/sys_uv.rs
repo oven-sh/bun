@@ -517,6 +517,20 @@ pub fn stat(path: &ZStr) -> Result<Stat> {
     }
 }
 
+/// Preserve Windows filename code units while using libuv's Win32 stat semantics.
+pub fn stat_w(path: &bun_core::WStr) -> Result<Stat> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut ptr = buf.as_mut_ptr().cast::<c_char>();
+    let mut len = buf.len() - 1;
+    // SAFETY: path covers its reported length; buf has len bytes plus libuv's NUL terminator.
+    let rc =
+        unsafe { uv::uv_utf16_to_wtf8(path.as_ptr(), path.len() as isize, &mut ptr, &mut len) };
+    if let Some(errno) = rc.errno() {
+        return Err(Error::new(errno, Tag::stat));
+    }
+    stat(ZStr::from_buf(&buf[..], len))
+}
+
 pub fn lstat(path: &ZStr) -> Result<Stat> {
     let mut req = FsReq::new();
     // SAFETY: synchronous libuv fs call; req lives on the stack for the duration.

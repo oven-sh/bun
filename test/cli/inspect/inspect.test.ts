@@ -2,11 +2,11 @@ import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, isPosix, randomPort, tempDir } from "harness";
-import net from "node:net";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
 import { InspectorSession, JUnitReporter, connect } from "./junit-reporter";
+import { rawRequest, requestWithUnusableHosts, unusableHosts, upgradeHeaders } from "./raw-http";
 import { SocketFramer } from "./socket-framer";
 let inspectee: Subprocess;
 const anyPort = expect.stringMatching(/^\d+$/);
@@ -377,41 +377,6 @@ describe("http metadata endpoint", () => {
     expect(web.status).toBe(403);
   });
 
-  // The requests below go over a raw socket: fetch() always sends HTTP/1.1 with a Host
-  // header, and the HTTP parser refuses an HTTP/1.1 request that has no Host header.
-  const upgrade = [
-    "Connection: Upgrade",
-    "Upgrade: websocket",
-    "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
-    "Sec-WebSocket-Version: 13",
-  ];
-  function raw(address: net.NetConnectOpts, requestLine: string, headers: string[] = []) {
-    const { promise, resolve, reject } = Promise.withResolvers<{ status: string; body: unknown }>();
-    const isUpgrade = headers.includes("Upgrade: websocket");
-    let response = "";
-    const socket = net.connect(address, () => socket.write([requestLine, ...headers, "", ""].join("\r\n")));
-    socket.on("data", chunk => {
-      response += chunk;
-      const headerEnd = response.indexOf("\r\n\r\n");
-      if (headerEnd === -1) return;
-      // The server keeps the socket open after an upgrade response, accepted or not.
-      const length = /^content-length: (\d+)$/im.exec(response.slice(0, headerEnd));
-      if (isUpgrade || (length && response.length - headerEnd - 4 >= Number(length[1]))) socket.destroy();
-    });
-    socket.on("error", reject);
-    socket.on("close", () => {
-      const status = response.slice(0, response.indexOf("\r\n"));
-      let body: unknown = isUpgrade ? "" : response.slice(response.indexOf("\r\n\r\n") + 4);
-      try {
-        body = JSON.parse(body as string);
-      } catch {
-        // Keep a large error page out of the assertion output.
-        if ((body as string).length > 200) body = `<${(body as string).length} bytes>`;
-      }
-      resolve({ status, body });
-    });
-    return promise;
-  }
   const version = {
     status: "HTTP/1.1 200 OK",
     body: {
@@ -426,29 +391,19 @@ describe("http metadata endpoint", () => {
   const switchingProtocols = { status: "HTTP/1.1 101 Switching Protocols", body: "" };
   const badRequest = { status: "HTTP/1.1 400 Bad Request", body: "" };
   const notFound = { status: "HTTP/1.1 404 Not Found", body: "" };
-  const unusableHosts = [
-    "a b",
-    "evil.example@localhost",
-    "localhost/evil",
-    "localhost#x",
-    "localhost?x",
-    "localhost\\x",
-    "[::1",
-    "localhost:abc",
-  ];
 
   test("answers a request without a Host header and refuses an unusable Host", async () => {
     const { port, pathname } = await spawnInspectee();
     const address = { port: Number(port), host: "127.0.0.1" };
 
     expect({
-      withoutHost: await raw(address, "GET /json/version HTTP/1.0"),
-      post: await raw(address, "POST /json/version HTTP/1.0", ["Content-Length: 0"]),
-      emptyHost: await raw(address, "GET /json/version HTTP/1.1", ["Host: ", "Connection: close"]),
+      withoutHost: await rawRequest(address, "GET /json/version HTTP/1.0"),
+      post: await rawRequest(address, "POST /json/version HTTP/1.0", ["Content-Length: 0"]),
+      emptyHost: await rawRequest(address, "GET /json/version HTTP/1.1", ["Host: ", "Connection: close"]),
       // A target that starts with "//" is a path, with or without a Host header.
       doubleSlash: {
-        withoutHost: await raw(address, "GET //x/json/version HTTP/1.0"),
-        withHost: await raw(address, "GET //x/json/version HTTP/1.1", ["Host: 127.0.0.1", "Connection: close"]),
+        withoutHost: await rawRequest(address, "GET //x/json/version HTTP/1.0"),
+        withHost: await rawRequest(address, "GET //x/json/version HTTP/1.1", ["Host: 127.0.0.1", "Connection: close"]),
       },
     }).toEqual({
       withoutHost: version,
@@ -457,19 +412,14 @@ describe("http metadata endpoint", () => {
       doubleSlash: { withoutHost: notFound, withHost: notFound },
     });
 
-    const refused: Record<string, unknown> = {};
-    for (const host of unusableHosts) {
-      refused[host] = {
-        version: await raw(address, "GET /json/version HTTP/1.1", [`Host: ${host}`, "Connection: close"]),
-        upgrade: await raw(address, `GET ${pathname} HTTP/1.1`, [`Host: ${host}`, ...upgrade]),
-      };
-    }
-    expect(refused).toEqual(
-      Object.fromEntries(unusableHosts.map(host => [host, { version: badRequest, upgrade: badRequest }])),
+    expect(await requestWithUnusableHosts(address, "/json/version", pathname)).toEqual(
+      Object.fromEntries(unusableHosts.map(host => [host, { get: badRequest, upgrade: badRequest }])),
     );
 
     // The accepted upgrade goes last: the inspectee can exit once this client disconnects (#45263).
-    expect(await raw(address, `GET ${pathname} HTTP/1.1`, ["Host: ", ...upgrade])).toEqual(switchingProtocols);
+    expect(await rawRequest(address, `GET ${pathname} HTTP/1.1`, ["Host: ", ...upgradeHeaders])).toEqual(
+      switchingProtocols,
+    );
   });
 
   // A unix socket server does not check which Host a request names, but Bun.serve
@@ -498,11 +448,14 @@ describe("http metadata endpoint", () => {
     ]);
 
     expect({
-      withoutHost: await raw({ path }, "GET /json/version HTTP/1.0"),
-      namedHost: await raw({ path }, "GET /json/version HTTP/1.1", ["Host: tunnel.example", "Connection: close"]),
-      unusableHost: await raw({ path }, "GET /json/version HTTP/1.1", ["Host: a b", "Connection: close"]),
+      withoutHost: await rawRequest({ path }, "GET /json/version HTTP/1.0"),
+      namedHost: await rawRequest({ path }, "GET /json/version HTTP/1.1", [
+        "Host: tunnel.example",
+        "Connection: close",
+      ]),
+      unusableHost: await rawRequest({ path }, "GET /json/version HTTP/1.1", ["Host: a b", "Connection: close"]),
       // The accepted upgrade goes last: the inspectee can exit once this client disconnects (#45263).
-      emptyHostUpgrade: await raw({ path }, "GET / HTTP/1.1", ["Host: ", ...upgrade]),
+      emptyHostUpgrade: await rawRequest({ path }, "GET / HTTP/1.1", ["Host: ", ...upgradeHeaders]),
     }).toEqual({
       withoutHost: version,
       namedHost: version,

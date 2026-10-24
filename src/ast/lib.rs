@@ -635,7 +635,7 @@ pub struct Location {
     // `Location::clone()` must deep-dupe them so a
     // `BuildMessage`/`ResolveMessage` that outlives the
     // `Source` it borrowed from doesn't read poisoned memory. The
-    // borrowed arm covers the common case where the slice points into
+    // borrowed arm covers a CSS diagnostic, where the slice points into
     // the bundle's arena.
     pub file: Cow<'static, [u8]>,
     pub namespace: Cow<'static, [u8]>,
@@ -660,7 +660,7 @@ pub struct Location {
 
 // NOT `#[derive(Clone)]`. `file` / `namespace` / `line_text` are
 // `Cow<'static, [u8]>` whose `Borrowed` arm may carry a lifetime-erased view
-// into a `Source` (see `init_or_null`, `css_parser.rs`, `error.rs`,
+// into a `Source` (see `css_parser.rs`, `error.rs`,
 // `JSBundler.rs`). The derived `Cow::clone` would re-borrow that pointer, so a
 // `BuildMessage` cloned via `Option<Location>::clone()` / `Vec<Data>::clone()`
 // could outlive the source buffer and read poisoned memory. Instead,
@@ -810,10 +810,13 @@ impl Location {
         tracker: Option<&mut LineColumnTracker>,
     ) -> Option<Location> {
         if let Some(source) = _source {
+            // Owned: a `BuildMessage` outlives the path of a virtual source.
+            let file = Cow::Owned(source.path.text.to_vec());
+            let namespace = Cow::Owned(source.path.namespace.to_vec());
             if r.is_empty() {
                 return Some(Location {
-                    file: Cow::Borrowed(source.path.text),
-                    namespace: Cow::Borrowed(source.path.namespace),
+                    file,
+                    namespace,
                     line: -1,
                     column: -1,
                     length: 0,
@@ -847,8 +850,8 @@ impl Location {
             }
 
             return Some(Location {
-                file: Cow::Borrowed(source.path.text),
-                namespace: Cow::Borrowed(source.path.namespace),
+                file,
+                namespace,
                 line: usize2loc(data.line_count).start,
                 column: usize2loc(data.column_count).start,
                 length: if r.len > -1 {
@@ -858,7 +861,7 @@ impl Location {
                 },
                 // `source_backing` in `Transpiler::parse_*` is RAII and
                 // drops on the parse-error path *before* `process_fetch_log`
-                // clones the `Msg` into a `BuildMessage`, so own the bytes here
+                // moves the `Msg` into a `BuildMessage`, so own the bytes here
                 // instead of borrowing `source.contents`. `full_line` is
                 // bounded (≤ ~120 bytes) and only materialized on diagnostic
                 // paths.
@@ -3429,6 +3432,47 @@ mod range_of_identifier_tests {
     fn non_identifier_start() {
         assert_eq!(len_of(b"1abc"), 0);
         assert_eq!(len_of(b" foo"), 0);
+    }
+}
+
+#[cfg(test)]
+mod location_tests {
+    use super::*;
+
+    #[test]
+    fn a_location_outlives_the_path_of_its_source() {
+        let text = b"dir/file.yaml".to_vec();
+        let namespace = b"virtual".to_vec();
+        let source = Source {
+            path: bun_paths::fs::Path::init_with_namespace(
+                text.as_slice().into_str(),
+                namespace.as_slice().into_str(),
+            ),
+            contents: Cow::Borrowed(b"a: [1, 2\n"),
+            ..Default::default()
+        };
+
+        let mut log = Log::init();
+        log.add_error(Some(&source), Loc { start: 3 }, b"with a range");
+        log.add_error(Some(&source), Loc::EMPTY, b"without a range");
+        let note = range_data(Some(&source), Range::NONE, b"a note");
+        drop(source);
+        drop(text);
+        drop(namespace);
+
+        let lines: Vec<i32> = log
+            .msgs
+            .iter()
+            .map(|msg| &msg.data)
+            .chain([&note])
+            .map(|data| {
+                let location = data.location.as_ref().unwrap();
+                assert_eq!(&*location.file, b"dir/file.yaml");
+                assert_eq!(&*location.namespace, b"virtual");
+                location.line
+            })
+            .collect();
+        assert_eq!(lines, [1, -1, -1]);
     }
 }
 

@@ -526,9 +526,8 @@ pub fn get_loader_and_virtual_source<'a>(
             }
 
             if !jsc_vm.blob_needs_read_file(blob) {
-                // SAFETY: `path.text` aliases jsc_vm-owned storage (blob filename
-                // or normalized specifier), which outlives the `virtual_source`
-                // returned to the caller.
+                // SAFETY: `path.text` aliases the caller's `specifier_str`, which
+                // outlives the `virtual_source` returned to the caller.
                 let static_text: &'static [u8] = bun_ast::StoreStr::new(path.text).slice();
                 *virtual_source_to_use = Some(bun_ast::Source {
                     path: bun_paths::fs::Path::init(static_text),

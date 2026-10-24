@@ -2519,11 +2519,9 @@ fn transpile_source_code_of_any_provenance(
                 if let Some(code) = node_fallbacks::contents_from_path(specifier) {
                     {
                         // `bun_ast::Source::path` is the logger-local
-                        // `fs::Path` (NOT `bun_resolver::fs::Path`). `specifier`
-                        // here is a `node_fallbacks` key — a `&'static [u8]`
-                        // literal — so no lifetime erasure needed.
-                        // SAFETY: `node_fallbacks::contents_from_path` only
-                        // matches `'static` literal keys.
+                        // `fs::Path` (NOT `bun_resolver::fs::Path`).
+                        // SAFETY: `specifier` is the caller's and outlives
+                        // `fallback_source`, a local of this call.
                         let spec_static: &'static [u8] = unsafe {
                             core::slice::from_raw_parts(specifier.as_ptr(), specifier.len())
                         };
@@ -4037,7 +4035,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
                     // `blob_to_deinit` slot for the synchronous transpile).
                     // `bun_ast::Source` stores `&'static [u8]` (see
                     // logger/lib.rs §`type Str`), so erase to
-                    // `'static`; sound because the blob outlives the
+                    // `'static`; sound because the blob and `specifier_str` outlive the
                     // synchronous `transpile_source_code_inner` call.
                     let (contents, path_text): (&'static [u8], &'static [u8]) = unsafe {
                         let v = blob.shared_view();

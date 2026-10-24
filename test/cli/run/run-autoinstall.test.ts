@@ -2616,7 +2616,17 @@ describe.concurrent("auto-install is off when a security scanner is configured",
   )("a package.json that %s", (_, packageJson) => {
     test.serialIf(packageJson === UNREADABLE)("beside the importing file, below a project", async () => {
       const result = await run({ ...project, "app/src/package.json": packageJson }, { cwd: "app/src" });
-      expect({ ...result, stderr: "" }).toEqual(refused(unreadable));
+      if (typeof packageJson === "string") {
+        // Invalid package metadata fails before the entrypoint can catch the import.
+        expect(result.stderr).toContain("ERR_INVALID_PACKAGE_CONFIG");
+        expect(result.stderr).toMatch(/app[\\/]src[\\/]package\.json/);
+        expect(result.stderr).toContain(
+          packageJson === UNREADABLE ? "Cannot read package config" : "Invalid package config",
+        );
+        expect({ ...result, stderr: "" }).toEqual({ stdout: "", stderr: "", exitCode: 1, requests: [] });
+      } else {
+        expect({ ...result, stderr: "" }).toEqual(refused(unreadable));
+      }
     });
 
     // One that does not open is passed over on the way up, as `bun install` passes over it.

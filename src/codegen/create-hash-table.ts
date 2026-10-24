@@ -8,7 +8,7 @@ const platform = process.env.TARGET_PLATFORM ?? process.platform;
 const create_hash_table = path.join(import.meta.dirname, "./create_hash_table");
 
 /** Writes to `output` the JSC hash tables for the `@begin ... @end` blocks in `input`. */
-export function createHashTable(input: string, output: string): void {
+function createHashTable(input: string, output: string): void {
   const input_text = readFileSync(input, "utf8");
   const to_preprocess = [...input_text.matchAll(/@begin\s+.+?@end/gs)].map(m => m[0]).join("\n");
 
@@ -43,6 +43,4 @@ export function createHashTable(input: string, output: string): void {
   writeIfNotChanged(output, str);
 }
 
-if (import.meta.main) {
-  createHashTable(process.argv[2], process.argv[3]);
-}
+createHashTable(process.argv[2], process.argv[3]);

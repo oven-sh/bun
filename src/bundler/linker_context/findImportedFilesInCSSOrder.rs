@@ -1032,8 +1032,6 @@ pub(crate) fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportCon
 ///
 /// Note that all of this deliberately ignores the existence of "@layer" because
 /// that is handled separately. All of this is only for handling unlayered styles.
-///
-/// Unlike esbuild, `layers_matter` stops that: a `layer(...)` that only `earlier` has makes it not redundant.
 fn is_conditional_import_redundant(
     earlier: &Vec<ImportConditions>,
     later: &Vec<ImportConditions>,
@@ -1042,8 +1040,7 @@ fn is_conditional_import_redundant(
     if later.len() > earlier.len() {
         return false;
     }
-    // Inside a `layer(name)` that only `earlier` has, its rules and layer names are in other layers.
-    // A bare `layer` stays as in esbuild: each entry under one prints as a layer of its own.
+    // Unlike esbuild: inside a `layer(name)` that only `earlier` has, its rules and layer names are in other layers.
     if layers_matter
         && earlier.slice()[later.len() as usize..]
             .iter()

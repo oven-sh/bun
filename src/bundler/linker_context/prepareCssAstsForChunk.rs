@@ -381,8 +381,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     {
                         // Strip leading "@import" and ".ignored" rules. Any
                         // "@layer" statement rules interleaved with them are
-                        // preserved (unless an earlier entry prints them, see
-                        // `stripped`), because they carry layer ordering
+                        // preserved, because they carry layer ordering
                         // information that is not re-emitted elsewhere by
                         // the bundler (e.g. Tailwind's
                         // `@layer theme, base, components, utilities;`).

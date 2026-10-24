@@ -2988,8 +2988,9 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
 
         if (auto* blob = dynamicDowncast<Bun::Bindgen::Generated::JSBlob>(cell)) {
             uint64_t size = Bun__Blob__getSizeForBindings(blob->wrapped());
+            // The size is unknown. NaN is not a number that a caller can compare or print as a length.
             if (size == std::numeric_limits<uint64_t>::max())
-                return std::numeric_limits<double>::max();
+                return PNaN;
             return static_cast<double>(size);
         }
     }

@@ -1636,6 +1636,18 @@ impl Expect {
         Ok((this, value, not))
     }
 
+    /// For `toHaveLength()` and `toBeEmpty()`: the length probe answers NaN for a Blob whose size is unknown.
+    pub(crate) fn throw_nan_length(global: &JSGlobalObject, value: JSValue) -> JsError {
+        if crate::webcore::blob::js::from_js(value).is_none() {
+            return global.throw(format_args!("Received value has non-number length property: NaN"));
+        }
+        let mut formatter = make_formatter(global);
+        global.throw(format_args!(
+            "Received value is a Blob whose size is not known: {}",
+            value.to_fmt(&mut formatter),
+        ))
+    }
+
     pub(crate) fn unreachable(cx: &mut JsScope<'_>, message: JsLocal<'_>) -> JsResult<()> {
         let global_this = cx.global();
         let arg = message.to_js();

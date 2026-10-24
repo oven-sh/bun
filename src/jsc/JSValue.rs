@@ -2792,7 +2792,7 @@ impl JSValue {
     }
 
     // ── Length introspection. ──────────────────────────
-    /// `JSValue.getLengthIfPropertyExistsInternal` — returns `f64::MAX` when
+    /// `JSValue.getLengthIfPropertyExistsInternal` — returns `+Infinity` when
     /// no `length`-ish property exists. Do not call directly; prefer
     /// [`JSValue::get_length`].
     pub fn get_length_if_property_exists_internal(self, global: &JSGlobalObject) -> JsResult<f64> {

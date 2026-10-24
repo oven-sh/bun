@@ -2,8 +2,8 @@
 // config into an `SSL_CTX*` should hit the same per-VM cache, so identical
 // configs (including `{servername}`-only and inline-CA configs) allocate one
 // CTX, not one per connection. The cache holds a ref on the 16 contexts asked
-// for last. Any other goes when its last real owner drops it: BoringSSL's
-// ex_data free callback tombstones the entry.
+// for last that read no file. Any other goes when its last real owner drops it:
+// BoringSSL's ex_data free callback tombstones the entry.
 import { describe, expect, test } from "bun:test";
 import { X509Certificate } from "node:crypto";
 import { once } from "node:events";
@@ -633,6 +633,60 @@ describe.concurrent("how long the cache keeps a context that nothing else holds"
         withTheRootsAgain: "DEPTH_ZERO_SELF_SIGNED_CERT ECDHE-RSA-AES128-GCM-SHA256",
         withOtherDefaultCiphers: "DEPTH_ZERO_SELF_SIGNED_CERT ECDHE-RSA-AES256-GCM-SHA384",
         withTheFirstCiphersAgain: "DEPTH_ZERO_SELF_SIGNED_CERT ECDHE-RSA-AES128-GCM-SHA256",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("one that read a file goes with its last user, so the next one reads the file again", async () => {
+    using dir = tempDir("ssl-ctx-file", {});
+    expect(
+      await inAFreshProcess(`
+        const fs = require("node:fs");
+        const caFile = ${JSON.stringify(join(String(dir), "ca.pem"))}, other = ${JSON.stringify(expiredTls.cert)};
+        // The size and the time are all that the cache's key has of the file's content.
+        const size = Math.max(tls.cert.length, other.length), time = new Date(1e12);
+        function put(cert) {
+          fs.writeFileSync(caFile, cert.padEnd(size, "\\n"));
+          fs.utimesSync(caFile, time, time);
+        }
+        using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } });
+        // The same options each time, with nothing left open in between.
+        async function connect() {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          let outcome;
+          Bun.connect({
+            hostname: "127.0.0.1",
+            port: listener.port,
+            tls: { serverName: "localhost", caFile, rejectUnauthorized: false },
+            socket: {
+              data() {},
+              handshake(socket, ok, error) {
+                outcome = socket.authorized ? "authorized" : error.code;
+                socket.end();
+              },
+              close: resolve,
+              connectError: (socket, error) => reject(error),
+            },
+          }).catch(reject);
+          await promise;
+          await turn();
+          await turn();
+          return outcome;
+        }
+        put(tls.cert);
+        result.withTheCertificateInTheFile = await connect();
+        put(other);
+        result.withAnotherInTheFile = await connect();
+        put(tls.cert);
+        result.withTheCertificateAgain = await connect();
+      `),
+    ).toEqual({
+      result: {
+        withTheCertificateInTheFile: "authorized",
+        withAnotherInTheFile: "DEPTH_ZERO_SELF_SIGNED_CERT",
+        withTheCertificateAgain: "authorized",
       },
       stderr: "",
       exitCode: 0,

@@ -1,4 +1,4 @@
-//! Per-VM cache of `SSL_CTX*` keyed by config digest: weak, except for the `KEPT` contexts asked for last.
+//! Per-VM cache of `SSL_CTX*` keyed by config digest: weak, except for the `KEPT` contexts asked for last that read no file.
 //!
 //! The map holds **zero** refs on the cached `SSL_CTX*`. An `SSL_CTX` ex_data
 //! slot stores a back-pointer to the heap `Entry`; BoringSSL's `CRYPTO_EX_free`
@@ -109,6 +109,10 @@ impl SSLContextCache {
         // SAFETY: the per-thread `RuntimeState` boxed in `init_runtime_state` is address-stable until VM teardown, and only the JS thread gets here, so this `&mut` is unique until its last use below.
         let cache = unsafe { &mut (*state).ssl_ctx_cache };
         let ctx = cache.find_or_build(opts, d, err)?;
+        // A file can get new content under the same digest, so its context goes with its last user and the next one reads the file again.
+        if opts.reads_files() {
+            return Some(ctx);
+        }
         let evicted = cache.keep(&ctx);
         // Freeing it can run `bun_ssl_ctx_cache_on_free`, which reaches the cache through the entry, so the borrow has to be over.
         drop(evicted);

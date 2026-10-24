@@ -2,7 +2,6 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isPosix, nodeExeAtLeast, tempDir } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { getSystemErrorName } from "node:util";
 
@@ -450,20 +449,23 @@ describe("child.stdin", () => {
     });
 
     it("lets the parent exit while the child is alive", async () => {
-      // The child never reads and leaves a file when it exits by itself after 5 s.
+      // The child says when it runs. It never reads its stdin, and it exits by itself after 30 s.
       using dir = tempDir("child-stdin-destroy", {
-        "deaf.js": `setTimeout(() => require("node:fs").writeFileSync(process.argv[2], ""), 5000);`,
+        "deaf.js": `
+          setTimeout(() => {}, 30000);
+          console.log("running");`,
         "launcher.js": `
           const { spawn } = require("node:child_process");
           const { join } = require("node:path");
-          const child = spawn(process.execPath, [join(__dirname, "deaf.js"), join(__dirname, "child-exited")], {
-            stdio: ["pipe", "ignore", "ignore"],
-          });
+          const child = spawn(process.execPath, [join(__dirname, "deaf.js")], { stdio: ["pipe", "pipe", "ignore"] });
           child.stdin.on("error", () => {});
-          child.unref();
-          child.stdin.write(Buffer.alloc(1 << 20, 97));
-          setImmediate(() => child.stdin.destroy());
-          console.log(child.pid);`,
+          child.stdout.once("data", () => {
+            child.stdout.destroy();
+            child.unref();
+            child.stdin.write(Buffer.alloc(1 << 20, 97));
+            setImmediate(() => child.stdin.destroy());
+            console.log(child.pid);
+          });`,
       });
       await using launcher = Bun.spawn({
         cmd: [bunExe(), "launcher.js"],
@@ -477,18 +479,16 @@ describe("child.stdin", () => {
         launcher.stderr.text(),
         launcher.exited,
       ]);
-      const childExited = existsSync(join(String(dir), "child-exited"));
+      // The launcher prints the pid after the child said that it runs. Signal 0 is no test of the child here:
+      // the exit of a parent ends its children on Windows and with BUN_FEATURE_FLAG_NO_ORPHANS (the ASAN lane).
       const pid = Number(stdout);
-      let childAlive = false;
       if (pid > 0) {
         try {
-          // Signal 0 sends nothing: it tests that the process is there.
-          childAlive = process.kill(pid, 0);
           process.kill(pid, "SIGKILL");
         } catch {}
       }
       expect(stderr).toBe("");
-      expect({ childAlive, childExited, exitCode }).toEqual({ childAlive: true, childExited: false, exitCode: 0 });
+      expect({ childRan: pid > 0, exitCode }).toEqual({ childRan: true, exitCode: 0 });
     });
 
     // The child exits while another process holds the pipe. Node: the callback gets `write ECANCELED`, no 'error'.

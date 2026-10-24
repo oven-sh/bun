@@ -460,6 +460,18 @@ export function namesToCompose(): Record<string, () => Buffer> {
     }
     return name(characters);
   }
+  // Finds a class in a character that has none. Behind U+05AE, whose class is exempt from the rule that classes
+  // rise, anything counts as a mark, and U+0334 joins it only behind class 0 or the exempt one. Behind U+0334
+  // only a higher class counts.
+  function unclassed(middles: number[]) {
+    const characters = new Uint32Array(middles.length * 11).fill(0x5f);
+    let at = 0;
+    for (const middle of middles) {
+      characters.set([0x1fb6, 0x5ae, middle, 0x334, 0x345, 0x5f, 0x1fb6, 0x334, middle, 0x345], at);
+      at += 11;
+    }
+    return name(characters);
+  }
   // With the character on either side of them.
   const syllables = range(0xabff, 0xd7a4);
 
@@ -480,6 +492,8 @@ export function namesToCompose(): Record<string, () => Buffer> {
         () => compared(oneOfEachClass.slice(quarter * 14, quarter * 14 + 14)),
       ]),
     ),
+    // The three blocks more hold a neighbour of a mark.
+    "characters without a class": () => unclassed(withMarks().concat(blocks(0x02, 0x1e, 0x2e))),
     "Hangul consonants and vowels": () => pairs(range(0x10ff, 0x1113), range(0x1160, 0x1176)),
     "Hangul syllables and final consonants": () =>
       pairs(

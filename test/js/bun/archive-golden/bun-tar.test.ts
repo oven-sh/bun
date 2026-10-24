@@ -202,6 +202,7 @@ describe("the reader and the writer compose on Windows", () => {
     "classes against each other, 2 of 4": "164850 bytes crc32=45a68ed3",
     "classes against each other, 3 of 4": "175786 bytes crc32=f0a7c7e3",
     "classes against each other, 4 of 4": "133132 bytes crc32=66d2fdd4",
+    "characters without a class": "230435 bytes crc32=1c014ca0",
     "Hangul consonants and vowels": "2184 bytes crc32=7a92fcc9",
     "Hangul syllables and final consonants": "48881 bytes crc32=af722c7b",
     "Hangul syllables": "77021 bytes crc32=cedcd6ca",

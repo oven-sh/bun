@@ -261,3 +261,92 @@ describe("returning a Response with an already-used body", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// The response sink drives the source of a native body stream itself only while no consumer has started the stream.
+// After that the stream's controller drives the source, and its queue can hold bytes the source no longer has.
+describe("returning a Response whose native body stream a consumer already started sends the rest of it", () => {
+  // A period (a prime) that does not divide a pull view, so bytes from the wrong offset cannot pass for the right ones.
+  const period = Buffer.alloc(4093);
+  for (let i = 0; i < period.length; i++) period[i] = 97 + (i % 26);
+  const payload = Buffer.alloc(400_000, period);
+
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  // An HTMLRewriter emits the output of one input chunk in one piece, some turns later, while nothing reads it.
+  const turns = async () => {
+    for (let i = 0; i < 8; i++) await tick();
+  };
+  const rewritten = () => {
+    let input!: ReadableStreamDefaultController;
+    const res = new HTMLRewriter()
+      .on("nothing", { element() {} })
+      .transform(new Response(new ReadableStream({ start: c => void (input = c) })));
+    return { res, input };
+  };
+
+  // [what the handler did, the handler, what the client gets]. `afterFirstChunk` runs once the response has started.
+  const cases: [string, () => Promise<{ res: Response; expected: Buffer; afterFirstChunk?: () => void }>][] = [
+    [
+      "getReader() + releaseLock(), body complete",
+      async () => {
+        const { res, input } = rewritten();
+        // The first pull waits. The output fills its view, which sits in the stream's queue; the rest stays behind.
+        res.body!.getReader().releaseLock();
+        input.enqueue(payload);
+        await turns();
+        input.close();
+        await turns();
+        return { res, expected: payload };
+      },
+    ],
+    [
+      "getReader() + releaseLock(), body still streaming",
+      async () => {
+        const { res, input } = rewritten();
+        res.body!.getReader().releaseLock();
+        input.enqueue(payload);
+        await turns();
+        return { res, expected: payload, afterFirstChunk: () => input.close() };
+      },
+    ],
+    [
+      "one read(), body complete",
+      async () => {
+        const { res, input } = rewritten();
+        const reader = res.body!.getReader();
+        input.enqueue(payload);
+        const head = (await reader.read()).value!;
+        reader.releaseLock();
+        input.close();
+        await turns();
+        return { res, expected: payload.subarray(head.length) };
+      },
+    ],
+  ];
+
+  it.each(cases)("after %s", async (_, handler) => {
+    let expected!: Buffer;
+    let afterFirstChunk: (() => void) | undefined;
+    using server = serve({
+      port: 0,
+      async fetch() {
+        const handled = await handler();
+        ({ expected, afterFirstChunk } = handled);
+        return handled.res;
+      },
+    });
+
+    const res = await fetch(server.url);
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of res.body!) {
+      chunks.push(chunk);
+      afterFirstChunk?.();
+      afterFirstChunk = undefined;
+    }
+    const got = Buffer.concat(chunks);
+    expect({ status: res.status, bytes: got.length, intact: got.equals(expected) }).toEqual({
+      status: 200,
+      bytes: expected.length,
+      intact: true,
+    });
+  });
+});

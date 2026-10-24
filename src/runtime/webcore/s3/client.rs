@@ -1005,11 +1005,10 @@ pub(crate) fn upload_stream(
     // bytes flow via `ByteStream::on_data` → `SinkHandle::write` without the JS
     // `readStreamIntoSink` pump.
     if let Some(byte_stream) = readable_stream.ptr.bytes() {
-        if byte_stream.sink.get().is_none() {
+        if byte_stream.sink.get().is_none() && readable_stream.try_lock_native(cx.global()) {
             sink.source = crate::webcore::streams::SourceHandle::ByteStream(byte_stream);
             byte_stream.sink.set(sink_handle);
             byte_stream.sink_paused.set(false);
-            readable_stream.lock_native(cx.global());
             byte_stream.signal_consumer_attached();
 
             if let Some(err) = byte_stream.take_pending_error() {
@@ -1061,7 +1060,7 @@ pub(crate) fn upload_stream(
             // sink outlives the synchronous `resolve()` re-entry.
             return Ok(end_promise_value);
         }
-        // sink already attached: fall through to the JS pump.
+        // sink already attached, or the source cannot be claimed: fall through to the JS pump.
     }
 
     // The controller cell is installed into `sink.source` by `assign_to_stream`.

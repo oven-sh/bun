@@ -899,6 +899,11 @@ impl FileReader {
 
         self.flowing.set(flag);
 
+        // Not started: the reader has no parent to dispatch a read to, and `on_start` issues the first read.
+        if !self.started.get() {
+            return;
+        }
+
         if flag {
             self.reader().unpause();
             if !self.reader().is_done() && !self.reader().has_pending_read() {

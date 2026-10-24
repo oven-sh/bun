@@ -1443,13 +1443,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReadableStreamToFormData, (JSGlobalObject * g
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::readableStreamToFormData(globalObject, stream, callFrame->argument(1))));
 }
 
+// Check and claim in one call, so no user code runs between the two.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream, (JSGlobalObject*, CallFrame* callFrame))
 {
-    if (auto* stream = dynamicDowncast<JSReadableStream>(callFrame->argument(0))) {
-        stream->m_transferred = true;
-        stream->m_disturbed = true;
-    }
-    return JSValue::encode(jsUndefined());
+    auto* stream = dynamicDowncast<JSReadableStream>(callFrame->argument(0));
+    if (!stream || !stream->canClaimNativeSource())
+        return JSValue::encode(jsUndefined());
+    // Empty for a text-mode or errored stream: only a reader gives decoded text or the stored error.
+    JSValue handle = stream->nativePtrForJS();
+    if (!handle || !handle.isObject())
+        return JSValue::encode(jsUndefined());
+    stream->m_transferred = true;
+    stream->m_disturbed = true;
+    return JSValue::encode(handle);
 }
 
 // [reaction-convention] handlers (FOR_EACH_WEB_STREAMS_REACTION_HANDLER_BUN_CONSUMERS).

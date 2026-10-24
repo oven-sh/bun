@@ -3,7 +3,7 @@ import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import { compose, Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
 import { text } from "node:stream/consumers";
 import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
@@ -732,6 +732,296 @@ it("Readable.toWeb(Readable.fromWeb(rs)).cancel(reason) propagates to the web so
   expect({ name: cancelReason?.name, message: cancelReason?.message }).toEqual({
     name: "RangeError",
     message: "consumer-gone",
+  });
+});
+
+// Readable.fromWeb drives the handle of a native stream itself only while no consumer has started the stream. After
+// that the stream's controller drives the handle and its queue can hold chunks, so fromWeb takes a reader at the call,
+// as Node does, and reads through the stream.
+describe.concurrent("a native stream that a consumer already started", () => {
+  // Every 4 bytes hold their own offset, so a lost, repeated or reordered chunk shows.
+  const payload = Buffer.alloc(1024 * 1024);
+  for (let i = 0; i < payload.length; i += 4) payload.writeUInt32LE(i, i);
+  const writePayloadToStdout = `
+    const payload = Buffer.alloc(${payload.length});
+    for (let i = 0; i < payload.length; i += 4) payload.writeUInt32LE(i, i);
+    process.stdout.write(payload);
+  `;
+
+  const collect = async readable => {
+    const chunks = [];
+    for await (const chunk of readable) chunks.push(chunk);
+    return Buffer.concat(chunks);
+  };
+  const payloadFile = stack =>
+    join(String(stack.use(tempDir("fromweb-started", { "payload.bin": payload }))), "payload.bin");
+
+  // Each source puts what it opens on the test's AsyncDisposableStack.
+  const sources = {
+    "new Blob().stream()": () => new Blob([payload]).stream(),
+    "new Response(bytes).body": () => new Response(payload).body,
+    "Bun.file().stream()": stack => Bun.file(payloadFile(stack)).stream(),
+    "new Response(Bun.file()).body": stack => new Response(Bun.file(payloadFile(stack))).body,
+    "fetch().body": async stack => {
+      const server = stack.use(Bun.serve({ port: 0, fetch: () => new Response(payload) }));
+      return (await fetch(server.url)).body;
+    },
+    "Bun.spawn().stdout": stack =>
+      stack.use(
+        Bun.spawn({ cmd: [bunExe(), "-e", writePayloadToStdout], env: bunEnv, stdout: "pipe", stderr: "inherit" }),
+      ).stdout,
+  };
+
+  // What a consumer does before it hands the stream on. Each returns the bytes it took, or null after a cancel.
+  const consumers = {
+    "getReader() + releaseLock()": async web => {
+      web.getReader().releaseLock();
+      return Buffer.alloc(0);
+    },
+    "one read()": async web => {
+      const reader = web.getReader();
+      const { value } = await reader.read();
+      reader.releaseLock();
+      return Buffer.from(value);
+    },
+    "values({ preventCancel: true }) + break": async web => {
+      for await (const chunk of web.values({ preventCancel: true })) return Buffer.from(chunk);
+    },
+    "cancel()": async web => {
+      await web.cancel();
+      return null;
+    },
+  };
+
+  const delivers = async (fromWeb, source, consumer) => {
+    await using stack = new AsyncDisposableStack();
+    const web = await sources[source](stack);
+    const taken = await consumers[consumer](web);
+    // A cancelled stream is closed: nothing is left, and the source must not start over.
+    const left = taken === null ? Buffer.alloc(0) : payload.subarray(taken.length);
+    if (taken !== null) expect(taken.equals(payload.subarray(0, taken.length))).toBe(true);
+
+    const out = await collect(fromWeb(web));
+    expect({ bytes: out.length, intact: out.equals(left) }).toEqual({ bytes: left.length, intact: true });
+  };
+
+  it.each(Object.keys(sources).flatMap(source => Object.keys(consumers).map(consumer => [source, consumer])))(
+    "Readable.fromWeb(rs) delivers exactly what is left of %s after %s",
+    (source, consumer) => delivers(web => Readable.fromWeb(web), source, consumer),
+  );
+
+  // These reach the same function.
+  describe.each([
+    ["Duplex.from(rs)", web => Duplex.from(web)],
+    ["Duplex.from({ readable: rs })", web => Duplex.from({ readable: web })],
+    ["compose(rs)", web => compose(web)],
+  ])("%s", (_, fromWeb) => {
+    it.each(["new Blob().stream()", "Bun.file().stream()"])(
+      "delivers exactly what is left of %s after one read()",
+      source => delivers(fromWeb, source, "one read()"),
+    );
+  });
+
+  it("a getter of `options` that starts the stream runs once, and every byte arrives", async () => {
+    const web = new Blob([payload]).stream();
+    let reads = 0;
+    const readable = Readable.fromWeb(web, {
+      get highWaterMark() {
+        reads++;
+        web.getReader().releaseLock();
+        return undefined;
+      },
+    });
+    const out = await collect(readable);
+    expect({ reads, bytes: out.length, intact: out.equals(payload) }).toEqual({
+      reads: 1,
+      bytes: payload.length,
+      intact: true,
+    });
+  });
+
+  // Node holds the reader before it constructs the Readable, so user code that the constructor runs sees a locked
+  // stream and cannot start it or take it away.
+  describe.each([
+    ["an untouched", false],
+    ["a started", true],
+  ])("%s native stream", (_, started) => {
+    const open = () => {
+      const web = new Blob([payload]).stream();
+      if (started) web.getReader().releaseLock();
+      return web;
+    };
+
+    it("is locked when a getter of `signal` runs", () => {
+      const web = open();
+      const locked = [];
+      const signal = {
+        get aborted() {
+          locked.push(web.locked);
+          return false;
+        },
+        addEventListener() {},
+        removeEventListener() {},
+      };
+      Readable.fromWeb(web, { signal }).destroy();
+      expect([...new Set(locked)]).toEqual([true]);
+    });
+
+    it.each([
+      ["highWaterMark: -1", { highWaterMark: -1 }, "ERR_INVALID_ARG_VALUE"],
+      ["signal: {}", { signal: {} }, "ERR_INVALID_ARG_TYPE"],
+    ])("stays locked when %s makes the Readable constructor throw, as in Node", (_, options, code) => {
+      const web = open();
+      expect(() => Readable.fromWeb(web, options)).toThrow(expect.objectContaining({ code }));
+      expect(web.locked).toBe(true);
+    });
+
+    it("fails with an AbortError when `signal` is already aborted, and stays locked", async () => {
+      const web = open();
+      const reason = new Error("stop");
+      const readable = Readable.fromWeb(web, { signal: AbortSignal.abort(reason) });
+      const error = await finishedP(readable).then(
+        () => undefined,
+        error => error,
+      );
+      expect({ name: error?.name, code: error?.code, cause: error?.cause, locked: web.locked }).toEqual({
+        name: "AbortError",
+        code: "ABORT_ERR",
+        cause: reason,
+        locked: true,
+      });
+    });
+  });
+
+  // These hold before the change too: a started stream used to go down the native path, which also locks for good.
+  it("is locked from the call on and after 'end', as in Node", async () => {
+    const web = new Blob([payload]).stream();
+    web.getReader().releaseLock();
+    const locked = expect.objectContaining({ code: "ERR_INVALID_STATE" });
+
+    const readable = Readable.fromWeb(web);
+    expect(web.locked).toBe(true);
+    expect(() => web.getReader()).toThrow(locked);
+    expect(() => Readable.fromWeb(web)).toThrow(locked);
+
+    await collect(readable);
+    expect(web.locked).toBe(true);
+    expect(() => web.getReader()).toThrow(locked);
+  });
+
+  // The child blocks in a write larger than a pipe until its stdout is read or closed, so its result does not depend
+  // on when the parent lets go of the pipe.
+  const writerChild = `
+    const fs = require("fs");
+    process.stdin.once("data", () => {
+      let result = "written";
+      try {
+        for (let rest = Buffer.alloc(1024 * 1024, "x"); rest.length; ) rest = rest.subarray(fs.writeSync(1, rest));
+      } catch (error) {
+        result = "failed:" + error.code;
+      }
+      fs.writeSync(2, result);
+      process.exit(0);
+    });
+  `;
+  const invalidSignal = {
+    get aborted() {
+      throw new Error("boom");
+    },
+  };
+
+  // Nothing else can release the source of a stream that fromWeb has locked for good.
+  it.each([
+    ["an untouched", "an already aborted signal", () => ({ signal: AbortSignal.abort() }), undefined],
+    ["a started", "an already aborted signal", () => ({ signal: AbortSignal.abort() }), undefined],
+    ["an untouched", "a throw from the Readable constructor", () => ({ signal: invalidSignal }), "boom"],
+  ])("the source of %s Bun.spawn().stdout is cancelled by %s", async (state, _, options, throws) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", writerChild],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const web = proc.stdout;
+    if (state === "a started") web.getReader().releaseLock();
+
+    if (throws) {
+      expect(() => Readable.fromWeb(web, options())).toThrow(throws);
+    } else {
+      const error = await finishedP(Readable.fromWeb(web, options())).then(
+        () => undefined,
+        error => error,
+      );
+      expect(error?.name).toBe("AbortError");
+    }
+    expect(web.locked).toBe(true);
+
+    proc.stdin.write("go");
+    await proc.stdin.end();
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stderr: "failed:EPIPE",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // Bun.stdin.stream() is the one stream that process.stdin reads from, and process.stdin pauses its source.
+  it.each([
+    ["process.stdin.pause()", `process.stdin.pause();`],
+    ["process.stdin.resume() and pause()", `process.stdin.resume(); process.stdin.pause();`],
+    [
+      "process.stdin took the first chunk",
+      `await new Promise(resolve => process.stdin.once("data", chunk => { head = chunk.length; process.stdin.pause(); resolve(); }));`,
+    ],
+  ])("Bun.stdin.stream() after %s delivers the rest of stdin", async (_, before) => {
+    const size = 300_000;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { Readable } = require("node:stream");
+          let head = 0;
+          ${before}
+          // process.stdin lets go of the stream a tick after pause().
+          await new Promise(resolve => setImmediate(resolve));
+          let rest = 0;
+          for await (const chunk of Readable.fromWeb(Bun.stdin.stream())) rest += chunk.length;
+          // A chunk that process.stdin read before it let go is in its own buffer.
+          console.log(head + process.stdin.readableLength + rest);
+        `,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write(Buffer.alloc(size, "x"));
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: size + "\n", stderr: "", exitCode: 0 });
+  });
+});
+
+// ReadableFromWeb used to pass `signal` to super(), which ran _destroy before its private fields existed.
+it("Readable.fromWeb with an already aborted signal fails with an AbortError and cancels the source", async () => {
+  let cancelled;
+  const web = new ReadableStream({
+    cancel(reason) {
+      cancelled = reason;
+    },
+  });
+  const readable = Readable.fromWeb(web, { signal: AbortSignal.abort() });
+  const error = await finishedP(readable).then(
+    () => undefined,
+    error => error,
+  );
+  expect({ name: error?.name, code: error?.code, cancelledWithIt: cancelled === error }).toEqual({
+    name: "AbortError",
+    code: "ABORT_ERR",
+    cancelledWithIt: true,
   });
 });
 

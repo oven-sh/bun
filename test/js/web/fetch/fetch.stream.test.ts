@@ -1472,9 +1472,9 @@ test.concurrent(
 // buffer. Every path that dropped the buffer used to keep that index, so the next `drain()`
 // read the prefix out of a buffer that was no longer there and aborted the process with
 // `panic: range end index 262144 out of range for slice of length 0`. One fixture per route:
-// node:stream taking the native source over, and the stream's own pull loop after the body
-// failed.
-test.concurrent("node:stream reading a started native body stream gets its tail instead of crashing", async () => {
+// node:stream reading a stream whose queue holds the taken view, and the stream's own pull loop
+// after the body failed.
+test.concurrent("node:stream reading a started native body stream gets every byte", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "bytestream-partial-read-fixture.ts")],
     env: bunEnv,

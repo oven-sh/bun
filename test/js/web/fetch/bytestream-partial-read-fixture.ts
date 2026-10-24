@@ -1,9 +1,13 @@
-// A consumer starts a native body stream and takes one pull view out of it, then hands the
-// stream to node:stream, which drives the native source directly. The source used to report the
-// bytes a reader had already taken as still buffered, so `drain()` read them out of a buffer that
-// was no longer there and the process aborted:
+// A consumer starts a native body stream, so one pull view of the body sits in the stream's queue
+// and the rest stays in the native source, behind the count of bytes already taken. Then it hands
+// the stream to node:stream. node:stream used to drive the native source itself from there, and
+// the source reported the taken bytes as still buffered, so `drain()` read them out of a buffer
+// that was no longer there and the process aborted:
 //
 //   panic: range end index 262144 out of range for slice of length 0
+//
+// After that fix node:stream got the tail alone: the view in the queue never reached it. It now
+// reads a started stream through a reader.
 //
 // The producer is an HTMLRewriter because it emits the output of one input chunk in one piece, so
 // the split between the pull view and the bytes left behind is the same on every run.
@@ -37,10 +41,6 @@ const chunks: Buffer[] = [];
 for await (const chunk of Readable.fromWeb(res.body!)) chunks.push(Buffer.from(chunk));
 const got = Buffer.concat(chunks);
 
-// The native source still holds the end of the body. Whatever it hands over has to be that
-// tail: never a byte a reader already took, and never nothing at all.
-if (got.length > 0 && got.equals(payload.subarray(SIZE - got.length))) {
-  console.log("ok");
-} else {
-  console.log(`BAD ${got.length} of ${SIZE} bytes, not the tail`);
-}
+// The view in the queue comes first, then the tail the native source still holds, from the right
+// offset.
+console.log(got.equals(payload) ? "ok" : `BAD ${got.length} of ${SIZE} bytes, or not in order`);

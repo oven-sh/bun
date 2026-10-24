@@ -123,6 +123,16 @@ public:
     {
         return m_transferred || m_consumedAsBody || (m_nativePtr.get().isInt32() && m_nativePtr.get().asInt32() == -1);
     }
+    // IsReadableStreamLocked(stream), widened by Bun's reader-less lock states.
+    bool isLocked() const
+    {
+        return m_reader || m_lockedWithoutReader || nativeHandleDetached();
+    }
+    // The one rule for a taker that drives the native handle itself (a native sink, node:stream): no consumer has started or locked the stream.
+    bool canClaimNativeSource() const
+    {
+        return m_bunMode == BunStreamMode::NativePending && !isLocked();
+    }
     // A Body consumer holds this stream now. It stays disturbed and locked after the consumer lets go of it.
     void markConsumedAsBody()
     {

@@ -3286,6 +3286,22 @@ where
                                 return;
                             }
                             let resp = this.resp.get().expect("infallible: resp bound");
+                            // A consumer started this stream: its controller drives the source and can hold chunks the source no longer has.
+                            if !stream.try_lock_native(global_this) {
+                                // The producer failed while nothing read the stream, and nothing is committed: `error()` answers.
+                                if let Some(err) = byte_stream.take_pending_error() {
+                                    let js_err = err.to_js(global_this);
+                                    js_err.ensure_still_alive();
+                                    crate::dispatch::fold(stream.error(global_this, js_err));
+                                    this.response_body_readable_stream_ref
+                                        .with_mut(|s| s.deinit());
+                                    this.run_error_handler(js_err);
+                                    return;
+                                }
+                                let mut pair = StreamPair { stream, this };
+                                resp.run_corked_with_type(Self::do_render_stream, &raw mut pair);
+                                return;
+                            }
                             // If we've received the complete body by the time this function is called
                             // we can avoid streaming it and just send it all at once.
                             // (A stored error goes through the attach path below instead.)
@@ -3296,6 +3312,8 @@ where
                                 this.blob.set(AnyBlob::from_array_list(
                                     byte_list.move_to_list_managed(),
                                 ));
+                                // No sink attaches, so nothing else ends the stream the claim locked.
+                                byte_stream.parent_const().end_locked_stream(None);
                                 this.response_body_readable_stream_ref
                                     .with_mut(|s| s.deinit());
                                 this.do_render_blob();
@@ -3309,7 +3327,6 @@ where
                             byte_stream.sink.set(WebCore::SinkHandle::ServerResponse(
                                 AnyRequestContext::init(this.as_ctx_ptr()),
                             ));
-                            stream.lock_native(global_this);
                             byte_stream.signal_consumer_attached();
                             // Deinit the old Strong reference before creating a new one
                             // to avoid leaking the Strong.Impl memory

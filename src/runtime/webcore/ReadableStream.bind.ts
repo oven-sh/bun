@@ -50,7 +50,7 @@ export const BlobInternalReadableStreamSource = b.class({
 export const FileInternalReadableStreamSource = b.class({
   ...source,
   rustPath: "crate::webcore::file_reader::Source",
-  /** `lockedStream` is the stream `ReadableStream__lockNative` locked, which `NewSource::end_locked_stream` closes or errors. */
+  /** `lockedStream` is the stream `ReadableStream__tryLockNative` locked, which `NewSource::end_locked_stream` closes or errors. */
   internalFields: [...internalFields, "lockedStream"],
   proto: {
     cancel: members.cancel,

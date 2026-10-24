@@ -152,7 +152,6 @@ unsafe extern "C" {
     safe fn ReadableStream__textDecodeFrom(global: &JSGlobalObject, source: JSValue) -> JSValue;
     safe fn ReadableStream__markConsumedAsBody(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__closeConsumedAsBody(stream: JSValue, global: &JSGlobalObject);
-    safe fn ReadableStream__lockNative(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__tryLockNative(stream: JSValue, global: &JSGlobalObject) -> bool;
     /// BunStreamSource.cpp: queue the adapter's close on the microtask queue.
     safe fn Bun__NativeStreamSourceAdapter__onClose(global: &JSGlobalObject, adapter: JSValue);
@@ -308,17 +307,7 @@ impl ReadableStream {
         ReadableStream__markConsumedAsBody(self.value, global_object);
     }
 
-    /// Mark the stream disturbed + locked-without-reader. Called by native
-    /// fast-paths after wiring a `SinkHandle` directly so `.locked`,
-    /// `.getReader()`, and body-mixin disturbed checks behave as they would
-    /// after `readStreamIntoSink` acquires a reader. It doesn't check the
-    /// stream's state, so callers must do that first.
-    pub fn lock_native(&self, global_object: &JSGlobalObject) {
-        ReadableStream__lockNative(self.value, global_object);
-    }
-
-    /// Calls [`Self::lock_native`] if the stream hasn't been started or locked.
-    /// Otherwise returns `false` without touching the stream.
+    /// Lock the stream for a native sink that wires itself to the source. `false`, with the stream untouched, if a consumer has started or locked it.
     pub(crate) fn try_lock_native(&self, global_object: &JSGlobalObject) -> bool {
         ReadableStream__tryLockNative(self.value, global_object)
     }
@@ -1112,7 +1101,7 @@ impl<C: SourceContext> NewSource<C> {
         Bun__NativeStreamSourceAdapter__onClose(global_this, adapter);
     }
 
-    /// A stream that [`ReadableStream::lock_native`] locked has no reader or controller, so its source ends it: errored with `err`, else closed.
+    /// A stream that [`ReadableStream::try_lock_native`] locked has no reader or controller, so its source ends it: errored with `err`, else closed.
     pub fn end_locked_stream(&self, err: Option<&streams::StreamError>) {
         if !self.is_reader_live() {
             return;

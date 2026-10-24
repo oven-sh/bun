@@ -12,6 +12,7 @@ const Writable = require("internal/streams/writable");
 const Readable = require("internal/streams/readable");
 const Duplex = require("internal/streams/duplex");
 const { destroyer } = require("internal/streams/destroy");
+const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const { isDestroyed, isReadable, isWritable, isWritableEnded } = require("internal/streams/utils");
 const { kEmptyObject } = require("internal/shared");
 const { validateBoolean, validateObject, validateOneOf } = require("internal/validators");
@@ -33,33 +34,28 @@ const SafePromisePrototypeFinally = $Promise.prototype.finally;
 
 const constants_zlib = $processBindingConstants.zlib;
 
-function tryTransferToNativeReadable(stream, options) {
-  const ptr = stream.$bunNativePtr;
-  if (!ptr || ptr === -1) {
-    return undefined;
-  }
-  return require("internal/streams/native-readable").constructNativeReadable(stream, options);
-}
-
 class ReadableFromWeb extends Readable {
   #reader;
   #closed;
+  // The stream, until the first read takes its reader. null: Readable.fromWeb passed the reader, and it is never released.
   #stream;
   // node-fetch, undici: `stream` is a Response body, which text(), json(), ... lock for good.
   #responseBody;
 
-  constructor(options, stream) {
-    const { objectMode, highWaterMark, encoding, signal, responseBody = false } = options;
+  // `reader`: Readable.fromWeb took it where Node does: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/webstreams/adapters.js#L589
+  constructor(options, stream, reader?, signal?) {
+    const { objectMode, highWaterMark, encoding, responseBody = false } = options;
     super({
       objectMode,
       highWaterMark,
       encoding,
-      signal,
     });
-    this.#reader = undefined;
-    this.#stream = stream;
+    this.#reader = reader;
+    this.#stream = reader ? null : stream;
     this.#closed = false;
     this.#responseBody = responseBody;
+    // Not through super(): an aborted signal runs _destroy at once, which reads the fields above.
+    if (signal) addAbortSignal(signal, this);
   }
 
   // Locked before this wrapper opened it: a body method has the contents, nothing to read or cancel.
@@ -68,7 +64,7 @@ class ReadableFromWeb extends Readable {
   }
 
   #handleDone(reader) {
-    reader.releaseLock();
+    if (this.#stream !== null) reader.releaseLock();
     this.#reader = undefined;
     this.#closed = true;
     this.push(null);
@@ -77,9 +73,11 @@ class ReadableFromWeb extends Readable {
   #handleError(reader, error) {
     if (reader) {
       this.#reader = undefined;
-      try {
-        reader.releaseLock();
-      } catch {}
+      if (this.#stream !== null) {
+        try {
+          reader.releaseLock();
+        } catch {}
+      }
     }
     this.#closed = true;
     this.destroy(error);
@@ -588,23 +586,28 @@ function newStreamReadableFromReadableStream(
     throw $ERR_INVALID_ARG_VALUE("options.encoding", encoding);
   validateBoolean(objectMode, "options.objectMode");
 
-  // Node acquires the reader at this point, so a locked stream throws here too.
-  if (readableStream.locked) throw $ERR_INVALID_STATE_TypeError("ReadableStream is locked");
+  // The values read above, so that a getter of `options` runs once, as in Node.
+  const readableOptions = options === kEmptyObject ? kEmptyObject : { highWaterMark, encoding, objectMode };
 
-  const nativeStream = tryTransferToNativeReadable(readableStream, options);
-
-  return (
-    nativeStream ||
-    new ReadableFromWeb(
-      {
-        highWaterMark,
-        encoding,
-        objectMode,
-        signal,
-      },
+  // Node acquires the reader at this point. A native stream gives up its handle instead, which locks it too.
+  const handle = readableStream.$bunNativePtr;
+  if (handle !== undefined) {
+    const nativeStream = require("internal/streams/native-readable").tryConstructNativeReadable(
       readableStream,
-    )
-  );
+      readableOptions,
+      signal,
+    );
+    if (nativeStream) return nativeStream;
+    if (readableStream.locked) throw $ERR_INVALID_STATE_TypeError("ReadableStream is locked");
+    // A consumer started or cancelled it: its controller drives the handle and can hold chunks.
+    const readable = new ReadableFromWeb(readableOptions, readableStream, readableStream.getReader(), signal);
+    // process.stdin pauses the source it shares with Bun.stdin.stream(). The native path resumes it in `_read`, a reader cannot.
+    handle.setFlowing?.(true);
+    return readable;
+  }
+
+  if (readableStream.locked) throw $ERR_INVALID_STATE_TypeError("ReadableStream is locked");
+  return new ReadableFromWeb(readableOptions, readableStream, undefined, signal);
 }
 
 let dep0201Warned = false;

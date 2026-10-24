@@ -238,30 +238,22 @@ static void lockNative(JSC::VM& vm, JSReadableStream* stream)
         slot->set(vm, handle.asCell(), stream);
 }
 
-// A native sink (fetch body / S3 / FileSink) has attached directly without a reader.
+// A native sink (fetch body / S3 / Bun.serve / FileSink) is about to connect itself to the native source without a reader.
 // Mark the stream disturbed+locked so .locked, .getReader(), and the body-mixin
 // disturbed checks behave as they do after readStreamIntoSink acquires a reader.
-extern "C" void ReadableStream__lockNative(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
-{
-    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
-    if (!stream) [[unlikely]]
-        return;
-    lockNative(JSC::getVM(globalObject), stream);
-}
-
-// Like ReadableStream__lockNative, for a sink that's about to connect itself to the native source. It only
+// JSReadableStream::canClaimNativeSource() decides: this only
 // locks a stream that hasn't started and isn't locked, because a started source already feeds a controller.
 // Otherwise it returns false without changing anything, and the caller falls back to readStreamIntoSink.
 extern "C" bool ReadableStream__tryLockNative(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
-    if (!stream || stream->m_bunMode != BunStreamMode::NativePending || isReadableStreamLocked(stream))
+    if (!stream || !stream->canClaimNativeSource())
         return false;
     lockNative(JSC::getVM(globalObject), stream);
     return true;
 }
 
-// The source of a stream that ReadableStream__lockNative locked dropped its sink: error the stream with `reason`, or close it if `reason` is empty.
+// The source of a stream that ReadableStream__tryLockNative locked dropped its sink: error the stream with `reason`, or close it if `reason` is empty.
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__NativeStreamSource__endLockedStream(JSC::EncodedJSValue encodedHandle, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
 {
     auto* slot = lockedStreamSlot(JSValue::decode(encodedHandle).asCell());

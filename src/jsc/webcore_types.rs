@@ -10,9 +10,7 @@
 //! Everything that touches the
 //! event loop / fs / network stays in `bun_runtime`.
 //!
-//! `BuildArtifact` is **not** hoisted here: its `#[host_fn]`-decorated accessors
-//! must live in an inherent `impl` (the macro emits a sibling shim referencing
-//! `Self`), and those accessors call `BlobExt` methods. With no lower-tier
+//! `BuildArtifact` is **not** hoisted here: its accessors call `BlobExt` methods. With no lower-tier
 //! consumer, the canonical `BuildArtifact` stays in `bun_runtime::api`.
 
 use core::cell::Cell;

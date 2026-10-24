@@ -286,7 +286,7 @@ impl Timeout {
 
         let jsc_vm = VirtualMachine::get();
         // `AbortSignal.timeout()`, a C++ host function, calls this.
-        let context = jsc_vm.context_of_caller_no_frame();
+        let context = jsc_vm.context_of_caller();
         let graph_context = jsc_vm.as_graph_context(context);
         let this: *mut Timeout = bun_core::heap::into_raw(Box::new(Timeout {
             event_loop_timer: EventLoopTimer {

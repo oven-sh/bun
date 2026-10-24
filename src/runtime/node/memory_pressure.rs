@@ -26,11 +26,10 @@
 //! are wired. The watcher does not keep the event loop alive.
 
 use bun_event_loop::ConcurrentTask::{Task, task_tag};
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_jsc::ArrayBuffer;
+use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope};
 #[cfg(not(windows))]
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 #[cfg(not(windows))]
 use core::ptr::NonNull;
 
@@ -523,33 +522,32 @@ pub(crate) extern "C" fn Bun__MemoryPressure__isInstalled(global: &JSGlobalObjec
 
 /// `memoryPressurePsiTrigger()`: the bytes `open_psi_fd` writes, as a
 /// `Buffer`. `null` where there is no PSI backend.
-#[bun_jsc::host_fn]
-pub(crate) fn js_psi_trigger(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn psi_trigger<'a>(
+    heap: &JsHeap<'a>,
+) -> bindgen::Result<'a, Option<JsLocal<'a, BufferSource>>> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        ArrayBuffer::create_buffer(global, posix::PSI_TRIGGER)
+        heap.create_buffer(posix::PSI_TRIGGER).map(Some)
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
-        let _ = global;
-        Ok(JSValue::NULL)
+        let _ = heap;
+        Ok(None)
     }
 }
 
 /// `memoryPressurePsiFilter(armed, ...polls)`: one `bool` per poll, `null` off Linux.
-#[bun_jsc::host_fn]
-pub(crate) fn js_psi_filter(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn psi_filter<'a>(
+    cx: &mut JsScope<'a>,
+    armed: &[u8],
+    polls: &'a [JsLocal<'a>],
+) -> JsResult<JSValue> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let args = frame.arguments();
-        let Some((armed, polls)) = args.split_first() else {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "memoryPressurePsiFilter() expects the file contents at arm time"
-            )));
-        };
-        let mut last_total = posix::parse_psi_some_total(&armed.to_utf8(global)?).unwrap_or(0);
+        let global = cx.global();
+        let mut last_total = posix::parse_psi_some_total(armed).unwrap_or(0);
         JSValue::create_array_from_iter(global, polls.iter(), |contents| {
-            let contents = contents.to_utf8(global)?;
+            let contents = contents.to_js().to_utf8(global)?;
             Ok(JSValue::js_boolean(posix::psi_growth_reached_threshold(
                 &mut last_total,
                 &contents,
@@ -558,7 +556,7 @@ pub(crate) fn js_psi_filter(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
-        let _ = (global, frame);
+        let _ = (cx, armed, polls);
         Ok(JSValue::NULL)
     }
 }
@@ -566,16 +564,17 @@ pub(crate) fn js_psi_filter(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
 /// `memoryPressureWatcherHasOsBackend()`: whether the watcher installed by
 /// the current listeners registered an OS source. On Windows `install` either
 /// starts the thread or leaves the slot empty, so this equals `isInstalled`.
-#[bun_jsc::host_fn]
-pub(crate) fn js_watcher_has_os_backend(
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn watcher_has_os_backend(heap: &JsHeap<'_>) -> bool {
+    // SAFETY: reads the watcher's slot in the VM.
+    let global = unsafe { heap.global() };
     #[cfg(not(windows))]
-    let armed = posix::has_os_backend(global);
+    {
+        posix::has_os_backend(global)
+    }
     #[cfg(windows)]
-    let armed = Bun__MemoryPressure__isInstalled(global);
-    Ok(JSValue::js_boolean(armed))
+    {
+        Bun__MemoryPressure__isInstalled(global)
+    }
 }
 
 #[cfg(not(windows))]

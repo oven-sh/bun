@@ -103,7 +103,10 @@ public:
     // The entry point has evaluated: Pending -> Running, queued tasks and messages are delivered.
     void workerGlobalScopeStarted(Zig::GlobalObject&);
     void postMessageToWorkerObject(MessageWithMessagePorts&&);
-    void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error);
+    // Whether an 'error' listener on the worker's own global scope was given the error.
+    enum class SeenInWorker : bool { No,
+        Yes };
+    void postErrorToWorkerObject(Zig::GlobalObject&, const String& message, JSC::JSValue error, SeenInWorker);
     // The thread's global scope, VM and per-thread state are gone; only the OS thread remains.
     // stoppedByParent: it stopped because it was asked to and never called process.exit() itself.
     void workerGlobalScopeDestroyed(int32_t exitCode, bool stoppedByParent);
@@ -126,8 +129,9 @@ private:
     void releaseWorkerThread();
     void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
     void rejectAllCrossVMRequests();
-    void postMessageErrorToWorkerObject(String&& message);
-    bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error);
+    void postMessageErrorToWorkerObject(String&& message, SeenInWorker);
+    void deliverErrorToWorkerObject(Worker&, ScriptExecutionContext&, const String& message, JSC::JSValue error, SeenInWorker);
+    bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error, SeenInWorker);
 
     // Parent thread only.
     RefPtr<ScriptExecutionContext> m_scriptExecutionContext;

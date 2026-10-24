@@ -141,13 +141,47 @@ bool URLSearchParams::has(const StringView name, const String& value) const
     return false;
 }
 
-void URLSearchParams::sort()
+static void stableSortByName(Vector<KeyValuePair<String, String>>& pairs)
 {
-    std::stable_sort(m_pairs.begin(), m_pairs.end(), [](const auto& a, const auto& b) {
+    std::stable_sort(pairs.begin(), pairs.end(), [](const auto& a, const auto& b) {
         return WTF::codePointCompareLessThan(a.key, b.key);
     });
+}
+
+void URLSearchParams::sort()
+{
+    stableSortByName(m_pairs);
     updateURL();
     needsSorting = false;
+}
+
+bool URLSearchParams::entriesEqual(const URLSearchParams& other) const
+{
+    size_t size = m_pairs.size();
+    if (size != other.m_pairs.size())
+        return false;
+
+    // As long as the names are in the same order, the values of a name are at the same indexes.
+    size_t sameNames = 0;
+    for (; sameNames < size && m_pairs[sameNames].key == other.m_pairs[sameNames].key; sameNames++) {
+        if (m_pairs[sameNames].value != other.m_pairs[sameNames].value)
+            return false;
+    }
+    if (sameNames == size)
+        return true;
+
+    // In another order, the two are equal only with the same entries and one value for each name.
+    auto sorted = m_pairs;
+    auto otherSorted = other.m_pairs;
+    stableSortByName(sorted);
+    stableSortByName(otherSorted);
+    if (sorted != otherSorted)
+        return false;
+    for (size_t i = 1; i < size; i++) {
+        if (sorted[i].key == sorted[i - 1].key && sorted[i].value != sorted[i - 1].value)
+            return false;
+    }
+    return true;
 }
 
 ExceptionOr<void> URLSearchParams::set(const String& name, const String& value)

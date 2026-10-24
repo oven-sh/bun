@@ -12,54 +12,67 @@ test("stubs", () => {
   expect(perf.performance.eventLoopUtilization()).toBeObject();
 });
 
+// Buckets are allocated 4 KB at a time, when a value is first recorded in them.
+const chunk = 4096;
+// With the default options, a value in each of the 88 chunks: 360 KB.
+const valuesInEveryChunk = [1, 512, 1024, 1536];
+for (let value = 2048; value < Number.MAX_SAFE_INTEGER; value *= 2) valuesInEveryChunk.push(value, value * 1.5);
+
 test("the garbage collector knows the size of a histogram", () => {
-  // 8 bytes for each bucket, up to that of the largest value.
-  for (const [figures, buckets] of [
-    [3, 45056],
-    [5, 4849664],
+  for (const [figures, chunks] of [
+    [3, 88],
+    [5, 9472],
   ]) {
     const histogram = perf.createHistogram({ figures });
-    expect(estimateShallowMemoryUsageOf(histogram)).toBeLessThan(1024);
+    const size = () => estimateShallowMemoryUsageOf(histogram);
+    expect(size()).toBeLessThan(1024);
+    // 8 bytes for each chunk there can be.
+    const table = chunks * 8;
     histogram.record(100);
-    expect(estimateShallowMemoryUsageOf(histogram)).toBeWithin(101 * 8, 101 * 8 + 1024);
-    // Growing in steps does not overshoot the last bucket.
-    for (let value = 2 ** 40; value < Number.MAX_SAFE_INTEGER; value *= 2) histogram.record(value);
+    histogram.record(101);
+    expect(size()).toBeWithin(table + chunk, table + chunk + 1024);
     histogram.record(Number.MAX_SAFE_INTEGER);
-    expect(estimateShallowMemoryUsageOf(histogram)).toBeWithin(buckets * 8, buckets * 8 + 1024);
+    expect(size()).toBeWithin(table + 2 * chunk, table + 2 * chunk + 1024);
 
     // A structured clone shares the buckets.
     const clone = structuredClone(histogram);
-    expect(estimateShallowMemoryUsageOf(histogram) + estimateShallowMemoryUsageOf(clone)).toBeWithin(
-      buckets * 8,
-      buckets * 8 + 1024,
-    );
+    expect(size() + estimateShallowMemoryUsageOf(clone)).toBeWithin(table + 2 * chunk, table + 2 * chunk + 1024);
+
+    histogram.reset();
+    expect(size() + estimateShallowMemoryUsageOf(clone)).toBeLessThan(1024);
   }
+
+  const histogram = perf.createHistogram();
+  for (const value of valuesInEveryChunk) histogram.record(value);
+  expect(estimateShallowMemoryUsageOf(histogram)).toBeWithin(88 * (chunk + 8), 88 * (chunk + 8) + 1024);
 });
 
 test("histograms that grew are collected without an explicit GC", () => {
-  // 360 KB each. How many it takes depends on the size of the heap, but 720 MB is far more than enough.
+  // How many it takes depends on the size of the heap, but 720 MB is far more than enough.
   let created = 0;
   do {
-    for (let i = 0; i < 100; i++) perf.createHistogram().record(Number.MAX_SAFE_INTEGER);
+    for (let i = 0; i < 100; i++) {
+      const histogram = perf.createHistogram();
+      for (const value of valuesInEveryChunk) histogram.record(value);
+    }
     created += 100;
   } while (created < 2000 && heapStats().objectTypeCounts.Histogram > created / 2);
   expect(created).toBeLessThan(2000);
 });
 
-test("a histogram of a few values far apart only uses the memory it writes to", () => {
+test("a histogram of a few values far apart is small", () => {
   const before = process.memoryUsage.rss();
-  // 38 MB of buckets each.
+  // All their buckets would take 38 MB each.
   const histograms = Array.from({ length: 10 }, () => perf.createHistogram({ figures: 5 }));
   for (const histogram of histograms) {
     histogram.record(1);
-    // The buckets grow twice, and what is between the values is not copied.
     histogram.record(2 ** 52);
     histogram.record(Number.MAX_SAFE_INTEGER);
+    histogram.add(histogram);
   }
-  // A structured clone moves the buckets.
   const clones = structuredClone(histograms);
   expect(process.memoryUsage.rss() - before).toBeLessThan(100 * 1024 * 1024);
-  expect(clones.map(clone => clone.count)).toEqual(histograms.map(() => 3));
+  expect(clones.map(clone => clone.count)).toEqual(histograms.map(() => 6));
 });
 
 test("doesn't throw", () => {

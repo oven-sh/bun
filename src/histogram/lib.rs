@@ -1,5 +1,5 @@
-//! A histogram of integers that keeps a fixed number of significant decimal digits over its whole range, in constant
-//! memory. It backs `createHistogram()` and `monitorEventLoopDelay()` of `node:perf_hooks`.
+//! A histogram of integers that keeps a fixed number of significant decimal digits over its whole range. It backs
+//! `createHistogram()` and `monitorEventLoopDelay()` of `node:perf_hooks`.
 //!
 //! The layout and the results are those of HdrHistogram, which Node.js uses:
 //! - https://github.com/HdrHistogram/HdrHistogram_c (Michael Barker, CC0 1.0 or BSD 2-Clause)
@@ -23,13 +23,22 @@
 /// What an empty histogram reports as its minimum.
 const EMPTY_MIN: u64 = i64::MAX as u64;
 
+/// The counts of 512 slots in a row: 4 KiB.
+type Chunk = [u64; CHUNK_LEN];
+const CHUNK_LEN: usize = 512;
+
+#[derive(Clone)]
 pub struct Histogram {
     highest_trackable_value: u64,
     unit_magnitude: u32,
     sub_bucket_half_count_magnitude: u32,
-    /// As far as the last slot that was ever used, or further. A histogram of small values stays small.
-    counts: Vec<u64>,
-    /// The sum of `counts`, so no slot and no partial sum overflows.
+    /// One for every `CHUNK_LEN` slots that a value can reach, or none at all while the histogram is empty. A chunk
+    /// exists once one of its slots is used, so the memory depends on how many different values were recorded and
+    /// not on how large they are: all the slots would take 360 KB with 3 figures, and 38 MB with 5.
+    chunks: Vec<Option<Box<Chunk>>>,
+    /// How many of `chunks` exist.
+    chunk_count: usize,
+    /// The sum of the counts, so no slot and no partial sum overflows.
     count: u64,
     exceeds: u64,
     /// The first and the last slot that is not zero. `first > last` while the histogram is empty.
@@ -37,7 +46,7 @@ pub struct Histogram {
     last: usize,
 }
 
-/// The values that one slot of `counts` stands for.
+/// The values that one slot stands for.
 #[derive(Clone, Copy)]
 struct Slot {
     lowest: u64,
@@ -52,15 +61,6 @@ impl Slot {
 
     fn median(self) -> u64 {
         self.lowest + (self.width >> 1)
-    }
-}
-
-impl Clone for Histogram {
-    fn clone(&self) -> Self {
-        Self {
-            counts: self.copy_of_counts(self.counts.len()),
-            ..*self
-        }
     }
 }
 
@@ -83,7 +83,8 @@ impl Histogram {
             highest_trackable_value: highest,
             unit_magnitude,
             sub_bucket_half_count_magnitude,
-            counts: Vec::new(),
+            chunks: Vec::new(),
+            chunk_count: 0,
             count: 0,
             exceeds: 0,
             first: usize::MAX,
@@ -101,10 +102,12 @@ impl Histogram {
             && let Some(count) = self.count.checked_add(n)
         {
             let index = self.index_of(value);
-            if index >= self.counts.len() {
-                self.grow(index);
+            if !matches!(self.chunks.get(index / CHUNK_LEN), Some(Some(_))) {
+                self.add_chunk(index / CHUNK_LEN);
             }
-            if let Some(slot) = self.counts.get_mut(index) {
+            if let Some(Some(chunk)) = self.chunks.get_mut(index / CHUNK_LEN)
+                && let Some(slot) = chunk.get_mut(index % CHUNK_LEN)
+            {
                 *slot += n;
                 self.count = count;
                 self.first = self.first.min(index);
@@ -116,36 +119,17 @@ impl Histogram {
         false
     }
 
-    /// Makes room for `index`, which is past the end of `counts`.
+    /// `index` is that of a chunk that does not exist.
     #[cold]
-    fn grow(&mut self, index: usize) {
-        /// 64 KiB of slots.
-        const LARGE: usize = 8192;
-        // Every slot that a value can reach.
-        let whole = self.index_of(self.highest_trackable_value) + 1;
-        // Twice as much as before, so that rising values do not copy the counts each time.
-        let len = (index + 1).max(self.counts.len() * 2);
-        // Memory that is not written to costs nothing (see `copy_of_counts`), so large counts grow only once.
-        let len = if len > LARGE { whole } else { len.min(whole) };
-        self.counts = self.copy_of_counts(len);
-    }
-
-    /// `len` is at least that of `counts`.
-    fn copy_of_counts(&self, len: usize) -> Vec<u64> {
-        // The allocator has zeroed memory that the system only backs with pages once they are written to. So no zero
-        // is written: the counts of a few values far apart take a few pages, however long they are.
-        let mut counts = vec![0; len];
-        let occupied = self.first..=self.last;
-        if let (Some(to), Some(from)) =
-            (counts.get_mut(occupied.clone()), self.counts.get(occupied))
-        {
-            for (to, &from) in to.iter_mut().zip(from) {
-                if from != 0 {
-                    *to = from;
-                }
-            }
+    fn add_chunk(&mut self, index: usize) {
+        if self.chunks.is_empty() {
+            let last_slot = self.index_of(self.highest_trackable_value);
+            self.chunks = vec![None; last_slot / CHUNK_LEN + 1];
         }
-        counts
+        if let Some(chunk) = self.chunks.get_mut(index) {
+            *chunk = Some(Box::new([0; CHUNK_LEN]));
+            self.chunk_count += 1;
+        }
     }
 
     /// Counts everything `other` counted, each value as the lowest of its slot in `other`. All of it is refused if the
@@ -164,7 +148,7 @@ impl Histogram {
     /// Moves the counts out, which leaves `self` as it was when it was created.
     pub fn take(&mut self) -> Self {
         let taken = Self {
-            counts: core::mem::take(&mut self.counts),
+            chunks: core::mem::take(&mut self.chunks),
             ..*self
         };
         self.reset();
@@ -172,9 +156,8 @@ impl Histogram {
     }
 
     pub fn reset(&mut self) {
-        if let Some(occupied) = self.counts.get_mut(self.first..=self.last) {
-            occupied.fill(0);
-        }
+        self.chunks = Vec::new();
+        self.chunk_count = 0;
         self.count = 0;
         self.exceeds = 0;
         self.first = usize::MAX;
@@ -247,22 +230,22 @@ impl Histogram {
     /// The slot of the `rank`th lowest value, counting from 1. `rank` is at most `count`.
     fn index_of_rank(&self, rank: u64) -> usize {
         const BLOCK: usize = 16;
-        let occupied = self.counts.get(self.first..=self.last).unwrap_or_default();
         let mut seen = 0;
-        let mut index = self.first;
-        for block in occupied.chunks(BLOCK) {
-            let in_block: u64 = block.iter().sum();
-            if seen + in_block < rank {
-                seen += in_block;
-                index += block.len();
-                continue;
-            }
-            for &n in block {
-                seen += n;
-                if seen >= rank {
-                    return index;
+        for (mut index, chunk) in self.existing_chunks() {
+            for block in chunk.chunks(BLOCK) {
+                let in_block: u64 = block.iter().sum();
+                if seen + in_block < rank {
+                    seen += in_block;
+                    index += block.len();
+                    continue;
                 }
-                index += 1;
+                for &n in block {
+                    seen += n;
+                    if seen >= rank {
+                        return index;
+                    }
+                    index += 1;
+                }
             }
         }
         self.last
@@ -300,7 +283,9 @@ impl Histogram {
 
     /// The bytes this histogram occupies. Recording a value can raise it.
     pub fn memory_size(&self) -> usize {
-        size_of::<Self>() + self.counts.capacity() * size_of::<u64>()
+        size_of::<Self>()
+            + self.chunks.capacity() * size_of::<Option<Box<Chunk>>>()
+            + self.chunk_count * size_of::<Chunk>()
     }
 
     /// `value` is at most `highest_trackable_value`.
@@ -314,7 +299,7 @@ impl Histogram {
         ((bucket as usize) << magnitude) + sub_bucket as usize
     }
 
-    /// `index` is in `counts`.
+    /// `index` is that of a slot that a value can reach.
     fn slot(&self, index: usize) -> Slot {
         let magnitude = self.sub_bucket_half_count_magnitude;
         let half_count = 1 << magnitude;
@@ -331,11 +316,20 @@ impl Histogram {
 
     /// The slots in use and their counts, from the lowest.
     fn slots(&self) -> impl Iterator<Item = (Slot, u64)> {
-        let occupied = self.counts.get(self.first..=self.last).unwrap_or_default();
-        occupied
-            .iter()
-            .zip(self.first..)
+        self.existing_chunks()
+            .flat_map(|(index, chunk)| chunk.iter().zip(index..))
             .filter(|&(&n, _)| n != 0)
             .map(|(&n, index)| (self.slot(index), n))
+    }
+
+    /// Each with the index of its first slot, from the lowest.
+    fn existing_chunks(&self) -> impl Iterator<Item = (usize, &Chunk)> {
+        let first = self.first / CHUNK_LEN;
+        let occupied = self.chunks.get(first..=self.last / CHUNK_LEN);
+        occupied
+            .unwrap_or_default()
+            .iter()
+            .zip((first * CHUNK_LEN..).step_by(CHUNK_LEN))
+            .filter_map(|(chunk, index)| Some((index, chunk.as_deref()?)))
     }
 }

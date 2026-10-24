@@ -49,7 +49,7 @@ function setRunOnlySubtests(node: TestNode, value: boolean) {
 
 // A filtered subtest is left out of the output and its promise resolves in sibling order: test.js#L1221-L1230 and #L1301-L1306 of the same commit.
 function omitSubtest(parent: TestNode): Promise<undefined> {
-  return (parent.subtestChain = parent.subtestChain.then(noop)) as Promise<undefined>;
+  return (parent.subtestChain = parent.subtestChain.$then(noop)) as Promise<undefined>;
 }
 
 function createOnlyFilter<Node extends TestNode>(shim: Shim<Node>) {
@@ -93,7 +93,7 @@ function createOnlyFilter<Node extends TestNode>(shim: Shim<Node>) {
     // Node never selects these: `{ only: false }`, and a skipped suite, whose callback cannot declare an only-marked test.
     if (only === false || skippedTopLevelSuite) {
       validateDeclaration(options);
-      return Promise.resolve(undefined);
+      return Promise.$resolve(undefined);
     }
     if (!only) return add(name, options, fn, executionParent, mode);
     const index = entryCount();

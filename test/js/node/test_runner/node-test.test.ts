@@ -231,13 +231,14 @@ describe("node:test", () => {
     test.skipIf(!node).concurrent(
       "the fixtures pass as they are under node",
       async () => {
-        const runs = await Promise.all(
-          ["30-only-filter.js", "31-only-subtests.mjs"].flatMap(name => [
+        const runs = await Promise.all([
+          ...["30-only-filter.js", "31-only-subtests.mjs"].flatMap(name => [
             run([node!, "--test", "--test-only", fixture(name)]),
             run([node!, "--test", fixture(name)], all),
           ]),
-        );
-        expect(runs.map(({ exitCode, stdout }) => (exitCode === 0 ? 0 : stdout))).toEqual([0, 0, 0, 0]);
+          run([node!, "--test", "--test-only", fixture("40-only-replaced-promise.mjs")]),
+        ]);
+        expect(runs.map(({ exitCode, stdout }) => (exitCode === 0 ? 0 : stdout))).toEqual([0, 0, 0, 0, 0]);
       },
       30_000,
     );
@@ -319,6 +320,18 @@ describe("node:test", () => {
       "t.describe() is not filtered",
       async () => {
         expect(await runFixtures(["--test-only"], ["38-only-t-describe.js"])).toEqual({
+          counts: { pass: 1, fail: 0 },
+          exitCode: 0,
+          stderr: "",
+        });
+      },
+      30_000,
+    );
+
+    test.concurrent(
+      "a filtered declaration does not call a Promise.resolve or a then that the file replaced",
+      async () => {
+        expect(await runFixtures(["--test-only"], ["40-only-replaced-promise.mjs"])).toEqual({
           counts: { pass: 1, fail: 0 },
           exitCode: 0,
           stderr: "",

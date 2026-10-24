@@ -3272,6 +3272,7 @@ pub mod bv2_impl {
                 transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
             transpiler.resolver.opts.mark_builtins_as_external =
                 transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
+            transpiler.resolver.settings_from_real_path = true;
 
             // SAFETY: `ssr_transpiler` intentionally aliases `transpiler` via a
             // raw `*mut` until bake installs a separate SSR transpiler; all

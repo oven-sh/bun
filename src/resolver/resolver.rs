@@ -483,6 +483,11 @@ pub struct Resolver<'a> {
     /// For Bun's runtime, we don't.
     pub(crate) care_about_browser_field: bool,
 
+    /// When a lookup went through a link, take the tsconfig.json settings and the package.json
+    /// "type" of the file from the directory of its real path. The bundler sets this: it keys a
+    /// module by the path that `finalize_result` returns.
+    pub settings_from_real_path: bool,
+
     pub debug_logs: Option<DebugLogs>,
     pub elapsed: u64, // tracing
 
@@ -622,6 +627,7 @@ impl<'a> Resolver<'a> {
             care_about_bin_folder: from.care_about_bin_folder,
             care_about_scripts: from.care_about_scripts,
             care_about_browser_field: from.care_about_browser_field,
+            settings_from_real_path: from.settings_from_real_path,
             // `DebugLogs` owns Vecs — per-worker fresh.
             debug_logs: None,
             elapsed: 0,
@@ -957,6 +963,7 @@ impl<'a> Resolver<'a> {
             log,
             extension_order: options::ExtOrder::DefaultDefault,
             care_about_browser_field,
+            settings_from_real_path: false,
             care_about_bin_folder: false,
             care_about_scripts: false,
             debug_logs: None,
@@ -1583,17 +1590,11 @@ impl<'a> Resolver<'a> {
         while let Some(path) = iter.next() {
             let name = path.name();
             let primary = core::mem::take(&mut is_primary);
-            let Ok(Some(dir)) = self.read_dir_info(name.dir) else {
+            let Ok(Some(mut dir)) = self.read_dir_info(name.dir) else {
                 continue;
             };
 
-            // Node reads "type" from the nearest package.json, named or not.
-            if primary && !kind.is_from_css() && module_type == options::ModuleType::Unknown {
-                if let Some(pkg) = dir.package_json_for_module_type {
-                    module_type = pkg.module_type;
-                }
-            }
-
+            // "sideEffects" is matched against the path as spelled, so this runs before the rewrite.
             let mut needs_side_effects = true;
             if let Some(existing) = Result::deref_package_json(result.package_json) {
                 // if we don't have it here, they might put it in a sideEfffects
@@ -1624,19 +1625,7 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
-                result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
-                result.flags.set_emit_decorator_metadata(
-                    result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
-                );
-                result.flags.set_experimental_decorators(
-                    result.flags.experimental_decorators() || tsconfig.experimental_decorators,
-                );
-                if let Some(v) = tsconfig.use_define_for_class_fields {
-                    result.flags.set_use_define_for_class_fields(v);
-                }
-            }
-
+            let mut rewritten = false;
             // Probe the listing in one `entries_mutex` critical section: a
             // concurrent resolver at a newer generation rewrites this `DirEntry`'s
             // map in place under that lock. The entry pointer stays valid after
@@ -1647,6 +1636,7 @@ impl<'a> Resolver<'a> {
                 let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
                 if !symlink_path.is_empty() {
                     path.set_realpath(symlink_path);
+                    rewritten = true;
                     if !result.file_fd.is_valid() {
                         result.file_fd = query.entry().cache().fd;
                     }
@@ -1732,6 +1722,44 @@ impl<'a> Resolver<'a> {
                     }
 
                     path.set_realpath(symlink);
+                    rewritten = true;
+                }
+            }
+
+            let mut at_real_path = false;
+            if primary
+                && rewritten
+                && self.settings_from_real_path
+                && let Some(real_dir) = self.settings_dir_of_real_path(path.text())
+            {
+                dir = real_dir;
+                at_real_path = true;
+            }
+
+            if primary && !kind.is_from_css() {
+                if at_real_path {
+                    // A lookup through "exports" or "imports" read "type" at the path as spelled.
+                    module_type = options::ModuleType::Unknown;
+                }
+                // Node reads "type" from the nearest package.json, named or not.
+                if module_type == options::ModuleType::Unknown
+                    && let Some(pkg) = dir.package_json_for_module_type
+                {
+                    module_type = pkg.module_type;
+                }
+            }
+
+            // Only the path that `Result::path()` returns takes the tsconfig.json settings.
+            if primary && let Some(tsconfig) = self.enclosing_tsconfig_json(&dir) {
+                result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
+                result.flags.set_emit_decorator_metadata(
+                    result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
+                );
+                result.flags.set_experimental_decorators(
+                    result.flags.experimental_decorators() || tsconfig.experimental_decorators,
+                );
+                if let Some(v) = tsconfig.use_define_for_class_fields {
+                    result.flags.set_use_define_for_class_fields(v);
                 }
             }
         }
@@ -1745,6 +1773,25 @@ impl<'a> Resolver<'a> {
 
         result.module_type = module_type;
         Ok(())
+    }
+
+    /// The directory that gives its settings to a file that a lookup found through a link, and
+    /// whose real path is `real`: the directory of `real`. `None` for a real path inside
+    /// node_modules: the installer chose that place, and the file keeps the settings of the path
+    /// as spelled.
+    #[cold]
+    #[inline(never)]
+    fn settings_dir_of_real_path(&mut self, real: &[u8]) -> Option<DirInfoRef> {
+        if strings::path_contains_node_modules_folder(real) {
+            return None;
+        }
+        let dir = Fs::PathName::init(real).dir;
+        // The first lookup of a directory fails when the "extends" chain of its tsconfig.json
+        // does not end. The directory stays in the cache without that file.
+        self.dir_info_cached(dir)
+            .or_else(|_| self.dir_info_cached(dir))
+            .ok()
+            .flatten()
     }
 
     pub(crate) fn resolve_without_symlinks(

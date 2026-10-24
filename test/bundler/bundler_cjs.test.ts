@@ -1,4 +1,5 @@
 import { describe } from "bun:test";
+import { isWindows } from "harness";
 import { itBundled } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
@@ -1233,6 +1234,56 @@ describe("bundler", () => {
     },
     run: {
       stdout: "function/undefined",
+    },
+  });
+
+  // Test 63: a package.json above a symbolic link does not give its "type" to a
+  // file that the link only leads to. The real path of the file decides.
+  itBundled("cjs/__toESM_type_module_above_symlink_does_not_apply", {
+    files: {
+      "/app/entry.js": `import "./link/importer.js";`,
+      "/app/package.json": `{ "name": "app", "type": "module" }`,
+      "/shared/importer.js": logDefaultAndNamed,
+      "/shared/dep.cjs": esModuleDep,
+    },
+    symlinks: { "/app/link": "/shared" },
+    run: {
+      stdout: "function 1",
+    },
+  });
+
+  // Test 64: the package.json above the real path gives its "type" to a file
+  // that an import reaches through a symbolic link.
+  itBundled("cjs/__toESM_type_module_above_real_path_of_symlinked_importer", {
+    files: {
+      "/app/entry.js": `import "./link/importer.js";`,
+      "/shared/package.json": `{ "name": "shared", "type": "module" }`,
+      "/shared/lib/importer.js": logDefaultAndNamed,
+      "/shared/lib/dep.cjs": esModuleDep,
+    },
+    symlinks: { "/app/link": "/shared/lib" },
+    run: {
+      stdout: "object 1",
+    },
+  });
+
+  // Test 65: an "imports" target that is a link to a file. The lookup reads
+  // "type" beside the link. The real path of the file decides, on this route
+  // as on a relative import. A link to a file needs a privilege on Windows.
+  (isWindows ? itBundled.skip : itBundled)("cjs/__toESM_type_of_real_path_for_imports_target_behind_file_link", {
+    files: {
+      "/pkg/entry.js": /* js */ `
+        import "#importer";
+        import "./importer.js";
+      `,
+      "/pkg/package.json": `{ "name": "pkg", "type": "module", "imports": { "#importer": "./importer.js" } }`,
+      "/real/package.json": `{ "name": "real" }`,
+      "/real/importer.js": logDefaultAndNamed,
+      "/real/dep.cjs": esModuleDep,
+    },
+    symlinks: { "/pkg/importer.js": "/real/importer.js" },
+    run: {
+      stdout: "function 1",
     },
   });
 });

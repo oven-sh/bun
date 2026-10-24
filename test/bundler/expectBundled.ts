@@ -6,7 +6,18 @@ import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
 import filenamify from "filenamify";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { bunEnv, bunExe, isCI, isDebug, isWindows } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -176,6 +187,12 @@ export interface BundlerTestInput {
   files: Record<string, string | Buffer | Uint8ClampedArray | Blob>;
   /** Files to be written only after the bundle is done. */
   runtimeFiles?: Record<string, string | Buffer>;
+  /**
+   * Symbolic links to create after `files` are written. A key is the path of a link. Its value is
+   * the path the link points to. Both are relative to the root. A link to a directory is a
+   * junction on Windows, which needs no privilege. A link to a file needs one there.
+   */
+  symlinks?: Record<string, string>;
   /** Defaults to the first item in `files` */
   entryPoints?: string[];
   /** ??? */
@@ -544,6 +561,7 @@ function expectBundled(
     skipOnEsbuild,
     snapshotSourceMap,
     sourceMap,
+    symlinks,
     splitting,
     splitRequire,
     modulePreload,
@@ -789,6 +807,12 @@ function expectBundled(
           ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\"))
           : contents;
       writeFileSync(filename, formattedContents as any);
+    }
+    for (const [link, target] of Object.entries(symlinks ?? {})) {
+      const linkPath = path.join(root, link);
+      const targetPath = path.join(root, target);
+      mkdirSync(path.dirname(linkPath), { recursive: true });
+      symlinkSync(targetPath, linkPath, statSync(targetPath).isDirectory() ? "junction" : "file");
     }
 
     if (useDefineForClassFields !== undefined) {

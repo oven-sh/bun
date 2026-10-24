@@ -509,6 +509,30 @@ describe("bundler", () => {
       },
     };
   });
+  // An import that every onResolve callback declines goes to the resolver. The file gets the
+  // package.json "type" above its real path, not the one above the link that leads to it.
+  itBundled("plugin/ResolveDeclinedThroughSymlinkTakesTypeOfRealPath", {
+    files: {
+      "/app/entry.js": `import "./link/importer.js";`,
+      "/app/package.json": `{ "name": "app", "type": "module" }`,
+      "/shared/importer.js": /* js */ `
+        import d, { named } from "./dep.cjs";
+        console.log(typeof d, named);
+      `,
+      "/shared/dep.cjs": /* js */ `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.named = 1;
+        exports.default = function theDefault() {};
+      `,
+    },
+    symlinks: { "/app/link": "/shared" },
+    plugins(builder) {
+      builder.onResolve({ filter: /.*/ }, () => undefined);
+    },
+    run: {
+      stdout: "function 1",
+    },
+  });
   // Like esbuild, an external import is printed with the path that onResolve returned.
   itBundled("plugin/ResolveExternalRewritesPath", {
     files: {

@@ -1291,3 +1291,225 @@ fn extract_to_disk_filtered(
 
     Ok(count)
 }
+
+/// `bun:internal-for-testing`
+pub(crate) mod testing {
+    use crate::generated_bindgen::archive_internals::{
+        ReadTarOptions, ReadTarSkip as Skip, WriteTarFile, WriteTarOptions,
+    };
+    use bun_archive::tar::output::Output;
+    use bun_archive::tar::writer::{File, Names, Writer};
+    use bun_archive::tar::{self, Event};
+    use bun_core::S;
+    use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal};
+    use core::fmt::Write as _;
+
+    enum Source<'a> {
+        Whole(tar::MemoryDecoder<'a>),
+        Pieces(tar::Decoder),
+    }
+
+    fn type_name(filetype: u32) -> Option<&'static str> {
+        Some(match filetype {
+            S::IFREG => "file",
+            S::IFDIR => "directory",
+            S::IFLNK => "symlink",
+            S::IFCHR => "character-device",
+            S::IFBLK => "block-device",
+            S::IFIFO => "fifo",
+            _ => return None,
+        })
+    }
+
+    /// Contents that follow each other, however many pieces they came in.
+    #[derive(Default)]
+    struct Run {
+        offset: i64,
+        len: i64,
+    }
+
+    impl Run {
+        fn flush(&mut self, log: &mut String) {
+            if self.len != 0 {
+                _ = writeln!(log, "  data {}+{}", self.offset, self.len);
+            }
+            *self = Self::default();
+        }
+    }
+
+    pub(crate) fn read_tar(data: &[u8], options: &ReadTarOptions) -> String {
+        let reader_options = tar::Options {
+            dialect: if options.npm {
+                tar::Dialect::Npm
+            } else {
+                tar::Dialect::General
+            },
+            charset: if options.windows {
+                tar::Charset::Utf8
+            } else {
+                tar::Charset::Ascii
+            },
+            mac_metadata: options.macos,
+        };
+        let opened = if options.stream {
+            tar::Decoder::new(reader_options, data.starts_with(&[0x1f, 0x8b])).map(Source::Pieces)
+        } else {
+            tar::MemoryDecoder::new(data, reader_options).map(Source::Whole)
+        };
+        let mut source = match opened {
+            Ok(source) => source,
+            Err(err) => return format!("refused: {err}\n"),
+        };
+
+        let mut log = String::new();
+        // `data[pos..end]` has arrived and was not taken yet.
+        let (mut pos, mut end) = (0usize, 0usize);
+        let mut index = 0usize;
+        let mut crc = 0u32;
+        let mut run = Run::default();
+        loop {
+            let mut skip = false;
+            let ended = end == data.len() && (!options.late_end || pos == end);
+            let next = match &mut source {
+                Source::Whole(reader) => reader.next().map(|event| (0, event)),
+                Source::Pieces(decoder) => decoder.next(&data[pos..end], ended),
+            };
+            let (used, event) = match next {
+                Ok(next) => next,
+                Err(err) => {
+                    run.flush(&mut log);
+                    _ = writeln!(log, "error: {err}");
+                    return log;
+                }
+            };
+            match event {
+                Event::NeedInput if ended => {
+                    log.push_str("error: the reader wants more input than there is\n");
+                    return log;
+                }
+                Event::NeedInput => {
+                    end = match options.piece_size {
+                        0 => data.len(),
+                        size => end.saturating_add(size).min(data.len()),
+                    };
+                }
+                Event::Entry(entry) => {
+                    match type_name(entry.filetype()) {
+                        Some(name) => log.push_str(name),
+                        None => _ = write!(log, "type-{:o}", entry.filetype()),
+                    }
+                    _ = write!(
+                        log,
+                        " perm={:o} size={} mtime={} path=\"",
+                        entry.perm(),
+                        entry.size(),
+                        entry.mtime(),
+                    );
+                    if entry.path_is_utf8()
+                        && let Ok(Some(composed)) = tar::compose::compose(entry.path())
+                    {
+                        let name: String =
+                            composed.into_iter().filter_map(char::from_u32).collect();
+                        _ = write!(log, "{}", name.as_bytes().escape_ascii());
+                    } else {
+                        _ = write!(log, "{}", entry.path().escape_ascii());
+                    }
+                    log.push('"');
+                    // Nothing reads a link's target on Windows.
+                    if let Some(target) = entry.symlink().filter(|_| !options.windows) {
+                        _ = write!(log, " -> \"{}\"", target.escape_ascii());
+                    }
+                    log.push('\n');
+                    skip = match options.skip {
+                        Skip::None => false,
+                        Skip::All => true,
+                        Skip::Odd => index % 2 == 1,
+                        Skip::OtherThanFiles => entry.filetype() != S::IFREG,
+                    };
+                    index += 1;
+                    crc = 0;
+                    run = Run::default();
+                }
+                Event::Data { offset, bytes } => {
+                    crc = bun_zlib::crc32_bytes(crc, bytes);
+                    if offset != run.offset + run.len {
+                        run.flush(&mut log);
+                        run.offset = offset;
+                    }
+                    run.len += bytes.len() as i64;
+                }
+                Event::EndOfEntry { size } => {
+                    run.flush(&mut log);
+                    _ = writeln!(log, "  end {size} crc32={crc:08x}");
+                }
+                Event::EndOfArchive => {
+                    log.push_str("end\n");
+                    return log;
+                }
+            }
+            pos += used;
+            if skip {
+                log.push_str("  skipped\n");
+                match &mut source {
+                    Source::Whole(reader) => reader.skip_entry(),
+                    Source::Pieces(decoder) => decoder.skip_entry(),
+                }
+            }
+        }
+    }
+
+    fn write_files<O: Output>(
+        out: O,
+        files: Vec<WriteTarFile>,
+        names: &[u8],
+        mut contents: &[u8],
+        options: &WriteTarOptions,
+    ) -> tar::Result<Writer<O>> {
+        let mut writer = Writer::new(
+            out,
+            if options.windows {
+                Names::Utf8
+            } else {
+                Names::Binary
+            },
+        );
+        for (file, path) in files.into_iter().zip(names.split(|&byte| byte == 0)) {
+            writer.header(&File {
+                path,
+                size: file.size as u64,
+                perm: file.perm,
+                mtime: file.mtime as i64,
+            })?;
+            let (given, rest) = contents.split_at(file.given.min(contents.len()));
+            contents = rest;
+            for piece in given.chunks(options.write_size.max(1)) {
+                writer.data(piece)?;
+            }
+        }
+        Ok(writer)
+    }
+
+    pub(crate) fn write_tar<'a>(
+        heap: &JsHeap<'a>,
+        files: Vec<WriteTarFile>,
+        names: &[u8],
+        contents: &[u8],
+        options: &WriteTarOptions,
+    ) -> bindgen::Result<'a, JsLocal<'a, BufferSource>> {
+        let written = match options.gzip_level {
+            _ if !options.finish => {
+                let mut written = Vec::new();
+                let sink = |bytes: &[u8]| written.extend_from_slice(bytes);
+                let result = write_files(sink, files, names, contents, options).map(drop);
+                result.map(|()| written)
+            }
+            None => write_files(Vec::new(), files, names, contents, options)
+                .and_then(|writer| writer.finish(true)),
+            Some(level) => tar::gzip::Encoder::new(Vec::new(), level)
+                .and_then(|encoder| write_files(encoder, files, names, contents, options))
+                .and_then(|writer| writer.finish(false))
+                .and_then(|encoder| encoder.finish()),
+        };
+        heap.create_buffer(&written.map_err(|err| heap.error(format_args!("{err}")))?)
+    }
+}

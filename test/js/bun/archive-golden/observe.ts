@@ -16,6 +16,73 @@ export async function loadCases<T>(path: string): Promise<T[]> {
 }
 
 /** A ustar header with mode 644 and everything else zero. */
+/** One failure message for all the cases that differ, instead of one test per case. */
+export function differences(results: { index: number; expected: string; actual: string }[]) {
+  const different = results.filter(r => r.actual !== r.expected);
+  if (different.length === 0) return "";
+  return [
+    `${different.length} of ${results.length} differ`,
+    ...different.slice(0, 5).map(r => `case ${r.index}\n--- expected\n${r.expected}--- actual\n${r.actual}`),
+  ].join("\n");
+}
+
+/** The options of `readTar` in `bun:internal-for-testing`. */
+export type ReaderMode = {
+  npm?: boolean;
+  windows?: boolean;
+  macos?: boolean;
+  stream?: boolean;
+  pieceSize?: number;
+  lateEnd?: boolean;
+  skip?: "none" | "all" | "odd" | "otherThanFiles";
+};
+export type ReaderFixture = {
+  modes: ReaderMode[];
+  logs: string[];
+  /** For each case of cases.json.gz, the index in `logs` of what each mode reports. */
+  cases: number[][];
+};
+
+const systems: ReaderMode[] = [{}, { macos: true }, { windows: true }];
+/** Both sets of rules, on all three kinds of system, from memory and as a download, reading all, some or none of the contents. */
+export const readerModes: ReaderMode[] = systems.flatMap(system =>
+  [false, true].flatMap(npm =>
+    [false, true].flatMap(stream =>
+      (["none", "all", "odd", "otherThanFiles"] as const).map(skip => ({ ...system, npm, stream, skip })),
+    ),
+  ),
+);
+
+export type WriterCase = {
+  files: {
+    /** Hex. */
+    path: string;
+    /** The arguments of `contents`. */
+    length: number;
+    kind: number;
+    seed: number;
+    /** What the header announces, which need not be `length`. */
+    size: string;
+    perm: number;
+    mtime: string;
+  }[];
+  windows: boolean;
+  gzipLevel: number | null;
+  writeSize: number;
+  finish: boolean;
+} & ({ expected: string } | { length: number; sha256: string });
+
+/** What a file of a `WriterCase` holds. */
+export function contents(length: number, kind: number, seed: number) {
+  if (kind === 2) return Buffer.alloc(length, "const x = require('y');\n");
+  const bytes = Buffer.alloc(length);
+  for (let i = 0; i < length; i++) {
+    seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+    bytes[i] = kind === 1 ? i / 7 : seed >>> 16;
+  }
+  return bytes;
+}
+
 /** The arguments of a record.ts, which has to be told that it may replace what libarchive did. */
 export function recordArguments() {
   const args = process.argv.slice(2);
@@ -28,7 +95,7 @@ export function recordArguments() {
   return args.filter(arg => arg !== "--accept");
 }
 
-export function tarHeader(name: Buffer | string, size: number, type = "0") {
+export function tarHeader(name: Buffer | string, size: number, type = "0", linkname = "") {
   const h = Buffer.alloc(512);
   Buffer.from(name).copy(h, 0, 0, 100);
   h.write("0000644\0", 100);
@@ -38,6 +105,7 @@ export function tarHeader(name: Buffer | string, size: number, type = "0") {
   h.write("00000000000\0", 136);
   h.fill(" ", 148, 156);
   h.write(type, 156);
+  h.write(linkname, 157);
   h.write("ustar\0" + "00", 257);
   h.write(
     h

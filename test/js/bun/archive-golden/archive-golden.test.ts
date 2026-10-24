@@ -4,7 +4,16 @@ import { describe, expect, test } from "bun:test";
 import { isLinux, isMacOS, isPosix, isWindows, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { loadCases, observeExtract, observeFiles, observeTar, tarHeader, tarPadded, type Case } from "./observe";
+import {
+  differences,
+  loadCases,
+  observeExtract,
+  observeFiles,
+  observeTar,
+  tarHeader,
+  tarPadded,
+  type Case,
+} from "./observe";
 
 const all = await loadCases<Case>(join(import.meta.dir, "cases.json.gz"));
 const cases = all
@@ -12,16 +21,6 @@ const cases = all
   // Recorded on Linux. Names outside ASCII are decoded differently on Windows, and macOS file
   // systems do not take all of them.
   .filter(c => isLinux || ((isMacOS ? c.mac : c.win) && !/[^\x20-\x7e\n]/.test(c.files + c.extract)));
-
-/** One failure message for all the cases that differ, instead of one test per case. */
-function differences(results: { index: number; expected: string; actual: string }[]) {
-  const different = results.filter(r => r.actual !== r.expected);
-  if (different.length === 0) return "";
-  return [
-    `${different.length} of ${results.length} differ`,
-    ...different.slice(0, 5).map(r => `case ${r.index}\n--- expected\n${r.expected}--- actual\n${r.actual}`),
-  ].join("\n");
-}
 
 // What a refused archive leaves behind depends on which error a system call fails with, and that
 // differs between systems: opening "dir/" for writing is EISDIR on Linux and ENOENT on macOS.

@@ -5,7 +5,7 @@ use std::borrow::Cow;
 
 use bun_collections::MultiArrayList;
 use bun_core::{ThreadLock, ZStr, feature_flags, output as Output, strings, zstr};
-use bun_sys::{self as sys, Fd};
+use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_threading::Mutex;
 
 use crate::watcher_trace as WatcherTrace;
@@ -230,6 +230,17 @@ impl Watcher {
         if !self.running.load() {
             return;
         }
+        if !WATCHES_BY_PATH {
+            for index in 0..event_count {
+                let event = self.watch_events[index];
+                if event.op.contains(Op::WATCH_INVALIDATED)
+                    && self.watchlist.items_kind().get(event.index as usize)
+                        == Some(&WatchItemKind::Directory)
+                {
+                    self.invalidate_directory_watch(event.index);
+                }
+            }
+        }
         let events = &mut self.watch_events[..event_count];
         let changed = &self.changed_filepaths[..changed_count];
         WatcherTrace::write_events(&self.watchlist, events, changed);
@@ -322,6 +333,18 @@ impl Watcher {
 
     pub fn get_hash(filepath: &[u8]) -> HashType {
         bun_wyhash::hash(filepath) as HashType
+    }
+
+    fn directory_path(path: &[u8]) -> &[u8] {
+        #[cfg(windows)]
+        {
+            bun_paths::string_paths::without_trailing_slash_windows_path(path)
+        }
+        #[cfg(not(windows))]
+        {
+            let trimmed = strings::trim_right(path, b"/");
+            if trimmed.is_empty() { path } else { trimmed }
+        }
     }
 
     /// # Safety
@@ -613,12 +636,6 @@ impl Watcher {
             }
         }
 
-        let fd = if stored_fd.is_valid() {
-            stored_fd
-        } else {
-            bun_sys::open_a(file_path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?
-        };
-
         // `WatchItem.file_path` is an owning `Cow<'static, [u8]>` column so the
         // CLONE_FILE_PATH=true arm heap-dups instead of
         // dangling once the caller's buffer is freed.
@@ -631,55 +648,117 @@ impl Watcher {
             Cow::Borrowed(unsafe { bun_collections::detach_lifetime(file_path) })
         };
 
-        let parent_hash =
-            Self::get_hash(bun_paths::fs::PathName::init(file_path).dir_with_trailing_slash());
+        let parent_hash = Self::get_hash(Self::directory_path(
+            bun_paths::fs::PathName::init(file_path).dir_with_trailing_slash(),
+        ));
 
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        let watchlist_id = self.watchlist.len();
-
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        let eventlist_index = {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            if file_path.len() >= buf.len() {
-                return Err(sys::Error::new(sys::E::ENAMETOOLONG, sys::Tag::watch));
-            }
-            let path: &ZStr = if CLONE_FILE_PATH
-                && !file_path.is_empty()
-                && file_path[file_path.len() - 1] == 0
-            {
-                // SAFETY: last byte is 0, slice len excludes it
-                ZStr::from_slice_with_nul(file_path)
-            } else {
-                let trailing_slash = if file_path.len() > 1 {
-                    strings::trim_right(file_path, &[0, b'/'])
-                } else {
-                    file_path
-                };
-                buf[0..trailing_slash.len()].copy_from_slice(trailing_slash);
-                buf[trailing_slash.len()] = 0;
-                // SAFETY: buf[len] == 0 written above
-                ZStr::from_buf(&buf[..], trailing_slash.len())
-            };
-
-            self.platform
-                .watch_dir(path)
-                .map_err(|e| e.with_path(file_path))?
-        };
-
+        let index = self.watchlist.len() as WatchItemIndex;
         self.watchlist.append_assume_capacity(WatchItem {
             file_path: file_path_,
-            fd,
+            fd: Fd::INVALID,
             hash,
             count: 0,
             parent_hash,
             kind: WatchItemKind::Directory,
             package_json: None,
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            eventlist_index,
+            eventlist_index: -1,
         });
-        Ok((self.watchlist.len() - 1) as WatchItemIndex)
+        if let Err(error) = self.register_directory_watch(index, stored_fd) {
+            drop(self.watchlist.pop());
+            return Err(error);
+        }
+        Ok(index)
+    }
+
+    fn register_directory_watch(
+        &mut self,
+        index: WatchItemIndex,
+        borrowed_fd: Fd,
+    ) -> sys::Result<()> {
+        debug_assert!(!self.watchlist.items_fd()[index as usize].is_valid());
+        let file_path = &self.watchlist.items_file_path()[index as usize];
+        // Resolver/parser descriptors remain owned by their caller.
+        let fd = if borrowed_fd.is_valid() {
+            #[cfg(not(windows))]
+            let fd = bun_sys::dup_at_least(borrowed_fd, libc::STDERR_FILENO + 1)?;
+            #[cfg(windows)]
+            let fd = bun_sys::dup(borrowed_fd)?;
+            fd
+        } else {
+            bun_sys::open_a(file_path, WATCH_OPEN_FLAGS | bun_sys::O::DIRECTORY, 0)?
+        };
+        let fd_guard = scopeguard::guard(fd, |fd| fd.close());
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        let eventlist_index = {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            if file_path.len() >= buf.len() {
+                return Err(sys::Error::new(sys::E::ENAMETOOLONG, sys::Tag::watch));
+            }
+            let path = bun_paths::resolve_path::z(file_path, &mut *buf);
+            self.platform
+                .watch_dir(path)
+                .map_err(|error| error.with_path(file_path))?
+        };
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        self.add_file_descriptor_to_kqueue_without_checks(fd, index as usize);
+        self.watchlist.items_mut::<"fd", Fd>()[index as usize] = fd;
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            self.watchlist
+                .items_mut::<"eventlist_index", platform::EventListIndex>()[index as usize] =
+                eventlist_index;
+        }
+        let _ = scopeguard::ScopeGuard::into_inner(fd_guard);
+        Ok(())
+    }
+
+    fn invalidate_directory_watch(&mut self, index: WatchItemIndex) {
+        debug_assert!(self.mutex.is_held_by_current_thread());
+        let fd = self.watchlist.items_fd()[index as usize];
+        if !fd.is_valid() {
+            return;
+        }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let descriptors = self
+                .watchlist
+                .items_mut::<"eventlist_index", platform::EventListIndex>();
+            let descriptor = ::core::mem::replace(&mut descriptors[index as usize], -1);
+            // DELETE_SELF may already have removed it; MOVE_SELF has not.
+            let _ = bun_sys::linux::inotify_rm_watch(self.platform.fd.native(), descriptor);
+        }
+        fd.close();
+        self.watchlist.items_mut::<"fd", Fd>()[index as usize] = Fd::INVALID;
+    }
+
+    #[cfg(not(windows))]
+    fn refresh_directory_watch(&mut self, index: WatchItemIndex) -> sys::Result<()> {
+        let fd = self.watchlist.items_fd()[index as usize];
+        if fd.is_valid() {
+            // Open directory descriptors can delay IN_DELETE_SELF until they close.
+            let mut buffer = bun_paths::path_buffer_pool::get();
+            let file_path = &self.watchlist.items_file_path()[index as usize];
+            if file_path.len() >= buffer.len() {
+                return Err(sys::Error::new(sys::E::ENAMETOOLONG, sys::Tag::watch));
+            }
+            let path = bun_paths::resolve_path::z(file_path, &mut *buffer);
+            let current = match bun_sys::stat(path) {
+                Ok(stat) => stat,
+                Err(error) => {
+                    if error.get_errno() == sys::E::ENOENT {
+                        self.invalidate_directory_watch(index);
+                    }
+                    return Err(error);
+                }
+            };
+            let watched = bun_sys::fstat(fd)?;
+            if current.st_dev == watched.st_dev && current.st_ino == watched.st_ino {
+                return Ok(());
+            }
+            self.invalidate_directory_watch(index);
+        }
+        self.register_directory_watch(index, Fd::INVALID)
     }
 
     // Below is platform-independent
@@ -700,12 +779,13 @@ impl Watcher {
         debug_assert!(file_path.len() > 1);
         let pathname = bun_paths::fs::PathName::init(file_path);
 
-        let parent_dir = pathname.dir_with_trailing_slash();
+        let parent_dir_with_slash = pathname.dir_with_trailing_slash();
+        let autowatch_parent_dir =
+            feature_flags::WATCH_DIRECTORIES && self.is_eligible_directory(parent_dir_with_slash);
+        let parent_dir = Self::directory_path(parent_dir_with_slash);
         let parent_dir_hash: HashType = Self::get_hash(parent_dir);
 
         let mut parent_watch_item: Option<WatchItemIndex> = None;
-        let autowatch_parent_dir =
-            feature_flags::WATCH_DIRECTORIES && self.is_eligible_directory(parent_dir);
         if autowatch_parent_dir {
             let watchlist_slice = self.watchlist.slice();
 
@@ -720,6 +800,13 @@ impl Watcher {
                 let hashes = watchlist_slice.items_hash();
                 if let Some(i) = hashes.iter().position(|h| *h == parent_dir_hash) {
                     parent_watch_item = Some(i as WatchItemIndex);
+                }
+            }
+        }
+        if !WATCHES_BY_PATH {
+            if let Some(index) = parent_watch_item {
+                if !self.watchlist.items_fd()[index as usize].is_valid() {
+                    self.register_directory_watch(index, Fd::INVALID)?;
                 }
             }
         }
@@ -801,7 +888,16 @@ impl Watcher {
     ) -> sys::Result<WatchItemIndex> {
         // RAII guard; see append_file_maybe_lock.
         let _guard = self.mutex.lock_guard();
+        let normalized_path = Self::directory_path(file_path);
+        let hash = if normalized_path.len() == file_path.len() {
+            hash
+        } else {
+            Self::get_hash(normalized_path)
+        };
+        let file_path = normalized_path;
         if let Some(idx) = self.index_of(hash) {
+            #[cfg(not(windows))]
+            self.refresh_directory_watch(idx)?;
             return Ok(idx as WatchItemIndex);
         }
         self.watchlist
@@ -1017,7 +1113,10 @@ bitflags::bitflags! {
         const WRITE    = 1 << 3;
         const MOVE_TO  = 1 << 4;
         const CREATE   = 1 << 5;
-        // bits 6..7 = _padding
+        /// The watched inode moved away from its path or was deleted.
+        const WATCH_INVALIDATED = 1 << 6;
+        /// An immediate child was added, removed, or renamed.
+        const DIRECTORY_ENTRIES_CHANGED = 1 << 7;
     }
 }
 
@@ -1035,6 +1134,8 @@ pub(crate) const OP_NAMES: &[(Op, &str)] = &[
     (Op::WRITE, "write"),
     (Op::MOVE_TO, "move_to"),
     (Op::CREATE, "create"),
+    (Op::WATCH_INVALIDATED, "watch_invalidated"),
+    (Op::DIRECTORY_ENTRIES_CHANGED, "directory_entries_changed"),
 ];
 
 impl fmt::Display for Op {

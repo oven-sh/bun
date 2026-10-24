@@ -66,6 +66,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             server_register_update_callback: _,
             bun_watcher: _,
             directory_watchers: _,
+            plugin_watchers: _,
             watcher_atomics: _,
             testing_batch_events: _,
             generation: _,
@@ -206,6 +207,24 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     }
     for dir_name in dev.directory_watchers.watches.keys() {
         other_bytes += dir_name.len();
+    }
+    // .plugin_watchers
+    for modules in &dev.plugin_watchers.modules {
+        other_bytes += memory_cost_array_hash_map(modules);
+        for (module, dependencies) in modules.iter() {
+            other_bytes += module.len();
+            other_bytes += memory_cost_array_list(&dependencies.files);
+            other_bytes += memory_cost_array_list(&dependencies.dirs);
+            for file in &dependencies.files {
+                other_bytes += file.path.len();
+                other_bytes += file.recovery_dir.as_ref().map_or(0, |path| path.len());
+            }
+            other_bytes += dependencies
+                .dirs
+                .iter()
+                .map(|directory| directory.path.len() + directory.watching.len())
+                .sum::<usize>();
+        }
     }
     // .html_router
     // std does not provide a way to measure exact allocation size of HashMapUnmanaged

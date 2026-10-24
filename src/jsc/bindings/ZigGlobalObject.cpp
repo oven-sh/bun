@@ -4495,6 +4495,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::BunServe__Plugins__onResolve;
     } else if (handler == BunServe__onRejectPlugins) {
         return GlobalObject::PromiseFunctions::BunServe__Plugins__onReject;
+    } else if (handler == BunDevServer__onStartResolved) {
+        return GlobalObject::PromiseFunctions::BunDevServer__onStartResolved;
+    } else if (handler == BunDevServer__onStartRejected) {
+        return GlobalObject::PromiseFunctions::BunDevServer__onStartRejected;
     } else if (handler == Bun__HTTPRequestContext__onReject) {
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContext__onReject;
     } else if (handler == Bun__HTTPRequestContext__onRejectStream) {

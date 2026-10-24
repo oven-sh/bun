@@ -1954,6 +1954,65 @@ describe("production headers and import.meta.env", () => {
     expect(a).not.toBe(b);
   });
 
+  test.concurrent.each([
+    ["true", true, true, true],
+    ["true", false, false, true],
+    ["{ hmr: false }", true, false, true],
+    ["false", true, false, false],
+  ])(
+    "serve plugins observe effective JSX and refresh modes (development: %s, React installed: %s)",
+    async (development, reactInstalled, reactFastRefresh, jsxDevelopment) => {
+      using dir = tempDir("html-plugin-development", {
+        "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
+        "app.ts": `console.log("hello" as string);`,
+        "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+        ...(reactInstalled
+          ? {
+              "node_modules/react/package.json": JSON.stringify({ name: "react", main: "index.js" }),
+              "node_modules/react/index.js": `export const version = "test";`,
+            }
+          : {}),
+        "plugin.ts": /*js*/ `
+          export default {
+            name: "observe-development",
+            setup(build) {
+              const mode = () => ({
+                reactFastRefresh: build.config.reactFastRefresh,
+                jsxDevelopment: build.config.jsx?.development,
+              });
+              const setup = mode();
+              build.onLoad({ filter: /app\\.ts$/ }, async ({ path }) => {
+                console.log(JSON.stringify({ setup, onLoad: mode() }));
+                return { loader: "ts", contents: await Bun.file(path).text() };
+              });
+            },
+          };
+        `,
+        "serve.ts": /*js*/ `
+          import index from "./index.html";
+          using server = Bun.serve({ hostname: "127.0.0.1", port: 0, development: ${development}, routes: { "/": index } });
+          const htmlResponse = await fetch(server.url);
+          const html = await htmlResponse.text();
+          const jsPath = html.match(/<script[^>]*src="([^"]+)"/)[1];
+          const jsResponse = await fetch(new URL(jsPath, server.url));
+          await jsResponse.text();
+          console.log(JSON.stringify({ htmlStatus: htmlResponse.status, jsStatus: jsResponse.status }));
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runServeFixture(dir, {
+        NODE_ENV: development === "false" ? "development" : "production",
+      });
+      const mode = { reactFastRefresh, jsxDevelopment };
+      expect({ stdout, exitCode }, stderr).toEqual({
+        stdout: [
+          JSON.stringify({ setup: mode, onLoad: mode }),
+          JSON.stringify({ htmlStatus: 200, jsStatus: 200 }),
+        ].join("\n"),
+        exitCode: 0,
+      });
+    },
+  );
+
   test("bunfig [serve.static] sourcemap overrides the per-mode default", async () => {
     const run = async (development: string, bunfig: string) => {
       const dir = tempDirWithFiles("html-sourcemap-override", {

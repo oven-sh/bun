@@ -540,6 +540,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // any such dependencies before freeing it so they do not dangle.
         directory_watchers
             .remove_dependencies_for_file(&self.bundled_files.keys()[file_index.get() as usize]);
+        // SAFETY: the owner is stable; this field is disjoint from the graph.
+        unsafe {
+            (*self.owner())
+                .plugin_watchers
+                .remove_module(&self.bundled_files.keys()[file_index.get() as usize], SIDE);
+        }
 
         // Free the key string and tombstone the slot. Cannot swap-remove since
         // FrameworkRouter / SerializedFailure hold FileIndices into this graph.
@@ -1698,11 +1704,28 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         &mut self,
         paths: &[Box<[u8]>],
         entry_points: &mut EntryPointList,
+        plugin_watchers: &super::plugin_watch_store::PluginWatchStore,
     ) -> Result<(), crate::Error> {
-        for path in paths {
-            let Some(index) = self.bundled_files.get_index(path) else {
+        let mut pending: Vec<usize> = paths
+            .iter()
+            .filter_map(|path| self.bundled_files.get_index(path))
+            .collect();
+        let mut seen = ArrayHashMap::<usize, ()>::default();
+        while let Some(index) = pending.pop() {
+            if seen.get_or_put(index)?.found_existing {
                 continue;
-            };
+            }
+            if plugin_watchers.is_virtual(&self.bundled_files.keys()[index], SIDE) {
+                self.stale_files.set(index);
+                // Virtual graph keys are module identities, not file entrypoints.
+                let mut it = self.edge_lists[index].first_dep;
+                while let Some(edge_index) = it {
+                    let edge = self.edges[edge_index.get() as usize];
+                    pending.push(edge.dependency.get() as usize);
+                    it = edge.next_dependency;
+                }
+                continue;
+            }
             self.stale_files.set(index);
             // Store the graph-owned key, not the incoming `path` (which may be
             // freed before `entry_points` is consumed).

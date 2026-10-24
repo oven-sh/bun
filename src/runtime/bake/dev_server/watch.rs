@@ -133,19 +133,22 @@ impl DevServer {
                         if !names.is_empty() {
                             for maybe_sub_path in names {
                                 // SAFETY: see `ev_ptr` above; call-scoped borrow.
-                                unsafe { &mut *ev_ptr }
-                                    .append_dir(file_path, maybe_sub_path.map(|s| s.as_bytes()));
+                                unsafe { &mut *ev_ptr }.append_dir(
+                                    file_path,
+                                    maybe_sub_path.map(|s| s.as_bytes()),
+                                    event.op,
+                                );
                             }
                         } else {
                             // SAFETY: see `ev_ptr` above; call-scoped borrow.
-                            unsafe { &mut *ev_ptr }.append_dir(file_path, None);
+                            unsafe { &mut *ev_ptr }.append_dir(file_path, None, event.op);
                         }
                     }
                     #[cfg(not(any(target_os = "linux", target_os = "android")))]
                     {
                         let _ = changed_files;
                         // SAFETY: see `ev_ptr` above; call-scoped borrow.
-                        unsafe { &mut *ev_ptr }.append_dir(file_path, None);
+                        unsafe { &mut *ev_ptr }.append_dir(file_path, None, event.op);
                     }
                 }
             }

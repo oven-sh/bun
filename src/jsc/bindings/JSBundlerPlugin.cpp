@@ -49,7 +49,7 @@ extern "C" void OnBeforeParseResult__reset(OnBeforeParseResult* result);
 
 /// These are native callbacks to be run after their associated JS version is run
 extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, uint8_t);
-extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
+extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onResolveAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__onDefer(void*, JSC::JSGlobalObject*);
 
@@ -475,7 +475,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObje
             UNWRAP_BUNDLER_PLUGIN(callFrame),
             thisObject->plugin.config,
             JSValue::encode(callFrame->argument(1)),
-            JSValue::encode(callFrame->argument(2)));
+            JSValue::encode(callFrame->argument(2)),
+            JSValue::encode(callFrame->argument(3)),
+            JSValue::encode(callFrame->argument(4)));
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());
@@ -560,6 +562,7 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
     this->putDirect(vm, Identifier::fromString(vm, String("onLoad"_s)), jsUndefined(), 0);
     this->putDirect(vm, Identifier::fromString(vm, String("onResolve"_s)), jsUndefined(), 0);
     this->putDirect(vm, Identifier::fromString(vm, String("onEndCallbacks"_s)), jsUndefined(), 0);
+    this->putDirect(vm, Identifier::fromString(vm, String("onStartCallbacks"_s)), jsUndefined(), 0);
     this->putDirect(vm, Identifier::fromString(vm, String("promises"_s)), jsUndefined(), 0);
     Bun::reifyStaticPropertyTable(vm, JSBundlerPlugin::info(), JSBundlerPluginHashTable, *this);
 }
@@ -650,7 +653,7 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
         target);
 }
 
-extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedPlugins, JSC::EncodedJSValue encodedBunfigFolder)
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedPlugins, JSC::EncodedJSValue encodedBunfigFolder, bool isDevServer, bool reactFastRefresh, bool jsxDevelopment)
 {
     auto& vm = plugin->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -667,6 +670,9 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bu
     arguments.append(JSValue::decode(encodedPlugins));
     arguments.append(JSValue::decode(encodedBunfigFolder));
     arguments.append(runSetupFn);
+    arguments.append(jsBoolean(isDevServer));
+    arguments.append(jsBoolean(reactFastRefresh));
+    arguments.append(jsBoolean(jsxDevelopment));
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(plugin->globalObject(), ProfilingReason::API, loadAndResolvePluginsForServeBuiltinFn, callData, plugin, arguments)));
 }
@@ -677,7 +683,8 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     JSC::EncodedJSValue encodedConfig,
     JSC::EncodedJSValue encodedOnstartPromisesArray,
     JSC::EncodedJSValue encodedIsLast,
-    JSC::EncodedJSValue encodedIsBake)
+    JSC::EncodedJSValue encodedIsBake,
+    bool isDevServer)
 {
     auto& vm = plugin->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -696,6 +703,7 @@ extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(
     arguments.append(JSValue::decode(encodedOnstartPromisesArray));
     arguments.append(JSValue::decode(encodedIsLast));
     arguments.append(JSValue::decode(encodedIsBake));
+    arguments.append(jsBoolean(isDevServer));
     // setup() can be any callable, and a callable Proxy isn't a JSFunction.
     auto* setupObject = JSValue::decode(encodedSetupFunction).getObject();
     auto* lexicalGlobalObject = setupObject ? setupObject->globalObject() : plugin->globalObject();
@@ -747,6 +755,19 @@ extern "C" void JSBundlerPlugin__tombstone(Bun::JSBundlerPlugin* plugin)
 extern "C" void JSBundlerPlugin__freezeFilters(Bun::JSBundlerPlugin* plugin)
 {
     plugin->plugin.filtersFrozen = true;
+}
+
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnStartCallbacks(Bun::JSBundlerPlugin* plugin)
+{
+    auto& vm = plugin->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = plugin->globalObject();
+    auto* callback = JSC::JSFunction::create(vm, globalObject,
+        WebCore::bundlerPluginRunOnStartCallbacksCodeGenerator(vm), globalObject);
+    MarkedArgumentBuffer arguments;
+    auto result = JSC::profiledCall(globalObject, ProfilingReason::API, callback, JSC::getCallData(callback), plugin, arguments);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(result);
 }
 
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__runOnEndCallbacks(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedBuildPromise, JSC::EncodedJSValue encodedBuildResult, JSC::EncodedJSValue encodedRejection)

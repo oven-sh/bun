@@ -402,7 +402,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 ))));
             };
 
-            crate::bake::UserOptions::from_js(app, global).map_err(js_err)?
+            crate::bake::UserOptions::from_js(app, global, false).map_err(js_err)?
         }
         Unwrapped::Rejected(err) => {
             return Err(js_err(global.throw_value(err.to_error().unwrap_or(err))));

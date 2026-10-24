@@ -19,7 +19,7 @@ pub(crate) struct HotReloadEvent {
     pub(crate) atomics: *mut WatcherAtomics,
     pub(crate) concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask,
     pub(crate) files: StringArrayHashMap<()>,
-    pub(crate) dirs: StringArrayHashMap<()>,
+    pub(crate) dirs: StringArrayHashMap<bun_watcher::Op>,
     /// NUL-joined absolute paths.
     pub(crate) extra_files: Vec<u8>,
     pub(crate) timer: std::time::Instant,
@@ -172,15 +172,18 @@ impl HotReloadEvent {
             bun_core::handle_oom(self.files.put(rest_extra, ()));
         }
 
+        bun_core::handle_oom(dev.plugin_watchers.invalidate(self, &mut dev.bun_watcher));
         let changed_file_paths = self.files.keys();
-        bun_core::handle_oom(
-            dev.server_graph
-                .invalidate(changed_file_paths, entry_points),
-        );
-        bun_core::handle_oom(
-            dev.client_graph
-                .invalidate(changed_file_paths, entry_points),
-        );
+        bun_core::handle_oom(dev.server_graph.invalidate(
+            changed_file_paths,
+            entry_points,
+            &dev.plugin_watchers,
+        ));
+        bun_core::handle_oom(dev.client_graph.invalidate(
+            changed_file_paths,
+            entry_points,
+            &dev.plugin_watchers,
+        ));
 
         if entry_points.set.count() == 0 {
             bun_core::debug_warn!("nothing to bundle");
@@ -232,11 +235,21 @@ impl HotReloadEvent {
 
     /// Records a changed directory (and, when present, the changed entry
     /// within it) in the pending hot-reload event (deduplicated).
-    pub(crate) fn append_dir(&mut self, dir_path: &[u8], maybe_sub_path: Option<&[u8]>) {
+    pub(crate) fn append_dir(
+        &mut self,
+        dir_path: &[u8],
+        maybe_sub_path: Option<&[u8]>,
+        op: bun_watcher::Op,
+    ) {
         if dir_path.is_empty() {
             return;
         }
-        bun_core::handle_oom(self.dirs.get_or_put(dir_path));
+        let entry = bun_core::handle_oom(self.dirs.get_or_put(dir_path));
+        if entry.found_existing {
+            *entry.value_ptr |= op;
+        } else {
+            *entry.value_ptr = op;
+        }
 
         let Some(sub_path) = maybe_sub_path else {
             return;
@@ -254,6 +267,14 @@ impl HotReloadEvent {
         self.extra_files.push(bun_paths::SEP);
         self.extra_files.extend_from_slice(sub_path);
         self.extra_files.push(0);
+    }
+
+    pub(crate) fn directory_entries_changed(&self, path: &[u8]) -> bool {
+        self.dirs.get(path).is_some_and(|op| {
+            op.intersects(
+                bun_watcher::Op::DIRECTORY_ENTRIES_CHANGED | bun_watcher::Op::WATCH_INVALIDATED,
+            )
+        })
     }
 
     /// Main-thread side of the watcher → DevServer hand-off.

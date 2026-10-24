@@ -905,6 +905,7 @@ impl ServerConfig {
                                 object,
                                 global,
                                 &mut bundler_options,
+                                true,
                             ) {
                                 Ok(framework) => framework,
                                 Err(err) => {
@@ -1099,7 +1100,11 @@ impl ServerConfig {
                         )));
                     }
 
-                    args.bake = Some(crate::bake::UserOptions::from_js(bake_args_js, global)?);
+                    args.bake = Some(crate::bake::UserOptions::from_js(
+                        bake_args_js,
+                        global,
+                        true,
+                    )?);
                 }
             }
         }

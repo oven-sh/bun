@@ -439,6 +439,7 @@ unsafe fn init_runtime_state(
                     t.options.global_cache = opts.global_cache;
                     t.resolver.opts.global_cache = opts.global_cache;
                     t.resolver.prefer_module_field = false;
+                    t.resolver.validate_package_config = true;
                     // Propagate `--preserve-symlinks`
                     // from CLI args to the resolver so symlinked node_modules
                     // entries resolve via their link path (peer deps stay reachable).
@@ -1351,9 +1352,7 @@ mod vm_loader_ctx {
             read_dir_info_package_json(dir) => {
                 match (*(*this).transpiler.as_ptr()).resolver.read_dir_info(dir) {
                     Ok(Some(dir_info)) => {
-                        dir_info
-                            .package_json()
-                            .or(dir_info.enclosing_package_json)
+                        dir_info.package_json_for_node_scope()
                     }
                     _ => None,
                 }
@@ -2720,9 +2719,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                                 match unsafe {
                                     (*transpiler).resolver.read_dir_info(source.path.name().dir)
                                 } {
-                                    Ok(Some(dir_info)) => {
-                                        dir_info.package_json().or(dir_info.enclosing_package_json)
-                                    }
+                                    Ok(Some(dir_info)) => dir_info.package_json_for_node_scope(),
                                     _ => None,
                                 }
                             });
@@ -2953,8 +2950,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                                 // stable cache slot.
                                 match unsafe { (*transpiler).resolver.read_dir_info(dir) } {
                                     Ok(Some(dir_info)) => dir_info
-                                        .package_json()
-                                        .or(dir_info.enclosing_package_json)
+                                        .package_json_for_node_scope()
                                         .map(|p| p.module_type),
                                     _ => None,
                                 }
@@ -3927,7 +3923,7 @@ fn package_json_of<'a>(
     }
     // SAFETY: `read_dir_info` is re-entrant on the JS thread.
     match unsafe { (*jsc_vm.transpiler.as_ptr()).resolver.read_dir_info(dir) } {
-        Ok(Some(dir_info)) => dir_info.package_json().or(dir_info.enclosing_package_json),
+        Ok(Some(dir_info)) => dir_info.package_json_for_node_scope(),
         _ => None,
     }
 }
@@ -4330,6 +4326,20 @@ fn transpile_file<const DATA_ONLY: bool>(
         return ptr::null_mut();
     }
 
+    if matches!(lr.path.name().ext, b".js" | b".ts") {
+        // SAFETY: the resolver belongs to this live VM on its JS thread.
+        if let Some(error) = unsafe {
+            (*jsc_vm)
+                .transpiler
+                .resolver
+                .node_package_scope_error(lr.path.text, false)
+        } {
+            *ret = ErrorableResolvedSource::err(bun_jsc::ResolveMessage::from_node_module_error(
+                global, &error, false, b"", b"",
+            ));
+            return ptr::null_mut();
+        }
+    }
     let module_type = module_type_of(&lr.path, lr.package_json);
     let pkg_name: Option<&[u8]> = lr
         .package_json

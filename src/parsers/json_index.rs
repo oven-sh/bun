@@ -44,6 +44,7 @@ pub struct StructuralIndex<'c> {
     kernel_state: [u64; 3],
 
     use_scalar: bool,
+    node_package_json: bool,
     s_i: usize,
     s_prev_scalar: bool,
     s_pending_escape: bool,
@@ -53,6 +54,12 @@ pub struct StructuralIndex<'c> {
 impl<'c> StructuralIndex<'c> {
     pub fn new(contents: &'c [u8]) -> Self {
         Self::with_producer(contents, !bun_core::env::IS_NATIVE)
+    }
+
+    pub(crate) fn for_node_package_json(contents: &'c [u8]) -> Self {
+        let mut index = Self::new(contents);
+        index.node_package_json = true;
+        index
     }
 
     fn with_producer(contents: &'c [u8], use_scalar: bool) -> Self {
@@ -83,6 +90,7 @@ impl<'c> StructuralIndex<'c> {
             src_off: 0,
             kernel_state: [0; 3],
             use_scalar,
+            node_package_json: false,
             s_i: 0,
             s_prev_scalar: false,
             s_pending_escape: false,
@@ -209,7 +217,7 @@ impl<'c> StructuralIndex<'c> {
             let was_escaped = self.s_pending_escape;
             self.s_pending_escape = false;
             match c {
-                b'"' | b'\'' if !was_escaped => {
+                b'"' | b'\'' if !was_escaped && (c == b'"' || !self.node_package_json) => {
                     emit!(i);
                     self.s_prev_scalar = false;
                     let quote = c;
@@ -240,7 +248,7 @@ impl<'c> StructuralIndex<'c> {
                         i += 1;
                     }
                 }
-                b'/' => {
+                b'/' if !self.node_package_json => {
                     self.s_prev_scalar = false;
                     let start = i;
                     match s.get(i + 1) {

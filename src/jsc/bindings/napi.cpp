@@ -730,7 +730,7 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
 }
 
 extern "C" size_t Bun__napi_module_register_count;
-void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_module& mod, void* dlopenHandle, JSC::JSObject* object)
+void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_module& mod, void* dlopenHandle, JSC::JSObject* object, std::unique_ptr<char[]> filename)
 {
     JSC::VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -741,7 +741,10 @@ void Napi::executePendingNapiModule(Zig::GlobalObject* globalObject, const napi_
         return;
     }
 
-    Ref<NapiEnv> env = globalObject->makeNapiEnv(mod);
+    auto module = mod;
+    module.nm_filename = filename.get();
+    Ref<NapiEnv> env = globalObject->makeNapiEnv(module);
+    env->filename = WTF::move(filename);
     auto keyStr = WTF::String::fromUTF8(mod.nm_modname);
 
     JSValue exportsObject = object->get(globalObject, WebCore::builtinNames(vm).exportsPublicName());

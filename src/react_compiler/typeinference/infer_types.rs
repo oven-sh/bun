@@ -602,8 +602,7 @@ fn generate_for_function_id(
     Ok(())
 }
 
-/// Not in upstream: the value of `x.y++` is the store, see `MemberUpdate`. It is the number or
-/// the bigint that the load has for upstream.
+/// Not in upstream: the value of `x.y++` is the store (see `MemberUpdate`), a number or a bigint.
 fn is_postfix_update(update: Option<MemberUpdate>) -> bool {
     matches!(
         update,

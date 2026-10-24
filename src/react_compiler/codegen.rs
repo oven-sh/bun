@@ -3281,8 +3281,7 @@ fn codegen_member_update(
             }
         }
     }
-    // The load is not inline: it has a name, or it is a constant. The store prints
-    // `target = value`, and the load printed the object and the key already.
+    // The load is not inline, so the store prints `target = value` and the target prints again.
     let (obj, mut prints_again) = codegen_place_to_print_again(cx, object)?;
     let target = match key {
         MemberKey::Literal(property) => property_access_expr(obj, property, loc, None),
@@ -3300,8 +3299,7 @@ fn codegen_member_update(
             )
         }
     };
-    // `target = load + 1` is not `target++` for a BigInt, and not the value of a postfix update.
-    // A target that is more than identifiers and literals would run a second time.
+    // `target = load + 1` is not `target++`, and a target that is no name or literal would run twice.
     if matches!(update, MemberUpdate::UpdateExpression { .. }) || !prints_again {
         cx.record_error(CompilerErrorDetail {
             category: ErrorCategory::Todo,
@@ -3322,8 +3320,7 @@ fn codegen_member_update(
     ))
 }
 
-/// The expression of `place`, and whether it can print a second time: only an identifier or a
-/// literal can. Anything else would run again.
+/// The expression of `place`, and whether it can print a second time: only a name or a literal can.
 fn codegen_place_to_print_again(
     cx: &mut Context,
     place: &Place,
@@ -3337,8 +3334,7 @@ fn codegen_place_to_print_again(
         ExprData::EImportIdentifier(identifier) => identifier.ref_,
         _ => return Ok((expr, expr.is_primitive_literal())),
     };
-    // A temporary hands out the expression that it has. Each use of a symbol has to be counted:
-    // the minifier puts a declaration with one use in the place of that use.
+    // Each print of a name is a use: the minifier puts a declaration with one use in its place.
     if is_temporary {
         cx.cg.host.record_usage(identifier);
     }

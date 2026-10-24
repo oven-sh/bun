@@ -1107,8 +1107,7 @@ fn lower_update(
                 },
             )?;
 
-            // Unlike upstream: the store prints as the update expression, see `MemberUpdate`. So it
-            // is the value of a postfix update too.
+            // Unlike upstream: the store prints as the update expression, so it is the value of `x.y++` too.
             let is_as_written = builder.environment().config.member_updates_print_as_written;
             let update =
                 is_as_written.then_some(MemberUpdate::UpdateExpression { operation, prefix });

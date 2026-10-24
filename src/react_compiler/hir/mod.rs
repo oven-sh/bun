@@ -1032,9 +1032,7 @@ impl UpdateOperator {
     }
 }
 
-/// Not in upstream: the source form of a store whose `value` is `load op right`. The analysis
-/// reads the load, the `BinaryExpression` and the store. Codegen prints this form on the load's
-/// own node, so the object and the key print once.
+/// Not in upstream: the source form of a store of `load op right`. Codegen prints it on the node of the load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemberUpdate {
     /// `object.property++`, `--object.property`

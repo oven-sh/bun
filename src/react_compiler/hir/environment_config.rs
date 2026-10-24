@@ -97,9 +97,7 @@ pub struct EnvironmentConfig {
     /// `({ k: a, b } = o)` where a function captures `a` goes through temporaries, as `[a, b] = o` does. Upstream
     /// assigns `b` at once and `a` not, and fails: "Expected consistent kind for destructuring". So do both for `{ a, b }`.
     pub captured_targets_with_keys_force_temporaries: bool,
-    /// `x.y++` and `x.y += 1` print as they are written, on the node of the load, so the object and the key run once:
-    /// see `MemberUpdate`. The store is then the value of `x.y++`. Upstream prints `x.y = x.y + 1`, and its value of
-    /// `x.y++` is the load.
+    /// `x.y++` and `x.y += 1` print as written (see `MemberUpdate`). Upstream prints `x.y = x.y + 1`.
     pub member_updates_print_as_written: bool,
     /// Code that is not reached and has a function in it is reported at the first such function. Upstream reports it at
     /// its first instruction, which can be the declaration of a later function that the first one refers to.

@@ -740,8 +740,7 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 };
                 (lvalues, smallvec![(object.identifier, id)])
             }
-            // Not in upstream: the value of a `PropertyStore` with a `MemberUpdate` is never an
-            // object, so it is memoized as that of a `ComputedStore` is.
+            // Not in upstream: the value of a store with a `MemberUpdate` is never an object.
             InstructionValue::ComputedStore {
                 object,
                 value: store_value,

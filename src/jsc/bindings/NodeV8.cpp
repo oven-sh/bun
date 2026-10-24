@@ -27,6 +27,7 @@ JSC_DEFINE_HOST_FUNCTION(functionGetHeapUsage, (JSGlobalObject * globalObject, C
     JSObject* result = constructEmptyObject(globalObject);
     result->putDirect(vm, Identifier::fromString(vm, "heapSize"_s), jsNumber(used));
     result->putDirect(vm, Identifier::fromString(vm, "heapCapacity"_s), jsNumber(capacity));
+    result->putDirect(vm, Identifier::fromString(vm, "globalObjectCount"_s), jsNumber(vm.heap.globalObjectCount()));
     result->putDirect(vm, Identifier::fromString(vm, "extraMemorySize"_s), jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
     RELEASE_AND_RETURN(scope, JSValue::encode(result));
 }

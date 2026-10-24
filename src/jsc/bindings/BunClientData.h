@@ -75,6 +75,7 @@ class DOMWrapperWorld;
 #include "Bindgen/SchemaStrings.h"
 #include "DOMURLBaseCache.h"
 #include "NodeHTTPRequestHeaderValues.h"
+#include "NodeVMSourceBuffer.h"
 #include "NodeVMOptionNames.h"
 #include "NodeVMSourceOriginCache.h"
 #include <JavaScriptCore/HeapObserver.h>
@@ -247,6 +248,7 @@ public:
 
     // Public so Bun::commonStrings(vm) below is a static_cast and a member load.
     Bun::CommonStrings commonStrings;
+    Bun::NodeVMSourceBufferPool nodeVMSourceBuffers;
     Bun::Bindgen::SchemaStrings schemaStrings;
 
     WebCore::DOMURLBaseCache& urlBaseCache() { return m_urlBaseCache; }

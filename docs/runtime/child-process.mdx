@@ -121,9 +121,12 @@ To append to a file, or to keep its content, open the file and pass the file des
 import { closeSync, openSync } from "node:fs";
 
 const fd = openSync("build.log", "a"); // "a" appends. "w" replaces the content.
-const proc = Bun.spawn(["bun", "--version"], { stdout: fd, stderr: fd });
-await proc.exited;
-closeSync(fd);
+try {
+  const proc = Bun.spawn(["bun", "--version"], { stdout: fd, stderr: fd });
+  await proc.exited;
+} finally {
+  closeSync(fd);
+}
 ```
 
 ## Exit handling

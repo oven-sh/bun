@@ -632,7 +632,9 @@ impl ShellSubprocess {
             true
         };
 
-        // The shell opens a redirect to a path itself, with the operator's flags.
+        // A redirect to a path is never `Stdio::Path`, which has the flags of `Bun.spawn`.
+        // The template turns `${Bun.file(path)}` into a path word, and `Cmd` opens
+        // a `Response` over a file itself. Both use the flags of the operator.
         debug_assert!(!stdio_guard.iter().any(|s| matches!(s, Stdio::Path(_))));
 
         // Hoist asSpawnOption results so a later one failing doesn't strand an earlier

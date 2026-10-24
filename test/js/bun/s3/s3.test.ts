@@ -10,16 +10,17 @@ const S3 = (...args) => new S3Client(...args);
 
 // The `it` for the cases of a service. A case that fails against R2 runs once
 // more: R2 is a live service, and at times it answers ServiceUnavailable or
-// InternalError for some minutes. A case has no second run against the local
-// server, so a defect in Bun still fails there, and none with a limit of its
-// own, because two such runs do not fit in the time of a CI attempt.
-function itFor(service: string, base = it): typeof it {
+// InternalError for some minutes. Against the local server a case has no
+// second run, so a defect in Bun still fails there.
+type ItOfService = ((title: string, ...rest: any[]) => void) & { skipIf(condition: boolean): ItOfService };
+function itFor(service: string, base: ItOfService = it): ItOfService {
   if (service !== "R2") return base;
-  const call: (...args: any[]) => void = base;
-  const wrapped = (title: string, ...rest: any[]) =>
-    rest.length === 1 ? call(title, { retry: 1 }, rest[0]) : call(title, ...rest);
-  wrapped.skipIf = (condition: boolean) => itFor(service, base.skipIf(condition));
-  return wrapped as typeof it;
+  const onceMore = (title: string, ...rest: any[]) => {
+    const fn = rest.find(arg => typeof arg === "function");
+    const limit = rest.find(arg => arg !== fn);
+    base(title, { ...(typeof limit === "number" ? { timeout: limit } : limit), retry: 1 }, fn);
+  };
+  return Object.assign(onceMore, { skipIf: (condition: boolean) => itFor(service, base.skipIf(condition)) });
 }
 
 type S3Credentials = S3Options & {
@@ -66,7 +67,6 @@ describe.concurrent.skipIf(!r2Credentials.endpoint && !isCI)("Virtual Hosted-Sty
     endpoint: r2Url.toString(),
     virtualHostedStyle: true,
   };
-  const it = itFor("R2");
 
   it("basic operations", async () => {
     const client = new Bun.S3Client(credentials);

@@ -126,6 +126,20 @@ describe("a stream of stdin when stdin is a regular file inherited at an offset"
     });
   });
 
+  // prompt() reads stdin through a 4096-byte buffer. It gives back what it read past its line.
+  test("prompt() takes one line and a stream gets the lines after it", async () => {
+    expect(
+      await runAfterParentRead(
+        `const answer = prompt("name?"); const lines = []; for await (const line of console) lines.push(line); process.stdout.write(JSON.stringify([answer, lines]));`,
+      ),
+    ).toEqual({
+      stdout: `name? ${JSON.stringify(["body1", ["body2", ""]])}`,
+      stderr: "",
+      exitCode: 0,
+      left: "",
+    });
+  });
+
   // A slice of stdin that starts at 0 is a budget from the position, as it is for a pipe.
   test("Bun.stdin.slice(0, n).stream() takes the next n bytes", async () => {
     const slice = `let s = ""; for await (const c of Bun.stdin.slice(0, 6).stream()) s += Buffer.from(c);`;
@@ -178,18 +192,27 @@ test("a stream of a Bun.file(fd) that is not stdin does not depend on the positi
     "slice(2, 6).stream()": await afterFiveBytes(fd => streamText(Bun.file(fd).slice(2, 6).stream())),
   };
 
-  let fd = openSync(path, "r");
-  result["stream(), then text()"] = [await streamText(Bun.file(fd).stream()), await Bun.file(fd).text()];
-  closeSync(fd);
+  async function withFd<T>(file: string, flags: string, read: (fd: number) => Promise<T>) {
+    const fd = openSync(join(String(dir), file), flags);
+    try {
+      return await read(fd);
+    } finally {
+      closeSync(fd);
+    }
+  }
 
-  fd = openSync(path, "r");
-  result["text(), then stream()"] = [await Bun.file(fd).text(), await streamText(Bun.file(fd).stream())];
-  closeSync(fd);
-
-  fd = openSync(join(String(dir), "out.txt"), "w+");
-  writeSync(fd, "just written");
-  result["a written fd, then stream()"] = await streamText(Bun.file(fd).stream());
-  closeSync(fd);
+  result["stream(), then text()"] = await withFd("in.txt", "r", async fd => [
+    await streamText(Bun.file(fd).stream()),
+    await Bun.file(fd).text(),
+  ]);
+  result["text(), then stream()"] = await withFd("in.txt", "r", async fd => [
+    await Bun.file(fd).text(),
+    await streamText(Bun.file(fd).stream()),
+  ]);
+  result["a written fd, then stream()"] = await withFd("out.txt", "w+", fd => {
+    writeSync(fd, "just written");
+    return streamText(Bun.file(fd).stream());
+  });
 
   const atByte5 = content.slice(5);
   expect(result).toEqual({

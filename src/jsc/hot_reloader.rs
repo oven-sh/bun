@@ -706,6 +706,10 @@ where
             return;
         }
 
+        if RELOAD_IMMEDIATELY {
+            bun_core::remember_stdin_offset_for_reload();
+        }
+
         let reloader = bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: `this` is the live owning context; it outlives the reloader.
             ctx: unsafe { bun_ptr::BackRef::from_raw_mut(this) },

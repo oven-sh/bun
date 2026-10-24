@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, forEachLine, isBroken, isWindows, tempDir } from "harness";
+import { closeSync, openSync, readSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -45,6 +46,47 @@ describe.todoIf(isBroken && isWindows)("--watch works", async () => {
 
       process.kill("SIGKILL");
       await process.exited;
+    });
+  }
+
+  // A run moves the position of a regular-file stdin, and the next run inherits the same
+  // descriptor. Each run must start where the first one did.
+  for (const read of ["await Bun.stdin.text()", "await new Response(Bun.stdin.stream()).text()"]) {
+    test(`each run reads a regular-file stdin again with ${read}`, async () => {
+      const script = (run: number) => `console.log("run ${run}: " + JSON.stringify(${read}));`;
+      await using tmpdir_ = tempDir("watch-stdin-fixture", {
+        "input.txt": "SECRET-HEADER\nbody\n",
+        "stdin.js": script(1),
+        "package.json": JSON.stringify({ name: "foo", version: "0.0.1" }),
+      });
+      const fd = openSync(join(tmpdir_, "input.txt"), "r");
+      try {
+        // The parent took the first line, so every run starts after it.
+        readSync(fd, Buffer.alloc("SECRET-HEADER\n".length));
+        const proc = spawn({
+          cmd: [bunExe(), "--watch", join(tmpdir_, "stdin.js")],
+          cwd: tmpdir_,
+          env: bunEnv,
+          stdio: [fd, "pipe", "inherit"],
+        });
+        const iter = forEachLine(proc.stdout);
+        const lines: (string | undefined)[] = [];
+        for (let run = 1; run <= 3; run++) {
+          // The watcher can restart a run for an earlier write. Skip a line that such a restart repeats.
+          let line: string | undefined;
+          do {
+            line = (await iter.next()).value;
+          } while (line !== undefined && !line.startsWith(`run ${run}:`));
+          lines.push(line);
+          if (run < 3) await writeFile(join(tmpdir_, "stdin.js"), script(run + 1));
+        }
+        proc.kill("SIGKILL");
+        await proc.exited;
+
+        expect(lines).toEqual([`run 1: "body\\n"`, `run 2: "body\\n"`, `run 3: "body\\n"`]);
+      } finally {
+        closeSync(fd);
+      }
     });
   }
 });

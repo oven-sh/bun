@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+import { cssInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
@@ -7861,6 +7862,141 @@ describe("css tests", () => {
     minify_test("@page toc,index{margin:1em}", "@page toc,index{margin:1em}");
     minify_test("@page CompanyLetterHead:first{margin:1em}", "@page CompanyLetterHead:first{margin:1em}");
     minify_test("@page \\31 st{margin:1em}", "@page \\31 st{margin:1em}");
+  });
+
+  // An at-rule that the parser does not know has no selector that can carry the style
+  // rule it is written in. When nesting is compiled away, it stays in the block of that rule.
+  describe("unknown at-rule in a style rule", () => {
+    const { minifyTest, _test, minifyTestWithOptions } = cssInternals;
+    // The browsers of `bun build --target=browser`. None of them has CSS nesting.
+    const browsers = { chrome: 80 << 16, edge: 80 << 16, firefox: 78 << 16, safari: 14 << 16, opera: 67 << 16 };
+
+    // lightningcss 1.33.0 prints the same bytes for these.
+    test.each([
+      [".btn { @apply font-bold; }", ".btn{@apply font-bold;}"],
+      [".btn { color: red; @apply font-bold; }", ".btn{color:red;@apply font-bold;}"],
+      [".card { @variant dark { color: blue; } }", ".card{@variant dark{color: blue;}}"],
+      [".a, .b { @apply x; }", ".a,.b{@apply x;}"],
+      [".p { .q { @apply x; } }", ".p .q{@apply x;}"],
+      [".a { & { @apply x; } }", ".a{@apply x;}"],
+      [".a { @nest .b & { @apply x; } }", ".b .a{@apply x;}"],
+      ["@media print { .a { @apply x; } }", "@media print{.a{@apply x;}}"],
+      ["@scope (.x) { .a { @apply y; } }", "@scope(.x){.a{@apply y;}}"],
+      // The other nested rules follow the block.
+      [".a { @apply x; .b { color: red } }", ".a{@apply x;}.a .b{color:red}"],
+      [
+        ".a { .b { color: red } @apply x; .c { color: blue } @apply y; }",
+        ".a{@apply x;@apply y;}.a .b{color:red}.a .c{color:#00f}",
+      ],
+      [".a { @apply x; @media print { color: red } }", ".a{@apply x;}@media print{.a{color:red}}"],
+      // Each vendor prefix pass of the rule has the block.
+      [".a:fullscreen { @apply x; }", ".a:-webkit-full-screen{@apply x;}.a:fullscreen{@apply x;}"],
+      // So does each rule that the selector list is split into for the targets.
+      [".a, .b:focus-visible { @apply x; }", ".b:focus-visible{@apply x;}.a{@apply x;}"],
+      // `@import` is not moved to the top level, where it would be live.
+      ['.a { @import "foo.css"; }', '.a{@import "foo.css";}'],
+    ])("%s", (source, expected) => {
+      expect(minifyTest(source, "", browsers)).toBe(expected);
+    });
+
+    // lightningcss parses `@property` and `@position-try` in a style rule and prints them
+    // after the block. Here they are unknown at-rules, and they keep that place.
+    test("@property stays after the block", () => {
+      const source = '.a { @property --x { syntax: "*"; inherits: false } @apply y; .b { color: blue } }';
+      expect(minifyTest(source, "", browsers)).toBe(
+        '.a{@apply y;}@property --x{syntax: "*"; inherits: false}.a .b{color:#00f}',
+      );
+    });
+
+    describe("not minified", () => {
+      test.each([
+        [".btn { color: red; @apply font-bold; }", ".btn {\n  color: red;\n  @apply font-bold;\n}\n"],
+        [".a { @apply x; .b { color: red } }", ".a {\n  @apply x;\n}\n\n.a .b {\n  color: red;\n}\n"],
+        // The nested rule has vendor prefix passes of its own.
+        [
+          ".a { @apply x; .b:fullscreen { color: red } }",
+          ".a {\n  @apply x;\n}\n\n.a .b:-webkit-full-screen {\n  color: red;\n}\n\n.a .b:fullscreen {\n  color: red;\n}\n",
+        ],
+      ])("%s", (source, expected) => {
+        expect(_test(source, "", browsers)).toBe(expected);
+      });
+    });
+
+    // https://github.com/parcel-bundler/lightningcss/commit/729e03e258cdc73ea44b134621853da787b62428
+    describe("the tests of lightningcss", () => {
+      test("nesting_test", () => {
+        const source = `
+          .foo {
+            @apply --mixin;
+            @apply --mixin-no-args();
+            @apply --mixin-args(1, 2);
+            @apply --mixin-with-empty-body {};
+            @apply --mixin-with-body {
+              color: red;
+            }
+            .bar {
+              @apply --nested;
+            }
+          }
+        `;
+        expect(_test(source, "", { chrome: 95 << 16 })).toBe(
+          ".foo {\n  @apply --mixin;\n  @apply --mixin-no-args();\n  @apply --mixin-args(1, 2);\n" +
+            "  @apply --mixin-with-empty-body {\n    \n  }\n  @apply --mixin-with-body {\n    color: red;\n  }\n}\n\n" +
+            ".foo .bar {\n  @apply --nested;\n}\n",
+        );
+      });
+
+      // No targets: nesting is kept, and this output is the same without the fix.
+      test("minify_test", () => {
+        const source = `
+          .foo {
+            @apply --mixin;
+            @apply --mixin-no-args();
+            @apply --mixin-args(1,2);
+            @apply --mixin-with-empty-body {};
+            @apply --mixin-with-body {
+              color: red;
+            };
+            .bar {
+              @apply --nested;
+            }
+          }
+        `;
+        expect(minifyTestWithOptions(source, "")).toBe(
+          ".foo{@apply --mixin;@apply --mixin-no-args();@apply --mixin-args(1,2);@apply --mixin-with-empty-body{}" +
+            "@apply --mixin-with-body{color: red;}& .bar{@apply --nested;}}",
+        );
+      });
+    });
+
+    describe("the output does not change", () => {
+      test.each([
+        ["@apply x;", "@apply x;"],
+        ["@media print { @apply x; }", "@media print{@apply x;}"],
+      ])("with no style rule around it: %s", (source, expected) => {
+        expect(minifyTest(source, "", browsers)).toBe(expected);
+      });
+
+      test.each([
+        [
+          '.a { color: red; @property --x { syntax: "*"; inherits: false } }',
+          '.a{color:red}@property --x{syntax: "*"; inherits: false}',
+        ],
+        [
+          ".a { color: red; @POSITION-TRY --p { top: anchor(bottom) } }",
+          ".a{color:red}@POSITION-TRY --p{top: anchor(bottom)}",
+        ],
+      ])("for an at-rule that lightningcss prints after the block: %s", (source, expected) => {
+        expect(minifyTest(source, "", browsers)).toBe(expected);
+      });
+
+      test.each([
+        [".btn { color: red; @apply font-bold; }", ".btn{color:red;@apply font-bold;}"],
+        [".a { @media print { @apply x; } }", ".a{@media print{@apply x;}}"],
+      ])("when nesting is kept: %s", (source, expected) => {
+        expect(minifyTestWithOptions(source, "")).toBe(expected);
+      });
+    });
   });
 
   describe("container", () => {

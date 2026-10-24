@@ -414,18 +414,50 @@ impl<R> CssRule<R> {
             _ => false,
         }
     }
+
+    /// The unknown at-rule that a style rule prints inside its own block when nesting is compiled away.
+    #[inline]
+    fn as_in_block_at_rule(&self) -> Option<&unknown::UnknownAtRule> {
+        let CssRule::Unknown(rule) = self else {
+            return None;
+        };
+        // lightningcss parses these two in a style rule and hoists them. Here they are unknown at-rules.
+        let is_hoisted = crate::match_ignore_ascii_case! { rule.name, {
+            b"property" | b"position-try" => true,
+            _ => false,
+        } };
+        (!is_hoisted).then_some(rule)
+    }
 }
 
 // ─── CssRuleList::{to_css,minify,deep_clone} ──────────────────────────────
 
 impl<R> CssRuleList<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        self.to_css_impl(dest, false)
+    }
+
+    /// The nested rules of a style rule, without the at-rules that it printed inside its own block.
+    pub(crate) fn to_css_hoisted(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        self.to_css_impl(dest, true)
+    }
+
+    fn to_css_impl(&self, dest: &mut Printer, skip_in_block: bool) -> Result<(), PrintErr> {
         let mut first = true;
         let mut last_without_block = false;
 
         for rule in self.v.iter() {
-            if matches!(rule, CssRule::Ignored) {
-                continue;
+            // One range test on the last three variants keeps `skip_in_block` off the path of every other rule.
+            if matches!(
+                rule,
+                CssRule::Ignored | CssRule::Unknown(_) | CssRule::Custom(_)
+            ) {
+                core::hint::cold_path();
+                if matches!(rule, CssRule::Ignored)
+                    || (skip_in_block && rule.as_in_block_at_rule().is_some())
+                {
+                    continue;
+                }
             }
 
             // While re-serializing nested rules for a non-final vendor prefix

@@ -2261,6 +2261,70 @@ c {
   toplevel-tilde.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
   `, */
   });
+
+  // The browser targets compile nesting away. An at-rule that the parser does not
+  // know stays in the block of its style rule.
+  for (const backend of ["cli", "api"] as const) {
+    for (const minify of [false, true]) {
+      itBundled(`css/UnknownAtRuleInStyleRule${backend === "api" ? "API" : ""}${minify ? "Minified" : ""}`, {
+        backend,
+        files: {
+          "/entry.css": /* css */ `
+            .btn { @apply font-bold; }
+            .btn2 { color: red; @apply font-bold; }
+            .card { @variant dark { color: blue; } }
+            .p { .q { @apply x; } }
+          `,
+        },
+        outfile: "/out.css",
+        minifyWhitespace: minify,
+        minifySyntax: minify,
+        onAfterBundle(api) {
+          api
+            .expectFile("/out.css")
+            .toBe(
+              minify
+                ? ".btn{@apply font-bold;}.btn2{color:red;@apply font-bold;}.card{@variant dark{color: blue;}}" +
+                    ".p .q{@apply x;}\n"
+                : "/* entry.css */\n.btn {\n  @apply font-bold;\n}\n\n.btn2 {\n  color: red;\n  @apply font-bold;\n}\n\n" +
+                    ".card {\n  @variant dark {\n    color: blue;\n  }\n}\n\n.p .q {\n  @apply x;\n}\n",
+            );
+        },
+      });
+    }
+  }
+  // `--no-bundle` minifies with no targets and prints for the browser targets: no
+  // selector list is split and no vendor prefix pass is added.
+  itBundled("css/UnknownAtRuleInStyleRuleNoBundle", {
+    files: {
+      "/entry.css": /* css */ `
+        .btn { color: red; @apply x; }
+        .a, .b:focus-visible { @apply x; }
+        .c:fullscreen { @apply y; }
+      `,
+    },
+    bundling: false,
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api
+        .expectFile("/out.css")
+        .toBe(".btn{color:red;@apply x;}.a,.b:focus-visible{@apply x;}.c:fullscreen{@apply y;}");
+    },
+  });
+  // `--target=bun` keeps nesting: the at-rule is printed where it is written.
+  itBundled("css/UnknownAtRuleInStyleRuleNestingKept", {
+    target: "bun",
+    files: {
+      "/entry.css": `.a { @media print { @apply x; } }`,
+    },
+    outfile: "/out.css",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toBe(".a{@media print{@apply x;}}\n");
+    },
+  });
+
   itBundled("css/MetafileCSSBundleTwoToOne", {
     files: {
       "/foo/entry.js": /* js */ `

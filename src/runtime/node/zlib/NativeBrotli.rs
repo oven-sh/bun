@@ -166,7 +166,7 @@ mod _impl {
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
             let write_result_value = write_state.to_js();
-            let Some(mut write_result_buf) = write_result_value.as_array_buffer(global_this) else {
+            let Some(write_result_buf) = write_result_value.as_array_buffer(global_this) else {
                 return Err(global_this.throw_invalid_argument_type_value(
                     "writeResult",
                     "Uint32Array",
@@ -180,8 +180,7 @@ mod _impl {
                     write_result_value,
                 ));
             }
-            let write_result_slice = write_result_buf.as_u32();
-            if write_result_slice.len() < 2 {
+            if write_result_buf.len < 2 {
                 return Err(global_this
                     .err(
                         ErrorCode::INVALID_ARG_VALUE,
@@ -196,10 +195,10 @@ mod _impl {
             )?;
 
             // Validate `params` before any native state is initialized so the
-            // error path needs no cleanup. `as_u32` reinterprets the view's
+            // error path needs no cleanup. `elements::<u32>` reinterprets the view's
             // bytes, so the element type must actually be Uint32Array.
             let params_value = init_params_array.to_js();
-            let Some(mut params_buf) = params_value.as_array_buffer(global_this) else {
+            let Some(params_buf) = params_value.as_array_buffer(global_this) else {
                 return Err(global_this.throw_invalid_argument_type_value(
                     "params",
                     "Uint32Array",
@@ -248,9 +247,10 @@ mod _impl {
                 return Ok(false);
             }
 
-            let params_ = params_buf.as_u32();
+            let params_ = params_buf.elements::<u32>();
 
-            for (i, &d) in params_.iter().enumerate() {
+            for (i, d) in params_.iter().enumerate() {
+                let d = d.get();
                 // (d == -1) {
                 if d == u32::MAX {
                     continue;

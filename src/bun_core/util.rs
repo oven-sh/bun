@@ -36,28 +36,41 @@ pub unsafe fn bytes_as_slice_mut<T>(bytes: &mut [u8]) -> &mut [T] {
 #[derive(Copy, Clone)]
 pub struct Unaligned<T: Copy>(T);
 
+// SAFETY: `#[repr(C, packed)]` around one `T` has the bytes of `T` and no padding. All zeroes is
+// valid because it is valid for `T`.
+unsafe impl<T: bytemuck::Zeroable + Copy> bytemuck::Zeroable for Unaligned<T> {}
+// SAFETY: as above, every bit pattern is valid because it is valid for `T`, and `T: Pod` is
+// `Copy + 'static`.
+unsafe impl<T: bytemuck::Pod> bytemuck::Pod for Unaligned<T> {}
+
 impl<T: Copy> Unaligned<T> {
+    #[inline(always)]
+    pub const fn new(value: T) -> Self {
+        Self(value)
+    }
+
     #[inline(always)]
     pub fn get(self) -> T {
         // `self` is by-value (already moved into an aligned local), so a plain
         // field read is fine; the `packed` repr only affects in-place borrows.
         self.0
     }
+}
 
+impl<T: bytemuck::Pod> Unaligned<T> {
+    /// The whole `T`s in `bytes`, in place. `bytes` can be at any address.
     #[inline]
-    pub fn slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T] {
-        if slice.is_empty() {
-            return &mut [];
-        }
-        debug_assert!(
-            (slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<T>()),
-            "Unaligned::slice_align_cast_mut: pointer is not {}-byte aligned",
-            core::mem::align_of::<T>(),
-        );
-        // SAFETY: `#[repr(C, packed)]` around a single `T` gives identical size
-        // and field offset 0; the debug-asserted alignment upgrades it to `T`'s
-        // layout. `&mut` exclusivity is preserved.
-        unsafe { core::slice::from_raw_parts_mut(slice.as_mut_ptr().cast::<T>(), slice.len()) }
+    pub fn slice_from_bytes(bytes: &[u8]) -> &[Self] {
+        const { assert!(size_of::<T>() != 0) };
+        bytemuck::cast_slice(&bytes[..bytes.len() - bytes.len() % size_of::<T>()])
+    }
+
+    /// See [`slice_from_bytes`](Self::slice_from_bytes).
+    #[inline]
+    pub fn slice_from_bytes_mut(bytes: &mut [u8]) -> &mut [Self] {
+        const { assert!(size_of::<T>() != 0) };
+        let whole = bytes.len() - bytes.len() % size_of::<T>();
+        bytemuck::cast_slice_mut(&mut bytes[..whole])
     }
 }
 
@@ -3092,9 +3105,10 @@ pub fn bytes_of<T: bytemuck::NoUninit>(v: &T) -> &[u8] {
 }
 
 // ─── Slice reinterpretation (canonical) ───────────────────────────────────────
-// Split by mutability, with two safety surfaces:
+// Split by mutability, with three safety surfaces:
 //   - `cast_slice` / `cast_slice_mut`  → SAFE, bytemuck-bounded, panics on
 //     misalign or `len % size_of::<B>() != 0`. Use for Pod↔Pod (u8↔u16 etc.).
+//   - `Unaligned::slice_from_bytes` / `_mut` → SAFE, no panic. Use for bytes at any address.
 //   - `bytes_as_slice_mut`             → UNSAFE escape hatch, unbounded `T`,
 //     TRUNCATES trailing bytes. Use only when `T` is not
 //     `AnyBitPattern` or the input length is intentionally not a multiple.

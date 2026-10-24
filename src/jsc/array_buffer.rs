@@ -679,23 +679,16 @@ impl ArrayBuffer {
         self.byte_slice_mut()
     }
 
-    /// See [`as_u16`]; 4-byte variant.
+    /// The elements, in place. Storage that JSC adopted starts at any address: there is no `&[T]`.
     #[inline]
-    pub fn as_u32(&mut self) -> &mut [u32] {
-        bun_core::Unaligned::slice_align_cast_mut(self.as_u32_unaligned())
+    pub fn elements<T: bytemuck::Pod>(&self) -> &[bun_core::Unaligned<T>] {
+        bun_core::Unaligned::slice_from_bytes(self.byte_slice())
     }
 
-    /// See [`as_u16_unaligned`]; 4-byte variant.
+    /// See [`elements`](Self::elements).
     #[inline]
-    pub(crate) fn as_u32_unaligned(&mut self) -> &mut [bun_core::Unaligned<u32>] {
-        if self.is_detached() {
-            return &mut [];
-        }
-        let len = self.byte_len / core::mem::size_of::<u32>();
-        // SAFETY: ptr non-null; `Unaligned<u32>` has size 4 / align 1, so any
-        // `*mut u8` is a valid `*mut Unaligned<u32>`. `&mut self` enforces
-        // exclusive access to this view.
-        unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<bun_core::Unaligned<u32>>(), len) }
+    pub fn elements_mut<T: bytemuck::Pod>(&mut self) -> &mut [bun_core::Unaligned<T>] {
+        bun_core::Unaligned::slice_from_bytes_mut(self.byte_slice_mut())
     }
 }
 

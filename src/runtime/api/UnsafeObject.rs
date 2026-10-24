@@ -1,5 +1,8 @@
+use crate::node::types::Encoding;
+use crate::webcore::encoding;
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::StringJsc as _;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::{GCLevel, VirtualMachine};
 use bun_jsc::{self as jsc, JSType, JSValue, JsResult};
@@ -28,12 +31,20 @@ pub(crate) fn array_buffer_to_string<'a>(
 
     let array_buffer = jsc::ArrayBuffer::from_typed_array(global, buffer);
     match array_buffer.typed_array_type {
-        // The empty slice of a detached view is not aligned.
-        JSType::Uint16Array | JSType::Int16Array if !array_buffer.byte_slice().is_empty() => {
-            // Uint16Array/Int16Array storage is u16-aligned with even byte length;
-            // bytemuck checks both at runtime.
-            let utf16: &[u16] = bytemuck::cast_slice(array_buffer.byte_slice());
-            Ok(EncodedSlice::utf16(utf16).to_js(global))
+        JSType::Uint16Array | JSType::Int16Array => {
+            let bytes = array_buffer.byte_slice();
+            match bytemuck::try_cast_slice::<u8, u16>(bytes) {
+                Ok(utf16) => Ok(EncodedSlice::utf16(utf16).to_js(global)),
+                // An odd address: external memory, or the empty slice of a detached view.
+                Err(_) => {
+                    let string = encoding::to_bun_string(bytes, Encoding::Utf16le);
+                    // Like `to_js`, too many units or no memory give the empty string.
+                    if string.is_dead() {
+                        return Ok(JSValue::js_empty_string(global));
+                    }
+                    string.into_js(global)
+                }
+            }
         }
         _ => Ok(EncodedSlice::latin1(array_buffer.slice()).to_js(global)),
     }

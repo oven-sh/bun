@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, unalignedTypedArraySource } from "harness";
 
 // Tests for bounds checking on native zlib handle write/writeSync methods.
 // These verify that user-controlled offset/length parameters are validated
@@ -144,6 +144,118 @@ describe("zlib native handle writeState", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("still works");
     expect(exitCode).toBe(0);
+  });
+
+  // init() reads the params array and every write stores two u32s in the writeState array. An
+  // ArrayBuffer over external memory can start at any address. Each case runs in a subprocess, so
+  // that an abort fails the case and not the test runner.
+  async function run(body: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const zlib = require("node:zlib");\n${unalignedTypedArraySource}\n${body}`],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("init() and a write use a Uint32Array at an unaligned address like an aligned one", async () => {
+    const result = await run(`
+      const input = Buffer.alloc(1024, "the quick brown fox jumps over the lazy dog. ");
+      // Compresses \`input\` in one write and returns what the write left in \`writeState\`.
+      function write(handle, writeState, finish) {
+        const out = Buffer.alloc(4096);
+        handle.writeSync(finish, input, 0, input.length, out, 0, out.length);
+        return Array.from(writeState).join(",");
+      }
+      {
+        const C = zlib.createDeflate()._handle.constructor;
+        const states = [new Uint32Array(2), unaligned(Uint32Array, [0, 0])].map(writeState => {
+          const h = new C(zlib.constants.DEFLATE);
+          h.init(15, 6, 8, 0, writeState, () => {}, undefined);
+          return write(h, writeState, zlib.constants.Z_FINISH);
+        });
+        console.log("zlib", states[0] !== "0,0" && states[1] === states[0] ? "same" : JSON.stringify(states));
+      }
+      {
+        const C = zlib.createBrotliCompress()._handle.constructor;
+        const unset = new Array(10).fill(0xffffffff);
+        const quality0 = unset.with(zlib.constants.BROTLI_PARAM_QUALITY, 0);
+        const states = [
+          [new Uint32Array(unset), new Uint32Array(2)],
+          [new Uint32Array(quality0), new Uint32Array(2)],
+          [unaligned(Uint32Array, quality0), unaligned(Uint32Array, [0, 0])],
+        ].map(([params, writeState]) => {
+          const h = new C(zlib.constants.BROTLI_ENCODE);
+          h.init(params, writeState, () => {});
+          return write(h, writeState, zlib.constants.BROTLI_OPERATION_FINISH);
+        });
+        // Quality 0 gives a larger output than the default quality.
+        console.log("brotli", states[1] !== states[0] && states[2] === states[1] ? "same" : JSON.stringify(states));
+      }
+      {
+        const C = zlib.createZstdCompress()._handle.constructor;
+        const unset = new Array(zlib.constants.ZSTD_c_checksumFlag + 1).fill(0xffffffff);
+        const checksum = unset.with(zlib.constants.ZSTD_c_checksumFlag, 1);
+        const states = [
+          [new Uint32Array(unset), new Uint32Array(2)],
+          [new Uint32Array(checksum), new Uint32Array(2)],
+          [unaligned(Uint32Array, checksum), unaligned(Uint32Array, [0, 0])],
+        ].map(([params, writeState]) => {
+          const h = new C(zlib.constants.ZSTD_COMPRESS);
+          h.init(params, undefined, writeState, () => {});
+          return write(h, writeState, zlib.constants.ZSTD_e_end);
+        });
+        // The checksum adds 4 bytes to the output.
+        console.log("zstd", states[1] !== states[0] && states[2] === states[1] ? "same" : JSON.stringify(states));
+      }
+    `);
+    expect(result).toEqual({ stdout: "zlib same\nbrotli same\nzstd same\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("init() throws on a writeState of one element, and a write skips one that shrank", async () => {
+    const result = await run(`
+      const { DEFLATE, BROTLI_ENCODE, ZSTD_COMPRESS, Z_FINISH } = zlib.constants;
+      const handle = (create, mode) => new (zlib[create]()._handle.constructor)(mode);
+      const inits = {
+        zlib: writeState => handle("createDeflate", DEFLATE).init(15, 6, 8, 0, writeState, () => {}, undefined),
+        brotli: writeState => handle("createBrotliCompress", BROTLI_ENCODE).init(new Uint32Array(0), writeState, () => {}),
+        zstd: writeState =>
+          handle("createZstdCompress", ZSTD_COMPRESS).init(new Uint32Array(0), undefined, writeState, () => {}),
+      };
+      for (const [name, init] of Object.entries(inits)) {
+        for (const writeState of [new Uint32Array(1), unaligned(Uint32Array, [0])]) {
+          try { init(writeState); console.log(name, "handled"); }
+          catch (e) { console.log(name, "threw " + e.code + ": " + e.message); }
+        }
+      }
+
+      const buffer = new ArrayBuffer(8, { maxByteLength: 8 });
+      const writeState = new Uint32Array(buffer);
+      const h = handle("createDeflate", DEFLATE);
+      h.init(15, 6, 8, 0, writeState, () => {}, undefined);
+      writeState[0] = 7;
+      buffer.resize(4);
+      const out = Buffer.alloc(64);
+      h.writeSync(Z_FINISH, Buffer.from("hello"), 0, 5, out, 0, out.length);
+      console.log("shrank to", Array.from(writeState).join(","));
+    `);
+    const tooShort = (name: string) =>
+      `threw ERR_INVALID_ARG_VALUE: ${name} must be a Uint32Array with at least 2 elements`;
+    expect(result).toEqual({
+      stdout:
+        [
+          "zlib " + tooShort("writeResult"),
+          "zlib " + tooShort("writeResult"),
+          "brotli " + tooShort("writeResult"),
+          "brotli " + tooShort("writeResult"),
+          "zstd " + tooShort("writeState"),
+          "zstd " + tooShort("writeState"),
+          "shrank to 7",
+        ].join("\n") + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

@@ -213,6 +213,31 @@ const filler = net.connect(port, "127.0.0.1");
 await new Promise((resolve, reject) => filler.on("connect", resolve).on("error", reject));
 `;
 
+/**
+ * Source for a `bun -e` script: binds `unaligned(TypedArray, values, offset = 1)`, which returns
+ * `values` in a view whose ArrayBuffer starts `offset` bytes after an 8-byte boundary. Also binds
+ * `ptr` and `toArrayBuffer` of bun:ffi, and `keepAlive`. `values` is not empty: `toArrayBuffer`
+ * throws on a length of 0.
+ *
+ * JSC aligns the buffers it allocates. A buffer over other memory (bun:ffi, N-API, Bun.mmap, a
+ * slice of a large Blob) starts at any address.
+ */
+export const unalignedTypedArraySource = `
+const { ptr, toArrayBuffer } = require("bun:ffi");
+const keepAlive = [];
+function unaligned(TypedArray, values, offset = 1) {
+  const aligned = new TypedArray(values);
+  // The returned view is a window into this buffer, which has to outlive it.
+  const backing = new Uint8Array(new ArrayBuffer(aligned.byteLength + 16));
+  keepAlive.push(backing);
+  const address = ptr(backing);
+  const buffer = toArrayBuffer(address, 8 - (address % 8) + offset, aligned.byteLength);
+  new Uint8Array(buffer).set(new Uint8Array(aligned.buffer));
+  if (ptr(buffer) % 8 !== offset) throw new Error("the ArrayBuffer is not at the requested address");
+  return new TypedArray(buffer);
+}
+`;
+
 export function nodeExe(): string | null {
   return which("node") || null;
 }

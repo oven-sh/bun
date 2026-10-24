@@ -1,3 +1,4 @@
+import { ptr, toArrayBuffer } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
 import {
   bunEnv,
@@ -285,6 +286,15 @@ it("BigIntArray", () => {
       );
     }
   }
+});
+
+it("TypedArray over memory that is not aligned for its elements", () => {
+  const view = new DataView(new ArrayBuffer(24));
+  const address = ptr(view);
+  const offset = address % 8 === 0 ? 1 : 0;
+  view.setFloat64(offset, 1.5, true);
+  view.setFloat64(offset + 8, -2, true);
+  expect(Bun.inspect(new Float64Array(toArrayBuffer(address + offset, 0, 16)))).toBe("Float64Array(2) [ 1.5, -2 ]");
 });
 
 for (let TypedArray of [Float32Array, Float64Array]) {
@@ -1429,6 +1439,13 @@ describe.concurrent("Bun.inspect when loading util.inspect for a custom inspect 
     `);
     expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
   });
+});
+
+it("a native object that refers to itself more than once", () => {
+  const decoder = new TextDecoder();
+  decoder.first = decoder;
+  decoder.second = decoder;
+  expect(Bun.inspect(decoder)).toStartWith("TextDecoder {\n  first: [Circular],\n  second: [Circular],\n");
 });
 
 // Runs in a subprocess because a native stack overflow would kill the test runner.

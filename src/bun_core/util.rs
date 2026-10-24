@@ -4318,21 +4318,6 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
-/// The position of stdin when watch mode started, or -1 for a stdin that cannot seek.
-#[cfg(unix)]
-static STDIN_OFFSET_FOR_RELOAD: core::sync::atomic::AtomicI64 =
-    core::sync::atomic::AtomicI64::new(-1);
-
-/// Records where stdin is, so that `reload_process` can put it back for the next run.
-pub fn remember_stdin_offset_for_reload() {
-    #[cfg(unix)]
-    {
-        // SAFETY: `lseek` takes no pointers. It fails with ESPIPE on a pipe or a terminal.
-        let offset = unsafe { libc::lseek(0, 0, libc::SEEK_CUR) };
-        STDIN_OFFSET_FOR_RELOAD.store(offset as i64, AOrdering::Relaxed);
-    }
-}
-
 /// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → exits with 1.
 /// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
 /// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
@@ -4395,10 +4380,6 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     // SAFETY: FFI calls receive only locally-built NUL-terminated argv/envp arrays; on success
     // `execve` never returns, on failure errno is read. No borrowed Rust state observed after.
     unsafe {
-        let stdin_offset = STDIN_OFFSET_FOR_RELOAD.load(AOrdering::Relaxed);
-        if stdin_offset >= 0 {
-            libc::lseek(0, stdin_offset as libc::off_t, libc::SEEK_SET);
-        }
         {
             unsafe extern "C" {
                 safe fn on_before_reload_process_posix();

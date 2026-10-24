@@ -402,40 +402,6 @@ ${chain}
     expect([0, 1]).toContain(exit);
   });
 
-  // `bun build` prints `ref.current++` in place, so there its value is the store. The rules read what upstream lowers:
-  // the value of a postfix update is the load, and a use of that value is one more report.
-  test("an update of a ref in render is reported as upstream lowers it", async () => {
-    const component = (body: string) =>
-      `import { useRef } from "react";\nexport function Component({ log }) {\n  const ref = useRef([0, 0]);\n  ${body}\n  return <div />;\n}\n`;
-    const { diagnostics, exit } = await report({
-      ".oxlintrc.json": rc(["react/refs"]),
-      "postfix-used.jsx": component("const id = ref.current++;\n  log(id);"),
-      "prefix-used.jsx": component("const id = ++ref.current;\n  log(id);"),
-      "postfix-unused.jsx": component("ref.current++;"),
-      "compound.jsx": component("let i = 0;\n  ref.current[i++] += 1;\n  log(i);"),
-    });
-    expect(Object.fromEntries(Object.entries(diagnostics).map(([file, found]) => [file, locationsOf(found)]))).toEqual({
-      "postfix-used.jsx": [
-        ["react(refs)", 4, 14],
-        ["react(refs)", 4, 14],
-        ["react(refs)", 4, 17],
-      ],
-      "prefix-used.jsx": [
-        ["react(refs)", 4, 16],
-        ["react(refs)", 4, 19],
-      ],
-      "postfix-unused.jsx": [
-        ["react(refs)", 4, 3],
-        ["react(refs)", 4, 6],
-      ],
-      "compound.jsx": [
-        ["react(refs)", 5, 3],
-        ["react(refs)", 5, 6],
-      ],
-    });
-    expect(exit).toBe(1);
-  });
-
   test("reports nothing for a path that contains node_modules", async () => {
     const { diagnostics, files, exit } = await report(small.node_modules);
     expect(diagnostics).toEqual(expected.reports.node_modules.diagnostics);

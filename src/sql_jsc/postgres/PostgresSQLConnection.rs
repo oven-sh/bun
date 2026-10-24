@@ -1759,8 +1759,7 @@ impl PostgresSQLConnection {
         self.pipelined_requests.get() > 0 || self.nonpipelinable_requests.get() > 0
     }
 
-    /// BEGIN and SAVEPOINT follow each other. COMMIT waits for the results of the user's
-    /// statements, and BEGIN for a lost statement to be written again (26000).
+    /// COMMIT waits for the user's results, BEGIN for a lost statement's retry (26000).
     fn has_user_request_in_flight(&self) -> bool {
         let requests = self.requests.get();
         let written = requests
@@ -1772,8 +1771,7 @@ impl PostgresSQLConnection {
             .any(|request| !request.flags.get().internal)
     }
 
-    /// What is written behind a request runs whatever becomes of it. What is not written yet was
-    /// handed over under the assumption that BEGIN or SAVEPOINT went through.
+    /// They were handed over for a transaction or savepoint that never began.
     fn reject_unwritten_behind_refused_internal(&self, error: JSValue) {
         let unwritten: Vec<RefPtr<PostgresSQLQuery>> = {
             let requests = self.requests.get();

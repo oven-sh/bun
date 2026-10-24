@@ -1822,7 +1822,7 @@ impl<'a> Resolver<'a> {
                                 package_json: res.package_json,
                                 dirname_fd: res.dirname_fd,
                                 file_fd: res.file_fd,
-                                jsx: tsconfig.merge_jsx(self.opts.jsx.clone()),
+                                jsx: self.opts.jsx.clone(),
                                 ..Default::default()
                             });
                         }

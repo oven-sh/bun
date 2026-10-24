@@ -1,9 +1,11 @@
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_collections::VecExt;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_sys::FdExt as _;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 
 // `bun.jsc.WebCore` lives in this crate (not `bun_jsc`); alias so the body can
 // say `webcore::ReadableStream` / `webcore::body::Value`.
@@ -32,7 +34,7 @@ bun_output::define_scoped_log!(log, SYS, visible);
 
 /// Payload of `Stdio::Capture`.
 #[derive(Clone, Copy)]
-pub struct Capture {
+pub(crate) struct Capture {
     // BACKREF: raw pointer to a capture buffer owned by the shell interpreter.
     // The shell keeps the buffer alive for the lifetime
     // of the spawned process; this struct never frees it.
@@ -42,7 +44,7 @@ pub struct Capture {
 
 /// Payload of `Stdio::Dup2`.
 #[derive(Clone, Copy)]
-pub struct Dup2 {
+pub(crate) struct Dup2 {
     pub out: StdioKind,
     pub(crate) to: StdioKind,
 }
@@ -50,7 +52,7 @@ pub struct Dup2 {
 // Constructed/matched in many other files (subprocess, shell); boxing `Blob`
 // would ripple through all of them.
 #[allow(clippy::large_enum_variant)]
-pub enum Stdio {
+pub(crate) enum Stdio {
     Inherit,
     Capture(Capture),
     Ignore,
@@ -58,6 +60,7 @@ pub enum Stdio {
     Dup2(Dup2),
     Path(PathLike<'static>),
     Blob(webcore::blob::Any),
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     Memfd(Fd),
     Pipe,
     /// Like `Pipe` at indices >= 3, but the parent end of the socketpair is
@@ -113,13 +116,8 @@ impl Stdio {
         }
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn can_use_memfd(&self) -> bool {
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            return false;
-        }
-
-        #[cfg(any(target_os = "linux", target_os = "android"))]
         match self {
             Self::Blob(blob) => !blob.needs_to_read_file(),
             Self::Memfd(_) => true,
@@ -129,75 +127,63 @@ impl Stdio {
         }
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn use_memfd(&mut self, index: u32) -> bool {
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-        {
-            let _ = index;
+        use crate::api::bun_process::spawn_sys;
+        if !spawn_sys::can_use_memfd() {
             return false;
         }
+        let label: &core::ffi::CStr = match index {
+            0 => c"spawn_stdio_stdin",
+            1 => c"spawn_stdio_stdout",
+            2 => c"spawn_stdio_stderr",
+            _ => c"spawn_stdio_memory_file",
+        };
 
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            use crate::api::bun_process::spawn_sys;
-            if !spawn_sys::can_use_memfd() {
-                return false;
-            }
-            let label: &core::ffi::CStr = match index {
-                0 => c"spawn_stdio_stdin",
-                1 => c"spawn_stdio_stdout",
-                2 => c"spawn_stdio_stderr",
-                _ => c"spawn_stdio_memory_file",
-            };
+        let fd = match spawn_sys::memfd_create(label, spawn_sys::MemfdFlag::CrossProcess) {
+            Ok(fd) => fd,
+            Err(_) => return false,
+        };
 
-            let fd = match spawn_sys::memfd_create(label, spawn_sys::MemfdFlag::CrossProcess) {
-                Ok(fd) => fd,
-                Err(_) => return false,
-            };
+        let mut remain = self.byte_slice();
 
-            let mut remain = self.byte_slice();
+        if !remain.is_empty() {
+            // Hint at the size of the file
+            let _ = sys::ftruncate(fd, i64::try_from(remain.len()).expect("int cast"));
+        }
 
-            if !remain.is_empty() {
-                // Hint at the size of the file
-                let _ = sys::ftruncate(fd, i64::try_from(remain.len()).expect("int cast"));
-            }
+        // Dump all the bytes in there
+        let mut written: i64 = 0;
+        while !remain.is_empty() {
+            match sys::pwrite(fd, remain, written) {
+                Err(err) => {
+                    if err.get_errno() == sys::E::EAGAIN {
+                        continue;
+                    }
 
-            // Dump all the bytes in there
-            let mut written: i64 = 0;
-            while !remain.is_empty() {
-                match sys::pwrite(fd, remain, written) {
-                    Err(err) => {
-                        if err.get_errno() == sys::E::EAGAIN {
-                            continue;
-                        }
-
-                        bun_core::debug_warn!(
-                            "Failed to write to memfd: {}",
-                            bstr::BStr::new(err.name()),
-                        );
+                    bun_core::debug_warn!(
+                        "Failed to write to memfd: {}",
+                        bstr::BStr::new(err.name()),
+                    );
+                    fd.close();
+                    return false;
+                }
+                Ok(result) => {
+                    if result == 0 {
+                        bun_core::debug_warn!("Failed to write to memfd: EOF");
                         fd.close();
                         return false;
                     }
-                    Ok(result) => {
-                        if result == 0 {
-                            bun_core::debug_warn!("Failed to write to memfd: EOF");
-                            fd.close();
-                            return false;
-                        }
-                        written += i64::try_from(result).expect("int cast");
-                        remain = &remain[result..];
-                    }
+                    written += i64::try_from(result).expect("int cast");
+                    remain = &remain[result..];
                 }
             }
-
-            // Note: reshaped for borrowck — `remain` borrows `*self`, so we
-            // must drop it before mutating `self`. Shadowing ends the borrow here.
-            let _ = remain;
-
-            // Assigning to `*self` drops the previous variant via `Drop`
-            // (and closes a prior `.memfd`).
-            *self = Stdio::Memfd(fd);
-            true
         }
+
+        // Assigning to `*self` drops the previous variant via `Drop`
+        // (and closes a prior `.memfd`).
+        *self = Stdio::Memfd(fd);
+        true
     }
 
     pub(crate) fn to_sync(&mut self, i: u32) {
@@ -293,10 +279,8 @@ impl Stdio {
             Self::SocketFd => buffer(),
             Self::Ipc => ipc(),
             Self::Fd(fd) => SpawnOptionsStdio::Pipe(*fd),
-            #[cfg(not(windows))]
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Self::Memfd(fd) => SpawnOptionsStdio::Pipe(*fd),
-            #[cfg(windows)]
-            Self::Memfd(_) => panic!("This should never happen"),
             Self::Path(pathlike) => {
                 SpawnOptionsStdio::Path(pathlike.slice().to_vec().into_boxed_slice())
             }
@@ -314,13 +298,14 @@ impl Stdio {
         }
     }
 
-    pub fn borrows_caller_fd(&self) -> bool {
+    #[cfg(not(windows))]
+    pub(crate) fn borrows_caller_fd(&self) -> bool {
         matches!(self, Self::Fd(_))
     }
 
     fn extract_body_value(
         out_stdio: &mut Stdio,
-        global: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         i: i32,
         body: &mut webcore::body::Value,
         is_sync: bool,
@@ -328,7 +313,7 @@ impl Stdio {
         body.to_blob_if_possible();
 
         if let Some(blob) = body.try_use_as_any_blob() {
-            return out_stdio.extract_blob(global, blob, i);
+            return out_stdio.extract_blob(cx.global(), blob, i);
         }
 
         match body {
@@ -337,7 +322,8 @@ impl Stdio {
                 return Ok(());
             }
             webcore::body::Value::Used => {
-                return Err(global
+                return Err(cx
+                    .global()
                     .err(
                         jsc::ErrorCode::BODY_ALREADY_USED,
                         format_args!("Body already used"),
@@ -345,7 +331,7 @@ impl Stdio {
                     .throw());
             }
             webcore::body::Value::Error(err) => {
-                return Err(global.throw_value(err.to_js(global)));
+                return Err(cx.global().throw_value(err.to_js(cx.global())));
             }
 
             // handled above.
@@ -354,7 +340,7 @@ impl Stdio {
             | webcore::body::Value::InternalBlob(_) => unreachable!(),
             webcore::body::Value::Locked(_) => {
                 if is_sync {
-                    return Err(global.throw_invalid_arguments(format_args!(
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
                         "ReadableStream cannot be used in sync mode"
                     )));
                 }
@@ -362,31 +348,34 @@ impl Stdio {
                 match i {
                     0 => {}
                     1 => {
-                        return Err(global.throw_invalid_arguments(format_args!(
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
                             "ReadableStream cannot be used for stdout yet. For now, do .stdout"
                         )));
                     }
                     2 => {
-                        return Err(global.throw_invalid_arguments(format_args!(
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
                             "ReadableStream cannot be used for stderr yet. For now, do .stderr"
                         )));
                     }
                     _ => {
-                        return Err(global.throw_invalid_arguments(format_args!(
+                        return Err(cx.global().throw_invalid_arguments(format_args!(
                             "ReadableStream cannot be used for stdio[{i}] yet"
                         )));
                     }
                 }
 
-                let stream_value = body.to_readable_stream(global)?;
+                let stream_value = body.to_readable_stream(cx)?;
 
-                let Some(stream) = webcore::ReadableStream::from_js(stream_value, global)? else {
-                    return Err(global
+                let Some(stream) = webcore::ReadableStream::from_js(stream_value, cx.global())?
+                else {
+                    return Err(cx
+                        .global()
                         .throw_invalid_arguments(format_args!("Failed to create ReadableStream")));
                 };
 
-                if stream.is_disturbed(global) {
-                    return Err(global
+                if stream.is_disturbed(cx.global()) {
+                    return Err(cx
+                        .global()
                         .err(
                             jsc::ErrorCode::BODY_ALREADY_USED,
                             format_args!("ReadableStream has already been used"),
@@ -403,7 +392,7 @@ impl Stdio {
 
     pub(crate) fn extract(
         out_stdio: &mut Stdio,
-        global: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         i: i32,
         value: JSValue,
         is_sync: bool,
@@ -420,7 +409,7 @@ impl Stdio {
         }
 
         if value.is_string() {
-            let str = value.to_js_string_view(global)?;
+            let str = value.to_js_string_view(cx.global())?;
             if str.eq_ascii(b"inherit") {
                 *out_stdio = Stdio::Inherit;
             } else if str.eq_ascii(b"ignore") {
@@ -429,14 +418,14 @@ impl Stdio {
                 *out_stdio = Stdio::Pipe;
             } else if str.eq_ascii(b"socket-fd") {
                 if i < 3 {
-                    return Err(global.throw_invalid_arguments(format_args!(
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
                         "stdio: 'socket-fd' is only supported at indices >= 3"
                     )));
                 }
                 if is_sync {
                     // Bun.spawnSync's result has no .stdio, so the caller
                     // could never receive the fd it's supposed to own.
-                    return Err(global.throw_invalid_arguments(format_args!(
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
                         "stdio: 'socket-fd' cannot be used with spawnSync"
                     )));
                 }
@@ -444,7 +433,7 @@ impl Stdio {
             } else if str.eq_ascii(b"ipc") {
                 *out_stdio = Stdio::Ipc;
             } else {
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(cx.global().throw_invalid_arguments(format_args!(
                     "stdio must be an array of 'inherit', 'pipe', 'ignore', Bun.file(pathOrFd), number, or null"
                 )));
             }
@@ -455,15 +444,15 @@ impl Stdio {
             let fd = Fd::from_uv(value.to_int32());
             let file_fd = fd.uv();
             if file_fd < 0 {
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(cx.global().throw_invalid_arguments(format_args!(
                     "file descriptor must be a positive integer"
                 )));
             }
 
             if file_fd >= i32::MAX as _ {
-                let mut formatter = jsc::console_object::Formatter::new(global);
+                let mut formatter = jsc::console_object::Formatter::new(cx.global());
                 // `defer formatter.deinit()` — handled by Drop.
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(cx.global().throw_invalid_arguments(format_args!(
                     "file descriptor must be a valid integer, received: {}",
                     value.to_fmt(&mut formatter),
                 )));
@@ -473,7 +462,7 @@ impl Stdio {
                 match tag {
                     FdStdio::StdIn => {
                         if i == 1 || i == 2 {
-                            return Err(global.throw_invalid_arguments(format_args!(
+                            return Err(cx.global().throw_invalid_arguments(format_args!(
                                 "stdin cannot be used for stdout or stderr"
                             )));
                         }
@@ -483,7 +472,7 @@ impl Stdio {
                     }
                     FdStdio::StdOut | FdStdio::StdErr => {
                         if i == 0 {
-                            return Err(global.throw_invalid_arguments(format_args!(
+                            return Err(cx.global().throw_invalid_arguments(format_args!(
                                 "stdout and stderr cannot be used for stdin"
                             )));
                         }
@@ -502,17 +491,17 @@ impl Stdio {
             // `as_class_ref` is the safe shared-borrow downcast (centralised
             // deref proof in `JSValue`); the JS wrapper roots the payload while
             // `value` is on the stack. `dupe()` only bumps the store refcount.
-            return out_stdio.extract_blob(global, webcore::blob::Any::Blob(blob.dupe()), i);
+            return out_stdio.extract_blob(cx.global(), webcore::blob::Any::Blob(blob.dupe()), i);
         } else if let Some(req) = value.as_class_ref::<webcore::Request>() {
-            return Self::extract_body_value(out_stdio, global, i, req.get_body_value(), is_sync);
+            return Self::extract_body_value(out_stdio, cx, i, req.get_body_value(), is_sync);
         } else if let Some(res) = value.as_class_ref::<webcore::Response>() {
-            return Self::extract_body_value(out_stdio, global, i, res.get_body_value(), is_sync);
+            return Self::extract_body_value(out_stdio, cx, i, res.get_body_value(), is_sync);
         }
 
-        if let Some(stream_) = webcore::ReadableStream::from_js(value, global)? {
+        if let Some(stream_) = webcore::ReadableStream::from_js(value, cx.global())? {
             let mut stream = stream_;
-            if let Some(blob) = stream.to_any_blob(global) {
-                return out_stdio.extract_blob(global, blob, i);
+            if let Some(blob) = stream.to_any_blob(cx.global()) {
+                return out_stdio.extract_blob(cx.global(), blob, i);
             }
 
             let name: &'static [u8] = match i {
@@ -520,21 +509,22 @@ impl Stdio {
                 1 => b"stdout",
                 2 => b"stderr",
                 _ => {
-                    return Err(global.throw_invalid_arguments(format_args!(
+                    return Err(cx.global().throw_invalid_arguments(format_args!(
                         "ReadableStream cannot be used for stdio[{i}] yet"
                     )));
                 }
             };
 
             if is_sync {
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(cx.global().throw_invalid_arguments(format_args!(
                     "'{}' ReadableStream cannot be used in sync mode",
                     bstr::BStr::new(name),
                 )));
             }
 
-            if stream.is_disturbed(global) {
-                return Err(global
+            if stream.is_disturbed(cx.global()) {
+                return Err(cx
+                    .global()
                     .err(
                         jsc::ErrorCode::INVALID_STATE,
                         format_args!(
@@ -548,7 +538,7 @@ impl Stdio {
             return Ok(());
         }
 
-        if let Some(array_buffer) = value.as_array_buffer(global) {
+        if let Some(array_buffer) = value.as_array_buffer(cx.global()) {
             // Change in Bun v1.0.34: don't throw for empty ArrayBuffer
             if array_buffer.byte_slice().is_empty() {
                 *out_stdio = Stdio::Ignore;
@@ -556,7 +546,7 @@ impl Stdio {
             }
 
             if i == 1 || i == 2 {
-                return Err(global.throw_invalid_arguments(format_args!(
+                return Err(cx.global().throw_invalid_arguments(format_args!(
                     "ArrayBufferView cannot be used for stdout/stderr yet"
                 )));
             }
@@ -567,7 +557,7 @@ impl Stdio {
             return Ok(());
         }
 
-        Err(global.throw_invalid_arguments(format_args!(
+        Err(cx.global().throw_invalid_arguments(format_args!(
             "stdio must be an array of 'inherit', 'ignore', or null"
         )))
     }
@@ -651,9 +641,10 @@ impl Stdio {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 impl Stdio {
     /// Move the memfd out (ownership passes to the caller); `self` becomes `Ignore`.
-    pub fn take_memfd(&mut self) -> Option<Fd> {
+    pub(crate) fn take_memfd(&mut self) -> Option<Fd> {
         let Stdio::Memfd(fd) = *self else { return None };
         // Don't run Drop on the old value: it would close `fd`.
         let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Stdio::Ignore));
@@ -667,6 +658,7 @@ impl Drop for Stdio {
             Self::Blob(blob) => {
                 blob.detach();
             }
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             Self::Memfd(fd) => {
                 fd.close();
             }

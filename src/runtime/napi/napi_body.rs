@@ -14,8 +14,8 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, Debugger, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue,
-    JsResult, StrongOptional, Task,
+    self as jsc, Debugger, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
+    StrongOptional, Task,
 };
 use bun_threading::Condition as Condvar;
 use bun_threading::Mutex;
@@ -53,6 +53,11 @@ impl Taskable for napi_async_work {
         // SAFETY: fn contract — the addon's live work object the pool posted.
         let _ = unsafe { (*this).run_from_js(global) };
     }
+    /// An addon's completion always runs (it frees the work there): `NapiEnv::complete_in_context`
+    /// enters the context that queued it, and refuses calls into script if that context has stopped.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 impl Taskable for ThreadSafeFunction {
     const TAG: TaskTag = task_tag::ThreadSafeFunction;
@@ -60,6 +65,10 @@ impl Taskable for ThreadSafeFunction {
     /// run with the exit handlers before the queue is released) already
     /// neutralised or freed. Nothing to do, and `this` must not be dereferenced.
     unsafe fn release_unrun(_: *mut Self) {}
+    /// As `napi_async_work`.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 impl Taskable for NapiFinalizerTask {
     const TAG: TaskTag = task_tag::NapiFinalizerTask;
@@ -69,6 +78,10 @@ impl Taskable for NapiFinalizerTask {
     unsafe fn release_unrun(this: *mut Self) {
         // `Err` is left pending for the release dispatcher's fold.
         let _ = NapiFinalizerTask::run_on_js_thread(this);
+    }
+    /// An addon counts on its finalizers running.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
@@ -92,12 +105,18 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     fn NapiEnv__globalObject(env: *mut NapiEnv) -> *mut JSGlobalObject;
     fn NapiEnv__getAndClearPendingException(env: *mut NapiEnv, out: *mut JSValue) -> bool;
-    fn NapiEnv__hasPendingException(env: *mut NapiEnv) -> bool;
+    /// Returns the previous value.
+    fn NapiEnv__setCompletingForStoppedContext(env: *mut NapiEnv, value: bool) -> bool;
+    /// `NapiStatus::ok`, or the status Node's `NAPI_PREAMBLE` returns at entry (`NapiEnv::entryStatus`).
+    fn NapiEnv__entryStatus(env: *mut NapiEnv) -> napi_status;
+    /// `NapiEnv::cleanup` runs no finalizer until each of these has its `NapiEnv__asyncWorkLeftThreadPool`.
+    fn NapiEnv__asyncWorkEnteredThreadPool(env: *mut NapiEnv);
+    fn NapiEnv__asyncWorkLeftThreadPool(env: *mut NapiEnv);
     fn NapiEnv__deref(env: *mut NapiEnv);
     fn NapiEnv__ref(env: *mut NapiEnv);
     /// The reference to its VM's handle the env holds (`BunVmHandleRef`).
     fn NapiEnv__vmHandle(env: *mut NapiEnv) -> *const bun_jsc::vm_handle::Shared;
-    fn napi_set_last_error(env: napi_env, status: NapiStatus) -> napi_status;
+    fn napi_set_last_error(env: napi_env, status: napi_status) -> napi_status;
     fn NapiUngatedScope__construct(storage: *mut c_void, env: *mut NapiEnv);
     fn NapiUngatedScope__destruct(storage: *mut c_void);
 }
@@ -118,7 +137,12 @@ impl NapiEnv {
     /// accessed by napi_get_last_error_info
     pub(crate) fn set_last_error(self_: Option<&Self>, err: NapiStatus) -> napi_status {
         // SAFETY: napi_set_last_error accepts null env.
-        unsafe { napi_set_last_error(self_.map(Self::as_mut_ptr).unwrap_or(ptr::null_mut()), err) }
+        unsafe {
+            napi_set_last_error(
+                self_.map(Self::as_mut_ptr).unwrap_or(ptr::null_mut()),
+                err as napi_status,
+            )
+        }
     }
 
     /// Convenience wrapper for set_last_error(.ok)
@@ -145,17 +169,46 @@ impl NapiEnv {
         Self::set_last_error(Some(self), NapiStatus::pending_exception)
     }
 
-    /// Checks both `env->m_pendingException` (set by `napi_throw*`) and the JSC
-    /// VM exception slot. This is the gate Node.js's `NAPI_PREAMBLE` enforces.
-    pub(crate) fn has_pending_exception(&self) -> bool {
+    pub(crate) fn cannot_run_js(&self) -> napi_status {
+        Self::set_last_error(Some(self), NapiStatus::cannot_run_js)
+    }
+
+    /// Runs `completion` (an addon's `complete` or `call_js`) in `context`, the one whose script
+    /// asked for the work: what the callback opens is that context's. Once the context has
+    /// stopped the callback still runs, since it owns memory only it can free, but functions
+    /// that would run script answer it as they do in a VM that is stopping.
+    pub(crate) fn complete_in_context(
+        &self,
+        context: bun_jsc::ContextId,
+        completion: impl FnOnce(),
+    ) {
+        let vm = self.to_js().bun_vm();
+        let stopped = !vm.is_context_live(context);
+        let _context = vm.enter_context(context);
+        // SAFETY: `self` is a live C++-owned napi_env; JS thread.
+        let previous =
+            unsafe { NapiEnv__setCompletingForStoppedContext(self.as_mut_ptr(), stopped) };
+        completion();
+        // SAFETY: as above; the env outlives its completions (the caller holds a ref).
+        unsafe { NapiEnv__setCompletingForStoppedContext(self.as_mut_ptr(), previous) };
+    }
+
+    /// Node's `NAPI_PREAMBLE` entry check (napi.h `NapiEnv::entryStatus`). `Err` is the status Node
+    /// returns, set as the last error.
+    pub(crate) fn entry_status(&self) -> Result<(), napi_status> {
         // SAFETY: env is non-null; C++ side is read-only here.
-        unsafe { NapiEnv__hasPendingException(self.as_mut_ptr()) }
+        let status = unsafe { NapiEnv__entryStatus(self.as_mut_ptr()) };
+        if status == NapiStatus::ok as napi_status {
+            return Ok(());
+        }
+        // SAFETY: env is non-null.
+        Err(unsafe { napi_set_last_error(self.as_mut_ptr(), status) })
     }
 
     /// Assert that we're not currently performing garbage collection
     pub(crate) fn check_gc(&self) {
         // SAFETY: env is non-null; C++ side is read-only here.
-        unsafe { napi_internal_check_gc(self.as_mut_ptr()) };
+        unsafe { Bun__napi_check_gc(self.as_mut_ptr()) };
     }
 
     pub(crate) fn get_and_clear_pending_exception(&self) -> Option<JSValue> {
@@ -313,8 +366,15 @@ impl Drop for NapiHandleScopeGuard<'_> {
 
 type napi_handle_scope = *mut NapiHandleScope;
 type napi_escapable_handle_scope = *mut NapiHandleScope;
-pub(super) type napi_callback_info = *mut CallFrame;
-type napi_deferred = *mut JSPromiseStrong;
+pub(super) type napi_callback_info = *mut c_void;
+/// What `napi_create_promise` hands the addon.
+pub(crate) struct Deferred {
+    promise: JSPromiseStrong,
+    /// The context whose script made the promise: settling it once that context has stopped
+    /// settles nothing, whichever completion the addon does it from.
+    context: bun_jsc::ContextId,
+}
+type napi_deferred = *mut Deferred;
 
 // ──────────────────────────────────────────────────────────────────────────
 // napi_value
@@ -388,32 +448,35 @@ impl napi_typedarray_type {
     }
 }
 
+/// The `napi_status` values (js_native_api_types.h) Rust produces. A status that comes from C++ is a
+/// `napi_status`, the integer: it can be any of them. The ones commented out are the values Rust
+/// does not produce yet; uncomment one to use it.
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum NapiStatus {
+pub(crate) enum NapiStatus {
     ok = 0,
     invalid_arg = 1,
     object_expected = 2,
-    string_expected = 3,
-    name_expected = 4,
+    // string_expected = 3,
+    // name_expected = 4,
     function_expected = 5,
-    number_expected = 6,
-    boolean_expected = 7,
+    // number_expected = 6,
+    // boolean_expected = 7,
     array_expected = 8,
     generic_failure = 9,
     pending_exception = 10,
     cancelled = 11,
     escape_called_twice = 12,
-    handle_scope_mismatch = 13,
-    callback_scope_mismatch = 14,
+    // handle_scope_mismatch = 13,
+    // callback_scope_mismatch = 14,
     queue_full = 15,
     closing = 16,
-    bigint_expected = 17,
-    date_expected = 18,
-    arraybuffer_expected = 19,
-    detachable_arraybuffer_expected = 20,
-    would_deadlock = 21,
-    no_external_buffers_allowed = 22,
+    // bigint_expected = 17,
+    // date_expected = 18,
+    // arraybuffer_expected = 19,
+    // detachable_arraybuffer_expected = 20,
+    // would_deadlock = 21,
+    // no_external_buffers_allowed = 22,
     cannot_run_js = 23,
 }
 
@@ -472,14 +535,12 @@ macro_rules! get_env {
     };
 }
 
-/// Like `get_env!` but also returns `napi_pending_exception` if a JS exception
-/// is pending on the env (mirrors Node's `NAPI_PREAMBLE`). Use this for napi
-/// entry points that can execute JS or have observable side effects.
+/// Node's `NAPI_PREAMBLE`: `get_env!`, then [`NapiEnv::entry_status`].
 macro_rules! preamble {
     ($env:expr) => {{
         let env = get_env!($env);
-        if env.has_pending_exception() {
-            return env.pending_exception();
+        if let Err(status) = env.entry_status() {
+            return status;
         }
         env
     }};
@@ -1621,13 +1682,49 @@ extern "C" fn napi_create_promise(
     let env = preamble!(env_);
     let deferred = get_out!(env, deferred_);
     let promise = get_out!(env, promise_);
-    let strong = Box::new(JSPromiseStrong::init(env.to_js()));
+    let strong = Box::new(Deferred {
+        promise: JSPromiseStrong::init(env.to_js()),
+        context: env.to_js().bun_vm().context_of_caller_no_frame().id(),
+    });
     let strong_ptr = bun_core::heap::into_raw(strong);
     *deferred = strong_ptr;
     // SAFETY: strong_ptr was just created from heap::alloc and is non-null.
-    let prom_value = unsafe { (*strong_ptr).get() }.as_value(env.to_js());
+    let prom_value = unsafe { (*strong_ptr).promise.get() }.as_value(env.to_js());
     promise.set(env, prom_value);
     env.ok()
+}
+
+/// `napi_resolve_deferred` / `napi_reject_deferred`. A deferred is settled for the context whose
+/// script made it, whichever completion the addon does it from.
+fn conclude_deferred(
+    env: &NapiEnv,
+    deferred: napi_deferred,
+    settle: impl FnOnce(&mut jsc::JSPromise, &JSGlobalObject) -> JsResult<()>,
+) -> napi_status {
+    if deferred.is_null() {
+        return env.invalid_arg();
+    }
+    // SAFETY: deferred is non-null and was created by heap::alloc in napi_create_promise.
+    let context = unsafe { (*deferred).context };
+    if !env.to_js().bun_vm().is_context_live(context) {
+        // Of a Bun.ModuleGraph that has been disposed: released, and nothing is settled.
+        // SAFETY: as above; the addon is done with it on napi_ok.
+        drop(unsafe { bun_core::heap::take(deferred) });
+        return env.ok();
+    }
+    let mut status = env.ok();
+    env.complete_in_context(context, || {
+        if let Err(refused) = env.entry_status() {
+            status = refused;
+            return;
+        }
+        // SAFETY: as above. `deferred_box` drops at scope exit (deinit + free).
+        let deferred_box = unsafe { bun_core::heap::take(deferred) };
+        if settle(deferred_box.promise.get(), env.to_js()).is_err() {
+            status = env.generic_failure();
+        }
+    });
+    status
 }
 
 #[unsafe(no_mangle)]
@@ -1637,16 +1734,11 @@ extern "C" fn napi_resolve_deferred(
     resolution_: napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_resolve_deferred");
-    let env = preamble!(env_);
-    // SAFETY: deferred was created by heap::alloc in napi_create_promise.
-    let deferred_box = unsafe { bun_core::heap::take(deferred) };
-    // `deferred_box` drops at scope exit (deinit + free).
+    let env = get_env!(env_);
     let resolution = resolution_.get();
-    let prom = deferred_box.get();
-    if prom.resolve(env.to_js(), resolution).is_err() {
-        return env.generic_failure();
-    }
-    env.ok()
+    conclude_deferred(env, deferred, |promise, global| {
+        promise.resolve(global, resolution)
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -1656,15 +1748,11 @@ extern "C" fn napi_reject_deferred(
     rejection_: napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_reject_deferred");
-    let env = preamble!(env_);
-    // SAFETY: deferred was created by heap::alloc in napi_create_promise.
-    let deferred_box = unsafe { bun_core::heap::take(deferred) };
+    let env = get_env!(env_);
     let rejection = rejection_.get();
-    let prom = deferred_box.get();
-    if prom.reject(env.to_js(), Ok(rejection)).is_err() {
-        return env.generic_failure();
-    }
-    env.ok()
+    conclude_deferred(env, deferred, |promise, global| {
+        promise.reject(global, Ok(rejection))
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -1829,6 +1917,8 @@ pub(crate) struct napi_async_work {
     pub(crate) status: AtomicU32, // AsyncWorkStatus
     pub(crate) scheduled: bool,
     pub poll_ref: KeepAlive,
+    /// The context whose script created the work: `complete` runs in it.
+    pub(crate) context: bun_jsc::ContextId,
 }
 
 bun_threading::intrusive_work_task!(napi_async_work, task);
@@ -1858,29 +1948,36 @@ impl napi_async_work {
             status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
             scheduled: false,
             poll_ref: KeepAlive::default(),
+            context: global.bun_vm().context_of_caller_no_frame().id(),
         }))
     }
 
-    // Forwards `this` to `heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn destroy(this: *mut napi_async_work) {
         // SAFETY: `this` was created by heap::alloc in `new`.
         // env.deinit() runs via Drop on NapiEnvRef.
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub(crate) fn schedule(&mut self) {
+    /// Returns false if the VM is closed. The addon still has to delete the work.
+    pub(crate) fn schedule(&mut self) -> bool {
         if self.scheduled {
-            return;
+            return true;
+        }
+        let vm = self.global.bun_vm();
+        // A finalizer can call this during the GC that destroys the heap.
+        if vm.closed() {
+            return false;
         }
         self.scheduled = true;
         self.poll_ref.ref_(bun_io::js_vm_ctx());
         // The work object belongs to the addon and `execute` receives this
         // env, so the VM waits for it (Node likewise settles its threadpool
         // requests before an environment is freed).
-        self.ticket = Some(self.global.bun_vm().ticket());
+        self.ticket = Some(vm.ticket());
+        // SAFETY: `self.env` keeps the env alive.
+        unsafe { NapiEnv__asyncWorkEnteredThreadPool(self.env.get()) };
         WorkPool::schedule(&raw mut self.task);
+        true
     }
 
     pub(crate) unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
@@ -1915,6 +2012,8 @@ impl napi_async_work {
         } else {
             let _ = self.cancel();
         }
+        // SAFETY: `self.env` keeps the env alive, and `self` is live until it is posted back.
+        unsafe { NapiEnv__asyncWorkLeftThreadPool(self.env.get()) };
         self.post_to_js_thread(self_ptr, &ticket);
     }
 
@@ -1968,7 +2067,8 @@ impl napi_async_work {
                 NapiStatus::ok
             };
 
-        complete(env, status as napi_status, self.data);
+        let data = self.data;
+        env_ref.complete_in_context(self.context, || complete(env, status as napi_status, data));
 
         // SAFETY: env is valid for the duration of this call.
         unsafe { &*env }.surface_exception(global)
@@ -2058,7 +2158,7 @@ extern "C" fn napi_fatal_error(
     message_len_: usize,
 ) -> ! {
     bun_output::scoped_log!(napi, "napi_fatal_error");
-    napi_internal_suppress_crash_on_abort_if_desired();
+    Bun__napi_suppress_crash_on_abort_if_desired();
     let mut message = napi_span(message_ptr, message_len_);
     if message.is_empty() {
         message = b"fatal error";
@@ -2241,7 +2341,9 @@ extern "C" fn napi_queue_async_work(env_: napi_env, work_: *mut napi_async_work)
         return env.invalid_arg();
     };
     debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    work.schedule();
+    if !work.schedule() {
+        return env.cannot_run_js();
+    }
     env.ok()
 }
 
@@ -2275,8 +2377,8 @@ extern "C" fn napi_get_node_version(
 
 #[cfg(windows)]
 type napi_event_loop = *mut bun_sys::windows::libuv::Loop;
-#[cfg(not(windows))]
-type napi_event_loop = *mut EventLoop;
+#[cfg(unix)]
+type napi_event_loop = *mut super::uv_posix::UvLoop;
 
 #[unsafe(no_mangle)]
 extern "C" fn napi_get_uv_event_loop(env_: napi_env, loop_: *mut napi_event_loop) -> napi_status {
@@ -2289,13 +2391,16 @@ extern "C" fn napi_get_uv_event_loop(env_: napi_env, loop_: *mut napi_event_loop
         // TODO(@190n) investigate
         *loop_out = VirtualMachine::get().uv_loop();
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     {
-        // there is no uv event loop on posix, we use our event loop handle.
-        // SAFETY: `VirtualMachine::event_loop` already yields `*mut EventLoop`;
-        // no const→mut cast needed.
-        // SAFETY: bun_vm() never null for a Bun-owned global.
-        *loop_out = env.to_js().bun_vm().event_loop();
+        // Bun doesn't run libuv on POSIX. The addon gets this VM's `UvLoop`, and
+        // `uv_posix` implements the uv_* functions on this VM's event loop.
+        // SAFETY: the env's VM is alive while the env is.
+        let uv_loop = unsafe { super::uv_posix::UvLoop::of_vm(env.to_js().bun_vm()) };
+        if uv_loop.is_null() {
+            return env.generic_failure();
+        }
+        *loop_out = uv_loop;
     }
     env.ok()
 }
@@ -2330,32 +2435,50 @@ unsafe extern "C" {
         data: *mut c_void,
     ) -> napi_status;
 
-    fn napi_internal_cleanup_env_cpp(env: napi_env);
-    fn napi_internal_check_gc(env: napi_env);
+    fn Bun__napi_cleanup_env_cpp(env: napi_env);
+    fn Bun__napi_check_gc(env: napi_env);
 
     /// Returns false if the env has already torn down its registry.
     fn NapiEnv__registerThreadSafeFunction(env: *mut NapiEnv, tsfn: *mut c_void) -> bool;
     fn NapiEnv__unregisterThreadSafeFunction(env: *mut NapiEnv, tsfn: *mut c_void);
 }
 
-extern "C" fn napi_internal_register_cleanup_callback(data: *mut c_void) {
+extern "C" fn Bun__napi_register_cleanup_callback(data: *mut c_void) {
     // SAFETY: data is the napi_env we registered below.
-    unsafe { napi_internal_cleanup_env_cpp(data as napi_env) };
+    unsafe { Bun__napi_cleanup_env_cpp(data as napi_env) };
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
+extern "C" fn Bun__napi_register_cleanup_zig(env_: napi_env) {
     // SAFETY: caller guarantees env_ is non-null.
     let env = unsafe { &*env_ };
     env.to_js().bun_vm().as_mut().rare_data().push_cleanup_hook(
         env.to_js(),
         env_.cast::<c_void>(),
-        napi_internal_register_cleanup_callback,
+        Bun__napi_register_cleanup_callback,
     );
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
+extern "C" fn Bun__napi_run_finalizers_after_teardown_wait(env_: napi_env) {
+    unsafe extern "C" {
+        safe fn NapiEnv__runFinalizers(env: *mut c_void);
+    }
+    // SAFETY: caller guarantees env_ is non-null.
+    let env = unsafe { &*env_ };
+    env.to_js()
+        .bun_vm()
+        .as_mut()
+        .rare_data()
+        .push_cleanup_hook_after_teardown_wait(
+            env.to_js(),
+            env_.cast::<c_void>(),
+            NapiEnv__runFinalizers,
+        );
+}
+
+#[unsafe(no_mangle)]
+extern "C" fn Bun__napi_suppress_crash_on_abort_if_desired() {
     if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT
         .get()
         .unwrap_or(false)
@@ -2365,7 +2488,7 @@ extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
 }
 
 unsafe extern "C" {
-    fn napi_internal_remove_finalizer(
+    fn Bun__napi_remove_finalizer(
         env: napi_env,
         fun: napi_finalize,
         hint: *mut c_void,
@@ -2395,7 +2518,7 @@ impl Finalizer {
 
         (self.fun)(env, self.data, self.hint);
         // SAFETY: env is valid; passes the C finalizer back for bookkeeping.
-        unsafe { napi_internal_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
+        unsafe { Bun__napi_remove_finalizer(env, Some(self.fun), self.hint, self.data) };
 
         env_ref.surface_exception(env_ref.to_js())
     }
@@ -2412,7 +2535,7 @@ impl Finalizer {
 /// immediate task queue instead of run immediately. This lets finalizers perform allocations,
 /// which they couldn't if they ran immediately while the garbage collector is still running.
 #[unsafe(no_mangle)]
-extern "C" fn napi_internal_enqueue_finalizer(
+extern "C" fn Bun__napi_enqueue_finalizer(
     env: napi_env,
     fun: napi_finalize,
     data: *mut c_void,
@@ -2471,6 +2594,12 @@ pub(crate) struct ThreadSafeFunction {
     pub(crate) handle: bun_jsc::VmHandle,
     pub(crate) loop_kind: bun_jsc::LoopKind,
     pub(crate) tracker: Debugger::AsyncTaskTracker,
+    /// The context whose script created the function: its calls run in it.
+    pub(crate) context: bun_jsc::ContextId,
+    /// Armed in that context until the JS thread lets go of the function (`finalize`,
+    /// `env_teardown`): once the context has stopped, the function no longer keeps the loop
+    /// alive, whoever asked it to. Addon threads can still call it and it is finalized as usual.
+    abort_handle: bun_jsc::AbortHandle,
 
     /// Dropped on the JS thread by `env_teardown`; `None` afterwards.
     pub(crate) env: Option<NapiEnvRef>,
@@ -2493,6 +2622,11 @@ pub(crate) struct ThreadSafeFunction {
     /// Also written under `lock`, once `finalize` or `env_teardown` has released every JS-thread-owned resource; until then the thread that drops the last `thread_count` reference must not free this (Node's `kClosed`).
     pub(crate) resources_released: AtomicBool,
 }
+
+bun_jsc::impl_abort_handle_owner!(ThreadSafeFunction, abort_handle, |this, _cause| {
+    // SAFETY: trait contract: `this` is live, and this is the JS thread.
+    unsafe { &mut *this }.unref()
+});
 
 pub(crate) enum TsfnCallback {
     Js(StrongOptional),
@@ -2546,14 +2680,8 @@ static THREADSAFE_FUNCTION_LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Exposed via `bun:internal-for-testing` so tests can assert a threadsafe
 /// function orphaned by a dead worker is freed rather than leaked.
-#[bun_jsc::host_fn]
-pub(crate) fn js_threadsafe_function_live_count(
-    _global: &JSGlobalObject,
-    _callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    Ok(JSValue::js_number(
-        THREADSAFE_FUNCTION_LIVE_COUNT.load(Ordering::SeqCst) as f64,
-    ))
+pub(crate) fn threadsafe_function_live_count() -> usize {
+    THREADSAFE_FUNCTION_LIVE_COUNT.load(Ordering::SeqCst)
 }
 
 impl Drop for ThreadSafeFunction {
@@ -2577,7 +2705,6 @@ impl ThreadSafeFunction {
     /// The threadsafe function's queue drain is a dispatcher: each queued call
     /// is a JS entry of its own, so what one leaves pending is folded per call
     /// (`dispatch_one`) and the drain goes on; the VM's termination ends it.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn on_dispatch(this: *mut ThreadSafeFunction) {
         // SAFETY: `this` is a live heap allocation owned by the event loop
         // dispatch; `env_dead` is atomic so a shared reborrow suffices.
@@ -2805,7 +2932,10 @@ impl ThreadSafeFunction {
                     Some(v) => napi_value::create(env, v),
                     None => napi_value(0),
                 };
-                napi_threadsafe_function_call_js(env.as_mut_ptr(), js, self.ctx, task);
+                let ctx = self.ctx;
+                env.complete_in_context(self.context, || {
+                    napi_threadsafe_function_call_js(env.as_mut_ptr(), js, ctx, task)
+                });
                 env.surface_exception(global_object)
             }
         }
@@ -2975,6 +3105,7 @@ impl ThreadSafeFunction {
             let self_ = &mut *this;
             // The same critical section reads thread_count, so a thread that drops the last reference frees only if it sees this store.
             let _g = self_.lock.lock_guard();
+            self_.abort_handle.leave();
             self_.event_loop = None;
             drop(self_.env.take());
             self_.resources_released.store(true, Ordering::SeqCst);
@@ -3074,6 +3205,7 @@ impl ThreadSafeFunction {
         let _g = self.lock.lock_guard();
         self.callback = TsfnCallback::Js(StrongOptional::empty());
         self.poll_ref.disable();
+        self.abort_handle.leave();
         self.event_loop = None;
         drop(self.env.take());
         self.resources_released.store(true, Ordering::SeqCst);
@@ -3086,6 +3218,13 @@ impl ThreadSafeFunction {
 
     /// `napi_ref_threadsafe_function` — JS thread only (as in Node).
     pub(crate) fn ref_(&mut self) {
+        let caller = VirtualMachine::get().context_of_caller_no_frame();
+        // Nothing of a context that has stopped holds the loop: not the function's own call_js
+        // once its maker has stopped (that is where it runs), not a disposed graph's leftover
+        // script. Accepted, and holds nothing.
+        if caller.is_stopped() {
+            return;
+        }
         self.poll_ref.ref_(bun_io::js_vm_ctx());
     }
 
@@ -3172,7 +3311,7 @@ impl ThreadSafeFunction {
 /// Called from `NapiEnv::cleanup()` (JS thread) for every threadsafe function
 /// still registered with the env that is being torn down.
 #[unsafe(no_mangle)]
-extern "C" fn napi_internal_threadsafe_function_env_teardown(tsfn: *mut c_void) {
+extern "C" fn Bun__napi_threadsafe_function_env_teardown(tsfn: *mut c_void) {
     let this = tsfn.cast::<ThreadSafeFunction>();
     // SAFETY: the registry only holds live TSFN pointers — `finalize` and
     // `env_teardown` both remove the entry before freeing. Exclusive borrow
@@ -3242,6 +3381,8 @@ extern "C" fn napi_create_threadsafe_function(
         thread_count: AtomicI64::new(i64::try_from(initial_thread_count).expect("int cast")),
         poll_ref: KeepAlive::init(),
         tracker: Debugger::AsyncTaskTracker::init(vm),
+        context: vm.context_of_caller_no_frame().id(),
+        abort_handle: bun_jsc::AbortHandle::for_owner::<ThreadSafeFunction>(),
         finalizer_fun: thread_finalize_cb,
         finalizer_data: thread_finalize_data,
         has_queued_finalizer: false,
@@ -3271,6 +3412,9 @@ extern "C" fn napi_create_threadsafe_function(
     // nodejs by default keeps the event loop alive until the thread-safe function is unref'd
     // SAFETY: function is non-null (just allocated) and not yet handed out.
     unsafe { (*function).ref_() };
+    // (Unless the context whose script is creating it stops first.)
+    // SAFETY: a heap allocation that leaves its context on this thread before it is freed.
+    unsafe { bun_jsc::AbortHandle::arm_owner(function, vm.context_of_caller_no_frame()) };
     // SAFETY: as above.
     unsafe { (*function).tracker.did_schedule(vm.global()) };
 
@@ -4100,12 +4244,11 @@ mod posix_platform_specific_v8_apis {
 // uv_* symbol references (posix DCE suppression)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Lists only the uv_* symbols defined in C and C++. `uv_posix` exports its own.
 #[cfg(unix)]
 mod uv_functions_to_export {
     unsafe extern "C" {
         pub(super) fn uv_accept();
-        pub(super) fn uv_async_init();
-        pub(super) fn uv_async_send();
         pub(super) fn uv_available_parallelism();
         pub(super) fn uv_backend_fd();
         pub(super) fn uv_backend_timeout();
@@ -4113,13 +4256,8 @@ mod uv_functions_to_export {
         pub(super) fn uv_barrier_init();
         pub(super) fn uv_barrier_wait();
         pub(super) fn uv_buf_init();
-        pub(super) fn uv_cancel();
         pub(super) fn uv_chdir();
-        pub(super) fn uv_check_init();
-        pub(super) fn uv_check_start();
-        pub(super) fn uv_check_stop();
         pub(super) fn uv_clock_gettime();
-        pub(super) fn uv_close();
         pub(super) fn uv_cond_broadcast();
         pub(super) fn uv_cond_destroy();
         pub(super) fn uv_cond_init();
@@ -4129,7 +4267,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_cpu_info();
         pub(super) fn uv_cpumask_size();
         pub(super) fn uv_cwd();
-        pub(super) fn uv_default_loop();
         pub(super) fn uv_disable_stdio_inheritance();
         pub(super) fn uv_dlclose();
         pub(super) fn uv_dlerror();
@@ -4212,11 +4349,7 @@ mod uv_functions_to_export {
         pub(super) fn uv_handle_set_data();
         pub(super) fn uv_handle_size();
         pub(super) fn uv_handle_type_name();
-        pub(super) fn uv_has_ref();
         pub(super) fn uv_hrtime();
-        pub(super) fn uv_idle_init();
-        pub(super) fn uv_idle_start();
-        pub(super) fn uv_idle_stop();
         pub(super) fn uv_if_indextoiid();
         pub(super) fn uv_if_indextoname();
         pub(super) fn uv_inet_ntop();
@@ -4227,8 +4360,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_ip4_name();
         pub(super) fn uv_ip6_addr();
         pub(super) fn uv_ip6_name();
-        pub(super) fn uv_is_active();
-        pub(super) fn uv_is_closing();
         pub(super) fn uv_is_readable();
         pub(super) fn uv_is_writable();
         pub(super) fn uv_key_create();
@@ -4257,7 +4388,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_mutex_lock();
         pub(super) fn uv_mutex_trylock();
         pub(super) fn uv_mutex_unlock();
-        pub(super) fn uv_now();
         pub(super) fn uv_once();
         pub(super) fn uv_open_osfhandle();
         pub(super) fn uv_os_environ();
@@ -4295,19 +4425,14 @@ mod uv_functions_to_export {
         pub(super) fn uv_poll_init_socket();
         pub(super) fn uv_poll_start();
         pub(super) fn uv_poll_stop();
-        pub(super) fn uv_prepare_init();
-        pub(super) fn uv_prepare_start();
-        pub(super) fn uv_prepare_stop();
         pub(super) fn uv_print_active_handles();
         pub(super) fn uv_print_all_handles();
         pub(super) fn uv_process_get_pid();
         pub(super) fn uv_process_kill();
-        pub(super) fn uv_queue_work();
         pub(super) fn uv_random();
         pub(super) fn uv_read_start();
         pub(super) fn uv_read_stop();
         pub(super) fn uv_recv_buffer_size();
-        pub(super) fn uv_ref();
         pub(super) fn uv_replace_allocator();
         pub(super) fn uv_req_get_data();
         pub(super) fn uv_req_get_type();
@@ -4369,13 +4494,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_thread_setaffinity();
         pub(super) fn uv_thread_setname();
         pub(super) fn uv_thread_setpriority();
-        pub(super) fn uv_timer_again();
-        pub(super) fn uv_timer_get_due_in();
-        pub(super) fn uv_timer_get_repeat();
-        pub(super) fn uv_timer_init();
-        pub(super) fn uv_timer_set_repeat();
-        pub(super) fn uv_timer_start();
-        pub(super) fn uv_timer_stop();
         pub(super) fn uv_translate_sys_error();
         pub(super) fn uv_try_write();
         pub(super) fn uv_try_write2();
@@ -4407,8 +4525,6 @@ mod uv_functions_to_export {
         pub(super) fn uv_udp_try_send();
         pub(super) fn uv_udp_try_send2();
         pub(super) fn uv_udp_using_recvmmsg();
-        pub(super) fn uv_unref();
-        pub(super) fn uv_update_time();
         pub(super) fn uv_uptime();
         pub(super) fn uv_utf16_length_as_wtf8();
         pub(super) fn uv_utf16_to_wtf8();
@@ -4587,11 +4703,10 @@ pub(crate) fn fix_dead_code_elimination() {
     // `uv_functions_to_export` module above.
     #[cfg(unix)]
     {
+        super::uv_posix::fix_dead_code_elimination();
         use uv_functions_to_export::*;
         keep_symbols!(
             uv_accept,
-            uv_async_init,
-            uv_async_send,
             uv_available_parallelism,
             uv_backend_fd,
             uv_backend_timeout,
@@ -4599,13 +4714,8 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_barrier_init,
             uv_barrier_wait,
             uv_buf_init,
-            uv_cancel,
             uv_chdir,
-            uv_check_init,
-            uv_check_start,
-            uv_check_stop,
             uv_clock_gettime,
-            uv_close,
             uv_cond_broadcast,
             uv_cond_destroy,
             uv_cond_init,
@@ -4615,7 +4725,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_cpu_info,
             uv_cpumask_size,
             uv_cwd,
-            uv_default_loop,
             uv_disable_stdio_inheritance,
             uv_dlclose,
             uv_dlerror,
@@ -4698,11 +4807,7 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_handle_set_data,
             uv_handle_size,
             uv_handle_type_name,
-            uv_has_ref,
             uv_hrtime,
-            uv_idle_init,
-            uv_idle_start,
-            uv_idle_stop,
             uv_if_indextoiid,
             uv_if_indextoname,
             uv_inet_ntop,
@@ -4713,8 +4818,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_ip4_name,
             uv_ip6_addr,
             uv_ip6_name,
-            uv_is_active,
-            uv_is_closing,
             uv_is_readable,
             uv_is_writable,
             uv_key_create,
@@ -4743,7 +4846,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_mutex_lock,
             uv_mutex_trylock,
             uv_mutex_unlock,
-            uv_now,
             uv_once,
             uv_open_osfhandle,
             uv_os_environ,
@@ -4781,19 +4883,14 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_poll_init_socket,
             uv_poll_start,
             uv_poll_stop,
-            uv_prepare_init,
-            uv_prepare_start,
-            uv_prepare_stop,
             uv_print_active_handles,
             uv_print_all_handles,
             uv_process_get_pid,
             uv_process_kill,
-            uv_queue_work,
             uv_random,
             uv_read_start,
             uv_read_stop,
             uv_recv_buffer_size,
-            uv_ref,
             uv_replace_allocator,
             uv_req_get_data,
             uv_req_get_type,
@@ -4855,13 +4952,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_thread_setaffinity,
             uv_thread_setname,
             uv_thread_setpriority,
-            uv_timer_again,
-            uv_timer_get_due_in,
-            uv_timer_get_repeat,
-            uv_timer_init,
-            uv_timer_set_repeat,
-            uv_timer_start,
-            uv_timer_stop,
             uv_translate_sys_error,
             uv_try_write,
             uv_try_write2,
@@ -4893,8 +4983,6 @@ pub(crate) fn fix_dead_code_elimination() {
             uv_udp_try_send,
             uv_udp_try_send2,
             uv_udp_using_recvmmsg,
-            uv_unref,
-            uv_update_time,
             uv_uptime,
             uv_utf16_length_as_wtf8,
             uv_utf16_to_wtf8,
@@ -5343,18 +5431,8 @@ impl NapiFinalizerTask {
     }
 
     pub(crate) fn schedule(self: Box<Self>) {
-        // SAFETY: env is valid (held by NapiEnvRef).
-        let global_this = unsafe { &*self.finalizer.env.get() }.to_js();
-
-        // Inline of `JSGlobalObject::try_bun_vm` (the full impl lives in the
-        // gated `JSGlobalObject.rs`): the VM pointer is fetched unconditionally
-        // from C++; "main thread" is determined by whether the thread-local VM
-        // holder is populated.
-        // SAFETY: `bun_vm()` returns a valid `*mut VirtualMachine` for this global.
-        let vm: &VirtualMachine = global_this.bun_vm();
-        let is_main_thread = VirtualMachine::get_or_null().is_some();
-
-        if !is_main_thread {
+        // `bun_vm()` reads a thread-local that is null on a GC thread, so check the thread first.
+        if VirtualMachine::get_or_null().is_none() {
             // Off the JS thread (e.g. an external buffer finalized from a GC
             // helper thread): post through the env's VM handle. If the VM is
             // already torn down the finalizer can never run; free the task but
@@ -5376,6 +5454,10 @@ impl NapiFinalizerTask {
             }
             return;
         }
+
+        // SAFETY: env is valid (held by NapiEnvRef).
+        let global_this = unsafe { &*self.finalizer.env.get() }.to_js();
+        let vm: &VirtualMachine = global_this.bun_vm();
 
         if vm.is_shutting_down() {
             if vm.has_run_cleanup_hooks() {
@@ -5403,9 +5485,6 @@ impl NapiFinalizerTask {
         }
     }
 
-    // Forwards `this` to `heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn run_on_js_thread(this: *mut NapiFinalizerTask) -> JsResult<()> {
         // SAFETY: `this` was created by heap::alloc in `schedule`.
         let mut this_box = unsafe { bun_core::heap::take(this) };

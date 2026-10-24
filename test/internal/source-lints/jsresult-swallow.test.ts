@@ -37,7 +37,7 @@ const PATTERNS: [name: string, re: RegExp, applies: (line: string) => boolean][]
     "JsResult collapsed on the spot",
     // `.ok()` / `.unwrap_or_else(|_| …)` straight off a call taking the global object: the Err is gone
     // and native code carries on. (`unwrap_or` on an `Option` and `is_err()`-then-bail are not this.)
-    /\((?:global|global_this|global_object|globalThis)\b[^;?]*\)\.(?:ok\(\)|unwrap_or_else\(\s*\|_\|)/,
+    /\((?:&?cx|global|global_this|global_object|globalThis)\b[^;?]*\)\.(?:ok\(\)|unwrap_or_else\(\s*\|_\|)/,
     line => !TERMINAL.test(line),
   ],
   ["taken exception discarded", /^\s*let _ = .*\b(?:take_exception|try_take_exception|take_error)\s*\(/, () => true],

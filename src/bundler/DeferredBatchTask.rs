@@ -24,6 +24,11 @@ impl bun_event_loop::Taskable for DeferredBatchTask {
         // SAFETY: released ⇒ never ran; `BundleV2` is alive until this comes back.
         unsafe { (*this).come_back() };
     }
+    /// A step of the bundle, which is waiting for it to come back: what the build reports is its
+    /// completion's to decide.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl DeferredBatchTask {

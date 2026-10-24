@@ -6,6 +6,9 @@
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "headers-handwritten.h"
 #include "webcore/HTTPHeaderMap.h"
+#include "webcore/JSWebSocket.h"
+#include "webcore/WebSocket.h"
+#include "node/JSNodeHTTPServerSocket.h"
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
@@ -244,4 +247,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_spawnThreadsForTesting, (JSC::JSGlobalObject
 #endif
 }
 
+}
+
+// For setSocketOptions(): the sockets that C++ classes own. Null for anything else, and for one that isn't connected.
+extern "C" us_socket_t* Bun__usSocketForTesting(JSC::EncodedJSValue encodedValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    if (auto* webSocket = dynamicDowncast<WebCore::JSWebSocket>(value))
+        return webSocket->wrapped().usSocket();
+    if (auto* socket = dynamicDowncast<Bun::JSNodeHTTPServerSocket>(value))
+        return socket->socket;
+    return nullptr;
 }

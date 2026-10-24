@@ -21,7 +21,6 @@
 // release) trips `unused_features`.
 #![cfg_attr(any(not(windows), debug_assertions), feature(core_intrinsics))]
 #![allow(internal_features)]
-#![allow(nonstandard_style, static_mut_refs, unexpected_cfgs)]
 #![warn(unused_must_use)]
 #[path = "CPUFeatures.rs"]
 pub mod cpu_features;
@@ -332,7 +331,7 @@ pub mod debug {
         }
     }
     /// Detect whether stderr supports ANSI color escapes.
-    #[allow(dead_code)]
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     pub(crate) fn detect_tty_config_stderr() -> TtyConfig {
         if bun_core::Output::ENABLE_ANSI_COLORS_STDERR.load(core::sync::atomic::Ordering::Relaxed) {
             TtyConfig::EscapeCodes
@@ -2855,7 +2854,6 @@ mod draft {
             // `CloseHandle`. `report()` runs immediately before
             // `crash()` → `ExitProcess(3)`, so the kernel reclaims them anyway.
             let _ = spawn_result;
-            let _ = url;
         }
         #[cfg(any(
             target_os = "macos",
@@ -2920,8 +2918,6 @@ mod draft {
                 _ => {}
             }
         }
-        #[cfg(not(unix))]
-        let _ = url;
     }
 
     /// Crash. Make sure segfault handlers are off so that this doesnt trigger the crash handler.
@@ -3105,10 +3101,10 @@ mod draft {
             let programs: &[&bun_core::ZStr] = if cfg!(windows) {
                 &[bun_core::zstr!("pdb-addr2line")]
             } else {
-                // if `llvm-symbolizer` doesn't work, also try `llvm-symbolizer-21`
+                // if `llvm-symbolizer` doesn't work, also try `llvm-symbolizer-23`
                 &[
                     bun_core::zstr!("llvm-symbolizer"),
-                    bun_core::zstr!("llvm-symbolizer-21"),
+                    bun_core::zstr!("llvm-symbolizer-23"),
                 ]
             };
             for &program in programs {
@@ -3651,24 +3647,23 @@ mod draft {
         );
     }
 
+    /// Sets the thread's action to `Dlopen(path)`. `CrashHandler__endDlOpenAction` restores the previous action.
     /// # Safety
-    /// `action` must be null or a valid NUL-terminated C string that outlives the dlopen call.
+    /// `path` must be a valid NUL-terminated C string that outlives the returned guard.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn CrashHandler__setDlOpenAction(action: *const c_char) {
-        if !action.is_null() {
-            debug_assert!(CURRENT_ACTION.with(|c| c.get()).is_none());
-            // SAFETY: action is a valid NUL-terminated C string for the duration of the dlopen call
-            let s = unsafe { bun_core::ffi::cstr(action) }.to_bytes();
-            // SAFETY: noreturn-on-crash usage; the C string outlives the action via caller contract
-            let s: &'static [u8] = unsafe { bun_collections::detach_lifetime(s) };
-            CURRENT_ACTION.with(|c| c.set(Some(Action::Dlopen(s))));
-        } else {
-            debug_assert!(matches!(
-                CURRENT_ACTION.with(|c| c.get()),
-                Some(Action::Dlopen(_))
-            ));
-            CURRENT_ACTION.with(|c| c.set(None));
-        }
+    unsafe extern "C" fn CrashHandler__beginDlOpenAction(path: *const c_char) -> *mut ActionGuard {
+        // SAFETY: path is a valid NUL-terminated C string (caller contract)
+        let s = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
+        // SAFETY: noreturn-on-crash usage; the C string outlives the action via caller contract
+        let s: &'static [u8] = unsafe { bun_collections::detach_lifetime(s) };
+        bun_core::heap::into_raw(Box::new(scoped_action(Action::Dlopen(s))))
+    }
+
+    /// SAFETY: `guard` must come from `CrashHandler__beginDlOpenAction`, on this thread, and must not be used again.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn CrashHandler__endDlOpenAction(guard: *mut ActionGuard) {
+        // SAFETY: guard is a live Box from CrashHandler__beginDlOpenAction (caller contract)
+        unsafe { bun_core::heap::destroy(guard) };
     }
 
     pub fn fix_dead_code_elimination() {

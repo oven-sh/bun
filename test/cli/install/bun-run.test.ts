@@ -9,6 +9,33 @@ const bunEnv: typeof bunEnv_ = {
   BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN: "1",
 };
 
+it.concurrent.each([false, true])("node shim environment uses the executable path (force Bun: %s)", async forceBun => {
+  using dir = tempDir("bun-run-node-env", {
+    "package.json": JSON.stringify({
+      name: "node-env",
+      scripts: { probe: 'echo "$NODE"; echo "$npm_node_execpath"; echo "$npm_execpath"' },
+    }),
+  });
+  // The builtin echo avoids racing other debug processes that recreate the shared shim.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--silent", ...(forceBun ? ["--bun"] : []), "--shell=bun", "run", "probe"],
+    cwd: String(dir),
+    env: { ...bunEnv, PATH: String(dir), NODE: undefined, npm_node_execpath: undefined, npm_execpath: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const lines = stdout
+    .trim()
+    .split(/\r?\n/)
+    .map(line => (isWindows ? line.replaceAll("\\", "/") : line));
+  expect({ lines, stderr, exitCode }).toEqual({
+    lines: [expect.stringMatching(/[/\\]bun-node[^/\\]*[/\\]node(?:\.exe)?$/), lines[0], bunExe()],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 describe.concurrent("bun run", () => {
   for (let withRun of [false, true]) {
     describe(withRun ? "bun run" : "bun", () => {

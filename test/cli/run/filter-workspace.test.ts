@@ -19,6 +19,48 @@ import { join } from "path";
 
 const { parseLockfile } = install_test_helpers;
 
+test("every filtered package keeps the node shim executable on PATH", async () => {
+  const pkg = (name: string) => ({
+    "package.json": JSON.stringify({ name, scripts: { probe: "node probe.js" } }),
+    "probe.js": `console.log(JSON.stringify({
+      pkg: ${JSON.stringify(name)},
+      node: process.env.NODE,
+      npmNodeExecpath: process.env.npm_node_execpath,
+      bun: typeof Bun !== "undefined",
+    }));`,
+  });
+  using dir = tempDir("filter-node-env", {
+    "package.json": JSON.stringify({ name: "workspace", workspaces: ["packages/*"] }),
+    packages: { a: pkg("a"), b: pkg("b"), c: pkg("c") },
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--shell=bun", "--filter", "*", "--elide-lines=0", "probe"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      NO_COLOR: "1",
+      FORCE_COLOR: undefined,
+      PATH: String(dir),
+      NODE: undefined,
+      npm_node_execpath: undefined,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const results = stdout
+    .split(/\r?\n/)
+    .filter(line => line.includes('{"pkg"'))
+    .map(line => JSON.parse(line.slice(line.indexOf("{"))))
+    .sort((a, b) => a.pkg.localeCompare(b.pkg));
+  const shimExe = expect.stringMatching(/[/\\]bun-node[^/\\]*[/\\]node(?:\.exe)?$/);
+  expect({ results, stderr, exitCode }).toEqual({
+    results: ["a", "b", "c"].map(pkg => ({ pkg, node: shimExe, npmNodeExecpath: shimExe, bun: true })),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 const cwd_root = tempDirWithFiles("testworkspace", {
   packages: {
     pkga: {

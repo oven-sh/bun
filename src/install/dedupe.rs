@@ -23,9 +23,12 @@ struct Pass<'a> {
     pinned: &'a DynamicBitSet,
     /// Versions that no dependency may move onto. See `dedupe_lockfile`.
     closed: &'a DynamicBitSet,
-    /// For `collapse_appended`: dependencies on loaded packages (ids below this) and the
-    /// dependencies of the root and workspaces don't move.
+    /// For `collapse_appended`: the dependencies of the root and workspaces don't move, and a
+    /// dependency on a loaded package (ids below this) moves only up, onto a version appended in
+    /// this session.
     frozen_below: Option<PackageID>,
+    /// Whether a dependency on a loaded package may move that way. `false` under `--depth 0`.
+    lift_loaded: bool,
     /// For each group, every dependency with the package that owns it.
     edges: Vec<Vec<(DependencyID, PackageID)>>,
     candidates: Vec<PackageID>,
@@ -51,6 +54,7 @@ impl<'a> Pass<'a> {
         pinned: &'a DynamicBitSet,
         closed: &'a DynamicBitSet,
         frozen_below: Option<PackageID>,
+        lift_loaded: bool,
         max_edges: usize,
     ) -> Pass<'a> {
         let package_count = lockfile.packages.len();
@@ -62,6 +66,7 @@ impl<'a> Pass<'a> {
             pinned,
             closed,
             frozen_below,
+            lift_loaded,
             edges: vec![Vec::new(); groups.len()],
             candidates: Vec::with_capacity(max_candidates),
             edge_count: 0,
@@ -229,6 +234,17 @@ impl<'a> Pass<'a> {
             self.required.unmanaged.set_all(false);
             let mut can_move = false;
 
+            // Candidates are sorted highest first. An edge at or after `lift_min` has a version
+            // appended in this session to move up onto.
+            let lift_min = match self.frozen_below {
+                Some(below) if self.lift_loaded => self
+                    .candidates
+                    .iter()
+                    .position(|&id| id >= below)
+                    .unwrap_or(usize::MAX),
+                _ => usize::MAX,
+            };
+
             for (e, &(dep_id, owner)) in edges.iter().enumerate() {
                 let dep = &deps[dep_id as usize];
                 let target = cur[dep_id as usize];
@@ -240,9 +256,9 @@ impl<'a> Pass<'a> {
                 self.cur_c[e] = cur_c;
                 let row = e * n;
 
-                let frozen = self
-                    .frozen_below
-                    .is_some_and(|below| is_direct(owner) || target < below);
+                let direct = self.frozen_below.is_some() && is_direct(owner);
+                let loaded = !direct && self.frozen_below.is_some_and(|below| target < below);
+                let frozen = direct || (loaded && lift_min >= cur_c);
                 let range = if pinned.is_set(target as usize) || frozen || dep.behavior.is_bundled()
                 {
                     None
@@ -272,14 +288,26 @@ impl<'a> Pass<'a> {
                             }
                             None => 0..n,
                         };
+                        // A dependency on a loaded package leaves it only for a higher version
+                        // appended in this session.
+                        let may_move_to = |c: usize| {
+                            let id = self.candidates[c];
+                            c == cur_c
+                                || (!closed.is_set(id as usize)
+                                    && (!loaded
+                                        || (c < cur_c
+                                            && self.frozen_below.is_some_and(|below| id >= below))))
+                        };
+                        let mut lifted = false;
                         for c in in_question {
                             let id = self.candidates[c] as usize;
-                            if (c == cur_c || !closed.is_set(id))
+                            if may_move_to(c)
                                 && query.satisfies(pkg_res[id].npm().version, buf, buf)
                             {
                                 self.sat.set(row + c);
                                 self.movable.set(e);
                                 can_move |= c != cur_c;
+                                lifted |= c != cur_c;
                             }
                         }
                         // No version is in range. An unmet peer follows the others (see
@@ -288,11 +316,11 @@ impl<'a> Pass<'a> {
                             self.movable.set(e);
                             can_move = true;
                             for c in 0..n {
-                                if c == cur_c || !closed.is_set(self.candidates[c] as usize) {
+                                if may_move_to(c) {
                                     self.sat.set(row + c);
                                 }
                             }
-                        } else if !self.movable.is_set(e) {
+                        } else if !self.movable.is_set(e) || (loaded && !lifted) {
                             self.sat.set(row + cur_c);
                             self.required.set(cur_c);
                         }
@@ -435,7 +463,11 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> Report {
+fn dedupe_lockfile(
+    lockfile: &mut Lockfile,
+    frozen_below: Option<PackageID>,
+    lift_loaded: bool,
+) -> Report {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let checked = pkg_res.len();
@@ -522,6 +554,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> 
                 &pinned,
                 &closed,
                 frozen_below,
+                lift_loaded,
                 max_edges,
             );
             loop {
@@ -981,7 +1014,7 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
         refuse_out_of_date(manager);
     }
 
-    let report = dedupe_lockfile(&mut manager.lockfile, None);
+    let report = dedupe_lockfile(&mut manager.lockfile, None, false);
     if report.rows.is_empty() {
         report_already_deduplicated(manager, &report);
     }
@@ -1032,12 +1065,13 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
 /// Runs after resolution. Collapses the versions that were appended in this session onto the fewest
 /// versions that satisfy their dependents.
 pub fn collapse_appended(manager: &mut PackageManager) {
+    let lift_loaded = !manager.options.do_.update_direct_only();
     let lockfile = &mut *manager.lockfile;
     let frozen_below = lockfile.loaded_package_count;
     if lockfile.packages.len() as PackageID <= frozen_below {
         return;
     }
-    let report = dedupe_lockfile(lockfile, Some(frozen_below));
+    let report = dedupe_lockfile(lockfile, Some(frozen_below), lift_loaded);
     for row in &report.rows {
         bun_output::scoped_log!(
             PackageManager,

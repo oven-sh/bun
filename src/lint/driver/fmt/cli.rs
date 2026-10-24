@@ -116,6 +116,9 @@ const OTHER: &[Param] = &[
     clap::param!(
         "--no-script                     Run the formatter even if the project has a <b>fmt<r> script"
     ),
+    clap::param!(
+        "--lsp                           Serve editors as a language server over standard input and output"
+    ),
     clap::param!("-v, --version                   Print the version of Bun"),
     clap::param!(
         "-h, --help                      Print the common flags. With <b>--all<r>, every flag"
@@ -171,7 +174,6 @@ const OXFMT_COMPAT: &[Param] = &[
         "--disable-nested-config         Use the config file in the working directory for every file"
     ),
     clap::param!("--migrate <source>              Not supported"),
-    clap::param!("--lsp                           Not supported"),
 ];
 
 /// Flags that `--help` lists in their `--no-..` form.
@@ -363,6 +365,8 @@ pub struct Options {
     pub debug_check: bool,
     /// Print the files that would be formatted, without formatting.
     pub list_files: bool,
+    /// Serve editors as a language server over standard input and output, instead of formatting.
+    pub lsp: bool,
 }
 
 impl Default for Options {
@@ -412,6 +416,7 @@ impl Default for Options {
             cwd: None,
             debug_check: false,
             list_files: false,
+            lsp: false,
         }
     }
 }
@@ -507,9 +512,10 @@ impl Options {
                     }
                 };
             }
-            b"migrate" | b"lsp" => {
+            b"migrate" => {
                 return error(&[b"bun fmt does not support --", name]);
             }
+            b"lsp" => self.lsp = is_on,
             b"editorconfig" => self.editorconfig = is_on,
             b"config-precedence" => {
                 self.config_precedence = match text {

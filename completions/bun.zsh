@@ -856,6 +856,7 @@ _bun_lint_completion() {
         '--no-infer-globals[Do not take globals from the project'"'"'s types]' \
         '--threads[Number of threads (default\: one per CPU core)]:threads' \
         '--no-script[Run the linter even if the project has a lint script]' \
+        '--lsp[Serve editors as a language server over standard input and output]' \
         '--version[Print the version of Bun]' \
         '-v[Print the version of Bun]' \
         '--help[Print the common flags. With --all, every flag]' \
@@ -970,6 +971,7 @@ _bun_fmt_completion() {
         '--threads[Number of threads (default\: one per CPU core)]:threads' \
         '--debug-check[Do not write. Fail if formatting a file would change what it means]' \
         '--no-script[Run the formatter even if the project has a fmt script]' \
+        '--lsp[Serve editors as a language server over standard input and output]' \
         '--version[Print the version of Bun]' \
         '-v[Print the version of Bun]' \
         '--help[Print the common flags. With --all, every flag]' \

@@ -110,6 +110,9 @@ const OTHER: &[Param] = &[
     clap::param!(
         "--no-script                     Run the linter even if the project has a <b>lint<r> script"
     ),
+    clap::param!(
+        "--lsp                           Serve editors as a language server over standard input and output"
+    ),
     clap::param!("-v, --version                   Print the version of Bun"),
     clap::param!(
         "-h, --help                      Print the common flags. With <b>--all<r>, every flag"
@@ -189,7 +192,6 @@ const OXLINT_COMPAT: &[Param] = &[
     clap::param!(
         "--disable-nested-config         Use the config file in the working directory for every file"
     ),
-    clap::param!("--lsp                           Not supported"),
     clap::param!("--import-plugin                 Turn on the <b>import<r> plugin"),
     clap::param!("--react-plugin                  Turn on the <b>react<r> plugin"),
     clap::param!("--jsdoc-plugin                  Turn on the <b>jsdoc<r> plugin"),
@@ -327,7 +329,7 @@ const ESLINT_ONLY: [&[u8]; 35] = [
 
 /// Flags only oxlint has, besides `--import-plugin` and friends. Flags that `--help` lists as Bun's own don't belong
 /// here.
-const OXLINT_ONLY: [&[u8]; 8] = [
+const OXLINT_ONLY: [&[u8]; 7] = [
     b"allow",
     b"warn",
     b"deny",
@@ -335,7 +337,6 @@ const OXLINT_ONLY: [&[u8]; 8] = [
     b"silent",
     b"disable-nested-config",
     b"rules",
-    b"lsp",
 ];
 
 /// The [`ESLINT_ONLY`] flags that can't be honored with an oxlint config.
@@ -596,6 +597,8 @@ pub struct Options {
     pub rulesdir: Vec<Vec<u8>>,
     /// ESLint 8's `--resolve-plugins-relative-to`.
     pub resolve_plugins_relative_to: Option<Vec<u8>>,
+    /// Serve editors as a language server over standard input and output, instead of linting.
+    pub lsp: bool,
 }
 
 impl Default for Options {
@@ -689,6 +692,7 @@ impl Default for Options {
             env: Vec::new(),
             rulesdir: Vec::new(),
             resolve_plugins_relative_to: None,
+            lsp: false,
         }
     }
 }
@@ -970,6 +974,7 @@ impl Options {
             b"type-check" => self.type_check = is_on,
             b"rules" => self.rules = is_on,
             b"explain" => self.explain = owned(),
+            b"lsp" => self.lsp = is_on,
             _ if is_on && name.ends_with(b"-plugin") => {
                 let plugin = &name[..name.len() - b"-plugin".len()];
                 self.plugins.push(match plugin.strip_prefix(b"disable-") {

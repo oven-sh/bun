@@ -2502,8 +2502,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   }
 
   // What closes with this socket clears its own.
-  const timeout = this[kTimeout];
-  if (timeout) clearTimeout(timeout);
+  clearTimeout(this[kTimeout]);
   const released = unadoptedTransport(this);
   if (released !== undefined && !this.resetAndClosing && this[kSessionAccepted] === true) releaseTransport(released);
 

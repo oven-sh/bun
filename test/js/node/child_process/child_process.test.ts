@@ -1369,9 +1369,11 @@ describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
     });
   });
 
-  // Not on macOS: there the bytes that the parent had not read when the child
-  // exited do not arrive. The same holds for the paused pipe below.
-  it.skipIf(isMacOS)("'close' waits for a pipe that the parent starts to read in 'exit'", async () => {
+  // Not yet on macOS: there the bytes that the parent had not read when the
+  // child exited do not arrive. The unix socket closes with an error, which
+  // https://github.com/oven-sh/bun/pull/46522 changes. The same holds for the
+  // paused pipe below.
+  it.todoIf(isMacOS)("'close' waits for a pipe that the parent starts to read in 'exit'", async () => {
     const result = await run(/* js */ `
       const { spawn } = require("node:child_process");
       const [file, args] =
@@ -1425,8 +1427,10 @@ describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
 
   // The child writes "two" only after the parent has paused the pipe, so "two"
   // stays in the paused socket until something resumes it.
-  it.skipIf(isWindows || isMacOS)("'close' comes for a pipe the parent paused, after its remaining bytes", async () => {
-    const result = await run(/* js */ `
+  it.skipIf(isWindows).todoIf(isMacOS)(
+    "'close' comes for a pipe the parent paused, after its remaining bytes",
+    async () => {
+      const result = await run(/* js */ `
       const { spawn } = require("node:child_process");
       const child = spawn("/bin/sh", ["-c", "printf one >&3; read line <&4; printf two >&3"], {
         stdio: ["ignore", "ignore", "inherit", "pipe", "pipe"],
@@ -1441,8 +1445,9 @@ describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
       });
       child.on("close", () => console.log(JSON.stringify({ got })));
     `);
-    expect(result).toEqual({ stdout: '{"got":"onetwo"}\n', stderr: "", exitCode: 0 });
-  });
+      expect(result).toEqual({ stdout: '{"got":"onetwo"}\n', stderr: "", exitCode: 0 });
+    },
+  );
 
   // readline pauses its input on close(). The lines must be in before 'exit',
   // or they stay in the paused socket and 'close' never comes.
@@ -1500,10 +1505,77 @@ describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
     expect(result).toEqual({ stdout: '{"resumed":false}\n', stderr: "", exitCode: 0 });
   });
 
+  // The tests from here on are serial, so that this block does not start more
+  // processes at once than it did.
+
+  // More than the socket buffers before it stops its handle: the resume after
+  // 'exit' has to start the handle again. 80 KB fits the pipe on Linux, so the
+  // child does not block.
+  it.serial.skipIf(!isLinux)("'close' comes for a pipe that holds more than the socket buffers", async () => {
+    const result = await run(/* js */ `
+      const { spawn } = require("node:child_process");
+      const watch = readsInExit => {
+        const child = spawn("/bin/sh", ["-c", "head -c 80000 /dev/zero >&3"], {
+          stdio: ["ignore", "ignore", "inherit", "pipe"],
+        });
+        const seen = [];
+        let bytes = 0;
+        child.stdio[3].on("end", () => seen.push("end"));
+        child.on("exit", code => {
+          seen.push("exit " + code);
+          if (readsInExit) child.stdio[3].on("data", chunk => (bytes += chunk.length));
+        });
+        child.on("close", code => seen.push("close " + code, bytes + " bytes"));
+        return seen;
+      };
+      const unread = watch(false);
+      const readInExit = watch(true);
+      process.on("exit", () => console.log(JSON.stringify({ unread, readInExit })));
+    `);
+    expect(result).toEqual({
+      stdout:
+        JSON.stringify({
+          unread: ["exit 0", "end", "close 0", "0 bytes"],
+          readInExit: ["exit 0", "end", "close 0", "80000 bytes"],
+        }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The shape of a pipe transport: the parent writes to fd 3, reads fd 4 and
+  // ends the child.
+  it.serial.skipIf(isWindows)("'close' comes after kill() for a child with a pipe in each direction", async () => {
+    const result = await run(/* js */ `
+      const { spawn } = require("node:child_process");
+      const child = spawn("/bin/sh", ["-c", "exec cat <&3 >&4"], {
+        stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"],
+      });
+      const [, , , toChild, fromChild] = child.stdio;
+      const seen = [];
+      fromChild.on("data", chunk => {
+        seen.push("data " + chunk);
+        child.kill();
+      });
+      child.on("exit", (code, signal) => seen.push("exit " + code + " " + signal));
+      child.on("close", (code, signal) => {
+        seen.push("close " + code + " " + signal, "pipes closed " + toChild.destroyed + " " + fromChild.destroyed);
+      });
+      toChild.write("ping");
+      process.on("exit", () => console.log(JSON.stringify(seen)));
+    `);
+    expect(result).toEqual({
+      stdout: JSON.stringify(["data ping", "exit null SIGTERM", "close null SIGTERM", "pipes closed true true"]) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // Two children: one with a pipe that nobody reads, one with a 'data' listener
   // on it. The line is printed when the process exits, so a lost event is a
-  // wrong line and not a timeout.
-  const bothReaders = (beforeLoad: string, afterLoad: string) => /* js */ `
+  // wrong line and not a timeout. In the 'data' listener the child either has
+  // its exit code or still has its pid.
+  const bothReaders = (beforeLoad: string, afterLoad: string, shell = "printf result >&3") => /* js */ `
     let calls = 0;
     const fake = () => void calls++;
     ${beforeLoad}
@@ -1512,11 +1584,22 @@ describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
     const [file, args] =
       process.platform === "win32"
         ? [process.execPath, ["-e", "require('fs').writeSync(3, 'result')"]]
-        : ["/bin/sh", ["-c", "printf result >&3"]];
+        : ["/bin/sh", ["-c", ${JSON.stringify(shell)}]];
+    const pidIsGone = child => {
+      if (child.exitCode !== null || child.signalCode !== null) return false;
+      try {
+        process.kill(child.pid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    };
     const watch = reads => {
       const child = spawn(file, args, { stdio: ["ignore", "ignore", "inherit", "pipe"] });
       const seen = [];
-      if (reads) child.stdio[3].on("data", chunk => seen.push("data " + chunk));
+      if (reads) {
+        child.stdio[3].on("data", chunk => seen.push("data " + chunk + (pidIsGone(child) ? ", no exit code, no pid" : "")));
+      }
       child.on("exit", code => seen.push("exit " + code));
       child.on("close", code => seen.push("close " + code, "pipe closed " + child.stdio[3].destroyed));
       return seen;
@@ -1536,27 +1619,62 @@ describe.concurrent("'close' and extra stdio pipes (index >= 3)", () => {
     exitCode: 0,
   };
 
-  // A fake clock replaces the timer globals (mock.timers of node:test, sinon),
-  // and a program can delete them. 'exit' and 'close' are the runtime's own
-  // work and do not pass through them. Each row: what the program does before
-  // node:child_process is first loaded, and what it does after that. Serial,
-  // so that this block does not start more processes at once than it did.
-  describe.serial("the timer globals", () => {
-    it.each([
-      ["setImmediate replaced before the first load", "globalThis.setImmediate = fake;", ""],
-      ["setImmediate replaced after the load", "", "globalThis.setImmediate = fake;"],
-      ["setImmediate and clearTimeout deleted", "delete globalThis.setImmediate; delete globalThis.clearTimeout;", ""],
-    ])("'exit' and 'close' come with %s", async (_, beforeLoad, afterLoad) => {
-      expect(await run(bothReaders(beforeLoad, afterLoad))).toEqual(bothReadersResult);
-    });
-
-    // Without a pidfd (gVisor, seccomp, Linux before 5.3) a thread waits for
-    // the child and reports its exit ahead of the poll that reads the pipe.
-    it.skipIf(!isLinux)("'exit' comes after the bytes of the pipe when a waiter thread reports it", async () => {
-      const env = { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" };
-      expect(await run(bothReaders("", ""), env)).toEqual(bothReadersResult);
-    });
+  // A fake clock replaces setImmediate (mock.timers of node:test, sinon), and
+  // a program can delete it. 'exit' and 'close' of a child that has exited are
+  // the runtime's own work and do not pass through it. Each row: what the
+  // program does before node:child_process is first loaded, and what it does
+  // after that.
+  it.serial.each([
+    ["replaced before the first load", "globalThis.setImmediate = fake;", ""],
+    ["replaced after the load", "", "globalThis.setImmediate = fake;"],
+    ["deleted", "delete globalThis.setImmediate;", ""],
+  ])("'exit' and 'close' come with setImmediate %s", async (_, beforeLoad, afterLoad) => {
+    expect(await run(bothReaders(beforeLoad, afterLoad))).toEqual(bothReadersResult);
   });
+
+  // Without a pidfd (seccomp, Linux before 5.3) a thread waits for the child
+  // and reports its exit ahead of the poll that reads the pipe.
+  it.serial.skipIf(!isLinux)("'exit' comes after the bytes of the pipe when a waiter thread reports it", async () => {
+    const env = { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" };
+    expect(await run(bothReaders("", ""), env)).toEqual(bothReadersResult);
+  });
+
+  // Bun.spawn calls onExit before it returns when it cannot watch the child
+  // (on macOS: a child that is gone already). The wrapper does the same once
+  // the child has written to fd 3.
+  it.serial.skipIf(isWindows)("'exit' comes after the bytes of the pipe when Bun.spawn reports it", async () => {
+    using dir = tempDir("child-process-exit-in-spawn", {});
+    const beforeLoad = /* js */ `
+      const fs = require("node:fs");
+      const realSpawn = Bun.spawn;
+      let spawned = 0;
+      Bun.spawn = options => {
+        const marker = process.env.MARKER_DIR + "/" + spawned++;
+        const { onExit } = options;
+        const handle = realSpawn({ ...options, env: { ...options.env, MARKER: marker }, onExit() {} });
+        const deadline = Date.now() + 30_000;
+        while (!fs.existsSync(marker)) if (Date.now() > deadline) throw new Error("the child made no " + marker);
+        onExit(handle, 0, null, undefined);
+        return handle;
+      };
+    `;
+    const script = bothReaders(beforeLoad, "", 'printf result >&3; : > "$MARKER"');
+    expect(await run(script, { ...bunEnv, MARKER_DIR: String(dir) })).toEqual(bothReadersResult);
+  });
+});
+
+// The mark for a pipe that is handed to a second spawn goes only onto the
+// pipes that this module made.
+it("spawn() writes nothing onto a stream that is passed as stdio", async () => {
+  using dir = tempDir("child-process-stdio-stream", {});
+  const file = path.join(String(dir), "out.txt");
+  const stream = fs.createWriteStream(file);
+  await once(stream, "open");
+  Object.preventExtensions(stream);
+  const child = spawn(bunExe(), ["-e", "console.log('hi')"], { env: bunEnv, stdio: ["ignore", stream, "inherit"] });
+  const [code] = await once(child, "close");
+  stream.destroy();
+  expect({ code, out: fs.readFileSync(file, "utf8") }).toEqual({ code: 0, out: "hi\n" });
 });
 
 describe("uid/gid options", () => {

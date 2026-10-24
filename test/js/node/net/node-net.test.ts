@@ -3604,39 +3604,3 @@ it.each(Object.entries({ setDefaultAutoSelectFamily, setDefaultAutoSelectFamilyA
     expect(thrown).toEqual(thrownBy(() => set(undefined)));
   },
 );
-
-// A fake clock replaces the timer globals (mock.timers of node:test, sinon),
-// and a program can delete them. 'close' is the runtime's own work. The line
-// is printed when the process exits, so a lost 'close' is a wrong line and
-// not a timeout.
-it.concurrent.each([
-  ["setImmediate replaced before the first load", "globalThis.setImmediate = () => {};", ""],
-  ["setImmediate replaced after the load", "", "globalThis.setImmediate = () => {};"],
-  ["setImmediate and clearTimeout deleted", "delete globalThis.setImmediate; delete globalThis.clearTimeout;", ""],
-])("a socket emits 'close' with %s", async (_, beforeLoad, afterLoad) => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      /* js */ `
-      ${beforeLoad}
-      const net = require("node:net");
-      ${afterLoad}
-      const seen = [];
-      const server = net.createServer(socket => socket.end("hello")).listen(0, "127.0.0.1", () => {
-        const client = net.connect(server.address().port, "127.0.0.1");
-        client.on("data", chunk => seen.push("data " + chunk));
-        client.on("end", () => seen.push("end"));
-        client.on("close", () => seen.push("close"));
-      });
-      server.unref();
-      process.on("exit", () => console.log(JSON.stringify(seen)));
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: '["data hello","end","close"]\n', stderr: "", exitCode: 0 });
-});

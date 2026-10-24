@@ -80,13 +80,13 @@ devTest('uses "development" condition', {
     await dev.fetch("/").equals("Environment: development");
   },
 });
-// The server graph has the main fields of a browser (a defect of its own), so a route takes the
-// "browser" file of a package. It takes the same file when a preload reads the package first.
+// A route is server code: it takes the "main" file of a package that also has a string "browser".
+// That does not depend on which reads the package first, the server graph or a preload.
 for (const [reader, bunfig] of [
   ["the server graph", ""],
   ["a preload", `preload = ["dual"]`],
 ]) {
-  devTest(`a route takes the same file of a package when ${reader} reads it first`, {
+  devTest(`a route takes the "main" file of a package when ${reader} reads it first`, {
     framework: minimalFramework,
     files: {
       "bunfig.toml": bunfig,
@@ -106,7 +106,7 @@ for (const [reader, bunfig] of [
       `,
     },
     async test(dev) {
-      await dev.fetch("/").equals("dual: browser.js");
+      await dev.fetch("/").equals("dual: node.js");
     },
   });
 }

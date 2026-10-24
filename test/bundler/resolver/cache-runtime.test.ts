@@ -165,6 +165,10 @@ describe.concurrent("main fields of a package.json that another resolver read fi
     "node_modules/custom-dual/main.js": `module.exports = "MAIN";`,
     "node_modules/custom-dual/browser.js": `module.exports = "BROWSER";`,
     "node_modules/custom-dual/custom.js": `module.exports = "CUSTOM";`,
+    // "module" for an import and "main" for a require(), when the list is the default of the target.
+    "node_modules/both/package.json": JSON.stringify({ name: "both", main: "./main.js", module: "./module.js" }),
+    "node_modules/both/main.js": `module.exports = "MAIN";`,
+    "node_modules/both/module.js": `export default "MODULE";`,
     // A list that does not name "main" takes the index file.
     "node_modules/main-index/package.json": JSON.stringify({ name: "main-index", main: "./main.js" }),
     "node_modules/main-index/main.js": `module.exports = "MAIN";`,
@@ -348,7 +352,7 @@ describe.concurrent("main fields of a package.json that another resolver read fi
     for (const name of readdirSync(path.join(dir, "out"))) {
       if (!name.endsWith(".js")) continue;
       const text = await Bun.file(path.join(dir, "out", name)).text();
-      bundled[name === "server.js" ? "server" : "page"] = /"(BROWSER|MAIN|CUSTOM)"/.exec(text)?.[1];
+      bundled[name === "server.js" ? "server" : "page"] = /"(BROWSER|MAIN|MODULE|CUSTOM)"/.exec(text)?.[1];
     }
     return bundled;
   }
@@ -372,5 +376,17 @@ describe.concurrent("main fields of a package.json that another resolver read fi
       ...Object.fromEntries(chain),
     });
     expect(await buildServerWithPage(String(dir))).toEqual({ server: "CUSTOM", page: "MAIN" });
+  });
+
+  // The page's list is the default of a browser, so its require() takes "main" and not "module".
+  test.each([
+    ["and the server imports it too", `import it from "both";`, { server: "MAIN", page: "MAIN" }],
+    ["and the server does not import it", `const it = 0;`, { page: "MAIN" }],
+  ])('the page of a --main-fields build requires a package with "module", %s', async (_, server, expected) => {
+    using dir = tempDir(
+      "main-fields-read-first-cli-require",
+      serverWithPage(server, `const it = require("both"); console.log(it);`),
+    );
+    expect(await buildServerWithPage(String(dir))).toEqual(expected);
   });
 });

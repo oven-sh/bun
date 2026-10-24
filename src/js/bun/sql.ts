@@ -112,8 +112,7 @@ class Scope implements Target {
 
   statements: TransactionCommands | null = null;
   distributed = false;
-  /// The server can refuse BEGIN for what was added to it (options, the name of an XA branch): the callback waits
-  /// for its answer. Otherwise what the callback sends follows BEGIN in the same flush.
+  /// The callback waits for BEGIN's answer, as the server can refuse its options or its XA branch.
   awaitsStart = false;
   /// BEGIN was refused. What was handed over before the answer came may have run outside a transaction.
   startRefusal: { error: unknown } | null = null;
@@ -444,8 +443,7 @@ function ownConnection(scope: Scope) {
   );
 }
 
-/// The error of the callback is the cause of `error`, unless it is that error: a lost connection rejects everything
-/// on it with one error object.
+/// `error` with the error of the callback as cause, unless they are one object (a lost connection).
 function withCauseOf(error: unknown, failure: { error: unknown } | null) {
   return failure !== null && failure.error !== error ? withCause(error, failure.error) : error;
 }

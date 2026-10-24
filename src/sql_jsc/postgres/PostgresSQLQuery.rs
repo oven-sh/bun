@@ -65,9 +65,7 @@ pub struct Flags {
     pub(crate) formats: ResultFormats,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
-    /// A statement of begin() or savepoint() itself. It has no parameters and returns no rows. It
-    /// goes out as the unnamed statement, which the server cannot have forgotten (26000), in one
-    /// write with its Bind, so it is pipelined.
+    /// BEGIN, COMMIT, SAVEPOINT: the unnamed statement, pipelined, never lost (26000).
     pub(crate) internal: bool,
     /// Parse + Describe go out first and Bind waits for the server's parameter types.
     pub(crate) describe_first: bool,

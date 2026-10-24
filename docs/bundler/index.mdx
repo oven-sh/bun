@@ -227,6 +227,14 @@ A map of file paths to their contents for in-memory bundling: bundle virtual fil
 
 You can provide file contents as a `string`, `Blob`, `TypedArray`, or `ArrayBuffer`.
 
+A key is one of:
+
+- An absolute path, such as `/app/index.ts`. Write it normalized, like the result of `path.resolve()`. Bun does not resolve it against the working directory.
+- A relative path, such as `./src/config.ts` or `src/config.ts`. It starts with `./` or `../`, or it has a file extension and no scheme. Bun resolves it against the working directory at the `Bun.build()` call. An import with exactly the key as its specifier also gets the file.
+- A name, such as `virtual:config.ts`. It starts with a scheme, or it has no file extension and does not start with `./` or `../`. Only an import with exactly the key as its specifier gets the file. A name cannot replace a module that the target provides, such as `node:fs`.
+
+To make any relative key a path, start it with `./`: `./LICENSE`. Bun picks the loader from the file extension of the key.
+
 #### Bundle entirely from memory
 
 You can bundle code without any files on disk by providing all sources in `files`:
@@ -251,11 +259,11 @@ const output = await result.outputs[0].text();
 console.log(output);
 ```
 
-When all entrypoints are in the `files` map, Bun uses the current working directory as the root.
+When every entrypoint is spelled like a key of `files`, Bun uses the current working directory as the root.
 
 #### Override files on disk
 
-In-memory files take priority over files on disk, so you can override specific files while keeping the rest of your codebase unchanged:
+In-memory files take priority over files on disk, so you can override specific files while keeping the rest of your codebase unchanged. A relative path for a file on disk replaces the contents of that file only. Bun still resolves the file on disk, so its `tsconfig.json` and `package.json` apply. The key must be the real path of the file: a path through a symlinked directory has no effect.
 
 ```ts title="build.ts" icon="/icons/typescript.svg"
 // Assume ./src/config.ts exists on disk with development settings

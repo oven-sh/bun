@@ -719,6 +719,7 @@ pub(crate) fn compute_chunks(
             } else {
                 b"."
             };
+            let root_dir = &this.resolver().opts.root_dir;
             let mut real_path_buf = bun_paths::path_buffer_pool::get();
             let dir: &[u8] = 'dir: {
                 let Ok(dir_file) = bun_sys::File::openat(
@@ -740,6 +741,16 @@ pub(crate) fn compute_chunks(
                         );
                         return Err(crate::Error::BuildFailed);
                     };
+                    // A directory inside the root keeps its path from the root.
+                    if bun_paths::is_absolute(dir_path) {
+                        let from_root = resolve_path::relative_platform::<
+                            bun_paths::platform::Auto,
+                            false,
+                        >(root_dir, dir_path);
+                        if !from_root.starts_with(b"..") && !bun_paths::is_absolute(from_root) {
+                            break 'dir dir_path;
+                        }
+                    }
                     break 'dir &*normalized;
                 };
 
@@ -761,7 +772,6 @@ pub(crate) fn compute_chunks(
                 }
             };
 
-            let root_dir = &this.resolver().opts.root_dir;
             chunk.template.placeholder.dir = resolve_path::relative_alloc(root_dir, dir)?;
         }
     }

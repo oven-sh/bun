@@ -9427,6 +9427,38 @@ describe.concurrent("store entries an install stops linking to", () => {
     expect(await file(join(packageDir, "bun.lock")).text()).toContain('"pkg": ["basic-1@./pkg.tgz", {}, "sha512-');
   });
 
+  test.skipIf(isWindows)(
+    "a workspace whose node_modules is a symlink keeps the store entries it links to",
+    async () => {
+      const pkg = (name: string, deps: Record<string, string>) => JSON.stringify({ name, dependencies: deps });
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+          "packages/pkg1/package.json": pkg("pkg1", { "no-deps": "1.0.0" }),
+          "packages/pkg2/package.json": pkg("pkg2", { "no-deps": "1.0.1" }),
+        },
+      });
+      await mkdir(join(packageDir, "packages", "pkg2", "real_modules"));
+      await symlink("real_modules", join(packageDir, "packages", "pkg2", "node_modules"));
+      await runBunInstall(installEnv(packageDir), packageDir);
+      expect(await entries(packageDir)).toEqual(["no-deps@1.0.0", "no-deps@1.0.1"]);
+
+      // bun.lock drops pkg2's dependency and bumps pkg1's, and node_modules is still the old one.
+      await write(join(packageDir, "packages", "pkg1", "package.json"), pkg("pkg1", { "no-deps": "1.1.0" }));
+      await write(join(packageDir, "packages", "pkg2", "package.json"), pkg("pkg2", {}));
+      await runBunInstall(installEnv(packageDir), packageDir, { packages: ["--lockfile-only"] });
+      const { out, err } = await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: false });
+      expect(err).not.toContain("cannot prune");
+      expect(out).toContain("1 package installed");
+      // The entry pkg2 links to stays, because nothing is unlinked behind the symlink.
+      expect(await entries(packageDir)).toEqual(["no-deps@1.0.0", "no-deps@1.0.1", "no-deps@1.1.0"]);
+      expect(
+        await file(join(packageDir, "packages", "pkg2", "node_modules", "no-deps", "package.json")).json(),
+      ).toMatchObject({ version: "1.0.1" });
+    },
+  );
+
   test.skipIf(isWindows)("a symlinked node_modules keeps its store entries, with no warning", async () => {
     const deps = (noDeps: string) => JSON.stringify({ name: "foo", dependencies: { "no-deps": noDeps } });
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

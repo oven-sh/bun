@@ -22,7 +22,7 @@ use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{LoadResult, Lockfile, print_log_errors, reachable, tree};
 use crate::lockfile_real::LinkedMembers;
 use crate::lockfile_real::package::{Diff, DiffSummary, DroppedRow, Package};
-use crate::package_install::{StagingLock, StagingPath};
+use crate::package_install::{Staging, StagingLock, StagingPath};
 use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::patch_package::{isolated_store_folders, package_for_folder};
 use crate::package_manager::workspace_selection::{self, RootSelection};
@@ -68,7 +68,6 @@ struct Removal {
     version: Option<Box<[u8]>>,
 }
 
-#[derive(Default)]
 struct Plan {
     folders: Vec<Folder>,
     removals: Vec<Removal>,
@@ -84,6 +83,23 @@ struct Plan {
     left_linked_folder: bool,
     /// The store that an isolated install with this run's options would create.
     store: Option<Store>,
+    /// Names the sibling a store entry is renamed to before it is deleted. `Off` deletes in place.
+    staging: Staging,
+}
+
+impl Default for Plan {
+    fn default() -> Self {
+        Plan {
+            folders: Vec::new(),
+            removals: Vec::new(),
+            checked: 0,
+            leftovers: false,
+            linked_folders: Vec::new(),
+            left_linked_folder: false,
+            store: None,
+            staging: Staging::Off,
+        }
+    }
 }
 
 impl Plan {
@@ -337,6 +353,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     let staging_lock = StagingLock::acquire();
     let mut plan = Plan {
         leftovers: !staging_lock.is_busy,
+        staging: staging_lock.mode,
         ..Default::default()
     };
     // The root `node_modules` is checked even if `--filter` excludes the root package, because the
@@ -1960,35 +1977,54 @@ pub(crate) fn remove_unreferenced_store_entries(manager: &mut PackageManager, in
     push_store_entry_names(&manager.lockfile, installed, None, &mut names);
     sort_names(&mut names);
     names.dedup();
+    let staging_lock = StagingLock::acquire();
+    plan.staging = staging_lock.mode;
     let removed_store = plan_store(&names, &mut plan);
     if removed_store.is_empty() {
         return;
     }
+    // The links into a removed entry are unlinked afterwards, so every importer must be reachable.
+    let Some(importers) = open_importer_folders(manager) else {
+        return;
+    };
     remove_planned(plan, Layout::Isolated, manager);
-    unlink_links_into(manager, &removed_store);
+    for dir in &importers {
+        unlink_links(dir, &|dir, _, name| {
+            store_link_target(dir, name).is_some_and(|target| contains(&removed_store, &target))
+        });
+        prune_bins(dir);
+    }
 }
 
-/// Unlinks the root's and each workspace's links into the store entries `removed`, and their bins.
-fn unlink_links_into(manager: &PackageManager, removed: &[Box<[u8]>]) {
+/// Opens the `node_modules` of the root and of each workspace. `None` if a workspace is outside
+/// the project or its `node_modules` is a symlink.
+fn open_importer_folders(manager: &PackageManager) -> Option<Vec<Dir>> {
     let lockfile: &Lockfile = &manager.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let mut linked_folders = Vec::new();
-    for pkg_id in 0..lockfile.packages.len() {
-        let folder_path: Box<[u8]> = match pkg_res[pkg_id].tag {
+    let mut dirs = Vec::new();
+    for (pkg_id, res) in pkg_res.iter().enumerate() {
+        let folder_path: Box<[u8]> = match res.tag {
             ResolutionTag::Root if pkg_id == 0 => ROOT_DIR.into(),
-            _ => match workspace_node_modules(lockfile, pkg_id as PackageID) {
-                Some(folder_path) if !is_pruned_workspace(manager, pkg_id) => folder_path,
-                _ => continue,
-            },
+            ResolutionTag::Workspace if !is_pruned_workspace(manager, pkg_id) => {
+                if lockfile.is_member_outside(pkg_id as PackageID) {
+                    return None;
+                }
+                join(
+                    strings::without_trailing_slash(res.workspace().slice(buf)),
+                    b"node_modules",
+                )
+            }
+            _ => continue,
         };
-        let Some(dir) = open_workspace_folder(&folder_path, &mut linked_folders) else {
-            continue;
-        };
-        unlink_links(&dir, &|dir, _, name| {
-            store_link_target(dir, name).is_some_and(|target| contains(removed, &target))
-        });
-        prune_bins(&dir);
+        match open_workspace_folder(&folder_path, &mut linked_folders) {
+            Some(dir) => dirs.push(dir),
+            None if linked_folders.is_empty() => {}
+            None => return None,
+        }
     }
+    Some(dirs)
 }
 
 /// Runs `f` with every CPU, OS and libc enabled.
@@ -2593,8 +2629,12 @@ fn plan_store(names: &[Box<[u8]>], plan: &mut Plan) -> Vec<Box<[u8]>> {
     let mut removed_store: Vec<Box<[u8]>> = Vec::new();
     if let Some(store) = open_workspace_folder(STORE_DIR, &mut plan.linked_folders) {
         let store_idx = plan.push_folder(STORE_DIR, FolderKind::Store);
-        for (name, kind) in read_entries(&store) {
+        for (name, kind) in read_entries_and_leftovers(&store, plan.leftovers) {
             if &*name == b"node_modules" {
+                continue;
+            }
+            if is_leftover(&name) {
+                plan.remove(store_idx, &name, kind);
                 continue;
             }
             plan.checked += 1;
@@ -2784,8 +2824,12 @@ fn execute(plan: &Plan, quiet: bool) -> usize {
 
     for removal in &plan.removals {
         let dir = plan.dir(removal.folder);
+        let is_store_entry = plan.folders[removal.folder].kind == FolderKind::Store;
         let result = match removal.kind {
             EntryKind::SymLink => remove_link(dir, &removal.name),
+            _ if is_store_entry && plan.staging != Staging::Off => {
+                remove_store_entry(dir, &removal.name, plan.staging)
+            }
             _ => dir.delete_tree(&removal.name),
         };
         match result {
@@ -2821,6 +2865,30 @@ fn execute(plan: &Plan, quiet: bool) -> usize {
     }
 
     failed
+}
+
+/// A delete can stop midway, and the next install only checks that the package's marker file
+/// exists. So the entry is renamed to a `StagingPath` first, which `read_entries` skips.
+fn remove_store_entry(dir: &Dir, name: &[u8], staging: Staging) -> sys::Maybe<()> {
+    let staged = StagingPath(name, staging).to_string();
+    let (from, to) = (zname(name), zname(staged.as_bytes()));
+    let (from, to) = (
+        ZStr::from_slice_with_nul(&from),
+        ZStr::from_slice_with_nul(&to),
+    );
+    let mut moved = sys::renameat(dir.fd(), from, dir.fd(), to);
+    if moved
+        .as_ref()
+        .is_err_and(|err| err.get_errno() != E::ENOENT)
+    {
+        dir.delete_tree(staged.as_bytes())?;
+        moved = sys::renameat(dir.fd(), from, dir.fd(), to);
+    }
+    match moved {
+        Ok(()) => dir.delete_tree(staged.as_bytes()),
+        Err(err) if err.get_errno() == E::ENOENT => Ok(()),
+        Err(_) => dir.delete_tree(name),
+    }
 }
 
 fn rmdir(dir: &Dir, name: &[u8]) {

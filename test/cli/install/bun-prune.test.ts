@@ -1035,16 +1035,18 @@ test.concurrent("isolated: removes staging leftovers inside a store entry it kee
     dir,
     "node_modules/.bun/@types+no-deps@1.0.0/node_modules/@types/.bun-tmp-fedcba9876543210",
   );
+  // A store entry that an install renamed aside before a delete that stopped midway.
+  const leftEntry = plant(dir, "node_modules/.bun/.bun-tmp-aaaabbbbccccdddd/node_modules/no-deps");
 
   const dry = await prune(dir, "--dry-run");
   expect(dry.stderr).toBe("");
   expect(dry.exitCode).toBe(0);
-  expect([left, leftInScope].map(path => existsSync(path))).toEqual([true, true]);
+  expect([left, leftInScope, leftEntry].map(path => existsSync(path))).toEqual([true, true, true]);
 
   const { stderr, exitCode } = await prune(dir);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
-  expect([left, leftInScope].map(path => existsSync(path))).toEqual([false, false]);
+  expect([left, leftInScope, leftEntry].map(path => existsSync(path))).toEqual([false, false, false]);
   // The packages next to them are kept.
   expect(storeEntries(dir)).toStrictEqual(entries);
   expect(existsSync(join(store, "no-deps@1.0.0", "node_modules", "no-deps", "package.json"))).toBeTrue();

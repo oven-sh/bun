@@ -162,7 +162,7 @@ impl Config {
     pub(crate) fn from_js(
         &mut self,
         global: &JSGlobalObject,
-        object: Option<TranspilerOptions<'_>>,
+        object: Option<&TranspilerOptions<'_>>,
         arena: &Arena,
     ) -> JsResult<()> {
         let Some(object) = object else {
@@ -221,7 +221,7 @@ impl Config {
             }
         }
 
-        if let Some(external) = object.external {
+        if let Some(external) = &object.external {
             match external {
                 TranspilerExternal::Name(str) => {
                     if !str.is_empty() {
@@ -893,7 +893,7 @@ fn export_replacement_value(
 impl JSTranspiler {
     pub(crate) fn constructor(
         cx: &mut JsScope<'_>,
-        config_arg: Option<TranspilerOptions<'_>>,
+        config_arg: Option<&TranspilerOptions<'_>>,
     ) -> JsResult<*mut JSTranspiler> {
         let global = cx.global();
         // NOTE: a non-POD field cannot be left uninitialized in a live Box
@@ -1299,7 +1299,7 @@ impl JSTranspiler {
         loader_arg: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let js_thread = global.js_thread_of_caller_no_frame();
+        let js_thread = global.js_thread_of_caller();
         jsc::mark_binding();
         let code = match code_arg {
             StringOrJsBytes::Bytes(buffer) => {

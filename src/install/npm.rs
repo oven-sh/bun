@@ -1140,8 +1140,6 @@ pub mod package_manifest {
     use super::*;
     use bun_io::Write as _;
 
-    // bindings — see bun_install_jsc::npm_jsc::ManifestBindings (deleted *_jsc alias)
-
     pub struct Serializer;
 
     /// The `save_async` tasks that have not finished.

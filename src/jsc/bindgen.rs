@@ -8,8 +8,8 @@ use core::ptr::NonNull;
 use bun_core::EncodedSlice;
 
 use crate::{
-    ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSGlobalObject, JSObject, JSString,
-    JSValue, JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
+    ArrayBuffer, CommonString, EncodedSliceJsc as _, ErrorCode, JSArray, JSGlobalObject, JSObject,
+    JSString, JSValue, JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -65,6 +65,38 @@ impl<'a> JsHeap<'a> {
                 should_have_exception,
             )
         }
+    }
+
+    /// An array of what `convert`, a function of [`to_js`], makes of each item.
+    #[inline]
+    pub fn create_array<I: IntoIterator>(
+        &self,
+        items: I,
+        mut convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsLocal<'a>>,
+    ) -> Result<'a, JsLocal<'a, JSArray>> {
+        let global = self.global_object();
+        // A short array is made with one call. A longer one takes a call per element.
+        let mut short = [JSValue::ZERO; 8];
+        let mut items = items.into_iter();
+        for count in 0..short.len() {
+            let Some(item) = items.next() else {
+                // SAFETY: `count` initialized values.
+                return JsLocal::from_js_result(crate::call_zero_is_throw(global, || unsafe {
+                    extern_types::Bun__Bindgen__constructArrayFromValues(
+                        self.global_ptr(),
+                        short.as_ptr(),
+                        count,
+                    )
+                }));
+            };
+            short[count] = convert(self, item)?.0;
+        }
+        let array = JSValue::create_empty_array(global, short.len() + items.size_hint().0)?;
+        let rest = items.map(|item| convert(self, item).map(|value| value.0));
+        for (index, value) in short.into_iter().map(Ok).chain(rest).enumerate() {
+            array.put_index(global, index as u32, value?)?;
+        }
+        Ok(JsLocal::from_raw(array))
     }
 
     #[inline]
@@ -211,7 +243,7 @@ impl<'a> JsScope<'a> {
     /// For the APIs that take the tree's own proof of being on the JS thread.
     #[inline]
     pub fn js_thread(&mut self) -> JsThread<'_> {
-        self.heap.global_object().js_thread_of_caller_no_frame()
+        self.heap.global_object().js_thread_of_caller()
     }
 }
 
@@ -427,8 +459,9 @@ impl<'a> JsLocal<'a, BufferSource> {
     /// The bytes as they are now. A detached or out-of-bounds view is empty.
     #[inline]
     pub fn with_bytes<R>(self, heap: &JsHeap<'a>, f: impl FnOnce(&[u8]) -> R) -> R {
-        let array_buffer = self.0.as_array_buffer(heap.global_object());
-        let result = f(array_buffer.as_ref().map_or(&[], ArrayBuffer::byte_slice));
+        // SAFETY: `self` holds the buffer until `f` returns, and only JavaScript moves its bytes, which takes the `&mut JsScope` that `heap` borrows.
+        let result =
+            f(unsafe { extern_types::Bun__Bindgen__bytesOfBlobOrBuffer(self.0).get(heap) });
         self.0.ensure_still_alive();
         result
     }
@@ -673,6 +706,16 @@ pub unsafe trait JsPayload: Sized + 'static {
     fn into_js_wrapper(self, global: &JSGlobalObject) -> JsWrapper<'_, Self> {
         // SAFETY: a `JsHeap` is the global object.
         self.into_js(unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() })
+    }
+
+    /// The JS object that owns `self`. In `Drop` the cell is dead: compare it by identity only.
+    ///
+    /// # Safety
+    /// `self` was given to [`into_js`](Self::into_js).
+    #[inline]
+    unsafe fn wrapper_value(&self) -> JSValue {
+        // SAFETY: the payload is at this offset in its cell.
+        JSValue::from_cell(unsafe { core::ptr::from_ref(self).byte_sub(Self::PAYLOAD_OFFSET) })
     }
 }
 
@@ -935,34 +978,23 @@ pub mod to_js {
     }
 
     #[inline]
+    pub fn string_array<'a>(
+        heap: &JsHeap<'a>,
+        strings: impl AsRef<[bun_core::String]>,
+    ) -> Result<'a, JsLocal<'a>> {
+        JsLocal::from_js_result(crate::bun_string_jsc::to_js_array(
+            heap.global_object(),
+            strings.as_ref(),
+        ))
+    }
+
+    #[inline]
     pub fn array<'a, I: IntoIterator>(
         heap: &JsHeap<'a>,
         items: I,
-        mut convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsLocal<'a>>,
+        convert: impl FnMut(&JsHeap<'a>, I::Item) -> Result<'a, JsLocal<'a>>,
     ) -> Result<'a, JsLocal<'a>> {
-        let global = heap.global_object();
-        // A short array is made with one call. A longer one takes a call per element.
-        let mut short = [JSValue::ZERO; 8];
-        let mut items = items.into_iter();
-        for count in 0..short.len() {
-            let Some(item) = items.next() else {
-                // SAFETY: `count` initialized values.
-                return JsLocal::from_js_result(crate::call_zero_is_throw(global, || unsafe {
-                    extern_types::Bun__Bindgen__constructArrayFromValues(
-                        heap.global_ptr(),
-                        short.as_ptr(),
-                        count,
-                    )
-                }));
-            };
-            short[count] = convert(heap, item)?.0;
-        }
-        let array = JSValue::create_empty_array(global, short.len() + items.size_hint().0)?;
-        let rest = items.map(|item| convert(heap, item).map(|value| value.0));
-        for (index, value) in short.into_iter().map(Ok).chain(rest).enumerate() {
-            array.put_index(global, index as u32, value?)?;
-        }
-        Ok(JsLocal::from_raw(array))
+        heap.create_array(items, convert).map(JsLocal::as_value)
     }
 
     /// A key that comes again keeps its place and takes the new value. The inline room is the upper `size_hint`.

@@ -1177,12 +1177,14 @@ describe("jobs of a pull() that ended the response", () => {
 
   // Two requests in one write are dispatched from one read of the socket, one after the
   // other, with no callback of the loop between them.
-  test.concurrent("run before the next pipelined request, which does not get the store that pull() entered", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  test.concurrent(
+    "run before the next pipelined request, which does not get the store that pull() entered",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
         const { AsyncLocalStorage } = require("node:async_hooks");
         const { connect } = require("node:net");
         const store = new AsyncLocalStorage();
@@ -1222,23 +1224,24 @@ describe("jobs of a pull() that ended the response", () => {
           server.stop(true);
         });
         `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ order: stdout && JSON.parse(stdout), stderr }).toEqual({
-      order: [
-        "pull() of request 1",
-        "nextTick of request 1",
-        "microtask of request 1",
-        "handler of request 2 sees undefined",
-      ],
-      stderr: "",
-    });
-    expect(exitCode).toBe(0);
-  });
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ order: stdout && JSON.parse(stdout), stderr }).toEqual({
+        order: [
+          "pull() of request 1",
+          "nextTick of request 1",
+          "microtask of request 1",
+          "handler of request 2 sees undefined",
+        ],
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // https://github.com/oven-sh/bun/issues/32137

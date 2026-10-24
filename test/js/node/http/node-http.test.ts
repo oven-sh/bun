@@ -1665,6 +1665,30 @@ describe("node https server", async () => {
     }
   });
 
+  it("setSecureContext preserves an empty ALPN protocol list", async () => {
+    const server = createHttpsServer({ ...httpsOptions, ALPNProtocols: [] });
+    const url = await listen(server, "https");
+    let socket;
+    try {
+      for (const update of [false, true]) {
+        if (update) server.setSecureContext(httpsOptions);
+        socket = tlsConnect({
+          host: "127.0.0.1",
+          port: Number(url.port),
+          servername: "localhost",
+          ALPNProtocols: ["http/1.1"],
+          rejectUnauthorized: false,
+        });
+        await once(socket, "secureConnect");
+        expect(socket.alpnProtocol).toBe(false);
+        socket.destroy();
+      }
+    } finally {
+      socket?.destroy();
+      server.close();
+    }
+  });
+
   it("setSecureContext accepts a PFX-only replacement and its embedded CA", async () => {
     const fixtures = path.join(import.meta.dir, "../test/fixtures/keys");
     const clientKey = nodefs.readFileSync(path.join(fixtures, "agent1-key.pem"));

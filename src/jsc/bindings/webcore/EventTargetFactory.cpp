@@ -46,7 +46,11 @@ JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, E
     case BunWebViewEventTargetInterfaceType:
         return Bun::toJS(state, globalObject, static_cast<Bun::WebViewEventTarget&>(impl));
     case DOMWindowEventTargetInterfaceType:
-        return globalObject;
+        // GlobalEventScope is the EventTarget behind globalThis.addEventListener(). Script sees the
+        // global as its JSGlobalProxy, so event.target / currentTarget / listener `this` must be
+        // that proxy; the JSGlobalObject cell itself is never === globalThis and JSValue::toThis
+        // turns it into undefined in strict-mode listeners.
+        return globalObject->globalThis();
     case MessagePortEventTargetInterfaceType:
         return toJS(state, globalObject, static_cast<MessagePort&>(impl));
     case WebSocketEventTargetInterfaceType:

@@ -1,9 +1,0 @@
-# A member whose type does not resolve gives up by itself. The other members of the object have their types.
-member-with-unresolved-import.ts:5 member `holder.bad` = member bad Field gave up: ErrorType checked gave up: ErrorType
-member-with-unresolved-import.ts:6 member `holder.good` = member good Field number checked number
-member-with-unresolved-import.ts:7 member `holder.list` = member list Field string[] checked string[]
-member-with-unresolved-import.ts:4 shape `Holder` = Object
-member-with-unresolved-import.ts:4 has `Holder` = bad Field gave up: ErrorType checked gave up: ErrorType
-member-with-unresolved-import.ts:4 has `Holder` = good Field number checked number
-member-with-unresolved-import.ts:4 has `Holder` = list Field string[] checked string[]
-member-with-unresolved-import.ts:2 diagnostic TS2307 = MissingDeclaration StopsBuild

@@ -12,7 +12,7 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readF
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { dirname, join } from "path";
 import { limitsLowered } from "./harness/limits";
-import { inPrograms, inShare, isGroup, listWrittenPrograms, partInShare, slot, taken, unsupported, withoutCoreDump, withoutDebugInformation } from "./run-programs";
+import { inPrograms, inShare, isGroup, keptBeside, listWrittenPrograms, partInShare, slot, taken, unsupported, withoutCoreDump, withoutDebugInformation } from "./run-programs";
 
 const root = join(import.meta.dir, "programs");
 // Of which about 250 can be joined.
@@ -51,7 +51,8 @@ function programsOfOneFile(): string[] {
       if (extension && entry.isFile() && !stem.endsWith(".d") && !filesBeside.some(suffix => present.has(stem + suffix))) chosen.push(join(root, topic.name, entry.name));
     }
   }
-  chosen.push(...listWrittenPrograms(/\.(ts|tsx|js)$/).filter(path => isGroup(path) || isOneFile(inPrograms(path).replaceAll("\\", "/"))));
+  const hasFileBeside = (path: string) => filesBeside.some(suffix => existsSync(keptBeside(path) + suffix));
+  chosen.push(...listWrittenPrograms(/\.(ts|tsx|js)$/).filter(path => isGroup(path) || (isOneFile(inPrograms(path).replaceAll("\\", "/")) && !hasFileBeside(path))));
   return chosen
     .map(path => [inPrograms(path), path])
     .sort(([a], [b]) => (a < b ? -1 : 1))

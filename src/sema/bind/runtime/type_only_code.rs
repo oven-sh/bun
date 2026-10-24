@@ -62,7 +62,6 @@ fn compute_type_only_member_keys(hir: &File<'_>, bound: &BoundBuilder) -> Vec<u6
         }
         stack.push(TreeNode::Expr(key));
         while let Some(node) = stack.pop() {
-            // `push_children` lists the substitutions of a tagged template twice.
             let is_new = match node {
                 TreeNode::Expr(e) => insert_bit(&mut keys, e.idx()),
                 _ => true,

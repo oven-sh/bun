@@ -192,7 +192,6 @@ pub(crate) fn for_each_program(
     });
 }
 
-// `name.d.txt.ts` declares what `name.txt` exports.
 fn declares_file_of_another_kind(path: &str) -> bool {
     let stem = path
         .strip_suffix(".ts")

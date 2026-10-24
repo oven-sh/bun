@@ -1,5 +1,7 @@
+use super::enum_constants::READS_OTHER_FILE_OR_VARIABLE;
 use crate::bind::{Bound, ModuleInstanceState, Parent};
 use crate::check::Checker;
+use crate::check::decl::Evaluated;
 use crate::check::errors_enums_names::Location;
 use crate::hir::{
     ExprId, ExprKind, File, Flags, FnBody, IdList, Node, NodeData, PatKind, StmtId, StmtKind,
@@ -17,17 +19,18 @@ struct Reader {
 }
 
 impl Checker<'_, '_> {
-    pub(in crate::check::aot) fn is_const_inlined_by_transpiler(
+    /// `initializer`: what the initializer of `constant` evaluates to.
+    pub(in crate::check) fn is_const_inlined_by_transpiler(
         &self,
-        (file, declaration): (FileId, VarDeclId),
+        constant: Option<(FileId, VarDeclId)>,
         used_at: Location,
-        value: Option<EnumValue>,
-        initializer_reads_outside: bool,
+        initializer: Evaluated,
     ) -> bool {
-        let Some(value) = value else {
+        let (Some((file, declaration)), Some(value)) = (constant, initializer.value) else {
             return false;
         };
-        if used_at.file() != file || initializer_reads_outside {
+        let reads_outside = initializer.run_time_inputs & READS_OTHER_FILE_OR_VARIABLE != 0;
+        if used_at.file() != file || reads_outside {
             return false;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));

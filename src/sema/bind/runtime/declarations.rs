@@ -37,7 +37,6 @@ pub(super) fn compute_declarations(input: &mut RuntimeInput<'_, '_>) -> RuntimeS
         hir: input.hir,
         bound: &mut *input.bound,
         scopes: RuntimeScopes::default(),
-        appended_declarations: FxHashMap::default(),
         body_variable_symbols: FxHashMap::default(),
         parameters_with_body_function: FxHashSet::default(),
         redeclarations: Vec::new(),
@@ -125,7 +124,6 @@ pub(super) struct Declarations<'a, 's> {
     pub(super) hir: &'a File<'s>,
     pub(super) bound: &'a mut BoundBuilder,
     pub(super) scopes: RuntimeScopes,
-    pub(super) appended_declarations: FxHashMap<(ScopeId, Atom), (SymbolId, Declaration)>,
     pub(super) body_variable_symbols: FxHashMap<SymbolId, SymbolId>,
     pub(super) parameters_with_body_function: FxHashSet<SymbolId>,
     pub(super) redeclarations: Vec<EarlyRedeclaration>,
@@ -156,7 +154,6 @@ impl Declarations<'_, '_> {
                 insert_bit(&mut strict_scopes, index);
             }
         }
-        field_initializer_scopes.shared_sort_unstable_by_key(|entry| entry.0);
         self.bound.runtime.declarations.scope_units = units;
         self.bound.runtime.field_initializer_scopes = field_initializer_scopes;
         self.scopes.strict_scopes = strict_scopes;
@@ -261,7 +258,7 @@ impl Declarations<'_, '_> {
 
     fn compute_statement_tables(&mut self) {
         let mut own_scopes = Vec::new();
-        let mut export_expression_symbols = Vec::new();
+        let mut declared_symbols = Vec::new();
         for (index, &scope) in self.bound.stmt_scope.iter().enumerate() {
             if scope.is_none() {
                 continue;
@@ -273,14 +270,15 @@ impl Declarations<'_, '_> {
                 }
                 StatementEntry::ExportExpression(name) => {
                     let symbol = self.container_export(scope, name);
-                    export_expression_symbols.extend(symbol.map(|symbol| (statement, symbol)));
+                    let decl = Decl::ExportExpr(statement);
+                    declared_symbols.extend(symbol.map(|symbol| (decl, symbol)));
                 }
                 StatementEntry::OwnScope(_) | StatementEntry::None => {}
             }
         }
         let declarations = &mut self.bound.runtime.declarations;
         declarations.own_scopes = own_scopes;
-        declarations.export_expression_symbols = export_expression_symbols;
+        declarations.declared_symbols = declared_symbols;
     }
 
     fn compute_import_symbols(&mut self) {
@@ -356,7 +354,7 @@ impl Declarations<'_, '_> {
         {
             return Some((symbol, first));
         }
-        self.appended_declarations.get(&(scope, name)).copied()
+        self.scopes.appended_bindings.get(&(scope, name)).copied()
     }
 
     pub(super) fn append_binding(
@@ -368,7 +366,8 @@ impl Declarations<'_, '_> {
         declaration: Declaration,
     ) -> SymbolId {
         let symbol = append_symbol(self.bound, name, flags, kind, declaration.decl, scope);
-        self.appended_declarations
+        self.scopes
+            .appended_bindings
             .insert((scope, name), (symbol, declaration));
         symbol
     }
@@ -379,35 +378,15 @@ impl Declarations<'_, '_> {
     }
 
     fn finish(mut self) -> RuntimeScopes {
-        let appended = self.appended_declarations.iter();
-        self.scopes.appended_bindings = appended.map(|(&key, entry)| (key, entry.0)).collect();
-        self.bound
-            .runtime
-            .early_error_redeclarations
-            .shared_sort_unstable();
-        let declarations = &mut self.bound.runtime.declarations;
-        declarations
-            .pattern_symbols
-            .shared_sort_by_key(|entry| entry.0);
-        declarations
-            .function_symbols
-            .shared_sort_by_key(|entry| entry.0);
-        declarations
-            .inner_class_symbols
-            .shared_sort_by_key(|entry| entry.0);
-        declarations
-            .annex_b_functions
-            .shared_sort_by_key(|entry| entry.function);
-        declarations
-            .parameter_var_copies
-            .shared_sort_by_key(|entry| entry.function);
         self.scopes
             .body_variables
             .shared_sort_by_key(|entry| entry.0);
+        let declarations = &mut self.bound.runtime.declarations;
         declarations.goal_independent_redeclaration_count = self.redeclarations.len() as u32;
         self.redeclarations
             .append(&mut self.module_only_redeclarations);
         declarations.early_redeclarations = self.redeclarations;
+        self.bound.runtime.sort();
         record_declared_binding_kinds(self.hir, self.bound);
         self.scopes
     }

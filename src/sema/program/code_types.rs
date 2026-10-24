@@ -29,10 +29,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             false,
             specifies_esm,
             Ok(parse),
-            Some(BuildFile {
-                context: self,
-                code: Some(&mut *code),
-            }),
+            (Some(self), Some(&mut *code)),
             &|_| (),
         );
         if let Some(declaration) = self.find_own_declaration(key, &loaded, &code) {
@@ -41,7 +38,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         (Box::new(loaded), code, payload)
     }
 
-    // What a package declares about its JavaScript is what the compiler expects of it.
     fn find_own_declaration(
         &self,
         key: LoadKey<'r>,
@@ -138,7 +134,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
     }
 }
 
-/// The resolver of the project that governs `module`.
 pub(super) fn resolver_of_governed_module<'q, 's: 'r, 'r>(
     project_resolvers: &'q ProjectResolvers<'r>,
     program: &'q Resolver<'r>,
@@ -175,7 +170,6 @@ impl<'s, 'r> LoadedCode<'s, 'r> {
         true
     }
 
-    /// Returns true if another loader than the one that the name of the file stands for answers the import, and not with code. TypeScript goes by the name.
     pub(super) fn answer_types_from_data_loader(
         &mut self,
         host: &dyn CodeHost,
@@ -193,7 +187,6 @@ impl<'s, 'r> LoadedCode<'s, 'r> {
         true
     }
 
-    /// TypeScript has found no file for the import.
     pub(super) fn answer_types_from_named_loader(&mut self, specifier: Atom, mode: ResolutionMode) {
         let Some(index) = self.find_target(specifier, mode) else {
             return;

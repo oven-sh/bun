@@ -1,4 +1,0 @@
-# `optional` and `readonly` are flags, and `?` adds no `undefined` to the written or the checked type.
-optional-and-readonly.ts:3 has `O` = a Field number checked number optional
-optional-and-readonly.ts:3 has `O` = b Field string checked string readonly
-optional-and-readonly.ts:3 has `O` = c Field number | undefined checked number | undefined

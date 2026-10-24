@@ -84,18 +84,6 @@ impl DiagnosticClass {
             self
         }
     }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            DiagnosticClass::EarlyError => "EarlyError",
-            DiagnosticClass::TypeScriptGrammar => "TypeScriptGrammar",
-            DiagnosticClass::Semantic => "Semantic",
-            DiagnosticClass::MissingDeclaration => "MissingDeclaration",
-            DiagnosticClass::Style => "Style",
-            DiagnosticClass::DeclarationFile => "DeclarationFile",
-            DiagnosticClass::EmittedOutput => "EmittedOutput",
-        }
-    }
 }
 
 #[cfg(test)]
@@ -119,10 +107,9 @@ mod tests {
     }
 
     #[test]
-    fn names_are_variant_names() {
+    fn classes_are_listed_in_order() {
         for (index, class) in DiagnosticClass::ALL.into_iter().enumerate() {
             assert_eq!(class as usize, index);
-            assert_eq!(class.name(), format!("{class:?}"));
         }
     }
 

@@ -15,7 +15,7 @@ pub mod diagnostic_effect;
 mod diagnostic_location;
 pub mod diagnostic_subject;
 pub(in crate::check) mod early_errors;
-mod enum_constants;
+pub(in crate::check) mod enum_constants;
 mod inferred_from_use;
 mod kept_answers;
 mod left_out_bodies;

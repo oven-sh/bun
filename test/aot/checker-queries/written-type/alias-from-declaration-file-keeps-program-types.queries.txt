@@ -1,9 +1,0 @@
-# A generic alias of a `.d.ts` is a function over types. The program's type that it is applied to stays written, as under the same alias declared here. Only what the `.d.ts` adds is unwritten.
-alias-from-declaration-file-keeps-program-types.ts:5 shape `Maybe<Point>` = Union(undefined | Point)
-alias-from-declaration-file-keeps-program-types.ts:6 shape `Own<Point>` = Union(undefined | Point)
-same: alias-from-declaration-file-keeps-program-types.ts:5 identity `Maybe<Point>` <=> alias-from-declaration-file-keeps-program-types.ts:6 identity `Own<Point>`
-absent: alias-from-declaration-file-keeps-program-types.ts:5 written `Maybe<Point>` = unknown
-
-alias-from-declaration-file-keeps-program-types.ts:7 shape `WithLabel<Point>` = Object
-alias-from-declaration-file-keeps-program-types.ts:7 has `WithLabel<Point>` = x Field number checked number
-alias-from-declaration-file-keeps-program-types.ts:7 has `WithLabel<Point>` = label Field unwritten checked string optional

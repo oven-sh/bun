@@ -1,3 +1,0 @@
-# `readonly` does not change the identity of an array type. Two type literals are two declarations, with `readonly` or without it.
-same: readonly-ignored.ts:4 identity `readonly number[]` <=> readonly-ignored.ts:5 identity `number[]`
-different: readonly-ignored.ts:2 identity `{ readonly a: number }` <=> readonly-ignored.ts:3 identity `{ a: number }`

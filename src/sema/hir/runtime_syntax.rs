@@ -38,7 +38,6 @@ impl<S: Storage> FileIn<S> {
         self.runtime_key(self[p].key, self[p].key_pos)
     }
 
-    /// `static constructor() {}` is a static method named `constructor`.
     #[inline]
     pub fn runtime_member_kind(&self, m: MemberId) -> MemberKind {
         match self[m].kind {
@@ -47,7 +46,6 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
-    /// See `runtime_member_kind`.
     #[inline]
     pub fn runtime_function_kind(&self, f: FnId) -> FnKind {
         match self[f].kind {
@@ -77,7 +75,6 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
-    /// A statement of a TypeScript file that `bun run` drops while it parses, so it can stand in a directive prologue.
     pub fn is_erased_statement(&self, stmt: StmtId) -> bool {
         let Some(statement) = self.stmts.get(stmt.idx()) else {
             return false;
@@ -93,7 +90,6 @@ impl<S: Storage> FileIn<S> {
                 let is_ambient = |it: VarDeclId| self[it].flags.contains(Flags::AMBIENT);
                 !declarations.is_empty() && declarations.iter().all(is_ambient)
             }
-            // A declaration past the deepest nesting that is parsed is none.
             StmtKind::Fn(function) => (self.fns.get(function.idx()))
                 .is_some_and(|it| it.flags.contains(Flags::AMBIENT) || !has_body(it)),
             StmtKind::Class(class) => {
@@ -109,7 +105,6 @@ impl<S: Storage> FileIn<S> {
         }
     }
 
-    /// `namespace N { interface I {} }`: interfaces, type aliases and namespaces of those, at any depth.
     fn declares_only_types(&self, namespace: ModuleId) -> bool {
         let mut namespaces = vec![namespace];
         while let Some(namespace) = namespaces.pop() {
@@ -123,7 +118,6 @@ impl<S: Storage> FileIn<S> {
                 return false;
             };
             for statement in self.ids(body) {
-                // Half-written code has statements that are none.
                 match self.stmts.get(statement.idx()).map(|it| it.kind) {
                     Some(StmtKind::Interface(_) | StmtKind::TypeAlias(_)) => {}
                     Some(StmtKind::Module(inner))
@@ -139,7 +133,6 @@ impl<S: Storage> FileIn<S> {
         true
     }
 
-    /// A TypeScript file of which `bun run` drops every statement: what it declares, it declares for the checker alone.
     pub fn only_declares(&self) -> bool {
         let mut statements = self.ids(self.body);
         self.has_typescript_semantics()
@@ -147,7 +140,6 @@ impl<S: Storage> FileIn<S> {
             && statements.all(|statement| self.is_erased_statement(statement))
     }
 
-    /// A TypeScript file of which `bun run` drops some statement at the top level.
     pub fn declares_beside_code(&self) -> bool {
         self.has_typescript_semantics()
             && self
@@ -166,7 +158,6 @@ impl<S: Storage> FileIn<S> {
 }
 
 impl File<'_> {
-    /// `bun run` drops a function's own `"use strict"` from a file that it transpiles, after its parser has read what follows the directive, nested functions too, as strict mode code.
     pub fn follows_dropped_directive(&self, node: Node) -> bool {
         if self.rare_syntax & rare::DROPPED_STRICT_DIRECTIVE == 0 {
             return false;
@@ -183,7 +174,6 @@ impl File<'_> {
         false
     }
 
-    /// Bun's parser looks for repeated parameters after it has read the body.
     pub fn has_parameters_read_as_strict(&self, function: FnId) -> bool {
         self.rare_syntax & rare::DROPPED_STRICT_DIRECTIVE != 0
             && (self.find_own_strict_directive(function).is_some()
@@ -215,7 +205,6 @@ impl File<'_> {
     }
 }
 
-/// ECMAScript's isProtoSetter: `{ __proto__: v }` and `{ "__proto__": v }` set the prototype.
 pub fn is_proto_setter(property: &Prop) -> bool {
     let is_literal_name = matches!(
         property.name_kind,
@@ -226,7 +215,6 @@ pub fn is_proto_setter(property: &Prop) -> bool {
         && property.key == PropKey::Name(known::__proto__)
 }
 
-/// `bun run` keeps a decorated `declare` or `abstract` field for its decorators and its computed name.
 pub fn has_runtime_member(hir: &File, member: MemberId) -> bool {
     let node = hir[member];
     let is_declaration_only = node.flags.intersects(Flags::AMBIENT | Flags::ABSTRACT);
@@ -246,7 +234,6 @@ pub fn has_runtime_member(hir: &File, member: MemberId) -> bool {
     }
 }
 
-/// `bun run` moves these statements of a file before its other statements and keeps their order.
 pub fn is_moved_to_file_start(hir: &File, statement: StmtId) -> bool {
     match hir[statement].kind {
         StmtKind::Class(class) => can_move_class(hir, class),

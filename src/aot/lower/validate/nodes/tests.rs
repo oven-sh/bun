@@ -292,26 +292,57 @@ fn constraints_become_rules() {
 }
 
 #[test]
-fn invalid_schema_arguments_are_dropped_and_counted() {
-    let declarations = r#"interface Rules {
-            unbounded: number & Schema.Min<number>;
-            negative: string & Schema.MinLength<-1>;
-            ambiguous: string & Schema.Format<"email" | "uuid">;
-            whole: number & Schema.Int & Schema.Max<number>;
-        }"#;
-    let lowered = lower_probe(declarations, "Rules");
-    assert_eq!(lowered.queries.invalid_schema_arguments, 4);
-    let (fragment, nodes) = nodes_of(declarations, "Rules");
-    let expected = [
-        ("unbounded", Vec::new()),
-        ("negative", Vec::new()),
-        ("ambiguous", Vec::new()),
-        ("whole", vec![ValidationRule::Integer]),
+fn invalid_schema_arguments_are_refused_and_counted() {
+    let types = [
+        "number & Schema.Min<number>",
+        "string & Schema.MinLength<-1>",
+        r#"string & Schema.Format<"email" | "uuid">"#,
+        "number & Schema.Int & Schema.Max<number>",
     ];
-    for (name, rules) in expected {
-        let member = find_member(&fragment, &nodes, ROOT, name);
-        assert_eq!(nodes[member.node as usize].rules, rules, "{name}");
+    for ty in types {
+        let declarations = format!("interface Rules {{ member: {ty} }}");
+        let lowered = lower_probe(&declarations, "Rules");
+        assert_eq!(lowered.queries.invalid_schema_arguments, 1, "{ty}");
+        assert_is_refused(&lowered, ty);
     }
+}
+
+fn assert_is_refused(lowered: &LoweredFile, ty: &str) {
+    let codes: Vec<Code> = collect_diagnostics(lowered)
+        .into_iter()
+        .map(|(code, _)| code)
+        .collect();
+    assert_eq!(codes, [Code::UnsupportedValidationType], "{ty}");
+    assert!(lowered.fragment.expected_results.is_empty(), "{ty}");
+}
+
+#[test]
+fn schema_alias_that_is_no_longer_as_written_is_refused() {
+    let declarations = "type Writable<T> = { -readonly [K in keyof T]: T[K] };";
+    let types = [
+        "Writable<{ readonly id: number } & Schema.Strict>",
+        "Partial<{ id: number } & Schema.Strict>",
+        "Required<{ id?: number } & Schema.Strict>",
+        "string & Readonly<Schema.MinLength<8>>",
+        "number & Partial<Schema.Min<0>>",
+        r#"string & { readonly "bun.minLength"?: 8 }"#,
+        "{ member: Schema.MinLength<3> }",
+        "Schema.Min<1>",
+    ];
+    for ty in types {
+        assert_is_refused(&lower_probe(declarations, ty), ty);
+    }
+}
+
+#[test]
+fn brand_of_program_beside_primitive_is_validated() {
+    let (_, nodes) = nodes_of("", r#"string & { readonly __brand?: "id" }"#);
+    assert_eq!(
+        nodes[ROOT as usize].shape,
+        ValidationShape::Primitive {
+            primitive: ValidatedPrimitive::String
+        }
+    );
 }
 
 #[test]

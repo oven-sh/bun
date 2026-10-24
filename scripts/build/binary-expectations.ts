@@ -351,8 +351,7 @@ const PREBUILT_BMALLOC_DLLEXPORTS = {
  */
 /**
  * The AoT compiler's IR as text: Bun hands the engine the program as bytes, so the engine's lexer and parser and the
- * printers of both sides serve tests and dumps alone (AOTIRPrinter.h in WebKit, the feature `ir_text` of bun_aot). A
- * build with assertions has the engine's printer, for BUN_JSC_dumpAOTIR.
+ * printers of both sides serve tests alone (sources of testaot in WebKit, the feature `ir_text` of bun_aot).
  */
 function symbolsOfIRText(cfg: Config): string[] | undefined {
   if (cfg.assertions) return undefined;

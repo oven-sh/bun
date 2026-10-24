@@ -35,10 +35,8 @@ use std::num::NonZeroUsize;
 #[derive(Copy, Clone)]
 pub enum EntryPoints<'a> {
     Written(&'a [Vec<u8>]),
-    /// Of one of the programs of an executable.
     WrittenFor(&'a [Vec<u8>], MainModule),
     Resolved(&'a [Vec<u8>]),
-    /// Under that configuration file and no other. Without one: the options of a project that has none.
     Configured(&'a [Vec<u8>], Option<&'a [u8]>),
 }
 
@@ -60,13 +58,11 @@ pub struct LoadedProgram<'s> {
     project_origin: FileOrigin,
     pub diagnostics: Vec<BuildDiagnostic>,
     pub has_bun_types_installed: bool,
-    /// `@types/bun` is not installed, and the host's own is read in its place.
     pub brings_bun_types: bool,
     without_bun_types: Option<WithoutBunTypes>,
     is_read_again: bool,
 }
 
-/// A program for which the declarations of Bun's own globals and modules (`@types/bun`) are not installed.
 pub(crate) struct WithoutBunTypes {
     pub has_configuration_file: bool,
     pub incomplete_containers: [Option<Sym>; 3],
@@ -85,7 +81,6 @@ impl<'s> LoadedProgram<'s> {
         self.origins[file.idx()]
     }
 
-    /// True: the files are those of several programs, and behind the one that is checked and lowered next comes another.
     pub fn set_is_read_again(&mut self, is_read_again: bool) {
         self.is_read_again = is_read_again;
         self.program.keep_what_is_reported(is_read_again);
@@ -181,10 +176,8 @@ pub struct CheckedProgram<T> {
 
 pub(crate) struct FileWork<'a, 's> {
     pub requested: &'a (dyn Fn(FileId) -> Requested + Sync),
-    /// `None`: the pass only checks.
     pub after_file: Option<&'a (dyn Fn(&mut Checker<'_, 's>, FileId) + Sync)>,
     pub after_commit: &'a (dyn Fn(FileId) + Sync),
-    /// Whether the tree of a leaf is freed when the task that checks it ends.
     pub frees_tree: &'a (dyn Fn(FileId) -> bool + Sync),
     pub first_round: u32,
     pub left_out_bodies: Option<&'a LeftOutBodies>,

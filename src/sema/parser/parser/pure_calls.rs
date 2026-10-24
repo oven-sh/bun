@@ -4,7 +4,6 @@ use bun_sema::hir::*;
 #[cfg(test)]
 mod tests;
 
-// Same rule as `scan_comment_text` and `scan_single_line_comment` in `js_parser`.
 fn has_annotation(comment: &Comment, text: &[u8]) -> bool {
     let closing = if comment.is_block { 2 } else { 0 };
     let (from, to) = (comment.pos as usize + 2, comment.end as usize);
@@ -61,11 +60,9 @@ fn previous_link(file: &FileBuilder, link: ExprId) -> Option<ExprId> {
     (previous.is_some() && !is_in_parentheses).then_some(previous)
 }
 
-/// As in `js_parser`, the annotation before a chain that ends in neither a call nor a `new` marks nothing.
 fn mark_chain(file: &mut FileBuilder, chain_end: ExprId) {
     let kind_of = |file: &FileBuilder, e: ExprId| file.exprs.get(e.idx()).map(|it| it.kind);
     let mut link = chain_end;
-    // `js_parser` keeps neither these nor parentheses.
     while let Some(ExprKind::NonNull(inner) | ExprKind::Instantiation { expr: inner, .. }) =
         kind_of(file, link)
     {
@@ -90,7 +87,6 @@ fn mark_chain(file: &mut FileBuilder, chain_end: ExprId) {
     }
 }
 
-// The first token behind the parentheses that open at `at`.
 fn skip_opening_parentheses(text: &[u8], mut at: usize) -> usize {
     loop {
         let rest = text.get(at..).unwrap_or_default();
@@ -109,7 +105,6 @@ fn skip_opening_parentheses(text: &[u8], mut at: usize) -> usize {
     }
 }
 
-// `/* @__PURE__ */ (f())`: the chain is all that the parentheses hold.
 fn find_chains_in_parentheses(
     file: &FileBuilder,
     text: &[u8],

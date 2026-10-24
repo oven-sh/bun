@@ -120,7 +120,6 @@ export default b.declarations(
   operation("tryPutByValDirect", "TryPutByValDirect"),
   operation("tryPutIndex", "TryPutIndex"),
 
-  b.intrinsic("arrayFrom", "Call", builtin("Array.from")),
   b.intrinsic("hasOwn", "Call", builtin("Object.hasOwn")),
   b.intrinsic("jsonParse", "Call", builtin("JSON.parse")),
   b.intrinsic("jsonStringify", "Call", builtin("JSON.stringify")),

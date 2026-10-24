@@ -17,7 +17,6 @@ pub(crate) fn call_site_kind(
     find_call_site(hir, bound, None, call, form).map(|site| site.kind)
 }
 
-// What the loader is given: not the arguments of the call where it goes through `call` or `apply`.
 pub(crate) fn call_site_arguments(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -67,7 +66,6 @@ pub struct RequireCall {
     pub args: IdList<ExprId>,
 }
 
-// `require(p)`, `require.call(receiver, p)` and `require.apply(receiver, [p])`, where `require` is the one of the file under any name.
 pub fn find_require_call(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -160,7 +158,6 @@ fn find_call_site(
             return Some(create_site(ImportSiteKind::ImportMetaRequire(call), args));
         }
         let is_module = is_free_common_js(hir, bound, object, CommonJsVariable::Module);
-        // The transpiler writes `require` in place of `module.require` and never reads `module`. It leaves `module?.require` as it is.
         let is_rewritten = !hir
             .expr_flags(callee)
             .contains(ExprFlags::OPTIONAL_CHAIN_LINK);
@@ -174,7 +171,6 @@ fn find_call_site(
         if is_import_meta {
             return Some(create_site(ImportSiteKind::ImportMetaResolve(call), args));
         }
-        // Under any name, as for the call itself: what `createRequire(import.meta.url)` makes resolves as the `require` of the file does.
         let is_require = find_own_require(hir, bound, decisions, object).is_some();
         return is_require.then(|| create_site(ImportSiteKind::RequireResolve(call), args));
     }
@@ -191,7 +187,6 @@ fn is_free_name(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, names: &[Atom]) ->
         && bound.dynamic_lookup_scope(NodeData::Expr(e)).is_none()
 }
 
-// `process`, `globalThis.process` and `global.process`.
 fn is_global_process(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
     let e = follow_settled_bindings(hir, bound, e);
     if is_free_name(hir, bound, e, &[known::process]) {

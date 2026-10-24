@@ -91,7 +91,6 @@ fn inferred_file_imports_code_targets() {
             assert_eq!(files.role(main), FileRole::Inferred);
             assert_eq!(files.code_answers(main), [CodeAnswer::File(code)]);
             assert_eq!(imported_files(files, main), [code]);
-            // What the package declares of its code is what the compiler expects of it.
             let declarations = file_at(files, "/node_modules/pkg/index.d.ts");
             assert_eq!(imported_files(files, code), [declarations]);
             assert_eq!(files.role(declarations), FileRole::TypesOnly);

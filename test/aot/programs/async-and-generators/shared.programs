@@ -1,0 +1,472 @@
+////: Bag
+class Bag {
+  constructor(public size: number) {}
+  *values(): Generator<number> {
+    for (let k = 0; k < this.size; k++) {
+      if (k === 5) throw new Error("at the sixth");
+      yield k;
+    }
+  }
+  [Symbol.iterator]() {
+    return this.values();
+  }
+}
+////: Effect
+class Effect {
+  constructor(readonly value: number) {}
+  [Symbol.iterator](): OneShot {
+    return new OneShot(this);
+  }
+}
+////: Point
+class Point {
+  constructor(
+    public x: number,
+    public y: number,
+  ) {}
+}
+////: Point-2
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+////: Service
+class Service {
+  async load(): Promise<Error> {
+    return await this.#«1»();
+  }
+  async #«1»(): Promise<Error> {
+    await «2»;
+    return await Service.parse();
+  }
+  static async parse(): Promise<Error> {
+    await «2»;
+    return new TypeError("parse");
+  }
+}
+////: Span
+class Span {
+  constructor(
+    public from: number,
+    public to: number,
+  ) {}
+  *[Symbol.iterator]() {
+    for (let k = this.from; k < this.to; k++) yield k;
+  }
+  *values() {
+    for (let k = this.from; k < this.to; k++) yield k * 2;
+  }
+  *failing(): Generator<number> {
+    yield this.from;
+    throw new Error("from the body");
+  }
+}
+////: Ticker
+interface Ticker {
+  count: number;
+  isOn: boolean;
+}
+////: Ticket
+class Ticket {
+  constructor(public id: number) {}
+  label(): string {
+    return "ticket " + this.id;
+  }
+}
+////: Wider
+class Wider extends Span {
+  *[Symbol.iterator]() {
+    yield -1;
+    yield* super[Symbol.iterator]();
+  }
+}
+////: adopt
+function adopt(label: string): Then {
+  return resolve => {
+    log.push(`then of ${label}`);
+    resolve(`adopted from ${label}`);
+  };
+}
+////: afterTimer
+function afterTimer(): Promise<void> {
+  return new Promise<void>(resolve => {
+    setTimeout(resolve, 0);
+  });
+}
+////: afterTimer-2
+function afterTimer(): Promise<void> {
+  return new Promise<void>(resolve => {
+    setTimeout(() => {
+      if (hasOtherJobs) s«1»);
+      resolve();
+    }, 0);
+  });
+}
+////: afterTwoJobs
+function afterTwoJobs<T>(value: T): Promise<T> {
+  return new Promise<T>(resolve => {
+    settled.then(() => settled.then(() => resolve(value)));
+  });
+}
+////: attempt
+function attempt(title: string, run: () => unknown) {
+  try {
+    say(title, "->", run());
+  } catch (error) {
+    say(title, "threw", error instanceof Mine ? error.message : error instanceof Error ? error.constructor.name : error);
+  }
+}
+////: awaitsCall
+async function awaitsCall(depth: number, ending: Ending): Promise<number> {
+  await settled;
+  try {
+    return 1 + (depth ? await awaitsCall(depth - 1, ending) : await innermost(ending));
+  } finally {
+    didResume(depth);
+  }
+}
+////: awaitsVariable
+async function awaitsVariable(depth: number, ending: Ending): Promise<number> {
+  await settled;
+  const pending = depth ? awaitsVariable(depth - 1, ending) : innermost(ending);
+  try {
+    return 1 + (await pending);
+  } finally {
+    didResume(depth);
+  }
+}
+////: beat
+function beat(label: string, beats: number): void {
+  let done = 0;
+  const step = (): void => {
+    «1».push(label + " " + ++done);
+    if (done < beats) «2».then(step);
+  };
+  «2».then(step);
+}
+////: byLoop
+async function byLoop(source: AsyncGenerator<unknown, string, unknown>): Promise<void> {
+    try {
+        for await (const x of source) note("got " + JSON.stringify(x));
+        note("the loop is over");
+    } catch (error) {
+        note("caught " + (error as Error).message);
+    }
+}
+////: byNext
+async function byNext(source: AsyncGenerator<unknown, string, unknown>): Promise<void> {
+    try {
+        for (let i = 0; ; i++) {
+            const step = await source.next("sent " + i);
+            note((step.done ? "done " : "step ") + JSON.stringify(step.value));
+            if (step.done) return;
+        }
+    } catch (error) {
+        note("caught " + (error as Error).message);
+    }
+}
+////: countTurns
+function countTurns(turns: number): void {
+  let chain: Promise<void> = Promise.resolve();
+  for (let turn = 1; turn <= turns; turn++) {
+    chain = chain.then(() => {
+      log.push("  turn " + turn);
+    });
+  }
+}
+////: kinds
+const kinds: [string, () => Iterable<unknown>][] = [
+    ["an empty array", () => []],
+    ["an array of one", () => [{ n: 1 }]],
+    ["an array of three", () => [1, "two", { n: 3 }]],
+    ["an array with a hole and undefined", () => [1, , undefined, null] as unknown[]],
+    ["an array of promises", () => [Promise.resolve("a"), outside().then(() => "b"), thenable, "c"]],
+    ["an array with a rejection", () => [1, rejected("rejected in an array"), 3]],
+    ["a set", () => new Set([1, 2])],
+    ["a map", () => new Map([["k", 1]])],
+    ["a text", () => "ab"],
+    ["a generator of nothing", nothing],
+    ["a generator of one", one],
+    ["a generator of three", three],
+    ["a generator that listens", listens],
+    ["a generator that cleans up", cleansUp],
+    ["a generator that throws at once", throwsAtOnce],
+    ["a generator that throws later", throwsLater],
+    ["a generator that queues a job", queuesAJob],
+    ["a generator of promises", yieldsPromises],
+    ["a generator with a rejection", yieldsARejection],
+    ["by hand", () => byHand([1, 2])],
+    ["by hand, empty", () => byHand([])],
+];
+////: last
+function last(generator: Numbers): number {
+  for (;;) {
+    const step = generator.next();
+    if (step.done) return step.value;
+  }
+}
+////: leftEarly
+function leftEarly(i: number): number {
+  let total = 0;
+  for (const value of new Span(0, 100)) {
+    if (value > i) break;
+    total += value;
+  }
+  return total;
+}
+////: lines
+async function «1»(«2»: «3»): Promise<«4»> {
+  return «5»(«2»);
+}
+////: lines-10
+async function «1»(«2»: «3»): Promise<«4»> {
+  return «5» «6»(«2»);
+}
+////: lines-11
+class «1» {
+  constructor(«2» «3»: «4») {}
+}
+////: lines-16
+async function «1»(): Promise<void> {
+  await «2»();
+}
+////: lines-18
+async function «1»(«2»: «3»): Promise<«3»> {
+  await settled;
+  return «2»;
+}
+////: lines-19
+async function «1»(n: number): Promise<number> {
+  await settled;
+  return n + «2»;
+}
+////: lines-20
+function «1»(): number {
+  return counted ? counted(«2») + counted(«3») : 0;
+}
+////: lines-21
+function «1»<T>(value: T): T {
+  «2».push(value);
+  return «2».pop();
+}
+////: lines-23
+function* «1»(n: number): Generator<number, string, unknown> {
+  for (let i = 0; i < n; i++) yield i;
+  return «2»;
+}
+////: lines-24
+function «1»(«2»: «3»): number {
+  let total = 0;
+  for (const «4» of «2») total += «4»;
+  return total;
+}
+////: lines-25
+async function «1»(n: number): Promise<«2»> {
+  «3» new «4»(«5» + n);
+}
+////: lines-3
+class «1» {
+  constructor(
+    «2» «3»: «4»,
+    «2» «5»: «6»,
+  ) {}
+}
+////: lines-39
+async function «1»): Promise<void> {
+    try {
+        for await (const x of «2») note("got " + JSON.stringify(x));
+        note("the loop is over");
+    } catch (error) {
+        note("caught " + (error as Error).message);
+    }
+}
+////: lines-4
+interface «1» {
+  «2»: «3»;
+  «4»: «5»;
+}
+////: lines-42
+async function «1»): Promise<Error> {
+  try {
+    await «2»);
+  } catch (error) {
+    return error as Error;
+  }
+  return new Error("not reached");
+}
+////: lines-8
+async function «1»(«2»: «3»): Promise<«4»> {
+  return «2»;
+}
+////: lines-9
+async function «1»(n: number): Promise<«2»> {
+  «3» «4» + «5»;
+}
+////: makesLater
+async function makesLater(): Promise<Error> {
+  await settled;
+  return new Error("later");
+}
+////: names
+function names(error: unknown): string {
+  const frames: string[] = [];
+  for (const line of ((error as Error).stack ?? "").split("\n")) {
+    const frame = /^\s*at (async )?(?:(.*?) \()?[^()]*?:(\d+):(\d+)\)?$/.exec(line) ?? /^(async )?(.*?)@.*?:(\d+):(\d+)$/.exec(line);
+    if (frame) frames.push((frame[1] ?? "") + (frame[2] === "module code" || frame[2] === "<anonymous>" ? "" : frame[2] ?? "") + ":" + frame[3] + ":" + frame[4]);
+  }
+  return frames.join(" | ");
+}
+////: note
+function note(text: string): void {
+    log.push(text);
+}
+////: note-2
+////= note
+////= ticker-3
+////: observe
+async function observe(label: string, returned: Promise<unknown>, awaited: Promise<unknown>): Promise<void> {
+  returned.then(value => log.push(`${label}: returned ${describe(value)}`));
+  awaited.then(value => log.push(`${label}: awaited ${describe(value)}`));
+  for (let turn = 1; turn <= 4; turn++) {
+    await undefined;
+    log.push(`${label}: turn ${turn}`);
+  }
+}
+////: outside
+function outside(): Promise<void> {
+    return new Promise(resolve => { Promise.resolve().then(() => undefined).then(() => resolve()); });
+}
+////: random
+function random(«1»: number): number {
+    seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+    return Math.floor(seed / 65536) % «1»;
+}
+////: resumed
+async function resumed(run: () => Promise<void>): Promise<void> {
+    await outside();
+    await run();
+}
+////: returnedInto
+async function returnedInto(source: AsyncGenerator<unknown, string, unknown>): Promise<void> {
+    try {
+        note("first " + JSON.stringify(await source.next()));
+        note("returned into " + JSON.stringify(await source.return("given up")));
+        note("then " + JSON.stringify(await source.next()));
+    } catch (error) {
+        note("caught " + (error as Error).message);
+    }
+}
+////: say
+function say(...parts: unknown[]) {
+  lines.push(parts.map(part => (typeof part === "string" ? part : JSON.stringify(part))).join(" "));
+}
+////: scene
+async function scene(title: string, run: () => Promise<unknown>): Promise<void> {
+    log = [];
+    await run();
+    lines.push(title + ": " + log.join(" | "));
+}
+////: show
+function show(value: unknown): string {
+  if (value instanceof Error) return value.constructor.name + ": " + value.message;
+  return typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
+}
+////: startTicker
+function startTicker(): Ticker {
+  const own: Ticker = { count: 0, isOn: true };
+  const step = (): void => {
+    if (!own.isOn) return;
+    own.count++;
+    settled.then(step);
+  };
+  settled.then(step);
+  return own;
+}
+////: startTicker-2
+function startTicker(): void {
+  const own: Ticker = { count: 0, isOn: true };
+  const step = (): void => {
+    if (!own.isOn) return;
+    own.count++;
+    settled.then(step);
+  };
+  ticker = own;
+  settled.then(step);
+}
+////: stepped
+function stepped(size: number): number | string {
+  const steps = new Bag(size).values();
+  let total = 0;
+  try {
+    for (let step = steps.next(); !step.done; step = steps.next()) total += step.value;
+  } catch (error) {
+    return (error as Error).stack!.split("\n").slice(0, 3).map(line => line.replace(/\(.*[\\/]/, "(").trim()).join(" | ");
+  }
+  return total;
+}
+////: sumOf
+function sumOf(lines: string[]): number {
+    let sum = 7;
+    for (const line of lines) {
+        for (let i = 0; i < line.length; i++)
+            sum = (sum * 31 + line.charCodeAt(i)) % 1000000007;
+    }
+    return sum;
+}
+////: sumOfBag
+function sumOfBag(size: number): number | string {
+  let total = 0;
+  try {
+    for (const value of new Bag(size)) total += value;
+  } catch (error) {
+    return (error as Error).stack!.split("\n").slice(0, 3).map(line => line.replace(/\(.*[\\/]/, "(").trim()).join(" | ");
+  }
+  return total;
+}
+////: thenable
+function thenable(value: number): PromiseLike<number> {
+  return {
+    then(resolve: any): any {
+      resolve(value);
+    },
+  };
+}
+////: ticker
+function ticker(label: string, turns: number): Promise<void> {
+    let last: Promise<void> = Promise.resolve();
+    for (let i = 1; i <= turns; i++) last = last.then(() => note(label + i));
+    return last;
+}
+////: ticker-2
+async function ticker(label: string, count: number): Promise<void> {
+    for (let i = 0; i < count; i++) {
+        await null;
+        note(label + " " + i);
+    }
+}
+////: ticker-3
+////= ticker
+////= outside
+////: ticks
+function ticks(name: string, count: number) {
+  let chain = Promise.resolve();
+  for (let i = 0; i < count; i++) chain = chain.then(() => log(name + " tick " + i));
+}
+////: ticks-2
+function ticks(name: string, count: number): void {
+  let chain: Promise<unknown> = settled;
+  for (let i = 1; i <= count; i++) chain = chain.then(() => log.push(name + " tick " + i));
+}
+////: traced
+function traced(): string {
+  try {
+    for (const value of new Span(1, 2).failing()) check += value;
+  } catch (error) {
+    return (error as Error).stack!.split("\n").slice(0, 3).map(line => line.replace(/\(.*[\\/]/, "(").trim()).join(" | ");
+  }
+  return "nothing thrown";
+}

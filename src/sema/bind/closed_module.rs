@@ -2,7 +2,6 @@ use crate::atom::Atom;
 use crate::hir::{File, FileKind, ImportEqualsTarget, ModuleName, StmtKind};
 use crate::util::FxHashSet;
 
-/// `Bound::specifiers` of a TypeScript module that says nothing about any other file and hands on nothing of another one: no `declare global`, no `declare module "m"`, no `export as namespace`, no `export *`.
 pub fn specifiers_of_closed_module(file: &File) -> Option<Vec<Atom>> {
     let is_typescript = matches!(file.kind, FileKind::Ts | FileKind::Tsx) && !file.is_js;
     let is_namespace = |name: ModuleName| matches!(name, ModuleName::Ident(_));
@@ -27,7 +26,6 @@ pub fn specifiers_of_closed_module(file: &File) -> Option<Vec<Atom>> {
         statement_count += 1;
         specifiers.extend(specifier.is_some().then_some(specifier));
     }
-    // One that is not at the top lies in a namespace or is an error.
     let names_other_files = |kind: StmtKind| match kind {
         StmtKind::Import(_) | StmtKind::ImportEquals(_) | StmtKind::ExportNamed(_) => Some(1),
         StmtKind::ExportStar { .. } | StmtKind::ExportAsNamespace(_) => None,

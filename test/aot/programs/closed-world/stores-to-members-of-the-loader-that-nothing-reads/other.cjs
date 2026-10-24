@@ -1,1 +1,0 @@
-exports.answer = "other";

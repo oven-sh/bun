@@ -53,9 +53,35 @@ export interface Case {
   readBody?: (bytes: Uint8Array<ArrayBuffer>) => Promise<string>;
   readRequest?: (bytes: Uint8Array<ArrayBuffer>) => Promise<string>;
   readUntyped: (value: any) => string;
+  /** What a server does with a request: reads its body as JSON under the type unchecked, or as text that is parsed by the type. */
+  serveCast?: (request: Request) => Promise<string>;
+  serveChecked?: (request: Request) => Promise<string>;
+  /** Parses by the type, hands the value to `change`, and reads every member through the type. */
+  readChanged?: (text: string, change: (value: unknown) => void) => string;
+  /** Parses by the type with one of `revivers`: its name and the call. */
+  revived?: [keyof typeof revivers, (text: string) => unknown][];
   /** Parses by the type behind an await. */
   parseLater?: (text: string) => Promise<unknown>;
 }
+
+class Stopped extends Error {}
+let calls = 0;
+
+/** Revivers that change what the text said. The type is asked about what they return. */
+export const revivers = {
+  "numbers and a half": (_: string, held: unknown) => (typeof held === "number" ? held + 0.5 : held),
+  "nothing for null": (_: string, held: unknown) => (held === null ? undefined : held),
+  "lengths for texts": (_: string, held: unknown) => (typeof held === "string" ? held.length : held),
+  "lists in objects": (_: string, held: unknown) => (Array.isArray(held) ? { list: held } : held),
+  "stops at the fifth call": (_: string, held: unknown) => {
+    if (++calls === 5) throw new Stopped("at the fifth call");
+    return held;
+  },
+  "a boolean removes its neighbors": function (this: any, name: string, held: unknown) {
+    if (typeof held === "boolean") for (const other in this) if (other !== name) delete this[other];
+    return held;
+  },
+};
 
 // ---- random numbers
 
@@ -329,6 +355,30 @@ function filledIn(description: Description, tree: Tree): Tree {
     default:
       return tree;
   }
+}
+
+/** What the slow parser would have found for a value of plain data. Nothing, if a list has a gap or holds undefined: JSON has no word for that. */
+function treeOf(value: unknown): Tree | undefined {
+  if (value === null || typeof value === "number" || typeof value === "string" || typeof value === "boolean")
+    return value;
+  if (typeof value !== "object") return undefined;
+  if (Array.isArray(value)) {
+    const items: Tree[] = [];
+    for (let at = 0; at < value.length; at++) {
+      const item = treeOf(value[at]);
+      if (item === undefined) return undefined;
+      items.push(item);
+    }
+    return items;
+  }
+  const found = new Found();
+  for (const name of Object.keys(value)) {
+    const held = treeOf((value as any)[name]);
+    if (held === undefined) return undefined;
+    found.names.push(name);
+    found.values.push(held);
+  }
+  return found;
 }
 
 function valueOf(tree: Tree): unknown {
@@ -1236,6 +1286,21 @@ const marks = [
   "/",
   "*",
   "'",
+  "\v",
+  "\f",
+  "\x85",
+  "\xa0",
+  "\u1680",
+  "\u180e",
+  "\u2000",
+  "\u2009",
+  "\u200a",
+  "\u200b",
+  "\u2028",
+  "\u2029",
+  "\u202f",
+  "\u205f",
+  "\u3000",
 ];
 
 function change(text: string, other: string): string {
@@ -1535,7 +1600,7 @@ function ask(test: Case, text: string): void {
         report(name + ": JSON.stringify writes it otherwise", test, text, how, writtenPlain, written);
     }
   }
-  if (tree !== noJSON && plain.threw === "") {
+  if (tree !== noJSON && plain.threw === "" && test.validate) {
     const answer = answerOf(() => test.validate!(plain.value));
     if (deep && answer.threw === "RangeError") {
     } else if (answer.threw !== expected)
@@ -1550,15 +1615,184 @@ function ask(test: Case, text: string): void {
     else if (expected === "" && spellValue(answer.value) !== spelledFilled)
       report("validate: another value", test, text, how, spelledFilled, spellValue(answer.value));
   }
-  if (tree !== noJSON && plain.threw === "" && !deep) {
+  if (test.revived && !deep && chance(0.3)) {
+    const [name, parse] = pick(test.revived);
+    calls = 0;
+    const reference = answerOf(() => plainParse(hold(text, how), revivers[name]));
+    calls = 0;
+    const answer = answerOf(() => parse(hold(text, how)));
+    const revivedTree = reference.threw === "" ? treeOf(reference.value) : undefined;
+    if (reference.threw !== "") {
+      if (answer.threw !== reference.threw)
+        report(
+          "JSON.parse<T> with a reviver, " + name + ": ends otherwise",
+          test,
+          text,
+          how,
+          reference.threw,
+          answer.threw || "a value: " + spellValue(answer.value),
+        );
+    } else if (revivedTree !== undefined) {
+      const wanted = fits(test.description, revivedTree) ? "" : "TypeError";
+      if (answer.threw !== wanted)
+        report(
+          "JSON.parse<T> with a reviver, " +
+            name +
+            (wanted === "TypeError" && answer.threw === "" ? ": takes what is no T" : ": ends otherwise"),
+          test,
+          text,
+          how,
+          wanted || "a value: " + spellValue(reference.value),
+          answer.threw || "a value: " + spellValue(answer.value),
+        );
+      else if (wanted === "" && spellValue(answer.value) !== spellValue(reference.value))
+        report(
+          "JSON.parse<T> with a reviver, " + name + ": another value",
+          test,
+          text,
+          how,
+          spellValue(reference.value),
+          spellValue(answer.value),
+        );
+    } else if (answer.threw === "" && spellValue(answer.value) !== spellValue(reference.value))
+      report(
+        "JSON.parse<T> with a reviver, " + name + ": another value",
+        test,
+        text,
+        how,
+        spellValue(reference.value),
+        spellValue(answer.value),
+      );
+  }
+  if (tree !== noJSON && plain.threw === "" && !deep && test.readCast) {
     const cast = endOf(() => test.readCast!(hold(text, how)));
     const untyped = endOf(() => test.readUntyped(plain.value));
     if (cast !== untyped) report("typed code reads what a cast let in otherwise", test, text, how, untyped, cast);
   }
-  if (expected === "" && !deep) {
+  if (expected === "" && !deep && test.readChanged && chance(0.3)) {
+    const drawn = next();
+    let changed: unknown;
+    let after = 0;
+    const typed = endOf(() =>
+      test.readChanged!(hold(text, how), value => {
+        state = drawn;
+        changeValue(value);
+        after = state;
+        changed = value;
+      }),
+    );
+    state = drawn;
+    const twin = valueOf(filled === undefined ? (tree as Tree) : filled);
+    changeValue(twin);
+    const same = state === after;
+    const untyped = endOf(() => test.readUntyped(twin));
+    if (!same) report("the same changes take another course", test, text, how, spellValue(twin), spellValue(changed));
+    else if (typed !== untyped)
+      report(
+        "typed code reads it otherwise after a change",
+        test,
+        text,
+        how,
+        untyped + " of " + spellValue(twin),
+        typed + " of " + spellValue(changed),
+      );
+    else if (spellValue(changed) !== spellValue(twin))
+      report("another value after a change", test, text, how, spellValue(twin), spellValue(changed));
+  }
+  if (expected === "" && !deep && test.readTyped) {
     const typed = endOf(() => test.readTyped!(hold(text, how)));
     const untyped = endOf(() => test.readUntyped(plainFilled));
     if (typed !== untyped) report("typed code reads it otherwise", test, text, how, untyped, typed);
+  }
+}
+
+/** Every object and list inside a value, the value itself first. */
+function partsOf(value: unknown, into: object[] = []): object[] {
+  if (typeof value !== "object" || value === null || into.length > 200) return into;
+  into.push(value);
+  for (const name of Object.keys(value)) {
+    const property = Object.getOwnPropertyDescriptor(value, name)!;
+    if ("value" in property) partsOf(property.value, into);
+  }
+  return into;
+}
+
+/** One to four drawn changes of a value. The same numbers drawn give the same changes on a value that is spelled the same. */
+function changeValue(value: unknown): void {
+  for (let times = 1 + below(4); times > 0; times--) {
+    const parts = partsOf(value);
+    if (!parts.length) return;
+    const part: any = pick(parts);
+    const names = Object.keys(part);
+    const name = names.length && chance(0.7) ? pick(names) : pick(oddNames);
+    // A list does not become billions of elements long.
+    if (Array.isArray(part) && (name === "length" || (isIndex(name) && Number(name) > part.length + 5))) continue;
+    try {
+      switch (below(12)) {
+        case 0:
+          delete part[name];
+          break;
+        case 1:
+        case 2:
+          part[name] = pick<() => unknown>([
+            () => 1.5,
+            () => "x",
+            () => null,
+            () => undefined,
+            () => ({}),
+            () => [],
+            () => true,
+            () => -0,
+            () => 2147483648,
+            () => 7,
+            () => ({ a: 1 }),
+          ])();
+          break;
+        case 3:
+          Object.defineProperty(part, name, { value: 3, writable: true, enumerable: true, configurable: true });
+          break;
+        case 4:
+          Object.defineProperty(part, name, { get: () => 7, enumerable: true, configurable: true });
+          break;
+        case 5:
+          pick([Object.freeze, Object.seal, Object.preventExtensions])(part);
+          break;
+        case 6:
+          if (Array.isArray(part))
+            pick<() => unknown>([
+              () => part.push(1),
+              () => part.pop(),
+              () => (part.length = 0),
+              () => (part[part.length + 3] = 1),
+              () => part.reverse(),
+              () => part.unshift("x"),
+              () => part.splice(1, 1),
+            ])();
+          break;
+        case 7:
+          Object.setPrototypeOf(
+            part,
+            pick<() => object | null>([() => null, () => ({ inherited: 1 }), () => Object.prototype])(),
+          );
+          break;
+        case 8: {
+          const held = part[name];
+          delete part[name];
+          part[name] = held;
+          break;
+        }
+        case 9:
+          Object.defineProperty(part, name, { enumerable: false });
+          break;
+        case 10:
+          Object.assign(part, { added: 1, 0: "zero" });
+          break;
+        default:
+          for (const other of names) part[other] = part[names[0]];
+      }
+    } catch (error) {
+      if (!(error instanceof TypeError) && !(error instanceof RangeError)) throw error;
+    }
   }
 }
 
@@ -1615,6 +1849,88 @@ const strayBytes = [
 ];
 const lenientDecoder = new TextDecoder();
 
+let server: ReturnType<typeof Bun.serve> | undefined;
+let served: Case[] = [];
+
+/** The bytes go to a server of this process over the loopback, whole or in pieces cut at any byte. */
+async function askServer(test: Case, bytes: Uint8Array<ArrayBuffer>): Promise<void> {
+  if (!test.serveCast || !test.serveChecked || bytes.length > 100000) return;
+  server ??= Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(request) {
+      const [, how, name] = new URL(request.url).pathname.split("/");
+      const wanted = served.find(one => one.name === name)!;
+      try {
+        // Written as JSON: half a surrogate pair does not survive in the bytes of an answer.
+        return new Response(
+          globalThis.JSON.stringify(
+            "prints " + (await (how === "cast" ? wanted.serveCast! : wanted.serveChecked!)(request)),
+          ),
+        );
+      } catch (error) {
+        return new Response(
+          globalThis.JSON.stringify(
+            error instanceof TypeError && !Array.isArray((error as any).issues)
+              ? "TypeError of the reader"
+              : nameOfError(error),
+          ),
+        );
+      }
+    },
+  });
+  const decoded = lenientDecoder.decode(bytes);
+  const tree = slowParse(decoded);
+  if (deepest > 400) return;
+  pairs++;
+  if (trace)
+    console.error(
+      "ASK SERVER " + globalThis.JSON.stringify([test.name, Buffer.from(bytes).toString("hex").slice(0, 6000)]),
+    );
+  const ofReader = (end: string): string => (end === "TypeError" ? "TypeError of the reader" : end);
+  const isAT = tree !== noJSON && fits(test.description, tree);
+  const expectations = {
+    cast: tree === noJSON ? "SyntaxError" : ofReader(endOf(() => test.readUntyped(plainParse(decoded)))),
+    checked:
+      tree === noJSON
+        ? "SyntaxError"
+        : !isAT
+          ? "TypeError"
+          : ofReader(
+              endOf(() =>
+                test.readUntyped(test.fills ? valueOf(filledIn(test.description, tree)) : plainParse(decoded)),
+              ),
+            ),
+  };
+  for (const how of ["cast", "checked"] as const) {
+    let body: Uint8Array<ArrayBuffer> | ReadableStream<Uint8Array<ArrayBuffer>> = bytes;
+    if (chance(0.4) && bytes.length) {
+      const pieces: Uint8Array<ArrayBuffer>[] = [];
+      for (let at = 0; at < bytes.length;) {
+        const size = 1 + below(pick([2, 8, 64, 1000]));
+        pieces.push(bytes.slice(at, at + size));
+        at += size;
+      }
+      body = new ReadableStream({
+        start(controller) {
+          for (const piece of pieces) controller.enqueue(piece);
+          controller.close();
+        },
+      });
+    }
+    const got = plainParse(await (await fetch(server.url + how + "/" + test.name, { method: "POST", body })).text());
+    if (got !== expectations[how])
+      report(
+        "a server reads a body otherwise, " + how,
+        test,
+        Buffer.from(bytes).toString("hex"),
+        body === bytes ? "bytes, here in hex" : "bytes in pieces, here in hex",
+        expectations[how],
+        got,
+      );
+  }
+}
+
 /** The bytes of a body, read as JSON under a type that nothing checks. */
 async function askBody(test: Case, text: string): Promise<void> {
   if (!test.readBody || !test.readRequest) return;
@@ -1630,6 +1946,7 @@ async function askBody(test: Case, text: string): Promise<void> {
     bytes = next;
   }
   if (chance(0.1)) bytes = bytes.slice(0, below(bytes.length + 1));
+  if (chance(0.3)) await askServer(test, bytes);
   pairs++;
   if (trace)
     console.error(
@@ -1802,7 +2119,8 @@ function askDeep(test: Case, index: number, levels: number): void {
   oddity = 0;
   spacing = 0;
   escaping = 0;
-  const parse = test.inPart ?? test.parsers![below(test.parsers!.length)][1];
+  const parse =
+    test.inPart ?? (test.parsers!.length ? test.parsers![below(test.parsers!.length)][1] : test.parsers![0][1]);
   const texts: [string, string, string[]][] = [];
   const isAT = (text: string): boolean => {
     const tree = slowParse(text);
@@ -2001,7 +2319,8 @@ function makeText(test: Case): string {
   escaping = pick([0, 0, 0, 0.1, 1]);
   oddity = pick([0, 0, 0.02, 0.05, 0.15]);
   budget = pick([30, 100, 100, 400]);
-  huge = chance(0.003);
+  // Where every allocation collects, a text of a megabyte takes minutes.
+  huge = !process.env.BUN_JSC_slowPathAllocsBetweenGCs && chance(0.003);
   return space() + make(test.description, 0) + space();
 }
 
@@ -2018,7 +2337,8 @@ export async function round(cases: Case[], perCase: number): Promise<void> {
       await askLater(test, text);
     }
     for (let count = 0; count < perCase && Date.now() < deadline; count++) {
-      let text = makeText(test);
+      // Now and then a text that was made for another type of the program: the two may have names in common.
+      let text = chance(0.05) ? makeText(pick(cases)) : makeText(test);
       if (chance(0.35)) for (let times = pick([1, 1, 1, 2, 3, 6]); times > 0; times--) text = change(text, last);
       ask(test, text);
       last = text;
@@ -2056,6 +2376,7 @@ export async function run(cases: Case[], descriptions: Description[]): Promise<v
   trace = process.argv.includes("--trace");
   const only = process.argv.indexOf("--only");
   if (only >= 0) cases = cases.filter(test => test.name === process.argv[only + 1]);
+  served = cases;
   const seconds = option("seconds", 0);
   const rounds = option("rounds", 1);
   const perCase = option("texts", 200);
@@ -2075,6 +2396,7 @@ export async function run(cases: Case[], descriptions: Description[]): Promise<v
   else
     for (let count = 0; seconds > 0 ? Date.now() - started < seconds * 1000 : count < rounds; count++)
       await round(cases, perCase);
+  await server?.stop(true);
   console.log(
     "texts " +
       pairs +

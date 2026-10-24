@@ -173,7 +173,6 @@ impl Finder<'_, '_> {
         }
     }
 
-    // `declare const a: T` and then a line that starts with `;(`: the semicolon ends the declaration, and it also keeps the parenthesis from calling what stands above the declaration.
     fn end_of_erased_statement(&self, end: usize) -> usize {
         if self.byte_before(end) != b';' {
             return end;

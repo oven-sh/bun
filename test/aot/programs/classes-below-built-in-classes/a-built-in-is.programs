@@ -1,0 +1,2995 @@
+////: Below
+class Below extends Object {
+  tag;
+  constructor(value, tag) {
+    super(value);
+    this.tag = tag;
+  }
+}
+////: Defaults
+class Defaults extends Map<string, number> {
+  getOr(key: string, fallback: number): number {
+    return this.get(key) ?? fallback;
+  }
+}
+////: Late
+class Late extends «1» {
+  method() {
+    return "method of " + this.constructor.name;
+  }
+  static fixed() {
+    return "static of " + this.name;
+  }
+}
+////: attempt
+attempt(«1», () => {
+  const first = «2»;
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new «3»(first, i);
+    sum += made.own();
+  }
+  describe(«1», made, «4», «3».prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof «3»);
+});
+////: attempt-10
+attempt(«1», () => {
+  const first = «2»;
+  const made = new «3»(first);
+  made.extra = 1;
+  describe(«1», made, «3», «3».prototype, first);
+  console.log(made.extra);
+});
+////: attempt-11
+attempt(«1», () => {
+  const first = «2»;
+  const made = Reflect.construct(«3», [first], «4»);
+  made.extra = 1;
+  describe(«1», made, «3», «4».prototype, first);
+  console.log(made.mark, made.extra);
+});
+////: attempt-12
+attempt(«1», () => {
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new «2»(i);
+    sum += made.own();
+  }
+  describe(«1», made, Bun.«3», «2».prototype, undefined);
+  console.log(sum, made.tag, made.late, made instanceof «2»);
+});
+////: attempt-13
+attempt(«1», () => {
+  const first = new «2»(«3»);
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new «4»(first, i);
+    sum += made.own();
+  }
+  describe(«1», made, «5», «4».prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof «4»);
+});
+////: attempt-14
+attempt(«1», () => {
+  const first = { «2»: «3» };
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new «4»(first, i);
+    sum += made.own();
+  }
+  describe(«1», made, «5», «4».prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof «4»);
+});
+////: attempt-15
+attempt(«1», () => {
+  const first = «2»;
+  const made = Reflect.construct(«3», [first]);
+  describe(«1», made, «3», «3».prototype, first);
+});
+////: attempt-16
+attempt(«1», () => {
+  const made = new Bun.«2»();
+  made.extra = 1;
+  describe(«1», made, Bun.«2», Bun.«2».prototype, undefined);
+  console.log(made.extra);
+});
+////: attempt-17
+attempt(«1», () => {
+  const made = Reflect.construct(Bun.«2», [], «3»);
+  made.extra = 1;
+  describe(«1», made, Bun.«2», «3».prototype, undefined);
+  console.log(made.mark, made.extra);
+});
+////: attempt-18
+attempt(«1», () => {
+  const first = new «2»(«3»);
+  const made = new «4»(first);
+  made.extra = 1;
+  describe(«1», made, «4», «4».prototype, first);
+  console.log(made.extra);
+});
+////: attempt-19
+attempt(«1», () => {
+  const first = new «2»(«3»);
+  const made = Reflect.construct(«4», [first], «5»);
+  made.extra = 1;
+  describe(«1», made, «4», «5».prototype, first);
+  console.log(made.mark, made.extra);
+});
+////: attempt-2
+attempt(«1», () => {
+  const first = «2»;
+  const made = new «3»(first);
+  made.extra = 1;
+  describe(«1», made, «3», «3».prototype, first);
+  console.log(made.extra);
+});
+////: attempt-20
+attempt(«1», () => {
+  const first = { «2»: «3» };
+  const made = new «4»(first);
+  made.extra = 1;
+  describe(«1», made, «4», «4».prototype, first);
+  console.log(made.extra);
+});
+////: attempt-21
+attempt(«1», () => {
+  const first = { «2»: «3» };
+  const made = Reflect.construct(«4», [first], «5»);
+  made.extra = 1;
+  describe(«1», made, «4», «5».prototype, first);
+  console.log(made.mark, made.extra);
+});
+////: attempt-22
+attempt(«1», () => {
+  const first = 1;
+  const second = 2;
+  const third = «2»;
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new «3»(first, second, third, i);
+    sum += made.own();
+  }
+  describe(«1», made, «4», «3».prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof «3»);
+});
+////: attempt-23
+attempt(«1», () => {
+  const first = new «2»(«3»);
+  const made = Reflect.construct(«4», [first]);
+  describe(«1», made, «4», «4».prototype, first);
+});
+////: attempt-24
+attempt(«1», () => {
+  const first = { «2»: «3» };
+  const made = Reflect.construct(«4», [first]);
+  describe(«1», made, «4», «4».prototype, first);
+});
+////: attempt-25
+attempt(«1», () => {
+  const made = Reflect.construct(Bun.«2», []);
+  describe(«1», made, Bun.«2», Bun.«2».prototype, undefined);
+});
+////: attempt-26
+attempt(«1», () => {
+  const first = [«2»];
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new «3»(first, i);
+    sum += made.own();
+  }
+  describe(«1», made, «4», «3».prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof «3»);
+});
+////: attempt-27
+attempt(«1», () => {
+  const first = [«2», «3»];
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new «4»(first, i);
+    sum += made.own();
+  }
+  describe(«1», made, «5», «4».prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof «4»);
+});
+////: attempt-28
+attempt(«1», () => {
+  const first = () => {};
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new «2»(first, i);
+    sum += made.own();
+  }
+  describe(«1», made, «3», «2».prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof «2»);
+});
+////: attempt-29
+attempt(«1», () => {
+  const first = 1;
+  const second = 2;
+  const third = «2»;
+  const made = new «3»(first, second, third);
+  made.extra = 1;
+  describe(«1», made, «3», «3».prototype, first);
+  console.log(made.extra);
+});
+////: attempt-3
+attempt(«1», () => {
+  const first = «2»;
+  const made = Reflect.construct(«3», [first], «4»);
+  made.extra = 1;
+  describe(«1», made, «3», «4».prototype, first);
+  console.log(made.mark, made.extra);
+});
+////: attempt-30
+attempt(«1», () => {
+  const first = 1;
+  const second = 2;
+  const third = «2»;
+  const made = Reflect.construct(«3», [first, second, third], «4»);
+  made.extra = 1;
+  describe(«1», made, «3», «4».prototype, first);
+  console.log(made.mark, made.extra);
+});
+////: attempt-31
+attempt(«1», () => {
+  const first = 1;
+  const second = 2;
+  const third = «2»;
+  const made = Reflect.construct(«3», [first, second, third]);
+  describe(«1», made, «3», «3».prototype, first);
+});
+////: attempt-32
+attempt(«1», () => {
+  const first = [«2»];
+  const made = new «3»(first);
+  made.extra = 1;
+  describe(«1», made, «3», «3».prototype, first);
+  console.log(made.extra);
+});
+////: attempt-33
+attempt(«1», () => {
+  const first = [«2»];
+  const made = Reflect.construct(«3», [first], «4»);
+  made.extra = 1;
+  describe(«1», made, «3», «4».prototype, first);
+  console.log(made.mark, made.extra);
+});
+////: attempt-34
+attempt(«1», () => {
+  const first = [«2», «3»];
+  const made = new «4»(first);
+  made.extra = 1;
+  describe(«1», made, «4», «4».prototype, first);
+  console.log(made.extra);
+});
+////: attempt-35
+attempt(«1», () => {
+  const first = [«2», «3»];
+  const made = Reflect.construct(«4», [first], «5»);
+  made.extra = 1;
+  describe(«1», made, «4», «5».prototype, first);
+  console.log(made.mark, made.extra);
+});
+////: attempt-36
+attempt(«1», () => {
+  const first = () => {};
+  const made = new «2»(first);
+  made.extra = 1;
+  describe(«1», made, «2», «2».prototype, first);
+  console.log(made.extra);
+});
+////: attempt-37
+attempt(«1», () => {
+  const first = () => {};
+  const made = Reflect.construct(«2», [first], «3»);
+  made.extra = 1;
+  describe(«1», made, «2», «3».prototype, first);
+  console.log(made.mark, made.extra);
+});
+////: attempt-4
+attempt(«1», () => {
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new «2»(i);
+    sum += made.own();
+  }
+  describe(«1», made, «3», «2».prototype, undefined);
+  console.log(sum, made.tag, made.late, made instanceof «2»);
+});
+////: attempt-5
+attempt(«1», () => {
+  const first = «2»;
+  const made = Reflect.construct(«3», [first]);
+  describe(«1», made, «3», «3».prototype, first);
+});
+////: attempt-6
+attempt(«1», () => {
+  const made = new «2»();
+  made.extra = 1;
+  describe(«1», made, «2», «2».prototype, undefined);
+  console.log(made.extra);
+});
+////: attempt-7
+attempt(«1», () => {
+  const made = Reflect.construct(«2», [], «3»);
+  made.extra = 1;
+  describe(«1», made, «2», «3».prototype, undefined);
+  console.log(made.mark, made.extra);
+});
+////: attempt-8
+attempt(«1», () => {
+  const first = «2»;
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new «3»(first, i);
+    sum += made.own();
+  }
+  describe(«1», made, «4», «3».prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof «3»);
+});
+////: attempt-9
+attempt(«1», () => {
+  const made = Reflect.construct(«2», []);
+  describe(«1», made, «2», «2».prototype, undefined);
+});
+////: lines
+try {
+  await import("./importer.js");
+} catch (error) {
+  console.log("caught", error?.constructor?.name);
+}
+////: lines-2
+class «1» extends «2» {
+  tag;
+  constructor(first, tag) {
+    super(first);
+    this.tag = tag;
+    this.late = "late";
+  }
+  own() { return this.tag; }
+}
+////: lines-3
+class «1» extends «2» {
+  tag;
+  constructor(tag) {
+    super();
+    this.tag = tag;
+    this.late = "late";
+  }
+  own() { return this.tag; }
+}
+////: lines-4
+class «1» extends «2» {
+  tag;
+  constructor(first, tag) {
+    super(first);
+    this.tag = tag;
+    this.late = "late";
+  }
+  own() { return this.tag; }
+}
+////: lines-5
+class «1» extends Bun.«2» {
+  tag;
+  constructor(tag) {
+    super();
+    this.tag = tag;
+    this.late = "late";
+  }
+  own() { return this.tag; }
+}
+////: lines-6
+class «1» extends «2» {
+  tag;
+  constructor(first, second, tag) {
+    super(first, second);
+    this.tag = tag;
+    this.late = "late";
+  }
+  own() { return this.tag; }
+}
+////: lines-7
+class «1» extends «2» {
+  tag;
+  constructor(first, second, third, tag) {
+    super(first, second, third);
+    this.tag = tag;
+    this.late = "late";
+  }
+  own() { return this.tag; }
+}
+////: lines-8
+class «1» extends «2» {
+  tag;
+  constructor(first, second, tag) {
+    super(first, second);
+    this.tag = tag;
+    this.late = "late";
+  }
+  own() { return this.tag; }
+}
+////: lines-9
+function «1»(made: «2»): «2» {
+  return Object.«3»(made);
+}
+////: tell
+function tell(what, run) {
+  try {
+    console.log(what, String(run()));
+  } catch (error) {
+    console.log(what, "threw " + error.constructor.name);
+  }
+}
+//// a-built-in-is-constructed-for-an-odd-new-target.js
+// The prototype that a built-in constructor takes from an odd new.target (its `prototype` is a number or null, a bound function, a proxy, one that moves), what cannot be new.target, Proxy, and a class whose parent is decided or changed at run time.
+function show(label, ...values) { console.log(label, ...values); }
+function attempt(label, run) {
+  try { run(); } catch (error) { console.log(label, "throws", error.constructor.name); }
+}
+// new.target.prototype is no object: the prototype object of the constructor's own class is taken.
+function WithNumber() {}
+WithNumber.prototype = 5;
+function WithNull() {}
+WithNull.prototype = null;
+function Plain() {}
+const bound = Plain.bind(null);
+attempt("Map for a number", () => {
+  const made = Reflect.construct(Map, [], WithNumber);
+  made.set(1, 2);
+  show("Map for a number", Object.getPrototypeOf(made) === Map.prototype, made.get(1), made.size);
+});
+attempt("Map for null", () => {
+  const made = Reflect.construct(Map, [[[1, 2]]], WithNull);
+  show("Map for null", Object.getPrototypeOf(made) === Map.prototype, made.get(1), made.size);
+});
+attempt("Map for a bound function", () => {
+  const made = Reflect.construct(Map, [], bound);
+  made.set(1, 2);
+  show("Map for a bound function", Object.getPrototypeOf(made) === Map.prototype, made.get(1));
+});
+attempt("Object for a number", () => {
+  const given = { given: true };
+  const made = Reflect.construct(Object, [given], WithNumber);
+  made.extra = 1;
+  show("Object for a number", made === given, Object.getPrototypeOf(made) === Object.prototype, given.extra, made.hasOwnProperty("extra"));
+});
+attempt("Object for a bound function", () => {
+  const given = { given: true };
+  const made = Reflect.construct(Object, [given], bound);
+  made.extra = 1;
+  show("Object for a bound function", made === given, Object.getPrototypeOf(made) === Object.prototype, given.extra);
+});
+attempt("Array for null", () => {
+  const made = Reflect.construct(Array, [1, 2, 3], WithNull);
+  made.push(4);
+  show("Array for null", Object.getPrototypeOf(made) === Array.prototype, made.length, made.join());
+});
+attempt("Error for a number", () => {
+  const made = Reflect.construct(Error, ["message"], WithNumber);
+  show("Error for a number", Object.getPrototypeOf(made) === Error.prototype, made.message, String(made));
+});
+attempt("Uint8Array for null", () => {
+  const made = Reflect.construct(Uint8Array, [2], WithNull);
+  made[0] = 7;
+  show("Uint8Array for null", Object.getPrototypeOf(made) === Uint8Array.prototype, made.length, made[0]);
+});
+attempt("Promise for a number", () => {
+  const made = Reflect.construct(Promise, [resolve => resolve(1)], WithNumber);
+  show("Promise for a number", Object.getPrototypeOf(made) === Promise.prototype, typeof made.then);
+});
+// The prototype changes between two constructions.
+function Moving() {}
+attempt("a prototype that moves", () => {
+  const first = Reflect.construct(Set, [], Moving);
+  Moving.prototype = { mark: "second", __proto__: Set.prototype };
+  const second = Reflect.construct(Set, [], Moving);
+  second.add(1);
+  show("a prototype that moves", first.mark, second.mark, second.size, Object.getPrototypeOf(first) === Object.getPrototypeOf(second));
+});
+// new.target is a proxy, whose trap says what the prototype is.
+attempt("a proxy as new.target", () => {
+  const handed = { mark: "handed", __proto__: Map.prototype };
+  const proxy = new Proxy(Plain, { get(target, key) { return key === "prototype" ? handed : target[key]; } });
+  const made = Reflect.construct(Map, [], proxy);
+  made.set(1, 2);
+  show("a proxy as new.target", made.mark, made.get(1), Object.getPrototypeOf(made) === handed);
+  const given = { given: true };
+  const object = Reflect.construct(Object, [given], proxy);
+  show("Object for a proxy", object === given, object.mark);
+});
+// What cannot construct.
+attempt("an arrow as new.target", () => Reflect.construct(Map, [], () => {}));
+attempt("a method as new.target", () => Reflect.construct(Object, [{}], { method() {} }.method));
+attempt("a number as new.target", () => Reflect.construct(Object, [{}], 5));
+// Proxy takes no notice of new.target.
+attempt("Proxy reflected", () => {
+  const target = { held: 1 };
+  const made = Reflect.construct(Proxy, [target, {}], Plain);
+  made.extra = 2;
+  show("Proxy reflected", made.held, target.extra, made instanceof Plain);
+});
+// A class whose parent is decided at run time.
+function parentOf(flag) { return flag ? Object : Map; }
+for (const flag of [true, false]) {
+  attempt("a parent decided late", () => {
+    class Below extends parentOf(flag) {
+      tag = 1;
+      constructor(value) { super(value); this.late = 2; }
+    }
+    const given = flag ? { given: true } : [[1, 2]];
+    const made = new Below(given);
+    show("a parent decided late", flag, made === given, made.tag, made.late, made instanceof Map, flag ? made.given : made.get(1));
+  });
+}
+// The parent is changed behind the class.
+attempt("a parent that is changed", () => {
+  class Below extends Map {
+    tag = 1;
+    constructor(value) { super(value); }
+  }
+  Object.setPrototypeOf(Below, Object);
+  const given = { given: true };
+  const made = new Below(given);
+  show("a parent that is changed", made === given, made.tag, made.given, made instanceof Map, Object.prototype.toString.call(made));
+});
+//// a-class-below-object-is-handed-an-object.ts
+// `class Below extends Object`: `super(value)` makes a new object of the class and does not answer the value, as `new Object(value)` and `Object(value)` do.
+class Below extends Object {
+  tag: number;
+  constructor(value: object, tag: number) {
+    super(value);
+    this.tag = tag;
+  }
+}
+const given = { given: true };
+let same = 0;
+let sum = 0;
+for (let i = 0; i < 300; i++) {
+  const made = new Below(given, i);
+  if ((made as object) === given) same++;
+  sum += made.tag;
+  const reflected = Reflect.construct(Object, [given], Below) as Below;
+  if ((reflected as object) === given) same++;
+  if (reflected instanceof Below) sum++;
+}
+console.log(same, sum, new Object(given) === given, Object(given) === given);
+//// a-class-below-object-is-handed-an-object-in-untyped-code.js
+// `class Below extends Object` in plain JavaScript: `super(value)` makes a new object of the class and does not answer the value. The field of the class is stored and read behind it.
+////= Below
+const given = { given: true };
+let sum = 0;
+for (let i = 0; i < 300; i++) {
+  const made = new Below(given, i);
+  sum += made.tag;
+}
+console.log(sum);
+//// a-class-below-proxy-in-an-imported-file/below.js
+class Below extends Proxy {
+  static answer() {
+    return 42;
+  }
+}
+export const answer = Below.answer();
+//// a-class-below-proxy-in-an-imported-file/importer.js
+import { answer } from "./below.js";
+console.log("ran", answer);
+//// a-class-below-proxy-in-an-imported-file/main.js
+// A class below Proxy, which has no prototype property, stands in an imported file that calls its static method: the file stops where the class is made, with a TypeError.
+////= lines
+//// a-class-below-proxy-that-is-exported-and-never-used/importer.js
+import { read } from "./made.js";
+if (process.argv.length > 100) console.log(read());
+console.log("ran to its end");
+//// a-class-below-proxy-that-is-exported-and-never-used/made.js
+export const Below = class extends Proxy {};
+export function read() {
+  return Below;
+}
+console.log("reached");
+//// a-class-below-proxy-that-is-exported-and-never-used/main.js
+// A class below Proxy, which has no prototype property, is exported and never used: the module stops where the class is made, with a TypeError.
+////= lines
+//// a-class-below-proxy-that-is-exported-and-that-no-file-names/importer.js
+import { reached } from "./made.js";
+console.log("ran to its end", reached);
+//// a-class-below-proxy-that-is-exported-and-that-no-file-names/made.js
+export const Below = class extends Proxy {};
+export const reached = "reached";
+console.log(reached);
+//// a-class-below-proxy-that-is-exported-and-that-no-file-names/main.js
+// A class below Proxy, which has no prototype property, is exported by a file whose importer names another export: the file stops where the class is made, with a TypeError.
+////= lines
+//// a-class-below-proxy-whose-members-are-used-behind-a-catch/made.js
+class Below extends Proxy {
+  method() {
+    return 1;
+  }
+  static answer() {
+    return 2;
+  }
+}
+function make() {
+  return new Below({ field: 1 }, {});
+}
+try {
+  console.log(Below.answer());
+} catch (error) {
+  console.log("caught", error.constructor.name);
+}
+try {
+  const made = make();
+  console.log(made.field, typeof made.method);
+} catch (error) {
+  console.log("caught", error.constructor.name);
+}
+//// a-class-below-proxy-whose-members-are-used-behind-a-catch/main.js
+// A class below Proxy, which has no prototype property, whose members are used behind a catch: the module stops where the class is made, with a TypeError.
+try {
+  await import("./made.js");
+  console.log("ran to its end");
+} catch (error) {
+  console.log("caught", error?.constructor?.name);
+}
+//// a-map-below-a-class-is-changed-out-of-sight.ts
+// An instance of a class below Map gains own properties, loses them and changes its prototype in code the compiler cannot see; each call behind that finds what the language says.
+////= Defaults
+const change = new Function("o", "how", `
+  if (how === 1) o.getOr = () => 42;
+  if (how === 2) { delete o.getOr; o.get = () => 7; }
+  if (how === 3) { delete o.get; Object.setPrototypeOf(o, { __proto__: Map.prototype, getOr() { return 5; } }); }
+  if (how === 4) Object.setPrototypeOf(o, Map.prototype);
+`) as (o: object, how: number) => void;
+function local(): void {
+  const d = new Defaults([["a", 1]]);
+  console.log("local", d.getOr("a", 9), d.getOr("b", 9));
+  for (let how = 1; how <= 3; how++) {
+    change(d, how);
+    console.log("local", how, d.getOr("a", 9), d.getOr("b", 9), d instanceof Defaults);
+  }
+  change(d, 4);
+  console.log("local", typeof d.getOr, d instanceof Defaults, d instanceof Map);
+}
+const shared = new Defaults([["a", 1]]);
+function read(d: Defaults): number {
+  return d.getOr("a", 9) + d.getOr("b", 9);
+}
+function viaParameter(): void {
+  let sum = 0;
+  for (let i = 0; i < 1000; i++) sum += read(shared);
+  console.log("parameter", sum);
+  for (let how = 1; how <= 3; how++) {
+    change(shared, how);
+    console.log("parameter", how, read(shared), read(new Defaults([["b", 3]])));
+  }
+}
+local();
+viaParameter();
+const made = Reflect.construct(Map, [[["a", 4]]], Defaults) as Defaults;
+console.log("constructed", read(made), made instanceof Defaults);
+//// aggregate-error-and-the-parent-gets-another-parent-before-the-first-touch.js
+// Between the definition of a class below AggregateError and its first touch the built-in class gets another prototype. A compiled executable refuses that: a built-in constructor keeps its prototype.
+////= tell
+////= Late	AggregateError
+tell("another parent", () => Object.setPrototypeOf(AggregateError, { above: () => "above" }) === AggregateError);
+tell("inherited", () => Late.above());
+tell("an instance", () => {
+  const one = new Late([new Error("a")], "m");
+  return [one.errors.length + one.message, one instanceof Late, one instanceof AggregateError, one.method(), one.constructor === Late, Object.getPrototypeOf(Late) === AggregateError].join(" ");
+});
+//// data-view-and-the-parent-gets-another-parent-before-the-first-touch.js
+// Between the definition of a class below DataView and its first touch the built-in class gets another prototype. A compiled executable refuses that: a built-in constructor keeps its prototype.
+////= tell
+////= Late	DataView
+tell("another parent", () => Object.setPrototypeOf(DataView, { above: () => "above" }) === DataView);
+tell("inherited", () => Late.above());
+tell("an instance", () => {
+  const one = new Late(new ArrayBuffer(8));
+  return [one.byteLength, one instanceof Late, one instanceof DataView, one.method(), one.constructor === Late, Object.getPrototypeOf(Late) === DataView].join(" ");
+});
+//// disposable-stack-and-the-parent-gets-another-parent-before-the-first-touch.js
+// Between the definition of a class below DisposableStack and its first touch the built-in class gets another prototype. A compiled executable refuses that: a built-in constructor keeps its prototype.
+////= tell
+////= Late	DisposableStack
+tell("another parent", () => Object.setPrototypeOf(DisposableStack, { above: () => "above" }) === DisposableStack);
+tell("inherited", () => Late.above());
+tell("an instance", () => {
+  const one = new Late();
+  return [one.disposed, one instanceof Late, one instanceof DisposableStack, one.method(), one.constructor === Late, Object.getPrototypeOf(Late) === DisposableStack].join(" ");
+});
+//// error-and-the-parent-gets-another-parent-before-the-first-touch.js
+// Between the definition of a class below Error and its first touch the built-in class gets another prototype. A compiled executable refuses that: a built-in constructor keeps its prototype.
+////= tell
+////= Late	Error
+tell("another parent", () => Object.setPrototypeOf(Error, { above: () => "above" }) === Error);
+tell("inherited", () => Late.above());
+tell("an instance", () => {
+  const one = new Late("m");
+  return [one.message, one instanceof Late, one instanceof Error, one.method(), one.constructor === Late, Object.getPrototypeOf(Late) === Error].join(" ");
+});
+//// every-constructor-of-the-host-is-entered-in-four-ways.js
+// Every constructor of the host that needs nothing from outside, entered in four ways, each site spelled out: `new X(..)`, `super(..)` from a class below X, Reflect.construct(X, [..], Other), Reflect.construct(X, [..]).
+const EventEmitter = require("node:events");
+const { StringDecoder } = require("node:string_decoder");
+const { AsyncLocalStorage } = require("node:async_hooks");
+const { Script } = require("node:vm");
+function describe(label, made, constructor, prototype, first) {
+  let brand;
+  try { brand = Object.prototype.toString.call(made); } catch (error) { brand = "throws"; }
+  console.log(label, typeof made, brand, made instanceof constructor, Object.getPrototypeOf(made) === prototype, made === first, Object.getOwnPropertyNames(made).filter(name => name !== "stack" && name !== "line" && name !== "column" && name !== "sourceURL").join());
+}
+function attempt(label, run) {
+  try { run(); } catch (error) { console.log(label, "throws", error.constructor.name); }
+}
+
+////= lines-2	BelowBuffer	Buffer
+function OtherBuffer() {}
+OtherBuffer.prototype.mark = "Buffer";
+////= attempt-2	"Buffer new"	4	Buffer
+////= attempt	"Buffer super"	4	BelowBuffer	Buffer
+////= attempt-3	"Buffer reflected"	4	Buffer	OtherBuffer
+////= attempt-5	"Buffer reflected for itself"	4	Buffer
+
+////= lines-2	BelowBufferOfText	Buffer
+function OtherBufferOfText() {}
+OtherBufferOfText.prototype.mark = "BufferOfText";
+////= attempt-2	"BufferOfText new"	"text"	Buffer
+////= attempt	"BufferOfText super"	"text"	BelowBufferOfText	Buffer
+////= attempt-3	"BufferOfText reflected"	"text"	Buffer	OtherBufferOfText
+////= attempt-5	"BufferOfText reflected for itself"	"text"	Buffer
+
+////= lines-2	BelowBufferOfBuffer	Buffer
+function OtherBufferOfBuffer() {}
+OtherBufferOfBuffer.prototype.mark = "BufferOfBuffer";
+////= attempt-18	"BufferOfBuffer new"	ArrayBuffer	8	Buffer
+////= attempt-13	"BufferOfBuffer super"	ArrayBuffer	8	BelowBufferOfBuffer	Buffer
+////= attempt-19	"BufferOfBuffer reflected"	ArrayBuffer	8	Buffer	OtherBufferOfBuffer
+////= attempt-23	"BufferOfBuffer reflected for itself"	ArrayBuffer	8	Buffer
+
+////= lines-2	BelowBufferOfList	Buffer
+function OtherBufferOfList() {}
+OtherBufferOfList.prototype.mark = "BufferOfList";
+////= attempt-34	"BufferOfList new"	1	2	Buffer
+////= attempt-27	"BufferOfList super"	1	2	BelowBufferOfList	Buffer
+////= attempt-35	"BufferOfList reflected"	1	2	Buffer	OtherBufferOfList
+attempt("BufferOfList reflected for itself", () => {
+  const first = [1, 2];
+  const made = Reflect.construct(Buffer, [first]);
+  describe("BufferOfList reflected for itself", made, Buffer, Buffer.prototype, first);
+});
+
+////= lines-2	BelowURL	URL
+function OtherURL() {}
+OtherURL.prototype.mark = "URL";
+////= attempt-2	"URL new"	"http://a.example/"	URL
+////= attempt	"URL super"	"http://a.example/"	BelowURL	URL
+////= attempt-3	"URL reflected"	"http://a.example/"	URL	OtherURL
+////= attempt-5	"URL reflected for itself"	"http://a.example/"	URL
+
+////= lines-2	BelowURLSearchParams	URLSearchParams
+function OtherURLSearchParams() {}
+OtherURLSearchParams.prototype.mark = "URLSearchParams";
+////= attempt-2	"URLSearchParams new"	"a=1"	URLSearchParams
+////= attempt	"URLSearchParams super"	"a=1"	BelowURLSearchParams	URLSearchParams
+////= attempt-3	"URLSearchParams reflected"	"a=1"	URLSearchParams	OtherURLSearchParams
+////= attempt-5	"URLSearchParams reflected for itself"	"a=1"	URLSearchParams
+
+////= lines-2	BelowHeaders	Headers
+function OtherHeaders() {}
+OtherHeaders.prototype.mark = "Headers";
+////= attempt-20	"Headers new"	a	'1'	Headers
+////= attempt-14	"Headers super"	a	'1'	BelowHeaders	Headers
+////= attempt-21	"Headers reflected"	a	'1'	Headers	OtherHeaders
+////= attempt-24	"Headers reflected for itself"	a	'1'	Headers
+
+////= lines-2	BelowHeadersOfHeaders	Headers
+function OtherHeadersOfHeaders() {}
+OtherHeadersOfHeaders.prototype.mark = "HeadersOfHeaders";
+attempt("HeadersOfHeaders new", () => {
+  const first = new Headers({ a: '1' });
+  const made = new Headers(first);
+  made.extra = 1;
+  describe("HeadersOfHeaders new", made, Headers, Headers.prototype, first);
+  console.log(made.extra);
+});
+attempt("HeadersOfHeaders super", () => {
+  const first = new Headers({ a: '1' });
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new BelowHeadersOfHeaders(first, i);
+    sum += made.own();
+  }
+  describe("HeadersOfHeaders super", made, Headers, BelowHeadersOfHeaders.prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof BelowHeadersOfHeaders);
+});
+attempt("HeadersOfHeaders reflected", () => {
+  const first = new Headers({ a: '1' });
+  const made = Reflect.construct(Headers, [first], OtherHeadersOfHeaders);
+  made.extra = 1;
+  describe("HeadersOfHeaders reflected", made, Headers, OtherHeadersOfHeaders.prototype, first);
+  console.log(made.mark, made.extra);
+});
+attempt("HeadersOfHeaders reflected for itself", () => {
+  const first = new Headers({ a: '1' });
+  const made = Reflect.construct(Headers, [first]);
+  describe("HeadersOfHeaders reflected for itself", made, Headers, Headers.prototype, first);
+});
+
+////= lines-2	BelowRequest	Request
+function OtherRequest() {}
+OtherRequest.prototype.mark = "Request";
+////= attempt-2	"Request new"	"http://a.example/"	Request
+////= attempt	"Request super"	"http://a.example/"	BelowRequest	Request
+////= attempt-3	"Request reflected"	"http://a.example/"	Request	OtherRequest
+////= attempt-5	"Request reflected for itself"	"http://a.example/"	Request
+
+////= lines-2	BelowRequestOfRequest	Request
+function OtherRequestOfRequest() {}
+OtherRequestOfRequest.prototype.mark = "RequestOfRequest";
+////= attempt-18	"RequestOfRequest new"	Request	"http://a.example/"	Request
+////= attempt-13	"RequestOfRequest super"	Request	"http://a.example/"	BelowRequestOfRequest	Request
+////= attempt-19	"RequestOfRequest reflected"	Request	"http://a.example/"	Request	OtherRequestOfRequest
+////= attempt-23	"RequestOfRequest reflected for itself"	Request	"http://a.example/"	Request
+
+////= lines-2	BelowResponse	Response
+function OtherResponse() {}
+OtherResponse.prototype.mark = "Response";
+////= attempt-2	"Response new"	"body"	Response
+////= attempt	"Response super"	"body"	BelowResponse	Response
+////= attempt-3	"Response reflected"	"body"	Response	OtherResponse
+////= attempt-5	"Response reflected for itself"	"body"	Response
+
+////= lines-2	BelowBlob	Blob
+function OtherBlob() {}
+OtherBlob.prototype.mark = "Blob";
+////= attempt-32	"Blob new"	"x"	Blob
+////= attempt-26	"Blob super"	"x"	BelowBlob	Blob
+////= attempt-33	"Blob reflected"	"x"	Blob	OtherBlob
+attempt("Blob reflected for itself", () => {
+  const first = ["x"];
+  const made = Reflect.construct(Blob, [first]);
+  describe("Blob reflected for itself", made, Blob, Blob.prototype, first);
+});
+
+////= lines-6	BelowFile	File
+function OtherFile() {}
+OtherFile.prototype.mark = "File";
+attempt("File new", () => {
+  const first = ["x"];
+  const second = "name";
+  const made = new File(first, second);
+  made.extra = 1;
+  describe("File new", made, File, File.prototype, first);
+  console.log(made.extra);
+});
+attempt("File super", () => {
+  const first = ["x"];
+  const second = "name";
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new BelowFile(first, second, i);
+    sum += made.own();
+  }
+  describe("File super", made, File, BelowFile.prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof BelowFile);
+});
+attempt("File reflected", () => {
+  const first = ["x"];
+  const second = "name";
+  const made = Reflect.construct(File, [first, second], OtherFile);
+  made.extra = 1;
+  describe("File reflected", made, File, OtherFile.prototype, first);
+  console.log(made.mark, made.extra);
+});
+attempt("File reflected for itself", () => {
+  const first = ["x"];
+  const second = "name";
+  const made = Reflect.construct(File, [first, second]);
+  describe("File reflected for itself", made, File, File.prototype, first);
+});
+
+////= lines-3	BelowFormData	FormData
+function OtherFormData() {}
+OtherFormData.prototype.mark = "FormData";
+////= attempt-6	"FormData new"	FormData
+////= attempt-4	"FormData super"	BelowFormData	FormData
+////= attempt-7	"FormData reflected"	FormData	OtherFormData
+////= attempt-9	"FormData reflected for itself"	FormData
+
+////= lines-3	BelowTextEncoder	TextEncoder
+function OtherTextEncoder() {}
+OtherTextEncoder.prototype.mark = "TextEncoder";
+////= attempt-6	"TextEncoder new"	TextEncoder
+////= attempt-4	"TextEncoder super"	BelowTextEncoder	TextEncoder
+////= attempt-7	"TextEncoder reflected"	TextEncoder	OtherTextEncoder
+////= attempt-9	"TextEncoder reflected for itself"	TextEncoder
+
+////= lines-3	BelowTextDecoder	TextDecoder
+function OtherTextDecoder() {}
+OtherTextDecoder.prototype.mark = "TextDecoder";
+////= attempt-6	"TextDecoder new"	TextDecoder
+////= attempt-4	"TextDecoder super"	BelowTextDecoder	TextDecoder
+////= attempt-7	"TextDecoder reflected"	TextDecoder	OtherTextDecoder
+////= attempt-9	"TextDecoder reflected for itself"	TextDecoder
+
+////= lines-3	BelowAbortController	AbortController
+function OtherAbortController() {}
+OtherAbortController.prototype.mark = "AbortController";
+////= attempt-6	"AbortController new"	AbortController
+////= attempt-4	"AbortController super"	BelowAbortController	AbortController
+////= attempt-7	"AbortController reflected"	AbortController	OtherAbortController
+////= attempt-9	"AbortController reflected for itself"	AbortController
+
+////= lines-2	BelowEvent	Event
+function OtherEvent() {}
+OtherEvent.prototype.mark = "Event";
+////= attempt-2	"Event new"	"x"	Event
+////= attempt	"Event super"	"x"	BelowEvent	Event
+////= attempt-3	"Event reflected"	"x"	Event	OtherEvent
+////= attempt-5	"Event reflected for itself"	"x"	Event
+
+////= lines-3	BelowEventTarget	EventTarget
+function OtherEventTarget() {}
+OtherEventTarget.prototype.mark = "EventTarget";
+////= attempt-6	"EventTarget new"	EventTarget
+////= attempt-4	"EventTarget super"	BelowEventTarget	EventTarget
+////= attempt-7	"EventTarget reflected"	EventTarget	OtherEventTarget
+////= attempt-9	"EventTarget reflected for itself"	EventTarget
+
+////= lines-2	BelowCustomEvent	CustomEvent
+function OtherCustomEvent() {}
+OtherCustomEvent.prototype.mark = "CustomEvent";
+////= attempt-2	"CustomEvent new"	"x"	CustomEvent
+////= attempt	"CustomEvent super"	"x"	BelowCustomEvent	CustomEvent
+////= attempt-3	"CustomEvent reflected"	"x"	CustomEvent	OtherCustomEvent
+////= attempt-5	"CustomEvent reflected for itself"	"x"	CustomEvent
+
+////= lines-2	BelowMessageEvent	MessageEvent
+function OtherMessageEvent() {}
+OtherMessageEvent.prototype.mark = "MessageEvent";
+////= attempt-2	"MessageEvent new"	"x"	MessageEvent
+////= attempt	"MessageEvent super"	"x"	BelowMessageEvent	MessageEvent
+////= attempt-3	"MessageEvent reflected"	"x"	MessageEvent	OtherMessageEvent
+////= attempt-5	"MessageEvent reflected for itself"	"x"	MessageEvent
+
+////= lines-2	BelowErrorEvent	ErrorEvent
+function OtherErrorEvent() {}
+OtherErrorEvent.prototype.mark = "ErrorEvent";
+////= attempt-2	"ErrorEvent new"	"x"	ErrorEvent
+////= attempt	"ErrorEvent super"	"x"	BelowErrorEvent	ErrorEvent
+////= attempt-3	"ErrorEvent reflected"	"x"	ErrorEvent	OtherErrorEvent
+////= attempt-5	"ErrorEvent reflected for itself"	"x"	ErrorEvent
+
+////= lines-2	BelowCloseEvent	CloseEvent
+function OtherCloseEvent() {}
+OtherCloseEvent.prototype.mark = "CloseEvent";
+////= attempt-2	"CloseEvent new"	"x"	CloseEvent
+////= attempt	"CloseEvent super"	"x"	BelowCloseEvent	CloseEvent
+////= attempt-3	"CloseEvent reflected"	"x"	CloseEvent	OtherCloseEvent
+////= attempt-5	"CloseEvent reflected for itself"	"x"	CloseEvent
+
+////= lines-2	BelowDOMException	DOMException
+function OtherDOMException() {}
+OtherDOMException.prototype.mark = "DOMException";
+////= attempt-2	"DOMException new"	"message"	DOMException
+////= attempt	"DOMException super"	"message"	BelowDOMException	DOMException
+////= attempt-3	"DOMException reflected"	"message"	DOMException	OtherDOMException
+////= attempt-5	"DOMException reflected for itself"	"message"	DOMException
+
+////= lines-3	BelowReadableStream	ReadableStream
+function OtherReadableStream() {}
+OtherReadableStream.prototype.mark = "ReadableStream";
+////= attempt-6	"ReadableStream new"	ReadableStream
+////= attempt-4	"ReadableStream super"	BelowReadableStream	ReadableStream
+////= attempt-7	"ReadableStream reflected"	ReadableStream	OtherReadableStream
+////= attempt-9	"ReadableStream reflected for itself"	ReadableStream
+
+////= lines-3	BelowWritableStream	WritableStream
+function OtherWritableStream() {}
+OtherWritableStream.prototype.mark = "WritableStream";
+////= attempt-6	"WritableStream new"	WritableStream
+////= attempt-4	"WritableStream super"	BelowWritableStream	WritableStream
+////= attempt-7	"WritableStream reflected"	WritableStream	OtherWritableStream
+////= attempt-9	"WritableStream reflected for itself"	WritableStream
+
+////= lines-3	BelowTransformStream	TransformStream
+function OtherTransformStream() {}
+OtherTransformStream.prototype.mark = "TransformStream";
+////= attempt-6	"TransformStream new"	TransformStream
+////= attempt-4	"TransformStream super"	BelowTransformStream	TransformStream
+////= attempt-7	"TransformStream reflected"	TransformStream	OtherTransformStream
+////= attempt-9	"TransformStream reflected for itself"	TransformStream
+
+////= lines-2	BelowByteLengthQueuingStrategy	ByteLengthQueuingStrategy
+function OtherByteLengthQueuingStrategy() {}
+OtherByteLengthQueuingStrategy.prototype.mark = "ByteLengthQueuingStrategy";
+////= attempt-20	"ByteLengthQueuingStrategy new"	highWaterMark	1	ByteLengthQueuingStrategy
+////= attempt-14	"ByteLengthQueuingStrategy super"	highWaterMark	1	BelowByteLengthQueuingStrategy	ByteLengthQueuingStrategy
+////= attempt-21	"ByteLengthQueuingStrategy reflected"	highWaterMark	1	ByteLengthQueuingStrategy	OtherByteLengthQueuingStrategy
+////= attempt-24	"ByteLengthQueuingStrategy reflected for itself"	highWaterMark	1	ByteLengthQueuingStrategy
+
+////= lines-2	BelowCountQueuingStrategy	CountQueuingStrategy
+function OtherCountQueuingStrategy() {}
+OtherCountQueuingStrategy.prototype.mark = "CountQueuingStrategy";
+////= attempt-20	"CountQueuingStrategy new"	highWaterMark	1	CountQueuingStrategy
+////= attempt-14	"CountQueuingStrategy super"	highWaterMark	1	BelowCountQueuingStrategy	CountQueuingStrategy
+////= attempt-21	"CountQueuingStrategy reflected"	highWaterMark	1	CountQueuingStrategy	OtherCountQueuingStrategy
+////= attempt-24	"CountQueuingStrategy reflected for itself"	highWaterMark	1	CountQueuingStrategy
+
+////= lines-3	BelowTextDecoderStream	TextDecoderStream
+function OtherTextDecoderStream() {}
+OtherTextDecoderStream.prototype.mark = "TextDecoderStream";
+////= attempt-6	"TextDecoderStream new"	TextDecoderStream
+////= attempt-4	"TextDecoderStream super"	BelowTextDecoderStream	TextDecoderStream
+////= attempt-7	"TextDecoderStream reflected"	TextDecoderStream	OtherTextDecoderStream
+////= attempt-9	"TextDecoderStream reflected for itself"	TextDecoderStream
+
+////= lines-3	BelowTextEncoderStream	TextEncoderStream
+function OtherTextEncoderStream() {}
+OtherTextEncoderStream.prototype.mark = "TextEncoderStream";
+////= attempt-6	"TextEncoderStream new"	TextEncoderStream
+////= attempt-4	"TextEncoderStream super"	BelowTextEncoderStream	TextEncoderStream
+////= attempt-7	"TextEncoderStream reflected"	TextEncoderStream	OtherTextEncoderStream
+////= attempt-9	"TextEncoderStream reflected for itself"	TextEncoderStream
+
+////= lines-2	BelowCompressionStream	CompressionStream
+function OtherCompressionStream() {}
+OtherCompressionStream.prototype.mark = "CompressionStream";
+////= attempt-2	"CompressionStream new"	"gzip"	CompressionStream
+////= attempt	"CompressionStream super"	"gzip"	BelowCompressionStream	CompressionStream
+////= attempt-3	"CompressionStream reflected"	"gzip"	CompressionStream	OtherCompressionStream
+////= attempt-5	"CompressionStream reflected for itself"	"gzip"	CompressionStream
+
+////= lines-5	BelowTranspiler	Transpiler
+function OtherTranspiler() {}
+OtherTranspiler.prototype.mark = "Transpiler";
+////= attempt-16	"Transpiler new"	Transpiler
+////= attempt-12	"Transpiler super"	BelowTranspiler	Transpiler
+////= attempt-17	"Transpiler reflected"	Transpiler	OtherTranspiler
+////= attempt-25	"Transpiler reflected for itself"	Transpiler
+
+////= lines-4	BelowGlob	Bun.Glob
+function OtherGlob() {}
+OtherGlob.prototype.mark = "Glob";
+////= attempt-10	"Glob new"	"*"	Bun.Glob
+////= attempt-8	"Glob super"	"*"	BelowGlob	Bun.Glob
+////= attempt-11	"Glob reflected"	"*"	Bun.Glob	OtherGlob
+////= attempt-15	"Glob reflected for itself"	"*"	Bun.Glob
+
+////= lines-4	BelowCryptoHasher	Bun.CryptoHasher
+function OtherCryptoHasher() {}
+OtherCryptoHasher.prototype.mark = "CryptoHasher";
+////= attempt-10	"CryptoHasher new"	"sha1"	Bun.CryptoHasher
+////= attempt-8	"CryptoHasher super"	"sha1"	BelowCryptoHasher	Bun.CryptoHasher
+////= attempt-11	"CryptoHasher reflected"	"sha1"	Bun.CryptoHasher	OtherCryptoHasher
+////= attempt-15	"CryptoHasher reflected for itself"	"sha1"	Bun.CryptoHasher
+
+////= lines-5	BelowSHA1	SHA1
+function OtherSHA1() {}
+OtherSHA1.prototype.mark = "SHA1";
+////= attempt-16	"SHA1 new"	SHA1
+////= attempt-12	"SHA1 super"	BelowSHA1	SHA1
+////= attempt-17	"SHA1 reflected"	SHA1	OtherSHA1
+////= attempt-25	"SHA1 reflected for itself"	SHA1
+
+////= lines-5	BelowMD5	MD5
+function OtherMD5() {}
+OtherMD5.prototype.mark = "MD5";
+////= attempt-16	"MD5 new"	MD5
+////= attempt-12	"MD5 super"	BelowMD5	MD5
+////= attempt-17	"MD5 reflected"	MD5	OtherMD5
+////= attempt-25	"MD5 reflected for itself"	MD5
+
+////= lines-5	BelowSHA256	SHA256
+function OtherSHA256() {}
+OtherSHA256.prototype.mark = "SHA256";
+////= attempt-16	"SHA256 new"	SHA256
+////= attempt-12	"SHA256 super"	BelowSHA256	SHA256
+////= attempt-17	"SHA256 reflected"	SHA256	OtherSHA256
+////= attempt-25	"SHA256 reflected for itself"	SHA256
+
+////= lines-3	BelowHTMLRewriter	HTMLRewriter
+function OtherHTMLRewriter() {}
+OtherHTMLRewriter.prototype.mark = "HTMLRewriter";
+////= attempt-6	"HTMLRewriter new"	HTMLRewriter
+////= attempt-4	"HTMLRewriter super"	BelowHTMLRewriter	HTMLRewriter
+////= attempt-7	"HTMLRewriter reflected"	HTMLRewriter	OtherHTMLRewriter
+////= attempt-9	"HTMLRewriter reflected for itself"	HTMLRewriter
+
+////= lines-8	BelowCookie	Bun.Cookie
+function OtherCookie() {}
+OtherCookie.prototype.mark = "Cookie";
+attempt("Cookie new", () => {
+  const first = "a";
+  const second = "b";
+  const made = new Bun.Cookie(first, second);
+  made.extra = 1;
+  describe("Cookie new", made, Bun.Cookie, Bun.Cookie.prototype, first);
+  console.log(made.extra);
+});
+attempt("Cookie super", () => {
+  const first = "a";
+  const second = "b";
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new BelowCookie(first, second, i);
+    sum += made.own();
+  }
+  describe("Cookie super", made, Bun.Cookie, BelowCookie.prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof BelowCookie);
+});
+attempt("Cookie reflected", () => {
+  const first = "a";
+  const second = "b";
+  const made = Reflect.construct(Bun.Cookie, [first, second], OtherCookie);
+  made.extra = 1;
+  describe("Cookie reflected", made, Bun.Cookie, OtherCookie.prototype, first);
+  console.log(made.mark, made.extra);
+});
+attempt("Cookie reflected for itself", () => {
+  const first = "a";
+  const second = "b";
+  const made = Reflect.construct(Bun.Cookie, [first, second]);
+  describe("Cookie reflected for itself", made, Bun.Cookie, Bun.Cookie.prototype, first);
+});
+
+////= lines-5	BelowCookieMap	CookieMap
+function OtherCookieMap() {}
+OtherCookieMap.prototype.mark = "CookieMap";
+////= attempt-16	"CookieMap new"	CookieMap
+////= attempt-12	"CookieMap super"	BelowCookieMap	CookieMap
+////= attempt-17	"CookieMap reflected"	CookieMap	OtherCookieMap
+////= attempt-25	"CookieMap reflected for itself"	CookieMap
+
+////= lines-3	BelowEventEmitter	EventEmitter
+function OtherEventEmitter() {}
+OtherEventEmitter.prototype.mark = "EventEmitter";
+////= attempt-6	"EventEmitter new"	EventEmitter
+////= attempt-4	"EventEmitter super"	BelowEventEmitter	EventEmitter
+////= attempt-7	"EventEmitter reflected"	EventEmitter	OtherEventEmitter
+////= attempt-9	"EventEmitter reflected for itself"	EventEmitter
+
+////= lines-3	BelowStringDecoder	StringDecoder
+function OtherStringDecoder() {}
+OtherStringDecoder.prototype.mark = "StringDecoder";
+////= attempt-6	"StringDecoder new"	StringDecoder
+////= attempt-4	"StringDecoder super"	BelowStringDecoder	StringDecoder
+////= attempt-7	"StringDecoder reflected"	StringDecoder	OtherStringDecoder
+////= attempt-9	"StringDecoder reflected for itself"	StringDecoder
+
+////= lines-2	BelowPerformanceObserver	PerformanceObserver
+function OtherPerformanceObserver() {}
+OtherPerformanceObserver.prototype.mark = "PerformanceObserver";
+////= attempt-36	"PerformanceObserver new"	PerformanceObserver
+////= attempt-28	"PerformanceObserver super"	BelowPerformanceObserver	PerformanceObserver
+////= attempt-37	"PerformanceObserver reflected"	PerformanceObserver	OtherPerformanceObserver
+attempt("PerformanceObserver reflected for itself", () => {
+  const first = () => {};
+  const made = Reflect.construct(PerformanceObserver, [first]);
+  describe("PerformanceObserver reflected for itself", made, PerformanceObserver, PerformanceObserver.prototype, first);
+});
+
+////= lines-3	BelowMessageChannel	MessageChannel
+function OtherMessageChannel() {}
+OtherMessageChannel.prototype.mark = "MessageChannel";
+////= attempt-6	"MessageChannel new"	MessageChannel
+////= attempt-4	"MessageChannel super"	BelowMessageChannel	MessageChannel
+////= attempt-7	"MessageChannel reflected"	MessageChannel	OtherMessageChannel
+////= attempt-9	"MessageChannel reflected for itself"	MessageChannel
+
+////= lines-3	BelowAsyncLocalStorage	AsyncLocalStorage
+function OtherAsyncLocalStorage() {}
+OtherAsyncLocalStorage.prototype.mark = "AsyncLocalStorage";
+////= attempt-6	"AsyncLocalStorage new"	AsyncLocalStorage
+////= attempt-4	"AsyncLocalStorage super"	BelowAsyncLocalStorage	AsyncLocalStorage
+////= attempt-7	"AsyncLocalStorage reflected"	AsyncLocalStorage	OtherAsyncLocalStorage
+////= attempt-9	"AsyncLocalStorage reflected for itself"	AsyncLocalStorage
+
+////= lines-2	BelowScript	Script
+function OtherScript() {}
+OtherScript.prototype.mark = "Script";
+////= attempt-2	"Script new"	"1"	Script
+////= attempt	"Script super"	"1"	BelowScript	Script
+////= attempt-3	"Script reflected"	"1"	Script	OtherScript
+////= attempt-5	"Script reflected for itself"	"1"	Script
+
+////= lines-5	BelowS3Client	S3Client
+function OtherS3Client() {}
+OtherS3Client.prototype.mark = "S3Client";
+////= attempt-16	"S3Client new"	S3Client
+////= attempt-12	"S3Client super"	BelowS3Client	S3Client
+////= attempt-17	"S3Client reflected"	S3Client	OtherS3Client
+////= attempt-25	"S3Client reflected for itself"	S3Client
+
+////= lines-4	BelowSemver	Bun.Archive
+function OtherSemver() {}
+OtherSemver.prototype.mark = "Semver";
+attempt("Semver new", () => {
+  const first = {};
+  const made = new Bun.Archive(first);
+  made.extra = 1;
+  describe("Semver new", made, Bun.Archive, Bun.Archive.prototype, first);
+  console.log(made.extra);
+});
+attempt("Semver super", () => {
+  const first = {};
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new BelowSemver(first, i);
+    sum += made.own();
+  }
+  describe("Semver super", made, Bun.Archive, BelowSemver.prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof BelowSemver);
+});
+attempt("Semver reflected", () => {
+  const first = {};
+  const made = Reflect.construct(Bun.Archive, [first], OtherSemver);
+  made.extra = 1;
+  describe("Semver reflected", made, Bun.Archive, OtherSemver.prototype, first);
+  console.log(made.mark, made.extra);
+});
+attempt("Semver reflected for itself", () => {
+  const first = {};
+  const made = Reflect.construct(Bun.Archive, [first]);
+  describe("Semver reflected for itself", made, Bun.Archive, Bun.Archive.prototype, first);
+});
+setTimeout(() => process.exit(0), 50);
+//// every-constructor-of-the-language-is-entered-in-four-ways.js
+// Every constructor of the language entered in four ways, each site spelled out: `new X(..)`, `super(..)` from a class below X, Reflect.construct(X, [..], Other), Reflect.construct(X, [..]). What is made lies below new.target's prototype, is of X's kind, is never an operand but for `new Object(object)`, and takes the fields of the class.
+function describe(label, made, constructor, prototype, first) {
+  let brand;
+  try { brand = Object.prototype.toString.call(made); } catch (error) { brand = "throws"; }
+  console.log(label, typeof made, brand, made instanceof constructor, Object.getPrototypeOf(made) === prototype, made === first, Object.getOwnPropertyNames(made).filter(name => name !== "stack" && name !== "line" && name !== "column" && name !== "sourceURL").join());
+}
+function attempt(label, run) {
+  try { run(); } catch (error) { console.log(label, "throws", error.constructor.name); }
+}
+
+////= lines-2	BelowObject	Object
+function OtherObject() {}
+OtherObject.prototype.mark = "Object";
+////= attempt-20	"Object new"	given	true	Object
+////= attempt-14	"Object super"	given	true	BelowObject	Object
+////= attempt-21	"Object reflected"	given	true	Object	OtherObject
+////= attempt-24	"Object reflected for itself"	given	true	Object
+
+////= lines-2	BelowObjectOfNumber	Object
+function OtherObjectOfNumber() {}
+OtherObjectOfNumber.prototype.mark = "ObjectOfNumber";
+////= attempt-2	"ObjectOfNumber new"	5	Object
+////= attempt	"ObjectOfNumber super"	5	BelowObjectOfNumber	Object
+////= attempt-3	"ObjectOfNumber reflected"	5	Object	OtherObjectOfNumber
+////= attempt-5	"ObjectOfNumber reflected for itself"	5	Object
+
+////= lines-2	BelowObjectOfText	Object
+function OtherObjectOfText() {}
+OtherObjectOfText.prototype.mark = "ObjectOfText";
+////= attempt-2	"ObjectOfText new"	"text"	Object
+////= attempt	"ObjectOfText super"	"text"	BelowObjectOfText	Object
+////= attempt-3	"ObjectOfText reflected"	"text"	Object	OtherObjectOfText
+////= attempt-5	"ObjectOfText reflected for itself"	"text"	Object
+
+////= lines-3	BelowObjectOfNothing	Object
+function OtherObjectOfNothing() {}
+OtherObjectOfNothing.prototype.mark = "ObjectOfNothing";
+////= attempt-6	"ObjectOfNothing new"	Object
+////= attempt-4	"ObjectOfNothing super"	BelowObjectOfNothing	Object
+////= attempt-7	"ObjectOfNothing reflected"	Object	OtherObjectOfNothing
+////= attempt-9	"ObjectOfNothing reflected for itself"	Object
+
+////= lines-2	BelowArrayOfLength	Array
+function OtherArrayOfLength() {}
+OtherArrayOfLength.prototype.mark = "ArrayOfLength";
+////= attempt-2	"ArrayOfLength new"	3	Array
+////= attempt	"ArrayOfLength super"	3	BelowArrayOfLength	Array
+////= attempt-3	"ArrayOfLength reflected"	3	Array	OtherArrayOfLength
+////= attempt-5	"ArrayOfLength reflected for itself"	3	Array
+
+////= lines-7	BelowArrayOfItems	Array
+function OtherArrayOfItems() {}
+OtherArrayOfItems.prototype.mark = "ArrayOfItems";
+////= attempt-29	"ArrayOfItems new"	3	Array
+////= attempt-22	"ArrayOfItems super"	3	BelowArrayOfItems	Array
+////= attempt-30	"ArrayOfItems reflected"	3	Array	OtherArrayOfItems
+////= attempt-31	"ArrayOfItems reflected for itself"	3	Array
+
+////= lines-2	BelowArrayBuffer	ArrayBuffer
+function OtherArrayBuffer() {}
+OtherArrayBuffer.prototype.mark = "ArrayBuffer";
+////= attempt-2	"ArrayBuffer new"	8	ArrayBuffer
+////= attempt	"ArrayBuffer super"	8	BelowArrayBuffer	ArrayBuffer
+////= attempt-3	"ArrayBuffer reflected"	8	ArrayBuffer	OtherArrayBuffer
+////= attempt-5	"ArrayBuffer reflected for itself"	8	ArrayBuffer
+
+////= lines-2	BelowSharedArrayBuffer	SharedArrayBuffer
+function OtherSharedArrayBuffer() {}
+OtherSharedArrayBuffer.prototype.mark = "SharedArrayBuffer";
+////= attempt-2	"SharedArrayBuffer new"	8	SharedArrayBuffer
+////= attempt	"SharedArrayBuffer super"	8	BelowSharedArrayBuffer	SharedArrayBuffer
+////= attempt-3	"SharedArrayBuffer reflected"	8	SharedArrayBuffer	OtherSharedArrayBuffer
+////= attempt-5	"SharedArrayBuffer reflected for itself"	8	SharedArrayBuffer
+
+////= lines-2	BelowBoolean	Boolean
+function OtherBoolean() {}
+OtherBoolean.prototype.mark = "Boolean";
+////= attempt-2	"Boolean new"	true	Boolean
+////= attempt	"Boolean super"	true	BelowBoolean	Boolean
+////= attempt-3	"Boolean reflected"	true	Boolean	OtherBoolean
+////= attempt-5	"Boolean reflected for itself"	true	Boolean
+
+////= lines-2	BelowNumber	Number
+function OtherNumber() {}
+OtherNumber.prototype.mark = "Number";
+////= attempt-2	"Number new"	5	Number
+////= attempt	"Number super"	5	BelowNumber	Number
+////= attempt-3	"Number reflected"	5	Number	OtherNumber
+////= attempt-5	"Number reflected for itself"	5	Number
+
+////= lines-2	BelowString	String
+function OtherString() {}
+OtherString.prototype.mark = "String";
+////= attempt-2	"String new"	"text"	String
+////= attempt	"String super"	"text"	BelowString	String
+////= attempt-3	"String reflected"	"text"	String	OtherString
+////= attempt-5	"String reflected for itself"	"text"	String
+
+////= lines-2	BelowDate	Date
+function OtherDate() {}
+OtherDate.prototype.mark = "Date";
+////= attempt-2	"Date new"	0	Date
+////= attempt	"Date super"	0	BelowDate	Date
+////= attempt-3	"Date reflected"	0	Date	OtherDate
+////= attempt-5	"Date reflected for itself"	0	Date
+
+////= lines-2	BelowDateOfDate	Date
+function OtherDateOfDate() {}
+OtherDateOfDate.prototype.mark = "DateOfDate";
+////= attempt-18	"DateOfDate new"	Date	5	Date
+////= attempt-13	"DateOfDate super"	Date	5	BelowDateOfDate	Date
+////= attempt-19	"DateOfDate reflected"	Date	5	Date	OtherDateOfDate
+////= attempt-23	"DateOfDate reflected for itself"	Date	5	Date
+
+////= lines-6	BelowRegExp	RegExp
+function OtherRegExp() {}
+OtherRegExp.prototype.mark = "RegExp";
+attempt("RegExp new", () => {
+  const first = "a";
+  const second = "g";
+  const made = new RegExp(first, second);
+  made.extra = 1;
+  describe("RegExp new", made, RegExp, RegExp.prototype, first);
+  console.log(made.extra);
+});
+attempt("RegExp super", () => {
+  const first = "a";
+  const second = "g";
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new BelowRegExp(first, second, i);
+    sum += made.own();
+  }
+  describe("RegExp super", made, RegExp, BelowRegExp.prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof BelowRegExp);
+});
+attempt("RegExp reflected", () => {
+  const first = "a";
+  const second = "g";
+  const made = Reflect.construct(RegExp, [first, second], OtherRegExp);
+  made.extra = 1;
+  describe("RegExp reflected", made, RegExp, OtherRegExp.prototype, first);
+  console.log(made.mark, made.extra);
+});
+attempt("RegExp reflected for itself", () => {
+  const first = "a";
+  const second = "g";
+  const made = Reflect.construct(RegExp, [first, second]);
+  describe("RegExp reflected for itself", made, RegExp, RegExp.prototype, first);
+});
+
+////= lines-2	BelowRegExpOfRegExp	RegExp
+function OtherRegExpOfRegExp() {}
+OtherRegExpOfRegExp.prototype.mark = "RegExpOfRegExp";
+attempt("RegExpOfRegExp new", () => {
+  const first = /a/g;
+  const made = new RegExp(first);
+  made.extra = 1;
+  describe("RegExpOfRegExp new", made, RegExp, RegExp.prototype, first);
+  console.log(made.extra);
+});
+attempt("RegExpOfRegExp super", () => {
+  const first = /a/g;
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new BelowRegExpOfRegExp(first, i);
+    sum += made.own();
+  }
+  describe("RegExpOfRegExp super", made, RegExp, BelowRegExpOfRegExp.prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof BelowRegExpOfRegExp);
+});
+attempt("RegExpOfRegExp reflected", () => {
+  const first = /a/g;
+  const made = Reflect.construct(RegExp, [first], OtherRegExpOfRegExp);
+  made.extra = 1;
+  describe("RegExpOfRegExp reflected", made, RegExp, OtherRegExpOfRegExp.prototype, first);
+  console.log(made.mark, made.extra);
+});
+attempt("RegExpOfRegExp reflected for itself", () => {
+  const first = /a/g;
+  const made = Reflect.construct(RegExp, [first]);
+  describe("RegExpOfRegExp reflected for itself", made, RegExp, RegExp.prototype, first);
+});
+
+////= lines-2	BelowError	Error
+function OtherError() {}
+OtherError.prototype.mark = "Error";
+////= attempt-2	"Error new"	"message"	Error
+////= attempt	"Error super"	"message"	BelowError	Error
+////= attempt-3	"Error reflected"	"message"	Error	OtherError
+////= attempt-5	"Error reflected for itself"	"message"	Error
+
+////= lines-2	BelowTypeError	TypeError
+function OtherTypeError() {}
+OtherTypeError.prototype.mark = "TypeError";
+////= attempt-2	"TypeError new"	"message"	TypeError
+////= attempt	"TypeError super"	"message"	BelowTypeError	TypeError
+////= attempt-3	"TypeError reflected"	"message"	TypeError	OtherTypeError
+////= attempt-5	"TypeError reflected for itself"	"message"	TypeError
+
+////= lines-2	BelowRangeError	RangeError
+function OtherRangeError() {}
+OtherRangeError.prototype.mark = "RangeError";
+////= attempt-2	"RangeError new"	"message"	RangeError
+////= attempt	"RangeError super"	"message"	BelowRangeError	RangeError
+////= attempt-3	"RangeError reflected"	"message"	RangeError	OtherRangeError
+////= attempt-5	"RangeError reflected for itself"	"message"	RangeError
+
+////= lines-6	BelowAggregateError	AggregateError
+function OtherAggregateError() {}
+OtherAggregateError.prototype.mark = "AggregateError";
+attempt("AggregateError new", () => {
+  const first = [new Error('inner')];
+  const second = "message";
+  const made = new AggregateError(first, second);
+  made.extra = 1;
+  describe("AggregateError new", made, AggregateError, AggregateError.prototype, first);
+  console.log(made.extra);
+});
+attempt("AggregateError super", () => {
+  const first = [new Error('inner')];
+  const second = "message";
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new BelowAggregateError(first, second, i);
+    sum += made.own();
+  }
+  describe("AggregateError super", made, AggregateError, BelowAggregateError.prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof BelowAggregateError);
+});
+attempt("AggregateError reflected", () => {
+  const first = [new Error('inner')];
+  const second = "message";
+  const made = Reflect.construct(AggregateError, [first, second], OtherAggregateError);
+  made.extra = 1;
+  describe("AggregateError reflected", made, AggregateError, OtherAggregateError.prototype, first);
+  console.log(made.mark, made.extra);
+});
+attempt("AggregateError reflected for itself", () => {
+  const first = [new Error('inner')];
+  const second = "message";
+  const made = Reflect.construct(AggregateError, [first, second]);
+  describe("AggregateError reflected for itself", made, AggregateError, AggregateError.prototype, first);
+});
+
+////= lines-7	BelowSuppressedError	SuppressedError
+function OtherSuppressedError() {}
+OtherSuppressedError.prototype.mark = "SuppressedError";
+////= attempt-29	"SuppressedError new"	"message"	SuppressedError
+////= attempt-22	"SuppressedError super"	"message"	BelowSuppressedError	SuppressedError
+////= attempt-30	"SuppressedError reflected"	"message"	SuppressedError	OtherSuppressedError
+////= attempt-31	"SuppressedError reflected for itself"	"message"	SuppressedError
+
+////= lines-2	BelowMap	Map
+function OtherMap() {}
+OtherMap.prototype.mark = "Map";
+attempt("Map new", () => {
+  const first = [[1, 2]];
+  const made = new Map(first);
+  made.extra = 1;
+  describe("Map new", made, Map, Map.prototype, first);
+  console.log(made.extra);
+});
+attempt("Map super", () => {
+  const first = [[1, 2]];
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new BelowMap(first, i);
+    sum += made.own();
+  }
+  describe("Map super", made, Map, BelowMap.prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof BelowMap);
+});
+attempt("Map reflected", () => {
+  const first = [[1, 2]];
+  const made = Reflect.construct(Map, [first], OtherMap);
+  made.extra = 1;
+  describe("Map reflected", made, Map, OtherMap.prototype, first);
+  console.log(made.mark, made.extra);
+});
+attempt("Map reflected for itself", () => {
+  const first = [[1, 2]];
+  const made = Reflect.construct(Map, [first]);
+  describe("Map reflected for itself", made, Map, Map.prototype, first);
+});
+
+////= lines-2	BelowSet	Set
+function OtherSet() {}
+OtherSet.prototype.mark = "Set";
+////= attempt-32	"Set new"	1	Set
+////= attempt-26	"Set super"	1	BelowSet	Set
+////= attempt-33	"Set reflected"	1	Set	OtherSet
+attempt("Set reflected for itself", () => {
+  const first = [1];
+  const made = Reflect.construct(Set, [first]);
+  describe("Set reflected for itself", made, Set, Set.prototype, first);
+});
+
+////= lines-3	BelowWeakMap	WeakMap
+function OtherWeakMap() {}
+OtherWeakMap.prototype.mark = "WeakMap";
+////= attempt-6	"WeakMap new"	WeakMap
+////= attempt-4	"WeakMap super"	BelowWeakMap	WeakMap
+////= attempt-7	"WeakMap reflected"	WeakMap	OtherWeakMap
+////= attempt-9	"WeakMap reflected for itself"	WeakMap
+
+////= lines-3	BelowWeakSet	WeakSet
+function OtherWeakSet() {}
+OtherWeakSet.prototype.mark = "WeakSet";
+////= attempt-6	"WeakSet new"	WeakSet
+////= attempt-4	"WeakSet super"	BelowWeakSet	WeakSet
+////= attempt-7	"WeakSet reflected"	WeakSet	OtherWeakSet
+////= attempt-9	"WeakSet reflected for itself"	WeakSet
+
+////= lines-2	BelowWeakRef	WeakRef
+function OtherWeakRef() {}
+OtherWeakRef.prototype.mark = "WeakRef";
+////= attempt-20	"WeakRef new"	held	true	WeakRef
+////= attempt-14	"WeakRef super"	held	true	BelowWeakRef	WeakRef
+////= attempt-21	"WeakRef reflected"	held	true	WeakRef	OtherWeakRef
+////= attempt-24	"WeakRef reflected for itself"	held	true	WeakRef
+
+////= lines-2	BelowPromise	Promise
+function OtherPromise() {}
+OtherPromise.prototype.mark = "Promise";
+attempt("Promise new", () => {
+  const first = resolve => resolve(1);
+  const made = new Promise(first);
+  made.extra = 1;
+  describe("Promise new", made, Promise, Promise.prototype, first);
+  console.log(made.extra);
+});
+attempt("Promise super", () => {
+  const first = resolve => resolve(1);
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new BelowPromise(first, i);
+    sum += made.own();
+  }
+  describe("Promise super", made, Promise, BelowPromise.prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof BelowPromise);
+});
+attempt("Promise reflected", () => {
+  const first = resolve => resolve(1);
+  const made = Reflect.construct(Promise, [first], OtherPromise);
+  made.extra = 1;
+  describe("Promise reflected", made, Promise, OtherPromise.prototype, first);
+  console.log(made.mark, made.extra);
+});
+attempt("Promise reflected for itself", () => {
+  const first = resolve => resolve(1);
+  const made = Reflect.construct(Promise, [first]);
+  describe("Promise reflected for itself", made, Promise, Promise.prototype, first);
+});
+
+////= lines-2	BelowDataView	DataView
+function OtherDataView() {}
+OtherDataView.prototype.mark = "DataView";
+////= attempt-18	"DataView new"	ArrayBuffer	8	DataView
+////= attempt-13	"DataView super"	ArrayBuffer	8	BelowDataView	DataView
+////= attempt-19	"DataView reflected"	ArrayBuffer	8	DataView	OtherDataView
+////= attempt-23	"DataView reflected for itself"	ArrayBuffer	8	DataView
+
+////= lines-2	BelowUint8Array	Uint8Array
+function OtherUint8Array() {}
+OtherUint8Array.prototype.mark = "Uint8Array";
+////= attempt-2	"Uint8Array new"	4	Uint8Array
+////= attempt	"Uint8Array super"	4	BelowUint8Array	Uint8Array
+////= attempt-3	"Uint8Array reflected"	4	Uint8Array	OtherUint8Array
+////= attempt-5	"Uint8Array reflected for itself"	4	Uint8Array
+
+////= lines-2	BelowUint8ArrayOfTyped	Uint8Array
+function OtherUint8ArrayOfTyped() {}
+OtherUint8ArrayOfTyped.prototype.mark = "Uint8ArrayOfTyped";
+attempt("Uint8ArrayOfTyped new", () => {
+  const first = new Uint8Array([1, 2]);
+  const made = new Uint8Array(first);
+  made.extra = 1;
+  describe("Uint8ArrayOfTyped new", made, Uint8Array, Uint8Array.prototype, first);
+  console.log(made.extra);
+});
+attempt("Uint8ArrayOfTyped super", () => {
+  const first = new Uint8Array([1, 2]);
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new BelowUint8ArrayOfTyped(first, i);
+    sum += made.own();
+  }
+  describe("Uint8ArrayOfTyped super", made, Uint8Array, BelowUint8ArrayOfTyped.prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof BelowUint8ArrayOfTyped);
+});
+attempt("Uint8ArrayOfTyped reflected", () => {
+  const first = new Uint8Array([1, 2]);
+  const made = Reflect.construct(Uint8Array, [first], OtherUint8ArrayOfTyped);
+  made.extra = 1;
+  describe("Uint8ArrayOfTyped reflected", made, Uint8Array, OtherUint8ArrayOfTyped.prototype, first);
+  console.log(made.mark, made.extra);
+});
+attempt("Uint8ArrayOfTyped reflected for itself", () => {
+  const first = new Uint8Array([1, 2]);
+  const made = Reflect.construct(Uint8Array, [first]);
+  describe("Uint8ArrayOfTyped reflected for itself", made, Uint8Array, Uint8Array.prototype, first);
+});
+
+////= lines-2	BelowUint8ArrayOfBuffer	Uint8Array
+function OtherUint8ArrayOfBuffer() {}
+OtherUint8ArrayOfBuffer.prototype.mark = "Uint8ArrayOfBuffer";
+////= attempt-18	"Uint8ArrayOfBuffer new"	ArrayBuffer	8	Uint8Array
+////= attempt-13	"Uint8ArrayOfBuffer super"	ArrayBuffer	8	BelowUint8ArrayOfBuffer	Uint8Array
+////= attempt-19	"Uint8ArrayOfBuffer reflected"	ArrayBuffer	8	Uint8Array	OtherUint8ArrayOfBuffer
+////= attempt-23	"Uint8ArrayOfBuffer reflected for itself"	ArrayBuffer	8	Uint8Array
+
+////= lines-2	BelowUint8ArrayOfList	Uint8Array
+function OtherUint8ArrayOfList() {}
+OtherUint8ArrayOfList.prototype.mark = "Uint8ArrayOfList";
+attempt("Uint8ArrayOfList new", () => {
+  const first = [1, 2, 3];
+  const made = new Uint8Array(first);
+  made.extra = 1;
+  describe("Uint8ArrayOfList new", made, Uint8Array, Uint8Array.prototype, first);
+  console.log(made.extra);
+});
+attempt("Uint8ArrayOfList super", () => {
+  const first = [1, 2, 3];
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new BelowUint8ArrayOfList(first, i);
+    sum += made.own();
+  }
+  describe("Uint8ArrayOfList super", made, Uint8Array, BelowUint8ArrayOfList.prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof BelowUint8ArrayOfList);
+});
+attempt("Uint8ArrayOfList reflected", () => {
+  const first = [1, 2, 3];
+  const made = Reflect.construct(Uint8Array, [first], OtherUint8ArrayOfList);
+  made.extra = 1;
+  describe("Uint8ArrayOfList reflected", made, Uint8Array, OtherUint8ArrayOfList.prototype, first);
+  console.log(made.mark, made.extra);
+});
+attempt("Uint8ArrayOfList reflected for itself", () => {
+  const first = [1, 2, 3];
+  const made = Reflect.construct(Uint8Array, [first]);
+  describe("Uint8ArrayOfList reflected for itself", made, Uint8Array, Uint8Array.prototype, first);
+});
+
+////= lines-2	BelowFloat64Array	Float64Array
+function OtherFloat64Array() {}
+OtherFloat64Array.prototype.mark = "Float64Array";
+////= attempt-34	"Float64Array new"	1.5	2.5	Float64Array
+////= attempt-27	"Float64Array super"	1.5	2.5	BelowFloat64Array	Float64Array
+////= attempt-35	"Float64Array reflected"	1.5	2.5	Float64Array	OtherFloat64Array
+attempt("Float64Array reflected for itself", () => {
+  const first = [1.5, 2.5];
+  const made = Reflect.construct(Float64Array, [first]);
+  describe("Float64Array reflected for itself", made, Float64Array, Float64Array.prototype, first);
+});
+
+////= lines-2	BelowBigInt64Array	BigInt64Array
+function OtherBigInt64Array() {}
+OtherBigInt64Array.prototype.mark = "BigInt64Array";
+////= attempt-2	"BigInt64Array new"	2	BigInt64Array
+////= attempt	"BigInt64Array super"	2	BelowBigInt64Array	BigInt64Array
+////= attempt-3	"BigInt64Array reflected"	2	BigInt64Array	OtherBigInt64Array
+////= attempt-5	"BigInt64Array reflected for itself"	2	BigInt64Array
+
+////= lines-2	BelowInt32Array	Int32Array
+function OtherInt32Array() {}
+OtherInt32Array.prototype.mark = "Int32Array";
+////= attempt-2	"Int32Array new"	2	Int32Array
+////= attempt	"Int32Array super"	2	BelowInt32Array	Int32Array
+////= attempt-3	"Int32Array reflected"	2	Int32Array	OtherInt32Array
+////= attempt-5	"Int32Array reflected for itself"	2	Int32Array
+
+////= lines-2	BelowFinalizationRegistry	FinalizationRegistry
+function OtherFinalizationRegistry() {}
+OtherFinalizationRegistry.prototype.mark = "FinalizationRegistry";
+////= attempt-36	"FinalizationRegistry new"	FinalizationRegistry
+////= attempt-28	"FinalizationRegistry super"	BelowFinalizationRegistry	FinalizationRegistry
+////= attempt-37	"FinalizationRegistry reflected"	FinalizationRegistry	OtherFinalizationRegistry
+attempt("FinalizationRegistry reflected for itself", () => {
+  const first = () => {};
+  const made = Reflect.construct(FinalizationRegistry, [first]);
+  describe("FinalizationRegistry reflected for itself", made, FinalizationRegistry, FinalizationRegistry.prototype, first);
+});
+
+////= lines-3	BelowIterator	Iterator
+function OtherIterator() {}
+OtherIterator.prototype.mark = "Iterator";
+////= attempt-6	"Iterator new"	Iterator
+////= attempt-4	"Iterator super"	BelowIterator	Iterator
+////= attempt-7	"Iterator reflected"	Iterator	OtherIterator
+////= attempt-9	"Iterator reflected for itself"	Iterator
+
+////= lines-3	BelowDisposableStack	DisposableStack
+function OtherDisposableStack() {}
+OtherDisposableStack.prototype.mark = "DisposableStack";
+////= attempt-6	"DisposableStack new"	DisposableStack
+////= attempt-4	"DisposableStack super"	BelowDisposableStack	DisposableStack
+////= attempt-7	"DisposableStack reflected"	DisposableStack	OtherDisposableStack
+////= attempt-9	"DisposableStack reflected for itself"	DisposableStack
+
+////= lines-3	BelowAsyncDisposableStack	AsyncDisposableStack
+function OtherAsyncDisposableStack() {}
+OtherAsyncDisposableStack.prototype.mark = "AsyncDisposableStack";
+////= attempt-6	"AsyncDisposableStack new"	AsyncDisposableStack
+////= attempt-4	"AsyncDisposableStack super"	BelowAsyncDisposableStack	AsyncDisposableStack
+////= attempt-7	"AsyncDisposableStack reflected"	AsyncDisposableStack	OtherAsyncDisposableStack
+////= attempt-9	"AsyncDisposableStack reflected for itself"	AsyncDisposableStack
+
+////= lines-2	BelowFunction	Function
+function OtherFunction() {}
+OtherFunction.prototype.mark = "Function";
+////= attempt-2	"Function new"	"return 1"	Function
+////= attempt	"Function super"	"return 1"	BelowFunction	Function
+////= attempt-3	"Function reflected"	"return 1"	Function	OtherFunction
+////= attempt-5	"Function reflected for itself"	"return 1"	Function
+
+////= lines-4	BelowIntlNumberFormat	Intl.NumberFormat
+function OtherIntlNumberFormat() {}
+OtherIntlNumberFormat.prototype.mark = "IntlNumberFormat";
+////= attempt-10	"IntlNumberFormat new"	"en"	Intl.NumberFormat
+////= attempt-8	"IntlNumberFormat super"	"en"	BelowIntlNumberFormat	Intl.NumberFormat
+////= attempt-11	"IntlNumberFormat reflected"	"en"	Intl.NumberFormat	OtherIntlNumberFormat
+////= attempt-15	"IntlNumberFormat reflected for itself"	"en"	Intl.NumberFormat
+
+////= lines-4	BelowIntlDateTimeFormat	Intl.DateTimeFormat
+function OtherIntlDateTimeFormat() {}
+OtherIntlDateTimeFormat.prototype.mark = "IntlDateTimeFormat";
+////= attempt-10	"IntlDateTimeFormat new"	"en"	Intl.DateTimeFormat
+////= attempt-8	"IntlDateTimeFormat super"	"en"	BelowIntlDateTimeFormat	Intl.DateTimeFormat
+////= attempt-11	"IntlDateTimeFormat reflected"	"en"	Intl.DateTimeFormat	OtherIntlDateTimeFormat
+////= attempt-15	"IntlDateTimeFormat reflected for itself"	"en"	Intl.DateTimeFormat
+
+////= lines-4	BelowIntlCollator	Intl.Collator
+function OtherIntlCollator() {}
+OtherIntlCollator.prototype.mark = "IntlCollator";
+////= attempt-10	"IntlCollator new"	"en"	Intl.Collator
+////= attempt-8	"IntlCollator super"	"en"	BelowIntlCollator	Intl.Collator
+////= attempt-11	"IntlCollator reflected"	"en"	Intl.Collator	OtherIntlCollator
+////= attempt-15	"IntlCollator reflected for itself"	"en"	Intl.Collator
+
+////= lines-4	BelowIntlPluralRules	Intl.PluralRules
+function OtherIntlPluralRules() {}
+OtherIntlPluralRules.prototype.mark = "IntlPluralRules";
+////= attempt-10	"IntlPluralRules new"	"en"	Intl.PluralRules
+////= attempt-8	"IntlPluralRules super"	"en"	BelowIntlPluralRules	Intl.PluralRules
+////= attempt-11	"IntlPluralRules reflected"	"en"	Intl.PluralRules	OtherIntlPluralRules
+////= attempt-15	"IntlPluralRules reflected for itself"	"en"	Intl.PluralRules
+
+////= lines-4	BelowIntlListFormat	Intl.ListFormat
+function OtherIntlListFormat() {}
+OtherIntlListFormat.prototype.mark = "IntlListFormat";
+////= attempt-10	"IntlListFormat new"	"en"	Intl.ListFormat
+////= attempt-8	"IntlListFormat super"	"en"	BelowIntlListFormat	Intl.ListFormat
+////= attempt-11	"IntlListFormat reflected"	"en"	Intl.ListFormat	OtherIntlListFormat
+////= attempt-15	"IntlListFormat reflected for itself"	"en"	Intl.ListFormat
+
+////= lines-4	BelowIntlLocale	Intl.Locale
+function OtherIntlLocale() {}
+OtherIntlLocale.prototype.mark = "IntlLocale";
+////= attempt-10	"IntlLocale new"	"en"	Intl.Locale
+////= attempt-8	"IntlLocale super"	"en"	BelowIntlLocale	Intl.Locale
+////= attempt-11	"IntlLocale reflected"	"en"	Intl.Locale	OtherIntlLocale
+////= attempt-15	"IntlLocale reflected for itself"	"en"	Intl.Locale
+
+////= lines-4	BelowIntlSegmenter	Intl.Segmenter
+function OtherIntlSegmenter() {}
+OtherIntlSegmenter.prototype.mark = "IntlSegmenter";
+////= attempt-10	"IntlSegmenter new"	"en"	Intl.Segmenter
+////= attempt-8	"IntlSegmenter super"	"en"	BelowIntlSegmenter	Intl.Segmenter
+////= attempt-11	"IntlSegmenter reflected"	"en"	Intl.Segmenter	OtherIntlSegmenter
+////= attempt-15	"IntlSegmenter reflected for itself"	"en"	Intl.Segmenter
+
+////= lines-4	BelowIntlRelativeTimeFormat	Intl.RelativeTimeFormat
+function OtherIntlRelativeTimeFormat() {}
+OtherIntlRelativeTimeFormat.prototype.mark = "IntlRelativeTimeFormat";
+////= attempt-10	"IntlRelativeTimeFormat new"	"en"	Intl.RelativeTimeFormat
+////= attempt-8	"IntlRelativeTimeFormat super"	"en"	BelowIntlRelativeTimeFormat	Intl.RelativeTimeFormat
+////= attempt-11	"IntlRelativeTimeFormat reflected"	"en"	Intl.RelativeTimeFormat	OtherIntlRelativeTimeFormat
+////= attempt-15	"IntlRelativeTimeFormat reflected for itself"	"en"	Intl.RelativeTimeFormat
+
+////= lines-8	BelowIntlDisplayNames	Intl.DisplayNames
+function OtherIntlDisplayNames() {}
+OtherIntlDisplayNames.prototype.mark = "IntlDisplayNames";
+attempt("IntlDisplayNames new", () => {
+  const first = "en";
+  const second = { type: "region" };
+  const made = new Intl.DisplayNames(first, second);
+  made.extra = 1;
+  describe("IntlDisplayNames new", made, Intl.DisplayNames, Intl.DisplayNames.prototype, first);
+  console.log(made.extra);
+});
+attempt("IntlDisplayNames super", () => {
+  const first = "en";
+  const second = { type: "region" };
+  let sum = 0;
+  let made;
+  for (let i = 0; i < 40; i++) {
+    made = new BelowIntlDisplayNames(first, second, i);
+    sum += made.own();
+  }
+  describe("IntlDisplayNames super", made, Intl.DisplayNames, BelowIntlDisplayNames.prototype, first);
+  console.log(sum, made.tag, made.late, made instanceof BelowIntlDisplayNames);
+});
+attempt("IntlDisplayNames reflected", () => {
+  const first = "en";
+  const second = { type: "region" };
+  const made = Reflect.construct(Intl.DisplayNames, [first, second], OtherIntlDisplayNames);
+  made.extra = 1;
+  describe("IntlDisplayNames reflected", made, Intl.DisplayNames, OtherIntlDisplayNames.prototype, first);
+  console.log(made.mark, made.extra);
+});
+attempt("IntlDisplayNames reflected for itself", () => {
+  const first = "en";
+  const second = { type: "region" };
+  const made = Reflect.construct(Intl.DisplayNames, [first, second]);
+  describe("IntlDisplayNames reflected for itself", made, Intl.DisplayNames, Intl.DisplayNames.prototype, first);
+});
+//// fields-with-the-names-of-what-the-parent-defines.ts
+// Classes below built-in classes declare fields under the names that the parent's constructor, its prototype object or the engine defines on or above an instance.
+const lines: string[] = [];
+function attempt(read: () => unknown): string {
+  try {
+    const value = read();
+    return typeof value + " " + (typeof value === "object" || typeof value === "function" ? "" : String(value));
+  } catch (e) {
+    return "throws " + (e as Error).name;
+  }
+}
+class Failure extends Error {
+  message: string = "mine";
+  cause: number = 3;
+  name: string = "Failure";
+  stack: string = "no stack";
+}
+class Quiet extends Error {
+  declare message: string;
+  declare cause: number;
+  code = 1;
+}
+class Sized extends Map<string, number> {
+  // @ts-expect-error
+  size: number = 40;
+  // @ts-expect-error
+  get: number = 41;
+}
+class Counted extends Set<string> {
+  // @ts-expect-error
+  has: string = "own";
+}
+class Pattern extends RegExp {
+  lastIndex: number = 2;
+  // @ts-expect-error
+  source: string = "mine";
+}
+class Moment extends Date {
+  // @ts-expect-error
+  getTime: number = 7;
+}
+class Bytes extends Uint8Array {
+  // @ts-expect-error
+  length: number = 99;
+  // @ts-expect-error
+  byteLength: string = "own";
+}
+class Text extends String {
+  extra: number = 5;
+}
+function failure(k: Failure): string {
+  return [attempt(() => k.message), attempt(() => k.cause), attempt(() => k.name), attempt(() => k.stack), attempt(() => String(k)), attempt(() => Object.keys(k).join())].join(" | ");
+}
+function quiet(k: Quiet): string {
+  return [attempt(() => k.message), attempt(() => k.cause), attempt(() => k.code), attempt(() => "cause" in k), attempt(() => Object.hasOwn(k, "message")), attempt(() => Object.keys(k).join())].join(" | ");
+}
+function sized(k: Sized): string {
+  return [attempt(() => k.size), attempt(() => k.get), attempt(() => k.has("a")), attempt(() => Map.prototype.get.call(k, "a")), attempt(() => [...k.keys()].join()), attempt(() => Object.keys(k).join())].join(" | ");
+}
+function counted(k: Counted): string {
+  return [attempt(() => k.has), attempt(() => k.size), attempt(() => Set.prototype.has.call(k, "a")), attempt(() => Object.keys(k).join())].join(" | ");
+}
+function pattern(k: Pattern): string {
+  return [attempt(() => k.lastIndex), attempt(() => k.source), attempt(() => k.flags), attempt(() => k.test("aaaa")), attempt(() => k.lastIndex), attempt(() => Object.keys(k).join())].join(" | ");
+}
+function moment(k: Moment): string {
+  return [attempt(() => k.getTime), attempt(() => k.valueOf()), attempt(() => k.toISOString()), attempt(() => Object.keys(k).join())].join(" | ");
+}
+function bytes(k: Bytes): string {
+  return [attempt(() => k.length), attempt(() => k.byteLength), attempt(() => k[1]), attempt(() => k.join()), attempt(() => Object.keys(k).join())].join(" | ");
+}
+function text(k: Text): string {
+  return [attempt(() => k.length), attempt(() => k.extra), attempt(() => k[1]), attempt(() => k + "!"), attempt(() => Object.keys(k).join())].join(" | ");
+}
+for (let round = 0; round < 3; round++) {
+  lines.push(failure(new Failure("given", { cause: "given" })));
+  lines.push(quiet(new Quiet("given")), quiet(new Quiet("given", { cause: 9 })), quiet(new Quiet()));
+  lines.push(attempt(() => sized(new Sized([["a", 1]]))));
+  lines.push(attempt(() => counted(new Counted(["a"]))));
+  lines.push(attempt(() => pattern(new Pattern("a", "g"))));
+  lines.push(attempt(() => moment(new Moment(86400000))));
+  lines.push(attempt(() => bytes(new Bytes([1, 2, 3]))));
+  lines.push(attempt(() => text(new Text("text"))));
+  Bun.gc(true);
+}
+const kept = new Failure("kept");
+(Error as any).captureStackTrace(kept);
+lines.push(attempt(() => typeof kept.stack), failure(Object.assign(kept, { stack: "again" })));
+console.log(lines.join("\n"));
+//// finalization-registry-and-the-parent-gets-another-parent-before-the-first-touch.js
+// Between the definition of a class below FinalizationRegistry and its first touch the built-in class gets another prototype. A compiled executable refuses that: a built-in constructor keeps its prototype.
+////= tell
+////= Late	FinalizationRegistry
+tell("another parent", () => Object.setPrototypeOf(FinalizationRegistry, { above: () => "above" }) === FinalizationRegistry);
+tell("inherited", () => Late.above());
+tell("an instance", () => {
+  const one = new Late(() => {});
+  return [typeof one.register, one instanceof Late, one instanceof FinalizationRegistry, one.method(), one.constructor === Late, Object.getPrototypeOf(Late) === FinalizationRegistry].join(" ");
+});
+//// instanceof-in-a-catch-is-not-three-times-as-slow-for-a-class-below-error.js
+// What is caught is told apart by `instanceof`. A class below Error finds Symbol.hasInstance two objects further up than a class of its own, and that is all the difference there is.
+class Plain {}
+class OtherPlain {}
+class Below extends Error {}
+class OtherBelow extends Error {}
+function kindOf(thrown, First, Second) {
+  try {
+    throw thrown;
+  } catch (caught) {
+    return caught instanceof First ? 1 : caught instanceof Second ? 2 : 3;
+  }
+}
+function throwAndTell(values, First, Second) {
+  let sum = 0;
+  for (let i = 0; i < 200000; i++) sum += kindOf(values[i & 1], First, Second);
+  return sum;
+}
+function fastestOf(runs, values, First, Second) {
+  let fastest = Infinity;
+  for (let run = 0; run < runs; run++) {
+    const began = performance.now();
+    if (throwAndTell(values, First, Second) !== 300000) console.log("told apart wrongly");
+    fastest = Math.min(fastest, performance.now() - began);
+  }
+  return fastest;
+}
+const plain = fastestOf(5, [new Plain(), new OtherPlain()], Plain, OtherPlain);
+const below = fastestOf(5, [new Below("a"), new OtherBelow("b")], Below, OtherBelow);
+console.log(below < plain * 3 ? "a class below Error is told apart in under three times the time" : "a class below Error took over three times the time");
+//// instances-are-frozen-sealed-and-closed-in-typed-code-and-live-through-collections.ts
+// Instances of classes below Map, Set and Error are frozen, sealed and made non-extensible where the compiler sees their type, then live through collections and are used.
+////= Defaults
+class Tags extends Set<string> {
+  count(): number {
+    return this.size;
+  }
+}
+class Failure extends Error {
+  code = 7;
+  twice(): number {
+    return this.code * 2;
+  }
+}
+////= lines-9	freezeDefaults	Defaults	freeze
+////= lines-9	sealTags	Tags	seal
+////= lines-9	closeFailure	Failure	preventExtensions
+////= lines-9	freezeFailure	Failure	freeze
+const kept: object[] = [];
+for (let i = 0; i < 2000; i++) {
+  const defaults = freezeDefaults(new Defaults([["a", i]]));
+  const tags = sealTags(new Tags(["a", "b"]));
+  const closed = closeFailure(new Failure("closed"));
+  const frozen = freezeFailure(new Failure("frozen"));
+  if (i % 100 === 0) {
+    kept.push(defaults, tags, closed, frozen);
+    Bun.gc(true);
+  }
+}
+Bun.gc(true);
+let sum = 0;
+for (const made of kept) {
+  if (made instanceof Defaults) sum += made.getOr("a", 1) + made.getOr("b", 2) + (Object.isFrozen(made) ? 1000 : 0);
+  else if (made instanceof Tags) sum += made.count() + (Object.isSealed(made) ? 100 : 0);
+  else if (made instanceof Failure) sum += made.twice() + (Object.isExtensible(made) ? 0 : 10) + (Object.isFrozen(made) ? 1 : 0);
+}
+console.log(sum, kept.length);
+for (const made of kept.slice(0, 4)) {
+  try {
+    "use strict";
+    (made as any).extra = 1;
+    console.log("stored", "extra" in made);
+  } catch (error) {
+    console.log((error as Error).constructor.name);
+  }
+}
+//// instances-go-where-the-parent-is-expected.ts
+// Instances of classes below built-in classes are handed to functions that take the parent, are tested for the parent, and every method of the parent is called on them, where the compiler sees the type of the class.
+const lines: string[] = [];
+function attempt(title: string, read: () => unknown) {
+  try { lines.push(title + " " + String(read())); } catch (e) { lines.push(title + " throws " + (e as Error).name); }
+}
+class OnMap extends Map<string, number> { count = 1; twice(): number { return this.count * 2; } }
+class OnSet extends Set<number> { count = 1; twice(): number { return this.count * 2; } }
+class OnWeakMap extends WeakMap<object, number> { count = 1; twice(): number { return this.count * 2; } }
+class OnWeakSet extends WeakSet<object> { count = 1; twice(): number { return this.count * 2; } }
+class OnError extends Error { count = 1; twice(): number { return this.count * 2; } }
+class OnTypeError extends TypeError { count = 1; twice(): number { return this.count * 2; } }
+class OnDate extends Date { count = 1; twice(): number { return this.count * 2; } }
+class OnRegExp extends RegExp { count = 1; twice(): number { return this.count * 2; } }
+class OnBytes extends Uint8Array { count = 1; twice(): number { return this.count * 2; } }
+class OnBuffer extends ArrayBuffer { count = 1; twice(): number { return this.count * 2; } }
+class OnView extends DataView<ArrayBuffer> { count = 1; twice(): number { return this.count * 2; } }
+class OnText extends String { count = 1; twice(): number { return this.count * 2; } }
+class OnNumber extends Number { count = 1; twice(): number { return this.count * 2; } }
+const anchor = {};
+
+function takesMap(m: Map<string, number>): string { return m.size + ":" + m.get("a") + ":" + m.has("b") + ":" + [...m.keys()].join(); }
+function takesReadonlyMap(m: ReadonlyMap<string, number>): number { let sum = 0; m.forEach(value => { sum += value; }); for (const [, value] of m) sum += value; return sum; }
+function takesSet(s: Set<number>): string { return s.size + ":" + s.has(1) + ":" + [...s].join(); }
+function takesIterable(i: Iterable<unknown>): number { let n = 0; for (const _ of i) n++; return n; }
+function takesError(e: Error): string { return e.name + ":" + e.message + ":" + (e instanceof TypeError) + ":" + String(e); }
+function takesDate(d: Date): string { return d.getTime() + ":" + d.toISOString() + ":" + (+d); }
+function takesRegExp(r: RegExp): string { r.lastIndex = 0; return r.source + ":" + r.test("xab") + ":" + "xab".replace(r, "-") + ":" + "a,b".split(r).length; }
+function takesBytes(b: Uint8Array): string { return b.length + ":" + b[0] + ":" + b.join() + ":" + b.byteLength; }
+function takesView(v: ArrayBufferView): number { return v.byteLength + v.byteOffset; }
+function takesBuffer(b: ArrayBuffer): string { return b.byteLength + ":" + new Uint8Array(b).length; }
+function takesObject(o: object): string { return Object.prototype.toString.call(o) + ":" + typeof o; }
+function takesUnknown(u: unknown): string {
+  return [u instanceof Map, u instanceof Set, u instanceof WeakMap, u instanceof WeakSet, u instanceof Error, u instanceof TypeError, u instanceof Date, u instanceof RegExp, u instanceof Uint8Array, u instanceof ArrayBuffer, u instanceof DataView, u instanceof String, u instanceof Number, ArrayBuffer.isView(u), Array.isArray(u), Error.isError(u)].map(Number).join("");
+}
+
+function map(k: OnMap) {
+  attempt("map twice", () => k.twice());
+  attempt("map as the parent", () => takesMap(k) + takesReadonlyMap(k) + takesIterable(k) + takesObject(k) + takesUnknown(k));
+  attempt("map tests", () => [k instanceof Map, k instanceof OnMap, k instanceof Object].join());
+  attempt("map forEach", () => { let t = ""; k.forEach((value, key, whole) => { t += key + value + (whole === k); }); return t; });
+  attempt("map forEach with this", () => { let t = ""; k.forEach(function (this: OnMap, value) { t += value + this.count; }, k); return t; });
+  attempt("map iterators", () => [...k.entries()].join("|") + [...k.values()].join() + [...k].length + k[Symbol.iterator]().next().value);
+  attempt("map copies", () => new Map(k).size + new OnMap(k).size + Array.from(k).length + Object.fromEntries(k).a + structuredClone(k).size);
+  attempt("map through the prototype", () => Map.prototype.get.call(k, "a") + ":" + Map.prototype.has.call(k, "a") + ":" + Reflect.get(Map.prototype, "size", k) + ":" + Map.prototype.forEach.call(k, () => {}));
+  attempt("map changes", () => k.set("c", 3).set("d", 4).delete("c") + ":" + k.size + ":" + k.getOrInsert("e", 5) + ":" + k.getOrInsertComputed("f", () => 6));
+  attempt("map for a set", () => Set.prototype.has.call(k as any, "a"));
+  attempt("map cleared", () => { k.clear(); return k.size + k.twice(); });
+}
+function set(k: OnSet, other: OnSet) {
+  attempt("set twice", () => k.twice());
+  attempt("set as the parent", () => takesSet(k) + takesIterable(k) + takesObject(k) + takesUnknown(k));
+  attempt("set forEach", () => { let t = ""; k.forEach((value, same, whole) => { t += value + same + (whole === k ? "w" : "?"); }); return t; });
+  attempt("set iterators", () => [...k.entries()].join("|") + [...k.values()].join() + [...k.keys()].join() + [...k].length);
+  attempt("set with sets", () => [...k.union(other)].join() + "|" + [...k.intersection(other)].join() + "|" + [...k.difference(other)].join() + "|" + [...k.symmetricDifference(other)].join() + "|" + k.isSubsetOf(other) + k.isSupersetOf(other) + k.isDisjointFrom(other));
+  attempt("sets with it", () => [...new Set([1, 9]).union(k)].join() + "|" + new Set([1]).isSubsetOf(k) + (k.union(other) instanceof OnSet));
+  attempt("set copies", () => new Set(k).size + new OnSet(k).size + Array.from(k).length + structuredClone(k).size);
+  attempt("set through the prototype", () => Set.prototype.has.call(k, 1) + ":" + Reflect.get(Set.prototype, "size", k) + ":" + Set.prototype.forEach.call(k, () => {}));
+  attempt("set changes", () => k.add(7).add(8).delete(7) + ":" + k.size);
+  attempt("set for a map", () => Map.prototype.get.call(k as any, 1));
+}
+function weak(m: OnWeakMap, s: OnWeakSet) {
+  attempt("weak map", () => m.twice() + ":" + m.get(anchor) + m.has(anchor) + m.set(anchor, 2).get(anchor) + m.delete(anchor) + takesObject(m) + takesUnknown(m) + WeakMap.prototype.has.call(m, anchor));
+  attempt("weak set", () => s.twice() + ":" + s.has(anchor) + s.add(anchor).has(anchor) + s.delete(anchor) + takesObject(s) + takesUnknown(s) + WeakSet.prototype.has.call(s, anchor));
+}
+function error(k: OnError, t: OnTypeError) {
+  attempt("error", () => k.twice() + takesError(k) + takesObject(k) + takesUnknown(k) + Error.prototype.toString.call(k) + typeof k.stack + (k.cause as number));
+  attempt("type error", () => t.twice() + takesError(t) + takesObject(t) + takesUnknown(t) + (t instanceof Error) + (t instanceof TypeError) + (t instanceof OnError));
+  attempt("error thrown", () => { try { throw k; } catch (e) { return e instanceof Error ? takesError(e) : "?"; } });
+  attempt("error rejected", () => { Promise.reject(t).catch(e => lines.push("caught " + takesError(e) + (e as OnTypeError).twice())); return "later"; });
+  attempt("error as a cause", () => takesError(new Error("outer", { cause: k }).cause as Error) + new AggregateError([k, t]).errors.length);
+}
+function date(k: OnDate) {
+  attempt("date", () => k.twice() + takesDate(k) + takesObject(k) + takesUnknown(k) + k.getUTCFullYear() + k.getUTCDay() + k.valueOf() + JSON.stringify(k) + k.toJSON() + Date.prototype.getTime.call(k));
+  attempt("date changes", () => k.setTime(5) + ":" + k.setUTCHours(1) + ":" + k.getTime() + ":" + (k > new Date(0)) + ":" + (Number(k) - Number(new OnDate(1))) + ":" + new Date(k).getTime());
+  attempt("date as a text", () => typeof `${k}` + typeof (k + "") + k[Symbol.toPrimitive]("number"));
+}
+function regExp(k: OnRegExp) {
+  attempt("regexp", () => k.twice() + takesRegExp(k) + takesObject(k) + takesUnknown(k) + k.flags + k.global + k.exec("ab")?.index + String(k) + RegExp.prototype.test.call(k, "b"));
+  attempt("regexp with texts", () => "aXbXc".split(k).join() + "ab".match(k)?.length + "ab".search(k) + "ab".replaceAll(new OnRegExp("a", "g"), "-") + [..."aa".matchAll(new OnRegExp("a", "g"))].length);
+}
+function bytes(k: OnBytes, b: OnBuffer, v: OnView) {
+  attempt("bytes", () => k.twice() + takesBytes(k) + takesView(k) + takesIterable(k) + takesObject(k) + takesUnknown(k) + k.at(-1) + k.indexOf(2) + k.includes(3) + k.reduce((a, c) => a + c, 0) + k.subarray(1).length + k.slice(1).join() + k.map(x => x * 2).join() + new Uint8Array(k).length + new TextDecoder().decode(k).length + Buffer.from(k).length);
+  attempt("bytes change", () => { k[0] = 9; k.set([7], 1); k.fill(1, 2); k.reverse(); k.sort(); return k.join() + Reflect.get(Object.getPrototypeOf(Uint8Array.prototype), "length", k); });
+  attempt("buffer", () => b.twice() + takesBuffer(b) + takesObject(b) + takesUnknown(b) + b.slice(1).byteLength + new DataView(b).byteLength + b.resizable + structuredClone(b).byteLength);
+  attempt("view", () => v.twice() + takesView(v) + takesObject(v) + takesUnknown(v) + v.getInt8(0) + (v.setInt16(0, 258), v.getUint8(1)) + v.buffer.byteLength);
+}
+function wrappers(t: OnText, n: OnNumber) {
+  attempt("text", () => t.twice() + takesObject(t) + takesUnknown(t) + t.length + t.charAt(1) + t.slice(1) + t.indexOf("x") + t.split("e").length + [...t].length + t.concat("!") + (t + "?") + t.valueOf() + String.prototype.toUpperCase.call(t) + JSON.stringify(t));
+  attempt("number", () => n.twice() + takesObject(n) + takesUnknown(n) + n.toFixed(1) + n.toString(2) + (Number(n) + 1) + n.valueOf() + Number.prototype.toFixed.call(n, 2) + JSON.stringify(n));
+}
+for (let round = 0; round < 3; round++) {
+  map(new OnMap([["a", 1], ["b", 2]]));
+  set(new OnSet([1, 2, 3]), new OnSet([2, 5]));
+  weak(new OnWeakMap([[anchor, 1]]), new OnWeakSet([anchor]));
+  error(new OnError("text", { cause: 4 }), new OnTypeError("typed"));
+  date(new OnDate(86400000));
+  regExp(new OnRegExp("[ab]"));
+  bytes(new OnBytes([1, 2, 3]), new OnBuffer(4), new OnView(new ArrayBuffer(4)));
+  wrappers(new OnText("text"), new OnNumber(4));
+  Bun.gc(true);
+}
+await Promise.resolve();
+console.log(lines.join("\n"));
+export {};
+//// iterator-and-the-parent-gets-another-parent-before-the-first-touch.js
+// Between the definition of a class below Iterator and its first touch the built-in class gets another prototype. A compiled executable refuses that: a built-in constructor keeps its prototype.
+////= tell
+////= Late	Iterator
+tell("another parent", () => Object.setPrototypeOf(Iterator, { above: () => "above" }) === Iterator);
+tell("inherited", () => Late.above());
+tell("an instance", () => {
+  const one = new Late();
+  return [typeof one.map, one instanceof Late, one instanceof Iterator, one.method(), one.constructor === Late, Object.getPrototypeOf(Late) === Iterator].join(" ");
+});
+//// names-asked-of-an-error-below-a-class.ts
+// Names that an instance of a class below Error has and has not are asked for with `in`, hasOwn and reads, in every order.
+class K extends Error { v = 1; id: number; constructor(id: number) { super("m" + id); this.id = id; } }
+class M extends Map<string, number> { v = 1; }
+function only(u: any): unknown { return ["cause" in u, "nothing" in u, "id" in u, "v" in u, "message" in u, "stack" in u]; }
+function readFirst(u: any): unknown { return [u.cause, "cause" in u, u.nothing, "nothing" in u, Object.hasOwn(u, "cause"), Object.hasOwn(u, "nothing")]; }
+function hasFirst(u: any): unknown { return ["cause" in u, u.cause, "nothing" in u, u.nothing]; }
+for (const make of [() => new K(1), () => new M(), () => new Error("plain"), () => new K(2)]) {
+  console.log(JSON.stringify(only(make())), JSON.stringify(readFirst(make())), JSON.stringify(hasFirst(make())));
+  const same = make();
+  console.log(JSON.stringify(readFirst(same)), JSON.stringify(only(same)), JSON.stringify(hasFirst(same)), Object.keys(same).join(), Reflect.ownKeys(same).map(String).join());
+}
+console.log(JSON.stringify(readFirst(new (class extends Error { constructor() { super("with", { cause: 5 }); } })())));
+//// names-read-through-a-built-in-constructor-that-change-behind-the-read.js
+// names read through a native constructor are cached: whatever can change behind the cache
+const out = [];
+function say(...a) { out.push(a.map(String).join(" ")); }
+function attempt(name, f) { try { say(name, f()); } catch (e) { say(name, "threw", e.constructor.name); } }
+class Failure extends Error { constructor(m) { super(m); this.name = "Failure"; } }
+class Deep extends Failure {}
+class Other extends TypeError {}
+class Table extends Map {}
+class List extends Array {}
+class Later extends Promise {}
+function kind(e) { if (e instanceof Deep) return "deep"; if (e instanceof Failure) return "failure"; if (e instanceof Other) return "other"; if (e instanceof Error) return "error"; return "none"; }
+function caught(f) { try { f(); } catch (e) { return kind(e); } return "nothing"; }
+const throwers = [() => { throw new Deep("d"); }, () => { throw new Failure("f"); }, () => { throw new Other("o"); }, () => { throw new Error("e"); }, () => { throw 5; }, () => { throw { __proto__: Failure.prototype }; }, () => { throw null; }];
+function round() { return throwers.map(caught).join(); }
+function warm() { let r; for (let i = 0; i < 200; i++) r = round(); return r; }
+say("warm", warm());
+function limit(C) { return C.stackTraceLimit; }
+function read(C, k) { return C[k]; }
+function missing(C) { return C.notThere; }
+for (let i = 0; i < 300; i++) { limit(Failure); limit(Deep); missing(Failure); missing(Table); missing(List); missing(Later); }
+say("limit", limit(Failure), limit(Deep), limit(Other), missing(Failure), missing(Table));
+Error.stackTraceLimit = 3;
+say("limit written on Error", limit(Failure), limit(Deep), limit(Other), limit(Error));
+attempt("a new name on Error", () => { Error.notThere = "now there"; return [missing(Failure), missing(Deep), missing(Other), missing(Table)].join(); });
+attempt("a new name on Map", () => { Map.notThere = "on Map"; return [missing(Table), missing(List)].join(); });
+attempt("deleted from Error", () => { delete Error.notThere; return [missing(Failure), missing(Deep)].join(); });
+attempt("deleted from Function.prototype", () => { delete Map.notThere; return [missing(Failure), missing(Table), missing(List)].join(); });
+Failure.stackTraceLimit = 77;
+say("own limit", limit(Failure), limit(Deep), limit(Other), limit(Error));
+delete Failure.stackTraceLimit;
+say("own limit gone", limit(Failure), limit(Deep));
+attempt("limit deleted from Error", () => { delete Error.stackTraceLimit; return [limit(Failure), limit(Error)].join(); });
+Error.stackTraceLimit = 10;
+say("limit back", limit(Failure), limit(Deep));
+// statics
+function from(C, v) { return C.from(v); }
+function of(C) { return C.of(1, 2); }
+for (let i = 0; i < 300; i++) { from(List, [1]); of(List); }
+say("from", from(List, [1, 2]) instanceof List, from(List, [1, 2]).length, of(List).constructor === List);
+attempt("List.from own", () => { List.from = () => "own"; const r = from(List, [1]); delete List.from; return r + " " + from(List, [1]).length; });
+function resolve(C, v) { return C.resolve(v); }
+for (let i = 0; i < 300; i++) resolve(Later, 1);
+say("resolve", resolve(Later, 1) instanceof Later);
+function species(C) { return C[Symbol.species]; }
+for (let i = 0; i < 300; i++) { species(List); species(Table); species(Later); }
+say("species", species(List) === List, species(Table) === Table, species(Later) === Later, new List(1, 2, 3).map(x => x) instanceof List);
+Object.defineProperty(List, Symbol.species, { get() { return Array; }, configurable: true });
+say("species own", species(List) === Array, new List(1, 2, 3).map(x => x) instanceof List);
+delete List[Symbol.species];
+say("species back", species(List) === List, new List(1, 2, 3).map(x => x) instanceof List);
+// Symbol.hasInstance
+Object.defineProperty(Failure, Symbol.hasInstance, { value(v) { return v === 5; }, configurable: true });
+say("hasInstance on Failure", round());
+delete Failure[Symbol.hasInstance];
+say("and gone", round());
+say("and gone", round(), warm());
+Object.defineProperty(Deep, Symbol.hasInstance, { get() { say("getter ran"); return undefined; }, configurable: true });
+attempt("a getter that gives undefined", () => caught(throwers[0]));
+delete Deep[Symbol.hasInstance];
+// the constructors' parents move
+Object.setPrototypeOf(Deep, Other);
+say("parent of the constructor moved", limit(Deep), round(), Deep.name);
+Object.setPrototypeOf(Deep, { [Symbol.hasInstance]() { return true; }, stackTraceLimit: "from an object" });
+attempt("to a plain object", () => limit(Deep) + " " + round());
+Object.setPrototypeOf(Deep, null);
+attempt("to null", () => limit(Deep) + " " + round());
+Object.setPrototypeOf(Deep, Failure);
+say("back", limit(Deep), round());
+// the prototypes move
+Object.setPrototypeOf(Deep.prototype, Other.prototype);
+say("parent of the prototype moved", round());
+Object.setPrototypeOf(Deep.prototype, Failure.prototype);
+say("back", round());
+Object.defineProperty(Failure, "prototype", { value: Failure.prototype, writable: false });
+attempt("function with prototype replaced", () => { function F() {} const x = new F(); let r = ""; for (let i = 0; i < 200; i++) r = x instanceof F; F.prototype = {}; return r + " " + (x instanceof F); });
+attempt("bound", () => { const B = Failure.bind(null); let r; for (let i = 0; i < 200; i++) r = new Deep("x") instanceof B; return r; });
+attempt("not callable", () => ({}) instanceof {});
+attempt("prototype is not an object", () => { function F() {} F.prototype = 3; return ({}) instanceof F; });
+say("names", Failure.name, Failure.length, Deep.length, Table.name, Object.getPrototypeOf(Failure) === Error, Failure.captureStackTrace === Error.captureStackTrace, typeof Failure.captureStackTrace);
+attempt("isError", () => [Error.isError && Failure.isError(new Deep("x")), Table.groupBy === Map.groupBy, List.isArray(new List())].join());
+console.log(out.join("\n"));
+//// object-constructed-for-another-new-target-ignores-its-operand.js
+// Object constructed for another new.target ignores its operand: super(object), super(5), super("text"), Reflect.construct(Object, [object], Other). For Object itself it answers the object or wraps the primitive.
+////= Below
+class BelowNumber extends Object {
+  tag = 1;
+  constructor(value) {
+    super(value);
+  }
+}
+function Other() {}
+Other.prototype.mark = "other";
+const given = { given: true };
+let sum = 0;
+for (let i = 0; i < 300; i++) {
+  const made = new Below(given, i);
+  sum += made.tag;
+  if (made === given || made.given === true || "tag" in given) throw new Error("the operand came back");
+}
+console.log(sum, Object.keys(given).join());
+const wrapped = new BelowNumber(5);
+console.log(typeof wrapped, wrapped instanceof Number, wrapped instanceof BelowNumber, wrapped.tag, Object.prototype.toString.call(wrapped));
+const text = new BelowNumber("text");
+console.log(text instanceof String, text.length, text.tag);
+const reflected = Reflect.construct(Object, [given], Other);
+console.log(reflected === given, reflected.mark, reflected.given, Object.getPrototypeOf(reflected) === Other.prototype);
+const reflectedItself = Reflect.construct(Object, [given], Object);
+console.log(reflectedItself === given, reflectedItself.given);
+const reflectedPlain = Reflect.construct(Object, [given]);
+console.log(reflectedPlain === given);
+const same = new Object(given);
+console.log(same === given, same.given);
+const number = new Object(5);
+console.log(number instanceof Number, typeof number, number + 1);
+const called = Object(given);
+console.log(called === given);
+const fresh = new Object();
+fresh.x = 1;
+console.log(Object.keys(fresh).join(), Object.keys(given).join());
+function pick(flag) { return flag ? Object : Other; }
+for (const flag of [true, false]) {
+  const either = Reflect.construct(Object, [given], pick(flag));
+  console.log(flag, either === given, either.mark);
+}
+class Deeper extends Below {
+  more = 2;
+  constructor(value) { super(value, 7); }
+}
+const deep = new Deeper(given);
+console.log(deep.tag, deep.more, deep === given, deep instanceof Deeper);
+//// objects-of-classes-below-built-ins-and-their-look-alikes-are-changed-out-of-sight.ts
+// Instances of classes below Map, Set, Error and Promise, and objects that only look like them, gain and lose names, change prototypes and hold values of other types in code the compiler cannot see.
+////= Defaults
+class Narrow extends Defaults {
+  limit = 3;
+  getOr(key: string, fallback: number): number {
+    return Math.min(super.getOr(key, fallback), this.limit);
+  }
+}
+class Tags extends Set<string> {
+  toggle(tag: string): boolean {
+    if (this.has(tag)) {
+      this.delete(tag);
+      return false;
+    }
+    this.add(tag);
+    return true;
+  }
+}
+class HttpError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+  isClient(): boolean {
+    return this.status < 500;
+  }
+}
+class Deferred extends Promise<number> {
+  tag(): number {
+    return 3;
+  }
+}
+class Sealed extends Map<string, number> {
+  #hits = 0;
+  #bump(): number {
+    return ++this.#hits;
+  }
+  count(key: string): number {
+    return this.has(key) ? this.#bump() : -this.#hits;
+  }
+}
+
+const change = new Function(
+  "o",
+  "how",
+  `
+  switch (how) {
+    case "hide member": o.getOr = o.toggle = o.isClient = o.tag = o.count = () => "hidden"; break;
+    case "show member": delete o.getOr; delete o.toggle; delete o.isClient; delete o.tag; delete o.count; break;
+    case "hide built-in": o.get = o.has = () => "own"; break;
+    case "show built-in": delete o.get; delete o.has; break;
+    case "between": Object.setPrototypeOf(o, { __proto__: Object.getPrototypeOf(o), getOr() { return "between"; }, toggle() { return "between"; }, isClient() { return "between"; }, tag() { return "between"; }, count() { return "between"; } }); break;
+    case "back": Object.setPrototypeOf(o, Object.getPrototypeOf(Object.getPrototypeOf(o))); break;
+    case "many": for (let i = 0; i < 200; i++) o["extra" + i] = i; break;
+    case "few": for (let i = 0; i < 200; i++) delete o["extra" + i]; break;
+    case "freeze": Object.freeze(o); break;
+    case "other type": o.status = "text"; o.limit = "wide"; break;
+    case "stack": void o.stack; break;
+  }
+`,
+) as (o: object, how: string) => void;
+
+function useDefaults(d: Defaults): unknown {
+  return [d.getOr("a", 9), d.getOr("b", 9), d.size, d instanceof Defaults, d instanceof Narrow, d instanceof Map];
+}
+function useTags(t: Tags): unknown {
+  return [t.toggle("a"), t.toggle("a"), t.size, t instanceof Tags, t instanceof Set];
+}
+function useError(e: HttpError): unknown {
+  return [e.isClient(), e.status, e.message, e instanceof HttpError, e instanceof Error];
+}
+function useDeferred(p: Deferred): unknown {
+  return [p.tag(), p instanceof Deferred, p instanceof Promise];
+}
+function useSealed(s: Sealed): unknown {
+  return [s.count("a"), s.count("b"), s instanceof Sealed];
+}
+function attempt(use: (o: any) => unknown, o: object): string {
+  try {
+    return JSON.stringify(use(o));
+  } catch (error) {
+    return "throws " + (error as Error).constructor.name;
+  }
+}
+
+const steps = ["hide member", "show member", "hide built-in", "show built-in", "between", "back", "many", "few", "other type", "stack", "freeze"];
+const makers: [string, (o: any) => unknown, () => object][] = [
+  ["Defaults", useDefaults, () => new Defaults([["a", 1]])],
+  ["Narrow", useDefaults, () => new Narrow([["a", 7]])],
+  ["Tags", useTags, () => new Tags(["a"])],
+  ["HttpError", useError, () => new HttpError("no", 404)],
+  ["Deferred", useDeferred, () => new Deferred(resolve => resolve(1))],
+  ["Sealed", useSealed, () => new Sealed([["a", 1]])],
+  ["Map for Defaults", useDefaults, () => Reflect.construct(Map, [[["a", 2]]], Defaults)],
+  ["Defaults for Narrow", useDefaults, () => Reflect.construct(Defaults, [[["a", 8]]], Narrow)],
+  ["Narrow for Defaults", useDefaults, () => Reflect.construct(Narrow, [[["a", 8]]], Defaults)],
+  ["Defaults for Tags", useDefaults, () => Reflect.construct(Defaults, [], Tags)],
+  ["Error for HttpError", useError, () => Reflect.construct(Error, ["made"], HttpError)],
+  ["TypeError for HttpError", useError, () => Reflect.construct(TypeError, ["made"], HttpError)],
+  ["a Map moved below Defaults", useDefaults, () => Object.setPrototypeOf(new Map([["a", 3]]), Defaults.prototype)],
+  ["an Error moved below HttpError", useError, () => Object.setPrototypeOf(new Error("moved"), HttpError.prototype)],
+  ["an object below Defaults", useDefaults, () => Object.create(Defaults.prototype)],
+  ["an object below an instance", useDefaults, () => Object.create(new Defaults([["a", 4]]))],
+  ["a Set moved below Defaults", useDefaults, () => Object.setPrototypeOf(new Set(["a"]), Defaults.prototype)],
+];
+
+for (const [name, use, make] of makers) {
+  const warm = make();
+  let last = "";
+  for (let i = 0; i < 300; i++) last = attempt(use, warm);
+  console.log(name, last);
+  for (const step of steps) {
+    const alone = make();
+    change(alone, step);
+    change(warm, step);
+    console.log(name, "|", step, "|", attempt(use, alone), "|", attempt(use, warm), "|", attempt(use, make()));
+  }
+}
+
+function classesMadeAgain(round: number): unknown {
+  class Local extends Map<string, number> {
+    twice(key: string): number {
+      return (this.get(key) ?? round) * 2;
+    }
+  }
+  return Local;
+}
+const first = classesMadeAgain(1) as new (entries: [string, number][]) => Map<string, number> & { twice(key: string): number };
+const second = classesMadeAgain(2) as typeof first;
+for (const made of [new first([["a", 5]]), new second([["a", 6]]), Reflect.construct(first, [[["a", 7]]], second)])
+  console.log("made again", made.twice("a"), made.twice("b"), made instanceof first, made instanceof second);
+
+(Defaults.prototype as any).getOr = function (this: Defaults, key: string) {
+  return "replaced " + this.has(key);
+};
+console.log("member replaced", attempt(useDefaults, new Defaults([["a", 1]])), attempt(useDefaults, new Narrow([["a", 1]])));
+Object.setPrototypeOf(Tags.prototype, {
+  __proto__: Set.prototype,
+  has() {
+    return true;
+  },
+});
+console.log("link changed", attempt(useTags, new Tags(["a"])));
+Object.setPrototypeOf(HttpError, RangeError);
+console.log("parent changed", attempt(useError, new HttpError("late", 500)), new HttpError("late", 500) instanceof RangeError);
+//// objects-of-classes-below-containers-flow-into-unions-of-an-interface-and-the-container.ts
+interface Stream {
+  listeners: number;
+  name?: string;
+}
+class Waiting extends Set<Stream> {
+  listeners = 7;
+  label = "waiting";
+}
+class Row extends Array<Stream> {
+  listeners = 8;
+}
+class Table extends Map<string, Stream> {
+  listeners = 9;
+}
+class Later extends Promise<Stream> {
+  listeners = 10;
+}
+class Bytes extends Uint8Array {
+  listeners = 11;
+}
+interface State {
+  set: Stream | Set<Stream> | null;
+  list: Stream | Stream[] | null;
+  map: Stream | Map<string, Stream> | null;
+  promise: Stream | Promise<Stream> | null;
+  bytes: Stream | Uint8Array | null;
+}
+
+function countOf(stream: Stream): number {
+  return stream.listeners;
+}
+function describe(value: State[keyof State]): string {
+  if (value === null) return "null";
+  if (value instanceof Set) {
+    return "set " + value.size + " " + (value as Waiting).label + " " + (value as unknown as Stream).listeners;
+  }
+  if (Array.isArray(value)) return "list " + value.length + " " + (value as unknown as Stream).listeners;
+  if (value instanceof Map) return "map " + value.size + " " + (value as unknown as Stream).listeners;
+  if (value instanceof Promise) return "promise " + (value as unknown as Stream).listeners;
+  if (value instanceof Uint8Array) return "bytes " + value.length + " " + (value as unknown as Stream).listeners;
+  return "stream " + countOf(value);
+}
+
+const plain: Stream = { listeners: 1 };
+const state: State = { set: null, list: null, map: null, promise: null, bytes: null };
+function fill(turn: number) {
+  state.set = turn % 3 === 0 ? plain : turn % 3 === 1 ? new Waiting([plain]) : new Set([plain, { listeners: 2 }]);
+  state.list = turn % 3 === 0 ? plain : turn % 3 === 1 ? Row.from([plain, plain]) : [plain];
+  state.map = turn % 3 === 0 ? plain : turn % 3 === 1 ? new Table([["a", plain]]) : new Map();
+  state.promise = turn % 3 === 0 ? plain : turn % 3 === 1 ? Later.resolve(plain) : Promise.resolve(plain);
+  state.bytes = turn % 3 === 0 ? plain : turn % 3 === 1 ? new Bytes(3) : new Uint8Array(4);
+}
+for (let turn = 0; turn < 6; turn++) {
+  fill(turn);
+  console.log(describe(state.set), "|", describe(state.list), "|", describe(state.map));
+  console.log(describe(state.promise), "|", describe(state.bytes));
+}
+// Each of them has the member that a Stream requires, so the checker lets it in as one.
+const streams = [new Waiting(), new Row(), new Table(), Later.resolve(plain), new Bytes(1), plain] as Stream[];
+for (const stream of streams) console.log(countOf(stream));
+//// one-class-text-evaluated-more-than-once.ts
+// The text of a class below a built-in class is evaluated more than once: each evaluation gives a class with a prototype object, captured values and static members of its own.
+const lines: string[] = [];
+function tagged(tag: string, step: number) {
+  return class Tagged extends Map<string, number> {
+    count = step;
+    static made = 0;
+    constructor() {
+      super([[tag, step]]);
+      Tagged.made++;
+    }
+    tag(): string {
+      return tag + this.count + ":" + this.get(tag) + ":" + this.size;
+    }
+    bump(): number {
+      this.count += step;
+      return this.count;
+    }
+  };
+}
+const First = tagged("first", 1);
+const Second = tagged("second", 10);
+type Tagged = InstanceType<typeof First>;
+function use(k: Tagged): string {
+  return k.tag() + " " + k.bump() + " " + (k instanceof First) + (k instanceof Second) + (k instanceof Map) + " " + (Object.getPrototypeOf(k) === First.prototype);
+}
+function failing<T extends new (...operands: any[]) => Error>(Parent: T, code: number) {
+  return class Coded extends Parent {
+    code = code;
+    describe(): string {
+      return this.name + ":" + this.message + ":" + this.code;
+    }
+  };
+}
+const Plain = failing(Error, 1);
+const Typed = failing(TypeError, 2);
+const Twice = failing(Plain, 3);
+function describe(k: InstanceType<typeof Plain>): string {
+  return k.describe() + " " + (k instanceof Plain) + (k instanceof Typed) + (k instanceof Twice) + (k instanceof TypeError);
+}
+for (let round = 0; round < 4; round++) {
+  const list: Tagged[] = [new First(), new Second(), new First(), new (tagged("third", 100))()];
+  for (const each of list) lines.push(use(each));
+  for (const each of [new Plain("p"), new Typed("t"), new Twice("w")]) lines.push(describe(each as InstanceType<typeof Plain>));
+  if (round === 1) (First.prototype as any).tag = function () { return "replaced on the first"; };
+  if (round === 2) Object.setPrototypeOf(Second.prototype, First.prototype);
+  Bun.gc(true);
+}
+lines.push(First.made + " " + Second.made);
+console.log(lines.join("\n"));
+//// one-object-under-the-type-of-the-class-and-of-the-parent.ts
+// One object is reached through two names in one function: one has the type of a class below a built-in class, the other the type of the parent. What is written through one is read through the other.
+const lines: string[] = [];
+class OnMap extends Map<string, number> { count = 1; twice(): number { return this.count * 2; } }
+class OnSet extends Set<number> { count = 1; twice(): number { return this.count * 2; } }
+class OnError extends Error { count = 1; twice(): number { return this.count * 2; } }
+class OnDate extends Date { count = 1; twice(): number { return this.count * 2; } }
+class OnRegExp extends RegExp { count = 1; twice(): number { return this.count * 2; } }
+class OnBytes extends Uint8Array { count = 1; twice(): number { return this.count * 2; } }
+function map(k: OnMap, m: Map<string, number>): string {
+  const twice = k.twice();
+  const before = k.get("x");
+  const size = k.size;
+  m.set("x", 5);
+  m.set("y", 6);
+  const between = k.get("x");
+  k.set("x", 7);
+  return [twice, before, size, between, k.size, m.get("x"), m.size, k.has("y"), m === k].join();
+}
+function set(k: OnSet, s: Set<number>): string {
+  const twice = k.twice();
+  const before = k.has(1);
+  const size = k.size;
+  s.add(1);
+  const between = k.has(1);
+  k.delete(1);
+  return [twice, before, size, between, k.size, s.has(1), s.size].join();
+}
+function error(k: OnError, e: Error): string {
+  const twice = k.twice();
+  const before = k.message;
+  e.message = "changed";
+  const between = k.message;
+  k.message = "again";
+  (e as any).count = 5;
+  return [twice, before, between, e.message, k.count, k.twice()].join();
+}
+function date(k: OnDate, d: Date): string {
+  const twice = k.twice();
+  const before = k.getTime();
+  d.setTime(5);
+  const between = k.getTime();
+  k.setTime(6);
+  return [twice, before, between, d.getTime()].join();
+}
+function regExp(k: OnRegExp, r: RegExp): string {
+  const twice = k.twice();
+  const before = k.lastIndex;
+  r.lastIndex = 3;
+  const between = k.lastIndex;
+  k.lastIndex = 4;
+  return [twice, before, between, r.lastIndex].join();
+}
+function bytes(k: OnBytes, b: Uint8Array): string {
+  const twice = k.twice();
+  const before = k[0];
+  b[0] = 5;
+  const between = k[0];
+  k[0] = 6;
+  return [twice, before, between, b[0], k.length, b.length].join();
+}
+function loop(k: OnMap, m: Map<string, number>): number {
+  let sum = 0;
+  for (let i = 0; i < 6; i++) {
+    sum += k.twice() + (k.get("x") ?? 0) + k.size;
+    m.set("x", i);
+    if (i === 3) m.set("z" + i, i);
+  }
+  return sum;
+}
+for (let round = 0; round < 3; round++) {
+  const m = new OnMap([["x", 1]]); lines.push(map(m, m), map(new OnMap([["x", 1]]), new Map()), map(new OnMap(), new OnMap()));
+  const s = new OnSet(); lines.push(set(s, s), set(new OnSet(), new Set()));
+  const e = new OnError("first"); lines.push(error(e, e), error(new OnError("first"), new Error("other")));
+  const d = new OnDate(1); lines.push(date(d, d), date(new OnDate(1), new Date(2)));
+  const r = new OnRegExp("a", "g"); lines.push(regExp(r, r), regExp(new OnRegExp("a", "g"), /b/g));
+  const b = new OnBytes([1]); lines.push(bytes(b, b), bytes(new OnBytes([1]), new Uint8Array(1)));
+  const l = new OnMap([["x", 1]]); lines.push(String(loop(l, l)), String(loop(new OnMap(), new Map())));
+}
+console.log(lines.join("\n"));
+//// range-error-and-the-parent-gets-another-parent-before-the-first-touch.js
+// Between the definition of a class below RangeError and its first touch the built-in class gets another prototype. A compiled executable refuses that: a built-in constructor keeps its prototype.
+////= tell
+////= Late	RangeError
+tell("another parent", () => Object.setPrototypeOf(RangeError, { above: () => "above" }) === RangeError);
+tell("inherited", () => Late.above());
+tell("an instance", () => {
+  const one = new Late("m");
+  return [one.message + one.name, one instanceof Late, one instanceof RangeError, one.method(), one.constructor === Late, Object.getPrototypeOf(Late) === RangeError].join(" ");
+});
+//// statics-and-instanceof-through-native-constructors-that-change.js
+class NotFound extends Error {}
+class Forbidden extends Error {}
+class Bag extends Map {}
+class List extends Array {}
+class Later extends Promise {}
+
+function kindOf(thrower) {
+  try {
+    thrower();
+  } catch (error) {
+    return error instanceof NotFound ? 404 : error instanceof Forbidden ? 403 : error instanceof Error ? 500 : 0;
+  }
+  return -1;
+}
+const notFound = new NotFound("a");
+const forbidden = new Forbidden("b");
+const throwers = [
+  () => {
+    throw notFound;
+  },
+  () => {
+    throw forbidden;
+  },
+  () => {
+    throw new RangeError("c");
+  },
+  () => {
+    throw "text";
+  },
+];
+function round() {
+  let sum = 0;
+  for (let i = 0; i < 400; i++) sum += kindOf(throwers[i & 3]);
+  return sum;
+}
+function statics(name) {
+  const found = [];
+  for (const constructor of [NotFound, Forbidden, Bag, List, Later]) {
+    let seen;
+    for (let i = 0; i < 50; i++) seen = constructor[name];
+    found.push(typeof seen === "function" ? "function " + seen.name : seen);
+  }
+  return found;
+}
+const lines = [round(), statics("extra"), statics("isArray"), statics("resolve"), statics("captureStackTrace"), statics("groupBy")];
+
+Error.extra = "on Error";
+Map.extra = "on Map";
+lines.push(statics("extra"));
+delete Error.extra;
+lines.push(statics("extra"));
+Object.defineProperty(Array, "extra", { get() { return "by a getter of " + this.name; }, configurable: true });
+lines.push(statics("extra"));
+delete Array.extra;
+lines.push(statics("extra"));
+
+NotFound.extra = 1;
+lines.push(statics("extra"), Object.hasOwn(Error, "extra"));
+
+Object.defineProperty(NotFound, Symbol.hasInstance, { value: value => value === forbidden, configurable: true });
+lines.push(round());
+delete NotFound[Symbol.hasInstance];
+lines.push(round());
+Object.setPrototypeOf(Forbidden, NotFound);
+Object.defineProperty(NotFound, Symbol.hasInstance, { value: () => false, configurable: true });
+lines.push(round());
+delete NotFound[Symbol.hasInstance];
+lines.push(round());
+console.log(JSON.stringify(lines));
+//// super-members-accessors-and-statics.ts
+// Methods of a class below a built-in class go through `super`, replace accessors and methods of the parent, are asynchronous or generators, and are reached through three classes, one of them abstract.
+const lines: string[] = [];
+abstract class Base extends Map<string, number> {
+  reads = 0;
+  abstract scale(): number;
+  get(key: string): number | undefined { this.reads++; const found = super.get(key); return found === undefined ? undefined : found * this.scale(); }
+  get size(): number { return super.size + 100; }
+  has(key: string): boolean { return super.has(key) || key === "always"; }
+  static create<T extends Base>(this: new () => T): T { return new this(); }
+}
+class Middle extends Base {
+  factor = 2;
+  scale(): number { return this.factor; }
+  *pairs(): Generator<string> { for (const [key, value] of super.entries()) yield key + value * this.factor; }
+  async later(key: string): Promise<number> { await null; return (this.get(key) ?? -1) + this.reads; }
+  [Symbol.iterator](): MapIterator<[string, number]> { lines.push("iterated"); return super[Symbol.iterator](); }
+}
+class Leaf extends Middle {
+  factor = 3;
+  extra = "leaf";
+  scale(): number { return super.scale() + 1; }
+  get size(): number { return super.size + 1000; }
+  toString(): string { return this.extra + super.toString(); }
+  get [Symbol.toStringTag](): string { return "Leaf"; }
+}
+function use(k: Base): string { return k.get("a") + ":" + k.get("z") + ":" + k.size + ":" + k.has("a") + k.has("always") + k.has("no") + ":" + k.reads; }
+function useMiddle(k: Middle): string { return [...k.pairs()].join() + ":" + [...k].length + ":" + k.factor + ":" + new Map(k).size; }
+function useLeaf(k: Leaf): string { return String(k) + ":" + k.extra + ":" + Object.prototype.toString.call(k) + ":" + `${k}`; }
+class Failure extends Error {
+  get message(): string { return "got " + this.code; }
+  set message(value: string) { lines.push("message is set to " + value); }
+  code = 1;
+  get name(): string { return "Failure" + this.code; }
+  toJSON(): object { return { code: this.code, name: this.name }; }
+}
+function useFailure(k: Failure): string { return k.message + "|" + k.name + "|" + String(k) + "|" + JSON.stringify(k) + "|" + Object.keys(k).join(); }
+const waits: Promise<unknown>[] = [];
+for (let round = 0; round < 3; round++) {
+  for (const k of [Middle.create(), Leaf.create(), new Leaf()]) {
+    k.set("a", 1).set("b", 2);
+    lines.push(use(k), useMiddle(k));
+    if (k instanceof Leaf) lines.push(useLeaf(k));
+    waits.push(k.later("b").then(value => lines.push("later " + value)));
+  }
+  lines.push(useFailure(new Failure("given")));
+  Bun.gc(true);
+}
+await Promise.all(waits);
+console.log(lines.join("\n"));
+export {};
+//// the-host-makes-instances-of-the-class.ts
+// Built-ins make instances of a class below a built-in class by themselves: through Symbol.species, through `this` of a static method, through Reflect.construct and through structuredClone, which makes none.
+const lines: string[] = [];
+function attempt(read: () => unknown): string { try { return String(read()); } catch (e) { return "throws " + (e as Error).name; } }
+class List extends Array<number> {
+  tag: string = "list";
+  sum(): number { let sum = 0; for (const each of this) sum += each; return sum; }
+}
+class Bytes extends Uint8Array {
+  tag: string = "bytes";
+  sum(): number { let sum = 0; for (const each of this) sum += each; return sum; }
+}
+class Later<T> extends Promise<T> {
+  tag: string = "later";
+  describe(): string { return this.tag; }
+}
+class Pattern extends RegExp {
+  tag: string = "pattern";
+  describe(): string { return this.tag + this.source + this.flags; }
+}
+class Store extends ArrayBuffer {
+  tag: string = "store";
+  describe(): string { return this.tag + this.byteLength; }
+}
+class Groups extends Map<string, number[]> {
+  tag: string = "groups";
+  describe(): string { return this.tag + this.size; }
+}
+function list(k: List): string { return k.tag + k.sum() + ":" + k.length + (k instanceof List); }
+function bytes(k: Bytes): string { return k.tag + k.sum() + ":" + k.length + (k instanceof Bytes); }
+function later(k: Later<number>): string { return k.describe() + (k instanceof Later); }
+function pattern(k: Pattern): string { return k.describe() + (k instanceof Pattern); }
+function store(k: Store): string { return k.describe() + (k instanceof Store); }
+function groups(k: Groups): string { return k.describe() + (k instanceof Groups); }
+const waits: Promise<unknown>[] = [];
+for (let round = 0; round < 3; round++) {
+  const numbers = List.from([1, 2, 3]) as List;
+  lines.push(list(numbers), list(numbers.map(each => each * 2) as List), list(numbers.filter(each => each > 1) as List), list(numbers.slice(1) as List), list(List.of(4, 5) as List), list(numbers.concat([9]) as List), list(numbers.splice(0, 1) as List), attempt(() => list(numbers.flat() as List)));
+  const some = Bytes.from([1, 2, 3]) as Bytes;
+  lines.push(bytes(some), bytes(some.map(each => each * 2) as Bytes), bytes(some.filter(each => each > 1) as Bytes), bytes(some.slice(1) as Bytes), bytes(some.subarray(1) as Bytes), bytes(Bytes.of(7) as Bytes));
+  const first = new Later<number>(resolve => resolve(1));
+  lines.push(later(first), later(first.then(() => 2) as Later<number>), later(first.catch(() => 3) as Later<number>), later(first.finally(() => {}) as Later<number>), later(Later.resolve(4) as Later<number>), later(Later.all([first]) as unknown as Later<number>));
+  waits.push(first, (async () => lines.push("awaited " + (await first)))());
+  const words = new Pattern("a(b)?", "g");
+  lines.push(pattern(words), "xabxa".split(words).join("|"), attempt(() => [..."abab".matchAll(words)].length), "abab".replace(words, "-"), pattern(words));
+  const memory = new Store(8);
+  lines.push(store(memory), store(memory.slice(2) as Store));
+  lines.push(attempt(() => groups(Reflect.construct(Map, [], Groups) as Groups)), attempt(() => groups(Reflect.construct(Groups, [], Groups))), attempt(() => groups(structuredClone(new Groups()) as Groups)), attempt(() => groups(Map.groupBy([1, 2], each => String(each)) as Groups)));
+  Bun.gc(true);
+}
+await Promise.all(waits);
+console.log(lines.join("\n"));
+export {};
+//// this-is-seen-before-the-fields-are-there.ts
+// The constructor of the built-in parent calls members that the class replaces, initial values read other fields and hand `this` on, constructors throw behind `super`, answer with another object or call `super` late.
+const lines: string[] = [];
+const seen: unknown[] = [];
+function attempt(read: () => unknown): string { try { return String(read()); } catch (e) { return "throws " + (e as Error).name; } }
+class Early extends Map<string, number> {
+  count: number = 5;
+  label: string = "l" + this.size;
+  set(key: string, value: number): this {
+    lines.push("set " + key + " " + typeof this.count + " " + String(this.label) + " " + (this instanceof Early));
+    seen.push(this);
+    return super.set(key, value + (this.count ?? 100));
+  }
+  total(): number { let sum = this.count; for (const value of this.values()) sum += value; return sum; }
+}
+class EarlySet extends Set<number> {
+  limit: number = 2;
+  add(value: number): this { return this.limit === undefined || this.size < this.limit ? super.add(value) : this; }
+  describe(): string { return this.limit + ":" + [...this].join(); }
+}
+function look(k: Early): string { return k.count + k.label + k.total() + ":" + k.size; }
+class HandsOn extends Error {
+  first: number = remember(this);
+  second: string = "s" + this.first;
+}
+function remember(k: HandsOn): number { seen.push(k); return k.second === undefined ? 1 : 2; }
+function lookAtHandsOn(k: HandsOn): string { return k.first + k.second + k.message; }
+class Throws extends Map<string, number> {
+  count = 1;
+  constructor(fails: boolean) { super(); seen.push(this); if (fails) throw new RangeError("behind super"); this.count = 2; }
+}
+class ThrowsInField extends Set<number> {
+  before = 1;
+  broken: number = fail(this);
+  after = 3;
+}
+function fail(k: ThrowsInField): number { seen.push(k); throw new RangeError("in a field"); }
+function lookAtBroken(k: ThrowsInField): string { return String(k.before) + String(k.broken) + String(k.after) + k.size; }
+function lookAtThrows(k: Throws): string { return String(k.count) + k.size; }
+class Answers extends Map<string, number> {
+  count = 1;
+  constructor(other?: object) { super(); if (other) return other as Answers; }
+  twice(): number { return this.count * 2; }
+}
+function lookAtAnswers(k: Answers): string { return attempt(() => k.count) + attempt(() => k.twice()) + (k instanceof Answers); }
+class Late extends Error {
+  code: number = 1;
+  constructor(text: string) { if (text.length > 1) super(text.toUpperCase()); else super("short"); this.code += text.length; }
+}
+function lookAtLate(k: Late): string { return k.message + k.code; }
+for (let round = 0; round < 3; round++) {
+  lines.push(look(new Early([["a", 1], ["b", 2]])), look(new Early()));
+  lines.push(new EarlySet([1, 2, 3, 4]).describe());
+  lines.push(lookAtHandsOn(new HandsOn("m")));
+  lines.push(attempt(() => lookAtThrows(new Throws(false))), attempt(() => lookAtThrows(new Throws(true))));
+  lines.push(attempt(() => lookAtBroken(new ThrowsInField([1]))));
+  lines.push(lookAtAnswers(new Answers()), lookAtAnswers(new Answers({ count: 9 })), lookAtAnswers(new Answers(new Map())), lookAtAnswers(new Answers(new Answers())));
+  lines.push(lookAtLate(new Late("ab")), lookAtLate(new Late("c")));
+  Bun.gc(true);
+}
+for (const each of seen) {
+  if (each instanceof Early) lines.push("early " + look(each));
+  else if (each instanceof HandsOn) lines.push("hands on " + lookAtHandsOn(each));
+  else if (each instanceof Throws) lines.push("throws " + lookAtThrows(each));
+  else if (each instanceof ThrowsInField) lines.push("broken " + lookAtBroken(each));
+}
+console.log(lines.join("\n"));
+//// type-error-and-the-parent-gets-another-parent-before-the-first-touch.js
+// Between the definition of a class below TypeError and its first touch the built-in class gets another prototype. A compiled executable refuses that: a built-in constructor keeps its prototype.
+////= tell
+////= Late	TypeError
+tell("another parent", () => Object.setPrototypeOf(TypeError, { above: () => "above" }) === TypeError);
+tell("inherited", () => Late.above());
+tell("an instance", () => {
+  const one = new Late("m");
+  return [one.message + one.name, one instanceof Late, one instanceof TypeError, one.method(), one.constructor === Late, Object.getPrototypeOf(Late) === TypeError].join(" ");
+});
+//// unions-and-interfaces-with-compiled-classes.ts
+// Values of a class below a built-in class meet values of ordinary classes and literals in unions, interfaces, arrays and fields, and one function reads, stores, freezes, lists and copies them all.
+const lines: string[] = [];
+interface Counter {
+  count: number;
+  label: string;
+  twice(): number;
+}
+class Plain implements Counter {
+  count = 1;
+  label = "plain";
+  twice(): number { return this.count * 2; }
+}
+class Other implements Counter {
+  label = "other";
+  extra = true;
+  count = 2;
+  twice(): number { return this.count * 2 + 1; }
+}
+class OnMap extends Map<string, number> implements Counter {
+  count = 3;
+  label = "map";
+  twice(): number { return this.count * 2 + this.size; }
+}
+class OnError extends Error implements Counter {
+  count = 4;
+  label = "error";
+  twice(): number { return this.count * 2 + this.message.length; }
+}
+class OnSet extends Set<number> implements Counter {
+  label = "set";
+  count = 5;
+  twice(): number { return this.count * 2 + this.size; }
+}
+const literal: Counter = { count: 6, label: "literal", twice() { return this.count * 2; } };
+function make(): Counter[] {
+  return [new Plain(), new OnMap([["a", 1]]), new Other(), new OnError("four"), new OnSet([1, 2]), { ...literal }];
+}
+function read(k: Counter): string { return k.count + k.label + k.twice(); }
+function store(k: Counter, value: number): number { k.count = value; k.label += "!"; return k.count; }
+function readUnion(k: Plain | OnMap | OnError): string { return k.count + k.label + k.twice() + (k instanceof OnMap ? k.get("a") : k instanceof OnError ? k.message : "-"); }
+function storeUnion(k: Plain | OnMap | OnSet, value: number): string { k.count += value; return Object.keys(k).join(); }
+function freeze(k: Counter): boolean { return Object.isFrozen(Object.freeze(k)); }
+function freezeUnion(k: Plain | OnMap): boolean { return Object.isFrozen(Object.freeze(k)); }
+function seal(k: Other | OnError): boolean { return Object.isSealed(Object.seal(k)); }
+function reparent(k: Plain | OnSet): string { Object.setPrototypeOf(k, Other.prototype); return String(k.twice()); }
+function copy(k: Counter): string { return JSON.stringify({ ...k }) + JSON.stringify(Object.assign({}, k)) + JSON.stringify(k); }
+function copyInto(to: Plain | OnMap, from: Other | OnError): string { Object.assign(to, from); return to.count + to.label + Object.keys(to).join(); }
+function list(k: Counter): string { const names: string[] = []; for (const name in k) names.push(name); return names.join() + "/" + Object.keys(k).length + "/" + Object.values(k).length; }
+function remove(k: Plain | OnMap | OnError): string { delete (k as any).label; return String(k.label) + Object.keys(k).join(); }
+class Holder {
+  first: Counter;
+  second: OnMap;
+  third: Plain | OnError;
+  constructor(first: Counter, second: OnMap, third: Plain | OnError) { this.first = first; this.second = second; this.third = third; }
+  sum(): number { return this.first.twice() + this.second.twice() + this.third.twice() + this.second.size; }
+}
+for (let round = 0; round < 3; round++) {
+  for (const each of make()) lines.push(read(each) + " " + store(each, round) + " " + read(each) + " " + copy(each) + " " + list(each));
+  lines.push(readUnion(new Plain()), readUnion(new OnMap([["a", 7]])), readUnion(new OnError("e")));
+  lines.push(storeUnion(new Plain(), 1), storeUnion(new OnMap(), 2), storeUnion(new OnSet(), 3));
+  lines.push(copyInto(new Plain(), new Other()), copyInto(new OnMap(), new Other()), copyInto(new Plain(), new OnError("x")), copyInto(new OnMap(), new OnError("y")));
+  lines.push(remove(new Plain()), remove(new OnMap()), remove(new OnError("z")));
+  const frozen = make();
+  lines.push(frozen.map(freeze).join());
+  for (const each of frozen) { try { "use strict"; store(each, 9); lines.push("stored " + read(each)); } catch (e) { lines.push((e as Error).name + " " + read(each)); } }
+  lines.push(String(freezeUnion(new Plain())), String(freezeUnion(new OnMap())), String(seal(new Other())), String(seal(new OnError("s"))));
+  lines.push(reparent(new Plain()), reparent(new OnSet([1])));
+  const holder = new Holder(new OnSet([1]), new OnMap([["a", 1]]), new OnError("held"));
+  lines.push(String(holder.sum()));
+  holder.first = new OnMap(); holder.third = new Plain();
+  lines.push(String(holder.sum()));
+  Bun.gc(true);
+  lines.push(String(holder.sum()), frozen.map(read).join());
+}
+console.log(lines.join("\n"));
+//// weak-ref-and-the-parent-gets-another-parent-before-the-first-touch.js
+// Between the definition of a class below WeakRef and its first touch the built-in class gets another prototype. A compiled executable refuses that: a built-in constructor keeps its prototype.
+////= tell
+////= Late	WeakRef
+tell("another parent", () => Object.setPrototypeOf(WeakRef, { above: () => "above" }) === WeakRef);
+tell("inherited", () => Late.above());
+tell("an instance", () => {
+  const one = new Late({});
+  return [typeof one.deref(), one instanceof Late, one instanceof WeakRef, one.method(), one.constructor === Late, Object.getPrototypeOf(Late) === WeakRef].join(" ");
+});

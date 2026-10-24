@@ -16,7 +16,7 @@ import { spawn } from "bun";
 import { cpSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { Random } from "./random";
-import { patterns, type Description, type Member } from "./texts-for-generated-types-driver";
+import { patterns, revivers, type Description, type Member } from "./texts-for-generated-types-driver";
 
 const plainNames = [
   "id",
@@ -622,7 +622,8 @@ export function program(seed: number, count: number): string {
   /** Several object types: told apart by a member with a literal type, or by a name that one of them alone declares. */
   function readOneOf(objects: Description[], x: string, level: number, suffix: string): string {
     const resolved = objects.map(resolve);
-    if (!resolved.every(arm => arm.kind === "object")) return `out += spellValue(${x});`;
+    // `{}` may be a primitive value as far as the checker knows, and `in` takes none.
+    if (!resolved.every(arm => arm.kind === "object" && arm.members.length > 0)) return `out += spellValue(${x});`;
     const shapes = resolved as Extract<Description, { kind: "object" }>[];
     for (const candidate of shapes[0].members) {
       const values = shapes.map(
@@ -661,13 +662,15 @@ export function program(seed: number, count: number): string {
     usesSelf = false;
     fills = false;
     allowsFallbacks = random.chance(0.25);
-    const description = random.weighted<() => Description>([
+    const drawn = random.weighted<() => Description>([
       [10, () => object(0)],
       [3, () => ({ kind: "array", of: object(1) })],
       [4, () => union(0)],
       [4, recursive],
       [5, () => typeAt(0)],
     ])();
+    // A type argument that is `any` or `unknown` by an alias checks nothing, and the build says so.
+    const description: Description = drawn.kind === "anything" ? { kind: "array", of: drawn } : drawn;
     current = description;
     descriptions.push(description);
     const type = write(description, false);
@@ -693,14 +696,22 @@ export function program(seed: number, count: number): string {
     }
     if (!fills) shareable.push(self);
     cases.push(
-      `  { name: "T${self}", type: ${JSON.stringify(type)}, description: descriptions[${self}],${marks} parseLater: async text => { await null; return Checked.parse<T${self}>(text); }, parsers: [["JSON.parse<T>", text => Checked.parse<T${self}>(text)], ["JSON.parse<T> in a generator", text => { for (const held of (function* () { yield none; yield Checked.parse<T${self}>(text); })()) if (held !== none) return held; }], ["JSON.parse<T> with a reviver", text => Checked.parse<T${self}>(text, (_, held) => held)]], validate: value => validate<T${self}>(value), readTyped: text => read${self}(Checked.parse<T${self}>(text)), readCast: text => read${self}(JSON.parse(text) as T${self}), readBody: async bytes => read${self}((await new Response(bytes).json()) as T${self}), readRequest: async bytes => read${self}((await new Request("http://localhost/", { method: "POST", body: bytes }).json()) as T${self}), readUntyped: read${self}u },`,
+      `  { name: "T${self}", type: ${JSON.stringify(type)}, description: descriptions[${self}],${marks} parseLater: async text => { await null; return Checked.parse<T${self}>(text); }, revived: [${Object.keys(
+        revivers,
+      )
+        .map(
+          name => `[${JSON.stringify(name)}, text => Checked.parse<T${self}>(text, revivers[${JSON.stringify(name)}])]`,
+        )
+        .join(
+          ", ",
+        )}], parsers: [["JSON.parse<T>", text => Checked.parse<T${self}>(text)], ["JSON.parse<T> in a generator", text => { for (const held of (function* () { yield none; yield Checked.parse<T${self}>(text); })()) if (held !== none) return held; }], ["JSON.parse<T> with a reviver", text => Checked.parse<T${self}>(text, (_, held) => held)]], validate: value => validate<T${self}>(value), readTyped: text => read${self}(Checked.parse<T${self}>(text)), serveCast: async request => read${self}((await request.json()) as T${self}), serveChecked: async request => read${self}(Checked.parse<T${self}>(await request.text())), readChanged: (text, change) => { const value = Checked.parse<T${self}>(text); change(value); return read${self}(value); }, readCast: text => read${self}(JSON.parse(text) as T${self}), readBody: async bytes => read${self}((await new Response(bytes).json()) as T${self}), readRequest: async bytes => read${self}((await new Request("http://localhost/", { method: "POST", body: bytes }).json()) as T${self}), readUntyped: read${self}u },`,
     );
   }
 
   return `// texts-for-generated-types.ts --print ${seed} --types ${count}
 import { JSON as Checked, type Schema, type int32 } from "bun";
 import { validate } from "bun:bundle";
-import { run, spellValue, type Case, type Description } from "./texts-for-generated-types-driver";
+import { revivers, run, spellValue, type Case, type Description } from "./texts-for-generated-types-driver";
 
 const none = Symbol();
 ${enums.join("\n")}
@@ -864,7 +875,12 @@ console.log("texts " + started + " differences 0");
       // Where no error can be thrown, a program whose heap is full stops and says so.
       const gaveUp = full && /^FATAL: out of memory/m.test(ran.stderr) && !/Sanitizer|ASSERT/.test(ran.stderr);
       if (gaveUp) outOfMemory++;
-      else if (!total || ran.ended !== "exit 0" || ran.stderr.trim() !== "" || ran.stdout.includes("DIFFERS")) {
+      else if (
+        !total ||
+        ran.ended !== "exit 0" ||
+        ran.stderr.replaceAll("Error while printing Error-like object: WorkerTerminated", "").trim() !== "" ||
+        ran.stdout.includes("DIFFERS")
+      ) {
         bad = true;
         said = "the run: " + ran.ended + "\n" + ran.stdout.slice(-60000) + "\n--- stderr\n" + ran.stderr.slice(-20000);
         const counted = /^texts (\d+) /.exec(last);

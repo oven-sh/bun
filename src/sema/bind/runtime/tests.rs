@@ -1,12 +1,13 @@
 use super::queries::find_entry;
+use super::storage::RuntimeDeclarationsIn;
 use super::{
     Binding, BindingKind, BindingStability, ImplicitReference, ImplicitReferenceKind,
     PrivateMembers, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn,
-    RuntimeDeclarationsIn, RuntimeTablesIn, StoreKind, SymbolStore,
+    RuntimeTablesIn, StoreKind, SymbolStore,
 };
 use crate::atom::known;
 use crate::bind::decorator_metadata::MetadataReference;
-use crate::bind::{ScopeId, SymbolId};
+use crate::bind::{Decl, ScopeId, SymbolId};
 use crate::hir::*;
 use crate::session::Arena;
 
@@ -107,7 +108,7 @@ fn assert_moved_lists(runtime: &RuntimeBindings<'_>) {
 }
 
 #[test]
-fn lists_reach_arena_and_shared_copy() {
+fn lists_reach_arena() {
     let arena = Arena::new();
     let mut tables = RuntimeTablesIn::<Growable> {
         field_initializer_scopes: vec![(MemberId(1), ScopeId(8))],
@@ -120,7 +121,6 @@ fn lists_reach_arena_and_shared_copy() {
     let moved = growable.move_to_arena(&arena);
     assert!(!growable.is_computed());
     assert_moved_lists(&moved);
-    assert_moved_lists(&moved.share(&arena));
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn uncomputed_tables_stay_uncomputed_in_the_arena() {
     let arena = Arena::new();
     let moved = RuntimeBindingsIn::<Growable>::default().move_to_arena(&arena);
     assert!(!moved.is_computed());
-    assert!(!moved.share(&arena).is_computed());
+    assert!(!moved.share().is_computed());
 }
 
 #[test]
@@ -140,7 +140,7 @@ fn clear_drops_the_tables() {
 
 #[test]
 fn unsorted_declarations_are_detected() {
-    let mut tables = RuntimeTablesIn::default();
+    let mut tables = RuntimeTablesIn::<Growable>::default();
     assert!(tables.is_sorted());
     tables.declarations.own_scopes = vec![(StmtId(1), ScopeId(2)), (StmtId(2), ScopeId(1))];
     assert!(tables.is_sorted());
@@ -149,11 +149,14 @@ fn unsorted_declarations_are_detected() {
 }
 
 #[test]
-fn unsorted_class_symbols_are_detected() {
-    let mut tables = RuntimeTablesIn::default();
-    tables.declarations.class_symbols = vec![(ClassId(0), SymbolId(5)), (ClassId(2), SymbolId(4))];
+fn unsorted_declared_symbols_are_detected() {
+    let mut tables = RuntimeTablesIn::<Growable>::default();
+    tables.declarations.declared_symbols = vec![
+        (Decl::Class(ClassId(0)), SymbolId(5)),
+        (Decl::Class(ClassId(2)), SymbolId(4)),
+    ];
     assert!(tables.is_sorted());
-    tables.declarations.class_symbols.reverse();
+    tables.declarations.declared_symbols.reverse();
     assert!(!tables.is_sorted());
 }
 
@@ -164,7 +167,7 @@ fn stores_are_sorted_by_symbol_then_target() {
         target: ExprId(target),
         kind: StoreKind::Assign,
     };
-    let mut tables = RuntimeTablesIn::default();
+    let mut tables = RuntimeTablesIn::<Growable>::default();
     tables.references.stores = vec![store(1, 9), store(2, 3), store(2, 7)];
     assert!(tables.is_sorted());
     tables.references.stores.swap(1, 2);
@@ -197,7 +200,7 @@ fn jsx_references_precede_decorator_metadata() {
         type_name(3),
     ];
     for (first, second) in [(0, 1), (1, 2), (2, 3), (3, 4)] {
-        let mut tables = RuntimeTablesIn::default();
+        let mut tables = RuntimeTablesIn::<Growable>::default();
         tables.references.implicit_references = sorted.clone();
         assert!(tables.is_sorted());
         tables.references.implicit_references.swap(first, second);

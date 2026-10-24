@@ -1,0 +1,1308 @@
+//// required-number-field-read-before-constructor-store.ts
+// A required field of type number or boolean holds `undefined` from its definition until the constructor stores into it,
+// and whatever untyped code puts there afterwards. Every read gives what plain Bun gives.
+
+const seen: string[] = [];
+
+function show(label: string, value: unknown): void {
+  seen.push(`${label}: ${typeof value} ${Object.is(value, -0) ? "-0" : String(value)}`);
+}
+
+let leaked: Counter | undefined;
+
+class Base {
+  constructor() {
+    this.inspect("base constructor");
+  }
+  inspect(_label: string): void {}
+}
+
+class Counter extends Base {
+  count: number;
+  ratio: number;
+  done: boolean;
+
+  constructor(count: number, ratio: number, done: boolean) {
+    super();
+    this.inspect("before the stores");
+    leaked = this;
+    readLeaked("leaked before the stores");
+    this.count = count | 0;
+    this.inspect("after the first store");
+    this.ratio = ratio;
+    this.done = done;
+    this.inspect("after the stores");
+  }
+
+  override inspect(label: string): void {
+    show(`${label}, count`, this.count);
+    show(`${label}, ratio`, this.ratio);
+    show(`${label}, done`, this.done);
+    show(`${label}, has count`, "count" in this);
+    show(`${label}, keys`, Object.keys(this).join());
+  }
+}
+
+function readLeaked(label: string): void {
+  const counter = leaked!;
+  show(`${label}, count ^ 5`, counter.count ^ 5);
+  show(`${label}, ratio + 1`, counter.ratio + 1);
+  show(`${label}, !done`, !counter.done);
+}
+
+function readTyped(counter: Counter): string {
+  return `${counter.count ^ 0} ${counter.count + 1} ${counter.ratio * 2} ${counter.done ? "yes" : "no"} ${counter.count} ${counter.ratio} ${counter.done}`;
+}
+
+function bump(counter: Counter): void {
+  counter.count++;
+  counter.ratio += 0.5;
+  counter.done = !counter.done;
+}
+
+const counter = new Counter(7, 1.5, true);
+show("typed reads", readTyped(counter));
+bump(counter);
+show("after bump", readTyped(counter));
+console.log(seen.join("\n"));
+
+const strangers: unknown[] = [
+  undefined,
+  null,
+  NaN,
+  -0,
+  0,
+  2 ** 31,
+  2 ** 31 - 1,
+  -(2 ** 31),
+  -(2 ** 31) + 1,
+  -(2 ** 31) + 2,
+  -(2 ** 31) + 3,
+  -(2 ** 31) + 4,
+  -(2 ** 31) + 5,
+  -(2 ** 31) - 1,
+  0.5,
+  Infinity,
+  "text",
+  true,
+  false,
+  { valueOf: () => 3 },
+  10n,
+];
+
+for (const name of ["count", "ratio", "done"]) {
+  for (const stranger of strangers) {
+    const fresh = new Counter(1, 2, false);
+    seen.length = 0;
+    (fresh as any)[name] = stranger;
+    let line: string;
+    try {
+      line = readTyped(fresh);
+    } catch (error) {
+      line = `threw ${(error as Error).constructor.name}`;
+    }
+    console.log(`${name} = ${typeof stranger} ${Object.is(stranger, -0) ? "-0" : typeof stranger === "object" && stranger ? "object" : String(stranger)}: ${line}`);
+    try {
+      bump(fresh);
+      line = readTyped(fresh);
+    } catch (error) {
+      line = `threw ${(error as Error).constructor.name}`;
+    }
+    console.log(`  bumped: ${line}; keys ${Object.keys(fresh).join()}`);
+    (fresh as any)[name] = name === "done" ? true : 4;
+    console.log(`  restored: ${readTyped(fresh)}`);
+  }
+}
+
+const deleted = new Counter(3, 4, true);
+seen.length = 0;
+delete (deleted as any).count;
+console.log(`deleted: ${readTyped(deleted)}; keys ${Object.keys(deleted).join()}`);
+deleted.count = 9;
+console.log(`stored again: ${readTyped(deleted)}; keys ${Object.keys(deleted).join()}`);
+
+const first = new Counter(11, 12.5, false);
+console.log(seen.join("\n"));
+console.log(readTyped(first));
+(globalThis as any).keep = [Counter, Base, readTyped, bump, readLeaked];
+//// response-json-string.ts
+const long = "0123456789abcdef".repeat(5000);
+const answer = Response.json("text \u4e2d \"q\"");
+console.log(await answer.text(), answer.headers.get("content-type"));
+////= lines-35	answerWith	text	string	Response	Response.json
+console.log(await answerWith("by its type").text(), await answerWith("").text(), (await answerWith(long).text()).length);
+//// response-json-typed-objects.ts
+interface Address { street: string; city: string }
+interface Order { id: number; total: number; paid: boolean }
+interface Customer { id: number; name: string; address: Address; tags: string[]; orders: Order[]; note: string | null }
+interface Link { value: number; next: Link | null }
+
+////= hide-2
+
+async function show(label: string, make: () => Response) {
+    try {
+        const response = make();
+        console.log(label, response.status, response.headers.get("content-type"), response.headers.get("x-more"), await response.text());
+    } catch (error) {
+        console.log(label, "throws", (error as Error).constructor.name, (error as Error).message);
+    }
+}
+
+function customer(i: number): Customer {
+    return { id: i, name: "customer " + i, address: { street: i + " Main Street", city: "Springfield" }, tags: ["a" + i, "b"], orders: [{ id: i * 2, total: 10.5 + i, paid: true }, { id: i * 2 + 1, total: 99 + i, paid: false }], note: i & 1 ? null : "note " + i };
+}
+
+const first = customer(1);
+await show("a record", () => Response.json(first));
+await show("the same record again", () => Response.json(first));
+first.name = "changed";
+await show("after a store", () => Response.json(first));
+await show("a status", () => Response.json(customer(2), { status: 201 }));
+await show("a number for the status", () => Response.json(customer(2), hide(202)));
+await show("headers", () => Response.json(customer(3), { headers: { "x-more": "yes" } }));
+await show("another content type", () => Response.json(customer(3), { headers: { "content-type": "text/plain" } }));
+await show("a list", () => Response.json([customer(4), customer(5)]));
+await show("an empty list", () => Response.json(((): Customer[] => [])()));
+const wide = customer(6);
+wide.name = "Ж中 😀 \ud800";
+await show("16-bit text", () => Response.json(wide));
+const withExtra = customer(7);
+hide(withExtra).extra = 1;
+await show("an extra property", () => Response.json(withExtra));
+const withToJSON = customer(8);
+hide(withToJSON.address).toJSON = () => "address";
+await show("toJSON inside", () => Response.json(withToJSON));
+const cycle: Link = { value: 1, next: null };
+cycle.next = cycle;
+await show("a cycle", () => Response.json(cycle));
+const perhaps: (Customer | undefined | null)[] = [undefined, null, customer(9)];
+for (const each of perhaps) await show("perhaps", () => Response.json(each));
+await show("init that throws", () => Response.json(customer(10), { get status(): number { throw new RangeError("no status"); } }));
+await show("behind a throw", () => Response.json(customer(11)));
+await show("init that changes the record", () => {
+    const changed = customer(12);
+    return Response.json(changed, { get status() { changed.name = "changed while init was read"; return 200; } });
+});
+await show("JSON.stringify behind Response.json", () => {
+    const value = customer(13);
+    const response = Response.json(value);
+    value.id = 14;
+    return new Response(JSON.stringify(value) + (await0(response) ? "" : ""));
+});
+function await0(_: Response): boolean {
+    return true;
+}
+const original = Response.json;
+hide(Response).json = (value: unknown) => new Response("replaced " + typeof value);
+await show("replaced", () => Response.json(customer(17)));
+hide(Response).json = original;
+await show("put back", () => Response.json(customer(18)));
+let length = 0;
+for (let i = 0; i < 2000; i++) length += (await Response.json(customer(i)).text()).length;
+console.log("two thousand", length);
+//// results-in-registers-behind-a-structure-check.ts
+// A function that returns a fresh object hands its fields back in registers, and its caller reads them from the call. Where one test of a receiver's shape splits the caller into a fast and a slow copy, the call stands in both, and what follows the last access to the receiver is shared: the fields are then read behind the place where the two copies meet.
+interface Item { id: number; weight: number; label: string; next: Item | null }
+interface Crate { id: number; depth: number }
+type Found = { x: number; y: number };
+function hide(value: unknown): any { return value }
+function make(i: number): Item { return { id: i + 0.5, weight: i + 1.5, label: "item" + i, next: null } }
+function makeCrate(i: number): Crate { return { id: i + 0.25, depth: i + 2.25 } }
+function grown(i: number): Item { const open = hide(makeCrate(i)); open.weight = i + 3.25; open.label = "crate" + i; open.next = null; return open }
+let noise = 0;
+function pad(k: number): void { for (let i = 0; i < 3; i++) noise = (noise * 31 + k + i) % 1000003 }
+function pads(): void { pad(1); pad(2); pad(3); pad(4); pad(5); pad(6); pad(7); pad(8); pad(9); pad(10); pad(11); pad(12) }
+function maybe(i: number): Found | undefined { pads(); pads(); if (Math.floor(i) % 3 === 0) return undefined; return { x: i, y: noise } }
+function always(i: number): Found { pads(); pads(); return { x: i * 2, y: noise } }
+function readsAtOnce(item: Item): number {
+  const found = maybe(item.id);
+  if (found) return found.x + found.y;
+  return item.weight + item.label.length;
+}
+function readsBehindALoop(item: Item): number {
+  const found = maybe(item.id);
+  if (found) {
+    for (let i = 0; i < 4; i++) pad(i);
+    return found.y - found.x + noise;
+  }
+  return item.weight + item.label.length;
+}
+function readsWhatIsAlwaysThere(item: Item): number {
+  const found = always(item.id);
+  if (found.x > 7) return found.x + found.y;
+  return item.weight + item.label.length + found.y;
+}
+function storesBefore(item: Item): number {
+  item.weight = item.id + 1;
+  const found = maybe(item.weight);
+  if (found) return found.x * 2 + found.y;
+  return item.weight + item.label.length;
+}
+const kept: { [name: string]: (item: Item) => number } = { readsAtOnce, readsBehindALoop, readsWhatIsAlwaysThere, storesBefore };
+for (const name in kept) {
+  for (const create of [make, grown]) {
+    const results: number[] = [];
+    for (let i = 0; i < 7; i++) results.push(kept[name]!(create(i)));
+    console.log(name, create.name, results.join(" "));
+  }
+}
+//// runtime-created-object-has-fields/base.ts
+export class Base {
+  link?: Base; other?: Base | null; word?: string; any: unknown; flag?: boolean; count?: number; big?: bigint;
+  declare run: (x: number) => number; declare twice: (x: number) => number; declare name: string | undefined;
+  constructor(name?: string) { this.run = x => x + 1; this.twice = x => x * 2; this.name = name; }
+}
+//// runtime-created-object-has-fields/heir.js
+import { Base } from "./base.ts";
+export class Heir extends Base {
+  constructor(name) { super(name); }
+}
+export function viaValue(some, name) { return new some(name); }
+//// runtime-created-object-has-fields/main.ts
+// A class whose object is made by the run time (an heir in untyped text, `new` of a value, Reflect.construct) has the fields it is born with, each `undefined` until it is stored to.
+import { Base } from "./base.ts";
+import { Heir, viaValue } from "./heir.js";
+function look(base: Base): string {
+  return [base.link, base.other, base.word, base.any, base.flag, base.count, base.big, base.name].map(value => value === undefined ? "u" : String(value instanceof Base ? "B" : value)).join(",") + " " + base.run(1) + " " + base.twice(2) + " " + Object.keys(base).join("");
+}
+const made: Base[] = [new Heir("a") as Base, viaValue(Base, "b") as Base, Reflect.construct(Base, ["c"], Heir) as Base, Reflect.construct(Base, []) as Base, new Base("e")];
+for (const base of made) console.log(look(base), base instanceof Heir, Object.getPrototypeOf(base) === Heir.prototype || Object.getPrototypeOf(base) === Base.prototype);
+made[0].link = made[1]; made[0].any = 5; made[0].word = "w"; made[1].other = null; made[1].flag = false; made[1].count = 0; made[2].big = 7n; made[2].any = made[0];
+for (const base of made) console.log(look(base));
+let garbage: unknown[] = [];
+for (let round = 0; round < 60; round++) { garbage = []; for (let i = 0; i < 400; i++) garbage.push(new Heir("g" + i)); }
+console.log(look(garbage[399] as Base), look(made[0]), made[0].run === made[0].run, made[0].run === made[1].run);
+//// same-structure-aliases.ts
+// Type aliases, anonymous object types and `typeof` types with the same or overlapping structure: an object created as one is used as the others.
+type PointA = { x: number; y: number }
+type PointB = { x: number; y: number }
+type PointC = { y: number; x: number }
+type Point3 = { x: number; y: number; z: number }
+type MaybeZ = { x: number; y: number; z?: number }
+type Renamed = PointA
+function show(o: object): string { return Object.keys(o).join() + " " + JSON.stringify(o) }
+function sumA(p: PointA): number { return p.x + p.y }
+function sumB(p: PointB): number { return p.x + p.y }
+function sumC(p: PointC): number { return p.x * 10 + p.y }
+function sumInline(p: { y: number }): number { return p.y + 1 }
+function zOf(p: MaybeZ): number | undefined { return p.z }
+const a: PointA = { x: 1, y: 2 }
+const b: PointB = { y: 4, x: 3 }
+const c: PointC = { y: 6, x: 5 }
+const d: Point3 = { z: 9, x: 7, y: 8 }
+const e: Renamed = { x: 10, y: 11 }
+const inferred = { x: 12, y: 13 }
+const template = { x: 0, y: 0, note: "t" }
+type FromValue = typeof template
+const f: FromValue = { note: "f", y: 15, x: 14 }
+const points: PointA[] = [a, b, c, d, e, inferred, f, template]
+console.log(points.map(sumA).join(), points.map(sumB).join(), points.map(sumC).join(), points.map(sumInline).join())
+console.log(points.map(show).join(" ; "))
+
+const maybes: MaybeZ[] = [a, b, c, d, e]
+console.log(maybes.map(zOf).map(String).join(), maybes.map(p => "z" in p).join())
+const viaMaybe: MaybeZ = a
+viaMaybe.z = 3
+console.log(show(a), zOf(a), (a as MaybeZ).z, sumA(a), viaMaybe === a)
+
+function moveB(p: PointB, by: number): void { p.x += by; p.y -= by }
+for (const p of points) moveB(p, 0.5)
+console.log(a.x, b.y, c.x, d.z, e.y, inferred.x, f.note, template.y, points.map(sumC).join())
+
+type Segment = { from: PointA; to: PointB }
+type Route = { segments: Segment[]; isLoop: boolean }
+const segment: Segment = { from: c, to: d }
+const route: Route = { segments: [segment, { from: a, to: a }], isLoop: false }
+console.log(route.segments.map(s => sumA(s.from) + ":" + sumB(s.to)).join(), route.segments[1].from === route.segments[1].to, segment.to === d, (segment.to as Point3).z)
+segment.to = { x: -1, y: -2 }
+console.log(show(segment.to), "z" in segment.to, zOf(segment.to), d.z)
+
+// One alias name, two types, with the kinds of the fields the other way round.
+function first(): string { type Local = { v: number; w: string }; const l: Local = { v: 1, w: "a" }; return show(l) + (l.v + 1) + (l.w + 1) }
+function second(): string { type Local = { w: number; v: string }; const l: Local = { w: 2, v: "b" }; return show(l) + (l.v + 1) + (l.w + 1) }
+console.log(first(), second())
+
+// A field name that is a number in one type and a string in another; both are read through a third type.
+type NumV = { v: number }
+type StrV = { v: string }
+type AnyV = { v: unknown }
+const numV: NumV = { v: 1.5 }
+const strV: StrV = { v: "s" }
+const anyVs: AnyV[] = [numV, strV, { v: null }, { v: [1] }, { v: undefined }, { v: numV }]
+console.log(anyVs.map(o => typeof o.v).join(), numV.v + 1, strV.v + 1, anyVs[5].v === numV)
+numV.v = -0
+strV.v = ""
+console.log(anyVs.map(o => Object.is(o.v, -0) ? "-0" : JSON.stringify(o.v)).map(String).join("|"))
+
+// The type of a parameter written in place, with the fields in another order and one more optional field each time.
+function inPlace1(p: { y: number; x: number; tag?: string }): string { return p.x + "/" + p.y + "/" + p.tag }
+function inPlace2(p: { tag?: string; weight?: number; x: number }): string { return p.x + "/" + p.tag + "/" + p.weight }
+console.log(points.map(inPlace1).join(), points.map(inPlace2).join())
+const tagged: { x: number; y: number; tag?: string } = b
+tagged.tag = "late"
+console.log(inPlace1(b), inPlace2(b), show(b), inPlace1(a), inPlace2(d))
+
+let total = 0
+for (let i = 0; i < 4000; i++) { const p = points[i & 7]; total += sumA(p) + sumC(p) + sumInline(p) + (zOf(maybes[i % 5]) ?? 0) }
+console.log(total)
+//// self-expanding-types.ts
+interface Grow<T> { value: T; more?: Grow<Grow<T>> }
+interface Key { key: number }
+interface Holder<T> { held: T; inner?: Holder<Holder<T> & Key> }
+interface Left<T> { item: T; right?: Right<T[]> }
+interface Right<T> { item: T; left?: Left<T[]> }
+type Pair<T> = { first: T; rest?: Pair<[T, T]> };
+interface WithCall<T> { value: T; run?: () => number; more?: WithCall<WithCall<T>> }
+class Made { size = 2 }
+interface WithInstance<T> { value: T; made?: Made; more?: WithInstance<WithInstance<T>> }
+
+function grow(): Grow<Key> {
+  return { value: { key: 1 }, more: { value: { value: { key: 2 } } } };
+}
+function hold(h: Holder<Key>): Holder<Key> {
+  return h;
+}
+function parsed<T>(text: string): T {
+  return JSON.parse(text);
+}
+
+const grown = grow();
+const key: Key = { key: 3 };
+const held = hold({ held: key, inner: { held: Object.assign({ held: key }, key) } });
+const left: Left<number> = { item: 4, right: { item: [5], left: { item: [[6]] } } };
+const pair: Pair<number> = { first: 7, rest: { first: [8, 9] } };
+const called: WithCall<Key> = { value: key, run: () => 10, more: { value: { value: key } } };
+const instance: WithInstance<Key> = { value: key, made: new Made(), more: { value: { value: key, made: new Made() } } };
+const far = parsed<Grow<Key>>('{"value":{"key":11},"more":{"value":{"value":{"key":12}},"more":{"value":{"value":{"value":{"key":13}}}}}}');
+
+console.log(grown.value.key, grown.more?.value.value.key, held.held.key, held.inner?.held.key, held.inner?.held.held.key);
+console.log(left.item, left.right?.item[0], left.right?.left?.item[0][0], pair.first, pair.rest?.first[1]);
+console.log(called.run?.(), called.more?.value.value.key, instance.made?.size, instance.more?.value.made?.size);
+console.log(far.value.key, far.more?.value.value.key, far.more?.more?.value.value.value.key);
+//// self-referential-mapped-constraint.ts
+// A type parameter can be constrained by a mapped type over itself: `F extends Selectors<F>`, as in reselect and Redux Toolkit.
+type Same<T> = { [K in keyof T]: T[K] };
+function count<F extends Same<F>>(table: F): number { return Object.keys(table).length; }
+console.log(count({ a: 1, b: "x" }));
+
+type Selectors<T extends Record<string, (...args: never[]) => unknown>> = { [K in keyof T]: T[K] };
+function names<F extends Selectors<F>>(table: F): (keyof F)[] { return Object.keys(table) as (keyof F)[]; }
+console.log(names({ one: () => 1, two: () => "2" }).join());
+
+class Registry<F extends Same<F>> {
+  constructor(public table: F) {}
+  get<K extends keyof F>(key: K): F[K] { return this.table[key]; }
+}
+console.log(new Registry({ x: 1, y: "why" }).get("y"));
+
+type ReadonlySame<T> = { readonly [K in keyof T]: T[K] };
+function freeze<F extends ReadonlySame<F>>(table: F): F { return Object.freeze(table); }
+console.log(freeze({ a: 1 }).a);
+
+type Optional<T> = { [K in keyof T]?: T[K] };
+function merge<F extends Optional<F>>(into: F, from: Optional<F>): F { return Object.assign(into, from); }
+console.log(JSON.stringify(merge({ a: 1, b: 2 }, { b: 3 })));
+
+function nested<F extends Readonly<Same<F>>>(table: F): number { return Object.keys(table).length; }
+console.log(nested({ a: 1, b: 2, c: 3 }));
+
+declare const declaredOnly: { pick: <F extends Same<F>>(table: F) => number };
+console.log(typeof declaredOnly);
+//// setter-only-literal.ts
+////= memoizeOne-2
+let built = 0;
+////= rulesOf
+////= describe
+const described = memoizeOne(describe);
+
+interface Sink {
+  value?: number;
+  seen: number;
+}
+function createSink(): Sink {
+  const sink: Sink = {
+    set value(given: number | undefined) {
+      sink.seen += given ?? 0;
+    },
+    seen: 0,
+  };
+  return sink;
+}
+function feed(sink: Sink): number {
+  sink.value = 4;
+  sink.value = 5;
+  return sink.seen;
+}
+const fed = memoizeOne(feed);
+const sink = createSink();
+console.log(fed(sink), sink.value, sink.seen, Object.keys(sink).join());
+delete sink.value;
+sink.value = 11;
+console.log(sink.value, sink.seen, feed(sink), Object.keys(sink).join());
+//// shadowing-builtin-property-name.ts
+// An own property with the name of a built-in method (`toString`, `valueOf` ..) on an object that the program created.
+function attempt(label: string, f: () => unknown) { try { console.log(label, String(f())) } catch (e) { console.log(label, (e as Error).constructor.name) } }
+function anySet(o: any, k: PropertyKey, v: unknown) { o[k] = v }
+interface Rec { e?: number }
+interface View { e?: number; toString?: () => string }
+function make(flag: boolean): Rec { return flag ? { e: 1 } : { e: 2 } }
+attempt("1", () => { const o = make(true); const v: View = o; v.toString = undefined; return Object.keys(o) })
+attempt("2", () => { const o = make(true); const v: View = o; v.toString = () => "own"; return String(o) + Object.keys(o) })
+attempt("3", () => { const o = make(true); const v: View = o; delete v.toString; v.toString = () => "own"; return String(o) + Object.keys(o) })
+attempt("4", () => { const o = make(true); return Reflect.set(o, "constructor", true, Object.create(o)) })
+attempt("5", () => { const o = make(true); const d = Object.create(o); d.constructor = true; d.toString = () => "d"; return String(d) + Object.keys(d) })
+attempt("6", () => { const p: any = new Proxy<Rec>({ e: 1 }, {}); p.toString = 1; return Object.keys(p) })
+attempt("7", () => { const o = make(true); anySet(o, "toString", 1); anySet(o, "valueOf", o); return Object.keys(o) })
+attempt("8", () => { const o = make(true); return Reflect.set(o, "toString", 1) + " " + Object.keys(o) })
+attempt("9", () => { const o = make(true); return Reflect.set(o, "toString", 1, {}) })
+attempt("10", () => { const o: any = { plain: 1 }; return Reflect.set(o, "constructor", true, Object.create(o)) })
+attempt("11", () => { const p: any = new Proxy({ plain: 1 } as any, {}); p.toString = 1; return Object.keys(p) })
+attempt("12", () => { const o = make(true); Object.defineProperty(o, "toString", { value: () => "defined", configurable: true }); return String(o) })
+class K { e = 1 }
+attempt("13", () => { const o = new K(); const v: View = o; v.toString = () => "own"; return String(o) + Object.keys(o) })
+attempt("14", () => { const o = new K(); return Reflect.set(o, "constructor", true, Object.create(o)) })
+attempt("15", () => { const o = new K(); anySet(o, "hasOwnProperty", 1); return Object.keys(o) })
+//// shared-nested-built-by-assignments.ts
+// An object that typed code holds is stored in an object that travels as `any` or `unknown` before a typed function first holds it. The declared
+// type of the inner object is looser than the type it is read as there, but the object has everything that type requires. It stays the same
+// object: a change made through one reference is seen through the other.
+interface Compile { outfile: string; target?: string }
+interface Loose { outfile?: string; target?: string }
+interface Build { entrypoints: string[]; compile: Compile; fold?: boolean }
+const madeCompile: Compile = { outfile: "made" }
+const madeBuild: Build = { entrypoints: ["made"], compile: madeCompile }
+const madeLoose: Loose = { target: "made" }
+function hide(value: unknown): any { return value }
+function out(build: Build): string { return build.entrypoints.join() + " " + build.compile.outfile + " " + build.compile.target + " " + build.fold }
+console.log(out(madeBuild), madeLoose.target)
+const inner: Loose = { outfile: "first" }
+const outer: any = {}
+outer.entrypoints = ["a"]
+outer.compile = inner
+const build = outer as Build
+console.log(out(build))
+inner.outfile = "second"
+console.log(out(build), outer.compile === inner, outer === build)
+//// shared-nested-depth-two.ts
+// An object that typed code holds is stored in an object that travels as `any` or `unknown` before a typed function first holds it. The declared
+// type of the inner object is looser than the type it is read as there, but the object has everything that type requires. It stays the same
+// object: a change made through one reference is seen through the other.
+interface Compile { outfile: string; target?: string }
+interface Loose { outfile?: string; target?: string }
+interface Build { entrypoints: string[]; compile: Compile; fold?: boolean }
+const madeCompile: Compile = { outfile: "made" }
+const madeBuild: Build = { entrypoints: ["made"], compile: madeCompile }
+const madeLoose: Loose = { target: "made" }
+function hide(value: unknown): any { return value }
+function out(build: Build): string { return build.entrypoints.join() + " " + build.compile.outfile + " " + build.compile.target + " " + build.fold }
+console.log(out(madeBuild), madeLoose.target)
+interface Deep { above: { build: Build } }
+const madeDeep: Deep = { above: { build: madeBuild } }
+function deep(value: Deep): string { return out(value.above.build) }
+console.log(deep(madeDeep))
+const inner: Loose = { outfile: "first" }
+const outer: any = { above: { build: { entrypoints: ["a"], compile: inner } } }
+console.log(deep(outer))
+inner.outfile = "second"
+console.log(deep(outer), outer.above.build.compile === inner)
+//// shared-nested-extra-and-wider-members.ts
+// An object that typed code holds is stored in an object that travels as `any` before a typed function first holds it. The inner object has a
+// member more than the type it is read as there, and another member is declared wider than that type allows, but holds a value that fits.
+// It stays the same object.
+interface Compile { outfile: string; target?: string }
+interface Build { entrypoints: string[]; compile: Compile }
+const madeCompile: Compile = { outfile: "made" }
+const madeBuild: Build = { entrypoints: ["made"], compile: madeCompile }
+function out(build: Build): string { return build.entrypoints.join() + " " + build.compile.outfile + " " + build.compile.target }
+function pick(): string | undefined { return madeBuild.entrypoints.length ? "first" : undefined }
+console.log(out(madeBuild))
+const inner = { outfile: pick() ?? 1, extra: 1 }
+const outer: any = { entrypoints: ["a"], compile: inner }
+console.log(out(outer))
+inner.outfile = "second"
+console.log(out(outer), outer.compile === inner, inner.extra)
+console.log(out({ entrypoints: ["b"], compile: { outfile: pick() ?? 1, extra: 2 } } as Build))
+//// shared-nested-in-array.ts
+// An object that typed code holds is stored in an object that travels as `any` or `unknown` before a typed function first holds it. The declared
+// type of the inner object is looser than the type it is read as there, but the object has everything that type requires. It stays the same
+// object: a change made through one reference is seen through the other.
+interface Compile { outfile: string; target?: string }
+interface Loose { outfile?: string; target?: string }
+interface Build { entrypoints: string[]; compile: Compile; fold?: boolean }
+const madeCompile: Compile = { outfile: "made" }
+const madeBuild: Build = { entrypoints: ["made"], compile: madeCompile }
+const madeLoose: Loose = { target: "made" }
+function hide(value: unknown): any { return value }
+function out(build: Build): string { return build.entrypoints.join() + " " + build.compile.outfile + " " + build.compile.target + " " + build.fold }
+console.log(out(madeBuild), madeLoose.target)
+interface Many { list: Compile[] }
+const madeMany: Many = { list: [madeCompile] }
+function outs(many: Many): string { return many.list.map(compile => compile.outfile).join() }
+console.log(outs(madeMany))
+const inner: Loose = { outfile: "first" }
+const outer: any = { list: [inner] }
+console.log(outs(outer))
+inner.outfile = "second"
+console.log(outs(outer), outer.list[0] === inner)
+//// shared-nested-in-discriminated-union.ts
+// An object that typed code holds is stored in an object that travels as `any` before a typed function first holds it. The type it is read as
+// there is one part of a discriminated union. The declared type of the inner object is looser than that part, but the object has everything
+// the part requires. It stays the same object: a change made through one reference is seen through the other.
+interface Click { kind: "click"; label: string; run: () => string }
+interface Key { kind: "key"; code: number; run: () => string }
+interface LooseClick { kind: "click"; label?: string; run: () => string }
+interface Binding { id: number; on: Click | Key }
+const knownClick: Binding = { id: 1, on: { kind: "click", label: "known", run: () => "clicked" } }
+const knownKey: Binding = { id: 2, on: { kind: "key", code: 13, run: () => "pressed" } }
+const knownLoose: LooseClick = { kind: "click", run: () => "loose" }
+function hide(value: unknown): any { return value }
+function describe(binding: Binding): string { const on = binding.on; return binding.id + " " + (on.kind === "click" ? on.label : String(on.code)) + " " + on.run() }
+console.log(describe(knownClick), describe(knownKey), knownLoose.run())
+const inner: LooseClick = { kind: "click", label: "first", run: () => "ran" }
+const outer: any = { id: 3, on: inner }
+console.log(describe(outer))
+inner.label = "second"
+console.log(describe(outer), outer.on === inner)
+console.log(describe(hide({ id: 4, on: { kind: "click", label: knownLoose.label ?? (knownClick.id ? "third" : undefined), run: () => "ran again" } })))
+//// shared-nested-in-tuple.ts
+// An object that typed code holds is stored in an object that travels as `any` or `unknown` before a typed function first holds it. The declared
+// type of the inner object is looser than the type it is read as there, but the object has everything that type requires. It stays the same
+// object: a change made through one reference is seen through the other.
+interface Compile { outfile: string; target?: string }
+interface Loose { outfile?: string; target?: string }
+interface Build { entrypoints: string[]; compile: Compile; fold?: boolean }
+const madeCompile: Compile = { outfile: "made" }
+const madeBuild: Build = { entrypoints: ["made"], compile: madeCompile }
+const madeLoose: Loose = { target: "made" }
+function hide(value: unknown): any { return value }
+function out(build: Build): string { return build.entrypoints.join() + " " + build.compile.outfile + " " + build.compile.target + " " + build.fold }
+console.log(out(madeBuild), madeLoose.target)
+interface Pair { pair: [Compile, number] }
+const madePair: Pair = { pair: [madeCompile, 1] }
+function first(value: Pair): string { return value.pair[0].outfile }
+console.log(first(madePair))
+const inner: Loose = { outfile: "first" }
+const outer: any = { pair: [inner, 1] }
+console.log(first(outer))
+inner.outfile = "second"
+console.log(first(outer), outer.pair[0] === inner)
+//// shared-nested-in-union-with-boolean.ts
+// An object that typed code holds is stored in an object that travels as `any` or `unknown` before a typed function first holds it. The declared
+// type of the inner object is looser than the type it is read as there, but the object has everything that type requires. It stays the same
+// object: a change made through one reference is seen through the other.
+interface Compile { outfile: string; target?: string }
+interface Loose { outfile?: string; target?: string }
+interface Build { entrypoints: string[]; compile: Compile; fold?: boolean }
+const madeCompile: Compile = { outfile: "made" }
+const madeBuild: Build = { entrypoints: ["made"], compile: madeCompile }
+const madeLoose: Loose = { target: "made" }
+function hide(value: unknown): any { return value }
+function out(build: Build): string { return build.entrypoints.join() + " " + build.compile.outfile + " " + build.compile.target + " " + build.fold }
+console.log(out(madeBuild), madeLoose.target)
+interface Either { compile?: boolean | Compile | null }
+const madeEither: Either = { compile: madeCompile }
+function either(value: Either): string { const compile = value.compile; return compile && typeof compile === "object" ? compile.outfile : String(compile) }
+console.log(either(madeEither), either({ compile: true }), either({}))
+const inner: Loose = { outfile: "first" }
+const outer: any = { compile: inner }
+console.log(either(outer))
+inner.outfile = "second"
+console.log(either(outer), outer.compile === inner)
+//// shared-nested-in-untyped-argument.ts
+// An object that typed code holds is stored in an object that travels as `any` or `unknown` before a typed function first holds it. The declared
+// type of the inner object is looser than the type it is read as there, but the object has everything that type requires. It stays the same
+// object: a change made through one reference is seen through the other.
+interface Compile { outfile: string; target?: string }
+interface Loose { outfile?: string; target?: string }
+interface Build { entrypoints: string[]; compile: Compile; fold?: boolean }
+const madeCompile: Compile = { outfile: "made" }
+const madeBuild: Build = { entrypoints: ["made"], compile: madeCompile }
+const madeLoose: Loose = { target: "made" }
+function hide(value: unknown): any { return value }
+function out(build: Build): string { return build.entrypoints.join() + " " + build.compile.outfile + " " + build.compile.target + " " + build.fold }
+console.log(out(madeBuild), madeLoose.target)
+const inner: Loose = { outfile: "first" }
+const outer: any = { entrypoints: ["a"], compile: inner }
+console.log(out(outer))
+inner.outfile = "second"
+console.log(out(outer), outer.compile === inner)
+//// shared-nested-in-untyped-return-value.ts
+// An object that typed code holds is stored in an object that travels as `any` or `unknown` before a typed function first holds it. The declared
+// type of the inner object is looser than the type it is read as there, but the object has everything that type requires. It stays the same
+// object: a change made through one reference is seen through the other.
+interface Compile { outfile: string; target?: string }
+interface Loose { outfile?: string; target?: string }
+interface Build { entrypoints: string[]; compile: Compile; fold?: boolean }
+const madeCompile: Compile = { outfile: "made" }
+const madeBuild: Build = { entrypoints: ["made"], compile: madeCompile }
+const madeLoose: Loose = { target: "made" }
+function hide(value: unknown): any { return value }
+function out(build: Build): string { return build.entrypoints.join() + " " + build.compile.outfile + " " + build.compile.target + " " + build.fold }
+console.log(out(madeBuild), madeLoose.target)
+const inner: Loose = { outfile: "first" }
+function make(): Build { return hide({ entrypoints: ["a"], compile: inner }) }
+const build = make()
+console.log(out(build))
+inner.outfile = "second"
+console.log(out(build), (build.compile as unknown) === (inner as unknown))
+//// shared-nested-in-untyped-variable.ts
+// An object that typed code holds is stored in an object literal that is kept in a variable of type `any`, and the variable is passed to a
+// typed function. The declared type of the inner object is looser than the type it is read as there, but the object has everything that
+// type requires. It stays the same object, however many members it has: a change made through one reference is seen through the other.
+interface Step { name: string; first: number; second: number; third: number; fourth: number; fifth: number; sixth: number; run: () => string }
+interface LooseStep { name?: string; first: number; second: number; third: number; fourth: number; fifth: number; sixth: number; run: () => string }
+interface Plan { id: number; step: Step }
+
+const knownPlan: Plan = { id: 1, step: { name: "known", first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, run: () => "ran" } }
+const knownLoose: LooseStep = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, run: () => "loose" }
+function describe(plan: Plan): string {
+  const step = plan.step
+  return plan.id + " " + step.name + " " + (step.first + step.second + step.third + step.fourth + step.fifth + step.sixth) + " " + step.run()
+}
+console.log(describe(knownPlan), knownLoose.name, knownLoose.run())
+
+const inner: LooseStep = { name: "first", first: 1, second: 1, third: 1, fourth: 1, fifth: 1, sixth: 1, run: () => "ran too" }
+const outer: any = { id: 2, step: inner }
+console.log(describe(outer))
+inner.name = "second"
+inner.sixth = 10
+console.log(describe(outer), outer.step === inner)
+//// shared-nested-into-typed-field-via-any.ts
+// An object that typed code holds is stored in an object that travels as `any` or `unknown` before a typed function first holds it. The declared
+// type of the inner object is looser than the type it is read as there, but the object has everything that type requires. It stays the same
+// object: a change made through one reference is seen through the other.
+interface Compile { outfile: string; target?: string }
+interface Loose { outfile?: string; target?: string }
+interface Build { entrypoints: string[]; compile: Compile; fold?: boolean }
+const madeCompile: Compile = { outfile: "made" }
+const madeBuild: Build = { entrypoints: ["made"], compile: madeCompile }
+const madeLoose: Loose = { target: "made" }
+function hide(value: unknown): any { return value }
+function out(build: Build): string { return build.entrypoints.join() + " " + build.compile.outfile + " " + build.compile.target + " " + build.fold }
+console.log(out(madeBuild), madeLoose.target)
+interface Holder { build: Build }
+const holder: Holder = { build: madeBuild }
+const inner: Loose = { outfile: "first" }
+holder.build = hide({ entrypoints: ["a"], compile: inner })
+console.log(out(holder.build))
+inner.outfile = "second"
+console.log(out(holder.build), (holder.build.compile as unknown) === (inner as unknown))
+//// shared-nested-literal-through-function.ts
+// An object that typed code holds is stored in an object that travels as `any` or `unknown` before a typed function first holds it. The declared
+// type of the inner object is looser than the type it is read as there, but the object has everything that type requires. It stays the same
+// object: a change made through one reference is seen through the other.
+interface Compile { outfile: string; target?: string }
+interface Loose { outfile?: string; target?: string }
+interface Build { entrypoints: string[]; compile: Compile; fold?: boolean }
+const madeCompile: Compile = { outfile: "made" }
+const madeBuild: Build = { entrypoints: ["made"], compile: madeCompile }
+const madeLoose: Loose = { target: "made" }
+function hide(value: unknown): any { return value }
+function out(build: Build): string { return build.entrypoints.join() + " " + build.compile.outfile + " " + build.compile.target + " " + build.fold }
+console.log(out(madeBuild), madeLoose.target)
+const inner: Loose = { outfile: "first" }
+const build = hide({ entrypoints: ["a"], compile: inner }) as Build
+console.log(out(build))
+inner.outfile = "second"
+console.log(out(build), (build.compile as unknown) === (inner as unknown))
+build.compile.outfile = "third"
+console.log(inner.outfile)
+//// shared-nested-literal-untyped-spread.ts
+// An object that typed code holds is stored in an object that travels as `any` or `unknown` before a typed function first holds it. The declared
+// type of the inner object is looser than the type it is read as there, but the object has everything that type requires. It stays the same
+// object: a change made through one reference is seen through the other.
+interface Compile { outfile: string; target?: string }
+interface Loose { outfile?: string; target?: string }
+interface Build { entrypoints: string[]; compile: Compile; fold?: boolean }
+const madeCompile: Compile = { outfile: "made" }
+const madeBuild: Build = { entrypoints: ["made"], compile: madeCompile }
+const madeLoose: Loose = { target: "made" }
+function hide(value: unknown): any { return value }
+function out(build: Build): string { return build.entrypoints.join() + " " + build.compile.outfile + " " + build.compile.target + " " + build.fold }
+console.log(out(madeBuild), madeLoose.target)
+const inner: Loose = { outfile: "first" }
+const build = { ...hide({ entrypoints: ["a"] }), compile: inner } as Build
+console.log(out(build))
+inner.outfile = "second"
+console.log(out(build), (build.compile as unknown) === (inner as unknown))
+//// shared-nested-with-function-member.ts
+// An object that typed code holds is stored in an object that travels as `any` before a typed function first holds it. The declared type of
+// the inner object is looser than the type it is read as there, and one of its members is a function. It stays the same object.
+interface Task { name: string; run: () => string }
+interface LooseTask { name?: string; run: () => string }
+interface Job { id: number; task: Task }
+const madeTask: Task = { name: "made", run: () => "ran" }
+const madeJob: Job = { id: 1, task: madeTask }
+const madeLoose: LooseTask = { run: () => "loose" }
+function use(job: Job): string { return job.id + " " + job.task.name + " " + job.task.run() }
+console.log(use(madeJob), madeLoose.run())
+const inner: LooseTask = { name: "first", run: () => "inner" }
+const outer: any = { id: 2, task: inner }
+console.log(use(outer))
+inner.name = "second"
+console.log(use(outer), outer.task === inner)
+//// shared-nested-with-many-members.ts
+// An object that typed code holds is stored in an object literal that passes through a function returning `any` before a typed function first
+// holds it. The inner object has eight or nine members, one of them a function. Its declared type is looser than the type it is read as
+// there, but it has everything that type requires. It stays the same object: a change made through one reference is seen through the other.
+interface Step { name: string; first: number; second: number; third: number; fourth: number; fifth: number; sixth: number; run: () => string }
+interface LooseStep { name?: string; first: number; second: number; third: number; fourth: number; fifth: number; sixth: number; run: () => string }
+interface Plan { id: number; step: Step }
+
+const knownPlan: Plan = { id: 1, step: { name: "known", first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, run: () => "ran" } }
+const knownLoose: LooseStep = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, run: () => "loose" }
+function hide(value: unknown): any { return value }
+function maybe(text: string): string | undefined { return knownPlan.id ? text : undefined }
+function describe(plan: Plan): string {
+  const step = plan.step
+  return plan.id + " " + step.name + " " + (step.first + step.second + step.third + step.fourth + step.fifth + step.sixth) + " " + step.run()
+}
+console.log(describe(knownPlan), knownLoose.name, knownLoose.run())
+
+const inner: LooseStep = { name: "first", first: 1, second: 1, third: 1, fourth: 1, fifth: 1, sixth: 1, run: () => "ran too" }
+const outer = hide({ id: 2, step: inner })
+console.log(describe(outer))
+inner.name = "second"
+console.log(describe(outer), outer.step === inner)
+
+const wider = { name: maybe("third"), first: 1, second: 1, third: 1, fourth: 1, fifth: 1, sixth: 1, seventh: 7, run: () => "ran again" }
+const other = hide({ id: 3, step: wider })
+console.log(describe(other))
+wider.name = "fourth"
+console.log(describe(other), other.step === wider, wider.seventh)
+//// shared-object-in-dictionary-cast-literal.ts
+// An object that typed code holds is a property of an object literal that is cast with `as` to a type whose member is a dictionary
+// (`Record<string, Compile>`). The declared type of the object is looser than the dictionary's value type, but the object has everything
+// that type requires. Reading it out of the dictionary does not throw, and it stays the same object.
+interface Compile { outfile: string; target?: string }
+interface Loose { outfile?: string; target?: string }
+interface Targets { byName: Record<string, Compile> }
+
+const known: Targets = { byName: { first: { outfile: "known.js", target: "bun" } } }
+const knownLoose: Loose = { target: "node" }
+function outfileOf(targets: Targets, name: string): string { return targets.byName[name].outfile }
+console.log(outfileOf(known, "first"), knownLoose.target)
+
+const held: Loose = { outfile: "a.js" }
+const targets = { byName: { held } } as Targets
+console.log(outfileOf(targets, "held"))
+held.outfile = "b.js"
+console.log(outfileOf(targets, "held"), (targets.byName.held as unknown) === (held as unknown))
+//// some-props-are-taken-by-name-and-many-optional-fields-of-the-rest-are-read.ts
+// A component takes some of its props by name and the rest as one object, and reads many optional fields of that object. Most callers leave most of them out.
+declare const process: { argv: string[] };
+declare const console: { log(...values: any[]): void };
+type Props = { children: string; onClick?: () => void; onFocus?: () => void; onBlur?: () => void; tabIndex?: number; autoFocus?: boolean; margin?: number; marginX?: number; marginY?: number; padding?: number; paddingX?: number; paddingY?: number; gap?: number; rowGap?: number; wrap?: "wrap" | "nowrap" };
+let warnings = 0;
+function ifNotInteger(value: number | undefined, name: string): void { if (value !== undefined && !Number.isInteger(value)) warnings += name.length; }
+function box(props: Props): number {
+  const { children, onClick, onFocus, onBlur, tabIndex, autoFocus, ...style } = props;
+  ifNotInteger(style.margin, "margin");
+  ifNotInteger(style.marginX, "marginX");
+  ifNotInteger(style.marginY, "marginY");
+  ifNotInteger(style.padding, "padding");
+  ifNotInteger(style.paddingX, "paddingX");
+  ifNotInteger(style.paddingY, "paddingY");
+  ifNotInteger(style.gap, "gap");
+  ifNotInteger(style.rowGap, "rowGap");
+  style.wrap ??= "nowrap";
+  return children.length + (onClick ? 1 : 0) + (onFocus ? 2 : 0) + (onBlur ? 4 : 0) + (tabIndex ?? 0) + (autoFocus ? 8 : 0) + style.wrap.length + (style.margin ?? 0);
+}
+const given: Props[] = [{ children: "a" }, { children: "bc", margin: 1 }, { padding: 2, children: "d" }, { children: "e", gap: 3, wrap: "wrap" }];
+{ (globalThis as any).kept = [box, given]; const somebody: any = (globalThis as any)[JSON.parse('"somebody"')] ?? {}; somebody[JSON.parse('"something"')] = 1; Object.defineProperty(somebody, JSON.parse('"other"'), { get() { return 1; }, configurable: true }); }
+const rounds = Number(process.argv[2]);
+let sum = 0;
+for (let i = 0; i < rounds; i++) sum += box(given[i & 3]!);
+console.log(sum, warnings);
+//// special-properties-read-by-host.ts
+interface Row { id: number; name: string }
+interface MayPrint { id: number; toString?: () => string; valueOf?: () => unknown; toJSON?: () => unknown }
+class Plain { constructor(public v: number) {} }
+class Printed { constructor(public v: number) {} toString() { return "Printed " + this.v; } }
+class PrintedHeir extends Printed { w = 1; }
+class Valued { constructor(public v: number) {} valueOf() { return this.v * 2; } }
+class Both { constructor(public v: number) {} toString() { return "s" + this.v; } valueOf() { return this.v; } }
+class Primitive { constructor(public v: number) {} [Symbol.toPrimitive](hint: string) { return hint + this.v; } }
+class Tagged { constructor(public v: number) {} get [Symbol.toStringTag]() { return "Tagged" + this.v; } }
+class OwnPrinter { toString: () => string; constructor(public v: number) { this.toString = () => "own " + this.v; } }
+function hide(value: unknown): any { return value; }
+let count = 0;
+////= show-2	out = JSON.stringify(make()
+const tag = (v: unknown) => Object.prototype.toString.call(v);
+const every = (v: unknown): unknown[] => { const x = hide(v); const out: unknown[] = []; for (const f of [() => String(x), () => `${x}`, () => x + "", () => +x, () => x * 1, () => x == "1", () => x < 5, () => tag(x), () => [x].join(), () => [x, x].sort().length, () => JSON.stringify([x]), () => JSON.stringify([new Date(0), x])]) { try { out.push(f()); } catch (e) { out.push((e as Error).name); } } return out.map(o => typeof o === "number" && o !== o ? "NaN" : o); };
+const row = (id: number): Row => ({ id, name: "n" + id });
+show("a record", () => every(row(1)));
+show("a record, again, and another", () => [every(row(1)), every(row(2))]);
+show("instances", () => [new Plain(1), new Printed(2), new PrintedHeir(3), new Valued(4), new Both(5), new Primitive(6), new Tagged(7), new OwnPrinter(8)].map(every));
+show("instances, again", () => [new Plain(1), new Printed(2), new PrintedHeir(3), new Valued(4), new Both(5), new Primitive(6), new Tagged(7), new OwnPrinter(8)].map(every));
+show("an optional toString: absent, there, absent", () => { const a: MayPrint = { id: 1 }, b: MayPrint = { id: 2 }, c: MayPrint = { id: 3 }; b.toString = () => "field " + b.id; return [every(a), every(b), every(c), every(b), every(a)]; });
+show("an optional valueOf: absent, there, absent", () => { const a: MayPrint = { id: 1 }, b: MayPrint = { id: 2 }; b.valueOf = () => 42; return [every(a), every(b), every(a)]; });
+show("an optional toJSON: absent, there, absent", () => { const a: MayPrint = { id: 1 }, b: MayPrint = { id: 2 }; b.toJSON = () => "field"; return [every(a), every(b), every(a)]; });
+show("an optional toString set, then deleted", () => { const a: MayPrint = { id: 1 }; const out = [every(a)]; a.toString = () => "set"; out.push(every(a)); delete a.toString; out.push(every(a)); return out; });
+show("an optional toString that is undefined", () => { const a: MayPrint = { id: 1 }, b: MayPrint = { id: 2 }; a.toString = undefined; return [every(a), every(b)]; });
+for (const name of ["toString", "valueOf", "toJSON"]) show("an extra " + name + ": without, with, without", () => { const a = row(1), b = row(2), c = row(3); const first = every(a); hide(b)[name] = () => "extra " + name; return [first, every(b), every(c), every(a), every(b)]; });
+show("an extra Symbol.toPrimitive", () => { const a = row(1), b = row(2); const first = every(a); hide(b)[Symbol.toPrimitive] = () => "primitive"; return [first, every(b), every(a)]; });
+show("an extra Symbol.toStringTag", () => { const a = row(1), b = row(2); const first = every(a); hide(b)[Symbol.toStringTag] = "Mine"; return [first, every(b), every(a)]; });
+show("an extra that is deleted again", () => { const a = row(1); const out = [every(a)]; hide(a).toString = () => "extra"; out.push(every(a)); delete hide(a).toString; out.push(every(a)); return out; });
+show("a prototype that gets each late and loses it", () => { const proto = JSON.parse("{}"); const a = row(1), b = row(2); Object.setPrototypeOf(a, proto); Object.setPrototypeOf(b, proto); const out = [every(a), every(b)]; proto.toString = function (this: Row) { return "late " + this.id; }; out.push(every(a), every(b)); proto.valueOf = () => 7; out.push(every(a)); proto[Symbol.toPrimitive] = () => "p"; out.push(every(b)); proto[Symbol.toStringTag] = "T"; out.push(every(a)); proto.toJSON = () => "j"; out.push(every(b)); delete proto.toString; delete proto.valueOf; delete proto[Symbol.toPrimitive]; delete proto[Symbol.toStringTag]; delete proto.toJSON; out.push(every(a), every(b)); return out; });
+show("a prototype whose method is replaced", () => { const proto = JSON.parse("{}"); proto.toString = () => "first"; const a = row(1); Object.setPrototypeOf(a, proto); const out = [every(a), every(a)]; proto.toString = () => "second"; out.push(every(a)); return out; });
+show("a prototype's prototype gets one late", () => { const top = JSON.parse("{}"), proto = Object.create(top); const a = row(1); Object.setPrototypeOf(a, proto); const out = [every(a)]; top.toString = () => "top"; out.push(every(a)); proto.toString = () => "nearer"; out.push(every(a)); return out; });
+show("the prototype is changed", () => { const one = JSON.parse("{}"), two = JSON.parse("{}"); one.toString = () => "one"; two.toString = () => "two"; const a = row(1); const out = [every(a)]; Object.setPrototypeOf(a, one); out.push(every(a)); Object.setPrototypeOf(a, two); out.push(every(a)); Object.setPrototypeOf(a, Object.prototype); out.push(every(a)); return out; });
+show("a null prototype", () => { const a = row(1); Object.setPrototypeOf(a, null); return [every(a), every(row(2))]; });
+show("a typed object as the prototype of a plain one", () => { const proto: MayPrint = { id: 1 }; const child = Object.create(proto); const out = [every(child)]; proto.toString = () => "from a typed prototype"; out.push(every(child)); delete proto.toString; out.push(every(child)); return out; });
+show("a typed object as the prototype of a typed one", () => { const proto: MayPrint = { id: 1 }; const a = row(1); Object.setPrototypeOf(a, proto); const out = [every(a)]; proto.toString = () => "typed above typed"; out.push(every(a)); delete proto.toString; out.push(every(a)); return out; });
+show("an accessor on the prototype", () => { let n = 0; const proto = Object.defineProperty(JSON.parse("{}"), "toString", { get() { const k = ++n; return () => "got " + k; } }); const a = row(1); Object.setPrototypeOf(a, proto); return [String(a), String(a), `${hide(a)}`]; });
+show("frozen, sealed, closed", () => [Object.freeze(row(1)), Object.seal(row(2)), Object.preventExtensions(row(3))].map(every));
+show("many of one shape", () => { const out: string[] = []; for (let i = 0; i < 30; i++) out.push(String(row(i)) + tag(row(i)) + String(new Printed(i))); return out.join(); });
+//// spread-copies-to-plain-objects.ts
+// The spread of a typed object whose keys are in an expected order is copied field by field into a plain object. Every other source takes the generic path, and both give what plain Bun gives.
+type Point = { x: number; y: number }
+type Named = { name: string; tag?: string; point: Point }
+
+class Vector {
+  x: number
+  y: number
+  #secret = 7
+  constructor(x: number, y: number) {
+    this.x = x
+    this.y = y
+  }
+  get length(): number {
+    return Math.hypot(this.x, this.y)
+  }
+  secret(): number {
+    return this.#secret
+  }
+}
+
+function describe(label: string, copy: object): void {
+  console.log(label, JSON.stringify(copy), Object.keys(copy).join(","), Object.getPrototypeOf(copy) === Object.prototype, Object.isFrozen(copy), Object.isExtensible(copy))
+}
+
+function copyPoint(point: Point): object {
+  return { ...point }
+}
+
+function copyPointWithStores(point: Point, y: number, z: number): object {
+  return { ...point, y, z }
+}
+
+function copyPointAfterStores(point: Point, v: number, w: number): object {
+  return { v, w, ...point }
+}
+
+function copyNamed(named: Named): object {
+  return { ...named, tag: "copied" }
+}
+
+function copyVector(vector: Vector): object {
+  return { ...vector }
+}
+
+function copyVectorWithStore(vector: Vector, length: number): object {
+  return { ...vector, length }
+}
+
+function copyNullable(point: Point | null | undefined): object {
+  return { ...point }
+}
+
+const points: Point[] = []
+for (let i = 0; i < 4; i++) points.push({ x: i, y: -i })
+for (const point of points) {
+  describe("point", copyPoint(point))
+  describe("stores", copyPointWithStores(point, 10, 20))
+  describe("stores first", copyPointAfterStores(point, 30, 40))
+  describe("nullable", copyNullable(point))
+}
+describe("null", copyNullable(null))
+describe("undefined", copyNullable(undefined))
+
+const copy = copyPoint(points[1]) as Point
+copy.x = 100
+console.log(points[1].x, copy.x)
+describe("copy of a copy", copyPoint(copy))
+
+describe("named", copyNamed({ name: "a", point: points[0] }))
+describe("named with tag", copyNamed({ name: "b", tag: "t", point: points[1] }))
+describe("named in another order", copyNamed({ point: points[2], tag: "u", name: "c" }))
+const shared = copyNamed({ name: "d", point: points[3] }) as Named
+console.log(shared.point === points[3])
+
+const vector = new Vector(3, 4)
+describe("vector", copyVector(vector))
+describe("vector with store", copyVectorWithStore(vector, -1))
+console.log("length" in copyVector(vector), copyVector(vector) instanceof Vector, vector.secret())
+
+describe("frozen", copyPoint(Object.freeze({ x: 1, y: 2 })))
+describe("sealed", copyPoint(Object.seal({ x: 3, y: 4 })))
+describe("not extensible", copyPoint(Object.preventExtensions({ x: 5, y: 6 })))
+
+const extended: Point = { x: 7, y: 8 }
+;(extended as any).z = 9
+;(extended as any)[Symbol.for("s")] = 10
+const extendedCopy = copyPoint(extended)
+describe("extended", extendedCopy)
+console.log((extendedCopy as any)[Symbol.for("s")])
+
+const shortened: Point = { x: 11, y: 12 }
+delete (shortened as any).x
+describe("shortened", copyPoint(shortened))
+;(shortened as any).x = 13
+describe("restored in another order", copyPoint(shortened))
+
+const hidden: Point = { x: 14, y: 15 }
+Object.defineProperty(hidden, "x", { enumerable: false })
+describe("hidden", copyPoint(hidden))
+
+let reads = 0
+const computed: Point = { x: 16, y: 17 }
+Object.defineProperty(computed, "y", { get() { return ++reads }, enumerable: true })
+describe("computed", copyPoint(computed))
+describe("computed", copyPoint(computed))
+console.log(reads)
+
+describe("from outside", copyPoint(JSON.parse('{"y":1,"x":2,"extra":3}')))
+//// spread-of-a-record-with-extra-properties.ts
+// `{ ...p }` where p is a typed record that was given properties its type does not have: the copy has them too, in the same order, and shares nothing with p. Every kind of extra property that cannot be copied word by word is here as well.
+interface Point {
+  x: number;
+  y: number;
+  name: string;
+  weight?: number;
+}
+
+function make(i: number): Point {
+  return { x: i, y: i + 0.5, name: "p" + i };
+}
+
+function mark(p: Point, names: string[], from: number): Point {
+  const open = p as unknown as Record<string, unknown>;
+  for (let i = 0; i < names.length; i++) open[names[i]!] = from + i;
+  return p;
+}
+
+function copy(p: Point): Point {
+  return { ...p };
+}
+
+function copyAndSet(p: Point, x: number): Point {
+  return { ...p, x };
+}
+
+function show(p: Point): string {
+  return Object.keys(p).join() + " " + JSON.stringify(p);
+}
+
+const one = mark(make(1), ["mark"], 10);
+let kept: Point = one;
+let sum = 0;
+for (let i = 0; i < 300; i++) {
+  kept = copy(one);
+  sum += kept.x + (kept as unknown as { mark: number }).mark;
+}
+console.log(sum, show(kept), kept === one);
+
+(kept as unknown as { mark: number }).mark = 99;
+kept.x = 7;
+console.log(show(one), show(kept));
+(one as unknown as { mark: number }).mark = 11;
+console.log(show(one), show(kept), show(copy(kept)), show(copy(copy(one))));
+
+for (const count of [2, 3, 5, 6, 7, 9, 20]) {
+  const names: string[] = [];
+  for (let i = 0; i < count; i++) names.push("extra" + i);
+  const many = mark(make(count), names, 100);
+  let last = many;
+  for (let i = 0; i < 40; i++) last = copy(many);
+  console.log(count, show(last) === show(many), Object.keys(last).length, (last as unknown as Record<string, number>)["extra" + (count - 1)]);
+}
+
+const changed = mark(make(2), ["mark"], 20);
+for (let i = 0; i < 40; i++) kept = copyAndSet(changed, i);
+console.log(show(kept), show(changed));
+
+const large = mark(make(3), ["mark"], 30);
+large.x = 2 ** 31 + 0.25;
+large.y = -(2 ** 30) - 5;
+for (let i = 0; i < 40; i++) kept = copy(large);
+large.x = 1;
+console.log(show(kept), show(large));
+
+const optional = mark(make(4), ["mark"], 40);
+optional.weight = 3;
+for (let i = 0; i < 40; i++) kept = copy(optional);
+console.log(show(kept));
+const optionalFirst = make(5);
+optionalFirst.weight = 4;
+mark(optionalFirst, ["mark"], 50);
+for (let i = 0; i < 40; i++) kept = copy(optionalFirst);
+console.log(show(kept));
+
+const symbol = Symbol("tag");
+const tagged = mark(make(6), ["mark"], 60);
+(tagged as unknown as Record<symbol, unknown>)[symbol] = "s";
+for (let i = 0; i < 40; i++) kept = copy(tagged);
+console.log(show(kept), (kept as unknown as Record<symbol, unknown>)[symbol], Object.getOwnPropertySymbols(kept).length);
+
+const hidden = mark(make(7), ["mark"], 70);
+Object.defineProperty(hidden, "secret", { value: 1, enumerable: false, writable: true, configurable: true });
+for (let i = 0; i < 40; i++) kept = copy(hidden);
+console.log(show(kept), "secret" in kept, "secret" in hidden);
+
+let reads = 0;
+const computed = mark(make(8), ["mark"], 80);
+Object.defineProperty(computed, "now", { get() { return ++reads; }, enumerable: true, configurable: true });
+for (let i = 0; i < 40; i++) kept = copy(computed);
+console.log(show(kept), reads, Object.getOwnPropertyDescriptor(kept, "now")!.writable);
+
+const indexed = mark(make(9), ["mark", "0", "7"], 90);
+for (let i = 0; i < 40; i++) kept = copy(indexed);
+console.log(show(kept));
+
+const shrunk = mark(make(10), ["first", "second", "third"], 100);
+delete (shrunk as unknown as Record<string, unknown>).second;
+for (let i = 0; i < 40; i++) kept = copy(shrunk);
+console.log(show(kept));
+delete (shrunk as unknown as Record<string, unknown>).first;
+delete (shrunk as unknown as Record<string, unknown>).third;
+for (let i = 0; i < 40; i++) kept = copy(shrunk);
+console.log(show(kept));
+
+for (const close of [Object.freeze, Object.seal, Object.preventExtensions]) {
+  const closed = mark(make(11), ["mark"], 110);
+  for (let i = 0; i < 40; i++) kept = copy(closed);
+  close(closed);
+  for (let i = 0; i < 40; i++) kept = copy(closed);
+  (kept as unknown as Record<string, unknown>).late = 1;
+  kept.x = 5;
+  console.log(show(kept), Object.isFrozen(kept), Object.isSealed(kept), Object.isExtensible(kept));
+}
+
+const holder = mark(make(12), ["mark"], 120);
+(holder as unknown as Record<string, unknown>).inner = { deep: [1, 2] };
+(holder as unknown as Record<string, unknown>).text = "t".repeat(3);
+const copies: Point[] = [];
+for (let i = 0; i < 5000; i++) {
+  copies.push(copy(holder));
+  if (i % 1000 === 999) copies.length = 10;
+}
+console.log(copies.length, show(copies[9]!), (copies[3] as unknown as { inner: unknown }).inner === (holder as unknown as { inner: unknown }).inner);
+
+const bare = Object.setPrototypeOf(mark(make(13), ["mark"], 130), null) as Point;
+for (let i = 0; i < 40; i++) kept = copy(bare);
+console.log(show(kept), Object.getPrototypeOf(kept) === Object.prototype);
+//// spread-of-wider-object-assign-result.ts
+// Object.assign() returns its first argument typed as an intersection, so an object reaches a wider type
+// without its own type ever being assigned to it. A spread of it followed by a property of the wider type must still work.
+function show(o: unknown): string {
+  return JSON.stringify(o) + " [" + Object.keys(o as object).join() + "]";
+}
+function row(name: string, f: () => unknown): void {
+  let said: string;
+  try {
+    said = String(f());
+  } catch (e) {
+    said = "threw " + (e as Error).name;
+  }
+  console.log(name + ": " + said);
+}
+
+type Failures = { last: number | null; count: number };
+type Fresh = { last: null; count: number };
+function fresh(): Fresh {
+  return { last: null, count: 0 };
+}
+function bump(f: Failures, n: number): Failures {
+  return { ...f, last: n };
+}
+function merge(f: Failures, more: { last: number }): Failures {
+  return { ...f, ...more };
+}
+const tag = Symbol("tag");
+
+row("with a symbol key", () => {
+  const copy = bump(Object.assign(fresh(), { [tag]: 1 }), 7);
+  return show(copy) + " " + Object.getOwnPropertySymbols(copy).length + " " + String((copy as any)[tag]);
+});
+row("two spreads", () => show(merge(Object.assign(fresh(), { [tag]: 1 }), { last: 8 })));
+row("the source is unchanged", () => {
+  const source = Object.assign(fresh(), { [tag]: 1 });
+  bump(source, 9);
+  return show(source);
+});
+row("a copy of the copy", () => show(bump(bump(Object.assign(fresh(), { [tag]: 1 }), 1), 2)));
+row("stored again later", () => {
+  const copy = bump(Object.assign(fresh(), { [tag]: 1 }), 3);
+  copy.last = null;
+  copy.last = 4;
+  return show(copy);
+});
+row("many times", () => {
+  let sum = 0;
+  for (let i = 0; i < 20000; i++) sum += bump(Object.assign(fresh(), { [tag]: i }), i).last!;
+  return sum;
+});
+//// spread-untyped-source.ts
+declare const aotOperationCount: (name: string) => number;
+type Span = { start: number; end: number; label: string };
+type Mark = { at: number; note: string };
+type Message = { content: string; spans?: Span[] };
+
+function measure(label: string, run: () => unknown): void {
+  const before = aotOperationCount("operationAOTEnforceType");
+  const result = run();
+  console.log(label + ": " + JSON.stringify(result) + ": " + (aotOperationCount("operationAOTEnforceType") - before) + " conversions by the runtime");
+}
+
+function append(message: Message, added: readonly Span[]): void {
+  const base = message.content.length;
+  message.spans = [...(message.spans ?? []), ...added.map(span => ({ ...span, start: span.start + base }))];
+}
+
+function totalOfMovedMarks(marks: readonly Mark[]): number {
+  const moved = marks.map(mark => ({ ...mark, at: mark.at + 1 }));
+  let sum = 0;
+  for (const mark of moved) sum += mark.at + mark.note.length;
+  return sum;
+}
+
+function keysOf(value: unknown): string {
+  return Object.keys(value as object).join();
+}
+
+const spanTexts = [
+  '[{"start":1,"end":2,"label":"a"},{"start":3,"end":4,"label":"b"}]',
+  '[{"label":"a","end":2,"start":1}]',
+  '[{"start":1,"label":"a"}]',
+  '[{"start":1,"end":"two","label":"a"}]',
+  '[{"label":"a","end":2,"start":1,"extra":true}]',
+  '[{"start":1,"end":2,"label":7}]',
+  '[{"end":2,"label":"a"}]',
+  '[]',
+];
+for (const text of spanTexts) {
+  measure("copies that nothing reads by field, of " + text, () => {
+    const message: Message = { content: "abc" };
+    const spans: Span[] = JSON.parse(text);
+    append(message, spans);
+    append(message, spans);
+    return [message.spans, message.spans!.map(keysOf)];
+  });
+}
+measure("copies of objects allocated here", () => {
+  const message: Message = { content: "abcd" };
+  const spans: Span[] = [{ start: 1, end: 2, label: "here" }];
+  append(message, spans);
+  return [message.spans, message.spans!.map(keysOf)];
+});
+measure("copies whose fields are read", () => {
+  const marks: Mark[] = JSON.parse('[{"at":1,"note":"one"},{"at":2,"note":"three"},{"note":"x","at":3}]');
+  return totalOfMovedMarks(marks);
+});
+//// spread-untyped-source-read-by-field.ts
+declare const aotOperationCount: (name: string) => number;
+type Mark = { pos: number; size: number; note: string; done: boolean; extra: unknown };
+
+function sampleMark(): Mark {
+  return { pos: 0, size: 1.5, note: "sample", done: false, extra: null };
+}
+
+function totalOfMoved(marks: readonly Mark[], by: number, kept: unknown[]): number {
+  const moved = marks.map(mark => ({ ...mark, pos: mark.pos + by }));
+  let total = 0;
+  for (const mark of moved) {
+    total += mark.pos + mark.size + mark.note.length + (mark.done ? 1 : 0) + (mark.extra === null ? 1 : 0);
+    kept.push(mark);
+  }
+  return total;
+}
+
+function totalOfMovedAndResized(marks: readonly Mark[], by: number, size: number, kept: unknown[]): number {
+  const moved = marks.map(mark => ({ ...mark, size, pos: mark.pos + by }));
+  let total = 0;
+  for (const mark of moved) {
+    total += mark.pos + mark.size + mark.note.length + (mark.done ? 1 : 0);
+    kept.push(mark);
+  }
+  return total;
+}
+
+function totalOfPositions(marks: readonly Mark[], by: number, kept: unknown[]): number {
+  const moved = marks.map(mark => ({ ...mark, pos: mark.pos + by }));
+  let total = 0;
+  for (const mark of moved) {
+    total += mark.pos;
+    kept.push(mark);
+  }
+  return total;
+}
+
+function show(label: string, marks: Mark[], conversions: number, totals: string, kept: unknown[]): void {
+  console.log(label + ": " + totals + ": " + conversions + " conversions by the runtime");
+  for (let i = 0; i < kept.length; i++) {
+    const copy = kept[i] as Record<string, unknown>;
+    const source = marks[i % marks.length] as unknown as Record<string, unknown>;
+    console.log("  " + JSON.stringify(copy) + " | " + Object.keys(copy).join() + " | " + Object.is(copy.pos, -0) + " " + Object.is(copy.size, -0) + " " + (Object.getPrototypeOf(copy) === Object.prototype) + " " + (copy !== source) + " " + (copy.extra === source.extra) + " " + Object.isFrozen(copy) + " " + Object.getOwnPropertySymbols(copy).length);
+    copy.note = "written";
+    copy.added = 1;
+    console.log("  " + JSON.stringify(copy));
+  }
+  console.log("  " + JSON.stringify(marks));
+}
+
+function reportRead(label: string, text: string): void {
+  const marks: Mark[] = JSON.parse(text);
+  const kept: unknown[] = [];
+  const before = aotOperationCount("operationAOTEnforceType");
+  const totals = totalOfMoved(marks, 1, kept) + " " + totalOfMovedAndResized(marks, 2, 7, kept);
+  show(label, marks, aotOperationCount("operationAOTEnforceType") - before, totals, kept);
+}
+
+function showPositionsOnly(label: string, marks: Mark[]): void {
+  const kept: unknown[] = [];
+  const before = aotOperationCount("operationAOTEnforceType");
+  const total = totalOfPositions(marks, 1, kept);
+  show(label, marks, aotOperationCount("operationAOTEnforceType") - before, String(total), kept);
+}
+
+const parsed = (text: string): Mark[] => {
+  const marks: Mark[] = JSON.parse(text);
+  return marks;
+};
+const changed = (change: (mark: any) => void): Mark[] => {
+  const marks = parsed('[{"pos":1,"size":2,"note":"n","done":true,"extra":0}]');
+  change(marks[0]);
+  return marks;
+};
+
+console.log(JSON.stringify(sampleMark()));
+reportRead("matching data", '[{"pos":1,"size":2,"note":"one","done":true,"extra":[1]},{"pos":2,"size":2.5,"note":"two","done":false,"extra":{"a":1}}]');
+reportRead("matching data in another key order", '[{"extra":"x","done":true,"note":"one","size":2,"pos":1}]');
+reportRead("numbers at the edges", '[{"pos":-1,"size":-0,"note":"","done":false,"extra":-0},{"pos":1073741822,"size":1073741824,"note":"n","done":true,"extra":1e300},{"pos":-1073741825,"size":-1073741825,"note":"n","done":true,"extra":2147483648},{"pos":2147483646,"size":-2147483648,"note":"n","done":true,"extra":null}]');
+reportRead("a property the type does not have", '[{"pos":1,"size":2,"note":"n","done":true,"extra":0,"more":1}]');
+reportRead("an index among the properties", '[{"pos":1,"size":2,"note":"n","done":true,"extra":0,"0":1}]');
+reportRead("more properties than fit in the object", '[{"pos":1,"size":2,"note":"n","done":true,"extra":0,"a":1,"b":2,"c":3,"d":4,"e":5,"f":6,"g":7,"h":8,"i":9,"j":10}]');
+showPositionsOnly("the stored field is missing in the source", parsed('[{"size":2,"note":"one","done":true,"extra":0}]'));
+showPositionsOnly("a required field is missing", parsed('[{"pos":1,"size":2,"done":true,"extra":0}]'));
+showPositionsOnly("a number where a string belongs", parsed('[{"pos":1,"size":2,"note":3,"done":true,"extra":0}]'));
+showPositionsOnly("a string where a number belongs", parsed('[{"pos":1,"size":"2","note":"n","done":true,"extra":0}]'));
+showPositionsOnly("a number where a boolean belongs", parsed('[{"pos":1,"size":2,"note":"n","done":1,"extra":0}]'));
+showPositionsOnly("null where a string, a number and a boolean belong", parsed('[{"pos":1,"size":null,"note":null,"done":null,"extra":null}]'));
+let reads = 0;
+showPositionsOnly("a getter", changed(mark => Object.defineProperty(mark, "size", { get() { return ++reads; }, enumerable: true, configurable: true })));
+showPositionsOnly("a property that is not enumerable", changed(mark => Object.defineProperty(mark, "note", { enumerable: false })));
+showPositionsOnly("a property that is not writable", changed(mark => Object.defineProperty(mark, "note", { writable: false })));
+showPositionsOnly("a frozen source", changed(mark => Object.freeze(mark)));
+showPositionsOnly("a source that cannot be extended", changed(mark => Object.preventExtensions(mark)));
+showPositionsOnly("a source with another prototype", changed(mark => Object.setPrototypeOf(mark, { inherited: 1 })));
+showPositionsOnly("a source without a prototype", changed(mark => Object.setPrototypeOf(mark, null)));
+showPositionsOnly("a symbol among the keys", changed(mark => { mark[Symbol.iterator] = 1; }));
+showPositionsOnly("a property deleted and added again", changed(mark => { delete mark.size; mark.size = 3; }));
+console.log(reads);
+
+const many = parsed("[" + Array.from({ length: 300 }, (_, i) => '{"pos":' + i + ',"size":' + (i + 0.5) + ',"note":"n' + i + '","done":' + (i % 2 === 0) + ',"extra":[' + i + "]}").join() + "]");
+let total = 0;
+const beforeMany = aotOperationCount("operationAOTEnforceType");
+for (let round = 0; round < 40; round++) total += totalOfMoved(many, round, []);
+console.log("12,000 copies: " + total + ": " + (aotOperationCount("operationAOTEnforceType") - beforeMany) + " conversions by the runtime");

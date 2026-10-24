@@ -11,14 +11,10 @@ use crate::resolve::{
     TypedVersionOrigin,
 };
 
-/// What `import.meta.main` is in an entry point. In every other file it is false.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum MainModule {
-    /// The process starts with an entry point: with the only one, or with one of them.
     EntryPoint,
-    /// The process or a Worker starts with the entry point. In a Worker it is false, and `require.main` is the module all the same.
     EntryPointOfProcessOrWorker,
-    /// A part of a program, which starts somewhere else.
     Elsewhere,
 }
 
@@ -98,6 +94,13 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             build.project_resolvers.add_links_to(build.resolver);
         }
     }
+
+    pub(super) fn is_entry_point(&self, key: LoadKey<'_>) -> bool {
+        self.entry_points.iter().any(|entry_point| {
+            entry_point.key.loader == key.loader
+                && is_same_path(entry_point.key.path, key.path, self.is_case_sensitive)
+        })
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -112,7 +115,6 @@ pub(super) struct CodeTarget<'r> {
     pub(super) host_module: Option<HostModuleId>,
     pub(super) typed_path: Option<&'r [u8]>,
     pub(super) increases_depth: bool,
-    /// `with { type: "file" }`
     pub(super) has_loader_attribute: bool,
 }
 
@@ -167,7 +169,6 @@ pub(super) struct CodeEntry<'s, 'r> {
     pub(super) package_depth: u32,
     pub(super) targets: Vec<u32>,
     pub(super) predicted_type_files: Vec<(&'r [u8], bool)>,
-    /// What only the JSDoc of an inferred file imports.
     pub(super) jsdoc_imports: Vec<(Atom, ResolutionMode, FileId)>,
     pub(super) loaded: Guarded<Option<Box<Loaded<'s, 'r>>>>,
     pub(super) code: Guarded<Option<Box<LoadedCode<'s, 'r>>>>,
@@ -186,7 +187,6 @@ pub(super) struct CodeFiles<'s, 'r> {
     pub(super) entry_points: Vec<u32>,
     pub(super) entry_of_file: Vec<Option<u32>>,
     pub(super) is_in_types_program: Vec<bool>,
-    /// `Module::path` of the files that `loader_of_code_in_place_of_typed_file` answers for.
     pub(super) typed_files_with_other_code: FxHashSet<Vec<u8>>,
 }
 
@@ -204,39 +204,10 @@ pub(super) struct RootTables<'t, 's> {
     pub(super) root_tasks: &'t mut Vec<Option<FileId>>,
 }
 
-pub(super) struct InstallTables<'t, 's> {
-    pub(super) arena: &'s Arena,
-    pub(super) modules: &'t mut ModuleSlots<'s>,
-    pub(super) depths: &'t mut Vec<u32>,
-    pub(super) found: &'t mut Found<'s>,
-    pub(super) seen: &'t mut Vec<bool>,
-}
-
-pub(super) struct BuildFile<'b, 'a, 's: 'r, 'r> {
-    pub(super) context: &'b CodeLoadContext<'a, 's, 'r>,
-    pub(super) code: Option<&'b mut LoadedCode<'s, 'r>>,
-}
-
-type BuildFileParts<'b, 'a, 's, 'r> = (
+pub(super) type BuildFile<'b, 'a, 's, 'r> = (
     Option<&'b CodeLoadContext<'a, 's, 'r>>,
     Option<&'b mut LoadedCode<'s, 'r>>,
 );
-
-impl<'b, 'a, 's: 'r, 'r> BuildFile<'b, 'a, 's, 'r> {
-    pub(super) fn of_types_file(context: &'b CodeLoadContext<'a, 's, 'r>) -> Self {
-        BuildFile {
-            context,
-            code: None,
-        }
-    }
-
-    pub(super) fn into_parts(build: Option<Self>) -> BuildFileParts<'b, 'a, 's, 'r> {
-        match build {
-            Some(build) => (Some(build.context), build.code),
-            None => (None, None),
-        }
-    }
-}
 
 #[derive(Copy, Clone)]
 pub(super) struct TypesQuestion<'q, 's, 'r> {

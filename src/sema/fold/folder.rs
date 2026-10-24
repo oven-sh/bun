@@ -1,4 +1,4 @@
-use super::dead_code::mark_dead_code;
+use super::dead_code::mark_nodes_below;
 use super::evaluate::{Evaluator, Value};
 use super::feature_flags::find_feature_import;
 use super::folder_commonjs::LoaderNames;
@@ -43,8 +43,8 @@ impl Folded {
     }
 }
 
-pub(super) struct DeadCode {
-    pub(super) exprs: PositionSet,
+pub(crate) struct MarkedNodes {
+    pub(crate) exprs: PositionSet,
     pub(super) stmts: PositionSet,
     pub(super) functions: PositionSet,
 }
@@ -207,10 +207,10 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    fn collect_constants(&self, dead: &DeadCode) -> Vec<FoldedConstant> {
+    fn collect_constants(&self, dead: &MarkedNodes) -> Vec<FoldedConstant> {
         let mut constants = Vec::new();
         for (index, node) in self.hir.exprs.iter().enumerate() {
-            let is_literal = literal_constant(self.hir, node.kind) != FoldedValue::Unknown;
+            let is_literal = literal_constant(self.hir, node.kind).is_some();
             if is_literal || dead.exprs.contains(index) {
                 continue;
             }
@@ -243,7 +243,7 @@ impl<'s> Folder<'_, 's> {
         self.specifiers.shared_sort_unstable_by_key(|entry| entry.0);
         self.paths_from_own_directory.shared_sort_unstable();
         self.paths_made_by_calls.shared_sort_unstable();
-        let dead = mark_dead_code(self.hir, self.find_dead_roots());
+        let dead = mark_nodes_below(self.hir, self.find_dead_roots());
         let decisions = Decisions {
             decided: slice_in(&self.decided, arena),
             constants: slice_in(&self.collect_constants(&dead), arena),

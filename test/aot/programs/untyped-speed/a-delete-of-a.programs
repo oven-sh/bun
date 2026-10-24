@@ -1,0 +1,3071 @@
+////: Plain
+class Plain {
+  table = { __proto__: null };
+  count = 0;
+  on(name, listener) {
+    if (typeof listener !== "function") throw new TypeError("no function");
+    const present = this.table[name];
+    if (present === undefined) {
+      this.table[name] = listener;
+      ++this.count;
+    } else if (typeof present === "function") this.table[name] = [present, listener];
+    else present.push(listener);
+    return this;
+  }
+  listenerCount(name) {
+    const present = this.table[name];
+    return present === undefined ? 0 : typeof present === "function" ? 1 : present.length;
+  }
+  removeListener(name, listener) {
+    const present = this.table[name];
+    if (present === listener) {
+      if (--this.count === 0) this.table = { __proto__: null };
+      else delete this.table[name];
+    }
+    return this;
+  }
+}
+////: fastestOf
+function fastestOf(runs, loop) {
+  let fastest = Infinity;
+  for (let run = 0; run < runs; run++) {
+    const began = performance.now();
+    loop();
+    fastest = Math.min(fastest, performance.now() - began);
+  }
+  return fastest;
+}
+////: fastestOf-2
+function fastestOf(runs, emitters, turns) {
+  let fastest = Infinity;
+  for (let i = 0; i < runs; i++) {
+    const began = performance.now();
+    if (run(emitters, turns) !== turns) console.log("a listener was not counted");
+    fastest = Math.min(fastest, performance.now() - began);
+  }
+  return fastest;
+}
+////: fastestOf-3
+function fastestOf(runs, «1») {
+  let fastest = Infinity;
+  for (let «2» = 0; «2» < runs; «2»++) {
+    const began = performance.now();
+    if («1»(«3») !== «4») console.log("a wrong sum");
+    fastest = Math.min(fastest, performance.now() - began);
+  }
+  return fastest;
+}
+////: lines
+const «1» = fastestOf(5, () => {
+  let sum = 0;
+  for (let i = 0; i < 5_000_000; i++) sum = (sum + «2».a + «2».b + «2».c + i) | 0;
+  sums = (sums + sum) | 0;
+});
+////: lines-2
+function «1»(turns) {
+  let sum = 0;
+  for (let i = 0; i < turns; i++) {
+    const made = «2»;
+    made.a = i & 7;
+    made.b = i & 3;
+    sum += made.a + made.b;
+  }
+  return sum;
+}
+////: ofLibrary
+const ofLibrary = [
+  new EventEmitter(),
+  new Readable({ read() {} }),
+  new Writable({
+    write(chunk, encoding, done) {
+      done();
+    },
+  }),
+];
+////: ofTheClass
+const ofTheClass = fastestOf(5, () => {
+  let sum = 0;
+  for (let i = 0; i < 5_000_000; i++) sum = (sum + «1») | 0;
+  sums = (sums + sum) | 0;
+});
+////: run
+function run(emitters, turns) {
+  let n = 0;
+  for (let i = 0; i < turns; i++) {
+    const emitter = emitters[i % 3];
+    emitter.on("thing", listener);
+    n += emitter.listenerCount("thing");
+    emitter.removeListener("thing", listener);
+  }
+  return n;
+}
+//// a-delete-of-a-name-from-a-new-literal-is-not-ten-times-as-slow-as-a-store-of-undefined.js
+// `delete message.draft` on an object that the function has just made, against `message.draft = undefined` on the same literal: the first has more to do, but not ten times as much.
+const kept = new Array(8);
+function deletes(turns) {
+  let sum = 0;
+  for (let i = 0; i < turns; i++) {
+    const message = { id: i, draft: true, text: "hi" };
+    delete message.draft;
+    kept[i & 7] = message;
+    sum += message.text.length + ("draft" in message ? 1 : 0);
+  }
+  return sum;
+}
+function stores(turns) {
+  let sum = 0;
+  for (let i = 0; i < turns; i++) {
+    const message = { id: i, draft: true, text: "hi" };
+    message.draft = undefined;
+    kept[i & 7] = message;
+    sum += message.text.length + (message.draft !== undefined ? 1 : 0);
+  }
+  return sum;
+}
+////= fastestOf-3	run	k	1_000_000	2_000_000
+fastestOf(2, deletes), fastestOf(2, stores);
+console.log(fastestOf(5, deletes) < fastestOf(5, stores) * 10 ? "under ten times the time" : "over ten times the time");
+//// a-for-in-loop-that-reads-by-its-key-is-not-a-third-slower-than-a-loop-over-object-keys.js
+// The values of an object with sixteen names are added up: in a for-in loop that reads by the key, and in a loop over Object.keys().
+const record = {}; for (let i = 0; i < 16; i++) record["n" + i.toString(36)] = i;
+function byForIn(turns) { let sum = 0; for (let t = 0; t < turns; t++) for (const key in record) sum = (sum + record[key]) | 0; return sum; }
+function byKeys(turns) { let sum = 0; for (let t = 0; t < turns; t++) { const keys = Object.keys(record); for (let i = 0; i < keys.length; i++) sum = (sum + record[keys[i]]) | 0; } return sum; }
+function fastestOf(run) { let fastest = Infinity; for (let turn = 0; turn < 7; turn++) { const began = performance.now(); run(200000); fastest = Math.min(fastest, performance.now() - began); } return fastest; }
+const forIn = fastestOf(byForIn), keys = fastestOf(byKeys);
+console.log(byForIn(10) === byKeys(10), forIn < keys * 4 / 3 ? "under a third slower" : "over a third slower");
+//// a-function-with-members-of-its-own-is-not-three-times-as-slow-a-call-as-a-method-of-a-class.js
+// A function that carries a method and a field of its own and hands every call on to that method, beside an instance of a class. A call of the one may cost a little more than a call of the other, not three times as much.
+function create() {
+  const handler = function (x) {
+    return handler.handle(x);
+  };
+  handler.handle = function (x) {
+    return x + this.base;
+  };
+  handler.base = 1;
+  return handler;
+}
+class Declared {
+  base = 1;
+  handle(x) {
+    return x + this.base;
+  }
+  call(x) {
+    return this.handle(x);
+  }
+}
+const handler = create(),
+  declared = new Declared();
+let sums = 0;
+////= fastestOf
+////= ofTheClass	declared.call(i)
+const ofTheFunction = fastestOf(5, () => {
+  let sum = 0;
+  for (let i = 0; i < 5_000_000; i++) sum = (sum + handler(i)) | 0;
+  sums = (sums + sum) | 0;
+});
+console.log(sums, Object.keys(handler).join());
+console.log(ofTheFunction < ofTheClass * 3 ? "under three times the time" : "over three times the time");
+//// a-listener-added-counted-and-removed-is-as-fast-as-on-a-class-written-by-hand.js
+// A listener is added, counted and removed, on three kinds of emitters of node:events and node:stream in turn, and on three objects of a class written here that keeps its
+// listeners the same way: a table without a prototype, a function alone under its name, a count. The library is no slower: plain Bun runs it in under half the time.
+const { EventEmitter } = require("node:events");
+const { Readable, Writable } = require("node:stream");
+
+////= Plain
+
+function listener() {}
+////= run
+////= fastestOf-2
+////= ofLibrary
+const written = fastestOf(5, [new Plain(), new Plain(), new Plain()], 300000);
+const library = fastestOf(5, ofLibrary, 300000);
+console.log(library <= written ? "no slower" : "slower");
+//// a-listener-added-counted-and-removed-is-not-three-times-as-slow-as-on-a-class-written-by-hand.js
+// A listener is added, counted and removed, on three kinds of emitters of node:events and node:stream in turn, and on three objects of a class written here that keeps its
+// listeners the same way: a table without a prototype, a function alone under its name, a count. The library checks more, which may cost a few times as much a turn.
+const { EventEmitter } = require("node:events");
+const { Readable, Writable } = require("node:stream");
+
+////= Plain
+
+function listener() {}
+////= run
+////= fastestOf-2
+////= ofLibrary
+const written = fastestOf(5, [new Plain(), new Plain(), new Plain()], 300000);
+const library = fastestOf(5, ofLibrary, 300000);
+console.log(library < written * 3 ? "under three times the time" : "over three times the time");
+//// a-literal-given-a-prototype-later-is-not-five-times-as-slow-a-read-as-an-instance-of-a-class.js
+// A literal that Object.setPrototypeOf() puts below another literal with a getter, beside a class that says the same. A read through the one may cost a few times what a read through the other costs, not five times.
+const above = {
+  get twice() {
+    return this.x * 2;
+  },
+};
+function putBelow(object) {
+  Object.setPrototypeOf(object, above);
+  return object;
+}
+class Declared {
+  constructor(x) {
+    this.x = x;
+  }
+  get twice() {
+    return this.x * 2;
+  }
+}
+const below = putBelow({ x: 1 }),
+  declared = new Declared(1);
+let sums = 0;
+////= fastestOf
+////= ofTheClass	declared.twice + i
+const ofTheLiteral = fastestOf(5, () => {
+  let sum = 0;
+  for (let i = 0; i < 5_000_000; i++) sum = (sum + below.twice + i) | 0;
+  sums = (sums + sum) | 0;
+});
+console.log(sums, Object.getPrototypeOf(below) === above);
+console.log(ofTheLiteral < ofTheClass * 5 ? "under five times the time" : "over five times the time");
+//// a-method-of-an-object-that-instances-are-put-below-is-not-five-times-as-slow-a-call-as-a-method-of-their-class.js
+// Instances of a class that Object.setPrototypeOf() puts below an object created from the class's prototype object, as a framework does with the requests of a server. A call of a method of that object may cost a few times what a call of a method of the class costs on the same instance, not five times.
+class Message {
+  constructor(count) {
+    this.count = count;
+  }
+  ofTheClass() {
+    return this.count + 1;
+  }
+}
+const above = Object.create(Message.prototype);
+above.ofTheObjectAbove = function () {
+  return this.count + 1;
+};
+const messages = [];
+for (let i = 0; i < 8; i++) messages.push(Object.setPrototypeOf(new Message(i), above));
+let sums = 0;
+////= fastestOf
+////= ofTheClass	messages[i & 7].ofTheClass()
+const ofTheObjectAbove = fastestOf(5, () => {
+  let sum = 0;
+  for (let i = 0; i < 5_000_000; i++) sum = (sum + messages[i & 7].ofTheObjectAbove()) | 0;
+  sums = (sums + sum) | 0;
+});
+console.log(sums, Object.getPrototypeOf(messages[0]) === above);
+console.log(ofTheObjectAbove < ofTheClass * 5 ? "under five times the time" : "over five times the time");
+//// a-method-stored-on-the-prototype-of-a-function-is-not-three-times-as-slow-a-call-as-a-method-of-a-class.cjs
+// A constructor written as a function, with its method stored on the prototype, beside a class that says the same. A call of the one may cost a little more than a call of the other, not three times as much.
+function Stored(x) {
+  this.x = x;
+}
+Stored.prototype.get = function () {
+  return this.x;
+};
+class Declared {
+  constructor(x) {
+    this.x = x;
+  }
+  get() {
+    return this.x;
+  }
+}
+const stored = new Stored(1),
+  declared = new Declared(1);
+let sums = 0;
+////= fastestOf
+////= ofTheClass	declared.get() + i
+const ofTheFunction = fastestOf(5, () => {
+  let sum = 0;
+  for (let i = 0; i < 5_000_000; i++) sum = (sum + stored.get() + i) | 0;
+  sums = (sums + sum) | 0;
+});
+console.log(sums);
+console.log(ofTheFunction < ofTheClass * 3 ? "under three times the time" : "over three times the time");
+//// a-name-is-deleted-by-key-not-three-times-as-slowly-as-it-is-stored.js
+// A new object gets four names by key and loses one of them by key. The deletion may cost a few times one of the stores, not three times.
+const names = ["timeout", "error", "close", "end"].map(name => name + String(Date.now()).slice(99));
+const listener = () => 1;
+function fill() { const o = Object.create(null); for (let k = 0; k < 4; k++) o[names[k]] = listener; return o; }
+function filled(n) { let t = 0; for (let i = 0; i < n; i++) t += fill()[names[3]] === listener ? 1 : 0; return t; }
+function filledAndDeleted(n) { let t = 0; for (let i = 0; i < n; i++) { const o = fill(); delete o[names[i & 3]]; t += o[names[3]] === listener ? 1 : 0; } return t; }
+function fastestOf(run) { let fastest = Infinity; for (let turn = 0; turn < 5; turn++) { const began = performance.now(); run(300000); fastest = Math.min(fastest, performance.now() - began); } return fastest; }
+const four = fastestOf(filled), withDeletion = fastestOf(filledAndDeleted);
+console.log(withDeletion - four < four / 4 * 3 ? "under three times a store" : "over three times a store");
+//// a-new-object-for-every-4096-words-with-256-names-is-not-three-times-as-slow-a-word-as-one-object-for-all.js
+// Words are counted by key, 256 different ones. Once into one object for the whole run, once into a new object for every 4,096 words.
+const names = []; for (let i = 0; i < 256; i++) names.push("w" + i.toString(36));
+const words = []; for (let i = 0; i < 4096; i++) words.push(names[(i * 7 + (i >> 3)) & 255]);
+function intoOne(rounds) { const counts = {}; for (let r = 0; r < rounds; r++) for (let i = 0; i < 4096; i++) { const word = words[i]; counts[word] = (counts[word] ?? 0) + 1; } return counts[words[0]]; }
+function intoNew(rounds) { let sum = 0; for (let r = 0; r < rounds; r++) { const counts = {}; for (let i = 0; i < 4096; i++) { const word = words[i]; counts[word] = (counts[word] ?? 0) + 1; } sum += counts[words[0]]; } return sum; }
+function fastestOf(run) { let fastest = Infinity; for (let turn = 0; turn < 5; turn++) { const began = performance.now(); run(200); fastest = Math.min(fastest, performance.now() - began); } return fastest; }
+const one = fastestOf(intoOne), fresh = fastestOf(intoNew);
+console.log(intoOne(3) === intoNew(3), fresh < one * 3 ? "under three times" : "over three times");
+//// a-node-and-its-twin-among-other-objects-with-the-same-field.js
+// A tree of nodes made by a constructor function, each with a twin, walked from a leaf to the root as a UI library marks an update.
+// Four other kinds of objects have a field of the same name as the one the walk asks the twin for, and they are made more often.
+const word = process.argv[3] ?? "";
+const open = new Function("value", "return value" + word.slice(word.length));
+
+function TreeNode(tag) {
+  this.tag = tag;
+  this.lanes = 0;
+  this.childLanes = 0;
+  this.twin = null;
+  this.parent = null;
+  this.state = null;
+}
+
+function makeQueue() { return { pending: null, lanes: 0, dispatch: null }; }
+function makeDependencies() { return { lanes: 0, first: null }; }
+function makeShared() { return { interleaved: null, lanes: 0, callbacks: null, hidden: null }; }
+function makeRoad() { return { name: "road", width: 3, length: 12, lanes: 2 }; }
+
+function markFromLeaf(source, lane) {
+  source.lanes |= lane;
+  var twin = source.twin;
+  null !== twin && (twin.lanes |= lane);
+  for (var parent = source.parent; null !== parent; )
+    (parent.childLanes |= lane),
+      (twin = parent.twin),
+      null !== twin && (twin.childLanes |= lane),
+      (source = parent),
+      (parent = parent.parent);
+  return 3 === source.tag ? source.state : null;
+}
+
+function build(depth) {
+  let parent = null, parentTwin = null, leaf = null;
+  for (let i = 0; i < depth; i++) {
+    const node = new TreeNode(i === 0 ? 3 : 5), twin = new TreeNode(i === 0 ? 3 : 5);
+    node.twin = twin; twin.twin = node;
+    node.parent = parent; twin.parent = parentTwin;
+    if (i === 0) node.state = twin.state = { name: "root" };
+    parent = node; parentTwin = twin; leaf = node;
+  }
+  return leaf;
+}
+
+let others = 0;
+for (let i = 0; i < 4000; i++) others += makeQueue().lanes + makeDependencies().lanes + makeShared().lanes + makeRoad().lanes;
+
+const rounds = Number(process.argv[2] ?? 200000);
+const leaf = open(build(12));
+let found = 0;
+for (let i = 0; i < rounds; i++) if (markFromLeaf(open(leaf), 1 << (i & 15)) !== null) found++;
+console.log(found, others, leaf.lanes, leaf.twin.lanes, leaf.parent.childLanes);
+//// a-sum-in-a-field-of-a-literal-that-no-longer-fits-32-bits-is-not-ten-times-as-slow-a-turn.cjs
+// An object literal with a field that starts at one and a method that adds to it. One day the sum no longer fits 32 bits. From then on a turn may cost a few times what it cost before, not ten times.
+const sum = {
+  n: 1,
+  add(x) {
+    this.n += x;
+    return this.n;
+  },
+};
+////= fastestOf
+const addMany = () => {
+  for (let i = 0; i < 2_000_000; i++) sum.add(3);
+};
+const small = fastestOf(5, addMany);
+for (let i = 0; i < 40_000; i++) sum.add(65_536);
+const large = fastestOf(5, addMany);
+console.log(sum.n, Object.keys(sum).join());
+console.log(large < small * 10 ? "under ten times the time" : "over ten times the time");
+//// a-sum-in-a-field-set-by-the-constructor-that-no-longer-fits-32-bits-is-not-ten-times-as-slow-a-turn.cjs
+// An untyped class whose constructor sets a field to one, and a method that adds to it. One day the sum no longer fits 32 bits. From then on a turn may cost a few times what it cost before, not ten times.
+class Sum {
+  constructor() {
+    this.n = 1;
+  }
+  add(x) {
+    this.n += x;
+    return this.n;
+  }
+}
+////= fastestOf
+const sum = new Sum();
+const addMany = () => {
+  for (let i = 0; i < 2_000_000; i++) sum.add(3);
+};
+const small = fastestOf(5, addMany);
+for (let i = 0; i < 40_000; i++) sum.add(65_536);
+const large = fastestOf(5, addMany);
+console.log(sum.n, Object.keys(sum).join());
+console.log(large < small * 10 ? "under ten times the time" : "over ten times the time");
+//// a-text-with-members-that-nobody-reads-is-not-twice-as-slow-to-parse-as-by-a-callee-out-of-a-variable.js
+// A text with three members, two of which are read. Two literals of the program have one of the names that are read, and neither has the others.
+const shelf = { name: "shelf", width: 3 }, crate = { name: "crate", depth: 2, lid: true };
+const text = '{"id":7,"name":"row","ok":true}';
+let parse = JSON.parse; if (text.length > 1000) parse = String;
+function direct(turns) { let sum = 0; for (let t = 0; t < turns; t++) { const row = JSON.parse(text); sum = (sum + row.id + row.name.length) | 0; } return sum; }
+function throughVariable(turns) { let sum = 0; for (let t = 0; t < turns; t++) { const row = parse(text); sum = (sum + row["i" + "d"] + row.name.length) | 0; } return sum; }
+function fastestOf(run) { let fastest = Infinity; for (let turn = 0; turn < 7; turn++) { const began = performance.now(); run(100000); fastest = Math.min(fastest, performance.now() - began); } return fastest; }
+const a = fastestOf(direct), b = fastestOf(throughVariable);
+console.log(direct(10) === throughVariable(10), shelf.name.length + crate.name.length, a < b * 2 ? "under twice as slow" : "over twice as slow");
+//// a-twin-that-is-null-as-often-as-an-object-is-asked-in-every-arm.js
+// One step of a walk over a tree gets a node and its twin. The twin is null for a new node and an object for an old one, and the step asks `twin === null`
+// in arm after arm, as the render step of a UI library does. Both answers occur, so the code on both sides of the question has to be fast.
+const word = process.argv[3] ?? "";
+const open = new Function("value", "return value" + word.slice(word.length));
+
+function TreeNode(tag, pending) {
+  this.tag = tag;
+  this.pending = pending;
+  this.settled = null;
+  this.lanes = 1;
+  this.flags = 0;
+  this.child = null;
+  this.twin = null;
+}
+
+let didChange = false;
+
+function begin(twin, node, lane) {
+  if (twin !== null) didChange = twin.settled !== node.pending || (twin.flags & 4) !== 0;
+  else didChange = false;
+  node.lanes = 0;
+  switch (node.tag) {
+    case 0:
+      if (twin === null) node.flags |= 2;
+      else node.flags |= twin.flags & 8;
+      node.settled = node.pending;
+      return node.child;
+    case 1:
+      node.flags |= twin === null ? 1 : twin.lanes & lane;
+      node.settled = node.pending;
+      return node.child;
+    case 2:
+      if (twin !== null && !didChange) return null;
+      node.settled = node.pending;
+      return twin === null ? node.child : twin.child;
+  }
+  return null;
+}
+
+function build(count, withTwins) {
+  const nodes = [];
+  for (let i = 0; i < count; i++) {
+    const node = new TreeNode(i % 3, { id: i });
+    if (withTwins) {
+      const twin = new TreeNode(i % 3, node.pending);
+      twin.settled = i % 2 ? node.pending : null;
+      twin.flags = i % 16;
+      node.twin = twin;
+      twin.twin = node;
+    }
+    if (i > 0) nodes[i - 1].child = node;
+    nodes.push(node);
+  }
+  return nodes;
+}
+
+const rounds = Number(process.argv[2] ?? 100000);
+const fresh = open(build(6, false)), old = open(build(6, true));
+let answers = 0;
+for (let i = 0; i < rounds; i++) {
+  for (const node of i & 1 ? old : fresh) if (begin(open(node.twin), open(node), 1 << (i & 7)) !== null) answers++;
+}
+console.log(answers, didChange, old[1].flags, fresh[1].flags, old[5].lanes);
+//// accessors-defined-in-a-loop-over-names-are-not-five-times-as-slow-a-read-as-accessors-of-a-class.js
+// Three getters that hand on to an inner object, defined by a loop over their names, beside a class that spells the three out. A read through the one may cost a few times what a read through the other costs, not five times.
+const above = {};
+for (const name of ["a", "b", "c"]) {
+  Object.defineProperty(above, name, {
+    get() {
+      return this.inner[name];
+    },
+    configurable: true,
+  });
+}
+class Declared {
+  constructor(inner) {
+    this.inner = inner;
+  }
+  get a() {
+    return this.inner.a;
+  }
+  get b() {
+    return this.inner.b;
+  }
+  get c() {
+    return this.inner.c;
+  }
+}
+const defined = Object.create(above);
+defined.inner = { a: 1, b: 2, c: 3 };
+const declared = new Declared({ a: 1, b: 2, c: 3 });
+let sums = 0;
+////= fastestOf
+////= lines	ofTheClass	declared
+////= lines	ofTheLoop	defined
+console.log(sums, Object.getOwnPropertyNames(above).join());
+console.log(ofTheLoop < ofTheClass * 5 ? "under five times the time" : "over five times the time");
+//// an-index-that-a-literal-with-numbers-for-keys-does-not-have-is-not-three-times-as-slow-as-one-it-has.js
+// A table written as a literal with numbers for keys is asked by a function that knows nothing of it: for a number that it has, and for one that it does not have, which is what most questions to such a
+// table find. Nothing above the table has elements, so "not there" is known as soon as the table's own elements are looked at, and may cost about what "there" costs.
+const hidden = process.argv.length > 99 ? process.argv[9] : "hidden";
+globalThis[hidden] = [{ 204: true, 205: true, 304: true }, { 300: true, 301: true, 302: true, 303: true, 305: true, 307: true, 308: true }];
+function ask(table, code) { return table[code]; }
+function fastestOf(runs, first, second) {
+  const [empty, redirect] = globalThis.hidden;
+  let fastest = Infinity, found = 0;
+  for (let run = 0; run < runs; run++) {
+    const began = performance.now();
+    for (let i = 0; i < 1000000; i++) { if (ask(empty, first + (i & 1))) found++; if (ask(redirect, second + (i & 1))) found++; }
+    fastest = Math.min(fastest, performance.now() - began);
+  }
+  return { fastest, found };
+}
+const there = fastestOf(5, 204, 300), notThere = fastestOf(5, 200, 200);
+console.log(there.found, notThere.found);
+console.log(notThere.fastest < there.fastest * 3 ? "not there in under three times the time of there" : "not there took over three times the time of there");
+//// an-object-constructed-and-filled-is-not-five-times-as-slow-as-an-empty-literal-filled.js
+////= lines-2	fillConstructed	new Object()
+////= lines-2	fillLiteral	{}
+////= fastestOf-3	fill	run	4_000_000	20_000_000
+fastestOf(2, fillConstructed), fastestOf(2, fillLiteral);
+const constructed = fastestOf(5, fillConstructed), literal = fastestOf(5, fillLiteral);
+console.log(constructed < literal * 5 ? "under five times the time" : "over five times the time");
+//// an-object-created-from-a-literal-is-not-five-times-as-slow-a-turn-as-an-instance-of-a-class.js
+// Object.create() of a literal that holds a method and a getter, and a store of a field, beside a class that says the same. A turn with the one may cost a few times what a turn with the other costs, not five times.
+const above = {
+  get() {
+    return this.x;
+  },
+  get twice() {
+    return this.x * 2;
+  },
+};
+function create(x) {
+  const created = Object.create(above);
+  created.x = x;
+  return created;
+}
+class Declared {
+  constructor(x) {
+    this.x = x;
+  }
+  get() {
+    return this.x;
+  }
+  get twice() {
+    return this.x * 2;
+  }
+}
+const created = create(1),
+  declared = new Declared(1);
+let sums = 0;
+////= fastestOf
+////= ofTheClass	declared.get() + declared.twice + i
+const ofTheLiteral = fastestOf(5, () => {
+  let sum = 0;
+  for (let i = 0; i < 5_000_000; i++) sum = (sum + created.get() + created.twice + i) | 0;
+  sums = (sums + sum) | 0;
+});
+console.log(sums, Object.keys(created).join(), Object.getPrototypeOf(created) === above);
+console.log(ofTheLiteral < ofTheClass * 5 ? "under five times the time" : "over five times the time");
+//// an-object-put-together-by-object-assign-is-not-three-times-as-slow-a-read-as-a-literal.cjs
+// Options laid over defaults with Object.assign(), beside a literal with the same three fields. A read out of the one may cost a little more than a read out of the other, not three times as much.
+const defaults = { a: 1, b: 2 };
+function withDefaults(options) {
+  return Object.assign({}, defaults, options);
+}
+const assigned = withDefaults({ c: 3 }),
+  literal = { a: 1, b: 2, c: 3 };
+let sums = 0;
+////= fastestOf
+////= lines	ofTheLiteral	literal
+////= lines	ofTheAssigned	assigned
+console.log(sums, JSON.stringify(assigned));
+console.log(ofTheAssigned < ofTheLiteral * 3 ? "under three times the time" : "over three times the time");
+//// array-callbacks.js
+// Array callbacks in ES5 style over a list of 3,000 objects: filter, map, reduce, some, every, forEach, sort and find, with closures that read a property under a computed name.
+function makeOrders(count) {
+  var orders = [];
+  for (var i = 0; i < count; i++) {
+    orders.push({ id: i, customer: "c" + (i % 23), amount: (i * 37) % 500, open: i % 3 !== 0 });
+  }
+  return orders;
+}
+
+function pluck(name) {
+  return function (item) {
+    return item[name];
+  };
+}
+
+function add(a, b) {
+  return a + b;
+}
+
+function groupBy(list, keyOf) {
+  return list.reduce(function (groups, item) {
+    var key = keyOf(item);
+    (groups[key] = groups[key] || []).push(item);
+    return groups;
+  }, {});
+}
+
+function report(orders) {
+  var open = orders.filter(function (order) {
+    return order.open;
+  });
+  var total = open.map(pluck("amount")).reduce(add, 0);
+  var large = open.some(function (order) {
+    return order.amount > 495;
+  });
+  var valid = orders.every(function (order) {
+    return order.amount >= 0;
+  });
+  var groups = groupBy(open, pluck("customer"));
+  var best = 0;
+  Object.keys(groups).forEach(function (customer) {
+    var spent = groups[customer].map(pluck("amount")).reduce(add, 0);
+    if (spent > best) best = spent;
+  });
+  var sorted = open.slice(0, 200).sort(function (a, b) {
+    return b.amount - a.amount || a.id - b.id;
+  });
+  var found = orders.find(function (order) {
+    return order.id === 777;
+  });
+  return total + best + sorted[0].id + (large ? 1 : 0) + (valid ? 2 : 0) + found.amount + orders.indexOf(found);
+}
+
+function run(rounds) {
+  var orders = makeOrders(3000);
+  var total = 0;
+  for (var i = 0; i < rounds; i++) total += report(orders);
+  return total;
+}
+
+console.log(run(250));
+//// async-pipelines.js
+// Async functions, an async generator read with `for await`, a callback API wrapped into promises, and four lanes that share one index under Promise.all.
+function delay(value) {
+  return new Promise(function (resolve) {
+    resolve(value);
+  });
+}
+
+function promisify(fn) {
+  return function () {
+    var args = Array.prototype.slice.call(arguments);
+    var self = this;
+    return new Promise(function (resolve, reject) {
+      args.push(function (error, value) {
+        if (error) reject(error);
+        else resolve(value);
+      });
+      fn.apply(self, args);
+    });
+  };
+}
+
+function readRecord(id, callback) {
+  if (id % 17 === 0) callback(new Error("missing " + id));
+  else callback(null, { id: id, size: (id * 7) % 13 });
+}
+
+var readRecordAsync = promisify(readRecord);
+
+async function load(id) {
+  try {
+    var record = await readRecordAsync(id);
+    return record.size;
+  } catch (error) {
+    return error.message.length;
+  }
+}
+
+async function* batches(count, size) {
+  for (var start = 0; start < count; start += size) {
+    var ids = [];
+    for (var id = start; id < start + size && id < count; id++) ids.push(id);
+    yield await delay(ids);
+  }
+}
+
+async function mapLimit(items, limit, worker) {
+  var results = new Array(items.length);
+  var next = 0;
+  async function lane() {
+    while (next < items.length) {
+      var index = next++;
+      results[index] = await worker(items[index]);
+    }
+  }
+  var lanes = [];
+  for (var i = 0; i < limit; i++) lanes.push(lane());
+  await Promise.all(lanes);
+  return results;
+}
+
+async function run(count) {
+  var total = 0;
+  for await (var ids of batches(count, 25)) {
+    var sizes = await mapLimit(ids, 4, load);
+    total += sizes.reduce(function (sum, size) {
+      return sum + size;
+    }, 0);
+    total += (await Promise.all([delay(1), delay(2), 3])).length;
+  }
+  return total;
+}
+
+run(200000).then(function (total) {
+  console.log(total);
+});
+//// binary-parsing.js
+// Records written and read through DataView and Uint8Array: a checksum, variable-length integers, hexadecimal text, subarray, and a Buffer made from one.
+function writeRecords(count) {
+  const bytes = new Uint8Array(count * 12 + 4);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, count, true);
+  let at = 4;
+  for (let i = 0; i < count; i++) {
+    bytes[at] = i & 3;
+    bytes[at + 1] = (i * 7) & 255;
+    view.setUint16(at + 2, (i * 31) & 65535, true);
+    view.setInt32(at + 4, i * 1000 - 5000, true);
+    view.setFloat32(at + 8, i / 4, true);
+    at += 12;
+  }
+  return bytes;
+}
+
+function readVarint(bytes, state) {
+  let value = 0;
+  let shift = 0;
+  let byte;
+  do {
+    byte = bytes[state.at++];
+    value |= (byte & 127) << shift;
+    shift += 7;
+  } while (byte & 128);
+  return value >>> 0;
+}
+
+function checksum(bytes) {
+  let a = 1;
+  let b = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    a = (a + bytes[i]) % 65521;
+    b = (b + a) % 65521;
+  }
+  return ((b << 16) | a) >>> 0;
+}
+
+function parse(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const count = view.getUint32(0, true);
+  const out = [];
+  for (let i = 0, at = 4; i < count; i++, at += 12) {
+    out.push({ kind: bytes[at], flags: bytes[at + 1], port: view.getUint16(at + 2, true), offset: view.getInt32(at + 4, true), ratio: view.getFloat32(at + 8, true) });
+  }
+  return out;
+}
+
+function toHex(bytes) {
+  let text = "";
+  for (let i = 0; i < bytes.length; i++) text += (bytes[i] < 16 ? "0" : "") + bytes[i].toString(16);
+  return text;
+}
+
+function run(rounds) {
+  const bytes = writeRecords(400);
+  const varints = new Uint8Array([1, 172, 2, 255, 255, 3, 128, 128, 128, 8]);
+  let total = 0;
+  for (let round = 0; round < rounds; round++) {
+    for (const record of parse(bytes)) total += record.kind + record.flags + (record.port & 15) + (record.offset & 7) + record.ratio;
+    total += checksum(bytes) & 1023;
+    const state = { at: 0 };
+    while (state.at < varints.length) total += readVarint(varints, state) & 255;
+    total += toHex(bytes.subarray(0, 32)).length + Buffer.from(bytes.subarray(4, 16)).readUInt16LE(2);
+  }
+  return total;
+}
+
+console.log(run(3000));
+//// collections.js
+// Map, Set and WeakMap: counts by key, unique values, an intersection, a cache that drops its oldest key, and iteration by `for of`, spread and forEach.
+function countBy(items, keyOf) {
+  const counts = new Map();
+  for (const item of items) {
+    const key = keyOf(item);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
+
+function unique(items) {
+  return [...new Set(items)];
+}
+
+function intersect(a, b) {
+  const out = new Set();
+  for (const value of a) if (b.has(value)) out.add(value);
+  return out;
+}
+
+class Cache {
+  constructor(limit) {
+    this.limit = limit;
+    this.entries = new Map();
+  }
+  get(key) {
+    const entries = this.entries;
+    if (!entries.has(key)) return undefined;
+    const value = entries.get(key);
+    entries.delete(key);
+    entries.set(key, value);
+    return value;
+  }
+  set(key, value) {
+    const entries = this.entries;
+    if (entries.has(key)) entries.delete(key);
+    else if (entries.size >= this.limit) entries.delete(entries.keys().next().value);
+    entries.set(key, value);
+  }
+}
+
+function run(rounds) {
+  const words = [];
+  for (let i = 0; i < 300; i++) words.push("k" + ((i * 11) % 70));
+  const objects = words.slice(0, 40).map(word => ({ word }));
+  const seen = new WeakMap();
+  const cache = new Cache(32);
+  let total = 0;
+  for (let round = 0; round < rounds; round++) {
+    const counts = countBy(words, word => word);
+    for (const [word, count] of counts) total += word.length + count;
+    total += unique(words).length + countBy(words, word => word.length).size;
+    total += intersect(new Set(words.slice(0, 100)), new Set(words.slice(50, 150))).size;
+    for (const object of objects) {
+      seen.set(object, (seen.get(object) || 0) + 1);
+      total += seen.get(object) & 1;
+    }
+    for (let i = 0; i < 200; i++) {
+      const key = (i * 7 + round) % 48;
+      if (cache.get(key) === undefined) cache.set(key, key * 2);
+      else total++;
+    }
+    counts.forEach((count, word) => {
+      if (count > 4) total += word.charCodeAt(1);
+    });
+  }
+  return total;
+}
+
+console.log(run(2500));
+//// column-names-out-of-a-split-header-read-rows-not-a-third-slower-than-names-written-out.js
+// Eight names come out of a header line by split() and are kept. Every row is read under each of them, again and again. The same loop runs with the eight names written out.
+const written = ["id", "name", "email", "city", "role", "note", "lang", "tag"];
+const fromHeader = written.join(",").split(",");
+const rows = []; for (let i = 0; i < 64; i++) rows.push({ id: i, name: i + 1, email: i + 2, city: i + 3, role: i + 4, note: i + 5, lang: i + 6, tag: i + 7 });
+function sumOf(names, turns) { let sum = 0; for (let t = 0; t < turns; t++) { const row = rows[t & 63]; for (let c = 0; c < 8; c++) sum = (sum + row[names[c]]) | 0; } return sum; }
+function fastestOf(names) { let fastest = Infinity; for (let turn = 0; turn < 7; turn++) { const began = performance.now(); sumOf(names, 400000); fastest = Math.min(fastest, performance.now() - began); } return fastest; }
+const byWritten = fastestOf(written), byHeader = fastestOf(fromHeader);
+console.log(sumOf(written, 1000) === sumOf(fromHeader, 1000), byHeader < byWritten * 4 / 3 ? "under a third slower" : "over a third slower");
+//// csv-and-templates.js
+// Text handled one character at a time and with regular expressions: a CSV parser that fills objects under computed names, and a template compiled into a closure that escapes HTML.
+function parseLine(line) {
+  var fields = [];
+  var field = "";
+  var quoted = false;
+  for (var i = 0; i < line.length; i++) {
+    var ch = line[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else quoted = false;
+      } else field += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ",") {
+      fields.push(field);
+      field = "";
+    } else field += ch;
+  }
+  fields.push(field);
+  return fields;
+}
+
+function parse(text) {
+  var lines = text.split("\n");
+  var header = parseLine(lines[0]);
+  var rows = [];
+  for (var i = 1; i < lines.length; i++) {
+    if (!lines[i]) continue;
+    var values = parseLine(lines[i]);
+    var row = {};
+    for (var j = 0; j < header.length; j++) row[header[j]] = values[j];
+    rows.push(row);
+  }
+  return rows;
+}
+
+var escapes = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"]/g, function (ch) {
+    return escapes[ch];
+  });
+}
+
+function compile(template) {
+  var parts = template.split(/\{\{\s*([\w.]+)\s*\}\}/);
+  return function (data) {
+    var out = parts[0];
+    for (var i = 1; i < parts.length; i += 2) {
+      var value = data;
+      var path = parts[i].split(".");
+      for (var j = 0; j < path.length && value != null; j++) value = value[path[j]];
+      out += escapeHtml(value == null ? "" : value) + parts[i + 1];
+    }
+    return out;
+  };
+}
+
+function run(rounds) {
+  var text = 'id,name,city,note\n1,Ann,"Paris, FR",plain\n2,"Bob ""B""",Oslo,<b>bold</b>\n3,Cy,Rome,"a & b"\n4,Di,,\n';
+  var render = compile("<li id={{ row.id }}>{{row.name}} of {{ row.city }}: {{row.note}} ({{ meta.round }})</li>");
+  var total = 0;
+  for (var round = 0; round < rounds; round++) {
+    var rows = parse(text);
+    var meta = { round: round & 15 };
+    for (var i = 0; i < rows.length; i++) total += render({ row: rows[i], meta: meta }).length;
+    total += rows
+      .map(function (row) {
+        return row.name.toUpperCase();
+      })
+      .join("|").length;
+  }
+  return total;
+}
+
+console.log(run(60000));
+//// deep-equal-clone.js
+// Recursive clone, equality and merge, and lookup by a dotted path, over a nested configuration object with arrays, a Date, null and NaN.
+function clone(value) {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(clone);
+  if (value instanceof Date) return new Date(value.getTime());
+  const out = {};
+  for (const key of Object.keys(value)) out[key] = clone(value[key]);
+  return out;
+}
+
+function equal(a, b) {
+  if (a === b) return true;
+  if (typeof a !== typeof b || a === null || b === null || typeof a !== "object") return a !== a && b !== b;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (!equal(a[i], b[i])) return false;
+    return true;
+  }
+  if (a instanceof Date) return b instanceof Date && a.getTime() === b.getTime();
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(b, key) || !equal(a[key], b[key])) return false;
+  }
+  return true;
+}
+
+function merge(target, source) {
+  for (const key of Object.keys(source)) {
+    const value = source[key];
+    if (value && typeof value === "object" && !Array.isArray(value) && target[key] && typeof target[key] === "object") merge(target[key], value);
+    else target[key] = value;
+  }
+  return target;
+}
+
+function get(object, path, fallback) {
+  const parts = path.split(".");
+  let current = object;
+  for (let i = 0; i < parts.length; i++) {
+    if (current == null) return fallback;
+    current = current[parts[i]];
+  }
+  return current === undefined ? fallback : current;
+}
+
+function run(rounds) {
+  const config = {
+    name: "service",
+    ports: [80, 443, 8080],
+    limits: { memory: 512, cpu: { cores: 2, shares: [1, 2, 3] } },
+    started: new Date(86400000),
+    flags: { debug: false, verbose: null, ratio: NaN },
+  };
+  let total = 0;
+  for (let i = 0; i < rounds; i++) {
+    const copy = clone(config);
+    total += equal(copy, config) ? 1 : 0;
+    copy.limits.cpu.shares[i % 3] = i;
+    total += equal(copy, config) ? 1 : 0;
+    const merged = merge(copy, { limits: { cpu: { cores: i & 3 } }, extra: [i] });
+    total += get(merged, "limits.cpu.cores", -1) + get(merged, "limits.disk.size", 7) + get(merged, "ports.1", 0);
+  }
+  return total;
+}
+
+console.log(run(150000));
+//// destructuring.js
+// Destructuring of parameters and variables: defaults, nested patterns, rest elements and rest properties, a swap, and objects returned only to be taken apart.
+function area({ width = 1, height = 1, unit: { scale = 1 } = {} } = {}) {
+  return width * height * scale;
+}
+
+function head([first, second = 10, ...others]) {
+  return first + second + others.length;
+}
+
+function swap(pair) {
+  let [a, b] = pair;
+  [a, b] = [b, a];
+  return a * 2 + b;
+}
+
+function pick(source, ...names) {
+  const out = {};
+  for (const name of names) out[name] = source[name];
+  return out;
+}
+
+function omitId({ id, ...others }) {
+  return others;
+}
+
+const describe = ({ name, tags: [firstTag = "none"] = [] }) => `${name}:${firstTag}`;
+
+function minMax(values) {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const value of values) {
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
+  return { min, max };
+}
+
+function run(count) {
+  const boxes = [{ width: 2, height: 3 }, { width: 4 }, { height: 5, unit: { scale: 2 } }, {}, undefined];
+  const people = [{ id: 1, name: "ann", tags: ["x", "y"] }, { id: 2, name: "bob" }, { id: 3, name: "cy", tags: [] }];
+  let total = 0;
+  for (let i = 0; i < count; i++) {
+    total += area(boxes[i % 5]) + head([i & 3, 2, 3, 4]) + head([i & 1]) + swap([i & 7, 3]);
+    const person = people[i % 3];
+    total += describe(person).length;
+    const { name, missing = 4 } = pick(person, "name", "id");
+    total += name.length + missing;
+    const { min, max } = minMax([i & 15, 7, i & 3]);
+    total += max - min;
+    if ((i & 3) === 0) total += Object.keys(omitId(person)).length;
+  }
+  return total;
+}
+
+console.log(run(700000));
+//// dictionaries.js
+// Objects used as dictionaries: counts under computed keys, hasOwnProperty.call, `in`, `for in`, Object.keys, and `delete` inside a `for in` loop.
+var hasOwn = Object.prototype.hasOwnProperty;
+
+function countWords(words, rounds) {
+  var counts = {};
+  for (var r = 0; r < rounds; r++) {
+    for (var i = 0; i < words.length; i++) {
+      var word = words[i];
+      if (hasOwn.call(counts, word)) counts[word]++;
+      else counts[word] = 1;
+    }
+  }
+  return counts;
+}
+
+function invert(table) {
+  var out = {};
+  for (var key in table) {
+    if (!hasOwn.call(table, key)) continue;
+    var bucket = "n" + (table[key] % 7);
+    (out[bucket] || (out[bucket] = [])).push(key);
+  }
+  return out;
+}
+
+function sumValues(table) {
+  var keys = Object.keys(table);
+  var sum = 0;
+  for (var i = 0; i < keys.length; i++) sum += table[keys[i]];
+  return sum;
+}
+
+function prune(table, limit) {
+  var removed = 0;
+  for (var key in table) {
+    if (table[key] < limit) {
+      delete table[key];
+      removed++;
+    }
+  }
+  return removed;
+}
+
+function run() {
+  var words = [];
+  for (var i = 0; i < 400; i++) words.push("w" + ((i * 7) % 150));
+  var total = 0;
+  for (var round = 0; round < 60; round++) {
+    var counts = countWords(words, 40);
+    var groups = invert(counts);
+    total += sumValues(counts) + Object.keys(groups).length;
+    total += "w3" in counts ? 1 : 0;
+    total += prune(counts, 90);
+    for (var name in groups) total += groups[name].length;
+  }
+  return total;
+}
+
+console.log(run());
+//// errors-and-cleanup.js
+// Errors of an ES5 constructor and of classes that extend Error in two levels, thrown through `finally` and told apart with `instanceof`, beside a TypeError that the engine throws.
+function HttpError(status, message) {
+  var error = Error.call(this, message);
+  this.name = "HttpError";
+  this.message = error.message;
+  this.status = status;
+}
+HttpError.prototype = Object.create(Error.prototype);
+HttpError.prototype.constructor = HttpError;
+
+class ValidationError extends Error {
+  constructor(field, message) {
+    super(message);
+    this.name = "ValidationError";
+    this.field = field;
+  }
+}
+
+class RangeValidationError extends ValidationError {
+  constructor(field, low, high) {
+    super(field, field + " must be in " + low + ".." + high);
+    this.low = low;
+    this.high = high;
+  }
+}
+
+var opened = 0;
+var closed = 0;
+
+function withResource(work) {
+  opened++;
+  try {
+    return work();
+  } finally {
+    closed++;
+  }
+}
+
+function check(request) {
+  if (request.age < 0 || request.age > 120) throw new RangeValidationError("age", 0, 120);
+  if (!request.name) throw new ValidationError("name", "name is required");
+  if (request.id === 13) throw new HttpError(404, "no such id");
+  if (request.id === 14) return null.missing;
+  return request.id + request.age;
+}
+
+function handle(request) {
+  try {
+    return withResource(function () {
+      return check(request);
+    });
+  } catch (error) {
+    if (error instanceof RangeValidationError) return error.high - error.low;
+    if (error instanceof ValidationError) return error.field.length;
+    if (error instanceof HttpError) return error.status;
+    if (error instanceof TypeError) return 1;
+    throw error;
+  }
+}
+
+function run(count) {
+  var total = 0;
+  for (var i = 0; i < count; i++) {
+    total += handle({ id: i % 16, age: (i % 140) - 5, name: i % 9 ? "n" : "" });
+  }
+  return total + opened - closed;
+}
+
+console.log(run(400000));
+//// es5-inheritance.js
+// ES5 inheritance in four ways: a prototype replaced by a literal, Object.create, `new` of the parent and Object.setPrototypeOf, with methods overridden and called through `call`.
+function Animal(name, legs) {
+  this.name = name;
+  this.legs = legs;
+  this.steps = 0;
+}
+Animal.prototype = {
+  constructor: Animal,
+  walk: function (distance) {
+    this.steps += distance * this.legs;
+    return this;
+  },
+  sound: function () {
+    return 1;
+  },
+  score: function () {
+    return this.steps + this.sound() + this.name.length;
+  },
+};
+
+function Dog(name) {
+  Animal.call(this, name, 4);
+  this.tricks = 0;
+}
+Dog.prototype = Object.create(Animal.prototype);
+Dog.prototype.constructor = Dog;
+Dog.prototype.sound = function () {
+  return 7 + this.tricks;
+};
+Dog.prototype.learn = function () {
+  this.tricks++;
+  return this;
+};
+
+function Puppy(name) {
+  Dog.call(this, name);
+  this.age = 1;
+}
+Puppy.prototype = new Dog("prototype");
+Puppy.prototype.constructor = Puppy;
+Puppy.prototype.score = function () {
+  return Dog.prototype.score.call(this) - this.age;
+};
+
+function Bird(name) {
+  Animal.call(this, name, 2);
+}
+Object.setPrototypeOf(Bird.prototype, Animal.prototype);
+Bird.prototype.sound = function () {
+  return 3;
+};
+
+function make(kind, name) {
+  switch (kind) {
+    case 0:
+      return new Dog(name);
+    case 1:
+      return new Puppy(name);
+    case 2:
+      return new Bird(name);
+  }
+  return new Animal(name, 6);
+}
+
+function run(count) {
+  var names = ["rex", "dot", "tweety", "ant"];
+  var total = 0;
+  var dogs = 0;
+  for (var i = 0; i < count; i++) {
+    var animal = make(i & 3, names[i & 3]);
+    animal.walk(i & 7).walk(1);
+    if (animal instanceof Dog) {
+      animal.learn();
+      dogs++;
+    }
+    total += animal.score();
+  }
+  return total + dogs;
+}
+
+console.log(run(2000000));
+//// es5-prototypes.js
+// ES5 constructors with methods on their prototypes: an `inherits` function, one call site that sees objects of three constructors, and short-lived points allocated in the loop.
+function Shape(name) {
+  this.name = name;
+  this.visits = 0;
+}
+Shape.prototype.area = function () {
+  return 0;
+};
+Shape.prototype.describe = function () {
+  this.visits++;
+  return this.name.length + this.area();
+};
+
+function inherits(child, parent) {
+  child.prototype = Object.create(parent.prototype);
+  child.prototype.constructor = child;
+}
+
+function Rectangle(width, height) {
+  Shape.call(this, "rectangle");
+  this.width = width;
+  this.height = height;
+}
+inherits(Rectangle, Shape);
+Rectangle.prototype.area = function () {
+  return this.width * this.height;
+};
+
+function Circle(radius) {
+  Shape.call(this, "circle");
+  this.radius = radius;
+}
+inherits(Circle, Shape);
+Circle.prototype.area = function () {
+  return 3 * this.radius * this.radius;
+};
+
+function Point(x, y) {
+  this.x = x;
+  this.y = y;
+}
+Point.prototype.plus = function (other) {
+  return new Point(this.x + other.x, this.y + other.y);
+};
+Point.prototype.dot = function (other) {
+  return this.x * other.x + this.y * other.y;
+};
+
+function run(count) {
+  var shapes = [new Rectangle(2, 3), new Circle(4), new Rectangle(5, 6), new Shape("none")];
+  var total = 0;
+  var position = new Point(0, 0);
+  for (var i = 0; i < count; i++) {
+    var step = new Point(i & 7, i % 5);
+    position = position.plus(step);
+    total += (position.dot(step) % 11) + shapes[i & 3].describe();
+  }
+  return total + shapes[1].visits + (shapes[0] instanceof Shape ? 1 : 0);
+}
+
+console.log(run(4000000));
+//// es6-classes.js
+// Classes in three levels: `super` calls, a getter, a static factory with `new this`, toString in a template literal, and a tree that is built and walked again and again.
+class Node {
+  constructor(name) {
+    this.name = name;
+    this.children = [];
+    this.parent = null;
+  }
+  add(child) {
+    child.parent = this;
+    this.children.push(child);
+    return this;
+  }
+  get depth() {
+    let depth = 0;
+    for (let node = this.parent; node; node = node.parent) depth++;
+    return depth;
+  }
+  weight() {
+    let total = this.ownWeight();
+    for (const child of this.children) total += child.weight();
+    return total;
+  }
+  ownWeight() {
+    return 1;
+  }
+  static of(name) {
+    return new this(name);
+  }
+}
+
+class File extends Node {
+  constructor(name, size) {
+    super(name);
+    this.size = size;
+  }
+  ownWeight() {
+    return this.size;
+  }
+}
+
+class Link extends File {
+  constructor(name, target) {
+    super(name, 0);
+    this.target = target;
+  }
+  ownWeight() {
+    return super.ownWeight() + (this.target ? 2 : 1);
+  }
+  toString() {
+    return `${this.name} -> ${this.target.name}`;
+  }
+}
+
+function build(width, levels) {
+  const root = Node.of("root");
+  let row = [root];
+  for (let level = 0; level < levels; level++) {
+    const next = [];
+    for (const parent of row) {
+      for (let i = 0; i < width; i++) {
+        const child = i === 0 ? new Node("d" + i) : i === 1 ? new Link("l" + i, parent) : new File("f" + i, i * 3);
+        parent.add(child);
+        if (i === 0) next.push(child);
+      }
+    }
+    row = next;
+  }
+  return { root, last: row[0] };
+}
+
+function run(rounds) {
+  let total = 0;
+  for (let i = 0; i < rounds; i++) {
+    const { root, last } = build(6, 12);
+    total += root.weight() + last.depth + String(root.children[1]).length;
+    total += root.children[2] instanceof File ? 1 : 0;
+  }
+  return total;
+}
+
+console.log(run(30000));
+//// evaluated-text-reads-a-number-that-may-be-undefined-not-three-times-as-slowly-as-a-string.ts
+// Text evaluated at run time reads two fields of objects that compiled code made: a string, and a number that may be undefined. A read of the second may cost a few times a read of the first, not three times.
+class Row { whole: number; fraction: number; flag: boolean; text: string; list: number[]; any: unknown; inner: { a: number }; maybe: number | undefined;
+    constructor(i: number) { this.whole = i | 0; this.fraction = i + 0.5; this.flag = (i & 1) === 0; this.text = "t" + i; this.list = [i]; this.any = i & 1 ? "s" : i; this.inner = { a: i }; this.maybe = i & 1 ? undefined : i; } }
+const rows = [new Row(1), new Row(2)];
+const loop = (read: string) => new Function("rows", "n", `let t = 0; for (let i = 0; i < n; i++) { const r = rows[i & 1]; ${read} } return t;`);
+const none = loop(""), text = loop("if (r.text === undefined) t++;"), maybe = loop("if (r.maybe === undefined) t++;");
+function fastestOf(run: Function) { let fastest = Infinity; for (let turn = 0; turn < 5; turn++) { const began = performance.now(); run(rows, 400000); fastest = Math.min(fastest, performance.now() - began); } return fastest; }
+const base = fastestOf(none), one = fastestOf(text) - base, other = fastestOf(maybe) - base;
+console.log(other < Math.max(one, base / 20) * 3 ? "under three times a read of the string" : "over three times a read of the string");
+//// exceptions.js
+// Exceptions in a hot loop: an ES5 error type thrown once in 128 turns and caught at the call, behind a `finally` and above five levels of recursion, beside a TypeError that the engine throws.
+function ValidationError(field, message) {
+  this.name = "ValidationError";
+  this.field = field;
+  this.message = message;
+}
+ValidationError.prototype = Object.create(Error.prototype);
+ValidationError.prototype.constructor = ValidationError;
+
+function requireNumber(record, field) {
+  var value = record[field];
+  if (typeof value !== "number") throw new ValidationError(field, field + " must be a number");
+  return value;
+}
+
+function validate(record) {
+  return requireNumber(record, "id") + requireNumber(record, "size");
+}
+
+function safely(fn, argument, fallback) {
+  try {
+    return fn(argument);
+  } catch (error) {
+    if (error instanceof ValidationError) return fallback + error.field.length;
+    throw error;
+  }
+}
+
+function withCleanup(record, log) {
+  log.opened++;
+  try {
+    if (record.size === 3) return -1;
+    return validate(record);
+  } finally {
+    log.closed++;
+  }
+}
+
+function deep(level, record) {
+  if (level === 0) return validate(record);
+  return deep(level - 1, record) + 1;
+}
+
+function run(count) {
+  var records = [{ id: 1, size: 2 }, { id: 2, size: 3 }, { id: 3, size: 4 }, { id: 4, size: 5 }];
+  var broken = { id: 5, size: "large" };
+  var log = { opened: 0, closed: 0 };
+  var total = 0;
+  for (var i = 0; i < count; i++) {
+    var record = (i & 127) === 0 ? broken : records[i & 3];
+    total += safely(validate, record, 100);
+    try {
+      total += withCleanup(record, log);
+    } catch (error) {
+      total += error.message.length;
+    }
+    try {
+      total += deep(4, record);
+    } catch (error) {
+      total += error.name.length;
+    }
+    if ((i & 1023) === 0) {
+      try {
+        null.missing;
+      } catch (error) {
+        total += error instanceof TypeError ? 7 : 0;
+      }
+    }
+  }
+  return total + log.opened - log.closed;
+}
+
+console.log(run(2500000));
+//// from-a-node-to-the-root-by-a-field-named-return.js
+// From a node to the root of its tree by the field `return`, which generators have as a method, and a look at `flags` and `tag` on the way, which regular expressions
+// and a dozen other kinds of objects have.
+const word = process.argv[3] ?? "";
+const open = new Function("value", "return value" + word.slice(word.length));
+
+function TreeNode(tag) {
+  this.tag = tag;
+  this.flags = 0;
+  this.return = null;
+  this.state = null;
+}
+
+const others = [];
+function makeOthers(k) {
+  others.push({ tag: k, text: "t" }, { sides: k, tag: k }, { body: "b", sender: "s", tag: k }, { color: k, tag: k }, { tag: k, left: null, right: null });
+}
+for (let i = 0; i < 64; i++) makeOthers(i);
+
+function rootOf(source) {
+  for (var parent = source.return; null !== parent; ) (source = parent), (parent = source.return);
+  return 3 === source.tag ? source.state : null;
+}
+
+function countMarked(node) {
+  var marked = 0;
+  for (var parent = node; null !== parent; ) {
+    if (0 !== (parent.flags & 4)) marked++;
+    else if (10 === parent.tag) break;
+    parent = parent.return;
+  }
+  return marked;
+}
+
+function build(depth) {
+  let parent = null;
+  for (let i = 0; i < depth; i++) {
+    const node = new TreeNode(i === 0 ? 3 : 5);
+    node.return = parent;
+    node.flags = i & 7;
+    if (i === 0) node.state = { name: "root" };
+    parent = node;
+  }
+  return parent;
+}
+
+const rounds = Number(process.argv[2] ?? 200000);
+const leaf = open(build(12));
+let found = 0, marked = 0;
+for (let i = 0; i < rounds; i++) {
+  if (rootOf(open(leaf)) !== null) found++;
+  marked += countMarked(open(leaf));
+}
+console.log(found, marked, others.length);
+//// functional.js
+// Functional style with arrow functions: compose, pipe, curry with rest and spread arguments, closures that return closures, and a recursive flatten.
+const compose = (...fns) => value => fns.reduceRight((result, fn) => fn(result), value);
+const pipe = (...fns) => value => fns.reduce((result, fn) => fn(result), value);
+
+const curry = fn => {
+  const collect = (...args) => (args.length >= fn.length ? fn(...args) : (...more) => collect(...args, ...more));
+  return collect;
+};
+
+const add = curry((a, b) => a + b);
+const multiply = curry((a, b) => a * b);
+const clamp = curry((low, high, value) => Math.min(high, Math.max(low, value)));
+const prop = name => object => object[name];
+const not = test => value => !test(value);
+const isEven = value => value % 2 === 0;
+const tap = fn => value => (fn(value), value);
+
+function debounceLike(fn) {
+  let calls = 0;
+  return (...args) => (++calls % 3 === 0 ? fn(...args) : 0);
+}
+
+function zipWith(fn, left, right) {
+  const out = [];
+  for (let i = 0; i < Math.min(left.length, right.length); i++) out.push(fn(left[i], right[i]));
+  return out;
+}
+
+const flatten = list => list.reduce((out, item) => (Array.isArray(item) ? out.concat(flatten(item)) : (out.push(item), out)), []);
+
+function run(count) {
+  let seen = 0;
+  const transform = pipe(add(3), multiply(2), clamp(0, 50), tap(() => seen++));
+  const back = compose(add(1), multiply(3));
+  const everyThird = debounceLike((a, b) => a + b);
+  const size = prop("size");
+  const items = [{ size: 1 }, { size: 4 }, { size: 9 }];
+  const nested = [1, [2, [3, 4]], [5], 6];
+  let total = 0;
+  for (let i = 0; i < count; i++) {
+    total += transform(i & 31) + back(i & 7) + everyThird(i & 3, 1);
+    total += size(items[i % 3]) + (not(isEven)(i) ? 1 : 0);
+    if ((i & 7) === 0) total += zipWith((a, b) => a * b, [1, 2, 3], [i & 3, 5, 6]).length + flatten(nested).length;
+  }
+  return total + seen;
+}
+
+console.log(run(900000));
+//// interpreter-loop.js
+// A stack machine: an assembler that resolves labels, and a `switch` over thirteen opcodes in an endless loop that pushes to arrays and pops from them.
+var PUSH = 0, ADD = 1, MUL = 2, SUB = 3, DUP = 4, JNZ = 5, LOAD = 6, STORE = 7, LT = 8, HALT = 9, CALL = 10, RET = 11, SWAP = 12;
+
+function assemble(source) {
+  var names = { push: PUSH, add: ADD, mul: MUL, sub: SUB, dup: DUP, jnz: JNZ, load: LOAD, store: STORE, lt: LT, halt: HALT, call: CALL, ret: RET, swap: SWAP };
+  var code = [];
+  var labels = {};
+  var fixups = [];
+  source.split("\n").forEach(function (line) {
+    line = line.trim();
+    if (!line) return;
+    if (line[line.length - 1] === ":") {
+      labels[line.slice(0, -1)] = code.length;
+      return;
+    }
+    var parts = line.split(" ");
+    code.push(names[parts[0]]);
+    if (parts.length > 1) {
+      if (/^-?\d+$/.test(parts[1])) code.push(parseInt(parts[1], 10));
+      else {
+        fixups.push({ at: code.length, label: parts[1] });
+        code.push(0);
+      }
+    }
+  });
+  fixups.forEach(function (fixup) {
+    code[fixup.at] = labels[fixup.label];
+  });
+  return code;
+}
+
+function execute(code, input) {
+  var stack = [];
+  var frames = [];
+  var locals = [input, 0, 0, 0];
+  var pc = 0;
+  var steps = 0;
+  for (;;) {
+    steps++;
+    switch (code[pc++]) {
+      case PUSH:
+        stack.push(code[pc++]);
+        break;
+      case ADD: {
+        var b = stack.pop();
+        stack.push(stack.pop() + b);
+        break;
+      }
+      case MUL: {
+        var d = stack.pop();
+        stack.push((stack.pop() * d) % 1000003);
+        break;
+      }
+      case SUB: {
+        var f = stack.pop();
+        stack.push(stack.pop() - f);
+        break;
+      }
+      case DUP:
+        stack.push(stack[stack.length - 1]);
+        break;
+      case SWAP: {
+        var top = stack.pop();
+        var under = stack.pop();
+        stack.push(top);
+        stack.push(under);
+        break;
+      }
+      case JNZ: {
+        var target = code[pc++];
+        if (stack.pop() !== 0) pc = target;
+        break;
+      }
+      case LOAD:
+        stack.push(locals[code[pc++]]);
+        break;
+      case STORE:
+        locals[code[pc++]] = stack.pop();
+        break;
+      case LT: {
+        var h = stack.pop();
+        stack.push(stack.pop() < h ? 1 : 0);
+        break;
+      }
+      case CALL:
+        frames.push(pc + 1);
+        pc = code[pc];
+        break;
+      case RET:
+        pc = frames.pop();
+        break;
+      case HALT:
+        return stack.pop() + steps;
+      default:
+        throw new Error("bad opcode at " + (pc - 1));
+    }
+  }
+}
+
+var program = assemble(
+  [
+    "push 1",
+    "store 1",
+    "push 0",
+    "store 2",
+    "loop:",
+    "load 1",
+    "call step",
+    "store 1",
+    "load 2",
+    "push 1",
+    "add",
+    "dup",
+    "store 2",
+    "load 0",
+    "lt",
+    "jnz loop",
+    "load 1",
+    "halt",
+    "step:",
+    "push 3",
+    "mul",
+    "load 2",
+    "add",
+    "ret",
+  ].join("\n"),
+);
+
+function run(rounds) {
+  var total = 0;
+  for (var i = 0; i < rounds; i++) total = (total + execute(program, 200 + (i & 63))) % 1000000007;
+  return total;
+}
+
+console.log(run(4000));
+//// iterators-generators.js
+// Generators chained into a pipeline, `yield*` over a tree and a class with an iterator of its own, consumed by `for of`, spread, destructuring and entries().
+function* range(from, to, step = 1) {
+  for (let value = from; value < to; value += step) yield value;
+}
+
+function* map(source, fn) {
+  for (const value of source) yield fn(value);
+}
+
+function* filter(source, test) {
+  for (const value of source) if (test(value)) yield value;
+}
+
+function* take(source, count) {
+  if (count <= 0) return;
+  for (const value of source) {
+    yield value;
+    if (--count === 0) return;
+  }
+}
+
+class Ring {
+  constructor(items) {
+    this.items = items;
+  }
+  [Symbol.iterator]() {
+    let at = 0;
+    const items = this.items;
+    return {
+      next() {
+        if (at < items.length) return { value: items[at++], done: false };
+        return { value: undefined, done: true };
+      },
+    };
+  }
+}
+
+function* walk(tree) {
+  yield tree.value;
+  for (const child of tree.children) yield* walk(child);
+}
+
+function sum(source) {
+  let total = 0;
+  for (const value of source) total += value;
+  return total;
+}
+
+function run(rounds) {
+  const ring = new Ring([1, 2, 3, 4, 5, 6, 7, 8]);
+  const tree = { value: 1, children: [{ value: 2, children: [{ value: 3, children: [] }] }, { value: 4, children: [] }] };
+  let total = 0;
+  for (let i = 0; i < rounds; i++) {
+    total += sum(take(filter(map(range(0, 100), x => x * 3), x => x % 2 === 0), 10));
+    total += sum(ring) + sum(walk(tree));
+    const [first, second] = range(i & 7, 100);
+    total += first + second + Math.max(...ring) + [...range(0, 5)].length;
+    for (const [index, value] of [10, 20, 30].entries()) total += index * value;
+  }
+  return total;
+}
+
+console.log(run(120000));
+//// json-walk.js
+// A document of 500 items is parsed with JSON.parse again and again, walked recursively by `typeof`, Array.isArray and `for in`, and then read by name.
+function makeDocument(count) {
+  var items = [];
+  for (var i = 0; i < count; i++) {
+    items.push({
+      id: i,
+      name: "item " + i,
+      tags: ["a" + (i % 5), "b" + (i % 3)],
+      price: i % 4 === 0 ? null : (i * 13) % 97,
+      nested: { depth: i % 6, flags: { hot: i % 2 === 0, label: i % 7 === 0 ? "sale" : undefined } },
+    });
+  }
+  return JSON.stringify({ version: 3, items: items, meta: { count: count, source: "generated" } });
+}
+
+function walk(value, depth) {
+  if (value === null) return 1;
+  switch (typeof value) {
+    case "number":
+      return value & 255;
+    case "string":
+      return value.length;
+    case "boolean":
+      return value ? 2 : 3;
+  }
+  var total = depth;
+  if (Array.isArray(value)) {
+    for (var i = 0; i < value.length; i++) total += walk(value[i], depth + 1);
+    return total;
+  }
+  for (var key in value) total += key.length + walk(value[key], depth + 1);
+  return total;
+}
+
+function summarize(document) {
+  var total = 0;
+  var items = document.items;
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i];
+    total += item.price || 0;
+    if (item.nested && item.nested.flags && item.nested.flags.label) total += item.nested.flags.label.length;
+    total += item.tags.indexOf("a2") + item.nested.depth;
+  }
+  return total + document.meta.count;
+}
+
+function run(rounds) {
+  var text = makeDocument(500);
+  var total = 0;
+  for (var i = 0; i < rounds; i++) {
+    var document = JSON.parse(text);
+    total += walk(document, 0) + summarize(document);
+    if (i % 10 === 0) total += JSON.stringify(document.items[i % 500]).length;
+  }
+  return total;
+}
+
+console.log(run(250));
+//// lists-of-anything-compared-with-object-is.js
+// Two lists of whatever a component depends on are compared element by element with Object.is, as a UI library does on every render.
+const word = process.argv[3] ?? "";
+const open = new Function("value", "return value" + word.slice(word.length));
+function is(x, y) {
+  return (x === y && (0 !== x || 1 / x === 1 / y)) || (x !== x && y !== y);
+}
+var objectIs = "function" === typeof Object.is ? Object.is : is;
+
+function areInputsEqual(next, previous) {
+  if (null === previous) return !1;
+  for (var i = 0; i < previous.length && i < next.length; i++)
+    if (!objectIs(next[i], previous[i])) return !1;
+  return !0;
+}
+
+const shared = { name: "shared" }, callback = () => 1;
+const lists = open([
+  [shared, callback, "text", 4],
+  [shared, callback, "text", 4],
+  [callback, shared],
+  [callback, shared],
+  ["a", "b", "c"],
+  ["a", "b", "d"],
+  [1, 2, 3],
+  [1, 2, 3],
+]);
+const rounds = Number(process.argv[2] ?? 200000);
+let equal = 0;
+for (let i = 0; i < rounds; i++) {
+  const pair = (i & 3) << 1;
+  if (areInputsEqual(lists[pair], lists[pair + 1])) equal++;
+}
+console.log(equal, areInputsEqual(lists[0], null), areInputsEqual([rounds, 2], [rounds, 2]));
+//// matrices-and-vectors.js
+// Floating-point arithmetic: matrices of 12 by 12 as arrays of arrays, multiplied and transposed, and short-lived vectors of three components from an ES5 constructor.
+function zeros(rows, columns) {
+  var matrix = [];
+  for (var i = 0; i < rows; i++) {
+    var row = [];
+    for (var j = 0; j < columns; j++) row.push(0);
+    matrix.push(row);
+  }
+  return matrix;
+}
+
+function multiply(a, b) {
+  var rows = a.length;
+  var inner = b.length;
+  var columns = b[0].length;
+  var out = zeros(rows, columns);
+  for (var i = 0; i < rows; i++) {
+    var rowOfA = a[i];
+    var rowOfOut = out[i];
+    for (var k = 0; k < inner; k++) {
+      var factor = rowOfA[k];
+      var rowOfB = b[k];
+      for (var j = 0; j < columns; j++) rowOfOut[j] += factor * rowOfB[j];
+    }
+  }
+  return out;
+}
+
+function transpose(matrix) {
+  return matrix[0].map(function (_, column) {
+    return matrix.map(function (row) {
+      return row[column];
+    });
+  });
+}
+
+function Vector(x, y, z) {
+  this.x = x;
+  this.y = y;
+  this.z = z;
+}
+Vector.prototype.add = function (other) {
+  return new Vector(this.x + other.x, this.y + other.y, this.z + other.z);
+};
+Vector.prototype.scale = function (factor) {
+  return new Vector(this.x * factor, this.y * factor, this.z * factor);
+};
+Vector.prototype.dot = function (other) {
+  return this.x * other.x + this.y * other.y + this.z * other.z;
+};
+Vector.prototype.cross = function (other) {
+  return new Vector(this.y * other.z - this.z * other.y, this.z * other.x - this.x * other.z, this.x * other.y - this.y * other.x);
+};
+Vector.prototype.length = function () {
+  return Math.sqrt(this.dot(this));
+};
+
+function trace(matrix) {
+  var sum = 0;
+  for (var i = 0; i < matrix.length; i++) sum += matrix[i][i];
+  return sum;
+}
+
+function run(rounds) {
+  var size = 12;
+  var a = zeros(size, size);
+  var b = zeros(size, size);
+  for (var i = 0; i < size; i++) {
+    for (var j = 0; j < size; j++) {
+      a[i][j] = ((i * 7 + j * 3) % 11) / 4;
+      b[i][j] = ((i + j * 5) % 13) - 6;
+    }
+  }
+  var total = 0;
+  var position = new Vector(0, 0, 0);
+  var velocity = new Vector(1, 0.5, -0.25);
+  var axis = new Vector(0, 0, 1);
+  for (var round = 0; round < rounds; round++) {
+    total += trace(multiply(a, transpose(b))) % 97;
+    for (var step = 0; step < 200; step++) {
+      velocity = velocity.add(velocity.cross(axis).scale(0.01));
+      position = position.add(velocity.scale(0.1));
+    }
+    total += Math.floor(position.length()) % 31;
+  }
+  return Math.round(total * 100) / 100;
+}
+
+console.log(run(4000));
+//// mixins-and-accessors.js
+// Methods mixed into a prototype with Object.assign, accessors from Object.defineProperty and from a class, a setter that notifies listeners, and valueOf in a subtraction.
+var Observable = {
+  on: function (name, listener) {
+    (this._listeners[name] || (this._listeners[name] = [])).push(listener);
+    return this;
+  },
+  notify: function (name, value) {
+    var list = this._listeners[name];
+    if (!list) return 0;
+    var sum = 0;
+    for (var i = 0; i < list.length; i++) sum += list[i](value);
+    return sum;
+  },
+};
+
+var Comparable = {
+  compareTo: function (other) {
+    return this.valueOf() - other.valueOf();
+  },
+  max: function (other) {
+    return this.compareTo(other) >= 0 ? this : other;
+  },
+};
+
+function Temperature(celsius) {
+  this._listeners = {};
+  this._celsius = celsius;
+}
+Object.assign(Temperature.prototype, Observable, Comparable);
+Object.defineProperty(Temperature.prototype, "celsius", {
+  get: function () {
+    return this._celsius;
+  },
+  set: function (value) {
+    var before = this._celsius;
+    this._celsius = value;
+    if (before !== value) this.changes = (this.changes || 0) + this.notify("change", value - before);
+  },
+});
+Object.defineProperty(Temperature.prototype, "fahrenheit", {
+  get: function () {
+    return (this._celsius * 9) / 5 + 32;
+  },
+});
+Temperature.prototype.valueOf = function () {
+  return this._celsius;
+};
+
+class Rectangle {
+  constructor(width, height) {
+    this._width = width;
+    this._height = height;
+  }
+  get area() {
+    return this._width * this._height;
+  }
+  get width() {
+    return this._width;
+  }
+  set width(value) {
+    this._width = value < 0 ? 0 : value;
+  }
+  static square(side) {
+    return new Rectangle(side, side);
+  }
+}
+
+function run(count) {
+  var total = 0;
+  var reference = new Temperature(20);
+  var sensor = new Temperature(0).on("change", function (delta) {
+    return delta > 0 ? 1 : 2;
+  });
+  sensor.on("change", function (delta) {
+    return delta & 1;
+  });
+  var box = Rectangle.square(3);
+  for (var i = 0; i < count; i++) {
+    sensor.celsius = i % 40;
+    total += sensor.fahrenheit + sensor.max(reference).celsius;
+    box.width = (i % 7) - 1;
+    total += box.area + box.width;
+  }
+  return total + sensor.changes;
+}
+
+console.log(run(1500000));
+//// module-pattern.js
+// The module pattern: functions that share the variables of an enclosing call, among them a table of counters, an accumulator with chained calls, memoize and once.
+var counters = (function () {
+  var values = {};
+  var total = 0;
+  function bump(name, by) {
+    if (values[name] === undefined) values[name] = 0;
+    values[name] += by;
+    total += by;
+    return values[name];
+  }
+  function read(name) {
+    return values[name] || 0;
+  }
+  return {
+    bump: bump,
+    read: read,
+    total: function () {
+      return total;
+    },
+  };
+})();
+
+function makeAccumulator(start) {
+  var sum = start;
+  var calls = 0;
+  return {
+    add: function (value) {
+      calls++;
+      sum += value;
+      return this;
+    },
+    result: function () {
+      return sum + calls;
+    },
+  };
+}
+
+function memoize(fn) {
+  var cache = {};
+  return function (key) {
+    var hit = cache[key];
+    if (hit !== undefined) return hit;
+    return (cache[key] = fn(key));
+  };
+}
+
+function once(fn) {
+  var done = false;
+  var value;
+  return function () {
+    if (!done) {
+      done = true;
+      value = fn();
+    }
+    return value;
+  };
+}
+
+var square = memoize(function (n) {
+  return n * n;
+});
+var seed = once(function () {
+  return 17;
+});
+var names = ["alpha", "beta", "gamma", "delta"];
+
+function run(count) {
+  var accumulator = makeAccumulator(seed());
+  for (var i = 0; i < count; i++) {
+    counters.bump(names[i & 3], i & 15);
+    accumulator.add(square(i & 63)).add(seed());
+  }
+  return accumulator.result() + counters.total() + counters.read("gamma") + counters.read("missing");
+}
+
+console.log(run(3000000));
+//// names-first-stored-on-an-instance-that-was-put-below-another-object-are-not-ten-times-as-slow-a-turn.js
+// Each turn makes an instance of a class and stores four names on it that its constructor does not store. In the second loop Object.setPrototypeOf() has put the instance below an object created from the class's prototype object first, as a framework does with the requests of a server. That turn may cost a few times the other, not ten times.
+class Message {
+  constructor(count) {
+    this.count = count;
+  }
+}
+const above = Object.create(Message.prototype);
+let sums = 0;
+globalThis.held = null;
+function finish(message, i) {
+  message.next = i;
+  message.params = i + 1;
+  message.route = i + 2;
+  message.body = i + 3;
+  globalThis.held = message;
+  return message.next + message.body;
+}
+////= fastestOf
+const asBorn = fastestOf(5, () => {
+  let sum = 0;
+  for (let i = 0; i < 1_000_000; i++) sum = (sum + finish(new Message(i), i & 7)) | 0;
+  sums = (sums + sum) | 0;
+});
+const putBelow = fastestOf(5, () => {
+  let sum = 0;
+  for (let i = 0; i < 1_000_000; i++) sum = (sum + finish(Object.setPrototypeOf(new Message(i), above), i & 7)) | 0;
+  sums = (sums + sum) | 0;
+});
+console.log(sums, Object.keys(globalThis.held).join(), Object.getPrototypeOf(globalThis.held) === above);
+console.log(putBelow < asBorn * 10 ? "under ten times the time" : "over ten times the time");
+//// options-objects.js
+// Options objects completed from defaults in four ways: field by field, with Object.assign, with object spread, and with a `for in` copy of every argument. The options may be undefined.
+var defaults = { width: 80, indent: 2, tabs: false, newline: "\n", limit: 1000 };
+
+function withDefaults(options) {
+  options = options || {};
+  return {
+    width: options.width !== undefined ? options.width : defaults.width,
+    indent: options.indent || defaults.indent,
+    tabs: !!options.tabs,
+    newline: options.newline || defaults.newline,
+    limit: options.limit == null ? defaults.limit : options.limit,
+  };
+}
+
+function merged(options) {
+  return Object.assign({}, defaults, options);
+}
+
+function spreadOver(options) {
+  return { ...defaults, ...options, seen: true };
+}
+
+function extend(target) {
+  for (var i = 1; i < arguments.length; i++) {
+    var source = arguments[i];
+    for (var key in source) target[key] = source[key];
+  }
+  return target;
+}
+
+function measure(options) {
+  return options.width + options.indent * 3 + (options.tabs ? 5 : 0) + options.newline.length + options.limit;
+}
+
+function layout(text, options) {
+  var settings = withDefaults(options);
+  return text.length * settings.indent + measure(settings);
+}
+
+function run(count) {
+  var given = [undefined, { width: 100 }, { indent: 4, tabs: true }, { newline: "\r\n", limit: 0 }, {}];
+  var total = 0;
+  for (var i = 0; i < count; i++) {
+    var options = given[i % 5];
+    total += layout("line", options);
+    if ((i & 3) === 0) total += measure(merged(options));
+    if ((i & 3) === 1) total += measure(spreadOver(options));
+    if ((i & 3) === 2) total += measure(extend({}, defaults, options, { limit: i & 7 }));
+  }
+  return total;
+}
+
+console.log(run(1200000));
+//// parsed-data-loops.js
+// Loops over what JSON.parse returned: a sum of numbers, the longest of some strings, and rows with nested objects and arrays of up to three tags.
+var text = JSON.stringify({
+  prices: Array.from({ length: 400 }, function (_, i) {
+    return (i * 37) % 101;
+  }),
+  names: Array.from({ length: 100 }, function (_, i) {
+    return "item" + (i % 17);
+  }),
+  rows: Array.from({ length: 60 }, function (_, i) {
+    return { id: i, tags: ["a", "b", "c"].slice(0, i % 4), size: { w: i % 7, h: i % 5 } };
+  }),
+});
+
+function sum(values) {
+  var total = 0;
+  for (var i = 0; i < values.length; i++) total += values[i];
+  return total;
+}
+
+function longest(names) {
+  var best = "";
+  for (var i = 0; i < names.length; i++) {
+    if (names[i].length > best.length) best = names[i];
+  }
+  return best;
+}
+
+function area(rows) {
+  var total = 0;
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i];
+    total += row.size.w * row.size.h + row.tags.length;
+    for (var j = 0; j < row.tags.length; j++) total += row.tags[j].charCodeAt(0) & 3;
+  }
+  return total;
+}
+
+function run(rounds) {
+  var total = 0;
+  var data = JSON.parse(text);
+  for (var round = 0; round < rounds; round++) {
+    if ((round & 255) === 0) data = JSON.parse(text);
+    total += sum(data.prices) + longest(data.names).length + area(data.rows);
+  }
+  return total;
+}
+
+console.log(run(6000));
+//// polymorphic-sites.js
+// Sites that see several kinds of values: an evaluator that switches on a `type` string, visitors found under that string, `length` of a string, an array, an object and a function, and objects with the same properties in another order.
+function literal(value) {
+  return { type: "literal", value: value };
+}
+function binary(operator, left, right) {
+  return { type: "binary", operator: operator, left: left, right: right };
+}
+function negate(operand) {
+  return { type: "negate", operand: operand };
+}
+function variable(name) {
+  return { type: "variable", name: name };
+}
+
+function evaluate(node, scope) {
+  switch (node.type) {
+    case "literal":
+      return node.value;
+    case "variable":
+      return scope[node.name];
+    case "negate":
+      return -evaluate(node.operand, scope);
+    case "binary":
+      var left = evaluate(node.left, scope);
+      var right = evaluate(node.right, scope);
+      if (node.operator === "+") return left + right;
+      if (node.operator === "*") return left * right;
+      return left - right;
+  }
+  throw new Error("unknown node " + node.type);
+}
+
+function size(thing) {
+  return thing.length;
+}
+
+function label(thing) {
+  return thing.name + ":" + thing.id;
+}
+
+var visitors = {
+  literal: function () {
+    return 1;
+  },
+  variable: function () {
+    return 2;
+  },
+  negate: function (node) {
+    return 1 + count(node.operand);
+  },
+  binary: function (node) {
+    return 1 + count(node.left) + count(node.right);
+  },
+};
+function count(node) {
+  return visitors[node.type](node);
+}
+
+function run(rounds) {
+  var tree = binary("+", binary("*", variable("x"), literal(3)), negate(binary("-", variable("y"), literal(1))));
+  var sized = ["text", [1, 2, 3], { length: 7 }, function (a, b) {}];
+  var named = [{ name: "a", id: 1 }, { id: 2, name: "b" }, { name: "c", id: 3, extra: true }, { kind: 0, name: "d", id: 4 }];
+  var total = 0;
+  for (var i = 0; i < rounds; i++) {
+    total += evaluate(tree, { x: i & 7, y: i & 3 }) + count(tree);
+    total += size(sized[i & 3]) + label(named[i & 3]).length;
+  }
+  return total;
+}
+
+console.log(run(1200000));
+//// promises.js
+// Promises in `then` and `catch` chains, under `await` with a rejection that is caught, ten at a time under Promise.all, and behind a callback.
+function delayValue(value) {
+  return new Promise(function (resolve) {
+    resolve(value);
+  });
+}
+
+function fetchRecord(id) {
+  return delayValue({ id: id, size: id % 13 });
+}
+
+function chain(id) {
+  return fetchRecord(id)
+    .then(function (record) {
+      return record.size + 1;
+    })
+    .then(function (size) {
+      if (size === 5) throw new Error("five");
+      return size * 2;
+    })
+    .catch(function (error) {
+      return error.message.length;
+    });
+}
+
+async function viaAwait(id) {
+  var record = await fetchRecord(id);
+  var extra = await record.size;
+  try {
+    if (extra === 7) await Promise.reject(new Error("seven"));
+  } catch (error) {
+    extra += error.message.length;
+  }
+  return record.id + extra;
+}
+
+async function batch(start, size) {
+  var pending = [];
+  for (var i = 0; i < size; i++) pending.push(i & 1 ? chain(start + i) : viaAwait(start + i));
+  var results = await Promise.all(pending);
+  var total = 0;
+  for (var j = 0; j < results.length; j++) total += results[j];
+  return total;
+}
+
+function callbackStyle(value, done) {
+  Promise.resolve(value).then(function (result) {
+    done(null, result + 1);
+  });
+}
+
+async function run(rounds) {
+  var total = 0;
+  for (var i = 0; i < rounds; i++) {
+    total += await batch(i * 10, 10);
+    total += await new Promise(function (resolve) {
+      callbackStyle(i & 3, function (error, result) {
+        resolve(result);
+      });
+    });
+  }
+  return total;
+}
+
+run(40000).then(function (total) {
+  console.log(total);
+});
+//// reducers.js
+// A store with reducers that never change their state: for every action arrays and objects are copied with spread, map and filter, and the listeners are called.
+const initial = { todos: [], filter: "all", nextId: 1, stats: { added: 0, done: 0 } };
+
+function todos(state, action) {
+  switch (action.type) {
+    case "add":
+      return [...state, { id: action.id, text: action.text, done: false }];
+    case "toggle":
+      return state.map(todo => (todo.id === action.id ? { ...todo, done: !todo.done } : todo));
+    case "remove":
+      return state.filter(todo => todo.id !== action.id);
+    default:
+      return state;
+  }
+}
+
+function stats(state, action) {
+  switch (action.type) {
+    case "add":
+      return { ...state, added: state.added + 1 };
+    case "toggle":
+      return { ...state, done: state.done + 1 };
+    default:
+      return state;
+  }
+}
+
+function reducer(state = initial, action) {
+  const next = {
+    todos: todos(state.todos, action),
+    filter: action.type === "filter" ? action.filter : state.filter,
+    nextId: action.type === "add" ? state.nextId + 1 : state.nextId,
+    stats: stats(state.stats, action),
+  };
+  return next;
+}
+
+function createStore(reduce) {
+  let state = reduce(undefined, { type: "@init" });
+  const listeners = [];
+  return {
+    getState: () => state,
+    subscribe: listener => listeners.push(listener),
+    dispatch(action) {
+      state = reduce(state, action);
+      for (const listener of listeners) listener(state);
+      return action;
+    },
+  };
+}
+
+const visible = ({ todos, filter }) => (filter === "all" ? todos : todos.filter(todo => (filter === "done" ? todo.done : !todo.done)));
+
+function run(rounds) {
+  let total = 0;
+  for (let round = 0; round < rounds; round++) {
+    const store = createStore(reducer);
+    let notified = 0;
+    store.subscribe(() => notified++);
+    for (let i = 0; i < 40; i++) {
+      store.dispatch({ type: "add", id: store.getState().nextId, text: "todo " + i });
+      if (i % 3 === 0) store.dispatch({ type: "toggle", id: (i >> 1) + 1 });
+      if (i % 7 === 0) store.dispatch({ type: "remove", id: (i >> 2) + 1 });
+      if (i % 10 === 0) store.dispatch({ type: "filter", filter: i % 20 === 0 ? "done" : "open" });
+    }
+    const state = store.getState();
+    total += visible(state).length + state.stats.added + state.stats.done + notified;
+  }
+  return total;
+}
+
+console.log(run(4000));
+//// sorting-and-grouping.js
+// Sorting with comparators put together from closures that read a property under a computed name, grouping into a dictionary, unique values through a Set, and a binary search.
+function byKey(key, direction) {
+  return function (a, b) {
+    var x = a[key];
+    var y = b[key];
+    return (x < y ? -1 : x > y ? 1 : 0) * direction;
+  };
+}
+
+function chain() {
+  var comparators = Array.prototype.slice.call(arguments);
+  return function (a, b) {
+    for (var i = 0; i < comparators.length; i++) {
+      var order = comparators[i](a, b);
+      if (order) return order;
+    }
+    return 0;
+  };
+}
+
+function groupBy(items, key) {
+  var groups = {};
+  items.forEach(function (item) {
+    var name = item[key];
+    (groups[name] || (groups[name] = [])).push(item);
+  });
+  return groups;
+}
+
+function unique(values) {
+  return Array.from(new Set(values));
+}
+
+function lowerBound(sorted, value) {
+  var low = 0;
+  var high = sorted.length;
+  while (low < high) {
+    var middle = (low + high) >>> 1;
+    if (sorted[middle] < value) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+function makeItems(count, seed) {
+  var teams = ["red", "green", "blue", "gold"];
+  var items = [];
+  for (var i = 0; i < count; i++) {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    items.push({ id: i, team: teams[seed & 3], score: (seed >>> 8) % 50, name: "p" + ((seed >>> 16) % 30) });
+  }
+  return items;
+}
+
+function run(rounds) {
+  var total = 0;
+  for (var round = 0; round < rounds; round++) {
+    var items = makeItems(120, round + 1);
+    items.sort(chain(byKey("team", 1), byKey("score", -1), byKey("name", 1)));
+    total += items[0].id + items[60].id + items[119].id;
+    var groups = groupBy(items, "team");
+    for (var team in groups) total += groups[team].length * team.length;
+    var scores = unique(
+      items.map(function (item) {
+        return item.score;
+      }),
+    ).sort(function (a, b) {
+      return a - b;
+    });
+    total += scores.length + lowerBound(scores, 25) + lowerBound(scores, round % 50);
+  }
+  return total;
+}
+
+console.log(run(2500));
+//// string-hashing.js
+// Integer arithmetic on the characters of strings: two hash functions, a Base64 encoder and decoder with a lookup table, and hexadecimal digits.
+function fnv1a(text) {
+  var hash = 0x811c9dc5;
+  for (var i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+function djb2(text) {
+  var hash = 5381;
+  for (var i = 0; i < text.length; i++) hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
+  return hash >>> 0;
+}
+
+var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+var reverse = {};
+for (var n = 0; n < alphabet.length; n++) reverse[alphabet[n]] = n;
+
+function encode(text) {
+  var out = "";
+  for (var i = 0; i < text.length; i += 3) {
+    var a = text.charCodeAt(i);
+    var b = i + 1 < text.length ? text.charCodeAt(i + 1) : 0;
+    var c = i + 2 < text.length ? text.charCodeAt(i + 2) : 0;
+    var word = (a << 16) | (b << 8) | c;
+    out += alphabet[(word >> 18) & 63] + alphabet[(word >> 12) & 63];
+    out += i + 1 < text.length ? alphabet[(word >> 6) & 63] : "=";
+    out += i + 2 < text.length ? alphabet[word & 63] : "=";
+  }
+  return out;
+}
+
+function decode(text) {
+  var codes = [];
+  for (var i = 0; i < text.length; i += 4) {
+    var word = (reverse[text[i]] << 18) | (reverse[text[i + 1]] << 12) | ((reverse[text[i + 2]] || 0) << 6) | (reverse[text[i + 3]] || 0);
+    codes.push((word >> 16) & 255);
+    if (text[i + 2] !== "=") codes.push((word >> 8) & 255);
+    if (text[i + 3] !== "=") codes.push(word & 255);
+  }
+  return String.fromCharCode.apply(null, codes);
+}
+
+function toHex(value) {
+  var digits = "0123456789abcdef";
+  var out = "";
+  for (var shift = 28; shift >= 0; shift -= 4) out += digits[(value >>> shift) & 15];
+  return out;
+}
+
+function run(count) {
+  var words = ["lorem", "ipsum dolor", "sit", "amet, consectetur", "adipiscing elit", "sed do eiusmod tempor", "x", ""];
+  var total = 0;
+  for (var i = 0; i < count; i++) {
+    var word = words[i & 7] + (i % 100);
+    var encoded = encode(word);
+    if (decode(encoded) !== word) throw new Error("round trip of " + word);
+    total = (total + (fnv1a(word) % 1009) + (djb2(encoded) % 1013) + toHex(i).charCodeAt(7)) % 1000000007;
+  }
+  return total;
+}
+
+console.log(run(250000));
+//// strings.js
+// String methods as applications use them: replace with a regular expression and a callback, split and join, slice, indexOf, padding in a loop, and a query string parsed into an object.
+function camelCase(name) {
+  return name.replace(/[-_](\w)/g, function (match, letter) {
+    return letter.toUpperCase();
+  });
+}
+
+function dashed(name) {
+  return name.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase();
+}
+
+function padLeft(text, width, fill) {
+  text = String(text);
+  while (text.length < width) text = fill + text;
+  return text;
+}
+
+function parseQuery(query) {
+  var out = {};
+  var pairs = query.split("&");
+  for (var i = 0; i < pairs.length; i++) {
+    var at = pairs[i].indexOf("=");
+    if (at < 0) out[pairs[i]] = "";
+    else out[pairs[i].slice(0, at)] = pairs[i].slice(at + 1);
+  }
+  return out;
+}
+
+function render(template, values) {
+  return template.replace(/\{(\w+)\}/g, function (match, key) {
+    return key in values ? values[key] : match;
+  });
+}
+
+function escapeHtml(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function run(count) {
+  var names = ["background-color", "border_top_width", "margin", "font-size-adjust"];
+  var total = 0;
+  for (var i = 0; i < count; i++) {
+    var camel = camelCase(names[i & 3]);
+    total += camel.length + dashed(camel).length;
+    var query = parseQuery("id=" + i + "&name=" + camel + "&flag&page=" + (i % 9));
+    total += query.id.length + query.page.charCodeAt(0);
+    var line = render("{name}: {id} <{missing}> & {page}", query);
+    total += escapeHtml(line).length + padLeft(i % 1000, 6, "0").length;
+    var words = line.split(" ");
+    total += words.join("+").length + words[0].trim().toUpperCase().lastIndexOf("R");
+    if (/^\w+Color/.test(line)) total++;
+  }
+  return total;
+}
+
+console.log(run(150000));
+//// the-name-of-a-function-that-holds-six-variables-is-not-five-times-as-slow-as-the-name-of-one-that-holds-two.js
+// Packages that wrap a callback ask for its name first: `fn.name || "anonymous"`. The callback is a function made for the occasion, so each one is asked once. How many variables of its surroundings it
+// holds says nothing about its name: the question may cost about the same for one that holds six as for one that holds two.
+function nameOf(fn) { return fn.name || "anonymous"; }
+function holdingTwo(a, b) { return function two(x) { return a + b + x; }; }
+function holdingSix(a, b, c, d, e, f) { return function six(x) { return a + b + c + d + e + f + x; }; }
+function fastestOf(runs, make) {
+  let fastest = Infinity, letters = 0;
+  for (let run = 0; run < runs; run++) {
+    const began = performance.now();
+    for (let i = 0; i < 300000; i++) letters += nameOf(make(i, 1, 2, 3, 4, 5)).length;
+    fastest = Math.min(fastest, performance.now() - began);
+  }
+  return { fastest, letters };
+}
+const two = fastestOf(5, holdingTwo), six = fastestOf(5, holdingSix);
+console.log(two.letters, six.letters);
+console.log(six.fastest < two.fastest * 5 ? "six variables in under five times the time of two" : "six variables took over five times the time of two");
+//// the-own-keys-of-an-object-are-counted-in-no-more-than-twice-the-time-of-its-values.js
+const shape = { a: 1, b: 2, c: 3, d: 4, e: 5 };
+function countKeys(turns) {
+  let sum = 0;
+  for (let i = 0; i < turns; i++) sum += Object.keys(shape).length + (i & 1);
+  return sum;
+}
+function countValues(turns) {
+  let sum = 0;
+  for (let i = 0; i < turns; i++) sum += Object.values(shape).length + (i & 1);
+  return sum;
+}
+////= fastestOf-3	count	run	4_000_000	22_000_000
+fastestOf(2, countKeys), fastestOf(2, countValues);
+const keys = fastestOf(5, countKeys), values = fastestOf(5, countValues);
+console.log(keys < values * 2 ? "under twice the time" : "over twice the time");
+//// the-strings-of-a-tagged-template-are-not-ten-times-as-slow-to-read-as-those-of-an-array.js
+// A tag function reads `strings[k]`. The strings object is frozen; a read of it may cost more than a read of an array that the program wrote itself, but not ten times as much.
+function lengths(strings, ...values) {
+  let sum = 0;
+  for (let k = 0; k < values.length; k++) sum += strings[k].length + values[k];
+  return sum;
+}
+const written = ["a", "bc", "d"];
+function tagged(turns) {
+  let sum = 0;
+  for (let i = 0; i < turns; i++) sum += lengths`a${i & 7}bc${2}d`;
+  return sum;
+}
+function called(turns) {
+  let sum = 0;
+  for (let i = 0; i < turns; i++) sum += lengths(written, i & 7, 2);
+  return sum;
+}
+////= fastestOf-3	run	k	800_000	6_800_000
+fastestOf(2, tagged), fastestOf(2, called);
+console.log(fastestOf(5, tagged) < fastestOf(5, called) * 10 ? "under ten times the time" : "over ten times the time");
+//// the-time-of-day-in-a-field-that-began-at-zero-is-not-ten-times-as-slow-a-store-as-a-small-number.cjs
+// Two instances of one untyped class whose field begins at zero. One is handed small numbers, the other the time of day in milliseconds, which does not fit 32 bits. A turn with the second may cost a few times what a turn with the first costs, not ten times.
+class Stamp {
+  constructor() {
+    this.at = 0;
+    this.count = 0;
+  }
+  touch(at) {
+    this.at = at;
+    this.count++;
+  }
+}
+////= fastestOf
+const early = new Stamp(),
+  late = new Stamp(),
+  now = Date.now();
+const small = fastestOf(5, () => {
+  for (let i = 0; i < 2_000_000; i++) early.touch(i);
+});
+const large = fastestOf(5, () => {
+  for (let i = 0; i < 2_000_000; i++) late.touch(now + i);
+});
+console.log(early.at, early.count, late.at - now, late.count, Object.keys(late).join());
+console.log(large < small * 10 ? "under ten times the time" : "over ten times the time");
+//// the-twin-of-a-node-is-asked-only-for-its-index.js
+// The twin of a node is asked for one thing only, its index, a name that arrays of matches have too.
+const word = process.argv[3] ?? "";
+const open = new Function("value", "return value" + word.slice(word.length));
+function TreeNode(index) { this.index = index; this.flags = 0; this.twin = null; this.sibling = null; }
+function place(node, last, index) {
+  node.index = index;
+  var twin = node.twin;
+  if (null !== twin) return (twin = twin.index), twin < last ? ((node.flags |= 2), last) : twin;
+  node.flags |= 2;
+  return last;
+}
+const nodes = [];
+for (let i = 0; i < 8; i++) { const node = new TreeNode(i), twin = new TreeNode(7 - i); node.twin = twin; twin.twin = node; nodes.push(node); }
+const rounds = Number(process.argv[2] ?? 200000);
+const given = open(nodes);
+let sum = 0;
+for (let i = 0; i < rounds; i++) { let last = 0; for (let k = 0; k < 8; k++) last = place(given[k], last, k); sum += last; }
+console.log(sum, nodes[3].flags);
+//// tokenizer.js
+// A tokenizer that reads character codes, switches on them and allocates one small object a token, with a `text` or with a `value`.
+function isDigit(code) {
+  return code >= 48 && code <= 57;
+}
+function isLetter(code) {
+  return (code >= 97 && code <= 122) || (code >= 65 && code <= 90) || code === 95;
+}
+
+var keywords = { if: true, else: true, while: true, return: true, var: true, function: true };
+
+function tokenize(source) {
+  var tokens = [];
+  var at = 0;
+  var length = source.length;
+  while (at < length) {
+    var code = source.charCodeAt(at);
+    var start = at;
+    switch (code) {
+      case 32:
+      case 10:
+      case 9:
+        at++;
+        continue;
+      case 40:
+      case 41:
+      case 123:
+      case 125:
+      case 59:
+      case 44:
+        at++;
+        tokens.push({ kind: "punctuation", text: source.charAt(start), at: start });
+        continue;
+      case 34:
+        at++;
+        while (at < length && source.charCodeAt(at) !== 34) at += source.charCodeAt(at) === 92 ? 2 : 1;
+        at++;
+        tokens.push({ kind: "string", text: source.slice(start + 1, at - 1), at: start });
+        continue;
+    }
+    if (isDigit(code)) {
+      var value = 0;
+      while (at < length && isDigit((code = source.charCodeAt(at)))) {
+        value = value * 10 + (code - 48);
+        at++;
+      }
+      tokens.push({ kind: "number", value: value, at: start });
+    } else if (isLetter(code)) {
+      while (at < length && (isLetter((code = source.charCodeAt(at))) || isDigit(code))) at++;
+      var word = source.slice(start, at);
+      tokens.push({ kind: keywords[word] === true ? "keyword" : "name", text: word, at: start });
+    } else {
+      at++;
+      if (source.charCodeAt(at) === 61) at++;
+      tokens.push({ kind: "operator", text: source.slice(start, at), at: start });
+    }
+  }
+  return tokens;
+}
+
+function checksum(tokens) {
+  var total = 0;
+  for (var i = 0; i < tokens.length; i++) {
+    var token = tokens[i];
+    total += token.kind.length + token.at;
+    if (token.kind === "number") total += token.value;
+    else total += token.text.length;
+  }
+  return total;
+}
+
+function run(rounds) {
+  var line = 'function step(a, b) { var total = a * 12 + b; if (total >= 100) { return "big\\"one"; } else { while (a < 7) a += 1; } return total; }\n';
+  var source = "";
+  for (var i = 0; i < 40; i++) source += line;
+  var total = 0;
+  for (var round = 0; round < rounds; round++) total += checksum(tokenize(source));
+  return total;
+}
+
+console.log(run(700));
+//// trees-and-graphs.js
+// A binary search tree of ES5 nodes, filled recursively, searched in a loop and walked with a callback, and a breadth-first search over a graph kept in dictionaries.
+function TreeNode(key, value) {
+  this.key = key;
+  this.value = value;
+  this.left = null;
+  this.right = null;
+}
+
+function insert(node, key, value) {
+  if (node === null) return new TreeNode(key, value);
+  if (key < node.key) node.left = insert(node.left, key, value);
+  else if (key > node.key) node.right = insert(node.right, key, value);
+  else node.value = value;
+  return node;
+}
+
+function find(node, key) {
+  while (node !== null) {
+    if (key === node.key) return node.value;
+    node = key < node.key ? node.left : node.right;
+  }
+  return -1;
+}
+
+function height(node) {
+  return node === null ? 0 : 1 + Math.max(height(node.left), height(node.right));
+}
+
+function inOrder(node, visit) {
+  if (node === null) return;
+  inOrder(node.left, visit);
+  visit(node);
+  inOrder(node.right, visit);
+}
+
+function Graph() {
+  this.edges = {};
+}
+Graph.prototype.connect = function (from, to) {
+  (this.edges[from] || (this.edges[from] = [])).push(to);
+  (this.edges[to] || (this.edges[to] = [])).push(from);
+};
+Graph.prototype.distances = function (start) {
+  var distance = {};
+  distance[start] = 0;
+  var queue = [start];
+  for (var head = 0; head < queue.length; head++) {
+    var node = queue[head];
+    var neighbors = this.edges[node] || [];
+    for (var i = 0; i < neighbors.length; i++) {
+      var next = neighbors[i];
+      if (distance[next] === undefined) {
+        distance[next] = distance[node] + 1;
+        queue.push(next);
+      }
+    }
+  }
+  return distance;
+}
+
+function run(rounds) {
+  var total = 0;
+  var graph = new Graph();
+  for (var n = 0; n < 60; n++) {
+    graph.connect("n" + n, "n" + ((n * 7 + 3) % 60));
+    graph.connect("n" + n, "n" + ((n + 1) % 60));
+  }
+  for (var round = 0; round < rounds; round++) {
+    var root = null;
+    var seed = round + 1;
+    for (var i = 0; i < 300; i++) {
+      seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+      root = insert(root, seed % 1000, i);
+    }
+    for (var key = 0; key < 1000; key += 3) total += find(root, key) & 7;
+    var sum = 0;
+    inOrder(root, function (node) {
+      sum = (sum * 31 + node.key) % 65521;
+    });
+    total += sum + height(root);
+    var distance = graph.distances("n" + (round % 60));
+    total += distance["n" + ((round * 13) % 60)];
+  }
+  return total;
+}
+
+console.log(run(2500));
+//// validators.js
+// A schema compiled into nested closures that check five sample objects: `typeof`, `in`, regular expressions made from strings, and messages put together from strings.
+function typeOf(value) {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
+function compile(schema, path) {
+  path = path || "$";
+  var checks = [];
+  if (schema.type) {
+    checks.push(function (value, errors) {
+      if (typeOf(value) !== schema.type) errors.push(path + ": expected " + schema.type);
+    });
+  }
+  if (schema.minimum !== undefined) {
+    checks.push(function (value, errors) {
+      if (typeof value === "number" && value < schema.minimum) errors.push(path + ": below " + schema.minimum);
+    });
+  }
+  if (schema.maxLength !== undefined) {
+    checks.push(function (value, errors) {
+      if (typeof value === "string" && value.length > schema.maxLength) errors.push(path + ": too long");
+    });
+  }
+  if (schema.pattern) {
+    var pattern = new RegExp(schema.pattern);
+    checks.push(function (value, errors) {
+      if (typeof value === "string" && !pattern.test(value)) errors.push(path + ": does not match");
+    });
+  }
+  if (schema.enum) {
+    checks.push(function (value, errors) {
+      if (schema.enum.indexOf(value) < 0) errors.push(path + ": not allowed");
+    });
+  }
+  if (schema.properties) {
+    var required = schema.required || [];
+    var names = Object.keys(schema.properties);
+    var validators = names.map(function (name) {
+      return compile(schema.properties[name], path + "." + name);
+    });
+    checks.push(function (value, errors) {
+      if (typeOf(value) !== "object") return;
+      for (var i = 0; i < required.length; i++) {
+        if (!(required[i] in value)) errors.push(path + "." + required[i] + ": missing");
+      }
+      for (var j = 0; j < names.length; j++) {
+        if (value[names[j]] !== undefined) validators[j](value[names[j]], errors);
+      }
+    });
+  }
+  if (schema.items) {
+    var item = compile(schema.items, path + "[]");
+    checks.push(function (value, errors) {
+      if (!Array.isArray(value)) return;
+      for (var i = 0; i < value.length; i++) item(value[i], errors);
+    });
+  }
+  return function (value, errors) {
+    for (var i = 0; i < checks.length; i++) checks[i](value, errors);
+    return errors;
+  };
+}
+
+var validate = compile({
+  type: "object",
+  required: ["id", "email"],
+  properties: {
+    id: { type: "number", minimum: 1 },
+    email: { type: "string", pattern: "^[^@ ]+@[^@ ]+$", maxLength: 24 },
+    role: { enum: ["admin", "user", "guest"] },
+    tags: { type: "array", items: { type: "string", maxLength: 5 } },
+    address: { type: "object", required: ["city"], properties: { city: { type: "string" }, zip: { type: "string", pattern: "^\\d{5}$" } } },
+  },
+});
+
+function run(count) {
+  var samples = [
+    { id: 1, email: "ann@example.com", role: "admin", tags: ["a", "bb"], address: { city: "Paris", zip: "75001" } },
+    { id: 0, email: "bob", role: "root", tags: ["toolong", 3] },
+    { email: "cy@example.org", address: { zip: "12" } },
+    { id: 7, email: "di@a-very-long-domain-name.example", tags: [] },
+    { id: "8", email: 9, address: null },
+  ];
+  var total = 0;
+  for (var i = 0; i < count; i++) {
+    var errors = validate(samples[i % samples.length], []);
+    total += errors.length;
+    if (errors.length) total += errors[errors.length - 1].length;
+  }
+  return total;
+}
+
+console.log(run(300000));

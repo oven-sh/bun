@@ -2,6 +2,7 @@ use super::bits::{has_bit, insert_bit};
 use super::declarations::is_var_scope;
 use super::lookup::is_appended_visible;
 use super::references::ReferencePass;
+use super::stores::find_outermost_cast;
 use super::type_only_code::TypeOnlyCode;
 use super::{Binding, BindingKind, CodeUnit, EvalScope, RuntimeScopes};
 use crate::atom::{Atom, known};
@@ -42,22 +43,15 @@ pub(super) fn find_direct_evals(
 }
 
 fn find_direct_eval_call(hir: &File<'_>, bound: &BoundBuilder, ident: ExprId) -> Option<ExprId> {
-    let mut callee = ident;
-    loop {
-        let Parent::Expr(parent) = bound.parent_of_expr(callee) else {
-            return None;
-        };
-        parent.some()?;
-        if hir.type_assertion_operand(parent).is_some() {
-            callee = parent;
-            continue;
-        }
-        let ExprKind::Call(c) = hir[parent].kind else {
-            return None;
-        };
-        let call = &hir[c];
-        return (call.callee == callee && call.chain == Chain::No).then_some(parent);
-    }
+    let callee = find_outermost_cast(hir, bound, ident);
+    let Parent::Expr(parent) = bound.parent_of_expr(callee) else {
+        return None;
+    };
+    let ExprKind::Call(c) = hir[parent.some()?].kind else {
+        return None;
+    };
+    let call = &hir[c];
+    (call.callee == callee && call.chain == Chain::No).then_some(parent)
 }
 
 pub(super) fn compute_dynamic_scopes(
@@ -88,7 +82,7 @@ impl ReferencePass<'_, '_> {
             return;
         }
         let bindings = self.lookup.scopes.appended_bindings.iter();
-        let mut appended: Vec<_> = bindings.map(|(key, &symbol)| (key.0, symbol)).collect();
+        let mut appended: Vec<_> = bindings.map(|(key, entry)| (key.0, entry.0)).collect();
         appended.shared_sort_unstable();
         let mut symbol_lists: FxHashMap<ScopeId, IdList<SymbolId>> = FxHashMap::default();
         for index in 0..self.direct_evals.len() {
@@ -160,7 +154,7 @@ impl ReferencePass<'_, '_> {
             return;
         }
         self.eval_symbol_ids.push(symbol.0);
-        insert_bit(&mut self.eval_visible_symbols, symbol.idx());
+        insert_bit(&mut self.references.eval_visible_symbols, symbol.idx());
     }
 
     fn note_eval_functions(&mut self, start: ScopeId) {

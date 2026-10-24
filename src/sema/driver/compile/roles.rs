@@ -1,5 +1,5 @@
 use super::effects::{can_lose_trust, requested_diagnostics};
-use super::queue::{QueuePass, ROLE_ROUNDS, run_queue};
+use super::queue::{ROLE_ROUNDS, run_queue};
 use super::{
     BuildDiagnostic, CompileRequest, Demotion, DemotionCause, FileWork, LoadedProgram, RoleDecision,
 };
@@ -45,12 +45,12 @@ pub fn decide_roles<'s>(
         };
     }
     candidates.shared_sort_by_key(|&file| files.rank_of_file(file));
-    let report = run_queue(QueuePass {
+    let report = run_queue(
         loaded,
         host,
         request,
-        to_check: candidates.clone(),
-        work: FileWork {
+        candidates.clone(),
+        &FileWork {
             requested: &|file| requested_diagnostics(loaded.origin(file), files.role(file)),
             after_file: None,
             after_commit: &|_| {},
@@ -58,13 +58,12 @@ pub fn decide_roles<'s>(
             first_round: ROLE_ROUNDS,
             left_out_bodies: request.left_out_bodies,
         },
-    });
+    );
     let mut diagnostics = loaded.program_origins().apply_effects(report.diagnostics);
     for demotion in find_files_without_trust(&diagnostics) {
         roles[demotion.file.idx()] = FileRole::Inferred;
         demoted.push(demotion);
     }
-    // The call that evaluates the text throws the error when it runs.
     diagnostics.retain(|reported| demotion_cause_of(reported) != Some(DemotionCause::EarlyError));
     demoted.shared_sort_by_key(|demotion| demotion.file);
     candidates.shared_sort_unstable();
@@ -79,7 +78,6 @@ pub fn decide_roles<'s>(
     }
 }
 
-/// The roles of a project whose files were checked before this build.
 pub fn keep_verified_roles(loaded: &LoadedProgram<'_>, files_to_lower: &[FileId]) -> RoleDecision {
     let files = loaded.files();
     let file_ids = (0..files.modules.len()).map(|index| FileId(index as u32));

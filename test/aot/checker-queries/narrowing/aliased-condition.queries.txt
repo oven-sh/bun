@@ -1,4 +1,0 @@
-# A condition kept in a `const` narrows where the constant is tested.
-aliased-condition.ts:3 type `x` = string | number
-aliased-condition.ts:5 type `x` = string
-aliased-condition.ts:7 type `x` = number

@@ -1,9 +1,11 @@
 use super::bits::has_bit;
+use super::declaration_kinds::declaration_symbol;
+use super::storage::RuntimeDeclarationsIn;
 use super::{
     AnnexBFunction, Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit,
     CommonJsVariable, EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference,
     InitialState, ParameterVarCopy, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn,
-    RuntimeDeclarationsIn, StoreKind, SymbolStore, stability,
+    StoreKind, SymbolStore, stability,
 };
 use crate::atom::Atom;
 use crate::bind::{
@@ -49,7 +51,6 @@ impl<S: Storage> RuntimeDeclarationsIn<S> {
 }
 
 impl<S: Storage> BoundIn<S> {
-    /// What the declaration is when it runs.
     pub fn variable_kind(&self, hir: &File, declaration: VarDeclId) -> VarKind {
         let written = hir[declaration].kind;
         let statement = self.var_stmt[declaration.idx()];
@@ -94,8 +95,8 @@ impl<S: Storage> BoundIn<S> {
     }
 
     pub(super) fn declared_pattern_symbol(&self, pattern: PatId) -> SymbolId {
-        find_symbol(&self.runtime.declarations.pattern_symbols, pattern)
-            .unwrap_or_else(|| self.pat_symbol[pattern.idx()])
+        let declared = &self.runtime.declarations.declared_symbols;
+        find_symbol(declared, Decl::Var(pattern)).unwrap_or_else(|| self.pat_symbol[pattern.idx()])
     }
 
     pub(super) fn declared_binding_symbol(&self, decl: Decl) -> Option<SymbolId> {
@@ -104,14 +105,12 @@ impl<S: Storage> BoundIn<S> {
             Decl::Var(pattern) | Decl::Param(pattern) | Decl::Require(pattern) => {
                 self.declared_pattern_symbol(pattern)
             }
-            Decl::Fn(function) => find_symbol(&declarations.function_symbols, function)
-                .unwrap_or_else(|| self.fn_symbol[function.idx()]),
-            Decl::Class(class) => find_symbol(&declarations.class_symbols, class)
-                .unwrap_or_else(|| self.class_symbol[class.idx()]),
-            Decl::Enum(id) => find_symbol(&declarations.enum_symbols, id)
-                .unwrap_or_else(|| self.enum_symbol[id.idx()]),
-            Decl::Module(module) => find_symbol(&declarations.module_symbols, module)
-                .unwrap_or_else(|| self.module_symbol[module.idx()]),
+            Decl::Fn(_)
+            | Decl::Class(_)
+            | Decl::Enum(_)
+            | Decl::Module(_)
+            | Decl::ExportExpr(_) => find_symbol(&declarations.declared_symbols, decl)
+                .unwrap_or_else(|| declaration_symbol(self, decl)),
             Decl::ImportDefault(import) => {
                 symbol_at(&declarations.import_default_symbols, import.idx())
             }
@@ -121,9 +120,6 @@ impl<S: Storage> BoundIn<S> {
             Decl::ImportSpec(spec) => symbol_at(&declarations.import_spec_symbols, spec.idx()),
             Decl::ImportEquals(import) => {
                 symbol_at(&declarations.import_equals_symbols, import.idx())
-            }
-            Decl::ExportExpr(stmt) => {
-                find_symbol(&declarations.export_expression_symbols, stmt).unwrap_or(SymbolId::NONE)
             }
             _ => return None,
         })
@@ -248,7 +244,6 @@ impl Bound<'_> {
     pub fn initial_state(&self, symbol: SymbolId) -> InitialState {
         match self.binding_kind(symbol) {
             BindingKind::Var => InitialState::Undefined,
-            // `bun run` declares an enum or a namespace with `var` at the top of a file and with `let` anywhere else.
             BindingKind::TypeScriptContainer => {
                 let scope = self.scopes.get(self.symbol_scope(symbol).idx());
                 match scope.is_none_or(|scope| matches!(scope.kind, ScopeKind::File)) {
@@ -334,7 +329,6 @@ impl Bound<'_> {
         flags.copied().unwrap_or_default()
     }
 
-    // The body of a CommonJS module, or an arrow function in it, names the `arguments` of the function that wraps the module.
     pub fn file_uses_arguments(&self) -> bool {
         self.runtime.file_uses_arguments
     }
@@ -439,7 +433,6 @@ impl Bound<'_> {
         has_bit(&self.runtime.references.evaluated_idents, e.idx())
     }
 
-    /// Whether code inside the function expression can get hold of the function: by its own name, by `arguments.callee` or by a direct eval.
     pub fn finds_itself(&self, hir: &File, function: FnId) -> bool {
         if hir[function].kind == FnKind::Arrow {
             return false;
@@ -456,7 +449,6 @@ impl Bound<'_> {
         idents.any(|ident| self.is_evaluated_ident(ident) && self.binding(ident) == own_name)
     }
 
-    /// Whether the function expression is the callee of a call and nothing else ever holds it, so that it runs where it is written and at no other time.
     pub fn is_called_only_where_written(&self, hir: &File, function: FnId) -> bool {
         self.get_immediately_invoked_function_expression(hir, function)
             .is_some()

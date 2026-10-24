@@ -89,7 +89,6 @@ pub(crate) fn repository_path(relative: &str) -> PathBuf {
     std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../..")).join(relative)
 }
 
-// A test binary does not link bun_sys.
 #[allow(clippy::disallowed_methods)]
 pub(crate) fn read_file(path: &std::path::Path) -> Option<Vec<u8>> {
     std::fs::read(path).ok()
@@ -121,7 +120,6 @@ pub(crate) fn for_each_program(
     });
 }
 
-// A test binary does not link bun_sys.
 #[allow(clippy::disallowed_methods)]
 fn find_programs(extensions: &[&str]) -> Vec<String> {
     let mut files = Vec::new();

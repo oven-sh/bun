@@ -1,6 +1,6 @@
 use super::children::{TreeNode, push_children};
 use super::evaluate::Value;
-use super::folder::{DeadCode, Folder};
+use super::folder::{Folder, MarkedNodes};
 use crate::bind::Parent;
 use crate::hir::{BinOp, CaseId, ExprId, File, FnBody, IdList, Span, StmtId, StmtKind};
 use crate::util::PositionSet;
@@ -87,7 +87,6 @@ impl<'s> Folder<'_, 's> {
 }
 
 impl<'s> Folder<'_, 's> {
-    /// The lists of a file and of a namespace are left out: their imports, exports and declarations count wherever they stand.
     fn push_statements_never_reached(&self, roots: &mut Vec<TreeNode>) {
         let hir = self.hir;
         for function in hir.fns.iter() {
@@ -122,7 +121,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// Whether control never reaches what follows `statement` in its list.
     fn always_leaves_list(&self, statement: StmtId) -> bool {
         let mut current = statement;
         loop {
@@ -152,7 +150,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// A function declaration is created where its list is entered.
     fn counts_unreached(&self, statement: StmtId) -> bool {
         let mut current = statement;
         while let StmtKind::Labeled { body, .. } = self.hir[current].kind {
@@ -169,8 +166,8 @@ impl<'s> Folder<'_, 's> {
     }
 }
 
-pub(super) fn mark_dead_code(hir: &File<'_>, roots: Vec<TreeNode>) -> DeadCode {
-    let mut dead = DeadCode {
+pub(crate) fn mark_nodes_below(hir: &File<'_>, roots: Vec<TreeNode>) -> MarkedNodes {
+    let mut marked = MarkedNodes {
         exprs: PositionSet::new(hir.exprs.len()),
         stmts: PositionSet::new(hir.stmts.len()),
         functions: PositionSet::new(hir.fns.len()),
@@ -178,16 +175,16 @@ pub(super) fn mark_dead_code(hir: &File<'_>, roots: Vec<TreeNode>) -> DeadCode {
     let mut stack = roots;
     while let Some(node) = stack.pop() {
         let is_new = match node {
-            TreeNode::Expr(e) => try_insert(&mut dead.exprs, e.idx()),
-            TreeNode::Stmt(stmt) => try_insert(&mut dead.stmts, stmt.idx()),
-            TreeNode::Function(function) => try_insert(&mut dead.functions, function.idx()),
+            TreeNode::Expr(e) => try_insert(&mut marked.exprs, e.idx()),
+            TreeNode::Stmt(stmt) => try_insert(&mut marked.stmts, stmt.idx()),
+            TreeNode::Function(function) => try_insert(&mut marked.functions, function.idx()),
             TreeNode::Class(_) | TreeNode::Pattern(_) => true,
         };
         if is_new {
             push_children(hir, node, &mut stack);
         }
     }
-    dead
+    marked
 }
 
 fn try_insert(set: &mut PositionSet, position: usize) -> bool {

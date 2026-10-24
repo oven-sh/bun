@@ -1,6 +1,6 @@
-// The IR of a build, as text. Only a Bun with assertions prints IR itself (BUN_JSC_dumpAOTIR). Every Bun writes the program that its
-// front end hands to the engine (`--aot-out=<file>`), and `testaot`, built from the same engine and packed beside Bun, runs the
-// same passes over it and prints. shell/tools.ts says where testaot is looked for.
+// The IR of a build, as text. No Bun prints IR. Every Bun writes the program that its front end hands to the engine
+// (`--aot-out=<file>`), and `testaot`, built from the same engine and packed beside Bun, runs the same passes over it and prints.
+// shell/tools.ts says where testaot is looked for.
 //
 // `test` and `describe` are those of ../supported.ts, and skip where there is no testaot either.
 import { describe as describeAnywhere, expect, test as testAnywhere } from "bun:test";

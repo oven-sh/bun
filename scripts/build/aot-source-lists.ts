@@ -65,12 +65,7 @@ function filesUnder(root: string, directory: string, isWanted: (name: string) =>
 
 const isHeader = (name: string): boolean =>
   name.startsWith("AOT") && headerExtensions.some(extension => name.endsWith(extension));
-/** There for tests alone, and not named or placed so: what runs one pass, the dumps that only test commands print. */
-const testSourcesOutsideTests = /^aot\/(?:place\/AOTPlacementDump)\.cpp$/;
-const isTestSource = (path: string): boolean =>
-  path.startsWith("aot/tests/") ||
-  /^AOT\w*TestCommands\.cpp$/.test(basename(path)) ||
-  testSourcesOutsideTests.test(path);
+const isTestSource = (path: string): boolean => path.startsWith("aot/tests/");
 
 function includedAotHeadersOf(text: string): string[] {
   return [...text.matchAll(includedAotHeader)].map(match => match[1]!);
@@ -107,13 +102,15 @@ export function readWrittenAotLists(javaScriptCore: string): WrittenAotLists {
     generatedHeaders: [
       ...evaluated.list("JavaScriptCore_AOT_SCHEMA_GENERATED_HEADERS"),
       ...evaluated.list("JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_HEADERS"),
+      ...evaluated.list("JavaScriptCore_AOT_VECTOR_GENERATED_HEADERS"),
     ],
     programSources: evaluated.list("JavaScriptCore_AOT_PROGRAM_SOURCES"),
     shellSources: evaluated.list("JavaScriptCore_AOT_SHELL_SOURCES"),
     tableExportedHeaders: evaluated.list("JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_HEADERS"),
-    tableExportedGeneratedHeaders: evaluated
-      .list("JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_GENERATED_HEADERS")
-      .map(path => basename(path)),
+    tableExportedGeneratedHeaders: [
+      ...evaluated.list("JavaScriptCore_AOT_BUILTIN_TABLE_EXPORTED_GENERATED_HEADERS"),
+      ...evaluated.list("JavaScriptCore_AOT_VECTOR_GENERATED_HEADERS"),
+    ].map(path => basename(path)),
   };
 }
 

@@ -271,7 +271,7 @@ fn import_site_lookups() {
         import_sites: &sites,
         sites_by_kind: &[0, 2, 1, 4, 3, 5],
         first_call_site: 3,
-        ..FileAnalysis::empty()
+        ..FileAnalysis::default()
     };
     for (index, kind) in kinds.into_iter().enumerate() {
         assert_eq!(analysis.import_site_index(kind), Some(index), "{kind:?}");
@@ -292,7 +292,7 @@ fn import_site_lookups() {
 
 #[test]
 fn lookups_without_sites() {
-    let analysis = FileAnalysis::empty();
+    let analysis = FileAnalysis::default();
     let kind = ImportSiteKind::Import(ImportId(0));
     assert_eq!(analysis.import_site_index(kind), None);
     assert_eq!(analysis.import_site_of_call(ExprId(0)), None);

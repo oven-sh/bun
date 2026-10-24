@@ -1,4 +1,0 @@
-{
-  "name": "level",
-  "exports": { ".": { "types": "./source/index.ts", "default": "./output/index.js" } }
-}

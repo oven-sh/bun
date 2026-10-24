@@ -1,4 +1,0 @@
-# A chain of aliases to `int32` is `int32`, whatever its length.
-long-alias-chain.ts:68 written `A64` = int32
-long-alias-chain.ts:68 shape `A64` = Constrained(number; Int32)
-long-alias-chain.ts:68 variable `a` = int32

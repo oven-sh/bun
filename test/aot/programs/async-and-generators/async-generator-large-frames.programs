@@ -1,0 +1,2967 @@
+////: lines-14
+async function «1»(work: Work, queuesBehind: boolean): Promise<void> {
+  await afterTimer();
+  queue(work);
+  drain();
+  drained(queuesBehind);
+  log.push("got " + (await «2»));
+  log.push("got " + (await «3»));
+}
+////: lines-26
+class «1» {
+  «2»: number
+  constructor(«2»: number) { this.«2» = «2» }
+}
+////: lines-33
+async function «1»(title, source, limit = Infinity) {
+  const seen = [];
+  try {
+    for await (const value of source) {
+      seen.push(value);
+      if (seen.length >= limit) break;
+    }
+  } catch (error) {
+    seen.push("caught " + show(error));
+  }
+  «2»(`${title}: ${seen.join(", ")}`);
+}
+////: lines-45
+async function «1»(work: Work, queuesBehind: boolean): Promise<«2»> {
+  await afterTimer();
+  queue(work);
+  drain();
+  drained(queuesBehind);
+  «3»;
+}
+//// async-generator-large-frames.ts
+// Async generators whose bodies need a large frame on the stack: hundreds of results of calls are alive at once between two suspensions. They are pulled by `for await`, by `yield*`,
+// by next() written out; they wait and do not wait; they throw from the middle of the large part; and one calls itself down to a depth where many large frames lie on the stack.
+let calls = 0;
+let opaque: (x: number) => number = x => { calls++; return x * 2 + 1; };
+////= outside
+async function* large(rounds: number, waits: boolean, throwsAt: number): AsyncGenerator<number, string> {
+    for (let r = 0; r < rounds; r++) {
+        if (waits) await outside();
+        const v0 = opaque(r + 0), v1 = opaque(r + 1), v2 = opaque(r + 2), v3 = opaque(r + 3), v4 = opaque(r + 4), v5 = opaque(r + 5), v6 = opaque(r + 6), v7 = opaque(r + 7);
+        const v8 = opaque(r + 8), v9 = opaque(r + 9), v10 = opaque(r + 10), v11 = opaque(r + 11), v12 = opaque(r + 12), v13 = opaque(r + 13), v14 = opaque(r + 14), v15 = opaque(r + 15);
+        const v16 = opaque(r + 16), v17 = opaque(r + 17), v18 = opaque(r + 18), v19 = opaque(r + 19), v20 = opaque(r + 20), v21 = opaque(r + 21), v22 = opaque(r + 22), v23 = opaque(r + 23);
+        const v24 = opaque(r + 24), v25 = opaque(r + 25), v26 = opaque(r + 26), v27 = opaque(r + 27), v28 = opaque(r + 28), v29 = opaque(r + 29), v30 = opaque(r + 30), v31 = opaque(r + 31);
+        const v32 = opaque(r + 32), v33 = opaque(r + 33), v34 = opaque(r + 34), v35 = opaque(r + 35), v36 = opaque(r + 36), v37 = opaque(r + 37), v38 = opaque(r + 38), v39 = opaque(r + 39);
+        const v40 = opaque(r + 40), v41 = opaque(r + 41), v42 = opaque(r + 42), v43 = opaque(r + 43), v44 = opaque(r + 44), v45 = opaque(r + 45), v46 = opaque(r + 46), v47 = opaque(r + 47);
+        const v48 = opaque(r + 48), v49 = opaque(r + 49), v50 = opaque(r + 50), v51 = opaque(r + 51), v52 = opaque(r + 52), v53 = opaque(r + 53), v54 = opaque(r + 54), v55 = opaque(r + 55);
+        const v56 = opaque(r + 56), v57 = opaque(r + 57), v58 = opaque(r + 58), v59 = opaque(r + 59), v60 = opaque(r + 60), v61 = opaque(r + 61), v62 = opaque(r + 62), v63 = opaque(r + 63);
+        const v64 = opaque(r + 64), v65 = opaque(r + 65), v66 = opaque(r + 66), v67 = opaque(r + 67), v68 = opaque(r + 68), v69 = opaque(r + 69), v70 = opaque(r + 70), v71 = opaque(r + 71);
+        const v72 = opaque(r + 72), v73 = opaque(r + 73), v74 = opaque(r + 74), v75 = opaque(r + 75), v76 = opaque(r + 76), v77 = opaque(r + 77), v78 = opaque(r + 78), v79 = opaque(r + 79);
+        const v80 = opaque(r + 80), v81 = opaque(r + 81), v82 = opaque(r + 82), v83 = opaque(r + 83), v84 = opaque(r + 84), v85 = opaque(r + 85), v86 = opaque(r + 86), v87 = opaque(r + 87);
+        const v88 = opaque(r + 88), v89 = opaque(r + 89), v90 = opaque(r + 90), v91 = opaque(r + 91), v92 = opaque(r + 92), v93 = opaque(r + 93), v94 = opaque(r + 94), v95 = opaque(r + 95);
+        const v96 = opaque(r + 96), v97 = opaque(r + 97), v98 = opaque(r + 98), v99 = opaque(r + 99), v100 = opaque(r + 100), v101 = opaque(r + 101), v102 = opaque(r + 102), v103 = opaque(r + 103);
+        const v104 = opaque(r + 104), v105 = opaque(r + 105), v106 = opaque(r + 106), v107 = opaque(r + 107), v108 = opaque(r + 108), v109 = opaque(r + 109), v110 = opaque(r + 110), v111 = opaque(r + 111);
+        const v112 = opaque(r + 112), v113 = opaque(r + 113), v114 = opaque(r + 114), v115 = opaque(r + 115), v116 = opaque(r + 116), v117 = opaque(r + 117), v118 = opaque(r + 118), v119 = opaque(r + 119);
+        const v120 = opaque(r + 120), v121 = opaque(r + 121), v122 = opaque(r + 122), v123 = opaque(r + 123), v124 = opaque(r + 124), v125 = opaque(r + 125), v126 = opaque(r + 126), v127 = opaque(r + 127);
+        const v128 = opaque(r + 128), v129 = opaque(r + 129), v130 = opaque(r + 130), v131 = opaque(r + 131), v132 = opaque(r + 132), v133 = opaque(r + 133), v134 = opaque(r + 134), v135 = opaque(r + 135);
+        const v136 = opaque(r + 136), v137 = opaque(r + 137), v138 = opaque(r + 138), v139 = opaque(r + 139), v140 = opaque(r + 140), v141 = opaque(r + 141), v142 = opaque(r + 142), v143 = opaque(r + 143);
+        const v144 = opaque(r + 144), v145 = opaque(r + 145), v146 = opaque(r + 146), v147 = opaque(r + 147), v148 = opaque(r + 148), v149 = opaque(r + 149), v150 = opaque(r + 150), v151 = opaque(r + 151);
+        const v152 = opaque(r + 152), v153 = opaque(r + 153), v154 = opaque(r + 154), v155 = opaque(r + 155), v156 = opaque(r + 156), v157 = opaque(r + 157), v158 = opaque(r + 158), v159 = opaque(r + 159);
+        const v160 = opaque(r + 160), v161 = opaque(r + 161), v162 = opaque(r + 162), v163 = opaque(r + 163), v164 = opaque(r + 164), v165 = opaque(r + 165), v166 = opaque(r + 166), v167 = opaque(r + 167);
+        const v168 = opaque(r + 168), v169 = opaque(r + 169), v170 = opaque(r + 170), v171 = opaque(r + 171), v172 = opaque(r + 172), v173 = opaque(r + 173), v174 = opaque(r + 174), v175 = opaque(r + 175);
+        const v176 = opaque(r + 176), v177 = opaque(r + 177), v178 = opaque(r + 178), v179 = opaque(r + 179), v180 = opaque(r + 180), v181 = opaque(r + 181), v182 = opaque(r + 182), v183 = opaque(r + 183);
+        const v184 = opaque(r + 184), v185 = opaque(r + 185), v186 = opaque(r + 186), v187 = opaque(r + 187), v188 = opaque(r + 188), v189 = opaque(r + 189), v190 = opaque(r + 190), v191 = opaque(r + 191);
+        const v192 = opaque(r + 192), v193 = opaque(r + 193), v194 = opaque(r + 194), v195 = opaque(r + 195), v196 = opaque(r + 196), v197 = opaque(r + 197), v198 = opaque(r + 198), v199 = opaque(r + 199);
+        const v200 = opaque(r + 200), v201 = opaque(r + 201), v202 = opaque(r + 202), v203 = opaque(r + 203), v204 = opaque(r + 204), v205 = opaque(r + 205), v206 = opaque(r + 206), v207 = opaque(r + 207);
+        const v208 = opaque(r + 208), v209 = opaque(r + 209), v210 = opaque(r + 210), v211 = opaque(r + 211), v212 = opaque(r + 212), v213 = opaque(r + 213), v214 = opaque(r + 214), v215 = opaque(r + 215);
+        const v216 = opaque(r + 216), v217 = opaque(r + 217), v218 = opaque(r + 218), v219 = opaque(r + 219), v220 = opaque(r + 220), v221 = opaque(r + 221), v222 = opaque(r + 222), v223 = opaque(r + 223);
+        const v224 = opaque(r + 224), v225 = opaque(r + 225), v226 = opaque(r + 226), v227 = opaque(r + 227), v228 = opaque(r + 228), v229 = opaque(r + 229), v230 = opaque(r + 230), v231 = opaque(r + 231);
+        const v232 = opaque(r + 232), v233 = opaque(r + 233), v234 = opaque(r + 234), v235 = opaque(r + 235), v236 = opaque(r + 236), v237 = opaque(r + 237), v238 = opaque(r + 238), v239 = opaque(r + 239);
+        const v240 = opaque(r + 240), v241 = opaque(r + 241), v242 = opaque(r + 242), v243 = opaque(r + 243), v244 = opaque(r + 244), v245 = opaque(r + 245), v246 = opaque(r + 246), v247 = opaque(r + 247);
+        const v248 = opaque(r + 248), v249 = opaque(r + 249), v250 = opaque(r + 250), v251 = opaque(r + 251), v252 = opaque(r + 252), v253 = opaque(r + 253), v254 = opaque(r + 254), v255 = opaque(r + 255);
+        const v256 = opaque(r + 256), v257 = opaque(r + 257), v258 = opaque(r + 258), v259 = opaque(r + 259), v260 = opaque(r + 260), v261 = opaque(r + 261), v262 = opaque(r + 262), v263 = opaque(r + 263);
+        const v264 = opaque(r + 264), v265 = opaque(r + 265), v266 = opaque(r + 266), v267 = opaque(r + 267), v268 = opaque(r + 268), v269 = opaque(r + 269), v270 = opaque(r + 270), v271 = opaque(r + 271);
+        const v272 = opaque(r + 272), v273 = opaque(r + 273), v274 = opaque(r + 274), v275 = opaque(r + 275), v276 = opaque(r + 276), v277 = opaque(r + 277), v278 = opaque(r + 278), v279 = opaque(r + 279);
+        const v280 = opaque(r + 280), v281 = opaque(r + 281), v282 = opaque(r + 282), v283 = opaque(r + 283), v284 = opaque(r + 284), v285 = opaque(r + 285), v286 = opaque(r + 286), v287 = opaque(r + 287);
+        const v288 = opaque(r + 288), v289 = opaque(r + 289), v290 = opaque(r + 290), v291 = opaque(r + 291), v292 = opaque(r + 292), v293 = opaque(r + 293), v294 = opaque(r + 294), v295 = opaque(r + 295);
+        const v296 = opaque(r + 296), v297 = opaque(r + 297), v298 = opaque(r + 298), v299 = opaque(r + 299), v300 = opaque(r + 300), v301 = opaque(r + 301), v302 = opaque(r + 302), v303 = opaque(r + 303);
+        const v304 = opaque(r + 304), v305 = opaque(r + 305), v306 = opaque(r + 306), v307 = opaque(r + 307), v308 = opaque(r + 308), v309 = opaque(r + 309), v310 = opaque(r + 310), v311 = opaque(r + 311);
+        const v312 = opaque(r + 312), v313 = opaque(r + 313), v314 = opaque(r + 314), v315 = opaque(r + 315), v316 = opaque(r + 316), v317 = opaque(r + 317), v318 = opaque(r + 318), v319 = opaque(r + 319);
+        const v320 = opaque(r + 320), v321 = opaque(r + 321), v322 = opaque(r + 322), v323 = opaque(r + 323), v324 = opaque(r + 324), v325 = opaque(r + 325), v326 = opaque(r + 326), v327 = opaque(r + 327);
+        const v328 = opaque(r + 328), v329 = opaque(r + 329), v330 = opaque(r + 330), v331 = opaque(r + 331), v332 = opaque(r + 332), v333 = opaque(r + 333), v334 = opaque(r + 334), v335 = opaque(r + 335);
+        const v336 = opaque(r + 336), v337 = opaque(r + 337), v338 = opaque(r + 338), v339 = opaque(r + 339), v340 = opaque(r + 340), v341 = opaque(r + 341), v342 = opaque(r + 342), v343 = opaque(r + 343);
+        const v344 = opaque(r + 344), v345 = opaque(r + 345), v346 = opaque(r + 346), v347 = opaque(r + 347), v348 = opaque(r + 348), v349 = opaque(r + 349), v350 = opaque(r + 350), v351 = opaque(r + 351);
+        const v352 = opaque(r + 352), v353 = opaque(r + 353), v354 = opaque(r + 354), v355 = opaque(r + 355), v356 = opaque(r + 356), v357 = opaque(r + 357), v358 = opaque(r + 358), v359 = opaque(r + 359);
+        const v360 = opaque(r + 360), v361 = opaque(r + 361), v362 = opaque(r + 362), v363 = opaque(r + 363), v364 = opaque(r + 364), v365 = opaque(r + 365), v366 = opaque(r + 366), v367 = opaque(r + 367);
+        const v368 = opaque(r + 368), v369 = opaque(r + 369), v370 = opaque(r + 370), v371 = opaque(r + 371), v372 = opaque(r + 372), v373 = opaque(r + 373), v374 = opaque(r + 374), v375 = opaque(r + 375);
+        const v376 = opaque(r + 376), v377 = opaque(r + 377), v378 = opaque(r + 378), v379 = opaque(r + 379), v380 = opaque(r + 380), v381 = opaque(r + 381), v382 = opaque(r + 382), v383 = opaque(r + 383);
+        const v384 = opaque(r + 384), v385 = opaque(r + 385), v386 = opaque(r + 386), v387 = opaque(r + 387), v388 = opaque(r + 388), v389 = opaque(r + 389), v390 = opaque(r + 390), v391 = opaque(r + 391);
+        const v392 = opaque(r + 392), v393 = opaque(r + 393), v394 = opaque(r + 394), v395 = opaque(r + 395), v396 = opaque(r + 396), v397 = opaque(r + 397), v398 = opaque(r + 398), v399 = opaque(r + 399);
+        const v400 = opaque(r + 400), v401 = opaque(r + 401), v402 = opaque(r + 402), v403 = opaque(r + 403), v404 = opaque(r + 404), v405 = opaque(r + 405), v406 = opaque(r + 406), v407 = opaque(r + 407);
+        const v408 = opaque(r + 408), v409 = opaque(r + 409), v410 = opaque(r + 410), v411 = opaque(r + 411), v412 = opaque(r + 412), v413 = opaque(r + 413), v414 = opaque(r + 414), v415 = opaque(r + 415);
+        const v416 = opaque(r + 416), v417 = opaque(r + 417), v418 = opaque(r + 418), v419 = opaque(r + 419), v420 = opaque(r + 420), v421 = opaque(r + 421), v422 = opaque(r + 422), v423 = opaque(r + 423);
+        const v424 = opaque(r + 424), v425 = opaque(r + 425), v426 = opaque(r + 426), v427 = opaque(r + 427), v428 = opaque(r + 428), v429 = opaque(r + 429), v430 = opaque(r + 430), v431 = opaque(r + 431);
+        const v432 = opaque(r + 432), v433 = opaque(r + 433), v434 = opaque(r + 434), v435 = opaque(r + 435), v436 = opaque(r + 436), v437 = opaque(r + 437), v438 = opaque(r + 438), v439 = opaque(r + 439);
+        const v440 = opaque(r + 440), v441 = opaque(r + 441), v442 = opaque(r + 442), v443 = opaque(r + 443), v444 = opaque(r + 444), v445 = opaque(r + 445), v446 = opaque(r + 446), v447 = opaque(r + 447);
+        const v448 = opaque(r + 448), v449 = opaque(r + 449), v450 = opaque(r + 450), v451 = opaque(r + 451), v452 = opaque(r + 452), v453 = opaque(r + 453), v454 = opaque(r + 454), v455 = opaque(r + 455);
+        const v456 = opaque(r + 456), v457 = opaque(r + 457), v458 = opaque(r + 458), v459 = opaque(r + 459), v460 = opaque(r + 460), v461 = opaque(r + 461), v462 = opaque(r + 462), v463 = opaque(r + 463);
+        const v464 = opaque(r + 464), v465 = opaque(r + 465), v466 = opaque(r + 466), v467 = opaque(r + 467), v468 = opaque(r + 468), v469 = opaque(r + 469), v470 = opaque(r + 470), v471 = opaque(r + 471);
+        const v472 = opaque(r + 472), v473 = opaque(r + 473), v474 = opaque(r + 474), v475 = opaque(r + 475), v476 = opaque(r + 476), v477 = opaque(r + 477), v478 = opaque(r + 478), v479 = opaque(r + 479);
+        const v480 = opaque(r + 480), v481 = opaque(r + 481), v482 = opaque(r + 482), v483 = opaque(r + 483), v484 = opaque(r + 484), v485 = opaque(r + 485), v486 = opaque(r + 486), v487 = opaque(r + 487);
+        const v488 = opaque(r + 488), v489 = opaque(r + 489), v490 = opaque(r + 490), v491 = opaque(r + 491), v492 = opaque(r + 492), v493 = opaque(r + 493), v494 = opaque(r + 494), v495 = opaque(r + 495);
+        const v496 = opaque(r + 496), v497 = opaque(r + 497), v498 = opaque(r + 498), v499 = opaque(r + 499), v500 = opaque(r + 500), v501 = opaque(r + 501), v502 = opaque(r + 502), v503 = opaque(r + 503);
+        const v504 = opaque(r + 504), v505 = opaque(r + 505), v506 = opaque(r + 506), v507 = opaque(r + 507), v508 = opaque(r + 508), v509 = opaque(r + 509), v510 = opaque(r + 510), v511 = opaque(r + 511);
+        const v512 = opaque(r + 512), v513 = opaque(r + 513), v514 = opaque(r + 514), v515 = opaque(r + 515), v516 = opaque(r + 516), v517 = opaque(r + 517), v518 = opaque(r + 518), v519 = opaque(r + 519);
+        const v520 = opaque(r + 520), v521 = opaque(r + 521), v522 = opaque(r + 522), v523 = opaque(r + 523), v524 = opaque(r + 524), v525 = opaque(r + 525), v526 = opaque(r + 526), v527 = opaque(r + 527);
+        const v528 = opaque(r + 528), v529 = opaque(r + 529), v530 = opaque(r + 530), v531 = opaque(r + 531), v532 = opaque(r + 532), v533 = opaque(r + 533), v534 = opaque(r + 534), v535 = opaque(r + 535);
+        const v536 = opaque(r + 536), v537 = opaque(r + 537), v538 = opaque(r + 538), v539 = opaque(r + 539), v540 = opaque(r + 540), v541 = opaque(r + 541), v542 = opaque(r + 542), v543 = opaque(r + 543);
+        const v544 = opaque(r + 544), v545 = opaque(r + 545), v546 = opaque(r + 546), v547 = opaque(r + 547), v548 = opaque(r + 548), v549 = opaque(r + 549), v550 = opaque(r + 550), v551 = opaque(r + 551);
+        const v552 = opaque(r + 552), v553 = opaque(r + 553), v554 = opaque(r + 554), v555 = opaque(r + 555), v556 = opaque(r + 556), v557 = opaque(r + 557), v558 = opaque(r + 558), v559 = opaque(r + 559);
+        const v560 = opaque(r + 560), v561 = opaque(r + 561), v562 = opaque(r + 562), v563 = opaque(r + 563), v564 = opaque(r + 564), v565 = opaque(r + 565), v566 = opaque(r + 566), v567 = opaque(r + 567);
+        const v568 = opaque(r + 568), v569 = opaque(r + 569), v570 = opaque(r + 570), v571 = opaque(r + 571), v572 = opaque(r + 572), v573 = opaque(r + 573), v574 = opaque(r + 574), v575 = opaque(r + 575);
+        const v576 = opaque(r + 576), v577 = opaque(r + 577), v578 = opaque(r + 578), v579 = opaque(r + 579), v580 = opaque(r + 580), v581 = opaque(r + 581), v582 = opaque(r + 582), v583 = opaque(r + 583);
+        const v584 = opaque(r + 584), v585 = opaque(r + 585), v586 = opaque(r + 586), v587 = opaque(r + 587), v588 = opaque(r + 588), v589 = opaque(r + 589), v590 = opaque(r + 590), v591 = opaque(r + 591);
+        const v592 = opaque(r + 592), v593 = opaque(r + 593), v594 = opaque(r + 594), v595 = opaque(r + 595), v596 = opaque(r + 596), v597 = opaque(r + 597), v598 = opaque(r + 598), v599 = opaque(r + 599);
+        const v600 = opaque(r + 600), v601 = opaque(r + 601), v602 = opaque(r + 602), v603 = opaque(r + 603), v604 = opaque(r + 604), v605 = opaque(r + 605), v606 = opaque(r + 606), v607 = opaque(r + 607);
+        const v608 = opaque(r + 608), v609 = opaque(r + 609), v610 = opaque(r + 610), v611 = opaque(r + 611), v612 = opaque(r + 612), v613 = opaque(r + 613), v614 = opaque(r + 614), v615 = opaque(r + 615);
+        const v616 = opaque(r + 616), v617 = opaque(r + 617), v618 = opaque(r + 618), v619 = opaque(r + 619), v620 = opaque(r + 620), v621 = opaque(r + 621), v622 = opaque(r + 622), v623 = opaque(r + 623);
+        const v624 = opaque(r + 624), v625 = opaque(r + 625), v626 = opaque(r + 626), v627 = opaque(r + 627), v628 = opaque(r + 628), v629 = opaque(r + 629), v630 = opaque(r + 630), v631 = opaque(r + 631);
+        const v632 = opaque(r + 632), v633 = opaque(r + 633), v634 = opaque(r + 634), v635 = opaque(r + 635), v636 = opaque(r + 636), v637 = opaque(r + 637), v638 = opaque(r + 638), v639 = opaque(r + 639);
+        if (r === throwsAt) throw new Error("thrown in round " + r + " behind " + calls + " calls");
+        let sum = 0;
+        sum += v15 + v14 + v13 + v12 + v11 + v10 + v9 + v8 + v7 + v6 + v5 + v4 + v3 + v2 + v1 + v0;
+        sum += v31 + v30 + v29 + v28 + v27 + v26 + v25 + v24 + v23 + v22 + v21 + v20 + v19 + v18 + v17 + v16;
+        sum += v47 + v46 + v45 + v44 + v43 + v42 + v41 + v40 + v39 + v38 + v37 + v36 + v35 + v34 + v33 + v32;
+        sum += v63 + v62 + v61 + v60 + v59 + v58 + v57 + v56 + v55 + v54 + v53 + v52 + v51 + v50 + v49 + v48;
+        sum += v79 + v78 + v77 + v76 + v75 + v74 + v73 + v72 + v71 + v70 + v69 + v68 + v67 + v66 + v65 + v64;
+        sum += v95 + v94 + v93 + v92 + v91 + v90 + v89 + v88 + v87 + v86 + v85 + v84 + v83 + v82 + v81 + v80;
+        sum += v111 + v110 + v109 + v108 + v107 + v106 + v105 + v104 + v103 + v102 + v101 + v100 + v99 + v98 + v97 + v96;
+        sum += v127 + v126 + v125 + v124 + v123 + v122 + v121 + v120 + v119 + v118 + v117 + v116 + v115 + v114 + v113 + v112;
+        sum += v143 + v142 + v141 + v140 + v139 + v138 + v137 + v136 + v135 + v134 + v133 + v132 + v131 + v130 + v129 + v128;
+        sum += v159 + v158 + v157 + v156 + v155 + v154 + v153 + v152 + v151 + v150 + v149 + v148 + v147 + v146 + v145 + v144;
+        sum += v175 + v174 + v173 + v172 + v171 + v170 + v169 + v168 + v167 + v166 + v165 + v164 + v163 + v162 + v161 + v160;
+        sum += v191 + v190 + v189 + v188 + v187 + v186 + v185 + v184 + v183 + v182 + v181 + v180 + v179 + v178 + v177 + v176;
+        sum += v207 + v206 + v205 + v204 + v203 + v202 + v201 + v200 + v199 + v198 + v197 + v196 + v195 + v194 + v193 + v192;
+        sum += v223 + v222 + v221 + v220 + v219 + v218 + v217 + v216 + v215 + v214 + v213 + v212 + v211 + v210 + v209 + v208;
+        sum += v239 + v238 + v237 + v236 + v235 + v234 + v233 + v232 + v231 + v230 + v229 + v228 + v227 + v226 + v225 + v224;
+        sum += v255 + v254 + v253 + v252 + v251 + v250 + v249 + v248 + v247 + v246 + v245 + v244 + v243 + v242 + v241 + v240;
+        sum += v271 + v270 + v269 + v268 + v267 + v266 + v265 + v264 + v263 + v262 + v261 + v260 + v259 + v258 + v257 + v256;
+        sum += v287 + v286 + v285 + v284 + v283 + v282 + v281 + v280 + v279 + v278 + v277 + v276 + v275 + v274 + v273 + v272;
+        sum += v303 + v302 + v301 + v300 + v299 + v298 + v297 + v296 + v295 + v294 + v293 + v292 + v291 + v290 + v289 + v288;
+        sum += v319 + v318 + v317 + v316 + v315 + v314 + v313 + v312 + v311 + v310 + v309 + v308 + v307 + v306 + v305 + v304;
+        sum += v335 + v334 + v333 + v332 + v331 + v330 + v329 + v328 + v327 + v326 + v325 + v324 + v323 + v322 + v321 + v320;
+        sum += v351 + v350 + v349 + v348 + v347 + v346 + v345 + v344 + v343 + v342 + v341 + v340 + v339 + v338 + v337 + v336;
+        sum += v367 + v366 + v365 + v364 + v363 + v362 + v361 + v360 + v359 + v358 + v357 + v356 + v355 + v354 + v353 + v352;
+        sum += v383 + v382 + v381 + v380 + v379 + v378 + v377 + v376 + v375 + v374 + v373 + v372 + v371 + v370 + v369 + v368;
+        sum += v399 + v398 + v397 + v396 + v395 + v394 + v393 + v392 + v391 + v390 + v389 + v388 + v387 + v386 + v385 + v384;
+        sum += v415 + v414 + v413 + v412 + v411 + v410 + v409 + v408 + v407 + v406 + v405 + v404 + v403 + v402 + v401 + v400;
+        sum += v431 + v430 + v429 + v428 + v427 + v426 + v425 + v424 + v423 + v422 + v421 + v420 + v419 + v418 + v417 + v416;
+        sum += v447 + v446 + v445 + v444 + v443 + v442 + v441 + v440 + v439 + v438 + v437 + v436 + v435 + v434 + v433 + v432;
+        sum += v463 + v462 + v461 + v460 + v459 + v458 + v457 + v456 + v455 + v454 + v453 + v452 + v451 + v450 + v449 + v448;
+        sum += v479 + v478 + v477 + v476 + v475 + v474 + v473 + v472 + v471 + v470 + v469 + v468 + v467 + v466 + v465 + v464;
+        sum += v495 + v494 + v493 + v492 + v491 + v490 + v489 + v488 + v487 + v486 + v485 + v484 + v483 + v482 + v481 + v480;
+        sum += v511 + v510 + v509 + v508 + v507 + v506 + v505 + v504 + v503 + v502 + v501 + v500 + v499 + v498 + v497 + v496;
+        sum += v527 + v526 + v525 + v524 + v523 + v522 + v521 + v520 + v519 + v518 + v517 + v516 + v515 + v514 + v513 + v512;
+        sum += v543 + v542 + v541 + v540 + v539 + v538 + v537 + v536 + v535 + v534 + v533 + v532 + v531 + v530 + v529 + v528;
+        sum += v559 + v558 + v557 + v556 + v555 + v554 + v553 + v552 + v551 + v550 + v549 + v548 + v547 + v546 + v545 + v544;
+        sum += v575 + v574 + v573 + v572 + v571 + v570 + v569 + v568 + v567 + v566 + v565 + v564 + v563 + v562 + v561 + v560;
+        sum += v591 + v590 + v589 + v588 + v587 + v586 + v585 + v584 + v583 + v582 + v581 + v580 + v579 + v578 + v577 + v576;
+        sum += v607 + v606 + v605 + v604 + v603 + v602 + v601 + v600 + v599 + v598 + v597 + v596 + v595 + v594 + v593 + v592;
+        sum += v623 + v622 + v621 + v620 + v619 + v618 + v617 + v616 + v615 + v614 + v613 + v612 + v611 + v610 + v609 + v608;
+        sum += v639 + v638 + v637 + v636 + v635 + v634 + v633 + v632 + v631 + v630 + v629 + v628 + v627 + v626 + v625 + v624;
+        yield sum;
+    }
+    return "over behind " + calls + " calls";
+}
+async function* nested(depth: number): AsyncGenerator<number> {
+    const v0 = opaque(depth + 0), v1 = opaque(depth + 1), v2 = opaque(depth + 2), v3 = opaque(depth + 3), v4 = opaque(depth + 4), v5 = opaque(depth + 5), v6 = opaque(depth + 6), v7 = opaque(depth + 7);
+    const v8 = opaque(depth + 8), v9 = opaque(depth + 9), v10 = opaque(depth + 10), v11 = opaque(depth + 11), v12 = opaque(depth + 12), v13 = opaque(depth + 13), v14 = opaque(depth + 14), v15 = opaque(depth + 15);
+    const v16 = opaque(depth + 16), v17 = opaque(depth + 17), v18 = opaque(depth + 18), v19 = opaque(depth + 19), v20 = opaque(depth + 20), v21 = opaque(depth + 21), v22 = opaque(depth + 22), v23 = opaque(depth + 23);
+    const v24 = opaque(depth + 24), v25 = opaque(depth + 25), v26 = opaque(depth + 26), v27 = opaque(depth + 27), v28 = opaque(depth + 28), v29 = opaque(depth + 29), v30 = opaque(depth + 30), v31 = opaque(depth + 31);
+    const v32 = opaque(depth + 32), v33 = opaque(depth + 33), v34 = opaque(depth + 34), v35 = opaque(depth + 35), v36 = opaque(depth + 36), v37 = opaque(depth + 37), v38 = opaque(depth + 38), v39 = opaque(depth + 39);
+    const v40 = opaque(depth + 40), v41 = opaque(depth + 41), v42 = opaque(depth + 42), v43 = opaque(depth + 43), v44 = opaque(depth + 44), v45 = opaque(depth + 45), v46 = opaque(depth + 46), v47 = opaque(depth + 47);
+    const v48 = opaque(depth + 48), v49 = opaque(depth + 49), v50 = opaque(depth + 50), v51 = opaque(depth + 51), v52 = opaque(depth + 52), v53 = opaque(depth + 53), v54 = opaque(depth + 54), v55 = opaque(depth + 55);
+    const v56 = opaque(depth + 56), v57 = opaque(depth + 57), v58 = opaque(depth + 58), v59 = opaque(depth + 59), v60 = opaque(depth + 60), v61 = opaque(depth + 61), v62 = opaque(depth + 62), v63 = opaque(depth + 63);
+    const v64 = opaque(depth + 64), v65 = opaque(depth + 65), v66 = opaque(depth + 66), v67 = opaque(depth + 67), v68 = opaque(depth + 68), v69 = opaque(depth + 69), v70 = opaque(depth + 70), v71 = opaque(depth + 71);
+    const v72 = opaque(depth + 72), v73 = opaque(depth + 73), v74 = opaque(depth + 74), v75 = opaque(depth + 75), v76 = opaque(depth + 76), v77 = opaque(depth + 77), v78 = opaque(depth + 78), v79 = opaque(depth + 79);
+    const v80 = opaque(depth + 80), v81 = opaque(depth + 81), v82 = opaque(depth + 82), v83 = opaque(depth + 83), v84 = opaque(depth + 84), v85 = opaque(depth + 85), v86 = opaque(depth + 86), v87 = opaque(depth + 87);
+    const v88 = opaque(depth + 88), v89 = opaque(depth + 89), v90 = opaque(depth + 90), v91 = opaque(depth + 91), v92 = opaque(depth + 92), v93 = opaque(depth + 93), v94 = opaque(depth + 94), v95 = opaque(depth + 95);
+    const v96 = opaque(depth + 96), v97 = opaque(depth + 97), v98 = opaque(depth + 98), v99 = opaque(depth + 99), v100 = opaque(depth + 100), v101 = opaque(depth + 101), v102 = opaque(depth + 102), v103 = opaque(depth + 103);
+    const v104 = opaque(depth + 104), v105 = opaque(depth + 105), v106 = opaque(depth + 106), v107 = opaque(depth + 107), v108 = opaque(depth + 108), v109 = opaque(depth + 109), v110 = opaque(depth + 110), v111 = opaque(depth + 111);
+    const v112 = opaque(depth + 112), v113 = opaque(depth + 113), v114 = opaque(depth + 114), v115 = opaque(depth + 115), v116 = opaque(depth + 116), v117 = opaque(depth + 117), v118 = opaque(depth + 118), v119 = opaque(depth + 119);
+    const v120 = opaque(depth + 120), v121 = opaque(depth + 121), v122 = opaque(depth + 122), v123 = opaque(depth + 123), v124 = opaque(depth + 124), v125 = opaque(depth + 125), v126 = opaque(depth + 126), v127 = opaque(depth + 127);
+    const v128 = opaque(depth + 128), v129 = opaque(depth + 129), v130 = opaque(depth + 130), v131 = opaque(depth + 131), v132 = opaque(depth + 132), v133 = opaque(depth + 133), v134 = opaque(depth + 134), v135 = opaque(depth + 135);
+    const v136 = opaque(depth + 136), v137 = opaque(depth + 137), v138 = opaque(depth + 138), v139 = opaque(depth + 139), v140 = opaque(depth + 140), v141 = opaque(depth + 141), v142 = opaque(depth + 142), v143 = opaque(depth + 143);
+    const v144 = opaque(depth + 144), v145 = opaque(depth + 145), v146 = opaque(depth + 146), v147 = opaque(depth + 147), v148 = opaque(depth + 148), v149 = opaque(depth + 149), v150 = opaque(depth + 150), v151 = opaque(depth + 151);
+    const v152 = opaque(depth + 152), v153 = opaque(depth + 153), v154 = opaque(depth + 154), v155 = opaque(depth + 155), v156 = opaque(depth + 156), v157 = opaque(depth + 157), v158 = opaque(depth + 158), v159 = opaque(depth + 159);
+    const v160 = opaque(depth + 160), v161 = opaque(depth + 161), v162 = opaque(depth + 162), v163 = opaque(depth + 163), v164 = opaque(depth + 164), v165 = opaque(depth + 165), v166 = opaque(depth + 166), v167 = opaque(depth + 167);
+    const v168 = opaque(depth + 168), v169 = opaque(depth + 169), v170 = opaque(depth + 170), v171 = opaque(depth + 171), v172 = opaque(depth + 172), v173 = opaque(depth + 173), v174 = opaque(depth + 174), v175 = opaque(depth + 175);
+    const v176 = opaque(depth + 176), v177 = opaque(depth + 177), v178 = opaque(depth + 178), v179 = opaque(depth + 179), v180 = opaque(depth + 180), v181 = opaque(depth + 181), v182 = opaque(depth + 182), v183 = opaque(depth + 183);
+    const v184 = opaque(depth + 184), v185 = opaque(depth + 185), v186 = opaque(depth + 186), v187 = opaque(depth + 187), v188 = opaque(depth + 188), v189 = opaque(depth + 189), v190 = opaque(depth + 190), v191 = opaque(depth + 191);
+    const v192 = opaque(depth + 192), v193 = opaque(depth + 193), v194 = opaque(depth + 194), v195 = opaque(depth + 195), v196 = opaque(depth + 196), v197 = opaque(depth + 197), v198 = opaque(depth + 198), v199 = opaque(depth + 199);
+    const v200 = opaque(depth + 200), v201 = opaque(depth + 201), v202 = opaque(depth + 202), v203 = opaque(depth + 203), v204 = opaque(depth + 204), v205 = opaque(depth + 205), v206 = opaque(depth + 206), v207 = opaque(depth + 207);
+    const v208 = opaque(depth + 208), v209 = opaque(depth + 209), v210 = opaque(depth + 210), v211 = opaque(depth + 211), v212 = opaque(depth + 212), v213 = opaque(depth + 213), v214 = opaque(depth + 214), v215 = opaque(depth + 215);
+    const v216 = opaque(depth + 216), v217 = opaque(depth + 217), v218 = opaque(depth + 218), v219 = opaque(depth + 219), v220 = opaque(depth + 220), v221 = opaque(depth + 221), v222 = opaque(depth + 222), v223 = opaque(depth + 223);
+    const v224 = opaque(depth + 224), v225 = opaque(depth + 225), v226 = opaque(depth + 226), v227 = opaque(depth + 227), v228 = opaque(depth + 228), v229 = opaque(depth + 229), v230 = opaque(depth + 230), v231 = opaque(depth + 231);
+    const v232 = opaque(depth + 232), v233 = opaque(depth + 233), v234 = opaque(depth + 234), v235 = opaque(depth + 235), v236 = opaque(depth + 236), v237 = opaque(depth + 237), v238 = opaque(depth + 238), v239 = opaque(depth + 239);
+    const v240 = opaque(depth + 240), v241 = opaque(depth + 241), v242 = opaque(depth + 242), v243 = opaque(depth + 243), v244 = opaque(depth + 244), v245 = opaque(depth + 245), v246 = opaque(depth + 246), v247 = opaque(depth + 247);
+    const v248 = opaque(depth + 248), v249 = opaque(depth + 249), v250 = opaque(depth + 250), v251 = opaque(depth + 251), v252 = opaque(depth + 252), v253 = opaque(depth + 253), v254 = opaque(depth + 254), v255 = opaque(depth + 255);
+    const v256 = opaque(depth + 256), v257 = opaque(depth + 257), v258 = opaque(depth + 258), v259 = opaque(depth + 259), v260 = opaque(depth + 260), v261 = opaque(depth + 261), v262 = opaque(depth + 262), v263 = opaque(depth + 263);
+    const v264 = opaque(depth + 264), v265 = opaque(depth + 265), v266 = opaque(depth + 266), v267 = opaque(depth + 267), v268 = opaque(depth + 268), v269 = opaque(depth + 269), v270 = opaque(depth + 270), v271 = opaque(depth + 271);
+    const v272 = opaque(depth + 272), v273 = opaque(depth + 273), v274 = opaque(depth + 274), v275 = opaque(depth + 275), v276 = opaque(depth + 276), v277 = opaque(depth + 277), v278 = opaque(depth + 278), v279 = opaque(depth + 279);
+    const v280 = opaque(depth + 280), v281 = opaque(depth + 281), v282 = opaque(depth + 282), v283 = opaque(depth + 283), v284 = opaque(depth + 284), v285 = opaque(depth + 285), v286 = opaque(depth + 286), v287 = opaque(depth + 287);
+    const v288 = opaque(depth + 288), v289 = opaque(depth + 289), v290 = opaque(depth + 290), v291 = opaque(depth + 291), v292 = opaque(depth + 292), v293 = opaque(depth + 293), v294 = opaque(depth + 294), v295 = opaque(depth + 295);
+    const v296 = opaque(depth + 296), v297 = opaque(depth + 297), v298 = opaque(depth + 298), v299 = opaque(depth + 299), v300 = opaque(depth + 300), v301 = opaque(depth + 301), v302 = opaque(depth + 302), v303 = opaque(depth + 303);
+    const v304 = opaque(depth + 304), v305 = opaque(depth + 305), v306 = opaque(depth + 306), v307 = opaque(depth + 307), v308 = opaque(depth + 308), v309 = opaque(depth + 309), v310 = opaque(depth + 310), v311 = opaque(depth + 311);
+    const v312 = opaque(depth + 312), v313 = opaque(depth + 313), v314 = opaque(depth + 314), v315 = opaque(depth + 315), v316 = opaque(depth + 316), v317 = opaque(depth + 317), v318 = opaque(depth + 318), v319 = opaque(depth + 319);
+    const v320 = opaque(depth + 320), v321 = opaque(depth + 321), v322 = opaque(depth + 322), v323 = opaque(depth + 323), v324 = opaque(depth + 324), v325 = opaque(depth + 325), v326 = opaque(depth + 326), v327 = opaque(depth + 327);
+    const v328 = opaque(depth + 328), v329 = opaque(depth + 329), v330 = opaque(depth + 330), v331 = opaque(depth + 331), v332 = opaque(depth + 332), v333 = opaque(depth + 333), v334 = opaque(depth + 334), v335 = opaque(depth + 335);
+    const v336 = opaque(depth + 336), v337 = opaque(depth + 337), v338 = opaque(depth + 338), v339 = opaque(depth + 339), v340 = opaque(depth + 340), v341 = opaque(depth + 341), v342 = opaque(depth + 342), v343 = opaque(depth + 343);
+    const v344 = opaque(depth + 344), v345 = opaque(depth + 345), v346 = opaque(depth + 346), v347 = opaque(depth + 347), v348 = opaque(depth + 348), v349 = opaque(depth + 349), v350 = opaque(depth + 350), v351 = opaque(depth + 351);
+    const v352 = opaque(depth + 352), v353 = opaque(depth + 353), v354 = opaque(depth + 354), v355 = opaque(depth + 355), v356 = opaque(depth + 356), v357 = opaque(depth + 357), v358 = opaque(depth + 358), v359 = opaque(depth + 359);
+    const v360 = opaque(depth + 360), v361 = opaque(depth + 361), v362 = opaque(depth + 362), v363 = opaque(depth + 363), v364 = opaque(depth + 364), v365 = opaque(depth + 365), v366 = opaque(depth + 366), v367 = opaque(depth + 367);
+    const v368 = opaque(depth + 368), v369 = opaque(depth + 369), v370 = opaque(depth + 370), v371 = opaque(depth + 371), v372 = opaque(depth + 372), v373 = opaque(depth + 373), v374 = opaque(depth + 374), v375 = opaque(depth + 375);
+    const v376 = opaque(depth + 376), v377 = opaque(depth + 377), v378 = opaque(depth + 378), v379 = opaque(depth + 379), v380 = opaque(depth + 380), v381 = opaque(depth + 381), v382 = opaque(depth + 382), v383 = opaque(depth + 383);
+    const v384 = opaque(depth + 384), v385 = opaque(depth + 385), v386 = opaque(depth + 386), v387 = opaque(depth + 387), v388 = opaque(depth + 388), v389 = opaque(depth + 389), v390 = opaque(depth + 390), v391 = opaque(depth + 391);
+    const v392 = opaque(depth + 392), v393 = opaque(depth + 393), v394 = opaque(depth + 394), v395 = opaque(depth + 395), v396 = opaque(depth + 396), v397 = opaque(depth + 397), v398 = opaque(depth + 398), v399 = opaque(depth + 399);
+    const v400 = opaque(depth + 400), v401 = opaque(depth + 401), v402 = opaque(depth + 402), v403 = opaque(depth + 403), v404 = opaque(depth + 404), v405 = opaque(depth + 405), v406 = opaque(depth + 406), v407 = opaque(depth + 407);
+    const v408 = opaque(depth + 408), v409 = opaque(depth + 409), v410 = opaque(depth + 410), v411 = opaque(depth + 411), v412 = opaque(depth + 412), v413 = opaque(depth + 413), v414 = opaque(depth + 414), v415 = opaque(depth + 415);
+    const v416 = opaque(depth + 416), v417 = opaque(depth + 417), v418 = opaque(depth + 418), v419 = opaque(depth + 419), v420 = opaque(depth + 420), v421 = opaque(depth + 421), v422 = opaque(depth + 422), v423 = opaque(depth + 423);
+    const v424 = opaque(depth + 424), v425 = opaque(depth + 425), v426 = opaque(depth + 426), v427 = opaque(depth + 427), v428 = opaque(depth + 428), v429 = opaque(depth + 429), v430 = opaque(depth + 430), v431 = opaque(depth + 431);
+    const v432 = opaque(depth + 432), v433 = opaque(depth + 433), v434 = opaque(depth + 434), v435 = opaque(depth + 435), v436 = opaque(depth + 436), v437 = opaque(depth + 437), v438 = opaque(depth + 438), v439 = opaque(depth + 439);
+    const v440 = opaque(depth + 440), v441 = opaque(depth + 441), v442 = opaque(depth + 442), v443 = opaque(depth + 443), v444 = opaque(depth + 444), v445 = opaque(depth + 445), v446 = opaque(depth + 446), v447 = opaque(depth + 447);
+    const v448 = opaque(depth + 448), v449 = opaque(depth + 449), v450 = opaque(depth + 450), v451 = opaque(depth + 451), v452 = opaque(depth + 452), v453 = opaque(depth + 453), v454 = opaque(depth + 454), v455 = opaque(depth + 455);
+    const v456 = opaque(depth + 456), v457 = opaque(depth + 457), v458 = opaque(depth + 458), v459 = opaque(depth + 459), v460 = opaque(depth + 460), v461 = opaque(depth + 461), v462 = opaque(depth + 462), v463 = opaque(depth + 463);
+    const v464 = opaque(depth + 464), v465 = opaque(depth + 465), v466 = opaque(depth + 466), v467 = opaque(depth + 467), v468 = opaque(depth + 468), v469 = opaque(depth + 469), v470 = opaque(depth + 470), v471 = opaque(depth + 471);
+    const v472 = opaque(depth + 472), v473 = opaque(depth + 473), v474 = opaque(depth + 474), v475 = opaque(depth + 475), v476 = opaque(depth + 476), v477 = opaque(depth + 477), v478 = opaque(depth + 478), v479 = opaque(depth + 479);
+    const v480 = opaque(depth + 480), v481 = opaque(depth + 481), v482 = opaque(depth + 482), v483 = opaque(depth + 483), v484 = opaque(depth + 484), v485 = opaque(depth + 485), v486 = opaque(depth + 486), v487 = opaque(depth + 487);
+    const v488 = opaque(depth + 488), v489 = opaque(depth + 489), v490 = opaque(depth + 490), v491 = opaque(depth + 491), v492 = opaque(depth + 492), v493 = opaque(depth + 493), v494 = opaque(depth + 494), v495 = opaque(depth + 495);
+    const v496 = opaque(depth + 496), v497 = opaque(depth + 497), v498 = opaque(depth + 498), v499 = opaque(depth + 499), v500 = opaque(depth + 500), v501 = opaque(depth + 501), v502 = opaque(depth + 502), v503 = opaque(depth + 503);
+    const v504 = opaque(depth + 504), v505 = opaque(depth + 505), v506 = opaque(depth + 506), v507 = opaque(depth + 507), v508 = opaque(depth + 508), v509 = opaque(depth + 509), v510 = opaque(depth + 510), v511 = opaque(depth + 511);
+    const v512 = opaque(depth + 512), v513 = opaque(depth + 513), v514 = opaque(depth + 514), v515 = opaque(depth + 515), v516 = opaque(depth + 516), v517 = opaque(depth + 517), v518 = opaque(depth + 518), v519 = opaque(depth + 519);
+    const v520 = opaque(depth + 520), v521 = opaque(depth + 521), v522 = opaque(depth + 522), v523 = opaque(depth + 523), v524 = opaque(depth + 524), v525 = opaque(depth + 525), v526 = opaque(depth + 526), v527 = opaque(depth + 527);
+    const v528 = opaque(depth + 528), v529 = opaque(depth + 529), v530 = opaque(depth + 530), v531 = opaque(depth + 531), v532 = opaque(depth + 532), v533 = opaque(depth + 533), v534 = opaque(depth + 534), v535 = opaque(depth + 535);
+    const v536 = opaque(depth + 536), v537 = opaque(depth + 537), v538 = opaque(depth + 538), v539 = opaque(depth + 539), v540 = opaque(depth + 540), v541 = opaque(depth + 541), v542 = opaque(depth + 542), v543 = opaque(depth + 543);
+    const v544 = opaque(depth + 544), v545 = opaque(depth + 545), v546 = opaque(depth + 546), v547 = opaque(depth + 547), v548 = opaque(depth + 548), v549 = opaque(depth + 549), v550 = opaque(depth + 550), v551 = opaque(depth + 551);
+    const v552 = opaque(depth + 552), v553 = opaque(depth + 553), v554 = opaque(depth + 554), v555 = opaque(depth + 555), v556 = opaque(depth + 556), v557 = opaque(depth + 557), v558 = opaque(depth + 558), v559 = opaque(depth + 559);
+    const v560 = opaque(depth + 560), v561 = opaque(depth + 561), v562 = opaque(depth + 562), v563 = opaque(depth + 563), v564 = opaque(depth + 564), v565 = opaque(depth + 565), v566 = opaque(depth + 566), v567 = opaque(depth + 567);
+    const v568 = opaque(depth + 568), v569 = opaque(depth + 569), v570 = opaque(depth + 570), v571 = opaque(depth + 571), v572 = opaque(depth + 572), v573 = opaque(depth + 573), v574 = opaque(depth + 574), v575 = opaque(depth + 575);
+    const v576 = opaque(depth + 576), v577 = opaque(depth + 577), v578 = opaque(depth + 578), v579 = opaque(depth + 579), v580 = opaque(depth + 580), v581 = opaque(depth + 581), v582 = opaque(depth + 582), v583 = opaque(depth + 583);
+    const v584 = opaque(depth + 584), v585 = opaque(depth + 585), v586 = opaque(depth + 586), v587 = opaque(depth + 587), v588 = opaque(depth + 588), v589 = opaque(depth + 589), v590 = opaque(depth + 590), v591 = opaque(depth + 591);
+    const v592 = opaque(depth + 592), v593 = opaque(depth + 593), v594 = opaque(depth + 594), v595 = opaque(depth + 595), v596 = opaque(depth + 596), v597 = opaque(depth + 597), v598 = opaque(depth + 598), v599 = opaque(depth + 599);
+    const v600 = opaque(depth + 600), v601 = opaque(depth + 601), v602 = opaque(depth + 602), v603 = opaque(depth + 603), v604 = opaque(depth + 604), v605 = opaque(depth + 605), v606 = opaque(depth + 606), v607 = opaque(depth + 607);
+    const v608 = opaque(depth + 608), v609 = opaque(depth + 609), v610 = opaque(depth + 610), v611 = opaque(depth + 611), v612 = opaque(depth + 612), v613 = opaque(depth + 613), v614 = opaque(depth + 614), v615 = opaque(depth + 615);
+    const v616 = opaque(depth + 616), v617 = opaque(depth + 617), v618 = opaque(depth + 618), v619 = opaque(depth + 619), v620 = opaque(depth + 620), v621 = opaque(depth + 621), v622 = opaque(depth + 622), v623 = opaque(depth + 623);
+    const v624 = opaque(depth + 624), v625 = opaque(depth + 625), v626 = opaque(depth + 626), v627 = opaque(depth + 627), v628 = opaque(depth + 628), v629 = opaque(depth + 629), v630 = opaque(depth + 630), v631 = opaque(depth + 631);
+    const v632 = opaque(depth + 632), v633 = opaque(depth + 633), v634 = opaque(depth + 634), v635 = opaque(depth + 635), v636 = opaque(depth + 636), v637 = opaque(depth + 637), v638 = opaque(depth + 638), v639 = opaque(depth + 639);
+    if (depth > 0) for await (const x of nested(depth - 1)) yield x + 1;
+    let sum = 0;
+    sum += v15 + v14 + v13 + v12 + v11 + v10 + v9 + v8 + v7 + v6 + v5 + v4 + v3 + v2 + v1 + v0;
+    sum += v31 + v30 + v29 + v28 + v27 + v26 + v25 + v24 + v23 + v22 + v21 + v20 + v19 + v18 + v17 + v16;
+    sum += v47 + v46 + v45 + v44 + v43 + v42 + v41 + v40 + v39 + v38 + v37 + v36 + v35 + v34 + v33 + v32;
+    sum += v63 + v62 + v61 + v60 + v59 + v58 + v57 + v56 + v55 + v54 + v53 + v52 + v51 + v50 + v49 + v48;
+    sum += v79 + v78 + v77 + v76 + v75 + v74 + v73 + v72 + v71 + v70 + v69 + v68 + v67 + v66 + v65 + v64;
+    sum += v95 + v94 + v93 + v92 + v91 + v90 + v89 + v88 + v87 + v86 + v85 + v84 + v83 + v82 + v81 + v80;
+    sum += v111 + v110 + v109 + v108 + v107 + v106 + v105 + v104 + v103 + v102 + v101 + v100 + v99 + v98 + v97 + v96;
+    sum += v127 + v126 + v125 + v124 + v123 + v122 + v121 + v120 + v119 + v118 + v117 + v116 + v115 + v114 + v113 + v112;
+    sum += v143 + v142 + v141 + v140 + v139 + v138 + v137 + v136 + v135 + v134 + v133 + v132 + v131 + v130 + v129 + v128;
+    sum += v159 + v158 + v157 + v156 + v155 + v154 + v153 + v152 + v151 + v150 + v149 + v148 + v147 + v146 + v145 + v144;
+    sum += v175 + v174 + v173 + v172 + v171 + v170 + v169 + v168 + v167 + v166 + v165 + v164 + v163 + v162 + v161 + v160;
+    sum += v191 + v190 + v189 + v188 + v187 + v186 + v185 + v184 + v183 + v182 + v181 + v180 + v179 + v178 + v177 + v176;
+    sum += v207 + v206 + v205 + v204 + v203 + v202 + v201 + v200 + v199 + v198 + v197 + v196 + v195 + v194 + v193 + v192;
+    sum += v223 + v222 + v221 + v220 + v219 + v218 + v217 + v216 + v215 + v214 + v213 + v212 + v211 + v210 + v209 + v208;
+    sum += v239 + v238 + v237 + v236 + v235 + v234 + v233 + v232 + v231 + v230 + v229 + v228 + v227 + v226 + v225 + v224;
+    sum += v255 + v254 + v253 + v252 + v251 + v250 + v249 + v248 + v247 + v246 + v245 + v244 + v243 + v242 + v241 + v240;
+    sum += v271 + v270 + v269 + v268 + v267 + v266 + v265 + v264 + v263 + v262 + v261 + v260 + v259 + v258 + v257 + v256;
+    sum += v287 + v286 + v285 + v284 + v283 + v282 + v281 + v280 + v279 + v278 + v277 + v276 + v275 + v274 + v273 + v272;
+    sum += v303 + v302 + v301 + v300 + v299 + v298 + v297 + v296 + v295 + v294 + v293 + v292 + v291 + v290 + v289 + v288;
+    sum += v319 + v318 + v317 + v316 + v315 + v314 + v313 + v312 + v311 + v310 + v309 + v308 + v307 + v306 + v305 + v304;
+    sum += v335 + v334 + v333 + v332 + v331 + v330 + v329 + v328 + v327 + v326 + v325 + v324 + v323 + v322 + v321 + v320;
+    sum += v351 + v350 + v349 + v348 + v347 + v346 + v345 + v344 + v343 + v342 + v341 + v340 + v339 + v338 + v337 + v336;
+    sum += v367 + v366 + v365 + v364 + v363 + v362 + v361 + v360 + v359 + v358 + v357 + v356 + v355 + v354 + v353 + v352;
+    sum += v383 + v382 + v381 + v380 + v379 + v378 + v377 + v376 + v375 + v374 + v373 + v372 + v371 + v370 + v369 + v368;
+    sum += v399 + v398 + v397 + v396 + v395 + v394 + v393 + v392 + v391 + v390 + v389 + v388 + v387 + v386 + v385 + v384;
+    sum += v415 + v414 + v413 + v412 + v411 + v410 + v409 + v408 + v407 + v406 + v405 + v404 + v403 + v402 + v401 + v400;
+    sum += v431 + v430 + v429 + v428 + v427 + v426 + v425 + v424 + v423 + v422 + v421 + v420 + v419 + v418 + v417 + v416;
+    sum += v447 + v446 + v445 + v444 + v443 + v442 + v441 + v440 + v439 + v438 + v437 + v436 + v435 + v434 + v433 + v432;
+    sum += v463 + v462 + v461 + v460 + v459 + v458 + v457 + v456 + v455 + v454 + v453 + v452 + v451 + v450 + v449 + v448;
+    sum += v479 + v478 + v477 + v476 + v475 + v474 + v473 + v472 + v471 + v470 + v469 + v468 + v467 + v466 + v465 + v464;
+    sum += v495 + v494 + v493 + v492 + v491 + v490 + v489 + v488 + v487 + v486 + v485 + v484 + v483 + v482 + v481 + v480;
+    sum += v511 + v510 + v509 + v508 + v507 + v506 + v505 + v504 + v503 + v502 + v501 + v500 + v499 + v498 + v497 + v496;
+    sum += v527 + v526 + v525 + v524 + v523 + v522 + v521 + v520 + v519 + v518 + v517 + v516 + v515 + v514 + v513 + v512;
+    sum += v543 + v542 + v541 + v540 + v539 + v538 + v537 + v536 + v535 + v534 + v533 + v532 + v531 + v530 + v529 + v528;
+    sum += v559 + v558 + v557 + v556 + v555 + v554 + v553 + v552 + v551 + v550 + v549 + v548 + v547 + v546 + v545 + v544;
+    sum += v575 + v574 + v573 + v572 + v571 + v570 + v569 + v568 + v567 + v566 + v565 + v564 + v563 + v562 + v561 + v560;
+    sum += v591 + v590 + v589 + v588 + v587 + v586 + v585 + v584 + v583 + v582 + v581 + v580 + v579 + v578 + v577 + v576;
+    sum += v607 + v606 + v605 + v604 + v603 + v602 + v601 + v600 + v599 + v598 + v597 + v596 + v595 + v594 + v593 + v592;
+    sum += v623 + v622 + v621 + v620 + v619 + v618 + v617 + v616 + v615 + v614 + v613 + v612 + v611 + v610 + v609 + v608;
+    sum += v639 + v638 + v637 + v636 + v635 + v634 + v633 + v632 + v631 + v630 + v629 + v628 + v627 + v626 + v625 + v624;
+    yield sum;
+}
+async function* forwards(inner: AsyncGenerator<number, string>): AsyncGenerator<number, string> { return yield* inner; }
+const lines: string[] = [];
+async function byLoop(title: string, stream: AsyncGenerator<number, unknown>): Promise<void> {
+    const got: number[] = [];
+    try { for await (const x of stream) got.push(x); lines.push(title + ": " + got.join(" ")); } catch (error) { lines.push(title + ": " + got.join(" ") + " caught " + (error as Error).message); }
+}
+async function byNext(title: string, stream: AsyncGenerator<number, unknown>): Promise<void> {
+    const got: string[] = [];
+    try { for (;;) { const step = await stream.next(); got.push(String(step.value)); if (step.done) break; } lines.push(title + ": " + got.join(" ")); } catch (error) { lines.push(title + ": " + got.join(" ") + " caught " + (error as Error).message); }
+}
+for (const waits of [false, true]) {
+    const how = waits ? "waits" : "does not wait";
+    calls = 0; await byLoop(how + ", a loop", large(3, waits, -1));
+    calls = 0; await byNext(how + ", next", large(3, waits, -1));
+    calls = 0; await byLoop(how + ", forwarded", forwards(forwards(large(3, waits, -1))));
+    calls = 0; await byNext(how + ", forwarded, next", forwards(large(3, waits, -1)));
+    calls = 0; await byLoop(how + ", throws", large(3, waits, 1));
+    calls = 0; await byNext(how + ", throws, forwarded", forwards(large(3, waits, 2)));
+    calls = 0; await Promise.all([byLoop(how + ", side by side, first", large(2, waits, -1)), byNext(how + ", side by side, second", large(2, waits, -1))]);
+}
+calls = 0; await byLoop("nested 12 deep", nested(12));
+opaque = x => { calls++; return x - 1; };
+calls = 0; await byLoop("another function", large(2, true, -1));
+console.log(lines.join("\n"));
+//// async-generator-loops-over-sync.ts
+// `for await` over what is only sync iterable, in async generators and in async functions: arrays, sets, maps, sync generators of the program, iterators written by hand:
+// empty, of one, of several; elements that are promises (fulfilled, pending, rejected), thenables, records; inner iterators that throw; loops left by break, by return and by a throw
+// (the inner iterator is closed); alone, resumed behind a wait, and beside other jobs with a ticker that shows every turn.
+let log: string[] = [];
+////= note-2
+function rejected(text: string): Promise<never> {
+    const promise = Promise.reject(new Error(text));
+    promise.catch(() => undefined);
+    return promise;
+}
+const thenable = { then(resolve: (value: string) => void): void { note("then is called"); resolve("from then"); } };
+function* nothing(): Generator<never, string> { note("nothing runs"); return "nothing returned"; }
+function* one(): Generator<string, string> { yield "only"; return "one returned"; }
+function* three(): Generator<number, number> { let t = 0; for (let i = 1; i <= 3; i++) { yield i; t += i; } return t; }
+function* listens(): Generator<string, string, unknown> {
+    const first = yield "say something";
+    const second = yield "heard " + JSON.stringify(first);
+    return "last heard " + JSON.stringify(second);
+}
+function* cleansUp(): Generator<number, string> {
+    try { yield 1; yield 2; return "ran through"; } catch (error) { note("inner caught " + (error as Error).message); yield 99; return "behind the catch"; } finally { note("inner finally"); }
+}
+function* throwsAtOnce(): Generator<number> { throw new Error("thrown at once"); }
+function* throwsLater(): Generator<number> { yield 1; throw new Error("thrown later"); }
+function* queuesAJob(): Generator<number> { Promise.resolve().then(() => note("the inner one's job")); yield 1; yield 2; }
+function* yieldsPromises(): Generator<unknown> { yield Promise.resolve("fulfilled"); yield outside().then(() => "was pending"); yield thenable; yield { n: 1 }; }
+function* yieldsARejection(): Generator<unknown> { try { yield 1; yield rejected("rejected element"); yield 3; } finally { note("inner finally"); } }
+function byHand(steps: unknown[]): Iterable<unknown> {
+    let i = 0;
+    return { [Symbol.iterator]() { return { next(...sent: unknown[]) { note("next with " + sent.length + " arguments"); return i < steps.length ? { value: steps[i++], done: false } : { value: "by hand is over", done: true }; } }; } };
+}
+////= kinds
+async function* loops(make: () => Iterable<unknown>): AsyncGenerator<unknown, string, unknown> {
+    note("outer begins");
+    for await (const x of make()) yield x;
+    note("the inner loop is over");
+    return "outer is over";
+}
+async function* loopsTwice(make: () => Iterable<unknown>): AsyncGenerator<unknown, string, unknown> {
+    for await (const x of make()) yield ["first", x];
+    for await (const x of make()) yield ["second", x];
+    return "both are over";
+}
+async function* loopsBehindAWait(make: () => Iterable<unknown>): AsyncGenerator<unknown, string, unknown> {
+    await outside();
+    for await (const x of make()) { yield x; await outside(); }
+    return "behind the waits";
+}
+async function* breaksOff(make: () => Iterable<unknown>): AsyncGenerator<unknown, string, unknown> {
+    for await (const x of make()) { yield x; break; }
+    return "broken off";
+}
+async function* collectsWithoutYielding(make: () => Iterable<unknown>): AsyncGenerator<unknown, string, unknown> {
+    const all: unknown[] = [];
+    for await (const x of make()) all.push(x);
+    yield all;
+    return "collected";
+}
+async function inAFunction(make: () => Iterable<unknown>): Promise<void> {
+    try {
+        for await (const x of make()) note("function got " + JSON.stringify(x));
+        note("the function's loop is over");
+    } catch (error) {
+        note("function caught " + (error as Error).message);
+    }
+}
+////= byLoop
+////= byNext
+async function thrownInto(source: AsyncGenerator<unknown, string, unknown>): Promise<void> {
+    try {
+        note("first " + JSON.stringify(await source.next()));
+        note("thrown into " + JSON.stringify(await source.throw(new Error("from outside"))));
+        note("then " + JSON.stringify(await source.next()));
+    } catch (error) {
+        note("caught " + (error as Error).message);
+    }
+}
+////= returnedInto
+////= resumed
+const lines: string[] = [];
+////= scene
+for (const [kind, make] of kinds) {
+    await scene(kind + ", a loop", () => byLoop(loops(make)));
+    await scene(kind + ", a loop, resumed", () => resumed(() => byLoop(loops(make))));
+    await scene(kind + ", a loop beside jobs", () => Promise.all([ticker("t", 14), byLoop(loops(make))]));
+    await scene(kind + ", a loop, resumed beside jobs", () => Promise.all([resumed(() => byLoop(loops(make))), ticker("t", 16)]));
+    await scene(kind + ", next", () => resumed(() => byNext(loops(make))));
+    await scene(kind + ", twice", () => resumed(() => byLoop(loopsTwice(make))));
+    await scene(kind + ", behind a wait", () => byLoop(loopsBehindAWait(make)));
+    await scene(kind + ", broken off", () => resumed(() => byLoop(breaksOff(make))));
+    await scene(kind + ", collected", () => resumed(() => byLoop(collectsWithoutYielding(make))));
+    await scene(kind + ", in a function", () => inAFunction(make));
+    await scene(kind + ", in a function, resumed", () => resumed(() => inAFunction(make)));
+    await scene(kind + ", in a function beside jobs", () => Promise.all([ticker("t", 10), resumed(() => inAFunction(make))]));
+    await scene(kind + ", thrown into", () => resumed(() => thrownInto(loops(make))));
+    await scene(kind + ", returned into", () => resumed(() => returnedInto(loops(make))));
+    await scene(kind + ", two at once", () => Promise.all([byLoop(loops(make)), byLoop(loops(make))]));
+}
+console.log(lines.join("\n"));
+//// async-generator-own-properties.ts
+// Async generator objects that the program has given properties of their own: a harmless one, `next`, `return`, `throw`, Symbol.asyncIterator;
+// as data, as accessors, added before the loop and in the middle of it, taken away again; consumed by `for await`, by `yield*` and by next() written out.
+const lines: string[] = [];
+async function* count(label: string, n: number): AsyncGenerator<string, string> {
+    try {
+        for (let i = 0; i < n; i++) yield label + i;
+        return label + " is over";
+    } finally {
+        lines.push(label + " is closed");
+    }
+}
+async function* other(): AsyncGenerator<string> {
+    yield "from the other";
+}
+async function collect(title: string, source: AsyncIterable<string>, limit = 99): Promise<void> {
+    const seen: string[] = [];
+    try {
+        for await (const x of source) { seen.push(x); if (seen.length >= limit) break; }
+    } catch (error) {
+        seen.push("caught " + (error instanceof TypeError ? "TypeError" : (error as Error).message));
+    }
+    lines.push(title + ": " + seen.join(" "));
+}
+async function* through(source: AsyncGenerator<string, string>): AsyncGenerator<string> {
+    yield "returned: " + (yield* source);
+}
+function withProperty<T extends object>(target: T, key: PropertyKey, value: unknown): T {
+    return Object.defineProperty(target, key, { value, enumerable: true, configurable: true, writable: true });
+}
+let calls = 0;
+const kinds: [string, () => AsyncGenerator<string, string>][] = [
+    ["as made", () => count("a", 2)],
+    ["a harmless property", () => withProperty(count("b", 2), "result", Promise.resolve(1))],
+    ["two harmless properties", () => withProperty(withProperty(count("c", 2), "result", 1), "label", "c")],
+    ["a symbol of its own", () => withProperty(count("d", 2), Symbol("mine"), 1)],
+    ["next of its own", () => { const g = count("e", 2); return withProperty(g, "next", () => { calls++; return Promise.resolve({ done: calls % 3 === 0, value: "own next " + calls }); }); }],
+    ["next of its own that calls the real one", () => { const g = count("f", 2); const real = g.next.bind(g); return withProperty(g, "next", () => { lines.push("next is called"); return real(); }); }],
+    ["an iterator method of its own", () => withProperty(count("g", 2), Symbol.asyncIterator, () => other())],
+    ["an iterator method that is undefined", () => withProperty(count("h", 2), Symbol.asyncIterator, undefined)],
+    ["return of its own", () => { const g = count("i", 3); return withProperty(g, "return", (value: string) => { lines.push("own return"); return Promise.resolve({ done: true, value }); }); }],
+    ["next as a getter", () => { const g = count("j", 2); const real = g.next; return Object.defineProperty(g, "next", { get() { lines.push("next is read"); return real; }, configurable: true }); }],
+    ["next added and taken away", () => { const g = withProperty(count("k", 2), "next", () => { throw new Error("never"); }); delete (g as any).next; return g; }],
+    ["frozen", () => Object.freeze(count("l", 2))],
+    ["many properties", () => { const g = count("m", 2); for (let i = 0; i < 80; i++) (g as any)["p" + i] = i; return g; }],
+];
+for (const [title, make] of kinds) {
+    await collect(title, make());
+    await collect(title + ", broken off", make(), 1);
+    await collect(title + ", through yield*", through(make()));
+}
+{
+    const g = count("n", 4);
+    const seen: string[] = [];
+    for await (const x of g) {
+        seen.push(x);
+        if (x === "n1") withProperty(g, "next", () => Promise.resolve({ done: true, value: "late next" }));
+    }
+    lines.push("next added in the middle of a loop: " + seen.join(" "));
+}
+console.log(lines.join("\n"));
+//// async-generator-prototype-changes.js
+// `for await` and `yield*` over async generators whose prototype chain the program has changed: the `prototype` object of the generator function gets a `next`, a `return`,
+// an iterator method or a harmless property, is replaced by another object or by a number, and the generator object itself gets another prototype or none.
+// `next` is read once, when the loop opens: a change in the middle of a loop is seen by the next loop only.
+const lines = [];
+function makeCount(label) {
+    return async function* (n) {
+        try {
+            for (let i = 0; i < n; i++) yield label + i;
+            return label + " is over";
+        } finally {
+            lines.push(label + " is closed");
+        }
+    };
+}
+async function* other() { yield "from the other"; }
+async function collect(title, source, limit = 99) {
+    await null;
+    const seen = [];
+    try {
+        for await (const x of source) { seen.push(x); if (seen.length >= limit) break; }
+    } catch (error) {
+        seen.push("caught " + (error instanceof TypeError ? "TypeError" : error.message));
+    }
+    lines.push(title + ": " + seen.join(" "));
+}
+async function* through(source) { yield "returned: " + (yield* source); }
+
+const realNext = Object.getPrototypeOf(makeCount("z").prototype).next;
+let calls = 0;
+const kinds = [
+    ["as made", () => makeCount("a")(2)],
+    ["a harmless property on the prototype", () => { const f = makeCount("b"); f.prototype.label = "b"; return f(2); }],
+    ["next on the prototype", () => { const f = makeCount("c"); f.prototype.next = () => Promise.resolve({ done: ++calls % 3 === 0, value: "other next " + calls }); return f(2); }],
+    ["next on the prototype that calls the real one", () => { const f = makeCount("d"); f.prototype.next = function (value) { lines.push("next is called"); return realNext.call(this, value); }; return f(2); }],
+    ["next on the prototype, as a getter", () => { const f = makeCount("e"); Object.defineProperty(f.prototype, "next", { get() { lines.push("next is read"); return realNext; } }); return f(2); }],
+    ["an iterator method on the prototype", () => { const f = makeCount("f"); f.prototype[Symbol.asyncIterator] = () => other(); return f(2); }],
+    ["an undefined iterator method on the prototype", () => { const f = makeCount("g"); f.prototype[Symbol.asyncIterator] = undefined; return f(2); }],
+    ["return on the prototype", () => { const f = makeCount("h"); f.prototype.return = value => { lines.push("other return"); return Promise.resolve({ done: true, value }); }; return f(3); }],
+    ["next added after the generator was made", () => { const f = makeCount("i"); const g = f(2); f.prototype.next = () => Promise.resolve({ done: true, value: "late" }); return g; }],
+    ["next added and taken away", () => { const f = makeCount("j"); f.prototype.next = () => { throw new Error("never"); }; delete f.prototype.next; return f(2); }],
+    ["another object as the prototype", () => { const f = makeCount("k"); f.prototype = Object.create(Object.getPrototypeOf(f.prototype)); return f(2); }],
+    ["an object without the methods as the prototype", () => { const f = makeCount("l"); f.prototype = {}; return f(2); }],
+    ["a number as the prototype", () => { const f = makeCount("m"); f.prototype = 5; return f(2); }],
+    ["the prototype of another generator function", () => { const g = makeCount("n")(2); Object.setPrototypeOf(g, makeCount("o").prototype); return g; }],
+    ["a prototype with a next of its own", () => { const g = makeCount("p")(2); Object.setPrototypeOf(g, { __proto__: Object.getPrototypeOf(g), next: () => Promise.resolve({ done: true, value: "never seen" }) }); return g; }],
+    ["no prototype", () => Object.setPrototypeOf(makeCount("q")(2), null)],
+    ["a frozen prototype", () => { const f = makeCount("r"); Object.freeze(f.prototype); return f(2); }],
+];
+for (const [title, make] of kinds) {
+    await collect(title, make());
+    await collect(title + ", broken off", make(), 1);
+    await collect(title + ", through yield*", through(make()));
+}
+{
+    const f = makeCount("s");
+    const seen = [];
+    for await (const x of f(4)) {
+        seen.push(x);
+        if (x === "s1") f.prototype.next = () => Promise.resolve({ done: true, value: "late next" });
+    }
+    lines.push("next added in the middle of a loop: " + seen.join(" "));
+    await collect("the loop after it", f(4));
+}
+{
+    const g = makeCount("t")(4);
+    const seen = [];
+    for await (const x of g) {
+        seen.push(x);
+        if (x === "t1") Object.setPrototypeOf(g, null);
+    }
+    lines.push("the prototype taken away in the middle of a loop: " + seen.join(" "));
+}
+console.log(lines.join("\n"));
+//// async-generator-step-interleaving.ts
+// `for await` and next() over async generators of the program: in which order the producer, the consumer and everything else run:
+// a consumer in its first run and one that has been resumed, alone, ahead of other jobs and behind them; every kind of yielded value;
+// awaits between yields; chains; several requests at once; return() and throw() while suspended; await in finally.
+let log: string[] = [];
+////= note
+function show(value: unknown): string {
+    if (value instanceof Error) return value.name + "(" + value.message + ")";
+    if (Array.isArray(value)) return "[" + value.map(show).join(",") + "]";
+    if (typeof value === "object" && value !== null) return value.constructor?.name + JSON.stringify(value);
+    return typeof value + " " + String(value);
+}
+////= ticker
+// Settled by a job two turns on: whoever awaits it waits in earnest, and nobody has to stand by to release it.
+////= outside
+class Thenable {
+    constructor(private label: string, private value: number) {}
+    then(onFulfilled: (value: number) => void): void {
+        note(this.label + " then is called");
+        onFulfilled(this.value);
+    }
+}
+const settled = Promise.resolve(10);
+
+async function* numbers(n: number): AsyncGenerator<number> {
+    note("numbers starts");
+    for (let i = 0; i < n; i++) { note("yields " + i); yield i; note("behind yield " + i); }
+    note("numbers ends");
+}
+async function* ofManyKinds(label: string): AsyncGenerator<unknown> {
+    yield 1.5;
+    yield "text";
+    yield undefined;
+    yield null;
+    yield { value: 1, done: true };
+    yield [1, 2];
+    yield Promise.resolve("fulfilled");
+    yield new Thenable(label, 7);
+    yield settled;
+    yield outside().then(() => "released");
+    yield { then: 5 };
+    yield Object.defineProperty({}, "then", { get() { note(label + " then is read"); return undefined; } });
+}
+async function* awaitsBetween(n: number): AsyncGenerator<number> {
+    for (let i = 0; i < n; i++) { note("awaits " + i); const v = await settled; note("awaited " + i); yield i + v; }
+}
+async function* awaitsOutside(n: number): AsyncGenerator<number> {
+    for (let i = 0; i < n; i++) { note("waits " + i); await outside(); note("waited " + i); yield i; yield i + 100; }
+}
+async function* queuesJobs(n: number): AsyncGenerator<number> {
+    for (let i = 0; i < n; i++) { Promise.resolve().then(() => note("job of the producer " + i)); yield i; }
+}
+async function* doubled(source: AsyncIterable<number>): AsyncGenerator<number> {
+    note("doubled starts");
+    for await (const x of source) { note("doubles " + x); yield x * 2; }
+    note("doubled ends");
+}
+async function* delegates(n: number): AsyncGenerator<number> {
+    yield -1;
+    const returned = yield* returnsSomething(n);
+    note("delegate returned " + returned);
+    yield -2;
+}
+async function* returnsSomething(n: number): AsyncGenerator<number, string> {
+    for (let i = 0; i < n; i++) yield i;
+    return "the end";
+}
+async function* throwsAt(n: number): AsyncGenerator<number> {
+    for (let i = 0; ; i++) { if (i === n) throw new RangeError("at " + n); yield i; }
+}
+async function* yieldsRejected(): AsyncGenerator<number> {
+    yield 1;
+    try { yield Promise.reject(new Error("rejected operand")) as Promise<number>; } catch (error) { note("producer caught " + show(error)); }
+    yield 2;
+}
+async function* cleansUp(label: string): AsyncGenerator<number> {
+    try {
+        for (let i = 0; ; i++) yield i;
+    } finally {
+        note(label + " finally starts");
+        await null;
+        note(label + " finally goes on");
+        await settled;
+        note(label + " finally ends");
+    }
+}
+async function* takesWhatIsSent(): AsyncGenerator<number, void, string | undefined> {
+    let sent = yield 0;
+    for (let i = 1; i < 4; i++) { note("was sent " + sent); sent = yield i; }
+}
+function fail(text: string): number { throw new RangeError(text); }
+async function* bindsParameters(n: number = fail("while the parameters are bound"), { step }: { step: number } = { step: 1 }): AsyncGenerator<number> {
+    note("binds parameters starts");
+    for (let i = 0; i < n; i += step) yield i;
+}
+async function* throwsBehindAwaits(n: number): AsyncGenerator<number> {
+    for (let i = 0; ; i++) { await settled; if (i === n) fail("behind awaits"); yield i; await null; }
+}
+async function* catchesWhatItsSourceThrows(source: AsyncIterable<number>): AsyncGenerator<number> {
+    try { for await (const x of source) yield x; } catch (error) { note("the middle caught " + show(error)); yield -1; }
+}
+class Stream {
+    constructor(private n: number) {}
+    async *[Symbol.asyncIterator](): AsyncGenerator<string> {
+        for await (const x of this.#inner()) yield "event " + x;
+    }
+    async *#inner(): AsyncGenerator<number> {
+        for (let i = 0; i < this.n; i++) yield i;
+    }
+}
+
+const kinds = 25;
+async function run(kind: number, label: string, isResumedFirst: boolean): Promise<void> {
+    if (isResumedFirst) await null;
+    note(label + " begins");
+    try {
+        switch (kind) {
+        case 0: for await (const x of numbers(3)) note(label + " got " + x); break;
+        case 1: for await (const x of ofManyKinds(label)) note(label + " got " + show(x)); break;
+        case 2: for await (const x of awaitsBetween(3)) note(label + " got " + x); break;
+        case 3: for await (const x of awaitsOutside(2)) note(label + " got " + x); break;
+        case 4: for await (const x of queuesJobs(3)) note(label + " got " + x); break;
+        case 5: for await (const x of doubled(numbers(3))) note(label + " got " + x); break;
+        case 6: for await (const x of doubled(doubled(awaitsBetween(2)))) note(label + " got " + x); break;
+        case 7: for await (const x of delegates(2)) note(label + " got " + x); break;
+        case 8: for await (const x of throwsAt(2)) note(label + " got " + x); break;
+        case 9: for await (const x of yieldsRejected()) note(label + " got " + x); break;
+        case 10: for await (const x of cleansUp(label)) { note(label + " got " + x); if (x === 2) break; } break;
+        case 11: for await (const x of cleansUp(label)) { note(label + " got " + x); if (x === 1) throw new Error("thrown by the consumer"); } break;
+        case 12: for await (const x of doubled(cleansUp(label))) { note(label + " got " + x); if (x === 2) break; } break;
+        case 13: for await (const x of new Stream(3)) note(label + " got " + x); break;
+        case 14: {
+            const g = numbers(3);
+            for (let step = await g.next(); !step.done; step = await g.next()) note(label + " got " + step.value);
+            note(label + " behind the end " + show(await g.next()));
+            break;
+        }
+        case 15: {
+            const g = numbers(4);
+            const all = [g.next(), g.next(), g.next()];
+            note(label + " asked three times");
+            for (const step of all) note(label + " got " + show(await step));
+            for await (const x of g) note(label + " then got " + x);
+            break;
+        }
+        case 16: {
+            const g = cleansUp(label);
+            note(label + " got " + show(await g.next()));
+            const first = g.next(), returned = g.return(42), behind = g.next();
+            note(label + " got " + show(await first) + " " + show(await returned) + " " + show(await behind));
+            break;
+        }
+        case 17: {
+            const g = cleansUp(label);
+            note(label + " got " + show(await g.next()));
+            try { await g.throw(new Error("thrown in")); } catch (error) { note(label + " got back " + show(error)); }
+            note(label + " got " + show(await g.next()));
+            const fresh = numbers(2);
+            note(label + " returned ahead of the start " + show(await fresh.return(5)) + " " + show(await fresh.next()));
+            break;
+        }
+        case 18: {
+            const g = takesWhatIsSent();
+            note(label + " got " + show(await g.next("lost")));
+            for (const text of ["a", "b", "c", "d"]) note(label + " got " + show(await g.next(text)));
+            break;
+        }
+        case 19: {
+            const g = numbers(6);
+            for await (const x of g) { note(label + " got " + x); if (x === 1) break; }
+            note(label + " behind the break " + show(await g.next()));
+            let sum = 0;
+            for await (const x of numbersQuietly(200)) sum += x;
+            note(label + " sum " + sum);
+            break;
+        }
+        case 20: for await (const x of bindsParameters(3, { step: 2 })) note(label + " got " + x); break;
+        case 21: {
+            let made: AsyncGenerator<number> | undefined;
+            try { made = bindsParameters(); } catch (error) { note(label + " the call threw " + show(error)); }
+            note(label + " made " + typeof made);
+            for await (const x of bindsParameters(2)) note(label + " got " + x);
+            break;
+        }
+        case 22: for await (const x of throwsBehindAwaits(2)) note(label + " got " + x); break;
+        case 23: for await (const x of doubled(throwsBehindAwaits(1))) note(label + " got " + x); break;
+        case 24: for await (const x of doubled(catchesWhatItsSourceThrows(throwsAt(1)))) note(label + " got " + x); break;
+        }
+        note(label + " is through");
+    } catch (error) {
+        note(label + " caught " + show(error));
+    }
+}
+async function* numbersQuietly(n: number): AsyncGenerator<number> { for (let i = 0; i < n; i++) yield i; }
+
+// Two consumers of two producers at once, and two of one.
+async function consumer(label: string, source: AsyncGenerator<number>): Promise<void> {
+    for await (const x of source) note(label + " got " + x);
+    note(label + " is through");
+}
+
+const out: string[] = [];
+function flush(title: string): void {
+    out.push(title + ": " + log.join(" | "));
+    log = [];
+}
+for (let kind = 0; kind < kinds; kind++) {
+    for (const isResumedFirst of [false, true]) {
+        for (const company of ["alone", "ahead of jobs", "behind jobs"]) {
+            const ahead = company === "behind jobs" ? ticker("t", 9) : undefined;
+            const running = run(kind, "c" + kind, isResumedFirst);
+            note("back in the module");
+            const behind = company === "ahead of jobs" ? ticker("t", 9) : undefined;
+            await running;
+            await ahead;
+            await behind;
+            flush(kind + (isResumedFirst ? " resumed " : " first run ") + company);
+        }
+    }
+}
+await Promise.all([consumer("a", numbersQuietly(3)), consumer("b", numbersQuietly(3)), ticker("t", 8)]);
+flush("two of two");
+const shared = numbersQuietly(6);
+await Promise.all([consumer("a", shared), consumer("b", shared), ticker("t", 8)]);
+flush("two of one");
+console.log(out.join("\n"));
+//// async-generator-stepped-by-a-first-activation.ts
+// `for await` over an async generator of the program is the first thing that suspends its function: nothing has saved the function's frame yet, so the first step has nobody to hand its
+// value to but a promise, and the steps behind it go the short way. At the top level of a module that has not awaited anything, at the top level later on, and in async functions, arrows,
+// methods and generators that are called by the module, by a job, by a timer, by a function that a job has resumed, by the body of a generator that is being stepped, and many at once.
+// Streams of several values, of one, of none, streams that throw at once, that wait first, and loops that leave at the first value.
+// Beside every run a chain of `then` callbacks notes the turns of the job queue.
+type Numbers = AsyncGenerator<number, void, unknown>;
+let log: string[] = [];
+const out: string[] = [];
+////= note
+function flush(title: string): void {
+    out.push(title + ": " + log.join(" | "));
+    log = [];
+}
+function show(value: unknown): string {
+    return value instanceof Error ? value.name + "(" + value.message + ")" : String(value);
+}
+////= ticker-3
+async function* counts(label: string, n: number): Numbers {
+    note(label + " starts");
+    for (let i = 0; i < n; i++) { note(label + " yields " + i); yield i; }
+    note(label + " ends");
+}
+async function* throwsAtOnce(label: string): Numbers {
+    note(label + " throws");
+    throw new RangeError("thrown by " + label);
+}
+async function* waitsFirst(label: string, n: number): Numbers {
+    note(label + " waits");
+    await outside();
+    for (let i = 0; i < n; i++) { note(label + " yields " + i); yield i; }
+}
+async function* cleansUp(label: string): Numbers {
+    try {
+        for (let i = 0; ; i++) { note(label + " yields " + i); yield i; }
+    } finally {
+        note(label + "'s finally");
+    }
+}
+
+// The module has not been suspended yet.
+const besideTheFirstLoop = ticker("t", 8);
+for await (const x of counts("p", 3)) note("the module got " + x);
+note("the module is through");
+await besideTheFirstLoop;
+flush("at the top level, the module's first suspension");
+
+for await (const x of counts("p", 3)) note("the module got " + x);
+note("the module is through");
+flush("at the top level, later, alone");
+
+const besideALaterLoop = ticker("t", 8);
+for await (const x of counts("p", 3)) note("the module got " + x);
+note("the module is through");
+await besideALaterLoop;
+flush("at the top level, later, behind jobs");
+
+async function loops(label: string, source: Numbers): Promise<string> {
+    let sum = 0;
+    for await (const x of source) { note(label + " got " + x); sum += x; }
+    note(label + " is through");
+    return label + "'s sum is " + sum;
+}
+const loopsInAnArrow = async (label: string, source: Numbers): Promise<string> => {
+    let sum = 0;
+    for await (const x of source) { note(label + " got " + x); sum += x; }
+    note(label + " is through");
+    return label + "'s sum is " + sum;
+};
+class Reader {
+    constructor(private label: string) {}
+    async read(source: Numbers): Promise<string> {
+        let sum = 0;
+        for await (const x of source) { note(this.label + " got " + x); sum += x; }
+        note(this.label + " is through");
+        return this.label + "'s sum is " + sum;
+    }
+    static async readAll(label: string, source: Numbers): Promise<string> {
+        let sum = 0;
+        for await (const x of source) { note(label + " got " + x); sum += x; }
+        note(label + " is through");
+        return label + "'s sum is " + sum;
+    }
+}
+async function loopsAndCatches(label: string, source: Numbers): Promise<string> {
+    try {
+        for await (const x of source) note(label + " got " + x);
+        return label + " is through";
+    } catch (error) {
+        note(label + " caught " + show(error));
+        return label + " has caught";
+    }
+}
+async function leavesAtOnce(label: string, source: Numbers): Promise<string> {
+    for await (const x of source) { note(label + " got " + x + " and leaves"); break; }
+    return label + " has left";
+}
+async function returnsFromTheLoop(label: string, source: Numbers): Promise<string> {
+    for await (const x of source) return label + " returns with " + x;
+    return label + " got nothing";
+}
+async function loopsTwice(label: string, first: Numbers, second: Numbers): Promise<string> {
+    for await (const x of first) note(label + " got " + x);
+    note(label + " is between its loops");
+    for await (const x of second) note(label + " then got " + x);
+    return label + " is through";
+}
+async function loopsOverALoop(label: string): Promise<string> {
+    for await (const row of counts(label + "r", 2)) {
+        for await (const column of counts(label + "c", 2)) note(label + " got " + row + "," + column);
+    }
+    return label + " is through";
+}
+async function callsOneThatLoops(label: string, source: Numbers): Promise<string> {
+    const result = await loops(label, source);
+    note(label + "'s caller goes on");
+    return result;
+}
+async function* relays(label: string, source: Numbers): Numbers {
+    for await (const x of source) { note(label + " relays " + x); yield x; }
+}
+async function* forwards(source: Numbers): Numbers {
+    yield* source;
+}
+async function* startsALoopAtEachStep(label: string, n: number, started: Promise<string>[]): Numbers {
+    for (let i = 0; i < n; i++) {
+        started.push(loops(label + i, counts("q" + i, 2)));
+        note(label + " yields " + i);
+        yield i;
+    }
+}
+
+type Start = (label: string) => Promise<string>;
+const starts: [string, Start][] = [
+    ["a function", label => loops(label, counts("p", 3))],
+    ["an arrow", label => loopsInAnArrow(label, counts("p", 3))],
+    ["a method", label => new Reader(label).read(counts("p", 3))],
+    ["a static method", label => Reader.readAll(label, counts("p", 3))],
+    ["a function over one value", label => loops(label, counts("p", 1))],
+    ["a function over nothing", label => loops(label, counts("p", 0))],
+    ["a function over what throws at once", label => loopsAndCatches(label, throwsAtOnce("p"))],
+    ["a function without a handler over what throws at once", label => loops(label, throwsAtOnce("p"))],
+    ["a function over what waits first", label => loops(label, waitsFirst("p", 2))],
+    ["a function that leaves at the first value", label => leavesAtOnce(label, cleansUp("p"))],
+    ["a function that returns from the loop", label => returnsFromTheLoop(label, cleansUp("p"))],
+    ["a function that returns behind an empty loop", label => returnsFromTheLoop(label, counts("p", 0))],
+    ["a function with two loops", label => loopsTwice(label, counts("p", 2), counts("q", 2))],
+    ["a function with two loops, the first over nothing", label => loopsTwice(label, counts("p", 0), counts("q", 2))],
+    ["a function with a loop in a loop", label => loopsOverALoop(label)],
+    ["a function over for await", label => loops(label, relays("r", counts("p", 3)))],
+    ["a function over yield*", label => loops(label, forwards(counts("p", 3)))],
+    ["a function over a chain of three", label => loops(label, relays("r", forwards(counts("p", 2))))],
+    ["a function that awaits one that loops", label => callsOneThatLoops(label, counts("p", 2))],
+];
+function watch(label: string, running: Promise<string>): Promise<void> {
+    return running.then(value => note(label + "'s promise: " + value), error => note(label + "'s promise is rejected: " + show(error)));
+}
+async function resumedThenStarts(start: Start): Promise<void> {
+    await null;
+    const running = watch("a", start("a"));
+    note("back in the function that a job has resumed");
+    await null;
+    note("that function went on");
+    await running;
+}
+async function resumedThenAwaits(start: Start): Promise<void> {
+    await null;
+    try {
+        note("the caller got: " + (await start("a")));
+    } catch (error) {
+        note("the caller caught " + show(error));
+    }
+}
+const callers: [string, (start: Start) => Promise<void>][] = [
+    ["the module", start => { const running = watch("a", start("a")); note("back in the module"); return running; }],
+    ["a job", start => Promise.resolve().then(() => { const running = watch("a", start("a")); note("back in the job"); return running; })],
+    ["a job of queueMicrotask", start => new Promise(resolve => { queueMicrotask(() => { watch("a", start("a")).then(resolve); note("back in the job"); }); })],
+    ["a timer", start => new Promise(resolve => { setTimeout(() => { watch("a", start("a")).then(resolve); note("back in the timer"); }, 0); })],
+    ["a function that a job has resumed", resumedThenStarts],
+    ["a function that a job has resumed and that awaits the call", resumedThenAwaits],
+    ["the module, three at once", start => { const all = ["a", "b", "c"].map(label => watch(label, start(label))); note("back in the module"); return Promise.all(all).then(() => undefined); }],
+];
+for (const [what, start] of starts) {
+    for (const [who, call] of callers) {
+        for (const company of ["alone", "behind jobs", "ahead of jobs"]) {
+            const all: Promise<void>[] = [];
+            if (company === "behind jobs") all.push(ticker("t", 10));
+            all.push(call(start));
+            if (company === "ahead of jobs") all.push(ticker("t", 10));
+            await Promise.all(all);
+            flush(what + ", called by " + who + ", " + company);
+        }
+    }
+}
+
+// The body of a generator that is being stepped starts functions that loop.
+for (const isResumedFirst of [false, true]) {
+    const started: Promise<string>[] = [];
+    const consume = async (): Promise<void> => {
+        if (isResumedFirst) await null;
+        for await (const x of startsALoopAtEachStep("s", 3, started)) note("a got " + x);
+        note("a is through");
+    };
+    await consume();
+    for (const result of await Promise.all(started)) note(result);
+    flush("functions that loop, started by the body of a generator whose consumer is " + (isResumedFirst ? "resumed" : "in its first run"));
+}
+
+// Every call is a first activation; each saves its frame at its first step.
+async function quietSum(n: number): Promise<number> {
+    let sum = 0;
+    for await (const x of quiet(n)) sum += x;
+    return sum;
+}
+async function* quiet(n: number): Numbers { for (let i = 0; i < n; i++) yield i; }
+let total = 0;
+for (let round = 0; round < 500; round++) total += await quietSum(round % 7);
+const atOnce = await Promise.all(Array.from({ length: 200 }, (_, i) => quietSum(i % 5)));
+out.push("five hundred calls in a row: " + total + ", two hundred at once: " + atOnce.reduce((sum, x) => sum + x, 0));
+console.log(out.join("\n"));
+export {};
+//// async-generator-steps-and-host.ts
+// `for await` over async generators of the program, and what the host sees of it: streams that wait for timers and then yield in bursts, through chains;
+// the store of an AsyncLocalStorage in producer and consumer; next ticks and timers between the steps; rejections nobody handles; the stacks of errors made in a producer.
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const log: string[] = [];
+////= note
+const storage = new AsyncLocalStorage<string>();
+function where(): string {
+    return storage.getStore() ?? "-";
+}
+function later(): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, 1));
+}
+function names(error: unknown): string {
+    const frames: string[] = [];
+    for (const line of ((error as Error).stack ?? "").split("\n")) {
+        const frame = /^\s*at (async )?(?:(.*?) \()?[^()]*?:(\d+):(\d+)\)?$/.exec(line) ?? /^(async )?(.*?)@.*?:(\d+):(\d+)$/.exec(line);
+        if (frame) frames.push((frame[1] ?? "") + (frame[2] === "module code" || frame[2] === "<anonymous>" ? "" : frame[2] ?? "") + ":" + frame[3]);
+    }
+    return frames.join(" < ");
+}
+
+async function* bursts(chunks: number, each: number): AsyncGenerator<number> {
+    for (let c = 0; c < chunks; c++) {
+        await later();
+        note("a chunk has come");
+        for (let i = 0; i < each; i++) yield c * 10 + i;
+    }
+}
+async function* lines(source: AsyncIterable<number>): AsyncGenerator<string> {
+    for await (const x of source) yield "line " + x;
+}
+async function* events(source: AsyncIterable<string>): AsyncGenerator<{ text: string }> {
+    for await (const text of source) { if (!text.endsWith("1")) yield { text }; }
+}
+async function streams(): Promise<void> {
+    for await (const event of events(lines(bursts(3, 3)))) {
+        note("got " + event.text);
+        if (event.text === "line 10") {
+            process.nextTick(() => note("a tick"));
+            queueMicrotask(() => note("a job"));
+            setTimeout(() => note("a timer"), 0);
+        }
+        if (event.text === "line 0") process.nextTick(() => note("a tick alone"));
+        if (event.text === "line 20") setTimeout(() => note("a timer alone"), 0);
+    }
+    note("the stream has ended");
+}
+
+async function* tellsStore(label: string, n: number): AsyncGenerator<string> {
+    for (let i = 0; i < n; i++) { yield label + i + " in " + where(); if (i === 1) await later(); }
+}
+async function* entersStore(): AsyncGenerator<string> {
+    yield "before " + where();
+    storage.enterWith("entered");
+    yield "behind " + where();
+    await null;
+    yield "later " + where();
+}
+async function stores(): Promise<void> {
+    const madeOutside = tellsStore("outside", 4);
+    await storage.run("a", async () => {
+        for await (const text of madeOutside) note(text + ", consumer in " + where());
+        for await (const text of tellsStore("inside", 4)) note(text + ", consumer in " + where());
+        for await (const text of lines2(tellsStore("chained", 3))) note(text + ", consumer in " + where());
+    });
+    await storage.run("b", async () => {
+        for await (const text of entersStore()) note(text + ", consumer in " + where());
+        note("behind the loop " + where());
+    });
+    note("at the end " + where());
+}
+async function* lines2(source: AsyncIterable<string>): AsyncGenerator<string> {
+    for await (const text of source) yield text + " through " + where();
+}
+
+const unhandled: string[] = [];
+process.on("unhandledRejection", (reason: unknown) => { unhandled.push((reason as Error).message); });
+async function* fails(text: string, late: boolean): AsyncGenerator<number> {
+    yield 1;
+    if (late) await later();
+    throw new Error(text);
+}
+async function drains(source: AsyncIterable<number>): Promise<number> {
+    let n = 0;
+    for await (const x of source) n += x;
+    return n;
+}
+async function rejections(): Promise<void> {
+    try { await drains(fails("one", false)); } catch (error) { note("caught " + (error as Error).message); }
+    try { await drains(fails("two", true)); } catch (error) { note("caught " + (error as Error).message); }
+    await later();
+    note("unhandled so far: " + unhandled.join());
+    drains(fails("three", false));
+    drains(fails("four", true));
+    fails("five", false).next();
+    const g = fails("six", false);
+    g.next();
+    g.next();
+    await later();
+    await later();
+    await later();
+    note("unhandled: " + unhandled.slice().sort().join());
+}
+
+async function* makesErrors(): AsyncGenerator<Error> {
+    yield new Error("first");
+    yield new Error("second");
+    await later();
+    yield new Error("behind a timer");
+    yield new Error("last");
+}
+async function* passesErrors(): AsyncGenerator<Error> {
+    for await (const error of makesErrors()) yield error;
+}
+async function stacks(): Promise<void> {
+    for await (const error of makesErrors()) note(error.message + ": " + names(error));
+    await null;
+    for await (const error of passesErrors()) note(error.message + ": " + names(error));
+}
+
+await streams();
+await stores();
+await rejections();
+await stacks();
+console.log(log.join("\n"));
+//// async-generator-steps-avoid-runtime.ts
+// next() of an async generator that `for await` or `yield*` of compiled code drives is carried out by a stub, whatever the generator function looks like: what it yields, how it takes its
+// parameters, how many variables it has, how many other generator functions stand beside it. The program counts the entries of the operation that the stub leaves for.
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+function entered(): number { return counted ? counted("operationAOTAsyncIteratorStep") : 0; }
+const lines: string[] = [];
+type Stream = AsyncGenerator<unknown, void, unknown>;
+interface Chunk { n: number; text: string; }
+async function* yieldsItsVariable(count: number): Stream { for (let i = 0; i < count; i++) yield i; }
+async function* yieldsAProduct(count: number): Stream { for (let i = 0; i < count; i++) yield i * 2; }
+async function* yieldsASum(count: number): Stream { for (let i = 0; i < count; i++) yield i + 1; }
+async function* yieldsAFraction(count: number): Stream { for (let i = 0; i < count; i++) yield i / 3; }
+async function* yieldsARecord(count: number): Stream { for (let i = 0; i < count; i++) yield { n: i }; }
+async function* yieldsALargerRecord(count: number): AsyncGenerator<Chunk, void, unknown> { for (let i = 0; i < count; i++) yield { n: i, text: "t" }; }
+async function* yieldsAnArray(count: number): Stream { for (let i = 0; i < count; i++) yield [i, i]; }
+async function* yieldsAString(count: number): Stream { for (let i = 0; i < count; i++) yield "s" + (i % 10); }
+async function* yieldsNothingMuch(count: number): Stream { for (let i = 0; i < count; i++) yield undefined; }
+async function* yieldsABoolean(count: number): Stream { for (let i = 0; i < count; i++) yield i % 2 === 0; }
+async function* awaitsFirst(count: number): Stream { for (let i = 0; i < count; i++) { await null; yield i; } }
+async function* awaitsAPromiseFirst(count: number): Stream { const settled = Promise.resolve(1); for (let i = 0; i < count; i++) yield i + await settled; }
+async function* hasAFinally(count: number): Stream { try { for (let i = 0; i < count; i++) yield i; } finally { lines.length; } }
+async function* hasACatch(count: number): Stream { for (let i = 0; i < count; i++) { try { yield i; } catch (error) { yield error; } } }
+async function* hasManyVariables(count: number): Stream {
+    let a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7, h = 8, j = 9, k = 10, l = 11, m = 12, n = 13, o = 14, p = 15, q = 16;
+    for (let i = 0; i < count; i++) {
+        a += b; b += c; c += d; d += e; e += f; f += g; g += h; h += j; j += k; k += l; l += m; m += n; n += o; o += p; p += q; q = (q + a) % 97;
+        a %= 97; b %= 97; c %= 97; d %= 97; e %= 97; f %= 97; g %= 97; h %= 97; j %= 97; k %= 97; l %= 97; m %= 97; n %= 97; o %= 97; p %= 97;
+        yield a + b + c + d + e + f + g + h + j + k + l + m + n + o + p + q;
+    }
+}
+async function* yieldsTwiceATurn(count: number): Stream { for (let i = 0; i < count; i += 2) { yield i; yield { n: i + 1 }; } }
+async function* closesOverItsVariable(count: number): Stream { for (let i = 0; i < count; i++) { const read = () => i; yield read(); } }
+async function* takesAPattern({ count }: { count: number }): Stream { for (let i = 0; i < count; i++) yield i; }
+async function* takesADefault(count: number, step: number = 1): Stream { for (let i = 0; i < count; i += step) yield { n: i }; }
+async function* takesARest(...counts: number[]): Stream { for (let i = 0; i < counts[0]; i++) yield i; }
+async function* forwards(inner: Stream): Stream { yield* inner; }
+async function* forwardsAPattern({ inner }: { inner: Stream }): Stream { yield* inner; }
+async function* relays(inner: Stream): Stream { for await (const x of inner) yield x; }
+class Holder {
+    constructor(private base: number) {}
+    async *stream(count: number): Stream { for (let i = 0; i < count; i++) yield this.base + i; }
+    static async *ofClass(count: number): Stream { for (let i = 0; i < count; i++) yield { n: i }; }
+}
+const expression = async function* (count: number): Stream { for (let i = 0; i < count; i++) yield -i; };
+const inObject = { async *stream(count: number): Stream { for (let i = 0; i < count; i++) yield [i]; } };
+async function measure(label: string, calls: number, make: () => AsyncGenerator<unknown, void, unknown>): Promise<void> {
+    await null;
+    const before = entered();
+    let steps = 0;
+    for await (const x of make()) steps += x === lines ? 2 : 1;
+    const entries = entered() - before;
+    lines.push(label + ": " + steps + " steps, " + (entries * 20 < calls ? "few entries" : entries + " ENTRIES FOR " + calls + " CALLS OF next()"));
+}
+const N = 2000;
+for (let round = 0; round < 2; round++) {
+    await measure("yields its variable", N, () => yieldsItsVariable(N));
+    await measure("yields a product", N, () => yieldsAProduct(N));
+    await measure("yields a sum", N, () => yieldsASum(N));
+    await measure("yields a fraction", N, () => yieldsAFraction(N));
+    await measure("yields a record", N, () => yieldsARecord(N));
+    await measure("yields a larger record", N, () => yieldsALargerRecord(N));
+    await measure("yields an array", N, () => yieldsAnArray(N));
+    await measure("yields a string", N, () => yieldsAString(N));
+    await measure("yields nothing much", N, () => yieldsNothingMuch(N));
+    await measure("yields a boolean", N, () => yieldsABoolean(N));
+    await measure("awaits first", N, () => awaitsFirst(N));
+    await measure("awaits a promise first", N, () => awaitsAPromiseFirst(N));
+    await measure("has a finally", N, () => hasAFinally(N));
+    await measure("has a catch", N, () => hasACatch(N));
+    await measure("has many variables", N, () => hasManyVariables(N));
+    await measure("yields twice a turn", N, () => yieldsTwiceATurn(N));
+    await measure("closes over its variable", N, () => closesOverItsVariable(N));
+    await measure("takes a pattern", N, () => takesAPattern({ count: N }));
+    await measure("takes a default", N, () => takesADefault(N));
+    await measure("takes a rest", N, () => takesARest(N, 1, 2));
+    await measure("forwards", 2 * N, () => forwards(yieldsARecord(N)));
+    await measure("forwards twice", 3 * N, () => forwards(forwards(yieldsItsVariable(N))));
+    await measure("forwards what awaits", 2 * N, () => forwards(awaitsFirst(N)));
+    await measure("forwards, by a pattern", 2 * N, () => forwardsAPattern({ inner: takesAPattern({ count: N }) }));
+    await measure("relays", 2 * N, () => relays(yieldsALargerRecord(N)));
+    await measure("relays what forwards", 3 * N, () => relays(forwards(yieldsAString(N))));
+    await measure("a method", N, () => new Holder(round).stream(N));
+    await measure("a static method", N, () => Holder.ofClass(N));
+    await measure("a function expression", N, () => expression(N));
+    await measure("a method of an object literal", N, () => inObject.stream(N));
+}
+console.log(lines.join("\n"));
+//// async-generator-steps-with-then-on-object-prototype.ts
+// In the middle of a stream that `for await` or `yield*` of the program steps, the program tries to give Object.prototype a `then`, promises another `constructor` and Promise another
+// species, and puts them back two steps later. The producer tries it in the middle of a step, the loop between two steps. Plain Bun takes the changes: every iterator result is then adopted
+// through `then`, and every promise that is awaited is asked for its constructor. A compiled program refuses them with a TypeError, because Object.prototype and Promise.prototype are locked
+// there (type-rules/new-properties-on-builtin-prototypes, language/promise-and-symbol-constructors-keep-their-members), and the stream goes on as if nobody had tried.
+// So the program judges each stream by what became of the change, and all ways of running it print the same. A change that was taken: the loop got what the changed prototype asks for.
+// A change that was refused: values and turns of the job queue are those of the untouched stream, which is printed in full.
+type Stream = AsyncGenerator<unknown, void, unknown>;
+type Resolve = (value: unknown) => void;
+type Hook = (index: number) => void;
+interface Change {
+    title: string;
+    // Answers whether the change was taken.
+    make: () => boolean;
+    undo: () => void;
+    replacesResults: boolean;
+    wasNoticed: () => boolean;
+}
+let log: string[] = [];
+const out: string[] = [];
+let thenCalls = 0, thenReads = 0, constructorReads = 0;
+////= note
+////= ticker
+function attempt(change: () => unknown): void {
+    try {
+        change();
+    } catch (error) {
+        if (!(error instanceof TypeError)) throw error;
+    }
+}
+
+// What it resolves with inherits nothing, so it is not asked for a `then` in turn.
+function adopts(this: { value?: unknown; done?: unknown }, resolve: Resolve): void {
+    thenCalls++;
+    const replaced = Object.create(null);
+    replaced.value = this.done ? undefined : "replaced " + String(this.value);
+    replaced.done = this.done;
+    resolve(replaced);
+}
+function Other(): void {}
+const objectPrototype = Object.prototype as any;
+const promisePrototype = Promise.prototype as any;
+const speciesAtTheStart = Object.getOwnPropertyDescriptor(Promise, Symbol.species)!;
+const hasThen = (): boolean => Object.hasOwn(Object.prototype, "then");
+const hasOtherConstructor = (): boolean => Object.getOwnPropertyDescriptor(Promise.prototype, "constructor")!.value !== Promise;
+const hasOtherSpecies = (): boolean => Object.getOwnPropertyDescriptor(Promise, Symbol.species)!.get !== speciesAtTheStart.get;
+const dropThen = (): void => attempt(() => delete objectPrototype.then);
+const restoreConstructor = (): void => attempt(() => Object.defineProperty(Promise.prototype, "constructor", { value: Promise, writable: true, enumerable: false, configurable: true }));
+const restoreSpecies = (): void => attempt(() => Object.defineProperty(Promise, Symbol.species, speciesAtTheStart));
+
+const changes: Change[] = [
+    {
+        title: "then is assigned",
+        make: () => { attempt(() => { objectPrototype.then = adopts; }); return hasThen(); },
+        undo: dropThen, replacesResults: true, wasNoticed: () => thenCalls >= 2,
+    },
+    {
+        title: "then is defined",
+        make: () => { attempt(() => Object.defineProperty(Object.prototype, "then", { value: adopts, writable: true, enumerable: false, configurable: true })); return hasThen(); },
+        undo: dropThen, replacesResults: true, wasNoticed: () => thenCalls >= 2,
+    },
+    {
+        title: "then is defined through Reflect",
+        make: () => { attempt(() => Reflect.defineProperty(Object.prototype, "then", { value: adopts, writable: true, enumerable: false, configurable: true })); return hasThen(); },
+        undo: dropThen, replacesResults: true, wasNoticed: () => thenCalls >= 2,
+    },
+    {
+        title: "then is a number",
+        make: () => { attempt(() => { objectPrototype.then = 5; }); return hasThen(); },
+        undo: dropThen, replacesResults: false, wasNoticed: () => true,
+    },
+    {
+        title: "then is a getter",
+        make: () => { attempt(() => Object.defineProperty(Object.prototype, "then", { get() { thenReads++; return undefined; }, enumerable: false, configurable: true })); return hasThen(); },
+        undo: dropThen, replacesResults: false, wasNoticed: () => thenReads >= 2,
+    },
+    {
+        title: "the constructor of promises is a getter",
+        make: () => { attempt(() => Object.defineProperty(Promise.prototype, "constructor", { get() { constructorReads++; return Promise; }, enumerable: false, configurable: true })); return hasOtherConstructor(); },
+        undo: restoreConstructor, replacesResults: false, wasNoticed: () => constructorReads >= 1,
+    },
+    {
+        title: "the constructor of promises is another function",
+        make: () => { attempt(() => { promisePrototype.constructor = Other; }); return hasOtherConstructor(); },
+        undo: restoreConstructor, replacesResults: false, wasNoticed: () => true,
+    },
+    {
+        title: "the species of Promise is another getter",
+        make: () => { attempt(() => Object.defineProperty(Promise, Symbol.species, { get() { return Promise; }, configurable: true })); return hasOtherSpecies(); },
+        undo: restoreSpecies, replacesResults: false, wasNoticed: () => true,
+    },
+];
+
+async function* produces(n: number, hook: Hook): Stream {
+    for (let i = 0; i < n; i++) { hook(i); note("yields " + i); yield i; }
+    note("the producer ends");
+}
+async function* relays(source: Stream): Stream {
+    for await (const x of source) { note("relays " + String(x)); yield x; }
+    note("the relay ends");
+}
+async function* forwards(source: Stream): Stream {
+    yield* source;
+    note("the forwarder ends");
+}
+async function consumes(source: Stream, hook: Hook, got: unknown[]): Promise<void> {
+    await null;
+    for await (const x of source) {
+        got.push(x);
+        note("got " + String(x));
+        hook(got.length);
+    }
+    note("the loop is through");
+}
+
+const doesNothing: Hook = () => {};
+async function run(wrap: (source: Stream) => Stream, isMadeByProducer: boolean, jobs: number, change: Change | undefined): Promise<{ wasTaken: boolean; got: unknown[] }> {
+    log = [];
+    thenCalls = thenReads = constructorReads = 0;
+    let wasTaken = false;
+    // The results of the values 2 and 3 are made while the change holds.
+    const hook: Hook = index => {
+        if (change && index === 2) wasTaken = change.make();
+        if (change && index === 4) change.undo();
+    };
+    const got: unknown[] = [];
+    try {
+        const beside = jobs ? ticker("t", jobs) : undefined;
+        await consumes(wrap(produces(6, isMadeByProducer ? hook : doesNothing)), isMadeByProducer ? doesNothing : hook, got);
+        await beside;
+    } finally {
+        change?.undo();
+    }
+    return { wasTaken, got };
+}
+function judge(change: Change, wasTaken: boolean, got: unknown[], depth: number, untouched: string): string {
+    const replaced = "replaced ".repeat(depth);
+    const expected = wasTaken && change.replacesResults ? "0,1," + replaced + "2," + replaced + "3,4,5" : "0,1,2,3,4,5";
+    const isRight = got.join() === expected && (wasTaken ? change.wasNoticed() : thenCalls + thenReads + constructorReads === 0 && log.join(" | ") === untouched);
+    return isRight ? "the stream is what the prototypes ask for" : "NOT WHAT THE PROTOTYPES ASK FOR, the change was " + (wasTaken ? "taken" : "refused") + ": " + log.join(" | ");
+}
+
+const shapes: [string, number, (source: Stream) => Stream][] = [
+    ["a loop over a generator", 1, source => source],
+    ["a loop over for await over a generator", 2, relays],
+    ["a loop over yield* over a generator", 2, forwards],
+    ["a loop over a chain of three", 3, source => relays(forwards(source))],
+];
+const companies: [string, number][] = [["alone", 0], ["beside jobs", 40]];
+// All of them ahead of the first change: what plain Bun has once taken it remembers, also when it is put back.
+const untouchedStreams = new Map<string, string>();
+for (const [shape, , wrap] of shapes) {
+    for (const [company, jobs] of companies) {
+        await run(wrap, true, jobs, undefined);
+        untouchedStreams.set(shape + ", " + company, log.join(" | "));
+        out.push(shape + ", " + company + ", untouched: " + log.join(" | "));
+    }
+}
+for (const [shape, depth, wrap] of shapes) {
+    for (const [company, jobs] of companies) {
+        const untouched = untouchedStreams.get(shape + ", " + company)!;
+        for (const change of changes) {
+            for (const isMadeByProducer of [true, false]) {
+                const { wasTaken, got } = await run(wrap, isMadeByProducer, jobs, change);
+                out.push(shape + ", " + company + ", " + change.title + " by " + (isMadeByProducer ? "the producer in the middle of a step" : "the loop between two steps") + ": " + judge(change, wasTaken, got, depth, untouched));
+            }
+        }
+    }
+}
+out.push("at the end: " + [hasThen(), hasOtherConstructor(), hasOtherSpecies(), Promise.prototype.constructor === Promise].join());
+console.log(out.join("\n"));
+export {};
+//// async-generator-yields-promises-and-thenables.ts
+// What an async generator yields is awaited before the consumer gets it, so a step whose value is a promise or may have a `then` cannot hand its value over in place, however alone the
+// stream is. Streams that yield promises (fulfilled, pending, rejected, of a subclass, with a `then` or a `constructor` of their own, of async functions) and thenables (that answer at once,
+// later, twice, with another thenable, that reject, that throw), by turns with plain numbers; the same values returned. `yield*` hands on what its source gives and awaits nothing: a promise
+// or a thenable from a hand-written iterator reaches the consumer as it is, while a sync iterable's values are awaited by its wrapper.
+// Objects that went through many times without a `then` get one in the middle of a stream, on their class, on themselves, in a declared field, and lose it again.
+// Beside every run a chain of `then` callbacks notes the turns of the job queue.
+type Stream = AsyncGenerator<unknown, unknown, unknown>;
+type Resolve = (value: unknown) => void;
+type Make = (i: number) => unknown;
+let log: string[] = [];
+const out: string[] = [];
+////= note
+function show(value: unknown): string {
+    if (value instanceof Error) return value.name + "(" + value.message + ")";
+    if (value instanceof Promise) return "a promise";
+    if (typeof value === "object" && value !== null) return value.constructor.name + JSON.stringify(value);
+    return typeof value + " " + String(value);
+}
+////= ticker-3
+class Thenable {
+    constructor(public n: number) {}
+    then(resolve: Resolve): void {
+        note("Thenable.then " + this.n);
+        resolve("from the thenable " + this.n);
+    }
+}
+class Derived<T> extends Promise<T> {}
+const settled = Promise.resolve("settled long ago");
+async function doubles(n: number): Promise<number> { return n * 2; }
+async function doublesLater(n: number): Promise<number> { await outside(); return n * 2; }
+async function fails(n: number): Promise<number> { throw new RangeError("the async function failed " + n); }
+function withOwnThen(n: number): Promise<number> {
+    const promise = Promise.resolve(n);
+    (promise as any).then = (resolve: Resolve): void => { note("the promise's own then is called"); resolve("from its own then " + n); };
+    return promise;
+}
+function withOwnConstructor(n: number): Promise<number> {
+    const promise = Promise.resolve(n);
+    (promise as any).constructor = function Other(): void {};
+    return promise;
+}
+
+const makers: [string, Make][] = [
+    ["a number", i => i * 10],
+    ["a fulfilled promise", i => Promise.resolve("fulfilled " + i)],
+    ["one promise again and again", () => settled],
+    ["a pending promise", i => outside().then(() => "released " + i)],
+    ["a rejected promise", i => Promise.reject(new RangeError("rejected " + i))],
+    ["a promise that is rejected later", i => outside().then(() => { throw new RangeError("rejected later " + i); })],
+    ["the promise of an async function", i => doubles(i)],
+    ["the promise of an async function that waits", i => doublesLater(i)],
+    ["the promise of an async function that fails", i => fails(i)],
+    ["a promise of a subclass", i => Derived.resolve("derived " + i)],
+    ["a promise with its own then", withOwnThen],
+    ["a promise with its own constructor", withOwnConstructor],
+    ["a thenable", i => new Thenable(i)],
+    ["a thenable that answers later", i => ({ then(resolve: Resolve): void { note("then is called"); outside().then(() => resolve("late " + i)); } })],
+    ["a thenable that answers twice", i => ({ then(resolve: Resolve): void { note("then is called"); resolve("first " + i); resolve("second " + i); } })],
+    ["a thenable that gives a thenable", i => ({ then(resolve: Resolve): void { note("the outer then is called"); resolve(new Thenable(i)); } })],
+    ["a thenable that gives a promise", i => ({ then(resolve: Resolve): void { note("then is called"); resolve(doublesLater(i)); } })],
+    ["a thenable that rejects", i => ({ then(_: Resolve, reject: Resolve): void { note("then is called"); reject(new RangeError("refused " + i)); } })],
+    ["a thenable that throws", i => ({ then(): void { note("then is called"); throw new RangeError("thrown by then " + i); } })],
+    ["a thenable that answers and then throws", i => ({ then(resolve: Resolve): void { resolve("answered " + i); throw new RangeError("too late " + i); } })],
+    ["then is a number", i => ({ then: i })],
+    ["then is a getter", i => Object.defineProperty({ n: i }, "then", { get() { note("then is read"); return undefined; }, enumerable: false })],
+    ["then is a getter that throws", i => Object.defineProperty({ n: i }, "then", { get() { note("then is read"); throw new RangeError("thrown by the getter " + i); }, enumerable: false })],
+    ["a record", i => ({ n: i })],
+    ["a promise in a record", i => ({ n: i, inside: Promise.resolve(i) })],
+    ["a promise in an array", i => [Promise.resolve(i)]],
+];
+
+async function* yieldsEach(make: Make, n: number): Stream {
+    for (let i = 0; i < n; i++) { note("yields " + i); yield make(i); note("behind the yield " + i); }
+    return "the end";
+}
+async function* yieldsByTurns(make: Make, n: number): Stream {
+    for (let i = 0; i < n; i++) {
+        try {
+            note("yields " + i);
+            yield i % 2 ? make(i) : i;
+            note("behind the yield " + i);
+        } catch (error) {
+            note("the producer caught " + show(error));
+        }
+    }
+    return "the end";
+}
+async function* returnsIt(make: Make): Stream {
+    yield 0;
+    note("returns");
+    return make(1);
+}
+async function* returnsItFromATry(make: Make): Stream {
+    try {
+        yield 0;
+        note("returns");
+        return make(1);
+    } catch (error) {
+        note("the producer caught " + show(error));
+        return "returned from the catch";
+    } finally {
+        note("the producer's finally");
+    }
+}
+async function* relays(source: AsyncIterable<unknown>): Stream {
+    for await (const x of source) { note("relays " + show(x)); yield x; }
+    return "the relay's end";
+}
+async function* forwards(source: AsyncIterable<unknown> | Iterable<unknown>): Stream {
+    const returned = yield* source;
+    note("yield* was returned " + show(returned));
+    return "the forwarder's end";
+}
+async function* forwardsAndCatches(source: AsyncIterable<unknown> | Iterable<unknown>): Stream {
+    try {
+        yield* source;
+    } catch (error) {
+        note("the forwarder caught " + show(error));
+        yield "goes on behind the catch";
+    }
+    return "the forwarder's end";
+}
+function handWritten(label: string, n: number, make: Make): AsyncIterable<unknown> {
+    let i = 0;
+    return {
+        [Symbol.asyncIterator]() {
+            return {
+                next(): Promise<IteratorResult<unknown, unknown>> {
+                    note(label + ".next is called");
+                    const result: IteratorResult<unknown, unknown> = i < n ? { value: make(i++), done: false } : { value: label + "'s end", done: true };
+                    return Promise.resolve(result);
+                },
+                return(value?: unknown): Promise<IteratorResult<unknown, unknown>> {
+                    note(label + ".return is called");
+                    const result: IteratorResult<unknown, unknown> = { value, done: true };
+                    return Promise.resolve(result);
+                },
+            };
+        },
+    };
+}
+
+async function consumes(source: AsyncIterable<unknown>, isResumedFirst: boolean): Promise<void> {
+    if (isResumedFirst) await null;
+    try {
+        for await (const x of source) {
+            note("got " + show(x));
+            if (!(x instanceof Promise)) continue;
+            try { note("in it is " + show(await x)); } catch (error) { note("it is rejected with " + show(error)); }
+        }
+        note("the loop is through");
+    } catch (error) {
+        note("the loop caught " + show(error));
+    }
+}
+async function scene(title: string, make: () => AsyncIterable<unknown>): Promise<void> {
+    for (const [company, isResumedFirst, jobs] of [["alone", true, 0], ["in its first run", false, 0], ["behind jobs", true, 14]] as [string, boolean, number][]) {
+        log = [];
+        const beside = jobs ? ticker("t", jobs) : undefined;
+        await consumes(make(), isResumedFirst);
+        await beside;
+        out.push(title + ", " + company + ": " + log.join(" | "));
+    }
+}
+
+for (const [what, make] of makers) {
+    await scene("yields " + what, () => yieldsEach(make, 3));
+    await scene("yields a number and " + what + " by turns", () => yieldsByTurns(make, 5));
+    await scene("yields " + what + ", under for await", () => relays(yieldsByTurns(make, 4)));
+    await scene("yields " + what + ", under yield*", () => forwards(yieldsByTurns(make, 4)));
+    await scene("yields " + what + ", under yield* that catches", () => forwardsAndCatches(yieldsEach(make, 2)));
+    await scene("returns " + what, () => forwards(returnsIt(make)));
+    await scene("returns " + what + " from a try", () => forwards(returnsItFromATry(make)));
+    await scene("a hand-written iterator gives " + what + ", under yield*", () => forwards(handWritten("h", 2, make)));
+    await scene("a hand-written iterator gives " + what + ", under yield* twice", () => forwards(forwards(handWritten("h", 2, make))));
+    await scene("a hand-written iterator gives " + what + ", under for await", () => relays(handWritten("h", 2, make)));
+    await scene("an array holds " + what + ", under yield*", () => forwardsAndCatches([0, make(1), 2]));
+}
+
+// The thenable test of a step goes by what the object is now, not by what objects of its kind were.
+class Parcel { constructor(public n: number) {} }
+interface Reply { text: string; then?: (resolve: Resolve) => void; }
+type Hook = (step: number) => void;
+async function* yieldsParcels(n: number, hook: Hook): Stream {
+    for (let i = 0; i < n; i++) { hook(i); yield new Parcel(i); }
+    return "the end";
+}
+async function* yieldsTheSame(value: unknown, n: number, hook: Hook): Stream {
+    for (let i = 0; i < n; i++) { hook(i); yield value; }
+    return "the end";
+}
+// What the loop got, as runs of one kind: `Parcel{"n":#} x100, string opened # x3, ..`.
+async function summarizes(source: Stream, hook: Hook): Promise<string> {
+    await null;
+    const runs: string[] = [];
+    let kindOfRun = "", lengthOfRun = 0, seen = 0;
+    for await (const x of source) {
+        const kind = show(x).replace(/[0-9]+/, "#");
+        if (kind !== kindOfRun) {
+            if (lengthOfRun) runs.push(kindOfRun + " x" + lengthOfRun);
+            kindOfRun = kind;
+            lengthOfRun = 0;
+        }
+        lengthOfRun++;
+        hook(++seen);
+    }
+    runs.push(kindOfRun + " x" + lengthOfRun);
+    return runs.join(", ");
+}
+const doesNothing: Hook = () => {};
+function between(from: number, to: number, give: () => void, take: () => void): Hook {
+    return step => {
+        if (step === from) give();
+        if (step === to) take();
+    };
+}
+const giveTheClass = (): void => { (Parcel.prototype as any).then = function (this: Parcel, resolve: Resolve): void { resolve("opened " + this.n); }; };
+const takeFromTheClass = (): void => { delete (Parcel.prototype as any).then; };
+async function report(title: string, jobs: number, run: () => Promise<string>): Promise<void> {
+    const beside = jobs ? ticker("t", jobs) : undefined;
+    const runs = await run();
+    await beside;
+    out.push(title + (jobs ? ", beside jobs: " : ", alone: ") + runs);
+    log = [];
+}
+// Alone the objects go through a hundred times first. Beside jobs the stream is short, so that the jobs last longer than it does.
+for (const [jobs, n, from] of [[0, 300, 100], [400, 30, 10]]) {
+    const forThreeSteps = (give: () => void, take: () => void): Hook => between(from, from + 3, give, take);
+    await report("the class gets a then from the loop", jobs, () => summarizes(yieldsParcels(n, doesNothing), forThreeSteps(giveTheClass, takeFromTheClass)));
+    await report("the class gets a then from the producer", jobs, () => summarizes(yieldsParcels(n, forThreeSteps(giveTheClass, takeFromTheClass)), doesNothing));
+    await report("the class gets a then from the loop, under a chain of three", jobs, () => summarizes(relays(forwards(yieldsParcels(n, doesNothing))), forThreeSteps(giveTheClass, takeFromTheClass)));
+    await report("the class gets a then from the producer, under a chain of three", jobs, () => summarizes(forwards(relays(yieldsParcels(n, forThreeSteps(giveTheClass, takeFromTheClass)))), doesNothing));
+
+    const parcel = new Parcel(7);
+    const giveTheParcel = (): void => { (parcel as any).then = (resolve: Resolve): void => resolve("opened by its own then"); };
+    const takeFromTheParcel = (): void => { delete (parcel as any).then; };
+    await report("one instance gets a then from the loop", jobs, () => summarizes(yieldsTheSame(parcel, n, doesNothing), forThreeSteps(giveTheParcel, takeFromTheParcel)));
+    await report("one instance gets a then from the producer", jobs, () => summarizes(yieldsTheSame(parcel, n, forThreeSteps(giveTheParcel, takeFromTheParcel)), doesNothing));
+
+    const reply: Reply = { text: "bare" };
+    const giveTheReply = (): void => { reply.then = resolve => resolve("the reply's field"); };
+    const takeFromTheReply = (): void => { reply.then = undefined; };
+    await report("a declared field gets a then from the loop", jobs, () => summarizes(yieldsTheSame(reply, n, doesNothing), forThreeSteps(giveTheReply, takeFromTheReply)));
+    await report("a declared field gets a then from the producer", jobs, () => summarizes(yieldsTheSame(reply, n, forThreeSteps(giveTheReply, takeFromTheReply)), doesNothing));
+
+    const parent: { then?: (resolve: Resolve) => void } = {};
+    const child: unknown = Object.create(parent);
+    const giveTheParent = (): void => { parent.then = resolve => resolve("the parent's then"); };
+    const takeFromTheParent = (): void => { delete parent.then; };
+    await report("the prototype of a plain object gets a then from the loop", jobs, () => summarizes(yieldsTheSame(child, n, doesNothing), forThreeSteps(giveTheParent, takeFromTheParent)));
+    await report("the prototype of a plain object gets a then from the producer", jobs, () => summarizes(yieldsTheSame(child, n, forThreeSteps(giveTheParent, takeFromTheParent)), doesNothing));
+}
+console.log(out.join("\n"));
+export {};
+//// async-generators-and-for-await.ts
+// Async generators and `for await`.
+const log: string[] = []
+const say = (s: string) => { log.push(s) }
+const later = <T,>(v: T): Promise<T> => new Promise(resolve => resolve(v))
+async function* count(n: number): AsyncGenerator<number, string, unknown> { for (let i = 0; i < n; i++) { say("before " + i); yield await later(i); say("after " + i) } return "finished" }
+async function* guarded(): AsyncGenerator<number, string, unknown> { try { yield 1; yield 2; return "end" } catch (e) { say("caught " + e); yield 99; return "recovered" } finally { say("cleanup"); await later(0); say("cleaned") } }
+async function* outer(): AsyncGenerator<number | string> { const r = yield* count(2); yield r; yield* [7, Promise.resolve(8)]; yield* guarded() }
+function* sync() { yield 1; yield Promise.resolve(2); yield 3 }
+async function main(): Promise<void> {
+  let total = 0
+  for await (const n of count(3)) total += n
+  say("total " + total)
+  for await (const n of guarded()) { say("got " + n); if (n === 1) break }
+  try { for await (const n of guarded()) { say("got " + n); throw new Error("body") } } catch (e) { say((e as Error).message) }
+  for await (const v of sync()) say("sync " + v)
+  for await (const v of [later("a"), "b"]) say("array " + v)
+  const all: (number | string)[] = []
+  for await (const v of outer()) all.push(v)
+  say(all.join())
+  const g = count(2)
+  const queued = [g.next(), g.next(), g.next(), g.next()]
+  say(JSON.stringify(await Promise.all(queued)))
+  const h = guarded(); await h.next()
+  say(JSON.stringify(await h.throw("boom")) + JSON.stringify(await h.next()) + JSON.stringify(await h.next()))
+  const r = guarded(); await r.next()
+  say(JSON.stringify(await r.return("early")) + JSON.stringify(await r.return(later("again"))))
+  const unstarted = guarded()
+  say(JSON.stringify(await unstarted.return("never")) + " " + Object.prototype.toString.call(unstarted) + " " + (unstarted[Symbol.asyncIterator]() === unstarted))
+  try { await guarded().throw(new Error("unstarted")) } catch (e) { say((e as Error).message) }
+}
+function old() { return arguments.length + ":" + Array.prototype.join.call(arguments, "-") + ":" + typeof arguments + ":" + Object.prototype.toString.call(arguments) }
+function named(a: number, b = 5) { return a + b + arguments.length }
+function viaArrow(this: unknown, a: number) { const inner = () => () => arguments.length + ":" + arguments[1] + ":" + a; return inner()() }
+function withRest(first: number, ...others: number[]) { return arguments.length + ":" + first + ":" + others.join("+") }
+say((viaArrow as any)(1, "second") + " " + withRest(1, 2, 3) + " " + withRest(9))
+say((old as any)(1, "two", 3) + " " + (old as any)() + " " + named(1) + " " + named(1, 2))
+main().then(() => console.log(log.join("\n")), e => console.log("failed", e, log.join("\n")))
+//// async-generators-wake-suspended-consumers.ts
+// A source that waits for something outside the pipeline wakes up while all its consumers are suspended. Each case logs the order in which the layers, other jobs and clean-up code run.
+import { AsyncLocalStorage } from "node:async_hooks";
+const storage = new AsyncLocalStorage<string>();
+let lines: string[] = [];
+const log = (text: string) => { lines.push(text); };
+const show = (value: unknown): string => (value === undefined ? "undefined" : JSON.stringify(value));
+type Stream = AsyncGenerator<any, any, any>;
+let deliver: (value: any) => void = () => {};
+let fail: (error: Error) => void = () => {};
+const arrival = () => new Promise<any>((resolve, reject) => { deliver = resolve; fail = reject; });
+const turns = async (count: number) => { for (let i = 0; i < count; i++) await null; };
+async function* source(count: number): Stream {
+  try {
+    for (let i = 0; i < count; i++) { const value = await arrival(); log("source has " + show(value)); yield value; }
+    return "source ended";
+  } finally { log("source cleans up"); }
+}
+async function* relay(name: string, input: AsyncIterable<any>): Stream {
+  try {
+    for await (const value of input) { log(name + " has " + show(value)); yield value; log(name + " goes on"); }
+  } finally { log(name + " cleans up"); }
+}
+async function* delegate(name: string, input: Stream): Stream {
+  const result = yield* input;
+  log(name + " got " + show(result));
+  return result;
+}
+async function* throwsAt(limit: number, input: AsyncIterable<any>): Stream {
+  let seen = 0;
+  for await (const value of input) { if (++seen === limit) throw new Error("layer failed at " + seen); yield value; }
+}
+async function consume(name: string, input: AsyncIterable<any>, stopAt = Infinity): Promise<string> {
+  let seen = 0;
+  try {
+    for await (const value of input) {
+      log(name + " has " + show(value));
+      Promise.resolve().then(() => log(name + "'s job"));
+      if (++seen === stopAt) break;
+    }
+  } catch (error) { log(name + " caught " + (error as Error).message); }
+  return name + " saw " + seen;
+}
+async function scene(title: string, run: () => Promise<void>) {
+  lines = [];
+  await run();
+  await turns(40);
+  console.log(title + ": " + lines.join(" | "));
+}
+
+await scene("three layers", async () => {
+  const done = consume("top", relay("b", relay("a", source(2))));
+  for (const value of [1, { v: 2 }, 3]) { await turns(10); log("deliver"); deliver(value); }
+  log(await done);
+});
+await scene("delegation", async () => {
+  const done = consume("top", delegate("outer", delegate("inner", source(2))));
+  for (const value of ["x", "y", "z"]) { await turns(10); log("deliver"); deliver(value); }
+  log(await done);
+});
+await scene("another job is queued first", async () => {
+  const done = consume("top", relay("a", source(2)));
+  await turns(10);
+  deliver(1); Promise.resolve().then(() => log("job behind the delivery")).then(() => log("second job"));
+  await turns(10);
+  Promise.resolve().then(() => log("job in front of the delivery")); deliver(2);
+  await turns(10); deliver(3);
+  log(await done);
+});
+await scene("a layer throws", async () => {
+  const done = consume("top", relay("b", throwsAt(2, relay("a", source(5)))));
+  for (const value of [1, 2]) { await turns(10); deliver(value); }
+  log(await done);
+});
+await scene("the source is rejected", async () => {
+  const done = consume("top", relay("a", source(5)));
+  await turns(10); deliver(1); await turns(10); fail(new Error("no more"));
+  log(await done);
+});
+await scene("the consumer leaves", async () => {
+  const done = consume("top", relay("b", relay("a", source(5))), 2);
+  for (const value of [1, 2]) { await turns(10); deliver(value); }
+  log(await done);
+});
+await scene("promises and thenables are yielded", async () => {
+  async function* unwraps(input: AsyncIterable<any>): Stream { for await (const box of input) yield box[0]; }
+  const done = consume("top", relay("b", unwraps(relay("a", source(5)))));
+  const thenable = { then(resolve: (value: string) => void) { log("then is called"); resolve("from then"); } };
+  for (const value of [Promise.resolve("settled"), thenable, [thenable], null, turns(3).then(() => "late"), 0]) { await turns(16); deliver([value]); }
+  log(await done);
+});
+await scene("several requests wait", async () => {
+  const middle = relay("a", source(3));
+  const requests = [middle.next(), middle.next(), middle.next("sent")];
+  for (const value of [1, 2, 3]) { await turns(10); deliver(value); }
+  for (const request of requests) log(show(await request));
+  log(show(await middle.return("closed")));
+});
+await scene("two consumers share a generator", async () => {
+  const shared = relay("shared", source(4));
+  const both = [consume("first", shared), consume("second", shared)];
+  for (const value of [1, 2, 3, 4, 5]) { await turns(12); deliver(value); }
+  for (const each of both) log(await each);
+});
+await scene("async contexts", async () => {
+  async function* reads(name: string, input: AsyncIterable<any>): Stream { for await (const value of input) { log(name + " in " + storage.getStore()); yield value; } }
+  const done = storage.run("consumer", async () => { for await (const value of reads("b", storage.run("inner", () => reads("a", source(2))))) log("top in " + storage.getStore() + " has " + value); });
+  for (const value of [1, 2, 3]) { await turns(10); storage.run("deliverer " + value, () => deliver(value)); }
+  await done;
+});
+await scene("collections between the layers", async () => {
+  async function* collects(input: AsyncIterable<any>): Stream { for await (const value of input) { Bun.gc(true); yield { kept: value, more: [value, value] }; } }
+  const done = consume("top", collects(collects(source(2))));
+  for (const value of [{ a: 1 }, "text" + lines.length, 3]) { await turns(10); deliver(value); Bun.gc(true); }
+  log(await done);
+});
+await scene("two hundred layers", async () => {
+  let stream: Stream = source(2);
+  for (let i = 0; i < 100; i++) stream = delegate2(plain(stream));
+  let sum = 0;
+  const done = (async () => { for await (const value of stream) sum += value; })();
+  for (const value of [5, 7, 9]) { await turns(400); deliver(value); }
+  await done; log("sum " + sum);
+});
+async function* plain(input: AsyncIterable<any>): Stream { for await (const value of input) yield value + 1; }
+async function* delegate2(input: Stream): Stream { return yield* input; }
+await scene("errors name the layers", async () => {
+  async function* inner(input: AsyncIterable<any>): Stream { for await (const value of input) yield value; }
+  async function outer(input: AsyncIterable<any>) { for await (const value of input) { const names = (new Error("here").stack ?? "").split("\n").slice(1).map(line => /at (?:async )?([\w.]+)/.exec(line)?.[1] ?? "?"); log(value + " in " + names.filter(name => name === "outer" || name === "inner" || name === "source").join(",")); } }
+  const done = outer(inner(source(1)));
+  await turns(10); deliver("a"); await turns(10); deliver("b");
+  await done;
+});
+//// async-iterator-steps.js
+// Steps of `for await` and `yield*` whose next method is one of the two built-in async ones: driven by an async function, an async generator and a module body, with an empty and a busy job queue.
+// Also the cases that must stay ordinary calls: another next method, a receiver that is no generator, and next() written in the source, whose result objects the program keeps.
+const lines = [];
+const note = text => void lines.push(text);
+const show = value => (value instanceof Error ? `${value.name}: ${value.message}` : JSON.stringify(value));
+
+async function* count(label, limit) {
+  try {
+    for (let i = 0; i < limit; i++) yield label + i;
+    return label + " result";
+  } finally {
+    note(label + " closed");
+  }
+}
+
+async function* countAfterAwaits(label, limit) {
+  for (let i = 0; i < limit; i++) {
+    await null;
+    yield await Promise.resolve(label + i);
+  }
+}
+
+async function* echo(label) {
+  let received = yield label + " started";
+  while (received !== "stop") received = yield label + " got " + show(received);
+  return label + " stopped";
+}
+
+async function* failsAt(label, limit) {
+  for (let i = 0; i < limit; i++) yield label + i;
+  throw new Error(label + " failed");
+}
+
+////= lines-33	driveFromFunction	note
+
+async function* driveFromGenerator(source) {
+  for await (const value of source) yield "relayed " + value;
+}
+
+async function* delegate(source) {
+  const result = yield* source;
+  yield "delegate result " + show(result);
+}
+
+function withBusyQueue(turns) {
+  let turn = 0;
+  const tick = () => {
+    if (++turn <= turns) queueMicrotask(tick);
+  };
+  queueMicrotask(tick);
+}
+
+async function drivers() {
+  await driveFromFunction("function", count("a", 3));
+  await driveFromFunction("function, broken off", count("b", 3), 2);
+  await driveFromFunction("function, awaits inside", countAfterAwaits("c", 3));
+  await driveFromFunction("function, failure", failsAt("d", 2));
+  await driveFromFunction("generator", driveFromGenerator(count("e", 3)));
+  await driveFromFunction("generator, awaits inside", driveFromGenerator(countAfterAwaits("f", 3)));
+  await driveFromFunction("generator, failure", driveFromGenerator(failsAt("g", 2)));
+  await driveFromFunction("delegate", delegate(count("h", 2)));
+  await driveFromFunction("delegate twice", delegate(delegate(count("i", 2))));
+  await driveFromFunction("delegate, failure", delegate(failsAt("j", 1)));
+  await driveFromFunction("empty", count("k", 0));
+  withBusyQueue(40);
+  await driveFromFunction("function, busy queue", count("l", 3));
+  await driveFromFunction("generator, busy queue", driveFromGenerator(countAfterAwaits("m", 3)));
+  await driveFromFunction("delegate, busy queue", delegate(count("n", 2)));
+}
+
+async function sentValues() {
+  const outer = delegate(echo("echo"));
+  for (const sent of [undefined, 1, { a: 1 }, undefined, "stop", "late"]) note("sent " + show(sent) + ": " + show(await outer.next(sent)));
+
+  function argumentCounter() {
+    let calls = 0;
+    return {
+      [Symbol.iterator]() {
+        return this;
+      },
+      next(...sent) {
+        return { done: ++calls > 3, value: `${sent.length} arguments ${show(sent)}` };
+      },
+    };
+  }
+  await driveFromFunction("sync next from for await", argumentCounter());
+  const overSync = delegate(argumentCounter());
+  for (const sent of ["first", "second", undefined, "fourth"]) note("sync next from yield*: " + show(await overSync.next(sent)));
+}
+
+async function otherNextMethods() {
+  const builtinNext = Object.getPrototypeOf(count.prototype).next;
+  const impostor = {
+    next: builtinNext,
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+  };
+  await driveFromFunction("built-in next, receiver is no generator", impostor);
+  await driveFromFunction("built-in next, receiver is no generator, delegated", delegate(impostor));
+
+  const borrowed = count("o", 2);
+  const borrower = {
+    next: value => builtinNext.call(borrowed, value),
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+  };
+  await driveFromFunction("own next that borrows the built-in one", borrower);
+
+  const replaced = count("p", 4);
+  const seen = [];
+  for await (const value of replaced) {
+    seen.push(value);
+    if (value === "p0") replaced.next = () => Promise.resolve({ done: true, value: "never read" });
+    if (value === "p2") delete replaced.next;
+  }
+  note("next replaced inside the loop: " + seen.join(", "));
+
+  const overridden = count("q", 4);
+  let calls = 0;
+  overridden.next = () => Promise.resolve({ done: ++calls > 2, value: "own " + calls });
+  const fromOwn = [];
+  for await (const value of overridden) {
+    fromOwn.push(value);
+    delete overridden.next;
+  }
+  note("own next removed inside the loop: " + fromOwn.join(", "));
+}
+
+async function keptResults() {
+  const generator = count("r", 3);
+  const first = await generator.next();
+  const second = await generator.next();
+  note(`results of next() in the source: ${first !== second}, ${show(first)}, ${show(second)}`);
+
+  const shared = count("s", 6);
+  const kept = [];
+  for await (const value of shared) {
+    kept.push(value);
+    if (value === "s0" || value === "s2") kept.push(shared.next());
+  }
+  const settled = await Promise.all(kept);
+  note("next() inside a loop over the same generator: " + settled.map(show).join(", "));
+  const objects = settled.filter(step => typeof step === "object");
+  note("kept results are distinct: " + (objects[0] !== objects[1]));
+}
+
+async function alternatingLoops() {
+  const seen = [];
+  async function loop(label, source) {
+    for await (const value of source) {
+      seen.push(label + value);
+      await null;
+    }
+  }
+  await Promise.all([loop("x:", count("t", 3)), loop("y:", countAfterAwaits("u", 3)), loop("z:", delegate(count("v", 2)))]);
+  note("three loops at once: " + seen.join(", "));
+
+  const nested = [];
+  for await (const outer of count("w", 2)) {
+    for await (const inner of count(outer + "/", 2)) nested.push(inner);
+  }
+  note("nested loops: " + nested.join(", "));
+}
+
+await drivers();
+await sentValues();
+await otherNextMethods();
+await keptResults();
+await alternatingLoops();
+
+const atTopLevel = [];
+for await (const value of count("module", 3)) atTopLevel.push(value);
+for await (const value of driveFromGenerator(countAfterAwaits("module relay", 2))) atTopLevel.push(value);
+for await (const value of [Promise.resolve("array 0"), "array 1"]) atTopLevel.push(value);
+note("module body: " + atTopLevel.join(", "));
+
+console.log(lines.join("\n"));
+//// async-iterator-steps-interpreted-generators.js
+// Async generators created from text at run time have the same built-in next method as compiled ones, so compiled `for await` and `yield*` step them too. They are not compiled generators: each step is an ordinary call.
+// Interpreted loops over compiled generators go the other way.
+const lines = [];
+const show = value => (value instanceof Error ? `${value.name}: ${value.message}` : JSON.stringify(value));
+
+const interpreted = new Function(`
+  return {
+    async *count(label, limit) {
+      for (let i = 0; i < limit; i++) yield label + i;
+      return label + " result";
+    },
+    async *countAfterAwaits(label, limit) {
+      for (let i = 0; i < limit; i++) {
+        await null;
+        yield await Promise.resolve(label + i);
+      }
+    },
+    async *echo(label) {
+      let received = yield label + " started";
+      while (received !== "stop") received = yield label + " got " + JSON.stringify(received);
+      return label + " stopped";
+    },
+    async *failsAt(label, limit) {
+      for (let i = 0; i < limit; i++) yield label + i;
+      throw new Error(label + " failed");
+    },
+    async *relay(source) {
+      for await (const value of source) yield "interpreted relay of " + value;
+    },
+    async *delegate(source) {
+      return yield* source;
+    },
+  };
+`)();
+
+async function* count(label, limit) {
+  for (let i = 0; i < limit; i++) yield label + i;
+  return label + " result";
+}
+
+async function* relay(source) {
+  for await (const value of source) yield "relay of " + value;
+}
+
+async function* delegate(source) {
+  const result = yield* source;
+  yield "delegate result " + show(result);
+}
+
+////= lines-33	collect	lines.push
+
+lines.push("one next method: " + (interpreted.count("", 0).next === count("", 0).next));
+
+await collect("function", interpreted.count("a", 3));
+await collect("function, broken off", interpreted.count("b", 3), 2);
+await collect("function, awaits inside", interpreted.countAfterAwaits("c", 3));
+await collect("function, failure", interpreted.failsAt("d", 2));
+await collect("function, empty", interpreted.count("e", 0));
+await collect("generator", relay(interpreted.count("f", 3)));
+await collect("generator, failure", relay(interpreted.failsAt("g", 1)));
+await collect("delegate", delegate(interpreted.count("h", 2)));
+await collect("delegate, failure", delegate(interpreted.failsAt("i", 1)));
+await collect("interpreted loop over compiled", interpreted.relay(count("j", 3)));
+await collect("interpreted delegate to compiled", delegate(interpreted.delegate(count("k", 2))));
+await collect("alternating", relay(interpreted.relay(relay(interpreted.count("l", 2)))));
+
+const outer = delegate(interpreted.echo("echo"));
+for (const sent of [undefined, 1, { a: 1 }, undefined, "stop", "late"]) lines.push("sent " + show(sent) + ": " + show(await outer.next(sent)));
+
+const order = [];
+async function loop(label, source) {
+  for await (const value of source) {
+    order.push(label + value);
+    await null;
+  }
+}
+await Promise.all([loop("x:", count("m", 3)), loop("y:", interpreted.count("n", 3)), loop("z:", interpreted.countAfterAwaits("o", 2)), loop("w:", delegate(interpreted.count("p", 2)))]);
+lines.push("four loops at once: " + order.join(", "));
+
+const finished = interpreted.count("q", 1);
+await collect("first loop", finished);
+await collect("second loop over a finished generator", finished);
+
+console.log(lines.join("\n"));
+//// async-local-storage-across-streams.ts
+// The store of an AsyncLocalStorage on both sides of every handover between async generators and async functions of the program, where somebody waits in earnest:
+// next() written out and awaited by a function or by a generator in a store of its own; helpers awaited by generators; relays; two consumers in two stores that
+// pull one stream in turn; a store entered in the middle. Waits are jobs (nothing else queued), jobs beside a ticker, and timers.
+import { AsyncLocalStorage } from "node:async_hooks";
+
+let log: string[] = [];
+////= note
+const storage = new AsyncLocalStorage<string>();
+function where(): string {
+    return storage.getStore() ?? "-";
+}
+type Wait = () => Promise<void>;
+const waits: [string, Wait][] = [
+    ["jobs", () => new Promise(resolve => { Promise.resolve().then(() => undefined).then(() => resolve()); })],
+    ["a timer", () => new Promise(resolve => setTimeout(resolve, 1))],
+    ["jobs in a store of their own", () => storage.run("w", () => new Promise<void>(resolve => { Promise.resolve().then(() => undefined).then(() => resolve()); }))],
+];
+function ticker(turns: number): Promise<void> {
+    let last: Promise<void> = Promise.resolve();
+    for (let i = 1; i <= turns; i++) last = last.then(() => undefined);
+    return last;
+}
+async function* source(wait: Wait, n: number): AsyncGenerator<string, string> {
+    for (let i = 0; i < n; i++) {
+        note("source ahead of its wait in " + where());
+        await wait();
+        note("source behind its wait in " + where());
+        yield "s" + i + "@" + where();
+        note("source behind its yield in " + where());
+    }
+    return "over@" + where();
+}
+async function pulls(from: AsyncGenerator<string, string>, label: string): Promise<void> {
+    for (;;) {
+        const step = await from.next();
+        note(label + " got " + step.value + " in " + where());
+        if (step.done) return;
+    }
+}
+async function* pullsAndYields(from: AsyncGenerator<string, string>, label: string): AsyncGenerator<string, string> {
+    for (;;) {
+        const step = await from.next();
+        note(label + " got " + step.value + " in " + where());
+        if (step.done) return step.value + "<" + where();
+        yield step.value + "<" + where();
+    }
+}
+async function* relay(from: AsyncGenerator<string, string>, store: string | null): AsyncGenerator<string, string> {
+    async function pulled(): Promise<IteratorResult<string, string>> {
+        const step = await from.next();
+        note("pulled() behind next() in " + where());
+        return step;
+    }
+    while (true) {
+        const step = await (store === null ? pulled() : storage.run(store, pulled));
+        note("relay behind pulled() in " + where());
+        if (step.done === true) return step.value;
+        yield step.value;
+    }
+}
+async function helper(wait: Wait, i: number, store: string | null): Promise<{ n: number; at: string }> {
+    if (store !== null) storage.enterWith(store);
+    await wait();
+    note("helper behind its wait in " + where());
+    return { n: i, at: where() };
+}
+async function* awaitsHelpers(wait: Wait, store: string | null): AsyncGenerator<string> {
+    for (let i = 0; i < 2; i++) {
+        const made = await helper(wait, i, store);
+        note("generator behind the helper in " + where());
+        yield made.n + "@" + made.at + "<" + where();
+    }
+}
+async function* entersAStore(wait: Wait): AsyncGenerator<string> {
+    await wait();
+    yield "before " + where();
+    storage.enterWith("entered");
+    await wait();
+    yield "behind " + where();
+}
+async function collect(from: AsyncIterable<string>, label: string): Promise<void> {
+    for await (const x of from) note(label + " got " + x + " in " + where());
+    note(label + " is through in " + where());
+}
+async function inTurn(from: AsyncGenerator<string, string>): Promise<void> {
+    const one = (label: string) => storage.run(label, async () => { const step = await from.next(); note(label + " got " + step.value + " in " + where()); });
+    await one("x"); await one("y"); await Promise.all([one("x"), one("y")]); await one("x");
+}
+const lines: string[] = [];
+async function scene(title: string, run: () => Promise<unknown>): Promise<void> {
+    for (const beside of [false, true]) {
+        log = [];
+        await (beside ? Promise.all([ticker(30), run()]) : run());
+        lines.push(title + (beside ? ", beside jobs" : "") + ": " + log.join(" | ") + " | at the end " + where());
+    }
+}
+for (const [kind, wait] of waits) {
+    await scene(kind + ": a function pulls, no store", () => pulls(source(wait, 2), "f"));
+    await scene(kind + ": a function pulls in a", () => storage.run("a", () => pulls(source(wait, 2), "f")));
+    await scene(kind + ": made in m, pulled in a", () => { const made = storage.run("m", () => source(wait, 2)); return storage.run("a", () => pulls(made, "f")); });
+    await scene(kind + ": begun in m, pulled on in a", async () => { const made = source(wait, 3); await storage.run("m", async () => { note("first " + (await made.next()).value); }); await storage.run("a", () => pulls(made, "f")); });
+    await scene(kind + ": a generator pulls in a, its consumer in b", () => { const middle = storage.run("a", () => pullsAndYields(source(wait, 2), "g")); return storage.run("b", () => collect(middle, "c")); });
+    await scene(kind + ": a generator pulls, pulled by a function in b", () => storage.run("b", () => pulls(pullsAndYields(source(wait, 2), "g"), "f")));
+    await scene(kind + ": relayed", () => storage.run("a", () => collect(relay(source(wait, 2), null), "c")));
+    await scene(kind + ": relayed, pulled() in p", () => storage.run("a", () => collect(relay(source(wait, 2), "p"), "c")));
+    await scene(kind + ": relayed twice", () => storage.run("a", () => collect(relay(relay(source(wait, 2), "p"), "q"), "c")));
+    await scene(kind + ": helpers", () => storage.run("a", () => collect(awaitsHelpers(wait, null), "c")));
+    await scene(kind + ": helpers that enter h", () => storage.run("a", () => collect(awaitsHelpers(wait, "h"), "c")));
+    await scene(kind + ": helpers, no store", () => collect(awaitsHelpers(wait, null), "c"));
+    await scene(kind + ": a store entered in the middle", () => storage.run("a", () => collect(entersAStore(wait), "c")));
+    await scene(kind + ": two consumers in turn", () => inTurn(source(wait, 6)));
+}
+console.log(lines.join("\n"));
+//// async-many-live-locals.ts
+// An async function with many live local variables awaits other async functions on some paths and not on others.
+declare const console: { log(...v: unknown[]): void };
+async function g(a: number): Promise<number> { return a * 2; }
+async function wide(a: number, flag: boolean): Promise<number> {
+    const v0 = a * 2 + 0;
+    const v1 = a * 3 + 1;
+    const v2 = a * 4 + 2;
+    const v3 = a * 5 + 3;
+    const v4 = a * 6 + 4;
+    const v5 = a * 7 + 5;
+    const v6 = a * 8 + 6;
+    const v7 = a * 9 + 7;
+    const v8 = a * 10 + 8;
+    const v9 = a * 11 + 9;
+    const v10 = a * 12 + 10;
+    const v11 = a * 13 + 11;
+    let t = 0;
+    if (flag) t += await g(0); else t -= await g(1);
+    if (flag) t += await g(2); else t -= await g(3);
+    if (flag) t += await g(4); else t -= await g(5);
+    if (flag) t += await g(6); else t -= await g(7);
+    if (flag) t += await g(8); else t -= await g(9);
+    if (flag) t += await g(10); else t -= await g(11);
+    if (flag) t += await g(12); else t -= await g(13);
+    if (flag) t += await g(14); else t -= await g(15);
+    if (flag) t += await g(16); else t -= await g(17);
+    if (flag) t += await g(18); else t -= await g(19);
+    return t + v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 + v10 + v11;
+}
+async function straight(a: number): Promise<number> {
+    const v0 = a * 2 + 0;
+    const v1 = a * 3 + 1;
+    const v2 = a * 4 + 2;
+    const v3 = a * 5 + 3;
+    const v4 = a * 6 + 4;
+    const v5 = a * 7 + 5;
+    const v6 = a * 8 + 6;
+    const v7 = a * 9 + 7;
+    const v8 = a * 10 + 8;
+    const v9 = a * 11 + 9;
+    const v10 = a * 12 + 10;
+    const v11 = a * 13 + 11;
+    let t = 0;
+    t += await g(0);
+    t += await g(1);
+    t += await g(2);
+    t += await g(3);
+    t += await g(4);
+    t += await g(5);
+    t += await g(6);
+    t += await g(7);
+    t += await g(8);
+    t += await g(9);
+    return t + v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 + v10 + v11;
+}
+async function looped(a: number, n: number): Promise<number> {
+    const v0 = a * 2 + 0;
+    const v1 = a * 3 + 1;
+    const v2 = a * 4 + 2;
+    const v3 = a * 5 + 3;
+    const v4 = a * 6 + 4;
+    const v5 = a * 7 + 5;
+    const v6 = a * 8 + 6;
+    const v7 = a * 9 + 7;
+    const v8 = a * 10 + 8;
+    const v9 = a * 11 + 9;
+    const v10 = a * 12 + 10;
+    const v11 = a * 13 + 11;
+    let t = 0;
+    for (let i = 0; i < n; i++) { if (i & 1) t += await g(i); else t -= await g(i + 1); try { t += await g(t); } catch (e) { t = -1; } }
+    return t + v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 + v10 + v11;
+}
+async function changing(a: number, flag: boolean): Promise<number> {
+    let x = a, y = a + 1, z = a + 2;
+    if (flag) { x += await g(0); } else { y += await g(1); }
+    if (x > y) z = x - y;
+    if (flag) { x += await g(1); } else { y += await g(2); }
+    if (x > y) z = x - y;
+    if (flag) { x += await g(2); } else { y += await g(3); }
+    if (x > y) z = x - y;
+    if (flag) { x += await g(3); } else { y += await g(4); }
+    if (x > y) z = x - y;
+    return x * 100 + y * 10 + z;
+}
+function* gen(a: number, flag: boolean): Generator<number> {
+    const v0 = a * 2 + 0;
+    const v1 = a * 3 + 1;
+    const v2 = a * 4 + 2;
+    const v3 = a * 5 + 3;
+    const v4 = a * 6 + 4;
+    const v5 = a * 7 + 5;
+    if (flag) yield 0; else yield 0;
+    if (flag) yield 1; else yield -1;
+    if (flag) yield 2; else yield -2;
+    if (flag) yield 3; else yield -3;
+    if (flag) yield 4; else yield -4;
+    yield v0 + v1 + v2 + v3 + v4 + v5;
+}
+(globalThis as any).kept = [g, wide, straight, looped, changing, gen];
+Promise.all([wide(1, true), wide(2, false), straight(3), looped(4, 5), looped(1, 0), changing(1, true), changing(5, false)]).then(r => console.log(r.join(), [...gen(1, true)].join(), [...gen(2, false)].join()));
+//// async-result-class-thenable.ts
+// An async function that returns an object whose class has a `then` method adopts it. A typed object without one, in the same program, is still handed over as a value.
+const log: string[] = []
+const say = (s: string) => { log.push(s) }
+
+////= lines-26	Point	x
+class HasThen {
+  then(resolve: (v: string) => void) { say("HasThen.then"); resolve("adopted from class") }
+}
+
+function describe(value: unknown): string {
+  if (value instanceof Point) return "Point " + value.x
+  if (value instanceof HasThen) return "HasThen was not adopted"
+  return typeof value + " " + String(value)
+}
+
+async function returnPoint(): Promise<Point> { return new Point(2) }
+async function returnHasThen(): Promise<string> { return new HasThen() as any }
+async function pointAfterAwait(): Promise<Point> { await null; return new Point(2) }
+async function hasThenAfterAwait(): Promise<string> { await null; return new HasThen() as any }
+
+const cases: [string, () => Promise<unknown>][] = [
+  ["point", returnPoint],
+  ["has then", returnHasThen],
+  ["point after await", pointAfterAwait],
+  ["has then after await", hasThenAfterAwait],
+]
+
+function attach(name: string, promise: Promise<unknown>) {
+  promise.then(v => say(name + " fulfilled: " + describe(v)), e => say(name + " rejected: " + describe(e)))
+}
+
+async function awaitedInLoop(): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    say("loop " + i + " " + describe(await returnPoint()))
+    say("loop " + i + " " + describe(await returnHasThen()))
+    say("loop " + i + " " + describe(await pointAfterAwait()))
+    say("loop " + i + " " + describe(await hasThenAfterAwait()))
+  }
+}
+
+say("start")
+Promise.resolve().then(() => say("tick 1")).then(() => say("tick 2")).then(() => say("tick 3")).then(() => say("tick 4")).then(() => say("tick 5"))
+for (const [name, run] of cases) attach(name, run())
+for (const [name, run] of cases) {
+  const promise = run()
+  attach("first reaction, " + name, promise)
+  attach("second reaction, " + name, promise)
+}
+awaitedInLoop().then(() => say("loop done"))
+say("end of script")
+setTimeout(() => console.log(log.join("\n")), 0)
+//// async-result-resolution.ts
+// How an async function settles its promise for each kind of result, and the order of every callback. No class here has a method named `then`: async-result-class-thenable.ts has one.
+const log: string[] = []
+const say = (s: string) => { log.push(s) }
+
+////= lines-26	Point	x
+////= lines-26	Size	width
+
+function pointWithThen(x: number): Point {
+  const p = new Point(x)
+  ;(p as any).then = (resolve: (v: string) => void) => { say("extra then"); resolve("adopted from extra property") }
+  return p
+}
+function throwingThenable(): any {
+  return { then() { say("throwing then"); throw new Error("thenable threw") } }
+}
+function describe(value: unknown): string {
+  if (value instanceof Point) return "Point " + value.x
+  if (value instanceof Size) return "Size " + value.width
+  if (value instanceof Error) return "Error " + value.message
+  return typeof value + " " + String(value)
+}
+
+async function returnNumber(): Promise<number> { return 1 }
+async function returnString(): Promise<string> { return "text" }
+async function returnUndefined(): Promise<undefined> { return undefined }
+async function returnPoint(): Promise<Point> { return new Point(2) }
+async function returnPointWithThen(): Promise<Point | string> { return pointWithThen(3) }
+async function returnSize(): Promise<Size> { return new Size(5) }
+async function returnPromise(): Promise<number> { return Promise.resolve(4) }
+async function returnThrowingThenable(): Promise<number> { return throwingThenable() }
+async function throwError(): Promise<number> { throw new Error("thrown") }
+
+async function numberAfterAwait(): Promise<number> { await null; return 1 }
+async function stringAfterAwait(): Promise<string> { await null; return "text" }
+async function undefinedAfterAwait(): Promise<undefined> { await null; return undefined }
+async function pointAfterAwait(): Promise<Point> { await null; return new Point(2) }
+async function pointWithThenAfterAwait(): Promise<Point | string> { await null; return pointWithThen(3) }
+async function sizeAfterAwait(): Promise<Size> { await null; return new Size(5) }
+async function promiseAfterAwait(): Promise<number> { await null; return Promise.resolve(4) }
+async function throwingThenableAfterAwait(): Promise<number> { await null; return throwingThenable() }
+async function throwErrorAfterAwait(): Promise<number> { await null; throw new Error("thrown") }
+
+const direct: [string, () => Promise<unknown>][] = [
+  ["number", returnNumber],
+  ["string", returnString],
+  ["undefined", returnUndefined],
+  ["point", returnPoint],
+  ["point with then", returnPointWithThen],
+  ["size", returnSize],
+  ["promise", returnPromise],
+  ["throwing thenable", returnThrowingThenable],
+  ["throw", throwError],
+]
+const afterAwait: [string, () => Promise<unknown>][] = [
+  ["number after await", numberAfterAwait],
+  ["string after await", stringAfterAwait],
+  ["undefined after await", undefinedAfterAwait],
+  ["point after await", pointAfterAwait],
+  ["point with then after await", pointWithThenAfterAwait],
+  ["size after await", sizeAfterAwait],
+  ["promise after await", promiseAfterAwait],
+  ["throwing thenable after await", throwingThenableAfterAwait],
+  ["throw after await", throwErrorAfterAwait],
+]
+
+function attach(name: string, promise: Promise<unknown>) {
+  promise.then(v => say(name + " fulfilled: " + describe(v)), e => say(name + " rejected: " + describe(e)))
+}
+
+async function awaitedInLoop(): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    say("loop " + i + " number " + (await returnNumber()))
+    say("loop " + i + " string " + (await returnString()))
+    say("loop " + i + " undefined " + (await returnUndefined()))
+    say("loop " + i + " " + describe(await returnPoint()))
+    say("loop " + i + " " + describe(await returnPointWithThen()))
+    say("loop " + i + " " + describe(await returnSize()))
+    say("loop " + i + " promise " + (await returnPromise()))
+    say("loop " + i + " number after await " + (await numberAfterAwait()))
+    say("loop " + i + " " + describe(await pointAfterAwait()))
+    say("loop " + i + " " + describe(await pointWithThenAfterAwait()))
+    say("loop " + i + " " + describe(await sizeAfterAwait()))
+    try { await returnThrowingThenable() } catch (e) { say("loop " + i + " caught " + describe(e)) }
+    try { await throwingThenableAfterAwait() } catch (e) { say("loop " + i + " caught " + describe(e)) }
+    try { await throwError() } catch (e) { say("loop " + i + " caught " + describe(e)) }
+    try { await throwErrorAfterAwait() } catch (e) { say("loop " + i + " caught " + describe(e)) }
+  }
+}
+
+say("start")
+Promise.resolve().then(() => say("tick 1")).then(() => say("tick 2")).then(() => say("tick 3")).then(() => say("tick 4")).then(() => say("tick 5"))
+for (const [name, run] of direct) attach(name, run())
+for (const [name, run] of afterAwait) attach(name, run())
+for (const [name, run] of afterAwait) {
+  const promise = run()
+  attach("first reaction, " + name, promise)
+  attach("second reaction, " + name, promise)
+}
+awaitedInLoop().then(() => say("loop done"))
+say("end of script")
+setTimeout(() => console.log(log.join("\n")), 0)
+//// async-results-errors-order.ts
+// Async functions: results, errors, and the exact order in which everything runs.
+const log: string[] = []
+const say = (s: string) => { log.push(s) }
+async function plain(n: number): Promise<number> { say("plain " + n); return n * 2 }
+async function one(n: number): Promise<number> { say("one in"); const a = await plain(n); say("one mid " + a); const b = await 5; say("one out"); return a + b }
+async function failing(): Promise<number> { say("failing in"); await null; say("failing throws"); throw new Error("bad") }
+async function catching(): Promise<string> {
+  try { await failing(); return "no" } catch (e) { say("caught " + (e as Error).message); return "yes" } finally { say("finally") }
+}
+async function loop(k: number): Promise<number> { let t = 0; for (let i = 0; i < k; i++) { t += await plain(i); if (i === 1) continue } return t }
+async function operands(): Promise<string> { const f = (a: number, b: number, c: number) => a + "," + b + "," + c; let x = 1; return f(x++, await plain(x), x++) + ";" + (x + (await plain(10)) + x) }
+async function thenable(): Promise<number> { return await ({ then(resolve: (v: number) => void) { say("then called"); resolve(7) } } as any) }
+async function rejected(): Promise<string> { try { await Promise.reject(new Error("r")) } catch (e) { return (e as Error).message } return "none" }
+class Service {
+  base = 100
+  async get(n: number): Promise<number> { await null; return this.base + n }
+  all = async (list: number[]): Promise<number[]> => { const out: number[] = []; for (const n of list) out.push(await this.get(n)); return out }
+}
+say("start")
+one(1).then(v => say("one = " + v))
+Promise.resolve().then(() => say("tick 1")).then(() => say("tick 2")).then(() => say("tick 3")).then(() => say("tick 4"))
+catching().then(v => say("catching = " + v))
+loop(3).then(v => say("loop = " + v))
+operands().then(v => say("operands = " + v))
+thenable().then(v => say("thenable = " + v))
+rejected().then(v => say("rejected = " + v))
+new Service().all([1, 2]).then(v => say("all = " + v.join()))
+failing().catch(e => say("outer " + e.message))
+const p = plain(9)
+say("is promise " + (p instanceof Promise) + " " + Object.prototype.toString.call(p))
+Promise.all([plain(1), one(2), 3]).then(v => say("Promise.all " + v.join()))
+say("end of script")
+setTimeout(() => console.log(log.join("\n")), 0)
+//// async-return-value-escapes.ts
+// The value that an async function returns escapes through its promise, so what callers await must be treated as escaped.
+interface Box { value: number }
+async function make(n: number): Promise<Box> { return { value: n } }
+async function use(n: number): Promise<number> {
+  const box = await make(n)
+  return box.value
+}
+console.log(await use(1))
+const kept: Box = await make(2)
+;(globalThis as any).leak = kept
+;(globalThis as any).leak.value = 40
+console.log(kept.value + (await use(2)))
+//// async-stack-trace-skips-generators.ts
+// A suspended sync generator with a number, a pending promise and a function in its frame is not an async frame: stack traces of the async functions awaiting the promise never include it, and its own stack traces never include them.
+const settled = Promise.resolve();
+Error.stackTraceLimit = 12;
+////= names
+
+type Errors = Generator<Error, Promise<number>, void>;
+const labels: ((count: number) => string)[] = [count => "even " + count, count => "odd " + count];
+const promises: Promise<number>[] = [];
+const resolvers: ((value: number) => void)[] = [];
+
+function* createErrors(): Errors {
+  let count = promises.length;
+  const pending = new Promise<number>(resolve => void resolvers.push(resolve));
+  const label = labels[count % labels.length];
+  promises.push(pending);
+  const end = count + 3;
+  while (count < end) yield new Error(label(count++));
+  return pending;
+}
+
+async function throwsOnceResolved(pending: Promise<number>): Promise<never> {
+  throw new Error("resolved with " + (await pending));
+}
+async function middle(pending: Promise<number>): Promise<number> {
+  return await throwsOnceResolved(pending);
+}
+////= lines-42	outer(pending: Promise<number>	middle(pending
+
+function resumeOnce(errors: Errors): Error[] {
+  return [errors.next().value as Error];
+}
+function resumeInForOf(errors: Errors): Error[] {
+  const result: Error[] = [];
+  for (const error of errors) result.push(error);
+  return result;
+}
+function resumeInSpread(errors: Errors): Error[] {
+  return [...errors];
+}
+function resumeInArrayFrom(errors: Errors): Error[] {
+  return Array.from(errors);
+}
+function resumeInJob(errors: Errors): Promise<Error[]> {
+  return settled.then(() => resumeOnce(errors));
+}
+async function resumeAfterAwait(errors: Errors): Promise<Error[]> {
+  await settled;
+  return resumeOnce(errors);
+}
+
+for (const resume of [resumeOnce, resumeInForOf, resumeInSpread, resumeInArrayFrom, resumeInJob, resumeAfterAwait]) {
+  const errors = createErrors();
+  console.log(resume.name + ", before the promise is awaited: " + names(errors.next().value));
+  const index = promises.length - 1;
+  const caught = outer(promises[index]);
+  for (const error of await resume(errors)) console.log(resume.name + ", while the promise is awaited: " + error.message + ": " + names(error));
+  resolvers[index](index);
+  const thrown = await caught;
+  console.log(resume.name + ", thrown after the await: " + thrown.message + ": " + names(thrown));
+  const last = errors.next();
+  console.log(resume.name + ", resumed again: " + (last.done ? "done" : names(last.value)));
+}
+//// async-stack-traces.ts
+// The stack of an error made after an await names the async functions that wait for the one that made it, up to Error.stackTraceLimit.
+const collect: (sync: boolean) => void = (globalThis as any).gc ?? (globalThis as any).Bun?.gc ?? (() => undefined);
+const tick = Promise.resolve();
+Error.stackTraceLimit = 10;
+////= names
+
+async function leaf(): Promise<Error> {
+  await tick;
+  return new Error("leaf");
+}
+async function chain(depth: number): Promise<Error> {
+  if (depth) return await chain(depth - 1);
+  return await leaf();
+}
+async function first(): Promise<Error> {
+  const error = await second();
+  return error;
+}
+async function second(): Promise<Error> {
+  await tick;
+  const error = await third(1);
+  await tick;
+  return error;
+}
+async function third(times: number): Promise<Error> {
+  for (let i = 0; i < times; i++) await tick;
+  return new RangeError("third");
+}
+////= Service	fetch	tick
+async function throughAll(): Promise<Error> {
+  const [error] = await Promise.all([leaf(), tick]);
+  return error;
+}
+async function throughRace(): Promise<Error> {
+  return await Promise.race([leaf()]);
+}
+async function throughAllSettled(): Promise<Error> {
+  const [result] = await Promise.allSettled([leaf()]);
+  return result.status === "fulfilled" ? result.value : new Error("rejected");
+}
+async function throughAny(): Promise<Error> {
+  return await Promise.any([leaf()]);
+}
+async function notAwaited(): Promise<Error> {
+  const pending = leaf();
+  await tick;
+  return await pending;
+}
+async function thrower(depth: number): Promise<never> {
+  if (depth) return await thrower(depth - 1);
+  await tick;
+  throw new Error("thrown");
+}
+async function catches(): Promise<Error> {
+  try {
+    return await thrower(2);
+  } catch (error) {
+    return error as Error;
+  }
+}
+async function inFinally(): Promise<Error> {
+  try {
+    await tick;
+  } finally {
+    await tick;
+    return await leaf();
+  }
+}
+async function* generated(): AsyncGenerator<Error> {
+  await tick;
+  yield await leaf();
+  yield new Error("in the generator");
+}
+async function overGenerator(): Promise<Error[]> {
+  const errors: Error[] = [];
+  for await (const error of generated()) errors.push(error);
+  return errors;
+}
+async function captured(): Promise<{ stack?: string }> {
+  await tick;
+  const holder: { stack?: string } = {};
+  Error.captureStackTrace(holder);
+  return holder;
+}
+async function capturedBelow(): Promise<{ stack?: string }> {
+  return await captured();
+}
+
+async function main(): Promise<void> {
+  for (const depth of [0, 1, 3, 8, 9, 10, 11, 30]) console.log("chain " + depth + ": " + names(await chain(depth)));
+  console.log("first: " + names(await first()));
+  console.log("methods: " + names(await new Service().load()));
+  console.log("all: " + names(await throughAll()));
+  console.log("race: " + names(await throughRace()));
+  console.log("allSettled: " + names(await throughAllSettled()));
+  console.log("any: " + names(await throughAny()));
+  console.log("not awaited at once: " + names(await notAwaited()));
+  console.log("caught: " + names(await catches()));
+  console.log("finally: " + names(await inFinally()));
+  for (const error of await overGenerator()) console.log("generator: " + names(error));
+  console.log("captureStackTrace: " + names((await capturedBelow()) as Error));
+  for (const limit of [0, 1, 2, 5, 20, 100]) {
+    Error.stackTraceLimit = limit;
+    console.log("limit " + limit + ": " + names(await chain(6)));
+  }
+  Error.stackTraceLimit = 10;
+  const kept: Error[] = [];
+  for (let i = 0; i < 300; i++) kept.push(await chain(i % 5));
+  collect(true);
+  console.log("read later: " + names(kept[4]) + " || " + names(kept[295]));
+}
+main();
+//// await-after-a-nested-drain.ts
+// A coroutine that a job has entered while nothing else is queued need not wait at an await of a settled value. Here such a coroutine calls into the host, which drains the job queue before it
+// returns: other coroutines are entered and left below it, some end and resume their waiters, some drain the queue themselves. Whatever the coroutine does next (an await of a number, of a promise
+// or of a call, a step of a stream, a yield, a return to its waiter, a throw) comes in the order of plain Bun, with nothing queued behind the drain and with a chain of jobs queued behind it.
+declare const drainMicrotasks: undefined | (() => void);
+const drain: () => void = typeof drainMicrotasks === "function" ? drainMicrotasks : require("bun:jsc").drainMicrotasks;
+const settled = Promise.resolve();
+const fulfilled = Promise.resolve("fulfilled");
+const lines: string[] = [];
+let log: string[] = [];
+
+////= afterTimer
+// A chain of jobs of a given length: a turn that is lost or added beside it shows in the order of the log.
+////= beat	log	settled
+async function steps(label: string, count: number): Promise<void> {
+  for (let i = 1; i <= count; i++) {
+    await null;
+    log.push(label + " " + i);
+  }
+}
+async function chain(depth: number): Promise<number> {
+  await settled;
+  const below = depth ? await chain(depth - 1) : 0;
+  log.push("chain " + depth);
+  return below + 1;
+}
+async function* counts(label: string, count: number): AsyncGenerator<number, void, unknown> {
+  for (let i = 1; i <= count; i++) {
+    log.push(label + " yields " + i);
+    yield i;
+  }
+}
+async function consumes(label: string, count: number): Promise<void> {
+  await null;
+  for await (const value of counts(label, count)) log.push(label + " got " + value);
+}
+async function drainsToo(): Promise<void> {
+  await null;
+  log.push("inner begins");
+  void steps("innermost", 2);
+  drain();
+  log.push("inner drained");
+  log.push("inner got " + (await 0));
+  log.push("inner got " + (await quick(1)));
+}
+////= lines-9	quick	number	return	n	1
+////= lines-19	once	1
+
+let open: (value: string) => void = () => {};
+let gate: Promise<string> = fulfilled;
+const works = ["nothing", "then handlers", "async functions", "a chain", "a stream", "a function that drains", "what opens the gate"] as const;
+type Work = (typeof works)[number];
+function queue(work: Work): void {
+  gate = new Promise<string>(resolve => {
+    open = resolve;
+  });
+  log.push("begins");
+  switch (work) {
+    case "nothing":
+      break;
+    case "then handlers":
+      beat("then", 3);
+      break;
+    case "async functions":
+      void steps("a", 2);
+      void steps("b", 3);
+      break;
+    case "a chain":
+      void chain(3).then(length => log.push("chain gave " + length));
+      break;
+    case "a stream":
+      void consumes("stream", 2);
+      break;
+    case "a function that drains":
+      void drainsToo();
+      beat("then", 2);
+      break;
+    case "what opens the gate":
+      void steps("opener", 2).then(() => open("opened in the drain"));
+      break;
+  }
+}
+function drained(queuesBehind: boolean): void {
+  log.push("drained");
+  if (queuesBehind) beat("behind", 5);
+}
+
+type Scene = (work: Work, queuesBehind: boolean) => Promise<unknown>;
+
+////= lines-14	awaitsNumbers	1	2
+////= lines-14	awaitsAFulfilledPromise	fulfilled	fulfilled
+async function awaitsTheGate(work: Work, queuesBehind: boolean): Promise<void> {
+  await afterTimer();
+  queue(work);
+  drain();
+  drained(queuesBehind);
+  if (work !== "what opens the gate") void steps("late opener", 3).then(() => open("opened behind the drain"));
+  log.push("got " + (await gate));
+  log.push("got " + (await 2));
+}
+async function awaitsCalls(work: Work, queuesBehind: boolean): Promise<void> {
+  await afterTimer();
+  queue(work);
+  drain();
+  drained(queuesBehind);
+  log.push("got " + (await quick(1)));
+  log.push("got " + (await once(2)));
+  log.push("got " + (await quick(3)));
+}
+////= lines-45	stepsAStream	void	for await (const value of counts("own stream", 2)) log.push("got " + value)
+////= lines-45	loopsOverAnArray	void	for await (const value of [1, fulfilled]) log.push("got " + value)
+async function drainsTwice(work: Work, queuesBehind: boolean): Promise<void> {
+  await afterTimer();
+  queue(work);
+  drain();
+  log.push("drained once");
+  void steps("between", 2);
+  drain();
+  drained(queuesBehind);
+  log.push("got " + (await 1));
+}
+async function drainsBetweenAwaits(work: Work, queuesBehind: boolean): Promise<void> {
+  await afterTimer();
+  log.push("got " + (await 1));
+  queue(work);
+  drain();
+  drained(queuesBehind);
+  log.push("got " + (await 2));
+  void steps("again", 1);
+  drain();
+  log.push("drained again");
+  log.push("got " + (await 3));
+}
+function drainsBelow(work: Work, queuesBehind: boolean, depth: number): void {
+  if (depth) return drainsBelow(work, queuesBehind, depth - 1);
+  queue(work);
+  drain();
+  drained(queuesBehind);
+}
+async function drainsInACallee(work: Work, queuesBehind: boolean): Promise<void> {
+  await afterTimer();
+  drainsBelow(work, queuesBehind, 3);
+  log.push("got " + (await 1));
+  log.push("got " + (await quick(2)));
+}
+async function drainsInACallback(work: Work, queuesBehind: boolean): Promise<void> {
+  await afterTimer();
+  [0].forEach(() => {
+    queue(work);
+    drain();
+    drained(queuesBehind);
+  });
+  log.push("got " + (await 1));
+  log.push("got " + (await fulfilled));
+}
+function* drainsInside(work: Work, queuesBehind: boolean): Generator<number, void, unknown> {
+  yield 1;
+  queue(work);
+  drain();
+  drained(queuesBehind);
+  yield 2;
+}
+async function stepsAGeneratorThatDrains(work: Work, queuesBehind: boolean): Promise<void> {
+  await afterTimer();
+  for (const value of drainsInside(work, queuesBehind)) log.push("stepped to " + value);
+  log.push("got " + (await 1));
+  log.push("got " + (await fulfilled));
+}
+
+////= lines-45	drainsAndReturns	string	return "returned"
+////= lines-45	drainsAndThrows	string	throw new RangeError("thrown")
+async function waitsForACall(work: Work, queuesBehind: boolean): Promise<void> {
+  log.push("the waiter got " + (await drainsAndReturns(work, queuesBehind)));
+  log.push("the waiter got " + (await 1));
+}
+async function waitsForAVariable(work: Work, queuesBehind: boolean): Promise<void> {
+  const pending = drainsAndReturns(work, queuesBehind);
+  log.push("the waiter got " + (await pending));
+  log.push("the waiter got " + (await 1));
+}
+async function waitsWithAnother(work: Work, queuesBehind: boolean): Promise<void> {
+  const pending = drainsAndReturns(work, queuesBehind);
+  void pending.then(value => log.push("a then got " + value));
+  log.push("the waiter got " + (await pending));
+}
+async function catchesFromACall(work: Work, queuesBehind: boolean): Promise<void> {
+  try {
+    await drainsAndThrows(work, queuesBehind);
+  } catch (error) {
+    log.push("the waiter caught " + (error as Error).message);
+  }
+  log.push("the waiter got " + (await 1));
+}
+async function catchesFromAVariable(work: Work, queuesBehind: boolean): Promise<void> {
+  const pending = drainsAndThrows(work, queuesBehind);
+  try {
+    await pending;
+  } catch (error) {
+    log.push("the waiter caught " + (error as Error).message);
+  }
+}
+
+async function* drainsBetweenYields(work: Work, queuesBehind: boolean): AsyncGenerator<string, void, unknown> {
+  yield "first";
+  queue(work);
+  drain();
+  drained(queuesBehind);
+  yield "second";
+  log.push("the body got " + (await 1));
+  yield "third";
+}
+async function consumesWhatDrains(work: Work, queuesBehind: boolean): Promise<void> {
+  await afterTimer();
+  for await (const value of drainsBetweenYields(work, queuesBehind)) log.push("the consumer got " + value);
+}
+async function asksWhatDrains(work: Work, queuesBehind: boolean): Promise<void> {
+  await afterTimer();
+  const stream = drainsBetweenYields(work, queuesBehind);
+  for (let result = await stream.next(); !result.done; result = await stream.next()) log.push("next() gave " + result.value);
+}
+async function drainsInTheLoop(work: Work, queuesBehind: boolean): Promise<void> {
+  await afterTimer();
+  for await (const value of counts("own stream", 2)) {
+    log.push("got " + value);
+    if (value === 1) {
+      queue(work);
+      drain();
+      drained(queuesBehind);
+    }
+  }
+}
+async function* relaysAndDrains(work: Work, queuesBehind: boolean): AsyncGenerator<number, void, unknown> {
+  for await (const value of counts("inner stream", 2)) {
+    if (value === 2) {
+      queue(work);
+      drain();
+      drained(queuesBehind);
+    }
+    yield value;
+  }
+}
+async function consumesARelay(work: Work, queuesBehind: boolean): Promise<void> {
+  await afterTimer();
+  for await (const value of relaysAndDrains(work, queuesBehind)) log.push("the consumer got " + value);
+}
+
+const scenes: [label: string, scene: Scene][] = [
+  ["awaits numbers", awaitsNumbers],
+  ["awaits a fulfilled promise", awaitsAFulfilledPromise],
+  ["awaits a promise that is fulfilled in the drain or behind it", awaitsTheGate],
+  ["awaits calls", awaitsCalls],
+  ["steps a stream", stepsAStream],
+  ["loops over an array with for await", loopsOverAnArray],
+  ["drains twice", drainsTwice],
+  ["drains between awaits", drainsBetweenAwaits],
+  ["drains in a callee", drainsInACallee],
+  ["drains in a callback of a built-in", drainsInACallback],
+  ["steps a generator that drains", stepsAGeneratorThatDrains],
+  ["returns to a function that awaited the call", waitsForACall],
+  ["returns to a function that awaited a variable", waitsForAVariable],
+  ["returns to a function and a then handler", waitsWithAnother],
+  ["throws to a function that awaited the call", catchesFromACall],
+  ["throws to a function that awaited a variable", catchesFromAVariable],
+  ["the body of a stream drains between yields", consumesWhatDrains],
+  ["the same, asked by next()", asksWhatDrains],
+  ["the consumer of a stream drains in its loop", drainsInTheLoop],
+  ["a stream between two others drains", consumesARelay],
+];
+for (const [label, scene] of scenes) {
+  lines.push("== " + label);
+  for (const work of works) {
+    for (const queuesBehind of [false, true]) {
+      log = [];
+      await scene(work, queuesBehind);
+      log.push("over");
+      await afterTimer();
+      lines.push(work + (queuesBehind ? ", jobs behind: " : ": ") + log.join(" | "));
+    }
+  }
+}
+
+async function drainsOften(rounds: number): Promise<number> {
+  await afterTimer();
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) {
+    const pending = once(i);
+    drain();
+    sum += (await pending) + (await i) + (await quick(i));
+  }
+  return sum;
+}
+log = [];
+lines.push("== a thousand drains", String(await drainsOften(1000)));
+console.log(lines.join("\n"));
+
+export {};

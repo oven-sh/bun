@@ -1028,7 +1028,3 @@ pub(crate) fn reject_unknown_flags(cmd: Tag, unknown: &[clap::UnknownLongFlag<'s
         exit_with_message(&message);
     }
 }
-
-#[cfg(test)]
-#[path = "compile_options/tests.rs"]
-mod tests;

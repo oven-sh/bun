@@ -1,6 +1,7 @@
-use super::answers::{SchemaConstraint, SchemaDefault, SchemaFormat};
+use super::answers::{GaveUp, MemberName, SchemaConstraint, SchemaDefault, SchemaFormat};
 use super::program_symbols::SchemaAlias;
 use super::queries::Queries;
+use super::type_shape::ShapeKind;
 use crate::atom::Atom;
 use crate::types::{EnumValue, Origin, TypeData, TypeId};
 
@@ -12,6 +13,26 @@ const SCHEMA_FORMATS: [(&[u8], SchemaFormat); 7] = [
     (b"date", SchemaFormat::Date),
     (b"date-time", SchemaFormat::DateTime),
     (b"url", SchemaFormat::Url),
+];
+
+/// The key of the one member that each alias of `Schema` declares.
+const SCHEMA_KEYS: [&[u8]; 16] = [
+    b"bun.above",
+    b"bun.below",
+    b"bun.default",
+    b"bun.format",
+    b"bun.int",
+    b"bun.int32",
+    b"bun.max",
+    b"bun.maxItems",
+    b"bun.maxLength",
+    b"bun.message",
+    b"bun.min",
+    b"bun.minItems",
+    b"bun.minLength",
+    b"bun.multipleOf",
+    b"bun.pattern",
+    b"bun.strict",
 ];
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -66,6 +87,23 @@ impl SchemaLiteral {
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
+    /// An alias of `Schema` is a rule only as it is written. Behind a mapped type, or spelled out by hand, its member is a
+    /// member like any other, and the rule would go unnoticed.
+    pub fn is_schema_key(&self, name: Atom) -> bool {
+        SCHEMA_KEYS.contains(&self.atom_bytes(name))
+    }
+
+    pub(super) fn has_schema_key(&mut self, ty: TypeId) -> Result<bool, GaveUp> {
+        if !matches!(self.type_shape(ty)?.kind, ShapeKind::Object) {
+            return Ok(false);
+        }
+        let members = self.checked_members(ty)?;
+        Ok(members.iter().any(|member| match member.name {
+            MemberName::String(name) => self.is_schema_key(name),
+            MemberName::Symbol(_) | MemberName::Private(_) => false,
+        }))
+    }
+
     pub(super) fn schema_part(&mut self, part: TypeId) -> SchemaPart {
         let TypeData::Anon {
             origin: Origin::TypeLiteral(file, node),

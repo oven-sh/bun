@@ -1,5 +1,8 @@
 //! Resolves declarations and type nodes to types.
 
+use super::aot::enum_constants::{
+    ALL_RUN_TIME_INPUTS, READS_OTHER_FILE_OR_VARIABLE, run_time_inputs_of_operator,
+};
 use super::errors_enums_names::{Location, is_ambient_enum, is_declared_before_use};
 use super::errors_names_and_exports::fully_qualified_name_of;
 use super::*;
@@ -413,6 +416,9 @@ pub(super) struct Evaluated {
     pub(super) is_syntactically_string: bool,
     pub(super) resolved_other_files: bool,
     pub(super) has_external_references: bool,
+    /// What of the value a build leaves to the run time: the bits of `aot::enum_constants`. Found
+    /// for the members of enums.
+    pub(super) run_time_inputs: u8,
 }
 
 crate::types::follow_struct!(Evaluated {
@@ -420,6 +426,7 @@ crate::types::follow_struct!(Evaluated {
     is_syntactically_string,
     resolved_other_files,
     has_external_references,
+    run_time_inputs,
 });
 
 impl Evaluated {
@@ -469,6 +476,8 @@ enum Evaluating {
     },
     /// A constant's initializer is being evaluated, for a use of the constant at this location.
     Initializer(Location),
+    /// A build leaves the entity name that is being evaluated to the run time.
+    LeftToRunTime,
 }
 
 /// The result of `evaluateEntity`.
@@ -488,6 +497,10 @@ impl<'p, 's> Checker<'p, 's> {
             self.bailed_out();
             return Evaluated::default();
         }
+        let is_for_build = match location {
+            Location::Member(..) => self.files.is_compile_build(),
+            Location::Variable(..) | Location::Expr(..) => false,
+        };
         let (mut file, mut e, mut location) = (file, e, location);
         let mut begun: SmallVec<[Evaluating; 4]> = SmallVec::new();
         'operand: loop {
@@ -550,6 +563,9 @@ impl<'p, 's> Checker<'p, 's> {
                     Evaluated::default()
                 }
                 ExprKind::Ident(_) | ExprKind::Index { .. } | ExprKind::Dot { .. } => {
+                    if is_for_build && !self.names_one_declaration(file, e) {
+                        begun.push(Evaluating::LeftToRunTime);
+                    }
                     match self.evaluate_entity(file, e, location) {
                         Entity::Result(result) => result,
                         Entity::Constant(of, d) => {
@@ -594,6 +610,7 @@ impl<'p, 's> Checker<'p, 's> {
                         text.extend_from_slice(self.atoms().bytes(literal));
                         template_result.resolved_other_files |= result.resolved_other_files;
                         template_result.has_external_references |= result.has_external_references;
+                        template_result.run_time_inputs |= result.run_time_inputs;
                         if index < exprs.len() {
                             e = hir.id_at(exprs, index);
                             begun.push(Evaluating::TemplateSpan {
@@ -608,13 +625,19 @@ impl<'p, 's> Checker<'p, 's> {
                         result = template_result;
                     }
                     Evaluating::Initializer(used_at) => {
-                        self.constants_in_evaluation.pop();
+                        let constant = self.constants_in_evaluation.pop();
+                        if is_for_build
+                            && !self.is_const_inlined_by_transpiler(constant, used_at, result)
+                        {
+                            result.run_time_inputs |= READS_OTHER_FILE_OR_VARIABLE;
+                        }
                         result = if used_at.file() != file {
                             Evaluated {
                                 value: result.value,
                                 is_syntactically_string: false,
                                 resolved_other_files: true,
                                 has_external_references: true,
+                                run_time_inputs: result.run_time_inputs,
                             }
                         } else {
                             Evaluated {
@@ -624,6 +647,7 @@ impl<'p, 's> Checker<'p, 's> {
                         };
                         (file, location) = (used_at.file(), used_at);
                     }
+                    Evaluating::LeftToRunTime => result.run_time_inputs = ALL_RUN_TIME_INPUTS,
                 }
             }
         }
@@ -648,6 +672,9 @@ impl<'p, 's> Checker<'p, 's> {
                 && op == Some(BinOp::Add),
             resolved_other_files: l.resolved_other_files || r.resolved_other_files,
             has_external_references: l.has_external_references || r.has_external_references,
+            run_time_inputs: l.run_time_inputs
+                | r.run_time_inputs
+                | run_time_inputs_of_operator(op, l.value, r.value),
         }
     }
 
@@ -721,7 +748,10 @@ impl<'p, 's> Checker<'p, 's> {
         if !is_declared_before_use(self, declared, location) {
             let at = self.span_of_expr(file, e);
             self.error_at(at, 2651, &[]);
-            return Evaluated::number(0.0);
+            return Evaluated {
+                run_time_inputs: ALL_RUN_TIME_INPUTS,
+                ..Evaluated::number(0.0)
+            };
         }
         // `E["x"]` is any export of `E`. `getEnumMemberValue` of what a merged namespace exports
         // panics.
@@ -733,8 +763,12 @@ impl<'p, 's> Checker<'p, 's> {
         let owner = &self.bound(of).enum_member_owner;
         let is_same_enum = matches!(location, Location::Member(file, using)
             if file == of && owner[using.idx()] == owner[member.idx()]);
+        let has_no_own_value =
+            of != location.file() || is_ambient_enum(self.hir(of), owner[member.idx()]);
         Evaluated {
             has_external_references: value.has_external_references || !is_same_enum,
+            run_time_inputs: value.run_time_inputs
+                | (u8::from(has_no_own_value) * READS_OTHER_FILE_OR_VARIABLE),
             ..value
         }
     }
@@ -2672,7 +2706,10 @@ impl<'p, 's> Checker<'p, 's> {
         {
             self.error_at(at, 18056, &[]);
         }
-        Evaluated::number(auto_value)
+        Evaluated {
+            run_time_inputs: previous.map_or(0, |(_, before)| before.run_time_inputs),
+            ..Evaluated::number(auto_value)
+        }
     }
 
     /// `computeConstantEnumMemberValue`

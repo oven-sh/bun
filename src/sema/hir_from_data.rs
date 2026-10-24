@@ -1,6 +1,4 @@
 mod builder;
-#[cfg(all(test, not(miri)))]
-mod tests;
 
 use crate::atom::{Atom, Interner};
 use crate::hir::{ExprId, File};
@@ -29,11 +27,9 @@ pub enum DataModule<'a> {
         loader_type: Option<Atom>,
         member: Option<Atom>,
     },
-    /// Machine code that the build embeds. The module loads it with `process.dlopen`, so the analysis sees the call that starts it.
     NativeAddon {
         path: Atom,
     },
-    /// An SQLite database. The module opens it with `bun:sqlite`, so the build sees which modules of Bun's that takes.
     Database {
         path: Atom,
         is_embedded: bool,

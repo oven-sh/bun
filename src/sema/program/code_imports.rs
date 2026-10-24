@@ -18,7 +18,6 @@ pub(super) fn resolve_code_imports<'s, 'r>(
     let sites = analyzed.analysis.import_sites;
     let mut resolutions = Vec::with_capacity(sites.len());
     let mut targets = Vec::new();
-    let mut targets_by_specifier = FxHashMap::default();
     for site in sites {
         let resolution = resolve_site(context, key, hir, site);
         resolutions.push(resolution);
@@ -28,47 +27,48 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             embed_attribute: embed_attribute(hir, site).map(|value| atoms.bytes(value)),
             increases_depth: !is_relative(constant_prefix(atoms, site.specifier)),
         };
-        let origin_of = |file: CodeFile<'r>| TargetOrigin {
-            increases_depth: origin.increases_depth
+        for file in files_of(resolution) {
+            let increases_depth = origin.increases_depth
                 && (file.host_module.is_some()
-                    || !context.resolver.is_same_package(key.path, file.path)),
-            ..origin
-        };
-        match resolution {
-            SiteResolution::Constant(resolution) => {
-                let Some(file) = file_of(resolution) else {
-                    continue;
-                };
-                let target = add_target(context, &mut targets, origin_of(file), file);
-                if let ImportSpecifier::Constant(specifier) = site.specifier {
-                    let kind = CodeImportKind::from_site(site.kind);
-                    targets_by_specifier
-                        .entry((specifier, kind))
-                        .or_insert(target);
-                }
-            }
-            SiteResolution::Computed(resolution) => {
-                let files = candidates_of(resolution)
-                    .iter()
-                    .filter_map(file_of_candidate);
-                for file in files {
-                    add_target(context, &mut targets, origin_of(file), file);
-                }
-            }
+                    || !context.resolver.is_same_package(key.path, file.path));
+            let origin = TargetOrigin {
+                increases_depth,
+                ..origin
+            };
+            add_target(context, &mut targets, origin, file);
         }
     }
-    LoadedCode {
+    let mut code = LoadedCode {
         analyzed,
         resolutions,
         implied: Vec::new(),
         targets,
-        targets_by_specifier,
+        targets_by_specifier: FxHashMap::default(),
         types_answers: Vec::new(),
         requests: ImportRequests::default(),
-    }
+    };
+    code.index_targets_by_specifier();
+    code
 }
 
 impl<'s, 'r> LoadedCode<'s, 'r> {
+    pub(super) fn index_targets_by_specifier(&mut self) {
+        self.targets_by_specifier.clear();
+        let mut target = 0;
+        let sites = self.analyzed.analysis.import_sites;
+        for (site, &resolution) in sites.iter().zip(&self.resolutions) {
+            if let SiteResolution::Constant(CodeResolution::File(_)) = resolution
+                && let ImportSpecifier::Constant(specifier) = site.specifier
+            {
+                let kind = CodeImportKind::from_site(site.kind);
+                self.targets_by_specifier
+                    .entry((specifier, kind))
+                    .or_insert(target);
+            }
+            target += files_of(resolution).count() as u32;
+        }
+    }
+
     pub(super) fn add_implied(
         &mut self,
         context: &CodeLoadContext<'_, 's, 'r>,
@@ -242,7 +242,6 @@ fn embed_attribute(hir: &hir::File<'_>, site: &ImportSite) -> Option<Atom> {
     hir.import_attribute(attributes, known::embed)
 }
 
-/// `bun run` reads a required file as code when no loader has its extension.
 fn loader_kind(site: &ImportSite) -> CodeImportKind {
     let is_constant = matches!(site.specifier, ImportSpecifier::Constant(_));
     match site.kind {
@@ -307,6 +306,15 @@ fn add_target<'r>(
         has_loader_attribute: type_attribute.is_some(),
     });
     index
+}
+
+pub(super) fn files_of(resolution: SiteResolution<'_>) -> impl Iterator<Item = CodeFile<'_>> {
+    let (file, candidates) = match resolution {
+        SiteResolution::Constant(resolution) => (file_of(resolution), &[][..]),
+        SiteResolution::Computed(resolution) => (None, candidates_of(resolution)),
+    };
+    let files = candidates.iter().filter_map(file_of_candidate);
+    file.into_iter().chain(files)
 }
 
 fn file_of(resolution: CodeResolution<'_>) -> Option<CodeFile<'_>> {

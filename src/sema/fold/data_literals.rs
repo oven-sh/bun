@@ -116,7 +116,6 @@ impl Frame {
 }
 
 enum Visited<'s> {
-    Unknown,
     Value(DataValue<'s>),
     Composite(Composite),
 }
@@ -141,104 +140,98 @@ pub fn data_value_of<'s>(
         atoms,
         arena,
     };
-    reader.read(root)
+    let value = reader.read(root);
+    value.map_or(FoldedData::Unknown, FoldedData::Known)
 }
 
 impl<'s> DataReader<'_, '_, 's> {
-    fn read(&self, root: ExprId) -> FoldedData<'s> {
+    fn read(&self, root: ExprId) -> Option<DataValue<'s>> {
         let mut frames: Vec<Frame> = Vec::new();
         let mut values: Vec<DataValue<'s>> = Vec::new();
         let mut part = root;
         loop {
-            match self.visit(part) {
-                Visited::Unknown => return FoldedData::Unknown,
+            match self.visit(part)? {
                 Visited::Value(value) => values.push(value),
                 Visited::Composite(composite) => frames.push(Frame::new(composite, values.len())),
             }
             part = loop {
                 let Some(frame) = frames.last_mut() else {
-                    return values.pop().map_or(FoldedData::Unknown, FoldedData::Known);
+                    return values.pop();
                 };
                 if let Some(child) = frame.take_child(self.hir) {
                     break child;
                 }
                 let (composite, start) = (frame.composite, frame.values_start);
                 frames.pop();
-                let finished = self.finish(composite, &values[start..]);
-                let FoldedData::Known(value) = finished else {
-                    return FoldedData::Unknown;
-                };
+                let value = self.finish(composite, &values[start..])?;
                 values.truncate(start);
                 values.push(value);
             };
         }
     }
 
-    fn visit(&self, part: ExprId) -> Visited<'s> {
+    fn visit(&self, part: ExprId) -> Option<Visited<'s>> {
         let mut e = part;
         loop {
             match self.decisions.decision(e) {
-                Decision::Constant(constant) => return Visited::Value(constant.to_data_value()),
-                Decision::Data(data) => return Visited::Value(*data),
-                Decision::GlobalPath(_) | Decision::DeferredData => return Visited::Unknown,
+                Decision::Constant(constant) => {
+                    return Some(Visited::Value(constant.to_data_value()));
+                }
+                Decision::Data(data) => return Some(Visited::Value(*data)),
+                Decision::GlobalPath(_) | Decision::DeferredData => return None,
                 Decision::Unknown => {}
             }
             match self.decisions.constant(self.hir, e) {
                 FoldedValue::Constant(constant)
                 | FoldedValue::ConstantOutsideDeadZone(constant) => {
-                    return Visited::Value(constant.to_data_value());
+                    return Some(Visited::Value(constant.to_data_value()));
                 }
                 FoldedValue::Unknown => {}
             }
-            let Some(node) = self.hir.exprs.get(e.idx()) else {
-                return Visited::Unknown;
-            };
-            match node.kind {
+            match self.hir.exprs.get(e.idx())?.kind {
                 ExprKind::As { expr, .. }
                 | ExprKind::Satisfies { expr, .. }
                 | ExprKind::AsConst(expr)
                 | ExprKind::NonNull(expr)
                 | ExprKind::Instantiation { expr, .. } => e = expr,
-                ExprKind::Array(items) => return Visited::Composite(Composite::Array(items)),
+                ExprKind::Array(items) => return Some(Visited::Composite(Composite::Array(items))),
                 ExprKind::Object(props) => return self.visit_object(props),
-                _ => return Visited::Unknown,
+                _ => return None,
             }
         }
     }
 
-    fn visit_object(&self, props: Span<PropId>) -> Visited<'s> {
+    fn visit_object(&self, props: Span<PropId>) -> Option<Visited<'s>> {
         let has_data_keys = props
             .iter()
             .all(|prop| match find_data_key(self.hir, prop) {
                 DataKey::Unknown => false,
                 DataKey::Name(_) | DataKey::Computed(_) => true,
             });
-        if has_data_keys {
-            Visited::Composite(Composite::Object(props))
-        } else {
-            Visited::Unknown
-        }
+        has_data_keys.then_some(Visited::Composite(Composite::Object(props)))
     }
 
-    fn finish(&self, composite: Composite, values: &[DataValue<'s>]) -> FoldedData<'s> {
+    fn finish(&self, composite: Composite, values: &[DataValue<'s>]) -> Option<DataValue<'s>> {
         match composite {
-            Composite::Array(_) => {
-                FoldedData::Known(DataValue::Array(slice_in(values, self.arena)))
-            }
+            Composite::Array(_) => Some(DataValue::Array(slice_in(values, self.arena))),
             Composite::Object(props) => self.finish_object(props, values),
         }
     }
 
-    fn finish_object(&self, props: Span<PropId>, values: &[DataValue<'s>]) -> FoldedData<'s> {
+    fn finish_object(
+        &self,
+        props: Span<PropId>,
+        values: &[DataValue<'s>],
+    ) -> Option<DataValue<'s>> {
         let searches_linearly = props.len() <= MAX_LINEAR_SEARCH_KEYS;
         let mut entries: Vec<(Atom, DataValue<'s>)> = Vec::with_capacity(props.len());
         let mut entry_indexes: FxHashMap<Atom, usize> = FxHashMap::default();
         for (prop, &value) in props.iter().zip(values) {
             let key = match find_data_key(self.hir, prop) {
-                DataKey::Unknown => return FoldedData::Unknown,
+                DataKey::Unknown => return None,
                 DataKey::Name(name) => name,
                 DataKey::Computed(key) => match self.find_key_constant(key) {
-                    FoldedValue::Unknown => return FoldedData::Unknown,
+                    FoldedValue::Unknown => return None,
                     FoldedValue::Constant(constant)
                     | FoldedValue::ConstantOutsideDeadZone(constant) => {
                         constant_to_key(constant, self.atoms)
@@ -257,7 +250,7 @@ impl<'s> DataReader<'_, '_, 's> {
                 None => entries.push((key, value)),
             }
         }
-        FoldedData::Known(DataValue::Object(slice_in(&entries, self.arena)))
+        Some(DataValue::Object(slice_in(&entries, self.arena)))
     }
 
     fn find_key_constant(&self, key: ExprId) -> FoldedValue {

@@ -46,7 +46,6 @@ fn main() {
     let header = library.join("zstd.h");
     println!("cargo:rerun-if-changed={}", header.display());
 
-    // `cargo check` for another target links nothing, and a C cross compiler need not exist.
     if env::var("TARGET").unwrap() != env::var("HOST").unwrap() {
         return;
     }
@@ -68,7 +67,6 @@ fn main() {
         .opt_level(2)
         .warnings(false);
     if env::var_os("CARGO_CFG_WINDOWS").is_some() {
-        // `patches/zstd/bmi2-probe-once.patch` calls `__atomic_load_n`, which cl.exe does not have.
         decoder.compiler("clang-cl").define("ZSTD_HEAPMODE", "0");
     }
     decoder.compile("bun_sema_standalone_zstd");

@@ -1,5 +1,0 @@
-# Which `module` takes `import defer` is a rule about what tsc writes. Bun runs it, and the rest of the import is checked.
-absent: main.ts:2 diagnostic TS18060 = Semantic StopsBuild
-absent: main.ts:3 diagnostic TS18060 = Semantic StopsBuild
-main.ts:5 type `later.seven` = number
-main.ts:3 diagnostic TS2440 = Semantic StopsBuild

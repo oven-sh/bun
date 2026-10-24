@@ -1,5 +1,5 @@
 use super::effects::requested_diagnostics;
-use super::queue::{LOWERING_ROUNDS, QueuePass, run_queue};
+use super::queue::{LOWERING_ROUNDS, run_queue};
 use super::{CheckedProgram, CompileRequest, FileWork, LoadedProgram, RoleDecision};
 use crate::{Diagnostic, equal_diagnostics};
 use bun_sema::check::aot::BuiltinTypeSymbols;
@@ -57,12 +57,12 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
         .filter(is_read_by_every_task)
         .collect();
     read_by_every_task.shared_sort_unstable();
-    let report = run_queue(QueuePass {
+    let report = run_queue(
         loaded,
         host,
         request,
         to_check,
-        work: FileWork {
+        &FileWork {
             requested: &requested,
             after_file: Some(&|checker, file| {
                 if let Some(slot) = slots[file.idx()]
@@ -84,7 +84,7 @@ pub fn check_and_lower_noting_commits<'s, T: Send>(
             first_round: LOWERING_ROUNDS,
             left_out_bodies: request.left_out_bodies,
         },
-    });
+    );
     if !loaded.is_read_again {
         for &file in &read_by_every_task {
             // SAFETY: every task has ended, and nothing reads a tree after them.
@@ -143,7 +143,7 @@ fn files_to_check(
     requested: &dyn Fn(FileId) -> Requested,
 ) -> Vec<FileId> {
     let files = loaded.files();
-    let is_reached = reached_files(files);
+    let is_reached = files.reached_from(files.entry_points().to_vec());
     let reports = |file: FileId| {
         is_reached[file.idx()]
             && !loaded.origin(file).can_lose_trust()
@@ -161,26 +161,6 @@ fn files_to_check(
     to_check
 }
 
-fn reached_files(files: &Files<'_>) -> Vec<bool> {
-    let mut is_reached = vec![false; files.modules.len()];
-    let mut worklist: Vec<FileId> = Vec::new();
-    let mut reach = |file: FileId, worklist: &mut Vec<FileId>| {
-        if !std::mem::replace(&mut is_reached[file.idx()], true) {
-            worklist.push(file);
-        }
-    };
-    for &entry_point in files.entry_points() {
-        reach(entry_point, &mut worklist);
-    }
-    while let Some(file) = worklist.pop() {
-        let module = files.module(file);
-        for &target in module.edges.iter().chain(module.code_edges) {
-            reach(target, &mut worklist);
-        }
-    }
-    is_reached
-}
-
 fn is_checked_by_kind(files: &Files<'_>, file: FileId) -> bool {
     let (module, options) = (files.module(file), files.options);
     match module.hir.kind {
@@ -188,7 +168,6 @@ fn is_checked_by_kind(files: &Files<'_>, file: FileId) -> bool {
         FileKind::Declaration => {
             !options.skip_lib_check && !(options.skip_default_lib_check && module.is_lib)
         }
-        // A source file that no code loads is in the program for what it declares: its errors are those of no compiled code.
         FileKind::Ts | FileKind::Tsx => files.is_compiled(file),
     }
 }

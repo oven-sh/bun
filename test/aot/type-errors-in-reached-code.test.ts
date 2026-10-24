@@ -70,7 +70,7 @@ test.skipIf(!!unsupported)(
   async () => {
     using root = tempDir("aot-type-errors-in-reached-code", {});
     const kept = join(import.meta.dir, "programs");
-    const { paths: programs, textOf } = withPackedPrograms(kept, singleFilePrograms(kept), /(?<!\.d)\.ts$/);
+    const { paths: programs, textOf } = withPackedPrograms(kept, singleFilePrograms(kept), /(?<!\.d)\.ts$/, [".json"]);
     const jobs = programs
       .map(path => ({ path, hash: Number(Bun.hash.crc32(seed + ":" + path.slice(import.meta.dir.length + 1))) }))
       .sort((a, b) => a.hash - b.hash)

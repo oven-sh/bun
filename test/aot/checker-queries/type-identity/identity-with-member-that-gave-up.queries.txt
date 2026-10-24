@@ -1,8 +1,0 @@
-# A member whose type does not resolve gives up by itself and takes the identity from no type that has it: neither from a type literal, which is identified by where it is written, nor from a computed type, which is identified by its members.
-identity-with-member-that-gave-up.ts:7 origin `{ bad: Missing; good: number }` = type literal identity-with-member-that-gave-up.ts:7
-identity-with-member-that-gave-up.ts:7 has `{ bad: Missing; good: number }` = bad Field gave up: ErrorType checked gave up: ErrorType
-identity-with-member-that-gave-up.ts:8 origin `typeof spread` = computed
-identity-with-member-that-gave-up.ts:8 has `typeof spread` = bad Field gave up: ErrorType checked gave up: ErrorType
-different: identity-with-member-that-gave-up.ts:7 identity `{ bad: Missing; good: number }` <=> identity-with-member-that-gave-up.ts:8 identity `typeof spread`
-different: identity-with-member-that-gave-up.ts:8 identity `typeof spread` <=> identity-with-member-that-gave-up.ts:9 identity `typeof sound`
-same: identity-with-member-that-gave-up.ts:8 identity `typeof spread` <=> identity-with-member-that-gave-up.ts:10 identity `typeof spread`

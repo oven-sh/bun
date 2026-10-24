@@ -1,5 +1,0 @@
-# The checker inferred the receiver's type argument, so nobody wrote it: the written result of the call stays the type parameter.
-method-of-inferred-receiver.ts:7 variable `box` = unwritten
-method-of-inferred-receiver.ts:8 type `box` = Box<number>
-method-of-inferred-receiver.ts:8 call `box.get()` = declaration method-of-inferred-receiver.ts:5
-method-of-inferred-receiver.ts:8 call result `box.get()` = T checked number

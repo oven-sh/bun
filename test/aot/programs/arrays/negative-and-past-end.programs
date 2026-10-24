@@ -1,0 +1,2250 @@
+////: lines-2
+function «1»(a: number[]): string {
+  let total = 0, text = "", present = 0;
+  for (let i = 0; i < a.length; i++) {
+    total += a[i];
+    text += a[i] + ",";
+    if (i in a) present++;
+  }
+  return total + " " + text + " " + present;
+}
+////: lines-33
+function «1»(a: number[], when: number): string {
+  let total = 0, bits = 0;
+  for (let i = 0; i < a.length; i++) {
+    if (i === when) a[i + 1] = «2» as any;
+    total += a[i];
+    bits = (bits << 1) ^ (a[i] * 4);
+  }
+  return show(total) + " " + bits;
+}
+////: lines-34
+function «1»(a: number[]): string {
+  let total = 0, text = "";
+  for (let i = 0; i < a.length; i++) {
+    total += a[i];
+    text += a[i] + ",";
+  }
+  return total + " " + text;
+}
+////: lines-36
+function «1»(a: «2»[], i: number, «3»: «2»): void {
+  a[i] = «3»;
+}
+////: lines-39
+function «1»(a: number[], v: number): «2» {
+  return a.«3»(v);
+}
+////: lines-47
+function «1», v: number): string {
+  let total = 0, bits = 0;
+  for (let i = 0; i < a.length; i++) {
+    total += a[i];
+    bits = (bits << 1) ^ (a[i] * 4);
+    «2»] = v;
+  }
+  for (let i = 0; i < a.length; i++) {
+    total += a[i];
+    bits = (bits << 1) ^ (a[i] * 4);
+  }
+  return show(total) + " " + bits;
+}
+////: lines-49
+function «1»): string {
+  let total = 0, bits = 0, i = 0;
+  for (const value of a) {
+    if (i === when) «2»;
+    total += value;
+    bits = (bits << 1) ^ (value * 4);
+    i++;
+  }
+  return show(total) + " " + bits;
+}
+////: lines-59
+function «1»): string {
+  let total = 0, bits = 0;
+  for (let i = 0, length = a.length; i < length; i++) {
+    if (i === when) a«2»;
+    total += a[i];
+    bits = (bits << 1) ^ (a[i] * 4);
+  }
+  return show(total) + " " + bits;
+}
+////: list
+function list(a: unknown[]): string {
+  let text = "[";
+  for (let i = 0; i < a.length; i++) text += (i > 0 ? " " : "") + (Object.hasOwn(a, i) ? show(a[i]) : "hole");
+  text += "]";
+  for (const key of Object.keys(a)) if (String(Number(key) >>> 0) !== key) text += " " + key + "=" + show((a as unknown as Record<string, unknown>)[key]);
+  return «1»;
+}
+////: sumLong
+function sumLong(a: number[]): number {
+    let t = 0;
+    for (let i = 0; i < a.length; i++) t += a[i];
+    for (let i = 0; i < a.length; i++) t += a[i] * 2;
+    for (let i = 0; i < a.length; i++) if (a[i] > 3) t += 1;
+    for (let i = 0; i < a.length; i++) t += a[i] * a[i];
+    for (let i = 0; i < a.length; i++) t -= a[i] * a[i];
+    for (let i = 0; i < a.length; i++) if (a[i] > 3) t -= 1;
+    for (let i = 0; i < a.length; i++) t -= a[i] * 2;
+    for (let i = 1; i < a.length; i++) t += a[i] - a[i - 1];
+    for (let i = 1; i < a.length; i++) t -= a[i] - a[i - 1];
+    return t;
+}
+//// negative-and-past-end-indices.ts
+// Reads, writes and `in` by index in loops, below zero and past the end: arrays with holes, typed arrays, strings, arguments objects, array-likes, frozen arrays, accessors.
+const say = (what: string, got: unknown) => console.log(what + ": " + String(got));
+function readAll(a: any, from: number, to: number): string { let s = ""; for (let i = from; i < to; i++) s += "|" + String(a[i]); return s; }
+function readByLength(a: any, more: number): string { let s = ""; for (let i = 0; i < a.length + more; i++) s += "|" + String(a[i]); return s; }
+function writeAll(a: any, from: number, to: number, v: unknown): void { for (let i = from; i < to; i++) a[i] = v; }
+function writeByLength(a: any, more: number, v: unknown): void { const n = a.length + more; for (let i = 0; i < n; i++) a[i] = v; }
+function forOf(a: unknown[]): string { let s = ""; for (const x of a) s += "|" + String(x); return s; }
+const holes = [1, , 3, , 5]; const doubles = [1.5, 2.5, , 4.5]; const ints = [1, 2, 3]; const mixed = ["a", 1, null, undefined, { toString() { return "o"; } }];
+const big: unknown[] = []; big[70000] = "far"; const frozen = Object.freeze(["f", "g"]);
+function args(..._: unknown[]) { return arguments; }
+const like = { length: 3, 0: "x", 2: "z" }; const withProto = Object.create({ 1: "inherited" }); withProto[0] = "own"; withProto.length = 3;
+for (const [name, a] of Object.entries({ holes, doubles, ints, mixed, frozen, text: "héllo", wide: "日本語", u8: new Uint8Array([1, 2, 3]), f64: new Float64Array([1.5, NaN]), i16: new Int16Array([-1, 2]), args: args("p", "q"), like, withProto, empty: [] })) {
+  say(name + " by length", readByLength(a, 2));
+  say(name + " from below", readAll(a, -2, 2));
+}
+say("far", readAll(big, 69999, 70002)); say("beyond int32", readAll(ints, 2147483646, 2147483650)); say("beyond uint32", readAll(ints, 4294967294, 4294967298));
+say("for of holes", forOf(holes)); say("for of doubles", forOf(doubles as unknown[]));
+say("null", (() => { try { return readAll(null, 0, 1); } catch (e) { return (e as Error).constructor.name; } })());
+say("a number", readAll(5, 0, 2)); say("a function", readAll(readAll, 0, 2));
+{ const a = [1, 2, 3]; writeByLength(a, 3, "w"); say("written past the end", a.join() + " " + a.length); }
+{ const a: unknown[] = [1.5, 2.5]; writeAll(a, 0, 3, "s"); say("strings into doubles", a.join()); }
+{ const a: unknown[] = [1, 2]; writeAll(a, 0, 2, 1.5); say("doubles into ints", a.join()); }
+{ const a: unknown[] = []; writeAll(a, 5, 7, "h"); say("leaving holes", a.join() + " " + a.length); }
+{ const a: unknown[] = []; writeAll(a, -2, 1, "n"); say("below nought", a.join() + " " + Object.keys(a).join()); }
+{ const a: unknown[] = []; writeAll(a, 4294967294, 4294967297, "b"); say("beyond uint32", a.length + " " + Object.keys(a).join()); }
+{ const a = new Uint8Array(3); writeAll(a, -1, 5, 300); say("a typed array", a.join()); }
+{ const a = new Float64Array(2); writeAll(a, 0, 2, "7"); say("a string into floats", a.join()); }
+{ const o: Record<number, unknown> = {}; writeAll(o, 0, 3, "o"); say("an object", JSON.stringify(o)); }
+{ say("frozen", (() => { try { writeAll(frozen, 0, 1, "x"); return "no error"; } catch (e) { return (e as Error).constructor.name; } })() + " " + frozen.join()); }
+{ const a = [1, 2, 3]; Object.defineProperty(a, 1, { get() { return "got"; }, set(v) { say("setter", v); } }); say("an accessor", readByLength(a, 0)); writeByLength(a, 0, "v"); say("after", readByLength(a, 0)); }
+{ const cow = () => [1, 2, 3]; const a = cow(); writeAll(a, 0, 1, 9); say("copy on write", a.join() + " " + cow().join()); }
+function hasAll(a: any, from: number, to: number): string { let s = ""; for (let i = from; i < to; i++) s += i in a ? "1" : "0"; return s; }
+function hasByLength(a: any, more: number): string { let s = ""; for (let i = 0; i < a.length + more; i++) s += i in a ? "1" : "0"; return s; }
+for (const [name, a] of Object.entries({ holes, doubles, ints, mixed, frozen, u8: new Uint8Array([1, 2, 3]), f64: new Float64Array([1.5, NaN]), args: args("p", "q"), like, withProto, empty: [], text: new String("héllo"), fn: hasAll })) {
+  say(name + " has, by length", hasByLength(a, 2));
+  say(name + " has, from below", hasAll(a, -2, 2));
+}
+say("has far", hasAll(big, 69999, 70002)); say("has beyond int32", hasAll(ints, 2147483646, 2147483650)); say("has beyond uint32", hasAll(ints, 4294967294, 4294967298));
+for (const bad of [null, undefined, 5, "text", true, Symbol.iterator]) say("in " + String(bad), (() => { try { return hasAll(bad, 0, 1); } catch (e) { return (e as Error).constructor.name; } })());
+{ const a: unknown[] = [undefined, null, 0, "", false, NaN]; say("has falsy elements", hasByLength(a, 1)); }
+{ class Below extends Array<unknown> {} const a = new Below(); a.length = 4; a[1] = "own"; (Below.prototype as any)[2] = "inherited"; say("has through a prototype", hasByLength(a, 1)); delete (Below.prototype as any)[2]; say("and no more", hasByLength(a, 1)); }
+{ const a: unknown[] = [1, 2, 3, 4]; const log = [hasByLength(a, 0)]; delete a[1]; log.push(hasByLength(a, 0)); a.length = 2; log.push(hasAll(a, 0, 4)); a[3] = 1.5; log.push(hasAll(a, 0, 5)); a.pop(); log.push(hasAll(a, 0, 5)); say("has, as the array changes", log.join()); }
+{ const a = [1, 2, 3]; let s = ""; for (let i = 0; i < 6; i++) { s += i in a ? "1" : "0"; if (i === 0) a.length = 1; if (i === 3) a[5] = 6; } say("has, changing in the loop", s); }
+{ const a = [1, 2, 3]; Object.defineProperty(a, 1, { get() { throw new Error("not called"); } }); say("has an accessor", hasByLength(a, 1)); }
+{ const asked: string[] = []; const p = new Proxy([1, , 3], { has(t, k) { asked.push(String(k)); return k in t; } }); say("has, of a proxy", hasAll(p, 0, 4) + " " + asked.join()); }
+{ const cow = () => [1, 2, 3]; say("has, copy on write", hasByLength(cow(), 1)); }
+{ const seen = (a: unknown[]) => { const log: string[] = []; const note = (how: string) => (x: unknown, i: number) => { log.push(how + i); return x; };
+    a.forEach(note("e")); a.map(note("m")); a.filter(note("f")); a.some(x => (note("s")(x, -1), false)); a.every(x => (note("v")(x, -1), true)); a.reduce((n: number, _x, i) => (log.push("r" + i), n), 0); a.reduceRight((n: number, _x, i) => (log.push("R" + i), n), 0);
+    log.push(String(a.indexOf(undefined)), String(a.includes(undefined)), String(a.findIndex(x => x === undefined)), String(a.map(x => x).length), String(1 in a.map(x => x)), String(a.filter(() => true).length)); return log.join(" "); };
+  say("methods skip holes", seen([1, , 3, , 5])); say("in doubles", seen([1.5, , 3.5])); say("none to skip", seen(["a", undefined, null])); const sparse: unknown[] = []; sparse[3] = "x"; sparse[1000] = "y"; say("sparse", seen(sparse)); }
+export {};
+//// neighbor-index-reads-in-loops.ts
+// Loops that read or write the neighbours of their index: a[i - 1], a[i + 1], a[i - 2], going up and going down, from starts and to ends at which the neighbour is inside the array and at which it is not; over arrays that shrink or grow on the way.
+declare const console: { log(...values: unknown[]): void };
+function show(v: number | undefined): number { return v === undefined ? 1000000 : v; }
+function differences(a: number[]): number { let t = 0; for (let i = 1; i < a.length; i++) t += (a[i] - a[i - 1]) * i; return t; }
+function differencesFromTwo(a: number[]): number { let t = 0; for (let i = 2; i < a.length; i++) t += a[i] - a[i - 1] + a[i - 2]; return t; }
+function fromZero(a: number[]): number { let t = 0; for (let i = 0; i < a.length; i++) t += show(a[i - 1]) + a[i]; return t; }
+function ahead(a: number[]): number { let t = 0; for (let i = 0; i < a.length; i++) t += show(a[i + 1]) + a[i]; return t; }
+function aheadToLast(a: number[]): number { let t = 0; for (let i = 0; i < a.length - 1; i++) t += a[i + 1] * a[i]; return t; }
+function downAhead(a: number[]): number { let t = 0; for (let i = a.length - 2; i >= 0; i--) t += a[i + 1] - a[i] * 2; return t; }
+function downAheadFromLast(a: number[]): number { let t = 0; for (let i = a.length - 1; i >= 0; i--) t += show(a[i + 1]) + a[i]; return t; }
+function downBehind(a: number[]): number { let t = 0; for (let i = a.length - 1; i >= 1; i--) t += a[i - 1] + a[i] * 3; return t; }
+function downBehindToZero(a: number[]): number { let t = 0; for (let i = a.length - 1; i >= 0; i--) t += show(a[i - 1]) + a[i]; return t; }
+function shiftUp(a: number[]): number { for (let i = a.length - 1; i > 0; i--) a[i] = a[i - 1]; return a.length ? a[a.length - 1] + a[0] : -1; }
+function shiftDown(a: number[]): number { for (let i = 1; i < a.length; i++) a[i - 1] = a[i]; return a.length ? a[a.length - 1] + a[0] : -1; }
+function isSorted(a: number[]): boolean { for (let i = 1; i < a.length; i++) if (a[i - 1] > a[i]) return false; return true; }
+function shrinking(a: number[]): number { let t = 0; for (let i = 1; i < a.length; i++) { t += show(a[i - 1]) + show(a[i]); if (i === 2) a.length = 4; if (i === 3) a.length = 1; } return t; }
+function growing(a: number[]): number { let t = 0; for (let i = 1; i < a.length && i < 12; i++) { t += a[i - 1]; if (i & 1) a.push(i + 0.5); } return t; }
+function texts(a: string[]): string { let t = ""; for (let i = 1; i < a.length; i++) t += a[i - 1] + a[i]; return t; }
+function wrapping(a: number[]): number { let t = 0; for (let i = 1; i < a.length; i = (i + 1) | 0) t += a[i - 1]; return t; }
+const halves = (n: number): number[] => Array.from({ length: n }, (_, i) => i * i + 0.5);
+for (const n of [0, 1, 2, 3, 4, 5, 9, 100]) {
+  console.log(n, differences(halves(n)), differencesFromTwo(halves(n)), fromZero(halves(n)), ahead(halves(n)), aheadToLast(halves(n)), downAhead(halves(n)), downAheadFromLast(halves(n)), downBehind(halves(n)), downBehindToZero(halves(n)));
+  console.log(n, shiftUp(halves(n)), shiftDown(halves(n)), isSorted(halves(n)), isSorted(halves(n).reverse()), shrinking(halves(n)), growing(halves(n)), wrapping(halves(n)), texts(halves(n).slice(0, 4).map(String)));
+}
+//// nested-loop-over-array-parameter.ts
+// Nested loops over an array parameter: the indexing type check is hoisted out of the inner loop, and a guard repeated within one iteration is emitted once. An iteration that fails a guard takes the slow path and returns to the fast loop.
+declare const console: { log(...v: unknown[]): void };
+function reach(list: number[], width: number): number { let t = 0; for (let first = 0; first + width <= list.length; first += width) { let least = list[first]!, most = list[first]!; for (let at = first + 1; at < first + width; at++) { least = Math.min(least, list[at]!); most = Math.max(most, list[at]!); } t += most - least; } return t; }
+function reachPastTheEnd(list: number[], width: number): string { let out = ""; for (let first = 0; first < list.length; first += width) { let least = Infinity, most = -Infinity; for (let at = first; at < first + width; at++) { least = Math.min(least, list[at]!); most = Math.max(most, list[at]!); } out += least + ".." + most + " "; } return out; }
+function rows(grid: number[], columns: number, scale: number[]): number { let t = 0; const count = grid.length / columns; for (let row = 0; row < count; row++) { let sum = 0; for (let column = 0; column < columns; column++) sum += grid[row * columns + column]! * scale[column]!; t += sum * (row + 1); } return t; }
+function changesBetweenRows(grid: number[], columns: number, at: number, act: () => void): string { let out = ""; for (let row = 0; row * columns < grid.length; row++) { if (row === at) act(); let sum = 0; for (let column = 0; column < columns; column++) sum += grid[row * columns + column] ?? -1; out += sum + " "; } return out; }
+function changesInsideARow(grid: number[], columns: number, at: number, act: () => void): string { let out = ""; for (let row = 0; row * columns < grid.length; row++) { let sum = 0; for (let column = 0; column < columns; column++) { if (row * columns + column === at) act(); sum += grid[row * columns + column] ?? -1; } out += sum + " "; } return out; }
+function said(run: () => unknown): string { try { return String(run()); } catch (e) { return (e as Error).constructor.name; } }
+
+const halves: number[] = []; for (let i = 0; i < 48; i++) halves.push(((i * 29) % 17) * 0.5);
+const wholes: number[] = []; for (let i = 0; i < 48; i++) wholes.push((i * 31) % 23);
+const withNaN = halves.slice(); withNaN[13] = NaN; withNaN[40] = NaN;
+const withHole = halves.slice(); delete withHole[21];
+const nothing = null as unknown as number[];
+const out: unknown[] = [];
+for (let r = 0; r < 3; r++) {
+  out.push(reach(halves, 8), reach(wholes, 8), reach(halves, 5), reach(halves, 48), reach(halves, 49), reach([], 4), reach(halves, 1));
+  out.push(reach(withNaN, 8), reach(withHole, 8), reach(withNaN, 48), reachPastTheEnd(halves, 7), reachPastTheEnd(wholes, 48), reachPastTheEnd(withNaN, 16), reachPastTheEnd(withHole, 12), reachPastTheEnd([], 3));
+  out.push(rows(halves, 6, wholes), rows(wholes, 6, halves), rows(halves, 6, [1, 2, 3]), rows(wholes, 48, wholes), rows([], 6, nothing), said(() => rows(halves, 6, nothing)), said(() => reach(nothing, 4)));
+}
+{ const grid = halves.slice(); out.push(changesBetweenRows(grid, 8, 2, () => { grid.length = 20; })); }
+{ const grid = wholes.slice(); out.push(changesBetweenRows(grid, 8, 3, () => { grid[30] = 0.25; })); }
+{ const grid = halves.slice(); out.push(changesBetweenRows(grid, 8, 1, () => { delete grid[10]; grid.push(1, 2, 3); })); }
+{ const grid = halves.slice(); out.push(changesInsideARow(grid, 8, 19, () => { grid.length = 21; })); }
+{ const grid = wholes.slice(); out.push(changesInsideARow(grid, 8, 11, () => { grid[12] = 7.75; grid[60] = 1; })); }
+{ const grid = wholes.slice(); out.push(changesInsideARow(grid, 8, 5, () => { grid.length = 0; })); }
+console.log(out.join(" "));
+//// no-cells-for-arrays-that-carry-arguments.js
+// 10,000 rounds of calls that hand over an array which is made for the call alone and which the callee only reads: a literal, a literal that the callee hands on, the surplus arguments of a function that uses `arguments`,
+// and the rest array of a function that is called through a value. One call in each round keeps its array. Each function calls itself, so that it is not taken into its caller.
+// object-census.test.ts runs it without collections, so that the census at exit counts every array that was made. The output is that of plain Bun.
+let sum = 0;
+const kept = [];
+
+function total(list, depth) {
+  if (depth > 0) return total(list, depth - 1);
+  let result = list.length;
+  for (let i = 0; i < list.length; i++) result += list[i].n;
+  return result;
+}
+
+function keeps(list, depth) {
+  if (depth > 0) return keeps(list, depth - 1);
+  kept.push(list);
+  return list.length;
+}
+
+function counts(a, depth) {
+  // No tail call: the frame that the surplus arguments lie in has to be there while the callee runs.
+  if (depth > 0) return counts(a, depth - 1, arguments[2], arguments[3], arguments[4]) + 0;
+  return arguments.length + arguments[2].n + arguments[4].n;
+}
+
+const table = {
+  rest(depth, ...values) {
+    let result = values.length;
+    for (let i = 0; i < values.length; i++) result += values[i].n;
+    return result;
+  },
+};
+const names = ["rest"];
+
+for (let i = 0; i < 10000; i++) {
+  const a = { n: i };
+  const b = { n: 1 };
+  sum += total([a, b, a], 1) + keeps([a, b, a, b], 1) + counts(a, 1, a, b, a) + table[names[i % names.length]](0, a, b, a, b, a);
+}
+console.log(sum, kept.length, kept[9999][0].n);
+//// no-list-for-calls-without-surplus-arguments.js
+// 20,000 calls by name of a function that hands its `arguments` to native code, none of them with a surplus argument. The function calls itself, so that it is not taken into its caller.
+// object-census.test.ts runs it without collections, so that the census at exit counts every array that was made, and looks for empty ones. The output is that of plain Bun.
+let sum = 0;
+const seen = new Set();
+
+function look(a, depth) {
+  if (depth > 0) return look(a + 1, depth - 1);
+  seen.add(Object.keys(arguments).length);
+  sum += arguments.length + a;
+}
+
+for (let i = 0; i < 10000; i++) look(i, 1);
+console.log(sum, [...seen].join());
+//// no-list-for-rest-arrays-that-are-passed-on.js
+// 10,000 rounds of a function that is called through a value and passes its rest array on behind two values, `f(a, b, ...rest)`, to a function that takes two values by name and the others in a rest parameter.
+// `reads` only reads its rest array; `keeps` keeps it, so one array a call has to be a cell, and no more than one.
+// object-census.test.ts runs it without collections, so that the census at exit counts every array and every closure that was made. The output is that of plain Bun.
+let sum = 0;
+const kept = [];
+
+function reads(a, b, ...rest) {
+  let result = a.n + b.n + rest.length;
+  for (let i = 0; i < rest.length; i++) result += rest[i].n;
+  return result;
+}
+
+function keeps(a, b, ...rest) {
+  kept.push(rest);
+  return a.n + b.n + rest.length;
+}
+
+const table = {
+  passesOnToReader(...args) {
+    return reads(args.length ? one : two, two, ...args);
+  },
+  passesOnToKeeper(...args) {
+    return keeps(one, two, ...args);
+  },
+};
+const one = { n: 1 };
+const two = { n: 2 };
+const names = ["passesOnToReader", "passesOnToKeeper"];
+
+for (let i = 0; i < 10000; i++) {
+  const a = { n: i };
+  sum += table[names[i % 1]](a, one, a) + table[names[1 - (i % 1)]](a, one, a, two);
+}
+console.log(sum, kept.length, kept[9999].length, kept[9999][0].n, new Set(kept).size);
+//// non-numeric-length-untyped.js
+// `new Array(n)` and `Array(n)` where the text does not say that n is a number, as Express's restore() has it with `arguments.length - 2`: what is made, and that filling it does not ask the run time.
+// Only the jsc shell can count. Elsewhere the program checks the answers alone.
+const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+const attempt = (f) => { try { return f(); } catch (error) { return error.constructor.name; } };
+// A method that is looked up under a name put together, and that has no loop of its own, so that no loop of the text is near it: a server's handlers are such functions.
+const router = { restore(holder, object) {
+  var props = new Array(holder.count - 2);
+  var values = Array(holder.count - 2);
+  if (props.length > 0) { props[0] = holder[2]; values[0] = object[props[0]]; }
+  if (props.length > 1) { props[1] = holder[3]; values[1] = object[props[1]]; }
+  if (props.length > 2) { props[2] = holder[4]; values[2] = object[props[2]]; }
+  return props.join() + "=" + values.join();
+} };
+const nameOfMethod = ["re", "store"].join("");
+const restore = (holder, object) => router[nameOfMethod](holder, object);
+const request = { baseUrl: "/", next: 1, params: "p" };
+const seen = new Set();
+let before = count("operationAOTPutByVal");
+for (let i = 0; i < 2000; i++)
+  seen.add(restore({ count: 5, 2: "baseUrl", 3: "next", 4: "params" }, request) + " " + restore({ count: 2 }, request) + " " + restore({ count: 3, 2: "next" }, request));
+let calls = count("operationAOTPutByVal") - before;
+console.log([...seen].join(" | "), calls <= 8 ? "and the run time was asked at most 8 times" : "and the run time was asked " + calls + " times");
+
+// What is handed over decides what is made.
+const describe = (array) => Array.isArray(array) + " " + array.length + " " + Object.keys(array).join() + " " + JSON.stringify(array) + " " + (Object.getPrototypeOf(array) === Array.prototype);
+const given = [0, 1, 2, 7, 100, 1000, 100000, 4294967295, -1, -0, 1.5, NaN, Infinity, 4294967296, "3", "", null, undefined, true, {}, [5], 3n, Symbol.iterator, () => 1];
+for (const value of given) {
+  const show = (array) => array.length > 10 ? "long " + array.length + " " + (0 in array) : describe(array.map ? array.map((element) => typeof element === "symbol" || typeof element === "bigint" || typeof element === "function" ? typeof element : element) : array);
+  console.log(typeof value, attempt(() => show(new Array(value))), "|", attempt(() => show(Array(value))));
+}
+
+// Holes are holes: nothing is there, and the length counts them.
+function holes(n) {
+  const array = new Array(n);
+  return [array.length, 0 in array, array[0], array.indexOf(undefined), array.includes(undefined), array.join("-"), Object.keys(array).length].join();
+}
+console.log(holes(3), holes(0), holes(1));
+
+// Numbers, strings and objects stored afterwards, beyond the end too.
+for (let i = 0; i < 4; i++) {
+  const array = new Array(request.next + i);
+  array[0] = i;
+  array[i] = "s" + i;
+  array[i + 3] = { i };
+  array.push(1.5);
+  console.log(JSON.stringify(array), array.length);
+}
+
+// An heir of Array.prototype with an index of its own stands between: a hole lets it shine through, a store to the hole meets its setter.
+const stored = [];
+const between = Object.create(Array.prototype, { 1: { value: "from the heir", configurable: true }, 2: { set(value) { stored.push(value); }, get() { return "got"; }, configurable: true } });
+const watched = new Array(request.next + 3);
+Object.setPrototypeOf(watched, between);
+watched[2] = "to the setter";
+watched[0] = "own";
+console.log(stored.join(), watched[1], watched[2], 2 in watched, Object.keys(watched).join(), watched.length);
+console.log(describe(new Array(request.next + 1)));
+//// non-pristine-array-methods.js
+// push, slice, indexOf, includes, spread and a read of a hole on a plain array, which takes the fast path, and on arrays for which that path gives a wrong answer: an instance of a subclass, an array whose prototype has an element, an array with its own Symbol.iterator, a frozen array.
+class Subclass extends Array {}
+
+function createSubclassInstance() {
+  const list = new Subclass(3);
+  list[0] = "a";
+  list[2] = "c";
+  return list;
+}
+
+function createArrayWithOwnIterator() {
+  const list = ["a", , "c"];
+  list[Symbol.iterator] = function* () {
+    yield "from";
+    yield "own iterator";
+  };
+  return list;
+}
+
+const kinds = [
+  ["plain", () => ["a", , "c"]],
+  ["subclass", createSubclassInstance],
+  ["element in prototype", () => Object.setPrototypeOf(["a", , "c"], { __proto__: Array.prototype, 1: "inherited" })],
+  ["own iterator", createArrayWithOwnIterator],
+  ["frozen", () => Object.freeze(["a", , "c"])],
+];
+
+function push(list, value) { return list.push(value); }
+function slice(list, start) { return list.slice(start); }
+function indexOf(list, value) { return list.indexOf(value); }
+function includes(list, value) { return list.includes(value); }
+function spread(list) { return [...list]; }
+function elementAt(list, index) { return list[index]; }
+
+// An inherited element is in parentheses, a hole is a dash.
+function describe(list) {
+  const elements = [];
+  for (let index = 0; index < list.length; index++) {
+    if (Object.hasOwn(list, index)) elements.push(String(list[index]));
+    else elements.push(index in list ? `(${list[index]})` : "-");
+  }
+  return `${list.constructor.name} [${elements.join(", ")}]`;
+}
+
+function describePush(list) {
+  let outcome;
+  try {
+    outcome = push(list, "d");
+  } catch (error) {
+    outcome = `throws ${error.constructor.name}`;
+  }
+  return `${outcome}, then ${describe(list)}`;
+}
+
+// In every round after the first, each call site has already seen every kind of array.
+for (let round = 1; round <= 3; round++) {
+  for (const [kind, create] of kinds) {
+    const report = (operation, outcome) => console.log(`round ${round}, ${kind}, ${operation}: ${outcome}`);
+    report("push", describePush(create()));
+    report("slice", `${describe(slice(create(), 0))}, ${describe(slice(create(), 1))}`);
+    for (const value of ["c", "inherited", undefined]) {
+      report(`indexOf ${value}`, indexOf(create(), value));
+      report(`includes ${value}`, includes(create(), value));
+    }
+    report("spread", describe(spread(create())));
+    report("hole", elementAt(create(), 1));
+  }
+}
+//// number-array-searches.ts
+declare const console: { log(...values: unknown[]): void };
+let depth = 0;
+function indexOfNumber(a: number[], x: number): number { if (depth > 0) { depth--; indexOfNumber(a, x); } for (let i = 0; i < a.length; i++) if (a[i] === x) return i; return -1; }
+function lastNot(a: readonly number[], x: number): number { if (depth > 0) { depth--; lastNot(a, x); } for (let i = a.length - 1; i >= 0; i--) if (a[i] !== x) return i; return -1; }
+function countLoose(a: (number | undefined)[], x: number | undefined): number { if (depth > 0) { depth--; countLoose(a, x); } let count = 0; for (let i = 0; i < a.length; i++) if (a[i] == x) count++; return count; }
+function countOf(a: number[], x: unknown): number { if (depth > 0) { depth--; countOf(a, x); } let count = 0; for (const value of a) if (value === x) count++; return count; }
+function kinds(a: (number | string)[]): string { if (depth > 0) { depth--; kinds(a); } let text = ""; for (let i = 0; i < a.length; i++) text += typeof a[i] === "number" ? "n" : "s"; return text; }
+function firstSame(a: number[], b: number[]): number { if (depth > 0) { depth--; firstSame(a, b); } for (let i = 0; i < a.length; i++) if (a[i] === b[i]) return i; return -1; }
+const integers = [3, 1, 4, 1, 5, 9, 2, 6];
+const doubles = [0.5, 1.5, -0, 0, NaN, Infinity, 2.5, 1e300];
+const mixed: number[] = [1, 2, 3]; mixed.push(0.25);
+const asValues: number[] = [1, 2.5]; (asValues as unknown[]).push("x"); asValues.pop();
+const holes: number[] = [1, , 3] as number[];
+const doubleHoles: number[] = [0.5, , 2.5] as number[];
+const frozen = Object.freeze([7, 8, 9]) as number[];
+const sparse: number[] = []; sparse[3000] = 4;
+class Numbers extends Array<number> {}
+const derived = new Numbers(); derived.push(1, 2, 3);
+const grown: number[] = []; for (let i = 0; i < 100; i++) grown.push(i * (i % 3 === 0 ? 1 : 0.5));
+const all = [integers, doubles, mixed, asValues, holes, doubleHoles, frozen, sparse, derived, grown, [] as number[]];
+const needles = [1, 3, 0, -0, 0.5, 2.5, NaN, Infinity, 9, 4, 49.5, 99, 1e300, -1];
+for (let round = 0; round < 2; round++) {
+    for (const a of all) {
+        const row: (number | string)[] = [];
+        for (const x of needles) row.push(indexOfNumber(a, x), lastNot(a, x), countOf(a, x), countLoose(a, x));
+        row.push(countLoose(a, undefined), countOf(a, undefined), countOf(a, "1"), firstSame(a, integers), firstSame(a, doubles), firstSame(doubles, a));
+        console.log(row.join(" "));
+    }
+    console.log(kinds([1, "a", 2.5, "b"]), kinds([1, 2]), kinds([0.5]), kinds(["x"]), kinds([]));
+}
+//// number-arrays-arrive-as-int32.ts
+declare const console: { log(...values: unknown[]): void };
+function sum(a: number[]): number { let t = 0; for (let i = 0; i < a.length; i++) t += a[i]; return t; }
+function sumOf(a: number[]): number { let t = 0; for (const x of a) t += x; return t; }
+function sumDown(a: number[]): number { let t = 0; for (let i = a.length - 1; i >= 0; i--) t += a[i]; return t; }
+function largest(a: number[]): number { let m = -Infinity; for (let i = 0; i < a.length; i++) if (a[i] > m) m = a[i]; return m; }
+function find(a: number[], v: number): number { for (let i = 0; i < a.length; i++) if (a[i] === v) return i; return -1; }
+function absent(a: number[]): number { let n = 0; for (let i = 0; i < a.length; i++) if (a[i] === undefined) n++; return n; }
+function fill(a: number[], v: number): number { for (let i = 0; i < a.length; i++) a[i] = v; return a.length; }
+function fillIndex(a: number[]): number { for (let i = 0; i < a.length; i++) a[i] = i; return a.length; }
+function fillZero(a: number[]): number { for (let i = 0; i < a.length; i++) a[i] = 0; return a.length; }
+function copy(a: number[], b: number[]): number { for (let i = 0; i < a.length; i++) b[i] = a[i]; return b.length; }
+function scale(a: number[], k: number): number { for (let i = 0; i < a.length; i++) a[i] = a[i] * k; return a.length; }
+function bump(a: number[]): number { for (let i = 0; i < a.length; i++) a[i]++; return a.length; }
+function dot(a: number[], b: number[]): number { let t = 0; for (let i = 0; i < a.length; i++) t += a[i] * b[i]; return t; }
+function gather(a: number[], b: number[]): number { let t = 0; for (let i = 0; i < a.length; i++) t += b[a[i]]; return t; }
+function bits(a: number[]): number { let t = 0; for (let i = 0; i < a.length; i++) t ^= a[i]; return t; }
+function append(a: number[], n: number, v: number): number { for (let i = 0; i < n; i++) a[a.length] = v + i; return a.length; }
+function pushAll(a: number[], n: number, v: number): number { for (let i = 0; i < n; i++) a.push(v + i); return a.length; }
+function one(a: number[], i: number): number { return a[i]; }
+function put(a: number[], i: number, v: number): void { a[i] = v; }
+function nested(a: number[], b: number[]): number { let t = 0; for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++) t += a[i] * b[j]; return t; }
+function rows(m: number[][]): number { let t = 0; for (let i = 0; i < m.length; i++) { const row = m[i]; for (let j = 0; j < row.length; j++) t += row[j]; } return t; }
+
+function storeSumStore(a: number[]): number { a[0] = 1; const s = sum(a); a[1] = 2; return s * 100 + a[0] * 10 + a[1]; }
+function readSumRead(a: number[]): number { const x = a[0]; const s = sum(a); const y = a[0]; return s * 100 + x * 10 + y; }
+function throughTwoViews(a: number[], u: unknown[]): string { u[0] = 7; const s = sum(a); u[1] = 8; u[2] = 9; return s + " " + a[0] + " " + a[1] + " " + a[2] + " " + String(u[1]); }
+function pushSumPush(a: number[], u: unknown[]): string { u.push(4); const s = sumOf(a); u.push(5); return s + " " + a.length + " " + a[a.length - 1] + " " + a[a.length - 2]; }
+function storeInLoopAroundSum(a: number[]): number { let t = 0; for (let k = 0; k < 3; k++) { a[k] = k + 1; t += sum(a); a[k + 1] = 1; } return t; }
+function sumTwice(a: number[]): number { let t = 0; for (let i = 0; i < a.length; i++) t += a[i]; for (let i = 0; i < a.length; i++) t += a[i] * 2; return t; }
+let never = 0;
+function sumApart(a: number[]): number { try { if (never > 0) throw never; } catch { return -1; } let t = 0; for (let i = 0; i < a.length; i++) t += a[i]; return t; }
+function sumOfApart(a: number[]): number { try { if (never > 0) throw never; } catch { return -1; } let t = 0; for (const x of a) t += x; return t; }
+function throughAnother(a: number[]): number { try { if (never > 0) throw never; } catch { return -1; } return sumApart(a) + 1; }
+function storeCallStore(a: number[]): number { a[0] = 1; const s = sumApart(a); a[1] = 2; return s * 100 + a[0] * 10 + a[1]; }
+function storeCallStoreTwice(a: number[]): number { a[0] = 1; a[1] = 5; const s = sumOfApart(a); a[1] = 2; a[2] = 3; return s * 1000 + a[0] * 100 + a[1] * 10 + a[2]; }
+function readCallRead(a: number[]): number { const x = a[0]; const s = sumApart(a); const y = a[0]; return s * 100 + x * 10 + y; }
+function storeCallThroughAnother(a: number[]): number { a[0] = 4; const s = throughAnother(a); a[1] = 6; a[0] = 7; return s * 100 + a[0] * 10 + a[1]; }
+function viewsAroundCall(a: number[], u: unknown[]): string { u[0] = 7; const s = sumApart(a); u[1] = 8; u[2] = 9; return s + " " + a[0] + " " + a[1] + " " + a[2] + " " + String(u[1]); }
+function pushAroundCall(a: number[], u: unknown[]): string { u.push(4); const s = sumOfApart(a); u.push(5); return s + " " + a.length + " " + a[a.length - 1] + " " + a[a.length - 2]; }
+function storesInLoopAroundCall(a: number[]): number { let t = 0; for (let k = 0; k < 3; k++) { a[k] = k + 1; t += sumApart(a); a[k + 1] = 1; } return t; }
+function wholeStoresInLoopAroundCall(a: number[], n: number): number { let t = 0; for (let k = 0; k < n; k++) { a[0] = k | 0; if (k === 1) t += sumApart(a); a[1] = (k + 1) | 0; } return t + a[0] + a[1]; }
+function readCallStore(a: number[]): number { const x = a[0]; const s = sumApart(a); a[1] = 2; return s * 1000 + x * 100 + a[1] * 10 + a[0]; }
+function readCallPush(a: number[]): number { const x = a[0]; const s = sumOfApart(a); a.push(3); return s * 1000 + x * 100 + a[a.length - 1] * 10 + a.length; }
+function readCallFillZero(a: number[]): number { const x = a[0]; const s = sumApart(a); for (let i = 0; i < a.length; i++) a[i] = 0; return s * 100 + x * 10 + a[0]; }
+function readCallStoreThroughAnother(a: number[]): number { const x = a[1]; const s = throughAnother(a); a[0] = 5; a[2] = 6; return s * 1000 + x * 100 + a[0] * 10 + a[2]; }
+function rowsAroundCall(rows: number[][]): number { let t = 0; for (let k = 0; k < rows.length; k++) { const row = rows[k]; t += row[0]; t += sumApart(row); t += row[0] * 10 + row[1]; } return t; }
+function rowsAroundCallThroughAnother(rows: number[][]): number { let t = 0; for (let k = 0; k < rows.length; k++) { const row = rows[k]; const x = row[1]; t += throughAnother(row); t += row[1] * 10 + x + row[2]; } return t; }
+function rowsLargestAroundCall(rows: number[][]): number { let m = -1; for (let k = 0; k < rows.length; k++) { const row = rows[k]; if (row[0] > m) m = row[0]; m += sumOfApart(row); if (row[0] > m) m = row[0]; if (row[2] > 2) m += row[2]; } return m; }
+////= sumLong
+function rowsAroundLongCall(rows: number[][]): number { let t = 0; for (let k = 0; k < rows.length; k++) { const row = rows[k]; t += row[0]; t += sumLong(row); t += row[0] * 10 + row[1]; } return t; }
+function rowsLargestAroundLongCall(rows: number[][]): number { let m = -1; for (let k = 0; k < rows.length; k++) { const row = rows[k]; if (row[0] > m) m = row[0]; m += sumLong(row); if (row[0] > m) m = row[0]; if (row[2] > 2) m += row[2]; } return m; }
+function rowsTwiceAroundLongCall(rows: number[][]): number { let t = 0; for (let k = 0; k < rows.length; k++) { const row = rows[k]; const x = row[1] + row[2]; const s = sumLong(row); t += s + x + row[1] + row[2]; } return t; }
+function rowsOfAnythingAroundLongCall(rows: number[][], seen: unknown[]): number { let t = 0; for (let k = 0; k < rows.length; k++) { const row = rows[k]; seen.push(row[0]); t += sumLong(row); seen.push(row[0]); seen.push(row[1]); } return t; }
+function longCallAlone(a: number[]): number { return sumLong(a) + 1; }
+function emptyLoop(a: number[], n: number): number { let t = 0; for (let i = 0; i < n; i++) t += a[i]; return t; }
+function nilInFrontOfLoop(a: number[] | undefined, n: number): string { let t = 0; try { for (let i = 0; i < n; i++) t += a![i]; } catch (e) { return "caught " + (e instanceof TypeError) + " " + t; } return String(t); }
+function chosenInLoop(a: number[], b: number[]): number { let t = 0; for (let i = 0; i < a.length; i++) { const c = i & 1 ? a : b; t += c[i]; } return t; }
+function sumThenStoreWhole(a: number[], k: number): number { let t = 0; for (let i = 0; i < a.length; i++) t += a[i]; a[0] = k | 0; a[1] = (k + 1) | 0; return t + a[0] + a[1]; }
+
+function show(a: unknown[]): string {
+    let s = "";
+    for (let i = 0; i < a.length; i++) s += (i ? "," : "") + (i in a ? (Object.is(a[i], -0) ? "-0" : typeof a[i] + ":" + String(a[i])) : "hole");
+    return "[" + s + "] " + JSON.stringify(a) + " " + a.length;
+}
+const makers: [string, () => number[]][] = [
+    ["parsed", () => JSON.parse("[1,2,3,4,5,6,7,8]") as number[]],
+    ["parsed, edges", () => JSON.parse("[2147483647,-2147483648,0,-1,1,2,3,4]") as number[]],
+    ["parsed, one", () => JSON.parse("[5]") as number[]],
+    ["parsed, none", () => JSON.parse("[]") as number[]],
+    ["parsed, mixed", () => JSON.parse("[1,2.5,3,4]") as number[]],
+    ["parsed, with a hole", () => { const a = JSON.parse("[1,2,3,4,5]") as number[]; delete (a as unknown[])[2]; return a; }],
+    ["parsed, longer than it is filled", () => { const a = JSON.parse("[1,2,3]") as number[]; a.length = 6; return a; }],
+    ["parsed, shortened", () => { const a = JSON.parse("[1,2,3,4,5,6]") as number[]; a.length = 2; return a; }],
+    ["parsed, with a name", () => { const a = JSON.parse("[1,2,3,4]") as number[]; (a as unknown as { tag: string }).tag = "t"; return a; }],
+    ["parsed, frozen", () => Object.freeze(JSON.parse("[1,2,3,4]")) as number[]],
+    ["parsed, sealed", () => Object.seal(JSON.parse("[1,2,3,4]")) as number[]],
+    ["parsed, not extensible", () => Object.preventExtensions(JSON.parse("[1,2,3,4]")) as number[]],
+    ["Array.of", () => (Array.of as (...values: unknown[]) => unknown[])(1, 2, 3, 4) as number[]],
+    ["cloned", () => structuredClone(JSON.parse("[3,2,1,0]")) as number[]],
+    ["sliced", () => (JSON.parse("[9,8,7,6,5]") as unknown[]).slice(1) as number[]],
+    ["values that are whole", () => { const a = JSON.parse("[1,2,3,\"x\"]") as unknown[]; a.pop(); return a as number[]; }],
+    ["a literal of anything", () => ([1, 2, 3, 4, 5] as unknown[]) as number[]],
+    ["a literal of anything, sliced", () => ([6, 5, 4, 3] as unknown[]).slice() as number[]],
+    ["a literal of anything, twice", () => { const make = (): unknown[] => [7, 8, 9]; const first = make() as number[]; sum(first); first[0] = 0.5; return make() as number[]; }],
+    ["Array.from", () => Array.from([4, 3, 2, 1] as unknown[]) as number[]],
+    ["born here", () => [1, 2, 3, 4]],
+    ["born here, pushed", () => { const a: number[] = []; for (let i = 0; i < 5; i++) a.push(i); return a; }],
+];
+function tell(name: string, f: () => unknown): void {
+    let said: string;
+    try { const v = f(); said = Object.is(v, -0) ? "-0" : String(v); } catch (e) { said = e instanceof TypeError ? "TypeError" : "threw " + String(e); }
+    console.log("  " + name + ": " + said);
+}
+for (let turn = 0; turn < 2; turn++) {
+    for (const [name, make] of makers) {
+        console.log(name + ", turn " + turn);
+        tell("sum", () => { const a = make(); return sum(a) + " " + show(a); });
+        tell("sumOf", () => { const a = make(); return sumOf(a) + " " + show(a); });
+        tell("sumDown", () => { const a = make(); return sumDown(a) + " " + show(a); });
+        tell("largest", () => { const a = make(); return largest(a) + " " + show(a); });
+        tell("find", () => { const a = make(); return find(a, 3) + " " + find(a, 2.5) + " " + find(a, -7) + " " + show(a); });
+        tell("absent", () => { const a = make(); return absent(a) + " " + show(a); });
+        tell("fill whole", () => { const a = make(); return fill(a, 7) + " " + show(a); });
+        tell("fill half", () => { const a = make(); return fill(a, 0.5) + " " + show(a); });
+        tell("fill NaN", () => { const a = make(); return fill(a, NaN) + " " + show(a); });
+        tell("fill -0", () => { const a = make(); return fill(a, -0) + " " + show(a); });
+        tell("fillIndex", () => { const a = make(); return fillIndex(a) + " " + show(a); });
+        tell("fillZero", () => { const a = make(); return fillZero(a) + " " + show(a); });
+        tell("copy", () => { const a = make(), b = make(); fill(b, 0); return copy(a, b) + " " + show(a) + " " + show(b); });
+        tell("copy onto itself", () => { const a = make(); return copy(a, a) + " " + show(a); });
+        tell("copy into doubles", () => { const a = make(), b = [0.5, 0.5]; return copy(a, b) + " " + show(b); });
+        tell("copy from doubles", () => { const a = [0.5, 1.5], b = make(); return copy(a, b) + " " + show(b); });
+        tell("scale", () => { const a = make(); return scale(a, 2) + " " + show(a); });
+        tell("scale by a half", () => { const a = make(); return scale(a, 0.5) + " " + show(a); });
+        tell("bump", () => { const a = make(); return bump(a) + " " + show(a); });
+        tell("dot", () => { const a = make(), b = make(); return dot(a, b) + " " + dot(a, a) + " " + show(a); });
+        tell("gather", () => { const a = JSON.parse("[0,1,0,1]") as number[], b = make(); return gather(a, b) + " " + show(a) + " " + show(b); });
+        tell("bits", () => { const a = make(); return bits(a) + " " + show(a); });
+        tell("append", () => { const a = make(); return append(a, 20, 1) + " " + show(a); });
+        tell("append halves", () => { const a = make(); return append(a, 3, 0.5) + " " + show(a); });
+        tell("pushAll", () => { const a = make(); return pushAll(a, 20, 1) + " " + show(a); });
+        tell("pushAll halves", () => { const a = make(); return pushAll(a, 3, 0.5) + " " + show(a); });
+        tell("one", () => { const a = make(); return one(a, 0) + " " + one(a, 1) + " " + one(a, 99) + " " + one(a, -1) + " " + show(a); });
+        tell("put", () => { const a = make(); put(a, 0, 11); put(a, 1, 1.5); put(a, 9, 3); return show(a); });
+        tell("nested", () => { const a = make(), b = make(); return nested(a, b) + " " + nested(a, a) + " " + show(a); });
+        tell("rows", () => { const m = [make(), make(), [0.5], make()]; return rows(m) + " " + show(m[0]) + " " + show(m[3]); });
+        tell("storeSumStore", () => { const a = make(); return storeSumStore(a) + " " + show(a); });
+        tell("readSumRead", () => { const a = make(); return readSumRead(a) + " " + show(a); });
+        tell("throughTwoViews", () => { const a = make(); return throughTwoViews(a, a) + " " + show(a); });
+        tell("pushSumPush", () => { const a = make(); return pushSumPush(a, a) + " " + show(a); });
+        tell("storeInLoopAroundSum", () => { const a = make(); return storeInLoopAroundSum(a) + " " + show(a); });
+        tell("sumTwice", () => { const a = make(); return sumTwice(a) + " " + show(a); });
+        tell("sumThenStoreWhole", () => { const a = make(); return sumThenStoreWhole(a, 40) + " " + show(a); });
+        tell("storeCallStore", () => { const a = make(); return storeCallStore(a) + " " + show(a); });
+        tell("storeCallStoreTwice", () => { const a = make(); return storeCallStoreTwice(a) + " " + show(a); });
+        tell("readCallRead", () => { const a = make(); return readCallRead(a) + " " + show(a); });
+        tell("storeCallThroughAnother", () => { const a = make(); return storeCallThroughAnother(a) + " " + show(a); });
+        tell("viewsAroundCall", () => { const a = make(); return viewsAroundCall(a, a) + " " + show(a); });
+        tell("pushAroundCall", () => { const a = make(); return pushAroundCall(a, a) + " " + show(a); });
+        tell("storesInLoopAroundCall", () => { const a = make(); return storesInLoopAroundCall(a) + " " + show(a); });
+        tell("wholeStoresInLoopAroundCall", () => { const a = make(); return wholeStoresInLoopAroundCall(a, 4) + " " + show(a); });
+        tell("readCallStore", () => { const a = make(); return readCallStore(a) + " " + show(a); });
+        tell("readCallPush", () => { const a = make(); return readCallPush(a) + " " + show(a); });
+        tell("readCallFillZero", () => { const a = make(); return readCallFillZero(a) + " " + show(a); });
+        tell("readCallStoreThroughAnother", () => { const a = make(); return readCallStoreThroughAnother(a) + " " + show(a); });
+        tell("rowsAroundCall", () => { const rows = [make(), make(), make()]; return rowsAroundCall(rows) + " " + show(rows[0]) + show(rows[2]); });
+        tell("rowsAroundCallThroughAnother", () => { const rows = [make(), make()]; return rowsAroundCallThroughAnother(rows) + " " + show(rows[1]); });
+        tell("rowsLargestAroundCall", () => { const rows = [make(), make()]; return rowsLargestAroundCall(rows) + " " + show(rows[0]); });
+        tell("rowsAroundLongCall", () => { const rows = [make(), make(), make()]; return rowsAroundLongCall(rows) + " " + show(rows[0]) + show(rows[2]); });
+        tell("rowsLargestAroundLongCall", () => { const rows = [make(), make()]; return rowsLargestAroundLongCall(rows) + " " + show(rows[0]); });
+        tell("rowsTwiceAroundLongCall", () => { const rows = [make(), make()]; return rowsTwiceAroundLongCall(rows) + " " + show(rows[1]); });
+        tell("rowsOfAnythingAroundLongCall", () => { const rows = [make(), make()]; const seen: unknown[] = []; return rowsOfAnythingAroundLongCall(rows, seen) + " " + show(seen) + show(rows[1]); });
+        tell("longCallAlone", () => { const a = make(); return longCallAlone(a) + " " + show(a); });
+        tell("emptyLoop", () => { const a = make(); return emptyLoop(a, 0) + " " + emptyLoop(a, 2) + " " + show(a); });
+        tell("nilInFrontOfLoop", () => { const a = make(); return nilInFrontOfLoop(undefined, 0) + " " + nilInFrontOfLoop(undefined, 2) + " " + nilInFrontOfLoop(a, 2) + " " + show(a); });
+        tell("chosenInLoop", () => { const a = make(), b = make(); return chosenInLoop(a, b) + " " + show(a) + " " + show(b); });
+        tell("methods afterwards", () => { const a = make(); sum(a); return a.indexOf(3) + " " + a.includes(2) + " " + a.lastIndexOf(1) + " " + a.join("-") + " " + a.slice(1, 3).join() + " " + a.concat([1.5]).join() + " " + [...a].reverse().join() + " " + a.map(x => x + 1).join() + " " + a.filter(x => x > 1).length + " " + a.reduce((t, x) => t + x, 0) + " " + Math.max(...a) + " " + [...a].sort((x, y) => y - x).join() + " " + Object.keys(a).join() + " " + Array.isArray(a); });
+        tell("a text stored afterwards", () => { const a = make(); sum(a); (a as unknown[])[1] = "x"; return show(a); });
+        tell("undefined stored afterwards", () => { const a = make(); sum(a); (a as unknown[])[1] = undefined; return show(a) + " " + absent(a); });
+    }
+}
+//// number-arrays-every-indexing-type.ts
+declare const console: { log(...values: unknown[]): void };
+function sum(a: number[]): number { let t = 0; for (let i = 0; i < a.length; i++) t += a[i]; return t; }
+function sumOf(a: number[]): number { let t = 0; for (const x of a) t += x; return t; }
+function product(a: number[]): number { let t = 1; for (const x of a) t *= x; return t; }
+function below(a: number[], limit: number): number { let n = 0; for (let i = 0; i < a.length; i++) if (a[i] < limit) n++; return n; }
+function notBelow(a: number[], limit: number): number { let n = 0; for (let i = 0; i < a.length; i++) if (!(a[i] < limit)) n++; return n; }
+function bits(a: number[]): number { let t = 0; for (const x of a) t ^= x | 0; return t; }
+function absent(a: number[]): number { let n = 0; for (let i = 0; i < a.length; i++) if (a[i] === undefined) n++; return n; }
+function absentOf(a: number[]): number { let n = 0; for (const x of a) if (x === undefined) n++; return n; }
+function kept(a: number[]): string { let s = ""; for (const x of a) s += String(x) + ","; return s; }
+function both(a: number[]): string { let t = 0, n = 0; for (const x of a) { t += x; if (x === undefined) n++; } return t + " " + n; }
+function text(a: number[]): string { let s = ""; for (let i = 0; i < a.length; i++) s = s + a[i]; return s; }
+function last(a: number[]): number { return a[a.length - 1]; }
+function plusOne(a: number[], i: number): number { return a[i] + 1; }
+function carried(a: number[]): number | undefined { let x: number | undefined = -1; for (let i = 0; i < a.length; i++) x = a[i]; return x; }
+function two(a: number[], b: number[]): number { let t = 0; for (let i = 0; i < a.length; i++) t += a[i] * b[i]; return t; }
+function tell(name: string, a: () => number[]): void {
+    const show = (f: () => unknown) => { try { const v = f(); return Object.is(v, -0) ? "-0" : String(v); } catch (e) { return e instanceof TypeError ? "TypeError" : "threw"; } };
+    console.log(name + ": " + [() => sum(a()), () => sumOf(a()), () => product(a()), () => below(a(), 2), () => notBelow(a(), 2), () => bits(a()), () => absent(a()), () => absentOf(a()), () => kept(a()), () => both(a()), () => text(a()), () => last(a()), () => plusOne(a(), 1), () => plusOne(a(), 99), () => carried(a()), () => two(a(), a()), () => two(a(), [1])].map(show).join(" | "));
+}
+for (let turn = 0; turn < 2; turn++) {
+    tell("doubles", () => [1.5, 2.5, -3.25]);
+    tell("whole numbers", () => [1, 2, 3]);
+    tell("pushed halves", () => { const a: number[] = []; for (let i = 0; i < 4; i++) a.push(i / 2); return a; });
+    tell("pushed whole", () => { const a: number[] = []; for (let i = 0; i < 4; i++) a.push(i); return a; });
+    tell("empty", () => []);
+    tell("NaN stored", () => [1.5, NaN, 2.5]);
+    tell("NaN pushed", () => { const a = [1.5]; a.push(NaN); a.push(0 / 0); return a; });
+    tell("-0", () => [-0, -0]);
+    tell("infinities", () => [Infinity, -Infinity, 1]);
+    tell("a hole among doubles", () => { const a = [1.5, 2.5, 3.5]; delete (a as unknown[])[1]; return a; });
+    tell("a hole among whole numbers", () => { const a = [1, 2, 3]; delete (a as unknown[])[1]; return a; });
+    tell("a hole at the end", () => { const a = [1.5, 2.5]; a.length = 3; return a; });
+    tell("all holes", () => new Array<number>(3));
+    tell("values", () => { const a: unknown[] = [1.5, "x", 3]; a[1] = 2; return a as number[]; });
+    tell("values with a hole", () => { const a: unknown[] = [1.5, "x", 3]; delete a[1]; return a as number[]; });
+    tell("undefined among values", () => [1.5, undefined as unknown as number, 3]);
+    tell("JSON whole", () => JSON.parse("[1,2,3]"));
+    tell("JSON mixed", () => JSON.parse("[1,2.5,3]"));
+    tell("sparse", () => { const a = [1.5, 2.5]; a[150000] = 1; a.length = 4; return a; });
+    tell("frozen", () => Object.freeze([1.5, 2.5]) as number[]);
+    tell("denormals", () => [5e-324, 2.1219957905e-314, 1.7976931348623157e308]);
+    tell("large whole", () => [2147483647, 2147483648, -2147483649, 9007199254740991]);
+}
+//// number-arrays-from-everywhere.ts
+// Typed functions over `number[]` (two sums, a read, a chain of reads, a store, a loop of stores, push, includes, indexOf, map, a pattern) get arrays from every source: literals of whole numbers, of fractions and of variables, empty literals that are pushed into, JSON.parse, Array.from, `new Array(n)`, the methods of the library, holes, frozen and sealed arrays, one constant literal evaluated many times, own properties named -1 and 1.5, subclasses, other prototypes, another realm, a proxy. Whatever storage an array arrives with, every function answers as in plain Bun, the first time it sees the array and the second, and 0 and -0 stay apart.
+// STATISTIC: ElementPresenceTestsPlaced >= 1
+// STATISTIC: IntegerArrayConversionsPlaced >= 1
+import vm from "node:vm";
+
+////= show-3
+
+////= list	Object.getPrototypeOf(a) === Array.prototype ? text : text + " with another prototype"
+
+////= lines-19	sum	a	total	i	a[i
+
+////= lines-38	sumOf	a	total
+
+function at(a: number[], i: number): number {
+  return a[i];
+}
+
+function chase(a: number[], k: number): number {
+  k = a[k];
+  k = a[k];
+  k = a[k];
+  return k;
+}
+
+////= lines-36	put	number	v
+
+function scale(a: number[], by: number): void {
+  for (let i = 0; i < a.length; i++) a[i] = a[i] * by;
+}
+
+////= lines-39	add	number	push
+
+////= lines-39	has	boolean	includes
+
+////= lines-39	where	number	indexOf
+
+function doubled(a: number[]): number[] {
+  return a.map(value => value * 2);
+}
+
+function firstLessSecond(a: number[]): number {
+  const [first, second] = a;
+  return first - second;
+}
+
+let traps = "";
+const logging: ProxyHandler<number[]> = {
+  get(target, key, receiver) {
+    traps += " get:" + String(key);
+    return Reflect.get(target, key, receiver);
+  },
+  set(target, key, value, receiver) {
+    traps += " set:" + String(key);
+    return Reflect.set(target, key, value, receiver);
+  },
+  has(target, key) {
+    traps += " has:" + String(key);
+    return Reflect.has(target, key);
+  },
+};
+
+function attempt(run: () => string): string {
+  let text: string;
+  try {
+    text = run();
+  } catch (error) {
+    text = "threw " + (error as Error).constructor.name;
+  }
+  if (traps !== "") text += " (traps:" + traps + ")";
+  traps = "";
+  return text;
+}
+
+// What the function answers or throws, and what the array is afterwards.
+function outcome(a: number[], run: (a: number[]) => string): string {
+  const text = attempt(() => run(a));
+  return (text === "" ? "" : text + " ") + attempt(() => list(a));
+}
+
+const one = JSON.parse("1") as number;
+const half = JSON.parse("0.5") as number;
+const nan = Number(JSON.parse('"x"'));
+
+function constant(): number[] {
+  return [1, 2, 3];
+}
+
+function constantFractions(): number[] {
+  return [0.5, 1.5, 2.5];
+}
+
+function rest(...values: number[]): number[] {
+  return values;
+}
+
+////= changed
+
+class Numbers extends Array<number> {}
+class Padded extends Array<number> {}
+(Padded.prototype as unknown as Record<string, number>)["1"] = 40;
+
+const otherRealm = vm.createContext({});
+const realmWithAnInheritedElement = vm.createContext({});
+vm.runInContext("Array.prototype[1] = 20;", realmWithAnInheritedElement);
+
+const makers: [string, () => number[]][] = [
+  ["whole numbers", constant],
+  ["fractions", constantFractions],
+  ["whole numbers around a fraction", () => [1, 2.5, 3]],
+  ["variables that hold whole numbers", () => [one, one + 1, one + 2]],
+  ["variables that hold fractions", () => [half, half + 1, half + 2]],
+  ["a variable that holds NaN", () => [nan, 2, 3]],
+  ["NaN", () => [NaN, 2, 3]],
+  ["numbers past 32 bits", () => [2147483647, 2147483648, -2147483649, 9007199254740991]],
+  ["infinities", () => [Infinity, -Infinity, 1e308]],
+  ["[-0]", () => [-0]],
+  ["[0]", () => [0]],
+  ["variables that hold 0 and -0", () => [one - one, -(one - one)]],
+  ["empty", () => []],
+  ["whole numbers pushed", () => changed([], a => (a.push(1), a.push(2), a.push(3)))],
+  ["fractions pushed", () => changed([], a => (a.push(0.5), a.push(1.5), a.push(2.5)))],
+  ["whole numbers and then a fraction pushed", () => changed([], a => (a.push(1), a.push(2), a.push(2.5)))],
+  ["whole numbers stored one behind the other", () => changed([], a => ((a[0] = 1), (a[1] = 2), (a[2] = 3)))],
+  ["JSON.parse", () => JSON.parse("[1,2,3]") as number[]],
+  ["JSON.parse, fractions", () => JSON.parse("[0.5,1.5,2.5]") as number[]],
+  ["JSON.parse, both", () => JSON.parse("[1,2.5,3]") as number[]],
+  ["JSON.parse, -0", () => JSON.parse("[-0,0]") as number[]],
+  ["JSON.parse, empty", () => JSON.parse("[]") as number[]],
+  ["Array.from a length", () => Array.from({ length: 3 }, (_, i) => i)],
+  ["Array.from a length, fractions", () => Array.from({ length: 3 }, (_, i) => i / 2)],
+  ["Array.from a set", () => Array.from(new Set([1, 2, 3]))],
+  ["Array.from bytes", () => Array.from(new Uint8Array([1, 2, 3]))],
+  ["Array.from doubles", () => Array.from(new Float64Array([1, NaN, -0]))],
+  ["Array.of", () => Array.of(1, 2, 3)],
+  ["new Array(3).fill(0)", () => new Array<number>(3).fill(0)],
+  ["new Array(3).fill(0.5)", () => new Array<number>(3).fill(0.5)],
+  ["new Array(3)", () => new Array<number>(3)],
+  ["new Array(3), one stored", () => changed(new Array<number>(3), a => (a[1] = 2))],
+  ["new Array(1, 2, 3)", () => new Array<number>(1, 2, 3)],
+  ["[1, , 3]", () => [1, , 3] as number[]],
+  ["[0.5, , 2.5]", () => [0.5, , 2.5] as number[]],
+  ["a hole made by delete", () => changed(JSON.parse("[1,2,3]") as number[], a => delete a[1])],
+  ["a hole made by delete among fractions", () => changed(constantFractions(), a => delete a[1])],
+  ["a length made longer", () => changed(constant(), a => (a.length = 5))],
+  ["a length made shorter", () => changed(constant(), a => (a.length = 2))],
+  ["an element past the end", () => changed(constant(), a => (a[6] = 7))],
+  ["split and converted", () => "1,2,3".split(",").map(Number)],
+  ["Object.values", () => Object.values({ a: 1, b: 2, c: 3 })],
+  ["spread", () => [...constant()]],
+  ["spread of a set", () => [...new Set([1, 2.5, 3])]],
+  ["slice", () => constant().slice()],
+  ["slice of a parsed array", () => (JSON.parse("[0,1,2,3,4]") as number[]).slice(1, 4)],
+  ["concat", () => constant().concat(constantFractions())],
+  ["filter", () => [1, 9, 2, 8, 3].filter(value => value < 5)],
+  ["map to whole numbers", () => constant().map(value => value | 0)],
+  ["map to fractions", () => constant().map(value => value / 4)],
+  ["flat", () => [[1], [2, 3]].flat()],
+  ["sorted", () => [3, 1, 2].sort((left, right) => left - right)],
+  ["reversed", () => [3, 2, 1].reverse()],
+  ["spliced out", () => [0, 1, 2, 3, 4].splice(1, 3)],
+  ["rest parameters", () => rest(1, 2, 3)],
+  ["rest parameters, fractions", () => rest(0.5, 1.5)],
+  ["held a text once", () => changed(["x", 2, 3] as unknown[] as number[], a => (a[0] = 1))],
+  ["held a fraction once", () => changed([0.5, 2, 3], a => (a[0] = 1))],
+  ["frozen", () => changed(constant(), a => Object.freeze(a))],
+  ["frozen fractions", () => changed(constantFractions(), a => Object.freeze(a))],
+  ["frozen, parsed", () => changed(JSON.parse("[1,2,3]") as number[], a => Object.freeze(a))],
+  ["Object.freeze([1, 2])", () => Object.freeze([1, 2]) as number[]],
+  ["sealed", () => changed(constant(), a => Object.seal(a))],
+  ["not extensible", () => changed(constant(), a => Object.preventExtensions(a))],
+  ["a length that is read-only", () => changed(constant(), a => Object.defineProperty(a, "length", { writable: false }))],
+  ["own properties -1 and 1.5", () => changed(constant(), a => (((a as unknown as Record<string, number>)["-1"] = 10), ((a as unknown as Record<string, number>)["1.5"] = 20)))],
+  ["own properties -1 and 1.5 stored by number", () => changed(constantFractions(), a => ((a[-1] = 10), (a[1.5] = 20)))],
+  ["own properties NaN and 4294967295", () => changed(constant(), a => ((a[NaN] = 30), (a[4294967295] = 40)))],
+  ["an own name", () => changed(constant(), a => ((a as unknown as Record<string, number>).name = 6))],
+  ["an own getter at 1", () => changed(constant(), a => Object.defineProperty(a, 1, { get: () => 50, enumerable: true, configurable: true }))],
+  ["a read-only element at 1", () => changed(constant(), a => Object.defineProperty(a, 1, { value: 2.5, writable: false, enumerable: true, configurable: true }))],
+  ["was sparse", () => changed(constant(), a => ((a[1000000] = 4), (a.length = 4)))],
+  ["a subclass", () => changed(new Numbers(), a => a.push(1, 2, 3))],
+  ["a subclass, fractions", () => changed(new Numbers(), a => a.push(0.5, 1.5, 2.5))],
+  ["a subclass, from", () => Numbers.from([1, 2, 3])],
+  ["a subclass, of", () => Numbers.of(1, 2, 3)],
+  ["a subclass with an element on its prototype", () => changed(new Padded(), a => (a.push(1, 2, 3), delete a[1]))],
+  ["a hole over another prototype's element", () => changed([1, , 3] as number[], a => Object.setPrototypeOf(a, { __proto__: Array.prototype, 1: 30 }))],
+  ["a hole among fractions over another prototype's element", () => changed([0.5, , 2.5] as number[], a => Object.setPrototypeOf(a, { __proto__: Array.prototype, 1: 30.5 }))],
+  ["another prototype with elements past the end", () => changed(constant(), a => Object.setPrototypeOf(a, { __proto__: Array.prototype, 3: 60, "-1": 70, "1.5": 80 }))],
+  ["another realm", () => vm.runInContext("[1, 2, 3]", otherRealm) as number[]],
+  ["another realm, fractions", () => vm.runInContext("[0.5, 1.5, 2.5]", otherRealm) as number[]],
+  ["another realm, a hole", () => vm.runInContext("[1, , 3]", otherRealm) as number[]],
+  ["another realm, a hole over an inherited element", () => vm.runInContext("[1, , 3]", realmWithAnInheritedElement) as number[]],
+  ["a proxy", () => new Proxy([1, 2, 3], logging) as number[]],
+  ["a proxy of fractions", () => new Proxy([0.5, 1.5, 2.5], logging) as number[]],
+  ["a proxy of a hole", () => new Proxy([1, , 3] as number[], logging) as number[]],
+];
+
+const keys = [0, 1, 2, 3, -1, 1.5, -0, NaN, 4294967295, 4294967296];
+const places: [string, (a: number[]) => number][] = [
+  ["0", () => 0],
+  ["1", () => 1],
+  ["the length", a => a.length],
+  ["the length + 2", a => a.length + 2],
+  ["-1", () => -1],
+  ["1.5", () => 1.5],
+  ["-0", () => -0],
+];
+const values = [7, 0.5, -0, nan];
+
+function exercise(name: string, make: () => number[], lines: string[]): void {
+  const tell = (what: string, run: () => string): void => void lines.push(name + " | " + what + ": " + attempt(run));
+  tell("summed", () => {
+    const a = make();
+    return show(sum(a)) + " " + show(sum(a)) + " " + show(sumOf(a)) + " " + show(sumOf(a)) + " " + list(a);
+  });
+  tell("summed by for-of first", () => {
+    const a = make();
+    return show(sumOf(a)) + " " + show(sum(a)) + " " + list(a);
+  });
+  tell("read", () => {
+    const a = make();
+    let text = "";
+    for (const key of keys) text += show(at(a, key)) + " ";
+    for (const key of keys) text += show(at(a, key)) + " ";
+    return text + list(a);
+  });
+  tell("chased", () => {
+    const a = make();
+    return show(chase(a, 0)) + " " + show(chase(a, 1)) + " " + show(chase(a, 2)) + " " + show(chase(a, 1.5)) + " " + show(chase(a, -1));
+  });
+  for (const [label, place] of places) {
+    tell("stored at " + label, () => values.map(value => outcome(make(), a => (put(a, place(a), value), show(sum(a))))).join(" ; "));
+  }
+  tell("summed, then stored into", () =>
+    outcome(make(), a => {
+      const before = sum(a);
+      put(a, 0, 8);
+      put(a, 1, 8.5);
+      return show(before) + " " + show(sum(a));
+    }),
+  );
+  tell("scaled", () => [2, 0.5, -1, nan].map(by => outcome(make(), a => (scale(a, by), ""))).join(" ; "));
+  tell("pushed into", () => values.map(value => outcome(make(), a => add(a, value) + " " + add(a, 1) + " " + show(sum(a)))).join(" ; "));
+  tell("searched", () => {
+    const a = make();
+    let text = "";
+    for (const value of [1, 2, 3, 0, -0, 0.5, 2.5, nan, 20, 30, 40, 50, Infinity, 2147483648]) text += (has(a, value) ? "y" : "n") + where(a, value) + " ";
+    return text + (has(a, undefined as unknown as number) ? "y" : "n") + where(a, undefined as unknown as number);
+  });
+  tell("summed, then searched", () => {
+    const a = make();
+    return show(sum(a)) + " " + has(a, 3) + " " + where(a, 3) + " " + has(a, 2.5) + " " + where(a, 2.5) + " " + has(a, nan);
+  });
+  tell("doubled", () => {
+    const a = make();
+    return list(doubled(a)) + " " + list(doubled(doubled(a))) + " " + list(a);
+  });
+  tell("taken apart", () => {
+    const a = make();
+    return show(firstLessSecond(a)) + " " + show(firstLessSecond(a));
+  });
+}
+
+function exerciseAll(): string[] {
+  const lines: string[] = [];
+  for (const [name, make] of makers) exercise(name, make, lines);
+  return lines;
+}
+
+const firstTime = exerciseAll();
+for (const line of firstTime) console.log(line);
+const secondTime = exerciseAll();
+let differences = 0;
+for (let i = 0; i < firstTime.length; i++) {
+  if (firstTime[i] === secondTime[i]) continue;
+  differences++;
+  console.log("the second time: " + secondTime[i]);
+}
+console.log("lines that differ the second time: " + differences);
+
+// One array that every function sees again and again, and one literal that many arrays come from.
+const shared: number[] = [4, 5, 6];
+const parsed = JSON.parse("[4,5,6]") as number[];
+for (const [name, a] of [["declared", shared], ["parsed", parsed]] as [string, number[]][]) {
+  console.log(name + ": " + show(sum(a)) + " " + show(at(a, 2)) + " " + show(sumOf(a)) + " " + list(a));
+  put(a, 0, 40);
+  console.log(name + ": " + show(sum(a)) + " " + show(at(a, 0)) + " " + has(a, 40) + " " + list(a));
+  put(a, 1, 0.25);
+  console.log(name + ": " + show(sum(a)) + " " + show(at(a, 1)) + " " + where(a, 0.25) + " " + list(a));
+  console.log(name + ": " + add(a, 7) + " " + show(sum(a)) + " " + list(a));
+  put(a, 2, nan);
+  console.log(name + ": " + show(sum(a)) + " " + show(at(a, 2)) + " " + has(a, nan) + " " + where(a, nan) + " " + list(a));
+  put(a, 2, -0);
+  console.log(name + ": " + show(sum(a)) + " " + show(at(a, 2)) + " " + show(1 / at(a, 2)) + " " + list(a));
+  put(a, 8, 1);
+  console.log(name + ": " + show(sum(a)) + " " + show(at(a, 6)) + " " + list(a) + " " + list(doubled(a)));
+}
+const copies = [constant(), constant(), constant()];
+put(copies[0], 0, 0.5);
+add(copies[1], 4);
+console.log(copies.map(list).join(" ") + " " + list(constant()) + " " + show(sum(constant())) + " " + list(constantFractions()));
+//// number-arrays-take-other-values.ts
+// In the middle of a typed loop over a `number[]` the array takes what its storage cannot hold, or loses what the loop counts on: NaN, undefined, null, a text, an object, a hole made by `delete`, `length = 0`, an element stored far past the end, a method of the library that moves the elements, a frozen array, a getter, another prototype, a named property. The change is written in the body of the loop, or made by a function the loop calls by name, or by a function value. The loops go on as in plain Bun: what they add up (a sum, and bits that NaN does not swallow), what they store and what the array holds afterwards. At the end come arrays that only typed code ever sees.
+////= show-2
+
+////= list	text
+
+////= outcome	(a: number[], run: (a: number[]) => string	run(a
+
+const nan = Number(JSON.parse('"x"'));
+const four = JSON.parse("4") as number;
+
+const makers: [string, () => number[]][] = [
+  ["whole numbers", () => [1, 2, 3, 4, 5, 6]],
+  ["fractions", () => [0.5, 1.5, 2.5, 3.5, 4.5, 5.5]],
+  ["parsed whole numbers", () => JSON.parse("[1,2,3,4,5,6]") as number[]],
+  ["pushed", () => {
+    const a: number[] = [];
+    for (let i = 1; i <= 6; i++) a.push(i);
+    return a;
+  }],
+  ["held a text once", () => {
+    const a: unknown[] = ["x", 2, 3, 4, 5, 6];
+    a[0] = 1;
+    return a as number[];
+  }],
+];
+const moments = [0, 2, 4, 5];
+
+// The change is in the body of the loop, one kind of change to a loop.
+////= lines-58	numberStoredInBody(a: number[], when: number, v: number	a[i + 1] = v
+
+////= lines-47	numberStoredBehindInBody(a: number[], when: number	if (i === when) a[0
+
+////= lines-33	undefinedStoredInBody	undefined
+
+////= lines-33	nullStoredInBody	null
+
+////= lines-33	textStoredInBody	"text"
+
+////= lines-58	objectStoredInBody(a: number[], when: number	a[i + 1] = { valueOf: () => 100 } as any
+
+////= lines-58	deletedInBody(a: number[], when: number	delete a[i + 1]
+
+////= lines-58	emptiedInBody(a: number[], when: number	a.length = 0
+
+////= lines-59	emptiedInBodyUnderAnEarlierLength(a: number[], when: number	.length = 0
+
+////= lines-58	shortenedInBody(a: number[], when: number	a.length = i + 2
+
+////= lines-58	lengthenedInBody(a: number[], when: number	a.length = a.length + 2
+
+////= lines-58	storedFarInBody(a: number[], when: number	a[a.length + 5] = 1
+
+////= lines-58	pushedInBody(a: number[], when: number, v: number	a.push(v)
+
+////= lines-58	poppedInBody(a: number[], when: number	total += a.pop()!
+
+////= lines-49	undefinedStoredInBodyOfForOf(a: number[], when: number	a[i + 1] = undefined as any
+
+////= lines-49	numberStoredInBodyOfForOf(a: number[], when: number, v: number	a[i + 1] = v
+
+////= lines-49	deletedInBodyOfForOf(a: number[], when: number	delete a[i + 1]
+
+////= lines-49	emptiedInBodyOfForOf(a: number[], when: number	a.length = 0
+
+////= lines-47	everyElementBecomes(a: number[]	a[i
+
+const inBody: [string, (a: number[], when: number) => string][] = [
+  ["NaN stored", (a, when) => numberStoredInBody(a, when, nan)],
+  ["-0 stored", (a, when) => numberStoredInBody(a, when, -0)],
+  ["a fraction stored", (a, when) => numberStoredInBody(a, when, 0.25)],
+  ["2 ** 31 stored", (a, when) => numberStoredInBody(a, when, 2147483648)],
+  ["Infinity stored", (a, when) => numberStoredInBody(a, when, Infinity)],
+  ["NaN stored behind the loop's position", (a, when) => numberStoredBehindInBody(a, when, nan)],
+  ["a fraction stored behind the loop's position", (a, when) => numberStoredBehindInBody(a, when, 0.25)],
+  ["undefined stored", undefinedStoredInBody],
+  ["null stored", nullStoredInBody],
+  ["a text stored", textStoredInBody],
+  ["an object stored", objectStoredInBody],
+  ["deleted", deletedInBody],
+  ["length = 0", emptiedInBody],
+  ["length = 0 under an earlier length", emptiedInBodyUnderAnEarlierLength],
+  ["a shorter length", shortenedInBody],
+  ["a longer length", lengthenedInBody],
+  ["stored far past the end", storedFarInBody],
+  ["NaN pushed", (a, when) => pushedInBody(a, when, nan)],
+  ["a fraction pushed", (a, when) => pushedInBody(a, when, 0.25)],
+  ["popped", poppedInBody],
+  ["for-of, undefined stored", undefinedStoredInBodyOfForOf],
+  ["for-of, NaN stored", (a, when) => numberStoredInBodyOfForOf(a, when, nan)],
+  ["for-of, a fraction stored", (a, when) => numberStoredInBodyOfForOf(a, when, 0.25)],
+  ["for-of, deleted", deletedInBodyOfForOf],
+  ["for-of, length = 0", emptiedInBodyOfForOf],
+];
+for (const [change, run] of inBody) {
+  for (const [name, make] of makers) {
+    console.log("in the body, " + change + ", " + name + ": " + moments.map(when => outcome(make(), a => run(a, when))).join(" ; "));
+  }
+}
+for (const [name, make] of makers) {
+  console.log("every element becomes, " + name + ": " + [nan, -0, 0.25, 7].map(v => outcome(make(), a => everyElementBecomes(a, v))).join(" ; "));
+}
+
+// The change is made by a function that the loop calls by name.
+////= lines-36	spoil	unknown	value
+
+function change(kind: number, a: number[], i: number): void {
+  switch (kind) {
+    case 0: a[i] = nan; break;
+    case 1: a[i] = undefined as any; break;
+    case 2: spoil(a, i, "text"); break;
+    case 3: delete a[i]; break;
+    case 4: a.length = 0; break;
+    case 5: a[a.length + 5] = 1; break;
+    case 6: spoil(a, i, null); break;
+    case 7: a[i] = 0.25; break;
+  }
+}
+const kinds = ["NaN", "undefined", "a text", "delete", "length = 0", "far past the end", "null", "a fraction"];
+
+////= lines-58	sumAroundNamedCall(a: number[], when: number, kind: number	change(kind, a, i + 1)
+
+////= lines-49	sumOfAroundNamedCall(a: number[], when: number, kind: number	change(kind, a, i + 1)
+
+function doubleAroundNamedCall(a: number[], when: number, kind: number): string {
+  for (let i = 0; i < a.length; i++) {
+    if (i === when) change(kind, a, i + 1);
+    a[i] = a[i] * 2;
+  }
+  return String(a.length);
+}
+
+function readTwiceAroundNamedCall(a: number[], when: number, kind: number): string {
+  const before = a[when + 1];
+  change(kind, a, when + 1);
+  return show(before + a[when + 1]);
+}
+
+const aroundNamedCall: [string, (a: number[], when: number, kind: number) => string][] = [
+  ["a sum", sumAroundNamedCall],
+  ["a for-of sum", sumOfAroundNamedCall],
+  ["doubling", doubleAroundNamedCall],
+  ["two reads", readTwiceAroundNamedCall],
+];
+for (const [loop, run] of aroundNamedCall) {
+  for (let kind = 0; kind < kinds.length; kind++) {
+    for (const [name, make] of makers) {
+      console.log("by a named function, " + loop + ", " + kinds[kind] + ", " + name + ": " + moments.map(when => outcome(make(), a => run(a, when, kind))).join(" ; "));
+    }
+  }
+}
+
+// The change is made by a function value.
+type Change = (a: number[], i: number) => void;
+
+////= lines-58	sumAround(a: number[], when: number, act: Change	act(a, i + 1)
+
+////= lines-59	sumUnderAnEarlierLength(a: number[], when: number, act: Change	ct(a, i + 1)
+
+function sumBackwards(a: number[], when: number, act: Change): string {
+  let total = 0, bits = 0;
+  for (let i = a.length - 1; i >= 0; i--) {
+    if (i === when) act(a, i - 1);
+    total += a[i];
+    bits = (bits << 1) ^ (a[i] * 4);
+  }
+  return show(total) + " " + bits;
+}
+
+////= lines-49	sumOfAround(a: number[], when: number, act: Change	act(a, i + 1)
+
+function doubleAround(a: number[], when: number, act: Change): string {
+  for (let i = 0; i < a.length; i++) {
+    if (i === when) act(a, i + 1);
+    a[i] = a[i] * 2;
+  }
+  return String(a.length);
+}
+
+function countAround(a: number[], when: number, act: Change): string {
+  let larger = 0;
+  for (let i = 0; i < a.length; i++) {
+    if (i === when) act(a, i + 1);
+    if (a[i] > 2) larger++;
+    if (a[i] === undefined) larger += 100;
+  }
+  return String(larger);
+}
+
+function mapAround(a: number[], when: number, act: Change): string {
+  const mapped = a.map((value, i) => {
+    if (i === when) act(a, i + 1);
+    return value + 1;
+  });
+  let total = 0, bits = 0;
+  for (let i = 0; i < mapped.length; i++) {
+    total += mapped[i];
+    bits = (bits << 1) ^ (mapped[i] * 4);
+  }
+  return show(total) + " " + bits;
+}
+
+const loops: [string, (a: number[], when: number, act: Change) => string][] = [
+  ["a sum", sumAround],
+  ["a sum under an earlier length", sumUnderAnEarlierLength],
+  ["a sum backwards", sumBackwards],
+  ["a for-of sum", sumOfAround],
+  ["doubling", doubleAround],
+  ["counting", countAround],
+  ["map", mapAround],
+];
+const changes: [string, Change][] = [
+  ["nothing", () => {}],
+  ["NaN", (a, i) => { a[i] = nan; }],
+  ["undefined", (a, i) => { a[i] = undefined as any; }],
+  ["null", (a, i) => { a[i] = null as any; }],
+  ["a text", (a, i) => { a[i] = "text" as any; }],
+  ["a text through unknown[]", (a, i) => spoil(a, i, "text")],
+  ["an object", (a, i) => { a[i] = { valueOf: () => 100 } as any; }],
+  ["a bigint", (a, i) => { a[i] = 5n as any; }],
+  ["a fraction", (a, i) => { a[i] = 0.25; }],
+  ["-0", (a, i) => { a[i] = -0; }],
+  ["delete", (a, i) => { delete a[i]; }],
+  ["length = 0", a => { a.length = 0; }],
+  ["length = 0 and pushes", a => { a.length = 0; a.push(10, 20.5, 30); }],
+  ["a longer length", a => { a.length += 3; }],
+  ["far past the end", a => { a[a.length + 5] = 1; }],
+  ["very far past the end", a => { a[a.length + 200000] = 1; a.length = 8; }],
+  ["push NaN", a => { a.push(nan); }],
+  ["push a text", a => { a.push("text" as any); }],
+  ["pushes until the storage moves", a => { for (let n = 0; n < 40; n++) a.push(n / 2); a.length = 8; }],
+  ["pop", a => { a.pop(); }],
+  ["shift", a => { a.shift(); }],
+  ["unshift", a => { a.unshift(0.25); }],
+  ["splice out", (a, i) => { a.splice(i, 1); }],
+  ["splice in", (a, i) => { a.splice(i, 0, 0.75, nan); }],
+  ["fill NaN", a => { a.fill(nan); }],
+  ["fill a fraction", a => { a.fill(0.25); }],
+  ["fill undefined", a => { a.fill(undefined as any); }],
+  ["reverse", a => { a.reverse(); }],
+  ["sort", a => { a.sort((left, right) => right - left); }],
+  ["copyWithin", a => { a.copyWithin(0, 3); }],
+  ["freeze", a => { Object.freeze(a); }],
+  ["seal", a => { Object.seal(a); }],
+  ["a getter", (a, i) => { Object.defineProperty(a, i, { get: () => 100, enumerable: true, configurable: true }); }],
+  ["a read-only element", (a, i) => { Object.defineProperty(a, i, { value: 100, writable: false, enumerable: true, configurable: true }); }],
+  ["a hole over another prototype's element", (a, i) => { delete a[i]; Object.setPrototypeOf(a, { __proto__: Array.prototype, [i]: 1000 }); }],
+  ["a hole over another prototype's text", (a, i) => { delete a[i]; Object.setPrototypeOf(a, { __proto__: Array.prototype, [i]: "up" }); }],
+  ["a named property", a => { (a as unknown as Record<string, number>).name = 1; }],
+  ["five named properties", a => { for (const name of ["p", "q", "r", "s", "t"]) (a as unknown as Record<string, number>)[name] = 1; }],
+];
+for (const [loop, run] of loops) {
+  for (const [what, act] of changes) {
+    for (const [name, make] of makers) {
+      console.log("by a function value, " + loop + ", " + what + ", " + name + ": " + moments.map(when => outcome(make(), a => run(a, when, act))).join(" ; "));
+    }
+  }
+}
+
+// Arrays that only typed code ever sees: nothing but the functions below reads them, stores into them or prints them. Each group has functions of its own.
+////= lines-34	readWhole
+function makeWhole(count: number): number[] {
+  const a: number[] = [];
+  for (let i = 0; i < count; i++) a.push((i * 5) & 15);
+  return a;
+}
+const wholeLiteral: number[] = [7, 8, 9];
+const wholePushed = makeWhole(four + 3);
+wholePushed[1] = (four * 3) | 0;
+console.log("only whole numbers: " + readWhole(wholeLiteral) + " " + readWhole(wholePushed) + " " + readWhole(makeWhole(0)));
+
+////= lines-34	readBoth
+console.log("whole numbers here, fractions there: " + readBoth([1, 2, 3]) + " " + readBoth([0.5, 1.5]) + " " + readBoth([four, four + 1]) + " " + readBoth([four / 8]));
+
+////= lines-34	readLaterFraction
+////= lines-36	storeLaterFraction	number	v
+const laterFraction: number[] = [1, 2, 3];
+console.log("a fraction later: " + readLaterFraction(laterFraction));
+storeLaterFraction(laterFraction, 1, four / 8);
+console.log("a fraction later: " + readLaterFraction(laterFraction));
+
+////= lines-2	readLaterNaN
+////= lines-36	storeLaterNaN	number	v
+const laterNaN: number[] = [0.5, 1.5, 2.5];
+console.log("NaN later: " + readLaterNaN(laterNaN));
+storeLaterNaN(laterNaN, 1, (four - 4) / (four - 4));
+console.log("NaN later: " + readLaterNaN(laterNaN));
+
+////= lines-2	readLaterUndefined
+const laterUndefined: number[] = [0.5, 1.5, 2.5];
+console.log("undefined later: " + readLaterUndefined(laterUndefined));
+(laterUndefined as (number | undefined)[])[four - 3] = undefined;
+console.log("undefined later: " + readLaterUndefined(laterUndefined));
+
+////= lines-2	readLaterHole
+const laterHole: number[] = [0.5, 1.5, 2.5];
+console.log("a hole later: " + readLaterHole(laterHole));
+delete laterHole[four - 3];
+console.log("a hole later: " + readLaterHole(laterHole));
+
+////= lines-2	readLaterLength
+const laterLength: number[] = [1, 2, 3];
+console.log("a longer length later: " + readLaterLength(laterLength));
+laterLength.length = four + 1;
+console.log("a longer length later: " + readLaterLength(laterLength));
+laterLength.length = four - 3;
+console.log("a shorter length later: " + readLaterLength(laterLength));
+
+////= lines-2	readLaterFarStore
+////= lines-36	storeFar	number	v
+const laterFarStore: number[] = [1, 2, 3];
+console.log("a store past the end later: " + readLaterFarStore(laterFarStore));
+storeFar(laterFarStore, four + 1, 6);
+console.log("a store past the end later: " + readLaterFarStore(laterFarStore));
+
+////= lines-2	readOfHoles
+const ofHoles = new Array<number>(four);
+console.log("made of holes: " + readOfHoles(ofHoles));
+for (let i = 0; i < ofHoles.length; i += 2) ofHoles[i] = i + 0.5;
+console.log("made of holes: " + readOfHoles(ofHoles));
+for (let i = 1; i < ofHoles.length; i += 2) ofHoles[i] = i;
+console.log("made of holes: " + readOfHoles(ofHoles));
+
+////= lines-2	readPair
+function pairOf(first: number, second: number): number[] {
+  return [first, second];
+}
+console.log("a literal of variables: " + readPair(pairOf(four / 8, four)) + " " + readPair(pairOf((four - 4) / (four - 4), four)) + " " + readPair(pairOf(four, (four - 4) / (four - 4))) + " " + readPair(pairOf(-(four - 4), four - 4)));
+
+////= lines-2	readPushed
+////= lines-39	pushOnto	number	push
+const laterPushed: number[] = [0.5];
+console.log("NaN pushed later: " + pushOnto(laterPushed, four / 8) + " " + readPushed(laterPushed));
+console.log("NaN pushed later: " + pushOnto(laterPushed, (four - 4) / (four - 4)) + " " + readPushed(laterPushed));
+console.log("NaN pushed later: " + pushOnto(laterPushed, four) + " " + readPushed(laterPushed));
+
+////= lines-2	readLaterText
+////= lines-36	storeAnything	unknown	value
+const laterText: number[] = [0.5, 1.5, 2.5];
+console.log("a text later, without a cast: " + readLaterText(laterText));
+storeAnything(laterText, four - 3, "text");
+console.log("a text later, without a cast: " + readLaterText(laterText));
+//// number-arrays-to-json.ts
+declare const console: { log(...values: unknown[]): void };
+function wholes(n: number): number[] { const a: number[] = []; for (let i = 0; i < n; i++) a.push(i * 7 - 20); return a; }
+function halves(n: number): number[] { const a: number[] = []; for (let i = 0; i < n; i++) a.push(i / 4 - 1); return a; }
+const makers: [string, () => unknown][] = [
+    ["none", () => wholes(0)], ["one", () => wholes(1)], ["wholes", () => wholes(12)], ["halves", () => halves(12)],
+    ["edges", (): number[] => [0, -0, 1, -1, 2147483647, -2147483648, 2147483648, -2147483649, 4294967295, 9007199254740991, -9007199254740991, 1e21, 1e-7, 123456789012345680000, 5e-324, 1.7976931348623157e308]],
+    ["not finite", (): number[] => [1, Infinity, 2, -Infinity, 3.5]],
+    ["NaN", (): number[] => [1.5, NaN, 2]],
+    ["a hole", (): number[] => { const a = [1.5, 2, 3]; delete (a as unknown[])[1]; return a; }],
+    ["holes alone", (): number[] => new Array<number>(3)],
+    ["longer than filled", (): number[] => { const a = [1, 2.5]; a.length = 4; return a; }],
+    ["shortened", (): number[] => { const a = wholes(9); a.length = 2; return a; }],
+    ["parsed", () => JSON.parse("[1,2,3]")], ["parsed mixed", () => JSON.parse("[1,2.5,-0,1e3]")],
+    ["rows", (): number[][] => [wholes(3), halves(3), [], [0.1]]],
+    ["in a record", () => ({ id: 7, list: wholes(4), nested: { list: halves(2) }, text: "t" })],
+    ["beside wide text", () => ({ text: "世界", list: wholes(5), more: halves(3) })],
+    ["wide text behind", () => [wholes(5), halves(3), "世"]],
+    ["with a name", () => { const a = wholes(3); (a as unknown as { tag: string }).tag = "t"; return a; }],
+    ["with toJSON", () => { const a = wholes(3); (a as unknown as { toJSON: () => string }).toJSON = () => "mine"; return a; }],
+    ["frozen", () => Object.freeze(halves(3))],
+    ["an heir", () => { class Mine extends Array<number> { } const a = new Mine(); a.push(1, 2.5); return a; }],
+];
+for (let turn = 0; turn < 2; turn++) {
+    for (const [name, make] of makers) {
+        console.log(name + ": " + JSON.stringify(make()) + " | " + JSON.stringify(make(), null, 1) + " | " + JSON.stringify(make(), null, "\t·") + " | " + JSON.stringify(make(), (_, v) => typeof v === "number" ? v + 1 : v) + " | " + JSON.stringify({ a: make() }));
+    }
+    for (const n of [100, 2000, 60000]) {
+        const w = JSON.stringify(wholes(n)), h = JSON.stringify(halves(n)), g = JSON.stringify(wholes(n), null, 2);
+        let sum = 0;
+        for (let i = 0; i < w.length; i += 97) sum += w.charCodeAt(i) + h.charCodeAt(i % h.length) + g.charCodeAt(i % g.length);
+        console.log(n + ": " + w.length + " " + h.length + " " + g.length + " " + sum + " " + w.slice(-24) + " " + h.slice(-24) + " " + (JSON.parse(w) as number[]).length + " " + (JSON.parse(h) as number[])[n - 1]);
+    }
+}
+//// number-elements-read-as-any.ts
+// Elements of a `number[]` read where any value is taken: as text, into `unknown`, into a Map, as an argument. Numbers, holes and reads past the end give what plain Bun gives. A string that got into the array through `unknown[]` throws a TypeError where the element is read.
+declare const console: { log(...values: unknown[]): void };
+function show(v: unknown): string { return typeof v + ":" + (Object.is(v, -0) ? "-0" : String(v)); }
+const given: number[] = [0, -0, 1, -1, 42, 2147483647, -2147483648, 2147483648, 4294967296, 0.5, -2.5, 1e21, 5e-324, Infinity, -Infinity, NaN];
+function asStrings(a: number[]): string { let s = ""; for (let i = 0; i < a.length + 1; i++) s += String(a[i]) + "|"; return s; }
+function asTemplates(a: number[]): string { let s = ""; for (let i = 0; i < a.length + 1; i++) s += `${a[i]};`; return s; }
+function kept(a: number[]): unknown[] { const out: unknown[] = []; for (let i = 0; i < a.length + 1; i++) out.push(a[i]); return out; }
+function keptOf(a: number[]): unknown[] { const out: unknown[] = []; for (const x of a) out.push(x); return out; }
+function stored(a: number[]): { [name: string]: unknown } { const o: { [name: string]: unknown } = {}; for (let i = 0; i < a.length; i++) o["k" + i] = a[i]; return o; }
+function kinds(a: number[]): string { let s = ""; for (let i = 0; i < a.length + 1; i++) { const v: unknown = a[i]; s += typeof v === "number" ? "n" : typeof v === "undefined" ? "u" : typeof v === "string" ? "s" : "?"; } return s; }
+function same(a: number[], v: unknown): number { let n = 0; for (let i = 0; i < a.length; i++) { const x: unknown = a[i]; if (x === v) n++; } return n; }
+function values(a: number[]): Map<number, unknown> { const m = new Map<number, unknown>(); for (let i = 0; i < a.length; i++) m.set(i, a[i]); return m; }
+function handed(a: number[], f: (v: unknown) => string): string { let s = ""; for (let i = 0; i < a.length + 1; i++) s += f(a[i]) + " "; return s; }
+function whileStoring(a: number[]): string { let s = ""; for (let i = 0; i < a.length; i++) { s += String(a[i]) + ","; a[i] = i + 0.5; s += String(a[i]) + ";"; } return s; }
+function whileBecomingValues(a: number[]): string { let s = ""; for (let i = 0; i < a.length; i++) { s += String(a[i]) + ","; if (i === 1) (a as unknown[])[3] = "text"; } return s; }
+////= sumLong
+function stringsAroundCall(a: number[]): string { let s = 0, t = 0; for (let k = 0; k < 3; k++) { s += String(a[k]).length; if (k === 1) t += sumLong(a); s += String(a[k + 1]).length * 10; } return s + " " + t; }
+function kindsAroundCall(a: number[]): string { let s = 0, t = 0; for (let k = 0; k < 4; k++) { const v: unknown = a[k]; if (typeof v === "number") s += 1; if (k === 0) t += sumLong(a); const w: unknown = a[k]; if (typeof w === "number") s += 10; if (v === w) s += 100; } return s + " " + t; }
+function sameAroundCall(a: number[], v: unknown): string { let n = 0, t = 0; for (let k = 0; k < a.length; k++) { const x: unknown = a[k]; if (x === v) n++; if (k === 1) t += sumLong(a); } return n + " " + t; }
+function callAlone(a: number[]): number { return sumLong(a); }
+const makers: [string, () => number[]][] = [
+    ["given", () => given.slice()], ["born", () => [1, 2.5, 3]], ["parsed", () => JSON.parse("[1,2,3,2147483647,-2147483648,0]") as number[]], ["parsed mixed", () => JSON.parse("[1,2.5,-0,1e3]") as number[]],
+    ["holed doubles", () => { const a = [1.5, 2.5, 3.5, 4.5]; delete (a as unknown[])[1]; return a; }], ["holed int32s", () => { const a = JSON.parse("[1,2,3,4]") as number[]; delete (a as unknown[])[2]; return a; }],
+    ["values", () => { const a = JSON.parse("[1,2.5,3,\"x\"]") as unknown[]; a.pop(); return a as number[]; }], ["none", () => []], ["holes", () => new Array<number>(3)], ["frozen", () => Object.freeze([1.5, 2]) as number[]],
+    ["far", () => { const a = [1.5, 2]; a[70000] = 3; a.length = 5; return a; }],
+];
+for (let turn = 0; turn < 2; turn++) {
+    for (const [name, make] of makers) {
+        console.log(name + ": " + asStrings(make()) + " # " + asTemplates(make()) + " # " + kept(make()).map(show).join() + " # " + keptOf(make()).map(show).join() + " # " + JSON.stringify(stored(make())) + " # " + kinds(make()) + " " + same(make(), 1) + same(make(), 2.5) + same(make(), undefined) + same(make(), NaN) + same(make(), 0));
+        console.log("  " + stringsAroundCall(make()) + " # " + kindsAroundCall(make()) + " # " + sameAroundCall(make(), 1) + " # " + sameAroundCall(make(), 2) + " # " + callAlone(make()));
+        let late: string;
+        try { late = whileStoring(make()); } catch (e) { late = e instanceof TypeError ? "TypeError" : "threw"; }
+        console.log("  " + [...values(make())].map(e => e[0] + ">" + show(e[1])).join() + " # " + handed(make(), show) + " # " + late);
+    }
+    let said: string;
+    try { said = whileBecomingValues([1.5, 2.5, 3.5, 4.5, 5.5]); } catch (e) { said = e instanceof TypeError ? "TypeError" : "threw"; }
+    console.log(said);
+}
+//// number-elements-read-outside-loops.ts
+declare const console: { log(...values: unknown[]): void };
+function at(a: number[], i: number): number { return a[i]; }
+function sumOfThree(a: number[], i: number, j: number, k: number): number { return a[i] + a[j] + a[k]; }
+function orZero(a: number[], i: number): number { return a[i] ?? 0; }
+function isThere(a: number[], i: number): boolean { return a[i] !== undefined; }
+function text(a: number[], i: number): string { return "<" + a[i] + ">"; }
+function first(a: number[]): number { return a[0]; }
+function last(a: number[]): number { return a[a.length - 1]; }
+function twice(a: number[], b: number[], i: number): number { const x = a[i]; const y = b[i]; return x * 2 + y; }
+function show(x: unknown): string { return Object.is(x, -0) ? "-0" : String(x); }
+function tell(name: string, f: () => unknown): void { let said: string; try { said = show(f()); } catch (e) { said = e instanceof TypeError ? "TypeError" : e instanceof RangeError ? "RangeError" : "threw"; } console.log(name + ": " + said); }
+const kinds: [string, () => number[]][] = [
+    ["doubles", () => [1.5, 2.5, 3.5]], ["whole", () => [1, 2, 3]], ["empty", () => []], ["values", () => { const a: unknown[] = [1.5, "x", 3]; a[1] = 2; return a as number[]; }],
+    ["odd numbers", () => [NaN, -0, 0, Infinity, -Infinity, 1e300, 5e-324, 4294967296, -2147483649]],
+    ["odd numbers among values", () => { const a: unknown[] = ["x", NaN, -0, 1e300, 2147483648]; a[0] = -0; return a as number[]; }],
+    ["a hole", () => { const a = [1.5, 2.5, 3.5]; delete (a as unknown[])[1]; return a; }], ["a hole among whole numbers", () => { const a = [1, 2, 3]; delete (a as unknown[])[1]; return a; }],
+    ["new Array(3)", () => new Array<number>(3)], ["JSON", () => JSON.parse("[1,2.5,3]")], ["undefined inside", () => [1.5, undefined, 3.5] as number[]],
+    ["frozen", () => Object.freeze([1.5, 2.5]) as number[]], ["sparse", () => { const a = [1.5]; a[150000] = 2; return a; }], ["constants", () => [10, 20, 30, 40]],
+    ["a property -1", () => { const a = [1.5, 2.5]; (a as unknown as Record<string, number>)["-1"] = 7; return a; }],
+];
+for (let turn = 0; turn < 2; turn++) {
+    for (const [name, make] of kinds) {
+        for (const i of [0, 1, 2, 3, 8, -1, 150000, 4294967294, 4294967295, 4294967296]) {
+            tell(name + " at " + i, () => at(make(), i));
+            tell(name + " or zero at " + i, () => orZero(make(), i));
+            tell(name + " is there at " + i, () => isThere(make(), i));
+            tell(name + " as text at " + i, () => text(make(), i));
+        }
+        tell(name + " sum", () => sumOfThree(make(), 0, 1, 2));
+        tell(name + " first and last", () => show(first(make())) + " " + show(last(make())));
+        for (const [other, makeOther] of kinds) tell(name + " twice and " + other, () => twice(make(), makeOther(), 1));
+    }
+}
+//// number-keys-that-are-not-indexes.ts
+const launder = new Function("v", "return v") as <V>(v: V) => V;
+
+const keys: number[] = launder([0, 1, 2, 3, 4, 5, -0, -1, 0.5, 1.5, NaN, Infinity, -Infinity, 2147483647, 2147483648, 4294967294, 4294967295, 4294967296, 9007199254740991, 9223372036854775807, -9223372036854775808, 1e300, -1e300, 5e-324]);
+
+function read(list: number[], key: number): number { return list[key]; }
+function readTwice(list: number[], key: number): number { return list[list[key]]; }
+function readNext(list: number[], key: number): number { return list[key + 1]; }
+function has(list: number[], key: number): boolean { return key in list; }
+function store(list: number[], key: number, value: number): void { list[key] = value; }
+function storeAndRead(list: number[], key: number): number { list[key] = key; return list[key + 1]; }
+function readText(list: string[], key: number): string { return list[key]; }
+function storeText(list: string[], key: number, value: string): void { list[key] = value; }
+function readAny(list: unknown[], key: number): unknown { return list[key]; }
+function readBytes(list: Uint8Array, key: number): number { return list[key]; }
+
+function describe(list: readonly unknown[]): string {
+    return JSON.stringify(Object.entries(list).map(([key, value]) => key + "=" + String(value))) + " " + list.length;
+}
+
+function makeDoubles(): number[] { return launder([0.5, 1, 2, 3.25, 4]); }
+function makeIntegers(): number[] { return launder([1, 2, 3, 4, 0]); }
+function makeWithHole(): number[] { const list = [1.5, 2, 3, 4, 5]; delete list[2]; return launder(list); }
+function makeWithNaN(): number[] { return launder([NaN, 1, NaN, 3, 2.5]); }
+function makeWithNamedNaN(): number[] {
+    const list = [4, 3, 2.5, 1, 0];
+    (list as unknown as Record<string, number>)["NaN"] = 77;
+    (list as unknown as Record<string, number>)["-1"] = 78;
+    (list as unknown as Record<string, number>)["0.5"] = 79;
+    (list as unknown as Record<string, number>)["Infinity"] = 80;
+    return launder(list);
+}
+
+const makers = [makeDoubles, makeIntegers, makeWithHole, makeWithNaN, makeWithNamedNaN];
+for (const make of makers) {
+    for (const key of keys) {
+        const list = make();
+        console.log(make.name, key, Object.is(key, -0), read(list, key), readTwice(list, key), readNext(list, key), has(list, key), readAny(list, key));
+    }
+    for (const key of keys) {
+        if (key > 100 && key < 4294967295)
+            continue;
+        const list = make();
+        store(list, key, 9.5);
+        console.log(make.name, "store", key, describe(list));
+        const other = make();
+        console.log(make.name, "both", key, storeAndRead(other, key), describe(other));
+        const third = make();
+        store(third, key, NaN);
+        console.log(make.name, "NaN", key, describe(third), read(third, key));
+    }
+}
+
+for (const key of keys) {
+    const texts = launder(["a", "b", "c"]);
+    (texts as unknown as Record<string, string>)["NaN"] = "named";
+    console.log("texts", key, readText(texts, key));
+    if (key > 100 && key < 4294967295)
+        continue;
+    storeText(texts, key, "z");
+    console.log("texts", key, describe(texts));
+    console.log("bytes", key, readBytes(launder(new Uint8Array([7, 8, 9])), key));
+}
+
+let sum = 0;
+const chain = launder([1, 2, 3, 4, 5, 6, 7, NaN, 0.5]);
+for (let round = 0; round < 20000; ++round) {
+    let key = round % 9;
+    for (let step = 0; step < 4 && key === key && key !== undefined; ++step)
+        key = read(chain, key);
+    sum += key === key && key !== undefined ? key : 100;
+}
+console.log(sum);
+//// number-reads-every-indexing-type.ts
+declare const console: { log(...values: unknown[]): void };
+let depth = 0;
+function at(a: number[], i: number): number | undefined { if (depth > 0) { depth--; at(a, i); } return a[i | 0]; }
+function third(a: number[]): number { if (depth > 0) { depth--; third(a); } return a[2]; }
+function sum(a: readonly number[]): number { if (depth > 0) { depth--; sum(a); } let t = 0; for (let i = 0; i < a.length; i++) t += a[i]; return t; }
+function sumPast(a: number[], n: number): number { if (depth > 0) { depth--; sumPast(a, n); } let t = 0; for (let i = 0; i < n; i++) { const v = a[i]; t += v === undefined ? 1000 : v; } return t; }
+function last(a: number[]): number | undefined { if (depth > 0) { depth--; last(a); } return a[a.length - 1]; }
+function show(v: number | undefined): string { return v === undefined ? "undefined" : Object.is(v, -0) ? "-0" : String(v); }
+const doubles = [0.5, 1.5, -0, 2.5]; const integers = [1, 2, 3, 4]; const constants: number[] = [10, 20, 30];
+const pushed: number[] = []; for (let i = 0; i < 6; i++) pushed.push(i % 2 ? i : i + 0.25);
+const withNaN: number[] = [1.5, 2.5, 3.5]; withNaN[1] = NaN;
+const holes = [1.5, , 3.5] as number[]; const integerHoles = [1, , 3] as number[]; const made = new Array<number>(4); made[2] = 7.5;
+const asValues: number[] = [1, 2.5, 3]; (asValues as unknown[]).push("x"); asValues.pop();
+const outside = JSON.parse("[1,2,3,4.5]") as number[]; const outsideIntegers = JSON.parse("[7,8,9]") as number[];
+const frozen = Object.freeze([1.5, 2.5, 3.5]) as number[]; const sparse: number[] = []; sparse[3000] = 4.5; sparse[2] = 1.5;
+class Numbers extends Array<number> {} const derived = new Numbers(); derived.push(1.5, 2.5, 3.5);
+const mapped = integers.map(v => v * 0.5); const sliced = doubles.slice(1); const filled = new Array<number>(3).fill(2.5); const spread = [...integers, 0.5]; const from = Array.from({ length: 3 }, (_, i) => i * 1.5);
+const shrunk = [1.5, 2.5, 3.5, 4.5]; shrunk.length = 2; const grownByLength = [1.5]; grownByLength.length = 3;
+const all: [string, number[]][] = [["doubles", doubles], ["integers", integers], ["constants", constants], ["pushed", pushed], ["withNaN", withNaN], ["holes", holes], ["integerHoles", integerHoles], ["made", made], ["asValues", asValues], ["outside", outside], ["outsideIntegers", outsideIntegers], ["frozen", frozen], ["sparse", sparse], ["derived", derived], ["mapped", mapped], ["sliced", sliced], ["filled", filled], ["spread", spread], ["from", from], ["shrunk", shrunk], ["grownByLength", grownByLength], ["empty", []]];
+for (let round = 0; round < 2; round++) {
+    for (const [name, a] of all) console.log(name, [0, 1, 2, 3, 4, -1, 3000, 4294967295].map(i => show(at(a, i))).join(" "), show(third(a)), name === "sparse" ? "-" : show(sum(a)), show(sumPast(a, 6)), show(last(a)));
+}
+outsideIntegers[1] = 0.5; integers[0] = 1e300; console.log(show(sum(outsideIntegers)), show(sum(integers)), show(third(outsideIntegers)));
+//// number-stores-any-array.ts
+declare const console: { log(...values: unknown[]): void };
+let depth = 0;
+function put(a: number[], i: number, v: number): void { if (depth > 0) { depth--; put(a, i, v); } a[i | 0] = v * 0.5; }
+function putThird(a: number[], v: number): void { if (depth > 0) { depth--; putThird(a, v); } a[2] = v + 0.25; }
+function fillUp(a: number[], n: number, v: number): void { if (depth > 0) { depth--; fillUp(a, n, v); } for (let i = 0; i < n; i++) a[i] = v * i; }
+function scale(a: number[], k: number): void { if (depth > 0) { depth--; scale(a, k); } for (let i = 0; i < a.length; i++) a[i] = a[i] * k; }
+function show(a: readonly unknown[]): string { let text = a.length + ":"; for (let i = 0; i < Math.min(a.length, 9); i++) text += (i in a ? (Object.is(a[i], -0) ? "-0" : String(a[i])) : "hole") + ","; return text; }
+function attempt(name: string, a: number[], action: () => void): void { try { action(); console.log(name, show(a)); } catch (error) { console.log(name, "throws", error instanceof TypeError ? "TypeError" : String(error), show(a)); } }
+const makers: [string, () => number[]][] = [
+    ["doubles", () => [0.5, 1.5, 2.5, 3.5]], ["integers", () => [1, 2, 3, 4]], ["empty", () => []], ["pushed", () => { const a: number[] = []; a.push(1.5); a.push(2); return a; }],
+    ["holes", () => [1.5, , 3.5] as number[]], ["made", () => new Array<number>(4)], ["asValues", () => { const a: number[] = [1, 2.5, 3]; (a as unknown[]).push("x"); a.pop(); return a; }],
+    ["outside", () => JSON.parse("[1,2,3,4.5]") as number[]], ["outsideIntegers", () => JSON.parse("[7,8,9]") as number[]], ["frozen", () => Object.freeze([1.5, 2.5, 3.5]) as number[]], ["sealed", () => Object.seal([1.5, 2.5, 3.5]) as number[]],
+    ["sparse", () => { const a: number[] = []; a[3000] = 4.5; return a; }], ["mapped", () => [1, 2, 3].map(v => v * 0.5)], ["filled", () => new Array<number>(3).fill(2.5)], ["shrunk", () => { const a = [1.5, 2.5, 3.5, 4.5]; a.length = 2; return a; }],
+];
+for (let round = 0; round < 2; round++) {
+    for (const [name, make] of makers) {
+        for (const i of [0, 2, 3, 4, 5, 9, -1]) { const a = make(); attempt(name + " put " + i, a, () => put(a, i, 7)); }
+        for (const v of [NaN, Infinity, -0, 1e300, 3]) { const a = make(); attempt(name + " value " + v, a, () => { put(a, 1, v); putThird(a, v); }); }
+        { const a = make(); attempt(name + " fillUp", a, () => fillUp(a, 7, 1.5)); }
+        { const a = make(); if (name !== "sparse") attempt(name + " scale", a, () => scale(a, 0.5)); }
+    }
+}
+//// number-stores-every-indexing-type.ts
+declare const console: { log(...values: unknown[]): void };
+class Rec { constructor(public amount: number) {} }
+function scale(a: number[], k: number): void { for (let i = 0; i < a.length; i++) a[i] = a[i] * k; }
+function copyTo(a: number[], b: number[]): void { for (let i = 0; i < a.length; i++) b[i] = a[i]; }
+function squares(n: number): number[] { const out: number[] = []; for (let i = 0; i < n; i++) out[i] = i * i / 2; return out; }
+function whole(n: number): number[] { const out: number[] = []; for (let i = 0; i < n; i++) out[i] = i | 0; return out; }
+function backwards(n: number): number[] { const out: number[] = []; for (let i = n - 1; i >= 0; i--) out[i] = i + 0.5; return out; }
+function everyOther(a: number[], x: number): void { const n = a.length + 4; for (let i = 0; i < n; i += 2) a[i] = x; }
+function setAt(a: number[], i: number, x: number): number { a[i] = x; return a.length; }
+function shiftLeft(a: number[]): void { for (let i = 1; i < a.length; i++) a[i - 1] = a[i]; }
+function recs(a: Rec[], r: Rec): void { for (let i = 0; i < a.length; i++) a[i] = r; }
+function show(a: unknown[]): string { let s = ""; for (let i = 0; i < a.length; i++) s += (i in a ? Object.is(a[i], -0) ? "-0" : String(a[i]) : "_") + ","; return s + a.length; }
+function tell(name: string, f: () => unknown): void { let text: string; try { text = String(f()); } catch (e) { text = e instanceof TypeError ? "TypeError" : e instanceof RangeError ? "RangeError" : "threw"; } console.log(name + ": " + text); }
+const kinds: [string, () => number[]][] = [
+    ["doubles", () => [1.5, 2.5, 3.5]], ["whole", () => [1, 2, 3]], ["empty", () => []], ["values", () => { const a: unknown[] = [1.5, "x", 3]; a[1] = 2; return a as number[]; }],
+    ["a hole", () => { const a = [1.5, 2.5, 3.5]; delete (a as unknown[])[1]; return a; }], ["new Array(3)", () => new Array<number>(3)], ["JSON", () => JSON.parse("[1,2.5,3]")],
+    ["frozen", () => Object.freeze([1.5, 2.5]) as number[]], ["sealed", () => Object.seal([1.5, 2.5])], ["sparse", () => { const a = [1.5]; a[150000] = 2; a.length = 3; return a; }],
+    ["constants", () => [10, 20, 30, 40]],
+];
+for (let turn = 0; turn < 2; turn++) {
+    for (const [name, make] of kinds) {
+        tell(name + " scaled", () => { const a = make(); scale(a, 1.5); return show(a); });
+        tell(name + " scaled by NaN", () => { const a = make(); scale(a, NaN); return show(a); });
+        tell(name + " scaled by -0", () => { const a = make(); scale(a, -0); return show(a); });
+        tell(name + " copied into", () => { const a = make(); copyTo([7.5, 8, NaN, -0, 1e300], a); return show(a); });
+        tell(name + " copied from", () => { const b = [0.5]; copyTo(make(), b); return show(b); });
+        tell(name + " every other", () => { const a = make(); everyOther(a, 0.25); return show(a); });
+        tell(name + " shifted", () => { const a = make(); shiftLeft(a); return show(a); });
+        for (const i of [0, 2, 3, 5, 1000, -1, 1.5, 4294967294, 4294967295]) tell(name + " set at " + i, () => { const a = make(); const n = setAt(a, i, 0.75); return n + " " + (a as unknown as Record<string, unknown>)[String(i)]; });
+    }
+    tell("made", () => show(squares(5)) + " " + show(whole(5)) + " " + show(backwards(5)) + " " + show(squares(0)));
+    tell("long", () => { const a = squares(70000); scale(a, 2); return a[69999] + " " + a.length; });
+    tell("the same array", () => { const a = [1.5, 2.5, 3.5]; copyTo(a, a); return show(a); });
+    tell("grows under the loop", () => { const a = [1.5, 2.5]; let n = 0; for (let i = 0; i < a.length && n++ < 6; i++) a[i + 1] = a[i] + 1; return show(a); });
+    tell("recs", () => { const a = [new Rec(1), new Rec(2)]; recs(a, new Rec(3)); return a[0].amount + a[1].amount; });
+}
+//// number-stores-outside-loops.ts
+declare const console: { log(...values: unknown[]): void };
+function setAt(a: number[], i: number, x: number): number { a[i] = x; return a.length; }
+function setTwo(a: number[], b: number[], i: number, x: number, y: number): void { a[i] = x * 0.5; b[i] = y + 0.25; }
+function setHalf(a: number[], i: number, x: number): void { a[i] = x / 2; }
+function setSquare(a: number[], i: number, x: number): void { a[i] = Math.sqrt(x); }
+function appendOne(a: number[], x: number): void { a[a.length] = x; }
+function show(a: unknown[]): string { let s = ""; for (let i = 0; i < a.length && i < 12; i++) s += (i in a ? Object.is(a[i], -0) ? "-0" : String(a[i]) : "_") + ","; return s + a.length; }
+function tell(name: string, f: () => unknown): void { let said: string; try { said = String(f()); } catch (e) { said = e instanceof TypeError ? "TypeError" : e instanceof RangeError ? "RangeError" : "threw"; } console.log(name + ": " + said); }
+const kinds: [string, () => number[]][] = [
+    ["doubles", () => [1.5, 2.5, 3.5]], ["whole", () => [1, 2, 3]], ["empty", () => []], ["values", () => { const a: unknown[] = [1.5, "x", 3]; a[1] = 2; return a as number[]; }],
+    ["a hole", () => { const a = [1.5, 2.5, 3.5]; delete (a as unknown[])[1]; return a; }], ["new Array(3)", () => new Array<number>(3)], ["JSON", () => JSON.parse("[1,2.5,3]")],
+    ["frozen", () => Object.freeze([1.5, 2.5]) as number[]], ["sealed", () => Object.seal([1.5, 2.5])], ["not extensible", () => Object.preventExtensions([1.5, 2.5])],
+    ["sparse", () => { const a = [1.5]; a[150000] = 2; a.length = 3; return a; }], ["constants", () => [10, 20, 30, 40]],
+];
+const numbers = [0, -0, 1, -1, 0.5, NaN, Infinity, -Infinity, 2147483647, 2147483648, -2147483648, -2147483649, 4294967296, 1e300, 5e-324];
+for (let turn = 0; turn < 2; turn++) {
+    for (const [name, make] of kinds) {
+        for (const x of numbers) {
+            tell(name + " [1] = " + (Object.is(x, -0) ? "-0" : x), () => { const a = make(); const n = setAt(a, 1, x); return n + " " + show(a); });
+            tell(name + " appended " + (Object.is(x, -0) ? "-0" : x), () => { const a = make(); appendOne(a, x); return show(a); });
+        }
+        for (const i of [0, 2, 3, 4, 9, 1000, -1, 4294967294, 4294967295]) tell(name + " set at " + i, () => { const a = make(); const n = setAt(a, i, 0.75); return n + " " + (a as unknown as Record<string, unknown>)[String(i)]; });
+        tell(name + " halves and roots", () => { const a = make(); setHalf(a, 0, 3); setHalf(a, 1, 4); setSquare(a, 2, 16); setSquare(a, 0, -1); return show(a); });
+        for (const [other, makeOther] of kinds) tell(name + " and " + other, () => { const a = make(), b = makeOther(); setTwo(a, b, 1, 3, 4); return show(a) + " " + show(b); });
+    }
+}
+//// numbers-come-into-copies-of-lists-by-every-road.ts
+// The numbers in a copy of a list are those of the lists that it copies and of the arguments: every road by which another number comes into the source, the arguments or the copy.
+const kept: number[][] = [];
+function storeInto(list: number[], value: number): void { list[0] = value; }
+function show(x: number): string { return Object.is(x, -0) ? '-0' : String(x); }
+const list1: number[] = [1, 2, 3, 4];
+function read1(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain1(): number[] { return list1.slice().concat(list1.toSorted()); }
+function attack1(): number[] { return Array.prototype.concat.apply(list1, [4294967296]) as number[]; }
+for (let turn = 0; turn < 3; turn++) read1(plain1());
+try { const c = attack1(); console.log('whole 4294967296 concatApply', read1(c), JSON.stringify(c), read1(list1), read1(plain1())); } catch (e) { console.log('whole 4294967296 concatApply threw', (e as Error).constructor.name); }
+const list2: number[] = [1, 2, 3, 4];
+function read2(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain2(): number[] { return list2.slice().concat(list2.toSorted()); }
+function attack2(): number[] { return Array.prototype.concat.call(list2, 4294967296) as number[]; }
+for (let turn = 0; turn < 3; turn++) read2(plain2());
+try { const c = attack2(); console.log('whole 4294967296 concatCall', read2(c), JSON.stringify(c), read2(list2), read2(plain2())); } catch (e) { console.log('whole 4294967296 concatCall threw', (e as Error).constructor.name); }
+const list3: number[] = [1, 2, 3, 4];
+function read3(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain3(): number[] { return list3.slice().concat(list3.toSorted()); }
+function attack3(): number[] { const more = [4294967296]; return list3.concat(...more); }
+for (let turn = 0; turn < 3; turn++) read3(plain3());
+try { const c = attack3(); console.log('whole 4294967296 concatSpreadCall', read3(c), JSON.stringify(c), read3(list3), read3(plain3())); } catch (e) { console.log('whole 4294967296 concatSpreadCall threw', (e as Error).constructor.name); }
+const list4: number[] = [1, 2, 3, 4];
+function read4(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain4(): number[] { return list4.slice().concat(list4.toSorted()); }
+function attack4(): number[] { return (list4.concat.bind(list4, 4294967296) as () => number[])(); }
+for (let turn = 0; turn < 3; turn++) read4(plain4());
+try { const c = attack4(); console.log('whole 4294967296 concatBound', read4(c), JSON.stringify(c), read4(list4), read4(plain4())); } catch (e) { console.log('whole 4294967296 concatBound threw', (e as Error).constructor.name); }
+const list5: number[] = [1, 2, 3, 4];
+function read5(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain5(): number[] { return list5.slice().concat(list5.toSorted()); }
+function attack5(): number[] { return Reflect.apply(Array.prototype.concat, list5, [4294967296]) as number[]; }
+for (let turn = 0; turn < 3; turn++) read5(plain5());
+try { const c = attack5(); console.log('whole 4294967296 concatReflect', read5(c), JSON.stringify(c), read5(list5), read5(plain5())); } catch (e) { console.log('whole 4294967296 concatReflect threw', (e as Error).constructor.name); }
+const list6: number[] = [1, 2, 3, 4];
+function read6(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain6(): number[] { return list6.slice().concat(list6.toSorted()); }
+function attack6(): number[] { return (Array.prototype.with as Function).apply(list6, [0, 4294967296]) as number[]; }
+for (let turn = 0; turn < 3; turn++) read6(plain6());
+try { const c = attack6(); console.log('whole 4294967296 withApply', read6(c), JSON.stringify(c), read6(list6), read6(plain6())); } catch (e) { console.log('whole 4294967296 withApply threw', (e as Error).constructor.name); }
+const list7: number[] = [1, 2, 3, 4];
+function read7(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain7(): number[] { return list7.slice().concat(list7.toSorted()); }
+function attack7(): number[] { return (Array.prototype.with as Function).call(list7, 0, 4294967296) as number[]; }
+for (let turn = 0; turn < 3; turn++) read7(plain7());
+try { const c = attack7(); console.log('whole 4294967296 withCall', read7(c), JSON.stringify(c), read7(list7), read7(plain7())); } catch (e) { console.log('whole 4294967296 withCall threw', (e as Error).constructor.name); }
+const list8: number[] = [1, 2, 3, 4];
+function read8(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain8(): number[] { return list8.slice().concat(list8.toSorted()); }
+function attack8(): number[] { return Reflect.apply(Array.prototype.with, list8, [0, 4294967296]) as number[]; }
+for (let turn = 0; turn < 3; turn++) read8(plain8());
+try { const c = attack8(); console.log('whole 4294967296 withReflect', read8(c), JSON.stringify(c), read8(list8), read8(plain8())); } catch (e) { console.log('whole 4294967296 withReflect threw', (e as Error).constructor.name); }
+const list9: number[] = [1, 2, 3, 4];
+function read9(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain9(): number[] { return list9.slice().concat(list9.toSorted()); }
+function attack9(): number[] { return (Array.prototype.toSpliced as Function).apply(list9, [0, 1, 4294967296]) as number[]; }
+for (let turn = 0; turn < 3; turn++) read9(plain9());
+try { const c = attack9(); console.log('whole 4294967296 toSplicedApply', read9(c), JSON.stringify(c), read9(list9), read9(plain9())); } catch (e) { console.log('whole 4294967296 toSplicedApply threw', (e as Error).constructor.name); }
+const list10: number[] = [1, 2, 3, 4];
+function read10(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain10(): number[] { return list10.slice().concat(list10.toSorted()); }
+function attack10(): number[] { const more = [4294967296, 4294967296]; return list10.toSpliced(0, 1, ...more); }
+for (let turn = 0; turn < 3; turn++) read10(plain10());
+try { const c = attack10(); console.log('whole 4294967296 toSplicedSpread', read10(c), JSON.stringify(c), read10(list10), read10(plain10())); } catch (e) { console.log('whole 4294967296 toSplicedSpread threw', (e as Error).constructor.name); }
+const list11: number[] = [1, 2, 3, 4];
+function read11(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain11(): number[] { return list11.slice().concat(list11.toSorted()); }
+function attack11(): number[] { const method = list11.with; return method.call(list11, 1, 4294967296); }
+for (let turn = 0; turn < 3; turn++) read11(plain11());
+try { const c = attack11(); console.log('whole 4294967296 withThroughAVariable', read11(c), JSON.stringify(c), read11(list11), read11(plain11())); } catch (e) { console.log('whole 4294967296 withThroughAVariable threw', (e as Error).constructor.name); }
+const list12: number[] = [1, 2, 3, 4];
+function read12(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain12(): number[] { return list12.slice().concat(list12.toSorted()); }
+function attack12(): number[] { const any: any = list12; return any.concat(4294967296); }
+for (let turn = 0; turn < 3; turn++) read12(plain12());
+try { const c = attack12(); console.log('whole 4294967296 concatThroughAny', read12(c), JSON.stringify(c), read12(list12), read12(plain12())); } catch (e) { console.log('whole 4294967296 concatThroughAny threw', (e as Error).constructor.name); }
+const list13: number[] = [1, 2, 3, 4];
+function read13(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain13(): number[] { return list13.slice().concat(list13.toSorted()); }
+function attack13(): number[] { const name = 'con' + 'cat'; return (list13 as any)[name](4294967296); }
+for (let turn = 0; turn < 3; turn++) read13(plain13());
+try { const c = attack13(); console.log('whole 4294967296 concatByName', read13(c), JSON.stringify(c), read13(list13), read13(plain13())); } catch (e) { console.log('whole 4294967296 concatByName threw', (e as Error).constructor.name); }
+const list14: number[] = [1, 2, 3, 4];
+function read14(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain14(): number[] { return list14.slice().concat(list14.toSorted()); }
+function attack14(): number[] { return list14.concat({ length: 1, 0: 4294967296, [Symbol.isConcatSpreadable]: true } as any); }
+for (let turn = 0; turn < 3; turn++) read14(plain14());
+try { const c = attack14(); console.log('whole 4294967296 concatSpreadable', read14(c), JSON.stringify(c), read14(list14), read14(plain14())); } catch (e) { console.log('whole 4294967296 concatSpreadable threw', (e as Error).constructor.name); }
+const list15: number[] = [1, 2, 3, 4];
+function read15(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain15(): number[] { return list15.slice().concat(list15.toSorted()); }
+function attack15(): number[] { return Array.prototype.slice.call({ length: 2, 0: 4294967296, 1: 4294967296 }) as number[]; }
+for (let turn = 0; turn < 3; turn++) read15(plain15());
+try { const c = attack15(); console.log('whole 4294967296 sliceOfArrayLike', read15(c), JSON.stringify(c), read15(list15), read15(plain15())); } catch (e) { console.log('whole 4294967296 sliceOfArrayLike threw', (e as Error).constructor.name); }
+const list16: number[] = [1, 2, 3, 4];
+function read16(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain16(): number[] { return list16.slice().concat(list16.toSorted()); }
+function attack16(): number[] { return (function (..._: number[]) { return Array.prototype.slice.call(arguments) as number[]; })(4294967296, 4294967296); }
+for (let turn = 0; turn < 3; turn++) read16(plain16());
+try { const c = attack16(); console.log('whole 4294967296 sliceOfArguments', read16(c), JSON.stringify(c), read16(list16), read16(plain16())); } catch (e) { console.log('whole 4294967296 sliceOfArguments threw', (e as Error).constructor.name); }
+const list17: number[] = [1, 2, 3, 4];
+function read17(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain17(): number[] { return list17.slice().concat(list17.toSorted()); }
+function attack17(): number[] { const inner = [4294967296]; return list17.concat(inner, [inner[0]]); }
+for (let turn = 0; turn < 3; turn++) read17(plain17());
+try { const c = attack17(); console.log('whole 4294967296 concatOfListOfList', read17(c), JSON.stringify(c), read17(list17), read17(plain17())); } catch (e) { console.log('whole 4294967296 concatOfListOfList threw', (e as Error).constructor.name); }
+const list18: number[] = [1, 2, 3, 4];
+function read18(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain18(): number[] { return list18.slice().concat(list18.toSorted()); }
+function attack18(): number[] { const first = list18.concat(4294967296); return first.slice().slice(1).toReversed().toSorted().concat(); }
+for (let turn = 0; turn < 3; turn++) read18(plain18());
+try { const c = attack18(); console.log('whole 4294967296 sliceOfSlice', read18(c), JSON.stringify(c), read18(list18), read18(plain18())); } catch (e) { console.log('whole 4294967296 sliceOfSlice threw', (e as Error).constructor.name); }
+const list19: number[] = [1, 2, 3, 4];
+function read19(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain19(): number[] { return list19.slice().concat(list19.toSorted()); }
+function attack19(): number[] { return list19.slice({ valueOf() { list19[0] = 4294967296; return 0; } } as any); }
+for (let turn = 0; turn < 3; turn++) read19(plain19());
+try { const c = attack19(); console.log('whole 4294967296 sliceValueOf', read19(c), JSON.stringify(c), read19(list19), read19(plain19())); } catch (e) { console.log('whole 4294967296 sliceValueOf threw', (e as Error).constructor.name); }
+const list20: number[] = [1, 2, 3, 4];
+function read20(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain20(): number[] { return list20.slice().concat(list20.toSorted()); }
+function attack20(): number[] { return list20.with({ valueOf() { list20[1] = 4294967296; return 0; } } as any, 5); }
+for (let turn = 0; turn < 3; turn++) read20(plain20());
+try { const c = attack20(); console.log('whole 4294967296 withValueOf', read20(c), JSON.stringify(c), read20(list20), read20(plain20())); } catch (e) { console.log('whole 4294967296 withValueOf threw', (e as Error).constructor.name); }
+const list21: number[] = [1, 2, 3, 4];
+function read21(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain21(): number[] { return list21.slice().concat(list21.toSorted()); }
+function attack21(): number[] { return list21.toSorted((a, b) => { list21[0] = 4294967296; return a - b; }).concat(list21); }
+for (let turn = 0; turn < 3; turn++) read21(plain21());
+try { const c = attack21(); console.log('whole 4294967296 toSortedComparator', read21(c), JSON.stringify(c), read21(list21), read21(plain21())); } catch (e) { console.log('whole 4294967296 toSortedComparator threw', (e as Error).constructor.name); }
+const list22: number[] = [1, 2, 3, 4];
+function read22(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain22(): number[] { return list22.slice().concat(list22.toSorted()); }
+function attack22(): number[] { return list22.filter((x, i, list) => { list[i + 1] = 4294967296; return true; }); }
+for (let turn = 0; turn < 3; turn++) read22(plain22());
+try { const c = attack22(); console.log('whole 4294967296 filterCallback', read22(c), JSON.stringify(c), read22(list22), read22(plain22())); } catch (e) { console.log('whole 4294967296 filterCallback threw', (e as Error).constructor.name); }
+const list23: number[] = [1, 2, 3, 4];
+function read23(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain23(): number[] { return list23.slice().concat(list23.toSorted()); }
+function attack23(): number[] { return list23.filter((x, i, list) => { if (i == 0) list.push(4294967296); return true; }).concat(list23); }
+for (let turn = 0; turn < 3; turn++) read23(plain23());
+try { const c = attack23(); console.log('whole 4294967296 filterCallbackPush', read23(c), JSON.stringify(c), read23(list23), read23(plain23())); } catch (e) { console.log('whole 4294967296 filterCallbackPush threw', (e as Error).constructor.name); }
+const list24: number[] = [1, 2, 3, 4];
+function read24(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain24(): number[] { return list24.slice().concat(list24.toSorted()); }
+function attack24(): number[] { return list24.toSpliced(0, { valueOf() { list24[2] = 4294967296; return 0; } } as any); }
+for (let turn = 0; turn < 3; turn++) read24(plain24());
+try { const c = attack24(); console.log('whole 4294967296 toSplicedValueOf', read24(c), JSON.stringify(c), read24(list24), read24(plain24())); } catch (e) { console.log('whole 4294967296 toSplicedValueOf threw', (e as Error).constructor.name); }
+const list25: number[] = [1, 2, 3, 4];
+function read25(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain25(): number[] { return list25.slice().concat(list25.toSorted()); }
+function attack25(): number[] { list25.fill(4294967296, 1, 2); return list25.slice(); }
+for (let turn = 0; turn < 3; turn++) read25(plain25());
+try { const c = attack25(); console.log('whole 4294967296 sourceFilled', read25(c), JSON.stringify(c), read25(list25), read25(plain25())); } catch (e) { console.log('whole 4294967296 sourceFilled threw', (e as Error).constructor.name); }
+const list26: number[] = [1, 2, 3, 4];
+function read26(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain26(): number[] { return list26.slice().concat(list26.toSorted()); }
+function attack26(): number[] { Object.assign(list26, [4294967296]); return list26.toReversed(); }
+for (let turn = 0; turn < 3; turn++) read26(plain26());
+try { const c = attack26(); console.log('whole 4294967296 sourceAssigned', read26(c), JSON.stringify(c), read26(list26), read26(plain26())); } catch (e) { console.log('whole 4294967296 sourceAssigned threw', (e as Error).constructor.name); }
+const list27: number[] = [1, 2, 3, 4];
+function read27(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain27(): number[] { return list27.slice().concat(list27.toSorted()); }
+function attack27(): number[] { Object.defineProperty(list27, 0, { value: 4294967296, writable: true, enumerable: true, configurable: true }); return list27.concat(); }
+for (let turn = 0; turn < 3; turn++) read27(plain27());
+try { const c = attack27(); console.log('whole 4294967296 sourceDefined', read27(c), JSON.stringify(c), read27(list27), read27(plain27())); } catch (e) { console.log('whole 4294967296 sourceDefined threw', (e as Error).constructor.name); }
+const list28: number[] = [1, 2, 3, 4];
+function read28(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain28(): number[] { return list28.slice().concat(list28.toSorted()); }
+function attack28(): number[] { Object.defineProperty(list28, 0, { get() { return 4294967296; }, enumerable: true, configurable: true }); return list28.slice(); }
+for (let turn = 0; turn < 3; turn++) read28(plain28());
+try { const c = attack28(); console.log('whole 4294967296 sourceGetter', read28(c), JSON.stringify(c), read28(list28), read28(plain28())); } catch (e) { console.log('whole 4294967296 sourceGetter threw', (e as Error).constructor.name); }
+const list29: number[] = [1, 2, 3, 4];
+function read29(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain29(): number[] { return list29.slice().concat(list29.toSorted()); }
+function attack29(): number[] { Reflect.set(list29, 0, 4294967296); return list29.toSorted(); }
+for (let turn = 0; turn < 3; turn++) read29(plain29());
+try { const c = attack29(); console.log('whole 4294967296 sourceReflectSet', read29(c), JSON.stringify(c), read29(list29), read29(plain29())); } catch (e) { console.log('whole 4294967296 sourceReflectSet threw', (e as Error).constructor.name); }
+const list30: number[] = [1, 2, 3, 4];
+function read30(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain30(): number[] { return list30.slice().concat(list30.toSorted()); }
+function attack30(): number[] { list30.push.apply(list30, [4294967296]); return list30.slice(); }
+for (let turn = 0; turn < 3; turn++) read30(plain30());
+try { const c = attack30(); console.log('whole 4294967296 sourcePushApply', read30(c), JSON.stringify(c), read30(list30), read30(plain30())); } catch (e) { console.log('whole 4294967296 sourcePushApply threw', (e as Error).constructor.name); }
+const list31: number[] = [1, 2, 3, 4];
+function read31(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain31(): number[] { return list31.slice().concat(list31.toSorted()); }
+function attack31(): number[] { list31.splice(0, 1, 4294967296); return list31.slice(); }
+for (let turn = 0; turn < 3; turn++) read31(plain31());
+try { const c = attack31(); console.log('whole 4294967296 sourceSpliced', read31(c), JSON.stringify(c), read31(list31), read31(plain31())); } catch (e) { console.log('whole 4294967296 sourceSpliced threw', (e as Error).constructor.name); }
+const list32: number[] = [1, 2, 3, 4];
+function read32(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain32(): number[] { return list32.slice().concat(list32.toSorted()); }
+function attack32(): number[] { const any: any = list32; any[0] = 4294967296; return list32.slice(); }
+for (let turn = 0; turn < 3; turn++) read32(plain32());
+try { const c = attack32(); console.log('whole 4294967296 sourceThroughAny', read32(c), JSON.stringify(c), read32(list32), read32(plain32())); } catch (e) { console.log('whole 4294967296 sourceThroughAny threw', (e as Error).constructor.name); }
+const list33: number[] = [1, 2, 3, 4];
+function read33(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain33(): number[] { return list33.slice().concat(list33.toSorted()); }
+function attack33(): number[] { storeInto(list33, 4294967296); return list33.with(1, 2); }
+for (let turn = 0; turn < 3; turn++) read33(plain33());
+try { const c = attack33(); console.log('whole 4294967296 sourceThroughAFunction', read33(c), JSON.stringify(c), read33(list33), read33(plain33())); } catch (e) { console.log('whole 4294967296 sourceThroughAFunction threw', (e as Error).constructor.name); }
+const list34: number[] = [1, 2, 3, 4];
+function read34(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain34(): number[] { return list34.slice().concat(list34.toSorted()); }
+function attack34(): number[] { list34.push(4294967296); list34.copyWithin(0, list34.length - 1); return list34.slice(0, 2); }
+for (let turn = 0; turn < 3; turn++) read34(plain34());
+try { const c = attack34(); console.log('whole 4294967296 sourceCopyWithin', read34(c), JSON.stringify(c), read34(list34), read34(plain34())); } catch (e) { console.log('whole 4294967296 sourceCopyWithin threw', (e as Error).constructor.name); }
+const list35: number[] = [1, 2, 3, 4];
+function read35(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain35(): number[] { return list35.slice().concat(list35.toSorted()); }
+function attack35(): number[] { const other = [4294967296]; list35.push(...other); return list35.filter(() => true); }
+for (let turn = 0; turn < 3; turn++) read35(plain35());
+try { const c = attack35(); console.log('whole 4294967296 sourceSpreadInto', read35(c), JSON.stringify(c), read35(list35), read35(plain35())); } catch (e) { console.log('whole 4294967296 sourceSpreadInto threw', (e as Error).constructor.name); }
+const list36: number[] = [1, 2, 3, 4];
+function read36(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain36(): number[] { return list36.slice().concat(list36.toSorted()); }
+function attack36(): number[] { const other = [4294967296]; const source = [...list36, ...other]; return source.slice(); }
+for (let turn = 0; turn < 3; turn++) read36(plain36());
+try { const c = attack36(); console.log('whole 4294967296 sourceIsSpread', read36(c), JSON.stringify(c), read36(list36), read36(plain36())); } catch (e) { console.log('whole 4294967296 sourceIsSpread threw', (e as Error).constructor.name); }
+const list37: number[] = [1, 2, 3, 4];
+function read37(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain37(): number[] { return list37.slice().concat(list37.toSorted()); }
+function attack37(): number[] { const source = Array.from(list37, () => 4294967296); return source.slice(); }
+for (let turn = 0; turn < 3; turn++) read37(plain37());
+try { const c = attack37(); console.log('whole 4294967296 sourceIsFrom', read37(c), JSON.stringify(c), read37(list37), read37(plain37())); } catch (e) { console.log('whole 4294967296 sourceIsFrom threw', (e as Error).constructor.name); }
+const list38: number[] = [1, 2, 3, 4];
+function read38(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain38(): number[] { return list38.slice().concat(list38.toSorted()); }
+function attack38(): number[] { const source = list38.map(() => 4294967296); return source.concat(list38); }
+for (let turn = 0; turn < 3; turn++) read38(plain38());
+try { const c = attack38(); console.log('whole 4294967296 sourceIsMapped', read38(c), JSON.stringify(c), read38(list38), read38(plain38())); } catch (e) { console.log('whole 4294967296 sourceIsMapped threw', (e as Error).constructor.name); }
+const list39: number[] = [1, 2, 3, 4];
+function read39(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain39(): number[] { return list39.slice().concat(list39.toSorted()); }
+function attack39(): number[] { list39.length = 6; return list39.slice(); }
+for (let turn = 0; turn < 3; turn++) read39(plain39());
+try { const c = attack39(); console.log('whole 4294967296 sourceLengthened', read39(c), JSON.stringify(c), read39(list39), read39(plain39())); } catch (e) { console.log('whole 4294967296 sourceLengthened threw', (e as Error).constructor.name); }
+const list40: number[] = [1, 2, 3, 4];
+function read40(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain40(): number[] { return list40.slice().concat(list40.toSorted()); }
+function attack40(): number[] { return list40.slice().fill(4294967296); }
+for (let turn = 0; turn < 3; turn++) read40(plain40());
+try { const c = attack40(); console.log('whole 4294967296 copyFilled', read40(c), JSON.stringify(c), read40(list40), read40(plain40())); } catch (e) { console.log('whole 4294967296 copyFilled threw', (e as Error).constructor.name); }
+const list41: number[] = [1, 2, 3, 4];
+function read41(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain41(): number[] { return list41.slice().concat(list41.toSorted()); }
+function attack41(): number[] { return Object.assign(list41.slice(), [4294967296]); }
+for (let turn = 0; turn < 3; turn++) read41(plain41());
+try { const c = attack41(); console.log('whole 4294967296 copyAssigned', read41(c), JSON.stringify(c), read41(list41), read41(plain41())); } catch (e) { console.log('whole 4294967296 copyAssigned threw', (e as Error).constructor.name); }
+const list42: number[] = [1, 2, 3, 4];
+function read42(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain42(): number[] { return list42.slice().concat(list42.toSorted()); }
+function attack42(): number[] { const c = list42.concat(); c.push.apply(c, [4294967296]); return c; }
+for (let turn = 0; turn < 3; turn++) read42(plain42());
+try { const c = attack42(); console.log('whole 4294967296 copyPushApply', read42(c), JSON.stringify(c), read42(list42), read42(plain42())); } catch (e) { console.log('whole 4294967296 copyPushApply threw', (e as Error).constructor.name); }
+const list43: number[] = [1, 2, 3, 4];
+function read43(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain43(): number[] { return list43.slice().concat(list43.toSorted()); }
+function attack43(): number[] { const c: any = list43.toSorted(); c[0] = 4294967296; return c; }
+for (let turn = 0; turn < 3; turn++) read43(plain43());
+try { const c = attack43(); console.log('whole 4294967296 copyThroughAny', read43(c), JSON.stringify(c), read43(list43), read43(plain43())); } catch (e) { console.log('whole 4294967296 copyThroughAny threw', (e as Error).constructor.name); }
+const list44: number[] = [1, 2, 3, 4];
+function read44(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain44(): number[] { return list44.slice().concat(list44.toSorted()); }
+function attack44(): number[] { const c = list44.toReversed(); c[0] = 4294967296; return c; }
+for (let turn = 0; turn < 3; turn++) read44(plain44());
+try { const c = attack44(); console.log('whole 4294967296 copyStored', read44(c), JSON.stringify(c), read44(list44), read44(plain44())); } catch (e) { console.log('whole 4294967296 copyStored threw', (e as Error).constructor.name); }
+const list45: number[] = [1, 2, 3, 4];
+function read45(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain45(): number[] { return list45.slice().concat(list45.toSorted()); }
+function attack45(): number[] { const c = list45.slice(); kept.push(c); kept[kept.length - 1][0] = 4294967296; return c; }
+for (let turn = 0; turn < 3; turn++) read45(plain45());
+try { const c = attack45(); console.log('whole 4294967296 copyKeptAndStoredLater', read45(c), JSON.stringify(c), read45(list45), read45(plain45())); } catch (e) { console.log('whole 4294967296 copyKeptAndStoredLater threw', (e as Error).constructor.name); }
+const list46: number[] = [1, 2, 3, 4];
+function read46(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain46(): number[] { return list46.slice().concat(list46.toSorted()); }
+function attack46(): number[] { const c = list46.slice(); c.splice(1, 0, 4294967296); return c; }
+for (let turn = 0; turn < 3; turn++) read46(plain46());
+try { const c = attack46(); console.log('whole 4294967296 copySpliced', read46(c), JSON.stringify(c), read46(list46), read46(plain46())); } catch (e) { console.log('whole 4294967296 copySpliced threw', (e as Error).constructor.name); }
+const list49: number[] = [1, 2, 3, 4];
+function read49(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain49(): number[] { return list49.slice().concat(list49.toSorted()); }
+function attack49(): number[] { const victim = [0.5]; (list49 as any).constructor = { [Symbol.species]: function () { return victim; } }; list49.push(4294967296); list49.slice(); return victim; }
+for (let turn = 0; turn < 3; turn++) read49(plain49());
+try { const c = attack49(); console.log('whole 4294967296 species', read49(c), JSON.stringify(c), read49(list49), read49(plain49())); } catch (e) { console.log('whole 4294967296 species threw', (e as Error).constructor.name); }
+const list50: number[] = [1, 2, 3, 4];
+function read50(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain50(): number[] { return list50.slice().concat(list50.toSorted()); }
+function attack50(): number[] { class Heir extends Array<number> {} const h = Heir.from(list50) as Heir; h.push(4294967296); return h.slice(); }
+for (let turn = 0; turn < 3; turn++) read50(plain50());
+try { const c = attack50(); console.log('whole 4294967296 heir', read50(c), JSON.stringify(c), read50(list50), read50(plain50())); } catch (e) { console.log('whole 4294967296 heir threw', (e as Error).constructor.name); }
+const list51: number[] = [1, 2, 3, 4];
+function read51(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain51(): number[] { return list51.slice().concat(list51.toSorted()); }
+function attack51(): number[] { return Array.prototype.concat.apply(list51, [7.25]) as number[]; }
+for (let turn = 0; turn < 3; turn++) read51(plain51());
+try { const c = attack51(); console.log('whole 7.25 concatApply', read51(c), JSON.stringify(c), read51(list51), read51(plain51())); } catch (e) { console.log('whole 7.25 concatApply threw', (e as Error).constructor.name); }
+const list52: number[] = [1, 2, 3, 4];
+function read52(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain52(): number[] { return list52.slice().concat(list52.toSorted()); }
+function attack52(): number[] { return Array.prototype.concat.call(list52, 7.25) as number[]; }
+for (let turn = 0; turn < 3; turn++) read52(plain52());
+try { const c = attack52(); console.log('whole 7.25 concatCall', read52(c), JSON.stringify(c), read52(list52), read52(plain52())); } catch (e) { console.log('whole 7.25 concatCall threw', (e as Error).constructor.name); }
+const list53: number[] = [1, 2, 3, 4];
+function read53(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain53(): number[] { return list53.slice().concat(list53.toSorted()); }
+function attack53(): number[] { const more = [7.25]; return list53.concat(...more); }
+for (let turn = 0; turn < 3; turn++) read53(plain53());
+try { const c = attack53(); console.log('whole 7.25 concatSpreadCall', read53(c), JSON.stringify(c), read53(list53), read53(plain53())); } catch (e) { console.log('whole 7.25 concatSpreadCall threw', (e as Error).constructor.name); }
+const list54: number[] = [1, 2, 3, 4];
+function read54(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain54(): number[] { return list54.slice().concat(list54.toSorted()); }
+function attack54(): number[] { return (list54.concat.bind(list54, 7.25) as () => number[])(); }
+for (let turn = 0; turn < 3; turn++) read54(plain54());
+try { const c = attack54(); console.log('whole 7.25 concatBound', read54(c), JSON.stringify(c), read54(list54), read54(plain54())); } catch (e) { console.log('whole 7.25 concatBound threw', (e as Error).constructor.name); }
+const list55: number[] = [1, 2, 3, 4];
+function read55(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain55(): number[] { return list55.slice().concat(list55.toSorted()); }
+function attack55(): number[] { return Reflect.apply(Array.prototype.concat, list55, [7.25]) as number[]; }
+for (let turn = 0; turn < 3; turn++) read55(plain55());
+try { const c = attack55(); console.log('whole 7.25 concatReflect', read55(c), JSON.stringify(c), read55(list55), read55(plain55())); } catch (e) { console.log('whole 7.25 concatReflect threw', (e as Error).constructor.name); }
+const list56: number[] = [1, 2, 3, 4];
+function read56(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain56(): number[] { return list56.slice().concat(list56.toSorted()); }
+function attack56(): number[] { return (Array.prototype.with as Function).apply(list56, [0, 7.25]) as number[]; }
+for (let turn = 0; turn < 3; turn++) read56(plain56());
+try { const c = attack56(); console.log('whole 7.25 withApply', read56(c), JSON.stringify(c), read56(list56), read56(plain56())); } catch (e) { console.log('whole 7.25 withApply threw', (e as Error).constructor.name); }
+const list57: number[] = [1, 2, 3, 4];
+function read57(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain57(): number[] { return list57.slice().concat(list57.toSorted()); }
+function attack57(): number[] { return (Array.prototype.with as Function).call(list57, 0, 7.25) as number[]; }
+for (let turn = 0; turn < 3; turn++) read57(plain57());
+try { const c = attack57(); console.log('whole 7.25 withCall', read57(c), JSON.stringify(c), read57(list57), read57(plain57())); } catch (e) { console.log('whole 7.25 withCall threw', (e as Error).constructor.name); }
+const list58: number[] = [1, 2, 3, 4];
+function read58(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain58(): number[] { return list58.slice().concat(list58.toSorted()); }
+function attack58(): number[] { return Reflect.apply(Array.prototype.with, list58, [0, 7.25]) as number[]; }
+for (let turn = 0; turn < 3; turn++) read58(plain58());
+try { const c = attack58(); console.log('whole 7.25 withReflect', read58(c), JSON.stringify(c), read58(list58), read58(plain58())); } catch (e) { console.log('whole 7.25 withReflect threw', (e as Error).constructor.name); }
+const list59: number[] = [1, 2, 3, 4];
+function read59(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain59(): number[] { return list59.slice().concat(list59.toSorted()); }
+function attack59(): number[] { return (Array.prototype.toSpliced as Function).apply(list59, [0, 1, 7.25]) as number[]; }
+for (let turn = 0; turn < 3; turn++) read59(plain59());
+try { const c = attack59(); console.log('whole 7.25 toSplicedApply', read59(c), JSON.stringify(c), read59(list59), read59(plain59())); } catch (e) { console.log('whole 7.25 toSplicedApply threw', (e as Error).constructor.name); }
+const list60: number[] = [1, 2, 3, 4];
+function read60(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain60(): number[] { return list60.slice().concat(list60.toSorted()); }
+function attack60(): number[] { const more = [7.25, 7.25]; return list60.toSpliced(0, 1, ...more); }
+for (let turn = 0; turn < 3; turn++) read60(plain60());
+try { const c = attack60(); console.log('whole 7.25 toSplicedSpread', read60(c), JSON.stringify(c), read60(list60), read60(plain60())); } catch (e) { console.log('whole 7.25 toSplicedSpread threw', (e as Error).constructor.name); }
+const list61: number[] = [1, 2, 3, 4];
+function read61(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain61(): number[] { return list61.slice().concat(list61.toSorted()); }
+function attack61(): number[] { const method = list61.with; return method.call(list61, 1, 7.25); }
+for (let turn = 0; turn < 3; turn++) read61(plain61());
+try { const c = attack61(); console.log('whole 7.25 withThroughAVariable', read61(c), JSON.stringify(c), read61(list61), read61(plain61())); } catch (e) { console.log('whole 7.25 withThroughAVariable threw', (e as Error).constructor.name); }
+const list62: number[] = [1, 2, 3, 4];
+function read62(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain62(): number[] { return list62.slice().concat(list62.toSorted()); }
+function attack62(): number[] { const any: any = list62; return any.concat(7.25); }
+for (let turn = 0; turn < 3; turn++) read62(plain62());
+try { const c = attack62(); console.log('whole 7.25 concatThroughAny', read62(c), JSON.stringify(c), read62(list62), read62(plain62())); } catch (e) { console.log('whole 7.25 concatThroughAny threw', (e as Error).constructor.name); }
+const list63: number[] = [1, 2, 3, 4];
+function read63(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain63(): number[] { return list63.slice().concat(list63.toSorted()); }
+function attack63(): number[] { const name = 'con' + 'cat'; return (list63 as any)[name](7.25); }
+for (let turn = 0; turn < 3; turn++) read63(plain63());
+try { const c = attack63(); console.log('whole 7.25 concatByName', read63(c), JSON.stringify(c), read63(list63), read63(plain63())); } catch (e) { console.log('whole 7.25 concatByName threw', (e as Error).constructor.name); }
+const list64: number[] = [1, 2, 3, 4];
+function read64(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain64(): number[] { return list64.slice().concat(list64.toSorted()); }
+function attack64(): number[] { return list64.concat({ length: 1, 0: 7.25, [Symbol.isConcatSpreadable]: true } as any); }
+for (let turn = 0; turn < 3; turn++) read64(plain64());
+try { const c = attack64(); console.log('whole 7.25 concatSpreadable', read64(c), JSON.stringify(c), read64(list64), read64(plain64())); } catch (e) { console.log('whole 7.25 concatSpreadable threw', (e as Error).constructor.name); }
+const list65: number[] = [1, 2, 3, 4];
+function read65(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain65(): number[] { return list65.slice().concat(list65.toSorted()); }
+function attack65(): number[] { return Array.prototype.slice.call({ length: 2, 0: 7.25, 1: 7.25 }) as number[]; }
+for (let turn = 0; turn < 3; turn++) read65(plain65());
+try { const c = attack65(); console.log('whole 7.25 sliceOfArrayLike', read65(c), JSON.stringify(c), read65(list65), read65(plain65())); } catch (e) { console.log('whole 7.25 sliceOfArrayLike threw', (e as Error).constructor.name); }
+const list66: number[] = [1, 2, 3, 4];
+function read66(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain66(): number[] { return list66.slice().concat(list66.toSorted()); }
+function attack66(): number[] { return (function (..._: number[]) { return Array.prototype.slice.call(arguments) as number[]; })(7.25, 7.25); }
+for (let turn = 0; turn < 3; turn++) read66(plain66());
+try { const c = attack66(); console.log('whole 7.25 sliceOfArguments', read66(c), JSON.stringify(c), read66(list66), read66(plain66())); } catch (e) { console.log('whole 7.25 sliceOfArguments threw', (e as Error).constructor.name); }
+const list67: number[] = [1, 2, 3, 4];
+function read67(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain67(): number[] { return list67.slice().concat(list67.toSorted()); }
+function attack67(): number[] { const inner = [7.25]; return list67.concat(inner, [inner[0]]); }
+for (let turn = 0; turn < 3; turn++) read67(plain67());
+try { const c = attack67(); console.log('whole 7.25 concatOfListOfList', read67(c), JSON.stringify(c), read67(list67), read67(plain67())); } catch (e) { console.log('whole 7.25 concatOfListOfList threw', (e as Error).constructor.name); }
+const list68: number[] = [1, 2, 3, 4];
+function read68(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain68(): number[] { return list68.slice().concat(list68.toSorted()); }
+function attack68(): number[] { const first = list68.concat(7.25); return first.slice().slice(1).toReversed().toSorted().concat(); }
+for (let turn = 0; turn < 3; turn++) read68(plain68());
+try { const c = attack68(); console.log('whole 7.25 sliceOfSlice', read68(c), JSON.stringify(c), read68(list68), read68(plain68())); } catch (e) { console.log('whole 7.25 sliceOfSlice threw', (e as Error).constructor.name); }
+const list69: number[] = [1, 2, 3, 4];
+function read69(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain69(): number[] { return list69.slice().concat(list69.toSorted()); }
+function attack69(): number[] { return list69.slice({ valueOf() { list69[0] = 7.25; return 0; } } as any); }
+for (let turn = 0; turn < 3; turn++) read69(plain69());
+try { const c = attack69(); console.log('whole 7.25 sliceValueOf', read69(c), JSON.stringify(c), read69(list69), read69(plain69())); } catch (e) { console.log('whole 7.25 sliceValueOf threw', (e as Error).constructor.name); }
+const list70: number[] = [1, 2, 3, 4];
+function read70(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain70(): number[] { return list70.slice().concat(list70.toSorted()); }
+function attack70(): number[] { return list70.with({ valueOf() { list70[1] = 7.25; return 0; } } as any, 5); }
+for (let turn = 0; turn < 3; turn++) read70(plain70());
+try { const c = attack70(); console.log('whole 7.25 withValueOf', read70(c), JSON.stringify(c), read70(list70), read70(plain70())); } catch (e) { console.log('whole 7.25 withValueOf threw', (e as Error).constructor.name); }
+const list71: number[] = [1, 2, 3, 4];
+function read71(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain71(): number[] { return list71.slice().concat(list71.toSorted()); }
+function attack71(): number[] { return list71.toSorted((a, b) => { list71[0] = 7.25; return a - b; }).concat(list71); }
+for (let turn = 0; turn < 3; turn++) read71(plain71());
+try { const c = attack71(); console.log('whole 7.25 toSortedComparator', read71(c), JSON.stringify(c), read71(list71), read71(plain71())); } catch (e) { console.log('whole 7.25 toSortedComparator threw', (e as Error).constructor.name); }
+const list72: number[] = [1, 2, 3, 4];
+function read72(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain72(): number[] { return list72.slice().concat(list72.toSorted()); }
+function attack72(): number[] { return list72.filter((x, i, list) => { list[i + 1] = 7.25; return true; }); }
+for (let turn = 0; turn < 3; turn++) read72(plain72());
+try { const c = attack72(); console.log('whole 7.25 filterCallback', read72(c), JSON.stringify(c), read72(list72), read72(plain72())); } catch (e) { console.log('whole 7.25 filterCallback threw', (e as Error).constructor.name); }
+const list73: number[] = [1, 2, 3, 4];
+function read73(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain73(): number[] { return list73.slice().concat(list73.toSorted()); }
+function attack73(): number[] { return list73.filter((x, i, list) => { if (i == 0) list.push(7.25); return true; }).concat(list73); }
+for (let turn = 0; turn < 3; turn++) read73(plain73());
+try { const c = attack73(); console.log('whole 7.25 filterCallbackPush', read73(c), JSON.stringify(c), read73(list73), read73(plain73())); } catch (e) { console.log('whole 7.25 filterCallbackPush threw', (e as Error).constructor.name); }
+const list74: number[] = [1, 2, 3, 4];
+function read74(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain74(): number[] { return list74.slice().concat(list74.toSorted()); }
+function attack74(): number[] { return list74.toSpliced(0, { valueOf() { list74[2] = 7.25; return 0; } } as any); }
+for (let turn = 0; turn < 3; turn++) read74(plain74());
+try { const c = attack74(); console.log('whole 7.25 toSplicedValueOf', read74(c), JSON.stringify(c), read74(list74), read74(plain74())); } catch (e) { console.log('whole 7.25 toSplicedValueOf threw', (e as Error).constructor.name); }
+const list75: number[] = [1, 2, 3, 4];
+function read75(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain75(): number[] { return list75.slice().concat(list75.toSorted()); }
+function attack75(): number[] { list75.fill(7.25, 1, 2); return list75.slice(); }
+for (let turn = 0; turn < 3; turn++) read75(plain75());
+try { const c = attack75(); console.log('whole 7.25 sourceFilled', read75(c), JSON.stringify(c), read75(list75), read75(plain75())); } catch (e) { console.log('whole 7.25 sourceFilled threw', (e as Error).constructor.name); }
+const list76: number[] = [1, 2, 3, 4];
+function read76(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain76(): number[] { return list76.slice().concat(list76.toSorted()); }
+function attack76(): number[] { Object.assign(list76, [7.25]); return list76.toReversed(); }
+for (let turn = 0; turn < 3; turn++) read76(plain76());
+try { const c = attack76(); console.log('whole 7.25 sourceAssigned', read76(c), JSON.stringify(c), read76(list76), read76(plain76())); } catch (e) { console.log('whole 7.25 sourceAssigned threw', (e as Error).constructor.name); }
+const list77: number[] = [1, 2, 3, 4];
+function read77(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain77(): number[] { return list77.slice().concat(list77.toSorted()); }
+function attack77(): number[] { Object.defineProperty(list77, 0, { value: 7.25, writable: true, enumerable: true, configurable: true }); return list77.concat(); }
+for (let turn = 0; turn < 3; turn++) read77(plain77());
+try { const c = attack77(); console.log('whole 7.25 sourceDefined', read77(c), JSON.stringify(c), read77(list77), read77(plain77())); } catch (e) { console.log('whole 7.25 sourceDefined threw', (e as Error).constructor.name); }
+const list78: number[] = [1, 2, 3, 4];
+function read78(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain78(): number[] { return list78.slice().concat(list78.toSorted()); }
+function attack78(): number[] { Object.defineProperty(list78, 0, { get() { return 7.25; }, enumerable: true, configurable: true }); return list78.slice(); }
+for (let turn = 0; turn < 3; turn++) read78(plain78());
+try { const c = attack78(); console.log('whole 7.25 sourceGetter', read78(c), JSON.stringify(c), read78(list78), read78(plain78())); } catch (e) { console.log('whole 7.25 sourceGetter threw', (e as Error).constructor.name); }
+const list79: number[] = [1, 2, 3, 4];
+function read79(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain79(): number[] { return list79.slice().concat(list79.toSorted()); }
+function attack79(): number[] { Reflect.set(list79, 0, 7.25); return list79.toSorted(); }
+for (let turn = 0; turn < 3; turn++) read79(plain79());
+try { const c = attack79(); console.log('whole 7.25 sourceReflectSet', read79(c), JSON.stringify(c), read79(list79), read79(plain79())); } catch (e) { console.log('whole 7.25 sourceReflectSet threw', (e as Error).constructor.name); }
+const list80: number[] = [1, 2, 3, 4];
+function read80(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain80(): number[] { return list80.slice().concat(list80.toSorted()); }
+function attack80(): number[] { list80.push.apply(list80, [7.25]); return list80.slice(); }
+for (let turn = 0; turn < 3; turn++) read80(plain80());
+try { const c = attack80(); console.log('whole 7.25 sourcePushApply', read80(c), JSON.stringify(c), read80(list80), read80(plain80())); } catch (e) { console.log('whole 7.25 sourcePushApply threw', (e as Error).constructor.name); }
+const list81: number[] = [1, 2, 3, 4];
+function read81(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain81(): number[] { return list81.slice().concat(list81.toSorted()); }
+function attack81(): number[] { list81.splice(0, 1, 7.25); return list81.slice(); }
+for (let turn = 0; turn < 3; turn++) read81(plain81());
+try { const c = attack81(); console.log('whole 7.25 sourceSpliced', read81(c), JSON.stringify(c), read81(list81), read81(plain81())); } catch (e) { console.log('whole 7.25 sourceSpliced threw', (e as Error).constructor.name); }
+const list82: number[] = [1, 2, 3, 4];
+function read82(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain82(): number[] { return list82.slice().concat(list82.toSorted()); }
+function attack82(): number[] { const any: any = list82; any[0] = 7.25; return list82.slice(); }
+for (let turn = 0; turn < 3; turn++) read82(plain82());
+try { const c = attack82(); console.log('whole 7.25 sourceThroughAny', read82(c), JSON.stringify(c), read82(list82), read82(plain82())); } catch (e) { console.log('whole 7.25 sourceThroughAny threw', (e as Error).constructor.name); }
+const list83: number[] = [1, 2, 3, 4];
+function read83(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain83(): number[] { return list83.slice().concat(list83.toSorted()); }
+function attack83(): number[] { storeInto(list83, 7.25); return list83.with(1, 2); }
+for (let turn = 0; turn < 3; turn++) read83(plain83());
+try { const c = attack83(); console.log('whole 7.25 sourceThroughAFunction', read83(c), JSON.stringify(c), read83(list83), read83(plain83())); } catch (e) { console.log('whole 7.25 sourceThroughAFunction threw', (e as Error).constructor.name); }
+const list84: number[] = [1, 2, 3, 4];
+function read84(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain84(): number[] { return list84.slice().concat(list84.toSorted()); }
+function attack84(): number[] { list84.push(7.25); list84.copyWithin(0, list84.length - 1); return list84.slice(0, 2); }
+for (let turn = 0; turn < 3; turn++) read84(plain84());
+try { const c = attack84(); console.log('whole 7.25 sourceCopyWithin', read84(c), JSON.stringify(c), read84(list84), read84(plain84())); } catch (e) { console.log('whole 7.25 sourceCopyWithin threw', (e as Error).constructor.name); }
+const list85: number[] = [1, 2, 3, 4];
+function read85(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain85(): number[] { return list85.slice().concat(list85.toSorted()); }
+function attack85(): number[] { const other = [7.25]; list85.push(...other); return list85.filter(() => true); }
+for (let turn = 0; turn < 3; turn++) read85(plain85());
+try { const c = attack85(); console.log('whole 7.25 sourceSpreadInto', read85(c), JSON.stringify(c), read85(list85), read85(plain85())); } catch (e) { console.log('whole 7.25 sourceSpreadInto threw', (e as Error).constructor.name); }
+const list86: number[] = [1, 2, 3, 4];
+function read86(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain86(): number[] { return list86.slice().concat(list86.toSorted()); }
+function attack86(): number[] { const other = [7.25]; const source = [...list86, ...other]; return source.slice(); }
+for (let turn = 0; turn < 3; turn++) read86(plain86());
+try { const c = attack86(); console.log('whole 7.25 sourceIsSpread', read86(c), JSON.stringify(c), read86(list86), read86(plain86())); } catch (e) { console.log('whole 7.25 sourceIsSpread threw', (e as Error).constructor.name); }
+const list87: number[] = [1, 2, 3, 4];
+function read87(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain87(): number[] { return list87.slice().concat(list87.toSorted()); }
+function attack87(): number[] { const source = Array.from(list87, () => 7.25); return source.slice(); }
+for (let turn = 0; turn < 3; turn++) read87(plain87());
+try { const c = attack87(); console.log('whole 7.25 sourceIsFrom', read87(c), JSON.stringify(c), read87(list87), read87(plain87())); } catch (e) { console.log('whole 7.25 sourceIsFrom threw', (e as Error).constructor.name); }
+const list88: number[] = [1, 2, 3, 4];
+function read88(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain88(): number[] { return list88.slice().concat(list88.toSorted()); }
+function attack88(): number[] { const source = list88.map(() => 7.25); return source.concat(list88); }
+for (let turn = 0; turn < 3; turn++) read88(plain88());
+try { const c = attack88(); console.log('whole 7.25 sourceIsMapped', read88(c), JSON.stringify(c), read88(list88), read88(plain88())); } catch (e) { console.log('whole 7.25 sourceIsMapped threw', (e as Error).constructor.name); }
+const list89: number[] = [1, 2, 3, 4];
+function read89(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain89(): number[] { return list89.slice().concat(list89.toSorted()); }
+function attack89(): number[] { list89.length = 6; return list89.slice(); }
+for (let turn = 0; turn < 3; turn++) read89(plain89());
+try { const c = attack89(); console.log('whole 7.25 sourceLengthened', read89(c), JSON.stringify(c), read89(list89), read89(plain89())); } catch (e) { console.log('whole 7.25 sourceLengthened threw', (e as Error).constructor.name); }
+const list90: number[] = [1, 2, 3, 4];
+function read90(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain90(): number[] { return list90.slice().concat(list90.toSorted()); }
+function attack90(): number[] { return list90.slice().fill(7.25); }
+for (let turn = 0; turn < 3; turn++) read90(plain90());
+try { const c = attack90(); console.log('whole 7.25 copyFilled', read90(c), JSON.stringify(c), read90(list90), read90(plain90())); } catch (e) { console.log('whole 7.25 copyFilled threw', (e as Error).constructor.name); }
+const list91: number[] = [1, 2, 3, 4];
+function read91(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain91(): number[] { return list91.slice().concat(list91.toSorted()); }
+function attack91(): number[] { return Object.assign(list91.slice(), [7.25]); }
+for (let turn = 0; turn < 3; turn++) read91(plain91());
+try { const c = attack91(); console.log('whole 7.25 copyAssigned', read91(c), JSON.stringify(c), read91(list91), read91(plain91())); } catch (e) { console.log('whole 7.25 copyAssigned threw', (e as Error).constructor.name); }
+const list92: number[] = [1, 2, 3, 4];
+function read92(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain92(): number[] { return list92.slice().concat(list92.toSorted()); }
+function attack92(): number[] { const c = list92.concat(); c.push.apply(c, [7.25]); return c; }
+for (let turn = 0; turn < 3; turn++) read92(plain92());
+try { const c = attack92(); console.log('whole 7.25 copyPushApply', read92(c), JSON.stringify(c), read92(list92), read92(plain92())); } catch (e) { console.log('whole 7.25 copyPushApply threw', (e as Error).constructor.name); }
+const list93: number[] = [1, 2, 3, 4];
+function read93(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain93(): number[] { return list93.slice().concat(list93.toSorted()); }
+function attack93(): number[] { const c: any = list93.toSorted(); c[0] = 7.25; return c; }
+for (let turn = 0; turn < 3; turn++) read93(plain93());
+try { const c = attack93(); console.log('whole 7.25 copyThroughAny', read93(c), JSON.stringify(c), read93(list93), read93(plain93())); } catch (e) { console.log('whole 7.25 copyThroughAny threw', (e as Error).constructor.name); }
+const list94: number[] = [1, 2, 3, 4];
+function read94(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain94(): number[] { return list94.slice().concat(list94.toSorted()); }
+function attack94(): number[] { const c = list94.toReversed(); c[0] = 7.25; return c; }
+for (let turn = 0; turn < 3; turn++) read94(plain94());
+try { const c = attack94(); console.log('whole 7.25 copyStored', read94(c), JSON.stringify(c), read94(list94), read94(plain94())); } catch (e) { console.log('whole 7.25 copyStored threw', (e as Error).constructor.name); }
+const list95: number[] = [1, 2, 3, 4];
+function read95(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain95(): number[] { return list95.slice().concat(list95.toSorted()); }
+function attack95(): number[] { const c = list95.slice(); kept.push(c); kept[kept.length - 1][0] = 7.25; return c; }
+for (let turn = 0; turn < 3; turn++) read95(plain95());
+try { const c = attack95(); console.log('whole 7.25 copyKeptAndStoredLater', read95(c), JSON.stringify(c), read95(list95), read95(plain95())); } catch (e) { console.log('whole 7.25 copyKeptAndStoredLater threw', (e as Error).constructor.name); }
+const list96: number[] = [1, 2, 3, 4];
+function read96(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain96(): number[] { return list96.slice().concat(list96.toSorted()); }
+function attack96(): number[] { const c = list96.slice(); c.splice(1, 0, 7.25); return c; }
+for (let turn = 0; turn < 3; turn++) read96(plain96());
+try { const c = attack96(); console.log('whole 7.25 copySpliced', read96(c), JSON.stringify(c), read96(list96), read96(plain96())); } catch (e) { console.log('whole 7.25 copySpliced threw', (e as Error).constructor.name); }
+const list99: number[] = [1, 2, 3, 4];
+function read99(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain99(): number[] { return list99.slice().concat(list99.toSorted()); }
+function attack99(): number[] { const victim = [0.5]; (list99 as any).constructor = { [Symbol.species]: function () { return victim; } }; list99.push(7.25); list99.slice(); return victim; }
+for (let turn = 0; turn < 3; turn++) read99(plain99());
+try { const c = attack99(); console.log('whole 7.25 species', read99(c), JSON.stringify(c), read99(list99), read99(plain99())); } catch (e) { console.log('whole 7.25 species threw', (e as Error).constructor.name); }
+const list100: number[] = [1, 2, 3, 4];
+function read100(v: number[]): string { let text = v.length + ':'; let sum = 0; for (let at = 0; at < v.length; at++) { text += show(v[at] + 1) + ','; sum += v[at] | 0; } return text + show(sum) + ' ' + show(v[0]) + ' ' + v.join(); }
+function plain100(): number[] { return list100.slice().concat(list100.toSorted()); }
+function attack100(): number[] { class Heir extends Array<number> {} const h = Heir.from(list100) as Heir; h.push(7.25); return h.slice(); }
+for (let turn = 0; turn < 3; turn++) read100(plain100());
+try { const c = attack100(); console.log('whole 7.25 heir', read100(c), JSON.stringify(c), read100(list100), read100(plain100())); } catch (e) { console.log('whole 7.25 heir threw', (e as Error).constructor.name); }
+export {};
+//// numbers-copied-by-push.ts
+declare const console: { log(...values: unknown[]): void };
+function copyByPush(from: number[]): number[] { const out: number[] = []; for (let i = 0; i < from.length; i++) out.push(from[i]); return out; }
+function copyPastTheEnd(from: number[], count: number): number[] { const out: number[] = []; for (let i = 0; i < count; i++) out.push(from[i]); return out; }
+function appendTo(out: number[], from: number[]): number { let n = 0; for (let i = 0; i < from.length; i++) n = out.push(from[i]); return n; }
+function pushOne(out: number[], from: number[], i: number): number { return out.push(from[i]); }
+function everySecond(from: number[]): number[] { const out: number[] = []; for (let i = 0; i < from.length; i += 2) { const x = from[i]; out.push(x); out.push(x); } return out; }
+function show(a: unknown[]): string { let s = ""; for (let i = 0; i < a.length; i++) s += (i in a ? Object.is(a[i], -0) ? "-0" : String(a[i]) : "_") + ","; return s + a.length; }
+function tell(name: string, f: () => unknown): void { let text: string; try { text = String(f()); } catch (e) { text = e instanceof TypeError ? "TypeError" : e instanceof RangeError ? "RangeError" : "threw"; } console.log(name + ": " + text); }
+const kinds: [string, () => number[]][] = [
+    ["doubles", () => [1.5, 2.5, 3.5]], ["whole", () => [1, 2, 3]], ["empty", () => []], ["values", () => { const a: unknown[] = [1.5, "x", 3]; a[1] = 2; return a as number[]; }],
+    ["odd numbers", () => [NaN, -0, 0, Infinity, -Infinity, 1e300, 5e-324, 4294967296, -2147483649]],
+    ["a hole", () => { const a = [1.5, 2.5, 3.5]; delete (a as unknown[])[1]; return a; }], ["new Array(3)", () => new Array<number>(3)], ["JSON", () => JSON.parse("[1,2.5,3]")],
+    ["undefined inside", () => [1.5, undefined, 3.5] as number[]],
+    ["frozen", () => Object.freeze([1.5, 2.5]) as number[]], ["sealed", () => Object.seal([1.5, 2.5])], ["sparse", () => { const a = [1.5]; a[150000] = 2; a.length = 3; return a; }],
+    ["constants", () => [10, 20, 30, 40]],
+];
+for (let turn = 0; turn < 2; turn++) {
+    for (const [name, make] of kinds) {
+        tell(name + " copied", () => show(copyByPush(make())));
+        tell(name + " copied past the end", () => show(copyPastTheEnd(make(), 6)));
+        tell(name + " every second, twice", () => show(everySecond(make())));
+        for (const [other, makeOther] of kinds) tell(name + " appended to " + other, () => { const out = makeOther(); const n = appendTo(out, make()); return n + " " + show(out); });
+        for (const i of [0, 1, 2, 3, -1, 1.5, 1000]) tell(name + " one pushed from " + i, () => { const out = [0.5]; const n = pushOne(out, make(), i); return n + " " + show(out); });
+    }
+    tell("long", () => { const from: number[] = []; for (let i = 0; i < 70000; i++) from.push(i / 2); const out = copyByPush(from); return out[69999] + " " + out.length; });
+    tell("onto itself", () => { const a = [1.5, 2.5]; let n = 0; for (let i = 0; i < a.length && n++ < 5; i++) a.push(a[i]); return show(a); });
+    tell("a push of its own", () => { const out: number[] = []; (out as unknown as { push(x: number): number }).push = () => 42; return pushOne(out, [1.5], 0) + " " + show(out); });
+    tell("a length that cannot grow", () => { const out = [0.5]; Object.defineProperty(out, "length", { writable: false }); return pushOne(out, [1.5], 0); });
+}
+//// numbers-or-what-a-hole-reads-as-that-a-reader-of-numbers-meets.ts
+// `[3, 1, 4].map(x => x)`: all that is known of its elements is "a number, or what a hole reads as", and general code has made it with storage for any value.
+// A reader of numbers gives it storage for numbers, once. A hole stays a hole. An array that really holds undefined keeps its storage; whoever reads either sees what plain Bun shows.
+function sum(list: number[]): number {
+  return list.reduce((total, x) => total + x, 0);
+}
+function sumOfPresent(list: (number | undefined)[]): number {
+  let total = 0;
+  for (let i = 0; i < list.length; i++) total += list[i] ?? 0.5;
+  return total;
+}
+function withIndexes(list: number[]): number {
+  let total = 0;
+  for (const [i, x] of list.entries()) total += i * x;
+  return total;
+}
+function describe(list: readonly unknown[]): string {
+  const own: string[] = [];
+  for (let i = 0; i < list.length; i++) own.push(i in list ? String(list[i]) : "hole");
+  return `${list.length}: ${own.join(" ")} | ${Object.keys(list).join("")}`;
+}
+const opened = <T>(value: T): T => new Function("value", "return value")(value);
+
+const mapped: number[] = [3, 1, 4, 1, 5, 9, 2, 6].map(x => x);
+const filtered: number[] = [3, 1, 4, 1, 5, 9, 2, 6].filter(x => x > 2);
+const made: number[] = Array.from({ length: 5 }, (_, i) => i * 1.5);
+const sliced: number[] = opened([1, 2, 3, 4, 5]).slice(1, 4);
+const joined: number[] = opened([1, 2]).concat([3.5], mapped);
+for (let round = 0; round < 4; round++) {
+  for (const list of [mapped, filtered, made, sliced, joined]) console.log(sum(list), sumOfPresent(list), withIndexes(list), describe(list));
+  mapped.push(round + 0.25);
+  filtered[filtered.length] = round;
+}
+
+const withHoles: (number | undefined)[] = opened([1, 2, 3, 4]).map((x: number) => x * 2);
+delete withHoles[1];
+withHoles[6] = 7;
+const withUndefined: (number | undefined)[] = opened([1, 2, 3, 4]).map((x: number) => (x === 2 ? undefined : x));
+const withBoth: (number | undefined)[] = opened([1, undefined, 3, 4]).map((x: number | undefined) => x);
+delete withBoth[2];
+const onlyUndefined: (number | undefined)[] = opened([undefined, undefined]).map((x: undefined) => x);
+const onlyHoles: (number | undefined)[] = opened(new Array(3)).map((x: undefined) => x);
+for (let round = 0; round < 4; round++) {
+  for (const list of [withHoles, withUndefined, withBoth, onlyUndefined, onlyHoles]) console.log(sumOfPresent(list), describe(list), list.indexOf(undefined), list.includes(undefined), JSON.stringify(list));
+  withHoles.push(undefined);
+  withUndefined.push(round);
+  onlyHoles[round] = round;
+}
+// What the type does not say comes in through a door that no type watches.
+const lied = opened([1, "two", 3]).map((x: unknown) => x) as number[];
+for (let round = 0; round < 3; round++) console.log(sum(lied), sumOfPresent(lied), describe(lied));

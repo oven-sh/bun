@@ -1,7 +1,0 @@
-{
-  "name": "uses-both-builds",
-  "type": "module",
-  "dependencies": {
-    "point": "1.0.0"
-  }
-}

@@ -1,0 +1,3020 @@
+////: for
+for (const file in loads) {
+  try {
+    await loads[file]();
+    console.log(file + ": loaded");
+  } catch (error) {
+    console.log(file + ": " + error.name);
+  }
+}
+////: lines-10
+try {
+  hoisted();
+} catch (error) {
+  log.push(error.name + «1»);
+}
+////: lines-5
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "typeRoots": ["../../../../../packages"],
+    "types": ["bun-types"],
+    "noEmit": true,
+    «1»: «2»,
+    «3»: «4»,
+    «5»: «6»
+  }
+}
+//// functions-of-the-program-named-like-globals/main.ts
+// A function, a class or an import of the program that has the name of a global hides the global in its file. Each call here means the program's own, and is the only reference to it.
+import { setTimeout, URL, Buffer, structuredClone } from "./mine";
+
+function fetch(what: string) { return "my fetch of " + what; }
+function parseInt(text: string) { return "my parseInt of " + text; }
+function queueMicrotask() { return "my queueMicrotask"; }
+function isNaN() { return "my isNaN"; }
+function String(value: unknown) { return "my String"; }
+class Map { size = "my Map"; }
+class Promise2 {}
+class Error { message = "my Error"; }
+class Date { static now() { return "my Date.now"; } }
+const Symbol = (name: string) => "my Symbol " + name;
+const JSON = { stringify: () => "my JSON.stringify" };
+const Math = { max: () => "my Math.max" };
+const console2 = console;
+const Reflect = { ownKeys: () => "my Reflect.ownKeys" };
+const Bun = { version: "my Bun" };
+const process = { platform: "my process" };
+
+console2.log(fetch("x"), parseInt("1"), queueMicrotask(), isNaN(), String(1));
+console2.log(new Map().size, new Error().message, Date.now(), Symbol("s"), JSON.stringify(), Math.max(), Reflect.ownKeys(), Bun.version, process.platform);
+console2.log(setTimeout(), new URL().href, Buffer.from(), structuredClone());
+console2.log(typeof globalThis.fetch, globalThis.parseInt("7"), new globalThis.Map().size, typeof globalThis.Bun.version);
+//// functions-of-the-program-named-like-globals/mine.ts
+export function setTimeout() { return "my setTimeout"; }
+export class URL { href = "my URL"; }
+export const Buffer = { from: () => "my Buffer.from" };
+export function structuredClone() { return "my structuredClone"; }
+export function clearTimeout() { return "never imported"; }
+//// functions-travel-through-containers-and-keys-made-at-run-time.js
+// Each function is named once, where it goes into a table, a list, a Map, a Set or a WeakMap. It comes out under a key or a position that is computed, after the container has been changed in between.
+function a() { return "a table"; } function b() { return "a symbol key"; } function c() { return "a number key"; } function d() { return "push and pop"; }
+function e() { return "unshift and shift"; } function f() { return "splice"; } function g() { return "concat and flat"; } function h() { return "reverse and at"; }
+function i() { return "find"; } function j() { return "a Map"; } function k() { return "a Set"; } function l() { return "a WeakMap"; }
+function m() { return "a nested list"; } function n() { return "sort"; } function o() { return "fill"; } function p() { return "a typed key from a number"; }
+
+const name = parts => parts.join("");
+const table = {};
+table[name(["o", "n", "e"])] = a;
+console.log(table[name(["on", "e"])]());
+const symbol = Symbol("s");
+console.log({ [symbol]: b }[[symbol][0]]());
+console.log({ 7: c }[3 + 4]());
+const list = [];
+list.push(d);
+console.log(list.pop()());
+list.unshift(e);
+console.log(list.shift()());
+list.splice(0, 0, f);
+console.log(list.splice(0, 1)[0]());
+console.log([[]].concat([[g]]).flat()[0]());
+console.log([h, null].reverse().at(-1)());
+console.log([1, "x", i].find(value => typeof value === "function")());
+console.log(new Map([[name(["k"]), j]]).get("k")());
+console.log([...new Set([k])][0]());
+const owner = {};
+console.log(new WeakMap([[owner, l]]).get(owner)());
+console.log([[[m]]][0][0][0]());
+console.log([{ rank: 2, run: () => "second" }, { rank: 1, run: n }].sort((x, y) => x.rank - y.rank)[0].run());
+console.log(new Array(3).fill(o)[2]());
+console.log({ 10: p }[String(5 * 2)]());
+//// functions-travel-through-promises-generators-and-closures.js
+// Each function is named once and handed on as a value: resolved by a promise, yielded by a generator, sent into one, returned by a closure, captured in a loop, thrown and caught, kept in a WeakRef, passed through an async iterator and through a callback of a callback.
+function a() { return "a resolved promise"; } function b() { return "Promise.all"; } function c() { return "a yield"; } function d() { return "sent into a generator"; }
+function e() { return "returned by a closure"; } function f() { return "captured in a loop"; } function g() { return "thrown and caught"; } function h() { return "a WeakRef"; }
+function i() { return "an async iterator"; } function j() { return "a callback of a callback"; } function k() { return "a rejected promise"; } function l() { return "the return value of a generator"; }
+function m() { return "curried"; } function n() { return "composed"; }
+
+console.log((await Promise.resolve(a))());
+console.log((await Promise.all([1, b]))[1]());
+console.log((function* () { yield c; })().next().value());
+const receiver = (function* () { const got = yield; yield got(); })();
+receiver.next();
+console.log(receiver.next(d).value);
+console.log((() => () => e)()()());
+const captured = [];
+for (const each of [f]) captured.push(() => each);
+console.log(captured[0]()());
+try { throw g; } catch (caught) { console.log(caught()); }
+console.log(new WeakRef(h).deref()());
+for await (const each of (async function* () { yield i; })()) console.log(each());
+console.log((callback => callback(inner => inner()))(run => run(j)));
+console.log(await Promise.reject(k).catch(reason => reason()));
+console.log((function* () { return l; })().next().value());
+console.log((first => second => third => third())(1)(2)(m));
+console.log([value => value, value => value()].reduce((value, step) => step(value), n));
+//// functions-travel-through-prototypes.js
+// Each function is named once, where it is put on an object that later stands in the prototype chain of another. The call is made on the object at the bottom.
+function a() { return "Object.create"; } function b() { return "setPrototypeOf"; } function c() { return "__proto__ in a literal"; } function d() { return "a store into a class's prototype"; }
+function e() { return "Object.assign into a prototype"; } function f() { return "two levels up"; } function g() { return "a prototype that is swapped"; } function h() { return "the prototype of a function"; }
+function i() { return "read off getPrototypeOf"; } function j() { return "a static inherited by a subclass"; } function k() { return "a store to __proto__"; }
+
+console.log(Object.create({ m: a }).m());
+console.log(Object.setPrototypeOf({}, { m: b }).m());
+console.log({ __proto__: { m: c } }.m());
+class Klass {}
+Klass.prototype.m = d;
+Object.assign(Klass.prototype, { n: e });
+console.log(new Klass().m(), new Klass().n());
+console.log(Object.create(Object.create({ m: f })).m());
+const swapped = Object.create({ m: () => "before the swap" });
+Object.setPrototypeOf(swapped, { m: g });
+console.log(swapped.m());
+function Old() {}
+Old.prototype = { m: h };
+console.log(new Old().m());
+console.log(Object.getPrototypeOf(Object.create({ m: i })).m());
+class Base {}
+Base.s = j;
+class Derived extends Base {}
+console.log(Derived.s());
+const stored = {};
+stored.__proto__ = { m: k };
+console.log(stored.m());
+//// functions-travel-through-proxies-accessors-and-arguments.js
+// Each function is named once. It is reached through a Proxy that forwards, a Proxy whose trap answers with it, a getter, a setter that stores it, the arguments object, rest parameters, a spread call, a default value, bind with arguments, and a tagged template's values.
+function a() { return "a forwarding proxy"; } function b() { return "a get trap"; } function c() { return "a getter"; } function d() { return "a setter"; }
+function e() { return "the arguments object"; } function f() { return "rest parameters"; } function g() { return "a spread call"; } function h() { return "a default value"; }
+function i() { return "bound as an argument"; } function j() { return "a value of a tagged template"; } function k() { return "an apply trap"; } function l() { return "a construct trap"; }
+function m() { return "a lazy getter that replaces itself"; }
+
+console.log(new Proxy({ run: a }, {}).run());
+console.log(new Proxy({}, { get: () => b }).anything());
+console.log({ get run() { return c; } }.run());
+const holder = { set run(value) { this.stored = value; } };
+holder.run = d;
+console.log(holder.stored());
+console.log((function () { return arguments[arguments.length - 1](); })(1, 2, e));
+console.log(((...all) => all.at(-1)())(1, f));
+console.log(((x, y) => y())(...[1, g]));
+console.log(((run = h) => run())());
+console.log((run => run()).bind(null, i)());
+console.log(((strings, value) => value())`${j}`);
+console.log(new Proxy(function () {}, { apply: () => k() })());
+console.log(new (new Proxy(function () {}, { construct: () => ({ run: l }) }))().run());
+const lazy = { get run() { Object.defineProperty(this, "run", { value: m }); return this.run; } };
+console.log(lazy.run(), lazy.run());
+//// functions-travel-through-reflective-copies.js
+// Each function is named once, where it is put into an object. From there it is copied by something that works on any object: Object.assign, entries and fromEntries, descriptors, a spread, a for-in loop, Reflect. The call is made on the copy, under a name that is put together.
+function a() { return "Object.assign"; } function b() { return "fromEntries"; } function c() { return "defineProperties"; } function d() { return "descriptors"; }
+function e() { return "a spread"; } function f() { return "a for-in loop"; } function g() { return "Reflect.set"; } function h() { return "Reflect.defineProperty"; }
+function i() { return "Object.values"; } function j() { return "JSON-like walk"; } function k() { return "Object.groupBy"; } function l() { return "Array.from of entries"; }
+
+const key = letter => ["k", "e", "y", letter].join("");
+const viaAssign = Object.assign({}, { keyA: a });
+const viaFromEntries = Object.fromEntries(Object.entries({ keyB: b }).map(([name, value]) => [name, value]));
+const viaDefineProperties = Object.defineProperties({}, { keyC: { value: c } });
+const viaDescriptors = Object.create(null, Object.getOwnPropertyDescriptors({ keyD: d }));
+const viaSpread = { ...{ keyE: e } };
+const viaLoop = {};
+const source = { keyF: f };
+for (const name in source) viaLoop[name] = source[name];
+const viaReflectSet = {};
+Reflect.set(viaReflectSet, "keyG", g);
+const viaReflectDefine = {};
+Reflect.defineProperty(viaReflectDefine, "keyH", { value: h });
+console.log(viaAssign[key("A")](), viaFromEntries[key("B")](), viaDefineProperties[key("C")](), viaDescriptors[key("D")]());
+console.log(viaSpread[key("E")](), viaLoop[key("F")](), Reflect.get(viaReflectSet, key("G"))(), Reflect.apply(viaReflectDefine[key("H")], null, []));
+console.log(Object.values({ only: i })[0]());
+function walk(value) { return typeof value === "function" ? value() : Object.keys(value).map(name => walk(value[name])).join(); }
+console.log(walk({ deep: { deeper: [{ deepest: j }] } }));
+console.log(Object.groupBy([k], () => "group").group[0](), new Map(Array.from(Object.entries({ x: l }))).get("x")());
+//// generators-async-functions-and-their-helpers/flows.ts
+function label(n: number) { return "item " + n; }
+function* inner() { yield label(1); yield label(2); }
+export function* outer() { yield* inner(); yield label(3); }
+
+function pause() { return Promise.resolve(); }
+async function step(n: number): Promise<string> { await pause(); return n === 0 ? "liftoff" : step(n - 1); }
+export async function countdown(n: number) { return step(n); }
+
+async function* source() { yield "raw"; }
+const decorate = async (text: string) => "<" + text + ">";
+export async function* pipeline() { for await (const value of source()) yield decorate(value); }
+
+export function* neverStarted() { yield label(0); }
+export async function neverAwaited() { await pause(); }
+//// generators-async-functions-and-their-helpers/main.ts
+// The units are generators, async functions and async generators, reached through yield*, await, for-await and a return of a call. Each calls a plain helper that nothing else names.
+import { outer, countdown, pipeline } from "./flows";
+
+console.log([...outer()].join());
+console.log(await countdown(2));
+for await (const value of pipeline()) console.log(value);
+//// getters-on-exported-objects-and-lazy-tables/api.ts
+function viaGetter() { return "via a getter"; }
+function viaMethod() { return "via a method"; }
+function viaProperty() { return "via a property"; }
+function inMap() { return "in a Map"; }
+function first() { return "first of a list"; }
+function last() { return "last of a list"; }
+function late() { return "late"; }
+function deep() { return "deep"; }
+
+export const api = {
+  get viaGetter() { return viaGetter; },
+  viaMethod() { return viaMethod(); },
+  viaProperty,
+};
+export const table = new Map([["entry", inMap]]);
+export const list = [first, last];
+export function lazy() { return { late }; }
+export const nested = { a: { b: { c: deep } } };
+//// getters-on-exported-objects-and-lazy-tables/main.ts
+// api.ts exports objects whose getters, methods, arrays and Maps hold or return functions of the file. The importer never names those functions.
+import { api, table, list, lazy, nested } from "./api";
+
+console.log(api.viaGetter(), api.viaMethod(), api.viaProperty());
+console.log(table.get("entry")!(), list[0](), list.at(-1)!());
+console.log(lazy().late(), nested.a.b.c());
+//// globs-list-the-files-with-side-effects/main.js
+// "sideEffects" holds two globs: "./polyfills/*.js" and "**/*.setup.js". index.js imports five files for their effects; three match. `bun run` reports all five. `bun build --compile` reports polyfills/one.js, three.setup.js and lib/four.setup.js, and --aot follows it.
+import { report } from "globbed";
+
+console.log(report());
+//// globs-list-the-files-with-side-effects/node_modules/globbed/five.js
+import { seen } from "./seen.js";
+seen.push("five.js");
+//// globs-list-the-files-with-side-effects/node_modules/globbed/index.js
+import "./polyfills/one.js";
+import "./polyfills/nested/two.js";
+import "./three.setup.js";
+import "./lib/four.setup.js";
+import "./five.js";
+import { seen } from "./seen.js";
+export function report() { return seen.join(", ") || "nothing"; }
+//// globs-list-the-files-with-side-effects/node_modules/globbed/lib/four.setup.js
+import { seen } from "../seen.js";
+seen.push("lib/four.setup.js");
+//// globs-list-the-files-with-side-effects/node_modules/globbed/package.json
+{ "name": "globbed", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": ["./polyfills/*.js", "**/*.setup.js"] }
+//// globs-list-the-files-with-side-effects/node_modules/globbed/polyfills/nested/two.js
+import { seen } from "../../seen.js";
+seen.push("polyfills/nested/two.js");
+//// globs-list-the-files-with-side-effects/node_modules/globbed/polyfills/one.js
+import { seen } from "../seen.js";
+seen.push("polyfills/one.js");
+//// globs-list-the-files-with-side-effects/node_modules/globbed/seen.js
+export const seen = [];
+//// globs-list-the-files-with-side-effects/node_modules/globbed/three.setup.js
+import { seen } from "./seen.js";
+seen.push("three.setup.js");
+//// heritage-clauses-with-type-arguments-and-calls/main.ts
+// The class after extends is named with type arguments, through a call, through a member, in a default export and in a class expression. Those are the only references to the bases.
+import Unnamed from "./unnamed";
+
+class Generic<T> { value(v: T) { return "generic " + v; } }
+class FromCall { hello() { return "from a call"; } }
+class FromMember { hello() { return "from a member"; } }
+class InExpression { hello() { return "in a class expression"; } }
+function pick() { return FromCall; }
+const holder = { get Base() { return FromMember; } };
+
+class A extends Generic<string> {}
+class B extends pick() {}
+class C extends holder.Base {}
+const D = class extends InExpression {};
+
+console.log(new A().value("a"), new B().hello(), new C().hello(), new D().hello(), new Unnamed().hello());
+//// heritage-clauses-with-type-arguments-and-calls/unnamed.ts
+class Hidden<T> { hello() { return "behind an unnamed default export"; } }
+export default class extends Hidden<number> {}
+//// import-equals-require-is-read-in-every-way/by-computed.ts
+export function target() { return "by a computed name"; }
+//// import-equals-require-is-read-in-every-way/by-name.ts
+export function target() { return "by name"; }
+export function unused() { return "unused"; }
+//// import-equals-require-is-read-in-every-way/by-pattern.ts
+export function target() { return "by a pattern"; }
+//// import-equals-require-is-read-in-every-way/classes.ts
+export class Base { method() { return "method of Base"; } }
+export class Other { method() { return "method of Other"; } }
+//// import-equals-require-is-read-in-every-way/exported-again.ts
+export function target() { return "exported again"; }
+//// import-equals-require-is-read-in-every-way/given-away.ts
+export function target() { return "given away"; }
+//// import-equals-require-is-read-in-every-way/main.ts
+// What `import lib = require()` binds is read by name, by a computed name, in a pattern, given away, exported again and used after new and extends.
+import byName = require("./by-name");
+import byComputed = require("./by-computed");
+import byPattern = require("./by-pattern");
+import givenAway = require("./given-away");
+import classes = require("./classes");
+export import exportedAgain = require("./exported-again");
+import * as self from "./main";
+
+console.log(byName.target());
+console.log((byComputed as any)["tar" + "get"]());
+const { target } = byPattern;
+console.log(target());
+function call(lib: { target(): string }) { return lib.target(); }
+console.log(call(givenAway));
+class Derived extends classes.Base {}
+console.log(new Derived().method(), new classes.Other().method());
+console.log(self.exportedAgain.target());
+//// indirect-eval-and-new-function-see-only-globals.js
+// (0, eval), eval?.(), an alias of eval, globalThis.eval and new Function run their text in the global scope, where the functions of a module are not. After `globalThis.shared = hidden` they find it under that name.
+////= lines-3	hidden	"hidden"
+
+console.log((0, eval)("typeof hidden"));
+console.log(eval?.("typeof hidden"));
+const alias = eval;
+console.log(alias("typeof hidden"));
+console.log(globalThis.eval("typeof hidden"));
+console.log(new Function("return typeof hidden")());
+console.log(Function("return typeof hidden")());
+
+globalThis.shared = hidden;
+console.log((0, eval)("shared()"), new Function("return shared()")());
+//// initializers-of-enums-and-namespaces-call-functions.ts
+// An enum member's initializer and the statements of a namespace run when the module does. They hold the only references to these functions.
+function width() { return 4; }
+function height() { return 3; }
+function label() { return "label".length; }
+function setUp() { return "set up"; }
+function logged(text: string) { console.log("namespace body: " + text); return text; }
+
+enum Size {
+  Width = width(),
+  Height = height(),
+  Area = Width * Height,
+  Text = label(),
+}
+
+namespace State {
+  export const value = setUp();
+  logged(value);
+  export namespace Deep {
+    export const inner = logged("deep");
+  }
+}
+
+console.log(Size.Width, Size.Height, Size.Area, Size.Text, Size[4]);
+console.log(State.value, State.Deep.inner);
+//// jsx-elements-have-effects-on-request.tsx
+// With --jsx-side-effects an element that nothing reads is still made. The command line passes the flag on only beside another --jsx option.
+/* @jsx h */
+/* @jsxRuntime classic */
+function h(tag: any, props: any, ...children: any[]) {
+  console.log("made", typeof tag == "string" ? tag : tag.name, JSON.stringify(props), children.length);
+  return { tag, props, children };
+}
+declare global { namespace JSX { interface IntrinsicElements { [name: string]: any } } }
+////= lines-3	Part	null
+const unread = <p title="in a constant" />;
+let alsoUnread = <Part />;
+<div>in a statement</div>;
+const nested = [<b />, { inner: <i>text</i> }];
+export {};
+console.log("end");
+//// jsx-elements-that-nothing-uses.tsx
+// An element is a call of the factory, and this factory counts its calls. One element is kept in a constant nothing reads, one is a statement of its own, one is exported and imported by nobody, one is used. `bun run` drops the statement alone and counts 6 calls. `bun build --compile` takes an element for something without effects and makes only the two that are used or exported: 4 calls.
+/* @jsxRuntime classic */
+/* @jsx h */
+declare global { namespace JSX { interface IntrinsicElements { [name: string]: any } } }
+
+let calls = 0;
+const h = (tag: any, props: any, ...children: any[]): any => {
+  calls++;
+  return typeof tag === "string" ? "<" + tag + ">" + children.join("") + "</" + tag + ">" : tag({ ...props, children });
+};
+const Arrow = (props: { text: string }) => <i>{props.text}</i>;
+
+const neverUsed = <Arrow text="kept in a constant nothing reads" />;
+<Arrow text="a statement of its own" />;
+export const exported = <Arrow text="exported by the entry point" />;
+const used = <Arrow text="used" />;
+console.log(used, calls);
+//// left-out-functions-hold-the-only-mention-of-many-things/helper.ts
+console.log("helper.ts is evaluated");
+export function helper() { return "helper"; }
+//// left-out-functions-hold-the-only-mention-of-many-things/late.ts
+console.log("late.ts is evaluated");
+export function late() { return "late"; }
+//// left-out-functions-hold-the-only-mention-of-many-things/main.ts
+// The bodies that are left out are the only places that mention a library module's function, a global, a regular expression, a template, a big number, a private name, an import() and a JSX-free tagged template. What is left of the file builds and runs without them.
+import { helper } from "./helper";
+
+function mentionsLibrary() { return require("node:fs").readFileSync("/dev/null").length; }
+function mentionsGlobals() { return [structuredClone, queueMicrotask, WebSocket, Intl.DateTimeFormat, WeakRef, Atomics, SharedArrayBuffer].length; }
+function mentionsLiterals() { return [/(?<year>\d{4})/u.exec("2026")?.groups?.year, 123456789012345678901234567890n, `a${1}b`, String.raw`\n`, 0x1fn, 1_000]; }
+async function mentionsImport() { return (await import("./late")).late(); }
+function mentionsHelper() { return helper(); }
+function mentionsBun() { return [Bun.file("/dev/null").size, Bun.hash("x"), Bun.version]; }
+class MentionsPrivate { #a = 1; static has(value: object) { return #a in value; } }
+
+console.log("built and ran");
+//// loads-that-stand-in-functions-nobody-calls/imported.js
+console.log("imported.js is evaluated");
+export function name() { return "imported"; }
+//// loads-that-stand-in-functions-nobody-calls/main.js
+// require() and import() inside functions that nobody calls load nothing. The same calls inside a function that is called load their files then, and what they return is whole.
+function neverRequires() { return require("./never-required.js"); }
+const neverImports = () => import("./never-imported.js");
+function requires() { return require("./required.js"); }
+async function imports() { return import("./imported.js"); }
+
+console.log("before");
+console.log(requires()["na" + "me"]());
+console.log((await imports())["na" + "me"]());
+//// loads-that-stand-in-functions-nobody-calls/never-imported.js
+console.log("never-imported.js is evaluated");
+export function name() { return "never imported"; }
+//// loads-that-stand-in-functions-nobody-calls/never-required.js
+console.log("never-required.js is evaluated");
+export function name() { return "never required"; }
+//// loads-that-stand-in-functions-nobody-calls/required.js
+console.log("required.js is evaluated");
+export function name() { return "required"; }
+//// marked-calls-inside-functions-blocks-and-expressions.js
+// A mark before a call lets it go when its result is not used, and both `bun run` and `bun build --compile` decide that while they parse, wherever the call stands: a marked call that is a statement of its own goes, in a function, a method, a static block, an arm, a loop, try, finally and a block; so does the left of a comma, an element of an array that is a statement, the operand of void and of !, an arm of ?: in a statement. A constant inside a function or a block keeps its marked call, and so does the left of &&.
+const log = [];
+function make(name) { log.push(name); return { name }; }
+class Made { constructor(name) { log.push("new " + name); } }
+function inFunction() { /* @__PURE__ */ make("a statement in a function"); const unused = /* @__PURE__ */ make("a constant in a function"); return 1; }
+const inArrow = () => { /* @__PURE__ */ make("a statement in an arrow function"); };
+class Holder { method() { /* @__PURE__ */ new Made("a statement in a method"); } static { /* @__PURE__ */ make("a statement in a static block"); } }
+inFunction();
+inArrow();
+new Holder().method();
+if (log.length >= 0) { /* @__PURE__ */ make("a statement in an arm"); }
+for (let i = 0; i < 1; i++) { /* @__PURE__ */ make("a statement in a loop"); }
+try { /* @__PURE__ */ make("a statement in try"); } finally { /* @__PURE__ */ make("a statement in finally"); }
+{ /* @__PURE__ */ make("a statement in a block"); const unused = /* @__PURE__ */ make("a constant in a block"); }
+(/* @__PURE__ */ make("the left of a comma"), log.push("the right of a comma"));
+[/* @__PURE__ */ make("an element beside a call"), log.push("the call beside it")];
+void /* @__PURE__ */ make("under void");
+!/* @__PURE__ */ make("under !");
+/* @__PURE__ */ make("an operand of &&") && log.push("the right of &&");
+log.length ? /* @__PURE__ */ make("an arm of ?: in a statement") : 0;
+console.log(log.join("\n"));
+//// merged-declarations-across-export-and-import/main.ts
+// The merged names of merged.ts are exported and used from here: the class side of one, the namespace side of another, both pieces of an enum, a function with its namespace, a default export that is a merged class.
+import Default, { Shape, parse, Pieces, Level, Config } from "./merged";
+import * as merged from "./merged";
+
+const config: Config = Config;
+console.log(new Shape().area(), Shape.unit, parse("x"), parse.version, Pieces.One + Pieces.Two, Level.describe(Level.High), config.port);
+console.log(new Default().name(), Default.label, merged.Shape.unit, Object.keys(merged.Pieces).length);
+//// merged-declarations-across-export-and-import/merged.ts
+export class Shape { area() { return 4; } }
+export namespace Shape { export const unit = "cm"; }
+export function parse(text: string) { return "parsed " + text; }
+export namespace parse { export const version = 2; }
+export enum Pieces { One = 1 }
+export enum Pieces { Two = 2 }
+export enum Level { High = "high" }
+export namespace Level { export const describe = (level: Level) => "level " + level; }
+export interface Config { port: number }
+export const Config = { port: 81 };
+class Default { name() { return "the default"; } }
+namespace Default { export const label = "its label"; }
+export default Default;
+//// merged-declarations-of-every-kind.ts
+// Two declarations make one name: a class and a namespace, a function and a namespace, an enum and a namespace, an enum in two pieces, a namespace in two pieces, an interface and a class, an interface and a constant, a type and a constant. Of each pair only one side is named by code that runs, and it needs the other.
+class Shape { describe() { return "shape of kind " + Shape.kind; } }
+namespace Shape { export const kind = "round"; }
+
+function parse(text: string) { return parse.prefix + text; }
+namespace parse { export const prefix = ">"; }
+
+enum Level { Low = 1 }
+namespace Level { export function name(level: Level) { return "level " + Level[level]; } }
+
+enum Pieces { First = 1 }
+enum Pieces { Second = 2 }
+
+namespace Split { export const first = "first half"; }
+namespace Split { export const second = first + ", second half"; }
+
+interface Point { x: number }
+class Point { y = 2; }
+
+interface Config { port: number }
+const Config = { port: 80 };
+
+type Name = string;
+const Name = "a constant beside a type";
+
+class OnlyStatics {}
+namespace OnlyStatics { export const value = "a namespace on a class nobody constructs"; }
+
+class UnusedMerged {}
+namespace UnusedMerged { export const value = 1; }
+enum UnusedPieces { A }
+enum UnusedPieces { B = 1 }
+
+const point = new Point();
+const config: Config = Config;
+const name: Name = Name;
+console.log(new Shape().describe(), parse("text"), Level.name(Level.Low), Pieces.First, Pieces.Second, Pieces[2], Split.second);
+console.log(point.y, point.x, config.port, name, OnlyStatics.value);
+//// methods-are-reached-through-super-this-and-the-constructor/base.ts
+export interface Speaker {
+  speak(): string;
+}
+function decorate(text: string) { return "*" + text + "*"; }
+
+export class Base implements Speaker {
+  name = "base";
+  viaSuper() { return decorate("viaSuper of Base"); }
+  hidden() { return decorate("hidden"); }
+  dispatch(name: string): string { return (this as any)[name](); }
+  viaConstructor() { return (this.constructor as typeof Base).describeStatic(); }
+  static describeStatic() { return decorate("static of " + this.name); }
+  inheritedOnly() { return decorate("inherited only"); }
+  speak() { return decorate(this.name + " speaks"); }
+}
+//// methods-are-reached-through-super-this-and-the-constructor/derived.ts
+import { Base } from "./base";
+
+export class Derived extends Base {
+  name = "derived";
+  viaSuper() { return "Derived, then " + super.viaSuper(); }
+}
+//// methods-are-reached-through-super-this-and-the-constructor/main.ts
+// Methods that no call names directly: through super.m(), through this[name](), through this.constructor, through a subclass in another file, through a variable typed as an interface, through the prototype and through a bound copy.
+import { Base, type Speaker } from "./base";
+import { Derived } from "./derived";
+
+const derived = new Derived();
+console.log(derived.viaSuper());
+console.log(derived.dispatch("hid" + "den"));
+console.log(derived.viaConstructor());
+console.log(derived.inheritedOnly());
+const speaker: Speaker = derived;
+console.log(speaker.speak());
+console.log(Base.prototype.speak.call({ name: "borrowed" }));
+const { speak } = derived;
+console.log(speak.bind({ name: "bound" })());
+console.log(Object.getPrototypeOf(Derived).describeStatic());
+//// names-declared-twice-in-sloppy-code.cjs
+// Outside strict mode one name may be declared several times at the top level: var twice, var and function, function twice, var in a block and outside, var in a loop, var in both arms. The last store counts, and functions come first.
+var twice = "first";
+var twice = "second";
+var varAndFunction = "the var wins once its statement ran";
+function varAndFunction() { return "the function"; }
+function functionTwice() { return "first"; }
+function functionTwice() { return "second"; }
+var inBlock = "outside";
+{
+  var inBlock = "inside the block";
+}
+for (var inLoop = 0; inLoop < 3; inLoop++) var madeInLoop = "made in a loop " + inLoop;
+if (twice) {
+  var inArm = "the first arm";
+} else {
+  var inArm = "the second arm";
+}
+var neverRead = 1;
+var neverRead = 2;
+var unusedThenFunction = 1;
+function unusedThenFunction() {}
+try {
+  var inTry = "in try";
+} catch (error) {
+  var inCatch = "in catch";
+}
+switch (1) {
+  case 1:
+    var inSwitch = "in a switch";
+}
+label: var labeled = "labeled";
+
+console.log(twice, varAndFunction, functionTwice(), inBlock, inLoop, madeInLoop, inArm, inTry, inCatch, inSwitch, labeled);
+console.log(typeof globalThis.twice, typeof globalThis.functionTwice, typeof this.twice);
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/another.js
+import { First, second } from "used-by-another";
+console.log("another", new First().constructor.name, second);
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/effects.js
+import { First as Assigned, second as assigned } from "assigned";
+import { First as Starred, second as starred } from "starred";
+import { First as Computed, second as computed } from "computed";
+import { First as Proven, second as proven } from "proven";
+import { First as RequiredToo, second as requiredToo } from "required-too";
+import { First as UsedByAnother, second as usedByAnother } from "used-by-another";
+import { First as UsedHere, second as usedHere } from "used-here";
+console.log("effects", new UsedHere().constructor.name, usedHere);
+export function unused() {
+  return [new Assigned(), assigned, new Starred(), starred, new Computed(), computed, new Proven(), proven, new RequiredToo(), requiredToo, new UsedByAnother(), usedByAnother];
+}
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/main.js
+// effects.js runs for what it prints. The names that it imports from CommonJS packages are used only in a function that nothing calls, and each package says
+// "sideEffects": false, so the packages are left out. Most of them make their exports in a way that only a run can tell the names of.
+import "./effects.js";
+import "./another.js";
+import "./requires.cjs";
+console.log("main");
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/node_modules/assigned/index.js
+Object.assign(exports, { First: class First {}, second: 2 });
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/node_modules/assigned/package.json
+{ "name": "assigned", "version": "1.0.0", "main": "index.js", "sideEffects": false }
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/node_modules/computed/index.js
+for (const [name, value] of [["First", class First {}], ["second", 2]]) exports[name] = value;
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/node_modules/computed/package.json
+{ "name": "computed", "version": "1.0.0", "main": "index.js", "sideEffects": false }
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/node_modules/proven/index.js
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.second = exports.First = void 0;
+var x_1 = require("./x");
+Object.defineProperty(exports, "First", { enumerable: true, get: function () { return x_1.First; } });
+Object.defineProperty(exports, "second", { enumerable: true, get: function () { return x_1.second; } });
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/node_modules/proven/package.json
+{ "name": "proven", "version": "1.0.0", "main": "index.js", "sideEffects": false }
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/node_modules/proven/x.js
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.second = exports.First = void 0;
+class First {}
+exports.First = First;
+exports.second = 2;
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/node_modules/required-too/index.js
+Object.assign(exports, { First: class First {}, second: 2 });
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/node_modules/required-too/package.json
+{ "name": "required-too", "version": "1.0.0", "main": "index.js", "sideEffects": false }
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/node_modules/starred/index.js
+"use strict";
+var __exportStar = function (m, exports) {
+  for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) exports[p] = m[p];
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+__exportStar(require("./x"), exports);
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/node_modules/starred/package.json
+{ "name": "starred", "version": "1.0.0", "main": "index.js", "sideEffects": false }
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/node_modules/starred/x.js
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.second = exports.First = void 0;
+class First {}
+exports.First = First;
+exports.second = 2;
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/node_modules/used-by-another/index.js
+Object.assign(exports, { First: class First {}, second: 2 });
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/node_modules/used-by-another/package.json
+{ "name": "used-by-another", "version": "1.0.0", "main": "index.js", "sideEffects": false }
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/node_modules/used-here/index.js
+Object.assign(exports, { First: class First {}, second: 2 });
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/node_modules/used-here/package.json
+{ "name": "used-here", "version": "1.0.0", "main": "index.js", "sideEffects": false }
+//// names-of-a-commonjs-package-without-side-effects-that-only-unreached-code-uses/requires.cjs
+console.log("requires", Object.keys(require("required-too")).join());
+//// names-of-the-module-system-that-the-program-declares-itself/main.js
+// In an ES module `require`, `module`, `exports`, `__filename` and `__dirname` are ordinary names if the file declares them. The calls here mean the file's own functions and load nothing.
+import { viaParameter } from "./parameters.js";
+
+function require(name) { return "my require of " + name; }
+const module = { exports: "my module.exports", require: name => "my module.require of " + name };
+const exports = { value: "my exports" };
+const __filename = "my __filename";
+const __dirname = "my __dirname";
+
+console.log(require("./not-a-file.js"), require("node:fs"));
+console.log(module.exports, module.require("./not-a-file.js"), exports.value, __filename, __dirname);
+console.log(viaParameter(name => "a parameter named require got " + name));
+//// names-of-the-module-system-that-the-program-declares-itself/parameters.js
+export function viaParameter(require) {
+  return require("./not-a-file-either.js");
+}
+//// names-that-are-shadowed-and-names-that-only-look-shadowed.ts
+// One function of the module per scope that could catch its name: a catch parameter, a loop variable, a class name, a label, a property, a parameter of another function, a type parameter and an interface. Where the scope has ended, or the other thing is no variable, the name means the function of the module.
+const log: string[] = [];
+function afterCatch() { return "after catch"; } function afterLoop() { return "after loop"; } function besideLabel() { return "beside a label"; }
+function besideProperty() { return "beside a property"; } function besideParameter() { return "beside a parameter"; } function T() { return "beside a type parameter"; }
+function Shape() { return "beside an interface"; } function inInitializer() { return "in the initializer of the loop"; } function afterClass() { return "after a class expression"; }
+
+try { throw 1; } catch (afterCatch) {}
+log.push(afterCatch());
+for (const afterLoop of [1]) {}
+log.push(afterLoop());
+besideLabel: for (;;) { log.push(besideLabel()); break besideLabel; }
+log.push({ besideProperty: 1 }.besideProperty + " " + besideProperty());
+function takes(besideParameter: number) { return besideParameter; }
+log.push(takes(1) + " " + besideParameter());
+function generic<T>(value: T): T { return value; }
+log.push(generic(T()));
+interface Shape { sides: number }
+log.push(Shape());
+for (const value of [inInitializer()]) { const inInitializer = value; log.push(inInitializer); }
+const Expression = class afterClass {};
+log.push(afterClass() + " " + Expression.name);
+console.log(log.join("\n"));
+//// names-that-may-be-missing-where-the-program-runs/main.js
+// An unused declaration reads a global that does not exist. A bare read throws, and so does a member of it; behind a typeof test it is not read at all. Each case is a file of its own, loaded here, and says whether it threw.
+const loads = {
+  "a bare name": () => import("./missing/bare.js"),
+  "a member": () => import("./missing/member.js"),
+  "in an object": () => import("./missing/in-object.js"),
+  "after extends": () => import("./missing/extends.js"),
+  "a statement": () => import("./missing/statement.js"),
+  "typeof": () => import("./missing/typeof.js"),
+  "guarded by &&": () => import("./missing/guarded-and.js"),
+  "guarded by ?:": () => import("./missing/guarded-conditional.js"),
+  "guarded the wrong way": () => import("./missing/guarded-wrong.js"),
+  "guarded by another name": () => import("./missing/guarded-other.js"),
+  "a member behind a guard": () => import("./missing/guarded-member.js"),
+  "an optional chain": () => import("./missing/optional.js"),
+  "globalThis.name": () => import("./missing/global-this.js"),
+};
+for (const name in loads) {
+  try {
+    await loads[name]();
+    console.log(name + ": loaded");
+  } catch (error) {
+    console.log(name + ": " + error.name);
+  }
+}
+//// names-that-may-be-missing-where-the-program-runs/missing/bare.js
+const unused = notDefinedAnywhere;
+//// names-that-may-be-missing-where-the-program-runs/missing/extends.js
+class Unused extends notDefinedAnywhere {}
+//// names-that-may-be-missing-where-the-program-runs/missing/global-this.js
+const unused = globalThis.notDefinedAnywhere;
+const deeper = globalThis.notDefinedAnywhere?.member;
+//// names-that-may-be-missing-where-the-program-runs/missing/guarded-and.js
+const unused = typeof notDefinedAnywhere !== "undefined" && notDefinedAnywhere;
+const other = typeof notDefinedAnywhere === "undefined" || notDefinedAnywhere;
+//// names-that-may-be-missing-where-the-program-runs/missing/guarded-conditional.js
+const unused = typeof notDefinedAnywhere === "undefined" ? null : notDefinedAnywhere;
+const other = typeof notDefinedAnywhere < "u" ? notDefinedAnywhere : null;
+//// names-that-may-be-missing-where-the-program-runs/missing/guarded-member.js
+const unused = typeof notDefinedAnywhere !== "undefined" && notDefinedAnywhere.member;
+//// names-that-may-be-missing-where-the-program-runs/missing/guarded-other.js
+const unused = typeof alsoNotDefined === "undefined" || notDefinedAnywhere;
+const second = typeof alsoNotDefined !== "function" && notDefinedAnywhere;
+//// names-that-may-be-missing-where-the-program-runs/missing/guarded-wrong.js
+const unused = typeof notDefinedAnywhere === "undefined" && notDefinedAnywhere;
+//// names-that-may-be-missing-where-the-program-runs/missing/in-object.js
+const unused = { key: notDefinedAnywhere, list: [notDefinedAnywhere] };
+//// names-that-may-be-missing-where-the-program-runs/missing/member.js
+const unused = notDefinedAnywhere.member;
+//// names-that-may-be-missing-where-the-program-runs/missing/optional.js
+const unused = notDefinedAnywhere?.member;
+//// names-that-may-be-missing-where-the-program-runs/missing/statement.js
+notDefinedAnywhere;
+//// names-that-may-be-missing-where-the-program-runs/missing/typeof.js
+const unused = typeof notDefinedAnywhere;
+typeof notDefinedAnywhere;
+//// names-written-with-unicode-escapes/lib.js
+export function plain() { return "plain"; }
+function local() { return "escaped export"; }
+export { local as escapedExport };
+export function both() { return "both"; }
+export function member() { return "member"; }
+export function unused() { return "unused"; }
+//// names-written-with-unicode-escapes/main.js
+// An identifier may be written with escapes: `foo` is `foo`. Here the declaration, the reference, the import, the export, a shorthand property or a member is written that way and its partner is not.
+import { plain, escapedExport, \u{62}oth } from "./lib.js";
+import * as lib from "./lib.js";
+
+function foo() { return "foo"; }
+function bar() { return "bar"; }
+const \u{62}az = () => "baz";
+class Klass { method() { return "Klass"; } }
+function shorthand() { return "shorthand"; }
+
+console.log(foo(), bar(), baz(), new Klass().method());
+console.log({ shorthand }.shorthand(), plain(), escapedExport(), both());
+console.log(lib.member(), lib["member"] === lib.member);
+//// old-style-classes-and-properties-of-functions.js
+// Constructor functions with methods stored into the prototype, statics stored into the function, inheritance by Object.create and util-style inherits, and a function that holds helpers as properties.
+function Animal(name) { this.name = name; }
+Animal.prototype.speak = function () { return this.name + " " + sound(); };
+Animal.create = function (name) { return new Animal(name); };
+function sound() { return "makes a sound"; }
+
+function Dog(name) { Animal.call(this, name); }
+Dog.prototype = Object.create(Animal.prototype);
+Dog.prototype.constructor = Dog;
+Dog.prototype.fetch = fetchStick;
+function fetchStick() { return this.name + " fetches"; }
+
+function tool() { return tool.prefix() + "tool"; }
+tool.prefix = prefix;
+function prefix() { return "a "; }
+
+function NeverConstructed() {}
+NeverConstructed.prototype.method = function () { return neverCalled(); };
+function neverCalled() { return "never"; }
+
+console.log(Animal.create("cat").speak());
+console.log(new Dog("rex").speak(), new Dog("rex").fetch(), new Dog("rex") instanceof Animal);
+console.log(tool());
+//// one-file-behind-a-barrel-has-an-effect/main.js
+// The package says nothing about side effects. Its barrel re-exports six files, the program uses one name, and another file prints and registers a function when it is evaluated. `bun run` and `bun build --compile` print the same: second.js is evaluated.
+import { fourth, registered } from "six-files";
+
+console.log(fourth());
+console.log(registered.map(entry => entry()).join());
+//// one-file-behind-a-barrel-has-an-effect/node_modules/six-files/fifth.js
+export function fifth() { return "fifth"; }
+//// one-file-behind-a-barrel-has-an-effect/node_modules/six-files/first.js
+export function first() { return "first"; }
+//// one-file-behind-a-barrel-has-an-effect/node_modules/six-files/fourth.js
+function detail() { return "in detail"; }
+export function fourth() { return "fourth, " + detail(); }
+//// one-file-behind-a-barrel-has-an-effect/node_modules/six-files/index.js
+export * from "./registered.js";
+export * from "./first.js";
+export { second } from "./second.js";
+export * from "./third.js";
+export { fourth } from "./fourth.js";
+export * as fifth from "./fifth.js";
+//// one-file-behind-a-barrel-has-an-effect/node_modules/six-files/package.json
+{ "name": "six-files", "version": "1.0.0", "type": "module", "main": "index.js" }
+//// one-file-behind-a-barrel-has-an-effect/node_modules/six-files/registered.js
+export const registered = [];
+//// one-file-behind-a-barrel-has-an-effect/node_modules/six-files/second.js
+import { registered } from "./registered.js";
+console.log("second.js is evaluated");
+function fromSecond() { return "registered by second.js"; }
+registered.push(fromSecond);
+export function second() { return "second"; }
+//// one-file-behind-a-barrel-has-an-effect/node_modules/six-files/third.js
+export function third() { return "third"; }
+//// one-member-of-the-namespace-of-a-pure-barrel-is-read/main.js
+// "sideEffects": false. The barrel is reached in four ways that each read one name: a member of a namespace import, a member of require(), a member of an awaited import(), and a pattern on an awaited import(). Every file behind the barrels prints when it is evaluated. `bun run` evaluates wanted.js and other.js behind each barrel. `bun build --compile` evaluates wanted.js alone, in all four.
+import * as first from "four-barrels/first/index.js";
+
+console.log(first.wanted());
+console.log(require("four-barrels/second/index.js").wanted());
+console.log((await import("four-barrels/third/index.js")).wanted());
+const { wanted } = await import("four-barrels/fourth/index.js");
+console.log(wanted());
+//// one-member-of-the-namespace-of-a-pure-barrel-is-read/node_modules/four-barrels/first/index.js
+export { wanted } from "./wanted.js";
+export { other } from "./other.js";
+//// one-member-of-the-namespace-of-a-pure-barrel-is-read/node_modules/four-barrels/first/other.js
+console.log("first/other.js is evaluated");
+export function other() { return "other"; }
+//// one-member-of-the-namespace-of-a-pure-barrel-is-read/node_modules/four-barrels/first/wanted.js
+console.log("first/wanted.js is evaluated");
+export function wanted() { return "wanted of first"; }
+//// one-member-of-the-namespace-of-a-pure-barrel-is-read/node_modules/four-barrels/fourth/index.js
+export { wanted } from "./wanted.js";
+export { other } from "./other.js";
+//// one-member-of-the-namespace-of-a-pure-barrel-is-read/node_modules/four-barrels/fourth/other.js
+console.log("fourth/other.js is evaluated");
+export function other() { return "other"; }
+//// one-member-of-the-namespace-of-a-pure-barrel-is-read/node_modules/four-barrels/fourth/wanted.js
+console.log("fourth/wanted.js is evaluated");
+export function wanted() { return "wanted of fourth"; }
+//// one-member-of-the-namespace-of-a-pure-barrel-is-read/node_modules/four-barrels/package.json
+{ "name": "four-barrels", "version": "1.0.0", "type": "module", "sideEffects": false }
+//// one-member-of-the-namespace-of-a-pure-barrel-is-read/node_modules/four-barrels/second/index.js
+export { wanted } from "./wanted.js";
+export { other } from "./other.js";
+//// one-member-of-the-namespace-of-a-pure-barrel-is-read/node_modules/four-barrels/second/other.js
+console.log("second/other.js is evaluated");
+export function other() { return "other"; }
+//// one-member-of-the-namespace-of-a-pure-barrel-is-read/node_modules/four-barrels/second/wanted.js
+console.log("second/wanted.js is evaluated");
+export function wanted() { return "wanted of second"; }
+//// one-member-of-the-namespace-of-a-pure-barrel-is-read/node_modules/four-barrels/third/index.js
+export { wanted } from "./wanted.js";
+export { other } from "./other.js";
+//// one-member-of-the-namespace-of-a-pure-barrel-is-read/node_modules/four-barrels/third/other.js
+console.log("third/other.js is evaluated");
+export function other() { return "other"; }
+//// one-member-of-the-namespace-of-a-pure-barrel-is-read/node_modules/four-barrels/third/wanted.js
+console.log("third/wanted.js is evaluated");
+export function wanted() { return "wanted of third"; }
+//// only-a-member-of-a-member-of-a-namespace-is-read/deeper.ts
+export function target() { return "third, deeper"; }
+export function unused() { return "unused"; }
+//// only-a-member-of-a-member-of-a-namespace-is-read/first.ts
+export function target() { return "first"; }
+export function unused() { return "unused"; }
+//// only-a-member-of-a-member-of-a-namespace-is-read/fourth.ts
+export function target() { return "fourth"; }
+export function unused() { return "unused"; }
+//// only-a-member-of-a-member-of-a-namespace-is-read/main.ts
+// The one use of each file is a chain of plain members: outer.inner.target(), a named import of the inner namespace, three levels, and a namespace that a file exports with a clause of its own.
+import * as outer from "./outer";
+import { second } from "./outer";
+
+console.log(outer.first.target());
+console.log(second.target());
+console.log(outer.third.deeper.target());
+console.log(outer.fourth.target());
+//// only-a-member-of-a-member-of-a-namespace-is-read/outer.ts
+import * as fourth from "./fourth";
+export * as first from "./first";
+export * as second from "./second";
+export * as third from "./third";
+export { fourth };
+//// only-a-member-of-a-member-of-a-namespace-is-read/second.ts
+export function target() { return "second"; }
+export function unused() { return "unused"; }
+//// only-a-member-of-a-member-of-a-namespace-is-read/third.ts
+export * as deeper from "./deeper";
+//// only-a-type-of-a-module-with-an-effect-is-used/class.ts
+console.log("class.ts is evaluated");
+export class Klass { method() { return 1; } }
+//// only-a-type-of-a-module-with-an-effect-is-used/empty-braces.ts
+console.log("empty-braces.ts is evaluated");
+export const value = 1;
+//// only-a-type-of-a-module-with-an-effect-is-used/import-type.ts
+console.log("import-type.ts is evaluated");
+export class Other {}
+//// only-a-type-of-a-module-with-an-effect-is-used/inline-type.ts
+console.log("inline-type.ts is evaluated");
+export class Inline {}
+//// only-a-type-of-a-module-with-an-effect-is-used/interface.ts
+console.log("interface.ts is evaluated");
+export interface Shape { sides: number }
+//// only-a-type-of-a-module-with-an-effect-is-used/main.ts
+// Each imported file prints when it is evaluated. Of each only a type is used: an interface, a class used as a type, `import type`, an inline `type`, `typeof` of a function in a type, and a re-export of a type. `bun run` and `bun build --compile` print the same.
+import { Shape } from "./interface";
+import { Klass } from "./class";
+import type { Other } from "./import-type";
+import { type Inline } from "./inline-type";
+import { fn } from "./typeof";
+import { Passed } from "./re-export";
+import {} from "./empty-braces";
+
+const shape: Shape = { sides: 3 };
+let klass: Klass | undefined;
+let other: Other | undefined;
+let inline: Inline | undefined;
+let callback: typeof fn | undefined;
+let passed: Passed | undefined;
+console.log(shape.sides, klass, other, inline, callback, passed);
+//// only-a-type-of-a-module-with-an-effect-is-used/passed.ts
+console.log("passed.ts is evaluated");
+export interface Passed { value: number }
+//// only-a-type-of-a-module-with-an-effect-is-used/re-export.ts
+console.log("re-export.ts is evaluated");
+export type { Passed } from "./passed";
+//// only-a-type-of-a-module-with-an-effect-is-used/typeof.ts
+console.log("typeof.ts is evaluated");
+export function fn() { return 1; }
+//// overloads-abstract-classes-and-declarations-beside-real-ones/global.ts
+function real() { return "provided by global.ts"; }
+(globalThis as any).providedElsewhere = real;
+//// overloads-abstract-classes-and-declarations-beside-real-ones/main.ts
+// What TypeScript lets stand beside a body: overload signatures, abstract members, `declare` fields, an interface and a type of the same name as a function, a `declare function` for a global that another file creates.
+import "./global";
+
+function format(value: number): string;
+function format(value: string): string;
+function format(value: number | string): string { return "formatted " + inner(value); }
+function inner(value: number | string) { return typeof value + " " + value; }
+
+abstract class Shape {
+  abstract area(): number;
+  describe(): string { return this.constructor.name + " of " + round(this.area()); }
+}
+function round(n: number) { return n.toFixed(1); }
+class Circle extends Shape {
+  declare tag: string;
+  area() { return Math.PI; }
+}
+
+interface Maker { (): string }
+function Maker() { return "the function Maker"; }
+type Both = string;
+const Both = () => "the constant Both";
+
+declare function providedElsewhere(): string;
+
+class Overloaded {
+  method(a: number): string;
+  method(a: string): string;
+  method(a: unknown) { return "overloaded method " + a; }
+  constructor();
+  constructor(a: number);
+  constructor(public a?: number) {}
+}
+
+console.log(format(1), format("a"));
+console.log(new Circle().describe(), "tag" in new Circle());
+const maker: Maker = Maker;
+const both: Both = Both();
+console.log(maker(), both);
+console.log(providedElsewhere());
+console.log(new Overloaded(1).method(2), new Overloaded().a);
+//// package-fields-pick-the-barrel/main.js
+// Which file is the barrel is for package.json to say: an "exports" map with conditions, "browser" beside "main", an "exports" map with a subpath that is a barrel too. Each package has a barrel that must be picked and one that must not, and each barrel has a file nobody asks for.
+import { picked as byExports } from "by-exports";
+import { picked as byBrowser } from "by-browser";
+import { picked as bySubpath } from "by-exports/sub";
+
+console.log(byExports(), byBrowser(), bySubpath());
+//// package-fields-pick-the-barrel/node_modules/by-browser/browser-impl.js
+export function picked() { return "by-browser: browser"; }
+//// package-fields-pick-the-barrel/node_modules/by-browser/browser.js
+export { picked } from "./browser-impl.js";
+//// package-fields-pick-the-barrel/node_modules/by-browser/impl.js
+export function picked() { return "by-browser: main"; }
+//// package-fields-pick-the-barrel/node_modules/by-browser/main.js
+export { picked } from "./impl.js";
+export { unasked } from "./unasked.js";
+//// package-fields-pick-the-barrel/node_modules/by-browser/package.json
+{ "name": "by-browser", "version": "1.0.0", "type": "module", "sideEffects": false, "main": "./main.js", "browser": "./browser.js" }
+//// package-fields-pick-the-barrel/node_modules/by-browser/unasked.js
+console.log("by-browser/unasked.js is evaluated");
+export function unasked() {}
+//// package-fields-pick-the-barrel/node_modules/by-exports/impl.js
+export function picked() { return "by-exports: the bun condition"; }
+//// package-fields-pick-the-barrel/node_modules/by-exports/package.json
+{
+  "name": "by-exports",
+  "version": "1.0.0",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./wrong.js",
+  "exports": {
+    ".": { "browser": "./wrong.js", "bun": "./right.js", "default": "./wrong.js" },
+    "./sub": { "import": "./sub/right.js", "require": "./wrong.js" }
+  }
+}
+//// package-fields-pick-the-barrel/node_modules/by-exports/right.js
+export { picked } from "./impl.js";
+export { unasked } from "./unasked.js";
+//// package-fields-pick-the-barrel/node_modules/by-exports/sub/impl.js
+export function picked() { return "by-exports/sub: the import condition"; }
+//// package-fields-pick-the-barrel/node_modules/by-exports/sub/right.js
+export { picked } from "./impl.js";
+export { unasked } from "../unasked.js";
+//// package-fields-pick-the-barrel/node_modules/by-exports/unasked.js
+console.log("by-exports/unasked.js is evaluated");
+export function unasked() {}
+//// package-fields-pick-the-barrel/node_modules/by-exports/wrong-impl.js
+export function picked() { return "by-exports: the wrong file"; }
+//// package-fields-pick-the-barrel/node_modules/by-exports/wrong.js
+export { picked } from "./wrong-impl.js";
+//// predicates-and-assertions-of-functions-that-are-called-and-not-called.ts
+// A type predicate and an assertion signature narrow where the function is called. Beside each stands one that is never called and only lends its type to a variable that holds another function.
+function isText(value: unknown): value is string {
+  return typeof value === "string";
+}
+function assertNumber(value: unknown): asserts value is number {
+  if (typeof value !== "number") throw new TypeError("not a number");
+}
+function isTextUnused(value: unknown): value is string {
+  return false;
+}
+function assertUnused(value: unknown): asserts value is number {}
+
+const check: typeof isTextUnused = (value): value is string => typeof value === "string" && value.length > 0;
+const assert: typeof assertUnused = value => {
+  if (typeof value !== "number") throw new RangeError("no number");
+};
+
+function run(value: unknown): string {
+  if (isText(value)) return value.toUpperCase();
+  if (check(value)) return value.toLowerCase();
+  assertNumber(value);
+  const sum = value + 1;
+  assert(value);
+  return String(sum + value);
+}
+console.log(run("a"), run(1));
+try {
+  run(null);
+} catch (error) {
+  console.log((error as Error).message);
+}
+//// pure-annotation-comment-forms.js
+const calls = [];
+function f(name) { calls.push(name); return { name }; }
+class C { constructor(name) { calls.push(name); } }
+function run() {
+  /* @__PURE__ */ f("block comment");
+  // @__PURE__
+  f("line comment");
+  // #__PURE__
+  f("line comment with #");
+  //@__PURE__
+  f("line comment without a space");
+  // @__PURE__ it only allocates
+  f("line comment, text after");
+  // @__PURE__
+  // note
+  f("line comment, then another line comment");
+  /* @__PURE__ */ /* note */ f("block comment, then another block comment");
+  /* @__PURE__ */ // note
+  f("block comment, then a line comment");
+  /* note */ /* @__PURE__ */ /* note */ new C("block comment between two others");
+  /** @__PURE__ */ f("documentation comment");
+  /**
+   * @__PURE__
+   */
+  f("documentation comment on several lines");
+  /*! @__PURE__ */ f("legal comment");
+  /* @__PURE__ it only allocates */ f("block comment, text after");
+  /* it only allocates: @__PURE__ */ f("block comment, text before");
+  /* @__PURE__: it only allocates */ f("block comment, colon after");
+  /* x@__PURE__ */ f("block comment, letter before the sign");
+  /* @@__PURE__ */ f("block comment, two signs");
+  /* @__NO_SIDE_EFFECTS__ @__PURE__ */ f("block comment, after another annotation");
+  /** @__PURE__ */ (f("documentation comment before a parenthesis"));
+
+  /* @__PURE__x */ f("kept: letter after");
+  /* @__PURE__$ */ f("kept: dollar after");
+  /* @__pure__ */ f("kept: lowercase");
+  /* @ __PURE__ */ f("kept: space after the sign");
+  /* __PURE__ */ f("kept: no sign");
+  // note @__PURE__
+  f("kept: line comment, text before");
+  // # @__PURE__
+  f("kept: line comment, second sign");
+  /// @__PURE__
+  f("kept: three slashes");
+  /** @__PURE__ */ calls; /* note */ f("kept: the annotation is before another statement");
+  return [/** @__PURE__ */ f("kept: the result is used")].length;
+}
+run();
+console.log(calls.join("\n"));
+//// pure-marks-are-ignored-on-request.ts
+// With --ignore-dce-annotations a call that is marked pure is a call like any other: it stays, though nothing reads its result.
+function loud(name: string): number {
+  console.log("called", name);
+  return name.length;
+}
+class Noisy {
+  constructor(name: string) {
+    console.log("made", name);
+  }
+}
+const unread = /* @__PURE__ */ loud("in a constant");
+let alsoUnread = /* #__PURE__ */ new Noisy("in a variable");
+/* @__PURE__ */ loud("in a statement");
+const nested = [/* @__PURE__ */ loud("in an array"), { inner: /* @__PURE__ */ loud("in an object") }];
+export {};
+console.log("end");
+//// re-exports-through-three-barrels/barrel-1.ts
+export * from "./barrel-2";
+export { named2 as named, twice as thrice, fromDefault, becomesDefault as default } from "./barrel-2";
+//// re-exports-through-three-barrels/barrel-2.ts
+export * from "./barrel-3";
+export { named3 as named2, once as twice, fromDefault, becomesDefault } from "./barrel-3";
+//// re-exports-through-three-barrels/barrel-3.ts
+export * from "./source";
+export { named as named3, zero as once, default as fromDefault, becomesDefault } from "./source";
+//// re-exports-through-three-barrels/main.ts
+// Each name passes three files that only re-export: by `export *`, by `export { x } from`, renamed on the way, as a default that becomes a name and a name that becomes the default.
+import fromName, { star, named, thrice, fromDefault, Klass, constant } from "./barrel-1";
+
+console.log(star(), named(), thrice(), fromDefault(), fromName(), new Klass().method(), constant());
+//// re-exports-through-three-barrels/source.ts
+function helper(text: string) { return "<" + text + ">"; }
+export function star() { return helper("star"); }
+export function named() { return helper("named"); }
+export function zero() { return helper("renamed three times"); }
+export default function () { return helper("was the default"); }
+export function becomesDefault() { return helper("becomes the default"); }
+export class Klass {
+  method() { return helper("class"); }
+}
+export const constant = () => helper("constant");
+export function nobodyImportsThis() { return helper("nobody"); }
+//// references-inside-patterns-and-class-bodies.ts
+// One function per place where an expression hides inside something that is not an expression: defaults and computed keys of patterns, of parameters, of a catch clause and a for-of head; the heritage, the keys, the fields, the static blocks and the accessors of a class.
+const log: string[] = [];
+function d1() { return "variable default"; } function d2() { return "array default"; } function d3() { return "k"; } function d4() { return "assignment default"; }
+function d5() { return "parameter default"; } function d6() { return "k"; } function d7() { return "catch default"; } function d8() { return "for-of default"; }
+function d9() { return "nested default"; } function d10() { return "k"; }
+function c1() { return class { base() { return "heritage"; } }; } function c2() { return "computedMethod"; } function c3() { return "field"; } function c4() { return "static field"; }
+function c5() { log.push("static block"); } function c6() { return "computedField"; } function c7() { return "accessor field"; } function c8() { return "computedGetter"; }
+function c9() { return "private field"; } function c10() { return "parameter property"; }
+
+const { a = d1() } = {} as { a?: string };
+const [b = d2()] = [] as string[];
+const { [d3()]: c } = { k: "computed key of a pattern" } as Record<string, string>;
+let e: string | undefined;
+({ e = d4() } = {} as { e?: string });
+function f(value = d5(), { [d6()]: g }: Record<string, string> = { k: "computed key of a parameter" }) { return value + ", " + g; }
+log.push(a, b, c, e!, f());
+try { throw {}; } catch ({ message = d7() }: any) { log.push(message); }
+for (const { h = d8() } of [{}] as { h?: string }[]) log.push(h);
+const { i: { j = d9() } = {} } = {} as { i?: { j?: string } };
+let l: string | undefined;
+({ [d10()]: l } = { k: "computed key of an assignment" } as Record<string, string>);
+log.push(j, l!);
+
+class Everything extends c1() {
+  [c2()]() { return "computed method"; }
+  field = c3();
+  static field = c4();
+  static { c5(); }
+  // @ts-ignore
+  [c6()] = "computed field";
+  accessor auto = c7();
+  get [c8()]() { return "computed getter"; }
+  #hidden = c9();
+  hidden() { return this.#hidden; }
+  constructor(public property = c10()) { super(); }
+}
+const all = new Everything() as any;
+log.push(all.base(), all.computedMethod(), all.field, Everything.field, all.computedField, all.auto, all.computedGetter, all.hidden(), all.property);
+console.log(log.join("\n"));
+//// references-that-are-not-plain-calls.ts
+// One function per way of naming it without writing a plain call of it.
+const log: unknown[] = [];
+function shorthand() { return "shorthand"; } function tagged(s: TemplateStringsArray) { return "tagged " + s[0]; } function optional() { return "optional call"; }
+function Constructed(this: any) { this.value = "constructed"; } function ConstructedBare(this: any) { this.value = "constructed without parentheses"; }
+function underTypeof() {} function inTemplate() { return 1; } function spreadIn() { return "spread"; } function inArray() { return "array"; }
+function viaBind() { return "bind"; } function viaApply() { return "apply"; } function inCondition() { return "condition"; } function afterComma() { return "comma"; }
+function rightOfInstanceof() {} function awaited() { return "awaited"; } function inNullish() { return "nullish"; } function thrown() { return "thrown"; }
+function asKey() { return "key"; } function inSwitch() { return "switch"; } function inReturn() { return "return"; } function inIn() {}
+function* delegated() { yield "delegated"; } function nonNull() { return "non-null"; } function cast() { return "cast"; } function angle() { return "angle cast"; }
+function satisfied() { return "satisfies"; } function generic<T>(value: T) { return value; } function parenthesized() { return "parenthesized"; }
+
+log.push({ shorthand }.shorthand(), tagged`x`, optional?.(), new (Constructed as any)().value, (new (ConstructedBare as any)).value);
+log.push(typeof underTypeof, `${inTemplate}`.length > 0, [...[spreadIn]][0](), [inArray][0]());
+log.push(viaBind.bind(null)(), viaApply.apply(null), (log.length ? inCondition : undefined)!(), (log.length, afterComma)());
+log.push({} instanceof rightOfInstanceof, (await awaited)(), (([] as (() => string)[])[0] ?? inNullish)());
+try { throw thrown; } catch (caught: any) { log.push(caught()); }
+log.push(Object.keys({ [asKey()]: 1 })[0]);
+switch (inSwitch) { case inSwitch: log.push(inSwitch()); }
+log.push((() => { return inReturn; })()(), "name" in inIn);
+log.push([...(function* () { yield* delegated(); })()][0]);
+log.push(nonNull!(), (cast as () => string)(), (<() => string>angle)(), (satisfied satisfies () => string)(), (parenthesized)());
+const instantiated = generic<string>;
+log.push(instantiated("instantiation expression"), generic<string>("type arguments"));
+console.log(log.join("\n"));
+//// resources-that-nothing-reads-are-still-disposed.ts
+// `using` and `await using` bind names that nothing reads, and leaving the scope runs their disposers: at the top level when the module ends, in a block when the block ends. null and undefined dispose nothing. The resources are made by constants and classes that nothing else names.
+const log: string[] = [];
+const makeResource = (name: string) => ({ [Symbol.dispose]() { log.push("disposed " + name); } });
+class Resource { constructor(public name: string) {} [Symbol.dispose]() { log.push("disposed " + this.name); } }
+const asyncResource = { async [Symbol.asyncDispose]() { log.push("disposed asynchronously"); } };
+const literal = { [Symbol.dispose]() { log.push("disposed a constant"); } };
+const unusedResource = { [Symbol.dispose]() { log.push("never"); } };
+
+{
+  using first = makeResource("first");
+  using second = new Resource("second");
+  using third = literal;
+  using nothing = null;
+  using alsoNothing = undefined;
+  await using fourth = asyncResource;
+  log.push("end of the block");
+}
+function scoped() {
+  using inFunction = makeResource("in a function");
+  return "returned";
+}
+log.push(scoped());
+(globalThis as any).process.on("exit", () => console.log(log.join("\n")));
+using atTopLevel = makeResource("at the top level");
+using alsoAtTopLevel = new Resource("also at the top level");
+await using asyncAtTopLevel = asyncResource;
+log.push("end of the module");
+//// shorthand-properties-named-by-words-that-start-a-member.js
+// `{ get, set, async, static }` are four shorthand properties, not the start of an accessor or of an async method. Each is the only reference to a function of that name. Beside them: methods and accessors that are named get, set, async and static.
+function get() { return "get"; }
+function set() { return "set"; }
+function async() { return "async"; }
+function static_() { return "static"; }
+function await_() { return "await"; }
+
+const shorthand = { get, set, async };
+console.log(shorthand.get(), shorthand.set(), shorthand.async());
+const last = { async, get };
+console.log(last.async(), last.get());
+const named = {
+  get() { return "a method named get"; },
+  set() { return "a method named set"; },
+  async() { return "a method named async"; },
+  get get() { return "an accessor named get"; },
+  async async() { return "an async method named async"; },
+  static: static_,
+  await: await_,
+};
+console.log(named.set(), named.get, await named.async(), named.static(), named.await());
+class Klass {
+  static static() { return "a static method named static"; }
+  static get get() { return "a static accessor named get"; }
+  static async async() { return "a static async method named async"; }
+  get = get;
+  set = set;
+  static async = async;
+}
+console.log(Klass.static(), Klass.get, typeof Klass.async, new Klass().get(), new Klass().set());
+//// some-declarators-of-a-statement-are-used-and-some-are-not.ts
+// One statement declares several names. Of each statement some are used, some are not, and some have an initializer that does something. What is used has its value, and what does something does it, in the order written.
+const log: string[] = [];
+function effect(name: string) { log.push(name); return name; }
+
+const used1 = 1, unused1 = 2, used2 = used1 + 1;
+const unused2 = "a", does1 = effect("first"), unused3 = [1, 2], does2 = effect("second");
+let unusedLet = 1, usedLet = 2, noInitializer: number | undefined;
+var unusedVar = { a: 1 }, usedVar = { b: 2 };
+const first = () => second(), second = () => "second is reached through first", third = () => "nobody calls third";
+const chainA = 1, chainB = chainA + 1, chainC = chainB + 1, chainUnused = chainC + 1;
+export const exportedUnused = 1, exportedDoes = effect("third"), exportedUsed = 3;
+const { a, b } = { a: "a of a pattern", b: "b of a pattern" };
+const [x, y] = ["x of a pattern", "y of a pattern"];
+const { unusedP, unusedQ } = { unusedP: 1, unusedQ: 2 };
+const [unusedR] = [1];
+const { deep: { inner } } = { deep: { inner: "inner of a nested pattern" } };
+
+console.log(used1, used2, usedLet, noInitializer, usedVar.b, first(), chainC, exportedUsed);
+console.log(a, x, inner);
+console.log(log.join());
+//// standard-member-decorators-reach-a-class-that-nothing-names.ts
+// A standard decorator of a static method adds an initializer, which runs with `this` = the class. The class is named nowhere. The decorators themselves are named only after an @.
+const kept: any[] = [];
+
+function keepClass(value: Function, context: ClassMethodDecoratorContext): void {
+  context.addInitializer(function (this: any) {
+    kept.push(this);
+  });
+}
+
+function twice(value: (this: any) => string, context: ClassMethodDecoratorContext) {
+  return function (this: any): string {
+    return value.call(this) + " " + value.call(this);
+  };
+}
+
+class Unnamed {
+  @keepClass static marked(): void {}
+  @twice run(): string {
+    return this.word();
+  }
+  word(): string {
+    return "ran";
+  }
+}
+
+console.log(new kept[0]().run());
+//// stars-of-commonjs-files-behind-an-import-that-is-left-out/main.mjs
+// A barrel without side effects imports a file that is left out and then hands on all names of two CommonJS files: which names those are is known when they have run.
+import { a, b } from "p";
+console.log(a, b);
+//// stars-of-commonjs-files-behind-an-import-that-is-left-out/node_modules/p/index.js
+import "./setup.js";
+export * from "./one.cjs";
+export * from "./two.cjs";
+//// stars-of-commonjs-files-behind-an-import-that-is-left-out/node_modules/p/one.cjs
+exports.a = 1;
+//// stars-of-commonjs-files-behind-an-import-that-is-left-out/node_modules/p/package.json
+{ "name": "p", "version": "1.0.0", "main": "index.js", "type": "module", "sideEffects": false }
+//// stars-of-commonjs-files-behind-an-import-that-is-left-out/node_modules/p/setup.js
+export const unused = 1;
+//// stars-of-commonjs-files-behind-an-import-that-is-left-out/node_modules/p/two.cjs
+exports.b = 2;
+//// statements-that-look-dead-and-run.ts
+// Code that stands in or beside something a compiler removes, and still runs: the body of do-while(false), the initializer of for(;false;), the else of if(false), a case that is fallen into, catch and finally, the operand of void, a comma, a label that is left.
+const log: string[] = [];
+function inDo() { log.push("do"); } function inForInit() { log.push("for init"); } function inElse() { log.push("else"); }
+function inFallThrough() { log.push("fall through"); } function inDefault() { log.push("default"); } function inCatch() { log.push("catch"); }
+function inFinally() { log.push("finally"); } function underVoid() { log.push("void"); } function beforeComma() { log.push("comma"); }
+function beforeBreak() { log.push("before break"); } function afterLabel() { log.push("after label"); } function inCondition() { log.push("condition"); return false; }
+function inFinallyAfterReturn() { log.push("finally after return"); } function inUnusedTemplate() { log.push("template"); return ""; }
+function asUnusedArgument() { log.push("argument"); } function inUnusedArray() { log.push("array"); } function inUnusedObject() { log.push("object"); return "k"; }
+
+do inDo(); while (false);
+for (inForInit(); false; );
+if (false) {
+} else inElse();
+switch (1 as number) {
+  case 1:
+  case 2:
+    inFallThrough();
+  default:
+    inDefault();
+}
+try {
+  throw 1;
+} catch {
+  inCatch();
+} finally {
+  inFinally();
+}
+void underVoid();
+beforeComma(), 0;
+label: {
+  beforeBreak();
+  break label;
+}
+afterLabel();
+if (inCondition()) {
+}
+(() => {
+  try {
+    return;
+  } finally {
+    inFinallyAfterReturn();
+  }
+})();
+`${inUnusedTemplate()}`;
+((...ignored: unknown[]) => {})(asUnusedArgument());
+[inUnusedArray()];
+({ [inUnusedObject()]: 1 });
+console.log(log.join(", "));
+//// static-initializers-call-static-methods-through-this.ts
+// The class is named nowhere. Its static fields and its static block call its static methods, a static getter and its constructor through `this` while the class is being defined.
+const log: string[] = [];
+
+function double(n: number): number {
+  return n * 2;
+}
+
+class Table {
+  static get label(): string {
+    return "table";
+  }
+  static size = this.compute(4);
+  static instance = new this("made in a field");
+  static {
+    log.push("size " + this.size, this.instance.describe(), "label " + this.label);
+  }
+  static compute(n: number): number {
+    return double(n) + 1;
+  }
+  constructor(public note: string) {}
+  describe(): string {
+    return "instance " + this.note;
+  }
+}
+
+console.log(log.join("\n"));
+//// tests-for-the-surroundings-decide-a-branch.js
+// `typeof window`, `typeof document`, `typeof Bun`, `typeof process`, `typeof require` and `process.browser` are asked after the program has given itself a window and a document. Each answer calls its own function.
+globalThis.window = globalThis;
+globalThis.document = { title: "made up" };
+
+function hasWindow() { return "has a window"; } function noWindow() { return "no window"; }
+function hasDocument() { return "has a document"; } function noDocument() { return "no document"; }
+function hasBun() { return "has Bun"; } function noBun() { return "no Bun"; }
+function hasProcess() { return "has process"; } function noProcess() { return "no process"; }
+function hasRequire() { return "has require"; } function noRequire() { return "no require"; }
+function isBrowser() { return "a browser"; } function notBrowser() { return "not a browser"; }
+function hasDeno() { return "has Deno"; } function noDeno() { return "no Deno"; }
+
+console.log(typeof window !== "undefined" ? hasWindow() : noWindow());
+console.log(typeof document === "undefined" ? noDocument() : hasDocument());
+console.log(typeof Bun !== "undefined" ? hasBun() : noBun());
+console.log(typeof process === "object" ? hasProcess() : noProcess());
+console.log(typeof require === "function" ? hasRequire() : noRequire());
+console.log(process.browser ? isBrowser() : notBrowser());
+console.log(typeof Deno === "undefined" ? noDeno() : hasDeno());
+//// the-application-itself-says-it-has-no-side-effects/effect.js
+console.log("effect.js is evaluated");
+globalThis.setByEffect = function () {};
+//// the-application-itself-says-it-has-no-side-effects/main.js
+// The package.json beside the entry point says "sideEffects": false, so the rule holds for the files of the application too: a file imported for its effect, a file of which nothing is used, and a file that is used. `bun run` evaluates all three and prints "used function". `bun build --compile` evaluates used.js alone and prints "used undefined", and --aot follows it.
+import "./effect.js";
+import { unused } from "./unused.js";
+import { used } from "./used.js";
+
+console.log(used(), typeof globalThis.setByEffect);
+//// the-application-itself-says-it-has-no-side-effects/package.json
+{ "name": "application", "version": "1.0.0", "type": "module", "sideEffects": false }
+//// the-application-itself-says-it-has-no-side-effects/unused.js
+console.log("unused.js is evaluated");
+export function unused() { return "unused"; }
+//// the-application-itself-says-it-has-no-side-effects/used.js
+console.log("used.js is evaluated");
+export function used() { return "used"; }
+//// the-automatic-jsx-runtime-is-imported-by-no-statement/main.tsx
+// No import statement names the runtime: the pragma does. Its jsx, jsxs, jsxDEV and Fragment are function declarations that call helpers of their file.
+/** @jsxImportSource ./mini */
+function Item(props: { label: string }) {
+  return <li>{props.label}</li>;
+}
+
+console.log(<ul><Item label="one" /><Item label="two" /></ul>);
+console.log(<><Item label="three" /></>);
+//// the-automatic-jsx-runtime-is-imported-by-no-statement/mini/jsx-dev-runtime.ts
+export * from "./jsx-runtime";
+//// the-automatic-jsx-runtime-is-imported-by-no-statement/mini/jsx-runtime.ts
+function flatten(children: unknown): string {
+  return Array.isArray(children) ? children.map(flatten).join("") : children == null ? "" : String(children);
+}
+
+function build(type: any, props: Record<string, unknown>): string {
+  return typeof type === "function" ? type(props) : "<" + type + ">" + flatten(props.children) + "</" + type + ">";
+}
+
+export function Fragment(props: { children?: unknown }): string {
+  return "{" + flatten(props.children) + "}";
+}
+
+export function jsx(type: any, props: Record<string, unknown>): string {
+  return build(type, props);
+}
+
+export function jsxs(type: any, props: Record<string, unknown>): string {
+  return build(type, props);
+}
+
+export function jsxDEV(type: any, props: Record<string, unknown>): string {
+  return build(type, props);
+}
+
+export namespace JSX {
+  export type Element = string;
+  export interface IntrinsicElements { [name: string]: any }
+  export interface ElementChildrenAttribute { children: {} }
+}
+//// the-classic-runtime-without-a-pragma-means-react/main.tsx
+// The classic runtime, when no pragma names a factory, calls React.createElement and React.Fragment. `React` is a namespace import here, so two exports of react.ts are named by no text at all.
+/* @jsxRuntime classic */
+import * as React from "./react";
+
+console.log(<><a>text</a></>);
+//// the-classic-runtime-without-a-pragma-means-react/react.ts
+declare global { namespace JSX { interface IntrinsicElements { [name: string]: any } } }
+
+export function Fragment(props: { children: any[] }): string {
+  return "fragment(" + props.children.join() + ")";
+}
+export function createElement(type: any, props: any, ...children: any[]): any {
+  return typeof type === "function" ? type({ ...props, children }) : type + "(" + children.join() + ")";
+}
+////= lines-8	useState	"unused"
+//// the-engine-calls-methods-named-by-symbols/main.ts
+// for-of, spread, a pattern, for-await, an addition, instanceof, using, String.prototype.split and replace, Object.prototype.toString and Array.from call methods whose keys are well-known symbols.
+import { Range, Ticks, Amount, Even, Resource, Comma, Tagged, log } from "./protocols";
+
+console.log([...new Range(3)].join(), Array.from(new Range(2)).join(), Math.max(...new Range(5)));
+const [first, second] = new Range(9);
+console.log(first, second);
+for (const value of new Range(1)) console.log("for-of", value);
+for await (const tick of new Ticks()) console.log("for-await", tick);
+console.log(`${new Amount()}`, +new Amount(), (new Amount() as any) + "");
+console.log((2 as any) instanceof Even, (3 as any) instanceof Even);
+{
+  using resource = new Resource("sync");
+  await using other = new Resource("async");
+  log.push("in the block");
+}
+console.log(log.join(", "));
+console.log("a,b".split(new Comma() as any), "a,b".replace(new Comma() as any, "-"));
+console.log(Object.prototype.toString.call(new Tagged()));
+//// the-engine-calls-methods-named-by-symbols/protocols.ts
+export const log: string[] = [];
+function* upTo(n: number) { for (let i = 0; i < n; i++) yield i; }
+async function* ticks() { yield "tick"; yield "tock"; }
+function hinted(hint: string) { return hint === "number" ? 7 : "hint " + hint; }
+function isEven(value: unknown) { return typeof value === "number" && value % 2 === 0; }
+function closed(name: string) { log.push("closed " + name); }
+
+export class Range {
+  constructor(public end: number) {}
+  [Symbol.iterator]() { return upTo(this.end); }
+}
+export class Ticks {
+  [Symbol.asyncIterator]() { return ticks(); }
+}
+export class Amount {
+  [Symbol.toPrimitive](hint: string) { return hinted(hint); }
+}
+export class Even {
+  static [Symbol.hasInstance](value: unknown) { return isEven(value); }
+}
+export class Resource {
+  constructor(public name: string) {}
+  [Symbol.dispose]() { closed(this.name); }
+  async [Symbol.asyncDispose]() { closed(this.name); }
+}
+export class Comma {
+  [Symbol.split](text: string) { return "split " + text; }
+  [Symbol.replace](text: string, by: string) { return "replace " + text + " " + by; }
+}
+export class Tagged {
+  get [Symbol.toStringTag]() { return "Custom"; }
+}
+//// the-engine-calls-tostring-valueof-and-tojson/main.ts
+// No code names toString, valueOf or toJSON: a template, an addition, a comparison, String(), a key of an object, join and JSON.stringify call them. Each calls a function of its file that nothing else names.
+import { Money, Label, Both } from "./values";
+
+console.log(`${new Label("template")}`);
+console.log("" + new Label("addition"));
+console.log(String(new Label("String")));
+console.log(Object.keys({ [new Label("key") as any]: 1 })[0]);
+console.log([new Label("join"), new Label("join")].join());
+console.log(+new Money(5), new Money(2) < new Money(3), (new Money(2) as any) * 2);
+console.log(JSON.stringify({ price: new Money(7), list: [new Money(8)] }));
+console.log(`${new Both()}`, (new Both() as any) + "", (new Both() as any) * 1);
+//// the-engine-calls-tostring-valueof-and-tojson/values.ts
+function bracket(text: string) { return "[" + text + "]"; }
+function cents(amount: number) { return amount * 100; }
+function forJSON(amount: number) { return { amount, currency: "EUR" }; }
+
+export class Label {
+  constructor(public text: string) {}
+  toString() { return bracket(this.text); }
+}
+export class Money {
+  constructor(public amount: number) {}
+  valueOf() { return cents(this.amount); }
+  toJSON() { return forJSON(this.amount); }
+}
+export class Both {
+  toString() { return "as text"; }
+  valueOf() { return 42; }
+}
+//// the-entry-of-a-pure-package-makes-a-global-for-the-file-behind-it/main.ts
+// The entry of a package for Node makes a global that the file behind it reads as a free name, and hands on every name of that file with `export *`; the package says "sideEffects": false. The importer is loaded by import(), as a server loads its renderer.
+const { page } = await import("./page.ts");
+console.log(page());
+//// the-entry-of-a-pure-package-makes-a-global-for-the-file-behind-it/node_modules/flagged/dist/flagged.d.ts
+export declare function describe(): string;
+//// the-entry-of-a-pure-package-makes-a-global-for-the-file-behind-it/node_modules/flagged/dist/flagged.js
+export function describe() {
+  return __FLAG_OF_THE_PACKAGE__ ? "the flag is on" : "the flag is off";
+}
+//// the-entry-of-a-pure-package-makes-a-global-for-the-file-behind-it/node_modules/flagged/flagged.node.mjs
+global.__FLAG_OF_THE_PACKAGE__ = false
+export * from "./dist/flagged.js"
+//// the-entry-of-a-pure-package-makes-a-global-for-the-file-behind-it/node_modules/flagged/package.json
+{"name": "flagged", "version": "1.0.0", "type": "module", "sideEffects": false, "module": "dist/flagged.js", "exports": {".": {"node": {"types": "./dist/flagged.d.ts", "import": "./flagged.node.mjs"}, "import": "./dist/flagged.js"}}}
+//// the-entry-of-a-pure-package-makes-a-global-for-the-file-behind-it/page.ts
+import { describe } from "flagged";
+export function page(): string {
+  return describe();
+}
+//// the-entry-point-exports-a-pure-package-again/main.js
+// "sideEffects": false, and the entry point says `export *` and `export { x }` of the package. What an entry point exports is used, by whoever loads the executable's module, so the files behind those names are evaluated. `bun run` evaluates all three files. `bun build --compile` evaluates stars.js and named.js and leaves not-exported.js out.
+export * from "handed-on/stars.js";
+export { named } from "handed-on/named.js";
+import { notExported } from "handed-on/not-exported.js";
+
+console.log("main.js runs");
+//// the-entry-point-exports-a-pure-package-again/node_modules/handed-on/named.js
+console.log("named.js is evaluated");
+export function named() { return "named"; }
+//// the-entry-point-exports-a-pure-package-again/node_modules/handed-on/not-exported.js
+console.log("not-exported.js is evaluated");
+export function notExported() { return "not exported"; }
+//// the-entry-point-exports-a-pure-package-again/node_modules/handed-on/package.json
+{ "name": "handed-on", "version": "1.0.0", "type": "module", "sideEffects": false }
+//// the-entry-point-exports-a-pure-package-again/node_modules/handed-on/stars.js
+console.log("stars.js is evaluated");
+export function star() { return "star"; }
+//// the-environment-at-run-time-decides-a-branch.js
+// NODE_ENV is "production" where the program runs and not set where it is built. Each arm calls its own function. `bun run` prints "production" first. `bun build --compile` replaces process.env.NODE_ENV by "development" at build time and prints that, and --aot follows it; every other way of reading the variable finds the real one.
+function production() { return "production"; }
+function development() { return "development"; }
+function other() { return "something else"; }
+function viaPattern() { return "production, read with a pattern"; }
+function viaBun() { return "production, read from Bun.env"; }
+function viaImportMeta() { return "production, read from import.meta.env"; }
+function custom() { return "a variable of the program's own"; }
+
+console.log(process.env.NODE_ENV === "production" ? production() : process.env.NODE_ENV === "development" ? development() : other());
+const { NODE_ENV } = process.env;
+if (NODE_ENV === "production") console.log(viaPattern());
+if (Bun.env.NODE_ENV === "production") console.log(viaBun());
+if (import.meta.env.NODE_ENV === "production") console.log(viaImportMeta());
+if (process.env.OWN_FLAG === "1") console.log(custom());
+//// the-es-module-marker-of-a-commonjs-file/main.ts
+// A CommonJS file that says __esModule, as a compiler writes it: its `default` is what a default import gets. One without the marker: the default import is the whole exports object.
+import marked, { named as namedOfMarked } from "./marked.cjs";
+import unmarked, { named as namedOfUnmarked } from "./unmarked.cjs";
+import * as markedNamespace from "./marked.cjs";
+
+console.log(marked(), namedOfMarked());
+console.log(typeof unmarked, unmarked.default(), unmarked.named(), namedOfUnmarked());
+console.log(markedNamespace.default === marked, Object.keys(markedNamespace).sort().join());
+console.log(require("./marked.cjs").default(), require("./real.ts").default(), require("./real.ts").__esModule);
+//// the-es-module-marker-of-a-commonjs-file/marked.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.named = exports.default = void 0;
+function theDefault() { return "the default of marked"; }
+function named() { return "named of marked"; }
+exports.default = theDefault;
+exports.named = named;
+//// the-es-module-marker-of-a-commonjs-file/real.ts
+export default function () { return "the default of a real ES module"; }
+//// the-es-module-marker-of-a-commonjs-file/unmarked.cjs
+function theDefault() { return "the default of unmarked"; }
+function named() { return "named of unmarked"; }
+exports.default = theDefault;
+exports.named = named;
+//// the-exports-of-a-second-entry-point-are-called-under-computed-names/main.ts
+// start.ts is the program; this file is passed to the build as a second entry point. start.ts loads it under a path that is put together where the program runs, and calls its exports under names that are put together too. Nothing else names them: what an entry point exports is kept.
+import { shared } from "./shared";
+
+function helper() { return "helper of the second entry point"; }
+export function first() { return "first, " + helper(); }
+export const second = () => "second, " + shared();
+export class Third { name() { return "third"; } }
+export default function () { return "the default"; }
+console.log("the second entry point is evaluated");
+//// the-exports-of-a-second-entry-point-are-called-under-computed-names/shared.ts
+export function shared() { return "shared"; }
+export function usedByNobody() { return "nobody"; }
+//// the-exports-of-a-second-entry-point-are-called-under-computed-names/start.ts
+import { shared } from "./shared";
+
+console.log("start.ts runs,", shared());
+const loaded: Record<string, any> = await import("./" + ["main", "ts"].join("."));
+console.log(loaded["fir" + "st"](), "/", loaded["sec" + "ond"](), "/", new loaded["Thi" + "rd"]().name(), "/", loaded["def" + "ault"]());
+const required: Record<string, any> = require("./" + ["main", "ts"].join("."));
+console.log(required["fir" + "st"](), required === loaded || Object.keys(required).sort().join());
+//// the-exports-of-the-entry-point-are-read-from-outside/main.ts
+// Nothing in the program names what the entry point exports by a binding: a file it imports gets at them through import() of the entry point and through a namespace import.
+import { viaImportCall, viaNamespace } from "./reader";
+
+export function first() { return "first"; }
+export const second = () => "second";
+export class Third { name() { return "third"; } }
+export default function () { return "the default"; }
+
+console.log(viaNamespace());
+viaImportCall().then(console.log);
+//// the-exports-of-the-entry-point-are-read-from-outside/reader.ts
+import * as entry from "./main";
+
+export async function viaImportCall() {
+  const module: Record<string, any> = await import("./main");
+  return [module.first(), module["sec" + "ond"](), new module.Third().name(), module.default()].join(", ");
+}
+
+export function viaNamespace() {
+  return Object.keys(entry).sort().join();
+}
+//// the-expression-of-a-parameter-decorator-runs-when-the-class-is-defined/main.ts
+// `@mark(label())` on a parameter is written inside a method, yet it runs when the class is defined, whether or not anything names the class. label, labelOfConstructor and mark have no other reference.
+const log: string[] = [];
+
+////= lines-4	label	string	"a parameter of a method"
+
+////= lines-4	labelOfConstructor	string	"a parameter of the constructor"
+
+function mark(text: string) {
+  return (target: object, member: string | undefined, index: number): void => {
+    log.push(text + ", " + String(member) + " " + index);
+  };
+}
+
+class Unnamed {
+  constructor(@mark(labelOfConstructor()) first: number) {}
+  method(first: number, @mark(label()) second: number): void {}
+}
+
+console.log(log.join("\n"));
+//// the-expression-of-a-parameter-decorator-runs-when-the-class-is-defined/tsconfig.json
+////= lines-2
+//// the-jsx-factory-and-fragment-are-named-only-by-pragmas/factory.ts
+declare global { namespace JSX { interface IntrinsicElements { [name: string]: any } } }
+
+function join(children: any[]): string {
+  return children.join("+");
+}
+
+export function Group(props: { children: any[] }): string {
+  return "group(" + join(props.children) + ")";
+}
+
+export function make(tag: any, props: any, ...children: any[]): any {
+  return typeof tag === "function" ? tag({ ...props, children }) : tag + "(" + join(children) + ")";
+}
+
+////= lines-11	neverCalled	string	"never"
+//// the-jsx-factory-and-fragment-are-named-only-by-pragmas/main.tsx
+// Nothing in this file names `make` or `Group` except the two pragmas. Both are imported functions, and the factory calls the fragment.
+/* @jsxRuntime classic */
+/* @jsx make */
+/* @jsxFrag Group */
+import { Group, make } from "./factory";
+
+console.log(<><a /><b>text</b></>);
+//// the-jsx-factory-and-fragment-come-from-tsconfig/factory.ts
+declare global { namespace JSX { interface IntrinsicElements { [name: string]: any } } }
+
+export function Group(props: { children: any[] }): string {
+  return "group(" + props.children.join("+") + ")";
+}
+
+export function make(tag: any, props: any, ...children: any[]): any {
+  return typeof tag === "function" ? tag({ ...props, children }) : tag + "(" + children.join("+") + ")";
+}
+//// the-jsx-factory-and-fragment-come-from-tsconfig/main.tsx
+// tsconfig.json names the factory and the fragment. No text of this file names them after the import.
+import { Group, make } from "./factory";
+
+console.log(<><a /><b>text</b></>);
+//// the-jsx-factory-and-fragment-come-from-tsconfig/tsconfig.json
+////= lines-5	"jsx"	"react"	"jsxFactory"	"make"	"jsxFragmentFactory"	"Group"
+//// the-jsx-factory-by-pragma-in-a-javascript-file/factory.js
+export function Group(props) { return "group(" + props.children.join("+") + ")"; }
+export function make(tag, props, ...children) { return typeof tag === "function" ? tag({ ...props, children }) : tag + "(" + children.join("+") + ")"; }
+//// the-jsx-factory-by-pragma-in-a-javascript-file/main.js
+// The same in JavaScript, where no type checker looks at the file: the pragmas are the only mention of the imported factory and fragment, and tags the only mention of the components.
+/* @jsxRuntime classic */
+/* @jsx make */
+/* @jsxFrag Group */
+import { Group, make } from "./factory.js";
+import * as ui from "./ui.js";
+import { Plain } from "./ui.js";
+
+console.log(<><Plain /><ui.Member /></>);
+//// the-jsx-factory-by-pragma-in-a-javascript-file/ui.js
+export function Plain() { return "plain"; }
+export function Member() { return "member"; }
+export function Unused() { return "unused"; }
+//// the-jsx-factory-is-a-member-of-a-namespace-import-named-only-by-a-pragma/lib.ts
+declare global { namespace JSX { interface IntrinsicElements { [name: string]: any } } }
+
+export function Group(props: { children: any[] }): string {
+  return "group(" + props.children.join("+") + ")";
+}
+
+export function make(tag: any, props: any, ...children: any[]): any {
+  return typeof tag === "function" ? tag({ ...props, children }) : tag + "(" + children.join("+") + ")";
+}
+//// the-jsx-factory-is-a-member-of-a-namespace-import-named-only-by-a-pragma/main.tsx
+// The pragmas say lib.make and lib.Group: the namespace import `lib` has no other use, and neither have the two exports.
+/* @jsxRuntime classic */
+/* @jsx lib.make */
+/* @jsxFrag lib.Group */
+import * as lib from "./lib";
+
+console.log(<><a /><b>text</b></>);
+//// the-keys-of-a-namespace-import-are-listed/lib.ts
+export function one() { return "one"; }
+export function two() { return "two"; }
+//// the-keys-of-a-namespace-import-are-listed/main.ts
+// Nothing names an export of lib.ts: the program lists the namespace object in six ways and calls what it finds.
+import * as lib from "./lib";
+
+type Functions = Record<string, () => string>;
+for (const key of Object.keys(lib)) console.log("keys", (lib as Functions)[key]());
+for (const key in lib) console.log("for in", (lib as Functions)[key]());
+for (const value of Object.values(lib)) console.log("values", value());
+for (const [key, value] of Object.entries(lib)) console.log("entries", key, value());
+for (const key of Reflect.ownKeys(lib)) if (typeof key === "string") console.log("own keys", Reflect.get(lib, key)());
+for (const key of Object.getOwnPropertyNames(lib)) console.log("descriptor", Object.getOwnPropertyDescriptor(lib, key)!.value());
+//// the-module-behind-a-name-asks-its-barrel-for-more/main.js
+// "sideEffects": false. The program asks the barrel for `first`. first.js imports `second` from the same barrel, and second.js reads `third` off the barrel's namespace. Every file prints when it is evaluated. `bun build --compile` evaluates first.js, second.js and third.js and leaves out fourth.js; `bun run` evaluates all four.
+import { first } from "asks-again";
+
+console.log(first());
+//// the-module-behind-a-name-asks-its-barrel-for-more/node_modules/asks-again/first.js
+import { second } from "./index.js";
+console.log("first.js is evaluated");
+export function first() { return "first, " + second(); }
+//// the-module-behind-a-name-asks-its-barrel-for-more/node_modules/asks-again/fourth.js
+console.log("fourth.js is evaluated");
+export function fourth() { return "fourth"; }
+//// the-module-behind-a-name-asks-its-barrel-for-more/node_modules/asks-again/index.js
+export { first } from "./first.js";
+export { second } from "./second.js";
+export { third } from "./third.js";
+export { fourth } from "./fourth.js";
+//// the-module-behind-a-name-asks-its-barrel-for-more/node_modules/asks-again/package.json
+{ "name": "asks-again", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": false }
+//// the-module-behind-a-name-asks-its-barrel-for-more/node_modules/asks-again/second.js
+import * as barrel from "./index.js";
+console.log("second.js is evaluated");
+export function second() { return "second, " + barrel.third(); }
+//// the-module-behind-a-name-asks-its-barrel-for-more/node_modules/asks-again/third.js
+console.log("third.js is evaluated");
+export function third() { return "third"; }
+//// the-module-field-of-a-package-stands-beside-main/main.js
+// package.json has "main" (a CommonJS file) and "module" (an ES module that is a barrel), as packages built for bundlers have. The program only imports the package. `bun run` takes "main"; `bun build --compile` takes "module". An executable built with --aot holds the file that one built without it holds.
+import { picked } from "by-module";
+
+console.log(picked());
+//// the-module-field-of-a-package-stands-beside-main/node_modules/by-module/impl.mjs
+export function picked() { return "by-module: module"; }
+//// the-module-field-of-a-package-stands-beside-main/node_modules/by-module/main.cjs
+exports.picked = function () { return "by-module: main"; };
+//// the-module-field-of-a-package-stands-beside-main/node_modules/by-module/module.mjs
+export { picked } from "./impl.mjs";
+export { unasked } from "./unasked.mjs";
+//// the-module-field-of-a-package-stands-beside-main/node_modules/by-module/package.json
+{ "name": "by-module", "version": "1.0.0", "sideEffects": false, "main": "./main.cjs", "module": "./module.mjs" }
+//// the-module-field-of-a-package-stands-beside-main/node_modules/by-module/unasked.mjs
+console.log("by-module/unasked.mjs is evaluated");
+export function unasked() {}
+//// the-name-of-a-method-is-not-a-binding.ts
+// Inside a method, a getter or a field named `load`, the name `load` means the function of the module: only a named function expression binds its own name.
+////= lines-4	load	string	"the function of the module"
+////= lines-4	size	number	3
+////= lines-4	make	string	"made by the module"
+////= lines-4	own	string	"never called"
+
+const literal = {
+  load() {
+    return "method of a literal, " + load();
+  },
+  get size() {
+    return size() + 1;
+  },
+  own: function own(depth: number): string {
+    return depth === 0 ? "a function expression calls itself" : own(depth - 1);
+  },
+};
+
+class Klass {
+  load() {
+    return "method of a class, " + load();
+  }
+  make = make();
+  static size() {
+    return size() + 2;
+  }
+}
+
+console.log(literal.load(), literal.size, literal.own(1));
+console.log(new Klass().load(), new Klass().make, Klass.size());
+//// the-namespace-of-a-barrel-that-is-left-out-is-read-in-odd-ways/main.js
+// "sideEffects": false, and index.js only has `export *`, so the imports go past it and the file is not in the executable. Its namespace object is read by constant names in every way there is; a name that it lacks asks the object itself.
+import * as ns from "stars";
+
+console.log(ns?.a(), ns["a"](), ns.a?.(), (0, ns.a)());
+console.log(typeof ns.a, new ns.Klass().m(), ns.value + 1, `${ns.value}`);
+const kept = ns.a;
+console.log(kept());
+class Sub extends ns.Klass {}
+console.log(new Sub().m(), new Sub() instanceof ns.Klass);
+//// the-namespace-of-a-barrel-that-is-left-out-is-read-in-odd-ways/node_modules/stars/a.js
+export function a() { return "a"; }
+export const value = 7;
+export class Klass { m() { return "m"; } }
+//// the-namespace-of-a-barrel-that-is-left-out-is-read-in-odd-ways/node_modules/stars/b.js
+export function b() { return "b"; }
+//// the-namespace-of-a-barrel-that-is-left-out-is-read-in-odd-ways/node_modules/stars/index.js
+export * from "./a.js";
+export * from "./b.js";
+//// the-namespace-of-a-barrel-that-is-left-out-is-read-in-odd-ways/node_modules/stars/package.json
+{ "name": "stars", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": false }
+//// the-namespace-of-a-barrel-that-is-left-out-is-read-in-odd-ways-and-a-name-it-lacks/main.js
+// As its neighbor, but the object is also asked for a name that it lacks and whether it has one, which only the object can answer: the barrel stays.
+import * as ns from "stars";
+
+console.log(typeof ns.missing, ns.missing === undefined, ns.missing?.(), "a" in ns, ns.a());
+//// the-namespace-of-a-barrel-that-is-left-out-is-read-in-odd-ways-and-a-name-it-lacks/node_modules/stars/a.js
+export function a() { return "a"; }
+export const value = 7;
+export class Klass { m() { return "m"; } }
+//// the-namespace-of-a-barrel-that-is-left-out-is-read-in-odd-ways-and-a-name-it-lacks/node_modules/stars/b.js
+export function b() { return "b"; }
+//// the-namespace-of-a-barrel-that-is-left-out-is-read-in-odd-ways-and-a-name-it-lacks/node_modules/stars/index.js
+export * from "./a.js";
+export * from "./b.js";
+//// the-namespace-of-a-barrel-that-is-left-out-is-read-in-odd-ways-and-a-name-it-lacks/node_modules/stars/package.json
+{ "name": "stars", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": false }
+//// the-namespace-of-a-file-with-unused-constants-is-looked-at/computed.js
+export const first = "first";
+export const second = "second";
+export default { kind: "default" };
+//// the-namespace-of-a-file-with-unused-constants-is-looked-at/listed.js
+export const number = 1;
+export const text = "two";
+export const list = [3];
+export class Klass { static toString() { return "Klass"; } }
+//// the-namespace-of-a-file-with-unused-constants-is-looked-at/main.js
+// Nothing names the constants of these files. One namespace is listed, one is read under a computed name, one is spread, one is required, one is given to JSON.stringify. Every export has its value there.
+import * as listed from "./listed.js";
+import * as computed from "./computed.js";
+import * as spread from "./spread.js";
+import * as printed from "./printed.js";
+
+console.log(Object.keys(listed).join(), Object.values(listed).map(String).join());
+console.log(computed["sec" + "ond"], computed["def" + "ault"].kind);
+console.log(JSON.stringify({ ...spread }));
+console.log(JSON.stringify(require("./required.js")));
+console.log(JSON.stringify(printed));
+//// the-namespace-of-a-file-with-unused-constants-is-looked-at/printed.js
+export const a = "printed";
+export const b = null;
+//// the-namespace-of-a-file-with-unused-constants-is-looked-at/required.js
+export const a = "required";
+export const b = [1, 2];
+//// the-namespace-of-a-file-with-unused-constants-is-looked-at/spread.js
+const hidden = "reached through an export";
+export const a = 1;
+export const b = { hidden };
+//// the-only-jsx-of-a-file-stands-in-a-function-nobody-calls/main.tsx
+// The automatic runtime is imported because the file has JSX, and evaluated when the file is, although the one element stands in a function that nobody calls.
+/** @jsxImportSource ./mini */
+function Unused() {
+  return <p>never</p>;
+}
+
+console.log("main.tsx runs");
+//// the-only-jsx-of-a-file-stands-in-a-function-nobody-calls/mini/jsx-dev-runtime.ts
+export * from "./jsx-runtime";
+//// the-only-jsx-of-a-file-stands-in-a-function-nobody-calls/mini/jsx-runtime.ts
+console.log("the runtime is evaluated");
+export function jsx(type: string): string { return type; }
+export const jsxs = jsx;
+export const jsxDEV = jsx;
+export const Fragment = "fragment";
+export namespace JSX {
+  export type Element = string;
+  export interface IntrinsicElements { [name: string]: any }
+}
+//// the-only-use-of-a-name-stands-in-a-function-nobody-calls/lib.ts
+export type OnlyAType = number;
+export function used() { return "used"; }
+export function onlyInUnusedBody(value: number): OnlyAType { return value; }
+//// the-only-use-of-a-name-stands-in-a-function-nobody-calls/main.ts
+// tsconfig.json turns unused locals, parameters and imports into errors. Each helper, import, private member and parameter here is used, but only inside bodies that nobody calls. A build that does not look into those bodies must not call them unused.
+import { used } from "./lib";
+import { onlyInUnusedBody, type OnlyAType } from "./lib";
+
+////= lines-9	helper	value	number	1
+const constant = 5;
+class Holder {
+  private secret = 1;
+  private hidden(): number {
+    return this.secret;
+  }
+  neverCalled(): number {
+    return this.hidden();
+  }
+}
+export function neverImported(parameter: number): OnlyAType {
+  const local = helper(parameter) + constant;
+  return onlyInUnusedBody(local);
+}
+export const alsoNeverImported = (holder: Holder) => holder.neverCalled();
+
+console.log(used());
+//// the-only-use-of-a-name-stands-in-a-function-nobody-calls/tsconfig.json
+////= lines-5	"strict"	true	"noUnusedLocals"	true	"noUnusedParameters"	true
+//// the-order-of-the-modules-that-stay/app-first.js
+import { e } from "ordered/e.js";
+console.log("app-first.js", e());
+//// the-order-of-the-modules-that-stay/app-last.js
+import { unusedOfF } from "ordered/f.js";
+console.log("app-last.js");
+//// the-order-of-the-modules-that-stay/main.js
+// Files of the application and of a pure package import each other. Each prints when it is evaluated. Some files of the package are not used; those that stay run in the order the imports give. `bun run` also prints b.js (before d.js) and f.js (before app-last.js). `bun build --compile` leaves those two out and keeps the order of the others, and --aot follows it.
+import "./app-first.js";
+import { c } from "ordered/c.js";
+import { a } from "ordered";
+import "./app-last.js";
+
+console.log("main", a(), c());
+//// the-order-of-the-modules-that-stay/node_modules/ordered/a.js
+import { d } from "./d.js";
+import { unusedOfB } from "./b.js";
+console.log("a.js");
+export function a() { return "a+" + d(); }
+//// the-order-of-the-modules-that-stay/node_modules/ordered/b.js
+console.log("b.js");
+export function b() { return "b"; }
+export function unusedOfB() { return "unused"; }
+//// the-order-of-the-modules-that-stay/node_modules/ordered/c.js
+import { e } from "./e.js";
+console.log("c.js");
+export function c() { return "c+" + e(); }
+//// the-order-of-the-modules-that-stay/node_modules/ordered/d.js
+console.log("d.js");
+export function d() { return "d"; }
+//// the-order-of-the-modules-that-stay/node_modules/ordered/e.js
+console.log("e.js");
+export function e() { return "e"; }
+//// the-order-of-the-modules-that-stay/node_modules/ordered/f.js
+console.log("f.js");
+export function unusedOfF() { return "unused"; }
+//// the-order-of-the-modules-that-stay/node_modules/ordered/index.js
+console.log("index.js");
+export { b } from "./b.js";
+export { a } from "./a.js";
+export { d } from "./d.js";
+//// the-order-of-the-modules-that-stay/node_modules/ordered/package.json
+{ "name": "ordered", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": false }
+//// the-same-barrel-in-a-package-without-side-effects/main.js
+// The barrel of one-file-behind-a-barrel-has-an-effect, in a package that says "sideEffects": false. `bun run` prints "second.js is evaluated" and "registered by second.js". `bun build --compile` leaves second.js out and prints "nothing registered", and --aot follows it.
+import { fourth, registered } from "six-files";
+
+console.log(fourth());
+console.log(registered.map(entry => entry()).join() || "nothing registered");
+//// the-same-barrel-in-a-package-without-side-effects/node_modules/six-files/fifth.js
+export function fifth() { return "fifth"; }
+//// the-same-barrel-in-a-package-without-side-effects/node_modules/six-files/first.js
+export function first() { return "first"; }
+//// the-same-barrel-in-a-package-without-side-effects/node_modules/six-files/fourth.js
+function detail() { return "in detail"; }
+export function fourth() { return "fourth, " + detail(); }
+//// the-same-barrel-in-a-package-without-side-effects/node_modules/six-files/index.js
+export * from "./registered.js";
+export * from "./first.js";
+export { second } from "./second.js";
+export * from "./third.js";
+export { fourth } from "./fourth.js";
+export * as fifth from "./fifth.js";
+//// the-same-barrel-in-a-package-without-side-effects/node_modules/six-files/package.json
+{ "name": "six-files", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": false }
+//// the-same-barrel-in-a-package-without-side-effects/node_modules/six-files/registered.js
+export const registered = [];
+//// the-same-barrel-in-a-package-without-side-effects/node_modules/six-files/second.js
+import { registered } from "./registered.js";
+console.log("second.js is evaluated");
+function fromSecond() { return "registered by second.js"; }
+registered.push(fromSecond);
+export function second() { return "second"; }
+//// the-same-barrel-in-a-package-without-side-effects/node_modules/six-files/third.js
+export function third() { return "third"; }
+//// the-type-of-a-class-nobody-constructs-is-asked-for.ts
+// Nothing constructs these classes or names them in an expression. They are used as types: of an object literal, of a parameter, after implements, as the base of an interface, through InstanceType and through an indexed access. The types of their members come from initializers and bodies.
+class Point {
+  x = 1;
+  y = 2;
+  label = "point";
+  norm() {
+    return Math.hypot(this.x, this.y);
+  }
+  get doubled() {
+    return { x: this.x * 2, y: this.y * 2 };
+  }
+  static origin() {
+    return new Point();
+  }
+}
+class Named {
+  name = "";
+  greet() {
+    return "hello " + this.name;
+  }
+}
+
+const literal: Point = { x: 3, y: 4, label: "literal", norm() { return 5; }, doubled: { x: 6, y: 8 } };
+function describe(point: Point) {
+  return point.label + " " + point.norm().toFixed(1) + " " + point.doubled.x;
+}
+class Person implements Named {
+  name = "Ada";
+  greet() {
+    return "hi " + this.name;
+  }
+}
+interface Labeled extends Named {
+  tag: string;
+}
+const labeled: Labeled = { name: "Bo", tag: "t", greet: () => "hey" };
+const instance: InstanceType<typeof Point> = literal;
+const norm: Point["norm"] = () => 9;
+const made: ReturnType<typeof Point.origin> = literal;
+
+console.log(describe(literal), new Person().greet(), labeled.greet(), labeled.tag, instance.y, norm() + 1, made.x);
+//// the-type-of-a-function-nobody-calls-is-asked-for.ts
+// These functions are never called, so their bodies may go. Their types stay in use: each has no return type written down, and code that runs is typed by ReturnType, Parameters, typeof and Awaited of them.
+function shape() {
+  return { width: 2, height: 3, label: "box" };
+}
+function pair(first: number, second: string) {
+  return [first, second] as const;
+}
+async function later() {
+  return { done: true, count: 1 };
+}
+function* steps() {
+  yield 1;
+  yield 2;
+}
+const arrow = (value: number) => ({ doubled: value * 2 });
+function nested() {
+  return shape().width > 1 ? pair(1, "a") : undefined;
+}
+
+type Shape = ReturnType<typeof shape>;
+const box: Shape = { width: 4, height: 5, label: "crate" };
+const args: Parameters<typeof pair> = [1, "one"];
+const result: Awaited<ReturnType<typeof later>> = { done: false, count: 7 };
+const step: ReturnType<typeof steps> extends Generator<infer T> ? T : never = 2;
+const doubled: ReturnType<typeof arrow> = { doubled: 8 };
+const maybe: ReturnType<typeof nested> = [1, "a"];
+let same: typeof shape | undefined;
+
+console.log(box.width * box.height, box.label.toUpperCase());
+console.log(args[0] + 1, args[1].length, result.count + 1, !result.done, step + 1, doubled.doubled / 2, maybe?.[1], same);
+//// the-types-of-another-file-s-unused-functions-are-asked-for/lib.ts
+function defaults() {
+  return { port: 8080, host: "0.0.0.0" };
+}
+export type Config = ReturnType<typeof defaults>;
+
+function innermost() {
+  return { value: 1 };
+}
+function wraps() {
+  return { inner: innermost() };
+}
+export type Deep = ReturnType<typeof wraps>;
+
+export function unusedFactory() {
+  return { id: 0, tags: [""] };
+}
+////= lines-8	neverImported	"never"
+export function used(config: Config) {
+  return config.host + ":" + config.port;
+}
+//// the-types-of-another-file-s-unused-functions-are-asked-for/main.ts
+// lib.ts is imported for one function and for the types of the others: `typeof import()`, an import used only in typeof, a type that lib.ts derives from a function nobody calls, and an inferred type that passes through two such functions.
+import { used, type Config, type Deep } from "./lib";
+import { unusedFactory } from "./lib";
+
+const config: Config = { port: 80, host: "localhost" };
+const deep: Deep = { inner: { value: 5 } };
+const made: ReturnType<typeof unusedFactory> = { id: 1, tags: ["a"] };
+const other: ReturnType<typeof import("./lib").neverImported> = "text";
+
+console.log(used(config), deep.inner.value + 1, made.tags.length + made.id, other.toUpperCase());
+//// the-types-of-constants-classes-and-enums-that-are-left-out.ts
+// Nothing that runs names these declarations; types do: typeof a constant, keyof typeof, an indexed access, the type of a class, the members of an enum, a constant with `as const`, `satisfies`. The values that are typed by them are made elsewhere.
+const defaults = { port: 80, host: "localhost", tags: ["a"] };
+const levels = ["low", "high"] as const;
+const table = { a: 1, b: 2 } satisfies Record<string, number>;
+class Point { x = 0; y = 0; norm() { return Math.hypot(this.x, this.y); } }
+enum Color { Red = "red", Green = "green" }
+const handler = (event: { kind: string }) => event.kind.length;
+const nested = { inner: { deep: [1, 2, 3] } };
+
+const config: typeof defaults = { port: 8080, host: "example", tags: [] };
+const level: (typeof levels)[number] = "high";
+const name: keyof typeof table = "b";
+const point: Point = { x: 3, y: 4, norm: () => 5 };
+const color: `${Color}` = "green";
+const other: typeof handler = event => event.kind.length * 2;
+const deep: (typeof nested)["inner"]["deep"] = [4];
+const constructed: InstanceType<typeof Point> = point;
+
+console.log(config.port + 1, config.host.toUpperCase(), level, name, point.norm(), color, other({ kind: "ab" }), deep[0] + 1, constructed.x);
+//// this-in-a-decorator-of-a-parameter-is-that-of-the-function-around-the-class/case-1.ts
+import { mark } from "./marks.ts";
+export function parameterOfAMethod(this: any): void {
+  class Made {
+    method(@mark(this.first()) value: number) {
+      return value;
+    }
+  }
+}
+////= lines-8	first	"first"
+//// this-in-a-decorator-of-a-parameter-is-that-of-the-function-around-the-class/case-2.ts
+import { mark } from "./marks.ts";
+export function parameterOfAConstructor(this: any): void {
+  class Made {
+    constructor(@mark(this.second()) value: number) {}
+  }
+}
+////= lines-8	second	"second"
+//// this-in-a-decorator-of-a-parameter-is-that-of-the-function-around-the-class/case-3.ts
+import { mark } from "./marks.ts";
+export function parameterOfAStaticMethodInAnArrow(this: any): void {
+  (() => {
+    class Made {
+      static method(other: number, @mark(this.third()) value: number) {
+        return value;
+      }
+    }
+  })();
+}
+////= lines-8	third	"third"
+//// this-in-a-decorator-of-a-parameter-is-that-of-the-function-around-the-class/main.ts
+// The decorators of a parameter are evaluated where the class is made, on the `this` of the function around the class. Each function
+// is called as a member of a namespace object and finds the other export of its file in that `this`.
+// One file a case: one function that is seen to look at `this` keeps every export of its file.
+import * as case1 from "./case-1.ts";
+import * as case2 from "./case-2.ts";
+import * as case3 from "./case-3.ts";
+import { seen } from "./marks.ts";
+import * as own from "./own.ts";
+case1.parameterOfAMethod();
+case2.parameterOfAConstructor();
+case3.parameterOfAStaticMethodInAnArrow();
+console.log(own.defaultValueBehindADecorator());
+console.log(seen.join("\n"));
+//// this-in-a-decorator-of-a-parameter-is-that-of-the-function-around-the-class/marks.ts
+export const seen: string[] = [];
+export function mark(label: string) {
+  return (target: object, key: string | symbol | undefined, index: number): void => {
+    seen.push(`${label} at parameter ${index} of ${String(key)}`);
+  };
+}
+//// this-in-a-decorator-of-a-parameter-is-that-of-the-function-around-the-class/own.ts
+import { mark } from "./marks.ts";
+// Here `this` belongs to the method: the function around the class looks at nothing.
+export function defaultValueBehindADecorator() {
+  class Made {
+    method(@mark("own") value: unknown = this) {
+      return value === this;
+    }
+  }
+  return new Made().method();
+}
+////= lines-8	neverNamed	"never named"
+//// this-in-a-decorator-of-a-parameter-is-that-of-the-function-around-the-class/tsconfig.json
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "typeRoots": ["../../../../../packages"],
+    "types": ["bun-types"],
+    "noEmit": true,
+    "experimentalDecorators": true
+  }
+}
+//// this-in-the-computed-name-of-a-method-is-that-of-the-function-around-it/case-1.js
+export function methodName() { return { [this.first()]() {} }; }
+export function first() { return "first"; }
+//// this-in-the-computed-name-of-a-method-is-that-of-the-function-around-it/case-10.js
+export function generatorName() { return { *[this.tenth()]() {} }; }
+export function tenth() { return "tenth"; }
+//// this-in-the-computed-name-of-a-method-is-that-of-the-function-around-it/case-2.js
+export function getterName() { return { get [this.second()]() { return 2; } }; }
+export function second() { return "second"; }
+//// this-in-the-computed-name-of-a-method-is-that-of-the-function-around-it/case-3.js
+export function setterName() { return { set [this.third()](value) {} }; }
+export function third() { return "third"; }
+//// this-in-the-computed-name-of-a-method-is-that-of-the-function-around-it/case-4.js
+export function classMethodName() { return class { [this.fourth()]() {} }; }
+export function fourth() { return "fourth"; }
+//// this-in-the-computed-name-of-a-method-is-that-of-the-function-around-it/case-5.js
+export function staticFieldName() { return class { static [this.fifth()] = 5; }; }
+export function fifth() { return "fifth"; }
+//// this-in-the-computed-name-of-a-method-is-that-of-the-function-around-it/case-6.js
+export function fieldName() { return new (class { [this.sixth()] = 6; })(); }
+export function sixth() { return "sixth"; }
+//// this-in-the-computed-name-of-a-method-is-that-of-the-function-around-it/case-7.js
+export function heritage() { return class extends this.seventh() {}; }
+export function seventh() { return class Seventh {}; }
+//// this-in-the-computed-name-of-a-method-is-that-of-the-function-around-it/case-8.js
+export function inAnArrow() { return (() => ({ [this.eighth()]() {} }))(); }
+export function eighth() { return "eighth"; }
+//// this-in-the-computed-name-of-a-method-is-that-of-the-function-around-it/case-9.js
+export function defaultValue(value = { [this.ninth()]() {} }) { return value; }
+export function ninth() { return "ninth"; }
+//// this-in-the-computed-name-of-a-method-is-that-of-the-function-around-it/main.js
+// Each function is called as a member of a namespace object and finds the other export of its file in `this`, in a place that belongs to it and stands inside the text of a member.
+// One file a case: one function that is seen to look at `this` keeps every export of its file.
+import * as case1 from "./case-1.js";
+import * as case2 from "./case-2.js";
+import * as case3 from "./case-3.js";
+import * as case4 from "./case-4.js";
+import * as case5 from "./case-5.js";
+import * as case6 from "./case-6.js";
+import * as case7 from "./case-7.js";
+import * as case8 from "./case-8.js";
+import * as case9 from "./case-9.js";
+import * as case10 from "./case-10.js";
+import * as own from "./own.js";
+console.log(Object.keys(case1.methodName()), Object.keys(case2.getterName()), Object.keys(case3.setterName()));
+console.log(Object.getOwnPropertyNames(case4.classMethodName().prototype), Object.keys(case5.staticFieldName()), Object.keys(case6.fieldName()));
+console.log(Object.getPrototypeOf(case7.heritage()).name, Object.keys(case8.inAnArrow()), Object.keys(case9.defaultValue()), Object.keys(case10.generatorName()));
+console.log(own.ownThisOfAMethod().method());
+//// this-in-the-computed-name-of-a-method-is-that-of-the-function-around-it/own.js
+// Here `this` belongs to the member: the function around it looks at nothing.
+export function ownThisOfAMethod() { return { method() { return this === undefined; } }; }
+export function neverNamed() { return "never named"; }
+//// this-of-a-namespace-call-in-arrows-and-nested-functions/lib.js
+export function throughArrow() { return (() => this.reachedFromArrow())(); }
+export function reachedFromArrow() { return "reached from an arrow"; }
+function callOn(object) { return object["reachedBy" + "Helper"](); }
+export function handsItOn() { return callOn(this); }
+export function reachedByHelper() { return "reached by a helper"; }
+export function takesItApart() { const { reachedByPattern } = this; return reachedByPattern(); }
+export function reachedByPattern() { return "reached by a pattern"; }
+export function nestedFunction() { return (function () { return typeof this; })(); }
+//// this-of-a-namespace-call-in-arrows-and-nested-functions/main.js
+// The export that is called as a member reads `this` only inside an arrow function, hands it to a helper, or takes it apart in a pattern. An arrow export and a nested ordinary function have no such `this`.
+import * as lib from "./lib.js";
+
+console.log(lib.throughArrow());
+console.log(lib.handsItOn());
+console.log(lib.takesItApart());
+console.log(lib.nestedFunction());
+//// three-levels-of-barrels-in-a-pure-package/main.js
+// "sideEffects": false. The name passes three barrels; every file of the package prints when it is evaluated, the barrels too. `bun run` evaluates all nine files. `bun build --compile` evaluates helper.js, leaf.js, level-2.js and level-1.js: it leaves out the three files of which nothing is used, and index.js, whose `export *` it passes through.
+import { leaf } from "deep-barrels";
+
+console.log(leaf());
+//// three-levels-of-barrels-in-a-pure-package/node_modules/deep-barrels/beside-1.js
+console.log("beside-1.js is evaluated");
+export function beside1() { return "beside 1"; }
+//// three-levels-of-barrels-in-a-pure-package/node_modules/deep-barrels/beside-2.js
+console.log("beside-2.js is evaluated");
+export function beside2() { return "beside 2"; }
+//// three-levels-of-barrels-in-a-pure-package/node_modules/deep-barrels/helper.js
+console.log("helper.js is evaluated");
+export function helper() { return "helper"; }
+//// three-levels-of-barrels-in-a-pure-package/node_modules/deep-barrels/index.js
+console.log("index.js is evaluated");
+export * from "./level-1.js";
+export * from "./beside-1.js";
+//// three-levels-of-barrels-in-a-pure-package/node_modules/deep-barrels/leaf.js
+console.log("leaf.js is evaluated");
+import { helper } from "./helper.js";
+export function leaf() { return "leaf, " + helper(); }
+//// three-levels-of-barrels-in-a-pure-package/node_modules/deep-barrels/level-1.js
+console.log("level-1.js is evaluated");
+export { leaf, otherLeaf } from "./level-2.js";
+export * from "./beside-2.js";
+//// three-levels-of-barrels-in-a-pure-package/node_modules/deep-barrels/level-2.js
+console.log("level-2.js is evaluated");
+import { leaf } from "./leaf.js";
+import { otherLeaf } from "./other-leaf.js";
+export { leaf, otherLeaf };
+//// three-levels-of-barrels-in-a-pure-package/node_modules/deep-barrels/other-leaf.js
+console.log("other-leaf.js is evaluated");
+export function otherLeaf() { return "other leaf"; }
+//// three-levels-of-barrels-in-a-pure-package/node_modules/deep-barrels/package.json
+{ "name": "deep-barrels", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": false }
+//// top-level-await-between-declarations-that-are-left-out/awaits-first.js
+import { order } from "./order.js";
+await null;
+const unused = { a: 1 };
+order.push("awaits-first.js after its await");
+//// top-level-await-between-declarations-that-are-left-out/awaits-last.js
+import { order } from "./order.js";
+const unused = { a: 1 };
+order.push("awaits-last.js before its await");
+await null;
+const alsoUnused = [];
+//// top-level-await-between-declarations-that-are-left-out/main.js
+// Awaits stand before, between and after declarations that nothing uses. What is observable is the order: of this module's own lines, of jobs that were queued, and of the modules that import each other.
+import { order } from "./order.js";
+import "./awaits-first.js";
+import "./awaits-last.js";
+
+const unusedBefore = { a: 1 };
+order.push("main starts");
+queueMicrotask(() => order.push("a job queued by main"));
+const unusedBetween = [1, 2];
+await null;
+class UnusedAfterAwait {}
+order.push("main after its first await");
+const usedAfterAwait = await Promise.resolve("a value that was awaited");
+const unusedAwaited = await Promise.resolve(order.push("an awaited value nothing reads"));
+const unusedLast = "text";
+order.push(usedAfterAwait);
+console.log(order.join("\n"));
+//// top-level-await-between-declarations-that-are-left-out/order.js
+export const order = [];
+export const unused = [];
+//// top-level-await-in-a-module-that-nothing-uses/main.js
+// "sideEffects": false. waits.js awaits at its top level and nothing of it is used. Whether it is there shows in the order: a module that awaits holds back its importer while promise jobs run. `bun run` prints the job, then waits.js, then main.js. `bun build --compile` leaves waits.js out, so main.js runs first and the job after it, and --aot follows it.
+import "./schedules.js";
+import { unused } from "waiting/waits.js";
+import { used } from "waiting/used.js";
+
+console.log("main.js runs", used());
+//// top-level-await-in-a-module-that-nothing-uses/node_modules/waiting/package.json
+{ "name": "waiting", "version": "1.0.0", "type": "module", "sideEffects": false }
+//// top-level-await-in-a-module-that-nothing-uses/node_modules/waiting/used.js
+export function used() { return "used"; }
+//// top-level-await-in-a-module-that-nothing-uses/node_modules/waiting/waits.js
+await null;
+console.log("waits.js went on after its await");
+export function unused() { return "unused"; }
+//// top-level-await-in-a-module-that-nothing-uses/schedules.js
+queueMicrotask(() => console.log("the job that schedules.js queued"));
+//// top-level-names-read-inside-a-with-block.cjs
+// Inside `with` a name is looked for in the object first and then outside: the constants outside stay, also one that is declared behind the function that reads it.
+const outer = "outer";
+const other = { inner: "inner" };
+const scope = { unrelated: 1 };
+with (scope) {
+  console.log(outer, other.inner);
+}
+function late() {
+  with (scope) { return typeof lateConstant + lateConstant; }
+}
+const lateConstant = "late";
+console.log(late());
+//// top-level-names-that-only-the-text-of-an-eval-uses.js
+// Nothing but the text of a direct eval uses these three names, so a file with one keeps all it declares.
+const secret = 41;
+class Hidden { value() { return "hidden"; } }
+const arrow = () => "arrow";
+console.log(eval("secret + 1"), eval("new Hidden().value()"), eval("arrow()"));
+//// top-level-statements-around-things-nothing-uses.js
+// Control flow at the top level of a module whose results nothing reads: conditions, loops, try and finally, a label, a block with its own declarations, a switch, a top-level await, and a using declaration. `bun run` and `bun build --compile` print the same.
+const log = [];
+function effect(name) { log.push(name); return name; }
+
+if (effect("a condition")) {
+  const inside = effect("a constant in an arm");
+}
+for (let i = 0; i < 2; i++) {
+  const unused = effect("a loop body " + i);
+}
+for (const unused of [effect("the list of a for-of")]);
+for (const unused in { [effect("a key of a for-in")]: 1 });
+while (log.length < 0) effect("never");
+try {
+  const unused = effect("a try block");
+} finally {
+  effect("a finally block");
+}
+{
+  let scoped = effect("a bare block");
+  function hoistedInBlock() { return effect("never"); }
+}
+label: {
+  const unused = effect("a labeled block");
+  break label;
+}
+switch (effect("a discriminant")) {
+  case effect("a case that is compared"):
+    break;
+  default:
+    effect("the default");
+}
+const awaited = await new Promise(resolve => { effect("an executor"); resolve(1); });
+await null;
+{
+  using resource = { [Symbol.dispose]() { effect("a disposer"); } };
+}
+var hoisted = effect("a var");
+var hoisted = effect("the same var again");
+
+console.log(log.join("\n"));
+//// top-level-variables-of-a-commonjs-file-and-its-exports/direct.cjs
+const constant = "a constant";
+const unused = "unused";
+class Klass {}
+class Unused {}
+const list = [1, 2];
+const named = "named";
+exports.constant = constant;
+exports.Klass = Klass;
+exports.list = list;
+exports.named = named;
+//// top-level-variables-of-a-commonjs-file-and-its-exports/late.cjs
+module.exports = { read: () => below, get later() { return alsoBelow; } };
+const below = "declared below the export";
+const alsoBelow = "read by a getter";
+const unused = below + alsoBelow;
+//// top-level-variables-of-a-commonjs-file-and-its-exports/main.js
+// The constants, classes and functions of these CommonJS files are named only where they are put into exports, each in another way. Beside them stand ones that nothing names.
+import direct from "./direct.cjs";
+import { named } from "./direct.cjs";
+import whole from "./whole.cjs";
+import late from "./late.cjs";
+import viaThis from "./via-this.cjs";
+
+console.log(direct.constant, direct.Klass.name, direct.list.join(), named);
+console.log(whole.constant, whole.nested.inner, new whole.Klass().value());
+console.log(late.read(), late.later);
+console.log(viaThis.constant, viaThis.computed);
+//// top-level-variables-of-a-commonjs-file-and-its-exports/via-this.cjs
+const constant = "through this";
+const computed = "under a computed name";
+this.constant = constant;
+module["exp" + "orts"]["comp" + "uted"] = computed;
+//// top-level-variables-of-a-commonjs-file-and-its-exports/whole.cjs
+const constant = "in a literal";
+const inner = "two levels down";
+const nested = { inner };
+const Klass = class { value() { return helper; } };
+const helper = "read by a method";
+const unused = { nested };
+module.exports = { constant, nested, Klass };
+//// two-barrels-export-from-each-other/main.js
+// "sideEffects": false. Each of two barrels exports one name of its own files and passes on the other's. The program asks the left one for a name that the right one holds, and the right one for a name that the left one holds. Every file prints when it is evaluated. `bun build --compile` leaves out the two files that nothing asks for.
+import { fromRight } from "two-barrels/left.js";
+import { fromLeft } from "two-barrels/right.js";
+
+console.log(fromRight(), fromLeft());
+//// two-barrels-export-from-each-other/node_modules/two-barrels/left-file.js
+console.log("left-file.js is evaluated");
+export function fromLeft() { return "from left"; }
+//// two-barrels-export-from-each-other/node_modules/two-barrels/left-unused.js
+console.log("left-unused.js is evaluated");
+export function unusedLeft() { return "unused"; }
+//// two-barrels-export-from-each-other/node_modules/two-barrels/left.js
+export { fromLeft } from "./left-file.js";
+export { unusedLeft } from "./left-unused.js";
+export { fromRight, unusedRight } from "./right.js";
+//// two-barrels-export-from-each-other/node_modules/two-barrels/package.json
+{ "name": "two-barrels", "version": "1.0.0", "type": "module", "sideEffects": false }
+//// two-barrels-export-from-each-other/node_modules/two-barrels/right-file.js
+console.log("right-file.js is evaluated");
+export function fromRight() { return "from right"; }
+//// two-barrels-export-from-each-other/node_modules/two-barrels/right-unused.js
+console.log("right-unused.js is evaluated");
+export function unusedRight() { return "unused"; }
+//// two-barrels-export-from-each-other/node_modules/two-barrels/right.js
+export { fromRight } from "./right-file.js";
+export { unusedRight } from "./right-unused.js";
+export { fromLeft } from "./left.js";
+//// two-functions-call-each-other-and-one-is-referenced.ts
+// isEven and isOdd call each other; the program names only isEven. ping, pong and pang form a ring that is entered at pong, across two files' worth of kinds: a declaration, an arrow constant and a function constant.
+function isEven(n: number): boolean {
+  return n === 0 ? true : isOdd(n - 1);
+}
+function isOdd(n: number): boolean {
+  return n === 0 ? false : isEven(n - 1);
+}
+
+function ping(n: number): string {
+  return n === 0 ? "ping" : pong(n - 1);
+}
+const pong = (n: number): string => (n === 0 ? "pong" : pang(n - 1));
+const pang = function (n: number): string {
+  return n === 0 ? "pang" : ping(n - 1);
+};
+
+////= lines-13	lonelyA	lonelyB
+////= lines-13	lonelyB	lonelyA
+
+console.log(isEven(7), isEven(8));
+console.log(pong(0), pong(1), pong(2), pong(3));
+//// unused-constants-with-and-without-effects.js
+// Top-level constants that nothing reads. Those whose initializer calls something, reads a getter, converts an object or runs an iterator have an effect that shows in the log. `bun run` and `bun build --compile` print the same.
+const log = [];
+function effect(name) { log.push(name); return name; }
+const source = { get getter() { return effect("a getter"); } };
+const converts = { toString() { return effect("toString"); }, valueOf() { return effect("valueOf"); } };
+const iterable = { *[Symbol.iterator]() { effect("an iterator"); } };
+
+const number = 1 + 2;
+const text = "a" + "b";
+const literal = { a: 1, b: [2, 3] };
+const arrow = () => effect("never called");
+const call = effect("a call");
+const construct = new (class { constructor() { effect("a constructor"); } })();
+const member = source.getter;
+const template = `${converts}`;
+const sum = converts + 1;
+const spreadArray = [...iterable];
+const spreadObject = { ...source };
+const tagged = effect`a tagged template`;
+const conditional = log.length ? effect("an arm of a conditional") : 0;
+const optional = source?.getter;
+const inOperator = "x" in new Proxy({}, { has() { effect("a has trap"); return true; } });
+const instance = {} instanceof class { static [Symbol.hasInstance]() { effect("hasInstance"); return true; } };
+const awaited = await { then(resolve) { effect("then"); resolve(); } };
+
+console.log(log.join("\n"));
+//// unused-declarations-that-compute-with-a-name-in-its-dead-zone/cases/computed-key.js
+const early = { [late]: 1 };
+const late = "key";
+//// unused-declarations-that-compute-with-a-name-in-its-dead-zone/cases/enum-like.js
+const early = Object.freeze({ a: late });
+const late = 1;
+//// unused-declarations-that-compute-with-a-name-in-its-dead-zone/cases/member.js
+const early = late.length;
+const late = "text";
+//// unused-declarations-that-compute-with-a-name-in-its-dead-zone/cases/negation.js
+const early = -late;
+const late = 1;
+//// unused-declarations-that-compute-with-a-name-in-its-dead-zone/cases/statement.js
+late;
+late + 1;
+const late = 1;
+//// unused-declarations-that-compute-with-a-name-in-its-dead-zone/cases/sum.js
+const early = late + 1;
+const late = 1;
+//// unused-declarations-that-compute-with-a-name-in-its-dead-zone/cases/template.js
+const early = `a${late}`;
+const late = 1;
+//// unused-declarations-that-compute-with-a-name-in-its-dead-zone/main.js
+// Each file declares something that nothing uses and whose initializer computes with a constant that is declared further down: a sum, a template, a member, a computed key, a sign, a call. Such a declaration stays, and evaluating it throws a ReferenceError, as in `bun run`. An executable of `bun build --compile` loads every file: there the constants of a file that import() loads are vars, which have no dead zone.
+const loads = {
+  "sum": () => import("./cases/sum.js"),
+  "template": () => import("./cases/template.js"),
+  "member": () => import("./cases/member.js"),
+  "computed-key": () => import("./cases/computed-key.js"),
+  "negation": () => import("./cases/negation.js"),
+  "statement": () => import("./cases/statement.js"),
+  "enum-like": () => import("./cases/enum-like.js"),
+};
+////= for
+//// unused-declarations-that-only-name-something-in-its-dead-zone/cases/array.js
+const early = [late];
+let late = 1;
+//// unused-declarations-that-only-name-something-in-its-dead-zone/cases/call.js
+const early = /* @__PURE__ */ late();
+const late = () => 1;
+//// unused-declarations-that-only-name-something-in-its-dead-zone/cases/comparison.js
+const early = late === 1;
+const late = 1;
+//// unused-declarations-that-only-name-something-in-its-dead-zone/cases/conditional.js
+const early = late ? 1 : 2;
+const late = true;
+//// unused-declarations-that-only-name-something-in-its-dead-zone/cases/extends.js
+class Early extends Late {}
+class Late {}
+//// unused-declarations-that-only-name-something-in-its-dead-zone/cases/object.js
+const early = { late, other: [late] };
+const late = 1;
+//// unused-declarations-that-only-name-something-in-its-dead-zone/cases/plain-name.js
+const early = late;
+const late = 1;
+//// unused-declarations-that-only-name-something-in-its-dead-zone/cases/static-field.js
+class Early { static held = late; }
+const late = 1;
+//// unused-declarations-that-only-name-something-in-its-dead-zone/cases/typeof.js
+const early = typeof late;
+const late = 1;
+//// unused-declarations-that-only-name-something-in-its-dead-zone/main.js
+// Each file declares something that nothing uses and that could be left out, but for one thing: it names a constant, a let or a class that is declared further down. `bun run` evaluates the declaration, which throws a ReferenceError (all but `extends`). `bun build --compile` leaves the declaration out, as the bundler does not count the dead zone of a name as an effect, and every file loads.
+const loads = {
+  "plain-name": () => import("./cases/plain-name.js"),
+  "call": () => import("./cases/call.js"),
+  "object": () => import("./cases/object.js"),
+  "array": () => import("./cases/array.js"),
+  "extends": () => import("./cases/extends.js"),
+  "static-field": () => import("./cases/static-field.js"),
+  "typeof": () => import("./cases/typeof.js"),
+  "comparison": () => import("./cases/comparison.js"),
+  "conditional": () => import("./cases/conditional.js"),
+};
+////= for
+//// unused-declarations-whose-values-do-something.ts
+// Nothing reads any of these declarations, and each of them does something when it is evaluated. All of it happens, in this order.
+const log: string[] = [];
+const sideEffect = log.push("call");
+const getter = { get value() { log.push("getter"); return 1; } }.value;
+const spread = { ...{ get x() { log.push("spread"); return 1; } } };
+const templated = `${{ toString() { log.push("toString"); return ""; } }}`;
+class WithStatic { static made = log.push("static field"); static { log.push("static block"); } }
+class WithKey { [(log.push("computed key"), "k")]() {} }
+const made = new (class { constructor() { log.push("constructor"); } })();
+const tagged = ((strings: TemplateStringsArray) => log.push("tag"))`x`;
+const awaited = await { then(resolve: (value: number) => void) { log.push("then"); resolve(1); } };
+const inOperator = "a" in new Proxy({}, { has() { log.push("has"); return true; } });
+const unary = +{ valueOf() { log.push("valueOf"); return 1; } };
+console.log(log.join());
+//// unused-enums-namespaces-and-object-literals.ts
+// Nothing reads these. An enum member or a namespace statement that calls something has an effect; so have a computed key, a spread of an object with a getter and a method call in an object literal. A getter that is only defined has none. `bun run` and `bun build --compile` print the same.
+const log: string[] = [];
+function effect(name: string): any { log.push(name); return name.length; }
+const withGetter = { get value() { return effect("a getter read by a spread"); } };
+
+enum Plain { A, B }
+enum Computed { A = effect("an enum member") }
+const enum Erased { A = 1 }
+namespace Empty { export interface OnlyTypes {} }
+namespace Calls { effect("a statement of a namespace"); }
+namespace Exports { export const value = effect("an exported constant of a namespace"); }
+
+const definesGetter = { get value() { return effect("never"); } };
+const definesMethod = { method() { return effect("never"); } };
+const computedKey = { [effect("a computed key")]: 1 };
+const spread = { ...withGetter };
+const callInside = { value: effect("a call inside a literal") };
+const nested = { inner: { list: [effect("a call inside a nested array")] } };
+
+console.log(log.join("\n"));
+//// unused-exports-of-an-imported-file-have-initializers/main.js
+// values.js is imported for one name. Its other exports are read by nobody, and their initializers call something, are marked pure, or are plain values. `bun run` runs all of them. `bun build --compile` drops the call marked pure and nothing else, and --aot follows it.
+import { used, log } from "./values.js";
+
+console.log(used);
+console.log(log.join("\n"));
+//// unused-exports-of-an-imported-file-have-initializers/values.js
+export const log = [];
+function effect(name) { log.push(name); return name; }
+
+export const used = effect("used");
+export const unusedCall = effect("an unused export with a call");
+export const unusedMarked = /* @__PURE__ */ effect("an unused export with a call marked pure");
+export const unusedPlain = 1;
+export let unusedLet = effect("an unused let");
+export var unusedVar = effect("an unused var");
+export class UnusedClass { static field = effect("a static field of an unused exported class"); }
+export default effect("an unused default export");
+export const { unusedFromPattern = effect("a default in the pattern of an unused export") } = {};
+//// unused-functions-and-classes-that-are-given-properties.js
+// Nothing calls these functions or constructs these classes, yet statements at the top level store into them, define properties on them and pass them on. The right-hand sides and the calls run. `bun run` and `bun build --compile` print the same.
+const log = [];
+function effect(name) { log.push(name); return name; }
+
+function plain() {}
+plain.label = effect("a property of a function");
+plain.prototype.method = effect("a property of a prototype");
+Object.defineProperty(plain, "defined", { value: effect("a defined property") });
+Object.assign(plain, { assigned: effect("an assigned property") });
+
+const arrow = () => {};
+arrow.displayName = effect("a property of an arrow function");
+
+class Klass {}
+Klass.label = effect("a property of a class");
+Klass.prototype.extra = effect("a property of a class's prototype");
+Object.freeze(Klass);
+log.push("frozen: " + Object.isFrozen(Klass));
+
+function registered() {}
+const registry = new Set();
+registry.add(registered);
+log.push("registered: " + registry.size);
+
+function withSetter() {}
+Object.defineProperty(withSetter, "watched", { set(value) { effect("a setter got " + value); } });
+withSetter.watched = "x";
+
+console.log(log.join("\n"));
+//// unused-locals-are-errors-and-a-part-is-used-only-by-a-part-that-is-left-out/lib.ts
+export const helper = () => "helper";
+//// unused-locals-are-errors-and-a-part-is-used-only-by-a-part-that-is-left-out/main.ts
+// tsconfig.json turns unused locals into errors. Each constant, class and enum here is used, but only by an exported declaration that nobody imports and that is left out. A build that does not look at what it leaves out must not call them unused.
+import { helper } from "./lib";
+
+const inner = 1;
+const list = [inner];
+class Base {}
+enum Kind { A }
+const arrow = () => helper();
+export const unusedExport = { list, Base, kind: Kind.A, arrow };
+export class UnusedClass extends Base { static kind = Kind.A; }
+
+console.log("built and ran");
+//// unused-locals-are-errors-and-a-part-is-used-only-by-a-part-that-is-left-out/tsconfig.json
+////= lines-7	"noUnusedLocals"
+//// unused-names-bound-by-patterns.js
+// Nothing reads the names these patterns bind. Taking a value apart has effects of its own: a default that calls something, a getter, an iterator and its return method, a computed key, a rest element over a proxy. `bun run` and `bun build --compile` print the same.
+const log = [];
+function effect(name) { log.push(name); return name; }
+const source = { get getter() { return effect("a getter"); }, present: 1 };
+const iterable = {
+  [Symbol.iterator]() {
+    effect("Symbol.iterator");
+    return { next() { effect("next"); return { done: false, value: 1 }; }, return() { effect("return"); return {}; } };
+  },
+};
+const proxy = new Proxy({ a: 1 }, { ownKeys(target) { effect("an ownKeys trap"); return Reflect.ownKeys(target); } });
+
+const { missing = effect("a default that is taken") } = source;
+const { present = effect("never") } = source;
+const { getter } = source;
+const [first] = iterable;
+const { [effect("a computed key")]: computed } = source;
+const { ...rest } = proxy;
+const [inner = effect("a default in an array pattern")] = [];
+const { nested: { deep = effect("a default in a nested pattern") } = {} } = source;
+for (const { looped = effect("a default in a loop") } of [{}]);
+
+console.log(log.join("\n"));
+//// used-declarations-around-declarations-that-are-left-out.js
+// Declarations that are used stand between ones that nothing uses. What is used is evaluated in the order written, a function that is hoisted reads constants that come later, and a read that comes too early still throws.
+const log = [];
+const unused1 = { a: 1 };
+const first = log.push("first");
+const unused2 = [1, 2, 3];
+function hoisted() { return [second, third.value, Fourth.name].join(); }
+const unused3 = () => hoisted();
+////= lines-10	" before second"
+const second = "second";
+const unused4 = "text";
+////= lines-10	" before third"
+const third = { value: "third" };
+class Unused5 {}
+////= lines-10	" before Fourth"
+class Fourth {}
+const unused6 = class {};
+log.push(hoisted());
+var late = "a var is undefined before its statement";
+function readsVar() { return typeof early + " " + typeof late; }
+log.push(readsVar());
+var early = 1;
+log.push(readsVar());
+console.log(log.join("\n"));
+//// values-that-look-inert-and-are-not.js
+// Each unused declaration looks like a plain value and hides something that runs when it is evaluated: a computed key that is an object, a class's computed key, a spread, a template with an object, a getter behind a pattern, a default in a pattern, a tag, `in`, instanceof, a comparison and a sum that convert an object, a class that extends a call, `new` without a mark, an optional call, a comma. `bun run` runs all of it. `bun build --compile` takes a name as the computed key of a class member for harmless, so the two classes go and the key's toString runs once, for the object literal; everything else runs.
+const log = [];
+const effect = name => { log.push(name); return name; };
+const keyObject = { toString() { return effect("toString of a key"); } };
+const converts = { valueOf() { effect("valueOf"); return 1; }, [Symbol.toPrimitive]: undefined };
+const primitive = { [Symbol.toPrimitive]() { return effect("Symbol.toPrimitive"); } };
+const withGetter = { get value() { return effect("a getter"); } };
+const iterable = { *[Symbol.iterator]() { effect("an iterator"); } };
+class HasInstance { static [Symbol.hasInstance]() { effect("Symbol.hasInstance"); return true; } }
+const trap = new Proxy({}, { has() { effect("a has trap"); return true; }, get() { return effect("a get trap"); } });
+
+const a1 = { [keyObject]: 1 };
+class A2 { [keyObject]() {} }
+class A3 { static [keyObject] = 1; }
+const a4 = { ...withGetter };
+const a5 = [...iterable];
+const a6 = `${primitive}`;
+const a7 = "" + primitive;
+const { value: a8 } = withGetter;
+const [a9] = iterable;
+const { a10 = effect("a default in a pattern") } = {};
+const a11 = effect`a tag`;
+const a12 = "key" in trap;
+const a13 = {} instanceof HasInstance;
+const a14 = converts == 1;
+const a15 = converts < 2;
+const a16 = converts + 1;
+const a17 = -converts;
+const a18 = ~converts;
+class A19 extends (effect("extends"), Object) {}
+const a20 = new (class { constructor() { effect("a constructor"); } })();
+const a21 = effect?.("an optional call");
+const a22 = (effect("the left of a comma"), 1);
+const a23 = trap.anything;
+const a24 = trap["any" + "thing"];
+const a25 = withGetter?.value;
+const a26 = [effect("an element")];
+const a27 = { key: effect("a property value") };
+const a28 = true && effect("the right of &&");
+const a29 = null ?? effect("the right of ??");
+const a30 = log.length ? effect("an arm") : 0;
+const a31 = typeof effect("the operand of typeof");
+const a32 = void effect("the operand of void");
+const a33 = !effect("the operand of !");
+const a34 = delete trap.gone;
+let a35 = 0;
+const a36 = a35++;
+
+console.log(log.join("\n"));
+//// variables-that-are-stored-to-and-never-read.js
+// Each variable has a plain initializer and nothing ever reads it, but something stores to it, each in another way. The right-hand sides have effects, so the stores stay and need a variable to store to.
+const log = [];
+function effect(name) { log.push(name); return name; }
+
+let plain = 1;
+plain = effect("a plain store");
+let compound = 1;
+compound += effect("a compound store").length;
+let logical = null;
+logical ??= effect("a logical store");
+let counted = 1;
+counted++;
+--counted;
+let inArray = 1;
+[inArray] = [effect("an array pattern")];
+let inObject = 1;
+({ inObject } = { inObject: effect("an object pattern") });
+let renamed = 1;
+({ key: renamed } = { key: effect("a renamed property") });
+let withDefault = 1;
+({ withDefault = effect("a default in a pattern") } = {});
+let restOfArray = 1;
+[...restOfArray] = [effect("a rest element")];
+let restOfObject = 1;
+({ ...restOfObject } = { a: effect("a rest property") });
+let nested = 1;
+[{ deep: [nested] }] = [{ deep: [effect("a nested pattern")] }];
+let inForOf = 1;
+for (inForOf of [effect("a for-of head")]);
+let inForIn = 1;
+for (inForIn in { [effect("a for-in head")]: 1 });
+let inForOfPattern = 1;
+for ([inForOfPattern] of [[effect("a pattern in a for-of head")]]);
+var viaVar = 1;
+viaVar = effect("a store to a var");
+let inFunction = 1;
+function stores() { inFunction = effect("a store inside a function"); }
+stores();
+let inArrow = 1;
+(() => (inArrow = effect("a store inside an arrow function")))();
+let inClass = 1;
+class Storer { static { inClass = effect("a store inside a static block"); } }
+let chained = 1, alsoChained = 1;
+chained = alsoChained = effect("a chained store");
+
+console.log(log.join("\n"));
+//// what-a-function-nobody-calls-declares-inside-is-a-type-outside.ts
+// The return types of these functions name things that exist only inside their bodies: a local class, a local enum, an object with a method, a closure, a tuple from a destructuring. Nobody calls the functions; the types are used on values that are made elsewhere.
+function makesLocalClass() {
+  class Local {
+    size = 3;
+    grow() {
+      return this.size + 1;
+    }
+  }
+  return new Local();
+}
+function makesLocalEnum() {
+  enum Direction {
+    Up = "up",
+    Down = "down",
+  }
+  return Direction.Up as Direction;
+}
+function makesClosure() {
+  let count = 0;
+  return { next: () => ++count, reset: (to: number) => void (count = to) };
+}
+function makesTuple() {
+  const [first, ...rest] = [1, "two", true] as [number, string, boolean];
+  return { first, rest };
+}
+function inferredPredicate(value: unknown) {
+  return typeof value === "string";
+}
+
+const local: ReturnType<typeof makesLocalClass> = { size: 5, grow: () => 6 };
+const direction = "down" as ReturnType<typeof makesLocalEnum>;
+const closure: ReturnType<typeof makesClosure> = { next: () => 1, reset: () => {} };
+const tuple: ReturnType<typeof makesTuple> = { first: 2, rest: ["three", false] };
+const predicate: typeof inferredPredicate = (value): value is string => typeof value === "string";
+
+const unknown: unknown = "text";
+console.log(local.size + local.grow(), direction.toUpperCase(), closure.next() + 1, closure.reset(2), tuple.first + 1, tuple.rest[0].length, !tuple.rest[1]);
+if (predicate(unknown)) console.log(unknown.length);

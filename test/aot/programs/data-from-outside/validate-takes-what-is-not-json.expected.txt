@@ -34,7 +34,7 @@ a getter that misfits once TypeError a invalid_type number string
 reads 2
 a proxy of an object {x:1,more:"m",y:2} {"ownKeys":1,"describe x":1,"get x":1,"describe more":1,"get more":1,"describe y":1,"get y":1} {x:1,more:"m",y:2}
 a proxy of an array [1,2]
-{"get Symbol(Symbol.iterator)":1,"get length":3,"get 0":1,"get 1":1}
+{"get length":1,"get 0":1,"get 1":1}
 a proxy that is refused TypeError x invalid_type number string
 {"ownKeys":1,"describe x":1,"get x":1,"describe y":1,"get y":1}
 a cycle under unknown true true true true

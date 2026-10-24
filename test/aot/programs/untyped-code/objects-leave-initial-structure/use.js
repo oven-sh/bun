@@ -1,3 +1,0 @@
-export function read(list) { let text = ""; for (let i = 0; i < list.length; i++) { const s = list[i]; let one; try { one = String(s.id) + "," + String(s.name) + "," + String(s.sent) + "," + typeof s.raw; } catch (error) { one = error.constructor.name; } text += one + ";"; } return text; }
-export function store(list, id, name) { let thrown = 0; for (let i = 0; i < list.length; i++) { const s = list[i]; try { s.id = id; s.name = name; } catch (error) { thrown++; } } return thrown; }
-export function strictStore(list, id) { "use strict"; let text = ""; for (let i = 0; i < list.length; i++) { const s = list[i]; try { s.id = id; text += "."; } catch (error) { text += error.constructor.name[0]; } } return text; }

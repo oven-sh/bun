@@ -1,4 +1,3 @@
-declare function $arrayFrom<T>(items: Iterable<T> | ArrayLike<T>): T[];
 declare function $call<R>(f: unknown, thisArg: unknown, ...args: unknown[]): R;
 declare function $hasOwn(object: object, key: PropertyKey): boolean;
 declare function $isArray(value: any): value is any[];
@@ -105,6 +104,15 @@ interface Run {
   matchesPattern: MatchesPattern;
   // Undefined when the whole value is a copy that nobody else has.
   copies: Set<object> | undefined;
+  // The copies of arrays that are not read to the end.
+  unread: Map<object, Unread> | undefined;
+  remainingHoles: number;
+}
+
+// A copy holds the elements that have been read so far.
+interface Unread {
+  source: any;
+  length: number;
 }
 
 // The number of the case in holds(). A rule that tests nothing has none.
@@ -138,6 +146,8 @@ function kindOfRule(rule: PlanRule["rule"]): number {
     case "DefaultNumber":
     case "DefaultString":
       return 11;
+    default:
+      throw new TypeError("a validation plan holds a rule that is not known: " + rule);
   }
 }
 
@@ -224,6 +234,11 @@ function maxIssueCount(): number {
   return 100;
 }
 
+// In all the arrays of one value.
+function maxHoleCount(): number {
+  return 65536;
+}
+
 function createRun(plan: string, preparedByText: Map<string, any>, isCopy: boolean): Run {
   const prepared = prepare(plan, preparedByText);
   return {
@@ -235,6 +250,8 @@ function createRun(plan: string, preparedByText: Map<string, any>, isCopy: boole
     optionalUnions: prepared.optionalUnions,
     matchesPattern: preparedUnder("matchesPattern", preparedByText),
     copies: isCopy ? undefined : new $Set(),
+    unread: isCopy ? undefined : new $Map(),
+    remainingHoles: maxHoleCount(),
   };
 }
 
@@ -382,11 +399,16 @@ function holds(matchesPattern: MatchesPattern, rule: PlanRule, value: any): bool
     case 8:
       return matchesPattern(rule.source!, value);
     case 9:
-      return rule.source ? matchesPattern(rule.source, value) : $urlCanParse(value);
+      if (rule.source) return matchesPattern(rule.source, value);
+      if (rule.format !== "url")
+        throw new TypeError("a validation plan holds a format that is not known: " + rule.format);
+      return $urlCanParse(value);
     case 10:
       return matchesTemplate(matchesPattern, rule.texts!, rule.placeholders!, value);
-    default:
+    case 11:
       return true;
+    default:
+      throw new TypeError("a validation plan holds a rule that is not known: " + rule.rule);
   }
 }
 
@@ -395,6 +417,20 @@ function allHold(run: Run, node: PlanNode, value: any): boolean {
   if (rules === undefined) return true;
   for (let i = 0; i < rules.length; i++) {
     if (!holds(run.matchesPattern, rules[i], value)) return false;
+  }
+  return true;
+}
+
+// The rules of an array are about its length.
+function holdsOfLength(rule: PlanRule, length: number): boolean {
+  return rule.kind === 6 ? length >= rule.length! : rule.kind !== 7 || length <= rule.length!;
+}
+
+function allHoldOfLength(node: PlanNode, length: number): boolean {
+  const rules = node.rules;
+  if (rules === undefined) return true;
+  for (let i = 0; i < rules.length; i++) {
+    if (!holdsOfLength(rules[i], length)) return false;
   }
   return true;
 }
@@ -421,27 +457,81 @@ function addOnce(list: number[], at: number): void {
 function describes(run: Run, at: number, isArray: boolean): boolean {
   const described = run.nodes[at];
   if (described.describesArrays === undefined) {
-    described.describesArrays = described.describesOtherObjects = false;
+    let describesArrays = false;
+    let describesOtherObjects = false;
     const alternatives = [at];
     for (let i = 0; i < alternatives.length; i++) {
       const node = run.nodes[alternatives[i]];
       const arms = node.shape === "Union" ? (node.arms ?? []) : [];
       for (let j = 0; j < arms.length; j++) addOnce(alternatives, arms[j]);
-      if (node.shape === "Array" || node.shape === "Tuple") described.describesArrays = true;
-      else if (node.shape === "Dictionary" || node.shape === "Object") described.describesOtherObjects = true;
+      if (node.shape === "Array" || node.shape === "Tuple") describesArrays = true;
+      else if (node.shape === "Dictionary" || node.shape === "Object") describesOtherObjects = true;
     }
+    described.describesOtherObjects = describesOtherObjects;
+    described.describesArrays = describesArrays;
   }
   return (isArray ? described.describesArrays : described.describesOtherObjects) === true;
 }
 
-// Reading an object may run code of the program: getters, the traps of a proxy, an iterator.
+function toLength(value: any): number {
+  const length = +value;
+  if (!(length > 0)) return 0;
+  return length >= 9007199254740991 ? 9007199254740991 : length - (length % 1);
+}
+
+// An array says how long it is, and an array without a single element can say 4,294,967,295. So nothing is done once for each index up to the length:
+// the length is read first, and an element when somebody asks for it.
+function holdArray(run: Run, value: any): any[] {
+  const copy: any[] = [];
+  const length = toLength(value.length);
+  if (length !== 0) run.unread!.set(copy, { source: value, length });
+  return copy;
+}
+
+function unreadOf(run: Run, input: any): Unread | undefined {
+  return run.unread === undefined ? undefined : run.unread.get(input);
+}
+
+// Reads the next element into the copy. A hole is read as undefined. False if the arrays of the value have too many holes.
+function tryReadNext(run: Run, input: any[], unread: Unread): boolean {
+  const index = input.length;
+  const element = unread.source[index];
+  if (element === undefined && !$hasOwn(unread.source, index)) {
+    if (run.remainingHoles === 0) return false;
+    run.remainingHoles--;
+  }
+  input.push(element);
+  if (index + 1 === unread.length) run.unread!.delete(input);
+  return true;
+}
+
+function readNext(run: Run, input: any[], unread: Unread): void {
+  if (!tryReadNext(run, input, unread))
+    throw new RangeError("The arrays of the value have more than " + maxHoleCount() + " holes");
+}
+
+function heldElement(run: Run, input: any[], unread: Unread | undefined, index: number, at: number): any {
+  if (unread !== undefined && index >= input.length) readNext(run, input, unread);
+  return heldAt(run, input, index, at);
+}
+
+// A copy that is handed on as it is holds all that its array holds.
+function readToEnd(run: Run, input: any): void {
+  const unread = isObject(input) ? unreadOf(run, input) : undefined;
+  if (unread === undefined) return;
+  while (input.length < unread.length) readNext(run, input, unread);
+}
+
+// Reading an object may run code of the program: getters, the traps of a proxy.
 function heldAt(run: Run, holder: any, key: any, at: number): any {
   const value = holder[key];
   const copies = run.copies;
   if (copies === undefined || !isObject(value) || copies.has(value)) return value;
+  // What the type says nothing about is asked nothing.
+  if (!describes(run, at, true) && !describes(run, at, false)) return value;
   const isArray = $isArray(value);
   if (!describes(run, at, isArray)) return value;
-  const copy = isArray ? $arrayFrom(value) : { ...value };
+  const copy = isArray ? holdArray(run, value) : { ...value };
   copies.add(copy);
   define(holder, key, copy);
   return copy;
@@ -493,22 +583,26 @@ function remember(memory: Map<object, unknown[]>, at: number, input: any, verdic
 
 function buildArray(run: Run, node: PlanNode, input: any): any {
   if (!$isArray(input)) return run.refused;
-  const result = $arrayFrom(input);
-  if (!allHold(run, node, result)) return run.refused;
-  for (let i = 0, length = result.length; i < length; i++) {
-    const item = build(run, node.element!, heldAt(run, input, i, node.element!));
+  const unread = unreadOf(run, input);
+  const length = unread === undefined ? input.length : unread.length;
+  if (!allHoldOfLength(node, length)) return run.refused;
+  const result: any[] = [];
+  for (let i = 0; i < length; i++) {
+    const item = build(run, node.element!, heldElement(run, input, unread, i, node.element!));
     if (item === run.refused) return run.refused;
-    result[i] = item;
+    result.push(item);
   }
   return result;
 }
 
 function buildTuple(run: Run, node: PlanNode, input: any): any {
   const elements = node.elements ?? [];
-  if (!$isArray(input) || input.length !== elements.length) return run.refused;
+  if (!$isArray(input)) return run.refused;
+  const unread = unreadOf(run, input);
+  if ((unread === undefined ? input.length : unread.length) !== elements.length) return run.refused;
   const result: any[] = [];
   for (let i = 0; i < elements.length; i++) {
-    const item = build(run, elements[i], heldAt(run, input, i, elements[i]));
+    const item = build(run, elements[i], heldElement(run, input, unread, i, elements[i]));
     if (item === run.refused) return run.refused;
     result.push(item);
   }
@@ -586,6 +680,7 @@ function build(run: Run, at: number, input: any): any {
   let result: any = input;
   switch (node.shape) {
     case "Unknown":
+      readToEnd(run, input);
       break;
     case "Never":
       return refused;
@@ -597,6 +692,7 @@ function build(run: Run, at: number, input: any): any {
       break;
     case "AnyObject":
       if (!isObject(input)) return refused;
+      readToEnd(run, input);
       break;
     case "Primitive":
       if (typeof input !== node.primitive) return refused;
@@ -667,9 +763,10 @@ function reportRules(run: Run, node: PlanNode, value: any, path: any[], issues: 
   const rules = node.rules;
   if (rules === undefined) return;
   const isArray = $isArray(value);
+  const unread = isArray ? unreadOf(run, value) : undefined;
   for (let i = 0; i < rules.length; i++) {
     const rule = rules[i];
-    if (holds(run.matchesPattern, rule, value)) continue;
+    if (unread === undefined ? holds(run.matchesPattern, rule, value) : holdsOfLength(rule, unread.length)) continue;
     let code = "invalid_format";
     let expected = "";
     switch (rule.rule) {
@@ -859,21 +956,29 @@ function report(run: Run, at: number, input: any, path: any[], issues: any[]): v
       code = "invalid_value";
       expected = $jsonStringify(node.value);
       break;
-    case "Array":
+    case "Array": {
       expected = "array";
       if (!$isArray(input)) break;
       reportRules(run, node, input, path, issues);
-      for (let i = 0; i < input.length && run.remainingIssues !== 0; i++) {
+      const unread = unreadOf(run, input);
+      const length = unread === undefined ? input.length : unread.length;
+      for (let i = 0; i < length && run.remainingIssues !== 0; i++) {
+        if (unread !== undefined && i >= input.length && !tryReadNext(run, input, unread)) return;
         const item = heldAt(run, input, i, node.element!);
         if (!isRightPrimitive(run, node.element!, item)) report(run, node.element!, item, withKey(path, i), issues);
       }
       return;
+    }
     case "Tuple": {
       const elements = node.elements ?? [];
       expected = "tuple";
-      if (!$isArray(input) || input.length !== elements.length) break;
-      for (let i = 0; i < elements.length; i++)
+      if (!$isArray(input)) break;
+      const unread = unreadOf(run, input);
+      if ((unread === undefined ? input.length : unread.length) !== elements.length) break;
+      for (let i = 0; i < elements.length; i++) {
+        if (unread !== undefined && i >= input.length && !tryReadNext(run, input, unread)) return;
         report(run, elements[i], heldAt(run, input, i, elements[i]), withKey(path, i), issues);
+      }
       return;
     }
     case "Dictionary":

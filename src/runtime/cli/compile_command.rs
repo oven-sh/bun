@@ -8,9 +8,6 @@ mod printing;
 mod reports;
 mod trimming;
 
-#[cfg(test)]
-mod tests;
-
 use core::ptr::NonNull;
 use core::time::Duration;
 

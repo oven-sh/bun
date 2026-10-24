@@ -1,7 +1,0 @@
-# Only an ordinary function with a store that something constructs with has a constructor shape: not a generator, an async function or an arrow function.
-constructor-functions.js:2 constructor function `P` = computed instance false computed static false
-absent: constructor-functions.js:5 constructor function `generator` = computed instance false computed static false
-absent: constructor-functions.js:6 constructor function `later` = computed instance false computed static false
-absent: constructor-functions.js:7 constructor function `plain` = computed instance false computed static false
-absent: constructor-functions.js:8 constructor function `() => { this.a = 1; }` = computed instance false computed static false
-absent: constructor-functions.js:9 constructor function `onlyCalled` = computed instance false computed static false

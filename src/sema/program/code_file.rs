@@ -28,14 +28,6 @@ struct AcceptedTree<'s, 'r> {
     typed_version_origin: Option<TypedVersionOrigin>,
 }
 
-#[derive(Copy, Clone)]
-struct AnalysisInputs<'a, 's> {
-    bind: BindOptions,
-    fold: &'a FoldInputs<'s>,
-    file: FileInputs<'s>,
-    settings: &'a TranspileSettings,
-}
-
 impl<'s> AcceptedTree<'s, '_> {
     fn replace_after_stack_overflow(
         &mut self,
@@ -58,17 +50,7 @@ impl<'s> AcceptedTree<'s, '_> {
     }
 }
 
-#[cfg(all(test, not(miri)))]
 pub(super) fn load_code_file<'s, 'r>(
-    context: &CodeLoadContext<'_, 's, 'r>,
-    arena: &'s Arena,
-    target: CodeTarget<'r>,
-    text: Cow<'static, [u8]>,
-) -> ParsedCodeFile<'s, 'r> {
-    load_code_file_of_graph(context, arena, target, text, false)
-}
-
-pub(super) fn load_code_file_of_graph<'s, 'r>(
     context: &CodeLoadContext<'_, 's, 'r>,
     arena: &'s Arena,
     target: CodeTarget<'r>,
@@ -113,7 +95,6 @@ pub(super) fn load_code_file_of_graph<'s, 'r>(
         false => context.inputs.fold,
     };
     let (bound, analyzed) = analyze(context, arena, key, settings, fold, &mut tree);
-    // `transform_tree` reads the comments that turn the React Compiler off.
     if !tree.request.options.keeps_comments {
         tree.hir.comments = Default::default();
     }
@@ -147,7 +128,6 @@ fn parse_options_of(
         experimental_decorators: !is_javascript
             && (settings.experimental_decorators || settings.emits_decorator_metadata),
         module_detection: ModuleDetection::Force,
-        // A default value stays in front of the body: nothing is rewritten for an older engine.
         bind: BindOptions {
             before_es2020: false,
             before_es2017: false,
@@ -334,22 +314,18 @@ fn analyze<'s, 'r>(
         false => resolver.declared_module_type(path),
     };
     let jsx_mode = jsx_mode_of(file_jsx, atoms);
-    let inputs = AnalysisInputs {
-        bind: BindOptions {
-            runtime: Some(runtime),
-            ..tree.request.options.bind
-        },
-        fold,
-        file: FileInputs {
-            declared_module_type,
-            import_meta_main: import_meta_main(context, key),
-            is_library: host.is_library_file(path),
-            host_values: tree.host_values,
-            jsx: jsx_mode,
-        },
-        settings,
+    let bind = BindOptions {
+        runtime: Some(runtime),
+        ..tree.request.options.bind
     };
-    let (bound, analysis) = analyze_with_host(context, arena, path, inputs, tree);
+    let file = FileInputs {
+        declared_module_type,
+        import_meta_main: import_meta_main(context, key),
+        is_library: host.is_library_file(path),
+        host_values: tree.host_values,
+        jsx: jsx_mode,
+    };
+    let (bound, analysis) = analyze_with_host(context, arena, path, bind, fold, file, tree);
     let analyzed = Analyzed {
         analysis,
         settings,
@@ -367,23 +343,19 @@ fn analyze<'s, 'r>(
     (bound, analyzed)
 }
 
-#[allow(clippy::large_types_passed_by_value)] // taken apart at once
 fn analyze_with_host<'s>(
     context: &CodeLoadContext<'_, 's, '_>,
     arena: &'s Arena,
     path: &[u8],
-    inputs: AnalysisInputs<'_, 's>,
+    bind: BindOptions,
+    fold: &FoldInputs<'s>,
+    mut file: FileInputs<'s>,
     tree: &mut AcceptedTree<'s, '_>,
 ) -> (Bound<'s>, FileAnalysis<'s>) {
     let &CodeLoadContext {
         host, ref atoms, ..
     } = context;
-    let AnalysisInputs {
-        bind,
-        fold,
-        mut file,
-        settings,
-    } = inputs;
+    let settings = tree.request.settings;
     let resolve = |specifier: &[u8]| resolve_macro_import(context, path, specifier);
     let mut is_transformed = false;
     loop {
@@ -438,16 +410,8 @@ fn jsx_mode_of(jsx: &JsxSettings, atoms: &Interner<'_>) -> JsxMode {
 }
 
 fn import_meta_main(context: &CodeLoadContext<'_, '_, '_>, key: LoadKey<'_>) -> Option<bool> {
-    let entry_points = &context.entry_points;
-    let is_entry_point = entry_points.iter().any(|entry_point| {
-        entry_point.key.loader == key.loader
-            && is_same_path(entry_point.key.path, key.path, context.is_case_sensitive)
-    });
-    match (
-        is_entry_point,
-        context.inputs.main_module,
-        entry_points.len(),
-    ) {
+    let (is_entry_point, count) = (context.is_entry_point(key), context.entry_points.len());
+    match (is_entry_point, context.inputs.main_module, count) {
         (false, ..) | (true, MainModule::Elsewhere, _) => Some(false),
         (true, MainModule::EntryPoint, 1) => Some(true),
         (true, MainModule::EntryPoint | MainModule::EntryPointOfProcessOrWorker, _) => None,

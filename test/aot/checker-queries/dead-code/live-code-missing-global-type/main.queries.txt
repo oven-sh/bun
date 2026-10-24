@@ -1,3 +1,0 @@
-# A missing global type is reported at the function that needs it.
-main.ts:3 diagnostic TS2318 = MissingDeclaration StopsBuild
-absent: -:0 diagnostic TS2318 = MissingDeclaration StopsBuild

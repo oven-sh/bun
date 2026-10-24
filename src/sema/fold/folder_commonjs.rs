@@ -7,11 +7,9 @@ use crate::module_format::{EsmSyntax, collect_this_of_file, file_esm_syntax};
 
 const VARIABLE_COUNT: usize = 5;
 
-/// What the text of a file can do to `module`, `exports`, `require`, `__filename` and `__dirname`.
 pub(super) struct LoaderNames {
     esm_syntax: EsmSyntax,
     is_stored: [bool; VARIABLE_COUNT],
-    // A direct `eval` names them, and the mapped `arguments` of the function around a CommonJS file are their other names.
     is_stored_out_of_sight: bool,
 }
 
@@ -53,7 +51,6 @@ impl<'s> Folder<'_, 's> {
         state.is_some_and(|&state| self.inputs.value_of(state).is_some())
     }
 
-    /// The one of the five names that `e` reads, where it holds what the loader has put there in every run.
     pub(super) fn find_loader_name(&self, e: ExprId) -> Option<CommonJsVariable> {
         let Binding::CommonJs(variable) = self.bound.binding(e) else {
             return None;
@@ -74,7 +71,6 @@ impl<'s> Folder<'_, 's> {
         is_unchanged.then_some(variable)
     }
 
-    /// A live `this` of the file makes a file without ES module syntax a CommonJS module, whose body is called on its exports object.
     fn is_this_of_commonjs_file(&self, e: ExprId) -> bool {
         matches!(self.hir[e].kind, ExprKind::This)
             && self.loader_names().esm_syntax == EsmSyntax::None
@@ -84,7 +80,6 @@ impl<'s> Folder<'_, 's> {
                 .contains(e.idx())
     }
 
-    // An object, a function or a path: true in a test, and reading it does nothing.
     pub(super) fn note_loader_value(&mut self, e: ExprId) -> Folded {
         self.conditions.insert(e, true);
         self.effects[e.idx()] = Effects::None;
@@ -105,7 +100,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// What `typeof` answers for one of the five names and for the `this` of a CommonJS file: every UMD header asks.
     pub(super) fn find_type_of_loader_value(&self, operand: ExprId) -> Option<Atom> {
         let operand = self.hir.skip_type_assertions(operand);
         if self.is_this_of_commonjs_file(operand) {
@@ -114,7 +108,6 @@ impl<'s> Folder<'_, 's> {
         self.find_loader_name(operand).map(type_of)
     }
 
-    /// Whether `e` is true in a test and evaluating it does nothing, although the build does not know the value.
     pub(super) fn is_truthy_without_effects(&self, e: ExprId) -> bool {
         self.conditions.get(&e) == Some(&true) && self.effects[e.idx()] == Effects::None
     }

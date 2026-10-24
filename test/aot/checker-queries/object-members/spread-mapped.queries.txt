@@ -1,7 +1,0 @@
-# A copy of a mapped member is written only if the mapped type is trusted. An access on the spread is unwritten either way.
-spread-mapped.ts:5 has `Stringify<Config>` = a Field unwritten checked string
-spread-mapped.ts:11 has `typeof untrusted` = a Field unwritten checked string
-spread-mapped.ts:12 has `typeof trusted` = a Field number checked number
-
-spread-mapped.ts:9 member `untrusted.a` = member a Field unwritten checked string
-spread-mapped.ts:10 member `trusted.a` = member a Field unwritten checked number

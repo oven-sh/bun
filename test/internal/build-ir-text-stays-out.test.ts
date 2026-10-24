@@ -1,4 +1,4 @@
-// The AoT compiler's IR is text for tests and dumps alone: Bun hands the engine the program as bytes. The check of the link edge
+// The AoT compiler's IR is text for tests alone: Bun hands the engine the program as bytes. The check of the link edge
 // (scripts/build/verify-binary.ts, "symbols") refuses an executable without assertions that defines a symbol of the engine's lexer,
 // parser or printer, or of the front end's printer. This holds the list that it is given.
 import { expect, test } from "bun:test";
@@ -66,7 +66,7 @@ test("a release build may define no symbol of IR text", () => {
   expect(matches(forbidden, "_ZN3JSC3AOT5Typed17JSONParserBuilder8emitNodeENS1_13ResultNodeRefE")).toBe(false);
 });
 
-test("a build with assertions has the engine's printer, for BUN_JSC_dumpAOTIR", () => {
+test("a build with assertions is not looked at", () => {
   using dir = tempDir("build-ir-text-stays-out", {});
   expect(binaryExpectations(config({ assertions: true }, String(dir))).forbiddenSymbols).toBeUndefined();
   expect(binaryExpectations(config({ buildType: "Debug" }, String(dir))).forbiddenSymbols).toBeUndefined();

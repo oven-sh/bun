@@ -1,0 +1,2985 @@
+////: lines-14
+function «1»(rs) {
+  let s = "";
+  for (let j = 0;j < rs.length; j++) {
+    const is = rs[j].kind === «2»;
+    s += is ? "1" : "0";
+  }
+  return s;
+}
+////: lines-17
+function «1»(rs) {
+  let n = 0;
+  for (let j = 0;j < rs.length; j++)
+    if (rs[j].kind === «2»)
+      n++;
+  return n;
+}
+//// json-values-of-unknown-type.ts
+// `JSON.stringify` of typed objects whose `unknown` fields hold every kind of value, and the generic answer where the writer declines.
+const print = (s: string) => console.log(s);
+interface Box { before: number; value: unknown; after: string }
+interface Point { x: number; y: number }
+class L extends Array<number> { }
+class Mixed extends Array<unknown> { }
+class Labeled extends Array<number> {
+    toJSON(): string {
+        return "from subclass";
+    }
+}
+class LaterDate extends Date { }
+
+function box(value: unknown): Box {
+    return { before: 1, value, after: "end" };
+}
+function attempt(f: () => unknown): string {
+    try {
+        return String(f());
+    } catch (e) {
+        return "throws " + (e as Error).name;
+    }
+}
+function show(label: string, value: unknown): void {
+    print(label);
+    print("  property " + attempt(() => JSON.stringify(box(value))));
+    print("  element  " + attempt(() => JSON.stringify([value, 2])));
+    print("  nested   " + attempt(() => JSON.stringify(box(box(value)))));
+    print("  root     " + attempt(() => JSON.stringify(value)));
+}
+function cat(a: string, b: string): string {
+    return a + b;
+}
+function nestedArrays(depth: number): unknown {
+    let value: unknown = [];
+    for (let i = 0; i < depth; i++)
+        value = [value];
+    return value;
+}
+function pointWithExtraProperties(): Point {
+    const point: Point = { x: 1, y: 2 };
+    (point as any).z = "extra";
+    (point as any)["with space"] = [3];
+    return point;
+}
+function subclassInstance(): L {
+    const list = new L();
+    list.push(1, 2, 3);
+    return list;
+}
+function mixedSubclassInstance(): Mixed {
+    const list = new Mixed();
+    list.push(1, "two", "日", { three: 3 }, [4]);
+    return list;
+}
+function labeledSubclassInstance(): Labeled {
+    const list = new Labeled();
+    list.push(1, 2);
+    return list;
+}
+function sparseSubclassInstance(): L {
+    const list = new L(3);
+    list[0] = 1;
+    return list;
+}
+
+const point: Point = { x: 1, y: 2.5 };
+show("typed object", point);
+show("extra properties", pointWithExtraProperties());
+show("ints", [1, 2, 3]);
+show("doubles", [1.5, -0, 1e21, 2.5]);
+show("strings", ["a", "b\"c", "日本"]);
+show("typed objects", [point, { x: 3, y: 4 } as Point, point]);
+show("nested arrays", nestedArrays(50));
+show("shallow nested arrays", nestedArrays(5));
+show("subclass", subclassInstance());
+show("subclass with plain object", mixedSubclassInstance());
+show("empty subclass", new L());
+show("null prototype array", Object.setPrototypeOf([1, 2], null));
+show("date", new Date(0));
+show("invalid date", new Date(NaN));
+show("wide string", "日本語");
+show("wide string to escape", "日\"\n\ud800");
+show("escapes", "quote \" backslash \\ newline \n tab \t control \u0001 end");
+show("rope", cat("left side of the rope ".repeat(3), "right side of the rope ".repeat(3)));
+show("wide rope", cat("left ".repeat(8), "日本".repeat(8)));
+show("primitives", [null, true, false, 0, NaN, Infinity]);
+
+show("function", () => 1);
+show("symbol", Symbol("s"));
+show("undefined", undefined);
+show("function with toJSON", Object.assign(() => 1, { toJSON() { return "from function"; } }));
+show("object with toJSON", { a: 1, toJSON() { return "from object"; } });
+show("array with toJSON", Object.assign([1, 2], { toJSON() { return "from array"; } }));
+show("subclass with toJSON", labeledSubclassInstance());
+show("subclass instance with own toJSON", Object.assign(subclassInstance(), { toJSON() { return "from instance"; } }));
+show("subclass with hole", sparseSubclassInstance());
+show("array with toJSON on new prototype", Object.setPrototypeOf([1, 2], { toJSON() { return "from prototype"; } }));
+const withGetter = pointWithExtraProperties();
+Object.defineProperty(withGetter, "computed", { get() { return 7; }, enumerable: true });
+show("getter among extra properties", withGetter);
+show("hole", [1, , 3]);
+show("wide string before hole", ["日", , 1]);
+show("undefined and symbol elements", [undefined, Symbol("s"), () => 1]);
+show("bigint", BigInt(10));
+show("bigint element", [1, BigInt(10)]);
+show("date subclass", new LaterDate(0));
+print(attempt(() => JSON.stringify(undefined)));
+print(attempt(() => JSON.stringify(() => 1)));
+(L.prototype as any).toJSON = function () { return "added later"; };
+show("subclass after toJSON is added", subclassInstance());
+//// keys-built-at-run-time.ts
+// Short strings built at run time and used as keys come from a cache of recent keys. Equal keys find the same entries while the cache grows, evicts keys and loses them to collections.
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+// The same text, built in a way the compiler does not look through.
+function spell(parts: (string | number)[]): string {
+  return parts.map(part => String(part)).join("").split("").join("");
+}
+
+const distinctKeyCount = 70000;
+const counts = new Map<string, number>();
+const sums: Record<string, number> = {};
+function countKeys(start: number, end: number): void {
+  for (let i = start; i < end; i++) {
+    const key = "k" + (i % distinctKeyCount);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    sums[key] = (sums[key] ?? 0) + i;
+  }
+}
+function describeCounts(): string {
+  let total = 0;
+  let weighted = 0;
+  for (const [key, count] of counts) {
+    total += count;
+    weighted += count * key.length;
+  }
+  let sum = 0;
+  for (const key in sums) sum += sums[key];
+  return [counts.size, total, weighted, Object.keys(sums).length, sum].join(" ");
+}
+function countMismatches(): number {
+  let mismatches = 0;
+  for (let i = 0; i < distinctKeyCount; i += 997) {
+    const key = "k" + i;
+    const spelled = spell(["k", i]);
+    if (key !== spelled || key.length !== spelled.length) mismatches++;
+    if (!counts.has(spelled) || counts.get(key) !== counts.get(spelled) || sums[key] !== sums[spelled]) mismatches++;
+    if (counts.has("q" + i) || counts.has("k" + i + "x") || "q" + i in sums) mismatches++;
+  }
+  return mismatches;
+}
+countKeys(0, 100000);
+console.log("the first 100000:", describeCounts(), countMismatches());
+collect();
+countKeys(100000, 200000);
+console.log("200000:", describeCounts(), countMismatches());
+collect();
+collect();
+countKeys(0, 200000);
+console.log("the same keys again:", describeCounts(), countMismatches());
+
+const byNumber = new Map<string, number>();
+for (let i = 0; i < 60000; i++) byNumber.set(String(i * 7), i);
+let numbersFound = 0;
+for (let i = 0; i < 60000; i++) {
+  if (byNumber.get("" + i * 7) === i) numbersFound++;
+  if (byNumber.has(i * 7 + 1 + "")) numbersFound--;
+}
+console.log("numbers as keys:", byNumber.size, numbersFound, byNumber.get(spell([419993])));
+
+const words = ["Accept", "Cache", "Content", "Control", "Encoding", "Forwarded", "Host", "Language", "Length", "Location", "Modified", "Origin", "Range", "Type", "Upgrade", "X"];
+const headerNames: string[] = [];
+for (let i = 0; i < 300; i++) headerNames.push(words[i % words.length] + "-" + words[(i * 5 + 3) % words.length] + "-" + i);
+function convertHeaderNames(): string {
+  const lowered = new Map<string, number>();
+  let checksum = 0;
+  let wrong = 0;
+  for (let i = 0; i < headerNames.length; i++) {
+    const name = headerNames[i];
+    const lower = name.toLowerCase();
+    const upper = name.toUpperCase();
+    lowered.set(lower, (lowered.get(lower) ?? 0) + 1);
+    if (lower.toUpperCase() !== upper || upper.toLowerCase() !== lower || lower.length !== name.length) wrong++;
+    if (lower !== spell([lower]) || upper !== spell([upper])) wrong++;
+    checksum += lower.charCodeAt(0) + upper.charCodeAt(1) * (i + 1);
+  }
+  return [lowered.size, checksum, wrong, headerNames[7].toLowerCase(), headerNames[299].toUpperCase()].join(" ");
+}
+console.log("300 header names:", convertHeaderNames());
+console.log("again:", convertHeaderNames());
+collect();
+console.log("after a collection:", convertHeaderNames());
+
+const codes = (text: string): string => Array.from(text, character => character.codePointAt(0)!.toString(16)).join(".");
+const oddCases = ["straße", "ÉtÉ", "ÿes", "5µm", "naïve", "İx", "ﬁx", "ǅ"];
+for (let round = 0; round < 2; round++) {
+  for (const text of oddCases) console.log("case of", codes(text), "is", codes(text.toLowerCase()), "and", codes(text.toUpperCase()));
+}
+
+const byLength = new Map<string, number>();
+const convertedLengths: number[] = [];
+for (const length of [2, 3, 63, 64, 65, 66, 1000]) {
+  const prefix = "P".repeat(length - 1);
+  for (let round = 0; round < 3; round++) {
+    for (let digit = 0; digit < 10; digit++) {
+      const key = prefix + digit;
+      byLength.set(key, (byLength.get(key) ?? 0) + 1);
+      sums[key] = (sums[key] ?? 0) + digit;
+      const lower = key.toLowerCase();
+      if (lower.length !== length || lower[0] !== "p" || lower[length - 1] !== String(digit) || lower.toUpperCase() !== key) convertedLengths.push(length);
+    }
+  }
+}
+let lengthsSeen = "";
+for (const [key, count] of byLength) {
+  if (key.endsWith("7")) lengthsSeen += key.length + ":" + count + ":" + sums[spell([key])] + " ";
+}
+console.log("keys of 2 to 1000 characters:", byLength.size, lengthsSeen + "wrong conversions:", convertedLengths.length);
+
+const wide = new Map<string, number>();
+for (let i = 0; i < 3000; i++) {
+  const beyondLatin1 = "kĀ" + (i % 1000);
+  const lastOfLatin1 = "kÿ" + (i % 1000);
+  const astral = "\u{1f600}" + (i % 1000);
+  wide.set(beyondLatin1, (wide.get(beyondLatin1) ?? 0) + 1);
+  wide.set(lastOfLatin1, (wide.get(lastOfLatin1) ?? 0) + 2);
+  wide.set(astral, (wide.get(astral) ?? 0) + 3);
+}
+console.log("characters at and above U+00FF:", wide.size, wide.get("kĀ" + 5), wide.get(spell(["kÿ", 5])), wide.get("\u{1f600}" + 999), wide.has("k" + 5), wide.has("kā" + 5));
+
+let narrowedFound = 0;
+for (let i = 0; i < 2000; i++) {
+  const narrowed = ("kĀ" + i).replace("Ā", "");
+  if (counts.get(narrowed) === counts.get("k" + i) && sums[narrowed] === sums["k" + i] && narrowed === "k" + i) narrowedFound++;
+}
+console.log("Latin-1 texts cut out of wider strings:", narrowedFound);
+
+const tiny = new Map<string, number>();
+const tinySums: Record<string, number> = {};
+const letters = "abcdefghij";
+for (let i = 0; i < 1000; i++) {
+  const digit = "" + (i % 10);
+  const letter = letters.slice(i % 10, (i % 10) + 1) + letters.slice(3, 3);
+  const empty = letters.slice(i % 10, i % 10) + letters.slice(5, 5);
+  for (const key of [digit, letter, empty]) {
+    tiny.set(key, (tiny.get(key) ?? 0) + 1);
+    tinySums["_" + key] = (tinySums["_" + key] ?? 0) + 1;
+    tinySums[key] = (tinySums[key] ?? 0) + 1;
+  }
+}
+console.log("keys of one and no characters:", tiny.size, tiny.get(""), tiny.get("7"), tiny.get("c"), tinySums[""], tinySums["7"], tinySums["c"], tinySums["_"], tinySums["_7"], Object.keys(tinySums).length);
+//// keys-concatenated-from-fields-that-are-tested.ts
+// A key is made of fields of several objects, as TypeScript's checker does with `source.id + "," + target.id`. Each field is read and tested between two concatenations.
+// Most objects hold what their type says. Some hold a string, undefined, null, a boolean, a bigint, an object whose conversion has an effect, a symbol, or have a getter with an effect:
+// the conversions, the reads and the errors come in the order of the source text, and every key is the text that plain Bun makes.
+// One case is left out: a symbol in front of a part whose read or conversion has an effect. ECMAScript refuses the symbol first, and so does the compiled program; the interpreter reads and converts the later parts first.
+interface Item {
+  id: number
+  name: string
+}
+const log: string[] = []
+function item(id: unknown, name: unknown = "n"): Item {
+  return { id, name } as Item
+}
+function pairKey(source: Item, target: Item): string {
+  return source.id + "," + target.id
+}
+function tripleKey(first: Item, second: Item, third: Item): string {
+  return first.id + ":" + second.id + ":" + third.id
+}
+function namedKey(source: Item, target: Item): string {
+  return source.name + "/" + target.name + "#" + source.id
+}
+function keyWithCall(source: Item, target: Item, between: () => void): string {
+  const start = source.id + ","
+  between()
+  return start + target.id
+}
+function keyInTry(source: Item, target: Item): string {
+  try {
+    return source.id + "|" + target.id
+  } catch (error) {
+    return "caught " + (error as Error).constructor.name
+  }
+}
+function templateKey(source: Item, target: Item): string {
+  return `${source.id}-${target.id}-${source.name}`
+}
+function attempt(action: () => string): string {
+  try {
+    return action()
+  } catch (error) {
+    return (error as Error).constructor.name
+  }
+}
+function flush(): string {
+  return log.splice(0).join(" ")
+}
+
+const cache = new Map<string, number>()
+let hits = 0
+const items: Item[] = []
+for (let i = 0; i < 300; i++) items.push(item(i, "n" + i))
+for (let round = 0; round < 40; round++) {
+  for (let i = 0; i < items.length; i++) {
+    const key = pairKey(items[i], items[(i * 7 + round) % items.length])
+    if (cache.has(key)) hits++
+    else cache.set(key, i)
+  }
+}
+console.log(cache.size, hits, tripleKey(items[1], items[22], items[299]), namedKey(items[3], items[4]), templateKey(items[5], items[6]))
+
+function talking(label: string, result: unknown): object {
+  return {
+    valueOf() {
+      log.push("valueOf " + label)
+      return result
+    },
+    toString() {
+      log.push("toString " + label)
+      return "text " + label
+    },
+  }
+}
+function withGetter(label: string, id: unknown): Item {
+  return {
+    get id() {
+      log.push("get " + label)
+      return id
+    },
+    name: label,
+  } as Item
+}
+const unusual: [string, () => Item][] = [
+  ["number", () => item(7)],
+  ["fraction", () => item(0.5)],
+  ["negative zero", () => item(-0)],
+  ["not a number", () => item(NaN)],
+  ["large", () => item(1e21)],
+  ["string", () => item("s")],
+  ["empty", () => item("")],
+  ["undefined", () => item(undefined)],
+  ["null", () => item(null)],
+  ["boolean", () => item(true)],
+  ["bigint", () => item(12345678901234567890n)],
+  ["object", () => item(talking("o", 5))],
+  ["object to string", () => item(talking("p", {}))],
+  ["symbol", () => item(Symbol("x"))],
+  ["getter", () => withGetter("g", 9)],
+  ["getter of object", () => withGetter("h", talking("h", "hv"))],
+  ["throwing getter", () => ({ get id(): number { log.push("throw"); throw new RangeError("no id") }, name: "t" })],
+  ["missing", () => ({ name: "m" }) as Item],
+  ["array", () => item([1, 2])],
+]
+const withEffect = new Set(["object", "object to string", "getter", "getter of object", "throwing getter"])
+for (const [firstLabel, first] of unusual) {
+  for (const [secondLabel, second] of unusual) {
+    if (firstLabel === "symbol" && withEffect.has(secondLabel)) continue
+    const results = [
+      attempt(() => pairKey(first(), second())), flush(),
+      attempt(() => keyInTry(first(), second())), flush(),
+      attempt(() => templateKey(first(), second())), flush(),
+      attempt(() => keyWithCall(first(), second(), () => log.push("between"))), flush(),
+    ]
+    console.log(firstLabel, "+", secondLabel, "=", results.join(" ; "))
+  }
+}
+for (const [label, make] of unusual) {
+  console.log(label, attempt(() => tripleKey(item(1), make(), item(3))), flush(), attempt(() => tripleKey(make(), item(2), make())), flush(), attempt(() => tripleKey(item(1), item(2), make())), flush())
+  console.log(label, attempt(() => namedKey(item(1, make().id), item(2, "b"))), flush(), attempt(() => namedKey(item(make().id, "a"), item(2, make().id))), flush())
+}
+console.log(attempt(() => pairKey(undefined as unknown as Item, item(1))), attempt(() => pairKey(item(1), null as unknown as Item)), attempt(() => keyWithCall(item(1), null as unknown as Item, () => log.push("between"))), flush())
+//// keys-concatenated-from-substrings-and-ropes.ts
+// The parts of a key that is put together on the spot need not be flat strings: slices of a longer text, pieces of a split, groups of a match, ropes, ropes of slices; 8-bit and 16-bit; short, and too long for any buffer. Each lookup is repeated with a key that was flattened beforehand.
+const report: string[] = [];
+let wrong = 0;
+function flat(text: string): string {
+  return text.split("").join("");
+}
+function note(table: Map<string, number>, left: string, right: string): void {
+  const label = left + "=" + right;
+  const times = table.get(label);
+  table.set(label, times === undefined ? 1 : times + 1);
+  if (table.get(flat(left) + "=" + flat(right)) !== (times ?? 0) + 1) wrong++;
+}
+const sources = ["the quick brown fox jumps over the lazy dog", "déjà vu, déjà lu, déjà bu", "αβγ δεζ αβγ δεζ", "0123456789".repeat(14)];
+
+for (const source of sources) {
+  const bySlices = new Map<string, number>();
+  for (let width = 1; width <= 41; width += 8) for (let at = 0; at + 2 * width <= source.length; at += width) note(bySlices, source.slice(at, at + width), source.substring(at + width, at + 2 * width));
+  const byPieces = new Map<string, number>();
+  const words = source.split(" ");
+  for (let turn = 0; turn < 2; turn++) for (let i = 0; i < words.length; i++) note(byPieces, words[i]!, words[(i + 2) % words.length]!);
+  const byRopes = new Map<string, number>();
+  for (let i = 1; i < words.length + 3; i++) {
+    const rope = words[i % words.length]! + words[(i - 1) % words.length]!;
+    note(byRopes, rope, rope.slice(1) + rope);
+    note(byRopes, rope + rope + rope, source.slice(0, i));
+  }
+  report.push(bySlices.size + " " + byPieces.size + " " + byRopes.size + " " + [...byPieces.keys()].slice(0, 2).join("|"));
+}
+
+const shape = /(\w+)-(\d+)(?:-(\w+))?/;
+const byGroups = new Set<string>();
+let repeats = 0;
+for (const code of ["ab-12", "ab-12-x", "cd-7-yy", "ab-12", "zz", "cd-7", "cd-7-yy"]) {
+  const parts = shape.exec("<" + code + ">");
+  if (!parts) continue;
+  const label = parts[2]! + "@" + parts[1]! + "@" + parts[3];
+  if (byGroups.has(label)) repeats++;
+  else byGroups.add(label);
+}
+report.push([...byGroups].join(" ") + " " + repeats, "wrong " + wrong);
+console.log(report.join("\n"));
+//// keys-concatenated-then-looked-up.ts
+// A string key put together on the spot and first used to look something up in a Map or Set. What the parts may be: constants, whole numbers, fractions, strings that are empty, short, long, Latin-1 or 16-bit, undefined and null behind a string type. What the table may be: empty, of a few keys, of hundreds, of tens of thousands. Every answer is checked against the same lookup by a key that was made beforehand.
+const report: string[] = [];
+let wrong = 0;
+function expect(condition: boolean): void {
+  if (!condition) wrong++;
+}
+
+const pieces: string[] = ["", "x", "left", "neé", "π", "a-piece-of-thirty-two-characters!", "w".repeat(70)];
+const numbers: number[] = [0, 7, -7, 1024, 2147483647, -2147483648, 4294967297, 0.25, -0, NaN];
+
+function tally(table: Map<string, number>, head: string, tail: string): number {
+  const label = head + ":" + tail;
+  const seen = table.get(label);
+  table.set(label, seen === undefined ? 1 : seen + 1);
+  return seen === undefined ? 0 : seen;
+}
+function tallyByNumber(table: Map<string, number>, head: string, n: number): number {
+  const label = `${head}#${n}`;
+  const seen = table.get(label) ?? 0;
+  table.set(label, seen + 2);
+  return seen;
+}
+function tallyThreeNumbers(table: Map<string, number>, a: number, b: number, c: number): void {
+  const label = a + "." + b + "." + c;
+  if (table.has(label)) table.set(label, table.get(label)! * 3);
+  else table.set(label, 1);
+}
+function joinOnce(group: Set<string>, head: string, n: number, tail: string): boolean {
+  const label = head + n + tail;
+  if (group.has(label)) return false;
+  group.add(label);
+  return true;
+}
+
+{
+  const table = new Map<string, number>();
+  const plain = new Map<string, number>();
+  for (let turn = 0; turn < 3; turn++)
+    for (const head of pieces)
+      for (const tail of pieces) {
+        const made = [head, tail].join(":");
+        const before = plain.get(made) ?? 0;
+        plain.set(made, before + 1);
+        expect(tally(table, head, tail) === before);
+      }
+  expect(table.size === plain.size);
+  for (const [label, times] of plain) expect(table.get(label) === times);
+  report.push("two strings " + table.size + " " + [...table.keys()].filter(label => label.length < 8).join("|"));
+}
+{
+  const table = new Map<string, number>();
+  const plain = new Map<string, number>();
+  for (let turn = 0; turn < 2; turn++)
+    for (const head of pieces)
+      for (const n of numbers) {
+        const made = [head, String(n)].join("#");
+        const before = plain.get(made) ?? 0;
+        plain.set(made, before + 2);
+        expect(tallyByNumber(table, head, n) === before);
+      }
+  report.push("a string and a number " + table.size + " " + [...table.keys()].slice(0, numbers.length).join("|"));
+}
+{
+  const table = new Map<string, number>();
+  for (let a = -2; a < 9; a++) for (let b = 0; b < 40; b += 3) for (let c = 0; c < 2000; c += 999) tallyThreeNumbers(table, a, b, (a * b + c) % 5);
+  let product = 0;
+  for (const times of table.values()) product += times;
+  report.push("three numbers " + table.size + " " + product + " " + [...table.keys()].slice(-3).join("|"));
+}
+{
+  const group = new Set<string>();
+  let fresh = 0;
+  for (let turn = 0; turn < 2; turn++) for (const head of pieces) for (const n of numbers) for (const tail of ["", "!", "π"]) if (joinOnce(group, head, n, tail)) fresh++;
+  report.push("a set " + fresh + " " + group.size);
+}
+
+function grownStepByStep(limit: number): string {
+  const table = new Map<string, number>();
+  let found = 0;
+  for (let n = 0; n < limit; n++) {
+    const label = "entry " + (n % 2 === 0 ? n : n - 1);
+    const held = table.get(label);
+    if (held === undefined) table.set(label, n);
+    else {
+      found++;
+      expect(held === n - 1);
+    }
+  }
+  return table.size + " " + found;
+}
+report.push("sizes " + [1, 2, 9, 10, 300, 600, 70000].map(grownStepByStep).join(" | "));
+
+function behindAType(values: string[], n: number): string {
+  const table = new Map<string, number>();
+  for (let turn = 0; turn < 2; turn++)
+    for (const value of values) {
+      const label = value + "/" + n;
+      table.set(label, (table.get(label) ?? 0) + 1);
+    }
+  return [...table].join(" ");
+}
+report.push(behindAType([undefined, null, "real", undefined] as unknown as string[], 5));
+
+function changedInBetween(): string {
+  const table = new Map<string, number>();
+  const log: string[] = [];
+  for (let n = 0; n < 6; n++) {
+    const label = "slot" + (n % 3);
+    const first = table.get(label);
+    table.delete(label);
+    table.set(label, (first ?? 0) + 1);
+    const second = table.get(label);
+    for (let extra = 0; extra < 30; extra++) table.set("filler" + n + "," + extra, extra);
+    table.set(label, (second ?? 0) + 10);
+    const third = table.has(label);
+    table.clear();
+    if (third) table.set(label, n);
+    log.push(label + "=" + table.get(label) + "/" + table.size);
+  }
+  return log.join(" ");
+}
+report.push(changedInBetween());
+
+function keptAfterwards(table: Map<string, string[]>, family: string, rank: number, member: string): string {
+  const label = family + "~" + rank;
+  const list = table.get(label);
+  if (list === undefined) table.set(label, [member]);
+  else list.push(member);
+  return label;
+}
+{
+  const table = new Map<string, string[]>();
+  const labels: string[] = [];
+  for (let n = 0; n < 40; n++) labels.push(keptAfterwards(table, pieces[n % 5]!, n % 3, "m" + n));
+  expect(labels.every(label => table.has(label)));
+  report.push("lists " + table.size + " " + [...table].map(([label, list]) => label + ":" + list.length).join(" "));
+}
+report.push("wrong " + wrong);
+console.log(report.join("\n"));
+//// keys-made-only-where-they-are-needed.ts
+// A key is put together in one place and used in others: looked up on one branch and handed on in the other, used again behind a join, inside a loop that the key stands outside of, in a closure, returned, thrown, caught; and the table may be one that nothing proves to be a plain Map or Set. The string has to be the same everywhere, however late it is made.
+const report: string[] = [];
+let wrong = 0;
+
+class Account {
+  constructor(readonly owner: string, readonly label: string) {}
+}
+const ledger = new Map<string, Account>();
+const archive: Record<string, Account> = {};
+function open(owner: string, year: number, archived: boolean): Account {
+  const label = owner + "@" + year;
+  if (archived) {
+    const old = archive[label];
+    return old ?? (archive[label] = new Account(owner, label));
+  }
+  const held = ledger.get(label);
+  if (held) return held;
+  const fresh = new Account(owner, label);
+  ledger.set(label, fresh);
+  return fresh;
+}
+for (let turn = 0; turn < 3; turn++)
+  for (const owner of ["ann", "bo", "", "zoë", "Женя"])
+    for (let year = 1998; year < 2040; year += 7) {
+      const live = open(owner, year, false);
+      const stored = open(owner, year, true);
+      if (live.label !== stored.label || live.label !== [owner, year].join("@") || live === (stored as unknown)) wrong++;
+      if (open(owner, year, false) !== live || open(owner, year, true) !== stored) wrong++;
+    }
+report.push("branches " + ledger.size + " " + Object.keys(archive).length);
+
+function afterAJoin(table: Map<string, number>, stem: string, n: number): string {
+  const label = stem + "-" + n;
+  let value: number;
+  if (n % 3 === 0) value = label.length;
+  else value = table.get(label) ?? -1;
+  if (n % 2 === 0) table.set(label, value + 1);
+  return n % 5 === 0 ? label + ">" + value : "";
+}
+{
+  const table = new Map<string, number>();
+  let text = "";
+  for (let turn = 0; turn < 2; turn++) for (let n = 0; n < 31; n++) text += afterAJoin(table, turn ? "s" : "stem", n % 16);
+  report.push("join " + table.size + " " + text);
+}
+
+function outsideTheLoop(table: Map<string, number>, stem: string, n: number): string {
+  const label = `${stem}[${n}]`;
+  let sum = 0;
+  for (let i = 0; i < 6; i++) {
+    sum += table.get(label) ?? 1;
+    if (i === 2) table.set(label, 10);
+    if (i === 4) table.delete(label);
+  }
+  const copies: string[] = [];
+  while (copies.length < 2) copies.push(label);
+  return sum + copies.join("");
+}
+report.push("loop " + outsideTheLoop(new Map(), "q", 4) + " " + outsideTheLoop(new Map([["q[4]", 3]]), "q", 4));
+
+function later(group: Set<string>, stem: string, n: number): () => string {
+  const label = stem + "/" + n;
+  if (group.has(label)) return () => "again " + label;
+  group.add(label);
+  return () => "first " + label;
+}
+{
+  const group = new Set<string>();
+  report.push("closure " + [later(group, "c", 1), later(group, "c", 2), later(group, "c", 1)].map(say => say()).join(", "));
+}
+
+function itself(table: Map<string, string>, stem: string, n: number): string {
+  const label = stem + "*" + n;
+  const held = table.get(label);
+  if (held !== undefined) return held + "'";
+  table.set(label, label);
+  return label;
+}
+{
+  const table = new Map<string, string>();
+  report.push("returned " + itself(table, "r", 9) + " " + itself(table, "r", 9) + " " + itself(table, "", -1) + " " + table.size);
+}
+
+function orThrow(table: Map<string, number>, stem: string, n: number): number {
+  const label = stem + "!" + n;
+  const held = table.get(label);
+  if (held === undefined) throw label;
+  return held;
+}
+function insideTry(table: Map<string, number>, stems: string[]): string {
+  let failures = 0;
+  let last = "";
+  for (let i = 0; i < stems.length; i++) {
+    try {
+      const label = stems[i]! + "?" + (i % 4);
+      const held = table.get(label);
+      if (i % 5 === 2) throw new TypeError(label);
+      table.set(label, held === undefined ? i : held - i);
+    } catch (problem) {
+      failures++;
+      last = (problem as Error).message;
+    }
+  }
+  return failures + " " + last + " " + table.size;
+}
+{
+  const table = new Map<string, number>([["t!1", 8]]);
+  const said: string[] = [];
+  for (const n of [1, 2, 1]) {
+    try {
+      said.push(String(orThrow(table, "t", n)));
+    } catch (label) {
+      said.push("no " + label);
+    }
+  }
+  report.push("thrown " + said.join(", ") + " | " + insideTry(new Map(), ["a", "b", "a", "c", "a", "b", "a", "d", "a", "b", "c", "a", "b"]));
+}
+
+class Folding extends Map<string, number> {
+  asked = 0;
+  get(label: string): number | undefined {
+    this.asked++;
+    return super.get(label.toLowerCase());
+  }
+  set(label: string, value: number): this {
+    return super.set(label.toLowerCase(), value);
+  }
+}
+type Shelf = { counts: Map<string, number>; present: Set<string> };
+function onAnyShelf(shelves: Shelf[], stems: string[]): string {
+  for (let i = 0; i < stems.length * 3; i++) {
+    const shelf = shelves[i % shelves.length]!;
+    const label = stems[i % stems.length]! + "_" + stems[(i * 2 + 1) % stems.length]!;
+    const times = shelf.counts.get(label);
+    shelf.counts.set(label, times === undefined ? 1 : times + 1);
+    if (!shelf.present.has(label)) shelf.present.add(label);
+  }
+  return shelves.map(shelf => shelf.counts.size + "," + shelf.present.size + "," + [...shelf.counts].slice(0, 2).join("+")).join(" ");
+}
+{
+  const folding = new Folding();
+  report.push("any table " + onAnyShelf([{ counts: new Map(), present: new Set() }, { counts: folding, present: new Set() }], ["Ab", "aB", "cd", "CD", "e"]) + " " + folding.asked);
+}
+
+class Halving extends Map<number, number> {
+  get(key: number): number | undefined {
+    const held = super.get(key);
+    if (key % 4 === 0) super.delete(key);
+    return held === undefined ? undefined : held / 2;
+  }
+}
+function numbersOnAnyTable(tables: Map<number, number>[], keys: number[]): string {
+  let sum = 0;
+  for (let turn = 0; turn < 3; turn++)
+    for (let i = 0; i < keys.length; i++) {
+      const table = tables[(i + turn) % tables.length]!;
+      const key = keys[i]!;
+      if (table.has(key)) sum += table.get(key)!;
+      else table.set(key, i + 1);
+      const half = table.get(key + 0.5);
+      table.set(key + 0.5, half === undefined ? 1 : half + 1);
+    }
+  return sum + " " + tables.map(table => table.size).join();
+}
+report.push("numbers " + numbersOnAnyTable([new Map(), new Halving()], [8, 3, 12, 3, 8, 5, 16, 12, 1]), "wrong " + wrong);
+console.log(report.join("\n"));
+//// keys-returned-to-lookups.ts
+// Functions that make a key and return it, as TypeScript's getRelationKey does; their callers look it up in a Map, a Set and an object, keep it in arrays, compare it and read its characters.
+// The keys are short and long, of one byte and of two bytes a character, look like array indexes, are empty, and are made of numbers, strings, booleans, undefined and null.
+interface Item {
+  id: number
+  name: string
+}
+function relationKey(source: Item, target: Item, postfix: string): string {
+  return `${source.id},${target.id}${postfix}`
+}
+function nameKey(source: Item, target: Item): string {
+  return source.name + "|" + target.name
+}
+function indexKey(first: number, second: number): string {
+  return "" + first + second
+}
+function listKey(items: readonly Item[]): string {
+  let result = ""
+  for (const item of items) {
+    if (result.length) result += ","
+    result += item.id
+  }
+  return result
+}
+function chosenKey(source: Item, target: Item, byName: boolean): string {
+  return byName ? nameKey(source, target) : relationKey(source, target, "")
+}
+function mixedKey(a: unknown, b: unknown): string {
+  return a + ":" + b
+}
+
+const items: Item[] = []
+const names = ["a", "", "long".repeat(40), "é", "日本語", "😀", "0", "-1", "x y", "__proto__", "constructor", "\u0000", "a|b"]
+for (let i = 0; i < 200; i++) items.push({ id: i * 37 - 500, name: names[i % names.length] + (i > 100 ? i : "") })
+
+const relation = new Map<string, number>()
+const seen = new Set<string>()
+const table: Record<string, number> = {}
+const kept: string[] = []
+let found = 0
+for (let round = 0; round < 30; round++) {
+  for (let i = 0; i < items.length; i++) {
+    const source = items[i]
+    const target = items[(i * 13 + round) % items.length]
+    const id = relationKey(source, target, round % 3 ? "" : ":" + (round % 5))
+    const entry = relation.get(id)
+    if (entry !== undefined) found += entry
+    else relation.set(id, i)
+    if (!seen.has(id)) {
+      seen.add(id)
+      if (id.startsWith("-") && kept.length < 50) kept.push(id)
+    }
+    const named = nameKey(source, target)
+    table[named] = (table[named] ?? 0) + 1
+    const chosen = chosenKey(source, target, round % 2 === 0)
+    if (relation.has(chosen)) found++
+  }
+}
+console.log(relation.size, seen.size, found, Object.keys(table).length, kept.length, kept.slice(0, 5).join(" "), kept[7].length, kept[9].charCodeAt(1), kept[3] === relationKey(items[0], items[3], ""))
+
+let total = 0
+for (const key of Object.keys(table).sort()) total = (total * 31 + key.length * table[key]) | 0
+console.log(total, table["a|"], table["|a"], table[nameKey(items[3], items[4])], table[nameKey(items[9], items[10])], Object.getPrototypeOf(table) === Object.prototype)
+
+const byIndex: number[] = []
+const sparse: Record<string, string> = {}
+for (let first = 0; first < 12; first++) {
+  for (let second = 0; second < 12; second++) {
+    const key = indexKey(first, second)
+    sparse[key] = key
+    byIndex[key as unknown as number] = first + second
+  }
+}
+console.log(byIndex.length, Object.keys(sparse).slice(0, 14).join(), sparse["00"], sparse["0"], sparse[indexKey(1, 0)], byIndex[10], byIndex[indexKey(11, 11) as unknown as number], Object.keys(byIndex).length)
+
+const lists = new Map<string, number>()
+for (let length = 0; length < 40; length++) lists.set(listKey(items.slice(0, length)), length)
+console.log(lists.size, lists.get(""), lists.get("-500"), lists.get(listKey(items.slice(0, 3))), lists.get(listKey(items.slice(0, 39))), listKey(items.slice(0, 39)).length)
+
+const mixed = new Map<string, string>()
+const parts: unknown[] = [0, -0, 1.5, NaN, Infinity, 1e21, 1e-7, 4294967295, 4294967296, true, false, undefined, null, "", "s", 12n, "é", "日"]
+for (const a of parts) for (const b of parts) mixed.set(mixedKey(a, b), String(a) + "&" + String(b))
+console.log(mixed.size, mixed.get("0:0"), mixed.get("NaN:undefined"), mixed.get(":"), mixed.get("12:é"), mixed.get(mixedKey(1e21, -0)), mixed.get(mixedKey("日", null)), [...mixed.keys()].join("").length)
+//// keys-that-helpers-build-and-callers-look-up.ts
+// Keys of Maps as a type checker builds them: a helper returns the text, the caller looks it up. Few distinct keys, asked for again and again.
+type Item = { id: number };
+function listId(items: readonly Item[]): string {
+  let result = "";
+  const length = items.length;
+  let i = 0;
+  while (i < length) {
+    const startId = items[i]!.id;
+    let count = 1;
+    while (i + count < length && items[i + count]!.id === startId + count) count++;
+    if (result.length) result += ",";
+    result += startId;
+    if (count > 1) result += ":" + count;
+    i += count;
+  }
+  return result;
+}
+function aliasId(symbol: Item | undefined, args: readonly Item[] | undefined): string { return symbol ? "@" + symbol.id + (args ? ":" + listId(args) : "") : ""; }
+function pairId(a: Item, b: Item): string { return a.id + "," + b.id; }
+const items: Item[] = []; for (let i = 0; i < 4096; i++) items.push({ id: i * 7 + 3 });
+const lists: Item[][] = []; for (let i = 0; i < 512; i++) lists.push([items[i]!, items[(i * 5) & 4095]!, items[(i * 11 + 1) & 4095]!]);
+const byList = new Map<string, number>(), byAlias = new Map<string, number>(), byPair = new Map<string, number>();
+let hits = 0;
+const which = Number(process.argv[2] ?? 0), rounds = Number(process.argv[3] ?? 2000);
+for (let r = 0; r < rounds; r++) {
+  const list = lists[r & 511]!;
+  if (which === 0 || which === 1) { const id = listId(list); const found = byList.get(id); if (found === undefined) byList.set(id, r); else hits++; }
+  if (which === 0 || which === 2) { const id = aliasId(list[0], list); const found = byAlias.get(id); if (found === undefined) byAlias.set(id, r); else hits++; }
+  if (which === 0 || which === 3) { const id = pairId(list[0]!, list[1]!); const found = byPair.get(id); if (found === undefined) byPair.set(id, r); else hits++; }
+}
+console.log(hits, byList.size, byAlias.size, byPair.size);
+//// keys-that-look-like-integers.ts
+function spell(parts: (string | number)[]): string {
+  return parts.map(part => String(part)).join("").split("").join("");
+}
+
+function joinIds(ids: number[]): string {
+  let result = "";
+  for (let i = 0; i < ids.length; i++) {
+    if (result.length) result += ",";
+    result += ids[i];
+  }
+  return result;
+}
+
+function joinTexts(texts: string[]): string {
+  let result = "";
+  for (const text of texts) result += text;
+  return result;
+}
+
+function pairKey(a: number, b: number, suffix: string): string {
+  return `${a},${b}${suffix}`;
+}
+
+function tripleKey(a: number, separator: string, b: number): string {
+  return a + separator + b;
+}
+
+const table = new Map<string, string>();
+const list: string[] = [];
+list[7] = "seven";
+list[10] = "ten";
+list[12345678] = "eight digits";
+
+function describe(key: string, expected: string): string {
+  const spelled = spell([expected]);
+  table.set(spelled, "stored " + expected);
+  const indexed = (list as unknown as Record<string, string | undefined>)[key];
+  return [JSON.stringify(key), key === spelled, key.length, table.get(key), table.has(key + " "), indexed, String(Number(key))].join(" | ");
+}
+
+const numbers = [0, 1, 7, 9, 10, 99, 100, 255, 256, 257, 65535, 999999, 1000000, 9999999, 10000000, 12345678, 99999999, 100000000, 100000001, 999999999, 1000000000, 2147483647, 2147483648, 4294967294, 4294967295, 4294967296, 9999999999];
+for (const number of numbers) {
+  console.log("one id:", describe(joinIds([number]), String(number)));
+  console.log("by parts:", describe(tripleKey(number, "", 0).slice(0, -1), String(number)));
+}
+for (let round = 0; round < 3; round++) {
+  for (const number of numbers) {
+    if (joinIds([number]) !== String(number)) console.log("differs", number);
+    if (table.get(joinIds([number])) !== "stored " + number) console.log("not found", number);
+  }
+}
+
+const texts = [["0", "0"], ["0", "7"], ["00", "7"], ["1", "0"], ["1", "", "0"], ["12", "/"], ["12", ":"], ["/", "12"], [":", "12"], ["1", ",", "2"], ["1", " "], [" ", "1"], ["1", "a"], ["1", "°"], ["±", "1"], ["1", "ÿ", "1"], ["-", "1"], ["1", "e", "3"], ["1234", "5678"], ["1234", "56789"], ["12345", "67890"], ["12345", "678901"], ["4294", "967295"], ["0123", "4567"], ["1", "٠"]];
+for (const parts of texts) {
+  console.log("texts:", describe(joinTexts(parts), parts.join("")));
+}
+
+for (const [a, b] of [[0, 0], [1, 2], [-1, 2], [1, -2], [99999999, 100000000], [100000000, 99999999], [2147483647, -2147483648], [12, 345678], [1.5, 2], [1, 2.5], [1e21, 1], [-0, 0], [NaN, 1]]) {
+  for (const suffix of ["", ":1", ":", "é", "一", "x".repeat(50), "x".repeat(70)]) {
+    console.log("pair:", describe(pairKey(a, b, suffix), a + "," + b + suffix));
+  }
+  for (const separator of ["", ",", "0", "-", "·", "一"]) {
+    console.log("triple:", describe(tripleKey(a, separator, b), String(a) + separator + String(b)));
+  }
+}
+
+let found = 0;
+const pairs = new Map<string, number>();
+for (let round = 0; round < 3; round++) {
+  for (let i = 0; i < 40000; i++) {
+    const key = pairKey(i * 31, i % 977, i % 5 ? "" : ":" + (i % 3));
+    const former = pairs.get(key);
+    if (former === undefined) pairs.set(key, i);
+    else if (former === i) found++;
+    const other = tripleKey(i, ",", i * 7);
+    if (other !== spell([i, ",", i * 7]) && found >= 0) found = -1000000;
+  }
+}
+console.log("pairs:", pairs.size, found);
+//// large-patterns-made-once-are-collected.js
+// A pattern made from a large text and used once is garbage afterwards, with its text and whatever was made of it.
+function use(number) {
+  const words = [];
+  for (let i = 0; i < 2500; i++) words.push("w" + number + "x" + i);
+  return new RegExp("^(?:" + words.join("|") + ")$").test("w" + number + "x2499");
+}
+for (let number = 0; number < 20; number++) use(-number);
+Bun.gc(true);
+const before = process.memoryUsage().rss;
+let matches = 0;
+for (let number = 1; number <= 1000; number++) if (use(number)) matches++;
+Bun.gc(true);
+const grown = (process.memoryUsage().rss - before) / (1024 * 1024);
+if (process.argv[2] === "show") console.log(Math.round(grown) + " MB");
+console.log(matches, grown < 150 ? "the memory did not grow with the number of patterns" : "the memory grew by " + Math.round(grown) + " MB");
+//// last-index-of-a-character-from-every-position.ts
+// lastIndexOf with a text of one character, a longer text and every kind of position, on 8-bit, 16-bit and concatenated strings. Every line prints what plain Bun prints.
+declare const console: { log(...values: unknown[]): void };
+function opaque<T>(value: T): T { return [value][Number(String(0))]; }
+function lastSlash(s: string): number { return s.lastIndexOf("/") + s.length * 100; }
+function lastSlashFrom(s: string, from: number): number { return s.lastIndexOf("/", from) + s.length * 100; }
+function lastPair(s: string, from: number): number { return s.lastIndexOf("::", from) + s.length * 100; }
+function lastWide(s: string, from: number): number { return s.lastIndexOf("β", from) + s.length * 100; }
+function extension(s: string): string { return s.slice(s.lastIndexOf(".") + 1) + s.charCodeAt(0); }
+
+const out: unknown[] = [];
+const subjects = ["", "/", "a", "a/b", "/a/b/", "a//b", "α/β/β", opaque("left/") + opaque("right/x"), "a::b:::c"];
+for (const s of subjects) {
+    out.push(lastSlash(opaque(s)), extension(opaque(s + ".ts")));
+    for (const from of [-Infinity, -5, -1, 0, 1, 2, 3.7, 100, Infinity, NaN])
+        out.push(lastSlashFrom(opaque(s), opaque(from)), lastPair(opaque(s), opaque(from)), lastWide(opaque(s), opaque(from)));
+}
+console.log(out.join(" "));
+//// last-match-after-test.js
+// `pattern.test(text)` that finds something leaves the last match where `RegExp.lastMatch`, `RegExp.$1`, `RegExp.input` and the contexts read it: typed and untyped sites, across collections.
+const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+var word = /(\w)(\w*)/, digits = /\d+/, plain = /^\w*$/;
+function tests(pattern, text) { return pattern.test(text); }
+function seen() { return [RegExp.lastMatch, RegExp.$1, RegExp.$2, RegExp.leftContext, RegExp.rightContext, RegExp.input, RegExp.lastParen].join("|"); }
+console.log(tests(word, "  hello there"), seen());
+console.log(tests(digits, "ab 123 cd"), seen());
+console.log(tests(digits, "none"), seen());
+console.log(tests(plain, ""), seen());
+console.log(tests(plain, "name"), seen());
+console.log(tests(word, "x"), seen());
+var kept = [];
+for (var i = 0; i < 30000; i++) {
+  var text = "k" + (i % 97) + " tail";
+  if (!tests(word, text)) throw new Error("no match");
+  if (i % 5000 == 0) { kept.push(seen()); if (typeof gc === "function") gc(); else if (typeof Bun !== "undefined") Bun.gc(true); kept.push(seen()); }
+}
+console.log(kept.join("\n"));
+function entries() { return count("operationAOTRegExpTestBoxed") + count("operationAOTRegExpTest") + count("operationAOTRegExpFind") + count("operationAOTRegExpMatchLiteral"); }
+var before = entries(), hits = 0;
+for (var j = 0; j < 2000; j++) if (tests(plain, "id")) hits++;
+console.log(hits, entries() - before < 100 ? "few entries" : "MANY ENTRIES", seen());
+var pairs = /(\d\d)/g, sticky = /[a-z]\d/y, ends = 0;
+before = entries();
+for (var k = 0; k < 2000; k++) {
+  pairs.lastIndex = k & 3;
+  if (tests(pairs, "a12b34")) ends += pairs.lastIndex;
+  sticky.lastIndex = k % 3;
+  if (tests(sticky, "a12b34")) ends += 10 * sticky.lastIndex; else ends += sticky.lastIndex;
+}
+console.log(ends, entries() - before < 100 ? "few entries" : "MANY ENTRIES", seen());
+var fixed = Object.freeze(/\d/g), thrown = 0;
+for (var m = 0; m < 3; m++) { try { tests(fixed, "a1"); } catch (error) { thrown += error instanceof TypeError ? 1 : 100; } }
+console.log(thrown, fixed.lastIndex, seen());
+RegExp.input = "set by hand";
+console.log(RegExp.input, tests(digits, "7"), RegExp.input, RegExp["$&"]);
+//// letters-change-case-one-at-a-time.ts
+const hidden = new Function("v", "return v") as <V>(v: V) => V;
+
+function caseBlind(word: string): string {
+  return [...word].map(c => (c.toLowerCase() === c ? c : `[${c}${c.toLowerCase()}]`)).join("");
+}
+function shout(word: string): string {
+  let result = "";
+  for (const c of word) result += c.toUpperCase();
+  return result;
+}
+function firstLower(word: string): string { return word.charAt(0).toLowerCase() + word.slice(1); }
+function firstUpper(word: string): string { return word[0]!.toUpperCase() + word.slice(1); }
+function lowerOfPrefixed(word: string): boolean { return ("tool__" + word).toLowerCase().startsWith("tool__a"); }
+
+const words = ["AWS_SECRET_ACCESS_KEY", "GitHubToken", "already lower", "ÉCOLE", "straße", "İstanbul", "ǅungla", "ΑΣ", "日本語", "a", "Z", "ß", "ŉ", "MiXeD123", "𝒜𝒷"];
+let digest = 0;
+function note(text: string): void {
+  for (let i = 0; i < text.length; i++) digest = (digest * 31 + text.charCodeAt(i)) | 0;
+  digest = (digest * 31 + text.length) | 0;
+}
+const rounds = Number(process.argv[2] ?? 20);
+for (let round = 0; round < rounds; round++) {
+  for (const word of words) {
+    const copy = hidden(word.split("").join(""));
+    note(caseBlind(copy)); note(shout(copy)); note(firstLower(copy)); note(firstUpper(copy));
+    digest = (digest * 31 + (lowerOfPrefixed(copy) ? 1 : 0)) | 0;
+  }
+}
+console.log(digest, words.map(caseBlind).join(" "), words.map(shout).join(" "), "A".toLowerCase() === "a", hidden("A").toLowerCase() === hidden("a"));
+//// literal-compared-in-loop.ts
+// `v === "literal"` in a loop gives the same answer however the string was created: literals, property keys, JSON.parse results, slices, ropes, 16-bit strings.
+declare const console: { log(...args: unknown[]): void }
+interface R { kind: string }
+const base = "xx-b-text-a longer one!-Жb"
+function made(text: string): string[] {
+  const rope = text.slice(0, 1) + text.slice(1), flat = text.slice(0, 1) + text.slice(1); flat.charCodeAt(0)
+  const padded = "<" + text + ">", part = padded.slice(1, 1 + text.length)
+  const parsed = JSON.parse(JSON.stringify({ v: text, [text]: 1 })) as Record<string, unknown>
+  const key = Object.keys(parsed)[1], wide = ("Ж" + text).slice(1), joined = [text.slice(0, 1), text.slice(1)].join("")
+  return [text, rope, flat, part, parsed.v as string, key, wide, joined, String(text), text.toLowerCase(), text + "", `${text}`, Symbol.for(text).description as string]
+}
+const names = ["written", "a rope", "a concatenation read once", "a slice", "out of JSON.parse", "a key of an object", "a slice of 16 bits", "joined", "String()", "toLowerCase()", "+ nothing", "a template", "a symbol's description"]
+const texts = ["b", "text", "a longer one!", "c", "texu", "a longer one?", "", "bb", "B"]
+const lists: string[][] = texts.map(made)
+let rows = 0
+function countB(rs: R[]): number { let n = 0; for (let j = 0; j < rs.length; j++) if (rs[j].kind === "b") n++; return n }
+function countText(rs: R[]): number { let n = 0; for (let j = 0; j < rs.length; j++) if (rs[j].kind === "text") n++; return n }
+function countLong(rs: R[]): number { let n = 0; for (let j = 0; j < rs.length; j++) if (rs[j].kind === "a longer one!") n++; return n }
+function valuesB(rs: R[]): string { let s = ""; for (let j = 0; j < rs.length; j++) { const is = rs[j].kind === "b"; s += is ? "1" : "0" } return s }
+function valuesText(rs: R[]): string { let s = ""; for (let j = 0; j < rs.length; j++) { const is = rs[j].kind === "text"; s += is ? "1" : "0" } return s }
+function valuesLong(rs: R[]): string { let s = ""; for (let j = 0; j < rs.length; j++) { const is = "a longer one!" === rs[j].kind; s += is ? "1" : "0" } return s }
+function notText(rs: R[]): number { let n = 0; for (let j = 0; j < rs.length; j++) if (rs[j].kind !== "text") n++; return n }
+function anything(vs: unknown[]): string { let s = ""; for (let j = 0; j < vs.length; j++) s += vs[j] === "text" ? "1" : vs[j] === "b" ? "2" : "0"; return s }
+function elements(vs: string[]): number { let n = 0; for (let j = 0; j < vs.length; j++) if (vs[j] === "text") n++; return n }
+for (let turn = 0; turn < 3; turn++) {
+  for (let t = 0; t < texts.length; t++) for (let k = 0; k < names.length; k++) {
+    const rs: R[] = [{ kind: lists[t][k] }, { kind: "b" }, { kind: lists[t][k] }, { kind: "text" }, { kind: lists[(t + 1) % texts.length][k] }, { kind: "a longer one!" }]
+    rows++
+    console.log(JSON.stringify(texts[t]) + " " + names[k] + " -> " + countB(rs) + " " + countText(rs) + " " + countLong(rs) + " " + valuesB(rs) + " " + valuesText(rs) + " " + valuesLong(rs) + " " + notText(rs) + " " + elements(rs.map(r => r.kind)))
+  }
+  const mixed: unknown[] = ["text", "b", 1, null, undefined, {}, [], true, Symbol("text"), 10n, lists[1][1], lists[1][3], lists[0][4], new String("text"), () => "text", lists[1][6]]
+  rows++
+  console.log("anything -> " + anything(mixed))
+  const holes: R[] = [{ kind: "text" }, { kind: undefined as unknown as string }, { kind: null as unknown as string }, { kind: lists[1][1] }]
+  rows++
+  console.log("nil -> " + countText(holes) + " " + valuesText(holes) + " " + notText(holes))
+}
+console.log(rows + " rows " + base.length)
+//// literal-compared-in-loop-untyped.js
+// `v === "literal"` in a loop gives the same answer however the string was created: literals, property keys, JSON.parse results, slices, ropes, 16-bit strings (the same program without type annotations).
+const base = "xx-b-text-a longer one!-\u0416b";
+function made(text) {
+  const rope = text.slice(0, 1) + text.slice(1), flat = text.slice(0, 1) + text.slice(1);
+  flat.charCodeAt(0);
+  const padded = "<" + text + ">", part = padded.slice(1, 1 + text.length);
+  const parsed = JSON.parse(JSON.stringify({ v: text, [text]: 1 }));
+  const key = Object.keys(parsed)[1], wide = ("\u0416" + text).slice(1), joined = [text.slice(0, 1), text.slice(1)].join("");
+  return [text, rope, flat, part, parsed.v, key, wide, joined, String(text), text.toLowerCase(), text + "", `${text}`, Symbol.for(text).description];
+}
+const names = ["written", "a rope", "a concatenation read once", "a slice", "out of JSON.parse", "a key of an object", "a slice of 16 bits", "joined", "String()", "toLowerCase()", "+ nothing", "a template", "a symbol's description"];
+const texts = ["b", "text", "a longer one!", "c", "texu", "a longer one?", "", "bb", "B"];
+const lists = texts.map(made);
+let rows = 0;
+////= lines-17	countB	"b"
+////= lines-17	countText	"text"
+////= lines-17	countLong	"a longer one!"
+////= lines-14	valuesB	"b"
+////= lines-14	valuesText	"text"
+////= lines-14	valuesLong	"a longer one!"
+function notText(rs) {
+  let n = 0;
+  for (let j = 0;j < rs.length; j++)
+    if (rs[j].kind !== "text")
+      n++;
+  return n;
+}
+function anything(vs) {
+  let s = "";
+  for (let j = 0;j < vs.length; j++)
+    s += vs[j] === "text" ? "1" : vs[j] === "b" ? "2" : "0";
+  return s;
+}
+function elements(vs) {
+  let n = 0;
+  for (let j = 0;j < vs.length; j++)
+    if (vs[j] === "text")
+      n++;
+  return n;
+}
+for (let turn = 0;turn < 3; turn++) {
+  for (let t = 0;t < texts.length; t++)
+    for (let k = 0;k < names.length; k++) {
+      const rs = [{ kind: lists[t][k] }, { kind: "b" }, { kind: lists[t][k] }, { kind: "text" }, { kind: lists[(t + 1) % texts.length][k] }, { kind: "a longer one!" }];
+      rows++;
+      console.log(JSON.stringify(texts[t]) + " " + names[k] + " -> " + countB(rs) + " " + countText(rs) + " " + countLong(rs) + " " + valuesB(rs) + " " + valuesText(rs) + " " + valuesLong(rs) + " " + notText(rs) + " " + elements(rs.map((r) => r.kind)));
+    }
+  const mixed = ["text", "b", 1, null, undefined, {}, [], true, Symbol("text"), 10n, lists[1][1], lists[1][3], lists[0][4], new String("text"), () => "text", lists[1][6]];
+  rows++;
+  console.log("anything -> " + anything(mixed));
+  const holes = [{ kind: "text" }, { kind: undefined }, { kind: null }, { kind: lists[1][1] }];
+  rows++;
+  console.log("nil -> " + countText(holes) + " " + valuesText(holes) + " " + notText(holes));
+}
+console.log(rows + " rows " + "xx-b-text-a longer one!-\u0416b".length);
+//// literals-of-every-length.ts
+// String literals of 1 to 9, 255, 256 and 300 characters are compared with strings in every internal representation, with near misses and with values that are not strings: === and == on `any`, and ===, startsWith and endsWith on `string`.
+// Only the jsc shell with --aotCountsPath=<path> can count calls into the runtime. Elsewhere the program checks the answers alone.
+declare const aotOperationCount: undefined | ((name: string) => number | null);
+const readCount = typeof aotOperationCount === "function" ? aotOperationCount : () => null;
+const canCount = readCount("operationAOTStringEqualsLiteral") !== null;
+const slowComparisons = (): number => (readCount("operationAOTStringEqualsLiteral") ?? 0) + (readCount("operationAOTStringEqualsLiteralInRegister") ?? 0);
+
+function compareAny1(value: any): number { return (value === "k" ? 1 : 0) | (value == "k" ? 2 : 0); }
+function compareString1(text: string): number { return (text === "k" ? 1 : 0) | (text.startsWith("k") ? 2 : 0) | (text.endsWith("k") ? 4 : 0); }
+function compareAny2(value: any): number { return (value === "kL" ? 1 : 0) | (value == "kL" ? 2 : 0); }
+function compareString2(text: string): number { return (text === "kL" ? 1 : 0) | (text.startsWith("kL") ? 2 : 0) | (text.endsWith("kL") ? 4 : 0); }
+function compareAny3(value: any): number { return (value === "kLm" ? 1 : 0) | (value == "kLm" ? 2 : 0); }
+function compareString3(text: string): number { return (text === "kLm" ? 1 : 0) | (text.startsWith("kLm") ? 2 : 0) | (text.endsWith("kLm") ? 4 : 0); }
+function compareAny4(value: any): number { return (value === "kLmN" ? 1 : 0) | (value == "kLmN" ? 2 : 0); }
+function compareString4(text: string): number { return (text === "kLmN" ? 1 : 0) | (text.startsWith("kLmN") ? 2 : 0) | (text.endsWith("kLmN") ? 4 : 0); }
+function compareAny5(value: any): number { return (value === "kLmNo" ? 1 : 0) | (value == "kLmNo" ? 2 : 0); }
+function compareString5(text: string): number { return (text === "kLmNo" ? 1 : 0) | (text.startsWith("kLmNo") ? 2 : 0) | (text.endsWith("kLmNo") ? 4 : 0); }
+function compareAny6(value: any): number { return (value === "kLmNoP" ? 1 : 0) | (value == "kLmNoP" ? 2 : 0); }
+function compareString6(text: string): number { return (text === "kLmNoP" ? 1 : 0) | (text.startsWith("kLmNoP") ? 2 : 0) | (text.endsWith("kLmNoP") ? 4 : 0); }
+function compareAny7(value: any): number { return (value === "kLmNoPq" ? 1 : 0) | (value == "kLmNoPq" ? 2 : 0); }
+function compareString7(text: string): number { return (text === "kLmNoPq" ? 1 : 0) | (text.startsWith("kLmNoPq") ? 2 : 0) | (text.endsWith("kLmNoPq") ? 4 : 0); }
+function compareAny8(value: any): number { return (value === "kLmNoPqR" ? 1 : 0) | (value == "kLmNoPqR" ? 2 : 0); }
+function compareString8(text: string): number { return (text === "kLmNoPqR" ? 1 : 0) | (text.startsWith("kLmNoPqR") ? 2 : 0) | (text.endsWith("kLmNoPqR") ? 4 : 0); }
+function compareAny9(value: any): number { return (value === "kLmNoPqRs" ? 1 : 0) | (value == "kLmNoPqRs" ? 2 : 0); }
+function compareString9(text: string): number { return (text === "kLmNoPqRs" ? 1 : 0) | (text.startsWith("kLmNoPqRs") ? 2 : 0) | (text.endsWith("kLmNoPqRs") ? 4 : 0); }
+function compareAny255(value: any): number { return (value === "wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUf" ? 1 : 0) | (value == "wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUf" ? 2 : 0); }
+function compareString255(text: string): number { return (text === "wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUf" ? 1 : 0) | (text.startsWith("wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUf") ? 2 : 0) | (text.endsWith("wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUf") ? 4 : 0); }
+function compareAny256(value: any): number { return (value === "wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUfW" ? 1 : 0) | (value == "wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUfW" ? 2 : 0); }
+function compareString256(text: string): number { return (text === "wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUfW" ? 1 : 0) | (text.startsWith("wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUfW") ? 2 : 0) | (text.endsWith("wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUfW") ? 4 : 0); }
+function compareAny300(value: any): number { return (value === "wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUfW5k2uhRaTIrKxgoy2i70usIN7LUAjLBZax1rz4g1ZsWzp" ? 1 : 0) | (value == "wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUfW5k2uhRaTIrKxgoy2i70usIN7LUAjLBZax1rz4g1ZsWzp" ? 2 : 0); }
+function compareString300(text: string): number { return (text === "wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUfW5k2uhRaTIrKxgoy2i70usIN7LUAjLBZax1rz4g1ZsWzp" ? 1 : 0) | (text.startsWith("wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUfW5k2uhRaTIrKxgoy2i70usIN7LUAjLBZax1rz4g1ZsWzp") ? 2 : 0) | (text.endsWith("wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUfW5k2uhRaTIrKxgoy2i70usIN7LUAjLBZax1rz4g1ZsWzp") ? 4 : 0); }
+
+type Case = { literal: string; compareAny: (value: any) => number; compareString: (text: string) => number };
+const cases: Case[] = [
+  { literal: "k", compareAny: compareAny1, compareString: compareString1 },
+  { literal: "kL", compareAny: compareAny2, compareString: compareString2 },
+  { literal: "kLm", compareAny: compareAny3, compareString: compareString3 },
+  { literal: "kLmN", compareAny: compareAny4, compareString: compareString4 },
+  { literal: "kLmNo", compareAny: compareAny5, compareString: compareString5 },
+  { literal: "kLmNoP", compareAny: compareAny6, compareString: compareString6 },
+  { literal: "kLmNoPq", compareAny: compareAny7, compareString: compareString7 },
+  { literal: "kLmNoPqR", compareAny: compareAny8, compareString: compareString8 },
+  { literal: "kLmNoPqRs", compareAny: compareAny9, compareString: compareString9 },
+  { literal: "wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUf", compareAny: compareAny255, compareString: compareString255 },
+  { literal: "wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUfW", compareAny: compareAny256, compareString: compareString256 },
+  { literal: "wgkGMNvKP91VTQmeyGGNTroYQFHT4Lux01JJe8BYftpPS2XZ1J3qJwA1QbLyCqzP6Di5oujkEq6zZKEC7Wqzj4vYdqff5FcLyIC47HQmTvBP3JOr1lN9QZ7JP2DBl9Fg4DZjedp5C11IfiJmKU0PxBVaJ6CCdTBLe5RZh3ebofyvnKNxvggjw7XRa9bkjV5qGQ5wSoqwVFaVqhXGac9a6wiId970yY1oStTD8jhwH1GPTvNdTIx8jwzbBup5aUfW5k2uhRaTIrKxgoy2i70usIN7LUAjLBZax1rz4g1ZsWzp", compareAny: compareAny300, compareString: compareString300 },
+];
+
+const opaque = new Function("value", "return value") as <T>(value: T) => T;
+const flat = (text: string): string => opaque(text.split("").join(""));
+const substring = (text: string): string => flat("<" + text + ">").slice(1, -1);
+const rope = (text: string): string => (text.length < 2 ? flat(text) : flat(text.slice(0, 1)) + flat(text.slice(1)));
+const wideFlat = (text: string): string => flat(text + "ā").replace("ā", "");
+const wideSubstring = (text: string): string => flat("ā" + text).slice(1);
+const representations = [flat, substring, rope, wideFlat, wideSubstring];
+
+const changedAt = (text: string, at: number, by: (unit: number) => number): string => text.slice(0, at) + String.fromCharCode(by(text.charCodeAt(at))) + text.slice(at + 1);
+
+// Both ends, the seams between the words that a comparison loads, and the middle.
+function changedPositions(length: number): number[] {
+  const positions = [0, 1, 2, 3, 4, 5, 6, 7, 8, length >> 1, length - 9, length - 8, length - 5, length - 4, length - 2, length - 1];
+  return [...new Set(positions)].filter(at => at >= 0 && at < length).sort((a, b) => a - b);
+}
+
+for (const { literal, compareAny, compareString } of cases) {
+  const length = literal.length;
+  const answers = (texts: string[]): string => {
+    let line = "";
+    for (const text of texts) {
+      for (const make of representations) {
+        const subject = make(text);
+        line += ` ${compareAny(subject)}${compareString(subject)}`;
+      }
+    }
+    return line;
+  };
+  console.log(length, "equal:" + answers([literal]));
+  console.log(length, "one character changed:" + answers(changedPositions(length).map(at => changedAt(literal, at, () => 35))));
+  console.log(length, "last character plus 0x80, plus 0x100:" + answers([changedAt(literal, length - 1, unit => unit + 0x80), changedAt(literal, length - 1, unit => unit + 0x100)]));
+  console.log(length, "shorter:" + answers([literal.slice(0, -1), literal.slice(1), ""]));
+  console.log(length, "longer:" + answers([literal + "s", "s" + literal, literal + literal]));
+  const others: unknown[] = [undefined, null, 0, NaN, true, 10n, Symbol(literal), {}, { toString() { return literal; } }, { valueOf() { return literal; } }, [literal], new String(literal)];
+  console.log(length, "not strings:", others.map(value => compareAny(value)).join(" "));
+}
+
+function compareAnyLatin1(value: any): number { return (value === "café" ? 1 : 0) | (value == "café" ? 2 : 0); }
+function compareStringLatin1(text: string): number { return (text === "café" ? 1 : 0) | (text.startsWith("café") ? 2 : 0) | (text.endsWith("café") ? 4 : 0); }
+function compareAny16Bit(value: any): number { return (value === "cafē" ? 1 : 0) | (value == "cafē" ? 2 : 0); }
+function compareString16Bit(text: string): number { return (text === "cafē" ? 1 : 0) | (text.startsWith("cafē") ? 2 : 0) | (text.endsWith("cafē") ? 4 : 0); }
+
+const nonASCIICases: Case[] = [
+  { literal: "café", compareAny: compareAnyLatin1, compareString: compareStringLatin1 },
+  { literal: "cafē", compareAny: compareAny16Bit, compareString: compareString16Bit },
+];
+for (const { literal, compareAny, compareString } of nonASCIICases) {
+  // The last two are the UTF-8 encodings of the two literals, read as Latin-1.
+  const texts = [literal, "cafe", "caf", literal + "s", "s" + literal, "cafÃ©", "cafÄ\u0093"];
+  let line = "";
+  for (const text of texts) {
+    for (const make of representations) {
+      const subject = make(text);
+      line += ` ${compareAny(subject)}${compareString(subject)}`;
+    }
+  }
+  console.log(JSON.stringify(literal), "not ASCII:" + line);
+}
+
+for (const { literal, compareAny, compareString } of cases) {
+  const whole = flat(literal);
+  const base = flat("<" + literal + ">");
+  const before = slowComparisons();
+  let sum = 0;
+  for (let round = 0; round < 2500; round++) {
+    const part = base.slice(1, -1);
+    sum += compareAny(whole) + compareString(whole) + compareAny(part) + compareString(part);
+  }
+  const calls = slowComparisons() - before;
+
+  const wide = wideSubstring(literal);
+  const beforeWide = slowComparisons();
+  const wideAnswers = `${compareAny(wide)}${compareString(wide)}`;
+  const wideCalls = slowComparisons() - beforeWide;
+
+  const problems: string[] = [];
+  if (literal.length <= 255 && calls > 0) problems.push(`${calls} calls for flat strings and substrings`);
+  // A string of one Latin-1 character is always the shared 8-bit one.
+  if (canCount && literal.length > 1 && wideCalls === 0) problems.push("no call for a 16-bit string");
+  console.log(literal.length, sum, wideAnswers, problems.length ? problems.join("; ") : "calls as expected");
+}
+//// literals-of-every-length-compared.ts
+// In loops of 1,000 turns, so that the comparisons are compiled for speed, literals of 0 to 33 characters are compared with the equal text, texts that differ in the first, the middle or the last unit, shorter and longer ones, each as a flat string, a rope, a slice, a 16-bit string with the same content and a slice of 16-bit text, and in an `any` position also with numbers, null, objects with toString and other values: ===, !==, ==, switch, startsWith and endsWith. Every line prints what plain Bun prints.
+// STATISTIC: StringLiteralsComparedInPlace >= 32
+const never = Date.now() < 0;
+const hidden = (text: string): string => (never ? text + "!" : text);
+const flat = (text: string): string => hidden(text.split("").join(""));
+const wideFlat = (text: string): string => JSON.parse(JSON.stringify([text, "\u2603"]))[0];
+
+type Prepared = {
+  flat: string[];
+  left: string[];
+  right: string[];
+  padded: string[];
+  wide: string[];
+  widePadded: string[];
+  others: any[];
+  subjects: number;
+  values: number;
+};
+
+function changedAt(text: string, at: number, unit: number): string {
+  return text.slice(0, at) + String.fromCharCode(unit) + text.slice(at + 1);
+}
+function prepare(literal: string): Prepared {
+  const length = literal.length;
+  const texts = [literal, literal + "!", "!" + literal, literal + literal, ""];
+  if (length > 0) {
+    texts.push(changedAt(literal, 0, 35), changedAt(literal, length >> 1, 35), changedAt(literal, length - 1, 35), literal.slice(0, -1), literal.slice(1));
+    texts.push(changedAt(literal, 0, literal.charCodeAt(0) ^ 0x100), changedAt(literal, length - 1, literal.charCodeAt(length - 1) ^ 0x100), changedAt(literal, length - 1, literal.charCodeAt(length - 1) ^ 0x80));
+  }
+  const others: any[] = [0, 7, NaN, null, undefined, true, false, { toString: () => literal }, { valueOf: () => literal }, [literal], new String(literal), Symbol(literal), 10n];
+  return {
+    flat: texts.map(text => flat(text)),
+    left: texts.map(text => flat(text.slice(0, text.length >> 1))),
+    right: texts.map(text => flat(text.slice(text.length >> 1))),
+    padded: texts.map(text => flat("<" + text + ">")),
+    wide: texts.map(text => wideFlat(text)),
+    widePadded: texts.map(text => flat("\u2603" + text + "\u2603")),
+    others,
+    subjects: texts.length * 5,
+    values: texts.length * 5 + others.length,
+  };
+}
+function subjectAt(prepared: Prepared, turn: number): string {
+  const which = turn % prepared.subjects;
+  const text = (which / 5) | 0;
+  switch (which % 5) {
+    case 0:
+      return prepared.flat[text];
+    case 1:
+      return prepared.left[text] + prepared.right[text];
+    case 2:
+      return prepared.padded[text].slice(1, -1);
+    case 3:
+      return prepared.wide[text];
+    default:
+      return prepared.widePadded[text].slice(1, -1);
+  }
+}
+function valueAt(prepared: Prepared, turn: number): any {
+  const which = turn % prepared.values;
+  return which < prepared.subjects ? subjectAt(prepared, which) : prepared.others[which - prepared.subjects];
+}
+
+function compareAsciiOf0(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "") bits |= 1;
+    if (text !== "") bits |= 2;
+    if (text.startsWith("")) bits |= 4;
+    if (text.endsWith("")) bits |= 8;
+    if (text === "#") bits |= 16;
+    if (text === "!") bits |= 32;
+    switch (text) { case "": bits += 64; break; case "##": bits += 128; break; case "!": bits += 192; break; }
+    if (value === "") bits |= 512;
+    if (value !== "") bits |= 1024;
+    if (value == "") bits |= 2048;
+    switch (value) { case "": bits += 4096; break; case "##": bits += 8192; break; case "!": bits += 12288; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf1(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "k") bits |= 1;
+    if (text !== "k") bits |= 2;
+    if (text.startsWith("k")) bits |= 4;
+    if (text.endsWith("k")) bits |= 8;
+    if (text === "#") bits |= 16;
+    if (text === "k!") bits |= 32;
+    switch (text) { case "k": bits += 64; break; case "#": bits += 128; break; case "k!": bits += 192; break; case "": bits += 256; break; }
+    if (value === "k") bits |= 512;
+    if (value !== "k") bits |= 1024;
+    if (value == "k") bits |= 2048;
+    switch (value) { case "k": bits += 4096; break; case "#": bits += 8192; break; case "k!": bits += 12288; break; case "": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf2(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kL") bits |= 1;
+    if (text !== "kL") bits |= 2;
+    if (text.startsWith("kL")) bits |= 4;
+    if (text.endsWith("kL")) bits |= 8;
+    if (text === "k#") bits |= 16;
+    if (text === "kL!") bits |= 32;
+    switch (text) { case "kL": bits += 64; break; case "#L": bits += 128; break; case "kL!": bits += 192; break; case "k": bits += 256; break; }
+    if (value === "kL") bits |= 512;
+    if (value !== "kL") bits |= 1024;
+    if (value == "kL") bits |= 2048;
+    switch (value) { case "kL": bits += 4096; break; case "#L": bits += 8192; break; case "kL!": bits += 12288; break; case "k": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf3(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLm") bits |= 1;
+    if (text !== "kLm") bits |= 2;
+    if (text.startsWith("kLm")) bits |= 4;
+    if (text.endsWith("kLm")) bits |= 8;
+    if (text === "kL#") bits |= 16;
+    if (text === "kLm!") bits |= 32;
+    switch (text) { case "kLm": bits += 64; break; case "#Lm": bits += 128; break; case "kLm!": bits += 192; break; case "kL": bits += 256; break; }
+    if (value === "kLm") bits |= 512;
+    if (value !== "kLm") bits |= 1024;
+    if (value == "kLm") bits |= 2048;
+    switch (value) { case "kLm": bits += 4096; break; case "#Lm": bits += 8192; break; case "kLm!": bits += 12288; break; case "kL": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf4(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmN") bits |= 1;
+    if (text !== "kLmN") bits |= 2;
+    if (text.startsWith("kLmN")) bits |= 4;
+    if (text.endsWith("kLmN")) bits |= 8;
+    if (text === "kLm#") bits |= 16;
+    if (text === "kLmN!") bits |= 32;
+    switch (text) { case "kLmN": bits += 64; break; case "#LmN": bits += 128; break; case "kLmN!": bits += 192; break; case "kLm": bits += 256; break; }
+    if (value === "kLmN") bits |= 512;
+    if (value !== "kLmN") bits |= 1024;
+    if (value == "kLmN") bits |= 2048;
+    switch (value) { case "kLmN": bits += 4096; break; case "#LmN": bits += 8192; break; case "kLmN!": bits += 12288; break; case "kLm": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf5(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNo") bits |= 1;
+    if (text !== "kLmNo") bits |= 2;
+    if (text.startsWith("kLmNo")) bits |= 4;
+    if (text.endsWith("kLmNo")) bits |= 8;
+    if (text === "kLmN#") bits |= 16;
+    if (text === "kLmNo!") bits |= 32;
+    switch (text) { case "kLmNo": bits += 64; break; case "#LmNo": bits += 128; break; case "kLmNo!": bits += 192; break; case "kLmN": bits += 256; break; }
+    if (value === "kLmNo") bits |= 512;
+    if (value !== "kLmNo") bits |= 1024;
+    if (value == "kLmNo") bits |= 2048;
+    switch (value) { case "kLmNo": bits += 4096; break; case "#LmNo": bits += 8192; break; case "kLmNo!": bits += 12288; break; case "kLmN": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf6(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoP") bits |= 1;
+    if (text !== "kLmNoP") bits |= 2;
+    if (text.startsWith("kLmNoP")) bits |= 4;
+    if (text.endsWith("kLmNoP")) bits |= 8;
+    if (text === "kLmNo#") bits |= 16;
+    if (text === "kLmNoP!") bits |= 32;
+    switch (text) { case "kLmNoP": bits += 64; break; case "#LmNoP": bits += 128; break; case "kLmNoP!": bits += 192; break; case "kLmNo": bits += 256; break; }
+    if (value === "kLmNoP") bits |= 512;
+    if (value !== "kLmNoP") bits |= 1024;
+    if (value == "kLmNoP") bits |= 2048;
+    switch (value) { case "kLmNoP": bits += 4096; break; case "#LmNoP": bits += 8192; break; case "kLmNoP!": bits += 12288; break; case "kLmNo": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf7(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPq") bits |= 1;
+    if (text !== "kLmNoPq") bits |= 2;
+    if (text.startsWith("kLmNoPq")) bits |= 4;
+    if (text.endsWith("kLmNoPq")) bits |= 8;
+    if (text === "kLmNoP#") bits |= 16;
+    if (text === "kLmNoPq!") bits |= 32;
+    switch (text) { case "kLmNoPq": bits += 64; break; case "#LmNoPq": bits += 128; break; case "kLmNoPq!": bits += 192; break; case "kLmNoP": bits += 256; break; }
+    if (value === "kLmNoPq") bits |= 512;
+    if (value !== "kLmNoPq") bits |= 1024;
+    if (value == "kLmNoPq") bits |= 2048;
+    switch (value) { case "kLmNoPq": bits += 4096; break; case "#LmNoPq": bits += 8192; break; case "kLmNoPq!": bits += 12288; break; case "kLmNoP": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf8(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqR") bits |= 1;
+    if (text !== "kLmNoPqR") bits |= 2;
+    if (text.startsWith("kLmNoPqR")) bits |= 4;
+    if (text.endsWith("kLmNoPqR")) bits |= 8;
+    if (text === "kLmNoPq#") bits |= 16;
+    if (text === "kLmNoPqR!") bits |= 32;
+    switch (text) { case "kLmNoPqR": bits += 64; break; case "#LmNoPqR": bits += 128; break; case "kLmNoPqR!": bits += 192; break; case "kLmNoPq": bits += 256; break; }
+    if (value === "kLmNoPqR") bits |= 512;
+    if (value !== "kLmNoPqR") bits |= 1024;
+    if (value == "kLmNoPqR") bits |= 2048;
+    switch (value) { case "kLmNoPqR": bits += 4096; break; case "#LmNoPqR": bits += 8192; break; case "kLmNoPqR!": bits += 12288; break; case "kLmNoPq": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf9(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRs") bits |= 1;
+    if (text !== "kLmNoPqRs") bits |= 2;
+    if (text.startsWith("kLmNoPqRs")) bits |= 4;
+    if (text.endsWith("kLmNoPqRs")) bits |= 8;
+    if (text === "kLmNoPqR#") bits |= 16;
+    if (text === "kLmNoPqRs!") bits |= 32;
+    switch (text) { case "kLmNoPqRs": bits += 64; break; case "#LmNoPqRs": bits += 128; break; case "kLmNoPqRs!": bits += 192; break; case "kLmNoPqR": bits += 256; break; }
+    if (value === "kLmNoPqRs") bits |= 512;
+    if (value !== "kLmNoPqRs") bits |= 1024;
+    if (value == "kLmNoPqRs") bits |= 2048;
+    switch (value) { case "kLmNoPqRs": bits += 4096; break; case "#LmNoPqRs": bits += 8192; break; case "kLmNoPqRs!": bits += 12288; break; case "kLmNoPqR": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf10(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsT") bits |= 1;
+    if (text !== "kLmNoPqRsT") bits |= 2;
+    if (text.startsWith("kLmNoPqRsT")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsT")) bits |= 8;
+    if (text === "kLmNoPqRs#") bits |= 16;
+    if (text === "kLmNoPqRsT!") bits |= 32;
+    switch (text) { case "kLmNoPqRsT": bits += 64; break; case "#LmNoPqRsT": bits += 128; break; case "kLmNoPqRsT!": bits += 192; break; case "kLmNoPqRs": bits += 256; break; }
+    if (value === "kLmNoPqRsT") bits |= 512;
+    if (value !== "kLmNoPqRsT") bits |= 1024;
+    if (value == "kLmNoPqRsT") bits |= 2048;
+    switch (value) { case "kLmNoPqRsT": bits += 4096; break; case "#LmNoPqRsT": bits += 8192; break; case "kLmNoPqRsT!": bits += 12288; break; case "kLmNoPqRs": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf11(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTu") bits |= 1;
+    if (text !== "kLmNoPqRsTu") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTu")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTu")) bits |= 8;
+    if (text === "kLmNoPqRsT#") bits |= 16;
+    if (text === "kLmNoPqRsTu!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTu": bits += 64; break; case "#LmNoPqRsTu": bits += 128; break; case "kLmNoPqRsTu!": bits += 192; break; case "kLmNoPqRsT": bits += 256; break; }
+    if (value === "kLmNoPqRsTu") bits |= 512;
+    if (value !== "kLmNoPqRsTu") bits |= 1024;
+    if (value == "kLmNoPqRsTu") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTu": bits += 4096; break; case "#LmNoPqRsTu": bits += 8192; break; case "kLmNoPqRsTu!": bits += 12288; break; case "kLmNoPqRsT": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf12(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuV") bits |= 1;
+    if (text !== "kLmNoPqRsTuV") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuV")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuV")) bits |= 8;
+    if (text === "kLmNoPqRsTu#") bits |= 16;
+    if (text === "kLmNoPqRsTuV!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuV": bits += 64; break; case "#LmNoPqRsTuV": bits += 128; break; case "kLmNoPqRsTuV!": bits += 192; break; case "kLmNoPqRsTu": bits += 256; break; }
+    if (value === "kLmNoPqRsTuV") bits |= 512;
+    if (value !== "kLmNoPqRsTuV") bits |= 1024;
+    if (value == "kLmNoPqRsTuV") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuV": bits += 4096; break; case "#LmNoPqRsTuV": bits += 8192; break; case "kLmNoPqRsTuV!": bits += 12288; break; case "kLmNoPqRsTu": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf13(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVw") bits |= 1;
+    if (text !== "kLmNoPqRsTuVw") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVw")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVw")) bits |= 8;
+    if (text === "kLmNoPqRsTuV#") bits |= 16;
+    if (text === "kLmNoPqRsTuVw!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVw": bits += 64; break; case "#LmNoPqRsTuVw": bits += 128; break; case "kLmNoPqRsTuVw!": bits += 192; break; case "kLmNoPqRsTuV": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVw") bits |= 512;
+    if (value !== "kLmNoPqRsTuVw") bits |= 1024;
+    if (value == "kLmNoPqRsTuVw") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVw": bits += 4096; break; case "#LmNoPqRsTuVw": bits += 8192; break; case "kLmNoPqRsTuVw!": bits += 12288; break; case "kLmNoPqRsTuV": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf14(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwX") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwX") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwX")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwX")) bits |= 8;
+    if (text === "kLmNoPqRsTuVw#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwX!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwX": bits += 64; break; case "#LmNoPqRsTuVwX": bits += 128; break; case "kLmNoPqRsTuVwX!": bits += 192; break; case "kLmNoPqRsTuVw": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwX") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwX") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwX") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwX": bits += 4096; break; case "#LmNoPqRsTuVwX": bits += 8192; break; case "kLmNoPqRsTuVwX!": bits += 12288; break; case "kLmNoPqRsTuVw": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf15(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXy") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXy") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXy")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXy")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwX#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXy!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXy": bits += 64; break; case "#LmNoPqRsTuVwXy": bits += 128; break; case "kLmNoPqRsTuVwXy!": bits += 192; break; case "kLmNoPqRsTuVwX": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXy") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXy") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXy") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXy": bits += 4096; break; case "#LmNoPqRsTuVwXy": bits += 8192; break; case "kLmNoPqRsTuVwXy!": bits += 12288; break; case "kLmNoPqRsTuVwX": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf16(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZ") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZ") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZ")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZ")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXy#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZ!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZ": bits += 64; break; case "#LmNoPqRsTuVwXyZ": bits += 128; break; case "kLmNoPqRsTuVwXyZ!": bits += 192; break; case "kLmNoPqRsTuVwXy": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZ") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZ") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZ") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZ": bits += 4096; break; case "#LmNoPqRsTuVwXyZ": bits += 8192; break; case "kLmNoPqRsTuVwXyZ!": bits += 12288; break; case "kLmNoPqRsTuVwXy": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf17(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZa") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZa") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZa")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZa")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZ#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZa!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZa": bits += 64; break; case "#LmNoPqRsTuVwXyZa": bits += 128; break; case "kLmNoPqRsTuVwXyZa!": bits += 192; break; case "kLmNoPqRsTuVwXyZ": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZa") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZa") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZa") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZa": bits += 4096; break; case "#LmNoPqRsTuVwXyZa": bits += 8192; break; case "kLmNoPqRsTuVwXyZa!": bits += 12288; break; case "kLmNoPqRsTuVwXyZ": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf18(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZaB") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZaB") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZaB")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZaB")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZa#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZaB!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZaB": bits += 64; break; case "#LmNoPqRsTuVwXyZaB": bits += 128; break; case "kLmNoPqRsTuVwXyZaB!": bits += 192; break; case "kLmNoPqRsTuVwXyZa": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZaB") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZaB") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZaB") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZaB": bits += 4096; break; case "#LmNoPqRsTuVwXyZaB": bits += 8192; break; case "kLmNoPqRsTuVwXyZaB!": bits += 12288; break; case "kLmNoPqRsTuVwXyZa": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf19(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZaBc") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZaBc") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZaBc")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZaBc")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZaB#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZaBc!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZaBc": bits += 64; break; case "#LmNoPqRsTuVwXyZaBc": bits += 128; break; case "kLmNoPqRsTuVwXyZaBc!": bits += 192; break; case "kLmNoPqRsTuVwXyZaB": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZaBc") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZaBc") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZaBc") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZaBc": bits += 4096; break; case "#LmNoPqRsTuVwXyZaBc": bits += 8192; break; case "kLmNoPqRsTuVwXyZaBc!": bits += 12288; break; case "kLmNoPqRsTuVwXyZaB": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf20(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZaBcD") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZaBcD") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZaBcD")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZaBcD")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZaBc#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZaBcD!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZaBcD": bits += 64; break; case "#LmNoPqRsTuVwXyZaBcD": bits += 128; break; case "kLmNoPqRsTuVwXyZaBcD!": bits += 192; break; case "kLmNoPqRsTuVwXyZaBc": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZaBcD") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZaBcD") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZaBcD") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZaBcD": bits += 4096; break; case "#LmNoPqRsTuVwXyZaBcD": bits += 8192; break; case "kLmNoPqRsTuVwXyZaBcD!": bits += 12288; break; case "kLmNoPqRsTuVwXyZaBc": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf21(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZaBcDe") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZaBcDe") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZaBcDe")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZaBcDe")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZaBcD#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZaBcDe!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZaBcDe": bits += 64; break; case "#LmNoPqRsTuVwXyZaBcDe": bits += 128; break; case "kLmNoPqRsTuVwXyZaBcDe!": bits += 192; break; case "kLmNoPqRsTuVwXyZaBcD": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZaBcDe") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZaBcDe") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZaBcDe") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZaBcDe": bits += 4096; break; case "#LmNoPqRsTuVwXyZaBcDe": bits += 8192; break; case "kLmNoPqRsTuVwXyZaBcDe!": bits += 12288; break; case "kLmNoPqRsTuVwXyZaBcD": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf22(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeF") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZaBcDeF") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZaBcDeF")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZaBcDeF")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZaBcDe#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeF!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZaBcDeF": bits += 64; break; case "#LmNoPqRsTuVwXyZaBcDeF": bits += 128; break; case "kLmNoPqRsTuVwXyZaBcDeF!": bits += 192; break; case "kLmNoPqRsTuVwXyZaBcDe": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZaBcDeF") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZaBcDeF") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZaBcDeF") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZaBcDeF": bits += 4096; break; case "#LmNoPqRsTuVwXyZaBcDeF": bits += 8192; break; case "kLmNoPqRsTuVwXyZaBcDeF!": bits += 12288; break; case "kLmNoPqRsTuVwXyZaBcDe": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf23(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFg") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZaBcDeFg") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZaBcDeFg")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZaBcDeFg")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeF#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFg!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZaBcDeFg": bits += 64; break; case "#LmNoPqRsTuVwXyZaBcDeFg": bits += 128; break; case "kLmNoPqRsTuVwXyZaBcDeFg!": bits += 192; break; case "kLmNoPqRsTuVwXyZaBcDeF": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZaBcDeFg") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZaBcDeFg") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZaBcDeFg") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZaBcDeFg": bits += 4096; break; case "#LmNoPqRsTuVwXyZaBcDeFg": bits += 8192; break; case "kLmNoPqRsTuVwXyZaBcDeFg!": bits += 12288; break; case "kLmNoPqRsTuVwXyZaBcDeF": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf24(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgH") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZaBcDeFgH") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZaBcDeFgH")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZaBcDeFgH")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFg#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgH!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZaBcDeFgH": bits += 64; break; case "#LmNoPqRsTuVwXyZaBcDeFgH": bits += 128; break; case "kLmNoPqRsTuVwXyZaBcDeFgH!": bits += 192; break; case "kLmNoPqRsTuVwXyZaBcDeFg": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZaBcDeFgH") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZaBcDeFgH") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZaBcDeFgH") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZaBcDeFgH": bits += 4096; break; case "#LmNoPqRsTuVwXyZaBcDeFgH": bits += 8192; break; case "kLmNoPqRsTuVwXyZaBcDeFgH!": bits += 12288; break; case "kLmNoPqRsTuVwXyZaBcDeFg": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf25(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHi") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZaBcDeFgHi") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZaBcDeFgHi")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZaBcDeFgHi")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgH#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHi!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZaBcDeFgHi": bits += 64; break; case "#LmNoPqRsTuVwXyZaBcDeFgHi": bits += 128; break; case "kLmNoPqRsTuVwXyZaBcDeFgHi!": bits += 192; break; case "kLmNoPqRsTuVwXyZaBcDeFgH": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZaBcDeFgHi") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZaBcDeFgHi") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZaBcDeFgHi") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZaBcDeFgHi": bits += 4096; break; case "#LmNoPqRsTuVwXyZaBcDeFgHi": bits += 8192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHi!": bits += 12288; break; case "kLmNoPqRsTuVwXyZaBcDeFgH": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf26(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZaBcDeFgHiJ") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZaBcDeFgHiJ")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZaBcDeFgHiJ")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHi#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZaBcDeFgHiJ": bits += 64; break; case "#LmNoPqRsTuVwXyZaBcDeFgHiJ": bits += 128; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ!": bits += 192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHi": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZaBcDeFgHiJ") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZaBcDeFgHiJ") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZaBcDeFgHiJ") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZaBcDeFgHiJ": bits += 4096; break; case "#LmNoPqRsTuVwXyZaBcDeFgHiJ": bits += 8192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ!": bits += 12288; break; case "kLmNoPqRsTuVwXyZaBcDeFgHi": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf27(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ0") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZaBcDeFgHiJ0") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZaBcDeFgHiJ0")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZaBcDeFgHiJ0")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ0!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZaBcDeFgHiJ0": bits += 64; break; case "#LmNoPqRsTuVwXyZaBcDeFgHiJ0": bits += 128; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ0!": bits += 192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZaBcDeFgHiJ0") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZaBcDeFgHiJ0") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZaBcDeFgHiJ0") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZaBcDeFgHiJ0": bits += 4096; break; case "#LmNoPqRsTuVwXyZaBcDeFgHiJ0": bits += 8192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ0!": bits += 12288; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf28(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ01") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZaBcDeFgHiJ01") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZaBcDeFgHiJ01")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZaBcDeFgHiJ01")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ0#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ01!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZaBcDeFgHiJ01": bits += 64; break; case "#LmNoPqRsTuVwXyZaBcDeFgHiJ01": bits += 128; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ01!": bits += 192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ0": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZaBcDeFgHiJ01") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZaBcDeFgHiJ01") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZaBcDeFgHiJ01") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZaBcDeFgHiJ01": bits += 4096; break; case "#LmNoPqRsTuVwXyZaBcDeFgHiJ01": bits += 8192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ01!": bits += 12288; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ0": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf29(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ012") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZaBcDeFgHiJ012") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZaBcDeFgHiJ012")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZaBcDeFgHiJ012")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ01#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ012!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZaBcDeFgHiJ012": bits += 64; break; case "#LmNoPqRsTuVwXyZaBcDeFgHiJ012": bits += 128; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ012!": bits += 192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ01": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZaBcDeFgHiJ012") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZaBcDeFgHiJ012") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZaBcDeFgHiJ012") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZaBcDeFgHiJ012": bits += 4096; break; case "#LmNoPqRsTuVwXyZaBcDeFgHiJ012": bits += 8192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ012!": bits += 12288; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ01": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf30(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZaBcDeFgHiJ0123")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZaBcDeFgHiJ0123")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ012#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123": bits += 64; break; case "#LmNoPqRsTuVwXyZaBcDeFgHiJ0123": bits += 128; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123!": bits += 192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ012": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123": bits += 4096; break; case "#LmNoPqRsTuVwXyZaBcDeFgHiJ0123": bits += 8192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123!": bits += 12288; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ012": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf31(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ01234") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZaBcDeFgHiJ01234") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZaBcDeFgHiJ01234")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZaBcDeFgHiJ01234")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ01234!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZaBcDeFgHiJ01234": bits += 64; break; case "#LmNoPqRsTuVwXyZaBcDeFgHiJ01234": bits += 128; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ01234!": bits += 192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZaBcDeFgHiJ01234") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZaBcDeFgHiJ01234") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZaBcDeFgHiJ01234") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZaBcDeFgHiJ01234": bits += 4096; break; case "#LmNoPqRsTuVwXyZaBcDeFgHiJ01234": bits += 8192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ01234!": bits += 12288; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf32(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ012345") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZaBcDeFgHiJ012345") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZaBcDeFgHiJ012345")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZaBcDeFgHiJ012345")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ01234#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ012345!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZaBcDeFgHiJ012345": bits += 64; break; case "#LmNoPqRsTuVwXyZaBcDeFgHiJ012345": bits += 128; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ012345!": bits += 192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ01234": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZaBcDeFgHiJ012345") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZaBcDeFgHiJ012345") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZaBcDeFgHiJ012345") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZaBcDeFgHiJ012345": bits += 4096; break; case "#LmNoPqRsTuVwXyZaBcDeFgHiJ012345": bits += 8192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ012345!": bits += 12288; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ01234": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareAsciiOf33(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123456") bits |= 1;
+    if (text !== "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123456") bits |= 2;
+    if (text.startsWith("kLmNoPqRsTuVwXyZaBcDeFgHiJ0123456")) bits |= 4;
+    if (text.endsWith("kLmNoPqRsTuVwXyZaBcDeFgHiJ0123456")) bits |= 8;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ012345#") bits |= 16;
+    if (text === "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123456!") bits |= 32;
+    switch (text) { case "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123456": bits += 64; break; case "#LmNoPqRsTuVwXyZaBcDeFgHiJ0123456": bits += 128; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123456!": bits += 192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ012345": bits += 256; break; }
+    if (value === "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123456") bits |= 512;
+    if (value !== "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123456") bits |= 1024;
+    if (value == "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123456") bits |= 2048;
+    switch (value) { case "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123456": bits += 4096; break; case "#LmNoPqRsTuVwXyZaBcDeFgHiJ0123456": bits += 8192; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ0123456!": bits += 12288; break; case "kLmNoPqRsTuVwXyZaBcDeFgHiJ012345": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareLatin1Of1(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "\u00e9") bits |= 1;
+    if (text !== "\u00e9") bits |= 2;
+    if (text.startsWith("\u00e9")) bits |= 4;
+    if (text.endsWith("\u00e9")) bits |= 8;
+    if (text === "#") bits |= 16;
+    if (text === "\u00e9!") bits |= 32;
+    switch (text) { case "\u00e9": bits += 64; break; case "#": bits += 128; break; case "\u00e9!": bits += 192; break; case "": bits += 256; break; }
+    if (value === "\u00e9") bits |= 512;
+    if (value !== "\u00e9") bits |= 1024;
+    if (value == "\u00e9") bits |= 2048;
+    switch (value) { case "\u00e9": bits += 4096; break; case "#": bits += 8192; break; case "\u00e9!": bits += 12288; break; case "": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareLatin1Of2(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "\u00e9\u00ff") bits |= 1;
+    if (text !== "\u00e9\u00ff") bits |= 2;
+    if (text.startsWith("\u00e9\u00ff")) bits |= 4;
+    if (text.endsWith("\u00e9\u00ff")) bits |= 8;
+    if (text === "\u00e9#") bits |= 16;
+    if (text === "\u00e9\u00ff!") bits |= 32;
+    switch (text) { case "\u00e9\u00ff": bits += 64; break; case "#\u00ff": bits += 128; break; case "\u00e9\u00ff!": bits += 192; break; case "\u00e9": bits += 256; break; }
+    if (value === "\u00e9\u00ff") bits |= 512;
+    if (value !== "\u00e9\u00ff") bits |= 1024;
+    if (value == "\u00e9\u00ff") bits |= 2048;
+    switch (value) { case "\u00e9\u00ff": bits += 4096; break; case "#\u00ff": bits += 8192; break; case "\u00e9\u00ff!": bits += 12288; break; case "\u00e9": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareLatin1Of3(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "\u00e9\u00ff\u0080") bits |= 1;
+    if (text !== "\u00e9\u00ff\u0080") bits |= 2;
+    if (text.startsWith("\u00e9\u00ff\u0080")) bits |= 4;
+    if (text.endsWith("\u00e9\u00ff\u0080")) bits |= 8;
+    if (text === "\u00e9\u00ff#") bits |= 16;
+    if (text === "\u00e9\u00ff\u0080!") bits |= 32;
+    switch (text) { case "\u00e9\u00ff\u0080": bits += 64; break; case "#\u00ff\u0080": bits += 128; break; case "\u00e9\u00ff\u0080!": bits += 192; break; case "\u00e9\u00ff": bits += 256; break; }
+    if (value === "\u00e9\u00ff\u0080") bits |= 512;
+    if (value !== "\u00e9\u00ff\u0080") bits |= 1024;
+    if (value == "\u00e9\u00ff\u0080") bits |= 2048;
+    switch (value) { case "\u00e9\u00ff\u0080": bits += 4096; break; case "#\u00ff\u0080": bits += 8192; break; case "\u00e9\u00ff\u0080!": bits += 12288; break; case "\u00e9\u00ff": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareLatin1Of4(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "\u00e9\u00ff\u0080\u00c0") bits |= 1;
+    if (text !== "\u00e9\u00ff\u0080\u00c0") bits |= 2;
+    if (text.startsWith("\u00e9\u00ff\u0080\u00c0")) bits |= 4;
+    if (text.endsWith("\u00e9\u00ff\u0080\u00c0")) bits |= 8;
+    if (text === "\u00e9\u00ff\u0080#") bits |= 16;
+    if (text === "\u00e9\u00ff\u0080\u00c0!") bits |= 32;
+    switch (text) { case "\u00e9\u00ff\u0080\u00c0": bits += 64; break; case "#\u00ff\u0080\u00c0": bits += 128; break; case "\u00e9\u00ff\u0080\u00c0!": bits += 192; break; case "\u00e9\u00ff\u0080": bits += 256; break; }
+    if (value === "\u00e9\u00ff\u0080\u00c0") bits |= 512;
+    if (value !== "\u00e9\u00ff\u0080\u00c0") bits |= 1024;
+    if (value == "\u00e9\u00ff\u0080\u00c0") bits |= 2048;
+    switch (value) { case "\u00e9\u00ff\u0080\u00c0": bits += 4096; break; case "#\u00ff\u0080\u00c0": bits += 8192; break; case "\u00e9\u00ff\u0080\u00c0!": bits += 12288; break; case "\u00e9\u00ff\u0080": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareLatin1Of7(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0") bits |= 1;
+    if (text !== "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0") bits |= 2;
+    if (text.startsWith("\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0")) bits |= 4;
+    if (text.endsWith("\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0")) bits |= 8;
+    if (text === "\u00e9\u00ff\u0080\u00c0\u00f1\u00df#") bits |= 16;
+    if (text === "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0!") bits |= 32;
+    switch (text) { case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0": bits += 64; break; case "#\u00ff\u0080\u00c0\u00f1\u00df\u00a0": bits += 128; break; case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0!": bits += 192; break; case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df": bits += 256; break; }
+    if (value === "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0") bits |= 512;
+    if (value !== "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0") bits |= 1024;
+    if (value == "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0") bits |= 2048;
+    switch (value) { case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0": bits += 4096; break; case "#\u00ff\u0080\u00c0\u00f1\u00df\u00a0": bits += 8192; break; case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0!": bits += 12288; break; case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareLatin1Of8(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5") bits |= 1;
+    if (text !== "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5") bits |= 2;
+    if (text.startsWith("\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5")) bits |= 4;
+    if (text.endsWith("\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5")) bits |= 8;
+    if (text === "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0#") bits |= 16;
+    if (text === "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5!") bits |= 32;
+    switch (text) { case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5": bits += 64; break; case "#\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5": bits += 128; break; case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5!": bits += 192; break; case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0": bits += 256; break; }
+    if (value === "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5") bits |= 512;
+    if (value !== "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5") bits |= 1024;
+    if (value == "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5") bits |= 2048;
+    switch (value) { case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5": bits += 4096; break; case "#\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5": bits += 8192; break; case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5!": bits += 12288; break; case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareLatin1Of9(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5\u00fe") bits |= 1;
+    if (text !== "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5\u00fe") bits |= 2;
+    if (text.startsWith("\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5\u00fe")) bits |= 4;
+    if (text.endsWith("\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5\u00fe")) bits |= 8;
+    if (text === "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5#") bits |= 16;
+    if (text === "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5\u00fe!") bits |= 32;
+    switch (text) { case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5\u00fe": bits += 64; break; case "#\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5\u00fe": bits += 128; break; case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5\u00fe!": bits += 192; break; case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5": bits += 256; break; }
+    if (value === "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5\u00fe") bits |= 512;
+    if (value !== "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5\u00fe") bits |= 1024;
+    if (value == "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5\u00fe") bits |= 2048;
+    switch (value) { case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5\u00fe": bits += 4096; break; case "#\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5\u00fe": bits += 8192; break; case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5\u00fe!": bits += 12288; break; case "\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareWideOf1(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "\u0141") bits |= 1;
+    if (text !== "\u0141") bits |= 2;
+    if (text.startsWith("\u0141")) bits |= 4;
+    if (text.endsWith("\u0141")) bits |= 8;
+    if (text === "#") bits |= 16;
+    if (text === "\u0141!") bits |= 32;
+    switch (text) { case "\u0141": bits += 64; break; case "#": bits += 128; break; case "\u0141!": bits += 192; break; case "": bits += 256; break; }
+    if (value === "\u0141") bits |= 512;
+    if (value !== "\u0141") bits |= 1024;
+    if (value == "\u0141") bits |= 2048;
+    switch (value) { case "\u0141": bits += 4096; break; case "#": bits += 8192; break; case "\u0141!": bits += 12288; break; case "": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareWideOf2(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "\u0141\u0142") bits |= 1;
+    if (text !== "\u0141\u0142") bits |= 2;
+    if (text.startsWith("\u0141\u0142")) bits |= 4;
+    if (text.endsWith("\u0141\u0142")) bits |= 8;
+    if (text === "\u0141#") bits |= 16;
+    if (text === "\u0141\u0142!") bits |= 32;
+    switch (text) { case "\u0141\u0142": bits += 64; break; case "#\u0142": bits += 128; break; case "\u0141\u0142!": bits += 192; break; case "\u0141": bits += 256; break; }
+    if (value === "\u0141\u0142") bits |= 512;
+    if (value !== "\u0141\u0142") bits |= 1024;
+    if (value == "\u0141\u0142") bits |= 2048;
+    switch (value) { case "\u0141\u0142": bits += 4096; break; case "#\u0142": bits += 8192; break; case "\u0141\u0142!": bits += 12288; break; case "\u0141": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareWideOf3(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "\u0141\u0142\u0143") bits |= 1;
+    if (text !== "\u0141\u0142\u0143") bits |= 2;
+    if (text.startsWith("\u0141\u0142\u0143")) bits |= 4;
+    if (text.endsWith("\u0141\u0142\u0143")) bits |= 8;
+    if (text === "\u0141\u0142#") bits |= 16;
+    if (text === "\u0141\u0142\u0143!") bits |= 32;
+    switch (text) { case "\u0141\u0142\u0143": bits += 64; break; case "#\u0142\u0143": bits += 128; break; case "\u0141\u0142\u0143!": bits += 192; break; case "\u0141\u0142": bits += 256; break; }
+    if (value === "\u0141\u0142\u0143") bits |= 512;
+    if (value !== "\u0141\u0142\u0143") bits |= 1024;
+    if (value == "\u0141\u0142\u0143") bits |= 2048;
+    switch (value) { case "\u0141\u0142\u0143": bits += 4096; break; case "#\u0142\u0143": bits += 8192; break; case "\u0141\u0142\u0143!": bits += 12288; break; case "\u0141\u0142": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareWideOf4(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "\u0141\u0142\u0143\u0144") bits |= 1;
+    if (text !== "\u0141\u0142\u0143\u0144") bits |= 2;
+    if (text.startsWith("\u0141\u0142\u0143\u0144")) bits |= 4;
+    if (text.endsWith("\u0141\u0142\u0143\u0144")) bits |= 8;
+    if (text === "\u0141\u0142\u0143#") bits |= 16;
+    if (text === "\u0141\u0142\u0143\u0144!") bits |= 32;
+    switch (text) { case "\u0141\u0142\u0143\u0144": bits += 64; break; case "#\u0142\u0143\u0144": bits += 128; break; case "\u0141\u0142\u0143\u0144!": bits += 192; break; case "\u0141\u0142\u0143": bits += 256; break; }
+    if (value === "\u0141\u0142\u0143\u0144") bits |= 512;
+    if (value !== "\u0141\u0142\u0143\u0144") bits |= 1024;
+    if (value == "\u0141\u0142\u0143\u0144") bits |= 2048;
+    switch (value) { case "\u0141\u0142\u0143\u0144": bits += 4096; break; case "#\u0142\u0143\u0144": bits += 8192; break; case "\u0141\u0142\u0143\u0144!": bits += 12288; break; case "\u0141\u0142\u0143": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareWideOf5(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "\u0141\u0142\u0143\u0144\u0145") bits |= 1;
+    if (text !== "\u0141\u0142\u0143\u0144\u0145") bits |= 2;
+    if (text.startsWith("\u0141\u0142\u0143\u0144\u0145")) bits |= 4;
+    if (text.endsWith("\u0141\u0142\u0143\u0144\u0145")) bits |= 8;
+    if (text === "\u0141\u0142\u0143\u0144#") bits |= 16;
+    if (text === "\u0141\u0142\u0143\u0144\u0145!") bits |= 32;
+    switch (text) { case "\u0141\u0142\u0143\u0144\u0145": bits += 64; break; case "#\u0142\u0143\u0144\u0145": bits += 128; break; case "\u0141\u0142\u0143\u0144\u0145!": bits += 192; break; case "\u0141\u0142\u0143\u0144": bits += 256; break; }
+    if (value === "\u0141\u0142\u0143\u0144\u0145") bits |= 512;
+    if (value !== "\u0141\u0142\u0143\u0144\u0145") bits |= 1024;
+    if (value == "\u0141\u0142\u0143\u0144\u0145") bits |= 2048;
+    switch (value) { case "\u0141\u0142\u0143\u0144\u0145": bits += 4096; break; case "#\u0142\u0143\u0144\u0145": bits += 8192; break; case "\u0141\u0142\u0143\u0144\u0145!": bits += 12288; break; case "\u0141\u0142\u0143\u0144": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareWideOf9(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149") bits |= 1;
+    if (text !== "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149") bits |= 2;
+    if (text.startsWith("\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149")) bits |= 4;
+    if (text.endsWith("\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149")) bits |= 8;
+    if (text === "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148#") bits |= 16;
+    if (text === "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149!") bits |= 32;
+    switch (text) { case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149": bits += 64; break; case "#\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149": bits += 128; break; case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149!": bits += 192; break; case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148": bits += 256; break; }
+    if (value === "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149") bits |= 512;
+    if (value !== "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149") bits |= 1024;
+    if (value == "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149") bits |= 2048;
+    switch (value) { case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149": bits += 4096; break; case "#\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149": bits += 8192; break; case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149!": bits += 12288; break; case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareWideOf32(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160") bits |= 1;
+    if (text !== "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160") bits |= 2;
+    if (text.startsWith("\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160")) bits |= 4;
+    if (text.endsWith("\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160")) bits |= 8;
+    if (text === "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f#") bits |= 16;
+    if (text === "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160!") bits |= 32;
+    switch (text) { case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160": bits += 64; break; case "#\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160": bits += 128; break; case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160!": bits += 192; break; case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f": bits += 256; break; }
+    if (value === "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160") bits |= 512;
+    if (value !== "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160") bits |= 1024;
+    if (value == "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160") bits |= 2048;
+    switch (value) { case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160": bits += 4096; break; case "#\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160": bits += 8192; break; case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160!": bits += 12288; break; case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+function compareWideOf33(prepared: Prepared): string {
+  let answers = "";
+  let hash = 0;
+  for (let turn = 0; turn < 1000; turn++) {
+    const text = subjectAt(prepared, turn);
+    const value = valueAt(prepared, turn);
+    let bits = 0;
+    if (text === "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160\u0161") bits |= 1;
+    if (text !== "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160\u0161") bits |= 2;
+    if (text.startsWith("\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160\u0161")) bits |= 4;
+    if (text.endsWith("\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160\u0161")) bits |= 8;
+    if (text === "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160#") bits |= 16;
+    if (text === "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160\u0161!") bits |= 32;
+    switch (text) { case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160\u0161": bits += 64; break; case "#\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160\u0161": bits += 128; break; case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160\u0161!": bits += 192; break; case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160": bits += 256; break; }
+    if (value === "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160\u0161") bits |= 512;
+    if (value !== "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160\u0161") bits |= 1024;
+    if (value == "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160\u0161") bits |= 2048;
+    switch (value) { case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160\u0161": bits += 4096; break; case "#\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160\u0161": bits += 8192; break; case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160\u0161!": bits += 12288; break; case "\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160": bits += 16384; break; }
+    if (turn < prepared.values) answers += " " + bits.toString(36);
+    hash = (Math.imul(hash, 31) + bits) | 0;
+  }
+  return answers + " hash " + hash;
+}
+
+const ascii = hidden("kLmNoPqRsTuVwXyZaBcDeFgHiJ0123456");
+const latin1 = hidden("\u00e9\u00ff\u0080\u00c0\u00f1\u00df\u00a0\u00b5\u00fe");
+const wide = hidden("\u0141\u0142\u0143\u0144\u0145\u0146\u0147\u0148\u0149\u014a\u014b\u014c\u014d\u014e\u014f\u0150\u0151\u0152\u0153\u0154\u0155\u0156\u0157\u0158\u0159\u015a\u015b\u015c\u015d\u015e\u015f\u0160\u0161");
+const preparedAscii: Prepared[] = [];
+for (let length = 0; length <= 33; length++) preparedAscii.push(prepare(ascii.slice(0, length)));
+const preparedLatin1: Prepared[] = [];
+for (let length = 0; length <= 9; length++) preparedLatin1.push(prepare(latin1.slice(0, length)));
+const preparedWide: Prepared[] = [];
+for (let length = 0; length <= 33; length++) preparedWide.push(prepare(wide.slice(0, length)));
+for (let round = 0; round < 2; round++) {
+  console.log("round " + round + ", ASCII 0:" + compareAsciiOf0(preparedAscii[0]));
+  console.log("round " + round + ", ASCII 1:" + compareAsciiOf1(preparedAscii[1]));
+  console.log("round " + round + ", ASCII 2:" + compareAsciiOf2(preparedAscii[2]));
+  console.log("round " + round + ", ASCII 3:" + compareAsciiOf3(preparedAscii[3]));
+  console.log("round " + round + ", ASCII 4:" + compareAsciiOf4(preparedAscii[4]));
+  console.log("round " + round + ", ASCII 5:" + compareAsciiOf5(preparedAscii[5]));
+  console.log("round " + round + ", ASCII 6:" + compareAsciiOf6(preparedAscii[6]));
+  console.log("round " + round + ", ASCII 7:" + compareAsciiOf7(preparedAscii[7]));
+  console.log("round " + round + ", ASCII 8:" + compareAsciiOf8(preparedAscii[8]));
+  console.log("round " + round + ", ASCII 9:" + compareAsciiOf9(preparedAscii[9]));
+  console.log("round " + round + ", ASCII 10:" + compareAsciiOf10(preparedAscii[10]));
+  console.log("round " + round + ", ASCII 11:" + compareAsciiOf11(preparedAscii[11]));
+  console.log("round " + round + ", ASCII 12:" + compareAsciiOf12(preparedAscii[12]));
+  console.log("round " + round + ", ASCII 13:" + compareAsciiOf13(preparedAscii[13]));
+  console.log("round " + round + ", ASCII 14:" + compareAsciiOf14(preparedAscii[14]));
+  console.log("round " + round + ", ASCII 15:" + compareAsciiOf15(preparedAscii[15]));
+  console.log("round " + round + ", ASCII 16:" + compareAsciiOf16(preparedAscii[16]));
+  console.log("round " + round + ", ASCII 17:" + compareAsciiOf17(preparedAscii[17]));
+  console.log("round " + round + ", ASCII 18:" + compareAsciiOf18(preparedAscii[18]));
+  console.log("round " + round + ", ASCII 19:" + compareAsciiOf19(preparedAscii[19]));
+  console.log("round " + round + ", ASCII 20:" + compareAsciiOf20(preparedAscii[20]));
+  console.log("round " + round + ", ASCII 21:" + compareAsciiOf21(preparedAscii[21]));
+  console.log("round " + round + ", ASCII 22:" + compareAsciiOf22(preparedAscii[22]));
+  console.log("round " + round + ", ASCII 23:" + compareAsciiOf23(preparedAscii[23]));
+  console.log("round " + round + ", ASCII 24:" + compareAsciiOf24(preparedAscii[24]));
+  console.log("round " + round + ", ASCII 25:" + compareAsciiOf25(preparedAscii[25]));
+  console.log("round " + round + ", ASCII 26:" + compareAsciiOf26(preparedAscii[26]));
+  console.log("round " + round + ", ASCII 27:" + compareAsciiOf27(preparedAscii[27]));
+  console.log("round " + round + ", ASCII 28:" + compareAsciiOf28(preparedAscii[28]));
+  console.log("round " + round + ", ASCII 29:" + compareAsciiOf29(preparedAscii[29]));
+  console.log("round " + round + ", ASCII 30:" + compareAsciiOf30(preparedAscii[30]));
+  console.log("round " + round + ", ASCII 31:" + compareAsciiOf31(preparedAscii[31]));
+  console.log("round " + round + ", ASCII 32:" + compareAsciiOf32(preparedAscii[32]));
+  console.log("round " + round + ", ASCII 33:" + compareAsciiOf33(preparedAscii[33]));
+  console.log("round " + round + ", Latin-1 1:" + compareLatin1Of1(preparedLatin1[1]));
+  console.log("round " + round + ", Latin-1 2:" + compareLatin1Of2(preparedLatin1[2]));
+  console.log("round " + round + ", Latin-1 3:" + compareLatin1Of3(preparedLatin1[3]));
+  console.log("round " + round + ", Latin-1 4:" + compareLatin1Of4(preparedLatin1[4]));
+  console.log("round " + round + ", Latin-1 7:" + compareLatin1Of7(preparedLatin1[7]));
+  console.log("round " + round + ", Latin-1 8:" + compareLatin1Of8(preparedLatin1[8]));
+  console.log("round " + round + ", Latin-1 9:" + compareLatin1Of9(preparedLatin1[9]));
+  console.log("round " + round + ", 16-bit 1:" + compareWideOf1(preparedWide[1]));
+  console.log("round " + round + ", 16-bit 2:" + compareWideOf2(preparedWide[2]));
+  console.log("round " + round + ", 16-bit 3:" + compareWideOf3(preparedWide[3]));
+  console.log("round " + round + ", 16-bit 4:" + compareWideOf4(preparedWide[4]));
+  console.log("round " + round + ", 16-bit 5:" + compareWideOf5(preparedWide[5]));
+  console.log("round " + round + ", 16-bit 9:" + compareWideOf9(preparedWide[9]));
+  console.log("round " + round + ", 16-bit 32:" + compareWideOf32(preparedWide[32]));
+  console.log("round " + round + ", 16-bit 33:" + compareWideOf33(preparedWide[33]));
+}
+//// literals-on-cold-paths.ts
+// A string literal that is only wanted where something goes wrong: the message of an assertion, the default of a lookup, the text of an error. The literal must be there in every arm that uses it, whichever is taken first.
+const out: string[] = [];
+namespace Debug {
+    export let failures = 0;
+    export function fail(message?: string): never { failures++; throw new Error(message ? "Debug Failure. " + message : "Debug Failure."); }
+    export function assert(expression: unknown, message?: string, verbose?: string | (() => string)): asserts expression {
+        if (!expression) {
+            message = message ? "False expression: " + message : "False expression.";
+            if (verbose) message += "\r\nVerbose Debug Information: " + (typeof verbose === "string" ? verbose : verbose());
+            fail(message);
+        }
+    }
+}
+let assertOfTheDay: (expression: unknown, message?: string) => void = Debug.assert;
+function token(kind: number): number {
+    Debug.assert(kind >= 0 && kind <= 166, "Invalid token");
+    Debug.assert(kind <= 15 || kind >= 18, "Invalid token. Use 'createTemplateLiteralLikeNode' to create template literals.");
+    Debug.assert(kind <= 9 || kind >= 15, "Invalid token. Use 'createLiteralLikeNode' to create literals.");
+    Debug.assert(kind !== 80, "Invalid token. Use 'createIdentifier' to create identifiers");
+    return kind * 2;
+}
+function throughVariable(kind: number): number {
+    assertOfTheDay(kind !== 7, "seven is not wanted here");
+    assertOfTheDay(kind !== 8, "nor is eight");
+    return kind + 1;
+}
+function twoArms(kind: number, other: number): string {
+    const message = "a text for two arms";
+    if (kind === 1000) return message + "!";
+    if (other === 1000) return "?" + message;
+    return "";
+}
+function threeArms(kind: number): string {
+    const message = "a text for three arms";
+    if (kind === 1000) return message + "1";
+    if (kind === 2000) return message + "2";
+    if (kind === 3000) return message + "3";
+    return "";
+}
+function alsoOnTheUsualPath(kind: number): number {
+    const message = "a text that is always wanted";
+    if (kind === 1000) return (message + "!").length;
+    if (kind === 2000) return ("?" + message).length;
+    return message.length + kind;
+}
+function inLoop(list: number[]): string {
+    const message = "a text used in a loop's rare arm";
+    let found = "";
+    for (const x of list) { if (x === 1000) found += message; else if (x === 2000) found += message.length; }
+    return found;
+}
+function sameCell(kind: number): boolean {
+    const message = "one literal, one value";
+    const a = kind === 1000 ? message : "x";
+    const b = kind >= 1000 ? message : "y";
+    return a === b;
+}
+function attempt(what: string, f: () => unknown): void { try { out.push(what + ": " + String(f())); } catch (e) { out.push(what + " threw: " + (e as Error).message); } }
+let sum = 0;
+for (let i = 0; i < 300; i++) { const kind = i % 167; if ((kind > 9 && kind < 18) || kind === 80) continue; sum += token(kind) + throughVariable(kind > 8 ? kind : 1) + twoArms(kind, i).length + threeArms(kind).length + alsoOnTheUsualPath(kind); }
+out.push("sum " + sum);
+for (const kind of [-1, 167, 16, 17, 10, 14, 80, 0, 166]) attempt("token " + kind, () => token(kind));
+for (const kind of [7, 8, 9]) attempt("through a variable " + kind, () => throughVariable(kind));
+assertOfTheDay = (expression, message) => { out.push("another assert: " + String(expression) + " " + message); };
+for (const kind of [7, 8, 9]) attempt("through another " + kind, () => throughVariable(kind));
+out.push([twoArms(1000, 0), twoArms(0, 1000), twoArms(1000, 1000), twoArms(0, 0)].join("|"));
+out.push([threeArms(1000), threeArms(2000), threeArms(3000), threeArms(0)].join("|"));
+out.push([alsoOnTheUsualPath(1000), alsoOnTheUsualPath(2000), alsoOnTheUsualPath(3)].join("|"));
+out.push(inLoop([1, 1000, 2, 2000, 1000]) + "|" + inLoop([]) + "|" + inLoop([5]));
+out.push([sameCell(1000), sameCell(1001), sameCell(1)].join("|"));
+out.push("failures " + Debug.failures);
+console.log(out.join("\n"));
+//// long-classes-that-take-turns-in-a-pattern-out-of-run-time-text.ts
+// The parser takes a character class whose text it has parsed before in the same pattern without parsing it again: the last short one, and the last sixteen long ones.
+// Here long classes take turns, twenty of them push each other out, two differ in their last character only, one is the beginning of another, one comes negated, one stands under (?i: ) and outside of it,
+// and each is followed by another quantifier. The patterns are put together at run time. The output is that of plain Bun.
+const given: string = typeof process === "object" ? process.argv.slice(2).join("") : String(Date.now()).slice(0, 0);
+function longClass(first: number, count: number, more = ""): string {
+  let text = "[";
+  for (let i = 0; i < count; i++) text += "\\u" + (first + i * 2).toString(16).padStart(4, "0");
+  return text + more + given + "]";
+}
+const log: string[] = [];
+function show(source: string, flags: string, ...subjects: string[]) {
+  const pattern = new RegExp(source, flags);
+  log.push(source.length + " " + flags + " " + subjects.map(subject => {
+    pattern.lastIndex = 0;
+    const match = pattern.exec(subject);
+    return match ? match.index + ":" + JSON.stringify(match[0]) + ":" + (match.length - 1) : "no";
+  }).join(" "));
+}
+const a = longClass(0x61, 6), b = longClass(0x62, 6), c = longClass(0x41, 6), d = longClass(0x30, 5);
+show("^" + a + b + a + b + c + d + a + "$", "", "abcbA0a", "abcbA1a", "bbcbA0a", "acedC8k");
+show("^" + a + "+" + b + "*" + a + "?" + b + "{2}" + a + "+?" + b + "*?$", "", "aabbbdd", "acebdfbd", "bd", "abb");
+const twenty: string[] = [];
+for (let i = 0; i < 20; i++) twenty.push(longClass(0x100 + i * 32, 6, String.fromCharCode(97 + i)));
+show("^" + twenty.join("") + twenty.join("") + twenty[0] + twenty[19] + twenty[3] + "$", "", "abcdefghijklmnopqrstabcdefghijklmnopqrstatd", "abcdefghijklmnopqrstabcdefghijklmnopqrstatc", "ĀbcdefghijklmnopqrstĂbcdefghijklmnopqrstatd");
+const endsInX = longClass(0x61, 6, "x"), endsInY = longClass(0x61, 6, "y");
+show("^" + endsInX + endsInY + endsInX + endsInY + "$", "", "xyxy", "yxyx", "aaaa", "xxxx");
+const whole = longClass(0x61, 8), beginning = longClass(0x61, 7);
+show("^" + whole + beginning + whole + beginning + "$", "", "oaoa", "oooo", "amom", "aooa");
+const negated = "[^" + a.slice(1);
+show("^" + a + negated + a + negated + "$", "", "abab", "aaaa", "a1c2", "bbbb");
+show("^" + a + "(?i:" + a + a + ")" + a + "$", "", "aAAa", "aaaa", "AAAA", "aACa", "aAaA");
+show("^(?:" + a + "|" + b + ")(" + a + ")(?=" + b + ")(?!" + a + ")" + b + "$", "", "aab", "bab", "aaa", "bcd");
+show("(" + a + ")\\1" + a, "g", "xxaacxx", "aba", "cce");
+show("^[ab][ab][cd][ab][cd][cd]" + a + "[ab]" + a + "[ab]$", "", "abcadcabab", "abcadcaccb", "abcadcabcc");
+show("^" + a + "-" + a + "]" + a + "$", "", "a-c]e", "a-c]f");
+console.log(log.join("\n"));
+//// long-pattern-source.ts
+// The `source` property of very long regular expressions, with slashes and escapes.
+declare const console: { log(...a: unknown[]): void }
+function sum(s: string): number { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h }
+function fill(n: number, head: string): string { return head + "|[" + "a".repeat(n - head.length - 7) + "]{9}~" }
+const heads: [string, string][] = [["plain", "xy+z"], ["escaped slash", "x\\/y"], ["slash in brackets", "x[/]y"], ["bare slash", "x/y"], ["bare slash behind an escaped one", "x\\/y/z"], ["bracket closed, then a slash", "[a]/b"], ["escaped bracket, then a slash", "\\[/\\]"], ["line feed", "x\ny"], ["carriage return", "x\ry"], ["escaped line feed", "x\\\ny"], ["u2028", "x" + String.fromCharCode(0x2028) + "y"], ["16 bits", "x" + String.fromCharCode(0x4e00) + "y"], ["16 bits and a slash", "x" + String.fromCharCode(0x4e00) + "/y"], ["backslash at the end of the head", "x\\\\"]]
+const lengths: number[] = [64, 4095, 4096, 4097, 5000, 16384, 16385, 65535, 65536, 65537, 70000]
+let rows = 0
+for (const [name, head] of heads) {
+  let line = name + ":"
+  for (const n of lengths) {
+    for (const flags of ["", "giu"]) {
+      let r: RegExp
+      try { r = new RegExp(fill(n, head), flags) } catch (e) { line += " " + n + flags + ":" + (e as Error).name; rows++; continue }
+      const s = r.source, again = r.source, t = r.toString(), copy = new RegExp(r), text = String(r)
+      line += " " + n + flags + ":" + s.length + "," + sum(s) + "," + (s === again) + "," + t.length + "," + sum(t) + "," + (copy.source === s) + "," + (text === t) + "," + JSON.stringify(s.slice(0, 12)) + "," + r.test("xy") + r.test("aaaaaaaaa~")
+      rows++
+    }
+  }
+  console.log(line)
+}
+const a = new RegExp(fill(5000, "one")), b = new RegExp(fill(6000, "two\\/"))
+const joined = new RegExp(a.source + "|" + b.source, "g")
+console.log(joined.source.length, sum(joined.source), joined.source === a.source + "|" + b.source, new RegExp("").source, new RegExp("/").source, /a\/b/.source, /[/]/.source)
+console.log(rows + " rows")
+//// long-regexp-source-untyped.js
+// The `source` property of very long regular expressions, with slashes and escapes (the same program without type annotations).
+////= sum
+function fill(n, head) {
+  return head + "|[" + "a".repeat(n - head.length - 7) + "]{9}~";
+}
+const heads = [["plain", "xy+z"], ["escaped slash", "x\\/y"], ["slash in brackets", "x[/]y"], ["bare slash", "x/y"], ["bare slash behind an escaped one", "x\\/y/z"], ["bracket closed, then a slash", "[a]/b"], ["escaped bracket, then a slash", "\\[/\\]"], ["line feed", `x
+y`], ["carriage return", "x\ry"], ["escaped line feed", "x\\\ny"], ["u2028", "x" + String.fromCharCode(8232) + "y"], ["16 bits", "x" + String.fromCharCode(19968) + "y"], ["16 bits and a slash", "x" + String.fromCharCode(19968) + "/y"], ["backslash at the end of the head", "x\\\\"]];
+const lengths = [64, 4095, 4096, 4097, 5000, 16384, 16385, 65535, 65536, 65537, 70000];
+let rows = 0;
+for (const [name, head] of heads) {
+  let line = name + ":";
+  for (const n of lengths) {
+    for (const flags of ["", "giu"]) {
+      let r;
+      try {
+        r = new RegExp(fill(n, head), flags);
+      } catch (e) {
+        line += " " + n + flags + ":" + e.name;
+        rows++;
+        continue;
+      }
+      const s = r.source, again = r.source, t = r.toString(), copy = new RegExp(r), text = String(r);
+      line += " " + n + flags + ":" + s.length + "," + sum(s) + "," + (s === again) + "," + t.length + "," + sum(t) + "," + (copy.source === s) + "," + (text === t) + "," + JSON.stringify(s.slice(0, 12)) + "," + r.test("xy") + r.test("aaaaaaaaa~");
+      rows++;
+    }
+  }
+  console.log(line);
+}
+const a = new RegExp(fill(5000, "one"));
+const b = new RegExp(fill(6000, "two\\/"));
+const joined = new RegExp(a.source + "|" + b.source, "g");
+console.log(joined.source.length, sum(joined.source), joined.source === a.source + "|" + b.source, new RegExp("").source, new RegExp("/").source, /a\/b/.source, /[/]/.source);
+console.log(rows + " rows");
+//// long-texts-as-constants.ts
+// Long texts as constants: read whole, in pieces, as keys, in containers, once and many times. A text that the program only makes into a string and a text that it also compares.
+function checksum(text: string): number {
+  let sum = 0;
+  for (let index = 0; index < text.length; index++) sum = (sum * 31 + text.charCodeAt(index)) % 1000000007;
+  return sum;
+}
+
+function show(label: string, text: string): void {
+  console.log(label, text.length, checksum(text), JSON.stringify(text.slice(0, 24)), JSON.stringify(text.slice(-24)), text.indexOf("bridge"), text.lastIndexOf("boats"), text.split(" ").length);
+}
+
+function narrow(): string {
+  return "nobody while them fox jumps alike a shore fox sail drift brown over because twice jumps an over because fox lazy past fox them fox past brown dog bridge twice while alike lazy and small a boats shore a jumps fox drift every alike because nobody light light shore and an small an over and look every on evening bridge jumps lazy sail twice seven on while every twice brown jumps nobody on the every light jumps over stone makes jumps fox and evening bridge counts the quick light the seven lazy every fox drift bridge dog an them them every over seven evening them stone dog because stone twice the counts past while over small while past past the every small old bridge the while twice alike shore nobody dog sail fox light them them them them a makes them fox boats jumps drift evening seven lazy on fox a the while alike a shore quick jumps drift counts while old the shore makes lazy lazy every light makes makes and over while a on old makes seven look quick drift look shore while alike quick look and over old look shore seven the past alike alike sail on past boats an them past boats look every the quick quick stone makes old boats the evening the shore over past a past makes boats on drift makes the makes the over lazy counts boats makes small because on over them light them over seven seven dog quick while light while makes the while dog quick the a look dog because boats drift quick old drift bridge sail an nobody old alike twice dog fox the light look twice sail dog alike while look sail quick evening small the while small while makes lazy fox nobody look look makes a fox an boats stone brown a sail evening quick jumps evening nobody sail sail boats stone evening sail alike makes sail an look old boats evening dog twice lazy them evening nobody jumps an because jumps drift and lazy while shore while old dog light past a them every seven past seven because sail them on twice boats the nobody over shore quick on light evening quick counts on look bridge sail jumps lazy past a over old stone brown small stone dog because old them while alike sail every nobody over stone fox small because jumps stone quick over old over past jumps old lazy light the on twice stone dog brown look an lazy seven old fox small boats and and look drift bridge evening sail small stone the quick old brown the quick sail boats sail makes an evening a because every alike them sail and drift past on boats dog them the fox dog the jumps old because seven fox over counts sail bridge an bridge brown light small seven stone evening the old shore on nobody an brown and drift the small the on counts over makes stone sail boats an sail the over old over while them brown them quick and and past over look while counts nobody every while bridge while brown sail because sail dog look sail quick past over quick brown dog shore a counts evening fox quick alike an every old the light jumps sail alike over look jumps makes old jumps old an drift past light every counts jumps makes bridge brown bo";
+}
+
+function wideText(): string {
+  return "┌umps while on old and ∑og the makes fox every┘stone a drift every br✓dge look bridge light 字ight light lazy boats →nd over makes quick br✗dge light jumps sail e←ening stone counts dri漢t drift jumps over whi←e look old shore dog s✗il stone lazy shore pa│t every every them qui←k seven the every evenλng them and while twic↓ the counts nobody laz✗ on the nobody on them✗lazy boats the bridge ─ld shore jumps them co↓nts jumps shore becaus∑ stone fox stone a fox├bridge while an stone ✓ecause sail nobody boa✓s shore because quick ├hem drift over fox twi─e evening dog bridge e✗ery fox dog seven make┘ twice on bridge and o✗d old them an and make┐ them lazy seven seven┌jumps drift sail every✓past evening on eveninλ because dog boats an ↓ver small on over nobo…y an shore old boats q┘ick twice counts twice└look drift counts ston─ on fox every stone sh│re dog sail look drift”over stone an counts t└em evening because and∑quick dog brown becaus✓ makes every the jumps┌them look light eveninλ an a past while whileπlook a light over brow↓ the dog past brown an“ dog old look because ┘azy a jumps and look b└ats counts old past th↓ the alike and light s←one nobody an makes lo┘k an an quick twice an“ fox quick boats every┘twice over old past be┌ause shore past every ┐rown on twice shore th✓m boats the bridge sai— jumps drift every boa├s and boats past light←past old bridge a ever└ small past every twic│ fox while them fox dr—ft quick while twice f↑x fox small them eveni│g nobody lazy over sevπn on boats small look ∑ight brown and counts ✓hore on evening seven ┌ the over stone over t字e twice lazy drift couπts the and because ove字 fox makes boats shore┘alike evening boats no∑ody shore makes quick ┤wice an them brown couπts brown light jumps f✓x old boats jumps on sπore stone on brown old├nobody stone and the j—mps quick past a makes┘light counts old becauλe every dog every smal├ the and while an nobo│y nobody light shore o✓er sail boats them sev“n an twice jumps brown┘makes alike nobody sev✓n because a jumps old ↓ver drift a twice ever┐ evening small past do└ twice light an alike ┤azy bridge bridge ston├ stone shore old old b│ats evening an small a” an while bridge boats漢nobody jumps them old │n sail look past a lig漢t brown a the makes pa↑t evening shore brown ┐ridge past lazy fox bo✓ts boats jumps shore sπil small evening old t…e a the drift brown sh”re on while brown drif∑ old brown drift the n←body twice shore small∑and jumps drift brown ✗very makes jumps twice←a them while al";
+}
+
+function noise(): string {
+  return "3Ms8GbLkV3AZkGAs+M+X/shUkbd/VOK+NptMzyL2Dvamh2Vwd6QEspT5pV74gdQq7eYimTTfpsUepYhNVNZxTSmm3jZNNjax7EBz3cl7CSgzAf31ddXP63ohM1fzUg296C0XpBx+NEgbUZsM6a8Cvr06aXyPtHgjwzHBJ11thNcmzcy7bVQIY8cSt07lQ8tdiwg2X9Ajtfmp9+2KuTmxHKpRsBBaJlgMSdX5sTazVLmZ/bK4OPh1dR8/H97S+f/VAUp7/l7v21JXuDCFqM9+SEb1QrMur8ak3r2gGllt/zqisa/PqYomQLFzzGzmNAFY8HwSKbF6WMXE1MBvRnhmX1EoC3G/FP1z5IBxT80NK8bTB2ABPLbPQ8Cjf5XGuSKl/6gGEBHBKxnnV+Hov48VSOuU19x5iqljHqBTn2fwxwd5kAphi2UFkSSj/sK+wZdnHy7agBx6LtIdyhp9ZYbYLXlutzTfF/vNv7KToDsjCMEa+bhj2M5QgErZXwKDGEv6+IyPLgodLyX5UvecWEgtHDGh9HMSoAZm4N8pvgxPv9wV4eSB7YEUcJvR5MxCJ5rpd9OuSqcHX5S4Ti10fTDilqVh+No69OTHb9kPgZu3heeMxl1UHlSC4rR4AkXu3F0bjXRXdWZKL/jWaRYnZBI0Hsqk/LB09RifXuEUvAt5JPtfpwHlN/5DRCfLcXVNngDCMYhC7e4NsMWFiP7/jOPPzRddS7yVCx1EyGurzeq3pzGpStf2BuNXIp3ZCcR1y6FFEiiEMgPB3eFkOnsVPHiK7S4PQl0kjfLk6cxZu6m98nDfqcYxyBtUepp+ikblHCUIs4Hx4tNcT1rtRZjM8iQ0NA0P/yT1jOw56ktltyxpA/w4mXmS3wdLqpfpa2BDGg/mn33x7tFs5BIdM0vzTY1+z4rLVuouJnWOlr1UlaY0XHNtF0BAnAmyMBDZW/iSZ0PSUNDMJV+73HBpSetjVEiMIsY5xCGcyF4GefcFUWoA6m1g/Ifxc0nz+CfLWVtwXAlyuOqxqzIP2sfxY7kse3EjDrTeQLZiQ47eUvtbzwam8ad5Qh4vfzbQPLixDSnBxLWdpYNIumYInLck";
+}
+
+function repeated(): string {
+  return "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab";
+}
+
+const atTopLevel = "an because counts shore evening sail evening small quick the every light an evening light small makes them a jumps dog the because shore over evening sail sail brown brown dog over nobody sail over fox sail counts dog quick jumps lazy boats dog every bridge seven past jumps the old seven nobody stone light while old sail makes drift old sail an nobody shore brown boats small them seven stone nobody counts seven old lazy look fox shore evening look a old alike them shore old counts shore while shore on over evening past small fox bridge look old and nobody the brown past while bridge because twice sail shore fox dog every past brown quick fox the the and a look the alike past twice and dog drift shore makes seven dog the an while evening a jumps while stone them old the fox the evening look every an seven the brown fox alike quick them small an seven fox a the boats while twice boats look sail twice small sail and jumps and fox makes alike the counts because light over evening small past a old past brown lazy on old fox stone because look old bridge drift over sail the seven old an boats seven nobody boats counts on an counts alike makes makes look the quick because past and drift them jumps seven while brown quick lazy a seven the while quick quick brown dog brown jumps brown jumps shore boats alike jumps counts a an drift drift lazy brown brown over bridge makes a dog a drift bridge nobody on because old quick the old bridge fox shore nobody sail makes bridge quick twice qui";
+const inAnArray = ["dog them bridge the them light dog stone small quick shore the twice quick light an them the a small bridge lazy stone past brown them brown seven because boats and while counts brown and small past every look old because the the lazy bridge brown fox an lazy brown nobody drift the over twice them past stone look over the because evening on sail evening sail fox drift because sail dog every boats brown old small alike seven an alike old an fox seven the the twice over boats and dog dog every makes an an the sail evening dog the and dog while an on lazy because seven while light them drift lazy bridge the shore every drift brown fox stone and boats lazy and evening lazy seven nobody evening light shore bridge seven jumps brown the light every over on old a every because every boats alike nobody the the over bridge old an over dog quick quick them while bridge shore small look seven a and nobody counts small the nobody past shore dog shore old an fox brown a them fox drift every because every seven and over while past seven dog evening them over brown evening makes boats drift shore the brown sail because while bridge jumps fox sail twice on jumps evening the small seven counts bridge the evening the boats makes over alike nobody look light because alike while them over fox on and twice shore makes dog and on look quick boats past evening over while shore twice shore look an evening them old lazy past small boats lazy past old a boats look old every past light past alike lazy sail over twice jumps evening dog sail sail lazy sail a light them alike seven boats makes over dog shore fox them an fox shore brown the drift light and lazy dog because over boats lazy the seven shore on the old lazy an shore sail look the every brown the a the nobody lazy brown an old the boats evening quick evening lazy quick every lazy jumps old small while bridge counts while old alike stone evening the quick on while every sail makes brown brown jumps small them makes seven evening them pa", "↑ook jumps shore on loo✗ drift and dog brown d∑ift seven shore light →n light counts the nob←dy the on makes on pas— quick an light brown ├hile while stone countλ stone jumps sail old ┘he look dog brown a bo—ts because a shore bri→ge an while jumps and └n shore sail an the th←m on fox on nobody mak←s sail shore an an the┌while dog drift the li↑ht them evening them a─d seven jumps while an— and old on jumps boat┤ over small and the li┘ht the because jumps e↑ery nobody small stone漢old alike quick seven πtone an quick drift foπ them evening boats br…dge sail a boats an fo├ dog fox over jumps onλdog the boats stone al│ke the nobody quick dr├ft nobody nobody quick↓every them on small fo│ twice brown over on e…ery them old light the┘quick nobody nobody fo✗ twice on seven over q└ick while drift while ←ook over the shore bec漢use the alike while on─past old makes brown a┐d light stone shore lo└k look stone dog old t─e makes a shore while └ast them over quick do← lazy fox alike sail d└ift small old shore wh“le small seven look qu↓ck the an evening ever┐ drift the counts ligh┘ drift nobody quick a …he jumps them the fox 漢ast counts twice count✓ past quick old quick ┌ld because an past the✗dri", "short"];
+const inAnObject = { first: "counts light lazy over past jumps the a every over drift light fox boats on makes fox twice dog twice fox while nobody on boats look the small alike stone look old over nobody counts old and them sail twice fox and and an counts because alike old and boats dog fox drift alike shore light every while shore on boats light fox nobody the alike jumps twice nobody brown stone past evening bridge boats drift light them evening drift drift fox small because lazy fox dog jumps every small the seven every past bridge drift alike seven while drift look a light a boats over fox twice past old evening because while fox dog brown seven evening bridge past nobody while and old nobody drift while past them brown nobody counts while bridge past alike over boats light while small because on them lazy brown the lazy drift look look jumps bridge every the quick every over boats every stone and alike over boats dog makes stone past and brown a the the boats while and fox small on the evening makes an on shore small lazy and jumps light a lazy seven them light brown brown brown sail a twice dog twice the jumps shore seven shore seven over on the makes and while old a a an lazy while every stone alike alike lazy nobody light an seven alike brown sail old shore boats bridge them drift dog an alike sail an a the a fox every drift past over seven while old quick because them look lazy bridge lazy over drift past an sail fox an jumps on a brown drift small and on over light small the nobody twice twice brown over an while sail seven while the dog drift boats past on jumps the makes brown every look", second: 2 };
+
+function isTheComparedText(text: string): boolean {
+  return text === "on them on brown an boats the brown dog sail past because a quick fox nobody jumps lazy lazy every dog look because the small past alike while alike sail lazy look the every jumps the drift past jumps stone small the old stone jumps brown boats sail fox twice shore stone the nobody brown light alike bridge on twice stone them because nobody alike twice counts while counts counts twice while the an sail old counts an boats lazy over brown fox them nobody evening nobody light the makes makes sail on alike counts an counts the jumps them look stone nobody jumps alike past old old makes the look makes past while jumps look shore look drift look seven shore an small while light small brown nobody counts shore because lazy twice while old counts a shore the look look and evening over stone them bridge evening lazy evening makes small look while the dog shore every look an shore look on counts old quick boats the old fox small and alike stone nobody old an old evening over look every over boats dog because bridge shore brown evening counts shore brown bridge twice because old the an counts dog boats shore jumps drift on jumps over evening counts them look twice every quick a light light because twice makes small jumps evening them every dog sail the past boats them alike brown bridge on";
+}
+
+for (let round = 0; round < 3; round++) {
+  show("narrow", narrow());
+  show("wide", wideText());
+  show("noise", noise());
+  show("repeated", repeated());
+}
+show("top level", atTopLevel);
+for (const text of inAnArray) show("array", text);
+show("object", inAnObject.first);
+console.log(narrow() === narrow(), narrow() === wideText(), narrow() + "" === narrow(), wideText().normalize("NFC") === wideText());
+
+const pieces = "on them on brown an boats the brown dog sail past because a quick fox nobody jumps lazy lazy every dog look because the small past alike while alike sail lazy look the every jumps the drift past jumps stone small the old stone jumps brown boats sail fox twice shore stone the nobody brown light alike bridge on twice stone them because nobody alike twice counts while counts counts twice while the an sail old counts an boats lazy over brown fox them nobody evening nobody light the makes makes sail on alike counts an counts the jumps them look stone nobody jumps alike past old old makes the look makes past while jumps look shore look drift look seven shore an small while light small brown nobody counts shore because lazy twice while old counts a shore the look look and evening over stone them bridge evening lazy evening makes small look while the dog shore every look an shore look on counts old quick boats the old fox small and alike stone nobody old an old evening over look every over boats dog because bridge shore brown evening counts shore brown bridge twice because old the an counts dog boats shore jumps drift on jumps over evening counts them look twice every quick a light light because twice makes small jumps evening them every dog sail the past boats them alike brown bridge on".split(" ");
+console.log(isTheComparedText(pieces.join(" ")), isTheComparedText(pieces.join("  ")), isTheComparedText(narrow()));
+
+const byText = new Map<string, number>([[narrow(), 1], [wideText(), 2], [atTopLevel, 3]]);
+console.log(byText.get(narrow()), byText.get(wideText().slice(0)), byText.get(atTopLevel + ""), byText.get(noise()));
+const asKeys: Record<string, number> = {};
+asKeys[narrow()] = 1;
+asKeys[wideText()] = 2;
+console.log(Object.keys(asKeys).map(key => key.length), asKeys[narrow()], asKeys[wideText()]);
+
+console.log(JSON.stringify(wideText()).length, encodeURIComponent(wideText()).length, Buffer.byteLength(wideText()), Buffer.byteLength(narrow()), new TextEncoder().encode(wideText()).length);
+console.log(narrow().toUpperCase().slice(100, 140), wideText().at(23), wideText().codePointAt(46), [...wideText()].length, narrow().replaceAll("the", "THE").length, /s[a-z]+l\b/.exec(narrow())?.index);
+console.log(`${narrow().length}:${repeated().length}`, repeated().lastIndexOf("ba"), repeated().slice(1999, 2003));
+//// long-texts-that-differ-in-one-place.ts
+function textOf(length: number, base: number, changed: number): string {
+  const codes: number[] = [];
+  for (let i = 0; i < length; i++) codes.push(base + ((i * 7) % 23) + (i === changed ? 1 : 0));
+  return String.fromCharCode(...codes);
+}
+function same(a: string, b: string): boolean {
+  return a === b;
+}
+function sameWhateverTheyAre(a: unknown, b: unknown): boolean {
+  return a === b;
+}
+function looselySame(a: any, b: any): boolean {
+  return a == b;
+}
+const lines: string[] = [];
+for (const base of [0x41, 0xc0, 0x3b1]) {
+  for (let length = 28; length <= 76; length++) {
+    const text = textOf(length, base, -1);
+    const places = [-1, 0, 1, 3, 4, 7, 8, 9, length >> 1, length - 10, length - 9, length - 8, length - 5, length - 4, length - 2, length - 1];
+    let bits = "";
+    for (const place of places) {
+      const other = textOf(length, base, place);
+      const list = [textOf(length, base, 2), other, textOf(length, base, length - 3)];
+      bits += same(text, other) ? "s" : ".";
+      bits += sameWhateverTheyAre(other, text) ? "u" : ".";
+      bits += looselySame(text, other) ? "l" : ".";
+      bits += text !== other ? "." : "n";
+      bits += list.includes(text) ? "i" : ".";
+      bits += list.indexOf(text);
+      bits += new Set(list).has(text) ? "h" : ".";
+      bits += " ";
+    }
+    lines.push(`${base} ${length} ${bits}`);
+  }
+}
+const narrow = textOf(40, 0x41, -1);
+const wide = (textOf(40, 0x41, -1) + String.fromCharCode(0x3b1)).slice(0, 40);
+lines.push(`${same(narrow, wide)} ${sameWhateverTheyAre(wide, narrow)} ${[wide].includes(narrow)} ${same(narrow, textOf(41, 0x41, -1))}`);
+console.log(lines.join("\n"));
+//// lookups-by-keys-whose-parts-were-joined-before.ts
+// `table.get(a + "|" + b)`: the key is looked up by its parts. The parts of a key that was made before, of one that never was, numbers, empty parts, parts of two bytes a character, long parts.
+const table = new Map<string, number>();
+const words = new Set<string>();
+const parts = ["alpha", "", "b", "été", "中文", "x".repeat(300), "7", "-0"];
+const numbers = [0, -1, 7, 2147483647, -2147483648];
+
+let stored = 0;
+for (const a of parts) {
+  for (const b of parts) {
+    if ((a.length + b.length) % 2) continue;
+    const key = a + "|" + b;
+    table.set(key, ++stored);
+    words.add(key);
+  }
+}
+for (const a of parts) for (const n of numbers) if (n % 2) table.set(a + ":" + n, ++stored);
+table.set("7", -7);
+words.add("77");
+
+const found: unknown[] = [];
+for (let round = 0; round < 3; round++) {
+  for (const a of parts) {
+    for (const b of parts) {
+      found.push(table.get(a + "|" + b) ?? "-", words.has(a + "|" + b) ? 1 : 0, table.has(b + "|" + a) ? 1 : 0);
+    }
+    for (const n of numbers) found.push(table.get(a + ":" + n) ?? "-");
+    found.push(table.get(a + "") ?? "-", words.has(a + a) ? 1 : 0);
+  }
+}
+console.log(found.join(" "));
+table.delete("alpha|b");
+words.delete("alpha|b");
+console.log(table.get("alpha" + "|" + parts[2]), words.has(parts[0] + "|" + parts[2]), table.get(parts[0] + "|" + parts[2]));
+table.clear();
+console.log(table.get(parts[0] + "|" + parts[0]), table.has(parts[2] + "|" + parts[2]), words.has(parts[2] + "|" + parts[2]));
+//// loop-carried-char-codes-or-integers.ts
+// A variable that holds char codes and integers, stored anew at the foot of a loop and read at its head.
+const lines: string[] = [];
+function show(label: string, ...values: unknown[]): void {
+    lines.push(label + ": " + values.map(value => (Object.is(value, -0) ? "-0" : String(value))).join(" "));
+}
+
+function parseNumbers(text: string): number {
+    let total = 0;
+    let i = 0;
+    let c = i < text.length ? text.charCodeAt(i) : 0;
+    while (i < text.length) {
+        let value = 0;
+        while (c >= 48 && c <= 57) {
+            value = value * 10 + (c - 48);
+            i++;
+            c = i < text.length ? text.charCodeAt(i) : 0;
+        }
+        if (c === 46) {
+            i++;
+            c = i < text.length ? text.charCodeAt(i) : 0;
+            let scale = 0.1;
+            while (c >= 48 && c <= 57) {
+                value += (c - 48) * scale;
+                scale *= 0.1;
+                i++;
+                c = i < text.length ? text.charCodeAt(i) : 0;
+            }
+        }
+        total += value;
+        i++;
+        c = i < text.length ? text.charCodeAt(i) : 0;
+    }
+    return total;
+}
+
+function runsOffTheEnd(text: string): [number, number, boolean] {
+    let i = 0;
+    let c = text.charCodeAt(i);
+    let digits = 0;
+    while (c >= 48 && c <= 57) {
+        digits++;
+        c = text.charCodeAt(++i);
+    }
+    return [digits, c, c !== c];
+}
+
+function joinedWithFraction(text: string, at: number): number[] {
+    const seen: number[] = [];
+    let x = 0;
+    for (let i = 0; i < text.length; i++) {
+        seen.push(x < 50 ? 1 : 0, x >= 0.5 ? 1 : 0, x);
+        x = i === at ? 0.5 : text.charCodeAt(i);
+    }
+    seen.push(x);
+    return seen;
+}
+
+function joinedWithNegativeZero(text: string, at: number): unknown[] {
+    const seen: unknown[] = [];
+    let z = 1;
+    for (let i = 0; i < text.length; i++) {
+        seen.push(z, 1 / z, z < 1, z <= 0, z > -1, z >= 0);
+        z = i === at ? -0 : text.charCodeAt(i) - text.charCodeAt(i);
+    }
+    seen.push(z);
+    return seen;
+}
+
+function swapped(text: string, turns: number): number[] {
+    let a = text.charCodeAt(0);
+    let b = 7;
+    let c = text.charCodeAt(1000);
+    let below = 0;
+    for (let i = 0; i < turns; i++) {
+        if (a < 50) below++;
+        if (c < 50 || c >= 50) below += 100;
+        const held = a;
+        a = b;
+        b = c;
+        c = held;
+    }
+    return [a, b, c, below];
+}
+
+function sometimesMissing(text: string): unknown[] {
+    const seen: unknown[] = [];
+    let u: number | undefined = undefined;
+    for (let i = 0; i < text.length; i++) {
+        seen.push(u, u !== undefined && u < 60, u !== undefined && u >= 60, u === undefined);
+        u = i % 3 ? text.charCodeAt(i) : undefined;
+    }
+    seen.push(u);
+    return seen;
+}
+
+function everyComparison(text: string): string {
+    let out = "";
+    let c = -1;
+    for (let i = 0; i <= text.length + 1; i++) {
+        for (const bound of [-2, -1, 0, 65, 65535, 65536]) {
+            out += (c < bound ? "a" : "-") + (c <= bound ? "b" : "-") + (c > bound ? "c" : "-") + (c >= bound ? "d" : "-") + (bound < c ? "e" : "-") + (bound <= c ? "f" : "-") + (bound > c ? "g" : "-") + (bound >= c ? "h" : "-") + (c === bound ? "i" : "-") + (c !== bound ? "j" : "-");
+        }
+        out += "|";
+        c = text.charCodeAt(i);
+    }
+    return out;
+}
+
+function nested(rows: string[]): number {
+    let sum = 0;
+    let c = 0;
+    for (let r = 0; r < rows.length; r++) {
+        const row = rows[r];
+        for (let i = 0; i < row.length; i++) {
+            if (c > 96) sum += c;
+            c = row.charCodeAt(i);
+        }
+        if (c < 97) sum -= 1;
+    }
+    return sum + c;
+}
+
+show("numbers", parseNumbers("12.5 7 0.25 1000 3.125"), parseNumbers(""), parseNumbers("."), parseNumbers("9"), parseNumbers("x1y22z"));
+show("off the end", ...runsOffTheEnd("123"), ...runsOffTheEnd(""), ...runsOffTheEnd("12a"), ...runsOffTheEnd("￿"));
+show("fraction", ...joinedWithFraction("0Az", 1), ...joinedWithFraction("0Az", 9), ...joinedWithFraction("", 0));
+show("negative zero", ...joinedWithNegativeZero("abc", 1), ...joinedWithNegativeZero("abc", 2));
+show("swapped", ...swapped("A", 0), ...swapped("A", 1), ...swapped("A", 2), ...swapped("A", 3), ...swapped("0", 7), ...swapped("", 4));
+show("missing", ...sometimesMissing("0Az9"), ...sometimesMissing(""));
+show("comparisons", everyComparison("A\u0000￿"), everyComparison(""));
+show("nested", nested(["abc", "", "XYZ", "q"]), nested([]), nested([""]));
+console.log(lines.join("\n"));
+//// loops-over-segments.ts
+// `for..of` over the result of `segmenter.segment(text)` skips the iterator protocol as long as the program cannot observe that.
+const print = (s: string) => console.log(s);
+////= show-6
+function cat(a: string, b: string): string { return a + b; }
+function cat3(a: string, b: string, c: string): string { return `${a}${b}${c}`; }
+function part(s: string, from: number, to: number): string { return s.slice(from, to); }
+function flattened(s: string): string { s.charCodeAt(0); return s; }
+
+const log: string[] = [];
+const graphemes = new Intl.Segmenter(), words = new Intl.Segmenter("en", { granularity: "word" });
+export function typed(s: string): string { let out = ""; for (const { segment, index } of graphemes.segment(s)) out += index + show(segment); return out; }
+export function untyped(g: any, s: any): any { let out = ""; for (const { segment } of g.segment(s)) out += "[" + segment + "]"; return out; }
+export function whole(s: string): string { let out = ""; for (const data of graphemes.segment(s)) out += Object.keys(data).join() + (data.input === s) + ";"; return out; }
+export function held(segments: any): any { let out = ""; for (const { index } of segments) out += index; return out; }
+export function leaving(s: string, at: number): string { let out = ""; for (const { segment, index } of graphemes.segment(s)) { if (index === at) break; if (index === at - 1) continue; if (index === at + 2) return "R" + out; out += segment; } return out; }
+export function throwing(s: string): string { let out = ""; try { for (const { segment, index } of graphemes.segment(s)) { try { if (index === 1) throw new Error("inner"); out += segment; } catch (e) { out += "!"; } if (index === 2) throw new Error("outer"); } } catch (e) { out += (e as Error).message; } finally { out += "."; } return out; }
+export function nested(a: string, b: string): string { let out = ""; for (const x of graphemes.segment(a)) for (const y of graphemes.segment(b)) for (const z of words.segment(a)) out += x.index + "" + y.index + z.index + ","; return out; }
+export async function awaiting(s: string): Promise<string> { let out = ""; for (const { segment } of graphemes.segment(s)) { await null; out += segment + "."; } return out; }
+export function* yielding(s: string): Generator<string> { for (const { segment } of graphemes.segment(s)) yield segment; }
+export function spread(s: string): string { return [...graphemes.segment(s)].map(x => x.index).join() + "|" + Array.from(graphemes.segment(s), x => x.segment.length).join(); }
+print(typed("ab") + " " + typed("") + "|" + typed("éx\r\n😀─") + " " + untyped(graphemes, "a日b") + " " + untyped(words, "two words") + " " + untyped(new Intl.Segmenter("ja", { granularity: "sentence" }), "One. Two.") + " " + whole("ab") + " " + spread("aéb"));
+// One Segments object, iterated twice, and while another iteration of it is under way; its own iterator, held.
+{ const segments = graphemes.segment("abc"); print(held(segments) + held(segments)); let out = ""; for (const a of segments) for (const b of segments) out += a.index + "" + b.index + ","; print(out); const it = segments[Symbol.iterator](); it.next(); print(held(it) + "|" + held(it) + JSON.stringify(it.next())); }
+// Somebody can tell.
+{ const segments: any = graphemes.segment("ab"); segments[Symbol.iterator] = function () { log.push("own iterator"); return [{ index: "x" }][Symbol.iterator](); }; print(held(segments) + log.splice(0).join()); }
+{ const segments: any = graphemes.segment("ab"); segments.extra = 1; print(held(segments) + segments.extra); }
+{ const segments: any = graphemes.segment("ab"); Object.setPrototypeOf(segments, { [Symbol.iterator]() { log.push("other prototype"); return [{ index: "y" }][Symbol.iterator](); } }); print(held(segments) + log.splice(0).join()); }
+{ const segments: any = graphemes.segment("ab"); Object.setPrototypeOf(segments, null); print(attempt(() => held(segments))); }
+{ const giving = { segment() { log.push("own segment"); return [{ segment: "s" }]; } }; print(untyped(giving, "ab") + log.splice(0).join() + " " + attempt(() => untyped({ segment: () => 5 }, "")) + " " + attempt(() => untyped(graphemes, Symbol.iterator)) + " " + untyped(graphemes, 12) + untyped(graphemes, null) + untyped(graphemes, { toString() { log.push("toString"); return "o"; } }) + log.splice(0).join()); }
+for (let at = 0; at < 5; at++) print(leaving("abcde", at));
+print(throwing("abcd") + " " + nested("ab", "x") + " " + [...yielding("aé")].map(show).join());
+{ let n = 0; for (let i = 0; i < 2000; i++) for (const { segment } of graphemes.segment("line " + i + (i % 5 ? "" : " ─日é😀"))) n += segment.length; print(String(n)); }
+(async () => { print(await awaiting("ab─")); print((await Promise.all([awaiting("x"), awaiting("yz")])).join()); })();
+(globalThis as any).kept = [typed, untyped, whole, held, leaving, throwing, nested, awaiting, yielding, spread]; console.log("number");

@@ -1,0 +1,2926 @@
+////: Body
+class Body {
+  constructor(mass) {
+    this.mass = mass;
+  }
+  weight() {
+    return this.mass * 2;
+  }
+}
+////: Point
+class Point {
+  x: number;
+  y: number;
+  next: Point | null = null;
+  label?: string;
+  tags: string[] | null = null;
+  scale: ((factor: number) => number) | null = null;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  length(): number {
+    return Math.hypot(this.x, this.y);
+  }
+  get first(): string {
+    return this.tags![0];
+  }
+  static origin: Point | null = null;
+}
+////: Shape
+interface Shape {
+  name: string;
+  center: Point | null;
+  area?: () => number;
+  inner?: { depth: number; deeper?: { value: string } };
+}
+////: Thrower
+class Thrower {
+  constructor(fails = false) { if (fails) throw new RangeError("in a constructor"); }
+  method(): never { throw new TypeError("in a method"); }
+  get getter(): number { throw new EvalError("in a getter"); }
+  static make(): Thrower { throw new URIError("in a static method"); }
+}
+////: attempt
+function attempt(label, run) {
+  try {
+    console.log(label, "-> no throw", String(run()));
+  } catch (error) {
+    console.log(label, "->", describe(error));
+  }
+}
+////: attempt-2
+function attempt(label: string, run: () => unknown): void {
+  try {
+    console.log(label, "-> no throw", String(run()));
+  } catch (error) {
+    console.log(label, "->", describe(error));
+  }
+}
+////: attempt-3
+function attempt(label, run) {
+  try {
+    console.log(label, "->", String(run()));
+  } catch (error) {
+    console.log(label, "«1»));
+  }
+}
+////: framesOf
+function framesOf(stack, count) {
+  const frames = [];
+  for (const text of String(stack).split("\n")) {
+    const frame = /^\s*at (?:(async )?(.*?) \()?([^()]*?)(?::(\d+):(\d+))?\)?$/.exec(text);
+    if (!frame) continue;
+    const file = frame[3].replace(/^.*[\\/]/, "");
+    frames.push((frame[1] ?? "") + (frame[2] ?? "") + "@" + file + (frame[4] ? ":" + frame[4] + ":" + frame[5] : ""));
+  }
+  return frames.slice(0, count).join(" | ");
+}
+////: framesOf-2
+function framesOf(stack: unknown, count: number): string {
+  const frames: string[] = [];
+  for (const text of String(stack).split("\n")) {
+    const frame = /^\s*at (?:(async )?(.*?) \()?([^()]*?)(?::(\d+):(\d+))?\)?$/.exec(text);
+    if (!frame) continue;
+    const file = frame[3].replace(/^.*[\\/]/, "");
+    frames.push((frame[1] ?? "") + (frame[2] ?? "") + "@" + file + (frame[4] ? ":" + frame[4] + ":" + frame[5] : ""));
+  }
+  return frames.slice(0, count).join(" | ");
+}
+////: lines
+try {
+  «1»;
+} catch (caught) {
+  note(caught);
+}
+//// a-definition-by-descriptor-that-is-refused.js
+// Object.defineProperty() with a descriptor written in the call: where the definition is refused, or runs other code, the stack has the frame of defineProperty where plain Bun has it, and that code runs once.
+"use strict";
+const opaque = value => [value, 0][Number(process.argv.length > 100)];
+function framesOf(stack) {
+  const frames = [];
+  for (const text of String(stack).split("\n")) {
+    const frame = /^\s*at (?:(.*?) \()?([^()]*?)(?::(\d+):(\d+))?\)?$/.exec(text);
+    if (frame) frames.push((frame[1] ?? "") + "@" + frame[2].replace(/^.*[\\/]/, "") + (frame[3] ? ":" + frame[3] + ":" + frame[4] : ""));
+  }
+  return frames.slice(0, 4).join(" | ");
+}
+let runs = 0;
+function attempt(label, run) {
+  runs = 0;
+  try {
+    console.log(label, "-> no throw", JSON.stringify(run()), runs);
+  } catch (error) {
+    console.log(label, "->", error.name + ": " + error.message, framesOf(error.stack), runs);
+  }
+}
+const fixed = () => Object.defineProperty({ kept: 1 }, "a", { value: 1 });
+class Point { constructor() { this.x = 1; this.y = 2; } }
+
+attempt("value of a fixed property", () => { Object.defineProperty(fixed(), "a", { value: opaque(2) }); });
+attempt("constant value of a fixed property", () => { Object.defineProperty(fixed(), "a", { value: 2 }); });
+attempt("the same value of a fixed property", () => Object.defineProperty(fixed(), "a", { value: opaque(1) }).a);
+attempt("a fixed property becomes enumerable", () => { Object.defineProperty(fixed(), "a", { enumerable: true }); });
+attempt("a fixed property becomes an accessor", () => { Object.defineProperty(fixed(), "a", { get: () => 1 }); });
+attempt("a new name on a frozen literal", () => { Object.defineProperty(Object.freeze({ a: 1 }), "b", { value: opaque(2) }); });
+attempt("a new name on a sealed literal", () => { Object.defineProperty(Object.seal({ a: 1 }), "b", { get: () => 1 }); });
+attempt("a field of a frozen instance", () => { Object.defineProperty(Object.freeze(new Point()), "x", { value: opaque(2) }); });
+attempt("a new name on an instance that takes none", () => { Object.defineProperty(Object.preventExtensions(new Point()), "z", { value: opaque(2) }); });
+attempt("a field of an instance again", () => Object.defineProperty(new Point(), "x", { value: opaque(5), enumerable: false }));
+attempt("an element of a frozen list", () => { Object.defineProperty(Object.freeze([1, 2]), "0", { value: opaque(2) }); });
+attempt("an element of a list again", () => Object.defineProperty([1, 2], "0", { value: opaque(7) }));
+attempt("the length of a list", () => { Object.defineProperty([1, 2], "length", { value: { valueOf() { runs++; return -1; } } }); });
+attempt("the length of a list from an object", () => Object.defineProperty([1, 2, 3], "length", { value: { valueOf() { runs++; return 1; } } }));
+attempt("the length of a list whose length is fixed", () => { Object.defineProperty(Object.freeze([1, 2]), "length", { value: opaque(1) }); });
+attempt("a getter that is no function", () => { Object.defineProperty({}, "a", { get: opaque(5) }); });
+attempt("a setter that is no function", () => { Object.defineProperty({}, "a", { set: opaque("text") }); });
+attempt("the prototype of a class", () => { Object.defineProperty(Point, "prototype", { value: opaque({}) }); });
+attempt("the name of a function", () => Object.defineProperty(function before() {}, "name", { value: opaque("after") }).name);
+attempt("an element of bytes", () => { Object.defineProperty(new Uint8Array(2), "0", { value: { valueOf() { runs++; return 3; } }, configurable: false }); });
+attempt("an element past the end of bytes", () => { Object.defineProperty(new Uint8Array(2), "5", { value: opaque(1) }); });
+attempt("a trap that answers false", () => { Object.defineProperty(new Proxy({}, { defineProperty() { runs++; return false; } }), "a", { value: opaque(1) }); });
+attempt("a trap that answers false for an empty descriptor", () => { Object.defineProperty(new Proxy({}, { defineProperty() { runs++; return false; } }), "a", {}); });
+attempt("a trap that answers true", () => typeof Object.defineProperty(new Proxy({}, { defineProperty(target, key, descriptor) { runs++; return Reflect.defineProperty(target, key, descriptor); } }), "a", { value: opaque(1) }));
+attempt("a trap that throws", () => { Object.defineProperty(new Proxy({}, { defineProperty() { runs++; throw new Error("from the trap"); } }), "a", { value: opaque(1) }); });
+attempt("a trap that sees the descriptor", () => { let seen; Object.defineProperty(new Proxy({}, { defineProperty(target, key, descriptor) { runs++; seen = descriptor; return true; } }), "a", { value: opaque(1), writable: true }); return seen; });
+attempt("a revoked proxy", () => { const { proxy, revoke } = Proxy.revocable({}, {}); revoke(); Object.defineProperty(proxy, "a", { value: opaque(1) }); });
+class Shape { static sides = 4; area() { return 1; } }
+attempt("a list is cut short down to an element that stays", () => { const list = [1, 2, 3, 4]; Object.defineProperty(list, "1", { value: 2, configurable: false }); try { Object.defineProperty(list, "length", { value: opaque(0) }); } finally { console.log(JSON.stringify(list), list.length); } });
+attempt("the length of a list is a fraction", () => { Object.defineProperty([1, 2], "length", { value: opaque(1.5) }); });
+attempt("the length of a list stops being writable", () => Object.getOwnPropertyDescriptor(Object.defineProperty([1, 2], "length", { writable: false }), "length"));
+attempt("the length of a function", () => Object.defineProperty(function (a, b) {}, "length", { value: opaque(5) }).length);
+attempt("the length of a frozen function", () => { Object.defineProperty(Object.freeze(function (a, b) {}), "length", { value: opaque(5) }); });
+attempt("the prototype of a function stops being writable", () => Object.getOwnPropertyDescriptor(Object.defineProperty(function () {}, "prototype", { writable: false }), "prototype").writable);
+attempt("the prototype of an arrow function", () => Object.defineProperty(() => 1, "prototype", { value: opaque(3) }).prototype);
+attempt("the name of a frozen bound function", () => { Object.defineProperty(Object.freeze(fixed.bind(null)), "name", { value: opaque("other") }); });
+attempt("a static member again", () => Object.defineProperty(Shape, "sides", { value: opaque(3) }).sides);
+attempt("a method of a class again", () => Object.defineProperty(Shape.prototype, "area", { value: () => opaque(2) }).area());
+attempt("a static member of a frozen class", () => { Object.defineProperty(Object.freeze(Shape), "sides", { value: opaque(5) }); });
+attempt("a method of a class whose prototype is frozen", () => { Object.defineProperty(Object.freeze(Shape.prototype), "area", { value: () => 3 }); });
+attempt("the name of a built-in function's copy", () => { Object.defineProperty(Object.freeze(Math.max.bind(Math)), "length", { value: opaque(9) }); });
+//// a-read-of-an-accessor-of-a-web-class-on-its-prototype-leaves-no-frame.js
+// The accessors of URL, Request, Response and their like are native code without a function object. Read on the prototype itself, which is no instance, each throws, and the stack trace
+// begins at the function that reads. A store through one that takes stores does the same. It prints what plain Bun prints.
+"use strict";
+function framesOf(error) {
+  const frames = [];
+  for (const text of String(error.stack).split("\n")) {
+    const frame = /^\s*at (?:(.*?) \()?([^()]*?)(?::(\d+):(\d+))?\)?$/.exec(text);
+    if (!frame) continue;
+    const file = frame[2].replace(/^.*[\\/]/, "");
+    frames.push((frame[1] ?? "") + "@" + file + (frame[3] && file !== "native" ? ":" + frame[3] + ":" + frame[4] : ""));
+  }
+  return frames.slice(0, 2).join(" | ");
+}
+////= attempt-3	->", error.name, framesOf(error
+
+attempt("URL href", () => URL.prototype.href);
+attempt("URL origin", () => URL.prototype.origin);
+attempt("URL searchParams", () => URL.prototype.searchParams);
+attempt("URL username", () => URL.prototype.username);
+attempt("URL href, a store", () => { URL.prototype.href = "http://example.com/"; });
+attempt("URLSearchParams size", () => URLSearchParams.prototype.size);
+attempt("Request url", () => Request.prototype.url);
+attempt("Request headers", () => Request.prototype.headers);
+attempt("Request signal", () => Request.prototype.signal);
+attempt("Request body", () => Request.prototype.body);
+attempt("Response url", () => Response.prototype.url);
+attempt("Response headers", () => Response.prototype.headers);
+attempt("Response statusText", () => Response.prototype.statusText);
+attempt("Response body", () => Response.prototype.body);
+attempt("Blob size", () => Blob.prototype.size);
+attempt("Blob type", () => Blob.prototype.type);
+attempt("TextDecoder encoding", () => TextDecoder.prototype.encoding);
+attempt("TextEncoder encoding", () => TextEncoder.prototype.encoding);
+attempt("AbortSignal aborted", () => AbortSignal.prototype.aborted);
+attempt("Event type", () => Event.prototype.type);
+
+// The reads that answer.
+const url = new URL("http://user@example.com:81/a?b=1#c");
+attempt("an instance", () => [url.href, url.origin, url.username, url.searchParams.size, new Request(url).url, new Response("", { statusText: "fine" }).statusText, new TextDecoder().encoding].join(" "));
+//// a-read-of-an-accessor-without-a-function-object-leaves-no-frame.js
+// Some accessors of built-in prototypes are native code without a function object: where a read of one throws, the stack trace has no frame of a getter. An accessor with a function object leaves one.
+// Both hold where the compiler knows which accessor a read finds, where it does not, and where the function of a descriptor is called. It prints what plain Bun prints.
+"use strict";
+const opaque = value => [value, 0][Number(process.argv.length > 100)];
+function framesOf(error) {
+  const frames = [];
+  for (const text of String(error.stack).split("\n")) {
+    const frame = /^\s*at (?:(.*?) \()?([^()]*?)(?::(\d+):(\d+))?\)?$/.exec(text);
+    if (!frame) continue;
+    const file = frame[2].replace(/^.*[\\/]/, "");
+    // Where a built-in that is written in JavaScript stands in its own text differs between builds of Bun.
+    frames.push((frame[1] ?? "") + "@" + file + (frame[3] && file !== "native" ? ":" + frame[3] + ":" + frame[4] : ""));
+  }
+  return frames.slice(0, 3).join(" | ");
+}
+function attempt(label, run) {
+  try {
+    run();
+    console.log(label, "-> no throw");
+  } catch (error) {
+    console.log(label, "->", error.name + ": " + error.message, framesOf(error));
+  }
+}
+
+attempt("format of numbers", () => { Intl.NumberFormat.prototype.format; });
+attempt("format of dates", () => { Intl.DateTimeFormat.prototype.format; });
+attempt("compare", () => { Intl.Collator.prototype.compare; });
+attempt("language", () => { Intl.Locale.prototype.language; });
+attempt("size of a map", () => { Map.prototype.size; });
+attempt("size of a set", () => { Set.prototype.size; });
+attempt("byteLength", () => { ArrayBuffer.prototype.byteLength; });
+attempt("description", () => { Symbol.prototype.description; });
+
+attempt("href, below an object", () => { Object.create(URL.prototype).href; });
+attempt("href, by its descriptor", () => { Object.getOwnPropertyDescriptor(URL.prototype, "href").get.call(opaque({})); });
+
+// The read through `super` begins above the class, whatever the receiver has under the name.
+class Address extends URL {
+  get href() { return "address " + super.href; }
+  get host() { return "host " + super.host; }
+}
+console.log(new Address("http://example.com:81/a").href, new Address("http://example.com:81/a").host);
+attempt("href through super, no instance", () => { Object.create(Address.prototype).href; });
+attempt("href through super, the prototype", () => { Address.prototype.href; });
+
+const holders = opaque({ numbers: Intl.NumberFormat.prototype, dates: Intl.DateTimeFormat.prototype, texts: Intl.Collator.prototype, map: Map.prototype });
+attempt("format of numbers, holder out of sight", () => { holders.numbers.format; });
+attempt("format of dates, holder out of sight", () => { holders.dates.format; });
+attempt("compare, holder out of sight", () => { holders.texts.compare; });
+attempt("size of a map, holder out of sight", () => { holders.map.size; });
+attempt("format of numbers, name out of sight", () => { Intl.NumberFormat.prototype[opaque("format")]; });
+
+attempt("format of numbers, below an object", () => { Object.create(Intl.NumberFormat.prototype).format; });
+attempt("compare, below an object", () => { Object.create(Intl.Collator.prototype).compare; });
+attempt("format of numbers, by Reflect.get", () => { Reflect.get(Intl.NumberFormat.prototype, "format", opaque({})); });
+attempt("format of numbers, by its descriptor", () => { Object.getOwnPropertyDescriptor(Intl.NumberFormat.prototype, "format").get.call(opaque({})); });
+attempt("compare, by its descriptor", () => { Object.getOwnPropertyDescriptor(Intl.Collator.prototype, "compare").get.call(opaque({})); });
+
+// The reads that answer.
+const numbers = new Intl.NumberFormat("en-US"), dates = new Intl.DateTimeFormat("en-US", { timeZone: "UTC" }), texts = new Intl.Collator("en-US");
+const format = numbers.format, formatDate = dates.format, compare = texts.compare;
+console.log(format(1234.5), numbers.format(0.25), numbers.format === format, typeof format, format.name === "", format.length);
+console.log(formatDate(0), dates.format(86400000), dates.format === formatDate, formatDate.length);
+console.log(compare("a", "b"), texts.compare("b", "a"), ["b", "c", "a"].sort(texts.compare).join(), texts.compare === compare, compare.length);
+console.log([1, 2.5, 1e6].map(numbers.format).join(" "), opaque(numbers).format(7), opaque(texts).compare("x", "x"));
+//// a-read-through-super-under-a-null-prototype-quotes-the-expression.js
+// `super.width` where the prototype of the home object is null: the message quotes the expression, which is `super.` and the name of the member.
+const home = {
+  __proto__: null,
+  read() { return super.width; },
+  readTwice() { return [super.height, super.height]; },
+  readInTry() { try { return super.depth; } catch (error) { return "caught " + error.message; } },
+};
+class Base {}
+class Derived extends Base {
+  static read() { return super.length; }
+}
+Object.setPrototypeOf(Derived, null);
+for (let round = 0; round < 3; round++) {
+  for (const run of [() => home.read(), () => home.readTwice(), () => home.readInTry(), () => Derived.read()]) {
+    try {
+      console.log(String(run()));
+    } catch (error) {
+      console.log(error.constructor.name + ": " + error.message);
+    }
+  }
+}
+//// a-trace-names-the-array-method-that-called-the-callback.ts
+// A trace that is taken in the callback of one array method names the method between the callback and the function that called it. `flatMap` ends in a tail call and is not named.
+type Site = { getFunctionName(): string | null; isNative(): boolean };
+(Error as any).prepareStackTrace = (_error: Error, sites: Site[]) =>
+  sites.map(site => (site.getFunctionName() ?? "(none)") + (site.isNative() ? "[native]" : "")).join(" < ");
+Error.stackTraceLimit = 12;
+let captured = "";
+function capture(): void {
+  captured = String(new Error("x").stack);
+}
+function mapToNothing(): void {
+  [1].map(() => capture());
+}
+function mapToNumbers(): number {
+  return [1, 2].map(value => (capture(), value + 1))[0];
+}
+function mapToTexts(): string {
+  return ["a"].map(value => (capture(), value + "b"))[0];
+}
+function forEach(): void {
+  [1].forEach(() => capture());
+}
+function filter(): void {
+  [1].filter(() => (capture(), true));
+}
+function flatMap(): void {
+  [1].flatMap(() => (capture(), [1]));
+}
+function mapAsTheLastCall(): number[] {
+  return [1].map(value => (capture(), value));
+}
+const makers = [mapToNothing, mapToNumbers, mapToTexts, forEach, filter, flatMap, mapAsTheLastCall];
+for (let round = 0; round < 3; round++) {
+  for (const make of makers) {
+    make();
+    if (round === 2) console.log(make.name, ":", captured);
+  }
+}
+//// an-error-inside-a-spread-says-which-item.js
+// An error that is thrown while a spread is evaluated says where: each item of a literal, a call or a construction stands on a line of its own, so the line tells the items apart.
+function framesOf(error) {
+  return String(error.stack)
+    .split("\n")
+    .filter(line => line.includes("says-which-item"))
+    .map(line => line.trim().replace(/^at /, "").replace(/\(?[^ (]*says-which-item\.js/, "").replace(/\)$/, ""))
+    .join(" < ");
+}
+
+function report(name, run) {
+  try {
+    run();
+    console.log(name, "did not throw");
+  } catch (error) {
+    console.log(name, "|", error.constructor.name, "|", error.message, "|", framesOf(error));
+  }
+}
+
+function failingAt(step) {
+  return {
+    [Symbol.iterator]() {
+      let count = 0;
+      return {
+        next() {
+          if (++count > step) throw new RangeError("step " + count);
+          return { done: false, value: count };
+        },
+      };
+    },
+  };
+}
+
+const withGetter = {
+  get broken() {
+    throw new EvalError("getter");
+  },
+};
+
+function take(...all) {
+  return all.length;
+}
+
+class Point {
+  constructor(...all) {
+    this.count = all.length;
+  }
+}
+
+class Above extends Point {
+  constructor(first, second) {
+    super(
+      ...first,
+      ...second,
+    );
+  }
+}
+
+const good = [1, 2, 3];
+const values = [undefined, null, 1, {}, failingAt(0), failingAt(2)];
+
+for (let round = 0; round < 3; round++) {
+  for (const bad of values) {
+    const name = bad === undefined ? "undefined" : bad === null ? "null" : typeof bad === "number" ? "number" : Symbol.iterator in bad ? "iterator" : "object";
+    report("array second " + name, () => [
+      ...good,
+      ...bad,
+      ...good,
+    ]);
+    report("array third " + name, () => [
+      ...good,
+      0,
+      ...good,
+      ...bad,
+    ]);
+    report("call first " + name, () =>
+      take(
+        ...bad,
+        ...good,
+      ),
+    );
+    report("call second " + name, () =>
+      take(
+        ...good,
+        ...bad,
+      ),
+    );
+    report("method second " + name, () =>
+      Math.max(
+        ...good,
+        ...bad,
+      ),
+    );
+    report("new second " + name, () =>
+      new Point(
+        ...good,
+        ...bad,
+      ),
+    );
+    report("super second " + name, () => new Above(good, bad));
+    report("super first " + name, () => new Above(bad, good));
+  }
+  report("object second", () => ({
+    ...good,
+    ...withGetter,
+    last: 1,
+  }));
+  report("object third", () => ({
+    first: 1,
+    ...{ a: 1 },
+    ...withGetter,
+  }));
+}
+
+// The same inside a small function that a caller takes in, and inside a try of the caller.
+function joined(a, b) {
+  return [
+    ...a,
+    ...b,
+  ];
+}
+
+function outer(a, b) {
+  let total = 0;
+  for (let i = 0; i < 4; i++) {
+    try {
+      total += joined(
+        a,
+        i === 3 ? b : a,
+      ).length;
+    } catch (error) {
+      console.log("inlined |", error.constructor.name, "|", error.message, "|", framesOf(error));
+    }
+  }
+  return total;
+}
+
+for (const bad of values) console.log(outer(good, bad));
+//// classes-that-extend-error.js
+// Classes of the program that extend Error and its kinds: their own fields, methods, getters and statics, what they inherit, and what the engine puts on their instances.
+const say = (...values) => console.log(...values);
+
+class Empty extends Error {}
+const empty = new Empty("nothing of its own");
+say(empty.message.length, empty.name, empty instanceof Empty, empty instanceof Error, empty.constructor === Empty, empty.stack.split("\n")[0], String(empty));
+say(Object.getPrototypeOf(empty) === Empty.prototype, Object.getPrototypeOf(Empty) === Error, Object.getOwnPropertyNames(empty).sort().join());
+
+class HttpError extends Error {
+  static count = 0;
+  #secret = "kept";
+  status;
+  constructor(status, message, options) {
+    super(message, options);
+    this.status = status;
+    this.name = "HttpError";
+    HttpError.count++;
+  }
+  get isServerError() { return this.status >= 500; }
+  describe() { return `${this.name} ${this.status}: ${this.message} (${this.#secret})`; }
+  toJSON() { return { status: this.status, message: this.message }; }
+}
+const failed = new HttpError(503, "unavailable", { cause: empty });
+say(failed.describe(), failed.isServerError, failed.status + 1, failed.cause === empty, failed.cause.message.length, HttpError.count, JSON.stringify(failed));
+say(String(failed), failed.stack.startsWith("HttpError: unavailable") || failed.stack.startsWith("Error: unavailable"), failed.line > 0);
+
+class NotFound extends HttpError {
+  constructor(path) { super(404, `no ${path}`); this.path = path; }
+  describe() { return `${super.describe()} at ${this.path}`; }
+}
+const missing = new NotFound("/x");
+say(missing.describe(), missing instanceof NotFound, missing instanceof HttpError, missing instanceof Error, missing.isServerError, HttpError.count);
+
+class Typed extends TypeError {
+  get message() { return "the getter of the class is hidden by the own property"; }
+}
+say(new Typed("own").message, new Typed().message, new Typed("own") instanceof TypeError, new Typed("x").name);
+
+// Thrown, caught, thrown on, and told apart.
+function fail(kind) {
+  if (kind === 0) throw new NotFound("/thrown");
+  if (kind === 1) throw new HttpError(500, "thrown");
+  if (kind === 2) throw new RangeError("of the language");
+  throw new Empty("last");
+}
+for (let kind = 0; kind < 4; kind++) {
+  try {
+    fail(kind);
+  } catch (error) {
+    if (error instanceof NotFound) say("NotFound", error.path.length, error.describe());
+    else if (error instanceof HttpError) say("HttpError", error.status, error.describe());
+    else if (error instanceof RangeError) say("RangeError", error.message.length);
+    else say("other", error.constructor.name, error.message.toUpperCase());
+  }
+}
+
+// new.target decides the prototype, and a function that is no class extends Error too.
+const reflected = Reflect.construct(Error, ["reflected"], NotFound);
+say(reflected instanceof NotFound, reflected.message.length, reflected.path, reflected.status);
+function Old(message) {
+  const self = Reflect.construct(Error, [message], new.target ?? Old);
+  self.old = true;
+  return self;
+}
+Object.setPrototypeOf(Old.prototype, Error.prototype);
+Object.setPrototypeOf(Old, Error);
+say(new Old("in the old way").message.length, new Old("x") instanceof Old, new Old("x").old, Old("called") instanceof Old);
+//// columns-behind-characters-that-are-not-ascii.js
+// The column of a frame counts UTF-16 units from the start of its line, whatever characters are in front of it.
+function place(error) {
+  return /(\d+:\d+)\)?$/.exec(error.stack.split("\n")[1])[1];
+}
+const rows = [];
+rows.push(["nothing in front", place(new Error())]);
+/* é */ rows.push(["two bytes", place(new Error())]);
+/* 字 */ rows.push(["three bytes", place(new Error())]);
+/* 😀 */ rows.push(["four bytes", place(new Error())]);
+/* aé字😀éb */ rows.push(["one of each", place(new Error())]);
+rows.push(["behind a string", "字字字".length, place(new Error("字"))]); rows.push(["the second on its line", place(new Error())]);
+/* 字 */ function thrower() { /* 字 */ throw new RangeError("字"); }
+try { /* éé */ thrower(); } catch (error) { rows.push(["two frames", error.stack.split("\n").slice(1, 3).map(line => /(\d+:\d+)\)?$/.exec(line)[1]).join(" ")]); }
+/* a line separator   */ rows.push(["behind a line separator", place(new Error())]);
+/* 字 and a paragraph separator   字 */ rows.push(["behind a paragraph separator", place(new Error())]);
+rows.push(["the line behind them", place(new Error())]);
+const text = `字
+字${place(new Error())}`;
+rows.push(["in a template over two lines", text.split("\n")[1].slice(1)]);
+for (const row of rows) console.log(row.join(" | "));
+//// errors-and-their-subclasses-bring-nothing-of-the-library.js
+// The compiler knows what a new error holds: `message` and `stack` are texts, `line` is a number, and a class that extends Error stays the program's own. So nothing of Bun's library comes in for them.
+// STATISTIC: ImageFunctionsEmitted <= 40
+class Refused extends Error {
+  describe() { return `${this.name}: ${this.message.length}`; }
+}
+const refused = new Refused("no");
+console.log(refused.describe(), refused.stack.length > 0, refused.line > 0, new TypeError("kind").message.toUpperCase(), new Error("plain").stack.split("\n")[0]);
+//// errors-that-the-run-time-makes-are-caught-and-changed.js
+// Each catch clause gets an error that the run time has made for an operation that failed by itself. The program reads it, stores into it, gives it another prototype and keeps it.
+////= Body
+const world = [new Body(1), new Body(2)];
+const seen = [];
+const kept = [];
+const nothing = process.argv.length > 99 ? world[0] : undefined;
+const noFunction = process.argv.length > 99 ? world[0].weight : 7;
+
+function describe(error) {
+  return [
+    typeof error,
+    error instanceof Error,
+    error.constructor.name,
+    error.name,
+    typeof error.message,
+    typeof error.stack,
+    error.mass,
+    Object.keys(error).length,
+  ].join(",");
+}
+
+try {
+  nothing.mass;
+} catch (error) {
+  kept.push(error);
+  seen.push(describe(error), error instanceof TypeError);
+}
+try {
+  noFunction();
+} catch (error) {
+  kept.push(error);
+  seen.push(describe(error), error === kept[0]);
+}
+try {
+  seen.push(tooEarly);
+  let tooEarly = 1;
+} catch (error) {
+  seen.push(describe(error), error instanceof ReferenceError);
+}
+try {
+  1n + (process.argv.length > 99 ? 1n : 1);
+} catch (error) {
+  seen.push(describe(error));
+}
+try {
+  new Array(process.argv.length > 99 ? 1 : -1);
+} catch (error) {
+  seen.push(describe(error), error instanceof RangeError);
+}
+try {
+  JSON.parse(process.argv.length > 99 ? "1" : "{");
+} catch (error) {
+  seen.push(describe(error), error instanceof SyntaxError);
+}
+function forever(depth) {
+  return forever(depth + 1) + 1;
+}
+try {
+  forever(0);
+} catch (error) {
+  error.mass = 5;
+  error.message = world[1];
+  seen.push(error instanceof RangeError, error.mass, error.message.weight(), Object.keys(error).join("+"));
+}
+try {
+  nothing.mass;
+} catch (error) {
+  Object.setPrototypeOf(error, Body.prototype);
+  error.mass = 21;
+  seen.push(error instanceof Error, error instanceof Body, error.weight());
+  world.push(error);
+}
+TypeError.prototype.weight = function () {
+  return "heavy " + this.name;
+};
+Object.defineProperty(TypeError.prototype, "mass", {
+  get() {
+    return 40;
+  },
+  configurable: true,
+});
+try {
+  nothing.mass;
+} catch (error) {
+  seen.push(error.weight(), error.mass, kept[0].mass, kept[1].weight());
+}
+let total = 0;
+for (const body of world) total += body.weight();
+seen.push(total);
+console.log(seen.join(" "));
+//// every-kind-of-place-that-throws.js
+// Every kind of place that throws: the class, the whole message, the line and column, and the first frames of the stack are those of plain Bun.
+"use strict";
+const opaque = value => [value, 0][Number(process.argv.length > 100)];
+////= framesOf
+function describe(error) {
+  if (!(error instanceof Error)) return "no error: " + String(error);
+  return error.name + ": " + error.message + " [" + error.line + ":" + error.column + "] " + framesOf(error.stack, 3);
+}
+////= attempt
+const nothing = opaque(undefined), none = opaque(null), five = opaque(5), text = opaque("abc"), plain = opaque({}), list = opaque([1, 2]);
+const holder = opaque({ inner: null, missing: undefined, number: 5, deep: { inner: null }, list: [null], run: 5 });
+const key = opaque("name"), index = opaque(0);
+function thrower() { throw new Error("thrown behind a tail call"); }
+const throwing = { method() { throw new Error("thrown in a method behind a tail call"); } };
+
+// Calls of what is no function.
+attempt("call variable", () => { nothing(); });
+attempt("call null variable", () => { none(); });
+attempt("call number variable", () => { five(); });
+attempt("call member", () => { holder.absent(); });
+attempt("call member number", () => { holder.run(); });
+attempt("call member null", () => { holder.inner(); });
+attempt("call deep member", () => { holder.deep.absent(); });
+attempt("call computed member", () => { holder[key](); });
+attempt("call indexed member", () => { list[index](); });
+attempt("call optional then member", () => { holder?.deep.absent(); });
+attempt("call member of this", function () { return this.absent(); }.bind(holder));
+attempt("call of string method absent", () => { text.absent(); });
+attempt("call of number method absent", () => { five.absent(); });
+attempt("call of array method absent", () => { list.absent(); });
+attempt("call global absent", () => { globalThis.absentGlobal(); });
+attempt("call Math absent", () => { Math.absent(); });
+attempt("call console absent", () => { console.absent(); });
+attempt("call in argument", () => { String(holder.absent()); });
+attempt("call in template", () => { `${holder.absent()}`; });
+attempt("new variable", () => { new nothing(); });
+attempt("new number", () => { new five(); });
+attempt("new member", () => { new holder.absent(); });
+attempt("new member number", () => { new holder.run(); });
+attempt("new Math", () => { new Math(); });
+
+// Destructuring.
+attempt("destructure undefined", () => { const { a } = nothing; return a; });
+attempt("destructure null", () => { const { a } = none; return a; });
+attempt("destructure empty pattern", () => { const {} = none; });
+attempt("destructure default call", () => { const { a = holder.absent() } = plain; return a; });
+attempt("destructure rest of null", () => { const { ...rest } = none; return rest; });
+attempt("destructure assignment", () => { let a; ({ a } = none); return a; });
+
+// Iteration.
+attempt("for-of number", () => { for (const x of five) return x; });
+attempt("for-of object", () => { for (const x of plain) return x; });
+attempt("for-of member", () => { for (const x of holder.number) return x; });
+attempt("spread number", () => { [...five]; });
+attempt("spread undefined", () => { [...nothing]; });
+attempt("spread member", () => { [...holder.inner]; });
+attempt("spread argument", () => { Math.max(...five); });
+attempt("spread argument undefined", () => { Math.max(...nothing); });
+attempt("new Map of number", () => { new Map(five); });
+attempt("new Set of number", () => { new Set(five); });
+attempt("new Map of numbers", () => { new Map([1]); });
+attempt("Array.from iterator 5", () => { Array.from({ [Symbol.iterator]: 5 }); });
+attempt("Object.fromEntries", () => { Object.fromEntries(five); });
+attempt("Promise.all sync", () => { Promise.all.call(5, []); });
+attempt("iterator result", () => { for (const x of { [Symbol.iterator]() { return { next() { return 5; } }; } }) return x; });
+attempt("iterator is number", () => { for (const x of { [Symbol.iterator]() { return 5; } }) return x; });
+
+// Variables.
+attempt("unknown variable", () => { absentVariable; });
+attempt("unknown variable call", () => { absentVariable(); });
+attempt("unknown variable store", () => { absentVariable = 1; });
+attempt("unknown variable member", () => { absentVariable.name; });
+attempt("dead zone own initializer", () => { let later = later + 1; return later; });
+attempt("dead zone parameter", () => { ((a = b, b = 1) => a)(); });
+attempt("class name store", () => { class Named { static run() { Named = 1; } } Named.run(); });
+attempt("function name store", () => { (function named() { named = 1; })(); });
+
+// Operators.
+attempt("instanceof number", () => { plain instanceof five; });
+attempt("instanceof undefined", () => { plain instanceof nothing; });
+attempt("instanceof member", () => { plain instanceof holder.inner; });
+attempt("instanceof bad prototype", () => { function F() {} F.prototype = 5; return plain instanceof F; });
+attempt("bigint plus number", () => { opaque(1n) + five; });
+attempt("bigint times number", () => { opaque(1n) * five; });
+attempt("bigint unary plus", () => { +opaque(1n); });
+attempt("bigint divide zero", () => { opaque(1n) / opaque(0n); });
+attempt("bigint remainder zero", () => { opaque(1n) % opaque(0n); });
+attempt("bigint negative power", () => { opaque(2n) ** opaque(-1n); });
+attempt("bigint unsigned shift", () => { opaque(2n) >>> opaque(1n); });
+attempt("bigint of fraction", () => { BigInt(opaque(1.5)); });
+attempt("bigint of text", () => { BigInt(opaque("x")); });
+attempt("bigint of undefined", () => { BigInt(nothing); });
+attempt("symbol to string", () => { "" + opaque(Symbol("s")); });
+attempt("symbol in template", () => { `${opaque(Symbol("s"))}`; });
+attempt("symbol to number", () => { +opaque(Symbol("s")); });
+attempt("symbol times", () => { opaque(Symbol("s")) * 2; });
+attempt("object to primitive", () => { "" + opaque({ toString: null, valueOf: null }); });
+attempt("object to primitive returns object", () => { "" + opaque({ toString() { return {}; }, valueOf() { return {}; } }); });
+attempt("toPrimitive 5", () => { +opaque({ [Symbol.toPrimitive]: 5 }); });
+attempt("toPrimitive returns object", () => { +opaque({ [Symbol.toPrimitive]() { return {}; } }); });
+attempt("null prototype to string", () => { "" + opaque(Object.create(null)); });
+attempt("null prototype as key", () => { plain[opaque(Object.create(null))]; });
+
+// Classes.
+attempt("this before super", () => { class A {} class B extends A { constructor() { this.x = 1; super(); } } return new B(); });
+attempt("super twice", () => { class A {} class B extends A { constructor() { super(); super(); } } return new B(); });
+attempt("super method absent", () => { class A {} class B extends A { run() { return super.absent(); } } return new B().run(); });
+attempt("private method store", () => { class A { #m() {} run() { this.#m = 1; } } return new A().run(); });
+attempt("private getter only store", () => { class A { get #g() { return 1; } run() { this.#g = 1; } } return new A().run(); });
+attempt("private setter only read", () => { class A { set #s(v) {} run() { return this.#s; } } return new A().run(); });
+attempt("getter only store", () => { class A { get g() { return 1; } } new A().g = 2; });
+attempt("new.target call", () => { function F() { if (!new.target) throw new TypeError("needs new"); } return F(); });
+
+// Objects that refuse.
+attempt("frozen store", () => { Object.freeze(opaque({ a: 1 })).a = 2; });
+attempt("frozen add", () => { Object.freeze(opaque({ a: 1 })).b = 2; });
+attempt("frozen delete", () => { delete Object.freeze(opaque({ a: 1 })).a; });
+attempt("frozen array store", () => { Object.freeze(opaque([1]))[0] = 2; });
+attempt("frozen array add", () => { Object.freeze(opaque([1]))[1] = 2; });
+attempt("frozen array length", () => { Object.freeze(opaque([1])).length = 0; });
+attempt("frozen array pop", () => { Object.freeze(opaque([1])).pop(); });
+attempt("sealed add", () => { Object.seal(opaque({ a: 1 })).b = 2; });
+attempt("sealed delete", () => { delete Object.seal(opaque({ a: 1 })).a; });
+attempt("not extensible add", () => { Object.preventExtensions(opaque({})).b = 2; });
+attempt("not extensible define", () => { Object.defineProperty(Object.preventExtensions(opaque({})), "b", { value: 1 }); });
+attempt("not extensible prototype", () => { Object.setPrototypeOf(Object.preventExtensions(opaque({})), {}); });
+attempt("read-only store", () => { Object.defineProperty(opaque({}), "a", { value: 1 }).a = 2; });
+attempt("read-only inherited store", () => { Object.create(Object.defineProperty({}, "a", { value: 1 })).a = 2; });
+attempt("getter only object store", () => { opaque({ get a() { return 1; } }).a = 2; });
+attempt("not configurable delete", () => { delete Object.defineProperty(opaque({}), "a", { value: 1 }).a; });
+attempt("not configurable redefine", () => { Object.defineProperty(Object.defineProperty(opaque({}), "a", { value: 1 }), "a", { value: 2 }); });
+attempt("descriptor both", () => { Object.defineProperty(opaque({}), "a", { value: 1, get() {} }); });
+attempt("descriptor getter 5", () => { Object.defineProperty(opaque({}), "a", { get: 5 }); });
+attempt("descriptor number", () => { Object.defineProperty(opaque({}), "a", 5); });
+attempt("define on number", () => { Object.defineProperty(five, "a", {}); });
+attempt("string index store", () => { text[0] = "x"; });
+attempt("string length store", () => { text.length = 1; });
+attempt("number member store", () => { five.a = 1; });
+attempt("string member store", () => { text.a = 1; });
+attempt("symbol member store", () => { opaque(Symbol()).a = 1; });
+attempt("arguments callee", function () { return arguments.callee; });
+attempt("function caller", () => { (function f() { return f.caller; })(); });
+attempt("prototype cycle", () => { const a = {}, b = Object.create(a); Object.setPrototypeOf(a, b); });
+attempt("prototype number", () => { Object.setPrototypeOf(opaque({}), five); });
+attempt("array length store", () => { opaque([]).length = -1; });
+attempt("array length fraction", () => { opaque([]).length = 1.5; });
+attempt("undefined store global", () => { undefined = 1; });
+attempt("NaN store global", () => { NaN = 1; });
+attempt("globalThis undefined", () => { globalThis.undefined = 1; });
+
+// Ranges.
+attempt("repeat -1", () => { text.repeat(opaque(-1)); });
+attempt("repeat Infinity", () => { text.repeat(opaque(Infinity)); });
+attempt("repeat huge", () => { text.repeat(opaque(2 ** 31)); });
+attempt("padEnd huge", () => { text.padEnd(opaque(2 ** 32), "x"); });
+attempt("toFixed", () => { five.toFixed(opaque(101)); });
+attempt("toPrecision", () => { five.toPrecision(opaque(0)); });
+attempt("toExponential", () => { five.toExponential(opaque(-1)); });
+attempt("toString radix", () => { five.toString(opaque(1)); });
+attempt("fromCodePoint", () => { String.fromCodePoint(opaque(-1)); });
+attempt("normalize", () => { text.normalize(opaque("x")); });
+attempt("new ArrayBuffer", () => { new ArrayBuffer(opaque(-1)); });
+attempt("new Uint8Array -1", () => { new Uint8Array(opaque(-1)); });
+attempt("new Uint32Array offset", () => { new Uint32Array(new ArrayBuffer(8), opaque(1)); });
+attempt("new Uint32Array length", () => { new Uint32Array(new ArrayBuffer(8), 0, opaque(9)); });
+attempt("typed set offset", () => { new Uint8Array(1).set([1, 2], opaque(1)); });
+attempt("DataView get", () => { new DataView(new ArrayBuffer(1)).getInt32(opaque(0)); });
+attempt("DataView offset", () => { new DataView(new ArrayBuffer(1), opaque(2)); });
+attempt("toISOString", () => { new Date(opaque(NaN)).toISOString(); });
+attempt("Intl locale", () => { new Intl.NumberFormat(opaque("xx-invalid-locale-x")); });
+attempt("Intl currency", () => { new Intl.NumberFormat("en", { style: "currency" }); });
+attempt("localeCompare", () => { text.localeCompare("b", opaque("x_y")); });
+attempt("stack overflow", () => { const again = () => again() + 1; return again(); });
+attempt("concat huge", () => { let s = opaque("x").repeat(2 ** 30); return (s + s + s + s).length; });
+attempt("at BigInt", () => { BigInt.asIntN(opaque(-1), 1n); });
+attempt("flat depth symbol", () => { list.flat(opaque(Symbol())); });
+attempt("with index", () => { list.with(opaque(9), 1); });
+attempt("decodeURIComponent", () => { decodeURIComponent(opaque("%")); });
+attempt("encodeURI", () => { encodeURI(opaque("\ud800")); });
+
+// Text that is parsed.
+attempt("JSON empty", () => { JSON.parse(opaque("")); });
+attempt("JSON brace", () => { JSON.parse(opaque("{")); });
+attempt("JSON token", () => { JSON.parse(opaque('{"a":x}')); });
+attempt("JSON undefined", () => { JSON.parse(nothing); });
+attempt("JSON trailing", () => { JSON.parse(opaque("1 2")); });
+attempt("JSON circular", () => { const o = {}; o.self = o; return JSON.stringify(o); });
+attempt("JSON bigint", () => { JSON.stringify(opaque({ a: 1n })); });
+attempt("JSON toJSON throws", () => { JSON.stringify({ toJSON() { throw new Error("toJSON"); } }); });
+attempt("JSON reviver throws", () => { JSON.parse("[1]", () => { throw new Error("reviver"); }); });
+attempt("RegExp paren", () => { new RegExp(opaque("(")); });
+attempt("RegExp flags", () => { new RegExp("a", opaque("zz")); });
+attempt("RegExp class", () => { new RegExp(opaque("[b-a]")); });
+attempt("RegExp quantifier", () => { new RegExp(opaque("a{2,1}")); });
+attempt("RegExp group name", () => { new RegExp(opaque("(?<a>x)(?<a>y)")); });
+attempt("matchAll not global", () => { text.matchAll(/a/); });
+attempt("startsWith RegExp", () => { text.startsWith(/a/); });
+attempt("Function text", () => { new Function(opaque("return (")); });
+attempt("eval text", () => { (0, eval)(opaque("let let")); });
+attempt("eval throws", () => { (0, eval)(opaque("null.x")); });
+attempt("Function throws", () => { new Function(opaque("return null.x"))(); });
+
+// Receivers and arguments that built-ins refuse.
+attempt("Map get receiver", () => { Map.prototype.get.call(plain, 1); });
+attempt("Set add receiver", () => { Set.prototype.add.call(plain, 1); });
+attempt("WeakMap key", () => { new WeakMap().set(five, 1); });
+attempt("WeakSet key", () => { new WeakSet().add(five); });
+attempt("WeakRef target", () => { new WeakRef(five); });
+attempt("Map without new", () => { Map(); });
+attempt("Promise executor", () => { new Promise(five); });
+attempt("Promise then receiver", () => { Promise.prototype.then.call(plain); });
+attempt("Promise resolve receiver", () => { Promise.resolve.call(five); });
+attempt("Proxy target", () => { new Proxy(five, {}); });
+attempt("Proxy handler", () => { new Proxy({}, five); });
+attempt("Proxy without new", () => { Proxy({}, {}); });
+attempt("Proxy revoked get", () => { const { proxy, revoke } = Proxy.revocable({}, {}); revoke(); return proxy.a; });
+attempt("Proxy revoked call", () => { const { proxy, revoke } = Proxy.revocable(() => 1, {}); revoke(); return proxy(); });
+attempt("Proxy trap 5", () => { new Proxy({}, { get: 5 }).a; });
+attempt("Proxy invariant get", () => { new Proxy(Object.defineProperty({}, "a", { value: 1 }), { get: () => 2 }).a; });
+attempt("Proxy invariant has", () => { "a" in new Proxy(Object.defineProperty({}, "a", { value: 1 }), { has: () => false }); });
+attempt("Proxy set false", () => { new Proxy({}, { set: () => false }).a = 1; });
+attempt("Proxy delete false", () => { delete new Proxy({}, { deleteProperty: () => false }).a; });
+attempt("Proxy define false", () => { Object.defineProperty(new Proxy({}, { defineProperty: () => false }), "a", {}); });
+attempt("Proxy trap throws", () => { new Proxy({}, { get() { throw new Error("trap"); } }).a; });
+attempt("Reflect ownKeys", () => { Reflect.ownKeys(five); });
+attempt("Reflect apply", () => { Reflect.apply(five, null, []); });
+attempt("Reflect apply list", () => { Reflect.apply(() => 1, null, five); });
+attempt("Reflect construct", () => { Reflect.construct(() => 1, []); });
+attempt("Reflect get", () => { Reflect.get(five, "a"); });
+attempt("Object.entries null", () => { Object.entries(none); });
+attempt("Object.assign null", () => { Object.assign(none, {}); });
+attempt("Object.groupBy", () => { Object.groupBy(list, five); });
+attempt("forEach callback", () => { list.forEach(five); });
+attempt("map callback", () => { list.map(nothing); });
+attempt("filter callback", () => { list.filter(plain); });
+attempt("reduce callback", () => { list.reduce(five); });
+attempt("reduce empty", () => { opaque([]).reduce((a, b) => a + b); });
+attempt("sort comparator", () => { list.sort(five); });
+attempt("find callback", () => { list.find(text); });
+attempt("flatMap callback", () => { list.flatMap(five); });
+attempt("Array.from mapper", () => { Array.from(list, five); });
+attempt("array method on null", () => { Array.prototype.map.call(none, x => x); });
+attempt("string method on null", () => { String.prototype.trim.call(none); });
+attempt("string method on undefined", () => { String.prototype.at.call(nothing, 0); });
+attempt("number method receiver", () => { Number.prototype.toFixed.call(text); });
+attempt("symbol description receiver", () => { Object.getOwnPropertyDescriptor(Symbol.prototype, "description").get.call(five); });
+attempt("date receiver", () => { Date.prototype.getTime.call(plain); });
+attempt("regexp receiver", () => { RegExp.prototype.exec.call(plain, "a"); });
+attempt("regexp exec 5", () => { RegExp.prototype.test.call({ exec: () => 5 }, "a"); });
+attempt("function toString receiver", () => { Function.prototype.toString.call(plain); });
+attempt("bind receiver", () => { Function.prototype.bind.call(plain); });
+attempt("typed array receiver", () => { Object.getOwnPropertyDescriptor(Object.getPrototypeOf(Uint8Array.prototype), "length").get.call(plain); });
+attempt("typed array without new", () => { Uint8Array(1); });
+attempt("typed array abstract", () => { new (Object.getPrototypeOf(Uint8Array))(); });
+attempt("detached buffer", () => { const b = new ArrayBuffer(8), v = new Uint8Array(b); structuredClone(b, { transfer: [b] }); return v.fill(1); });
+attempt("generator running", () => { const g = (function* () { g.next(); })(); return g.next(); });
+attempt("generator receiver", () => { (function* () {})().next.call(plain); });
+attempt("generator throw", () => { (function* named() { yield 1; })().throw(new Error("into a generator")); });
+attempt("Symbol.keyFor", () => { Symbol.keyFor(five); });
+attempt("Atomics", () => { Atomics.add(list, 0, 1); });
+attempt("FinalizationRegistry", () => { new FinalizationRegistry(five); });
+attempt("Error cause", () => { throw new Error("outer", { cause: new TypeError("inner") }); });
+attempt("AggregateError", () => { throw new AggregateError([new Error("one")], "many"); });
+attempt("SuppressedError", () => { throw new SuppressedError(new Error("a"), new Error("b"), "suppressed"); });
+attempt("DOMException", () => { throw new DOMException("text", "AbortError"); });
+
+// The same in the position of a tail call: strict code leaves its frame before such a call.
+attempt("tail call variable", () => nothing());
+attempt("tail call member", () => holder.absent());
+attempt("tail call deep member", () => holder.deep.absent());
+attempt("tail call computed member", () => holder[key]());
+attempt("tail call of this", function () { return this.absent(); }.bind(holder));
+attempt("tail call function that throws", () => thrower());
+attempt("tail call method that throws", () => throwing.method());
+attempt("tail return in a function", function named() { return holder.absent(); });
+//// messages-of-iterators-that-are-no-objects.mjs
+// The engine rewrites some messages around the text of the failing expression. A compiled program has the message from before that step.
+function withoutSourceText(message) {
+  return message
+    .replace(/^(.*) is not a function\. \(In '.*', '.*' is (an instance of )?(.*)\)$/s, "$3 is not a function")
+    .replace(/ \((evaluating|near) '.*'\)$/s, "")
+    .replace(/^Symbol\(.*\) is not a function$/s, "a Symbol is not a function")
+    .replace(/^.* is not an Object\.$/s, "(operand) is not an Object.")
+    .replace(/^.*( is not a function\.|  is not a function)$/s, "(operand) is not a function.")
+    .replace(/^.*\[Symbol\.hasInstance\] is not a function, undefined, or null\.?$/s, "(operand)[Symbol.hasInstance] is not a function, undefined, or null.")
+    .replace(/^.* is not an object or null$/s, "The value of the superclass's prototype property is not an object or null.");
+}
+
+////= attempt-3	threw", error?.constructor?.name, withoutSourceText(String(error?.message)
+
+const opaque = value => [value, 0][Number(process.argv.length > 100)];
+const returnsNumber = opaque({ [Symbol.iterator]() { return 5; } });
+const methodIsNumber = opaque({ [Symbol.iterator]: 5 });
+
+attempt("for of, iterator returns 5", () => { for (const x of returnsNumber) break; return "done"; });
+attempt("[a] =, iterator returns 5", () => { const [a] = returnsNumber; return "done"; });
+attempt("[...], iterator returns 5", () => [...returnsNumber].length);
+attempt("f(...), iterator returns 5", () => Math.max(...returnsNumber));
+attempt("yield*, iterator returns 5", () => { for (const x of (function* () { yield* returnsNumber; })()) break; return "done"; });
+attempt("yield*, iterator 5", () => { for (const x of (function* () { yield* methodIsNumber; })()) break; return "done"; });
+//// places-that-throw-in-typed-code.ts
+// The places that throw in typed code: the class, the whole message, the line and column, and the first frames of the stack are those of plain Bun.
+const opaque = <T,>(value: T): T => [value, value][Number(process.argv.length > 100)];
+////= framesOf-2
+function describe(thrown: unknown): string {
+  if (!(thrown instanceof Error)) return "no error: " + String(thrown);
+  const error: any = thrown;
+  return error.name + ": " + error.message + " [" + error.line + ":" + error.column + "] " + framesOf(error.stack, 3);
+}
+////= attempt-2
+
+////= Point
+////= Shape
+const point = opaque(new Point(1, 2));
+const noPoint = opaque<Point | null>(null);
+const missingPoint = opaque<Point | undefined>(undefined);
+const shape = opaque<Shape>({ name: "shape", center: null });
+const noList = opaque<number[] | null>(null);
+const noText = opaque<string | null>(null);
+const noMap = opaque<Map<string, number> | null>(null);
+const noSet = opaque<Set<number> | undefined>(undefined);
+const noFunction = opaque<((value: number) => number) | null>(null);
+const points = opaque<(Point | null)[]>([null]);
+const table = opaque<Record<string, Point | undefined>>({});
+const pair = opaque<[Point | null, number]>([null, 1]);
+
+function readX(p: Point): number { return p.x; }
+function readTwice(p: Point): number { const x = readX(p); return x + 1; }
+////= Thrower
+class ThrowsInField { field: number = fail("in a field initializer"); }
+function fail(message: string): never { throw new Error(message); }
+function generic<T>(value: T): T { if (opaque(true)) throw new Error("in a generic function " + typeof value); return value; }
+class Failure extends Error { code: number; constructor(message: string, code: number) { super(message); this.name = "Failure"; this.code = code; } }
+enum Color { Red, Green }
+function lookup(color: Color): string { switch (color) { case Color.Red: return "red"; case Color.Green: return "green"; default: throw new RangeError("no color " + color); } }
+function unreachable(value: never): never { throw new Error("reached with " + String(value)); }
+
+// Calls.
+attempt("optional method that is missing", () => { shape.area!(); });
+attempt("optional method in tail position", () => shape.area!());
+attempt("method that a cast invents", () => { (point as any).absent(); });
+attempt("method that a cast invents, tail", () => (point as any).absent());
+
+// Built-in receivers.
+attempt("spread of a null array", () => { [...noList!]; });
+attempt("destructuring of a null object", () => { const { x } = noPoint!; return x; });
+
+// What the program throws.
+attempt("throw in a method", () => { new Thrower().method(); });
+attempt("throw in a constructor", () => { new Thrower(true); });
+attempt("throw in a getter", () => { new Thrower().getter; });
+attempt("throw in a static method", () => { Thrower.make(); });
+attempt("throw in a generic function", () => { generic<number>(1); });
+attempt("throw of a subclass", () => { throw new Failure("failed", 7); });
+attempt("throw in an enum lookup", () => { lookup(opaque(5 as Color)); });
+attempt("throw behind a never", () => { unreachable(opaque("x") as never); });
+//// places-that-throw-in-typed-code-with-another-text-or-column.ts
+// The places that throw in typed code where the message or a column is not that of plain Bun: see docs/bundler/aot-compatibility.mdx#error-messages and docs/bundler/aot-debugging.mdx#stack-traces. The class and the line are the same.
+const opaque = <T,>(value: T): T => [value, value][Number(process.argv.length > 100)];
+////= framesOf-2
+function describe(thrown: unknown): string {
+  if (!(thrown instanceof Error)) return "no error: " + String(thrown);
+  const error: any = thrown;
+  return error.name + ": " + error.message + " [" + error.line + ":" + error.column + "] " + framesOf(error.stack, 3);
+}
+////= attempt-2
+
+////= Point
+////= Shape
+const point = opaque(new Point(1, 2));
+const noPoint = opaque<Point | null>(null);
+const missingPoint = opaque<Point | undefined>(undefined);
+const shape = opaque<Shape>({ name: "shape", center: null });
+const noList = opaque<number[] | null>(null);
+const noText = opaque<string | null>(null);
+const noMap = opaque<Map<string, number> | null>(null);
+const noSet = opaque<Set<number> | undefined>(undefined);
+const noFunction = opaque<((value: number) => number) | null>(null);
+const points = opaque<(Point | null)[]>([null]);
+const table = opaque<Record<string, Point | undefined>>({});
+const pair = opaque<[Point | null, number]>([null, 1]);
+
+function readX(p: Point): number { return p.x; }
+function readTwice(p: Point): number { const x = readX(p); return x + 1; }
+////= Thrower
+class ThrowsInField { field: number = fail("in a field initializer"); }
+function fail(message: string): never { throw new Error(message); }
+function generic<T>(value: T): T { if (opaque(true)) throw new Error("in a generic function " + typeof value); return value; }
+class Failure extends Error { code: number; constructor(message: string, code: number) { super(message); this.name = "Failure"; this.code = code; } }
+enum Color { Red, Green }
+function lookup(color: Color): string { switch (color) { case Color.Red: return "red"; case Color.Green: return "green"; default: throw new RangeError("no color " + color); } }
+function unreachable(value: never): never { throw new Error("reached with " + String(value)); }
+
+// Fields of typed objects.
+attempt("field of null", () => { noPoint!.x; });
+attempt("field of undefined", () => { missingPoint!.x; });
+attempt("second field of null", () => { noPoint!.y; });
+attempt("field of a field", () => { point.next!.x; });
+attempt("field of a field of a field", () => { point.next!.next!.x; });
+attempt("field of an interface member", () => { shape.center!.x; });
+attempt("optional member of an interface", () => { shape.inner!.depth; });
+attempt("deep optional member", () => { shape.inner!.deeper!.value; });
+attempt("field of a static", () => { Point.origin!.x; });
+attempt("field of an element", () => { points[0]!.x; });
+attempt("field of a record member", () => { table.absent!.x; });
+attempt("field of a tuple member", () => { pair[0]!.x; });
+attempt("field in arithmetic", () => { noPoint!.x + noPoint!.y; });
+attempt("field as an argument", () => { Math.abs(noPoint!.x); });
+attempt("field returned", () => noPoint!.x);
+attempt("field in a loop", () => { let sum = 0; for (let i = 0; i < 3; i++) sum += noPoint!.x; return sum; });
+attempt("field through a parameter", () => { ((p: Point) => p.x)(noPoint as Point); });
+attempt("field through a typed function", () => { readX(noPoint as Point); });
+attempt("field through two typed functions", () => { readTwice(noPoint as Point); });
+attempt("optional string member", () => { point.label!.length; });
+
+// Stores.
+attempt("store to null", () => { noPoint!.x = 1; });
+attempt("store to undefined", () => { missingPoint!.x = 1; });
+attempt("store to a field of a field", () => { point.next!.x = 1; });
+attempt("compound store", () => { noPoint!.x += 1; });
+attempt("increment", () => { noPoint!.x++; });
+attempt("store to an element of null", () => { noList![0] = 1; });
+attempt("store of an object field", () => { noPoint!.next = point; });
+
+// Calls.
+attempt("method of null", () => { noPoint!.length(); });
+attempt("method of undefined", () => { missingPoint!.length(); });
+attempt("method of a field", () => { point.next!.length(); });
+attempt("getter of null", () => { noPoint!.first; });
+attempt("getter that reads null", () => { point.first; });
+attempt("function field that is null", () => { point.scale!(2); });
+attempt("function variable that is null", () => { noFunction!(1); });
+attempt("method in tail position", () => noPoint!.length());
+attempt("function field in tail position", () => point.scale!(2));
+attempt("new of null", () => { new (opaque<typeof Point | null>(null))!(1, 2); });
+
+// Built-in receivers.
+attempt("length of a null array", () => { noList!.length; });
+attempt("element of a null array", () => { noList![0]; });
+attempt("push on a null array", () => { noList!.push(1); });
+attempt("map on a null array", () => { noList!.map(value => value); });
+attempt("for-of over a null array", () => { for (const value of noList!) return value; });
+attempt("destructuring of a null array", () => { const [first] = noList!; return first; });
+attempt("length of a null string", () => { noText!.length; });
+attempt("method of a null string", () => { noText!.toUpperCase(); });
+attempt("character of a null string", () => { noText![0]; });
+attempt("get on a null Map", () => { noMap!.get("a"); });
+attempt("set on a null Map", () => { noMap!.set("a", 1); });
+attempt("size of a null Map", () => { noMap!.size; });
+attempt("has on an undefined Set", () => { noSet!.has(1); });
+attempt("destructuring of a null field", () => { const { next: { x } } = point as { next: Point }; return x; });
+attempt("destructured parameter", () => { (({ x }: Point) => x)(noPoint as Point); });
+
+// What the program throws.
+attempt("throw in a field initializer", () => { new ThrowsInField(); });
+//// places-that-throw-with-another-text-or-column.js
+// The places that throw where the message, a column or a frame of a built-in is not that of plain Bun: see docs/bundler/aot-compatibility.mdx#error-messages and docs/bundler/aot-debugging.mdx#stack-traces. The class and the line are the same.
+"use strict";
+const opaque = value => [value, 0][Number(process.argv.length > 100)];
+////= framesOf
+function describe(error) {
+  if (!(error instanceof Error)) return "no error: " + String(error);
+  return error.name + ": " + error.message + " [" + error.line + ":" + error.column + "] " + framesOf(error.stack, 3);
+}
+////= attempt
+const nothing = opaque(undefined), none = opaque(null), five = opaque(5), text = opaque("abc"), plain = opaque({}), list = opaque([1, 2]);
+const holder = opaque({ inner: null, missing: undefined, number: 5, deep: { inner: null }, list: [null], run: 5 });
+const key = opaque("name"), index = opaque(0);
+function thrower() { throw new Error("thrown behind a tail call"); }
+const throwing = { method() { throw new Error("thrown in a method behind a tail call"); } };
+
+// Calls of what is no function.
+attempt("call string variable", () => { text(); });
+attempt("call object variable", () => { plain(); });
+attempt("call with arguments", () => { holder.absent(1, "two", [3]); });
+attempt("call of a call", () => { (() => 5)()(); });
+attempt("call spread", () => { holder.absent(...list); });
+attempt("call tagged template", () => { holder.absent`x`; });
+attempt("call via call", () => { holder.absent.call(null); });
+attempt("new arrow", () => { new (() => 1)(); });
+attempt("new method", () => { new ({ m() {} }).m(); });
+attempt("new Symbol", () => { new Symbol(); });
+attempt("new async function", () => { new (async function named() {})(); });
+attempt("new generator", () => { new (function* named() {})(); });
+
+// Reads of null and undefined.
+attempt("read of undefined", () => { nothing.name; });
+attempt("read of null", () => { none.name; });
+attempt("read member", () => { holder.inner.name; });
+attempt("read member undefined", () => { holder.missing.name; });
+attempt("read deep member", () => { holder.deep.inner.name; });
+attempt("read computed", () => { holder.inner[key]; });
+attempt("read indexed", () => { holder.inner[index]; });
+attempt("read of element", () => { holder.list[0].name; });
+attempt("read of computed holder", () => { holder[key].name; });
+attempt("read of call", () => { (() => null)().name; });
+attempt("read optional chain tail", () => { holder.deep?.inner.name; });
+attempt("read length", () => { holder.inner.length; });
+attempt("read then call", () => { holder.inner.run(); });
+attempt("read then call computed", () => { holder.inner[key](); });
+attempt("read in a sum", () => { 1 + holder.inner.name; });
+attempt("read in a condition", () => { (holder.inner.name ? 1 : 2); });
+attempt("read typeof", () => { typeof holder.inner.name; });
+attempt("read private of other", () => { class A { #p = 1; static read(o) { return o.#p; } } return A.read(plain); });
+attempt("read this undefined", function () { return (function () { return this.name; })(); });
+
+// Stores to null and undefined.
+attempt("store member", () => { holder.inner.name = 1; });
+attempt("store undefined member", () => { holder.missing.name = 1; });
+attempt("store computed", () => { holder.inner[key] = 1; });
+attempt("store indexed", () => { holder.inner[index] = 1; });
+attempt("store compound", () => { holder.inner.name += 1; });
+attempt("store increment", () => { holder.inner.name++; });
+attempt("store prefix decrement", () => { --holder.inner.name; });
+attempt("store logical", () => { holder.inner.name ??= 1; });
+attempt("store compound computed", () => { holder.inner[key] += 1; });
+attempt("delete member", () => { delete holder.inner.name; });
+attempt("delete computed", () => { delete holder.inner[key]; });
+
+// Destructuring.
+attempt("destructure nested", () => { const { inner: { a } } = holder; return a; });
+attempt("destructure nested undefined", () => { const { missing: { a } } = holder; return a; });
+attempt("destructure array of undefined", () => { const [a] = nothing; return a; });
+attempt("destructure array of number", () => { const [a] = five; return a; });
+attempt("destructure array of object", () => { const [a] = plain; return a; });
+attempt("destructure nested array", () => { const { number: [a] } = holder; return a; });
+attempt("destructure parameter", () => { (({ a }) => a)(nothing); });
+attempt("destructure parameter nested", () => { (({ inner: { a } }) => a)(holder); });
+attempt("destructure array parameter", () => { (([a]) => a)(nothing); });
+attempt("destructure default throws", () => { const { a = holder.inner.name } = plain; return a; });
+attempt("destructure computed key", () => { const { [holder.inner.name]: a } = plain; return a; });
+attempt("destructure assignment target", () => { ({ a: holder.inner.name } = { a: 1 }); });
+attempt("destructure in for-of", () => { for (const { a } of [null]) return a; });
+attempt("destructure in catch", () => { try { throw null; } catch ({ a }) { return a; } });
+attempt("destructure second of two", () => { const { number, inner: { a } } = holder; return a + number; });
+attempt("destructure getter throws", () => { const { a } = { get a() { throw new Error("getter"); } }; return a; });
+attempt("destructure iterator throws", () => { const [a] = { [Symbol.iterator]() { throw new Error("iterator"); } }; return a; });
+attempt("destructure next throws", () => { const [a] = { [Symbol.iterator]() { return { next() { throw new Error("next"); } }; } }; return a; });
+
+// Iteration.
+attempt("for-of undefined", () => { for (const x of nothing) return x; });
+attempt("yield star", () => { [...(function* () { yield* five; })()]; });
+attempt("iterator no next", () => { for (const x of { [Symbol.iterator]() { return {}; } }) return x; });
+
+// Variables.
+attempt("dead zone let", () => { const read = () => later; read(); let later = 1; });
+attempt("dead zone const", () => { const read = () => later; read(); const later = 1; });
+attempt("dead zone class", () => { const read = () => Later; read(); class Later {} });
+attempt("dead zone store", () => { const write = () => { later = 2; }; write(); let later = 1; });
+
+// Operators.
+attempt("in number", () => { "a" in five; });
+attempt("in undefined", () => { "a" in nothing; });
+attempt("in member", () => { key in holder.inner; });
+attempt("in string", () => { "length" in text; });
+attempt("private in number", () => { class A { #p; static has(o) { return #p in o; } } return A.has(five); });
+attempt("instanceof object", () => { plain instanceof plain; });
+attempt("instanceof arrow", () => { plain instanceof (() => 1); });
+attempt("instanceof hasInstance 5", () => { plain instanceof { [Symbol.hasInstance]: 5 }; });
+attempt("bigint Math", () => { Math.max(opaque(1n)); });
+
+// Classes.
+attempt("class without new", () => { class A {} return A(); });
+attempt("class member without new", () => { const o = { A: class {} }; return o.A(); });
+attempt("no super", () => { class A {} class B extends A { constructor() {} } return new B(); });
+attempt("derived returns number", () => { class A {} class B extends A { constructor() { super(); return 5; } } return new B(); });
+attempt("extends number", () => { class B extends five {} return B; });
+attempt("extends undefined", () => { class B extends nothing {} return B; });
+attempt("extends member", () => { class B extends holder.inner2 {} return B; });
+attempt("extends arrow", () => { class B extends (() => 1) {} return B; });
+attempt("extends bad prototype", () => { function F() {} F.prototype = 5; class B extends F {} return B; });
+attempt("extends null new", () => { class B extends null {} return new B(); });
+attempt("extends generator", () => { class B extends (function* () {}) {} return B; });
+attempt("super member of null", () => { class A {} class B extends A { run() { return super.absent.name; } } return new B().run(); });
+attempt("private method of other", () => { class A { #m() {} static run(o) { return o.#m(); } } return A.run(plain); });
+attempt("private store of other", () => { class A { #p = 1; static write(o) { o.#p = 2; } } return A.write(plain); });
+attempt("private twice", () => { class Base { constructor(o) { return o; } } class A extends Base { #p = 1; } const o = {}; new A(o); return new A(o); });
+attempt("static prototype", () => { class A { static ["prototype"]() {} } return A; });
+
+// Objects that refuse.
+attempt("frozen array push", () => { Object.freeze(opaque([1])).push(2); });
+attempt("not extensible index", () => { Object.preventExtensions(opaque({}))[0] = 2; });
+attempt("not configurable accessor", () => { Object.defineProperty(Object.defineProperty(opaque({}), "a", { value: 1 }), "a", { get() {} }); });
+attempt("function name store strict", () => { (function f() {}).name = "g"; });
+attempt("create number", () => { Object.create(five); });
+
+// Ranges.
+attempt("new Array -1", () => { new Array(opaque(-1)); });
+attempt("new Array fraction", () => { new Array(opaque(1.5)); });
+attempt("Array call -1", () => { Array(opaque(-1)); });
+
+// Text that is parsed.
+attempt("JSON circular deep", () => { const o = { a: { b: [] } }; o.a.b.push(o); return JSON.stringify(o); });
+attempt("replaceAll not global", () => { text.replaceAll(/a/, "b"); });
+
+// Receivers and arguments that built-ins refuse.
+attempt("Promise without new", () => { Promise(() => {}); });
+attempt("Proxy ownKeys", () => { Object.keys(new Proxy({}, { ownKeys: () => [1] })); });
+attempt("Object.keys undefined", () => { Object.keys(nothing); });
+attempt("hasOwn undefined", () => { Object.hasOwn(nothing, "a"); });
+attempt("apply list", () => { (() => 1).apply(null, five); });
+attempt("structuredClone function", () => { structuredClone(() => 1); });
+attempt("structuredClone symbol", () => { structuredClone(Symbol()); });
+attempt("Intl receiver", () => { Intl.NumberFormat.prototype.format.call(plain); });
+
+// The same in the position of a tail call: strict code leaves its frame before such a call.
+attempt("tail call native", () => Math.max(opaque(1n)));
+//// reads-of-null-with-many-values-in-registers.ts
+// Each function holds another number of integers in registers over three reads of a reference that may be null. The usual way through them calls nothing.
+type Link = { x: number; next: Link | null };
+function hold4(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold4(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (r ^ (v0 << 0) ^ (v1 << 1) ^ (v2 << 2) ^ (v3 << 3) ^ p ^ (q << 20) ^ (s << 21) ^ (t << 22)) | 0;
+}
+function hold5(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold5(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const v4 = (v0 ^ (q << 1)) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (r ^ (v0 << 0) ^ (v1 << 1) ^ (v2 << 2) ^ (v3 << 3) ^ (v4 << 4) ^ p ^ (q << 20) ^ (s << 21) ^ (t << 22)) | 0;
+}
+function hold6(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold6(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const v4 = (v0 ^ (q << 1)) | 0;
+  const v5 = (v1 ^ (s << 2)) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (
+    (r ^
+      (v0 << 0) ^
+      (v1 << 1) ^
+      (v2 << 2) ^
+      (v3 << 3) ^
+      (v4 << 4) ^
+      (v5 << 5) ^
+      p ^
+      (q << 20) ^
+      (s << 21) ^
+      (t << 22)) |
+    0
+  );
+}
+function hold7(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold7(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const v4 = (v0 ^ (q << 1)) | 0;
+  const v5 = (v1 ^ (s << 2)) | 0;
+  const v6 = (v2 ^ (t << 3)) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (
+    (r ^
+      (v0 << 0) ^
+      (v1 << 1) ^
+      (v2 << 2) ^
+      (v3 << 3) ^
+      (v4 << 4) ^
+      (v5 << 5) ^
+      (v6 << 6) ^
+      p ^
+      (q << 20) ^
+      (s << 21) ^
+      (t << 22)) |
+    0
+  );
+}
+function hold8(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold8(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const v4 = (v0 ^ (q << 1)) | 0;
+  const v5 = (v1 ^ (s << 2)) | 0;
+  const v6 = (v2 ^ (t << 3)) | 0;
+  const v7 = (v3 ^ (p << 4)) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (
+    (r ^
+      (v0 << 0) ^
+      (v1 << 1) ^
+      (v2 << 2) ^
+      (v3 << 3) ^
+      (v4 << 4) ^
+      (v5 << 5) ^
+      (v6 << 6) ^
+      (v7 << 7) ^
+      p ^
+      (q << 20) ^
+      (s << 21) ^
+      (t << 22)) |
+    0
+  );
+}
+function hold9(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold9(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const v4 = (v0 ^ (q << 1)) | 0;
+  const v5 = (v1 ^ (s << 2)) | 0;
+  const v6 = (v2 ^ (t << 3)) | 0;
+  const v7 = (v3 ^ (p << 4)) | 0;
+  const v8 = (v4 + v1 * 13) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (
+    (r ^
+      (v0 << 0) ^
+      (v1 << 1) ^
+      (v2 << 2) ^
+      (v3 << 3) ^
+      (v4 << 4) ^
+      (v5 << 5) ^
+      (v6 << 6) ^
+      (v7 << 7) ^
+      (v8 << 8) ^
+      p ^
+      (q << 20) ^
+      (s << 21) ^
+      (t << 22)) |
+    0
+  );
+}
+function hold10(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold10(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const v4 = (v0 ^ (q << 1)) | 0;
+  const v5 = (v1 ^ (s << 2)) | 0;
+  const v6 = (v2 ^ (t << 3)) | 0;
+  const v7 = (v3 ^ (p << 4)) | 0;
+  const v8 = (v4 + v1 * 13) | 0;
+  const v9 = (v5 + v2 * 17) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (
+    (r ^
+      (v0 << 0) ^
+      (v1 << 1) ^
+      (v2 << 2) ^
+      (v3 << 3) ^
+      (v4 << 4) ^
+      (v5 << 5) ^
+      (v6 << 6) ^
+      (v7 << 7) ^
+      (v8 << 8) ^
+      (v9 << 9) ^
+      p ^
+      (q << 20) ^
+      (s << 21) ^
+      (t << 22)) |
+    0
+  );
+}
+function hold11(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold11(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const v4 = (v0 ^ (q << 1)) | 0;
+  const v5 = (v1 ^ (s << 2)) | 0;
+  const v6 = (v2 ^ (t << 3)) | 0;
+  const v7 = (v3 ^ (p << 4)) | 0;
+  const v8 = (v4 + v1 * 13) | 0;
+  const v9 = (v5 + v2 * 17) | 0;
+  const v10 = (v6 + v3 * 19) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (
+    (r ^
+      (v0 << 0) ^
+      (v1 << 1) ^
+      (v2 << 2) ^
+      (v3 << 3) ^
+      (v4 << 4) ^
+      (v5 << 5) ^
+      (v6 << 6) ^
+      (v7 << 7) ^
+      (v8 << 8) ^
+      (v9 << 9) ^
+      (v10 << 10) ^
+      p ^
+      (q << 20) ^
+      (s << 21) ^
+      (t << 22)) |
+    0
+  );
+}
+function hold12(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold12(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const v4 = (v0 ^ (q << 1)) | 0;
+  const v5 = (v1 ^ (s << 2)) | 0;
+  const v6 = (v2 ^ (t << 3)) | 0;
+  const v7 = (v3 ^ (p << 4)) | 0;
+  const v8 = (v4 + v1 * 13) | 0;
+  const v9 = (v5 + v2 * 17) | 0;
+  const v10 = (v6 + v3 * 19) | 0;
+  const v11 = (v7 + v4 * 23) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (
+    (r ^
+      (v0 << 0) ^
+      (v1 << 1) ^
+      (v2 << 2) ^
+      (v3 << 3) ^
+      (v4 << 4) ^
+      (v5 << 5) ^
+      (v6 << 6) ^
+      (v7 << 7) ^
+      (v8 << 8) ^
+      (v9 << 9) ^
+      (v10 << 10) ^
+      (v11 << 11) ^
+      p ^
+      (q << 20) ^
+      (s << 21) ^
+      (t << 22)) |
+    0
+  );
+}
+function hold13(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold13(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const v4 = (v0 ^ (q << 1)) | 0;
+  const v5 = (v1 ^ (s << 2)) | 0;
+  const v6 = (v2 ^ (t << 3)) | 0;
+  const v7 = (v3 ^ (p << 4)) | 0;
+  const v8 = (v4 + v1 * 13) | 0;
+  const v9 = (v5 + v2 * 17) | 0;
+  const v10 = (v6 + v3 * 19) | 0;
+  const v11 = (v7 + v4 * 23) | 0;
+  const v12 = (v8 + v5 * 29) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (
+    (r ^
+      (v0 << 0) ^
+      (v1 << 1) ^
+      (v2 << 2) ^
+      (v3 << 3) ^
+      (v4 << 4) ^
+      (v5 << 5) ^
+      (v6 << 6) ^
+      (v7 << 7) ^
+      (v8 << 8) ^
+      (v9 << 9) ^
+      (v10 << 10) ^
+      (v11 << 11) ^
+      (v12 << 12) ^
+      p ^
+      (q << 20) ^
+      (s << 21) ^
+      (t << 22)) |
+    0
+  );
+}
+function hold14(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold14(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const v4 = (v0 ^ (q << 1)) | 0;
+  const v5 = (v1 ^ (s << 2)) | 0;
+  const v6 = (v2 ^ (t << 3)) | 0;
+  const v7 = (v3 ^ (p << 4)) | 0;
+  const v8 = (v4 + v1 * 13) | 0;
+  const v9 = (v5 + v2 * 17) | 0;
+  const v10 = (v6 + v3 * 19) | 0;
+  const v11 = (v7 + v4 * 23) | 0;
+  const v12 = (v8 + v5 * 29) | 0;
+  const v13 = (v9 + v6 * 31) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (
+    (r ^
+      (v0 << 0) ^
+      (v1 << 1) ^
+      (v2 << 2) ^
+      (v3 << 3) ^
+      (v4 << 4) ^
+      (v5 << 5) ^
+      (v6 << 6) ^
+      (v7 << 7) ^
+      (v8 << 8) ^
+      (v9 << 9) ^
+      (v10 << 10) ^
+      (v11 << 11) ^
+      (v12 << 12) ^
+      (v13 << 13) ^
+      p ^
+      (q << 20) ^
+      (s << 21) ^
+      (t << 22)) |
+    0
+  );
+}
+function hold15(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold15(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const v4 = (v0 ^ (q << 1)) | 0;
+  const v5 = (v1 ^ (s << 2)) | 0;
+  const v6 = (v2 ^ (t << 3)) | 0;
+  const v7 = (v3 ^ (p << 4)) | 0;
+  const v8 = (v4 + v1 * 13) | 0;
+  const v9 = (v5 + v2 * 17) | 0;
+  const v10 = (v6 + v3 * 19) | 0;
+  const v11 = (v7 + v4 * 23) | 0;
+  const v12 = (v8 + v5 * 29) | 0;
+  const v13 = (v9 + v6 * 31) | 0;
+  const v14 = (v10 + v7 * 37) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (
+    (r ^
+      (v0 << 0) ^
+      (v1 << 1) ^
+      (v2 << 2) ^
+      (v3 << 3) ^
+      (v4 << 4) ^
+      (v5 << 5) ^
+      (v6 << 6) ^
+      (v7 << 7) ^
+      (v8 << 8) ^
+      (v9 << 9) ^
+      (v10 << 10) ^
+      (v11 << 11) ^
+      (v12 << 12) ^
+      (v13 << 13) ^
+      (v14 << 14) ^
+      p ^
+      (q << 20) ^
+      (s << 21) ^
+      (t << 22)) |
+    0
+  );
+}
+function hold16(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold16(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const v4 = (v0 ^ (q << 1)) | 0;
+  const v5 = (v1 ^ (s << 2)) | 0;
+  const v6 = (v2 ^ (t << 3)) | 0;
+  const v7 = (v3 ^ (p << 4)) | 0;
+  const v8 = (v4 + v1 * 13) | 0;
+  const v9 = (v5 + v2 * 17) | 0;
+  const v10 = (v6 + v3 * 19) | 0;
+  const v11 = (v7 + v4 * 23) | 0;
+  const v12 = (v8 + v5 * 29) | 0;
+  const v13 = (v9 + v6 * 31) | 0;
+  const v14 = (v10 + v7 * 37) | 0;
+  const v15 = (v11 + v8 * 41) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (
+    (r ^
+      (v0 << 0) ^
+      (v1 << 1) ^
+      (v2 << 2) ^
+      (v3 << 3) ^
+      (v4 << 4) ^
+      (v5 << 5) ^
+      (v6 << 6) ^
+      (v7 << 7) ^
+      (v8 << 8) ^
+      (v9 << 9) ^
+      (v10 << 10) ^
+      (v11 << 11) ^
+      (v12 << 12) ^
+      (v13 << 13) ^
+      (v14 << 14) ^
+      (v15 << 15) ^
+      p ^
+      (q << 20) ^
+      (s << 21) ^
+      (t << 22)) |
+    0
+  );
+}
+function hold17(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold17(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const v4 = (v0 ^ (q << 1)) | 0;
+  const v5 = (v1 ^ (s << 2)) | 0;
+  const v6 = (v2 ^ (t << 3)) | 0;
+  const v7 = (v3 ^ (p << 4)) | 0;
+  const v8 = (v4 + v1 * 13) | 0;
+  const v9 = (v5 + v2 * 17) | 0;
+  const v10 = (v6 + v3 * 19) | 0;
+  const v11 = (v7 + v4 * 23) | 0;
+  const v12 = (v8 + v5 * 29) | 0;
+  const v13 = (v9 + v6 * 31) | 0;
+  const v14 = (v10 + v7 * 37) | 0;
+  const v15 = (v11 + v8 * 41) | 0;
+  const v16 = (v12 + v9 * 43) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (
+    (r ^
+      (v0 << 0) ^
+      (v1 << 1) ^
+      (v2 << 2) ^
+      (v3 << 3) ^
+      (v4 << 4) ^
+      (v5 << 5) ^
+      (v6 << 6) ^
+      (v7 << 7) ^
+      (v8 << 8) ^
+      (v9 << 9) ^
+      (v10 << 10) ^
+      (v11 << 11) ^
+      (v12 << 12) ^
+      (v13 << 13) ^
+      (v14 << 14) ^
+      (v15 << 15) ^
+      (v16 << 16) ^
+      p ^
+      (q << 20) ^
+      (s << 21) ^
+      (t << 22)) |
+    0
+  );
+}
+function hold18(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold18(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const v4 = (v0 ^ (q << 1)) | 0;
+  const v5 = (v1 ^ (s << 2)) | 0;
+  const v6 = (v2 ^ (t << 3)) | 0;
+  const v7 = (v3 ^ (p << 4)) | 0;
+  const v8 = (v4 + v1 * 13) | 0;
+  const v9 = (v5 + v2 * 17) | 0;
+  const v10 = (v6 + v3 * 19) | 0;
+  const v11 = (v7 + v4 * 23) | 0;
+  const v12 = (v8 + v5 * 29) | 0;
+  const v13 = (v9 + v6 * 31) | 0;
+  const v14 = (v10 + v7 * 37) | 0;
+  const v15 = (v11 + v8 * 41) | 0;
+  const v16 = (v12 + v9 * 43) | 0;
+  const v17 = (v13 + v10 * 47) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (
+    (r ^
+      (v0 << 0) ^
+      (v1 << 1) ^
+      (v2 << 2) ^
+      (v3 << 3) ^
+      (v4 << 4) ^
+      (v5 << 5) ^
+      (v6 << 6) ^
+      (v7 << 7) ^
+      (v8 << 8) ^
+      (v9 << 9) ^
+      (v10 << 10) ^
+      (v11 << 11) ^
+      (v12 << 12) ^
+      (v13 << 13) ^
+      (v14 << 14) ^
+      (v15 << 15) ^
+      (v16 << 16) ^
+      (v17 << 17) ^
+      p ^
+      (q << 20) ^
+      (s << 21) ^
+      (t << 22)) |
+    0
+  );
+}
+function hold19(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold19(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const v4 = (v0 ^ (q << 1)) | 0;
+  const v5 = (v1 ^ (s << 2)) | 0;
+  const v6 = (v2 ^ (t << 3)) | 0;
+  const v7 = (v3 ^ (p << 4)) | 0;
+  const v8 = (v4 + v1 * 13) | 0;
+  const v9 = (v5 + v2 * 17) | 0;
+  const v10 = (v6 + v3 * 19) | 0;
+  const v11 = (v7 + v4 * 23) | 0;
+  const v12 = (v8 + v5 * 29) | 0;
+  const v13 = (v9 + v6 * 31) | 0;
+  const v14 = (v10 + v7 * 37) | 0;
+  const v15 = (v11 + v8 * 41) | 0;
+  const v16 = (v12 + v9 * 43) | 0;
+  const v17 = (v13 + v10 * 47) | 0;
+  const v18 = (v14 + v11 * 53) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (
+    (r ^
+      (v0 << 0) ^
+      (v1 << 1) ^
+      (v2 << 2) ^
+      (v3 << 3) ^
+      (v4 << 4) ^
+      (v5 << 5) ^
+      (v6 << 6) ^
+      (v7 << 7) ^
+      (v8 << 8) ^
+      (v9 << 9) ^
+      (v10 << 10) ^
+      (v11 << 11) ^
+      (v12 << 12) ^
+      (v13 << 13) ^
+      (v14 << 14) ^
+      (v15 << 15) ^
+      (v16 << 16) ^
+      (v17 << 17) ^
+      (v18 << 18) ^
+      p ^
+      (q << 20) ^
+      (s << 21) ^
+      (t << 22)) |
+    0
+  );
+}
+function hold20(o: Link | null, a: number, b: number, c: number, d: number): number {
+  if (d > 1e9) return hold20(o, a, b, c, d - 1);
+  const p = a | 0,
+    q = b | 0,
+    s = c | 0,
+    t = d | 0;
+  const v0 = (p * 3 + q) | 0;
+  const v1 = (q * 5 + s) | 0;
+  const v2 = (s * 7 + t) | 0;
+  const v3 = (t * 11 + p) | 0;
+  const v4 = (v0 ^ (q << 1)) | 0;
+  const v5 = (v1 ^ (s << 2)) | 0;
+  const v6 = (v2 ^ (t << 3)) | 0;
+  const v7 = (v3 ^ (p << 4)) | 0;
+  const v8 = (v4 + v1 * 13) | 0;
+  const v9 = (v5 + v2 * 17) | 0;
+  const v10 = (v6 + v3 * 19) | 0;
+  const v11 = (v7 + v4 * 23) | 0;
+  const v12 = (v8 + v5 * 29) | 0;
+  const v13 = (v9 + v6 * 31) | 0;
+  const v14 = (v10 + v7 * 37) | 0;
+  const v15 = (v11 + v8 * 41) | 0;
+  const v16 = (v12 + v9 * 43) | 0;
+  const v17 = (v13 + v10 * 47) | 0;
+  const v18 = (v14 + v11 * 53) | 0;
+  const v19 = (v15 + v12 * 59) | 0;
+  const n1 = o!.next,
+    n2 = n1!.next;
+  const r = (n2!.x + n1!.x + o!.x) | 0;
+  return (
+    (r ^
+      (v0 << 0) ^
+      (v1 << 1) ^
+      (v2 << 2) ^
+      (v3 << 3) ^
+      (v4 << 4) ^
+      (v5 << 5) ^
+      (v6 << 6) ^
+      (v7 << 7) ^
+      (v8 << 8) ^
+      (v9 << 9) ^
+      (v10 << 10) ^
+      (v11 << 11) ^
+      (v12 << 12) ^
+      (v13 << 13) ^
+      (v14 << 14) ^
+      (v15 << 15) ^
+      (v16 << 16) ^
+      (v17 << 17) ^
+      (v18 << 18) ^
+      (v19 << 19) ^
+      p ^
+      (q << 20) ^
+      (s << 21) ^
+      (t << 22)) |
+    0
+  );
+}
+const functions = [
+  hold4,
+  hold5,
+  hold6,
+  hold7,
+  hold8,
+  hold9,
+  hold10,
+  hold11,
+  hold12,
+  hold13,
+  hold14,
+  hold15,
+  hold16,
+  hold17,
+  hold18,
+  hold19,
+  hold20,
+];
+const chains: (Link | null)[] = [null];
+for (let length = 1; length <= 3; length++) chains.push({ x: length, next: chains[length - 1] });
+for (let round = 0; round < 3; round++) {
+  for (const hold of functions) {
+    const answers: string[] = [];
+    for (const chain of chains) {
+      try {
+        answers.push(String(hold(chain, round, round + 1, round + 2, round + 3)));
+      } catch (error) {
+        answers.push(`${error instanceof TypeError}: ${(error as Error).message.split(" (")[0]}`);
+      }
+    }
+    console.log(hold.name, answers.join(" | "));
+  }
+}
+//// stacks-from-operations-that-make-several-calls.js
+// One operation of the program is often several calls of the compiled code in a row: an iteration asks for the iterator, for each step and for the end; a pattern reads one getter after the other; a template converts each of its values; an await calls and then waits. Each of the functions that are called that way says where it was called from, and throws in its turn, inside and outside of a try. What is caught, by whom, and every line and column of every stack are plain Bun's.
+function whereAmI() {
+  return new Error("here").stack
+    .split("\n")
+    .slice(2, 5)
+    .map(line => line.trim().replace(/\(?[^\s(]*[\\/]([^\\/:]+:\d+:\d+)\)?$/, "$1"))
+    .join(" < ");
+}
+let turn = 0;
+let failAt = -1;
+function step(name) {
+  const mine = turn++;
+  console.log(mine, name, whereAmI());
+  if (mine === failAt) throw new Error("failed at " + name + " " + mine);
+  return mine;
+}
+const iterable = {
+  [Symbol.iterator]() {
+    step("iterator");
+    let count = 0;
+    return {
+      next() { step("next"); return { get done() { step("done"); return count++ >= 2; }, get value() { return step("value"); } }; },
+      return() { step("return"); return {}; },
+    };
+  },
+};
+const getters = { get a() { return step("a"); }, get b() { return step("b"); }, get c() { return step("c"); } };
+const primitive = name => ({ [Symbol.toPrimitive]() { return step(name); } });
+const thenable = name => ({ then(resolve) { step(name); resolve(name); } });
+class Checked { static [Symbol.hasInstance]() { return step("hasInstance") >= 0; } }
+function tag(strings, ...values) { step("tag"); return values.length; }
+
+function iteration() { let sum = 0; for (const value of iterable) sum += value; return sum; }
+function iterationInTry() { let sum = 0; try { for (const value of iterable) sum += value; } catch (error) { console.log("caught in iterationInTry:", error.message); sum = -1; } finally { step("finally"); } return sum; }
+function pattern() { const { a, b, c } = getters; return a + b + c; }
+function patternInTry() { try { const { a, b, c } = getters; return a + b + c; } catch (error) { console.log("caught in patternInTry:", error.message); return -1; } }
+function spread() { return Math.max(...iterable, ...iterable); }
+function spreadInTry() { try { return [...iterable, ...iterable].length; } catch (error) { console.log("caught in spreadInTry:", error.message); return -1; } }
+function template() { return `${primitive("x")}${primitive("y")}${primitive("z")}`; }
+function templateInTry() { try { return `${primitive("x")}${primitive("y")}${primitive("z")}`; } catch (error) { console.log("caught in templateInTry:", error.message); return "-"; } }
+function arithmetic() { return primitive("left") * primitive("right") + primitive("third"); }
+function comparison() { return primitive("left") < primitive("right") || primitive("left") == 3; }
+function tests() { return ({}) instanceof Checked && tag`a${step("in the tag")}b${step("again")}c` > 0; }
+function twoOnOneLine() { return step("first") + step("second") + step("third"); }
+function halfInTry() { let sum = step("outside"); try { sum += step("inside"); } catch (error) { console.log("caught in halfInTry:", error.message); } return sum + step("behind"); }
+async function waiting() { const first = await thenable("first"); const second = await thenable("second"); return first + second; }
+async function waitingInTry() { try { return (await thenable("first")) + (await thenable("second")); } catch (error) { console.log("caught in waitingInTry:", error.message); return "-"; } }
+async function* generating() { yield step("yielded"); yield* [step("delegated"), step("delegated again")]; }
+async function consuming() { let sum = 0; for await (const value of generating()) sum += value; return sum; }
+
+const plain = [iteration, iterationInTry, pattern, patternInTry, spread, spreadInTry, template, templateInTry, arithmetic, comparison, tests, twoOnOneLine, halfInTry];
+const asynchronous = [waiting, waitingInTry, consuming];
+for (const run of plain) {
+  for (failAt = -1; failAt < 14; failAt++) {
+    turn = 0;
+    try { console.log(run.name, failAt, String(run())); } catch (error) { console.log(run.name, failAt, "threw", error.message); }
+  }
+}
+for (const run of asynchronous) {
+  for (failAt = -1; failAt < 5; failAt++) {
+    turn = 0;
+    try { console.log(run.name, failAt, String(await run())); } catch (error) { console.log(run.name, failAt, "threw", error.message); }
+  }
+}
+//// the-stack-of-an-error-is-made-by-the-program.js
+// Error.prepareStackTrace makes `stack` where a program has set it, Error.captureStackTrace puts one on any object, and Error.stackTraceLimit cuts it.
+const say = (...values) => console.log(...values);
+class Seen { constructor(error, sites) { this.message = error.message; this.isList = Array.isArray(sites); } describe() { return `made for ${this.message}, ${this.isList}`; } }
+
+say(typeof new Error("before").stack, Error.prepareStackTrace);
+Error.prepareStackTrace = (error, sites) => new Seen(error, sites);
+const made = new Error("during");
+say(made.stack.describe(), made.stack === made.stack, made.stack instanceof Seen);
+class Mine extends Error {}
+say(new Mine("a subclass").stack.describe(), new TypeError("a kind").stack.describe());
+Error.prepareStackTrace = function (error) { return this === Error ? error.message.length : -1; };
+say(new Error("four").stack + 1);
+Error.prepareStackTrace = undefined;
+say(typeof new Error("after").stack, new Error("after").stack.split("\n")[0]);
+
+const holder = { name: "Holder", message: "held" };
+Error.captureStackTrace(holder);
+say(typeof holder.stack, holder.stack.split("\n")[0], Object.getOwnPropertyNames(holder).includes("stack"));
+function outer() { const target = {}; Error.captureStackTrace(target, outer); return target.stack; }
+say(outer().includes("outer"));
+const again = new Error("again");
+Error.captureStackTrace(again);
+say(again.stack.split("\n")[0], again.message.length);
+
+const limit = Error.stackTraceLimit;
+Error.stackTraceLimit = 0;
+say(new Error("no frames").stack);
+Error.stackTraceLimit = limit;
+say(new Error("frames again").stack.split("\n").length > 1);
+//// the-stack-of-an-error-of-the-run-time-is-made-by-the-program.js
+// Error.prepareStackTrace is called for an error that the run time makes too: it gets the error, and what it answers is the `stack`.
+////= Body
+const made = new Body(3);
+const handed = [];
+Error.prepareStackTrace = function (error, sites) {
+  handed.push(error);
+  error.mass = 11;
+  return made;
+};
+const nothing = process.argv.length > 99 ? made : undefined;
+try {
+  nothing.mass;
+} catch (error) {
+  const stack = error.stack;
+  console.log(
+    stack === made,
+    stack.weight(),
+    error.mass,
+    handed.length,
+    handed[0] === error,
+    error instanceof TypeError,
+  );
+}
+//// throws-and-stacks-across-every-kind-of-frame.ts
+// What is thrown passes, and a stack lists, frames of every kind in one walk: functions with few and with many live values, callbacks of built-ins,
+// accessors, bound functions, calls with lists of arguments, constructors, generators, async functions.
+
+function namesOn(error: unknown): string {
+  const stack = String((error as Error).stack ?? "");
+  const names: string[] = [];
+  for (const line of stack.split("\n")) {
+    const match = /\b(walk[A-Za-z0-9]+)\b/.exec(line);
+    if (match) names.push(match[1]);
+  }
+  return names.join(" < ");
+}
+
+let depthToThrowAt = 0;
+
+function walkLeaf(value: number): number {
+  if (value === depthToThrowAt) throw new Error("leaf " + value);
+  return value + 1;
+}
+
+function walkOneValue(value: number): number {
+  const kept = value * 3;
+  return walkLeaf(value) + kept;
+}
+
+function walkManyValues(a: number, b: number, c: number, d: number, e: number, f: number): number {
+  const g = a + b, h = c + d, i = e + f, j = a * c, k = b * d, l = c * e, m = d * f, n = a - f, o = b - e, p = c - d;
+  const first = walkOneValue(a);
+  const second = walkOneValue(b + 100);
+  return first + second + g + h + i + j + k + l + m + n + o + p;
+}
+
+function walkTenParameters(a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number): number {
+  return walkManyValues(a, b, c, d, e, f) + g + h + i + j;
+}
+
+function walkTailCall(a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number): number {
+  return walkTenParameters(j, i, h, g, f, e, d, c, b, a);
+}
+
+function walkCatches(value: number): string {
+  const before = value * 7;
+  let text = "";
+  for (let round = 0; round < 3; round++) {
+    const inLoop = round + before;
+    try {
+      depthToThrowAt = round === 1 ? value : -1;
+      text += walkTenParameters(value, 2, 3, 4, 5, 6, 7, 8, 9, 10) + ";";
+    } catch (error) {
+      text += "caught " + (error as Error).message + " [" + namesOn(error) + "] " + inLoop + ";";
+    } finally {
+      text += "finally " + inLoop + ";";
+    }
+  }
+  depthToThrowAt = -1;
+  return text + before;
+}
+
+console.log(walkCatches(11));
+depthToThrowAt = 10;
+try {
+  walkTailCall(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+} catch (error) {
+  console.log("tail call:", (error as Error).message, namesOn(error).includes("walkLeaf < walkOneValue < walkManyValues < walkTenParameters"));
+}
+depthToThrowAt = -1;
+
+function walkCallback(value: number): number {
+  return walkManyValues(value, 1, 2, 3, 4, 5);
+}
+
+function walkThroughBuiltIns(): void {
+  const list = [1, 2, 3, 4];
+  const ways: [string, () => unknown][] = [
+    ["map", () => list.map(walkCallback)],
+    ["forEach", () => list.forEach(value => void walkCallback(value))],
+    ["sort", () => [3, 1, 2].sort((left, right) => walkCallback(left + 1) - right)],
+    ["reduce", () => list.reduce((sum, value) => sum + walkCallback(value), 0)],
+    ["replace", () => "abc".replace(/b/, () => String(walkCallback(3)))],
+    ["from", () => Array.from({ length: 4 }, (_, index) => walkCallback(index))],
+    ["stringify", () => JSON.stringify({ toJSON: () => walkCallback(3) })],
+    ["parse", () => JSON.parse("[3]", (_, value) => (typeof value === "number" ? walkCallback(value) : value))],
+    ["apply", () => Reflect.apply(walkCallback, undefined, [3])],
+    ["call", () => walkCallback.call(undefined, 3)],
+    ["bind", () => walkTenParameters.bind(undefined, 3, 2, 3, 4, 5)(6, 7, 8, 9, 10)],
+    ["spread", () => walkTenParameters(...([3, 2, 3, 4, 5, 6, 7, 8, 9, 10] as [number, number, number, number, number, number, number, number, number, number]))],
+    ["getter", () => ({ get value() { return walkCallback(3); } }).value],
+    ["setter", () => { ({ set value(given: number) { walkCallback(given); } }).value = 3; }],
+    ["proxy", () => new Proxy({} as Record<string, number>, { get: () => walkCallback(3) }).anything],
+    ["symbol", () => `${{ [Symbol.toPrimitive]: () => walkCallback(3) } as unknown as string}`],
+    ["iterator", () => [...{ [Symbol.iterator]: () => ({ next: () => ({ done: false, value: walkCallback(3) }) }) }]],
+  ];
+  depthToThrowAt = 3;
+  for (const [name, way] of ways) {
+    const kept = name.length;
+    try {
+      way();
+      console.log(name, "did not throw");
+    } catch (error) {
+      console.log(name, (error as Error).message, namesOn(error), kept);
+    }
+  }
+  depthToThrowAt = -1;
+}
+walkThroughBuiltIns();
+
+function WalkPlainConstructor(this: { sum: number }, a: number, b: number, c: number, d: number, e: number, f: number) {
+  this.sum = walkManyValues(a, b, c, d, e, f);
+}
+
+class WalkBase {
+  sum: number;
+  constructor(a: number, b: number, c: number, d: number, e: number, f: number) {
+    this.sum = walkManyValues(a, b, c, d, e, f);
+  }
+}
+
+class WalkDerived extends WalkBase {
+  constructor(...values: [number, number, number, number, number, number]) {
+    super(...values);
+  }
+}
+
+function walkConstructs(): void {
+  for (const throwsAt of [-1, 5]) {
+    depthToThrowAt = throwsAt;
+    for (const make of [
+      () => new (WalkPlainConstructor as unknown as new (...values: number[]) => { sum: number })(5, 2, 3, 4, 5, 6).sum,
+      () => new WalkBase(5, 2, 3, 4, 5, 6).sum,
+      () => new WalkDerived(5, 2, 3, 4, 5, 6).sum,
+      () => Reflect.construct(WalkDerived, [5, 2, 3, 4, 5, 6]).sum,
+    ]) {
+      try {
+        console.log("constructed", make());
+      } catch (error) {
+        console.log("constructor threw", (error as Error).message, namesOn(error));
+      }
+    }
+  }
+  depthToThrowAt = -1;
+}
+walkConstructs();
+
+function walkReadsNull(holder: { inner: { value: number } | null }, extra: number): number {
+  return holder.inner!.value + extra;
+}
+
+function walkReadsNullWithFrame(holder: { inner: { value: number } | null }, extra: number): number {
+  const before = walkLeaf(extra);
+  return holder.inner!.value + before + walkLeaf(extra + 1);
+}
+
+for (const read of [walkReadsNull, walkReadsNullWithFrame]) {
+  for (const holder of [{ inner: { value: 1 } }, { inner: null }]) {
+    try {
+      console.log("read", read(holder, 40));
+    } catch (error) {
+      console.log("read threw", (error as Error).constructor.name, namesOn(error));
+    }
+  }
+}
+
+let deepest = 0;
+function walkRecursion(depth: number, a: number, b: number): number {
+  deepest = depth;
+  return walkRecursion(depth + 1, b, a + 1) + a;
+}
+
+function walkRecursionInCallback(depth: number): number {
+  deepest = depth;
+  return [depth].map(value => walkRecursionInCallback(value + 1))[0] + 1;
+}
+
+for (let round = 0; round < 3; round++) {
+  for (const recurse of [() => walkRecursion(0, 1, 2), () => walkRecursionInCallback(0)]) {
+    deepest = 0;
+    try {
+      recurse();
+      console.log("no overflow");
+    } catch (error) {
+      console.log((error as Error).constructor.name, deepest > 500, namesOn(error).startsWith("walkRecursion"));
+    }
+  }
+  console.log("after the overflow", walkCatches(round).length);
+}
+
+function* walkGenerator(count: number): Generator<number, number, number> {
+  let sum = 0;
+  for (let index = 0; index < count; index++) {
+    try {
+      sum += yield walkManyValues(index, 1, 2, 3, 4, 5);
+    } catch (error) {
+      sum += 1000;
+      console.log("generator caught", (error as Error).message, namesOn(error));
+    }
+  }
+  return sum;
+}
+
+function walkDrivesGenerator(): void {
+  depthToThrowAt = 2;
+  const generator = walkGenerator(4);
+  let step = generator.next();
+  while (!step.done) step = generator.next(step.value);
+  console.log("generator returned", step.value);
+  const thrownInto = walkGenerator(2);
+  thrownInto.next();
+  console.log("thrown into", thrownInto.throw(new Error("from outside")).value);
+  depthToThrowAt = -1;
+}
+walkDrivesGenerator();
+
+async function walkAsyncLeaf(value: number): Promise<number> {
+  await null;
+  return walkManyValues(value, 1, 2, 3, 4, 5);
+}
+
+async function walkAsyncMiddle(value: number): Promise<number> {
+  const kept = value * 2;
+  const first = await walkAsyncLeaf(value + 50);
+  const second = await walkAsyncLeaf(value);
+  return first + second + kept;
+}
+
+async function walkAsyncTop(): Promise<void> {
+  for (const throwsAt of [-1, 6]) {
+    depthToThrowAt = throwsAt;
+    try {
+      console.log("async", await walkAsyncMiddle(6));
+    } catch (error) {
+      console.log("async caught", (error as Error).message, namesOn(error).startsWith("walkLeaf < walkOneValue < walkManyValues < walkAsyncLeaf"));
+    }
+  }
+  depthToThrowAt = 6;
+  console.log("settled", (await Promise.allSettled([walkAsyncMiddle(6), walkAsyncMiddle(7)])).map(result => result.status).join());
+  depthToThrowAt = -1;
+}
+
+function walkCaptures(): string {
+  const holder: { stack?: string } = {};
+  Error.captureStackTrace(holder, walkCaptures);
+  return namesOn(holder);
+}
+
+function walkCallsCapture(value: number): string {
+  const kept = value + 1;
+  return walkCaptures() + " " + kept;
+}
+
+console.log("captured", [1].map(walkCallsCapture)[0]);
+
+function walkRest(...values: number[]): number {
+  return walkManyValues(values[0], values[1], values[2], values[3], values[4], values[5]) + values.length;
+}
+
+function walkArguments(): number {
+  return walkRest.apply(undefined, arguments as unknown as number[]);
+}
+
+depthToThrowAt = 9;
+try {
+  (walkArguments as (...values: number[]) => number)(9, 2, 3, 4, 5, 6, 7, 8);
+} catch (error) {
+  console.log("rest", (error as Error).message, namesOn(error));
+}
+depthToThrowAt = -1;
+console.log("rest", (walkArguments as (...values: number[]) => number)(9, 2, 3, 4, 5, 6, 7, 8));
+
+await walkAsyncTop();
+//// traces-of-many-places-asked-round-after-round.js
+// Over a hundred places make an error, round after round, and each trace must name its own place: line and column of the innermost frames, in functions called by value and entered from native code.
+const seen = new Map();
+const log = [];
+function placeOf(stack) {
+  const places = [];
+  for (const line of stack.split("\n")) {
+    const found = /(\d+:\d+)\)?$/.exec(line);
+    if (found) places.push(found[1]);
+  }
+  return places.slice(0, 4).join(" ");
+}
+function note(label, stack) {
+  const place = placeOf(stack);
+  if (!seen.has(label)) seen.set(label, place);
+  else if (seen.get(label) !== place) throw new Error(label + ": " + seen.get(label) + " then " + place);
+}
+const makers = [];
+makers.push(function maker0(flag) { if (flag) log.push(0); const made = new Error("0").stack; return made; });
+makers.push(function maker1(flag) { if (flag) log.push(1);  const made = new Error("1").stack; return made; });
+makers.push(function maker2(flag) { if (flag) log.push(2);   const made = new Error("2").stack; return made; });
+makers.push(function maker3(flag) { if (flag) log.push(3);    const made = new Error("3").stack; return made; });
+makers.push(function maker4(flag) { if (flag) log.push(4);     const made = new Error("4").stack; return made; });
+makers.push(function maker5(flag) { if (flag) log.push(5);      const made = new Error("5").stack; return made; });
+makers.push(function maker6(flag) { if (flag) log.push(6);       const made = new Error("6").stack; return made; });
+makers.push(function maker7(flag) { if (flag) log.push(7); const made = new Error("7").stack; return made; });
+makers.push(function maker8(flag) { if (flag) log.push(8);  const made = new Error("8").stack; return made; });
+makers.push(function maker9(flag) { if (flag) log.push(9);   const made = new Error("9").stack; return made; });
+makers.push(function maker10(flag) { if (flag) log.push(10);    const made = new Error("10").stack; return made; });
+makers.push(function maker11(flag) { if (flag) log.push(11);     const made = new Error("11").stack; return made; });
+makers.push(function maker12(flag) { if (flag) log.push(12);      const made = new Error("12").stack; return made; });
+makers.push(function maker13(flag) { if (flag) log.push(13);       const made = new Error("13").stack; return made; });
+makers.push(function maker14(flag) { if (flag) log.push(14); const made = new Error("14").stack; return made; });
+makers.push(function maker15(flag) { if (flag) log.push(15);  const made = new Error("15").stack; return made; });
+makers.push(function maker16(flag) { if (flag) log.push(16);   const made = new Error("16").stack; return made; });
+makers.push(function maker17(flag) { if (flag) log.push(17);    const made = new Error("17").stack; return made; });
+makers.push(function maker18(flag) { if (flag) log.push(18);     const made = new Error("18").stack; return made; });
+makers.push(function maker19(flag) { if (flag) log.push(19);      const made = new Error("19").stack; return made; });
+makers.push(function maker20(flag) { if (flag) log.push(20);       const made = new Error("20").stack; return made; });
+makers.push(function maker21(flag) { if (flag) log.push(21); const made = new Error("21").stack; return made; });
+makers.push(function maker22(flag) { if (flag) log.push(22);  const made = new Error("22").stack; return made; });
+makers.push(function maker23(flag) { if (flag) log.push(23);   const made = new Error("23").stack; return made; });
+makers.push(function maker24(flag) { if (flag) log.push(24);    const made = new Error("24").stack; return made; });
+makers.push(function maker25(flag) { if (flag) log.push(25);     const made = new Error("25").stack; return made; });
+makers.push(function maker26(flag) { if (flag) log.push(26);      const made = new Error("26").stack; return made; });
+makers.push(function maker27(flag) { if (flag) log.push(27);       const made = new Error("27").stack; return made; });
+makers.push(function maker28(flag) { if (flag) log.push(28); const made = new Error("28").stack; return made; });
+makers.push(function maker29(flag) { if (flag) log.push(29);  const made = new Error("29").stack; return made; });
+makers.push(function maker30(flag) { if (flag) log.push(30);   const made = new Error("30").stack; return made; });
+makers.push(function maker31(flag) { if (flag) log.push(31);    const made = new Error("31").stack; return made; });
+makers.push(function maker32(flag) { if (flag) log.push(32);     const made = new Error("32").stack; return made; });
+makers.push(function maker33(flag) { if (flag) log.push(33);      const made = new Error("33").stack; return made; });
+makers.push(function maker34(flag) { if (flag) log.push(34);       const made = new Error("34").stack; return made; });
+makers.push(function maker35(flag) { if (flag) log.push(35); const made = new Error("35").stack; return made; });
+makers.push(function maker36(flag) { if (flag) log.push(36);  const made = new Error("36").stack; return made; });
+makers.push(function maker37(flag) { if (flag) log.push(37);   const made = new Error("37").stack; return made; });
+makers.push(function maker38(flag) { if (flag) log.push(38);    const made = new Error("38").stack; return made; });
+makers.push(function maker39(flag) { if (flag) log.push(39);     const made = new Error("39").stack; return made; });
+makers.push(function maker40(flag) { if (flag) log.push(40);      const made = new Error("40").stack; return made; });
+makers.push(function maker41(flag) { if (flag) log.push(41);       const made = new Error("41").stack; return made; });
+makers.push(function maker42(flag) { if (flag) log.push(42); const made = new Error("42").stack; return made; });
+makers.push(function maker43(flag) { if (flag) log.push(43);  const made = new Error("43").stack; return made; });
+makers.push(function maker44(flag) { if (flag) log.push(44);   const made = new Error("44").stack; return made; });
+makers.push(function maker45(flag) { if (flag) log.push(45);    const made = new Error("45").stack; return made; });
+makers.push(function maker46(flag) { if (flag) log.push(46);     const made = new Error("46").stack; return made; });
+makers.push(function maker47(flag) { if (flag) log.push(47);      const made = new Error("47").stack; return made; });
+makers.push(function maker48(flag) { if (flag) log.push(48);       const made = new Error("48").stack; return made; });
+makers.push(function maker49(flag) { if (flag) log.push(49); const made = new Error("49").stack; return made; });
+makers.push(function maker50(flag) { if (flag) log.push(50);  const made = new Error("50").stack; return made; });
+makers.push(function maker51(flag) { if (flag) log.push(51);   const made = new Error("51").stack; return made; });
+makers.push(function maker52(flag) { if (flag) log.push(52);    const made = new Error("52").stack; return made; });
+makers.push(function maker53(flag) { if (flag) log.push(53);     const made = new Error("53").stack; return made; });
+makers.push(function maker54(flag) { if (flag) log.push(54);      const made = new Error("54").stack; return made; });
+makers.push(function maker55(flag) { if (flag) log.push(55);       const made = new Error("55").stack; return made; });
+makers.push(function maker56(flag) { if (flag) log.push(56); const made = new Error("56").stack; return made; });
+makers.push(function maker57(flag) { if (flag) log.push(57);  const made = new Error("57").stack; return made; });
+makers.push(function maker58(flag) { if (flag) log.push(58);   const made = new Error("58").stack; return made; });
+makers.push(function maker59(flag) { if (flag) log.push(59);    const made = new Error("59").stack; return made; });
+makers.push(function maker60(flag) { if (flag) log.push(60);     const made = new Error("60").stack; return made; });
+makers.push(function maker61(flag) { if (flag) log.push(61);      const made = new Error("61").stack; return made; });
+makers.push(function maker62(flag) { if (flag) log.push(62);       const made = new Error("62").stack; return made; });
+makers.push(function maker63(flag) { if (flag) log.push(63); const made = new Error("63").stack; return made; });
+makers.push(function maker64(flag) { if (flag) log.push(64);  const made = new Error("64").stack; return made; });
+makers.push(function maker65(flag) { if (flag) log.push(65);   const made = new Error("65").stack; return made; });
+makers.push(function maker66(flag) { if (flag) log.push(66);    const made = new Error("66").stack; return made; });
+makers.push(function maker67(flag) { if (flag) log.push(67);     const made = new Error("67").stack; return made; });
+makers.push(function maker68(flag) { if (flag) log.push(68);      const made = new Error("68").stack; return made; });
+makers.push(function maker69(flag) { if (flag) log.push(69);       const made = new Error("69").stack; return made; });
+makers.push(function maker70(flag) { if (flag) log.push(70); const made = new Error("70").stack; return made; });
+makers.push(function maker71(flag) { if (flag) log.push(71);  const made = new Error("71").stack; return made; });
+makers.push(function maker72(flag) { if (flag) log.push(72);   const made = new Error("72").stack; return made; });
+makers.push(function maker73(flag) { if (flag) log.push(73);    const made = new Error("73").stack; return made; });
+makers.push(function maker74(flag) { if (flag) log.push(74);     const made = new Error("74").stack; return made; });
+makers.push(function maker75(flag) { if (flag) log.push(75);      const made = new Error("75").stack; return made; });
+makers.push(function maker76(flag) { if (flag) log.push(76);       const made = new Error("76").stack; return made; });
+makers.push(function maker77(flag) { if (flag) log.push(77); const made = new Error("77").stack; return made; });
+makers.push(function maker78(flag) { if (flag) log.push(78);  const made = new Error("78").stack; return made; });
+makers.push(function maker79(flag) { if (flag) log.push(79);   const made = new Error("79").stack; return made; });
+makers.push(function maker80(flag) { if (flag) log.push(80);    const made = new Error("80").stack; return made; });
+makers.push(function maker81(flag) { if (flag) log.push(81);     const made = new Error("81").stack; return made; });
+makers.push(function maker82(flag) { if (flag) log.push(82);      const made = new Error("82").stack; return made; });
+makers.push(function maker83(flag) { if (flag) log.push(83);       const made = new Error("83").stack; return made; });
+makers.push(function maker84(flag) { if (flag) log.push(84); const made = new Error("84").stack; return made; });
+makers.push(function maker85(flag) { if (flag) log.push(85);  const made = new Error("85").stack; return made; });
+makers.push(function maker86(flag) { if (flag) log.push(86);   const made = new Error("86").stack; return made; });
+makers.push(function maker87(flag) { if (flag) log.push(87);    const made = new Error("87").stack; return made; });
+makers.push(function maker88(flag) { if (flag) log.push(88);     const made = new Error("88").stack; return made; });
+makers.push(function maker89(flag) { if (flag) log.push(89);      const made = new Error("89").stack; return made; });
+makers.push(function maker90(flag) { if (flag) log.push(90);       const made = new Error("90").stack; return made; });
+makers.push(function maker91(flag) { if (flag) log.push(91); const made = new Error("91").stack; return made; });
+makers.push(function maker92(flag) { if (flag) log.push(92);  const made = new Error("92").stack; return made; });
+makers.push(function maker93(flag) { if (flag) log.push(93);   const made = new Error("93").stack; return made; });
+makers.push(function maker94(flag) { if (flag) log.push(94);    const made = new Error("94").stack; return made; });
+makers.push(function maker95(flag) { if (flag) log.push(95);     const made = new Error("95").stack; return made; });
+makers.push(function maker96(flag) { if (flag) log.push(96);      const made = new Error("96").stack; return made; });
+makers.push(function maker97(flag) { if (flag) log.push(97);       const made = new Error("97").stack; return made; });
+makers.push(function maker98(flag) { if (flag) log.push(98); const made = new Error("98").stack; return made; });
+makers.push(function maker99(flag) { if (flag) log.push(99);  const made = new Error("99").stack; return made; });
+makers.push(function maker100(flag) { if (flag) log.push(100);   const made = new Error("100").stack; return made; });
+makers.push(function maker101(flag) { if (flag) log.push(101);    const made = new Error("101").stack; return made; });
+makers.push(function maker102(flag) { if (flag) log.push(102);     const made = new Error("102").stack; return made; });
+makers.push(function maker103(flag) { if (flag) log.push(103);      const made = new Error("103").stack; return made; });
+makers.push(function maker104(flag) { if (flag) log.push(104);       const made = new Error("104").stack; return made; });
+makers.push(function maker105(flag) { if (flag) log.push(105); const made = new Error("105").stack; return made; });
+makers.push(function maker106(flag) { if (flag) log.push(106);  const made = new Error("106").stack; return made; });
+makers.push(function maker107(flag) { if (flag) log.push(107);   const made = new Error("107").stack; return made; });
+makers.push(function maker108(flag) { if (flag) log.push(108);    const made = new Error("108").stack; return made; });
+makers.push(function maker109(flag) { if (flag) log.push(109);     const made = new Error("109").stack; return made; });
+function direct(i) {
+  if (i < 0) log.push(i);
+  const made = makers[i](false);
+  log.length = 0;
+  return made;
+}
+for (let round = 0; round < 5; round++) {
+  for (let i = 0; i < makers.length; i++) {
+    note("direct " + i, direct(i));
+    note("mapped " + i, [i].map(direct)[0]);
+    const held = {};
+    Error.captureStackTrace(held);
+    note("captured", held.stack);
+  }
+}
+console.log(seen.size, log.length, [...seen].filter((_, index) => index % 37 === 0).map(([label, place]) => label + " " + place).join(" | "));
+//// typed-array-lengths-that-are-refused.js
+// A typed array of a length that is no index is refused with the constructor's own words, whichever way the construction is compiled.
+function describe(make) {
+  try {
+    return "length " + make().length;
+  } catch (error) {
+    return error.name + ": " + error.message;
+  }
+}
+const lengths = [-1, -0.5, -1.5, 0, 1.5, NaN, 2 ** 40, 2 ** 53, 2 ** 53 - 1, Infinity, -Infinity, 3];
+for (const length of lengths) {
+  console.log(String(length), "|", describe(() => new Uint8Array(length)), "|", describe(() => new Float64Array(length)), "|", describe(() => new BigInt64Array(length)));
+}
+console.log(describe(() => new Uint8Array(-1)), "|", describe(() => new Int32Array(2 ** 40)), "|", describe(() => new Uint16Array(2 ** 53)));
+//// what-a-new-error-holds.js
+// What the constructor and the engine put on a new error: message, stack, line, column, sourceURL, cause. Each is used as what it is: a text is measured and cut, a number is added to.
+const say = (...values) => console.log(...values);
+const kindOf = value => (value === null ? "null" : typeof value);
+
+const plain = new Error("first");
+say(plain.message.length, plain.message.toUpperCase(), plain.stack.split("\n")[0], kindOf(plain.line), kindOf(plain.column), kindOf(plain.sourceURL));
+say(plain.line + 0 === plain.line, plain.column > 0, plain.sourceURL.length > 0, plain.cause, "cause" in plain, Object.hasOwn(plain, "message"));
+say(Object.getOwnPropertyNames(plain).sort().join());
+
+// Without a message the prototype answers, and whatever is passed is converted to a string.
+const silent = new Error();
+say(JSON.stringify(silent.message), Object.hasOwn(silent, "message"), silent.message.length, String(silent));
+say(new Error(5).message + 1, new Error(null).message.length, new Error({ toString: () => "converted" }).message.slice(0, 4), new Error(undefined).message === "");
+try {
+  new Error(Symbol("no text"));
+} catch (error) {
+  say(error instanceof TypeError, error.message.length > 0);
+}
+
+// Called without `new`, and each kind of the language.
+const called = Error("called");
+say(called instanceof Error, called.message.length, called.stack.includes("called"), Object.getPrototypeOf(called) === Error.prototype);
+for (const Kind of [EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError]) {
+  const made = new Kind("of a kind");
+  say(made.name, made.message.length, made instanceof Kind, made instanceof Error, String(made), made.stack.startsWith(made.name), Kind("x").message);
+}
+
+// The cause is whatever the options hold, and is there only if they have the property.
+class Reason { describe() { return "the reason ran"; } }
+say(new Error("a", { cause: new Reason() }).cause.describe(), new Error("a", { cause: undefined }).cause, "cause" in new Error("a", { cause: undefined }), "cause" in new Error("a", {}));
+say(new Error("a", { get cause() { return "from a getter"; } }).cause, new Error("a", 5).cause, new Error("a", null).cause);
+
+const many = new AggregateError([new Reason(), 2], "several", { cause: 7 });
+say(many.errors.length, many.errors[0].describe(), many.errors[1] + 1, many.message.length, many.cause + 1, many.name);
+const suppressed = new SuppressedError(new Reason(), "hidden", "both");
+say(suppressed.error.describe(), suppressed.suppressed.length, suppressed.message.length, suppressed.name);
+
+// A program stores, deletes and redefines what it likes.
+plain.message = 12;
+say(plain.message + 1, String(plain));
+plain.stack = { replaced: true };
+say(plain.stack.replaced, delete plain.stack, plain.stack, delete plain.message, JSON.stringify(plain.message));
+const redefined = new Error("redefined");
+Object.defineProperty(redefined, "message", { get() { return ["from", "a", "getter"]; } });
+Object.defineProperty(redefined, "stack", { value: 3, writable: true });
+say(redefined.message.length, redefined.stack + 1);
+redefined.line = "a text now";
+say(redefined.line.length);
+//// what-a-program-can-ask-about-a-stack.mjs
+// What a program can ask about a stack: error.stack, Error.captureStackTrace, Error.stackTraceLimit, Error.prepareStackTrace and every method of a call site, async frames.
+import { EventEmitter } from "node:events";
+const opaque = value => [value, 0][Number(process.argv.length > 100)];
+// A frame of one of Bun's own modules has a line of Bun's source file in an executable, and of the module as it is built into Bun elsewhere.
+const shorten = text => String(text).replace(/\((?:node:|bun:|internal[:\/])[^()]*\)/g, "(a module of Bun)").replace(/(?:file:\/\/)?(?:[A-Z]:)?[\\\/][^\s():]*[\\\/]/g, "");
+function framesOf(stack, count = 6) {
+  const frames = [];
+  for (const text of String(stack).split("\n").slice(1)) frames.push(shorten(text.trim()));
+  return frames.slice(0, count).join(" | ");
+}
+const say = (label, ...values) => console.log(label + ":", ...values);
+
+// Frames of every kind of function.
+function plainFunction() { let error; error = new Error("plain"); return error; }
+const arrowFunction = () => { let error; error = new Error("arrow"); return error; };
+const namedExpression = function inner() { let error; error = new Error("expression"); return error; };
+const object = {
+  method() { let error; error = new Error("method"); return error; },
+  get getter() { let error; error = new Error("getter"); return error; },
+  set setter(value) { value.error = new Error("setter"); },
+  ["computed" + opaque("Key")]() { let error; error = new Error("computed"); return error; },
+  [Symbol.for("symbolic")]() { let error; error = new Error("symbol"); return error; },
+  property: function () { let error; error = new Error("property"); return error; },
+  arrow: () => { let error; error = new Error("arrow property"); return error; },
+  async asyncMethod() { let error; error = new Error("async method"); return error; },
+  *generatorMethod() { let error; error = new Error("generator method"); yield error; },
+  nested: { deeper: { method() { let error; error = new Error("nested method"); return error; } } },
+};
+class Base {
+  constructor(kind) { if (kind === "base") this.error = new Error("base constructor"); }
+  method() { let error; error = new Error("class method"); return error; }
+  static method() { let error; error = new Error("static method"); return error; }
+  get getter() { let error; error = new Error("class getter"); return error; }
+  static get getter() { let error; error = new Error("static getter"); return error; }
+  #hidden() { let error; error = new Error("private method"); return error; }
+  callHidden() { let error; error = this.#hidden(); return error; }
+  static #hiddenStatic() { let error; error = new Error("private static method"); return error; }
+  static callHiddenStatic() { let error; error = Base.#hiddenStatic(); return error; }
+  field = opaque(true) ? new Error("field") : null;
+  static field = new Error("static field");
+  static { Base.block = new Error("static block"); }
+  arrowField = () => { let error; error = new Error("arrow field"); return error; };
+}
+class Derived extends Base {
+  constructor(kind) { super(kind); if (kind === "derived") this.error = new Error("derived constructor"); }
+  method() { let error; error = super.method(); return error; }
+}
+const anonymousClass = class { constructor() { this.error = new Error("anonymous class"); } };
+say("function", framesOf(plainFunction().stack, 2));
+say("arrow", framesOf(arrowFunction().stack, 2));
+say("expression", framesOf(namedExpression().stack, 2));
+say("method", framesOf(object.method().stack, 2));
+say("getter", framesOf(object.getter.stack, 2));
+{ const box = {}; object.setter = box; say("setter", framesOf(box.error.stack, 2)); }
+say("computed", framesOf(object.computedKey().stack, 2));
+say("symbol", framesOf(object[Symbol.for("symbolic")]().stack, 2));
+say("property", framesOf(object.property().stack, 2));
+say("arrow property", framesOf(object.arrow().stack, 2));
+say("generator method", framesOf(object.generatorMethod().next().value.stack, 3));
+say("nested method", framesOf(object.nested.deeper.method().stack, 2));
+say("base constructor", framesOf(new Base("base").error.stack, 2));
+say("derived constructor", framesOf(new Derived("derived").error.stack, 2));
+say("base through derived", framesOf(new Derived("base").error.stack, 3));
+say("class method", framesOf(new Base().method().stack, 2));
+say("super method", framesOf(new Derived().method().stack, 3));
+say("static method", framesOf(Base.method().stack, 2));
+say("inherited static method", framesOf(Derived.method().stack, 2));
+say("class getter", framesOf(new Base().getter.stack, 2));
+say("static getter", framesOf(Base.getter.stack, 2));
+say("private method", framesOf(new Base().callHidden().stack, 3));
+say("private static method", framesOf(Base.callHiddenStatic().stack, 3));
+say("field", framesOf(new Base().field.stack, 3));
+say("field through derived", framesOf(new Derived().field.stack, 4));
+say("static field", framesOf(Base.field.stack, 3));
+say("static block", framesOf(Base.block.stack, 3));
+say("arrow field", framesOf(new Base().arrowField().stack, 2));
+say("anonymous class", framesOf(new anonymousClass().error.stack, 2));
+say("bound", framesOf(plainFunction.bind(null)().stack, 3));
+say("call", framesOf(plainFunction.call(null).stack, 3));
+say("apply", framesOf(plainFunction.apply(null, []).stack, 3));
+say("Reflect.apply", framesOf(Reflect.apply(plainFunction, null, []).stack, 3));
+say("immediately called", framesOf((function () { let error; error = new Error("called at once"); return error; })().stack, 2));
+say("default parameter", framesOf(((error = new Error("default")) => error)().stack, 2));
+say("template tag", framesOf(((strings) => { let error; error = new Error(strings[0]); return error; })`tag`.stack, 2));
+say("renamed", framesOf((() => { function before() { let error; error = new Error("renamed"); return error; } Object.defineProperty(before, "name", { value: "after" }); let error; error = before(); return error; })().stack, 2));
+say("displayName", framesOf((() => { function written() { let error; error = new Error("displayName"); return error; } written.displayName = "shown"; let error; error = written(); return error; })().stack, 2));
+
+// Through built-ins.
+const through = {
+  map: run => [1].map(run)[0],
+  forEach: run => { let result; [1].forEach(() => { result = run(); }); return result; },
+  filter: run => { let result; [1].filter(() => { result = run(); return true; }); return result; },
+  reduce: run => [1].reduce(() => run(), 0),
+  find: run => { let result; [1].find(() => { result = run(); return true; }); return result; },
+  some: run => { let result; [1].some(() => { result = run(); return true; }); return result; },
+  sort: run => { let result; [2, 1].sort(() => { result = run(); return 0; }); return result; },
+  "Array.from": run => Array.from([1], run)[0],
+  replace: run => { let result; "a".replace("a", () => { result = run(); return ""; }); return result; },
+  "JSON.parse": run => { let result; JSON.parse("1", () => { result = run(); }); return result; },
+  "JSON.stringify": run => { let result; JSON.stringify({ toJSON() { result = run(); } }); return result; },
+  "Map.forEach": run => { let result; new Map([[1, 1]]).forEach(() => { result = run(); }); return result; },
+  "Set.forEach": run => { let result; new Set([1]).forEach(() => { result = run(); }); return result; },
+  "typed array map": run => { let result; new Uint8Array(1).map(() => { result = run(); return 0; }); return result; },
+  "Object.defineProperty getter": run => Object.defineProperty({}, "a", { get: run }).a,
+  "Proxy get": run => new Proxy({}, { get: () => run() }).a,
+  "Proxy apply": run => new Proxy(() => {}, { apply: () => run() })(),
+  valueOf: run => { let result; +{ valueOf() { result = run(); return 1; } }; return result; },
+  toPrimitive: run => { let result; +{ [Symbol.toPrimitive]() { result = run(); return 1; } }; return result; },
+  iterator: run => { let result; for (const x of { [Symbol.iterator]() { result = run(); return [][Symbol.iterator](); } }); return result; },
+  next: run => { let result; for (const x of { [Symbol.iterator]() { return { next() { result = run(); return { done: true }; } }; } }); return result; },
+  spread: run => { let result; [...{ *[Symbol.iterator]() { result = run(); } }]; return result; },
+  "new Promise": run => { let result; new Promise(() => { result = run(); }); return result; },
+  hasInstance: run => { let result; ({}) instanceof { [Symbol.hasInstance]() { result = run(); return true; } }; return result; },
+  "structuredClone getter": run => { let result; structuredClone({ get a() { result = run(); return 1; } }); return result; },
+  "Object.assign getter": run => { let result; Object.assign({}, { get a() { result = run(); return 1; } }); return result; },
+  "Object.entries getter": run => { let result; Object.entries({ get a() { result = run(); return 1; } }); return result; },
+  "indirect eval": run => { globalThis.runFromText = run; const result = (0, eval)("const result = runFromText(); result"); delete globalThis.runFromText; return result; },
+};
+for (const [name, call] of Object.entries(through)) say("through " + name, framesOf(call(function leaf() { let error; error = new Error("leaf"); return error; }).stack, 5));
+
+// Error.captureStackTrace.
+function capture(target, above) { Error.captureStackTrace(target, above); return target; }
+function outerCapture(target, above) { let result; result = capture(target, above); return result; }
+say("capture object", framesOf(outerCapture({}).stack, 3));
+say("capture above capture", framesOf(outerCapture({}, capture).stack, 3));
+say("capture above outer", framesOf(outerCapture({}, outerCapture).stack, 3));
+say("capture above a function that is not there", JSON.stringify(outerCapture({}, plainFunction).stack));
+say("capture head of an object", JSON.stringify(String(outerCapture({ name: "Named", message: "text" }).stack).split("\n")[0]));
+say("capture head of an error", JSON.stringify(String(outerCapture(new RangeError("text")).stack).split("\n")[0]));
+say("capture descriptor", JSON.stringify({ ...Object.getOwnPropertyDescriptor(outerCapture({}), "stack"), value: undefined }));
+say("capture twice", framesOf(capture(outerCapture({})).stack, 2));
+say("capture on a function", framesOf(outerCapture(function target() {}).stack, 2));
+say("capture on an array", framesOf(outerCapture([]).stack, 2));
+for (const target of [undefined, null, 5, "text"]) { try { capture(target); say("capture on " + target, "nothing thrown"); } catch (error) { say("capture on " + target, error.name, error.message); } }
+try { say("capture on frozen", framesOf(capture(Object.freeze({})).stack, 1)); } catch (error) { say("capture on frozen", error.name, error.message); }
+class Custom extends Error { constructor(message) { super(message); this.name = "Custom"; Error.captureStackTrace(this, Custom); } }
+function makeCustom() { let error; error = new Custom("made"); return error; }
+say("capture in a subclass", JSON.stringify(String(makeCustom().stack).split("\n")[0]), framesOf(makeCustom().stack, 2));
+
+// Error.stackTraceLimit.
+function deep(depth) { let error; if (depth === 0) error = new Error("deep"); else error = deep(depth - 1); return error; }
+const usualLimit = Error.stackTraceLimit;
+say("usual limit", usualLimit, String(deep(30).stack).split("\n").length);
+for (const limit of [0, 1, 2, 5, 100, Infinity, -1, 2.5, NaN, "3", undefined, null]) {
+  Error.stackTraceLimit = limit;
+  const error = deep(30);
+  say("limit " + String(limit), typeof error.stack, String(error.stack).split("\n").length);
+}
+delete Error.stackTraceLimit;
+say("limit deleted", typeof deep(3).stack, String(deep(3).stack).split("\n").length);
+Error.stackTraceLimit = usualLimit;
+
+// Error.prepareStackTrace and the call sites.
+const methods = ["getTypeName", "getFunctionName", "getMethodName", "getFileName", "getLineNumber", "getColumnNumber", "getEnclosingLineNumber", "getEnclosingColumnNumber", "getEvalOrigin", "getScriptNameOrSourceURL", "getPosition", "getPromiseIndex", "getScriptHash", "isToplevel", "isEval", "isNative", "isConstructor", "isAsync", "isPromiseAll", "toString"];
+function sitesOf(make, count = 3) {
+  const usual = Error.prepareStackTrace;
+  Error.prepareStackTrace = (error, sites) => sites;
+  try { return make().stack.slice(0, count); } finally { Error.prepareStackTrace = usual; }
+}
+function describeSite(site) {
+  return methods.map(name => { try { return typeof site[name] === "function" ? name + "=" + shorten(site[name]()) : name + " is missing"; } catch (error) { return name + " threw " + error.message; } }).join(" ");
+}
+const sited = {
+  function: () => plainFunction(),
+  method: () => object.method(),
+  "class method": () => new Base().method(),
+  "static method": () => Base.method(),
+  getter: () => object.getter,
+  arrow: () => arrowFunction(),
+  "through map": () => [1].map(() => { let error; error = new Error("in map"); return error; })[0],
+  "null prototype receiver": () => { const bare = Object.create(null); bare.method = object.method; let error; error = bare.method(); return error; },
+  "number receiver": () => { let error; error = object.method.call(5); return error; },
+};
+for (const [name, make] of Object.entries(sited)) for (const [index, site] of sitesOf(make, 2).entries()) say("site of " + name + " " + index, describeSite(site));
+say("site getThis", sitesOf(() => object.method(), 1).map(site => String(site.getThis())).join());
+say("site getFunction", sitesOf(() => object.method(), 1).map(site => typeof site.getFunction()).join());
+say("site prototype", sitesOf(() => plainFunction(), 1).map(site => Object.prototype.toString.call(site) + " " + site.constructor.name + " " + Object.getOwnPropertyNames(Object.getPrototypeOf(site)).sort().join()).join());
+{
+  const calls = [];
+  Error.prepareStackTrace = (error, sites) => { calls.push(error.message + " " + Array.isArray(sites) + " " + sites.length); return "prepared " + error.message; };
+  const error = deep(2);
+  say("prepare is lazy or eager", calls.length);
+  say("prepared", error.stack, error.stack, calls.join(" | "));
+  const captured = outerCapture({ message: "captured" });
+  say("prepared capture", captured.stack, calls.length);
+  Error.prepareStackTrace = () => { throw new RangeError("thrown while preparing"); };
+  try { say("prepare throws", String(deep(1).stack)); } catch (thrown) { say("prepare throws", thrown.name, thrown.message); }
+  Error.prepareStackTrace = () => 5;
+  say("prepare answers a number", deep(1).stack);
+  Error.prepareStackTrace = () => undefined;
+  say("prepare answers undefined", deep(1).stack);
+  Error.prepareStackTrace = 5;
+  say("prepare is a number", typeof deep(1).stack);
+  Error.prepareStackTrace = undefined;
+  say("prepare is undefined", typeof deep(1).stack);
+  Error.prepareStackTrace = (error, sites) => sites.map(site => site.getFunctionName()).join(",");
+  try { null.x; } catch (thrown) { say("prepared for an error of the engine", thrown.stack); }
+  try { JSON.parse("{"); } catch (thrown) { say("prepared for an error of a built-in", thrown.stack); }
+  Error.prepareStackTrace = undefined;
+}
+
+// The property itself.
+{
+  const error = deep(1);
+  say("own names", Object.getOwnPropertyNames(error).sort().join());
+  say("descriptor", JSON.stringify({ ...Object.getOwnPropertyDescriptor(error, "stack"), value: undefined }));
+  say("keys", JSON.stringify(Object.keys(error)), JSON.stringify(error));
+  error.stack = "stored";
+  say("stored", error.stack);
+  say("deleted", delete error.stack, error.stack, "stack" in error);
+  const changed = new Error("before");
+  changed.message = "after"; changed.name = "Renamed";
+  say("head after a change", String(changed.stack).split("\n")[0], "|", String(changed));
+  const empty = new Error();
+  say("head without a message", JSON.stringify(String(empty.stack).split("\n")[0]));
+  const lines = new Error("first\nsecond");
+  say("head with two lines", JSON.stringify(String(lines.stack).split("\n").slice(0, 2)));
+  const frozen = Object.freeze(new Error("frozen"));
+  say("frozen", typeof frozen.stack, framesOf(frozen.stack, 1));
+  say("line column sourceURL", typeof error.line, typeof error.column, shorten(error.sourceURL));
+  const withoutNew = Error("without new");
+  say("without new", framesOf(withoutNew.stack, 1));
+  say("cause", framesOf(new Error("outer", { cause: deep(0) }).cause.stack, 2));
+  say("aggregate", framesOf(new AggregateError([deep(0)], "many").errors[0].stack, 2));
+  say("thrown elsewhere", (() => { const made = deep(0); try { throw made; } catch (caught) { return framesOf(caught.stack, 2); } })());
+  say("no error thrown", (() => { try { throw { stack: "own" }; } catch (caught) { return caught.stack; } })());
+  say("create", typeof Object.create(error).stack, typeof Object.create(Error.prototype).stack);
+  say("structuredClone", framesOf(structuredClone(deep(0)).stack, 2));
+}
+
+// Async frames.
+const tick = () => new Promise(resolve => setImmediate(resolve));
+async function asyncLeaf(kind) {
+  if (kind === "before") throw new Error("before an await");
+  await null;
+  if (kind === "after") throw new Error("after an await");
+  await tick();
+  throw new Error("after a turn of the loop");
+}
+async function asyncMiddle(kind) { let result; result = await asyncLeaf(kind); return result; }
+async function asyncOuter(kind) { try { return await asyncMiddle(kind); } finally { opaque(0); } }
+const asyncArrow = async function asyncArrow(kind) { let result; result = await asyncOuter(kind); return result; };
+class AsyncClass { async method(kind) { let result; result = await asyncArrow(kind); return result; } static async make(kind) { let result; result = await new AsyncClass().method(kind); return result; } }
+async function* asyncGenerator(kind) { yield await AsyncClass.make(kind); }
+async function overGenerator(kind) { for await (const value of asyncGenerator(kind)) return value; }
+async function returnsWithoutAwait(kind) { return asyncLeaf(kind); }
+async function viaThen(kind) { const result = await Promise.resolve().then(function thenCallback() { return asyncLeaf(kind); }); return result; }
+async function viaAll(kind) { let result; result = await Promise.all([asyncLeaf(kind)]); return result; }
+async function viaAllSettled(kind) { const [result] = await Promise.allSettled([asyncLeaf(kind)]); throw result.reason; }
+async function viaAny(kind) { try { return await Promise.any([asyncLeaf(kind)]); } catch (error) { throw error.errors[0]; } }
+async function viaRace(kind) { let result; result = await Promise.race([asyncLeaf(kind)]); return result; }
+async function viaThenable(kind) { const result = await { then(resolve, reject) { asyncLeaf(kind).then(resolve, reject); } }; return result; }
+async function viaTimer() { await new Promise((resolve, reject) => setTimeout(function timerCallback() { reject(new Error("in a timer")); }, 1)); }
+async function viaMicrotask() { await new Promise((resolve, reject) => queueMicrotask(function microtaskCallback() { reject(new Error("in a microtask")); })); }
+async function viaNextTick() { await new Promise((resolve, reject) => process.nextTick(function tickCallback() { reject(new Error("in a tick")); })); }
+async function viaEmitter() { const emitter = new EventEmitter(); await new Promise((resolve, reject) => { emitter.on("go", function listener() { reject(new Error("in a listener")); }); emitter.emit("go"); }); }
+async function rethrown(kind) { try { await asyncLeaf(kind); } catch (error) { throw error; } }
+async function wrapped(kind) { try { await asyncLeaf(kind); } catch (error) { throw new Error("wrapped", { cause: error }); } }
+async function main() {
+  for (const kind of ["before", "after", "later"]) {
+    for (const run of [asyncLeaf, asyncMiddle, asyncOuter, asyncArrow, AsyncClass.make, overGenerator, returnsWithoutAwait, viaThen, viaAll, viaAllSettled, viaAny, viaRace, viaThenable, rethrown, wrapped]) {
+      try { await run(kind); say("async " + run.name + " " + kind, "nothing thrown"); } catch (error) { say("async " + run.name + " " + kind, error.message, "||", framesOf(error.stack, 9)); }
+    }
+  }
+  for (const run of [viaTimer, viaMicrotask, viaNextTick, viaEmitter]) {
+    try { await run(); say("async " + run.name, "nothing thrown"); } catch (error) { say("async " + run.name, error.message, "||", framesOf(error.stack, 6)); }
+  }
+  const sites = await (async () => { const usual = Error.prepareStackTrace; Error.prepareStackTrace = (error, sites) => sites.filter(site => String(site.getFileName()).endsWith(".mjs")).map(site => (site.isAsync() ? "async " : "") + site.getFunctionName() + ":" + site.getLineNumber()).join(" | "); try { await asyncOuter("after"); } catch (error) { return error.stack; } finally { Error.prepareStackTrace = usual; } })();
+  say("async call sites", sites);
+  for (let round = 0; round < 3; round++) { try { await asyncOuter("after"); } catch (error) { say("async round " + round, framesOf(error.stack, 4)); } }
+}
+await main();
+//// what-is-thrown-inside-an-operation-is-what-is-caught.mjs
+// Code of the program runs inside an operation and throws: a primitive, or an object of the program. The catch clause around the operation gets that value and no error of the run time.
+////= Body
+const world = [new Body(1), new Body(2), new Body(3)];
+const seen = [];
+function note(caught) {
+  seen.push(typeof caught === "object" && caught !== null ? caught.weight() : String(caught));
+  if (typeof caught === "object" && caught !== null) caught.mass += 10;
+}
+
+const withGetter = {
+  get mass() {
+    throw world[0];
+  },
+};
+const withSetter = {
+  set mass(value) {
+    throw value;
+  },
+};
+const withValueOf = {
+  valueOf() {
+    throw world[1];
+  },
+};
+const withToString = {
+  toString() {
+    throw "text";
+  },
+};
+const withIterator = {
+  [Symbol.iterator]() {
+    throw world[2];
+  },
+};
+class Below extends Body {
+  get label() {
+    throw 7;
+  }
+}
+
+////= lines	withGetter.mass
+////= lines	withSetter.mass = world[1]
+////= lines	withValueOf + 1
+////= lines	world[withToString]
+////= lines	for (const each of withIterator) seen.push(each)
+////= lines	new Below(4).label
+////= lines	Object.create(withGetter).mass
+////= lines	throw null
+try {
+  await {
+    then() {
+      throw world[2];
+    },
+  };
+} catch (caught) {
+  note(caught);
+}
+try {
+  await {
+    get then() {
+      throw undefined;
+    },
+  };
+} catch (caught) {
+  note(caught);
+}
+seen.push(world.map(body => body.mass).join("+"));
+console.log(seen.join(" "));

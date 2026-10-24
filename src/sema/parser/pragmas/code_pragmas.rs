@@ -32,7 +32,6 @@ pub(super) fn code_jsx_pragmas(
                 continue;
             };
             arguments[pragma] = argument;
-            // `scan_pragma` does not count the blanks between the two.
             rest = &rest[name_len + argument.len()..];
         }
     }
@@ -63,7 +62,6 @@ fn code_pragma_argument(rest: &[u8]) -> Option<&[u8]> {
 }
 
 fn code_factory(argument: &[u8]) -> &[u8] {
-    // `bun run` prints the argument and parses the output, where a line break ends the name.
     let name = &argument[..line_end_pos(argument, 0)];
     match name.iter().all(|&c| c == b'.') {
         true => b"",

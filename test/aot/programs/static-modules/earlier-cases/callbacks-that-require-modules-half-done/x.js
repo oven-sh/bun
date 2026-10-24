@@ -1,1 +1,0 @@
-exports.g = "g";

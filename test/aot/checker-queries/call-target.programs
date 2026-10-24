@@ -1,0 +1,3640 @@
+////: lines
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "types": [],
+    "noEmit": true,
+    «1»: true,
+    «2»: «3»,
+    «4»: «5»
+  }
+}
+////: lines-2
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "types": [],
+    "noEmit": true,
+    «1»: «2»,
+    «3»: «4»
+  }
+}
+////: lines-3
+function «1»() {
+  this.«2» = 1;
+}
+////: lines-4
+function «1»() {
+  this.«2» = «3»;
+  «4».call(this);
+}
+//// call-target/annotated-result.queries.txt
+# A call reports its declaration, the written result and the written signature.
+annotated-result.ts:3 call `f(1)` = declaration annotated-result.ts:2
+annotated-result.ts:3 call result `f(1)` = string checked string
+annotated-result.ts:3 call signature `f(1)` = (number checked number) this unwritten checked any returns string checked string
+//// call-target/annotated-result.ts
+// A call reports its declaration, the written result and the written signature.
+function f(a: number): string { return ""; }
+f(1);
+//// call-target/constructor-functions.queries.txt
+# `new` of a function gives back the object that the function got as `this`, unless the function returns a value. In a compile build it has the type that the function declares for `this`, where the callee is a binding that holds that function and no other.
+constructor-functions.ts:11 call `new Declared(1)` = declaration constructor-functions.ts:8
+constructor-functions.ts:11 call result `new Declared(1)` = unwritten checked Point
+constructor-functions.ts:15 call result `new Held(1)` = unwritten checked Point
+constructor-functions.ts:19 call result `new Generic("a")` = unwritten checked Box<string>
+constructor-functions.ts:24 call result `new Leaving(1)` = unwritten checked Point
+absent: constructor-functions.ts:11 diagnostic TS7009 = Style StopsBuild
+absent: constructor-functions.ts:15 diagnostic TS7009 = Style StopsBuild
+absent: constructor-functions.ts:19 diagnostic TS7009 = Style StopsBuild
+absent: constructor-functions.ts:24 diagnostic TS7009 = Style StopsBuild
+
+# A function that returns a value may give back another object.
+constructor-functions.ts:29 call result `new Returning(1)` = unwritten checked any
+constructor-functions.ts:29 diagnostic TS7009 = Style StopsBuild
+
+# Nobody wrote what `this` is.
+constructor-functions.ts:31 call result `new Undeclared(1)` = unwritten checked any
+constructor-functions.ts:31 diagnostic TS7009 = Style StopsBuild
+
+# The type of the callee names a function. Which function the binding holds is another question.
+constructor-functions.ts:34 call result `new Stored()` = unwritten checked any
+constructor-functions.ts:34 diagnostic TS7009 = Style StopsBuild
+constructor-functions.ts:36 call result `new Renamed(1)` = unwritten checked any
+constructor-functions.ts:36 diagnostic TS7009 = Style StopsBuild
+
+# What `new` allocates is an ordinary object, and the compiler gives it one layout: `this` is one object type that compiled code declares.
+constructor-functions.ts:38 call result `new OfNumber()` = unwritten checked any
+constructor-functions.ts:38 diagnostic TS7009 = Style StopsBuild
+constructor-functions.ts:40 call result `new OfDate()` = unwritten checked any
+constructor-functions.ts:40 diagnostic TS7009 = Style StopsBuild
+constructor-functions.ts:42 call result `new OfFunction()` = unwritten checked any
+constructor-functions.ts:42 diagnostic TS7009 = Style StopsBuild
+constructor-functions.ts:44 call result `new OfEither()` = unwritten checked any
+constructor-functions.ts:44 diagnostic TS7009 = Style StopsBuild
+
+# `return new F(..)` in `F` gives back what another call of `F` got as `this`.
+constructor-functions.ts:46 call result `new Guarded(x)` = unwritten checked Point
+constructor-functions.ts:49 call result `new Guarded(1)` = unwritten checked Point
+constructor-functions.ts:54 call result `new GuardedUnderCasts(1)` = unwritten checked Point
+absent: constructor-functions.ts:46 diagnostic TS7009 = Style StopsBuild
+absent: constructor-functions.ts:49 diagnostic TS7009 = Style StopsBuild
+absent: constructor-functions.ts:54 diagnostic TS7009 = Style StopsBuild
+
+# What another function constructed is another object.
+constructor-functions.ts:59 call result `new GivesAnother(1)` = unwritten checked any
+constructor-functions.ts:59 diagnostic TS7009 = Style StopsBuild
+
+# An interface of the function's name declares no value.
+constructor-functions.ts:64 call result `new Merged(x)` = unwritten checked Merged
+constructor-functions.ts:67 call result `new Merged(1)` = unwritten checked Merged
+absent: constructor-functions.ts:67 diagnostic TS7009 = Style StopsBuild
+//// call-target/constructor-functions.ts
+// `new` of a function gives back the object that the function got as `this`, unless the function returns a value. In a compile build it has the type that the function declares for `this`, where the callee is a binding that holds that function and no other.
+interface Point {
+  x: number;
+}
+interface Box<T> {
+  value: T;
+}
+function Declared(this: Point, x: number) {
+  this.x = x;
+}
+new Declared(1);
+const Held = function (this: Point, x: number) {
+  this.x = x;
+};
+new Held(1);
+function Generic<T>(this: Box<T>, value: T) {
+  this.value = value;
+}
+new Generic("a");
+function Leaving(this: Point, x: number) {
+  if (x < 0) return;
+  this.x = x;
+}
+new Leaving(1);
+function Returning(this: Point, x: number) {
+  this.x = x;
+  return { x };
+}
+new Returning(1);
+function Undeclared(x: number) {}
+new Undeclared(1);
+let Stored = function (this: Point) {};
+Stored = function (this: Point) {};
+new Stored();
+const Renamed: typeof Declared = Returning;
+new Renamed(1);
+function OfNumber(this: number) {}
+new OfNumber();
+function OfDate(this: Date) {}
+new OfDate();
+function OfFunction(this: { (): void; x: number }) {}
+new OfFunction();
+function OfEither(this: Point | Box<number>) {}
+new OfEither();
+function Guarded(this: Point, x: number) {
+  if (!(this instanceof Guarded)) return new Guarded(x);
+  this.x = x;
+}
+new Guarded(1);
+function GuardedUnderCasts(this: Point, x: number) {
+  if (!(this instanceof GuardedUnderCasts)) return new (GuardedUnderCasts as any)(x) as Point;
+  this.x = x;
+}
+new GuardedUnderCasts(1);
+function GivesAnother(this: Point, x: number) {
+  if (x < 0) return new Declared(x);
+  this.x = x;
+}
+new GivesAnother(1);
+interface Merged {
+  x: number;
+}
+function Merged(this: Merged, x: number) {
+  if (!(this instanceof Merged)) return new Merged(x);
+  this.x = x;
+}
+new Merged(1);
+//// call-target/constructors-javascript.js
+// `new` of a checked class results in the class; `new` of a library or JavaScript class has no written result.
+export class J {}
+//// call-target/constructors.queries.txt
+# `new` of a checked class results in the class; `new` of a library or JavaScript class has no written result.
+constructors.ts:6 call `new A(1)` = declaration constructors.ts:4
+constructors.ts:6 call result `new A(1)` = A checked A
+constructors.ts:6 call signature `new A(1)` = (number checked number) this unwritten checked A returns A checked A
+constructors.ts:8 call `new B()` = declaration none
+constructors.ts:8 call result `new B()` = B checked B
+constructors.ts:8 call signature `new B()` = () this unwritten checked B returns B checked B
+
+# A class without a constructor takes the parameters of the base class's constructor.
+constructors.ts:10 call `new D(1)` = declaration none
+constructors.ts:10 call result `new D(1)` = D checked D
+constructors.ts:10 call signature `new D(1)` = (number checked number) this unwritten checked D returns D checked D
+
+constructors.ts:14 call result `new G(1)` = G<T> checked G<number>
+constructors.ts:14 call signature `new G(1)` = (T checked number) this unwritten checked G<T> returns G<T> checked G<T> generic
+constructors.ts:15 call `new Map<string, number>()` = declaration outside
+constructors.ts:15 call result `new Map<string, number>()` = unwritten checked Map<string, number>
+constructors.ts:16 call result `new J()` = unwritten checked J
+//// call-target/constructors.ts
+// `new` of a checked class results in the class; `new` of a library or JavaScript class has no written result.
+import { J } from "./constructors-javascript.js";
+class A {
+  constructor(a: number) {}
+}
+new A(1);
+class B {}
+new B();
+class D extends A {}
+new D(1);
+class G<T> {
+  constructor(v: T) {}
+}
+new G(1);
+new Map<string, number>();
+new J();
+//// call-target/declaration-file-callee.d.ts
+// A callee declared in a `.d.ts` has a declaration, but nothing in it counts as written.
+declare function host(a: number): string;
+//// call-target/declaration-file-callee.queries.txt
+# A callee declared in a `.d.ts` has a declaration, but nothing in it counts as written.
+declaration-file-callee.ts:3 call `host(1)` = declaration declaration-file-callee.d.ts:2
+declaration-file-callee.ts:3 call result `host(1)` = unwritten checked string
+declaration-file-callee.ts:3 call signature `host(1)` = (unwritten checked number) this unwritten checked any returns unwritten checked string
+//// call-target/declaration-file-callee.ts
+// A callee declared in a `.d.ts` has a declaration, but nothing in it counts as written.
+/// <reference path="./declaration-file-callee.d.ts" />
+host(1);
+//// call-target/function-signature-in-javascript.js
+// A signature in an inferred file keeps its parameter forms and has nothing written.
+function f(a, b = 1, ...c) {}
+//// call-target/function-signature-in-javascript.queries.txt
+# A signature in an inferred file keeps its parameter forms and has nothing written.
+function-signature-in-javascript.js:2 signature `f` = (unwritten checked any, unwritten checked number?, ...unwritten checked any[]) this unwritten checked any returns unwritten checked void
+//// call-target/inferred-type-argument.queries.txt
+# A type argument the checker inferred is not written: the result stays the type parameter.
+inferred-type-argument.ts:3 call result `wrap(1)` = T checked 1
+inferred-type-argument.ts:3 call signature `wrap(1)` = (T checked 1) this unwritten checked any returns T checked 1 generic
+//// call-target/inferred-type-argument.ts
+// A type argument the checker inferred is not written: the result stays the type parameter.
+function wrap<T>(x: T): T { return x; }
+wrap(1);
+//// call-target/int32-result.queries.txt
+# A written `int32` result keeps its refinement.
+int32-result.ts:4 call result `f()` = int32 checked int32
+//// call-target/int32-result.ts
+// A written `int32` result keeps its refinement.
+import type { int32 } from "bun";
+function f(): int32 { return 1; }
+f();
+//// call-target/method-of-inferred-receiver.queries.txt
+# The checker inferred the receiver's type argument, so nobody wrote it: the written result of the call stays the type parameter.
+method-of-inferred-receiver.ts:7 variable `box` = unwritten
+method-of-inferred-receiver.ts:8 type `box` = Box<number>
+method-of-inferred-receiver.ts:8 call `box.get()` = declaration method-of-inferred-receiver.ts:5
+method-of-inferred-receiver.ts:8 call result `box.get()` = T checked number
+//// call-target/method-of-inferred-receiver.ts
+// The checker inferred the receiver's type argument, so nobody wrote it: the written result of the call stays the type parameter.
+class Box<T> {
+  value: T;
+  constructor(value: T) { this.value = value; }
+  get(): T { return this.value; }
+}
+const box = new Box(1);
+box.get();
+//// call-target/optional-and-rest.queries.txt
+# A signature marks optional parameters, defaults and a rest parameter.
+optional-and-rest.ts:2 signature `f` = (number checked number, string checked string | undefined?, unwritten checked number?, ...boolean[] checked boolean[]) this unwritten checked any returns unwritten checked void
+//// call-target/optional-and-rest.ts
+// A signature marks optional parameters, defaults and a rest parameter.
+function f(a: number, b?: string, c = 1, ...d: boolean[]) {}
+//// call-target/overloads.queries.txt
+# A call to an overloaded function reports the overload it resolved to.
+overloads.ts:5 call `o("x")` = declaration overloads.ts:3
+overloads.ts:5 call result `o("x")` = string checked string
+//// call-target/overloads.ts
+// A call to an overloaded function reports the overload it resolved to.
+function o(a: number): number;
+function o(a: string): string;
+function o(a: any) { return a; }
+o("x");
+//// call-target/parameter-with-unresolved-type.queries.txt
+# A parameter whose type does not resolve gives up alone: the other parameter and the result keep their types.
+parameter-with-unresolved-type.ts:2 signature `f` = (gave up: ErrorType checked gave up: ErrorType, number checked number) this unwritten checked any returns string checked string
+parameter-with-unresolved-type.ts:3 call result `f(0, 1)` = string checked string
+parameter-with-unresolved-type.ts:3 call signature `f(0, 1)` = (gave up: ErrorType checked gave up: ErrorType, number checked number) this unwritten checked any returns string checked string
+//// call-target/parameter-with-unresolved-type.ts
+// A parameter whose type does not resolve gives up alone: the other parameter and the result keep their types.
+function f(a: Missing, b: number): string { return ""; }
+f(0, 1);
+//// call-target/receiver-type-arguments.queries.txt
+# The receiver's type arguments may be inferred, so they do not instantiate the written result of the call. They do instantiate the signature.
+receiver-type-arguments.ts:6 call `box.get()` = declaration receiver-type-arguments.ts:3
+receiver-type-arguments.ts:6 call result `box.get()` = T checked number
+receiver-type-arguments.ts:6 call signature `box.get()` = () this unwritten checked any returns number checked number
+//// call-target/receiver-type-arguments.ts
+// The receiver's type arguments may be inferred, so they do not instantiate the written result of the call. They do instantiate the signature.
+interface Box<T> {
+  get(): T;
+}
+declare const box: Box<number>;
+box.get();
+//// call-target/this-types.queries.txt
+# Only a `this` parameter writes `this`. In an instance method the checker says the class, in a static method and in a plain function `any`.
+this-types.ts:2 signature `f` = () this Date checked Date returns unwritten checked void
+this-types.ts:4 signature `m` = () this unwritten checked C returns unwritten checked void
+this-types.ts:5 signature `s` = () this unwritten checked any returns unwritten checked void
+this-types.ts:7 signature `g` = () this unwritten checked any returns unwritten checked void
+//// call-target/this-types.ts
+// Only a `this` parameter writes `this`. In an instance method the checker says the class, in a static method and in a plain function `any`.
+function f(this: Date) {}
+class C {
+  m() {}
+  static s() {}
+}
+function g() {}
+//// call-target/unannotated-result.queries.txt
+# A result the checker inferred is unwritten.
+unannotated-result.ts:3 call result `f(1)` = unwritten checked number
+unannotated-result.ts:3 call signature `f(1)` = (number checked number) this unwritten checked any returns unwritten checked number
+//// call-target/unannotated-result.ts
+// A result the checker inferred is unwritten.
+function f(a: number) { return a; }
+f(1);
+//// call-target/union-of-functions.queries.txt
+# A signature the checker composed for a union has no declaration and nothing written.
+union-of-functions.ts:3 call `u(1 as never)` = declaration none
+union-of-functions.ts:3 call result `u(1 as never)` = unwritten checked void
+union-of-functions.ts:3 call signature `u(1 as never)` = (unwritten checked never) this unwritten checked any returns unwritten checked void
+//// call-target/union-of-functions.ts
+// A signature the checker composed for a union has no declaration and nothing written.
+declare const u: ((a: number) => void) | ((a: string) => void);
+u(1 as never);
+//// call-target/untrusted-type-argument.d.ts
+// An alias that only a declaration file declares, for untrusted-type-argument.ts.
+type Port = string;
+//// call-target/untrusted-type-argument.queries.txt
+# A type argument that names a `.d.ts` alias does not instantiate the written result: its written form, `unknown`, would take the other branch of a conditional type.
+untrusted-type-argument.ts:6 call result `pick<Port>()` = T extends string ? Name : Count checked Name
+absent: untrusted-type-argument.ts:6 call result `pick<Port>()` = Count checked Name
+absent: untrusted-type-argument.ts:6 call result `pick<Port>()` = Name checked Name
+
+untrusted-type-argument.ts:7 call result `pick<string>()` = Name checked Name
+//// call-target/untrusted-type-argument.ts
+// A type argument that names a `.d.ts` alias does not instantiate the written result: its written form, `unknown`, would take the other branch of a conditional type.
+/// <reference path="./untrusted-type-argument.d.ts" />
+interface Name { name: string }
+interface Count { count: number }
+declare function pick<T>(): T extends string ? Name : Count;
+pick<Port>();
+pick<string>();
+export {};
+//// call-target/untyped-call.queries.txt
+# A call of `any` resolves to no target.
+untyped-call.ts:3 call `anything(1)` = none
+//// call-target/untyped-call.ts
+// A call of `any` resolves to no target.
+declare const anything: any;
+anything(1);
+//// call-target/written-type-argument.queries.txt
+# A type argument the call wrote instantiates the written result, but not what the signature has written.
+written-type-argument.ts:3 call result `wrap<number>(1)` = number checked number
+written-type-argument.ts:3 call signature `wrap<number>(1)` = (T checked number) this unwritten checked any returns T checked number generic
+//// call-target/written-type-argument.ts
+// A type argument the call wrote instantiates the written result, but not what the signature has written.
+function wrap<T>(x: T): T { return x; }
+wrap<number>(1);
+//// class-shape/bigint-member-names.js
+// A BigInt literal as a member name names the property whose name is its decimal digits. A getter of that name is a member, and a store to the same name runs into the getter and adds no field.
+class A {
+  get 99999999999999999999n() { return 1; }
+  constructor() { this["99999999999999999999"] = 2; }
+}
+function F() { this["99999999999999999999"] = 1; }
+F.prototype = { get 99999999999999999999n() { return 1; } };
+//// class-shape/bigint-member-names.queries.txt
+# A BigInt literal as a member name names the property whose name is its decimal digits. A getter of that name is a member, and a store to the same name runs into the getter and adds no field.
+bigint-member-names.js:2 class member `A` = 99999999999999999999 Getter Member 3 unwritten checked number
+absent: bigint-member-names.js:2 class member `A` = 99999999999999999999 Field ThisStore 4 unwritten checked 2 optional
+
+bigint-member-names.js:6 constructor function member `F` = 99999999999999999999 Getter PrototypeStore 7 unwritten checked () => number optional
+absent: bigint-member-names.js:6 constructor function member `F` = 99999999999999999999 Field ThisStore 6 unwritten checked 1 optional
+//// class-shape/binding-decorated.queries.txt
+# A class decorator can replace the binding, so it may not be the class.
+binding-decorated.ts:2 class binding `K` = yes
+binding-decorated.ts:4 class binding `C` = no
+//// class-shape/binding-decorated.ts
+// A class decorator can replace the binding, so it may not be the class.
+class K {}
+function d(c: any) { return c; }
+@d
+class C {}
+//// class-shape/binding-reassigned.queries.txt
+# A reassigned binding may not be the class.
+binding-reassigned.ts:2 class binding `K` = yes
+binding-reassigned.ts:3 class binding `C` = no
+//// class-shape/binding-reassigned.ts
+// A reassigned binding may not be the class.
+class K {}
+class C {}
+C = null as any;
+//// class-shape/binding-seen-by-eval.queries.txt
+# A binding visible to a direct `eval` may not be the class; a binding outside the eval's scope is.
+binding-seen-by-eval.ts:2 class binding `K` = yes
+binding-seen-by-eval.ts:3 class binding `C` = no
+//// class-shape/binding-seen-by-eval.ts
+// A binding visible to a direct `eval` may not be the class; a binding outside the eval's scope is.
+function f() { class K {} }
+class C {}
+eval("C");
+//// class-shape/class-in-inferred-file.js
+// A class of a JavaScript file: nobody wrote a type, so every member is unwritten and has the type that the checker concludes.
+export class Point {
+  x = 1;
+  label = "p";
+  move(by) { this.x += by; return this; }
+}
+//// class-shape/class-in-inferred-file.queries.txt
+# A class of a JavaScript file: nobody wrote a type, so every member is unwritten and has the type that the checker concludes.
+class-in-inferred-file.js:2 class member `Point` = x Field Member 3 unwritten checked number
+class-in-inferred-file.js:2 class member `Point` = label Field Member 4 unwritten checked string
+class-in-inferred-file.js:2 class member `Point` = move Method Member 5 unwritten checked (by: any) => Point
+class-in-inferred-file.js:2 class binding `Point` = yes
+//// class-shape/compound-and-logical-stores-add-members.js
+// A store of any form adds a member. What `+=` stores is computed, so only a store of another form says a type.
+class C {
+  constructor() {
+    this.total += 1;
+    this.cache ||= "c";
+    this.fallback ??= 2;
+    this.flag &&= 3;
+    this.early -= 1;
+    this.early = 4;
+  }
+  m() {
+    this.late *= 2;
+  }
+  static s() {
+    this.calls += 1;
+    this.label ||= "l";
+  }
+}
+C.count += 1;
+C.kind ??= "k";
+function F() {
+  this.a = 1;
+  this.n += 1;
+  this.o ||= 2;
+}
+F.prototype.shared ||= 5;
+F.prototype.text += function () {};
+F.prototype.made ??= function () {};
+////= lines-3	G	a
+G.prototype ||= { never() {} };
+function update() {
+  this.n += 1;
+  this.o ||= 2;
+}
+//// class-shape/compound-and-logical-stores-add-members.queries.txt
+# A store of any form adds a member. What `+=` stores is computed, so only a store of another form says a type.
+compound-and-logical-stores-add-members.js:2 class member `C` = total Field ThisStore 4 unwritten checked any optional
+compound-and-logical-stores-add-members.js:2 class member `C` = late Field ThisStore 12 unwritten checked any optional
+# `||=`, `??=` and `&&=` store their right side or nothing.
+compound-and-logical-stores-add-members.js:2 class member `C` = cache Field ThisStore 5 unwritten checked string optional
+compound-and-logical-stores-add-members.js:2 class member `C` = fallback Field ThisStore 6 unwritten checked number optional
+compound-and-logical-stores-add-members.js:2 class member `C` = flag Field ThisStore 7 unwritten checked number optional
+# The member stands where its first store stands and has the type of the first value that the program names.
+compound-and-logical-stores-add-members.js:2 class member `C` = early Field ThisStore 8 unwritten checked number
+absent: compound-and-logical-stores-add-members.js:2 class member `C` = early Field ThisStore 9 unwritten checked 4
+# `this` of a static method is the class.
+compound-and-logical-stores-add-members.js:2 class member `C` = calls Field StaticStore 15 unwritten checked any static optional
+compound-and-logical-stores-add-members.js:2 class member `C` = label Field StaticStore 16 unwritten checked string static optional
+compound-and-logical-stores-add-members.js:2 class member `C` = count Field StaticStore 19 unwritten checked any static optional
+compound-and-logical-stores-add-members.js:2 class member `C` = kind Field StaticStore 20 unwritten checked string static optional
+compound-and-logical-stores-add-members.js:21 constructor function member `F` = a Field ThisStore 22 unwritten checked number
+compound-and-logical-stores-add-members.js:21 constructor function member `F` = n Field ThisStore 23 unwritten checked any optional
+compound-and-logical-stores-add-members.js:21 constructor function member `F` = o Field ThisStore 24 unwritten checked number optional
+compound-and-logical-stores-add-members.js:21 constructor function member `F` = shared Field PrototypeStore 26 unwritten checked number optional
+compound-and-logical-stores-add-members.js:21 constructor function member `F` = made Method PrototypeStore 28 unwritten checked () => void optional
+# What `+=` makes of a function is no method.
+compound-and-logical-stores-add-members.js:21 constructor function member `F` = text Field PrototypeStore 27 unwritten checked any optional
+absent: compound-and-logical-stores-add-members.js:21 constructor function member `F` = text Method PrototypeStore 27 unwritten checked () => void optional
+# A function has a prototype object, so `||=` never replaces it.
+absent: compound-and-logical-stores-add-members.js:29 constructor function member `G` = never Method PrototypeStore 32 unwritten checked () => void optional
+# A function that only updates what `this` has is a method, not a constructor.
+absent: compound-and-logical-stores-add-members.js:33 constructor function `update` = computed instance false computed static false
+//// class-shape/computed-names.queries.txt
+# A key known only at run time sets a flag and adds no member; a string literal key is a static name. A field under a symbol that a constant holds is a member.
+computed-names.ts:3 class `A` = computed instance false computed static true
+computed-names.ts:3 class member `A` = [symbol] Field Member 4 unwritten checked number
+computed-names.ts:3 class member `A` = a Field Member 6 unwritten checked number
+computed-names.ts:8 class `B` = computed instance false computed static false
+computed-names.ts:11 class `C` = computed instance true computed static false
+//// class-shape/computed-names.ts
+// A key known only at run time sets a flag and adds no member; a string literal key is a static name. A field under a symbol that a constant holds is a member.
+const k = Symbol();
+class A {
+  [k] = 1;
+  static [k]() {}
+  ["a"] = 2;
+}
+class B {
+  ["a"] = 1;
+}
+class C {
+  [k]() {}
+}
+//// class-shape/constructor-functions.js
+// Only an ordinary function with a store that something constructs with has a constructor shape: not a generator, an async function or an arrow function.
+////= lines-3	P	a
+function* generator() { this.a = 1; }
+async function later() { this.a = 1; }
+function plain() { return 1; }
+const arrow = () => { this.a = 1; };
+function onlyCalled() { this.a = 1; }
+new P(), new generator(), new later(), new plain(), new arrow();
+onlyCalled.call({});
+//// class-shape/constructor-functions.queries.txt
+# Only an ordinary function with a store that something constructs with has a constructor shape: not a generator, an async function or an arrow function.
+constructor-functions.js:2 constructor function `P` = computed instance false computed static false
+absent: constructor-functions.js:5 constructor function `generator` = computed instance false computed static false
+absent: constructor-functions.js:6 constructor function `later` = computed instance false computed static false
+absent: constructor-functions.js:7 constructor function `plain` = computed instance false computed static false
+absent: constructor-functions.js:8 constructor function `() => { this.a = 1; }` = computed instance false computed static false
+absent: constructor-functions.js:9 constructor function `onlyCalled` = computed instance false computed static false
+//// class-shape/imported-class-declaration.ts
+// An importing file gets the same members as the file that declares the class.
+export class C {
+  x: number = 1;
+}
+//// class-shape/imported-class.queries.txt
+# An importing file gets the same members as the file that declares the class.
+imported-class.ts:3 declares `C` = x Field Member 3 number checked number
+same: imported-class.ts:3 declares `C` <=> imported-class-declaration.ts:2 class member `C`
+//// class-shape/imported-class.ts
+// An importing file gets the same members as the file that declares the class.
+import { C } from "./imported-class-declaration";
+let c: C = new C();
+//// class-shape/inferred-unwritten-types.js
+// An inferred file has no written types, whatever its JSDoc says.
+class J {
+  /** @type {number} */
+  x = 1;
+}
+//// class-shape/inferred-unwritten-types.queries.txt
+# An inferred file has no written types, whatever its JSDoc says.
+inferred-unwritten-types.js:3 written `number` = unwritten
+inferred-unwritten-types.js:2 class member `J` = x Field Member 4 unwritten checked number
+//// class-shape/member-with-unresolved-type.queries.txt
+# A class keeps all its members when the type of one does not resolve. That one gives up by itself.
+member-with-unresolved-type.ts:3 class member `Holder` = bad Field Member 4 gave up: ErrorType checked gave up: ErrorType
+member-with-unresolved-type.ts:3 class member `Holder` = good Field Member 5 unwritten checked number
+member-with-unresolved-type.ts:3 class member `Holder` = describe Method Member 6 unwritten checked () => string
+member-with-unresolved-type.ts:3 class binding `Holder` = yes
+member-with-unresolved-type.ts:2 diagnostic TS2307 = MissingDeclaration StopsBuild
+//// class-shape/member-with-unresolved-type.ts
+// A class keeps all its members when the type of one does not resolve. That one gives up by itself.
+import type { Missing } from "./no-such-file";
+export class Holder {
+  bad!: Missing;
+  good = 1;
+  describe(): string { return String(this.good); }
+}
+//// class-shape/members-in-order.queries.txt
+# A class lists its parameter properties first, then its members in source order; a plain parameter adds no member.
+members-in-order.ts:2 class `C` = computed instance false computed static false
+members-in-order.ts:2 class binding `C` = yes
+ordered: members-in-order.ts:2 class member `C` = a Field ParameterProperty 4 number checked number
+ordered: members-in-order.ts:2 class member `C` = b Field ParameterProperty 4 string checked string
+ordered: members-in-order.ts:2 class member `C` = x Field Member 3 number checked number
+ordered: members-in-order.ts:2 class member `C` = s Field Member 5 string checked string static
+ordered: members-in-order.ts:2 class member `C` = #p Field Member 6 number checked number
+ordered: members-in-order.ts:2 class member `C` = m Method Member 7 unwritten checked () => void
+ordered: members-in-order.ts:2 class member `C` = g Getter Member 8 number checked number
+ordered: members-in-order.ts:2 class member `C` = g Setter Member 9 number checked number
+absent: members-in-order.ts:2 class member `C` = c Field ParameterProperty 4 boolean checked boolean
+//// class-shape/members-in-order.ts
+// A class lists its parameter properties first, then its members in source order; a plain parameter adds no member.
+class C {
+  x: number = 1;
+  constructor(public a: number, private b: string, c: boolean) {}
+  static s: string = "s";
+  #p: number = 2;
+  m(): void {}
+  get g(): number { return 1; }
+  set g(v: number) {}
+}
+//// class-shape/optional-fields.queries.txt
+# Fields absent at creation are optional: `x?`, `declare x` and `abstract x`, but not an initialized field.
+optional-fields.ts:2 class member `O` = a Field Member 3 number checked number | undefined optional
+optional-fields.ts:2 class member `O` = b Field Member 4 string checked string optional
+optional-fields.ts:2 class member `O` = c Field Member 5 boolean checked boolean optional
+optional-fields.ts:2 class member `O` = d Field Member 6 number checked number
+//// class-shape/optional-fields.ts
+// Fields absent at creation are optional: `x?`, `declare x` and `abstract x`, but not an initialized field.
+abstract class O {
+  a?: number;
+  declare b: string;
+  abstract c: boolean;
+  d: number = 1;
+}
+//// class-shape/overloads.queries.txt
+# An overloaded method is one member, at its implementation.
+overloads.ts:2 class member `V` = m Method Member 5 unwritten checked { (a: number): void; (a: string): void; }
+absent: overloads.ts:2 class member `V` = m Method Member 3 unwritten checked { (a: number): void; (a: string): void; }
+absent: overloads.ts:2 class member `V` = m Method Member 4 unwritten checked { (a: number): void; (a: string): void; }
+//// class-shape/overloads.ts
+// An overloaded method is one member, at its implementation.
+class V {
+  m(a: number): void;
+  m(a: string): void;
+  m(a: unknown): void {}
+}
+//// class-shape/prototype-accessors.js
+// A name that a prototype literal defines as an accessor is not a field: `this.name = v` runs the setter.
+function F() {
+  this.g = 1;
+  this.a = 2;
+}
+F.prototype = {
+  get g() { return this.a; },
+  set g(v) { this.a = v; },
+};
+F.g = 3;
+function R() {
+  this.g = 1;
+  this.a = 2;
+}
+R.prototype = {
+  set g(v) {},
+};
+R = null;
+//// class-shape/prototype-accessors.queries.txt
+# A name that a prototype literal defines as an accessor is not a field: `this.name = v` runs the setter.
+prototype-accessors.js:2 constructor function member `F` = g Getter PrototypeStore 7 unwritten checked () => any optional
+prototype-accessors.js:2 constructor function member `F` = g Setter PrototypeStore 8 unwritten checked (v: any) => void optional
+prototype-accessors.js:2 constructor function member `F` = a Field ThisStore 4 unwritten checked number
+prototype-accessors.js:2 constructor function member `F` = g Field StaticStore 10 unwritten checked number static optional
+absent: prototype-accessors.js:2 constructor function member `F` = g Field ThisStore 3 unwritten checked 1 optional
+
+prototype-accessors.js:11 constructor function member `R` = a Field ThisStore 13 unwritten checked number
+absent: prototype-accessors.js:11 constructor function member `R` = g Field ThisStore 12 unwritten checked 1 optional
+absent: prototype-accessors.js:11 constructor function member `R` = g Setter PrototypeStore 16 unwritten checked (v: any) => void optional
+//// class-shape/prototype-stores.js
+// Prototype stores and object literals add members to a constructor function; a prototype from a call and `__proto__` add none.
+////= lines-3	F	a
+F.prototype.m = function () {};
+F.prototype.v = 1;
+function G() {}
+G.prototype = {
+  m() {},
+  get g() { return 1; },
+  v: 1,
+  f: function () {},
+};
+////= lines-3	H	a
+H.prototype = Object.create(F.prototype);
+F.prototype.arrow = () => {};
+F.prototype.__proto__ = G.prototype;
+let text = "";
+function I() {
+  this.a = 1;
+  this.__proto__ = G.prototype;
+}
+I.prototype = {
+  __proto__: G.prototype,
+  v: text += function () {},
+};
+//// class-shape/prototype-stores.queries.txt
+# Prototype stores and object literals add members to a constructor function; a prototype from a call and `__proto__` add none.
+prototype-stores.js:2 constructor function `F` = computed instance false computed static false
+prototype-stores.js:2 constructor function member `F` = a Field ThisStore 3 unwritten checked number
+prototype-stores.js:2 constructor function member `F` = m Method PrototypeStore 5 unwritten checked () => void optional
+prototype-stores.js:2 constructor function member `F` = v Field PrototypeStore 6 unwritten checked number optional
+prototype-stores.js:7 constructor function member `G` = m Method PrototypeStore 9 unwritten checked () => void optional
+prototype-stores.js:7 constructor function member `G` = g Getter PrototypeStore 10 unwritten checked () => number optional
+prototype-stores.js:7 constructor function member `G` = v Field PrototypeStore 11 unwritten checked number optional
+prototype-stores.js:7 constructor function member `G` = f Method PrototypeStore 12 unwritten checked () => void optional
+prototype-stores.js:14 constructor function member `H` = a Field ThisStore 15 unwritten checked number
+absent: prototype-stores.js:14 constructor function member `H` = m Method PrototypeStore 5 unwritten checked () => void optional
+absent: prototype-stores.js:14 constructor function member `H` = m Method PrototypeStore 17 unwritten checked any optional
+absent: prototype-stores.js:14 constructor function member `H` = m Field PrototypeStore 17 unwritten checked any optional
+prototype-stores.js:2 constructor function member `F` = arrow Field PrototypeStore 18 unwritten checked () => void optional
+absent: prototype-stores.js:2 constructor function member `F` = __proto__ Field PrototypeStore 19 unwritten checked { m(): void; readonly g: number; v: number; f: () => void; } optional
+prototype-stores.js:21 constructor function member `I` = a Field ThisStore 22 unwritten checked number
+absent: prototype-stores.js:21 constructor function member `I` = __proto__ Field ThisStore 23 unwritten checked { m(): void; readonly g: number; v: number; f: () => void; } optional
+absent: prototype-stores.js:21 constructor function member `I` = __proto__ Field PrototypeStore 26 unwritten checked { m(): void; readonly g: number; v: number; f: () => void; } optional
+prototype-stores.js:21 constructor function member `I` = v Field PrototypeStore 27 unwritten checked string optional
+//// class-shape/static-stores.js
+// Stores to the class add static members only when the binding is known to be the class: not if reassigned or visible to `eval`.
+function stores() {
+  class S {
+    static {
+      this.a = 1;
+      S.b = 2;
+    }
+  }
+  S.c = 3;
+}
+function reassigned() {
+  class R {}
+  R.x = 1;
+  R = null;
+}
+class E {}
+E.x = 1;
+eval("E");
+//// class-shape/static-stores.queries.txt
+# Stores to the class add static members only when the binding is known to be the class: not if reassigned or visible to `eval`.
+static-stores.js:3 class member `S` = a Field StaticStore 5 unwritten checked number static optional
+static-stores.js:3 class member `S` = b Field StaticStore 6 unwritten checked number static optional
+static-stores.js:3 class member `S` = c Field StaticStore 9 unwritten checked number static optional
+absent: static-stores.js:12 class member `R` = x Field StaticStore 13 unwritten checked 1 static optional
+absent: static-stores.js:16 class member `E` = x Field StaticStore 17 unwritten checked 1 static optional
+//// class-shape/stores-after-members.js
+// Stores follow the written members, in source order.
+class S {
+  constructor() {
+    this.early = 1;
+  }
+  written = 0;
+  m() { this.late = 2; }
+}
+S.label = "s";
+//// class-shape/stores-after-members.queries.txt
+# Stores follow the written members, in source order.
+ordered: stores-after-members.js:2 class member `S` = written Field Member 6 unwritten checked number
+ordered: stores-after-members.js:2 class member `S` = m Method Member 7 unwritten checked () => void
+ordered: stores-after-members.js:2 class member `S` = early Field ThisStore 4 unwritten checked number
+ordered: stores-after-members.js:2 class member `S` = late Field ThisStore 7 unwritten checked number optional
+ordered: stores-after-members.js:2 class member `S` = label Field StaticStore 9 unwritten checked string static optional
+//// class-shape/stores-in-removed-code.js
+// A store in code that folding removed adds no member.
+class D {
+  constructor() {
+    if (false) {
+      this.a = 1;
+    }
+    this.b = 1;
+  }
+}
+//// class-shape/stores-in-removed-code.queries.txt
+# A store in code that folding removed adds no member.
+stores-in-removed-code.js:2 class member `D` = b Field ThisStore 7 unwritten checked number
+absent: stores-in-removed-code.js:2 class member `D` = a Field ThisStore 5 unwritten checked 1 optional
+//// class-shape/stores-of-every-construction.js
+// A stored member is not optional if every construction stores it: `this.name = v` that a statement of the constructor's body always evaluates, in front of the first `return` that can hand out `this`.
+function Item(kind) {
+  if (!(this instanceof Item)) return new Item(kind);
+  this.kind = 1;
+  this.first = this.last = 0;
+  this.a = 2, this.b = 3;
+  if (kind) this.parent = 4;
+  this.parent = 5;
+  if (kind) this.conditional = 6;
+  { this.inBlock = 7; }
+  kind && (this.behindTest = 8);
+  this.lazy ||= 9;
+  const later = () => { this.inArrow = 10; };
+  const value = () => this.arrowResult = 11;
+  if (kind === 0) return;
+  this.afterReturn = 12;
+}
+function Replaced(flag) {
+  if (flag) return { other: true };
+  this.a = 1;
+}
+function Removed() {
+  if (false) return;
+  this.a = 1;
+}
+class Base {
+  constructor(x) {
+    this.x = 1;
+    if (x) return this;
+    this.y = 2;
+  }
+  m() { this.z = 3; }
+  w = (this.v = 4);
+}
+class Derived extends Base {
+  constructor() {
+    super(0);
+    this.d = 5;
+  }
+}
+new Replaced(), new Removed();
+//// class-shape/stores-of-every-construction.queries.txt
+# A stored member is not optional if every construction stores it: `this.name = v` that a statement of the constructor's body always evaluates, in front of the first `return` that can hand out `this`.
+stores-of-every-construction.js:2 constructor function member `Item` = kind Field ThisStore 4 unwritten checked number
+stores-of-every-construction.js:2 constructor function member `Item` = first Field ThisStore 5 unwritten checked number
+stores-of-every-construction.js:2 constructor function member `Item` = last Field ThisStore 5 unwritten checked number
+stores-of-every-construction.js:2 constructor function member `Item` = a Field ThisStore 6 unwritten checked number
+stores-of-every-construction.js:2 constructor function member `Item` = b Field ThisStore 6 unwritten checked number
+# Any store of the name counts, not only the first.
+stores-of-every-construction.js:2 constructor function member `Item` = parent Field ThisStore 7 unwritten checked number
+# Under a condition, in a block, behind a test, by `||=`, in another function, behind a `return`.
+stores-of-every-construction.js:2 constructor function member `Item` = conditional Field ThisStore 9 unwritten checked number optional
+stores-of-every-construction.js:2 constructor function member `Item` = inBlock Field ThisStore 10 unwritten checked number optional
+stores-of-every-construction.js:2 constructor function member `Item` = behindTest Field ThisStore 11 unwritten checked number optional
+stores-of-every-construction.js:2 constructor function member `Item` = lazy Field ThisStore 12 unwritten checked number optional
+stores-of-every-construction.js:2 constructor function member `Item` = inArrow Field ThisStore 13 unwritten checked number optional
+stores-of-every-construction.js:2 constructor function member `Item` = arrowResult Field ThisStore 14 unwritten checked number optional
+stores-of-every-construction.js:2 constructor function member `Item` = afterReturn Field ThisStore 16 unwritten checked number optional
+# A `return` of an object that it creates drops `this`, and one in removed code never runs.
+stores-of-every-construction.js:18 constructor function member `Replaced` = a Field ThisStore 20 unwritten checked number
+stores-of-every-construction.js:22 constructor function member `Removed` = a Field ThisStore 24 unwritten checked number
+stores-of-every-construction.js:26 class member `Base` = x Field ThisStore 28 unwritten checked number
+stores-of-every-construction.js:26 class member `Base` = y Field ThisStore 30 unwritten checked number optional
+stores-of-every-construction.js:26 class member `Base` = z Field ThisStore 32 unwritten checked number optional
+stores-of-every-construction.js:26 class member `Base` = v Field ThisStore 33 unwritten checked number optional
+stores-of-every-construction.js:35 class member `Derived` = d Field ThisStore 38 unwritten checked number
+//// class-shape/this-stores.js
+// A `this.name = v` adds an optional member only where `this` is an instance of the class and no member declares the name.
+const key = "k";
+class T {
+  declared = 0;
+  constructor() {
+    this.a = 1;
+    this.declared = 2;
+    this[key] = 3;
+    this.n += 1;
+  }
+  m() {
+    this.b = 1;
+    const f = () => { this.c = 1; };
+    function g() { this.d = 1; }
+  }
+  e = (this.f = 1);
+  static s() { this.h = 1; }
+}
+//// class-shape/this-stores.queries.txt
+# A `this.name = v` adds an optional member only where `this` is an instance of the class and no member declares the name.
+this-stores.js:3 class member `T` = a Field ThisStore 6 unwritten checked number
+this-stores.js:3 class member `T` = b Field ThisStore 12 unwritten checked number optional
+this-stores.js:3 class member `T` = c Field ThisStore 13 unwritten checked number optional
+this-stores.js:3 class member `T` = f Field ThisStore 16 unwritten checked number optional
+absent: this-stores.js:3 class member `T` = declared Field ThisStore 7 unwritten checked 2 optional
+absent: this-stores.js:3 class member `T` = k Field ThisStore 8 unwritten checked 3 optional
+absent: this-stores.js:3 class member `T` = n Field ThisStore 9 unwritten checked 1 optional
+absent: this-stores.js:3 class member `T` = d Field ThisStore 14 unwritten checked 1 optional
+absent: this-stores.js:3 class member `T` = h Field ThisStore 17 unwritten checked 1 optional
+absent: this-stores.js:3 class member `T` = h Field StaticStore 17 unwritten checked 1 static optional
+//// constructor-function-parents/fields-of-called-functions.js
+// A function that hands its `this` to another function stores what that function stores, at the place of the call.
+function Base(name) {
+  this.name = name;
+  this.ready = false;
+}
+function Middle(name) {
+  this.before = 1;
+  Base.call(this, name);
+  this.after = 2;
+}
+function Leaf(name) {
+  Middle.apply(this, [name]);
+  this.ready = true;
+  this.own = 3;
+}
+function Both() {
+  this.own = 1;
+  Base.call(this, "both");
+  Middle.call(this, "both");
+}
+function OtherReceiver(other) {
+  this.own = 1;
+  Base.call(other, "other");
+}
+function InAnArrowFunction() {
+  this.own = 1;
+  const start = () => Base.call(this, "arrow");
+  start();
+}
+function InAnInnerFunction() {
+  this.own = 1;
+  function start() {
+    Base.call(this, "inner");
+  }
+  start();
+}
+////= lines-4	First	first	1	Second
+////= lines-4	Second	second	2	First
+let Reassigned = function () {
+  this.lost = 1;
+};
+Reassigned = function () {
+  this.lost = 2;
+};
+////= lines-4	CallsReassigned	own	1	Reassigned
+function InRemovedCode() {
+  this.own = 1;
+  if (false) Base.call(this, "removed");
+}
+function BehindASpread(list) {
+  this.own = 1;
+  Base.call(...list, this);
+}
+function OtherMember() {
+  this.own = 1;
+  Base.bind(this, "bound");
+}
+new Base(), new Middle(), new Leaf(), new Both(), new OtherReceiver(), new InAnArrowFunction(), new InAnInnerFunction(), new First(), new Second();
+new CallsReassigned(), new InRemovedCode(), new BehindASpread(), new OtherMember();
+//// constructor-function-parents/fields-of-called-functions.queries.txt
+# A function that hands its `this` to another function stores what that function stores, at the place of the call.
+fields-of-called-functions.js:6 constructor function member `Middle` = name Field ThisStore 8 unwritten checked any optional
+fields-of-called-functions.js:6 constructor function member `Middle` = ready Field ThisStore 8 unwritten checked boolean optional
+# Through two calls, in the order in which the stores run. A name that the function stores itself stays its own.
+ordered: fields-of-called-functions.js:11 constructor function member `Leaf` = before Field ThisStore 12 unwritten checked number optional
+ordered: fields-of-called-functions.js:11 constructor function member `Leaf` = name Field ThisStore 12 unwritten checked any optional
+ordered: fields-of-called-functions.js:11 constructor function member `Leaf` = after Field ThisStore 12 unwritten checked number optional
+absent: fields-of-called-functions.js:11 constructor function member `Leaf` = ready Field ThisStore 12 unwritten checked false optional
+# The first call that stores a name has it.
+fields-of-called-functions.js:16 constructor function member `Both` = name Field ThisStore 18 unwritten checked any optional
+fields-of-called-functions.js:16 constructor function member `Both` = ready Field ThisStore 18 unwritten checked boolean optional
+fields-of-called-functions.js:16 constructor function member `Both` = before Field ThisStore 19 unwritten checked number optional
+fields-of-called-functions.js:16 constructor function member `Both` = after Field ThisStore 19 unwritten checked number optional
+absent: fields-of-called-functions.js:16 constructor function member `Both` = name Field ThisStore 19 unwritten checked any optional
+# `this` of an arrow function is that of the function around it.
+fields-of-called-functions.js:25 constructor function member `InAnArrowFunction` = name Field ThisStore 27 unwritten checked any optional
+# Functions that call each other have the names of both.
+fields-of-called-functions.js:37 constructor function member `First` = second Field ThisStore 39 unwritten checked number optional
+fields-of-called-functions.js:41 constructor function member `Second` = first Field ThisStore 43 unwritten checked number optional
+# Another receiver, the `this` of another function, a binding that names no one function, removed code, a receiver behind a spread argument, another member.
+absent: fields-of-called-functions.js:21 constructor function member `OtherReceiver` = name Field ThisStore 23 unwritten checked any optional
+absent: fields-of-called-functions.js:30 constructor function member `InAnInnerFunction` = name Field ThisStore 33 unwritten checked any optional
+absent: fields-of-called-functions.js:51 constructor function member `CallsReassigned` = lost Field ThisStore 53 unwritten checked 1 optional
+absent: fields-of-called-functions.js:51 constructor function member `CallsReassigned` = lost Field ThisStore 53 unwritten checked 2 optional
+absent: fields-of-called-functions.js:55 constructor function member `InRemovedCode` = name Field ThisStore 57 unwritten checked any optional
+absent: fields-of-called-functions.js:59 constructor function member `BehindASpread` = name Field ThisStore 61 unwritten checked any optional
+absent: fields-of-called-functions.js:63 constructor function member `OtherMember` = name Field ThisStore 65 unwritten checked any optional
+//// constructor-function-parents/linked-by-a-function.js
+function Base() {}
+function inherits(constructor, parent) {
+  constructor.super_ = parent;
+  Object.setPrototypeOf(constructor.prototype, parent.prototype);
+}
+function Linked() {}
+inherits(Linked, Base);
+function extend(parent, constructor) {
+  if (parent) constructor.prototype = Object.create(parent.prototype);
+  return constructor;
+}
+function Extended() {}
+extend(Base, Extended);
+function inheritsAndNames(constructor, name, parent) {
+  inherits(constructor, parent);
+  constructor.displayName = name;
+}
+function ThroughTwoFunctions() {}
+inheritsAndNames(ThroughTwoFunctions, "name", Base);
+function underBase(constructor) {
+  Object.setPrototypeOf(constructor.prototype, Base.prototype);
+}
+function FixedParent() {}
+underBase(FixedParent);
+function replacesItsParameter(constructor, parent) {
+  parent = parent || Object;
+  Object.setPrototypeOf(constructor.prototype, parent.prototype);
+}
+function UnknownParent() {}
+replacesItsParameter(UnknownParent, Base);
+function Spread() {}
+inherits(...[Spread, Base]);
+function NeverCalled() {}
+function linksNothing(constructor, parent) {}
+linksNothing(NeverCalled, Base);
+//// constructor-function-parents/linked-by-a-function.queries.txt
+# A call of a function of the file that links the prototype objects of its parameters links those of the arguments.
+linked-by-a-function.js:6 constructor function parent `Linked` = linked-by-a-function.js:1
+linked-by-a-function.js:12 constructor function parent `Extended` = linked-by-a-function.js:1
+linked-by-a-function.js:18 constructor function parent `ThroughTwoFunctions` = linked-by-a-function.js:1
+linked-by-a-function.js:23 constructor function parent `FixedParent` = linked-by-a-function.js:1
+absent: linked-by-a-function.js:29 constructor function parent `UnknownParent` = linked-by-a-function.js:1
+absent: linked-by-a-function.js:31 constructor function parent `Spread` = linked-by-a-function.js:1
+absent: linked-by-a-function.js:33 constructor function parent `NeverCalled` = linked-by-a-function.js:1
+//// constructor-function-parents/linked-by-built-ins.js
+function Base() {}
+function Relinked() {}
+Object.setPrototypeOf(Relinked.prototype, Base.prototype);
+function Reflected() {}
+Reflect.setPrototypeOf(Reflected.prototype, Base.prototype);
+function Created() {}
+Created.prototype = Object.create(Base.prototype);
+function CreatedWithDescriptors() {}
+CreatedWithDescriptors.prototype = Object.create(Base.prototype, { constructor: { value: CreatedWithDescriptors } });
+function UnderAnInstance() {}
+UnderAnInstance.prototype = new Base();
+function UnderALiteral() {}
+UnderALiteral.prototype = { __proto__: Base.prototype, constructor: UnderALiteral };
+function StoredLink() {}
+StoredLink.prototype.__proto__ = Base.prototype;
+function RelinkedLiteral() {}
+RelinkedLiteral.prototype = Object.setPrototypeOf({ constructor: RelinkedLiteral }, Base.prototype);
+const { setPrototypeOf } = Object;
+function ThroughAnAlias() {}
+setPrototypeOf(ThroughAnAlias.prototype, Base.prototype);
+var Expression = function () {};
+Object.setPrototypeOf(Expression.prototype, Base.prototype);
+function Twice() {}
+Twice.prototype = Object.create(Base.prototype);
+Object.setPrototypeOf(Twice.prototype, Base.prototype);
+class Class {}
+function UnderAClass() {}
+Object.setPrototypeOf(UnderAClass.prototype, Class.prototype);
+function Below() {}
+Object.setPrototypeOf(Below["prototype"], Relinked["prototype"]);
+//// constructor-function-parents/linked-by-built-ins.queries.txt
+# The parent of a constructor function is the function or class to whose prototype object the file links the prototype object of the function.
+# A function that is an end of such a link is a constructor function, also where nothing is stored into `this` or into its prototype object.
+linked-by-built-ins.js:1 constructor function `Base` = computed instance false computed static false
+absent: linked-by-built-ins.js:1 constructor function parent `Base` = linked-by-built-ins.js:1
+linked-by-built-ins.js:2 constructor function `Relinked` = computed instance false computed static false
+linked-by-built-ins.js:2 constructor function parent `Relinked` = linked-by-built-ins.js:1
+linked-by-built-ins.js:4 constructor function parent `Reflected` = linked-by-built-ins.js:1
+linked-by-built-ins.js:6 constructor function parent `Created` = linked-by-built-ins.js:1
+linked-by-built-ins.js:8 constructor function parent `CreatedWithDescriptors` = linked-by-built-ins.js:1
+linked-by-built-ins.js:10 constructor function parent `UnderAnInstance` = linked-by-built-ins.js:1
+linked-by-built-ins.js:12 constructor function parent `UnderALiteral` = linked-by-built-ins.js:1
+linked-by-built-ins.js:14 constructor function parent `StoredLink` = linked-by-built-ins.js:1
+linked-by-built-ins.js:16 constructor function parent `RelinkedLiteral` = linked-by-built-ins.js:1
+linked-by-built-ins.js:19 constructor function parent `ThroughAnAlias` = linked-by-built-ins.js:1
+linked-by-built-ins.js:21 constructor function parent `function () {}` = linked-by-built-ins.js:1
+linked-by-built-ins.js:23 constructor function parent `Twice` = linked-by-built-ins.js:1
+linked-by-built-ins.js:27 constructor function parent `UnderAClass` = linked-by-built-ins.js:26
+linked-by-built-ins.js:29 constructor function parent `Below` = linked-by-built-ins.js:2
+//// constructor-function-parents/members-copied-into-prototype-objects.js
+// `Object.assign` stores the properties of an object literal into the prototype object of a function.
+function Base() {}
+////= lines-3	Mixed	own
+Object.assign(Mixed.prototype, {
+  method() {},
+  written: function () {},
+  arrow: () => {},
+  value: 1,
+  get computed() {
+    return 1;
+  },
+  own: 2,
+  __proto__: null,
+  ["key" + 1]: 1,
+});
+function FromTwoLiterals() {}
+Object.assign(FromTwoLiterals.prototype, { first() {} }, Base.prototype, { first: 1, second() {} });
+function Created() {}
+Created.prototype = Object.assign(Object.create(Base.prototype), { run() {} });
+////= lines-3	TheFunctionItself	own
+Object.assign(TheFunctionItself, { helper() {} });
+////= lines-3	IsTheSource	own
+Object.assign({ copied() {} }, IsTheSource.prototype);
+{
+  const Object = { assign(target, source) {} };
+  function OtherObject() {
+    this.own = 1;
+  }
+  Object.assign(OtherObject.prototype, { method() {} });
+}
+//// constructor-function-parents/members-copied-into-prototype-objects.queries.txt
+# `Object.assign` stores the properties of an object literal into the prototype object of a function.
+members-copied-into-prototype-objects.js:3 constructor function member `Mixed` = method Method PrototypeStore 7 unwritten checked () => void optional
+members-copied-into-prototype-objects.js:3 constructor function member `Mixed` = written Method PrototypeStore 8 unwritten checked () => void optional
+members-copied-into-prototype-objects.js:3 constructor function member `Mixed` = arrow Field PrototypeStore 9 unwritten checked () => void optional
+members-copied-into-prototype-objects.js:3 constructor function member `Mixed` = value Field PrototypeStore 10 unwritten checked 1 optional
+# The copy reads a getter: what is stored is a value.
+members-copied-into-prototype-objects.js:3 constructor function member `Mixed` = computed Field PrototypeStore 11 unwritten checked any optional
+absent: members-copied-into-prototype-objects.js:3 constructor function member `Mixed` = computed Getter PrototypeStore 11 unwritten checked () => number optional
+# A name that the function stores itself stays its own. `__proto__` is no property of the literal.
+absent: members-copied-into-prototype-objects.js:3 constructor function member `Mixed` = own Field PrototypeStore 14 unwritten checked 2 optional
+absent: members-copied-into-prototype-objects.js:3 constructor function member `Mixed` = __proto__ Field PrototypeStore 15 unwritten checked null optional
+# A function that gets members this way is a constructor function. The first literal that has a name gives the member.
+members-copied-into-prototype-objects.js:18 constructor function `FromTwoLiterals` = computed instance false computed static false
+members-copied-into-prototype-objects.js:18 constructor function member `FromTwoLiterals` = first Method PrototypeStore 19 unwritten checked () => void optional
+members-copied-into-prototype-objects.js:18 constructor function member `FromTwoLiterals` = second Method PrototypeStore 19 unwritten checked () => void optional
+absent: members-copied-into-prototype-objects.js:18 constructor function member `FromTwoLiterals` = first Field PrototypeStore 19 unwritten checked 1 optional
+# The result of the copy is its target.
+members-copied-into-prototype-objects.js:20 constructor function parent `Created` = members-copied-into-prototype-objects.js:2
+members-copied-into-prototype-objects.js:20 constructor function member `Created` = run Method PrototypeStore 21 unwritten checked () => void optional
+# Another target, the prototype object as a source, and a function of the same name that is no built-in.
+absent: members-copied-into-prototype-objects.js:22 constructor function member `TheFunctionItself` = helper Method PrototypeStore 25 unwritten checked () => void optional
+absent: members-copied-into-prototype-objects.js:26 constructor function member `IsTheSource` = copied Method PrototypeStore 29 unwritten checked () => void optional
+absent: members-copied-into-prototype-objects.js:32 constructor function member `OtherObject` = method Method PrototypeStore 35 unwritten checked () => void optional
+//// constructor-function-parents/no-single-parent.js
+function First() {}
+function Second() {}
+function TwoParents() {}
+Object.setPrototypeOf(TwoParents.prototype, First.prototype);
+Object.setPrototypeOf(TwoParents.prototype, Second.prototype);
+function EitherParent() {}
+Object.setPrototypeOf(EitherParent.prototype, Math.random() < 0.5 ? First.prototype : Second.prototype);
+function Replaced() {}
+Object.setPrototypeOf(Replaced.prototype, First.prototype);
+Replaced.prototype = { constructor: Replaced };
+function UnderAnObject() {}
+Object.setPrototypeOf(UnderAnObject.prototype, First);
+function UnderNothing() {}
+UnderNothing.prototype = Object.create(null);
+function Itself() {}
+Object.setPrototypeOf(Itself.prototype, Itself.prototype);
+function SharesThePrototypeObject() {}
+SharesThePrototypeObject.prototype = First.prototype;
+function InRemovedCode() {}
+if (false) Object.setPrototypeOf(InRemovedCode.prototype, First.prototype);
+let Reassigned = function () {};
+Object.setPrototypeOf(Reassigned.prototype, First.prototype);
+Reassigned = function () {};
+function ReassignedParent() {}
+let parent = First;
+parent = Second;
+Object.setPrototypeOf(ReassignedParent.prototype, parent.prototype);
+function TheFunctionItself() {}
+Object.setPrototypeOf(TheFunctionItself, First);
+{
+  const Object = { setPrototypeOf(object, parent) {}, create(parent) {} };
+  function OtherObject() {}
+  Object.setPrototypeOf(OtherObject.prototype, First.prototype);
+  function OtherCreate() {}
+  OtherCreate.prototype = Object.create(First.prototype);
+}
+//// constructor-function-parents/no-single-parent.queries.txt
+# Two parents, a parent that no binding names, a prototype object that is replaced by another object, and a function of the same name that is no built-in: no parent.
+absent: no-single-parent.js:3 constructor function parent `TwoParents` = no-single-parent.js:1
+absent: no-single-parent.js:3 constructor function parent `TwoParents` = no-single-parent.js:2
+absent: no-single-parent.js:6 constructor function parent `EitherParent` = no-single-parent.js:1
+absent: no-single-parent.js:6 constructor function parent `EitherParent` = no-single-parent.js:2
+absent: no-single-parent.js:8 constructor function parent `Replaced` = no-single-parent.js:1
+absent: no-single-parent.js:11 constructor function parent `UnderAnObject` = no-single-parent.js:1
+absent: no-single-parent.js:15 constructor function parent `Itself` = no-single-parent.js:15
+absent: no-single-parent.js:17 constructor function parent `SharesThePrototypeObject` = no-single-parent.js:1
+absent: no-single-parent.js:19 constructor function parent `InRemovedCode` = no-single-parent.js:1
+absent: no-single-parent.js:21 constructor function parent `function () {}` = no-single-parent.js:1
+absent: no-single-parent.js:24 constructor function parent `ReassignedParent` = no-single-parent.js:1
+absent: no-single-parent.js:24 constructor function parent `ReassignedParent` = no-single-parent.js:2
+absent: no-single-parent.js:28 constructor function parent `TheFunctionItself` = no-single-parent.js:1
+absent: no-single-parent.js:32 constructor function parent `OtherObject` = no-single-parent.js:1
+absent: no-single-parent.js:34 constructor function parent `OtherCreate` = no-single-parent.js:1
+//// contextual-type/discriminated-union.queries.txt
+# A discriminant property selects the union member that is the literal's contextual type.
+discriminated-union.ts:3 contextual `{ kind: "a", x: 1 }` = { kind: "a"; x: number; }
+//// contextual-type/discriminated-union.ts
+// A discriminant property selects the union member that is the literal's contextual type.
+type Shape = { kind: "a"; x: number } | { kind: "b"; y: string };
+const s: Shape = { kind: "a", x: 1 };
+export {};
+//// contextual-type/inferred-array.queries.txt
+# An array literal has a contextual type only where an annotation provides one.
+inferred-array.ts:2 contextual `[1, 2]` = number[]
+inferred-array.ts:3 contextual `[3, 4]` = none
+//// contextual-type/inferred-array.ts
+// An array literal has a contextual type only where an annotation provides one.
+const list: number[] = [1, 2];
+const free = [3, 4];
+export {};
+//// contextual-type/primitive-stays-primitive.queries.txt
+# A primitive literal's contextual type is the primitive type, not its wrapper interface.
+primitive-stays-primitive.ts:2 contextual `1` = number
+primitive-stays-primitive.ts:3 contextual `"a"` = string
+//// contextual-type/primitive-stays-primitive.ts
+// A primitive literal's contextual type is the primitive type, not its wrapper interface.
+const n: number = 1;
+const t: string | undefined = "a";
+export {};
+//// contextual-type/resolved-signature-argument.queries.txt
+# An argument's contextual type is the parameter type of the resolved signature.
+resolved-signature-argument.ts:4 contextual `{ port: 1 }` = Options
+//// contextual-type/resolved-signature-argument.ts
+// An argument's contextual type is the parameter type of the resolved signature.
+interface Options { port: number }
+function listen(options: Options) {}
+listen({ port: 1 });
+export {};
+//// contextual-type/union-without-discriminant.queries.txt
+# An object literal typed by a union without a discriminant has no contextual type.
+union-without-discriminant.ts:3 contextual `{ x: 1 }` = none
+//// contextual-type/union-without-discriminant.ts
+// An object literal typed by a union without a discriminant has no contextual type.
+type U = { x: number } | { y: string };
+const u: U = { x: 1 };
+export {};
+//// dead-code/dead-operand-missing-global-type/main.queries.txt
+# A dead return and a dead conditional arm still contribute to live types, but their errors are dropped with the dead code.
+main.ts:0 role `` = Checked
+absent: -:0 diagnostic TS2318 = MissingDeclaration StopsBuild
+absent: main.ts:2 diagnostic TS2318 = MissingDeclaration StopsBuild
+absent: main.ts:3 diagnostic TS2318 = MissingDeclaration StopsBuild
+//// dead-code/dead-operand-missing-global-type/main.ts
+declare const live: boolean;
+function kept() { if (false) { return (async function* () { yield 1; })(); } return live ? 1 : 2; }
+export const answer = false ? (async function* () { yield 2; })() : kept();
+//// dead-code/dead-operand-missing-global-type/tsconfig.json
+{ "compilerOptions": { "target": "esnext", "lib": ["es2017"], "module": "preserve", "moduleResolution": "bundler", "types": [], "strict": true, "noEmit": true } }
+//// dead-code/dead-statement-missing-global-type/main.queries.txt
+# Dead statements are not type-checked, so they cannot report a missing global type.
+main.ts:0 role `` = Checked
+absent: -:0 diagnostic TS2318 = MissingDeclaration StopsBuild
+//// dead-code/dead-statement-missing-global-type/main.ts
+declare const live: boolean;
+function kept() {
+  if (false) {
+    class Unused { async *each() { yield 1; } }
+    for (const one of [async function* () { yield 2; }]) one();
+    const { made = async function* () { yield 3; } } = {} as { made?: () => unknown };
+    const table = { async *each() { yield 4; } };
+    async function* declared() { yield 5; }
+    new Unused().each(), made(), table.each(), declared();
+  }
+  return live ? 1 : 2;
+}
+while (false) { (async function* () { yield 6; })(); }
+if (false) {
+  const numbers = async function* () { yield 7; };
+  numbers();
+}
+export const answer = kept();
+//// dead-code/dead-statement-missing-global-type/tsconfig.json
+{ "compilerOptions": { "target": "esnext", "lib": ["es2017"], "module": "preserve", "moduleResolution": "bundler", "types": [], "strict": true, "noEmit": true } }
+//// dead-code/early-error-in-removed-code.queries.txt
+# An early error in code that folding removed is still reported: `bun run`'s parser rejects it there too.
+early-error-in-removed-code.ts:3 diagnostic TS1105 = EarlyError StopsBuild
+//// dead-code/early-error-in-removed-code.ts
+// An early error in code that folding removed is still reported: `bun run`'s parser rejects it there too.
+if (false) {
+  break;
+}
+//// dead-code/live-code-missing-global-type/main.queries.txt
+# A missing global type is reported at the function that needs it.
+main.ts:3 diagnostic TS2318 = MissingDeclaration StopsBuild
+absent: -:0 diagnostic TS2318 = MissingDeclaration StopsBuild
+//// dead-code/live-code-missing-global-type/main.ts
+declare const live: boolean;
+if (live) {
+  const numbers = async function* () { yield 1; };
+  numbers();
+}
+export const answer = 1;
+//// dead-code/live-code-missing-global-type/tsconfig.json
+{ "compilerOptions": { "target": "esnext", "lib": ["es2017"], "module": "preserve", "moduleResolution": "bundler", "types": [], "strict": true, "noEmit": true } }
+//// dead-code/missing-import-in-removed-code.queries.txt
+# An `import()` in code that folding removed is never resolved, so a missing file is not an error. The same `import()` in live code is an error.
+absent: missing-import-in-removed-code.ts:3 diagnostic TS2307 = MissingDeclaration StopsBuild
+
+missing-import-in-removed-code.ts:5 diagnostic TS2307 = MissingDeclaration StopsBuild
+//// dead-code/missing-import-in-removed-code.ts
+// An `import()` in code that folding removed is never resolved, so a missing file is not an error. The same `import()` in live code is an error.
+if (false) {
+  import("./does-not-exist");
+}
+import("./does-not-exist");
+export {};
+//// dead-code/never-run-code.queries.txt
+# Code that a constant keeps from running reports no type errors: the body of a loop, a clause of a switch, an operand behind a condition that is decided though its value is not known, what follows `?.` on null.
+absent: never-run-code.ts:3 diagnostic TS2322 = Semantic StopsBuild
+absent: never-run-code.ts:4 diagnostic TS2322 = Semantic StopsBuild
+absent: never-run-code.ts:7 diagnostic TS2322 = Semantic StopsBuild
+absent: never-run-code.ts:9 diagnostic TS2322 = Semantic StopsBuild
+absent: never-run-code.ts:11 diagnostic TS2322 = Semantic StopsBuild
+absent: never-run-code.ts:12 diagnostic TS2322 = Semantic StopsBuild
+absent: never-run-code.ts:14 diagnostic TS2339 = Semantic StopsBuild
+
+never-run-code.ts:15 diagnostic TS2322 = Semantic StopsBuild
+//// dead-code/never-run-code.ts
+// Code that a constant keeps from running reports no type errors: the body of a loop, a clause of a switch, an operand behind a condition that is decided though its value is not known, what follows `?.` on null.
+declare const live: string;
+while (false) { const a: number = "x"; }
+for (; false; ) { const b: number = "x"; }
+const kind: number = 1;
+switch (kind) {
+  case 0: { const c: number = "x"; break; }
+  case 1: break;
+  default: { const d: number = "x"; }
+}
+live && false && ((): number => "x")();
+live && false ? ((): number => "x")() : 0;
+const nothing = false ? { member: 1 } : null;
+nothing?.member.missing;
+const e: number = "y";
+//// dead-code/removed-branch.queries.txt
+# Code that folding removed has no types and reports no type errors. Live code beside it does.
+removed-branch.ts:4 type `a` = gave up: UnreachedNode
+absent: removed-branch.ts:3 diagnostic TS2322 = Semantic StopsBuild
+
+removed-branch.ts:6 diagnostic TS2322 = Semantic StopsBuild
+//// dead-code/removed-branch.ts
+// Code that folding removed has no types and reports no type errors. Live code beside it does.
+if (false) {
+  const a: number = "x";
+  a;
+}
+const b: number = "y";
+//// dead-code/removed-operand.queries.txt
+# A call in an operand that folding removed has no target. The same call in live code has one.
+removed-operand.ts:3 call `one()` = gave up: UnreachedNode
+
+removed-operand.ts:4 call `one()` = declaration removed-operand.ts:2
+//// dead-code/removed-operand.ts
+// A call in an operand that folding removed has no target. The same call in live code has one.
+declare function one(): number;
+const v = false ? one() : 2;
+one();
+//// dead-code/require-in-removed-code.queries.txt
+# A `require` in code that folding removed is never followed, so its file is not compiled. The file of a live `require` is compiled.
+absent: required-in-removed-code.cjs:0 role `` = Inferred
+
+required-in-live-code.cjs:0 role `` = Inferred
+//// dead-code/require-in-removed-code.ts
+// A `require` in code that folding removed is never followed, so its file is not compiled. The file of a live `require` is compiled.
+if (false) {
+  require("./required-in-removed-code.cjs");
+}
+require("./required-in-live-code.cjs");
+export {};
+//// dead-code/required-in-live-code.cjs
+// A `require` in code that folding removed is never followed, so its file is not compiled. The file of a live `require` is compiled.
+module.exports = {};
+//// dead-code/required-in-removed-code.cjs
+// A `require` in code that folding removed is never followed, so its file is not compiled. The file of a live `require` is compiled.
+module.exports = {};
+//// diagnostic-class/async-before-of.queries.txt
+# ECMAScript forbids the tokens `for (async of`, in and outside an await context. TypeScript is silent in an await context, so there the error comes from the early-error pass.
+async-before-of.ts:3 diagnostic TS1106 = EarlyError StopsBuild
+async-before-of.ts:4 diagnostic TS1106 = EarlyError StopsBuild
+
+# TypeScript forbids the name `async` after `for await (` and with an escape too. Both are valid JavaScript.
+async-before-of.ts:5 diagnostic TS1106 = TypeScriptGrammar StopsBuild
+async-before-of.ts:6 diagnostic TS1106 = TypeScriptGrammar StopsBuild
+absent: async-before-of.ts:5 diagnostic TS1106 = EarlyError StopsBuild
+absent: async-before-of.ts:6 diagnostic TS1106 = EarlyError StopsBuild
+//// diagnostic-class/async-before-of.ts
+// ECMAScript forbids the tokens `for (async of`, in and outside an await context. TypeScript forbids the name `async` there, however it is written, outside an await context only.
+declare let async: any;
+for (async of []) {}
+async function f() { for (async of []) {} }
+for await (async of []) {}
+for (\u0061sync of []) {}
+export {};
+//// diagnostic-class/bigint-binding-names.queries.txt
+# `getLiteralTypeFromPropertyName` of `0n` is the string `0n`, which indexes no array.
+bigint-binding-names.ts:4 diagnostic TS2538 = Semantic StopsBuild
+absent: bigint-binding-names.ts:5 diagnostic TS2538 = Semantic StopsBuild
+
+# `1n` reads the property `1n`. The rest omits that one and keeps `1`.
+bigint-binding-names.ts:7 diagnostic TS2322 = Semantic StopsBuild
+bigint-binding-names.ts:8 diagnostic TS2322 = Semantic StopsBuild
+bigint-binding-names.ts:9 diagnostic TS2741 = Semantic StopsBuild
+
+# The type of the default `{}` is padded with the property `1n`.
+bigint-binding-names.ts:13 diagnostic TS2322 = Semantic StopsBuild
+absent: bigint-binding-names.ts:14 diagnostic TS2353 = Semantic StopsBuild
+//// diagnostic-class/bigint-binding-names.ts
+// To the checker the name `1n` of a binding element is the text `1n`. At run time it is the property `1`.
+declare const list: number[];
+declare const record: { 1: string; "1n": number; other: boolean };
+const { 0n: first } = list;
+const { 0: second } = list;
+const { 1n: named, ...rest } = record;
+const namedText: string = named;
+const keptNumber: number = rest[1];
+const omitted: { "1n": number } = rest;
+function withDefault({ 1n: value = 1 } = {}) {
+  return value;
+}
+withDefault({ "1n": "text" });
+withDefault({ "1n": 2 });
+export {};
+//// diagnostic-class/deferred-import-under-an-older-module/later.ts
+export const seven: number = 7;
+//// diagnostic-class/deferred-import-under-an-older-module/main.queries.txt
+# Which `module` takes `import defer` is a rule about what tsc writes. Bun runs it, and the rest of the import is checked.
+absent: main.ts:2 diagnostic TS18060 = Semantic StopsBuild
+absent: main.ts:3 diagnostic TS18060 = Semantic StopsBuild
+main.ts:5 type `later.seven` = number
+main.ts:3 diagnostic TS2440 = Semantic StopsBuild
+//// diagnostic-class/deferred-import-under-an-older-module/main.ts
+// Which `module` takes `import defer` is a rule about what tsc writes. Bun runs it, and the rest of the import is checked.
+import defer * as later from "./later.ts";
+import defer * as twice from "./later.ts";
+const twice = 2;
+export const sum = later.seven + twice;
+//// diagnostic-class/deferred-import-under-an-older-module/tsconfig.json
+{ "compilerOptions": { "target": "esnext", "module": "es2022", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "strict": true, "noEmit": true } }
+//// diagnostic-class/duplicate-sites.queries.txt
+# A duplicate private name or constructor, `??` mixed with `||`, and a rest element before the end are EarlyError. A duplicate public field is valid JavaScript, so it is Semantic.
+duplicate-sites.ts:4 diagnostic TS2300 = EarlyError StopsBuild
+duplicate-sites.ts:8 diagnostic TS2804 = EarlyError StopsBuild
+duplicate-sites.ts:12 diagnostic TS2392 = EarlyError StopsBuild
+duplicate-sites.ts:19 diagnostic TS5076 = EarlyError StopsBuild
+duplicate-sites.ts:20 diagnostic TS2462 = EarlyError StopsBuild
+
+duplicate-sites.ts:16 diagnostic TS2300 = Semantic StopsBuild
+//// diagnostic-class/duplicate-sites.ts
+// A duplicate private name or constructor, `??` mixed with `||`, and a rest element before the end are EarlyError. A duplicate public field is valid JavaScript, so it is Semantic.
+class E {
+  #a = 1;
+  #a = 2;
+}
+class F {
+  #a = 1;
+  static #a = 2;
+}
+class H {
+  constructor() {}
+  constructor() {}
+}
+class G {
+  a = 1;
+  a = 2;
+}
+declare let a: any, b: any, c: any;
+a ?? b || c;
+[...a, b] = c;
+//// diagnostic-class/error-in-another-file/first.ts
+if (false) { console.log("this statement is removed, and it covers the place where the other file has its error"); }
+export {};
+declare global { enum Merged { A } }
+//// diagnostic-class/error-in-another-file/main.queries.txt
+# The check of first.ts reports the error in second.ts. A statement that is removed from first.ts covers the same offsets there, which says nothing about second.ts.
+second.ts:2 diagnostic TS2432 = Semantic StopsBuild
+//// diagnostic-class/error-in-another-file/main.ts
+import "./first";
+import "./second";
+//// diagnostic-class/error-in-another-file/second.ts
+export {};
+declare global { enum Merged { B } }
+//// diagnostic-class/eval-and-arguments-sloppy.cjs
+// `eval` and `arguments` as the name of a class and as a target that is not itself the operand of an assignment are EarlyError in strict mode code and are not reported in sloppy mode code.
+var o = {};
+[arguments] = [];
+({ eval } = o);
+for (eval of []) {}
+(arguments) = 1;
+class C { m() { [eval] = []; } }
+module.exports = {};
+//// diagnostic-class/eval-and-arguments-strict.mjs
+// `eval` and `arguments` as the name of a class and as a target that is not itself the operand of an assignment are EarlyError in strict mode code and are not reported in sloppy mode code.
+var o = {};
+class eval {}
+[arguments] = [];
+({ eval } = o);
+for (eval of []) {}
+(arguments) = 1;
+class C { m() { [eval] = []; } }
+[o.eval] = [];
+export {};
+//// diagnostic-class/eval-and-arguments.queries.txt
+# `eval` and `arguments` as the name of a class and as a target that is not itself the operand of an assignment are EarlyError in strict mode code and are not reported in sloppy mode code.
+eval-and-arguments-strict.mjs:3 diagnostic TS1215 = EarlyError StopsBuild
+eval-and-arguments-strict.mjs:4 diagnostic TS1215 = EarlyError StopsBuild
+eval-and-arguments-strict.mjs:5 diagnostic TS1215 = EarlyError StopsBuild
+eval-and-arguments-strict.mjs:6 diagnostic TS1215 = EarlyError StopsBuild
+eval-and-arguments-strict.mjs:7 diagnostic TS1215 = EarlyError StopsBuild
+eval-and-arguments-strict.mjs:8 diagnostic TS1210 = EarlyError StopsBuild
+absent: eval-and-arguments-strict.mjs:9 diagnostic TS1215 = EarlyError StopsBuild
+
+# A class is strict mode code in a sloppy file too.
+eval-and-arguments-sloppy.cjs:7 diagnostic TS1210 = EarlyError StopsBuild
+absent: eval-and-arguments-sloppy.cjs:3 diagnostic TS1100 = EarlyError StopsBuild
+absent: eval-and-arguments-sloppy.cjs:3 diagnostic TS1215 = EarlyError StopsBuild
+absent: eval-and-arguments-sloppy.cjs:4 diagnostic TS1100 = EarlyError StopsBuild
+absent: eval-and-arguments-sloppy.cjs:4 diagnostic TS1215 = EarlyError StopsBuild
+absent: eval-and-arguments-sloppy.cjs:5 diagnostic TS1100 = EarlyError StopsBuild
+absent: eval-and-arguments-sloppy.cjs:5 diagnostic TS1215 = EarlyError StopsBuild
+absent: eval-and-arguments-sloppy.cjs:6 diagnostic TS1100 = EarlyError StopsBuild
+absent: eval-and-arguments-sloppy.cjs:6 diagnostic TS1215 = EarlyError StopsBuild
+//// diagnostic-class/eval-and-arguments.ts
+// `eval` and `arguments` as the name of a class and as a target that is not itself the operand of an assignment are EarlyError in strict mode code and are not reported in sloppy mode code.
+import "./eval-and-arguments-sloppy.cjs";
+import "./eval-and-arguments-strict.mjs";
+//// diagnostic-class/expression-sites/main.queries.txt
+# The errors about `super`, `arguments`, private names and decorators that are raised among the type checks: an early error only where JavaScript rejects the text too. Implicit `any` is style.
+main.ts:3 diagnostic TS2815 = EarlyError StopsBuild
+main.ts:4 diagnostic TS2335 = EarlyError StopsBuild
+main.ts:5 diagnostic TS2660 = EarlyError StopsBuild
+main.ts:6 diagnostic TS2337 = EarlyError StopsBuild
+main.ts:7 diagnostic TS18016 = EarlyError StopsBuild
+main.ts:8 diagnostic TS18016 = EarlyError StopsBuild
+main.ts:9 diagnostic TS1497 = EarlyError StopsBuild
+
+main.ts:11 diagnostic TS2335 = Semantic StopsBuild
+main.ts:12 diagnostic TS2337 = Semantic StopsBuild
+main.ts:13 diagnostic TS2336 = Semantic StopsBuild
+main.ts:14 diagnostic TS2815 = Semantic StopsBuild
+main.ts:19 diagnostic TS2338 = Semantic StopsBuild
+
+main.ts:15 diagnostic TS2683 = Style StopsBuild
+main.ts:16 diagnostic TS7017 = Style StopsBuild
+//// diagnostic-class/expression-sites/main.ts
+declare const anything: any;
+declare const makeDecorator: any;
+function makeFields() { return class { field = arguments; }; }
+class NoBase { constructor() { super(); } }
+function reads() { return super.member; }
+function calls() { super(); }
+export const name = anything.#name;
+interface Shape { #name: number; }
+@makeDecorator()() class Decorated {}
+class Base { name = "base"; }
+class ReadsObjectPrototype { describe() { return typeof super.toString; } }
+class InArrow extends Base { constructor() { const initialize = () => super(); initialize(); } }
+class InParameter extends Base { constructor(self = super()) { void self; } }
+class InNestedParameter { make = function (first = arguments.length) { return first; }; }
+function implicitThis() { return this; }
+export const missing = globalThis.missing;
+export { makeFields, NoBase, reads, calls, Decorated, ReadsObjectPrototype, InArrow, InParameter, InNestedParameter, implicitThis };
+export type { Shape };
+class StaticConstructor { static constructor() { void super.toString; } }
+export { StaticConstructor };
+//// diagnostic-class/expression-sites/tsconfig.json
+{ "compilerOptions": { "target": "esnext", "module": "preserve", "moduleResolution": "bundler", "types": [], "noEmit": true } }
+//// diagnostic-class/global-diagnostic-location/declaration-file/main.queries.txt
+# TS2502 for a circular auto-accessor has no node in TypeScript. In a declaration file it must not stop the build.
+main.ts:0 role `` = Checked
+absent: -:0 diagnostic TS2502 = Semantic StopsBuild
+//// diagnostic-class/global-diagnostic-location/declaration-file/main.ts
+import type { Held } from "./types";
+export function read(held: Held) { return held.value; }
+//// diagnostic-class/global-diagnostic-location/declaration-file/types.d.ts
+export declare class Held { accessor value: Held["value"]; }
+//// diagnostic-class/global-diagnostic-location/program-source/main.queries.txt
+# TS2502 and TS2428 have no node in TypeScript for these declarations. A build reports them at the declaration.
+main.ts:1 diagnostic TS2502 = Semantic StopsBuild
+main.ts:2 diagnostic TS2428 = Semantic StopsBuild
+main.ts:3 diagnostic TS2428 = Semantic StopsBuild
+absent: -:0 diagnostic TS2502 = Semantic StopsBuild
+absent: -:0 diagnostic TS2428 = Semantic StopsBuild
+//// diagnostic-class/global-diagnostic-location/program-source/main.ts
+export class Held { accessor value: Held["value"] = 1 as any; }
+export default class<T> { held?: T; }
+export default interface Named<U> { other?: U; }
+//// diagnostic-class/grammar-sites.queries.txt
+# A grammar error is an EarlyError where JavaScript rejects the text too. A TypeScript-only rule is TypeScriptGrammar, and a type error is Semantic.
+grammar-sites.ts:2 diagnostic TS1105 = EarlyError StopsBuild
+grammar-sites.ts:3 diagnostic TS1114 = EarlyError StopsBuild
+grammar-sites.ts:4 diagnostic TS1014 = EarlyError StopsBuild
+grammar-sites.ts:5 diagnostic TS1054 = EarlyError StopsBuild
+grammar-sites.ts:6 diagnostic TS1155 = EarlyError StopsBuild
+grammar-sites.ts:7 diagnostic TS2480 = EarlyError StopsBuild
+grammar-sites.ts:8 diagnostic TS1312 = EarlyError StopsBuild
+grammar-sites.ts:9 diagnostic TS2523 = EarlyError StopsBuild
+grammar-sites.ts:10 diagnostic TS2364 = EarlyError StopsBuild
+
+grammar-sites.ts:11 diagnostic TS1117 = TypeScriptGrammar StopsBuild
+grammar-sites.ts:12 diagnostic TS1016 = TypeScriptGrammar StopsBuild
+grammar-sites.ts:13 diagnostic TS2322 = Semantic StopsBuild
+grammar-sites.ts:14 diagnostic TS1117 = EarlyError StopsBuild
+//// diagnostic-class/grammar-sites.ts
+// A grammar error is an EarlyError where JavaScript rejects the text too. A TypeScript-only rule is TypeScriptGrammar, and a type error is Semantic.
+break;
+again: { again: {} }
+function rest(...a: number[], b: number) {}
+class Getter { get a(x: number) { return x; } }
+const missing;
+let let = 1;
+({ a = 1 });
+function* g(a = yield) {}
+1 = 2;
+({ p: 1, p: 2 });
+function optional(a?: number, b: number) {}
+const n: number = "x";
+({ __proto__: null, "__proto__": null });
+//// diagnostic-class/implicit-returns/main.queries.txt
+# A missing return under `noImplicitReturns` is Style.
+main.ts:2 diagnostic TS7030 = Style StopsBuild
+//// diagnostic-class/implicit-returns/main.ts
+// A missing return under `noImplicitReturns` is Style.
+function f(a: boolean) { if (a) return 1; }
+//// diagnostic-class/implicit-returns/tsconfig.json
+{ "extends": "../../tsconfig.json", "compilerOptions": { "noImplicitReturns": true } }
+//// diagnostic-class/jsx-sites/main.queries.txt
+# An empty attribute expression is an early error: `bun run` rejects it. `bun run` accepts the other three, so they are TypeScript grammar.
+main.tsx:3 diagnostic TS17000 = EarlyError StopsBuild
+main.tsx:4 diagnostic TS17001 = TypeScriptGrammar StopsBuild
+main.tsx:5 diagnostic TS18007 = TypeScriptGrammar StopsBuild
+main.tsx:6 diagnostic TS2639 = TypeScriptGrammar StopsBuild
+//// diagnostic-class/jsx-sites/main.tsx
+function h(tag: any, props: any, ...children: any[]) { return { tag, props, children }; }
+declare global { namespace JSX { interface IntrinsicElements { [name: string]: any } } }
+export const empty = <p title={} />;
+export const repeated = <p title="first" title="second" />;
+export const comma = <p>{1, 2}</p>;
+export const namespaced = <Svg:path />;
+//// diagnostic-class/jsx-sites/tsconfig.json
+////= lines-2	"jsx"	"react"	"jsxFactory"	"h"
+//// diagnostic-class/jsx-without-intrinsic-elements/main.queries.txt
+# A tag that is implicitly `any` because there is no `JSX.IntrinsicElements` says nothing about run-time behavior.
+main.tsx:2 diagnostic TS7026 = Style StopsBuild
+//// diagnostic-class/jsx-without-intrinsic-elements/main.tsx
+function h(tag: any, props: any, ...children: any[]) { return { tag, props, children }; }
+export const element = <p />;
+//// diagnostic-class/jsx-without-intrinsic-elements/tsconfig.json
+////= lines	"noImplicitAny"	"jsx"	"react"	"jsxFactory"	"h"
+//// diagnostic-class/legacy-decorators/main.queries.txt
+# With `experimentalDecorators` `bun run` takes any call chain as a decorator and runs a decorated class with a static private name: both errors are TypeScript's own.
+main.ts:3 diagnostic TS1497 = TypeScriptGrammar StopsBuild
+main.ts:4 diagnostic TS18036 = TypeScriptGrammar StopsBuild
+//// diagnostic-class/legacy-decorators/main.ts
+declare const make: () => () => (target: Function) => void;
+declare const decorate: (target: Function) => void;
+@make()() class Chained {}
+@decorate class WithStaticPrivate { static #count = 1; static read() { return WithStaticPrivate.#count; } }
+export { Chained, WithStaticPrivate };
+//// diagnostic-class/legacy-decorators/tsconfig.json
+{ "compilerOptions": { "target": "esnext", "module": "preserve", "moduleResolution": "bundler", "types": [], "noEmit": true, "experimentalDecorators": true } }
+//// diagnostic-class/modifier-sites.queries.txt
+# A modifier error is an EarlyError where JavaScript rejects the text too, and TypeScriptGrammar where the modifier or the rule is TypeScript's own.
+modifier-sites.ts:2 diagnostic TS1030 = EarlyError StopsBuild
+modifier-sites.ts:3 diagnostic TS1029 = EarlyError StopsBuild
+modifier-sites.ts:4 diagnostic TS1491 = EarlyError StopsBuild
+
+modifier-sites.ts:5 diagnostic TS1029 = TypeScriptGrammar StopsBuild
+modifier-sites.ts:6 diagnostic TS1089 = TypeScriptGrammar StopsBuild
+modifier-sites.ts:7 diagnostic TS18010 = TypeScriptGrammar StopsBuild
+//// diagnostic-class/modifier-sites.ts
+// A modifier error is an EarlyError where JavaScript rejects the text too, and TypeScriptGrammar where the modifier or the rule is TypeScript's own.
+class A { async async m() {} }
+async export function f() {}
+export using u = null;
+class B { readonly static a = 1; }
+class C { static constructor() {} }
+class D { private #a = 1; }
+//// diagnostic-class/module-sites.queries.txt
+# `import`, `export` and `new.target` outside the positions JavaScript allows are EarlyError. `import a = require()` is TypeScript syntax, so its position error is TypeScriptGrammar.
+module-sites.ts:2 diagnostic TS1232 = EarlyError StopsBuild
+module-sites.ts:3 diagnostic TS1233 = EarlyError StopsBuild
+module-sites.ts:4 diagnostic TS17013 = EarlyError StopsBuild
+
+module-sites.ts:5 diagnostic TS1232 = TypeScriptGrammar StopsBuild
+//// diagnostic-class/module-sites.ts
+// `import`, `export` and `new.target` outside the positions JavaScript allows are EarlyError. `import a = require()` is TypeScript syntax, so its position error is TypeScriptGrammar.
+{ import "a"; }
+function f() { export {}; }
+new.target;
+{ import a = require("a"); }
+export {};
+//// diagnostic-class/old-target-class-fields/main.queries.txt
+# `bun run` leaves class fields where they are written unless `useDefineForClassFields` is false, and a default value in front of the body, whatever the target. No rule about where tsc would move them counts, and a name means what it means at run time.
+absent: main.ts:4 diagnostic TS2699 = Semantic StopsBuild
+absent: main.ts:5 diagnostic TS2301 = Semantic StopsBuild
+main.ts:5 type `limit` = 3
+main.ts:13 type `new Late(true).max` = number
+absent: main.ts:6 diagnostic TS2401 = Semantic StopsBuild
+absent: main.ts:7 diagnostic TS2373 = Semantic StopsBuild
+main.ts:7 type `fallback` = "outer"
+main.ts:7 binding `name` = string
+absent: main.ts:8 diagnostic TS2373 = Semantic StopsBuild
+main.ts:8 type `fallback` = "outer"
+main.ts:8 binding `seen` = string
+
+# What such a field does is reported, whatever the target: it is defined again as undefined, and it is initialized in front of the constructor's body.
+main.ts:11 diagnostic TS2612 = Semantic StopsBuild
+main.ts:12 diagnostic TS2729 = Semantic StopsBuild
+//// diagnostic-class/old-target-class-fields/main.ts
+// `bun run` leaves class fields where they are written unless `useDefineForClassFields` is false, and a default value in front of the body, whatever the target. No rule about where tsc would move them counts.
+const limit = 3;
+const fallback = "outer";
+class Named { static name = "its own"; }
+class Limited { max = limit; text: string; constructor(limit: string) { this.text = limit; } }
+class Late extends Limited { extra = 1; constructor(flag: boolean) { if (flag) { super("yes"); } else { super("no"); } } }
+function pick(options?: { name?: string }, name = options?.name ?? fallback) { var fallback = 1; return name + fallback; }
+function split({ a, ...others }: { a: number; b: number }, seen = fallback) { var fallback = 2; return [a, others, seen, fallback]; }
+// What such a field does is reported, whatever the target: it is defined again as undefined, and it is initialized in front of the constructor's body.
+class Base { x: number = 5; }
+class Redeclared extends Base { x!: number; }
+class FromParameter { doubled = this.n * 2; constructor(public n: number) {} }
+export const all = [Named.name, new Late(true).max, pick(), split({ a: 1, b: 2 }), new Redeclared().x, new FromParameter(1).doubled];
+//// diagnostic-class/old-target-class-fields/tsconfig.json
+{ "compilerOptions": { "target": "es2015", "module": "preserve", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "strict": true, "noEmit": true } }
+//// diagnostic-class/old-target/main.queries.txt
+# A build writes nothing for an older engine, so no rule about `target` counts: flags and named groups of regular expressions, BigInt literals and their powers.
+absent: main.ts:2 diagnostic TS1501 = TypeScriptGrammar StopsBuild
+absent: main.ts:2 diagnostic TS1503 = TypeScriptGrammar StopsBuild
+absent: main.ts:3 diagnostic TS1501 = TypeScriptGrammar StopsBuild
+absent: main.ts:4 diagnostic TS2737 = Semantic StopsBuild
+absent: main.ts:5 diagnostic TS2737 = Semantic StopsBuild
+absent: main.ts:5 diagnostic TS2791 = Semantic StopsBuild
+main.ts:5 type `big ** 2n` = bigint
+
+# TypeScript has this rule from ES2016 on, and `bun run` drops the directive.
+absent: main.ts:7 diagnostic TS1347 = TypeScriptGrammar StopsBuild
+absent: main.ts:7 diagnostic TS1346 = TypeScriptGrammar StopsBuild
+//// diagnostic-class/old-target/main.ts
+// A build writes nothing for an older engine, so no rule about `target` counts: flags and named groups of regular expressions, BigInt literals and their powers.
+const found = /(?<year>\d+).(?<month>\d+)/s.exec("1\n2");
+const indices = /a/d, sets = /[a]/v;
+const big = 1n;
+const power = big ** 2n;
+// TypeScript has this rule from ES2016 on, and `bun run` drops the directive.
+function strict(a = 1) { "use strict"; return a; }
+export const all = [found, indices, sets, power, strict()];
+//// diagnostic-class/old-target/tsconfig.json
+{ "compilerOptions": { "target": "es2015", "module": "preserve", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "strict": true, "noEmit": true } }
+//// diagnostic-class/regular-expressions/main.queries.txt
+# Every error about a regular expression literal has the class of TypeScript's grammar, also where JavaScript rejects the literal: whether a literal is valid is the engine's answer.
+main.ts:1 diagnostic TS1534 = TypeScriptGrammar StopsBuild
+main.ts:2 diagnostic TS1534 = TypeScriptGrammar StopsBuild
+main.ts:3 diagnostic TS1507 = TypeScriptGrammar StopsBuild
+main.ts:4 diagnostic TS1526 = TypeScriptGrammar StopsBuild
+main.ts:5 diagnostic TS1526 = TypeScriptGrammar StopsBuild
+main.ts:6 diagnostic TS1514 = TypeScriptGrammar StopsBuild
+main.ts:6 diagnostic TS1532 = TypeScriptGrammar StopsBuild
+main.ts:7 diagnostic TS1508 = TypeScriptGrammar StopsBuild
+main.ts:8 diagnostic TS1517 = TypeScriptGrammar StopsBuild
+absent: main.ts:2 diagnostic TS1534 = EarlyError StopsBuild
+absent: main.ts:3 diagnostic TS1507 = EarlyError StopsBuild
+absent: main.ts:5 diagnostic TS1526 = EarlyError StopsBuild
+//// diagnostic-class/regular-expressions/main.ts
+export const annexB = /\1/;
+export const unicode = /\1/u;
+export const repeated = /a**/;
+export const script = /\p{Script=Nope}/u;
+export const category = /\p{General_Category=Nope}/u;
+export const escaped = /(?<\u0041>.)\k<A>/;
+export const ampersand = /[a&b]/v;
+export const control = /[\c1-\x20]/;
+//// diagnostic-class/regular-expressions/tsconfig.json
+{ "compilerOptions": { "target": "esnext", "module": "preserve", "moduleResolution": "bundler", "types": [], "noEmit": true } }
+//// diagnostic-class/roles-declarations.d.ts
+// A diagnostic carries its class and its effect on the build. A type error in the program's TypeScript stops the build. JavaScript reports its early errors and nothing else, even under `// @ts-check`. A declaration file reports nothing.
+declare const broken: Missing;
+//// diagnostic-class/roles-javascript.js
+// A diagnostic carries its class and its effect on the build. A type error in the program's TypeScript stops the build. JavaScript reports its early errors and nothing else, even under `// @ts-check`. A declaration file reports nothing.
+// @ts-check
+again: { again: {} }
+/** @type {number} */ const s = "x";
+s();
+//// diagnostic-class/roles.queries.txt
+# A diagnostic carries its class and its effect on the build. A type error in the program's TypeScript stops the build. JavaScript reports its early errors and nothing else, even under `// @ts-check`. A declaration file reports nothing.
+roles.ts:0 role `` = Checked
+roles.ts:4 diagnostic TS2322 = Semantic StopsBuild
+
+roles-javascript.js:0 role `` = Inferred
+roles-javascript.js:3 diagnostic TS1114 = EarlyError StopsBuild
+absent: roles-javascript.js:4 diagnostic TS2322 = Semantic StopsBuild
+absent: roles-javascript.js:5 diagnostic TS2349 = Semantic StopsBuild
+
+roles-declarations.d.ts:0 role `` = TypesOnly
+absent: roles-declarations.d.ts:2 diagnostic TS2304 = DeclarationFile StopsBuild
+absent: roles-declarations.d.ts:2 diagnostic TS2304 = MissingDeclaration StopsBuild
+//// diagnostic-class/roles.ts
+// A diagnostic carries its class and its effect on the build. A type error in the program's TypeScript stops the build. JavaScript reports its early errors and nothing else, even under `// @ts-check`. A declaration file reports nothing.
+/// <reference path="./roles-declarations.d.ts" />
+import "./roles-javascript.js";
+const n: number = "x";
+//// diagnostic-class/rules-that-say-nothing-about-a-type/main.queries.txt
+# A condition that is always true, an operand that is never reached and `override` where nothing is overridden say nothing about a type: Style, which costs a dependency nothing.
+main.ts:2 diagnostic TS2869 = Style StopsBuild
+main.ts:3 diagnostic TS2774 = Style StopsBuild
+main.ts:4 diagnostic TS2872 = Style StopsBuild
+main.ts:5 diagnostic TS1313 = Style StopsBuild
+main.ts:7 diagnostic TS4113 = Style StopsBuild
+main.ts:8 diagnostic TS4112 = Style StopsBuild
+//// diagnostic-class/rules-that-say-nothing-about-a-type/main.ts
+// A condition that is always true, an operand that is never reached and `override` where nothing is overridden say nothing about a type: Style, which costs a dependency nothing.
+export function half(n: number, label?: string): number { const text = "" + label ?? "none"; return text.length + n / 2; }
+export function call(callback: () => void) { if (callback) return 1; return 2; }
+export function always() { if ({}) return 1; return 2; }
+export function empty(n: number) { if (n); }
+class Base {}
+export class Derived extends Base { override run() { return 1; } }
+export class Alone { override run() { return 1; } }
+//// diagnostic-class/rules-that-say-nothing-about-a-type/tsconfig.json
+{ "compilerOptions": { "target": "esnext", "module": "preserve", "moduleResolution": "bundler", "types": [], "strict": true, "noEmit": true } }
+//// diagnostic-class/statement-style-sites/main.queries.txt
+# Implicit `any` in a mapped type, in a captured variable and in a field assigned `[]`, a fallthrough and an unused label are Style.
+main.ts:1 diagnostic TS7039 = Style StopsBuild
+main.ts:3 diagnostic TS7029 = Style StopsBuild
+main.ts:4 diagnostic TS7028 = Style StopsBuild
+main.ts:5 diagnostic TS7034 = Style StopsBuild
+main.ts:5 diagnostic TS7005 = Style StopsBuild
+main.ts:6 diagnostic TS7008 = Style StopsBuild
+//// diagnostic-class/statement-style-sites/main.ts
+export type Mapped = { [K in "a"] };
+declare function called(): void;
+export function fallsThrough(n: number) { switch (n) { case 1: called(); case 2: called(); } }
+export function labeled() { unused: for (;;) { break; } }
+export function captured() { let later; const read = () => later; later = 1; return read; }
+export class Members { items; constructor() { this.items = []; } }
+//// diagnostic-class/statement-style-sites/tsconfig.json
+////= lines-2	"noFallthroughCasesInSwitch"	true	"allowUnusedLabels"	false
+//// diagnostic-class/strict-only-sloppy.cjs
+// `with` and `delete` of a name are EarlyError in an ES module and are not reported in sloppy CommonJS. A legacy octal literal is EarlyError in neither: `bun run` prints its value.
+var o = {};
+with (o) {}
+var name; delete name;
+var octal = 010;
+module.exports = {};
+//// diagnostic-class/strict-only-strict.mjs
+// `with` and `delete` of a name are EarlyError in an ES module and are not reported in sloppy CommonJS. A legacy octal literal is EarlyError in neither: `bun run` prints its value.
+var o = {};
+with (o) {}
+var name; delete name;
+var octal = 010;
+export {};
+//// diagnostic-class/strict-only.queries.txt
+# `with` and `delete` of a name are EarlyError in an ES module and are not reported in sloppy CommonJS. A legacy octal literal is EarlyError in neither: `bun run` prints its value.
+strict-only-strict.mjs:3 diagnostic TS1101 = EarlyError StopsBuild
+strict-only-strict.mjs:4 diagnostic TS1102 = EarlyError StopsBuild
+
+absent: strict-only-strict.mjs:5 diagnostic TS1121 = EarlyError StopsBuild
+absent: strict-only-strict.mjs:5 diagnostic TS1121 = TypeScriptGrammar StopsBuild
+absent: strict-only-sloppy.cjs:3 diagnostic TS1101 = EarlyError StopsBuild
+absent: strict-only-sloppy.cjs:3 diagnostic TS1101 = TypeScriptGrammar StopsBuild
+absent: strict-only-sloppy.cjs:4 diagnostic TS1102 = EarlyError StopsBuild
+absent: strict-only-sloppy.cjs:4 diagnostic TS1102 = TypeScriptGrammar StopsBuild
+absent: strict-only-sloppy.cjs:5 diagnostic TS1121 = EarlyError StopsBuild
+absent: strict-only-sloppy.cjs:5 diagnostic TS1121 = TypeScriptGrammar StopsBuild
+//// diagnostic-class/strict-only.ts
+// `with` and `delete` of a name are EarlyError in an ES module and are not reported in sloppy CommonJS. A legacy octal literal is EarlyError in neither: `bun run` prints its value.
+import "./strict-only-sloppy.cjs";
+import "./strict-only-strict.mjs";
+//// diagnostic-class/style-sites/main.queries.txt
+# Unused names, unreachable code, implicit returns and implicit `any` are Style. Their neighbors, which no option turns on, are Semantic.
+main.ts:1 diagnostic TS6133 = Style StopsBuild
+main.ts:2 diagnostic TS6196 = Style StopsBuild
+main.ts:3 diagnostic TS7027 = Style StopsBuild
+main.ts:5 diagnostic TS7030 = Style StopsBuild
+main.ts:8 diagnostic TS7010 = Style StopsBuild
+main.ts:9 diagnostic TS7032 = Style StopsBuild
+
+main.ts:6 diagnostic TS2355 = Semantic StopsBuild
+main.ts:7 diagnostic TS2534 = Semantic StopsBuild
+main.ts:10 diagnostic TS2842 = Semantic StopsBuild
+//// diagnostic-class/style-sites/main.ts
+const unusedLocal = 1;
+type UnusedType = number;
+export function unreachable(): number { fail(); called(); }
+declare function called(): void;
+export function someReturns(flag: boolean) { if (flag) { return 1; } }
+export function noReturn(): number {}
+export function neverEnds(): never {}
+export declare function implicitResult();
+export declare class Accessors { set value(value); }
+export type Renamed = ({ a: string }: { a: number }) => void;
+declare function fail(): never;
+//// diagnostic-class/style-sites/tsconfig.json
+////= lines	"noUnusedLocals"	"noImplicitReturns"	true	"allowUnreachableCode"	false
+//// diagnostic-class/valid-javascript-sites.queries.txt
+# TypeScript's own rules on text that is valid JavaScript, that `bun run` rewrites or that TypeScript erases. None is an EarlyError.
+# `new.target` in a method or a field initializer.
+valid-javascript-sites.ts:3 diagnostic TS17013 = Semantic StopsBuild
+valid-javascript-sites.ts:4 diagnostic TS17013 = Semantic StopsBuild
+absent: valid-javascript-sites.ts:3 diagnostic TS17013 = EarlyError StopsBuild
+absent: valid-javascript-sites.ts:4 diagnostic TS17013 = EarlyError StopsBuild
+
+# To ECMAScript `static constructor() {}` is a method, and a method can be repeated.
+valid-javascript-sites.ts:7 diagnostic TS2392 = Semantic StopsBuild
+valid-javascript-sites.ts:8 diagnostic TS2392 = Semantic StopsBuild
+absent: valid-javascript-sites.ts:7 diagnostic TS2392 = EarlyError StopsBuild
+absent: valid-javascript-sites.ts:8 diagnostic TS2392 = EarlyError StopsBuild
+
+# `bun run` rewrites a labeled function to `let f = function () {}` in a block, in strict mode code too.
+valid-javascript-sites.ts:10 diagnostic TS1344 = TypeScriptGrammar StopsBuild
+absent: valid-javascript-sites.ts:10 diagnostic TS1344 = EarlyError StopsBuild
+
+# `export type` is erased, and in TypeScript `bun run` drops the specifier of a name without a local binding.
+valid-javascript-sites.ts:11 diagnostic TS2661 = Semantic StopsBuild
+valid-javascript-sites.ts:12 diagnostic TS2661 = Semantic StopsBuild
+absent: valid-javascript-sites.ts:11 diagnostic TS2661 = EarlyError StopsBuild
+absent: valid-javascript-sites.ts:12 diagnostic TS2661 = EarlyError StopsBuild
+//// diagnostic-class/valid-javascript-sites.ts
+// TypeScript's own rules on text that is valid JavaScript, that `bun run` rewrites or that TypeScript erases. None is an EarlyError.
+class A {
+  method() { new.target; }
+  field = new.target;
+}
+class B {
+  static constructor() {}
+  static constructor() {}
+}
+label: function f() {}
+export type { Request };
+export { Array };
+//// diagnostic-class/walk-sites.queries.txt
+# The errors the walk raises itself. A generator or an accessor named `constructor` is an EarlyError on the instance side, under a quoted name too. On the static side the rule is TypeScript's own.
+walk-sites.ts:2 diagnostic TS1368 = EarlyError StopsBuild
+walk-sites.ts:3 diagnostic TS1341 = EarlyError StopsBuild
+walk-sites.ts:4 diagnostic TS1368 = EarlyError StopsBuild
+walk-sites.ts:5 diagnostic TS1341 = EarlyError StopsBuild
+walk-sites.ts:9 diagnostic TS1142 = EarlyError StopsBuild
+
+walk-sites.ts:6 diagnostic TS1368 = Semantic StopsBuild
+walk-sites.ts:7 diagnostic TS1341 = Semantic StopsBuild
+absent: walk-sites.ts:8 diagnostic TS1368 = EarlyError StopsBuild
+absent: walk-sites.ts:8 diagnostic TS1368 = Semantic StopsBuild
+
+# The object of a `with` is checked, its body is not.
+walk-sites.ts:11 diagnostic TS2410 = TypeScriptGrammar StopsBuild
+absent: walk-sites.ts:11 diagnostic TS2304 = MissingDeclaration StopsBuild
+//// diagnostic-class/walk-sites.ts
+// The errors the walk raises itself. A generator or an accessor named `constructor` is an EarlyError on the instance side, under a quoted name too. On the static side the rule is TypeScript's own.
+class A { *constructor() {} }
+class B { get constructor() { return 1; } }
+class C { *"constructor"() {} }
+class D { set "constructor"(value: number) {} }
+class E { static *constructor() {} }
+class F { static get constructor() { return 1; } }
+class G { static *"constructor"() {} }
+function thrower() { throw
+new Error("after a line break"); }
+with (A) { missing; }
+//// early-errors/accessors.accepted.js
+// Getters with no parameter and setters with one, which can have a default or be a pattern.
+({ get a() { return 1; }, set a(b) {} });
+({ set a(b = 1) {} });
+({ set a([b]) {} });
+class C { static get a() { return 1; } }
+//// early-errors/accessors.rejected.js
+// A getter takes no parameter. A setter takes exactly one, which is not a rest parameter. The literal with a rest parameter is an argument, because bun run drops an unused one before JavaScriptCore reads it.
+({ get a(b) {} });
+({ set a() {} });
+({ set a(b, c) {} });
+f({ set a(...b) {} });
+class C { get a(b) {} }
+class C { set a() {} }
+class C { static set a(...b) {} }
+//// early-errors/arguments-in-initializers.accepted.js
+// arguments inside a function or a method, which has its own, arguments in the computed name or a decorator of a field, and arguments as a property name.
+class C { a = function () { arguments; }; }
+function f() { class C { [arguments[0]] = 1; } }
+class C { m() { arguments; } }
+class C { static { function f() { arguments; } } }
+class C { a = { m() { arguments; } }; }
+class C { a = { arguments: 1 }; }
+class C { a = this.arguments; }
+function f(log) { class C { @log(arguments[0]) a = 1; } }
+// Not listed: class C { a = function (b = arguments) {}; } ECMAScript allows it and JavaScriptCore's parser rejects it.
+//// early-errors/arguments-in-initializers.rejected.js
+// arguments in a field initializer or a static block, also through arrow functions and computed member names.
+class C { a = arguments; }
+class C { static a = arguments; }
+class C { a = () => arguments; }
+class C { static { arguments; } }
+class C { static { (() => arguments)(); } }
+function f() { class C { a = arguments; } }
+class C { a = class { [arguments]() {} }; }
+//// early-errors/assignment-patterns.accepted.js
+// Valid assignment patterns, and { a = 1 } as a pattern.
+var a, b, c; [a, ...b] = c;
+var a, b, c; ({ a, ...b } = c);
+var a, c; [...[a]] = c;
+var a = {}, c; ({ ...a.b } = c);
+var a, c; ({ a = 1 } = c);
+var a, c; [{ a = 1 }] = c;
+var a, c; for ({ a = 1 } of c);
+({ a = 1 }) => a;
+//// early-errors/assignment-patterns.rejected.js
+// Array and object literals that are not valid assignment patterns, and { a = 1 } where no pattern is expected.
+[...a, b] = c;
+[...a = 1] = c;
+[...a,] = c;
+({ ...a, b } = c);
+({ ...{ a } } = c);
+({ ...[a] } = c);
+({ m() {} } = c);
+({ get a() {} } = c);
+[a()] = c;
+({ a: 1 } = c);
+[a?.b] = c;
+({ a: b() } = c);
+[[a + 1]] = c;
+({ a = 1 });
+f({ a = 1 });
+[([a])] = c;
+({ a: ({ b }) } = c);
+//// early-errors/assignment-targets.accepted.js
+// Names, member accesses and patterns as the left side. Parentheses around a name or a member access are allowed.
+var a; a = 1;
+var a; (a) = 1;
+var a = {}; (a.b) = 1;
+var a = {}; a.b.c = 1;
+var a = {}; a[0] = 1;
+var a, b; [(a)] = b;
+var b, c; ({ a: (b) } = c);
+var a, b, c, d; [a = 1, [b], { c }] = d;
+var a = {}; a.b ||= 1;
+var a = {}; [a.b, a[0]] = [];
+//// early-errors/assignment-targets.rejected.js
+// The left side of an assignment is not a name, a member access or an unparenthesized pattern.
+1 = 2;
+a() = 1;
+a?.b = 1;
+a?.[0] = 1;
+this = 1;
+import.meta = 1;
+(a, b) = 1;
+a + b = 1;
+([a]) = 1;
+({ a }) = 1;
+[a] += 1;
+a() += 1;
+a?.b ||= 1;
+(a = 1) = 2;
+function f() { new.target = 1; }
+//// early-errors/async-before-of.accepted.js
+// Not the tokens async of after for (: an escape in the name, parentheses, a member access, in, for await, an arrow function.
+var async; for (\u0061sync of []) {}
+async function f() { var async; for (\u0061sync of []) {} }
+async function f() { var async; for ((async) of []) {} }
+async function f() { var async = {}; for (async.a of []) {} }
+async function f() { var async; for (async in {}) {} }
+async function f() { var async; for await (async of []) {} }
+async function f() { for (async of => {}; false;) {} }
+//// early-errors/async-before-of.rejected.js
+// for (async of is not allowed in an await context either.
+async function f() { for (async of []) {} }
+async function* g() { for (async of []) {} }
+const f = async () => { for (async of []) {} };
+class C { async m() { for (async of []) {} } }
+function f() { for (async of []) {} }
+//// early-errors/await-and-yield.accepted.cjs
+// In sloppy mode code, outside of async functions and generators, await and yield are names.
+function f() { var await; var yield; }
+function f(await, yield) {}
+var yield = 1; yield;
+//// early-errors/await-and-yield.accepted.js
+// await at the top level of a module and in async functions, yield in generators.
+await 1;
+async function f() { await 1; }
+function* g() { yield 1; }
+async () => { await 1; };
+async function* g() { yield await 1; }
+class C { async m() { await 1; } }
+class C { static { (async () => { await 1; })(); } }
+function* g() { yield; }
+//// early-errors/await-and-yield.rejected.js
+// await and yield expressions outside of async and generator code or in parameters, and await and yield as names where they are reserved. The async arrow function is an argument, because bun run drops an unused one before JavaScriptCore reads it.
+function f() { await 1; }
+function f() { yield 1; }
+function* g() { function f() { yield 1; } }
+async function f() { function g() { await 1; } }
+class C { static { await 1; } }
+class C { a = await 1; }
+function* g(a = yield) {}
+async function f(a = await 1) {}
+f(async (a = await 1) => 1);
+async function f() { var await; }
+function* g() { var yield; }
+class C { static { var await; } }
+() => { await 1; };
+//// early-errors/catch-initializer.accepted.js
+// A catch clause with a name, with no parameter, and with a default inside a pattern.
+try {} catch (e) {}
+try {} catch {}
+try {} catch ({ a = 1 }) {}
+//// early-errors/catch-initializer.rejected.js
+// A catch parameter has no initializer.
+try {} catch (e = 1) {}
+//// early-errors/class-members.accepted.js
+// constructor as a static member, prototype as an instance member, both as computed names, a quoted constructor, two methods of one name, and a comma expression in parentheses as a computed name.
+class C { static constructor() {} }
+class C { constructor() {} static constructor() {} }
+class C { static constructor() {} static "constructor"() {} }
+class C { static *constructor() {} }
+class C { static get constructor() { return 1; } }
+class C { prototype = 1; }
+class C { get prototype() { return 1; } }
+class C { ["constructor"] = 1; }
+class C { "constructor"() {} }
+class C { m() {} m() {} }
+class C { static ["prototype"] = 1; }
+class C { [(a, b)] = 1; }
+//// early-errors/class-members.rejected.js
+// Member names and modifiers that a class does not allow: constructor, prototype, #constructor, static twice, two base classes, a comma expression as a computed name.
+class C { constructor() {} constructor() {} }
+class C { *constructor() {} }
+class C { get constructor() {} }
+class C { set constructor(v) {} }
+class C { async constructor() {} }
+class C { async *constructor() {} }
+class C { constructor = 1; }
+class C { "constructor" = 1; }
+class C { static constructor = 1; }
+class C { static prototype = 1; }
+class C { static prototype() {} }
+class C { static get prototype() {} }
+class C { #constructor; }
+class C { #constructor() {} }
+class C { static static a; }
+class C extends A, B {}
+class C { [a, b] = 1; }
+class C { set [a, b](v = 1) {} }
+//// early-errors/conditional-before-arrow.accepted.js
+// JavaScript has no return types: the colon behind a parenthesized expression is that of the conditional around it.
+var a, b, c, d; a ? b ? (c, d) : e => e : 5;
+var a, b, c; a ? b ? (c) : e => e : 5;
+var a, b, c, d; a ? b ? (c = 1, d) : e => e : 5;
+var a, b, c, async; a ? b ? async (c) : e => e : 5;
+var a, b, c; a ? b ? x => (c) : e => e : 5;
+var a, c; a ? (c) : e => e;
+var a, c; switch (a) { case (c): e => e; }
+var p, a, b, c, x; p ? a ? b ? x : (c) : e => e : 5;
+//// early-errors/conditional-before-arrow.rejected.js
+// A return type is still no JavaScript.
+var a = (b): c => b;
+var a = (): c => 1;
+var a, c; a ? (b): c => b : 1;
+//// early-errors/declaration-as-body.accepted.cjs
+// Annex B: in sloppy mode code a plain function can be the body of if, else or a label.
+if (1) function f() {}
+if (1) ; else function f() {}
+label: function f() {}
+a: b: function f() {}
+if (1) var a;
+//// early-errors/declaration-as-body.accepted.js
+// A block or a var statement in the same positions.
+if (1) { function f() {} }
+if (1) var a;
+label: { class C {} }
+// ECMAScript rejects the next four in strict mode code. bun run starts them: its transpiler turns the function into a let declaration in a block.
+if (1) function f() {}
+if (1) ; else function f() {}
+label: function f() {}
+a: b: function f() {}
+//// early-errors/declaration-as-body.rejected.cjs
+// Declarations as a body that Annex B does not allow in sloppy mode code either.
+while (0) function f() {}
+if (1) label: function f() {}
+while (0) label: function f() {}
+if (1) async function f() {}
+if (1) function* g() {}
+if (1) class C {}
+label: async function f() {}
+with ({}) function f() {}
+//// early-errors/declaration-as-body.rejected.js
+// A declaration as the body of if, a loop or a label, where only a statement is allowed.
+if (1) let a;
+if (1) const a = 1;
+if (1) class C {}
+while (0) function f() {}
+for (;0;) class C {}
+do function f() {} while (0);
+if (1) async function f() {}
+if (1) function* g() {}
+label: class C {}
+//// early-errors/decorators.accepted.js
+// Names, member chains and one call of either as decorators. Parentheses allow any expression.
+var a; @a class C {}
+var a = {}; @a.b.c class C {}
+var a = {}; @a.b() class C {}
+var a = []; @(a[0]) class C {}
+var a; @(a().b) class C {}
+var a; @(a?.b) class C {}
+var a; class C { @a m() {} }
+var a; class C { @(a().b) m() {} }
+var a = []; class C { @(a[0]) a = 1; }
+var a; (@(a()()) class {});
+class C { static #a() {} static m() { class D { @C.#a m() {} } } }
+//// early-errors/decorators.rejected.js
+// A decorator that is not a name, a member chain, one call of either, or an expression in parentheses.
+@a().b class C {}
+@a()() class C {}
+@a?.b class C {}
+@a.b?.() class C {}
+@this.a class C {}
+class C { @a().b m() {} }
+class C { @a?.b a = 1; }
+(@a().b class {});
+//// early-errors/delete.accepted.cjs
+// Sloppy mode code allows delete of a name.
+var a; delete a;
+var a; delete (a);
+//// early-errors/delete.accepted.js
+// delete of any other operand.
+var a = {}; delete a.b;
+var a = {}; delete a[0];
+delete 1;
+class C { #a; m() { delete this.#a.b; } }
+var a = {}; delete (a.b);
+function f() {} delete f();
+//// early-errors/delete.accepted.ts
+// delete of a member, with a type assertion in or around the operand. Checked or not.
+export function f(a: { b?: number }) { delete a.b; }
+export function f(a: { b?: number }) { delete (a.b); }
+export function f(a: { b?: number }) { delete a!.b; }
+export function f(a: unknown) { delete (a as { b?: number }).b; }
+export class C { #a: { b?: number } = {}; m() { delete this.#a.b; } }
+export class C { #a: { b?: number } = {}; m() { delete this.#a!.b; } }
+⏎// @ts-nocheck⏎export function f(a) { delete (a.b as unknown); }
+⏎// @ts-nocheck⏎export function f(a) { delete a.b!; }
+⏎// @ts-nocheck⏎export function f(a) { delete (a() as unknown); }
+//// early-errors/delete.rejected.js
+// delete of a private member, and in strict mode code delete of a name, with or without parentheses.
+class C { #a; m() { delete this.#a; } }
+class C { #a; m() { delete (this.#a); } }
+class C { #a; m(o) { delete o?.#a; } }
+var a; delete a;
+var a; delete (a);
+var a; delete ((a));
+//// early-errors/delete.rejected.ts
+// delete of a name or of a private member in parentheses or under a type assertion, and the cases of delete.rejected.js in TypeScript. Checked or not.
+let a: unknown; delete (a); export {};
+let a: unknown; delete ((a)); export {};
+let a: unknown; delete a; export {};
+let a; delete (a);
+let a: unknown; delete (a as object); export {};
+let a: unknown; delete a!; export {};
+let a: unknown; delete <object>a; export {};
+let a: unknown; delete (a satisfies unknown); export {};
+export class C { #a = 1; m() { delete this.#a; } }
+export class C { #a = 1; m() { delete (this.#a); } }
+export class C { #a = 1; m() { delete (this.#a as unknown); } }
+export class C { #a = 1; m() { delete this.#a!; } }
+⏎// @ts-nocheck⏎let a; delete (a); export {};
+⏎// @ts-nocheck⏎let a; delete (a as object); export {};
+⏎// @ts-nocheck⏎let a; delete a!; export {};
+⏎// @ts-nocheck⏎export class C { #a = 1; m() { delete (this.#a as unknown); } }
+//// early-errors/dynamic-import.accepted.js
+// import() with one or two arguments, with or without a trailing comma, and after new in parentheses or as an argument.
+import("node:fs");
+import("node:fs", {});
+import("node:fs",);
+var a; import(a);
+new (import("node:fs"));
+new (import("node:fs").then)();
+class C {} new C(import("node:fs"));
+//// early-errors/dynamic-import.rejected.js
+// import() takes one or two arguments and no spread. It cannot be the operand of new or an assignment target.
+import();
+import(a, b, c);
+import(...a);
+import(a, ...b);
+new import(a);
+new import(a).b;
+new import(a)[0]();
+import(a) = 1;
+//// early-errors/erased-syntax.accepted.ts
+// TypeScript's errors in a type, in the declaration of a type and in a type parameter. bun run skips that text, so none is an early error, checked or not.
+export type F = (public: boolean) => void;
+export type F = (arguments: number) => void;
+export type F = (await: number) => void;
+export type F = (...a: number[], b: string) => void;
+export type F = (...a: number[],) => void;
+export type F = { new (...a: number[], b: string): object };
+export interface I { m(...a: number[], b: string): void; }
+export interface I { get a(b: number): number; }
+export interface I { set a(...b: number[]); }
+export function f<public>() {}
+⏎// @ts-nocheck⏎export type F = (public: boolean) => void;
+⏎// @ts-nocheck⏎export type F = (await: number) => void;
+⏎// @ts-nocheck⏎export type F = (...a: number[], b: string) => void;
+//// early-errors/erased-syntax.rejected.ts
+// The errors of erased-syntax.accepted.ts in text that reaches JavaScript.
+export function f(public: boolean) {}
+export function f(arguments: number) {}
+export function f(...a: number[], b: string) {}
+export function f(...a: number[],) {}
+export class C { m(...a: number[], b: string) {} }
+export class C { get a(b: number) { return b; } }
+export class C { set a(...b: number[]) {} }
+⏎// @ts-nocheck⏎export function f(public: boolean) {}
+⏎// @ts-nocheck⏎export function f(...a: number[], b: string) {}
+//// early-errors/eval-and-arguments.accepted.js
+// Strict mode code allows eval and arguments as property names and as values.
+var o = {}; [o.eval] = []; ({ eval: o.arguments } = {});
+var o = {}; for (o.eval of []) {}
+var o = {}; (o.arguments) = 1; (o.eval)++;
+var a; [a = eval] = [];
+var a; ({ a = eval } = {});
+var a = [eval], b = { eval };
+var { eval: a } = {};
+class C { eval() {} static arguments() {} }
+var a; export { a as eval };
+function f() { return [arguments]; }
+function f() { var a; [a] = arguments; }
+function f() { var a; for (a of arguments) {} }
+//// early-errors/eval-and-arguments.accepted.ts
+// Names that TypeScript erases, checked or not.
+declare class eval {} export {};
+declare function arguments(): void; export {};
+import { type eval } from "./a"; export {};
+import type arguments from "./a"; export {};
+⏎// @ts-nocheck⏎declare class eval {} export {};
+⏎// @ts-nocheck⏎import { type eval } from "./a"; export {};
+⏎// @ts-nocheck⏎import type arguments from "./a"; export {};
+//// early-errors/eval-and-arguments.rejected.cjs
+// Strict mode code in a CommonJS module: a class with its name, and after a "use strict" directive.
+class eval {}
+(class arguments {});
+class C { m() { [eval] = []; } }
+class C { m() { for (arguments in {}) {} } }
+class C extends (function () { (eval) = 1; }) {}
+"use strict"; [eval] = [];
+"use strict"; ({ arguments } = {});
+"use strict"; for (eval of []) {}
+"use strict"; (arguments)++;
+//// early-errors/eval-and-arguments.rejected.js
+// Strict mode code, here a module: eval and arguments as the name of a class or an import, and as a target in a pattern, in a loop head or in parentheses.
+class eval {}
+class arguments {}
+(class eval {});
+import eval from "./a.js";
+import * as arguments from "./a.js";
+import { a as eval } from "./a.js";
+import { arguments } from "./a.js";
+[eval] = [];
+[[arguments]] = [[]];
+[...eval] = [];
+({ a: eval } = {});
+({ arguments } = {});
+({ eval = 1 } = {});
+({ ...arguments } = {});
+for (eval of []) {}
+for (arguments in {}) {}
+for ([eval] of []) {}
+for ({ arguments } of []) {}
+(eval) = 1;
+(arguments) += 1;
+(eval)++;
+--(arguments);
+[[eval] = []] = [];
+[...[arguments]] = [];
+({ a: arguments = 1, ...eval } = {});
+//// early-errors/eval-and-arguments.rejected.ts
+// eval and arguments as a target under a type assertion, and the cases of eval-and-arguments.rejected.js in TypeScript, checked or not.
+(eval as any) = 1; export {};
+(<any>arguments) = 1; export {};
+[eval!] = []; export {};
+for ((arguments satisfies any) of []) {} export {};
+export class eval {}
+[arguments] = []; export {};
+⏎// @ts-nocheck⏎(eval as any) = 1; export {};
+⏎// @ts-nocheck⏎export class eval {}
+⏎// @ts-nocheck⏎[arguments] = []; export {};
+⏎// @ts-nocheck⏎import { a as eval } from "./a"; eval;
+//// early-errors/exports.accepted.js
+// export { name } of a later declaration, of an import, and with a from clause.
+export { f }; function f() {}
+export { a }; let a;
+export { C }; class C {}
+import * as ns from "node:fs"; export { ns };
+export { readFile } from "node:fs";
+//// early-errors/exports.accepted.ts
+// export { name } of a name that has no value: a type, a declare, a global. bun run drops the specifier in TypeScript, checked or not.
+⏎// @ts-nocheck⏎interface A { x: number }⏎export { A };
+⏎// @ts-nocheck⏎type T = number;⏎export { T };
+⏎// @ts-nocheck⏎declare const x: number;⏎export { x };
+⏎// @ts-nocheck⏎import type { Stats } from "node:fs";⏎export { Stats };
+⏎// @ts-nocheck⏎export { Array };
+interface A { x: number }⏎export { A };
+export { Array };
+//// early-errors/exports.rejected.js
+// export { name } where the module declares no such name.
+export { missing };
+export { missing as a };
+export { Array };
+//// early-errors/import-attributes.accepted.js
+// The value of an import attribute that is a string literal.
+import a from "node:fs" with { type: "json" };
+export * from "node:fs" with { type: "json" };
+export { readFile } from "node:fs" with { type: "json" };
+//// early-errors/import-attributes.accepted.ts
+// The attributes of an import type. bun run skips that text, so a value that is not a string literal is not an early error.
+export type T = import("node:fs", { with: { "resolution-mode": T } });
+// `assert` in the place of `with` is an error of TypeScript. bun run accepts it.
+import a from "node:fs" assert { type: "json" };
+export * from "node:fs" assert { type: "json" };
+//// early-errors/import-attributes.rejected.js
+// The value of an import attribute that is not a string literal: a number, a template literal, a string literal in parentheses.
+import a from "node:fs" with { type: 1 };
+import a from "node:fs" with { type: `json` };
+import a from "node:fs" with { type: ("json") };
+export * from "node:fs" with { type: 1 };
+export { readFile } from "node:fs" with { type: 1 };
+//// early-errors/jsx-attributes.accepted.jsx
+// An attribute name that is repeated, and an empty pair of braces as a child.
+<a x="1" x="2" />
+<a>{}</a>
+//// early-errors/jsx-attributes.rejected.jsx
+// An attribute whose value is an empty pair of braces, alone and after an attribute name that is repeated.
+<a y={} />
+<a x="1" x="2" y={} />
+//// early-errors/jumps-and-labels.accepted.js
+// break and continue with a target, one label name on two consecutive statements, and the name of an outer label in a class static block.
+a: { break a; }
+a: while (0) { continue a; }
+a: ; a: ;
+switch (0) { case 0: break; }
+a: { b: { break a; } }
+while (0) { switch (0) { case 0: continue; } }
+a: { class C { static { a: for (;;) break a; } } }
+//// early-errors/jumps-and-labels.rejected.js
+// break and continue with no target in the same function or static block, and a label inside a label of the same name.
+break;
+continue;
+a: { continue a; }
+while (0) { break missing; }
+a: a: ;
+a: { a: ; }
+while (0) { function f() { break; } }
+a: while (0) { function f() { break a; } }
+switch (0) { case 0: continue; }
+class C { static { break; } }
+a: while (0) { class C { static { continue a; } } }
+//// early-errors/loop-heads.accepted.cjs
+// Annex B: in sloppy mode code the var of a for-in loop can have an initializer.
+for (var a = 1 in {}) {}
+//// early-errors/loop-heads.accepted.js
+// Valid loop heads that look like the rejected ones.
+for (let a of []) {}
+for (var [a] in {}) {}
+for (const { a } of []) {}
+for (let a in {}) {}
+for await (const a of []) {}
+async function f() { for await (const a of []) {} }
+for ((async) of []) {}
+var async; for await (async of []) {}
+for (let a = 1, b;;) { break; }
+// ECMAScript rejects the next one in strict mode code. bun run starts it: its transpiler moves the initializer in front of the loop.
+for (var a = 1 in {}) {}
+//// early-errors/loop-heads.rejected.js
+// Declarations that the head of a for, for-in or for-of loop does not allow, for (async of, and for await outside of async code.
+for (let a, b of []) {}
+for (let a = 1 of []) {}
+for (var a = 1 of []) {}
+for (let a = 1 in {}) {}
+for (var [a] = 1 in {}) {}
+for (async of []) {}
+for (let let of []) {}
+for (const a;;) {}
+function f() { for await (const a of []) {} }
+for (using a in {}) {}
+//// early-errors/loop-targets.accepted.js
+// Names, member accesses and patterns before in or of.
+var a; for (a of []) {}
+var a = {}; for (a.b in {}) {}
+var a; for ([a] of []) {}
+var a; for ({ a } in {}) {}
+var a; for ((a) of []) {}
+//// early-errors/loop-targets.rejected.js
+// The expression before in or of is not a valid assignment target.
+for (1 of []) {}
+for (a() of []) {}
+for (a?.b of []) {}
+for (a() in {}) {}
+for (a = 1 of []) {}
+for ([a()] of []) {}
+for ({ a: 1 } in {}) {}
+for ((a, b) of []) {}
+for ([...a, b] of []) {}
+//// early-errors/module-syntax-position.accepted.js
+// import and export declarations at the top level. import() and import.meta are expressions and can be anywhere. So can an @import tag, which is a comment.
+import "node:fs"; export {};
+{ import("node:fs"); }
+function f() { return import.meta; }
+function f() {⏎/** @import { Stats } from "node:fs" */⏎return 1; }
+//// early-errors/module-syntax-position.rejected.js
+// import and export declarations below the top level of the module.
+{ import "node:fs"; }
+function f() { import "node:fs"; }
+{ export {}; }
+if (1) { export default 1; }
+function f() { export const a = 1; }
+{ export * from "node:fs"; }
+//// early-errors/new-target.accepted.cjs
+// A CommonJS module is the body of a function.
+new.target;
+//// early-errors/new-target.accepted.js
+// new.target in functions, methods, accessors, field initializers and static blocks.
+function f() { new.target; }
+function f() { () => new.target; }
+class C { constructor() { new.target; } }
+class C { m() { new.target; } }
+class C { get a() { return new.target; } }
+class C { a = new.target; }
+class C { static { new.target; } }
+({ m() { new.target; } });
+//// early-errors/new-target.rejected.js
+// new.target outside of every function that is not an arrow function. The arrow function is an argument, because bun run drops an unused one before JavaScriptCore reads it.
+new.target;
+f(() => new.target);
+({ a: new.target });
+class C { [new.target]() {} }
+//// early-errors/nullish-mixing.accepted.js
+// ?? next to || or && with parentheses, and ?? next to ??.
+var a, b, c; (a ?? b) || c;
+var a, b, c; a ?? (b && c);
+var a, b, c; a ?? b ?? c;
+var a, b, c; (a || b) ?? c;
+var a, b, c, x; x = (a || b) ?? c;
+var a, b, c, x; x = a ?? (b || c);
+var a, b, c, x; x = (a ?? b) && c;
+//// early-errors/nullish-mixing.accepted.ts
+// ?? next to || or && with parentheses, also under a type assertion. Checked or not.
+var a: unknown, b: unknown, c: unknown, x: unknown; x = (a || b) ?? c; export {};
+var a: unknown, b: unknown, c: unknown, x: unknown; x = a ?? (b && c); export {};
+var a: unknown, b: unknown, c: unknown, x: unknown; x = (a ?? b) || c; export {};
+var a: unknown, b: unknown, c: unknown, x: unknown; x = (a || b)! ?? c; export {};
+var a: unknown, b: unknown, c: unknown, x: unknown; x = (a ?? b) as unknown || c; export {};
+var a: unknown, b: unknown, c: unknown, x: unknown; x = a ?? (b || c) as unknown; export {};
+⏎// @ts-nocheck⏎var a, b, c, x; x = (a || b)! ?? c; export {};
+//// early-errors/nullish-mixing.rejected.js
+// ?? next to || or && without parentheses.
+a ?? b || c;
+a || b ?? c;
+a ?? b && c;
+a && b ?? c;
+x = a || b ?? c;
+x = a && b ?? c;
+x = a ?? b && c;
+x = a ?? b || c;
+a || b ?? c, d;
+//// early-errors/nullish-mixing.rejected.ts
+// ?? next to || or && without parentheses where TypeScript's own check does not look: in an operand of = or of a comma. Checked or not.
+var a: unknown, b: unknown, c: unknown, x: unknown; x = a || b ?? c; export {};
+var a: unknown, b: unknown, c: unknown, x: unknown; x = a && b ?? c; export {};
+var a: unknown, b: unknown, c: unknown, x: unknown; x = a ?? b && c; export {};
+var a: unknown, b: unknown, c: unknown, x: unknown; x = a ?? b || c; export {};
+var a: unknown, b: unknown, c: unknown, d: unknown; a || b ?? c, d; export {};
+var a: unknown, b: unknown, c: unknown, x: unknown; x = a || b! ?? c; export {};
+var a: unknown, b: unknown, c: unknown, x: unknown; x = a ?? b as unknown || c; export {};
+x = a || b ?? c;
+⏎// @ts-nocheck⏎var a, b, c, x; x = a || b ?? c; export {};
+⏎// @ts-nocheck⏎var a, b, c, x; x = a ?? b || c; export {};
+//// early-errors/object-literals.accepted.js
+// Repeated names are allowed. __proto__ counts only when written as name: value, and not in a pattern.
+({ __proto__: 1, ["__proto__"]: 2 });
+({ __proto__: 1, __proto__() {} });
+var __proto__; ({ __proto__, __proto__: 1 });
+({ a: 1, a: 2 });
+({ get a() { return 1; }, a: 2 });
+({ 1n: 1 });
+({ async a() {}, *b() {}, async *c() {} });
+({ if: 1, class: 2 });
+var a, b, c; ({ __proto__: a, __proto__: b } = c);
+//// early-errors/object-literals.rejected.js
+// Object literals with two __proto__: value properties, with a default outside of a pattern, or with a malformed property.
+({ __proto__: 1, __proto__: 2 });
+({ __proto__: 1, "__proto__": 2 });
+({ a = 1 });
+({ a, b = 1 });
+({ async a: 1 });
+({ static a() {} });
+({ #a: 1 });
+({ [a, b]: 1 });
+({ if });
+//// early-errors/object-literals.rejected.ts
+// Malformed properties that TypeScript's parser reads, in files that are not type checked. Each is the only odd syntax of its file.
+⏎// @ts-nocheck⏎var a, b; ({ [a, b]: 1 });
+⏎// @ts-nocheck⏎({ a?: 1 });
+⏎// @ts-nocheck⏎({ a!: 1 });
+// A second __proto__: value after two properties at which TypeScript's own check of repeated names returns.
+⏎// @ts-nocheck⏎var x, y; ({ get a() { return 1; }, a: 2, __proto__: x, __proto__: y });
+// The same literal in a type-checked file.
+var x, y; ({ get a() { return 1; }, a: 2, __proto__: x, __proto__: y }); export {};
+//// early-errors/parameters.accepted.js
+// Parameter lists that look like the rejected ones.
+function f(a, ...b) {}
+function f(a) { "use strict"; }
+function f(a = 1) { "use sloppy"; }
+function f(a,) {}
+(a) =>⏎1;
+// ECMAScript rejects the next four. bun run starts them: its transpiler removes the "use strict" directive of a function.
+function f(a = 1) { "use strict"; }
+function f({ a }) { "use strict"; }
+(a = 1) => { "use strict"; };
+function f(...a) { "use strict"; }
+//// early-errors/parameters.rejected.js
+// A rest parameter that is not last or has a default, and a line break before =>.
+function f(...a, b) {}
+function f(...a = []) {}
+function f(...a,) {}
+(...a, b) => 1;
+(a)⏎=> 1;
+//// early-errors/private-names.accepted.js
+// Private names that an enclosing class declares, before or after the use.
+class C { #a; m() { this.#a; } }
+class C { #a; m() { #a in this; } }
+class C { #a; m() { class D { n(o) { o.#a; } } } }
+class C { m() { this.#a; } #a; }
+class C { #a; m(o) { o?.#a; } }
+class C { static #a; static m() { C.#a; } }
+class C { #a() {} m() { this.#a(); } }
+class D { #a; m(o) { class C extends (o.#a) { #a; } } }
+class D { #a; m(o) { class C extends (o.#a) {} } }
+class D { #a; m(o) { #a in o; class C extends (o.#a) { #a; } } }
+class D { #a; m(o) { class C extends (#a in o ? Object : Array) { #a; } } }
+class D { #a; m() { class C extends class { n(o) { o.#a; } } { #a; } } }
+class C { #a; [C.#a]() {} }
+//// early-errors/private-names.accepted.ts
+// Private names that the body of an enclosing class declares, also from the heritage clause of an inner class. Checked or not.
+export class C { #a = 1; m(o: C) { return o.#a; } }
+export class C { #a = 1; static is(o: object) { return #a in o; } }
+export class D { #a = Object; m(o: D) { return class extends (o.#a) {}; } }
+export class D { #a = 1; m(o: object) { return class extends (#a in o ? Object : Array) {}; } }
+⏎// @ts-nocheck⏎export class D { #a; m(o) { class C extends (o.#a) { #a; } } }
+⏎// @ts-nocheck⏎export class D { #a; m(o) { class C extends (#a in o ? Object : Array) { #a; } } }
+//// early-errors/private-names.rejected.js
+// A private name that no enclosing class declares, or in a position that does not allow one.
+this.#a;
+class C { m() { this.#a; } }
+class C { #a; m() { class D { n() { this.#b; } } } }
+class C { #a; m() { #b in this; } }
+#a in {};
+class C { #a; m() { super.#a; } }
+class C { #a; m() { #a; } }
+({ #a: 1 });
+class C { #a; } new C().#a;
+class C extends (o.#a) { #a; }
+class C extends (#a in o ? Object : Array) { #a; }
+class C extends class { m(o) { o.#a; } } { #a; }
+//// early-errors/private-names.rejected.ts
+// A private name in the heritage clause of the only class that declares it. TypeScript finds the declaration, ECMAScript does not. Checked or not.
+declare const o: any; class C extends (o.#a) { #a = 1; } export {};
+declare const o: any; class C extends (#a in o ? Object : Array) { #a = 1; } export {};
+declare const o: any; class C extends class { m() { return o.#a; } } { #a = 1; } export {};
+class C extends (o.#a) { #a }
+⏎// @ts-nocheck⏎class C extends (o.#a) { #a; } export {};
+⏎// @ts-nocheck⏎class C extends (#a in o ? Object : Array) { #a; } export {};
+//// early-errors/redeclarations.accepted.cjs
+// Sloppy mode code: var and function declarations can repeat a name.
+var f; function f() {}
+function f() {} function f() {}
+{ function f() {} function f() {} }
+// Not listed: function f(a, a) {} ECMAScript allows it in sloppy mode code and bun run's parser rejects it.
+//// early-errors/redeclarations.accepted.js
+// A name declared twice where that is allowed: var, a nested scope, a getter with its setter, public class members, one binding exported under two names.
+var a; var a;
+function f(a) { var a; }
+try {} catch (e) { var e; }
+let a; { let a; }
+function f() { let a; } function g() { let a; }
+class C { get #a() { return 1; } set #a(v) {} }
+class C { a; a; m() {} m() {} }
+switch (0) { case 0: { let a; } case 1: { let a; } }
+const a = 1; export { a, a as b };
+// ECMAScript rejects the next three. bun run starts them: its transpiler removes a function declaration that a later one of the same name overwrites.
+function f() {} function f() {}
+function* f() {} function* f() {}
+{ function f() {} function f() {} }
+//// early-errors/redeclarations.rejected.cjs
+// Repeated names that are errors in sloppy mode code too.
+function f(a, a) { "use strict"; }
+(a, a) => 1;
+function f(a, a = 1) {}
+let a; var a;
+//// early-errors/redeclarations.rejected.js
+// A second declaration of a name that its scope, parameter list, class body or export list allows only once.
+let a; let a;
+let a; var a;
+var a; let a;
+const a = 1; function a() {}
+class A {} class A {}
+var both; function both() {}
+function both() {} var both;
+function both() {} { var both; }
+{ function* f() {} function* f() {} }
+{ async function f() {} async function f() {} }
+{ function f() {} function* f() {} }
+function f(a) { let a; }
+function f(a, a) {}
+(a, a) => 1;
+function f(a, [a]) {}
+({ m(a, a) {} });
+try {} catch (e) { let e; }
+try {} catch ([e, e]) {}
+switch (0) { case 0: let a; case 1: let a; }
+import * as a from "node:fs"; let a;
+for (let i, i;;) {}
+let [a, a] = [];
+class C { #a; #a; }
+class C { get #a() {} get #a() {} }
+class C { static get #a() {} set #a(v) {} }
+export const a = 1; export { a };
+const a = 1, b = 2; export { a as c, b as c };
+export default 1; export default 2;
+//// early-errors/rest-elements.accepted.js
+// Rest elements in last position. In an array pattern the rest element can be a pattern.
+let [a, ...b] = [];
+let { a, ...b } = {};
+let [...[a, b]] = [];
+let [...{ length }] = [];
+//// early-errors/rest-elements.rejected.js
+// In a binding pattern a rest element is last and has no default. In an object pattern it is a name.
+let [...a, b] = [];
+let [...a = []] = [];
+let [...a,] = [];
+let { ...a, b } = {};
+let { ...{ a } } = {};
+let { ...[a] } = {};
+function f([...a, b]) {}
+//// early-errors/return-and-throw.accepted.cjs
+// A CommonJS module is the body of a function.
+return;
+//// early-errors/return-and-throw.accepted.js
+// return in a function, also in a function in a static block, and throw with its operand on the same line.
+function f() { return; }
+() => { return; };
+throw 1;
+class C { static { (() => { return; })(); } }
+//// early-errors/return-and-throw.rejected.js
+// return outside of a function, and a line break between throw and its operand.
+return;
+{ return; }
+class C { static { return; } }
+throw⏎1;
+//// early-errors/strict-mode.accepted.cjs
+// Sloppy mode code allows with, delete of a name, legacy octal literals and escapes, 08 and "\8", and eval, arguments and the reserved words of strict mode as names.
+with ({}) {}
+var a; delete a;
+010;
+08;
+"\101";
+"\8";
+var eval;
+var let = 1;
+var public = 1, static = 2, yield = 3;
+function f(eval, arguments) {}
+var implements, interface, package, private, protected;
+// Not listed: eval = 1; arguments = 1; var await; "\01"; ECMAScript allows them in sloppy mode code and bun run's parser rejects them.
+// ECMAScript rejects the next five. bun run starts them: its transpiler prints the value of a legacy octal literal or escape and of "\8".
+function f() { "use strict"; 010; }
+"use strict"; 010;
+"use strict"; var a = "\101";
+class C { m() { 010; } }
+class C { a = "\8"; }
+// ECMAScript rejects the next two. bun run starts them: its transpiler removes the "use strict" directive of a function, so JavaScriptCore reads sloppy mode code.
+function f(eval) { "use strict"; }
+function f() { "use strict"; delete f; }
+//// early-errors/strict-mode.accepted.js
+// Strict mode code allows delete of a property, reserved words as property names, 0o10 and "\0".
+var a = {}; delete a.b;
+var o = { eval: 1, public: 2, let: 3 };
+var o = {}; o.static; o.let; o.yield;
+0o10;
+"\0";
+// ECMAScript rejects the next five in a module. bun run starts them: a with statement makes the file a CommonJS module, and its transpiler prints the value of a legacy octal literal or escape, of 08 and of "\8".
+with ({}) {}
+010;
+08;
+"\101";
+"\8";
+//// early-errors/strict-mode.rejected.cjs
+// Strict mode code in a CommonJS module: after a "use strict" directive and in a class.
+"use strict"; with ({}) {}
+function f() { "use strict"; var public; }
+"use strict"; function f(eval) {}
+"use strict"; function f() { delete f; }
+class C { m() { with ({}) {} } }
+class C { m() { var let; } }
+class C extends (function () { with ({}) {} }) {}
+//// early-errors/strict-mode.rejected.js
+// Strict mode code, here a module: with, delete of a name, eval and arguments as targets or declared names, reserved words as names.
+export {}; with ({}) {}
+var a; delete a;
+eval = 1;
+arguments = 1;
+eval++;
+var eval;
+function f(eval) {}
+function arguments() {}
+var let = 1;
+var public = 1;
+var static = 1;
+var yield = 1;
+var implements;
+class static {}
+const f = package => 1;
+({ eval } = {});
+[arguments] = [];
+var await;
+function await() {}
+//// early-errors/super.accepted.js
+// super() in the constructor of a derived class and super.name in a method, an accessor, a field initializer or a static block, also through arrow functions.
+class C extends Object { constructor() { super(); } }
+class C extends Object { constructor() { (() => super())(); } }
+class C { m() { super.a; } }
+class C { static m() { super.a; } }
+({ m() { super.a; } });
+({ get a() { return super.a; } });
+class C { a = super.b; }
+class C { static { super.a; } }
+class C { m() { () => super.a; } }
+class C extends Object { constructor(a = super()) {} }
+class D { m() { class C { [super.a]() {} } } }
+//// early-errors/super.rejected.js
+// super() outside of the constructor of a derived class, and super.name outside of methods, accessors, field initializers and static blocks.
+super();
+super.a;
+function f() { super.a; }
+function f() { super(); }
+class C { constructor() { super(); } }
+class C extends Object { m() { super(); } }
+class C extends Object { a = super(); }
+class C extends Object { static { super(); } }
+({ a: function () { super.b; } });
+({ a() { super(); } });
+class C extends Object { constructor() { function f() { super(); } } }
+class C { m() { function f() { super.a; } } }
+() => super.a;
+class C extends Object { [super.a]() {} }
+//// early-errors/test262-known-failures.txt
+# Paths under $TEST262_DIR that the run over test262 still gets wrong. Sorted. Empty at first: bring-up fills it, and each fix removes a line.
+//// early-errors/update-targets.accepted.js
+// Names and member accesses as the operand of ++ or --.
+var a; a++;
+var a; (a)++;
+var a = {}; a.b--;
+var a = {}; ++a[0];
+var a = {}; (a.b)++;
+//// early-errors/update-targets.rejected.js
+// The operand of ++ or -- is not a name or a member access.
+1++;
+a()++;
+++a();
+a?.b++;
+--a?.b;
+this++;
+(a, b)++;
+[a]++;
+++(a + b);
+//// enum-access-package/main.queries.txt
+# A package whose `exports` give one file for types and another for code: only the file with the code is compiled, and no constant comes from the file with the types.
+output/index.js:0 role `` = Inferred
+main.ts:3 type `Level.Info` = Level.Info
+
+absent: source/index.ts:0 role `` = Checked
+absent: main.ts:3 enum `Level.Info` = 1
+//// enum-access-package/main.ts
+// A package whose `exports` give one file for types and another for code: only the file with the code is compiled, and no constant comes from the file with the types.
+import { Level } from "level";
+Level.Info;
+//// enum-access-package/output/index.js
+// The code of the package `level`, imported by main.ts.
+export const Level = { Info: 0, Warn: 2 };
+//// enum-access-package/package.json
+{
+  "name": "level",
+  "exports": { ".": { "types": "./source/index.ts", "default": "./output/index.js" } }
+}
+//// enum-access-package/source/index.ts
+// The types of the package `level`, imported by main.ts. No code edge reaches it.
+export enum Level { Info = 1, Warn = 2 }
+//// exact-optional-of-the-file/inner/deletes.ts
+// What may be deleted is a rule that only reports, so it is asked of the file.
+export interface Box { value: number | undefined; size: number }
+export function clear(box: Box): number { delete box.value; return box.size; }
+export function shrink(box: Box): void { delete box.size; }
+//// exact-optional-of-the-file/inner/tsconfig.json
+{ "extends": "../../tsconfig.json" }
+//// exact-optional-of-the-file/main.queries.txt
+# `inner/` is written with `strict` alone, the program with `exactOptionalPropertyTypes` too.
+# What may be deleted is a rule that only reports, so it is asked of the file.
+main.ts:4 diagnostic TS2790 = Semantic StopsBuild
+absent: inner/deletes.ts:3 diagnostic TS2790 = Semantic StopsBuild
+inner/deletes.ts:4 diagnostic TS2790 = Semantic StopsBuild
+//// exact-optional-of-the-file/main.ts
+// `inner/` is written with `strict` alone, the program with `exactOptionalPropertyTypes` too.
+import { clear, type Box } from "./inner/deletes.ts";
+const box: Box = { value: 1, size: 2 };
+export function clearHere(own: Box): void { delete own.value; }
+console.log(clear(box));
+//// exact-optional-of-the-file/tsconfig.json
+{ "extends": "../tsconfig.json", "compilerOptions": { "exactOptionalPropertyTypes": true } }
+//// inferred-from-use/calls.js
+// A callee is a function. An argument is what the parameter is written to be, or what the parameter is inferred to be.
+// parameter `f` = Function
+function run(f) { return f(); }
+// parameter `C` = Function
+function make(C) { return new C(); }
+// parameter `f` = Function
+function maybeRun(f) { return f?.(); }
+// parameter `a` = any
+// parameter `g` = Function
+function forward(a, g) { return g(a); }
+// predicted `a` = number
+function floor(a) { return Math.floor(a); }
+// parameter `s` = string
+function parse(s) { return JSON.parse(s); }
+// parameter `o` = { name?: any; }
+function outer(o) { return inner(o); }
+// parameter `o` = { name?: any; }
+function inner(o) { return o.name; }
+// parameter `o` = { box: { name?: any; }; }
+function passesMember(o) { o.box.name; return inner(o.box); }
+// parameter `o` = any
+function even(o) { return odd(o); }
+// parameter `o` = any
+function odd(o) { return even(o); }
+// parameter `o` = { a?: any; b?: any; }
+function ping(o) { o.a; return pong(o); }
+// parameter `o` = { a?: any; b?: any; }
+function pong(o) { o.b; return ping(o); }
+// parameter `node` = { next?: any; value?: number; }
+function sum(node) { return node ? node.value * 1 + sum(node.next) : 0; }
+// parameter `a` = any
+function afterSpread(a, list) { return Math.max(...list, a); }
+// parameter `a` = any
+function intoRest(a) { return Math.max(1, a) && [].concat(a); }
+// The name of a member proposes no built-in type: calling `apply` does not say function.
+// parameter `fn` = any
+function invoke(fn, self) { return fn.apply(self, arguments); }
+// parameter `fn` = any
+function named(fn, self) { return fn.name + fn.call(self); }
+// parameter `user` = { name?: any; }
+function nameOf(user) { return user.name; }
+// parameter `o` = any
+function text(o) { return o.toString(); }
+//// inferred-from-use/calls.queries.txt
+# A callee is a function. An argument is what the parameter is written to be, or what the parameter is inferred to be.
+calls.js:3 parameter `f` = Function
+calls.js:5 parameter `C` = Function
+calls.js:7 parameter `f` = Function
+calls.js:10 parameter `a` = any
+calls.js:10 parameter `g` = Function
+calls.js:12 predicted `a` = number
+calls.js:14 parameter `s` = string
+calls.js:16 parameter `o` = { name?: any; }
+calls.js:18 parameter `o` = { name?: any; }
+calls.js:20 parameter `o` = { box: { name?: any; }; }
+calls.js:22 parameter `o` = any
+calls.js:24 parameter `o` = any
+calls.js:26 parameter `o` = { a?: any; b?: any; }
+calls.js:28 parameter `o` = { a?: any; b?: any; }
+calls.js:30 parameter `node` = { next?: any; value?: number; }
+calls.js:32 parameter `a` = any
+calls.js:34 parameter `a` = any
+calls.js:37 parameter `fn` = any
+calls.js:39 parameter `fn` = any
+calls.js:41 parameter `user` = { name?: any; }
+calls.js:43 parameter `o` = any
+//// inferred-from-use/expressions.js
+// What is expected of an expression that the checker types `any` is what its variable or its receiver is inferred to be, or what its own uses say.
+function total(rows) {
+  let sum = 0;
+  // predicted `rows` = { size: { w?: number; }; }[]
+  // predicted `rows.length` = number
+  for (let i = 0; i < rows.length; i++) {
+    // predicted `rows[i]` = { size: { w?: number; }; }
+    // predicted `rows[i].size` = { w?: number; }
+    // predicted `rows[i].size.w` = number
+    sum += rows[i].size.w * 2;
+  }
+  return sum;
+}
+function read(text) {
+  // predicted `JSON.parse(text)` = { name?: any; port?: number; }
+  // binding `data` = { name?: any; port?: number; }
+  const data = JSON.parse(text);
+  // predicted `data.port` = number
+  return [data.name, data.port + 1];
+}
+function direct(text) {
+  // predicted `JSON.parse(text)` = { items: string | any[]; }
+  // predicted `JSON.parse(text).items` = string | any[]
+  return JSON.parse(text).items[0];
+}
+// A variable that the checker types `number` is int32, where it is declared and at each reference, if it starts as an integer, gets only integers and is a key.
+function countPairs(list) {
+  // binding `at` = int32
+  let at = 0;
+  // binding `pairs` = number
+  let pairs = 0;
+  // predicted `at` = int32
+  // absent: predicted `pairs` = int32
+  while (list[at]) { at += 2; pairs++; }
+  // absent: predicted `pairs` = int32
+  return pairs;
+}
+//// inferred-from-use/expressions.queries.txt
+# What is expected of an expression that the checker types `any` is what its variable or its receiver is inferred to be, or what its own uses say.
+expressions.js:6 predicted `rows` = { size: { w?: number; }; }[]
+expressions.js:6 predicted `rows.length` = number
+expressions.js:10 predicted `rows[i]` = { size: { w?: number; }; }
+expressions.js:10 predicted `rows[i].size` = { w?: number; }
+expressions.js:10 predicted `rows[i].size.w` = number
+expressions.js:17 predicted `JSON.parse(text)` = { name?: any; port?: number; }
+expressions.js:17 binding `data` = { name?: any; port?: number; }
+expressions.js:19 predicted `data.port` = number
+expressions.js:24 predicted `JSON.parse(text)` = { items: string | any[]; }
+expressions.js:24 predicted `JSON.parse(text).items` = string | any[]
+# A variable that the checker types `number` is int32, where it is declared and at each reference, if it starts as an integer, gets only integers and is a key.
+expressions.js:29 binding `at` = int32
+expressions.js:31 binding `pairs` = number
+expressions.js:34 predicted `at` = int32
+absent: expressions.js:34 predicted `pairs` = int32
+absent: expressions.js:36 predicted `pairs` = int32
+//// inferred-from-use/flows.js
+// Where the value goes on, the uses of the expression or the variable that holds it count.
+// parameter `o` = { a?: any; }
+function orDefault(o) { return (o || {}).a; }
+// parameter `o` = { a?: any; }
+function andThen(o) { return (o && o).a; }
+// parameter `o` = { a?: any; }
+function coalesce(o) { return (o ?? null).a; }
+// parameter `c` = any
+// parameter `o` = { a?: any; }
+function choose(c, o) { return (c ? o : null).a; }
+// parameter `o` = { a?: any; }
+function comma(o) { return (0, o).a; }
+// parameter `o` = { a?: any; }
+function alias(o) { const same = o; return same.a; }
+// parameter `o` = { a?: any; }
+function aliasInLoop(o) { for (var i = 0; i < 2; i++) { var same = o; same.a; } }
+// parameter `o` = any
+function reassignedAlias(o) { let other = o; other = null; return other.a; }
+// parameter `opts` = { depth?: any; }
+function configure(opts) { opts = opts || {}; return opts.depth; }
+// predicted `n` = number
+function normalize(n) { if (!n) n = 0; return n; }
+// parameter `o` = { a?: number; b: Function; }
+function unpack(o) { const { a, b } = o; return b(a * 2); }
+// parameter `o` = { a?: any; b?: any; }
+function assignPattern(o) { let a, b; ({ a, b } = o); return [a, b]; }
+// parameter `o` = { done?: any; }
+function later(o) { return function () { return o.done; }; }
+// parameter `o` = any
+function returned(o) { return o; }
+// parameter `o` = any
+function stored(o) { return { o, list: [o], text: `${o}` }; }
+// parameter `o` = any
+function tested(o) { return o ? 1 : !o; }
+//// inferred-from-use/flows.queries.txt
+# Where the value goes on, the uses of the expression or the variable that holds it count.
+flows.js:3 parameter `o` = { a?: any; }
+flows.js:5 parameter `o` = { a?: any; }
+flows.js:7 parameter `o` = { a?: any; }
+flows.js:10 parameter `c` = any
+flows.js:10 parameter `o` = { a?: any; }
+flows.js:12 parameter `o` = { a?: any; }
+flows.js:14 parameter `o` = { a?: any; }
+flows.js:16 parameter `o` = { a?: any; }
+flows.js:18 parameter `o` = any
+flows.js:20 parameter `opts` = { depth?: any; }
+flows.js:22 predicted `n` = number
+flows.js:24 parameter `o` = { a?: number; b: Function; }
+flows.js:26 parameter `o` = { a?: any; b?: any; }
+flows.js:28 parameter `o` = { done?: any; }
+flows.js:30 parameter `o` = any
+flows.js:32 parameter `o` = any
+flows.js:34 parameter `o` = any
+//// inferred-from-use/lists.js
+// An element access or an iteration proposes an Array or a string, and the members used rule out the one that lacks them. Names alone propose neither, and where an Array, a string or a function has them all they say nothing.
+// parameter `a` = any
+function size(a) { return a.length; }
+// parameter `a` = any
+function tail(a) { return a.slice(1); }
+// parameter `a` = any
+function has(a, x) { return a.includes(x) || a.indexOf(x) > 0 || a.at(0) === x || a.concat(x).length; }
+// parameter `s` = any
+function tidy(s) { return s.trim().toLowerCase().padStart(4); }
+// parameter `s` = any
+function begins(s) { return s.slice(1).length && s.startsWith("a"); }
+// parameter `a` = any
+function grown(a) { a.push(1); return a.slice(1); }
+// parameter `o` = any
+function described(o) { return o.toString() + o.length; }
+// parameter `a` = string | any[]
+function first(a) { return a[0]; }
+// parameter `a` = string | any[]
+function last(a) { return a[a.length - 1]; }
+// parameter `a` = number[]
+function fill(a) { for (let i = 0; i < a.length; i++) a[i] = 0; }
+// parameter `rows` = { size: { w?: number; }; }[]
+function total(rows) { let sum = 0; for (let i = 0; i < rows.length; i++) sum += rows[i].size.w * 2; return sum; }
+// parameter `a` = { id?: any; }[]
+function ids(a) { const out = []; for (const item of a) out.push(item.id); return out; }
+// parameter `pair` = string | any[]
+function swap(pair) { const [x, y] = pair; return [y, x]; }
+// parameter `pair` = number[]
+function difference(pair) { const [x, y] = pair; return x - y; }
+// parameter `a` = string | any[]
+function maximum(a) { return Math.max(...a); }
+// parameter `a` = string | any[]
+function clone(a) { return [...a]; }
+// parameter `a` = any
+function append(a) { a.push(1); }
+// parameter `a` = any
+function truncate(a) { a.length = 0; }
+// parameter `s` = any
+function code(s) { return s.charCodeAt(0); }
+// parameter `a` = string | any[]
+// parameter `i` = int32
+function previous(a, i) { return a[i] || a[i - 1]; }
+// parameter `a` = { name?: any; }
+function namedList(a) { return a[0] || a.name; }
+// parameter `s` = string
+function firstLetter(s) { if (typeof s === "string") s.trim(); return s[0]; }
+// parameter `a` = any[]
+function firstItem(a) { if (Array.isArray(a)) a.pop(); return a[0]; }
+// A name that an Array has as a method does not make an Array of a value that only reads it.
+// parameter `layer` = { keys: string | any[]; }
+function countKeys(layer) { const keys = layer.keys; return keys.length + keys[0]; }
+// parameter `o` = { forEach?: any; }
+function hasForEach(o) { return !!o.forEach; }
+// parameter `holder` = { items?: any[]; }
+function reset(holder) { holder.items = []; }
+// parameter `queue` = { ops: { size?: any; }[]; }
+function refill(queue) { queue.ops = []; return queue.ops[0].size; }
+//// inferred-from-use/lists.queries.txt
+# An element access or an iteration proposes an Array or a string, and the members used rule out the one that lacks them. Names alone propose neither, and where an Array, a string or a function has them all they say nothing.
+lists.js:3 parameter `a` = any
+lists.js:5 parameter `a` = any
+lists.js:7 parameter `a` = any
+lists.js:9 parameter `s` = any
+lists.js:11 parameter `s` = any
+lists.js:13 parameter `a` = any
+lists.js:15 parameter `o` = any
+lists.js:17 parameter `a` = string | any[]
+lists.js:19 parameter `a` = string | any[]
+lists.js:21 parameter `a` = number[]
+lists.js:23 parameter `rows` = { size: { w?: number; }; }[]
+lists.js:25 parameter `a` = { id?: any; }[]
+lists.js:27 parameter `pair` = string | any[]
+lists.js:29 parameter `pair` = number[]
+lists.js:31 parameter `a` = string | any[]
+lists.js:33 parameter `a` = string | any[]
+lists.js:35 parameter `a` = any
+lists.js:37 parameter `a` = any
+lists.js:39 parameter `s` = any
+lists.js:42 parameter `a` = string | any[]
+lists.js:42 parameter `i` = int32
+lists.js:44 parameter `a` = { name?: any; }
+lists.js:46 parameter `s` = string
+lists.js:48 parameter `a` = any[]
+lists.js:51 parameter `layer` = { keys: string | any[]; }
+lists.js:53 parameter `o` = { forEach?: any; }
+lists.js:55 parameter `holder` = { items?: any[]; }
+lists.js:57 parameter `queue` = { ops: { size?: any; }[]; }
+//// inferred-from-use/members.js
+// A name that is read or stored is a member. It is required where a use of its value throws without it, optional otherwise.
+const kState = Symbol("state");
+// parameter `point` = { x?: number; y?: number; }
+function squaredLength(point) { return point.x * point.x + point.y * point.y; }
+// parameter `logger` = { log: Function; }
+function report(logger) { logger.log("x"); }
+// parameter `o` = { Type: Function; }
+function create(o) { return new o.Type(); }
+// parameter `o` = { name?: any; }
+function bracket(o) { return o["name"]; }
+// parameter `options` = { timeout?: any; }
+function timeoutOf(options) { return options.timeout || 100; }
+// parameter `o` = { a: { b?: any; }; }
+function deep(o) { return o.a.b; }
+// parameter `o` = { a?: { b?: any; }; }
+function optionalChain(o) { return o.a?.b; }
+// parameter `o` = { a: { b?: any; }; }
+function guarded(o) { if (o.a) return o.a.b; return null; }
+// parameter `o` = { list: string | any[]; }
+function iterated(o) { for (const item of o.list) return item; return null; }
+// parameter `o` = { count?: number; label?: string; }
+function reset(o) { o.count = 0; o.label = ""; }
+// parameter `o` = { a: { b?: number; }; }
+function storeDeep(o) { o.a.b = 1; }
+// parameter `o` = { [kState]?: boolean; }
+function mark(o) { o[kState] = true; }
+// parameter `o` = { [kState]?: any; }
+function marked(o) { return o[kState]; }
+// parameter `o` = { cache?: any; }
+function clear(o) { delete o.cache; }
+// parameter `o` = object
+// parameter `k` = any
+function get(o, k) { return o[k]; }
+// parameter `o` = object
+function has(o) { return "a" in o; }
+// parameter `o` = object
+function countKeys(o) { let n = 0; for (const k in o) n++; return n; }
+// parameter `o` = object
+function copy(o) { return { ...o }; }
+// parameter `o` = { list: string | any[]; }
+function spreadMember(o) { return [...o.list]; }
+// parameter `o` = { flag?: any; kind?: any; }
+function comparedAndTested(o) { return o.kind === 1 || !o.flag; }
+// parameter `o` = { table: object; }
+function keyedMember(o, k) { return o.table[k]; }
+// parameter `o` = { f?: Function; }
+function optionalCall(o) { return o.f?.(); }
+// An object that is also enumerated, or read by a computed key, is a dictionary: the names that are spelled do not describe it.
+// parameter `o` = object
+function walked(o) { let n = o.version; for (const key in o) n += o[key]; return n; }
+// parameter `o` = object
+function copied(o) { return { ...o, size: o.size }; }
+// parameter `o` = { table: object; }
+function looked(o, key) { return o.table[key] || o.table.fallback; }
+//// inferred-from-use/members.queries.txt
+# A name that is read or stored is a member. It is required where a use of its value throws without it, optional otherwise.
+members.js:4 parameter `point` = { x?: number; y?: number; }
+members.js:6 parameter `logger` = { log: Function; }
+members.js:8 parameter `o` = { Type: Function; }
+members.js:10 parameter `o` = { name?: any; }
+members.js:12 parameter `options` = { timeout?: any; }
+members.js:14 parameter `o` = { a: { b?: any; }; }
+members.js:16 parameter `o` = { a?: { b?: any; }; }
+members.js:18 parameter `o` = { a: { b?: any; }; }
+members.js:20 parameter `o` = { list: string | any[]; }
+members.js:22 parameter `o` = { count?: number; label?: string; }
+members.js:24 parameter `o` = { a: { b?: number; }; }
+members.js:26 parameter `o` = { [kState]?: boolean; }
+members.js:28 parameter `o` = { [kState]?: any; }
+members.js:30 parameter `o` = { cache?: any; }
+members.js:33 parameter `o` = object
+members.js:33 parameter `k` = any
+members.js:35 parameter `o` = object
+members.js:37 parameter `o` = object
+members.js:39 parameter `o` = object
+members.js:41 parameter `o` = { list: string | any[]; }
+members.js:43 parameter `o` = { flag?: any; kind?: any; }
+members.js:45 parameter `o` = { table: object; }
+members.js:47 parameter `o` = { f?: Function; }
+members.js:50 parameter `o` = object
+members.js:52 parameter `o` = object
+members.js:54 parameter `o` = { table: object; }
+//// inferred-from-use/narrowed.js
+// A reference that the checker has narrowed has that type, and its context says nothing more.
+// parameter `x` = string
+function shout(x) { if (typeof x === "string") return x.toUpperCase(); return null; }
+// parameter `x` = any[]
+function lengthOf(x) { return Array.isArray(x) ? x.length : 0; }
+// parameter `x` = Date
+function time(x) { return x instanceof Date ? x.getTime() : 0; }
+// parameter `x` = string | { value?: any; }
+function unwrap(x) { if (typeof x === "string") return x.trim(); return x.value; }
+// parameter `x` = number | Function
+function resolve(x) { return typeof x === "function" ? x() : x * 1; }
+//// inferred-from-use/narrowed.queries.txt
+# A reference that the checker has narrowed has that type, and its context says nothing more.
+narrowed.js:3 parameter `x` = string
+narrowed.js:5 parameter `x` = any[]
+narrowed.js:7 parameter `x` = Date
+narrowed.js:9 parameter `x` = string | { value?: any; }
+narrowed.js:11 parameter `x` = number | Function
+//// inferred-from-use/numbers.js
+// An arithmetic operand is a number. An operand of a bitwise operator and the index of an element of a list are int32.
+// predicted `a` = number
+function negate(a) { return -a; }
+// predicted `a` = number
+function scale(a) { return a * 2; }
+// predicted `a` = number
+function count(a) { a++; return a; }
+// predicted `a` = number
+function decrease(a) { a -= 1; return a; }
+// parameter `a` = int32
+function mask(a) { return a & 255; }
+// parameter `a` = int32
+function flip(a) { return ~a; }
+// parameter `i` = int32
+function letter(i) { return "text"[i]; }
+// predicted `a` = number
+function isSmall(a) { return a < 10; }
+// parameter `a` = string
+function isEarly(a) { return a < "m"; }
+// predicted `a` = number
+function increment(a) { return a + 1; }
+// parameter `a` = any
+function greet(a) { return a + "!"; }
+// parameter `a` = any
+// parameter `b` = any
+function add(a, b) { return a + b; }
+// parameter `a` = any
+function isSame(a) { return a === 1; }
+// `number` alone is not expected of a parameter where the function is entered: the operators find out by themselves. int32 is.
+// parameter `a` = any
+function halved(a) { return a / 2; }
+// parameter `a` = int32
+function masked(a) { return a & 255; }
+// parameter `o` = { w?: number; }
+function width(o) { return o.w * 2; }
+// A variable that starts as an integer, gets only integers and unknown values, and is a key or a bitwise operand is int32.
+// binding `i` = int32
+// predicted `i` = int32
+function walk(list) { for (let i = 0; i < 9; i++) list[i] = 0; }
+// binding `pc` = int32
+// predicted `pc` = int32
+function step(code, frame) { let pc = 0; while (code[pc]) { pc = pc + 2; if (code[pc + 1]) pc = frame.target; } return pc; }
+// binding `i` = int32
+// binding `n` = number
+function each(list, visit) { for (var i = 0, n = list.length; i < n; i++) visit(list[i]); }
+// binding `at` = int32
+function peek(code) { let at = 0; at += 2; return code[at + 1]; }
+// binding `bits` = int32
+function collect(flags) { let bits = 0; for (const flag of flags) bits |= flag; return bits; }
+// binding `last` = int32
+function lastLetter() { const text = "text"; let last = text.length - 1; while (text[last] === " ") last--; return last; }
+// binding `i` = int32
+// binding `next` = int32
+function neighbor(list) { let i = 0; let next = i + 1; return list[next] - list[i]; }
+// It stays a number where nothing uses it as an int32, where it starts as a fraction, and where a quotient, a product or the result of `>>>` is stored.
+// binding `total` = number
+function sum(list) { let total = 0; for (const item of list) total += item; return total; }
+// binding `half` = number
+function halve(list) { let half = 8; half = half / 2; return list[half]; }
+// binding `at` = number
+function middle(list) { let at = 0.5; at++; return list[at]; }
+// binding `size` = number
+function grow(list) { let size = 1; size *= 2; return list[size]; }
+// binding `hash` = number
+function shift() { let hash = 7; hash >>>= 1; return hash; }
+// A parameter holds what its callers pass, whatever its default is.
+// binding `i` = number
+function pick(list, i = 0) { return list[i]; }
+//// inferred-from-use/numbers.queries.txt
+# An arithmetic operand is a number. An operand of a bitwise operator and the index of an element of a list are int32.
+numbers.js:3 predicted `a` = number
+numbers.js:5 predicted `a` = number
+numbers.js:7 predicted `a` = number
+numbers.js:9 predicted `a` = number
+numbers.js:11 parameter `a` = int32
+numbers.js:13 parameter `a` = int32
+numbers.js:15 parameter `i` = int32
+numbers.js:17 predicted `a` = number
+numbers.js:19 parameter `a` = string
+numbers.js:21 predicted `a` = number
+numbers.js:23 parameter `a` = any
+numbers.js:26 parameter `a` = any
+numbers.js:26 parameter `b` = any
+numbers.js:28 parameter `a` = any
+numbers.js:31 parameter `a` = any
+numbers.js:33 parameter `a` = int32
+numbers.js:35 parameter `o` = { w?: number; }
+# A variable that starts as an integer, gets only integers and unknown values, and is a key or a bitwise operand is int32.
+numbers.js:39 binding `i` = int32
+numbers.js:39 predicted `i` = int32
+numbers.js:42 binding `pc` = int32
+numbers.js:42 predicted `pc` = int32
+numbers.js:45 binding `i` = int32
+numbers.js:45 binding `n` = number
+numbers.js:47 binding `at` = int32
+numbers.js:49 binding `bits` = int32
+numbers.js:51 binding `last` = int32
+numbers.js:54 binding `i` = int32
+numbers.js:54 binding `next` = int32
+# It stays a number where nothing uses it as an int32, where it starts as a fraction, and where a quotient, a product or the result of `>>>` is stored.
+numbers.js:57 binding `total` = number
+numbers.js:59 binding `half` = number
+numbers.js:61 binding `at` = number
+numbers.js:63 binding `size` = number
+numbers.js:65 binding `hash` = number
+# A parameter holds what its callers pass, whatever its default is.
+numbers.js:68 binding `i` = number
+//// inferred-from-use/patterns.js
+// A parameter that is an object pattern has the members that the pattern names, typed by the uses of the variables.
+// parameter `{ a, b }` = { a?: number; b: { c?: number; }; }
+function take({ a, b }) { return a * b.c; }
+// parameter `{ size = 1 }` = { size?: number; }
+function withDefault({ size = 1 }) { return size; }
+// parameter `{ a: { b } }` = { a: { b?: number; }; }
+function nested({ a: { b } }) { return b + 1; }
+// parameter `{ a, ...rest }` = { a?: any; }
+function withRest({ a, ...rest }) { return [a, rest]; }
+// parameter `[x, y]` = [any, any]
+// binding `x` = number
+// binding `y` = number
+function pair([x, y]) { return x - y; }
+// parameter `o` = { a?: number; }
+function passesOn(o) { return onlyA(o); }
+// parameter `{ a }` = { a?: number; }
+function onlyA({ a }) { return a * 2; }
+//// inferred-from-use/patterns.queries.txt
+# A parameter that is an object pattern has the members that the pattern names, typed by the uses of the variables.
+patterns.js:3 parameter `{ a, b }` = { a?: number; b: { c?: number; }; }
+patterns.js:5 parameter `{ size = 1 }` = { size?: number; }
+patterns.js:7 parameter `{ a: { b } }` = { a: { b?: number; }; }
+patterns.js:9 parameter `{ a, ...rest }` = { a?: any; }
+patterns.js:13 parameter `[x, y]` = [any, any]
+patterns.js:13 binding `x` = number
+patterns.js:13 binding `y` = number
+patterns.js:15 parameter `o` = { a?: number; }
+patterns.js:17 parameter `{ a }` = { a?: number; }
+//// inferred-from-use/results.js
+// A function without a written result returns the union of what its returned expressions are.
+// returns `same` = { id?: any; }[]
+function same(rows) { rows[0].id; return rows; }
+function caller(x) {
+  // predicted `same(x)` = { id?: any; }[]
+  // predicted `same(x).length` = number
+  return same(x).length;
+}
+// returns `either` = string | number
+function either(a, b) { if (a < "m") return a; return b * 2 ? b : b - 1; }
+// returns `member` = number
+function member(o) { o.count++; return o.count; }
+// returns `through` = number
+function through(o) { return member(o); }
+// returns `again` = number
+function again(n) { if (n > 0) return again(n - 1); return n; }
+// returns `first` = number
+function first(n) { if (n > 0) return second(n - 1); return n; }
+// returns `second` = number
+function second(n) { return first(n); }
+// returns `last` = number
+function last(n) { return (n * 2, n); }
+// returns `fallback` = string
+function fallback(s, t) { s < "m"; return s || t; }
+// returns `nothing` = any
+function nothing(o) { return o; }
+// returns `later` = Promise<any>
+async function later(n) { n * 2; return n; }
+//// inferred-from-use/results.queries.txt
+# A function without a written result returns the union of what its returned expressions are.
+results.js:3 returns `same` = { id?: any; }[]
+results.js:7 predicted `same(x)` = { id?: any; }[]
+results.js:7 predicted `same(x).length` = number
+results.js:10 returns `either` = string | number
+results.js:12 returns `member` = number
+results.js:14 returns `through` = number
+results.js:16 returns `again` = number
+results.js:18 returns `first` = number
+results.js:20 returns `second` = number
+results.js:22 returns `last` = number
+results.js:24 returns `fallback` = string
+results.js:26 returns `nothing` = any
+results.js:28 returns `later` = Promise<any>
+//// inferred-from-use/this.js
+// `this` of a function that is neither a method of a class nor an arrow function is what the uses of `this` in it say.
+// signature `Counter` = () this unwritten checked { count?: number; } returns unwritten checked void
+function Counter() { this.count = 0; }
+// signature `add` = (unwritten checked any) this unwritten checked { count?: any; } returns unwritten checked { count?: any; }
+Counter.prototype.add = function add(n) { this.count += n; return this; };
+// signature `Base` = (unwritten checked any) this unwritten checked { name?: any; } returns unwritten checked void
+function Base(name) { this.name = name; }
+// signature `Derived` = (unwritten checked any) this unwritten checked { extra?: number; name?: any; } returns unwritten checked void
+function Derived(name) { Base.call(this, name); this.extra = 1; }
+// signature `Applied` = () this unwritten checked { name?: any; } returns unwritten checked void
+function Applied() { Base.apply(this, arguments); }
+// signature `inArrow` = () this unwritten checked { items: any; seen: Function; } returns unwritten checked void
+function inArrow() { this.items.forEach(item => this.seen(item)); }
+// predicted `size` = number
+function Sized(size) { Scaled.call(this, size); }
+// predicted `size` = number
+function Scaled(size) { this.size = size * 2; }
+// The checker takes `this` in a method of an object literal to be the literal. That is where it is written, not a use.
+const Mixin = {
+  // signature `notify` = (unwritten checked any) this unwritten checked any returns unwritten checked never[]
+  notify: function notify(value) { return this.listeners; },
+  listeners: [],
+};
+//// inferred-from-use/this.queries.txt
+# `this` of a function that is neither a method of a class nor an arrow function is what the uses of `this` in it say.
+this.js:3 signature `Counter` = () this unwritten checked { count?: number; } returns unwritten checked void
+this.js:5 signature `add` = (unwritten checked any) this unwritten checked { count?: any; } returns unwritten checked { count?: any; }
+this.js:7 signature `Base` = (unwritten checked any) this unwritten checked { name?: any; } returns unwritten checked void
+this.js:9 signature `Derived` = (unwritten checked any) this unwritten checked { extra?: number; name?: any; } returns unwritten checked void
+this.js:11 signature `Applied` = () this unwritten checked { name?: any; } returns unwritten checked void
+this.js:13 signature `inArrow` = () this unwritten checked { items: any; seen: Function; } returns unwritten checked void
+this.js:15 predicted `size` = number
+this.js:17 predicted `size` = number
+this.js:21 signature `notify` = (unwritten checked any) this unwritten checked any returns unwritten checked never[]
+//// inferred-from-use/typescript.queries.txt
+# In a checked file a parameter, a variable and a result keep the checker's type: a value is tested against it where it arrives. What the uses say is expected of expressions and of `this` only.
+typescript.ts:0 role `` = Checked
+typescript.ts:5 parameter `a: any` = any
+typescript.ts:5 predicted `a` = number
+typescript.ts:8 parameter `item` = any
+typescript.ts:8 predicted `item` = { id?: any; }
+typescript.ts:10 parameter `text` = string
+typescript.ts:13 binding `written` = any
+typescript.ts:15 binding `unwritten` = any
+typescript.ts:17 predicted `unwritten` = { id?: any; }
+typescript.ts:20 returns `result` = any
+typescript.ts:22 predicted `result(values)` = { id?: any; }
+typescript.ts:25 binding `at` = number
+typescript.ts:27 predicted `at` = int32
+# Nothing tests the `this` of a function that is no member of a class. `noImplicitThis` reports this one, which changes no answer.
+typescript.ts:31 signature `Counter` = () this unwritten checked { count?: number; } returns unwritten checked void
+//// inferred-from-use/typescript.ts
+// In a checked file a parameter, a variable and a result keep the checker's type: a value is tested against it where it arrives. What the uses say is expected of expressions and of `this` only.
+declare const values: any[];
+// parameter `a: any` = any
+// predicted `a` = number
+function written(a: any) { return a * 2; }
+// parameter `item` = any
+// predicted `item` = { id?: any; }
+values.forEach(item => item.id);
+// parameter `text` = string
+["a"].forEach(text => text.length);
+function locals(source: any) {
+  // binding `written` = any
+  const written: any = source;
+  // binding `unwritten` = any
+  const unwritten = source;
+  // predicted `unwritten` = { id?: any; }
+  return [written.id, unwritten.id];
+}
+// returns `result` = any
+function result(source: any) { const row = source; row.id; return row; }
+// predicted `result(values)` = { id?: any; }
+result(values);
+function walk(list: number[]) {
+  // binding `at` = number
+  let at = 0;
+  // predicted `at` = int32
+  while (list[at]) at += 2;
+}
+// Nothing tests the `this` of a function that is no member of a class. `noImplicitThis` reports this one, which changes no answer.
+// signature `Counter` = () this unwritten checked { count?: number; } returns unwritten checked void
+function Counter() { this.count = 0; }
+//// javascript-of-a-strict-program/main.queries.txt
+# An object literal of a JavaScript file takes every name, also where the `strict` tsconfig.json of the program governs the file.
+main.ts:0 option noImplicitAny `` = true
+own.js:0 role `` = Inferred
+own.js:0 option noImplicitAny `` = true
+own.js:3 type `table[String(key)]` = any
+own.js:4 type `table[key]` = any
+//// javascript-of-a-strict-program/main.ts
+// An object literal of a JavaScript file takes every name, also where the `strict` tsconfig.json of the program governs the file.
+import { own, put, take } from "./own.js";
+put("b", 2);
+console.log(own("b"), take("b"));
+//// javascript-of-a-strict-program/own.js
+const table = {};
+export function put(key, value) { table[String(key)] = value; }
+export function own(key) { return table[String(key)]; }
+export function take(key) { return table[key]; }
+//// jsdoc-imports/import-type.js
+// A type that JSDoc imports is the checker's type of the parameter.
+/** @typedef {import("./shapes").Point} Point */
+/** @import { Size } from "./shapes" */
+
+/** @param {import("./shapes").Point} p */
+export function norm(p) {
+  return p.x + p.y;
+}
+
+/** @param {Point} q */
+export function twice(q) {
+  return q.x * 2;
+}
+
+/** @param {Size} s */
+export function area(s) {
+  return s.width * s.height;
+}
+//// jsdoc-imports/import-type.queries.txt
+# A type that JSDoc imports is the checker's type of the parameter.
+import-type.js:6 parameter `p` = Point
+import-type.js:7 type `p.x` = number
+import-type.js:6 returns `norm` = number
+import-type.js:11 parameter `q` = Point
+import-type.js:12 type `q.x` = number
+import-type.js:16 parameter `s` = Size
+import-type.js:17 type `s.width` = number
+import-type.js:16 returns `area` = number
+//// jsdoc-imports/reached-from-typescript.queries.txt
+# The same where `allowJs` brings the JavaScript file into the types program.
+import-type.js:6 parameter `p` = Point
+import-type.js:6 returns `norm` = number
+reached-from-typescript.ts:3 type `norm({ x: 3, y: 4 })` = number
+//// jsdoc-imports/reached-from-typescript.ts
+// The same where `allowJs` brings the JavaScript file into the types program.
+import { norm } from "./import-type.js";
+export const length = norm({ x: 3, y: 4 });
+//// jsdoc-imports/shapes.d.ts
+export interface Point {
+  x: number;
+  y: number;
+}
+export interface Size {
+  width: number;
+  height: number;
+}
+//// lenient-options/inner/dictionary.js
+// An object literal of a JavaScript file takes every name.
+const table = {};
+export function set(key, value) { table[String(key)] = value; }
+export function get(key) { return table[String(key)]; }
+export function take(key) { return table[key]; }
+//// lenient-options/inner/fields.js
+// What TypeScript emits for `root: Node;` is `root;`. The constructor says what the field holds, as it does for a field that is not declared.
+class Node { value = 0; }
+export class Declared { root; #count; constructor() { this.root = new Node(); this.#count = 1; } count() { return this.#count; } }
+export class Stored { constructor() { this.root = new Node(); } }
+//// lenient-options/inner/index-by-string.ts
+// `noImplicitAny` is asked of the file that holds the access.
+export const pick = (from: { a: number }, key: string) => from[key];
+//// lenient-options/inner/possibly-undefined.ts
+// What `strictNullChecks` only reports, and makes no type of, is asked of the file.
+export function size(sizes: Map<string, { n: number }>, key: string): number { return sizes.get(key).n; }
+export function later(flag: boolean): number { let n: number; if (flag) n = 1; return n; }
+export function sign(n: number): number { if (n > 0) return 1; if (n < 0) return -1; }
+export function pick(from: { a: number }) { return { a: 1, ...from }; }
+//// lenient-options/inner/starts-empty.ts
+// Without `noImplicitAny` a variable that starts as `[]` or `null` is no `never[]` and no `null` because the program has `strictNullChecks`: it holds what is stored.
+export function evens(list: number[]): number[] { const out = []; for (const n of list) if (n % 2 === 0) out.push(n); return out; }
+export function last(list: string[]): string | null { let found = null; for (const s of list) found = s; return found; }
+export function first(list: string[]): string | undefined { let found = undefined; for (const s of list) { found = s; break; } return found; }
+export function anything() { let value; value = {}; value.more = 1; return value; }
+//// lenient-options/inner/tsconfig.json
+{ "extends": "../../tsconfig.json", "compilerOptions": { "strict": false } }
+//// lenient-options/main.queries.txt
+# `inner/` is written without `strict`, the program with it.
+main.ts:0 option noImplicitAny `` = true
+inner/fields.js:0 option noImplicitAny `` = false
+
+# What TypeScript emits for `root: Node;` is `root;`. The constructor says what the field holds, as it does for a field that is not declared.
+inner/fields.js:3 class member `Declared` = root Field Member 3 unwritten checked Node
+inner/fields.js:3 class member `Declared` = #count Field Member 3 unwritten checked number
+inner/fields.js:3 returns `count` = number
+inner/fields.js:4 class member `Stored` = root Field ThisStore 4 unwritten checked Node
+
+# Without `noImplicitAny` a variable that starts as `[]` or `null` is no `never[]` and no `null` because the program has `strictNullChecks`: it holds what is stored.
+inner/starts-empty.ts:0 role `` = Checked
+inner/starts-empty.ts:2 binding `out` = any[]
+inner/starts-empty.ts:3 binding `found` = any
+inner/starts-empty.ts:4 binding `found` = any
+absent: inner/starts-empty.ts:2 diagnostic TS2345 = Semantic StopsBuild
+absent: inner/starts-empty.ts:3 diagnostic TS2322 = Semantic StopsBuild
+absent: inner/starts-empty.ts:4 diagnostic TS2322 = Semantic StopsBuild
+inner/starts-empty.ts:5 binding `value` = any
+
+# An object literal of a JavaScript file takes every name.
+inner/dictionary.js:4 type `table[String(key)]` = any
+inner/dictionary.js:5 type `table[key]` = any
+
+# `noImplicitAny` is asked of the file that holds the access.
+absent: inner/index-by-string.ts:2 diagnostic TS7053 = Style StopsBuild
+
+# What `strictNullChecks` only reports, and makes no type of, is asked of the file.
+inner/possibly-undefined.ts:2 type `sizes.get(key).n` = number
+absent: inner/possibly-undefined.ts:2 diagnostic TS2532 = Semantic StopsBuild
+absent: inner/possibly-undefined.ts:3 diagnostic TS2454 = Semantic StopsBuild
+absent: inner/possibly-undefined.ts:4 diagnostic TS2366 = Semantic StopsBuild
+absent: inner/possibly-undefined.ts:5 diagnostic TS2783 = Semantic StopsBuild
+//// lenient-options/main.ts
+// `inner/` is written without `strict`, the program with it.
+import { Declared, Stored } from "./inner/fields.js";
+import { evens, last, first, anything } from "./inner/starts-empty.ts";
+import { get, set, take } from "./inner/dictionary.js";
+import { pick } from "./inner/index-by-string.ts";
+import { size, later, sign, pick as spread } from "./inner/possibly-undefined.ts";
+set("a", 1);
+console.log(new Declared().count(), new Stored(), evens([1]), last(["a"]), first(["a"]), anything(), get("a"), take("a"), pick({ a: 1 }, "a"), size(new Map(), "a"), later(true), sign(1), spread({ a: 2 }));
+//// module-options/inner/index.ts
+// Each file is checked with the module options of the nearest tsconfig.json: `inner/` has `verbatimModuleSyntax` and `isolatedModules`, `main.ts` has neither.
+import { Shape } from "./shape.ts";
+import type { Declared } from "./types";
+export function width(shape: Shape): number { return shape.width; }
+//// module-options/inner/shape.ts
+// Each file is checked with the module options of the nearest tsconfig.json: `inner/` has `verbatimModuleSyntax` and `isolatedModules`, `main.ts` has neither.
+export interface Shape { width: number }
+//// module-options/inner/tsconfig.json
+{ "extends": "../../tsconfig.json", "compilerOptions": { "verbatimModuleSyntax": true, "isolatedModules": true } }
+//// module-options/inner/types.d.ts
+// Each file is checked with the module options of the nearest tsconfig.json: `inner/` has `verbatimModuleSyntax` and `isolatedModules`, `main.ts` has neither.
+export interface Declared { depth: number }
+//// module-options/main.queries.txt
+# Each file is checked with the module options of the nearest tsconfig.json: `inner/` has `verbatimModuleSyntax` and `isolatedModules`, `main.ts` has neither.
+main.ts:0 option verbatimModuleSyntax `` = false
+main.ts:0 option isolatedModules `` = false
+inner/index.ts:0 option verbatimModuleSyntax `` = true
+inner/index.ts:0 option isolatedModules `` = true
+
+# A declaration file is not compiled, so it has the program's options, not those of `inner/tsconfig.json`.
+inner/types.d.ts:0 role `` = TypesOnly
+inner/types.d.ts:0 option verbatimModuleSyntax `` = false
+inner/types.d.ts:0 option isolatedModules `` = false
+
+inner/index.ts:2 diagnostic TS1484 = TypeScriptGrammar StopsBuild
+absent: main.ts:2 diagnostic TS1484 = TypeScriptGrammar StopsBuild
+//// module-options/main.ts
+// Each file is checked with the module options of the nearest tsconfig.json: `inner/` has `verbatimModuleSyntax` and `isolatedModules`, `main.ts` has neither.
+import { Shape } from "./shape.ts";
+import { width } from "./inner/index.ts";
+const shape: Shape = { width: 1 };
+width(shape);
+//// module-options/shape.ts
+// Each file is checked with the module options of the nearest tsconfig.json: `inner/` has `verbatimModuleSyntax` and `isolatedModules`, `main.ts` has neither.
+export interface Shape { width: number }

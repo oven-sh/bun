@@ -1,0 +1,1629 @@
+////: lines
+function «1»(a: «2»[], s: number, x: «2»[]): «2»[] {
+  switch (x.length) {
+    case 0: return a.splice(s, «3»);
+    case 1: return a.splice(s, «3», x[0]);
+    case 2: return a.splice(s, «3», x[0], x[1]);
+    case 3: return a.splice(s, «3», x[0], x[1], x[2]);
+    case 4: return a.splice(s, «3», x[0], x[1], x[2], x[3]);
+    case 5: return a.splice(s, «3», x[0], x[1], x[2], x[3], x[4]);
+    case 6: return a.splice(s, «3», x[0], x[1], x[2], x[3], x[4], x[5]);
+    case 7: return a.splice(s, «3», x[0], x[1], x[2], x[3], x[4], x[5], x[6]);
+    case 8: return a.splice(s, «3», x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7]);
+    default: return a.splice(s, «3», x[0], x[1], x[2], x[3], x[4], x[5], x[6], x[7], x[8]);
+  }
+}
+////: lines-10
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < 8; k++) a.push({ id: k });
+  Object.«2»(a);
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push({ id: -1 }); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-11
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < 8; k++) a.push({ id: k });
+  a[«2»] = { id: -1 };
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push({ id: -1 }); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-12
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push({ id: k });
+  a.«3»();
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push({ id: -1 }); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-13
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < 8; k++) a.push(k % 2 ? "p" + k : k);
+  a[«2»] = 1.5;
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push(1.5); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-14
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < 8; k++) a.push(k % 2 ? "p" + k : k);
+  a.«2» = «3»;
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push(1.5); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-15
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push(k % 2 ? "p" + k : k);
+  a.«3»();
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push(1.5); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-22
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push(k % 2 ? "p" + k : k);
+  a.«3»(«4», «5»);
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push(1.5); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-23
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push(k % 2 ? "p" + k : k);
+  a.splice(1, «3», 1.5, 1.5);
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push(1.5); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-24
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push(k % 2 ? "p" + k : k);
+  «3»(a);
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push(1.5); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-25
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push("p" + k);
+  a.«3»(«4», «5»);
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push("z"); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-26
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push("p" + k);
+  a.splice(1, «3», "z", "z");
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push("z"); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-27
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push("p" + k);
+  «3»(a);
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push("z"); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-28
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < 8; k++) a.push({ id: k });
+  a.length = «2»;
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push({ id: -1 }); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-29
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push({ id: k });
+  a.unshift({ id: -1 });
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push({ id: -1 }); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-3
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push("p" + k);
+  «3»(«4»);
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push("z"); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-30
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push({ id: k });
+  a.«3»(«4», «5»);
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push({ id: -1 }); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-31
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push({ id: k });
+  a.splice(1, «3», { id: -1 }, { id: -1 });
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push({ id: -1 }); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-32
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push({ id: k });
+  «3»(a);
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push({ id: -1 }); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-4
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push(k % 2 ? "p" + k : k);
+  «3»(«4»);
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push(1.5); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-43
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < 8; k++) a.push(«2»);
+  
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push(«3»); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-44
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push("p" + k);
+  «3»;
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push("z"); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-45
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push(k % 2 ? "p" + k : k);
+  «3»;
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push(1.5); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-46
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push({ id: k });
+  «3»;
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push({ id: -1 }); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-7
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < 8; k++) a.push("p" + k);
+  a[«2»] = "z";
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push("z"); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-8
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < 8; k++) a.push("p" + k);
+  a.«2» = «3»;
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push("z"); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+////: lines-9
+function «1»() {
+  let seen, heir;
+  const a = [];
+  for (let k = 0; k < «2»; k++) a.push("p" + k);
+  a.«3»();
+  let s = a.length + "|";
+  let n = 0;
+  for (let i = 0; i < a.length && i < 20000; i++) { const v = a[i]; n += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += n + "|";
+  let m = 0, turns = 0;
+  for (const v of a) { if (++turns > 20000) break; m += v === undefined ? 1000 : typeof v === "object" ? v.id + 1 : typeof v === "string" ? v.length : v; }
+  s += m + "|" + text(a[0]) + "," + text(a[2]) + "," + text(a[3]) + "," + text(a[9]) + "," + text(a[a.length - 1]);
+  try { a.push("z"); s += "|pushed " + a.length; } catch (error) { s += "|push threw " + error.name; }
+  try { s += "|popped " + text(a.pop()) + " " + a.length; } catch (error) { s += "|pop threw " + error.name; }
+  return s + "|" + text(seen) + "|" + (heir ? text(heir[0]) + text(heir[1]) : "");
+}
+//// sparse-then-dense.js
+// Arrays filled from the last index down or in shuffled order start out sparse and end up dense; arrays that stay sparse, hold an accessor at an index or have a read-only length behave as in plain Bun.
+const collect = globalThis.Bun ? full => globalThis.Bun.gc(full) : full => (full ? fullGC() : edenGC());
+
+function hashText(hash, text) {
+  for (let i = 0; i < text.length; i++) hash = (Math.imul(hash, 31) + text.charCodeAt(i)) | 0;
+  return hash;
+}
+
+function textOf(element) {
+  return typeof element === "object" ? JSON.stringify(element) : String(element);
+}
+
+function describe(array) {
+  let holes = 0;
+  for (let i = 0; i < array.length; i++) if (!(i in array)) holes++;
+  const json = JSON.stringify(array);
+  let visited = 0;
+  let iterated = 0;
+  for (const element of array) {
+    visited++;
+    iterated = hashText(iterated, textOf(element));
+  }
+  return `length ${array.length}, holes ${holes}, keys ${Object.keys(array).length}, JSON ${json.length} ${hashText(0, json)}, for-of ${visited} ${iterated}`;
+}
+
+////= attempt-5	constructor.name + ": " + error.messag
+
+function store(array, index, value) {
+  "use strict";
+  array[index] = value;
+}
+
+function fillDescending(array, first, last, createElement) {
+  for (let i = first; i >= last; i--) array[i] = createElement(i);
+}
+
+function descendingOrder(count) {
+  const order = [];
+  for (let i = count - 1; i >= 0; i--) order.push(i);
+  return order;
+}
+
+function shuffledOrder(count) {
+  const order = descendingOrder(count);
+  let state = count;
+  for (let i = count - 1; i > 0; i--) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    const j = (state >>> 8) % (i + 1);
+    const swapped = order[i];
+    order[i] = order[j];
+    order[j] = swapped;
+  }
+  return order;
+}
+
+const elementKinds = {
+  integers: i => i,
+  doubles: i => i + 0.5,
+  strings: i => "s" + i,
+  objects: i => ({ id: i }),
+  mixed: i => [i, i + 0.25, "m" + i, { id: i }, null, undefined][i % 6],
+};
+
+function fill(label, order, createElement) {
+  const count = order.length;
+  const denseEnough = count >> 3;
+  const checkpoints = new Set([denseEnough - 1, denseEnough + 1, count]);
+  if (count < 100000) checkpoints.add(1).add(denseEnough).add(count >> 1);
+  const array = [];
+  let stored = 0;
+  for (const index of order) {
+    array[index] = createElement(index);
+    if (checkpoints.has(++stored)) console.log(`${label} after ${stored}: ${describe(array)}`);
+  }
+  let mismatches = 0;
+  for (let i = 0; i < count; i++) if (textOf(array[i]) !== textOf(createElement(i))) mismatches++;
+  array.push(createElement(count));
+  array.push(-1, 2.5, "pushed", { pushed: true });
+  console.log(`${label} pushed: mismatches ${mismatches}, ${describe(array)}, popped ${textOf(array.pop())} ${textOf(array.pop())}, length ${array.length}`);
+  return array;
+}
+
+function checkEveryKind() {
+  for (const count of [600, 1500, 9000]) {
+    for (const [kind, createElement] of Object.entries(elementKinds)) {
+      fill(`${kind} ${count} descending`, descendingOrder(count), createElement);
+      fill(`${kind} ${count} shuffled`, shuffledOrder(count), createElement);
+    }
+  }
+  for (const kind of ["integers", "mixed"]) {
+    fill(`${kind} 120000 descending`, descendingOrder(120000), elementKinds[kind]);
+    fill(`${kind} 120000 shuffled`, shuffledOrder(120000), elementKinds[kind]);
+  }
+}
+
+function checkSparseAgainAfterDense() {
+  const array = fill("dense twice", descendingOrder(2000), elementKinds.strings);
+  const start = array.length;
+  fillDescending(array, start + 7999, start, elementKinds.doubles);
+  console.log(`dense twice, second fill: ${describe(array)}, push ${array.push("pushed")}`);
+}
+
+function checkHolesRemain() {
+  const array = [];
+  for (let i = 4998; i >= 0; i -= 2) array[i] = { id: i };
+  console.log(`every other index: ${describe(array)}, ${textOf(array[4997])} ${textOf(array[4998])}, push ${array.push("pushed")}`);
+  for (let i = 4997; i >= 0; i -= 2) array[i] = i;
+  console.log(`every index: ${describe(array)}`);
+}
+
+function checkDeleteAndShortenWhileSparse() {
+  const array = [];
+  fillDescending(array, 3999, 3600, elementKinds.strings);
+  for (let i = 3999; i >= 3600; i -= 3) delete array[i];
+  console.log(`deleted while sparse: ${describe(array)}`);
+  array.length = 3700;
+  console.log(`shortened while sparse: ${describe(array)}`);
+  fillDescending(array, 3650, 0, elementKinds.integers);
+  console.log(`filled afterwards: ${describe(array)}, push ${array.push("pushed")}`);
+}
+
+function checkYoungElementsInOldArray() {
+  const array = [];
+  array[3999] = { id: 3999 };
+  collect(true);
+  fillDescending(array, 3998, 0, elementKinds.objects);
+  collect(false);
+  const garbage = [];
+  for (let i = 0; i < 20000; i++) garbage[i % 64] = { id: -i, text: "garbage " + i };
+  collect(false);
+  let total = 0;
+  for (const element of array) total += element.id;
+  console.log(`young elements in an old array: ${describe(array)}, total ${total}, garbage ${garbage.length}`);
+}
+
+function checkStaysSparse() {
+  const array = [];
+  array[200000] = "last";
+  for (let i = 0; i < 2000; i++) array[i * 97] = i;
+  console.log(`stays sparse: ${describe(array)}`);
+  console.log(`stays sparse: push ${array.push("pushed")}, ${textOf(array[200000])} ${textOf(array[200001])} ${textOf(array[199999])}, ${describe(array)}`);
+}
+
+function checkMaximumIndex() {
+  const array = [];
+  array[4294967294] = "last";
+  fillDescending(array, 99, 0, elementKinds.integers);
+  console.log(`maximum index: length ${array.length}, keys ${Object.keys(array).length}, ${textOf(array[4294967294])}`);
+  console.log(`maximum index: push ${attempt(() => array.push("pushed"))}, length ${array.length}, keys ${Object.keys(array).length}`);
+}
+
+function checkGetterAtIndex() {
+  const array = [];
+  let reads = 0;
+  Object.defineProperty(array, 2999, { get: () => "read " + ++reads, enumerable: true, configurable: true });
+  fillDescending(array, 2998, 0, elementKinds.integers);
+  console.log(`getter: ${describe(array)}, reads ${reads}`);
+  console.log(`getter: store ${attempt(() => store(array, 2999, "stored"))}, push ${array.push("pushed")}, ${textOf(array[2999])}, reads ${reads}`);
+  Object.defineProperty(array, 2999, { value: "data", writable: true, enumerable: true, configurable: true });
+  console.log(`getter redefined as data: ${describe(array)}, reads ${reads}`);
+}
+
+function checkSetterAtIndex() {
+  const array = [];
+  const received = [];
+  Object.defineProperty(array, 10, { get: () => received.length, set: value => received.push(value), enumerable: true, configurable: true });
+  fillDescending(array, 2999, 0, elementKinds.integers);
+  console.log(`setter: ${describe(array)}, received ${received.join()}, push ${array.push("pushed")}`);
+}
+
+function checkReadOnlyLength() {
+  const array = [];
+  array[2999] = "last";
+  Object.defineProperty(array, "length", { writable: false });
+  fillDescending(array, 2998, 0, elementKinds.integers);
+  console.log(`read-only length: ${describe(array)}`);
+  console.log(`read-only length: push ${attempt(() => array.push("pushed"))}, store ${attempt(() => store(array, 3000, "stored"))}, length ${array.length}, ${3000 in array}`);
+}
+
+function checkNonExtensible() {
+  const array = [];
+  array[2999] = "last";
+  array[5] = "five";
+  Object.preventExtensions(array);
+  let failures = 0;
+  for (let i = 2998; i >= 0; i--) {
+    try {
+      store(array, i, i);
+    } catch {
+      failures++;
+    }
+  }
+  console.log(`non-extensible: ${describe(array)}, failures ${failures}, ${textOf(array[5])}, push ${attempt(() => array.push("pushed"))}`);
+}
+
+function checkNamedProperty() {
+  const array = [];
+  array.label = "named";
+  fillDescending(array, 2999, 0, elementKinds.strings);
+  console.log(`named property: ${describe(array)}, ${array.label}, push ${array.push("pushed")}`);
+}
+
+function checkSubclass() {
+  class List extends Array {}
+  const list = new List();
+  fillDescending(list, 2999, 0, elementKinds.doubles);
+  console.log(`subclass: ${describe(list)}, push ${list.push("pushed")}, ${list instanceof List} ${list.slice(0, 2) instanceof List}`);
+}
+
+checkEveryKind();
+checkSparseAgainAfterDense();
+checkHolesRemain();
+checkDeleteAndShortenWhileSparse();
+checkYoungElementsInOldArray();
+checkStaysSparse();
+checkMaximumIndex();
+checkGetterAtIndex();
+checkSetterAtIndex();
+checkReadOnlyLength();
+checkNonExtensible();
+checkNamedProperty();
+checkSubclass();
+//// splice-at-a-position-typed-number.ts
+// The position and the count of a splice are typed `number` and hold whole numbers, fractions, NaN, infinities, -0, numbers beyond int32: with the result used, unused, and taken apart.
+function insertAt(list: number[], at: number, value: number): void { list.splice(at, 0, value); }
+function removeAt(list: string[], at: number, count: number): string[] { return list.splice(at, count); }
+function replaceAt(list: (string | number)[], at: number, count: number, a: string, b: number): number { const [first] = list.splice(at, count, a, b); return typeof first === "number" ? first : -1; }
+function pick(values: number[], i: number): number { let chosen: number; if (i % 3 === 0) chosen = values[i % values.length]; else if (i % 3 === 1) chosen = values[(i * 7) % values.length] / 1; else chosen = i % 5; return chosen; }
+const positions = [0, 1, 2, 3.5, -1, -2.5, NaN, Infinity, -Infinity, -0, 2 ** 31, -(2 ** 31) - 1, 2 ** 32 + 1, 1e300, 0.999, 4, 100];
+const lines: string[] = [];
+for (let round = 0; round < 400; round++) {
+  const at = pick(positions, round), count = pick(positions, round + 5);
+  const numbers = [1, 2, 3, 4, 5];
+  insertAt(numbers, at, 9);
+  const texts = ["a", "b", "c", "d", "e", "f"];
+  const removed = removeAt(texts, at, count);
+  const mixed: (string | number)[] = [1, "x", 2, "y"];
+  const first = replaceAt(mixed, at, count, "new", 7);
+  if (round < 60 || round % 37 === 0) lines.push([at, count, numbers.join(), texts.join(""), removed.join(""), mixed.join(), first].join(" | "));
+}
+console.log(lines.join("\n"));
+// As in a sorted insertion: the position is a variable without an initial value that two branches fill.
+function reorder(items: number[]): number[] {
+  const result: number[] = [];
+  let special = -1, cutoff = 0, index = 0;
+  for (const item of items) {
+    let spliceIndex: number;
+    if (item % 4 === 0) { special++; spliceIndex = special; cutoff++; } else { index = item % 3 === 0 ? cutoff : index + 1; spliceIndex = Math.min(index, result.length); }
+    result.splice(spliceIndex, 0, item);
+  }
+  return result;
+}
+let sum = 0;
+for (let i = 0; i < 3000; i++) sum += reorder([i, i + 1, i + 2, i + 3, i + 4, i + 5, i + 6])[i % 7];
+console.log(sum, reorder([8, 3, 4, 1, 12, 9, 5, 16]).join());
+//// splice-literal-delete-count.ts
+// a.splice(start, D, ..) with D written as 0, 1, 2 or 3 and 0 to 9 inserted elements, against the same edit made element by element: int32s, doubles, strings and mixed values, holes, full and spare capacity, short and long tails, every kind of start. Then arrays whose storage cannot be edited in place.
+class Rec { constructor(public id: number) {} }
+
+////= lines	spliceNumbers0	number	0
+////= lines	spliceNumbers1	number	1
+////= lines	spliceNumbers2	number	2
+////= lines	spliceNumbers3	number	3
+////= lines	spliceValues0	unknown	0
+////= lines	spliceValues1	unknown	1
+////= lines	spliceValues2	unknown	2
+////= lines	spliceValues3	unknown	3
+type Splice<T> = (a: T[], s: number, x: T[]) => T[];
+const numberSplices: Splice<number>[] = [spliceNumbers0, spliceNumbers1, spliceNumbers2, spliceNumbers3];
+const valueSplices: Splice<unknown>[] = [spliceValues0, spliceValues1, spliceValues2, spliceValues3];
+
+function show(v: unknown): string { return v instanceof Rec ? "#" + v.id : v === undefined ? "undefined" : v === null ? "null" : typeof v === "string" ? "'" + v + "'" : Object.is(v, -0) ? "-0" : String(v); }
+function showAt(a: readonly unknown[], k: number): string { return (k in a ? show(a[k]) : "_") + ","; }
+function list(a: readonly unknown[]): string { let t = a.length + "["; for (let k = 0; k < a.length; k++) t += showAt(a, k); return t + "]"; }
+function expected(a: readonly unknown[], start: number, deleteCount: number, items: readonly unknown[]): string {
+  const n = a.length, relative = start !== start ? 0 : Math.trunc(start);
+  const from = relative < 0 ? Math.max(n + relative, 0) : Math.min(relative, n), count = Math.min(deleteCount, n - from);
+  let removed = count + "[", edited = n - count + items.length + "[";
+  for (let k = 0; k < count; k++) removed += showAt(a, from + k);
+  for (let k = 0; k < from; k++) edited += showAt(a, k);
+  for (const item of items) edited += show(item) + ",";
+  for (let k = from + count; k < n; k++) edited += showAt(a, k);
+  return removed + "] " + edited + "]";
+}
+let checks = 0, bad = 0;
+function check<T>(name: string, splice: Splice<T>, a: T[], start: number, deleteCount: number, items: T[]): void {
+  const want = expected(a, start, deleteCount, items), removed = splice(a, start, items), got = list(removed) + " " + list(a);
+  checks++;
+  if (got !== want && bad++ < 12) console.log("DIFFERS: " + name + "\n  got  " + got + "\n  want " + want);
+}
+function build<T>(n: number, element: (k: number) => T, hasSpareCapacity: boolean, holes: number): T[] {
+  const a: T[] = [];
+  for (let k = 0; k < n; k++) a.push(element(k));
+  const result = hasSpareCapacity ? a : a.slice();
+  if (holes) for (let k = 1; k < n; k += holes) delete result[k];
+  return result;
+}
+const int32At = (k: number) => k * 3, doubleAt = (k: number) => k + 0.5, stringAt = (k: number): unknown => "t" + k;
+const mixedAt = (k: number): unknown => (k % 4 === 0 ? undefined : k % 4 === 1 ? null : k % 4 === 2 ? -0 : new Rec(k));
+
+for (const n of [0, 1, 2, 3, 5, 8, 33, 34, 35, 36, 70]) {
+  for (const start of [0, 1, 2, n >> 1, n - 2, n - 1, n, n + 1, -1, -2, -n, -n - 1, 0.5, -1.5, NaN, Infinity, -Infinity, 2 ** 31, -(2 ** 31) - 1, 2 ** 32 + 1]) {
+    for (let deleteCount = 0; deleteCount <= 3; deleteCount++) {
+      for (let inserted = 0; inserted <= 9; inserted++) {
+        const int32s: number[] = [], fractions: number[] = [], oddNumbers: number[] = [], values: unknown[] = [];
+        for (let k = 0; k < inserted; k++) { int32s.push(100 + k); fractions.push(100.25 + k); oddNumbers.push(k === inserted - 1 ? NaN : k ? 100.25 + k : -0); values.push(k % 3 === 0 ? "x" + k : k % 3 === 1 ? new Rec(100 + k) : k); }
+        for (const hasSpareCapacity of [false, true]) {
+          const at = " n=" + n + " start=" + start + " delete=" + deleteCount + " insert=" + inserted + (hasSpareCapacity ? " spare" : " full");
+          const numbers = numberSplices[deleteCount], anything = valueSplices[deleteCount];
+          check("int32s into int32s" + at, numbers, build(n, int32At, hasSpareCapacity, 0), start, deleteCount, int32s);
+          check("fractions into int32s" + at, numbers, build(n, int32At, hasSpareCapacity, 0), start, deleteCount, fractions);
+          check("int32s into doubles" + at, numbers, build(n, doubleAt, hasSpareCapacity, 0), start, deleteCount, int32s);
+          check("fractions into doubles" + at, numbers, build(n, doubleAt, hasSpareCapacity, 0), start, deleteCount, fractions);
+          check("NaN and -0 into doubles" + at, numbers, build(n, doubleAt, hasSpareCapacity, 0), start, deleteCount, oddNumbers);
+          check("int32s into doubles with holes" + at, numbers, build(n, doubleAt, hasSpareCapacity, 3), start, deleteCount, int32s);
+          check("values into strings" + at, anything, build(n, stringAt, hasSpareCapacity, 0), start, deleteCount, values);
+          check("values into mixed values" + at, anything, build(n, mixedAt, hasSpareCapacity, 0), start, deleteCount, values);
+          check("values into strings with holes" + at, anything, build(n, stringAt, hasSpareCapacity, 2), start, deleteCount, values);
+          check("values into int32s" + at, anything, build<unknown>(n, int32At, hasSpareCapacity, 0), start, deleteCount, values);
+          check("values into doubles" + at, anything, build<unknown>(n, doubleAt, hasSpareCapacity, 0), start, deleteCount, values);
+        }
+      }
+    }
+  }
+}
+console.log(checks + " checks, " + bad + " bad");
+
+function report(name: string, run: () => string): void { let text: string; try { text = run(); } catch (error) { text = error instanceof TypeError ? "TypeError" : "threw " + String(error); } console.log(name + ": " + text); }
+function edit(a: number[], inserted: number): string {
+  const items: number[] = [];
+  for (let k = 0; k < inserted; k++) items.push(50 + k);
+  let text: string;
+  try { text = list(spliceNumbers1(a, 1, items)); } catch (error) { text = error instanceof TypeError ? "TypeError" : "threw " + String(error); }
+  return text + " " + list(a);
+}
+class Numbers extends Array<number> {}
+for (const inserted of [0, 1, 2, 3, 8, 9]) {
+  const label = " with " + inserted + " inserted";
+  report("constants" + label, () => edit([1, 2, 3, 4], inserted) + " " + edit([1.5, 2.5, 3.5, 4.5], inserted));
+  report("frozen" + label, () => edit(Object.freeze([1, 2, 3, 4]) as number[], inserted));
+  report("sealed" + label, () => edit(Object.seal([1, 2, 3, 4]), inserted));
+  report("not extensible" + label, () => edit(Object.preventExtensions([1, 2, 3, 4]), inserted));
+  report("length is read-only" + label, () => edit(Object.defineProperty([1, 2, 3, 4], "length", { writable: false }), inserted));
+  report("sparse" + label, () => { const a = [1, 2, 3]; a[100000] = 4; const removed = spliceNumbers1(a, 1, [7, 8, 9].slice(0, Math.min(inserted, 3))); return list(removed) + " " + a.length + " " + list(a.slice(0, 6)); });
+  report("subclass" + label, () => { const a = new Numbers(); a.push(1, 2, 3, 4); const removed = spliceNumbers1(a, 1, [7, 8, 9].slice(0, Math.min(inserted, 3))); return (removed instanceof Numbers) + " " + list(removed) + " " + list(a); });
+  report("inherited in a hole" + label, () => { const a = [1, , 3, 4] as number[]; Object.setPrototypeOf(a, { __proto__: Array.prototype, 1: 77 }); return edit(a, inserted); });
+  report("named property" + label, () => { const a = [1, 2, 3, 4]; (a as unknown as { tag: string }).tag = "kept"; return edit(a, inserted) + " " + (a as unknown as { tag: string }).tag; });
+}
+console.log(bad ? "splices with a literal delete count: FAILED" : "splices with a literal delete count: PASS");
+//// splice-results-partly-used.ts
+// splice whose result is not used, or of which only the length or the first elements are read: the array changes as it always does, and what is read of the removed elements is what
+// the array of removed elements would have answered. Every way an array keeps its elements, holes, ranges off both ends, inserted items that do not fit, and arrays that refuse the change.
+const lines: string[] = [];
+const show = (label: string, ...values: unknown[]) => lines.push(label + ": " + values.map(value => JSON.stringify(value) ?? String(value)).join(" "));
+
+function removeOne<T>(list: T[], at: number): void {
+  list.splice(at, 1);
+}
+function takeOne<T>(list: T[], at: number): T | undefined {
+  return list.splice(at, 1)[0];
+}
+function takeTwo<T>(list: T[], at: number): [T | undefined, T | undefined, T | undefined] {
+  const [first, second, third] = list.splice(at, 2);
+  return [first, second, third];
+}
+function countRemoved<T>(list: T[], at: number, count: number): number {
+  return list.splice(at, count).length;
+}
+function replaceOne<T>(list: T[], at: number, item: T): T | undefined {
+  return list.splice(at, 1, item)[0];
+}
+function insertTwo<T>(list: T[], at: number, a: T, b: T): void {
+  list.splice(at, 0, a, b);
+}
+function removedIsThere<T>(list: T[], at: number): boolean {
+  return 0 in list.splice(at, 1);
+}
+function wholeResult<T>(list: T[], at: number): T[] {
+  return list.splice(at, 1);
+}
+
+const makers: [string, () => unknown[]][] = [
+  ["integers", () => [1, 2, 3, 4, 5]],
+  ["doubles", () => [1.5, 2.5, 3.5, 4.5, 5.5]],
+  ["strings", () => ["a", "b", "c", "d", "e"]],
+  ["mixed", () => [1, "b", 3.5, null, { e: 5 }]],
+  ["holes", () => [1, , 3, , 5]],
+  ["holes among doubles", () => [1.5, , 3.5, , 5.5]],
+  ["holes among strings", () => ["a", , "c", , "e"]],
+  ["one", () => [7]],
+  ["none", () => []],
+  ["long", () => Array.from({ length: 200 }, (_, i) => i)],
+  ["pushed", () => { const list: unknown[] = []; for (let i = 0; i < 9; i++) list.push(i * 2); return list; }],
+];
+const short = (list: unknown[]) => (list.length > 12 ? [list.length, ...list.slice(0, 4), ...list.slice(-2)] : list);
+for (let round = 0; round < 40; round++) {
+  const print = round === 0 || round === 39;
+  for (const [name, make] of makers) {
+    for (const at of [0, 1, 3, 4, 5, 9, -1, -2, -9]) {
+      let list = make();
+      removeOne(list, at);
+      if (print) show(name + " removeOne " + at, short(list), list.length);
+      list = make();
+      const one = takeOne(list, at);
+      if (print) show(name + " takeOne " + at, one, short(list));
+      list = make();
+      const two = takeTwo(list, at);
+      if (print) show(name + " takeTwo " + at, two.map(String), short(list));
+      list = make();
+      const count = countRemoved(list, at, round % 4);
+      if (print) show(name + " countRemoved " + at, count, short(list));
+      list = make();
+      const replaced = replaceOne(list, at, round % 2 ? "item" : 0.5);
+      if (print) show(name + " replaceOne " + at, replaced, short(list));
+      list = make();
+      insertTwo(list, at, 10, round % 3 ? 11 : "eleven");
+      if (print) show(name + " insertTwo " + at, short(list));
+      list = make();
+      const there = removedIsThere(list, at);
+      if (print) show(name + " removedIsThere " + at, there);
+      list = make();
+      const whole = wholeResult(list, at);
+      if (print) show(name + " wholeResult " + at, whole, Object.keys(whole).join());
+    }
+  }
+}
+
+// Arrays that are not what the inline code moves by itself.
+class Stack<T> extends Array<T> {}
+const stack = Stack.from([1, 2, 3]);
+show("subclass", takeOne(stack, 1), [...stack], stack.splice(0, 1) instanceof Stack);
+const frozen = Object.freeze([1, 2, 3]) as number[];
+try {
+  removeOne(frozen, 0);
+  show("frozen", "no error");
+} catch (error) {
+  show("frozen", (error as Error).constructor.name, frozen);
+}
+const named = Object.assign([1, 2, 3], { extra: "kept" });
+removeOne(named, 1);
+show("named property", named, named.extra);
+const sparse: number[] = [];
+sparse[5000] = 1;
+show("sparse", takeOne(sparse, 5000), sparse.length, countRemoved(sparse, 10, 20), sparse.length);
+const shared = () => [1, 2, 3];
+const firstCopy = shared();
+removeOne(firstCopy, 0);
+show("literal made twice", firstCopy, shared());
+
+console.log(lines.length);
+console.log(lines.join("\n"));
+//// spread-into-literals.js
+function report(name, run) {
+    let text;
+    try { text = String(run()); } catch (error) { text = "threw " + error.name; }
+    console.log(name + " -> " + text);
+}
+function summary(array) {
+    let sum = 0;
+    let holes = 0;
+    for (let index = 0; index < array.length; index++) {
+        if (!(index in array)) holes++;
+        const value = array[index];
+        sum += typeof value === "number" ? value : value === undefined ? 0 : 1;
+    }
+    return array.length + " " + sum + " " + holes;
+}
+function integers(count) {
+    const array = [];
+    for (let index = 0; index < count; index++)
+        array.push(index);
+    return array;
+}
+
+for (const first of [0, 1, 70000, 200000]) {
+    for (const second of [0, 1, 70000, 200000]) {
+        const a = integers(first);
+        const b = integers(second);
+        report("integers " + first + " and " + second, () => summary([...a, ...b]));
+    }
+}
+
+report("holes read as undefined", () => summary([...[1, , 3], ...[, 5]]));
+report("literal holes", () => summary([1, , ...[2], , 3]));
+report("doubles into contiguous", () => summary(["text", ...[1.5, 2.5], {}, ...[3.5]]));
+report("long doubles into contiguous", () => summary(["text", ...integers(70000).map(value => value + 0.5)]));
+report("integers into doubles", () => summary([0.5, ...[1, 2]]));
+report("strings into integers", () => summary([1, ...["a", "b"]]));
+
+report("typed array", () => summary([...new Uint8Array([1, 2, 3]), ...new Float64Array([0.5])]));
+report("empty typed array", () => summary([...new Int32Array(0)]));
+report("detached typed array", () => {
+    const buffer = new ArrayBuffer(8);
+    const view = new Uint8Array(buffer);
+    buffer.transfer();
+    return summary([...view]);
+});
+
+report("Map", () => [...new Map([[1, 2], [3, 4]])].join("|"));
+report("Map keys", () => [...new Map([[1, 2], [3, 4]]).keys()].join("|"));
+report("Set", () => [...new Set([1, 2, 2, 3])].join("|"));
+report("string", () => [..."a\u{1F600}b"].length);
+report("generator", () => [...(function* () { yield 1; yield 2; })()].join("|"));
+
+report("array with own iterator", () => {
+    const array = [1, 2, 3];
+    array[Symbol.iterator] = function* () { yield "own"; };
+    return [...array].join("|");
+});
+class Plain extends Array {}
+report("subclass without iterator", () => [...Plain.of(1, 2, 3)].join("|"));
+class Reversed extends Array {
+    *[Symbol.iterator]() { for (let index = this.length - 1; index >= 0; index--) yield this[index]; }
+}
+report("subclass with iterator", () => [...Reversed.of(1, 2, 3)].join("|"));
+
+report("not iterable", () => [...5]);
+report("null", () => [...null]);
+
+let closed = 0;
+const failing = {
+    [Symbol.iterator]() {
+        let count = 0;
+        return {
+            next() {
+                if (++count > 2) throw new RangeError("stop");
+                return { value: count, done: false };
+            },
+            return() { closed++; return {}; },
+        };
+    },
+};
+let literal = "not assigned";
+report("next throws", () => { literal = [0, ...failing, 9]; return literal; });
+console.log(literal, closed);
+//// spread-kinds.ts
+// Spreads into array literals of numbers, of integers and of values, with elements before, between and behind them: sources of every length, however they keep their elements, with holes at the start, in the middle and at the end, with a property of their own, frozen, shared until written to.
+declare const console: { log(...values: unknown[]): void };
+function numbers(a: number[], b: number[], v: number): number[] { return [v, ...a, v, v, ...b, v]; }
+function numbersFirst(a: number[], b: number[], v: number): number[] { return [...a, v, ...b]; }
+function numbersOnly(a: number[], b: number[], c: number[]): number[] { return [...a, ...b, ...c]; }
+function integers(a: number[], b: number[]): number[] { return [1, ...a, 2, 3, ...b, 4, 5, 6]; }
+function values(a: unknown[], b: unknown[], v: unknown): unknown[] { return [v, ...a, v, v, ...b, v]; }
+function texts(a: string[], b: string[]): string[] { return ["<", ...a, "|", ...b, ">", ">", ">", ">", ">"]; }
+function mixed(a: number[], b: string[]): (number | string)[] { return ["n", ...a, 0.5, ...b, 1]; }
+function inLoop(a: number[], b: number[]): number[] { let out: number[] = []; for (let i = 0; i < 3; i++) out = [i, ...a, i + 0.5, ...b, ...out.slice(0, 2), i]; return out; }
+function textsInLoop(a: string[], b: string[]): string[] { let out: string[] = []; for (let i = 0; i < 3; i++) out = ["<", ...a, ...b, ...out.slice(0, 2), ">", ">"]; return out; }
+function sum(...all: number[]): number { let t = 0; for (const x of all) t += x === undefined ? 1000 : x; return t; }
+function passed(a: number[], b: number[]): number { return sum(1, ...a, 2, ...b, 3); }
+function show(a: readonly unknown[]): string {
+  let text = a.length + ":"; let run = 0;
+  for (let i = 0; i < a.length; i++) { if (!(i in a)) text += "_"; else if (i < 6 || i > a.length - 7) text += String(a[i]) + ","; else run++; }
+  let check = 0; for (let i = 0; i < a.length; i++) { const v = a[i]; check = (check * 31 + (typeof v === "number" ? v * 2 : v === undefined ? 7 : String(v).length)) % 1000003; }
+  return text + "(" + run + ")#" + check;
+}
+const lengths = [0, 1, 2, 3, 4, 5, 7, 8, 15, 16, 31, 63, 64, 65, 100, 127, 128, 200, 254, 255, 256, 300];
+const kinds: [string, (n: number) => any[]][] = [
+  ["int32s", n => Array.from({ length: n }, (_, i) => i + 1)],
+  ["doubles", n => Array.from({ length: n }, (_, i) => i + 0.5)],
+  ["values", n => Array.from({ length: n }, (_, i) => (i % 3 ? i : i + 0.25) as unknown).concat([]).map(x => x)],
+  ["a hole first", n => { const a = Array.from({ length: n }, (_, i) => i + 0.5); delete a[0]; return a; }],
+  ["a hole in the middle", n => { const a = Array.from({ length: n }, (_, i) => i + 0.5); delete a[n >> 1]; return a; }],
+  ["a hole last", n => { const a = Array.from({ length: n }, (_, i) => i + 0.5); delete a[n - 1]; return a; }],
+  ["a hole among int32s", n => { const a = Array.from({ length: n }, (_, i) => i + 1); delete a[n >> 1]; return a; }],
+  ["only holes", n => new Array(n)],
+  ["a property of its own", n => Object.assign(Array.from({ length: n }, (_, i) => i + 0.5), { extra: 1 })],
+  ["frozen", n => Object.freeze(Array.from({ length: n }, (_, i) => i + 0.5)) as any[]],
+  ["not a number among doubles", n => Array.from({ length: n }, (_, i) => (i === 1 ? NaN : i + 0.5))],
+];
+for (const [kind, make] of kinds) for (const n of lengths) {
+  const a = make(n); const b = make(n >> 1);
+  console.log(kind, n, show(numbers(a, b, 0.25)), show(numbersFirst(a, b, 9)), show(numbersOnly(a, b, a)), show(integers(a, b)), show(values(a, b, "v")), show(mixed(a, ["s", "t"])), show(inLoop(a, b)), n <= 100 ? passed(a, b) : "-");
+}
+for (const n of lengths) {
+  const a = Array.from({ length: n }, (_, i) => "s" + i); const b = a.slice(n >> 1); const holey = a.slice(); delete holey[n >> 1];
+  console.log("strings", n, show(texts(a, b)), show(texts(holey, a)), show(textsInLoop(a, b)), show(values(a, holey, 1)), show(mixed([1, 2.5], a)));
+}
+const literal = (): number[] => [1, 2, 3]; const halves = (): number[] => [0.5, 1.5];
+console.log(show(numbers(literal(), halves(), 7)), show(integers(literal(), literal())), show(values(literal(), halves(), null)), show(numbersOnly(halves(), literal(), halves())));
+//// spread-of-long-arrays.ts
+// Spreading an array of a hundred thousand elements or more copies it as a short one is copied.
+function sum(list: readonly unknown[]): string {
+  let h = 0;
+  for (let i = 0; i < list.length; i++) {
+    const x = list[i];
+    h = (h * 31 + (typeof x === "number" ? Math.round(x * 4) : typeof x === "string" ? x.length + 1 : x === undefined ? 7 : x === null ? 11 : (x as { id: number }).id)) % 1000003;
+  }
+  return list.length + ":" + h;
+}
+function integers(n: number): number[] { const a: number[] = []; for (let i = 0; i < n; i++) a.push(i); return a; }
+function fractions(n: number): number[] { const a: number[] = []; for (let i = 0; i < n; i++) a.push(i + 0.25); return a; }
+function objects(n: number): { id: number }[] { const a: { id: number }[] = []; for (let i = 0; i < n; i++) a.push({ id: i % 977 }); return a; }
+function strings(n: number): string[] { const a: string[] = []; for (let i = 0; i < n; i++) a.push("s" + (i % 100)); return a; }
+function mixed(n: number): (number | string | null | undefined)[] { const a: (number | string | null | undefined)[] = []; for (let i = 0; i < n; i++) a.push(i % 4 === 0 ? i : i % 4 === 1 ? "m" : i % 4 === 2 ? null : undefined); return a; }
+const sizes = [99998, 99999, 100000, 100001, 150000, 262144];
+let out = "";
+for (const n of sizes) {
+  const i = integers(n), f = fractions(n), o = objects(n), s = strings(n), m = mixed(n);
+  const copies = [[...i], [...f], [...o], [...s], [...m]];
+  out += n + " " + copies.map(sum).join(" ") + "\n";
+  out += [sum([-1, ...i]), sum([...i, -1]), sum([0.5, ...i]), sum(["x", ...i, ...f]), sum([...f, ...i]), sum([...i, ...i]), sum([...o, ...s, null]), sum([1, 2, 3, ...f, 4])].join(" ") + "\n";
+  const copy = [...i];
+  copy.push(1, 2, 3);
+  copy[5] = -5;
+  out += sum(copy) + " " + sum(i) + " " + (copy === i) + " " + copy.indexOf(n - 1) + "\n";
+}
+const holey = integers(120000);
+delete holey[77777];
+const withHole = [...holey];
+out += sum(withHole) + " " + (77777 in withHole) + " " + (77777 in holey) + "\n";
+const nans = fractions(120000);
+nans[5] = NaN;
+const withNaN = [...nans];
+out += withNaN.length + " " + Number.isNaN(withNaN[5]) + " " + withNaN[6] + "\n";
+const frozen = Object.freeze(integers(110000));
+out += sum([...frozen]) + " " + Object.isFrozen([...frozen]) + "\n";
+class List extends Array<number> {}
+const heir = new List();
+for (let k = 0; k < 110000; k++) heir.push(k);
+const fromHeir = [...heir];
+out += sum(fromHeir) + " " + (fromHeir instanceof List) + "\n";
+function count(...all: number[]): number { return all.length; }
+out += [...integers(130000)].length + " " + Math.max(...integers(100)) + " " + count(...integers(1000)) + "\n";
+console.log(out);
+//// spreads-and-patterns-by-stub.js
+// Spreads and array patterns over plain arrays stay out of C++. Every other source gives what bun run gives.
+import vm from "node:vm";
+
+const count = globalThis.aotOperationCount ?? (() => 0);
+
+function describeElements(list) {
+  let description = list.length + ":";
+  for (let i = 0; i < list.length; i++) description += " " + (i in list ? (Object.is(list[i], -0) ? "-0" : String(list[i])) : "hole");
+  return description;
+}
+function makeArray(length, valueAt) {
+  const list = [];
+  for (let i = 0; i < length; i++) list.push(valueAt(i));
+  return list;
+}
+function copyOf(a) { return [...a]; }
+function copyBetween(a, b) { return [0, ...a, 1, ...b]; }
+function copyAfterText(a, b) { return ["start", ...a, "end", ...b]; }
+function firstThree(a) {
+  const [x, y, z] = a;
+  return [x, y, z];
+}
+function printCase(name, a, b) {
+  console.log(name, "|", describeElements(copyOf(a)), "|", describeElements(copyBetween(a, b)), "|", describeElements(firstThree(a)));
+}
+
+const integers = makeArray(5, i => i);
+const doubles = makeArray(5, i => i + 0.5);
+const strings = makeArray(5, i => "s" + i);
+const integers64 = makeArray(64, i => i);
+const doubles64 = makeArray(64, i => i + 0.25);
+const strings64 = makeArray(64, i => "t" + i);
+const integers65 = makeArray(65, i => i);
+const doubles65 = makeArray(65, i => i + 0.25);
+const strings65 = makeArray(65, i => "u" + i);
+const shortList = makeArray(2, i => i + 0.5);
+const literalIntegers = [1, 2, 3];
+const literalDoubles = [1.5, 2.5, 3.5];
+const literalStrings = ["a", "b", "c"];
+
+printCase("integers", integers, doubles);
+printCase("doubles", doubles, strings);
+printCase("strings", strings, integers);
+printCase("integer holes", [1, , 3], integers);
+printCase("double holes", [1.5, , 3.5], doubles);
+printCase("string holes", ["a", , "c"], strings);
+printCase("empty", [], []);
+printCase("integers 64", integers64, integers65);
+printCase("doubles 64", doubles64, doubles65);
+printCase("strings 64", strings64, strings65);
+printCase("integers 65", integers65, integers64);
+printCase("doubles 65", doubles65, doubles64);
+printCase("strings 65", strings65, strings64);
+printCase("short", shortList, shortList);
+printCase("literal integers", literalIntegers, literalDoubles);
+printCase("literal doubles", literalDoubles, literalStrings);
+printCase("literal strings", literalStrings, literalIntegers);
+printCase("negative zero", [-0, 1.5], [-0, 2.5]);
+printCase("set", new Set([1, "two", 3.5]), new Set());
+printCase("string", "héllo", "ab");
+printCase("iterable object", { *[Symbol.iterator]() { yield 1; yield "two"; } }, []);
+printCase("generator", (function* () { yield 1; yield 2.5; yield "three"; })(), (function* () { yield 4; })());
+
+const plainSources = [integers, doubles, strings, integers64, doubles64, strings64, shortList];
+let appendsBefore = count("operationAOTAppendSpread");
+let readsBefore = count("operationAOTReadBatchedElements");
+let total = 0;
+for (let round = 0; round < 1000; round++) {
+  for (const source of plainSources) {
+    total += copyAfterText(source, source).length;
+    const [x, y, z] = source;
+    if (x !== source[0] || y !== source[1] || z !== source[2]) total = -1;
+  }
+}
+console.log("copied", total, count("operationAOTAppendSpread") === appendsBefore, count("operationAOTReadBatchedElements") === readsBefore);
+
+class Rows extends Array {}
+const subclassInstance = new Rows();
+subclassInstance.push(1, 2, 3);
+printCase("subclass instance", subclassInstance, subclassInstance);
+
+const ownIterator = [1, 2, 3];
+ownIterator[Symbol.iterator] = function* () { yield "own"; };
+printCase("own iterator", ownIterator, ownIterator);
+
+const replacedPrototype = [1, 2, 3];
+Object.setPrototypeOf(replacedPrototype, { *[Symbol.iterator]() { yield "prototype"; } });
+printCase("replaced prototype", replacedPrototype, replacedPrototype);
+
+const frozen = Object.freeze([1, 2, 3]);
+printCase("frozen", frozen, frozen);
+console.log("frozen copy", Object.isFrozen(copyOf(frozen)));
+
+const otherRealm = vm.runInNewContext("[1, 2.5, 'three']");
+printCase("other realm", otherRealm, otherRealm);
+console.log("other realm copy", copyOf(otherRealm) instanceof Array);
+
+try {
+  copyOf(null);
+  console.log("null spread did not throw");
+} catch (error) {
+  console.log("null spread", error instanceof TypeError);
+}
+
+let halfBuilt;
+const throwsInNext = {
+  [Symbol.iterator]() {
+    let step = 0;
+    return {
+      next() {
+        if (step++ === 1) throw new RangeError("next failed");
+        return { done: false, value: step };
+      },
+    };
+  },
+};
+try {
+  halfBuilt = [1, ...throwsInNext, 2];
+} catch (error) {
+  console.log("throwing next", error instanceof RangeError, halfBuilt === undefined);
+}
+//// spreads-in-loops.ts
+// Spreads into array literals and argument lists inside loops: records, numbers, strings; sources with holes, frozen, of a subclass, with an iterator of their own, sparse, empty, and iterables that are no arrays.
+declare const console: { log(...values: unknown[]): void };
+class Rec { constructor(public n: number) {} }
+function joinRecs(a: Rec[], b: Rec[], extra: Rec): Rec[] { let out: Rec[] = []; for (let i = 0; i < 3; i++) out = [extra, ...a, ...b, extra, ...out.slice(0, 2)]; return out; }
+function joinNumbers(a: number[], b: number[]): number[] { let out: number[] = []; for (let i = 0; i < 3; i++) out = [...a, i, ...b, 0.5, ...out.slice(0, 1)]; return out; }
+function joinTexts(a: string[], b: Iterable<string>): string[] { let out: string[] = []; for (let i = 0; i < 2; i++) out = ["<", ...a, ...b, ">"]; return out; }
+function total(...values: number[]): number { let t = 0; for (const v of values) t += v; return t; }
+function callWith(a: number[], b: number[]): number { let t = 0; for (let i = 0; i < 3; i++) t += total(...a, i, ...b); return t; }
+function show(a: readonly unknown[]): string { return a.length + ":" + a.map(v => v instanceof Rec ? "R" + v.n : v === undefined ? "undefined" : String(v)).join(","); }
+const recs = [new Rec(1), new Rec(2)]; const holes = [new Rec(1), , new Rec(3)] as Rec[]; const frozen = Object.freeze([new Rec(7)]) as Rec[];
+class Recs extends Array<Rec> {} const derived = new Recs(); derived.push(new Rec(21));
+class Odd extends Array<Rec> { *[Symbol.iterator](): ArrayIterator<Rec> { yield new Rec(99); } } const odd = new Odd(); odd.push(new Rec(1), new Rec(2));
+const sparse: Rec[] = []; sparse[12] = new Rec(12);
+for (let round = 0; round < 2; round++) {
+    for (const a of [recs, holes, frozen, derived, odd, sparse, []]) console.log(show(joinRecs(a, recs, new Rec(0))), show(joinRecs(recs, a, new Rec(0))));
+    for (const a of [[1, 2, 3], [0.5, 1.5], [1, , 3] as number[], [0.5, , 2.5] as number[], [NaN, -0], JSON.parse("[4,5,6.5]") as number[], []]) console.log(show(joinNumbers(a, [7, 8])), show(joinNumbers([0.25], a)), callWith(a, [1]), callWith([2.5], a));
+    console.log(show(joinTexts(["a", "b"], new Set(["x", "y"]))), show(joinTexts([], "héllo")), show(joinTexts(["q"], ["r", "s"].values())), show(joinTexts(["q"], new Map([["k", 1]]).keys())));
+}
+//// storage-follows-the-elements.ts
+// The code that creates an array allocates the storage that fits the elements the build found for it, and the code that reads it expects that storage. Each array here is created with small integers in view and then gets, at run time, what such storage cannot hold: a fraction, NaN, -0, undefined, a string, a hole, an element far past the end, a shorter and a longer length. Every read answers as in plain Bun.
+function sum(list: number[]): string {
+  let total = 0, holes = 0;
+  for (let i = 0; i < list.length; ++i) {
+    const element = list[i];
+    if (element === undefined) ++holes; else total += element;
+  }
+  return total + " (" + list.length + " long, " + holes + " missing)";
+}
+function chase(list: number[], key: number): number {
+  key = list[key];
+  key = list[key];
+  key = list[key];
+  return key;
+}
+function integers(count: number): number[] {
+  const list: number[] = [];
+  for (let i = 0; i < count; ++i) list.push((i * 7 + 1) & 7);
+  return list;
+}
+const count = process.argv.length > 100 ? 3 : 8;
+
+const plain = integers(count);
+console.log("integers:", sum(plain), chase(plain, 1), chase(plain, 7), chase(plain, 100));
+
+const withFraction = integers(count);
+withFraction.push(0.5);
+console.log("a fraction:", sum(withFraction), withFraction[8], chase(withFraction, 8));
+
+const withNaN = integers(count);
+withNaN[2] = NaN;
+console.log("NaN:", sum(withNaN), withNaN[2], chase(withNaN, 2));
+
+const withNegativeZero = integers(count);
+withNegativeZero[0] = -0;
+console.log("-0:", sum(withNegativeZero), Object.is(withNegativeZero[0], -0), 1 / withNegativeZero[0]);
+
+const withUndefined = integers(count) as (number | undefined)[];
+withUndefined[3] = undefined;
+console.log("undefined:", sum(withUndefined as number[]), withUndefined[3], 3 in withUndefined);
+
+const withString = integers(count) as unknown[];
+withString[1] = "one";
+console.log("a string:", withString.join(), typeof withString[1], typeof withString[2]);
+
+const withHole = integers(count);
+delete withHole[4];
+console.log("a hole:", sum(withHole), 4 in withHole, withHole[4]);
+
+const farPastTheEnd = integers(count);
+farPastTheEnd[100] = 1;
+console.log("far past the end:", sum(farPastTheEnd), farPastTheEnd[100], farPastTheEnd[99]);
+
+const veryFar = integers(count);
+veryFar[5000000] = 2;
+console.log("very far past the end:", veryFar.length, veryFar[5000000], veryFar[4999999], veryFar[1]);
+
+const shorter = integers(count);
+shorter.length = 2;
+console.log("a shorter length:", sum(shorter), shorter[2], chase(shorter, 0));
+
+const longer = integers(count);
+longer.length = 12;
+console.log("a longer length:", sum(longer), longer[11], 11 in longer);
+
+const ofHoles: number[] = new Array(5);
+ofHoles[1] = 3;
+console.log("new Array(5):", sum(ofHoles), ofHoles[0], ofHoles[1]);
+
+const large = integers(count);
+large.push(2147483648, -2147483649);
+console.log("past 32 bits:", sum(large), large[8], large[9]);
+
+const named = integers(count) as number[] & Record<string, number>;
+named["undefined"] = 42;
+named["-1"] = 43;
+named["1.5"] = 44;
+console.log("names that are no indexes:", named[undefined as unknown as number], named[-1], named[1.5], chase(named, 100), sum(named));
+
+function make(first: unknown): unknown[] { return [first]; }
+const madeWithInteger = make(1), madeWithString = make("s");
+console.log("one literal, two contents:", madeWithInteger[0], madeWithString[0], madeWithInteger.length + madeWithString.length);
+//// storage-turned-into-another-kind-by-every-door.js
+// Contiguous storage of an array takes every value, and turns into another kind only where the engine makes it sparse or slow. Every case does that, or comes close to it, by another door, and then reads, pushes and pops: no store under an index, which would cost the array the proofs that the case is after.
+const far = Date.now() > 0 ? 150000 : 1;
+const many = []; for (let k = 0; k < 3000; k++) many.push("m");
+function text(v) { return v === undefined ? "undefined" : typeof v === "object" ? "#" + v.id : String(v); }
+function shiftIt(list) { list.shift(); }
+function freezeIt(list) { Object.freeze(list); }
+function structuredCloneOrNot(list) { return typeof structuredClone === "function" ? structuredClone(list) : list; }
+const lines = [];
+function run(name, f) { try { lines.push(name + ": " + f()); } catch (error) { lines.push(name + ": threw " + error.name); } }
+////= lines-43	f1	"p" + k	"z"
+run("texts | nothing", f1);
+////= lines-3	f2	8	Object.freeze	a
+run("texts | freeze", f2);
+////= lines-3	f3	8	Object.seal	a
+run("texts | seal", f3);
+////= lines-3	f4	8	Object.preventExtensions	a
+run("texts | prevent extensions", f4);
+////= lines-44	f5	8	Object.defineProperty(a, 2, { get() { return "z"; }, configurable: true, enumerable: true })
+run("texts | accessor at an index", f5);
+////= lines-44	f6	8	Object.defineProperty(a, 2, { value: "z", writable: false, configurable: true, enumerable: true })
+run("texts | read-only index", f6);
+////= lines-44	f7	8	Object.defineProperty(a, "length", { writable: false })
+run("texts | read-only length", f7);
+////= lines-44	f8	8	Object.setPrototypeOf(a, { __proto__: Array.prototype, 3: "z" })
+run("texts | another prototype", f8);
+////= lines-44	f9	8	Object.setPrototypeOf(a, Object.create(Array.prototype, { 9: { set(v) { seen = v; }, get() { return "z"; } } }))
+run("texts | prototype with a setter", f9);
+////= lines-44	f10	8	heir = Object.create(a); heir[1] = "z"
+run("texts | becomes a prototype", f10);
+////= lines-7	f11	200000
+run("texts | store far above", f11);
+////= lines-7	f12	4000000000
+run("texts | store very far above", f12);
+////= lines-7	f13	far
+run("texts | store far above by variable", f13);
+////= lines-8	f14	length	200000
+run("texts | length far above", f14);
+////= lines-8	f15	length	4294967295
+run("texts | length at the limit", f15);
+////= lines-44	f16	8	a.length = 200000; a.length = 8
+run("texts | length far above and back", f16);
+////= lines-9	f17	12000	shift
+run("texts | shift of a long array", f17);
+////= lines-3	f18	12000	a.unshift	"z"
+run("texts | unshift of a long array", f18);
+////= lines-25	f19	12000	splice	1	1
+run("texts | splice out of a long array", f19);
+////= lines-26	f20	12000	0
+run("texts | splice into a long array", f20);
+////= lines-9	f21	8	shift
+run("texts | shift of a short array", f21);
+////= lines-3	f22	8	a.unshift	"z"
+run("texts | unshift of a short array", f22);
+////= lines-26	f23	8	1
+run("texts | splice of a short array", f23);
+////= lines-44	f24	12000	Array.prototype.shift.call(a)
+run("texts | shift through call", f24);
+////= lines-27	f25	12000	shiftIt
+run("texts | shift in a callee", f25);
+////= lines-44	f26	12000	const b = a; b.shift()
+run("texts | shift through an alias", f26);
+////= lines-44	f27	8	while (a.length) a.pop(); a.push("z")
+run("texts | pop to empty, push", f27);
+////= lines-44	f28	8	a.length = 0; a.push("z", "z")
+run("texts | emptied, push", f28);
+////= lines-9	f29	8	reverse
+run("texts | reverse", f29);
+////= lines-44	f30	8	a.sort((x, y) => (String(x.id ?? x) < String(y.id ?? y) ? 1 : -1))
+run("texts | sort", f30);
+////= lines-44	f31	8	a.fill("z", 2, 5)
+run("texts | fill", f31);
+////= lines-25	f32	8	copyWithin	0	4
+run("texts | copyWithin", f32);
+////= lines-8	f33	label	"z"
+run("texts | named property", f33);
+////= lines-44	f34	8	a[-1] = "z"
+run("texts | negative name", f34);
+////= lines-44	f35	8	delete a[3]
+run("texts | delete", f35);
+////= lines-44	f36	8	JSON.stringify(a); Array.from(a); new Set(a); a.join(); a.includes("z"); a.indexOf("z"); a.slice(1); a.concat(a); structuredCloneOrNot(a)
+run("texts | handed to natives", f36);
+////= lines-44	f37	8	a.push(...many)
+run("texts | push of many", f37);
+////= lines-44	f38	8	Array.prototype.push.apply(a, many)
+run("texts | push applied", f38);
+////= lines-44	f39	8	Object.freeze(new Proxy(a, {}))
+run("texts | through a proxy", f39);
+////= lines-27	f40	8	freezeIt
+run("texts | frozen in a callee", f40);
+////= lines-44	f41	8	const o = { list: a }; Object.freeze(o.list)
+run("texts | frozen through a holder", f41);
+////= lines-43	f42	{ id: k }	{ id: -1 }
+run("objects | nothing", f42);
+////= lines-10	f43	freeze
+run("objects | freeze", f43);
+////= lines-10	f44	seal
+run("objects | seal", f44);
+////= lines-10	f45	preventExtensions
+run("objects | prevent extensions", f45);
+////= lines-46	f46	8	Object.defineProperty(a, 2, { get() { return { id: -1 }; }, configurable: true, enumerable: true })
+run("objects | accessor at an index", f46);
+////= lines-46	f47	8	Object.defineProperty(a, 2, { value: { id: -1 }, writable: false, configurable: true, enumerable: true })
+run("objects | read-only index", f47);
+////= lines-46	f48	8	Object.defineProperty(a, "length", { writable: false })
+run("objects | read-only length", f48);
+////= lines-46	f49	8	Object.setPrototypeOf(a, { __proto__: Array.prototype, 3: { id: -1 } })
+run("objects | another prototype", f49);
+////= lines-46	f50	8	Object.setPrototypeOf(a, Object.create(Array.prototype, { 9: { set(v) { seen = v; }, get() { return { id: -1 }; } } }))
+run("objects | prototype with a setter", f50);
+////= lines-46	f51	8	heir = Object.create(a); heir[1] = { id: -1 }
+run("objects | becomes a prototype", f51);
+////= lines-11	f52	200000
+run("objects | store far above", f52);
+////= lines-11	f53	4000000000
+run("objects | store very far above", f53);
+////= lines-11	f54	far
+run("objects | store far above by variable", f54);
+////= lines-28	f55	200000
+run("objects | length far above", f55);
+////= lines-28	f56	4294967295
+run("objects | length at the limit", f56);
+////= lines-46	f57	8	a.length = 200000; a.length = 8
+run("objects | length far above and back", f57);
+////= lines-12	f58	12000	shift
+run("objects | shift of a long array", f58);
+////= lines-29	f59	12000
+run("objects | unshift of a long array", f59);
+////= lines-30	f60	12000	splice	1	1
+run("objects | splice out of a long array", f60);
+////= lines-31	f61	12000	0
+run("objects | splice into a long array", f61);
+////= lines-12	f62	8	shift
+run("objects | shift of a short array", f62);
+////= lines-29	f63	8
+run("objects | unshift of a short array", f63);
+////= lines-31	f64	8	1
+run("objects | splice of a short array", f64);
+////= lines-46	f65	12000	Array.prototype.shift.call(a)
+run("objects | shift through call", f65);
+////= lines-32	f66	12000	shiftIt
+run("objects | shift in a callee", f66);
+////= lines-46	f67	12000	const b = a; b.shift()
+run("objects | shift through an alias", f67);
+////= lines-46	f68	8	while (a.length) a.pop(); a.push({ id: -1 })
+run("objects | pop to empty, push", f68);
+////= lines-46	f69	8	a.length = 0; a.push({ id: -1 }, { id: -1 })
+run("objects | emptied, push", f69);
+////= lines-12	f70	8	reverse
+run("objects | reverse", f70);
+////= lines-46	f71	8	a.sort((x, y) => (String(x.id ?? x) < String(y.id ?? y) ? 1 : -1))
+run("objects | sort", f71);
+////= lines-46	f72	8	a.fill({ id: -1 }, 2, 5)
+run("objects | fill", f72);
+////= lines-30	f73	8	copyWithin	0	4
+run("objects | copyWithin", f73);
+////= lines-46	f74	8	a.label = { id: -1 }
+run("objects | named property", f74);
+////= lines-46	f75	8	a[-1] = { id: -1 }
+run("objects | negative name", f75);
+////= lines-46	f76	8	delete a[3]
+run("objects | delete", f76);
+////= lines-46	f77	8	JSON.stringify(a); Array.from(a); new Set(a); a.join(); a.includes({ id: -1 }); a.indexOf({ id: -1 }); a.slice(1); a.concat(a); structuredCloneOrNot(a)
+run("objects | handed to natives", f77);
+////= lines-46	f78	8	a.push(...many)
+run("objects | push of many", f78);
+////= lines-46	f79	8	Array.prototype.push.apply(a, many)
+run("objects | push applied", f79);
+////= lines-46	f80	8	Object.freeze(new Proxy(a, {}))
+run("objects | through a proxy", f80);
+////= lines-32	f81	8	freezeIt
+run("objects | frozen in a callee", f81);
+////= lines-46	f82	8	const o = { list: a }; Object.freeze(o.list)
+run("objects | frozen through a holder", f82);
+////= lines-43	f83	k % 2 ? "p" + k : k	1.5
+run("mixed | nothing", f83);
+////= lines-4	f84	8	Object.freeze	a
+run("mixed | freeze", f84);
+////= lines-4	f85	8	Object.seal	a
+run("mixed | seal", f85);
+////= lines-4	f86	8	Object.preventExtensions	a
+run("mixed | prevent extensions", f86);
+////= lines-45	f87	8	Object.defineProperty(a, 2, { get() { return 1.5; }, configurable: true, enumerable: true })
+run("mixed | accessor at an index", f87);
+////= lines-45	f88	8	Object.defineProperty(a, 2, { value: 1.5, writable: false, configurable: true, enumerable: true })
+run("mixed | read-only index", f88);
+////= lines-45	f89	8	Object.defineProperty(a, "length", { writable: false })
+run("mixed | read-only length", f89);
+////= lines-45	f90	8	Object.setPrototypeOf(a, { __proto__: Array.prototype, 3: 1.5 })
+run("mixed | another prototype", f90);
+////= lines-45	f91	8	Object.setPrototypeOf(a, Object.create(Array.prototype, { 9: { set(v) { seen = v; }, get() { return 1.5; } } }))
+run("mixed | prototype with a setter", f91);
+////= lines-45	f92	8	heir = Object.create(a); heir[1] = 1.5
+run("mixed | becomes a prototype", f92);
+////= lines-13	f93	200000
+run("mixed | store far above", f93);
+////= lines-13	f94	4000000000
+run("mixed | store very far above", f94);
+////= lines-13	f95	far
+run("mixed | store far above by variable", f95);
+////= lines-14	f96	length	200000
+run("mixed | length far above", f96);
+////= lines-14	f97	length	4294967295
+run("mixed | length at the limit", f97);
+////= lines-45	f98	8	a.length = 200000; a.length = 8
+run("mixed | length far above and back", f98);
+////= lines-15	f99	12000	shift
+run("mixed | shift of a long array", f99);
+////= lines-4	f100	12000	a.unshift	1.5
+run("mixed | unshift of a long array", f100);
+////= lines-22	f101	12000	splice	1	1
+run("mixed | splice out of a long array", f101);
+////= lines-23	f102	12000	0
+run("mixed | splice into a long array", f102);
+////= lines-15	f103	8	shift
+run("mixed | shift of a short array", f103);
+////= lines-4	f104	8	a.unshift	1.5
+run("mixed | unshift of a short array", f104);
+////= lines-23	f105	8	1
+run("mixed | splice of a short array", f105);
+////= lines-45	f106	12000	Array.prototype.shift.call(a)
+run("mixed | shift through call", f106);
+////= lines-24	f107	12000	shiftIt
+run("mixed | shift in a callee", f107);
+////= lines-45	f108	12000	const b = a; b.shift()
+run("mixed | shift through an alias", f108);
+////= lines-45	f109	8	while (a.length) a.pop(); a.push(1.5)
+run("mixed | pop to empty, push", f109);
+////= lines-45	f110	8	a.length = 0; a.push(1.5, 1.5)
+run("mixed | emptied, push", f110);
+////= lines-15	f111	8	reverse
+run("mixed | reverse", f111);
+////= lines-45	f112	8	a.sort((x, y) => (String(x.id ?? x) < String(y.id ?? y) ? 1 : -1))
+run("mixed | sort", f112);
+////= lines-45	f113	8	a.fill(1.5, 2, 5)
+run("mixed | fill", f113);
+////= lines-22	f114	8	copyWithin	0	4
+run("mixed | copyWithin", f114);
+////= lines-14	f115	label	1.5
+run("mixed | named property", f115);
+////= lines-45	f116	8	a[-1] = 1.5
+run("mixed | negative name", f116);
+////= lines-45	f117	8	delete a[3]
+run("mixed | delete", f117);
+////= lines-45	f118	8	JSON.stringify(a); Array.from(a); new Set(a); a.join(); a.includes(1.5); a.indexOf(1.5); a.slice(1); a.concat(a); structuredCloneOrNot(a)
+run("mixed | handed to natives", f118);
+////= lines-45	f119	8	a.push(...many)
+run("mixed | push of many", f119);
+////= lines-45	f120	8	Array.prototype.push.apply(a, many)
+run("mixed | push applied", f120);
+////= lines-45	f121	8	Object.freeze(new Proxy(a, {}))
+run("mixed | through a proxy", f121);
+////= lines-24	f122	8	freezeIt
+run("mixed | frozen in a callee", f122);
+////= lines-45	f123	8	const o = { list: a }; Object.freeze(o.list)
+run("mixed | frozen through a holder", f123);
+console.log(lines.join("\n"));
+//// stores-below-a-frozen-array-find-its-elements-read-only.cjs
+// A frozen array is the prototype of other objects. Its elements are read-only properties: a store under one of their indexes to an object below is refused,
+// a store under any other index makes an own property, and the array itself goes on answering as before.
+const lines = [];
+function attempt(label, action) {
+  let outcome;
+  try { outcome = JSON.stringify(action()) ?? "undefined"; } catch (error) { outcome = error.constructor.name; }
+  lines.push(label + ": " + outcome);
+}
+function storeSloppy(object, index, value) { object[index] = value; return [object[index], Object.hasOwn(object, index)]; }
+function storeStrict(object, index, value) { "use strict"; object[index] = value; return [object[index], Object.hasOwn(object, index)]; }
+
+const makers = {
+  ints: () => Object.freeze([10, 20, 30]),
+  doubles: () => Object.freeze([0.5, 1.5, 2.5]),
+  texts: () => Object.freeze(["a", "b", "c"]),
+  objects: () => Object.freeze([{ v: 1 }, { v: 2 }, { v: 3 }]),
+  holes: () => Object.freeze([1, , 3]),
+  empty: () => Object.freeze([]),
+};
+const children = {
+  create: array => Object.create(array),
+  literal: array => ({ __proto__: array }),
+  literalWithFields: array => ({ __proto__: array, a: 1, b: 2 }),
+  setPrototypeOf: array => Object.setPrototypeOf({}, array),
+  withElements: array => Object.setPrototypeOf({ 5: "five" }, array),
+  arrayWithHoles: array => Object.setPrototypeOf([, , , "own"], array),
+  emptyArray: array => Object.setPrototypeOf([], array),
+  instance: array => { function F() {} F.prototype = array; return new F(); },
+  classInstance: array => { class C {} Object.setPrototypeOf(C.prototype, array); return new C(); },
+  twoBelow: array => Object.create(Object.create(array)),
+  functionBelow: array => Object.setPrototypeOf(function () {}, array),
+};
+for (const kind in makers) {
+  for (const way in children) {
+    const name = kind + ", " + way;
+    for (const index of [0, 1, 2, 3, 7, "1", "x"]) {
+      attempt(name + ", sloppy [" + index + "]", () => storeSloppy(children[way](makers[kind]()), index, "stored"));
+      attempt(name + ", strict [" + index + "]", () => storeStrict(children[way](makers[kind]()), index, "stored"));
+    }
+    attempt(name + ", Reflect.set", () => { const child = children[way](makers[kind]()); return [Reflect.set(child, 0, 9), Reflect.set(child, 4, 9), Reflect.set(child, "length", 9), Object.keys(child)]; });
+    attempt(name + ", defined", () => { const child = children[way](makers[kind]()); Object.defineProperty(child, 0, { value: "defined", enumerable: true }); return [child[0], Object.keys(child)]; });
+    attempt(name + ", reads", () => { const array = makers[kind](); const child = children[way](array); return [child[0], child[1], child[2], child[3], child.length, 0 in child, 1 in child, Object.hasOwn(child, 0), Array.isArray(child), array.length, Object.isFrozen(array), array]; });
+    attempt(name + ", the array afterwards", () => {
+      const array = makers[kind](); const child = children[way](array);
+      try { storeStrict(child, 0, 1); } catch {}
+      try { storeStrict(array, 0, 1); } catch {}
+      try { array.push(1); } catch {}
+      try { array.x = 1; } catch {}
+      return [array, array.length, Object.getOwnPropertyDescriptor(array, 0) ?? null, Object.getOwnPropertyDescriptor(array, "length"), Object.isFrozen(array), array.map(x => x).length, [...array].length, array.indexOf(array[2]), child[2] === array[2]];
+    });
+  }
+}
+
+// One array above many objects, and the objects made before and after the first store.
+const shared = Object.freeze([1, 2, 3]);
+const before = [];
+for (let i = 0; i < 4; i++) before.push(Object.create(shared));
+attempt("shared, the first", () => storeSloppy(before[0], 1, "x"));
+for (let i = 0; i < 4; i++) before.push({ __proto__: shared });
+for (let i = 0; i < before.length; i++) attempt("shared, " + i, () => [storeSloppy(before[i], i, "x"), Object.keys(before[i])]);
+let total = 0;
+for (let turn = 0; turn < 1000; turn++) for (let i = 0; i < shared.length; i++) total += shared[i];
+lines.push("shared, read in a loop: " + total);
+
+console.log(lines.join("\n"));

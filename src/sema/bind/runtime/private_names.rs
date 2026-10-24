@@ -66,7 +66,6 @@ pub(super) fn compute_private_names(
             let Some(declared) = declared_members(node, member) else {
                 continue;
             };
-            // A decorated `declare #x` is kept for its decorators and declares no name.
             let is_declaration_only = node.flags.intersects(Flags::AMBIENT | Flags::ABSTRACT);
             if is_declaration_only || !has_runtime_member(hir, member) {
                 continue;

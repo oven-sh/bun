@@ -51,7 +51,6 @@ pub(super) struct StatementsHost {
     pub(super) deferred: &'static [(&'static str, ScriptKind)],
     pub(super) unfinished: Guarded<Vec<Vec<u8>>>,
     pub(super) has_finished_reads: AtomicBool,
-    /// The read of the first file returns when the second one is parsed.
     pub(super) read_by_plugin: &'static [(&'static str, &'static str)],
     pub(super) has_waited_in_vain: AtomicBool,
     pub(super) background_readable: &'static [&'static str],
@@ -103,7 +102,6 @@ impl Default for StatementsHost {
 impl StatementsHost {
     pub(super) fn with_process_io_pool(self, threads: usize) -> StatementsHost {
         static OUTPUT: Once = Once::new();
-        // A thread of Bun's pool asserts that Bun's `main` has set up the output.
         OUTPUT.call_once(bun_core::output::stdio::init);
         StatementsHost {
             threads,

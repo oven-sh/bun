@@ -1,2 +1,0 @@
-# A type literal with an optional member and one with a required member are two declarations, so they have two identities.
-different: optional-counts.ts:2 identity `{ a?: number }` <=> optional-counts.ts:3 identity `{ a: number }`

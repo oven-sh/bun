@@ -1717,7 +1717,8 @@ for (const kind of ["expected", "erased"]) {
 }
 // REASONS: an instance travels as a reason (or is thrown), link by link, and the function that finally gets it changes it.
 // One path a program: who throws or rejects -> 0 to 4 links -> who gets it -> what that one does to it.
-const NAP = "await new Promise(resolve => setTimeout(resolve, 5));";
+// The second timer is set when the reactions have run, so a timer that one of them sets fires first however long they took.
+const NAP = "await new Promise(resolve => setTimeout(() => setTimeout(resolve, 5), 0));";
 const EFFECTS: Record<string, [string, string]> = {
   store: ["stores a string into a number field of it", 'caught.mass = "9";'],
   delete: ["deletes a field of it", "delete caught.mass;"],

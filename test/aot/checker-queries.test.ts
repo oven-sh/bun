@@ -5,9 +5,10 @@ import { expect } from "bun:test";
 import { tempDir } from "harness";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join, relative } from "node:path";
+import { unpacked } from "./generate";
 import { describe, test } from "./supported";
 
-const fixtures = join(import.meta.dir, "checker-queries");
+const fixtures = unpacked(join(import.meta.dir, "checker-queries"));
 const extensions = ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
 
 function textLines(path: string, commentPrefix: string): string[] {

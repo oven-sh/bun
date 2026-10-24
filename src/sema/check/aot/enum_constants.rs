@@ -2,41 +2,33 @@ use super::answers::{EnumConstant, GaveUp};
 use super::queries::Queries;
 use crate::atom::known;
 use crate::bind::{Binding, Decl, SymFlags};
-use crate::check::errors_enums_names::{Location, is_ambient_enum, is_declared_before_use};
+use crate::check::Checker;
 use crate::fold::is_exact_power;
 use crate::hir::{self, BinOp, Chain, EnumMemberId, ExprId, ExprKind, MemberKey};
 use crate::program::{FileId, Sym};
 use crate::types::EnumValue;
-use smallvec::SmallVec;
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(super) struct ConstantInputs {
-    other_file_or_variable: bool,
-    inexact_power: bool,
-}
+// The bits of `Evaluated::run_time_inputs`.
+pub(in crate::check) const READS_OTHER_FILE_OR_VARIABLE: u8 = 1 << 0;
+pub(in crate::check) const RESTS_ON_INEXACT_POWER: u8 = 1 << 1;
+pub(in crate::check) const ALL_RUN_TIME_INPUTS: u8 =
+    READS_OTHER_FILE_OR_VARIABLE | RESTS_ON_INEXACT_POWER;
 
-impl ConstantInputs {
-    const NONE: ConstantInputs = ConstantInputs {
-        other_file_or_variable: false,
-        inexact_power: false,
-    };
-    const UNKNOWN: ConstantInputs = ConstantInputs {
-        other_file_or_variable: true,
-        inexact_power: true,
-    };
-
-    fn merge(self, other: ConstantInputs) -> ConstantInputs {
-        ConstantInputs {
-            other_file_or_variable: self.other_file_or_variable || other.other_file_or_variable,
-            inexact_power: self.inexact_power || other.inexact_power,
-        }
+pub(in crate::check) fn run_time_inputs_of_operator(
+    op: Option<BinOp>,
+    left: Option<EnumValue>,
+    right: Option<EnumValue>,
+) -> u8 {
+    if op != Some(BinOp::Pow) {
+        return 0;
     }
-
-    fn with_other_file_or_variable(self, is_read: bool) -> ConstantInputs {
-        ConstantInputs {
-            other_file_or_variable: self.other_file_or_variable || is_read,
-            ..self
+    match (left, right) {
+        (Some(EnumValue::Number(base)), Some(EnumValue::Number(exponent)))
+            if is_exact_power(f64::from_bits(base), f64::from_bits(exponent)) =>
+        {
+            0
         }
+        (Some(EnumValue::Number(_) | EnumValue::String(_)) | None, _) => RESTS_ON_INEXACT_POWER,
     }
 }
 
@@ -75,12 +67,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         file: FileId,
         member: EnumMemberId,
     ) -> Option<EnumConstant> {
-        let value = self.c.get_enum_member_value(file, member).value?;
-        let inputs = self.member_inputs(file, member);
+        let evaluated = self.c.get_enum_member_value(file, member);
+        let inputs = evaluated.run_time_inputs;
         Some(EnumConstant {
-            value,
-            reads_other_file_or_variable: inputs.other_file_or_variable,
-            rests_on_inexact_power: inputs.inexact_power,
+            value: evaluated.value?,
+            reads_other_file_or_variable: inputs & READS_OTHER_FILE_OR_VARIABLE != 0,
+            rests_on_inexact_power: inputs & RESTS_ON_INEXACT_POWER != 0,
         })
     }
 
@@ -90,7 +82,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let Decl::EnumMember(member) = declaration else {
                 return true;
             };
-            self.member_inputs(file, member).inexact_power
+            let evaluated = self.c.get_enum_member_value(file, member);
+            evaluated.value.is_none() || evaluated.run_time_inputs & RESTS_ON_INEXACT_POWER != 0
         })
     }
 
@@ -193,148 +186,24 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 is_in_reach && bound.has_runtime_value(bound.declared_symbol(decl))
             })
     }
+}
 
-    fn member_inputs(&mut self, file: FileId, member: EnumMemberId) -> ConstantInputs {
-        let key = (file, member);
-        if let Some(&stored) = self.memo.enum_member_inputs.get(&key) {
-            return stored;
-        }
-        let Some(initializer) = self.c.hir(file)[member].init.some() else {
-            return self.uninitialized_member_inputs(file, member);
-        };
-        self.memo
-            .enum_member_inputs
-            .insert(key, ConstantInputs::UNKNOWN);
-        let used_at = Location::Member(file, member);
-        let inputs = self.expression_inputs(file, initializer, used_at);
-        if self.c.ran_out_of_stack.get() {
-            self.memo.enum_member_inputs.remove(&key);
-        } else {
-            self.memo.enum_member_inputs.insert(key, inputs);
-        }
-        inputs
-    }
-
-    fn uninitialized_member_inputs(
-        &mut self,
-        file: FileId,
-        member: EnumMemberId,
-    ) -> ConstantInputs {
-        let hir = self.c.hir(file);
-        let owner = self.c.bound(file).enum_member_owner[member.idx()];
-        let mut last_initialized = None;
-        let mut run = SmallVec::<[EnumMemberId; 8]>::new();
-        let mut is_member_in_run = false;
-        for sibling in hir[owner].members.iter() {
-            if hir[sibling].init.is_none() {
-                run.push(sibling);
-                is_member_in_run |= sibling == member;
-            } else if is_member_in_run {
-                break;
-            } else {
-                last_initialized = Some(sibling);
-                run.clear();
-            }
-        }
-        debug_assert!(is_member_in_run);
-        let inputs = match last_initialized {
-            Some(initialized) => self.member_inputs(file, initialized),
-            None => ConstantInputs::NONE,
-        };
-        if !self.c.ran_out_of_stack.get() {
-            let answers = run.into_iter().map(|sibling| ((file, sibling), inputs));
-            self.memo.enum_member_inputs.extend(answers);
-        }
-        inputs
-    }
-
-    fn expression_inputs(
-        &mut self,
-        file: FileId,
-        root: ExprId,
-        used_at: Location,
-    ) -> ConstantInputs {
-        let hir = self.c.hir(file);
-        let mut inputs = ConstantInputs::NONE;
-        let mut pending = SmallVec::<[ExprId; 8]>::new();
-        pending.push(root);
-        while let Some(expression) = pending.pop() {
-            match hir[expression].kind {
-                ExprKind::Number(_) | ExprKind::String(_) => {}
-                ExprKind::Template { exprs } => pending.extend(hir.ids(exprs)),
-                ExprKind::Unary { operand, .. } => pending.push(operand),
-                ExprKind::Binary { op, left, right } => {
-                    inputs.inexact_power |=
-                        op == BinOp::Pow && !self.is_power_exact(file, left, right, used_at);
-                    pending.extend([left, right]);
-                }
-                ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-                    inputs = inputs.merge(self.entity_inputs(file, expression, used_at));
-                }
-                _ => return ConstantInputs::UNKNOWN,
-            }
-            if inputs == ConstantInputs::UNKNOWN {
-                break;
-            }
-        }
-        inputs
-    }
-
-    fn is_power_exact(
-        &mut self,
-        file: FileId,
-        base: ExprId,
-        exponent: ExprId,
-        used_at: Location,
-    ) -> bool {
-        let base = self.c.evaluate(file, base, used_at).value;
-        let exponent = self.c.evaluate(file, exponent, used_at).value;
-        match (base, exponent) {
-            (Some(EnumValue::Number(base)), Some(EnumValue::Number(exponent))) => {
-                is_exact_power(f64::from_bits(base), f64::from_bits(exponent))
-            }
-            (Some(EnumValue::Number(_) | EnumValue::String(_)) | None, _) => false,
-        }
-    }
-
-    fn entity_inputs(&mut self, file: FileId, entity: ExprId, used_at: Location) -> ConstantInputs {
-        if self.c.is_stack_low() {
-            return ConstantInputs::UNKNOWN;
-        }
-        let Some(symbol) = self.resolve_constant_entity(file, entity) else {
-            return ConstantInputs::UNKNOWN;
-        };
-        if self.is_global_number(symbol) {
-            return ConstantInputs::NONE;
-        }
-        let declarations = self.files().decls_of(symbol);
-        let [(of, declaration)] = declarations[..] else {
-            return ConstantInputs::UNKNOWN;
-        };
-        let inputs = match declaration {
-            Decl::EnumMember(member) => {
-                let owner = self.c.bound(of).enum_member_owner[member.idx()];
-                let declared = (of, self.c.hir(of).node(member));
-                let has_no_own_value = is_ambient_enum(self.c.hir(of), owner)
-                    || !is_declared_before_use(self.c, declared, used_at);
-                self.member_inputs(of, member)
-                    .with_other_file_or_variable(has_no_own_value)
-            }
-            Decl::Var(_) => self.constant_variable_inputs(symbol, used_at),
-            _ => ConstantInputs::UNKNOWN,
-        };
-        inputs.with_other_file_or_variable(of != used_at.file())
+impl Checker<'_, '_> {
+    /// Whether `bun run` can read the entity name as the checker does: it has no optional link, and it names `NaN`, `Infinity` or what has one declaration.
+    pub(in crate::check) fn names_one_declaration(&self, file: FileId, entity: ExprId) -> bool {
+        let named = self.resolve_constant_entity(file, entity);
+        named.is_some_and(|symbol| {
+            self.is_global_number(symbol) || self.files().decls_of(symbol).len() == 1
+        })
     }
 
     fn resolve_constant_entity(&self, file: FileId, entity: ExprId) -> Option<Sym> {
-        let (hir, files) = (self.c.hir(file), self.files());
+        let (hir, files) = (self.hir(file), self.files());
         if has_optional_link(hir, entity) {
             return None;
         }
         let ExprKind::Index { obj, index, .. } = hir[entity].kind else {
-            return self
-                .c
-                .resolve_entity_name_expression(file, entity, SymFlags::VALUE);
+            return self.resolve_entity_name_expression(file, entity, SymFlags::VALUE);
         };
         let (_, MemberKey::Name(name)) = hir.member_key(entity)? else {
             return None;
@@ -342,9 +211,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if hir::is_parenthesized(hir, index) || !hir::is_entity_name_expression(hir, obj) {
             return None;
         }
-        let root = self
-            .c
-            .resolve_entity_name_expression(file, obj, SymFlags::VALUE)?;
+        let root = self.resolve_entity_name_expression(file, obj, SymFlags::VALUE)?;
         if !files.flags(root).intersects(SymFlags::ENUM) {
             return None;
         }
@@ -356,23 +223,5 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         [known::NaN, known::Infinity]
             .into_iter()
             .any(|name| files.global(name, SymFlags::VALUE) == Some(symbol))
-    }
-
-    fn constant_variable_inputs(&mut self, symbol: Sym, used_at: Location) -> ConstantInputs {
-        let Some((file, declaration)) = self.c.constant_variable_declaration(symbol, used_at)
-        else {
-            return ConstantInputs::UNKNOWN;
-        };
-        let initializer = self.c.hir(file)[declaration].init;
-        let location = Location::Variable(file, declaration);
-        let value = self.c.evaluate(file, initializer, location).value;
-        let inputs = self.expression_inputs(file, initializer, location);
-        let is_inlined = self.c.is_const_inlined_by_transpiler(
-            (file, declaration),
-            used_at,
-            value,
-            inputs.other_file_or_variable,
-        );
-        inputs.with_other_file_or_variable(!is_inlined)
     }
 }

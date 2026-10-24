@@ -16,7 +16,6 @@ unsafe fn bytes<'a>(p: *const u8, len: usize) -> &'a [u8] {
     }
 }
 
-/// FIPS 180-4, section 5.3.3.
 const INITIAL_HASH_VALUE: [u32; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ];
@@ -30,7 +29,6 @@ const INITIAL_CONTEXT: SHA256_CTX = SHA256_CTX {
     md_len: 32,
 };
 
-/// FIPS 180-4, section 4.2.2.
 const K: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
     0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -42,7 +40,6 @@ const K: [u32; 64] = [
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
-/// FIPS 180-4, section 6.2.2.
 fn compress(state: &mut [u32; 8], block: &[u8; 64]) {
     let mut schedule = [0u32; 64];
     for (word, encoded) in schedule.iter_mut().zip(block.as_chunks::<4>().0) {
@@ -162,7 +159,6 @@ unsafe extern "C" fn SHA256(data: *const u8, len: usize, out: *mut u8) -> *mut u
     out
 }
 
-/// Its address identifies SHA-256 as an `EVP_MD`. Nothing reads it.
 static SHA256_MARKER: u8 = 0;
 
 #[unsafe(no_mangle)]
@@ -200,7 +196,6 @@ unsafe extern "C" fn EVP_MD_CTX_cleanup(ctx: *mut EVP_MD_CTX) -> c_int {
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 unsafe extern "C" fn EVP_DigestInit(ctx: *mut EVP_MD_CTX, type_: *const EVP_MD) -> c_int {
-    // Release builds ignore the result, so returning 0 would let a caller read a wrong digest.
     assert!(type_ == EVP_sha256(), "only SHA-256 has a stand-in");
     // SAFETY: the caller passes room for a context, which need not be initialized.
     unsafe {
@@ -345,7 +340,6 @@ extern "C" fn bun_initialize_process() {
     }
 }
 
-// Read by `on_before_reload_process_posix`, which does nothing here.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 #[unsafe(no_mangle)]
 #[linkage = "weak"]

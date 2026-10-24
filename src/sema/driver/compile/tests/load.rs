@@ -191,13 +191,11 @@ fn tree_of_leaf_that_no_task_reads_is_freed() {
         let files = program.files();
         let has_tree = |name: &str| !files.module(program.file(name)).hir.stmts.is_empty();
         let has_text = |name: &str| !files.module(program.file(name)).hir.text.is_empty();
-        // No file refers to the first, and only files that nothing reads refer to the others.
         for name in ["unread.test.ts", "helper.ts", "each-other.ts"] {
             assert!(files.module(program.file(name)).is_leaf, "{name}");
             assert!(!has_tree(name), "{name}");
             assert!(!has_text(name), "{name}");
         }
-        // Compiled, compiled, seen by every file, referred to by such a file, and checked unless `skipLibCheck` is on.
         for name in [
             "main.ts",
             "used.ts",
@@ -244,7 +242,6 @@ fn file_that_is_not_compiled_is_bound_when_a_file_that_is_read_refers_to_it() {
         let symbol_count = |name: &str| files.module(program.file(name)).bound.symbols.len();
         assert!(files.module(program.file("unread.test.ts")).is_leaf);
         assert_eq!(symbol_count("unread.test.ts"), 0);
-        // Read by a compiled file, by what that reads, by a file that hands it on, by every file, and by such a file.
         for name in [
             "types.ts",
             "inner.ts",
@@ -256,7 +253,6 @@ fn file_that_is_not_compiled_is_bound_when_a_file_that_is_read_refers_to_it() {
             assert!(!is_unbound(name), "{name}");
             assert!(symbol_count(name) > 0, "{name}");
         }
-        // A private name is spelled for its class as soon as the file is bound.
         let inner = &files.module(program.file("inner.ts")).hir;
         let is_spelled_for_class = |member: &bun_sema::hir::Member| match member.key {
             bun_sema::hir::PropKey::Private(name) => files.atoms.bytes(name).starts_with(b"\xFE"),
@@ -295,7 +291,6 @@ fn module_that_is_reached_has_the_bodies_of_its_functions() {
     });
 }
 
-// What the top level alone says of the file, and what the whole file says. `None`: the file has to be parsed whole, or bound.
 fn specifiers_by_both_parses(path: &str, text: &str) -> [Option<Vec<String>>; 2] {
     let session = Session::new();
     let (arena, atoms) = (session.arena(), Interner::new_in(&session));
@@ -394,7 +389,6 @@ fn files_that_are_not_typescript_modules_have_no_parse_of_the_top_level() {
     }
 }
 
-// `None`: the file has to be bound.
 fn specifiers_without_binding(text: &str) -> Option<Vec<String>> {
     let session = Session::new();
     let (arena, atoms) = (session.arena(), Interner::new_in(&session));
@@ -588,7 +582,6 @@ fn libraries_match_bun_check() {
         let checked = from_bun_check(&files, |files| libraries_of(files.options));
         assert_eq!(configured.0, checked.0);
         assert_eq!(checked.1, None);
-        // The run time provides what they declare, whatever `types` lists, so a build reads them where they are installed.
         assert_eq!(configured.1, has_bun_types.then(|| vec![b"bun".to_vec()]));
 
         let tool = "node_modules/tool/main.ts";

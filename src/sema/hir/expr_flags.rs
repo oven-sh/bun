@@ -9,14 +9,12 @@ bitflags::bitflags! {
         const OPTIONAL_CHAIN_LINK = 1 << 2;
         const PRIVATE_NAME = 1 << 3;
         const TEMPLATE_LITERAL = 1 << 4;
-        /// A `Call` that is an import site whose specifier the run-time loader resolves. Only `module_from_data` sets it.
         const RESOLVED_AT_RUNTIME = 1 << 5;
     }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct TemplatePart {
-    /// `None`: the part has an invalid escape, which only a tagged template allows.
     pub cooked: Option<Atom>,
     pub raw: Atom,
 }

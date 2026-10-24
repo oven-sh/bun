@@ -566,7 +566,6 @@ const LOADER_VALUES: &[DeadCalls] = &[
 ];
 
 const UNDECIDED_LOADER_VALUES: &[DeadCalls] = &[
-    // The fold knows no value for a free name, `undefined` among them.
     (
         "a.cjs",
         "exports !== undefined ? a() : b();",
@@ -839,6 +838,60 @@ const UNMATCHED_IMPORT_META_MAIN: &[&str] = &[
 const FEATURE_TESTS: &[(&str, bool, &[&str], &[&str])] = &[
     (r#"if (feature("ON")) a(); else b();"#, true, &["b"], &["a"]),
     (r#"feature("OFF") ? a() : b();"#, false, &["a"], &["b"]),
+    (
+        r#"if (feature("ON"!)) a(); else b();"#,
+        true,
+        &["b"],
+        &["a"],
+    ),
+    (
+        r#"if ({ k: feature("ON") }) a(); else b();"#,
+        true,
+        &["b"],
+        &["a"],
+    ),
+    (
+        r#"if ({ [feature("ON")]: null }) a(); else b();"#,
+        true,
+        &["b"],
+        &["a"],
+    ),
+    (
+        r#"if (x ? feature("ON") : null) a(); else b();"#,
+        true,
+        &[],
+        &["a", "b"],
+    ),
+    (
+        r#"if ((() => feature("ON"))()) a(); else b();"#,
+        true,
+        &[],
+        &["a", "b"],
+    ),
+    (
+        r#"(() => { const v = feature("ON"); return v; })() ? a() : b();"#,
+        true,
+        &[],
+        &["a", "b"],
+    ),
+    (
+        r#"(() => { return feature("ON"); })() ? a() : b();"#,
+        true,
+        &[],
+        &["a", "b"],
+    ),
+];
+
+const RENAMED_FEATURE_IMPORTS: &[&str] = &[
+    "import { feature as flag } from \"bun:bundle\";\n",
+    concat!(
+        "import type { Registry } from \"bun:bundle\";\n",
+        "import { type feature, feature as flag, type Registry as Renamed } from \"bun:bundle\";\n"
+    ),
+    concat!(
+        "declare module \"m\" { import { feature, Registry } from \"bun:bundle\"; }\n",
+        "import { feature as flag } from \"bun:bundle\";\n"
+    ),
 ];
 
 const UNRESOLVED_FEATURE_CALLS: &[&str] = &[
@@ -881,6 +934,11 @@ const FEATURE_ERRORS: &[(&str, FoldErrorKind, ErrorNode)] = &[
         ErrorNode::Argument,
     ),
     (
+        "if (feature(1!)) a();",
+        FoldErrorKind::FeatureArgumentNotString,
+        ErrorNode::Argument,
+    ),
+    (
         r#"if (feature("é")) a();"#,
         FoldErrorKind::FeatureFlagNotAscii,
         ErrorNode::Argument,
@@ -912,6 +970,21 @@ const FEATURE_ERRORS: &[(&str, FoldErrorKind, ErrorNode)] = &[
     ),
     (
         r#"x ? 0 : feature("ON");"#,
+        FoldErrorKind::FeatureOutsideCondition,
+        ErrorNode::Call,
+    ),
+    (
+        r#"x ? feature("ON") : 0;"#,
+        FoldErrorKind::FeatureOutsideCondition,
+        ErrorNode::Call,
+    ),
+    (
+        r#"if (x) feature("ON");"#,
+        FoldErrorKind::FeatureOutsideCondition,
+        ErrorNode::Call,
+    ),
+    (
+        r#"(() => feature("ON"))();"#,
         FoldErrorKind::FeatureOutsideCondition,
         ErrorNode::Call,
     ),
@@ -1590,13 +1663,13 @@ fn feature_calls() {
     folded("a.ts", &[FEATURE_IMPORT, both].concat(), FEATURES, |s| {
         assert_dead_calls(s, both, &["b"], &["a"]);
     });
-    let renamed = concat!(
-        "import { feature as flag } from \"bun:bundle\";\n",
-        r#"if (flag("ON")) a(); else b();"#
-    );
-    folded("a.ts", renamed, FEATURES, |s| {
-        assert_dead_calls(s, renamed, &["b"], &["a"]);
-    });
+    for &import in RENAMED_FEATURE_IMPORTS {
+        let text = [import, r#"if (flag("ON")) a(); else b();"#].concat();
+        folded("a.ts", &text, FEATURES, |s| {
+            assert_dead_calls(s, &text, &["b"], &["a"]);
+            assert!(kinds(s).is_empty(), "{text}");
+        });
+    }
 }
 
 #[test]
@@ -1627,8 +1700,17 @@ fn feature_errors() {
                 NodeData::Expr(expected),
                 "{test}"
             );
+            assert_eq!(decision(s, call), boolean(false), "{test}");
         });
     }
+    let accented = Fold {
+        features: &["é"],
+        ..Fold::NONE
+    };
+    let text = [FEATURE_IMPORT, r#"if (feature("é")) a();"#].concat();
+    folded("a.ts", &text, accented, |s| {
+        assert_eq!(decision(s, call_of(s, "feature")), boolean(false));
+    });
 }
 
 #[test]
@@ -1638,6 +1720,18 @@ fn feature_import_errors() {
         assert_eq!(kinds(s), [FoldErrorKind::FeatureImportedTwice]);
         let expected = NodeData::ImportSpec(ImportSpecId(1));
         assert_eq!(s.analysis.errors[0].node, expected);
+    });
+    let several = concat!(
+        "import { feature, feature as again, nope } from \"bun:bundle\";\n",
+        r#"if (feature("ON")) a(); else b();"#
+    );
+    folded("a.ts", several, FEATURES, |s| {
+        let nope = FoldErrorKind::UnknownBundleExport(s.workspace.atom("nope"));
+        assert_eq!(kinds(s), [FoldErrorKind::FeatureImportedTwice, nope]);
+        let nodes = s.analysis.errors.iter().map(|error| error.node);
+        let expected = [1, 2].map(|it| NodeData::ImportSpec(ImportSpecId(it)));
+        assert!(nodes.eq(expected));
+        assert_dead_calls(s, several, &["b"], &["a"]);
     });
     folded(
         "a.ts",
@@ -1657,6 +1751,8 @@ fn feature_import_errors() {
         |s| {
             let expected = FoldErrorKind::UnknownBundleExport(s.workspace.atom("validate"));
             assert_eq!(kinds(s), [expected]);
+            let expected = NodeData::ImportSpec(ImportSpecId(0));
+            assert_eq!(s.analysis.errors[0].node, expected);
         },
     );
 }

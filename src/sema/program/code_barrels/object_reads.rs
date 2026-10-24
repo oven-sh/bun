@@ -1,12 +1,9 @@
 use super::*;
 
-// What a file reads from the object of a module that `import()` or `require()` evaluates to, by the rules of `bun build`: `dynamic_import_namespace_locals`, `try_track_dynamic_import_destructure` and `track_promise_all_destructure` in src/js_parser/p.rs, `bare_statement_namespace` in src/js_parser/visit/visit_stmt.rs.
 #[derive(Default)]
 pub(super) struct ObjectReads {
     pub(super) names: Vec<Atom>,
-    // Bindings that hold the object, or a copy of what a pattern leaves of it.
     pub(super) holders: Vec<SymbolId>,
-    // A name that a pattern reads into a binding, which counts if the binding is used.
     pub(super) names_of_bindings: Vec<(SymbolId, Atom)>,
 }
 
@@ -43,8 +40,7 @@ fn is_type_syntax(kind: ExprKind) -> bool {
 }
 
 impl Summary<'_, '_> {
-    // `node` with the type syntax around it, and the parent of that.
-    fn with_type_syntax(&self, mut node: ExprId) -> (ExprId, Parent) {
+    pub(super) fn with_type_syntax(&self, mut node: ExprId) -> (ExprId, Parent) {
         loop {
             match self.bound.parent_of_expr(node) {
                 Parent::Expr(parent) if is_type_syntax(self.hir[parent].kind) => node = parent,
@@ -83,7 +79,6 @@ impl Summary<'_, '_> {
         }
     }
 
-    // The binding that a name in a pattern makes, if only this pattern gives it a value.
     fn find_own_binding(&self, name: PatId) -> Option<SymbolId> {
         match (self.hir[name].kind, self.bound.initialized_binding(name)) {
             (PatKind::Ident(_), Binding::Symbol(symbol)) => {
@@ -93,7 +88,6 @@ impl Summary<'_, '_> {
         }
     }
 
-    // `keeps_all`: the bindings are exported.
     fn find_reads_of_pattern(
         &self,
         properties: Span<PatPropId>,
@@ -116,7 +110,6 @@ impl Summary<'_, '_> {
                 (PropKey::Name(name), NameKind::Identifier | NameKind::StringLiteral) => name,
                 _ => return None,
             };
-            // A default value shows whether the export is there, and a pattern reads through it.
             match self.find_own_binding(node.value) {
                 Some(binding) if !keeps_all && node.default.is_none() && !seen.contains(&name) => {
                     reads.names_of_bindings.push((binding, name));
@@ -128,7 +121,6 @@ impl Summary<'_, '_> {
         Some(reads)
     }
 
-    // `is_copy`: the initializer is a binding that holds the object, and not the call.
     fn find_reads_of_declaration(
         &self,
         declaration: VarDeclId,
@@ -155,7 +147,6 @@ impl Summary<'_, '_> {
         }
     }
 
-    // The call of which `callee` is the callee.
     fn find_call_of(&self, callee: ExprId) -> Option<(ExprId, CallId)> {
         let Parent::Expr(parent) = self.bound.parent_of_expr(callee) else {
             return None;
@@ -166,7 +157,6 @@ impl Summary<'_, '_> {
         }
     }
 
-    // `promise.then(callback)`, `promise.then(callback, other)`: the pattern of the first parameter of the callback, `None` inside if it has no parameter.
     fn find_then_parameter(&self, member: ExprId) -> Option<Option<PatId>> {
         let hir = self.hir;
         let (_, call) = self.find_call_of(member)?;
@@ -191,7 +181,6 @@ impl Summary<'_, '_> {
         }
     }
 
-    // What the element of an array pattern reads that stands where the promise of the object stands in the list.
     fn find_reads_of_element(&self, pattern: PatId, place: usize) -> Option<ObjectReads> {
         let hir = self.hir;
         let PatKind::Array(elements) = hir[pattern].kind else {
@@ -215,7 +204,6 @@ impl Summary<'_, '_> {
         }
     }
 
-    // `const [{ a }, ns] = await Promise.all([import("a"), import("b")])`, `Promise.all([..]).then(([{ a }, ns]) => ..)`
     fn find_reads_through_promise_all(&self, promise: ExprId, list: ExprId) -> Option<ObjectReads> {
         let (hir, bound) = (self.hir, self.bound);
         let ExprKind::Array(items) = hir[list].kind else {
@@ -289,7 +277,6 @@ impl Summary<'_, '_> {
         })
     }
 
-    // `c ? require("a") : d ? await import("b") : null`
     fn holds_objects_or_nothing(&self, value: ExprId) -> bool {
         let hir = self.hir;
         let value = self.without_type_syntax(value);
@@ -310,7 +297,6 @@ impl Summary<'_, '_> {
         }
     }
 
-    // `const ns = c ? require("a") : null`: the binding holds one of several objects, or none.
     fn find_reads_of_branch(&self, mut conditional: ExprId) -> Option<ObjectReads> {
         let hir = self.hir;
         loop {
@@ -331,8 +317,7 @@ impl Summary<'_, '_> {
         }
     }
 
-    // `object.a`, `object["a"]`
-    fn find_member_read(&self, object: ExprId, member: ExprId) -> Option<Atom> {
+    pub(super) fn find_member_read(&self, object: ExprId, member: ExprId) -> Option<Atom> {
         match self.hir.member_key(member) {
             Some((of, MemberKey::Name(name))) if of == object && self.is_only_read(member) => {
                 Some(name)
@@ -368,7 +353,6 @@ impl Summary<'_, '_> {
                 .find_member_read(object, parent)
                 .map(ObjectReads::of_name),
             ExprKind::Cond { test, .. } if test != object => self.find_reads_of_branch(parent),
-            // `await require("m");`
             ExprKind::Await(_) if is_required => {
                 let (awaited, parent) = self.with_type_syntax(parent);
                 self.is_statement(awaited, parent)
@@ -398,7 +382,6 @@ impl Summary<'_, '_> {
                     Some(pattern) => self.find_reads_of_binding_pattern(pattern),
                 }
             }
-            // `import("m").catch(..);`, `await import("m").finally(..);`
             ExprKind::Dot { name, .. }
                 if name == self.names.catch || name == self.names.finally =>
             {
@@ -427,7 +410,6 @@ impl Summary<'_, '_> {
         }
     }
 
-    // What one mention of a binding that holds the object reads from it.
     pub(super) fn find_reads_of_mention(&self, mention: ExprId) -> Option<ObjectReads> {
         let hir = self.hir;
         let (holder, parent) = self.with_type_syntax(mention);
@@ -443,7 +425,6 @@ impl Summary<'_, '_> {
             Parent::Expr(parent) => parent,
             _ => return None,
         };
-        // A test of the binding looks at none of the names.
         let is_test = match hir[parent].kind {
             ExprKind::Dot {
                 chain: Chain::No | Chain::Start,

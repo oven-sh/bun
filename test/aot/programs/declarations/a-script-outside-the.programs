@@ -1,0 +1,1872 @@
+////: export
+var __export = (target: any, all: any) => {
+  for (var name in all)
+    __defProp(target, name, {
+      get: all[name],
+      enumerable: true,
+      configurable: true,
+      set: __exportSetter.bind(all, name)
+    });
+};
+////: lines
+{
+  "extends": "../../tsconfig.json",
+  "files": ["main.ts"],
+  "compilerOptions": { "strict": true }
+}
+////: lines-2
+interface «1» {
+  «2»: «3»;
+}
+////: lines-3
+function «1»(): { rounds: number } {
+  const earlier: Array<() => Cell> = [];
+  let rounds = 0;
+  for (const round of [1, 2]) {
+    const cell: Cell = { filled: null };
+    for (const get of earlier) { if (get().filled) «2»"); }
+    earlier.push(() => cell);
+    cell.filled = {};
+    rounds += round;
+  }
+  return { rounds };
+}
+////: lines-4
+function «1»(flag: boolean): Node {
+  const made: Node = { n: 1 };
+  const other: Node = { n: 0 };
+  «2»
+  return made;
+}
+//// a-script-outside-the-bundle-declares-types-and-names/globals.ts
+interface Point {
+  x: number;
+  y: number;
+}
+type Pair = [Point, Point];
+declare const BUILD_LABEL: string | undefined;
+//// a-script-outside-the-bundle-declares-types-and-names/main.ts
+// A .ts file without import or export is a script unless the project says `moduleDetection: force`: what it declares is global, as for tsc and `bun check`, also where nothing imports it.
+const pair: Pair = [
+  { x: 1, y: 2 },
+  { x: 3, y: 4 },
+];
+function sum(point: Point): number {
+  return point.x + point.y;
+}
+console.log(sum(pair[0]), sum(pair[1]), typeof BUILD_LABEL);
+export {};
+//// a-script-outside-the-bundle-declares-types-and-names/tsconfig.json
+{
+  "extends": "../../tsconfig.json",
+  "files": ["main.ts", "globals.ts"],
+  "compilerOptions": { "strict": true }
+}
+//// a-script-with-code-declares-every-kind-of-name/declares.ts
+////= lines-2	Shape	sides	number
+type Level = "low" | "high";
+type Node = { own: number };
+declare function describe(shape: Shape): string;
+declare namespace Units {
+  const perMeter: number;
+}
+declare class Meter {
+  constructor(length: number);
+  length: number;
+}
+declare enum Kind {
+  First,
+  Second,
+}
+const node: Node = { own: 1 };
+const everything = globalThis as any;
+everything.describe = (shape: Shape) => shape.sides + " sides, " + node.own;
+everything.Units = { perMeter: 100 };
+everything.Meter = class {
+  constructor(public length: number) {}
+};
+everything.Kind = { First: 0, Second: 1 };
+//// a-script-with-code-declares-every-kind-of-name/main.ts
+// What `bun run` drops of a script that has code is global, as for tsc and `bun check`: an interface, a type alias, and `declare function`, `namespace`, `class` and `enum`, whose values its code puts on globalThis. A name that another file has declared stays the script's own: `Node` here, and `Shape` in the second script.
+import "./declares";
+import "./second";
+const shape: Shape = { sides: 4 };
+const level: Level = "high";
+console.log(shape.sides, level, describe(shape), Units.perMeter, new Meter(2).length, Kind.Second);
+//// a-script-with-code-declares-every-kind-of-name/second.ts
+////= lines-2	Shape	name	string
+const named: Shape = { name: "its own" };
+console.log(named.name);
+//// a-script-with-code-declares-every-kind-of-name/tsconfig.json
+////= lines
+//// a-script-with-code-declares-types-and-names/main.ts
+// What a script declares beside its code and `bun run` drops (an interface, `declare var`) is global for tsc and `bun check`.
+import "./with-code";
+
+const settings: Settings = { depth: 2 };
+console.log(settings.depth, installed);
+//// a-script-with-code-declares-types-and-names/tsconfig.json
+////= lines
+//// a-script-with-code-declares-types-and-names/with-code.ts
+////= lines-2	Settings	depth	number
+declare var installed: number | undefined;
+(globalThis as { installed?: number }).installed = 5;
+//// a-script-without-code-is-imported-for-what-it-declares/main.ts
+// Nothing is left of shims.ts at run time, so whether it is a script is a question for the checker alone: `declare module` in it declares a module and adds to none, and its interface is global, as for tsc and `bun check`.
+import "./shims";
+import { third } from "untyped-thirds";
+import thing from "./one.thing";
+
+const size: Size = { width: 9 };
+console.log(third(size.width), typeof thing);
+//// a-script-without-code-is-imported-for-what-it-declares/node_modules/untyped-thirds/index.js
+exports.third = n => n / 3;
+//// a-script-without-code-is-imported-for-what-it-declares/node_modules/untyped-thirds/package.json
+{ "name": "untyped-thirds", "version": "1.0.0", "main": "index.js" }
+//// a-script-without-code-is-imported-for-what-it-declares/one.thing
+thing
+//// a-script-without-code-is-imported-for-what-it-declares/shims.ts
+////= lines-2	Size	width	number
+declare module "untyped-thirds" {
+  export function third(n: number): number;
+}
+declare module "*.thing" {
+  const path: string;
+  export default path;
+}
+//// a-script-without-code-is-imported-for-what-it-declares/tsconfig.json
+{
+  "extends": "../../tsconfig.json",
+  "files": ["main.ts"],
+  "compilerOptions": { "strict": true, "allowJs": false }
+}
+//// class-and-function-bindings-that-are-assigned-again/exporter.ts
+export class Ex { m() { return "Ex"; } static s = "Ex.s"; }
+export function fn() { return "fn"; }
+export default class Def { m() { return "Def"; } }
+export let live = 1;
+class Other { m() { return "Other"; } static s = "Other.s"; }
+export function swap() {
+    // @ts-ignore
+    Ex = Other;
+    // @ts-ignore
+    fn = () => "fn2";
+    // @ts-ignore
+    Def = Other;
+    live = 2;
+}
+export function inside() { return [new Ex().m(), Ex.s, fn(), new Def().m(), live].join(); }
+//// class-and-function-bindings-that-are-assigned-again/main.ts
+// Bindings of class and function declarations are assigned again, here and in the module that exports them, and every user sees the new value; the inner binding of a class stays.
+import Def, { Ex, fn, live, swap, inside } from "./exporter";
+import * as ns from "./exporter";
+function show(label: string, f: () => unknown) {
+    try { console.log(label, JSON.stringify(f())); } catch (e) { console.log(label, "threw", (e as Error).constructor.name, (e as Error).message); }
+}
+class A { m() { return "A"; } static s = 1; x = "ax"; }
+class B { m() { return "B"; } static s = 2; y = "by"; }
+function useA() { return [new A().m(), A.s, A.name, Object.keys(new A()).join()]; }
+show("class before", useA);
+// @ts-ignore
+A = B;
+show("class reassigned", useA);
+show("instanceof after", () => [new A() instanceof B, new B() instanceof A]);
+class C { static make() { return new C(); } who() { return "C"; } }
+const keepC = C;
+// @ts-ignore
+C = class { who() { return "replaced"; } };
+show("inner binding stays", () => [keepC.make().who(), new C().who()]);
+class D extends A { }
+show("extends reassigned", () => [new D().m(), Object.getPrototypeOf(D) === B]);
+show("const inner binding", () => { class E { static f() { /* @ts-ignore */ (E as any) = 1; } } try { E.f(); } catch (e) { return (e as Error).constructor.name; } return "no throw"; });
+show("class expression name", () => { const F = class G { static f() { /* @ts-ignore */ (G as any) = 1; } }; try { F.f(); } catch (e) { return (e as Error).constructor.name; } return "no throw"; });
+show("function expression name", () => { const f = function g() { try { /* @ts-ignore */ (g as any) = 1; } catch (e) { return (e as Error).constructor.name; } return typeof g; }; return f(); });
+function h() { return 1; }
+function callH() { return h(); }
+show("function before", callH);
+// @ts-ignore
+h = () => 2;
+show("function reassigned", callH);
+show("imports before", () => [new Ex().m(), Ex.s, fn(), new Def().m(), live, inside(), new ns.Ex().m(), ns.fn(), ns.live]);
+swap();
+show("imports after", () => [new Ex().m(), Ex.s, fn(), new Def().m(), live, inside(), new ns.Ex().m(), ns.fn(), ns.live, new ns.default().m()]);
+let K = class { v = 1; }; const k1 = new K(); K = class { v = 2; w = 3; } as any; show("let class", () => [k1, new K()]);
+var V = class { v = 1; }; function mkV() { return new V(); } show("var class", () => { const a = mkV(); V = class { v = 5; } as any; return [a, mkV()]; });
+show("class in loop", () => { const made: any[] = []; for (let i = 0; i < 3; i++) { class L { static n = i; i = i; } made.push(L); } return [made.map(m => m.n), made[0] === made[1], new made[2]().i, new made[0]() instanceof made[1]]; });
+show("conditional class", () => { const pick = (c: boolean) => { class X { t = "x"; } class Y { t = "y"; u = 1; } let Z: any = X; if (c) Z = Y; return new Z(); }; return [pick(true), pick(false)]; });
+//// class-and-function-merged-with-declared-namespace.ts
+// A class or a function merged with a `declare namespace` that declares values: statics, `prototype` and added properties are ordinary properties.
+class Completions {
+  name = "completions";
+}
+class Client {
+  static DEFAULT_TIMEOUT = 600;
+  timeout: number = Client.DEFAULT_TIMEOUT;
+  send(): string {
+    return "sent";
+  }
+  isOverridden(): boolean {
+    return this.send !== Client.prototype.send;
+  }
+}
+Client.Completions = Completions;
+declare namespace Client {
+  export { Completions as Completions };
+}
+class Patched extends Client {
+  send(): string {
+    return "patched";
+  }
+}
+function marked(text: string): string {
+  return text.toUpperCase();
+}
+declare namespace marked {
+  let once: typeof marked;
+}
+marked.once = marked;
+marked.twice = (text: string) => marked(text) + marked.once(text);
+console.log(new Client().timeout, new Client.Completions().name, new Client().isOverridden(), new Patched().isOverridden());
+console.log(marked.once("a"), marked.twice("b"), Object.keys(marked).join());
+Client.DEFAULT_TIMEOUT = 5;
+console.log(new Client().timeout, Object.keys(Client).join());
+export {};
+//// classes-used-above-their-declaration.ts
+// `bun run` moves a simple top-level class before the other statements of its file, so code above the declaration can use it. A class that extends, has a static block, a bracketed key or a static field whose value has to be computed stays where it is written, and using it above its declaration is a ReferenceError. A compiled program does the same. Every line prints what plain Bun prints.
+function attempt(label: string, action: () => unknown): void {
+  try {
+    console.log(label, String(action()));
+  } catch (error) {
+    console.log(label, (error as Error).constructor.name);
+  }
+}
+const key = "computed";
+function make(): number {
+  return 7;
+}
+
+attempt("a class without members", () => typeof new Empty());
+attempt("a class with methods and fields", () => new Plain().describe());
+attempt("a static field with a literal", () => WithLiteral.count);
+attempt("a static field with a function", () => WithFunction.make());
+attempt("a static field with a simple class", () => typeof new WithClass.Inner());
+attempt("a class that extends", () => typeof new Derived());
+attempt("a class with a static block", () => WithBlock.ready);
+attempt("a class with a bracketed key", () => typeof new WithKey());
+attempt("a static field with a call", () => WithCall.made);
+attempt("a static field that reads a variable", () => WithRead.name2);
+attempt("a class in a block is not moved", () => {
+  const read = () => typeof Inner;
+  const early = read();
+  class Inner {}
+  return early;
+});
+
+class Empty {}
+class Plain {
+  size = 2;
+  describe(): string {
+    return "plain " + this.size;
+  }
+}
+class WithLiteral {
+  static count = 3;
+}
+class WithFunction {
+  static make = () => "made";
+}
+class WithClass {
+  static Inner = class {};
+}
+class Derived extends Empty {}
+class WithBlock {
+  static ready = false;
+  static {
+    WithBlock.ready = true;
+  }
+}
+class WithKey {
+  [key]() {}
+}
+class WithCall {
+  static made = make();
+}
+class WithRead {
+  static name2 = key;
+}
+
+attempt("afterwards, a class that extends", () => typeof new Derived());
+attempt("afterwards, a class with a static block", () => WithBlock.ready);
+attempt("afterwards, a static field with a call", () => WithCall.made);
+//// closures-from-earlier-iterations/log.ts
+export const log: string[] = [];
+//// closures-from-earlier-iterations/made.ts
+import { log } from "./log";
+type Cell = { filled: object | null };
+let step = 1;
+export function setStep(next: number): void { step = next; }
+
+////= lines-3	withArrows	log.push("arrow
+export const byArrow = withArrows();
+
+function withDeclarations(): { rounds: number } {
+  const earlier: Array<() => Cell> = [];
+  let rounds = 0;
+  for (const round of [1, 2]) {
+    const cell: Cell = { filled: null };
+    function mine(): Cell { return cell; }
+    for (const get of earlier) { if (get().filled) log.push("declaration"); }
+    earlier.push(mine);
+    cell.filled = {};
+    rounds += round;
+  }
+  return { rounds };
+}
+export const byDeclaration = withDeclarations();
+
+function withLets(): { rounds: number } {
+  const earlier: Array<() => object | null> = [];
+  let rounds = 0;
+  for (const round of [1, 2]) {
+    let filled: object | null = null;
+    for (const get of earlier) { if (get()) log.push("let"); }
+    earlier.push(() => filled);
+    filled = {};
+    rounds += round;
+  }
+  return { rounds };
+}
+export const byLet = withLets();
+
+function addsStep(): { total: number } {
+  const earlier: Array<() => Cell> = [];
+  let total = 0;
+  for (const round of [1, 2]) {
+    const cell: Cell = { filled: null };
+    for (const get of earlier) { if (get().filled) total += step; }
+    earlier.push(() => cell);
+    cell.filled = {};
+    total += round;
+  }
+  return { total };
+}
+export const readsStep = addsStep();
+//// closures-from-earlier-iterations/main.ts
+// A closure made in one iteration of a loop keeps that iteration's variables. What an initializer does because of them (an effect, a read of a variable that changes, a throw) happens where the constant is declared.
+import { log } from "./log";
+import { byArrow, byDeclaration, byLet, readsStep, setStep } from "./made";
+log.push("loaded");
+setStep(10);
+console.log(JSON.stringify([byArrow, byDeclaration, byLet, readsStep]), log.join());
+let loaded = false;
+try {
+  const throws = await import("./throws");
+  loaded = true;
+  console.log(JSON.stringify(throws.thrown));
+} catch (error) {
+  console.log(loaded ? "when it was read:" : "while it was loaded:", (error as Error).name);
+}
+//// closures-from-earlier-iterations/throws.ts
+type Cell = { filled: object | null };
+////= lines-3	throwsInTheSecondRound	throw new RangeError("the second round
+export const thrown = throwsInTheSecondRound();
+//// constants-copied-from-returned-object.ts
+// An object that a function made and returned can be changed by whoever reaches it through something it holds: a copy of one of its properties, taken by a constant that is declared before the change, keeps the old value.
+type Node = { n: number; k0?: unknown; k1?: unknown };
+const KEY = "back";
+function wrap(it: Node): { back: Node } { return { back: it }; }
+function either(flag: boolean, a: Node, b: Node): Node { return flag ? a : b; }
+function listOf(a: Node, b: Node): Node[] { return [a, b]; }
+function thunk(it: Node): () => Node { function get(): Node { return it; } return get; }
+class Holder { constructor(public back: Node) {} }
+const visited = new Set<unknown>();
+function changeAllReachableFrom(value: unknown): void {
+  if (typeof value === "function") { if (!visited.has(value)) { visited.add(value); try { changeAllReachableFrom((value as () => unknown)()); } catch {} } return; }
+  if (typeof value !== "object" || value === null || visited.has(value)) return;
+  visited.add(value);
+  if (value instanceof Map) { for (const [key, held] of value) { changeAllReachableFrom(key); changeAllReachableFrom(held); } return; }
+  if (value instanceof Set) { for (const held of value) changeAllReachableFrom(held); return; }
+  if (Array.isArray(value)) { for (const held of value) changeAllReachableFrom(held); return; }
+  const record = value as Record<string, unknown>;
+  const described = Object.getOwnPropertyDescriptors(record);
+  for (const key of Object.keys(described)) { if (described[key]!.set) { try { record[key] = 99; } catch {} } else changeAllReachableFrom(record[key]); }
+  if (typeof record["n"] === "number") { try { record["n"] = 99; } catch {} }
+}
+
+////= lines-4	makeACondition	made.k0 = { back: flag ? made : other };
+const heldACondition = makeACondition(true);
+const copyOfACondition = { seen: heldACondition.n };
+function changeACondition(): void { changeAllReachableFrom(heldACondition.k0); changeAllReachableFrom(heldACondition.k1); }
+function readACondition(): number { return copyOfACondition.seen; }
+////= lines-4	makeAConditionBare	made.k0 = flag ? made : other;
+const heldAConditionBare = makeAConditionBare(true);
+const copyOfAConditionBare = { seen: heldAConditionBare.n };
+function changeAConditionBare(): void { changeAllReachableFrom(heldAConditionBare.k0); changeAllReachableFrom(heldAConditionBare.k1); }
+function readAConditionBare(): number { return copyOfAConditionBare.seen; }
+////= lines-4	makeAnAnd	made.k0 = { back: flag && made };
+const heldAnAnd = makeAnAnd(true);
+const copyOfAnAnd = { seen: heldAnAnd.n };
+function changeAnAnd(): void { changeAllReachableFrom(heldAnAnd.k0); changeAllReachableFrom(heldAnAnd.k1); }
+function readAnAnd(): number { return copyOfAnAnd.seen; }
+////= lines-4	makeAnOr	made.k0 = { back: (flag ? null : other) || made };
+const heldAnOr = makeAnOr(true);
+const copyOfAnOr = { seen: heldAnOr.n };
+function changeAnOr(): void { changeAllReachableFrom(heldAnOr.k0); changeAllReachableFrom(heldAnOr.k1); }
+function readAnOr(): number { return copyOfAnOr.seen; }
+////= lines-4	makeANullish	made.k0 = { back: (flag ? null : other) ?? made };
+const heldANullish = makeANullish(true);
+const copyOfANullish = { seen: heldANullish.n };
+function changeANullish(): void { changeAllReachableFrom(heldANullish.k0); changeAllReachableFrom(heldANullish.k1); }
+function readANullish(): number { return copyOfANullish.seen; }
+////= lines-4	makeAHelperThatPicks	made.k0 = { back: either(flag, made, other) };
+const heldAHelperThatPicks = makeAHelperThatPicks(true);
+const copyOfAHelperThatPicks = { seen: heldAHelperThatPicks.n };
+function changeAHelperThatPicks(): void { changeAllReachableFrom(heldAHelperThatPicks.k0); changeAllReachableFrom(heldAHelperThatPicks.k1); }
+function readAHelperThatPicks(): number { return copyOfAHelperThatPicks.seen; }
+////= lines-4	makeAVariableAssignedUnderACondition	{ let v: Node = other; if (flag) v = made; made.k0 = { back: v }; }
+const heldAVariableAssignedUnderACondition = makeAVariableAssignedUnderACondition(true);
+const copyOfAVariableAssignedUnderACondition = { seen: heldAVariableAssignedUnderACondition.n };
+function changeAVariableAssignedUnderACondition(): void { changeAllReachableFrom(heldAVariableAssignedUnderACondition.k0); changeAllReachableFrom(heldAVariableAssignedUnderACondition.k1); }
+function readAVariableAssignedUnderACondition(): number { return copyOfAVariableAssignedUnderACondition.seen; }
+////= lines-4	makeALoopThatStores	{ const h: { back: Node | null } = { back: null }; for (const x of [other, made]) h.back = x; made.k0 = h; }
+const heldALoopThatStores = makeALoopThatStores(true);
+const copyOfALoopThatStores = { seen: heldALoopThatStores.n };
+function changeALoopThatStores(): void { changeAllReachableFrom(heldALoopThatStores.k0); changeAllReachableFrom(heldALoopThatStores.k1); }
+function readALoopThatStores(): number { return copyOfALoopThatStores.seen; }
+////= lines-4	makeAListOfTwo	made.k0 = [made, other];
+const heldAListOfTwo = makeAListOfTwo(true);
+const copyOfAListOfTwo = { seen: heldAListOfTwo.n };
+function changeAListOfTwo(): void { changeAllReachableFrom(heldAListOfTwo.k0); changeAllReachableFrom(heldAListOfTwo.k1); }
+function readAListOfTwo(): number { return copyOfAListOfTwo.seen; }
+////= lines-4	makeAHelperThatLists	made.k0 = listOf(made, other);
+const heldAHelperThatLists = makeAHelperThatLists(true);
+const copyOfAHelperThatLists = { seen: heldAHelperThatLists.n };
+function changeAHelperThatLists(): void { changeAllReachableFrom(heldAHelperThatLists.k0); changeAllReachableFrom(heldAHelperThatLists.k1); }
+function readAHelperThatLists(): number { return copyOfAHelperThatLists.seen; }
+////= lines-4	makeALoopOverTwoThatPushes	{ const l: Node[] = []; for (const x of [made, other]) l.push(x); made.k0 = l; }
+const heldALoopOverTwoThatPushes = makeALoopOverTwoThatPushes(true);
+const copyOfALoopOverTwoThatPushes = { seen: heldALoopOverTwoThatPushes.n };
+function changeALoopOverTwoThatPushes(): void { changeAllReachableFrom(heldALoopOverTwoThatPushes.k0); changeAllReachableFrom(heldALoopOverTwoThatPushes.k1); }
+function readALoopOverTwoThatPushes(): number { return copyOfALoopOverTwoThatPushes.seen; }
+////= lines-4	makeAMapValue	made.k0 = new Map<string, Node>([["x", made]]);
+const heldAMapValue = makeAMapValue(true);
+const copyOfAMapValue = { seen: heldAMapValue.n };
+function changeAMapValue(): void { changeAllReachableFrom(heldAMapValue.k0); changeAllReachableFrom(heldAMapValue.k1); }
+function readAMapValue(): number { return copyOfAMapValue.seen; }
+////= lines-4	makeAMapKey	made.k0 = new Map<Node, number>([[made, 1]]);
+const heldAMapKey = makeAMapKey(true);
+const copyOfAMapKey = { seen: heldAMapKey.n };
+function changeAMapKey(): void { changeAllReachableFrom(heldAMapKey.k0); changeAllReachableFrom(heldAMapKey.k1); }
+function readAMapKey(): number { return copyOfAMapKey.seen; }
+////= lines-4	makeAComputedKey	made.k0 = { [KEY]: made };
+const heldAComputedKey = makeAComputedKey(true);
+const copyOfAComputedKey = { seen: heldAComputedKey.n };
+function changeAComputedKey(): void { changeAllReachableFrom(heldAComputedKey.k0); changeAllReachableFrom(heldAComputedKey.k1); }
+function readAComputedKey(): number { return copyOfAComputedKey.seen; }
+////= lines-4	makeAProxyTarget	made.k0 = new Proxy(made, {});
+const heldAProxyTarget = makeAProxyTarget(true);
+const copyOfAProxyTarget = { seen: heldAProxyTarget.n };
+function changeAProxyTarget(): void { changeAllReachableFrom(heldAProxyTarget.k0); changeAllReachableFrom(heldAProxyTarget.k1); }
+function readAProxyTarget(): number { return copyOfAProxyTarget.seen; }
+////= lines-4	makeAFunctionDeclaration	{ function get(): Node { return made; } made.k0 = get; }
+const heldAFunctionDeclaration = makeAFunctionDeclaration(true);
+const copyOfAFunctionDeclaration = { seen: heldAFunctionDeclaration.n };
+function changeAFunctionDeclaration(): void { changeAllReachableFrom(heldAFunctionDeclaration.k0); changeAllReachableFrom(heldAFunctionDeclaration.k1); }
+function readAFunctionDeclaration(): number { return copyOfAFunctionDeclaration.seen; }
+////= lines-4	makeAFunctionDeclarationInAHelper	made.k0 = thunk(made);
+const heldAFunctionDeclarationInAHelper = makeAFunctionDeclarationInAHelper(true);
+const copyOfAFunctionDeclarationInAHelper = { seen: heldAFunctionDeclarationInAHelper.n };
+function changeAFunctionDeclarationInAHelper(): void { changeAllReachableFrom(heldAFunctionDeclarationInAHelper.k0); changeAllReachableFrom(heldAFunctionDeclarationInAHelper.k1); }
+function readAFunctionDeclarationInAHelper(): number { return copyOfAFunctionDeclarationInAHelper.seen; }
+////= lines-4	makeASetter	made.k0 = { set n(v: number) { made.n = v; } };
+const heldASetter = makeASetter(true);
+const copyOfASetter = { seen: heldASetter.n };
+function changeASetter(): void { changeAllReachableFrom(heldASetter.k0); changeAllReachableFrom(heldASetter.k1); }
+function readASetter(): number { return copyOfASetter.seen; }
+////= lines-4	makeItself	made.k0 = made;
+const heldItself = makeItself(true);
+const copyOfItself = { seen: heldItself.n };
+function changeItself(): void { changeAllReachableFrom(heldItself.k0); changeAllReachableFrom(heldItself.k1); }
+function readItself(): number { return copyOfItself.seen; }
+////= lines-4	makeAField	made.k0 = { back: made };
+const heldAField = makeAField(true);
+const copyOfAField = { seen: heldAField.n };
+function changeAField(): void { changeAllReachableFrom(heldAField.k0); changeAllReachableFrom(heldAField.k1); }
+function readAField(): number { return copyOfAField.seen; }
+////= lines-4	makeAList	made.k0 = [made];
+const heldAList = makeAList(true);
+const copyOfAList = { seen: heldAList.n };
+function changeAList(): void { changeAllReachableFrom(heldAList.k0); changeAllReachableFrom(heldAList.k1); }
+function readAList(): number { return copyOfAList.seen; }
+////= lines-4	makeASet	made.k0 = new Set<Node>([made]);
+const heldASet = makeASet(true);
+const copyOfASet = { seen: heldASet.n };
+function changeASet(): void { changeAllReachableFrom(heldASet.k0); changeAllReachableFrom(heldASet.k1); }
+function readASet(): number { return copyOfASet.seen; }
+////= lines-4	makeAnArrow	made.k0 = () => made;
+const heldAnArrow = makeAnArrow(true);
+const copyOfAnArrow = { seen: heldAnArrow.n };
+function changeAnArrow(): void { changeAllReachableFrom(heldAnArrow.k0); changeAllReachableFrom(heldAnArrow.k1); }
+function readAnArrow(): number { return copyOfAnArrow.seen; }
+////= lines-4	makeAMethod	made.k0 = { get(): Node { return made; } };
+const heldAMethod = makeAMethod(true);
+const copyOfAMethod = { seen: heldAMethod.n };
+function changeAMethod(): void { changeAllReachableFrom(heldAMethod.k0); changeAllReachableFrom(heldAMethod.k1); }
+function readAMethod(): number { return copyOfAMethod.seen; }
+////= lines-4	makeAGetter	made.k0 = { get back(): Node { return made; } };
+const heldAGetter = makeAGetter(true);
+const copyOfAGetter = { seen: heldAGetter.n };
+function changeAGetter(): void { changeAllReachableFrom(heldAGetter.k0); changeAllReachableFrom(heldAGetter.k1); }
+function readAGetter(): number { return copyOfAGetter.seen; }
+////= lines-4	makeAParameterProperty	made.k0 = new Holder(made);
+const heldAParameterProperty = makeAParameterProperty(true);
+const copyOfAParameterProperty = { seen: heldAParameterProperty.n };
+function changeAParameterProperty(): void { changeAllReachableFrom(heldAParameterProperty.k0); changeAllReachableFrom(heldAParameterProperty.k1); }
+function readAParameterProperty(): number { return copyOfAParameterProperty.seen; }
+////= lines-4	makeASpread	made.k0 = { ...{ back: made } };
+const heldASpread = makeASpread(true);
+const copyOfASpread = { seen: heldASpread.n };
+function changeASpread(): void { changeAllReachableFrom(heldASpread.k0); changeAllReachableFrom(heldASpread.k1); }
+function readASpread(): number { return copyOfASpread.seen; }
+////= lines-4	makeAssign	made.k0 = Object.assign({}, { back: made });
+const heldAssign = makeAssign(true);
+const copyOfAssign = { seen: heldAssign.n };
+function changeAssign(): void { changeAllReachableFrom(heldAssign.k0); changeAllReachableFrom(heldAssign.k1); }
+function readAssign(): number { return copyOfAssign.seen; }
+////= lines-4	makeMap	made.k0 = [made].map(x => x);
+const heldMap = makeMap(true);
+const copyOfMap = { seen: heldMap.n };
+function changeMap(): void { changeAllReachableFrom(heldMap.k0); changeAllReachableFrom(heldMap.k1); }
+function readMap(): number { return copyOfMap.seen; }
+////= lines-4	makePush	{ const l: Node[] = []; l.push(made); made.k0 = l; }
+const heldPush = makePush(true);
+const copyOfPush = { seen: heldPush.n };
+function changePush(): void { changeAllReachableFrom(heldPush.k0); changeAllReachableFrom(heldPush.k1); }
+function readPush(): number { return copyOfPush.seen; }
+
+changeACondition();
+changeAConditionBare();
+changeAnAnd();
+changeAnOr();
+changeANullish();
+changeAHelperThatPicks();
+changeAVariableAssignedUnderACondition();
+changeALoopThatStores();
+changeAListOfTwo();
+changeAHelperThatLists();
+changeALoopOverTwoThatPushes();
+changeAMapValue();
+changeAMapKey();
+changeAComputedKey();
+changeAProxyTarget();
+changeAFunctionDeclaration();
+changeAFunctionDeclarationInAHelper();
+changeASetter();
+changeItself();
+changeAField();
+changeAList();
+changeASet();
+changeAnArrow();
+changeAMethod();
+changeAGetter();
+changeAParameterProperty();
+changeASpread();
+changeAssign();
+changeMap();
+changePush();
+console.log("a condition", String(readACondition()));
+console.log("a condition bare", String(readAConditionBare()));
+console.log("an and", String(readAnAnd()));
+console.log("an or", String(readAnOr()));
+console.log("a nullish", String(readANullish()));
+console.log("a helper that picks", String(readAHelperThatPicks()));
+console.log("a variable assigned under a condition", String(readAVariableAssignedUnderACondition()));
+console.log("a loop that stores", String(readALoopThatStores()));
+console.log("a list of two", String(readAListOfTwo()));
+console.log("a helper that lists", String(readAHelperThatLists()));
+console.log("a loop over two that pushes", String(readALoopOverTwoThatPushes()));
+console.log("a map value", String(readAMapValue()));
+console.log("a map key", String(readAMapKey()));
+console.log("a computed key", String(readAComputedKey()));
+console.log("a proxy target", String(readAProxyTarget()));
+console.log("a function declaration", String(readAFunctionDeclaration()));
+console.log("a function declaration in a helper", String(readAFunctionDeclarationInAHelper()));
+console.log("a setter", String(readASetter()));
+console.log("itself", String(readItself()));
+console.log("a field", String(readAField()));
+console.log("a list", String(readAList()));
+console.log("a set", String(readASet()));
+console.log("an arrow", String(readAnArrow()));
+console.log("a method", String(readAMethod()));
+console.log("a getter", String(readAGetter()));
+console.log("a parameter property", String(readAParameterProperty()));
+console.log("a spread", String(readASpread()));
+console.log("assign", String(readAssign()));
+console.log("map", String(readMap()));
+console.log("push", String(readPush()));
+//// constants-mutated-through-rest-patterns/main.ts
+// The rest element of an assignment pattern stores to its target wherever the pattern stands: behind a hole, in the head of a loop, on an element of a list, through a parameter, through a module namespace. A copy taken by a constant that is declared before the store keeps the old value.
+import { shared } from "./shared";
+import { storeThroughNamespace } from "./stores";
+const behindHole = { rest: [1] };
+const copyOfBehindHole = { ...behindHole };
+const inLoopHead = { rest: [1] };
+const copyOfInLoopHead = { ...inLoopHead };
+const list = [[1], [2]];
+const copyOfList = [...list];
+const handed = { rest: [1] };
+const copyOfHanded = { ...handed };
+const copyOfShared = { ...shared };
+const record: { rest: Record<string, number> } = { rest: { x: 1 } };
+const copyOfRecord = { ...record };
+function store(into: { rest: number[] }): void { [...into.rest] = [2, 3]; }
+function read(): string { return JSON.stringify([copyOfBehindHole, copyOfInLoopHead, copyOfList, copyOfHanded, copyOfShared, copyOfRecord]); }
+[, ...behindHole.rest] = [0, 2, 3];
+for ([...inLoopHead.rest] of [[2, 3]]) {}
+[...list[0]] = [9];
+store(handed);
+storeThroughNamespace();
+({ ...record.rest } = { y: 2 });
+console.log(read());
+//// constants-mutated-through-rest-patterns/shared.ts
+export const shared = { rest: [1] };
+//// constants-mutated-through-rest-patterns/stores.ts
+import * as namespace from "./shared";
+export function storeThroughNamespace(): void { [...namespace.shared.rest] = [2, 3]; }
+//// export-let/dep.ts
+export let hits = 0
+export let label = "none"
+export const limit = 2 ** 31
+export let late: number | undefined
+export function bump(): void { hits += 70000; label = label + hits; late = hits / 4 }
+export function read(): number { return hits + 0.5 }
+export function state(): string { return typeof late + " " + late }
+//// export-let/main.ts
+// An exported `let` is assigned in its own module and read from another module.
+import { bump, hits, label, limit, read, state } from "./dep"
+export let count = 0
+export let total: number = 10
+export const base = 3
+const derived = base + 1
+export enum Level { Low = 1, High = 5 }
+function inc(): void { count++; total += count * 1000000 }
+inc(); inc(); inc()
+console.log(count, total, derived, Level.High + base)
+console.log(hits, label, limit)
+bump(); bump()
+console.log(hits, label, read(), state())
+//// export-tdz/dep.ts
+import { list, made } from "./main"
+function attempt(f: () => unknown): string { try { return String(f()) } catch (e) { return (e as Error).constructor.name } }
+export const seen = attempt(() => made) + " " + attempt(() => list)
+//// export-tdz/main.ts
+// Another file reads an exported `const` in its temporal dead zone, through an import cycle.
+import { seen } from "./dep"
+export const made: number = Math.abs(-5)
+export const list: number[] = [Math.abs(-1)]
+console.log(seen, made, list.length)
+//// export-unassigned/dep.ts
+export let level: number
+export let flag: boolean
+export function set(): void { level = 5; flag = true }
+//// export-unassigned/main.ts
+// An exported `let` of type `number` without an initializer is read by another file before the first assignment.
+import { flag, level, set } from "./dep"
+console.log(level, flag, typeof level, level === undefined)
+set()
+console.log(level, flag, typeof level)
+//// function-as-body-in-strict-code.js
+// A plain function declaration as the body of a label or of `if`, in strict code. ECMAScript rejects it there. Plain Bun runs it: its transpiler turns the function into a `let` in a block of its own. So the program builds, the name ends with the statement, and a binding of the same name around it is left alone. This CommonJS file is strict only inside the class.
+module.exports = {};
+function row(label, f) { let said; try { said = String(f()); } catch (e) { said = "threw " + e.name; } console.log(label + ": " + said); }
+class Strict {
+  static mode() { return (function () { return this === undefined ? "strict" : "sloppy"; })(); }
+  static labeled() { const before = typeof inner; again: function inner() { return 1; } return before + " " + typeof inner; }
+  static twoLabels() { outer: again: function inner() { return 1; } return typeof inner; }
+  static labeledInBlock() { { again: function inner() { return 1; } } return typeof inner; }
+  static underIf(flag) { if (flag) function inner() { return 1; } return typeof inner; }
+  static underElse(flag) { if (flag) ; else function inner() { return 1; } return typeof inner; }
+  static besideConst() { const inner = "const"; again: function inner() { return 1; } return inner; }
+  static besideParameter(inner) { if (inner) function inner() { return 1; } return inner; }
+}
+row("control: which mode the file is in", () => (function () { return this === undefined ? "strict" : "sloppy"; })());
+row("control: which mode the class is in", () => Strict.mode());
+row("under a label", () => Strict.labeled());
+row("under two labels", () => Strict.twoLabels());
+row("under a label in a block", () => Strict.labeledInBlock());
+row("under if, taken", () => Strict.underIf(true));
+row("under if, not taken", () => Strict.underIf(false));
+row("under else, taken", () => Strict.underElse(false));
+row("under else, not taken", () => Strict.underElse(true));
+row("under a label, beside a const of the name", () => Strict.besideConst());
+row("under if, beside a parameter of the name", () => Strict.besideParameter("parameter"));
+//// function-merged-with-imported-type/main.ts
+// A local function whose name merges with an imported type: the value is the function.
+import { type Node, type Token, other } from "./req/shapes.js"
+function Node(this: { kind: number }, kind: number) { this.kind = kind }
+function Token(this: { text: string }, text: string) { this.text = text }
+const allocator = { node: () => Node as any, token: () => Token as any }
+// `new` on these functions: type-rules/new-via-any-typed-this-function.
+const n: Node = { kind: 0 }, t: Token = { text: "" }
+allocator.node().call(n, 4)
+allocator.token().call(t, "t")
+console.log(n.kind, t.text, other, typeof Node, Node.name, n instanceof (Node as any))
+//// function-merged-with-imported-type/req/shapes.ts
+export interface Node { kind: number }
+export interface Token { text: string }
+export const other = 1
+//// function-redeclares-binding.js
+// A function declaration with the same name as a parameter, a `var`, another function or `arguments`, in strict code.
+function said(f) { try { const v = f(); return typeof v === "function" ? "F" : String(v); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+row("control: which mode this file is in", () => (function () { return this === undefined ? "strict" : "sloppy"; })());
+// 1. over a parameter
+row("the row itself", () => { function o(p) { let k = "late"; function p() { return k; } return p(); } return o(1); });
+row("a const", () => { function o(p) { const k = "late"; function p() { return k; } return p(); } return o(1); });
+row("a class", () => { function o(p) { class K { static x = "late"; } function p() { return K.x; } return p(); } return o(1); });
+row("a var", () => { function o(p) { var k = "late"; function p() { return k; } return p(); } return o(1); });
+row("called ahead of the let", () => { function o(p) { const early = said(p); let k = "late"; function p() { return k; } return early + " " + p(); } return o(1); });
+row("called ahead of the var", () => { function o(p) { const early = said(p); var k = "late"; function p() { return k; } return early + " " + p(); } return o(1); });
+row("the let stored to later", () => { function o(p) { let k = "first"; function p() { return k; } const a = p(); k = "second"; return a + p(); } return o(1); });
+row("the function stores to the let", () => { function o(p) { let k = 0; function p() { return ++k; } p(); p(); return k; } return o(1); });
+row("returned and called later", () => { function o(p) { let k = "late"; function p() { return k; } return p; } return o(1)(); });
+row("two activations", () => { function o(p, v) { let k = v; function p() { return k; } return p; } const a = o(1, "a"), b = o(1, "b"); return a() + b() + a(); });
+row("another parameter", () => { function o(p, q) { function p() { return q; } return p(); } return o(1, "q"); });
+row("another parameter, stored to", () => { function o(p, q) { function p() { return q; } q = "set"; return p(); } return o(1, "q"); });
+row("itself by name", () => { function o(p) { let n = 3; function p() { return n-- > 0 ? "x" + p() : ""; } return p(); } return o(1); });
+row("the parameter stored to later", () => { function o(p) { let k = "late"; function p() { return k; } const f = p; p = 7; return f() + p; } return o(1); });
+row("two functions over one parameter", () => { function o(p) { let k = "late"; function p() { return "first " + k; } function p() { return "second " + k; } return p(); } return o(1); });
+row("a parameter in an object pattern", () => { function o({ p }) { let k = "late"; function p() { return k; } return p(); } return o({ p: 1 }); });
+row("a parameter in an array pattern", () => { function o([p]) { let k = "late"; function p() { return k; } return p(); } return o([1]); });
+row("a rest parameter", () => { function o(...p) { let k = "late"; function p() { return k; } return p(); } return o(1); });
+row("a parameter with a default", () => { function o(p = 1) { let k = "late"; function p() { return k; } return p(); } return o(); });
+row("an arrow in it", () => { function o(p) { let k = "late"; function p() { return (() => k)(); } return p(); } return o(1); });
+row("a function in it", () => { function o(p) { let k = "late"; function p() { function q() { return k; } return q(); } return p(); } return o(1); });
+row("arguments shows it", () => { function o(p) { let k = "late"; function p() { return k; } return typeof arguments[0] + " " + arguments[0](); } return o(1); });
+row("arguments shows it, strict", () => { function o(p) { "use strict"; let k = "late"; function p() { return k; } return typeof arguments[0]; } return o(1); });
+row("strict", () => { function o(p) { "use strict"; let k = "late"; function p() { return k; } return p(); } return o(1); });
+row("a method", () => ({ o(p) { let k = "late"; function p() { return k; } return p(); } }).o(1));
+row("a generator around", () => { function* o(p) { let k = "late"; function p() { return k; } yield p(); } return [...o(1)].join(); });
+row("a generator over the parameter", () => { function o(p) { let k = "late"; function* p() { yield k; } return [...p()].join(); } return o(1); });
+row("a let of a loop", () => { function o(p) { const r = []; for (let i = 0; i < 2; i++) r.push(() => i); let k = r; function p() { return k.map((f) => f()).join(); } return p(); } return o(1); });
+row("this of the outer by an arrow", () => { function o(p) { const self = () => this.x; function p() { return self(); } return p(); } return o.call({ x: "this" }, 1); });
+// 2. over a var
+row("over a var with a value", () => { function o() { var p = 1; let k = "late"; function p() { return k; } return typeof p; } return o(); });
+// 3. over another function
+row("over another function", () => { function o() { let k = "late"; function p() { return "first " + k; } function p() { return "second " + k; } return p(); } return o(); });
+row("over another function, other captures", () => { function o() { let a = "a", b = "b"; function p() { return a; } function p() { return b; } return p(); } return o(); });
+row("over another function, called ahead", () => { function o() { const early = said(p); let k = "late"; function p() { return 1; } function p() { return k; } return early + " " + p(); } return o(); });
+// 4. in a block
+row("in a block, sloppy, over a parameter", () => { function o(p) { let k = "late"; { function p() { return k; } } return typeof p; } return o(1); });
+row("in a block, sloppy, read in it", () => { function o(p) { let k = "late"; { function p() { return k; } return p(); } } return o(1); });
+row("in a block, sloppy, no parameter", () => { function o() { const early = typeof p; let k = "late"; { function p() { return k; } } return early + " " + p(); } return o(); });
+row("in a block, sloppy, called ahead in the block", () => { function o() { { const early = said(p); let k = "late"; function p() { return k; } return early + " " + p(); } } return o(); });
+row("in a block, strict", () => { function o(p) { "use strict"; let k = "late"; { function p() { return k; } k += p(); } return typeof p + " " + k; } return o(1); });
+row("in an if, sloppy", () => { function o(p) { let k = "late"; if (p) { function p() { return k; } } return typeof p; } return o(1); });
+row("in a block, over a let of the function", () => { function o() { let p = 1, k = "late"; { function p() { return k; } k += p(); } return p + " " + k; } return o(); });
+// 5. over `arguments`
+// 6. in a default's scope
+row("a default's closure sees the parameter", () => { function o(p, q = () => p) { let k = "late"; function p() { return k; } return q() + " " + p(); } return o("argument"); });
+row("a default's closure stores to the parameter", () => { function o(p, q = () => { p = "set"; }) { let k = "late"; function p() { return k; } q(); return p(); } return o("argument"); });
+row("a default reads the parameter", () => { function o(p, q = p) { let k = "late"; function p() { return k; } return q + " " + p(); } return o("argument"); });
+row("a default calls the parameter", () => { function o(p, q = p()) { let k = "late"; function p() { return k; } return q + " " + p(); } return o(() => "the argument's"); });
+row("a function in a default of the name", () => { function o(p = function p() { return "default's"; }) { let k = "late"; function p() { return k; } return p(); } return o(); });
+row("a default's closure, no function over it", () => { function o(p, q = () => p) { var p; return q() + " " + p; } return o("argument"); });
+row("a default's closure, a var over it with a value", () => { function o(p, q = () => p) { var p = "var"; return q() + " " + p; } return o("argument"); });
+//// function-redeclares-binding-sloppy.js
+// A function declaration with the same name as a parameter, a `var`, another function or `arguments`, in sloppy code. Plain Bun's transpiler declares no `var` for a function in a block (the row "in a block, sloppy, no parameter"), and plain Bun leaves the argument in `arguments[0]` where a function is declared over the parameter (the row "arguments shows it, strict": the directive of a function has no effect in a sloppy file, so `arguments` is mapped). In both rows the expected output follows ECMAScript.
+function said(f) { try { const v = f(); return typeof v === "function" ? "F" : String(v); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+module.exports = {};
+row("control: which mode this file is in", () => (function () { return this === undefined ? "strict" : "sloppy"; })());
+// 1. over a parameter
+row("the row itself", () => { function o(p) { let k = "late"; function p() { return k; } return p(); } return o(1); });
+row("a const", () => { function o(p) { const k = "late"; function p() { return k; } return p(); } return o(1); });
+row("a class", () => { function o(p) { class K { static x = "late"; } function p() { return K.x; } return p(); } return o(1); });
+row("a var", () => { function o(p) { var k = "late"; function p() { return k; } return p(); } return o(1); });
+row("called ahead of the let", () => { function o(p) { const early = said(p); let k = "late"; function p() { return k; } return early + " " + p(); } return o(1); });
+row("called ahead of the var", () => { function o(p) { const early = said(p); var k = "late"; function p() { return k; } return early + " " + p(); } return o(1); });
+row("the let stored to later", () => { function o(p) { let k = "first"; function p() { return k; } const a = p(); k = "second"; return a + p(); } return o(1); });
+row("the function stores to the let", () => { function o(p) { let k = 0; function p() { return ++k; } p(); p(); return k; } return o(1); });
+row("returned and called later", () => { function o(p) { let k = "late"; function p() { return k; } return p; } return o(1)(); });
+row("two activations", () => { function o(p, v) { let k = v; function p() { return k; } return p; } const a = o(1, "a"), b = o(1, "b"); return a() + b() + a(); });
+row("another parameter", () => { function o(p, q) { function p() { return q; } return p(); } return o(1, "q"); });
+row("another parameter, stored to", () => { function o(p, q) { function p() { return q; } q = "set"; return p(); } return o(1, "q"); });
+row("itself by name", () => { function o(p) { let n = 3; function p() { return n-- > 0 ? "x" + p() : ""; } return p(); } return o(1); });
+row("the parameter stored to later", () => { function o(p) { let k = "late"; function p() { return k; } const f = p; p = 7; return f() + p; } return o(1); });
+row("two functions over one parameter", () => { function o(p) { let k = "late"; function p() { return "first " + k; } function p() { return "second " + k; } return p(); } return o(1); });
+row("a parameter in an object pattern", () => { function o({ p }) { let k = "late"; function p() { return k; } return p(); } return o({ p: 1 }); });
+row("a parameter in an array pattern", () => { function o([p]) { let k = "late"; function p() { return k; } return p(); } return o([1]); });
+row("a rest parameter", () => { function o(...p) { let k = "late"; function p() { return k; } return p(); } return o(1); });
+row("a parameter with a default", () => { function o(p = 1) { let k = "late"; function p() { return k; } return p(); } return o(); });
+row("an arrow in it", () => { function o(p) { let k = "late"; function p() { return (() => k)(); } return p(); } return o(1); });
+row("a function in it", () => { function o(p) { let k = "late"; function p() { function q() { return k; } return q(); } return p(); } return o(1); });
+row("arguments shows it, strict", () => { function o(p) { "use strict"; let k = "late"; function p() { return k; } return typeof arguments[0]; } return o(1); });
+row("strict", () => { function o(p) { "use strict"; let k = "late"; function p() { return k; } return p(); } return o(1); });
+row("a method", () => ({ o(p) { let k = "late"; function p() { return k; } return p(); } }).o(1));
+row("a generator around", () => { function* o(p) { let k = "late"; function p() { return k; } yield p(); } return [...o(1)].join(); });
+row("a generator over the parameter", () => { function o(p) { let k = "late"; function* p() { yield k; } return [...p()].join(); } return o(1); });
+row("a let of a loop", () => { function o(p) { const r = []; for (let i = 0; i < 2; i++) r.push(() => i); let k = r; function p() { return k.map((f) => f()).join(); } return p(); } return o(1); });
+row("this of the outer by an arrow", () => { function o(p) { const self = () => this.x; function p() { return self(); } return p(); } return o.call({ x: "this" }, 1); });
+// 2. over a var
+row("over a var with a value", () => { function o() { var p = 1; let k = "late"; function p() { return k; } return typeof p; } return o(); });
+// 3. over another function
+row("over another function", () => { function o() { let k = "late"; function p() { return "first " + k; } function p() { return "second " + k; } return p(); } return o(); });
+row("over another function, other captures", () => { function o() { let a = "a", b = "b"; function p() { return a; } function p() { return b; } return p(); } return o(); });
+row("over another function, called ahead", () => { function o() { const early = said(p); let k = "late"; function p() { return 1; } function p() { return k; } return early + " " + p(); } return o(); });
+// 4. in a block
+row("in a block, sloppy, over a parameter", () => { function o(p) { let k = "late"; { function p() { return k; } } return typeof p; } return o(1); });
+row("in a block, sloppy, read in it", () => { function o(p) { let k = "late"; { function p() { return k; } return p(); } } return o(1); });
+row("in a block, sloppy, no parameter", () => { function o() { const early = typeof p; let k = "late"; { function p() { return k; } } return early + " " + p(); } return o(); });
+row("in a block, sloppy, called ahead in the block", () => { function o() { { const early = said(p); let k = "late"; function p() { return k; } return early + " " + p(); } } return o(); });
+row("in a block, strict", () => { function o(p) { "use strict"; let k = "late"; { function p() { return k; } k += p(); } return typeof p + " " + k; } return o(1); });
+row("in an if, sloppy", () => { function o(p) { let k = "late"; if (p) { function p() { return k; } } return typeof p; } return o(1); });
+row("in a block, over a let of the function", () => { function o() { let p = 1, k = "late"; { function p() { return k; } k += p(); } return p + " " + k; } return o(); });
+// 5. over `arguments`
+// 6. in a default's scope
+row("a default's closure sees the parameter", () => { function o(p, q = () => p) { let k = "late"; function p() { return k; } return q() + " " + p(); } return o("argument"); });
+row("a default's closure stores to the parameter", () => { function o(p, q = () => { p = "set"; }) { let k = "late"; function p() { return k; } q(); return p(); } return o("argument"); });
+row("a default reads the parameter", () => { function o(p, q = p) { let k = "late"; function p() { return k; } return q + " " + p(); } return o("argument"); });
+row("a default calls the parameter", () => { function o(p, q = p()) { let k = "late"; function p() { return k; } return q + " " + p(); } return o(() => "the argument's"); });
+row("a function in a default of the name", () => { function o(p = function p() { return "default's"; }) { let k = "late"; function p() { return k; } return p(); } return o(); });
+row("a default's closure, no function over it", () => { function o(p, q = () => p) { var p; return q() + " " + p; } return o("argument"); });
+row("a default's closure, a var over it with a value", () => { function o(p, q = () => p) { var p = "var"; return q() + " " + p; } return o("argument"); });
+//// function-redeclares-var.js
+// A function declaration with the same name as a `var` in the same function, in strict code.
+function said(f) { try { const v = f(); return typeof v === "function" ? "F" : String(v); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+row("control: which mode this file is in", () => (function () { return this === undefined ? "strict" : "sloppy"; })());
+row("over a var with a value, taken ahead", () => { function o() { const f = p; var p = 1; let k = "late"; function p() { return k; } return f() + " " + p; } return o(); });
+row("over a var without a value", () => { function o() { var p; let k = "late"; function p() { return k; } return p(); } return o(); });
+row("a var behind it", () => { function o() { let k = "late"; function p() { return k; } var p; return p(); } return o(); });
+row("over a var, called ahead of the let", () => { function o() { var p; const early = said(p); let k = "late"; function p() { return k; } return early + " " + p(); } return o(); });
+//// function-redeclares-var-sloppy.js
+// A function declaration with the same name as a `var` in the same function, in sloppy code.
+function said(f) { try { const v = f(); return typeof v === "function" ? "F" : String(v); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+module.exports = {};
+row("control: which mode this file is in", () => (function () { return this === undefined ? "strict" : "sloppy"; })());
+row("over a var with a value, taken ahead", () => { function o() { const f = p; var p = 1; let k = "late"; function p() { return k; } return f() + " " + p; } return o(); });
+row("over a var without a value", () => { function o() { var p; let k = "late"; function p() { return k; } return p(); } return o(); });
+row("a var behind it", () => { function o() { let k = "late"; function p() { return k; } var p; return p(); } return o(); });
+row("over a var, called ahead of the let", () => { function o() { var p; const early = said(p); let k = "late"; function p() { return k; } return early + " " + p(); } return o(); });
+//// function-under-if-stores-own-name/main.cjs
+// A function declared as the body of `if` in sloppy code is in a block of its own (Annex B.3.3). Its name in that block is an ordinary variable: the function can store to it, the store stays for the next call, each evaluation of the `if` has a variable of its own, and the `var` of the same name around it keeps the function. Plain Bun's transpiler declares no such `var`, so there nothing can call the function: the expected output follows ECMAScript.
+function storesOwnName(a) {
+  if (a) function f() { f = 1; return f; }
+  return [typeof f, f(), typeof f, f()];
+}
+console.log(storesOwnName(true));
+
+function keepsTheStore(a) {
+  if (a) function f() { const before = typeof f; f = "stored"; return before; }
+  return [f(), f()];
+}
+console.log(keepsTheStore(true));
+
+function underElse(a) {
+  if (a) ; else function f() { f = 2; return f; }
+  return typeof f === "function" ? f() : typeof f;
+}
+console.log(underElse(false), underElse(true));
+
+function oneVariablePerEvaluation() {
+  const made = [];
+  for (var i = 0; i < 2; i++) {
+    if (i >= 0) function f(value) { if (value !== undefined) f = value; return f; }
+    made.push(f);
+  }
+  const [first, second] = made;
+  const before = [first() === first, second() === second, first === second];
+  first("only the first");
+  return [...before, first(), second() === second];
+}
+console.log(oneVariablePerEvaluation());
+
+function storedByAnInnerFunction(a) {
+  if (a) function f() { (() => { f = "inner"; })(); return f; }
+  return f();
+}
+console.log(storedByAnInnerFunction(true));
+
+function storedByEvaluatedText(a) {
+  if (a) function f() { eval("f = 'text'"); return f; }
+  return f();
+}
+console.log(storedByEvaluatedText(true));
+
+function incremented(a) {
+  if (a) function f() { f = typeof f === "number" ? f + 1 : 0; return f; }
+  return [f(), f(), f()];
+}
+console.log(incremented(true));
+
+function neverStored(a) {
+  if (a) function f() { return f; }
+  return f() === f;
+}
+console.log(neverStored(true));
+
+if (typeof module === "object") function atTheTop() { atTheTop = "top"; return atTheTop; }
+console.log(atTheTop(), typeof atTheTop);
+
+const expression = function named() { named = 1; return typeof named; };
+console.log(expression());
+{
+  function inABlock() { inABlock = "block"; return inABlock; }
+}
+console.log(inABlock(), typeof inABlock);
+//// initializer-freezes-proxy/log.ts
+export const log: string[] = [];
+//// initializer-freezes-proxy/made.ts
+import { log } from "./log";
+const target = { size: 1 };
+const withTraps = Object.freeze(new Proxy({ size: 1 }, {
+  preventExtensions(of) { log.push("preventExtensions"); return Reflect.preventExtensions(of); },
+  ownKeys(of) { log.push("ownKeys"); return Reflect.ownKeys(of); },
+}));
+const withoutTraps = Object.freeze(new Proxy(target, {}));
+export function isTargetFrozen(): boolean { return Object.isFrozen(target); }
+export function readAll(): number { return [withTraps, withoutTraps].length; }
+//// initializer-freezes-proxy/main.ts
+// Object.freeze of a Proxy runs its traps, or freezes its target, or throws: so a constant that is initialized that way is made where it is declared.
+import { log } from "./log";
+import { isTargetFrozen, readAll } from "./made";
+log.push("loaded");
+console.log(String(isTargetFrozen()), String(readAll()), log.join());
+let loaded = false;
+try {
+  const module = await import("./throws");
+  loaded = true;
+  console.log(typeof module.refused);
+} catch (error) {
+  console.log((error as Error).name, loaded ? "when it was read" : "while it was loaded");
+}
+//// initializer-freezes-proxy/throws.ts
+export const refused = Object.freeze(new Proxy({ size: 1 }, { preventExtensions() { return false; } }));
+//// initializers-call-program-code.ts
+// Each of these initializers runs code of the program: a function, a getter, a setter, a callback, a conversion, an iterator, a trap. So each runs where its constant is declared, in the order of the declarations, before anything that follows them.
+const log: string[] = [];
+function tell<V>(name: string, value: V): V { log.push(name); return value; }
+function tellNumber(x: number): number { return tell("aNamedCallback", x); }
+const KEY = "k";
+const WITH_GETTER = { get a(): number { return tell("aGetterOfAConstant", 1); } };
+const TOOLS = { make(name: string): { a: number } { return tell(name, { a: 1 }); } };
+function takeA({ a }: { a: number }): { v: number } { return { v: a }; }
+function copy<V extends object>(it: V): V { return { ...it }; }
+function storeA(it: { a: number }): { a: number } { it.a = 1; return it; }
+function each(list: number[], visit: (x: number) => void): number[] { list.forEach(visit); return list; }
+function loop(list: number[], name: string): number[] { const out: number[] = []; for (const x of list) out.push(tell(name, x)); return out; }
+class Telling { constructor(name: string) { tell(name, 0); } }
+class TellingField { a = tell("aFieldInitializer", 1); }
+class TellingHeir extends Telling { b = 1; }
+function withDefault(a: number = tell("aDefaultOfAParameter", 1)): { a: number } { return { a }; }
+function withPatternDefault({ a = tell("aDefaultOfAPattern", 1) }: { a?: number }): { a: number } { return { a }; }
+function firstOf(from: Iterable<number>): number[] { const [first] = from; return [first ?? 0]; }
+function tag(strings: TemplateStringsArray): { a: string } { return tell(strings[0]!, { a: strings[0]! }); }
+
+const aFunctionThatLogs = tell("aFunctionThatLogs", { a: 1 });
+const aValueInALiteral = { a: tell("aValueInALiteral", 1) };
+const anElementOfAList = [tell("anElementOfAList", 1)];
+const aValueUnderAComputedKey = { [KEY]: tell("aValueUnderAComputedKey", 1) };
+const aComputedKey = { [tell("aComputedKey", "k")]: 1 };
+const aKeyWithToString = { [{ toString(): string { return tell("aKeyWithToString", "k"); } } as any]: 1 };
+const aGetterRunByASpread = { ...{ get a(): number { return tell("aGetterRunByASpread", 1); } } };
+const aGetterRunByAssign = Object.assign({}, { get a(): number { return tell("aGetterRunByAssign", 1); } });
+const aGetterRunByValues = Object.values({ get a(): number { return tell("aGetterRunByValues", 1); } });
+const aGetterRunByEntries = Object.entries({ get a(): number { return tell("aGetterRunByEntries", 1); } });
+const aGetterRunByARead = { v: { get a(): number { return tell("aGetterRunByARead", 1); } }.a };
+const aGetterRunByAPattern = takeA({ get a(): number { return tell("aGetterRunByAPattern", 1); } });
+const aGetterRunInAHelper = copy({ get a(): number { return tell("aGetterRunInAHelper", 1); } });
+const aGetterMovedAndThenSpread = { ...Object.defineProperties({}, Object.getOwnPropertyDescriptors({ get a(): number { return tell("aGetterMovedAndThenSpread", 1); } })) };
+const aGetterOfAConstant = { v: WITH_GETTER.a };
+const aSetterRunByAssign = Object.assign({ set a(v: number) { tell("aSetterRunByAssign", v); } }, { a: 1 });
+const aSetterRunByAStore = storeA({ set a(v: number) { tell("aSetterRunByAStore", v); } });
+const aCallbackOfMap = [1].map(x => tell("aCallbackOfMap", x));
+const aCallbackOfFilter = [1].filter(x => tell("aCallbackOfFilter", x) > 0);
+const aCallbackOfFlatMap = [1].flatMap(x => [tell("aCallbackOfFlatMap", x)]);
+const aCallbackOfForEach = each([1], x => { tell("aCallbackOfForEach", x); });
+const aCallbackOfSome = { v: [1].some(x => tell("aCallbackOfSome", x) > 0) };
+const aCallbackOfFind = { v: [1].find(x => tell("aCallbackOfFind", x) > 0) };
+const aCallbackOfSort = [2, 1].sort((x, y) => tell("aCallbackOfSort", x - y));
+const aCallbackOfReduce = { v: [1, 2].reduce((x, y) => tell("aCallbackOfReduce", x + y)) };
+const aCallbackOfArrayFrom = Array.from([1], x => tell("aCallbackOfArrayFrom", x));
+const aNamedCallback = [1].map(tellNumber);
+const aLoopBody = loop([1], "aLoopBody");
+const aConstructor = new Telling("aConstructor");
+const aFieldInitializer = new TellingField();
+const aBaseConstructor = new TellingHeir("aBaseConstructor");
+const aDefaultOfAParameter = withDefault();
+const aDefaultOfAPattern = withPatternDefault({});
+const toStringInATemplate = { v: `${{ toString(): string { return tell("toStringInATemplate", "s"); } }}` };
+const toStringInAJoin = { v: [{ toString(): string { return tell("toStringInAJoin", "s"); } }].join() };
+const valueOfInAConversion = { v: Number({ valueOf(): number { return tell("valueOfInAConversion", 1); } }) };
+const toPrimitiveInAConversion = { v: String({ [Symbol.toPrimitive](): string { return tell("toPrimitiveInAConversion", "s"); } }) };
+const anIteratorInASpread = [...{ *[Symbol.iterator](): Generator<number> { yield tell("anIteratorInASpread", 1); } }];
+const anIteratorInASet = new Set({ *[Symbol.iterator](): Generator<number> { yield tell("anIteratorInASet", 1); } });
+const anIteratorInAPattern = firstOf({ *[Symbol.iterator](): Generator<number> { yield tell("anIteratorInAPattern", 1); } });
+const aTrapRunByASpread = { ...new Proxy({ a: 1 }, { ownKeys(target) { tell("aTrapRunByASpread", 0); return Reflect.ownKeys(target); } }) };
+const aTrapRunByARead = { v: new Proxy({ a: 1 }, { get(target, key) { tell("aTrapRunByARead", 0); return Reflect.get(target, key); } }).a };
+const aTrapRunByKeys = Object.keys(new Proxy({ a: 1 }, { ownKeys(target) { tell("aTrapRunByKeys", 0); return Reflect.ownKeys(target); } }));
+const aTrapRunByFreeze = Object.freeze(new Proxy({ a: 1 }, { preventExtensions(target) { tell("aTrapRunByFreeze", 0); return Reflect.preventExtensions(target); } }));
+const aTaggedTemplate = tag`aTaggedTemplate`;
+const aMethodOfAConstant = TOOLS.make("aMethodOfAConstant");
+const aFunctionCalledWhereItStands = (() => tell("aFunctionCalledWhereItStands", { a: 1 }))();
+const toJSON = { v: JSON.stringify({ toJSON(): number { return tell("toJSON", 1); } }) };
+const aReplacerOfReplace = { v: "a".replace("a", () => tell("aReplacerOfReplace", "b")) };
+const aStaticBlock = class { static { tell("aStaticBlock", 0); } };
+const aStaticField = class { static a = tell("aStaticField", 1); };
+const aComputedMemberOfAClass = class { [tell("aComputedMemberOfAClass", "m")](): void {} };
+function readAll(): number { return [aFunctionThatLogs, aValueInALiteral, anElementOfAList, aValueUnderAComputedKey, aComputedKey, aKeyWithToString, aGetterRunByASpread, aGetterRunByAssign, aGetterRunByValues, aGetterRunByEntries, aGetterRunByARead, aGetterRunByAPattern, aGetterRunInAHelper, aGetterMovedAndThenSpread, aGetterOfAConstant, aSetterRunByAssign, aSetterRunByAStore, aCallbackOfMap, aCallbackOfFilter, aCallbackOfFlatMap, aCallbackOfForEach, aCallbackOfSome, aCallbackOfFind, aCallbackOfSort, aCallbackOfReduce, aCallbackOfArrayFrom, aNamedCallback, aLoopBody, aConstructor, aFieldInitializer, aBaseConstructor, aDefaultOfAParameter, aDefaultOfAPattern, toStringInATemplate, toStringInAJoin, valueOfInAConversion, toPrimitiveInAConversion, anIteratorInASpread, anIteratorInASet, anIteratorInAPattern, aTrapRunByASpread, aTrapRunByARead, aTrapRunByKeys, aTrapRunByFreeze, aTaggedTemplate, aMethodOfAConstant, aFunctionCalledWhereItStands, toJSON, aReplacerOfReplace, aStaticBlock, aStaticField, aComputedMemberOfAClass].length; }
+log.push("loaded");
+console.log(String(readAll()));
+for (const name of log) console.log(name);
+//// initializers-read-mutable-state/main.ts
+// Each of these initializers reads something that changes later: a variable, a property, a list, a map, a global. So each holds what it found where its constant is declared.
+import * as other from "./other";
+import { moving, shared, change } from "./other";
+let step = 1;
+let maybe: object | null = null;
+function readStep(): number { return step; }
+function addStep(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + step); return out; }
+function withStep(v: number = step): { v: number } { return { v }; }
+class WithStep { v = step; }
+class Counter { static count = 1; }
+const changing = { a: 1, b: 2 };
+const growing: Record<string, number> = { a: 1 };
+const list = [1, 2];
+const holder = { inner: { a: 1 } };
+const frozen = Object.freeze({ inner: { a: 1 } });
+function aOf(it: { a: number }): number { return it.a; }
+function takeA({ a }: { a: number }): { v: number } { return { v: a }; }
+const table = new Map<string, number>([["k", 1]]);
+const frozenLater = { a: 1 };
+function counted(): void {}
+(counted as unknown as { calls: number }).calls = 1;
+const tools = { name(): string { return "early"; } };
+const withRest = { rest: [1] };
+const withPattern = { a: 1 };
+const withLoopHead = { a: 1 };
+const withAlias = { a: 1 };
+const withParameter = { a: 1 };
+const withDelete: { a?: number; b: number } = { a: 1, b: 2 };
+const withDefine = { a: 1 };
+function store(into: { a: number }): void { into.a = 9; }
+
+const aLet = { v: step };
+const aLetInAFunction = { v: readStep() };
+const aLetInAGetterThatIsSpread = { ...{ get v(): number { return step; } } };
+const aLetInACallback = [1].map(x => x + step);
+const aLetInALoop = addStep([1]);
+const aLetInADefault = withStep();
+const aLetInAKey = { ["k" + step]: 1 };
+const aLetInATemplate = { v: `${step}` };
+const aLetInATest = { v: step > 5 ? "late" : "early" };
+const aLetThatIsNilOrNot = { v: maybe ? "late" : "early" };
+const aLetInAFieldInitializer = new WithStep();
+const aLetOfAnotherModule = { v: moving };
+const aLetBehindANamespace = { v: other.moving };
+const aNamespaceWithALet = { ...other };
+const aStaticField = { v: Counter.count };
+const aProperty = { v: changing.a };
+const aSpread = { ...changing };
+const anAssign = Object.assign({}, changing);
+const theKeys = Object.keys(growing);
+const theValues = Object.values(growing);
+const theEntries = Object.entries(growing);
+const theDescriptors = Object.defineProperties({}, Object.getOwnPropertyDescriptors(changing));
+const aSpreadOfAList = [...list];
+const aMapOverAList = list.map(x => x);
+const aSliceOfAList = list.slice();
+const theLengthOfAList = { v: list.length };
+const aSetOfAList = new Set(list);
+const aJoinOfAList = { v: list.join() };
+const aPropertyOfWhatAConstantHolds = { v: holder.inner.a };
+const aPropertyOfWhatAFrozenConstantHolds = { v: frozen.inner.a };
+const aPropertyThroughAHelper = { v: aOf(changing) };
+const aPropertyThroughAPattern = takeA(changing);
+const aMapEntry = { v: table.get("k") };
+const theSizeOfAMap = { v: table.size };
+const whetherItIsFrozen = { v: Object.isFrozen(frozenLater) };
+const aPropertyOfAFunction = { v: (counted as unknown as { calls: number }).calls };
+const aMethodThatIsReplaced = { v: tools.name() };
+const aGlobal = { v: (globalThis as unknown as { marker?: string }).marker ?? "none" };
+const aPropertyStoredToThroughARestElement = { ...withRest };
+const aPropertyStoredToThroughAPattern = { ...withPattern };
+const aPropertyStoredToInALoopHead = { ...withLoopHead };
+const aPropertyStoredToThroughAnAlias = { ...withAlias };
+const aPropertyStoredToThroughAParameter = { ...withParameter };
+const aPropertyThatIsDeleted = { ...withDelete };
+const aPropertyThatIsDefinedAgain = { ...withDefine };
+const aPropertyStoredToByAnotherModule = { ...shared };
+function show(value: unknown): string { return JSON.stringify(value, (key, held) => (held instanceof Set || held instanceof Map ? [...held] : held)); }
+function readAll(): Array<[string, unknown]> { return [["aLet", aLet], ["aLetInAFunction", aLetInAFunction], ["aLetInAGetterThatIsSpread", aLetInAGetterThatIsSpread], ["aLetInACallback", aLetInACallback], ["aLetInALoop", aLetInALoop], ["aLetInADefault", aLetInADefault], ["aLetInAKey", aLetInAKey], ["aLetInATemplate", aLetInATemplate], ["aLetInATest", aLetInATest], ["aLetThatIsNilOrNot", aLetThatIsNilOrNot], ["aLetInAFieldInitializer", aLetInAFieldInitializer], ["aLetOfAnotherModule", aLetOfAnotherModule], ["aLetBehindANamespace", aLetBehindANamespace], ["aNamespaceWithALet", aNamespaceWithALet], ["aStaticField", aStaticField], ["aProperty", aProperty], ["aSpread", aSpread], ["anAssign", anAssign], ["theKeys", theKeys], ["theValues", theValues], ["theEntries", theEntries], ["theDescriptors", theDescriptors], ["aSpreadOfAList", aSpreadOfAList], ["aMapOverAList", aMapOverAList], ["aSliceOfAList", aSliceOfAList], ["theLengthOfAList", theLengthOfAList], ["aSetOfAList", aSetOfAList], ["aJoinOfAList", aJoinOfAList], ["aPropertyOfWhatAConstantHolds", aPropertyOfWhatAConstantHolds], ["aPropertyOfWhatAFrozenConstantHolds", aPropertyOfWhatAFrozenConstantHolds], ["aPropertyThroughAHelper", aPropertyThroughAHelper], ["aPropertyThroughAPattern", aPropertyThroughAPattern], ["aMapEntry", aMapEntry], ["theSizeOfAMap", theSizeOfAMap], ["whetherItIsFrozen", whetherItIsFrozen], ["aPropertyOfAFunction", aPropertyOfAFunction], ["aMethodThatIsReplaced", aMethodThatIsReplaced], ["aGlobal", aGlobal], ["aPropertyStoredToThroughARestElement", aPropertyStoredToThroughARestElement], ["aPropertyStoredToThroughAPattern", aPropertyStoredToThroughAPattern], ["aPropertyStoredToInALoopHead", aPropertyStoredToInALoopHead], ["aPropertyStoredToThroughAnAlias", aPropertyStoredToThroughAnAlias], ["aPropertyStoredToThroughAParameter", aPropertyStoredToThroughAParameter], ["aPropertyThatIsDeleted", aPropertyThatIsDeleted], ["aPropertyThatIsDefinedAgain", aPropertyThatIsDefinedAgain], ["aPropertyStoredToByAnotherModule", aPropertyStoredToByAnotherModule]]; }
+step = 10;
+maybe = {};
+Counter.count = 10;
+changing.a = 9;
+growing.z = 9;
+list.push(9);
+holder.inner.a = 9;
+frozen.inner.a = 9;
+table.set("k", 9).set("z", 9);
+Object.freeze(frozenLater);
+(counted as unknown as { calls: number }).calls = 9;
+tools.name = () => "late";
+(globalThis as unknown as { marker?: string }).marker = "late";
+[...withRest.rest] = [9];
+[withPattern.a] = [9];
+for (withLoopHead.a of [9]) {}
+const alias = withAlias;
+alias.a = 9;
+store(withParameter);
+delete withDelete.a;
+Object.defineProperty(withDefine, "a", { value: 9 });
+change();
+for (const [name, value] of readAll()) console.log(name, show(value));
+//// initializers-read-mutable-state/other.ts
+export let moving = 1;
+export const shared = { a: 1 };
+export function change(): void { moving = 10; shared.a = 9; }
+//// initializers-with-side-effects.ts
+// Each of these initializers changes something that other code reads. What it changes is looked at before its constant is first read: the change has been made where the constant is declared.
+let counter = 0;
+const aCounter = { v: ++counter };
+let calls = 0;
+function next(): number { return ++calls; }
+const aCounterInAFunction = { v: next() };
+const registry: string[] = [];
+const aPushToAList = { v: registry.push("made") };
+const names: string[] = [];
+function register(name: string): { name: string } { names.push(name); return { name }; }
+const aPushInAFunction = register("made");
+const byName = new Map<string, number>();
+const aMapEntry = { v: byName.set("made", 1).size };
+const members = new Set<string>();
+const aSetMember = { v: members.add("made").size };
+const state = { made: false };
+function mark(): { ok: boolean } { state.made = true; return { ok: true }; }
+const aStoreToAConstant = mark();
+const target: { a: number; z?: number } = { a: 1 };
+const anAssignToAConstant = Object.assign(target, { z: 1 });
+const cold = { a: 1 };
+const aFreezeOfAConstant = Object.freeze(cold);
+const inner = { a: 1 };
+const aFreezeInsideALiteral = { inner: Object.freeze(inner) };
+const sealed = { a: 1 };
+function seal<V extends object>(it: V): Readonly<V> { return Object.freeze(it); }
+const aFreezeInAHelper = { it: seal(sealed) };
+const defined: { a?: number } = {};
+const aDefinitionOnAConstant = Object.defineProperty(defined, "a", { value: 1, enumerable: true });
+class Made { static count = 0; constructor() { Made.count++; } }
+const aStaticField = new Made();
+function tagged(): void {}
+const aPropertyOfAFunction = Object.assign(tagged, { tag: 1 });
+const seen: number[] = [];
+const aStoreInACallback = [1, 2].map(x => seen.push(x));
+const visited: number[] = [];
+function visit(all: number[]): number[] { for (const x of all) visited.push(x); return all; }
+const aStoreInALoop = visit([1, 2]);
+const touched = { by: "" };
+const aStoreInAGetter = { ...{ get a(): number { touched.by = "getter"; return 1; } } };
+const cells = [{ n: 1 }];
+const aStoreToAnElementOfAConstantList = cells.map(cell => { cell.n = 2; return cell.n; });
+const aGlobal = { v: ((globalThis as unknown as { madeMarker?: number }).madeMarker = 1) };
+const unsorted = [2, 1];
+const aSortOfAConstantList = unsorted.sort();
+const shrinking: { a?: number } = { a: 1 };
+function drop(): { ok: boolean } { return { ok: delete shrinking.a }; }
+const aDeletion = drop();
+const heir = {};
+const parent = { inherited: 1 };
+const aPrototype = Object.setPrototypeOf(heir, parent) as object;
+function readAll(): number { return [aCounter, aCounterInAFunction, aPushToAList, aPushInAFunction, aMapEntry, aSetMember, aStoreToAConstant, anAssignToAConstant, aFreezeOfAConstant, aFreezeInsideALiteral, aFreezeInAHelper, aDefinitionOnAConstant, aStaticField, aPropertyOfAFunction, aStoreInACallback, aStoreInALoop, aStoreInAGetter, aStoreToAnElementOfAConstantList, aGlobal, aSortOfAConstantList, aDeletion, aPrototype].length; }
+console.log("aCounter", String(counter));
+console.log("aCounterInAFunction", String(calls));
+console.log("aPushToAList", registry.join());
+console.log("aPushInAFunction", names.join());
+console.log("aMapEntry", String(byName.size));
+console.log("aSetMember", String(members.size));
+console.log("aStoreToAConstant", String(state.made));
+console.log("anAssignToAConstant", Object.keys(target).join());
+console.log("aFreezeOfAConstant", String(Object.isFrozen(cold)));
+console.log("aFreezeInsideALiteral", String(Object.isFrozen(inner)));
+console.log("aFreezeInAHelper", String(Object.isFrozen(sealed)));
+console.log("aDefinitionOnAConstant", Object.keys(defined).join());
+console.log("aStaticField", String(Made.count));
+console.log("aPropertyOfAFunction", Object.keys(tagged).join());
+console.log("aStoreInACallback", seen.join());
+console.log("aStoreInALoop", visited.join());
+console.log("aStoreInAGetter", touched.by);
+console.log("aStoreToAnElementOfAConstantList", String(cells[0]!.n));
+console.log("aGlobal", String((globalThis as unknown as { madeMarker?: number }).madeMarker));
+console.log("aSortOfAConstantList", unsorted.join());
+console.log("aDeletion", Object.keys(shrinking).join() || "none");
+console.log("aPrototype", String("inherited" in heir));
+console.log(String(readAll()));
+//// lazy-constant-created-once/barrel.ts
+export { named as farnamed, renamed as farrenamed, namespace as farnamespace, namespaceByKey as farnamespaceByKey, barrel as farbarrel, star as farstar, starAs as farstarAs, aFunctionOfTheModule as faraFunctionOfTheModule, values as farvalues, entries as farentries, destructured as fardestructured, descriptor as fardescriptor, reflect as farreflect, untyped as faruntyped, dynamic as fardynamic, aClosure as faraClosure, aGetter as faraGetter, aDefaultParameter as faraDefaultParameter, aClassField as faraClassField, aGenerator as faraGenerator, anAsyncFunction as faranAsyncFunction, inATry as farinATry } from "./made";
+export * as inner from "./made";
+//// lazy-constant-created-once/made.ts
+export const named = { name: "named", list: [1, 2] };
+export function readnamed(): unknown { return named; }
+export const renamed = { name: "renamed", list: [1, 2] };
+export function readrenamed(): unknown { return renamed; }
+export const namespace = { name: "namespace", list: [1, 2] };
+export function readnamespace(): unknown { return namespace; }
+export const namespaceByKey = { name: "namespaceByKey", list: [1, 2] };
+export function readnamespaceByKey(): unknown { return namespaceByKey; }
+export const barrel = { name: "barrel", list: [1, 2] };
+export function readbarrel(): unknown { return barrel; }
+export const star = { name: "star", list: [1, 2] };
+export function readstar(): unknown { return star; }
+export const starAs = { name: "starAs", list: [1, 2] };
+export function readstarAs(): unknown { return starAs; }
+export const aFunctionOfTheModule = { name: "aFunctionOfTheModule", list: [1, 2] };
+export function readaFunctionOfTheModule(): unknown { return aFunctionOfTheModule; }
+export const values = { name: "values", list: [1, 2] };
+export function readvalues(): unknown { return values; }
+export const entries = { name: "entries", list: [1, 2] };
+export function readentries(): unknown { return entries; }
+export const destructured = { name: "destructured", list: [1, 2] };
+export function readdestructured(): unknown { return destructured; }
+export const descriptor = { name: "descriptor", list: [1, 2] };
+export function readdescriptor(): unknown { return descriptor; }
+export const reflect = { name: "reflect", list: [1, 2] };
+export function readreflect(): unknown { return reflect; }
+export const untyped = { name: "untyped", list: [1, 2] };
+export function readuntyped(): unknown { return untyped; }
+export const dynamic = { name: "dynamic", list: [1, 2] };
+export function readdynamic(): unknown { return dynamic; }
+export const aClosure = { name: "aClosure", list: [1, 2] };
+export function readaClosure(): unknown { return aClosure; }
+export const aGetter = { name: "aGetter", list: [1, 2] };
+export function readaGetter(): unknown { return aGetter; }
+export const aDefaultParameter = { name: "aDefaultParameter", list: [1, 2] };
+export function readaDefaultParameter(): unknown { return aDefaultParameter; }
+export const aClassField = { name: "aClassField", list: [1, 2] };
+export function readaClassField(): unknown { return aClassField; }
+export const aGenerator = { name: "aGenerator", list: [1, 2] };
+export function readaGenerator(): unknown { return aGenerator; }
+export const anAsyncFunction = { name: "anAsyncFunction", list: [1, 2] };
+export function readanAsyncFunction(): unknown { return anAsyncFunction; }
+export const inATry = { name: "inATry", list: [1, 2] };
+export function readinATry(): unknown { return inATry; }
+//// lazy-constant-created-once/main.ts
+// A top-level constant that is created at its first read is created once. Each constant of ./made is first read in another way; then it is read in every way, and all find the same object.
+import { named, renamed, namespace, namespaceByKey, barrel, star, starAs, aFunctionOfTheModule, values, entries, destructured, descriptor, reflect, untyped, dynamic, aClosure, aGetter, aDefaultParameter, aClassField, aGenerator, anAsyncFunction, inATry, readnamed, readrenamed, readnamespace, readnamespaceByKey, readbarrel, readstar, readstarAs, readaFunctionOfTheModule, readvalues, readentries, readdestructured, readdescriptor, readreflect, readuntyped, readdynamic, readaClosure, readaGetter, readaDefaultParameter, readaClassField, readaGenerator, readanAsyncFunction, readinATry } from "./made";
+import { named as renamednamed, renamed as renamedrenamed, namespace as renamednamespace, namespaceByKey as renamednamespaceByKey, barrel as renamedbarrel, star as renamedstar, starAs as renamedstarAs, aFunctionOfTheModule as renamedaFunctionOfTheModule, values as renamedvalues, entries as renamedentries, destructured as renameddestructured, descriptor as renameddescriptor, reflect as renamedreflect, untyped as renameduntyped, dynamic as renameddynamic, aClosure as renamedaClosure, aGetter as renamedaGetter, aDefaultParameter as renamedaDefaultParameter, aClassField as renamedaClassField, aGenerator as renamedaGenerator, anAsyncFunction as renamedanAsyncFunction, inATry as renamedinATry } from "./made";
+import * as made from "./made";
+import { inner, farnamed, farrenamed, farnamespace, farnamespaceByKey, farbarrel, farstar, farstarAs, faraFunctionOfTheModule, farvalues, farentries, fardestructured, fardescriptor, farreflect, faruntyped, fardynamic, faraClosure, faraGetter, faraDefaultParameter, faraClassField, faraGenerator, faranAsyncFunction, farinATry } from "./barrel";
+import * as starred from "./star";
+import { fromUntyped } from "./untyped.js";
+const roads: string[] = [];
+function compare(name: string, first: unknown, found: unknown[]): void { roads.push(name + ":" + typeof first + ":" + found.filter(it => it !== first).length); }
+{ const first: unknown = named; compare("named", first, [named, renamednamed, made.named, (made as unknown as Record<string, unknown>)[["named"].join("")], farnamed, starred.named, inner.named, readnamed(), Object.values(made).find(value => (value as { name?: string }).name === "named"), Object.entries(made).find(entry => entry[0] === "named")![1], (({ named: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "named")!.value, Reflect.get(made, "named"), fromUntyped("named"), (await import("./made")).named, (() => named)(), ({ get it() { return named; } }).it, ((it = named) => it)(), new (class { it = named; })().it, [...(function* () { yield named; })()][0], await (async () => named)(), (() => { try { return named; } finally { roads.length; } })()]); }
+{ const first: unknown = renamedrenamed; compare("renamed", first, [renamed, renamedrenamed, made.renamed, (made as unknown as Record<string, unknown>)[["renamed"].join("")], farrenamed, starred.renamed, inner.renamed, readrenamed(), Object.values(made).find(value => (value as { name?: string }).name === "renamed"), Object.entries(made).find(entry => entry[0] === "renamed")![1], (({ renamed: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "renamed")!.value, Reflect.get(made, "renamed"), fromUntyped("renamed"), (await import("./made")).renamed, (() => renamed)(), ({ get it() { return renamed; } }).it, ((it = renamed) => it)(), new (class { it = renamed; })().it, [...(function* () { yield renamed; })()][0], await (async () => renamed)(), (() => { try { return renamed; } finally { roads.length; } })()]); }
+{ const first: unknown = made.namespace; compare("namespace", first, [namespace, renamednamespace, made.namespace, (made as unknown as Record<string, unknown>)[["namespace"].join("")], farnamespace, starred.namespace, inner.namespace, readnamespace(), Object.values(made).find(value => (value as { name?: string }).name === "namespace"), Object.entries(made).find(entry => entry[0] === "namespace")![1], (({ namespace: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "namespace")!.value, Reflect.get(made, "namespace"), fromUntyped("namespace"), (await import("./made")).namespace, (() => namespace)(), ({ get it() { return namespace; } }).it, ((it = namespace) => it)(), new (class { it = namespace; })().it, [...(function* () { yield namespace; })()][0], await (async () => namespace)(), (() => { try { return namespace; } finally { roads.length; } })()]); }
+{ const first: unknown = (made as unknown as Record<string, unknown>)[["namespaceByKey"].join("")]; compare("namespaceByKey", first, [namespaceByKey, renamednamespaceByKey, made.namespaceByKey, (made as unknown as Record<string, unknown>)[["namespaceByKey"].join("")], farnamespaceByKey, starred.namespaceByKey, inner.namespaceByKey, readnamespaceByKey(), Object.values(made).find(value => (value as { name?: string }).name === "namespaceByKey"), Object.entries(made).find(entry => entry[0] === "namespaceByKey")![1], (({ namespaceByKey: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "namespaceByKey")!.value, Reflect.get(made, "namespaceByKey"), fromUntyped("namespaceByKey"), (await import("./made")).namespaceByKey, (() => namespaceByKey)(), ({ get it() { return namespaceByKey; } }).it, ((it = namespaceByKey) => it)(), new (class { it = namespaceByKey; })().it, [...(function* () { yield namespaceByKey; })()][0], await (async () => namespaceByKey)(), (() => { try { return namespaceByKey; } finally { roads.length; } })()]); }
+{ const first: unknown = farbarrel; compare("barrel", first, [barrel, renamedbarrel, made.barrel, (made as unknown as Record<string, unknown>)[["barrel"].join("")], farbarrel, starred.barrel, inner.barrel, readbarrel(), Object.values(made).find(value => (value as { name?: string }).name === "barrel"), Object.entries(made).find(entry => entry[0] === "barrel")![1], (({ barrel: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "barrel")!.value, Reflect.get(made, "barrel"), fromUntyped("barrel"), (await import("./made")).barrel, (() => barrel)(), ({ get it() { return barrel; } }).it, ((it = barrel) => it)(), new (class { it = barrel; })().it, [...(function* () { yield barrel; })()][0], await (async () => barrel)(), (() => { try { return barrel; } finally { roads.length; } })()]); }
+{ const first: unknown = starred.star; compare("star", first, [star, renamedstar, made.star, (made as unknown as Record<string, unknown>)[["star"].join("")], farstar, starred.star, inner.star, readstar(), Object.values(made).find(value => (value as { name?: string }).name === "star"), Object.entries(made).find(entry => entry[0] === "star")![1], (({ star: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "star")!.value, Reflect.get(made, "star"), fromUntyped("star"), (await import("./made")).star, (() => star)(), ({ get it() { return star; } }).it, ((it = star) => it)(), new (class { it = star; })().it, [...(function* () { yield star; })()][0], await (async () => star)(), (() => { try { return star; } finally { roads.length; } })()]); }
+{ const first: unknown = inner.starAs; compare("starAs", first, [starAs, renamedstarAs, made.starAs, (made as unknown as Record<string, unknown>)[["starAs"].join("")], farstarAs, starred.starAs, inner.starAs, readstarAs(), Object.values(made).find(value => (value as { name?: string }).name === "starAs"), Object.entries(made).find(entry => entry[0] === "starAs")![1], (({ starAs: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "starAs")!.value, Reflect.get(made, "starAs"), fromUntyped("starAs"), (await import("./made")).starAs, (() => starAs)(), ({ get it() { return starAs; } }).it, ((it = starAs) => it)(), new (class { it = starAs; })().it, [...(function* () { yield starAs; })()][0], await (async () => starAs)(), (() => { try { return starAs; } finally { roads.length; } })()]); }
+{ const first: unknown = readaFunctionOfTheModule(); compare("aFunctionOfTheModule", first, [aFunctionOfTheModule, renamedaFunctionOfTheModule, made.aFunctionOfTheModule, (made as unknown as Record<string, unknown>)[["aFunctionOfTheModule"].join("")], faraFunctionOfTheModule, starred.aFunctionOfTheModule, inner.aFunctionOfTheModule, readaFunctionOfTheModule(), Object.values(made).find(value => (value as { name?: string }).name === "aFunctionOfTheModule"), Object.entries(made).find(entry => entry[0] === "aFunctionOfTheModule")![1], (({ aFunctionOfTheModule: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "aFunctionOfTheModule")!.value, Reflect.get(made, "aFunctionOfTheModule"), fromUntyped("aFunctionOfTheModule"), (await import("./made")).aFunctionOfTheModule, (() => aFunctionOfTheModule)(), ({ get it() { return aFunctionOfTheModule; } }).it, ((it = aFunctionOfTheModule) => it)(), new (class { it = aFunctionOfTheModule; })().it, [...(function* () { yield aFunctionOfTheModule; })()][0], await (async () => aFunctionOfTheModule)(), (() => { try { return aFunctionOfTheModule; } finally { roads.length; } })()]); }
+{ const first: unknown = Object.values(made).find(value => (value as { name?: string }).name === "values"); compare("values", first, [values, renamedvalues, made.values, (made as unknown as Record<string, unknown>)[["values"].join("")], farvalues, starred.values, inner.values, readvalues(), Object.values(made).find(value => (value as { name?: string }).name === "values"), Object.entries(made).find(entry => entry[0] === "values")![1], (({ values: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "values")!.value, Reflect.get(made, "values"), fromUntyped("values"), (await import("./made")).values, (() => values)(), ({ get it() { return values; } }).it, ((it = values) => it)(), new (class { it = values; })().it, [...(function* () { yield values; })()][0], await (async () => values)(), (() => { try { return values; } finally { roads.length; } })()]); }
+{ const first: unknown = Object.entries(made).find(entry => entry[0] === "entries")![1]; compare("entries", first, [entries, renamedentries, made.entries, (made as unknown as Record<string, unknown>)[["entries"].join("")], farentries, starred.entries, inner.entries, readentries(), Object.values(made).find(value => (value as { name?: string }).name === "entries"), Object.entries(made).find(entry => entry[0] === "entries")![1], (({ entries: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "entries")!.value, Reflect.get(made, "entries"), fromUntyped("entries"), (await import("./made")).entries, (() => entries)(), ({ get it() { return entries; } }).it, ((it = entries) => it)(), new (class { it = entries; })().it, [...(function* () { yield entries; })()][0], await (async () => entries)(), (() => { try { return entries; } finally { roads.length; } })()]); }
+{ const first: unknown = (({ destructured: it }) => it)(made); compare("destructured", first, [destructured, renameddestructured, made.destructured, (made as unknown as Record<string, unknown>)[["destructured"].join("")], fardestructured, starred.destructured, inner.destructured, readdestructured(), Object.values(made).find(value => (value as { name?: string }).name === "destructured"), Object.entries(made).find(entry => entry[0] === "destructured")![1], (({ destructured: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "destructured")!.value, Reflect.get(made, "destructured"), fromUntyped("destructured"), (await import("./made")).destructured, (() => destructured)(), ({ get it() { return destructured; } }).it, ((it = destructured) => it)(), new (class { it = destructured; })().it, [...(function* () { yield destructured; })()][0], await (async () => destructured)(), (() => { try { return destructured; } finally { roads.length; } })()]); }
+{ const first: unknown = Object.getOwnPropertyDescriptor(made, "descriptor")!.value; compare("descriptor", first, [descriptor, renameddescriptor, made.descriptor, (made as unknown as Record<string, unknown>)[["descriptor"].join("")], fardescriptor, starred.descriptor, inner.descriptor, readdescriptor(), Object.values(made).find(value => (value as { name?: string }).name === "descriptor"), Object.entries(made).find(entry => entry[0] === "descriptor")![1], (({ descriptor: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "descriptor")!.value, Reflect.get(made, "descriptor"), fromUntyped("descriptor"), (await import("./made")).descriptor, (() => descriptor)(), ({ get it() { return descriptor; } }).it, ((it = descriptor) => it)(), new (class { it = descriptor; })().it, [...(function* () { yield descriptor; })()][0], await (async () => descriptor)(), (() => { try { return descriptor; } finally { roads.length; } })()]); }
+{ const first: unknown = Reflect.get(made, "reflect"); compare("reflect", first, [reflect, renamedreflect, made.reflect, (made as unknown as Record<string, unknown>)[["reflect"].join("")], farreflect, starred.reflect, inner.reflect, readreflect(), Object.values(made).find(value => (value as { name?: string }).name === "reflect"), Object.entries(made).find(entry => entry[0] === "reflect")![1], (({ reflect: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "reflect")!.value, Reflect.get(made, "reflect"), fromUntyped("reflect"), (await import("./made")).reflect, (() => reflect)(), ({ get it() { return reflect; } }).it, ((it = reflect) => it)(), new (class { it = reflect; })().it, [...(function* () { yield reflect; })()][0], await (async () => reflect)(), (() => { try { return reflect; } finally { roads.length; } })()]); }
+{ const first: unknown = fromUntyped("untyped"); compare("untyped", first, [untyped, renameduntyped, made.untyped, (made as unknown as Record<string, unknown>)[["untyped"].join("")], faruntyped, starred.untyped, inner.untyped, readuntyped(), Object.values(made).find(value => (value as { name?: string }).name === "untyped"), Object.entries(made).find(entry => entry[0] === "untyped")![1], (({ untyped: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "untyped")!.value, Reflect.get(made, "untyped"), fromUntyped("untyped"), (await import("./made")).untyped, (() => untyped)(), ({ get it() { return untyped; } }).it, ((it = untyped) => it)(), new (class { it = untyped; })().it, [...(function* () { yield untyped; })()][0], await (async () => untyped)(), (() => { try { return untyped; } finally { roads.length; } })()]); }
+{ const first: unknown = (await import("./made")).dynamic; compare("dynamic", first, [dynamic, renameddynamic, made.dynamic, (made as unknown as Record<string, unknown>)[["dynamic"].join("")], fardynamic, starred.dynamic, inner.dynamic, readdynamic(), Object.values(made).find(value => (value as { name?: string }).name === "dynamic"), Object.entries(made).find(entry => entry[0] === "dynamic")![1], (({ dynamic: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "dynamic")!.value, Reflect.get(made, "dynamic"), fromUntyped("dynamic"), (await import("./made")).dynamic, (() => dynamic)(), ({ get it() { return dynamic; } }).it, ((it = dynamic) => it)(), new (class { it = dynamic; })().it, [...(function* () { yield dynamic; })()][0], await (async () => dynamic)(), (() => { try { return dynamic; } finally { roads.length; } })()]); }
+{ const first: unknown = (() => aClosure)(); compare("aClosure", first, [aClosure, renamedaClosure, made.aClosure, (made as unknown as Record<string, unknown>)[["aClosure"].join("")], faraClosure, starred.aClosure, inner.aClosure, readaClosure(), Object.values(made).find(value => (value as { name?: string }).name === "aClosure"), Object.entries(made).find(entry => entry[0] === "aClosure")![1], (({ aClosure: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "aClosure")!.value, Reflect.get(made, "aClosure"), fromUntyped("aClosure"), (await import("./made")).aClosure, (() => aClosure)(), ({ get it() { return aClosure; } }).it, ((it = aClosure) => it)(), new (class { it = aClosure; })().it, [...(function* () { yield aClosure; })()][0], await (async () => aClosure)(), (() => { try { return aClosure; } finally { roads.length; } })()]); }
+{ const first: unknown = ({ get it() { return aGetter; } }).it; compare("aGetter", first, [aGetter, renamedaGetter, made.aGetter, (made as unknown as Record<string, unknown>)[["aGetter"].join("")], faraGetter, starred.aGetter, inner.aGetter, readaGetter(), Object.values(made).find(value => (value as { name?: string }).name === "aGetter"), Object.entries(made).find(entry => entry[0] === "aGetter")![1], (({ aGetter: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "aGetter")!.value, Reflect.get(made, "aGetter"), fromUntyped("aGetter"), (await import("./made")).aGetter, (() => aGetter)(), ({ get it() { return aGetter; } }).it, ((it = aGetter) => it)(), new (class { it = aGetter; })().it, [...(function* () { yield aGetter; })()][0], await (async () => aGetter)(), (() => { try { return aGetter; } finally { roads.length; } })()]); }
+{ const first: unknown = ((it = aDefaultParameter) => it)(); compare("aDefaultParameter", first, [aDefaultParameter, renamedaDefaultParameter, made.aDefaultParameter, (made as unknown as Record<string, unknown>)[["aDefaultParameter"].join("")], faraDefaultParameter, starred.aDefaultParameter, inner.aDefaultParameter, readaDefaultParameter(), Object.values(made).find(value => (value as { name?: string }).name === "aDefaultParameter"), Object.entries(made).find(entry => entry[0] === "aDefaultParameter")![1], (({ aDefaultParameter: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "aDefaultParameter")!.value, Reflect.get(made, "aDefaultParameter"), fromUntyped("aDefaultParameter"), (await import("./made")).aDefaultParameter, (() => aDefaultParameter)(), ({ get it() { return aDefaultParameter; } }).it, ((it = aDefaultParameter) => it)(), new (class { it = aDefaultParameter; })().it, [...(function* () { yield aDefaultParameter; })()][0], await (async () => aDefaultParameter)(), (() => { try { return aDefaultParameter; } finally { roads.length; } })()]); }
+{ const first: unknown = new (class { it = aClassField; })().it; compare("aClassField", first, [aClassField, renamedaClassField, made.aClassField, (made as unknown as Record<string, unknown>)[["aClassField"].join("")], faraClassField, starred.aClassField, inner.aClassField, readaClassField(), Object.values(made).find(value => (value as { name?: string }).name === "aClassField"), Object.entries(made).find(entry => entry[0] === "aClassField")![1], (({ aClassField: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "aClassField")!.value, Reflect.get(made, "aClassField"), fromUntyped("aClassField"), (await import("./made")).aClassField, (() => aClassField)(), ({ get it() { return aClassField; } }).it, ((it = aClassField) => it)(), new (class { it = aClassField; })().it, [...(function* () { yield aClassField; })()][0], await (async () => aClassField)(), (() => { try { return aClassField; } finally { roads.length; } })()]); }
+{ const first: unknown = [...(function* () { yield aGenerator; })()][0]; compare("aGenerator", first, [aGenerator, renamedaGenerator, made.aGenerator, (made as unknown as Record<string, unknown>)[["aGenerator"].join("")], faraGenerator, starred.aGenerator, inner.aGenerator, readaGenerator(), Object.values(made).find(value => (value as { name?: string }).name === "aGenerator"), Object.entries(made).find(entry => entry[0] === "aGenerator")![1], (({ aGenerator: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "aGenerator")!.value, Reflect.get(made, "aGenerator"), fromUntyped("aGenerator"), (await import("./made")).aGenerator, (() => aGenerator)(), ({ get it() { return aGenerator; } }).it, ((it = aGenerator) => it)(), new (class { it = aGenerator; })().it, [...(function* () { yield aGenerator; })()][0], await (async () => aGenerator)(), (() => { try { return aGenerator; } finally { roads.length; } })()]); }
+{ const first: unknown = await (async () => anAsyncFunction)(); compare("anAsyncFunction", first, [anAsyncFunction, renamedanAsyncFunction, made.anAsyncFunction, (made as unknown as Record<string, unknown>)[["anAsyncFunction"].join("")], faranAsyncFunction, starred.anAsyncFunction, inner.anAsyncFunction, readanAsyncFunction(), Object.values(made).find(value => (value as { name?: string }).name === "anAsyncFunction"), Object.entries(made).find(entry => entry[0] === "anAsyncFunction")![1], (({ anAsyncFunction: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "anAsyncFunction")!.value, Reflect.get(made, "anAsyncFunction"), fromUntyped("anAsyncFunction"), (await import("./made")).anAsyncFunction, (() => anAsyncFunction)(), ({ get it() { return anAsyncFunction; } }).it, ((it = anAsyncFunction) => it)(), new (class { it = anAsyncFunction; })().it, [...(function* () { yield anAsyncFunction; })()][0], await (async () => anAsyncFunction)(), (() => { try { return anAsyncFunction; } finally { roads.length; } })()]); }
+{ const first: unknown = (() => { try { return inATry; } finally { roads.length; } })(); compare("inATry", first, [inATry, renamedinATry, made.inATry, (made as unknown as Record<string, unknown>)[["inATry"].join("")], farinATry, starred.inATry, inner.inATry, readinATry(), Object.values(made).find(value => (value as { name?: string }).name === "inATry"), Object.entries(made).find(entry => entry[0] === "inATry")![1], (({ inATry: it }) => it)(made), Object.getOwnPropertyDescriptor(made, "inATry")!.value, Reflect.get(made, "inATry"), fromUntyped("inATry"), (await import("./made")).inATry, (() => inATry)(), ({ get it() { return inATry; } }).it, ((it = inATry) => it)(), new (class { it = inATry; })().it, [...(function* () { yield inATry; })()][0], await (async () => inATry)(), (() => { try { return inATry; } finally { roads.length; } })()]); }
+console.log(roads.join(" "));
+//// lazy-constant-created-once/star.ts
+export * from "./made";
+//// lazy-constant-created-once/untyped.js
+import * as made from "./made";
+export function fromUntyped(name) { return made[name]; }
+//// names-used-only-in-removed-code/main.ts
+// With noUnusedLocals and noUnusedParameters, a name whose only use is in code that the build removes is not reported as unused.
+const WINDOWS_PATH = /^[a-zA-Z]:/;
+type Drive = string;
+class Paths {
+  private separator = "\\";
+  #root = "C:";
+  isAbsolute(path: string): boolean {
+    if (process.platform === "win32") {
+      const drive: Drive = this.#root + this.separator;
+      return WINDOWS_PATH.test(path) || path.startsWith(drive);
+    }
+    return path.startsWith("/");
+  }
+}
+function decode(text: string, onError: (message: string) => void): string {
+  if (typeof Buffer === "function") return Buffer.from(text, "base64").toString();
+  onError("no Buffer");
+  return text;
+}
+const separator = process.platform === "win32" ? WINDOWS_PATH.source : "/";
+console.log(new Paths().isAbsolute("/a"), decode("YQ==", message => console.log(message)), separator);
+//// names-used-only-in-removed-code/tsconfig.json
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  }
+}
+//// sound-bundle-namespaces/bundle.ts
+// src/util.ts
+namespace util {
+export type MakePartial<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
+export interface P { x: number; y: number }
+type Hidden = P | undefined;
+export namespace deep {
+export type Key = "a" | "b";
+}
+}
+export type { Loose };
+var util: any;
+((util) => {
+  type MakePartial<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
+  interface P { x: number; y: number }
+  type Hidden = P | undefined;
+  util.origin = { x: 0, y: 0 };
+  function dist(a: P, b: Hidden = util.origin): number {
+    return Math.hypot(a.x - (b?.x ?? 0), a.y - (b?.y ?? 0));
+  }
+  util.dist = dist;
+  let deep;
+  ((deep) => {
+    type Key = "a" | "b";
+    deep.keys = ["a", "b"];
+  })(deep = util.deep ||= {});
+})(util ||= {});
+namespace onlyTypes {
+  export type Id = string | number;
+}
+namespace errors {
+export type Message = string | { message?: string };
+}
+var errors: any;
+((errors) => {
+  type Message = string | { message?: string };
+  errors.toObject = (message?: Message): { message?: string } => typeof message === "string" ? { message } : message || {};
+})(errors ||= {});
+
+// src/index.ts
+type Loose = util.MakePartial<util.P, "y">;
+function far(point: util.P, key: util.deep.Key, id: onlyTypes.Id): number {
+  return util.dist(point) + util.deep.keys.indexOf(key) + String(id).length;
+}
+function explain(message?: errors.Message): string | undefined {
+  return errors.toObject(message).message;
+}
+export {
+  explain,
+  far,
+  util
+};
+//// sound-bundle-namespaces/main.ts
+// A bundle of namespaces that hold both types and code: each is a variable that a function fills, beside a namespace of its types alone.
+import { explain, far, util, type Loose } from "./bundle";
+
+const loose: Loose = { x: 3 };
+const point: util.P = { x: 3, y: 4 };
+const key: util.deep.Key = "b";
+console.log("through the functions:", far(point, key, 12), far({ x: 0, y: 0 }, "a", "abc"), explain("said"), explain({ message: "held" }), explain());
+console.log("through the object:", util.dist(point), util.dist(point, { x: 3, y: 0 }), JSON.stringify(util.origin), util.deep.keys.join());
+console.log("its keys:", Object.keys(util).join(), Object.keys(util.deep).join(), typeof util.dist, loose.x, loose.y);
+//// sound-bundles/augments.ts
+// src/index.ts
+declare global {
+  interface SymbolConstructor {
+    readonly watched: symbol;
+  }
+  interface Array<T> {
+    lastOf?: Last<T>;
+  }
+}
+type Last<T> = () => T;
+interface Watched<T> {
+  [Symbol.watched]: () => T;
+}
+function watch<T>(value: T): Partial<Watched<T>> {
+  return typeof Symbol.watched === "symbol" ? { [Symbol.watched]: () => value } : {};
+}
+export {
+  watch
+};
+
+//// sound-bundles/constants.ts
+type Kind = Kind3;
+declare namespace Kind { export type Leaf = Kind3.Leaf; export type Branch = Kind3.Branch; }
+type Color = Color3;
+declare namespace Color { export type Red = Color3.Red; export type Blue = Color3.Blue; }
+declare const KEY2: unique symbol;
+declare const OTHER2: unique symbol;
+declare const exports_keys2: { COUNT: typeof COUNT; Color: typeof Color; KEY: typeof KEY; Kind: typeof Kind; NAME: typeof NAME; NIL: typeof NIL; NOTHING: typeof NOTHING; OTHER: typeof OTHER; Unused: typeof Unused; used: typeof used };
+export type { Marked };
+export type { Tools };
+export type { Tree };
+var __defProp = Object.defineProperty;
+var __returnValue = (v: any) => v;
+function __exportSetter(this: any, name: any, newValue: any) {
+  this[name] = __returnValue.bind(null, newValue);
+}
+////= export
+
+// src/keys.ts
+var exports_keys: any = {};
+__export(exports_keys, {
+  COUNT: () => COUNT,
+  Color: () => Color,
+  KEY: () => KEY,
+  Kind: () => Kind,
+  NAME: () => NAME,
+  NIL: () => NIL,
+  NOTHING: () => NOTHING,
+  OTHER: () => OTHER,
+  Unused: () => Unused,
+  used: () => used
+});
+var KEY: typeof KEY2 = Symbol.for("key") as typeof KEY2;
+var OTHER: typeof OTHER2 = Symbol("other") as typeof OTHER2;
+var NAME = "name" as const;
+var COUNT = -3 as const;
+var NIL: undefined = undefined;
+var NOTHING: null = null;
+var Kind!: typeof Kind3;
+((Kind2: any) => {
+  Kind2[Kind2["Leaf"] = 0] = "Leaf";
+  Kind2[Kind2["Branch"] = 1] = "Branch";
+})(Kind ||= {} as any);
+declare enum Kind3 { Leaf, Branch }
+declare enum Color3 { Red = "red", Blue = "blue" }
+var Color!: typeof Color3;
+((Color2: any) => {
+  Color2["Red"] = "red";
+  Color2["Blue"] = "blue";
+})(Color ||= {} as any);
+
+abstract class Unused {
+abstract run(): void
+}
+function used(): number {
+  return COUNT;
+}
+
+// src/index.ts
+declare const injected: number;
+interface Marked { [KEY]?: boolean; [OTHER]: number; name: string }
+type Tools = { Unused: typeof Unused; used: typeof used };
+interface Leaf { kind: Kind3.Leaf; value: number }
+interface Branch { kind: Kind3.Branch; left: Tree; right: Tree }
+type Tree = Leaf | Branch;
+function sum(tree: Tree): number {
+  switch (tree.kind) {
+    case 0 as Kind3.Leaf /* Leaf */:
+      return tree.value;
+    case 1 as Kind3.Branch /* Branch */:
+      return sum(tree.left) + sum(tree.right);
+  }
+}
+function leaf(value: number): Tree {
+  return { kind: 0 as Kind3.Leaf /* Leaf */, value };
+}
+function paint(color: Color3 = "red" as Color3.Red /* Red */): Color3 {
+  return color === ("blue" as Color3.Blue) /* Blue */ ? "red" as Color3.Red /* Red */ : "blue" as Color3.Blue as Color3 /* Blue */;
+}
+function mark(target: object, name: unknown): Marked {
+  const marked = target as Marked;
+  (target as { [KEY]?: boolean })[KEY] = true;
+  marked[OTHER] = used() + injected;
+  const record: Record<typeof NAME, string> = { [NAME]: "x" };
+  return { name: name as string, [OTHER]: record[NAME].length, [KEY]: NIL ?? NOTHING ?? undefined };
+}
+function pick(name: keyof typeof exports_keys2): unknown {
+  return exports_keys[name];
+}
+function depth(tree: Tree, flag: number): number {
+  const first = tree.kind === (1 as Kind3.Branch) /* Branch */ ? +flag : -flag;
+  return first + (flag & (1 as Kind3.Branch) /* Branch */ | flag);
+}
+
+class Machine {
+  state: Kind3 = 0 as Kind3.Leaf /* Leaf */;
+  readonly first = 0 as Kind3.Leaf /* Leaf */;
+  step(next: Color3 = "red" as Color3.Red /* Red */): Kind3 {
+    let color: Color3 = "blue" as Color3.Blue /* Blue */;
+    color = next;
+    this.state = color === ("red" as Color3.Red) /* Red */ ? 1 as Kind3.Branch /* Branch */ : 0 as Kind3.Leaf /* Leaf */;
+    return this.state;
+  }
+}
+export {
+  Machine,
+  depth,
+  exports_keys as everything,
+  leaf,
+  mark,
+  paint,
+  pick,
+  sum
+};
+
+//// sound-bundles/greeter.ts
+// src/mood.ts
+declare enum Mood2 {
+  Happy,
+  Sad = 5,
+}
+type Options = Mood2[];
+type Options2 = { name: string; loud?: boolean };
+interface Greeter<T extends Options2 = Options2> {
+  greet(options: T): string;
+}
+type Mood = Mood2;
+declare namespace Mood { export type Happy = Mood2.Happy; export type Sad = Mood2.Sad; }
+export type { Server };
+export type { Options2 as Options };
+var Mood!: typeof Mood2;
+((Mood: any) => {
+  Mood[Mood["Happy"] = 0] = "Happy";
+  Mood[Mood["Sad"] = 5] = "Sad";
+})(Mood ||= {} as any);
+
+// src/polite.ts
+class Polite implements Greeter {
+  public mood: Mood2;
+  private moods?: Options;
+  private count: number = 0;
+  readonly prefix: string;
+  static made = 0;
+  constructor(prefix: string, mood: Mood2 = 0 as Mood2.Happy /* Happy */, moods?: Options) {
+    this.mood = mood;
+    this.moods = moods;
+    this.prefix = prefix;
+  }
+  greet(options: Options2): string;
+  greet(options: Options2, times: number): string[];
+  greet(options: Options2, times?: number): string | string[] {
+    this.count++;
+    const text = (options.loud ? options.name.toUpperCase() : options.name) as string;
+    const line = this.prefix + " " + text!;
+    return times === undefined ? line : new Array<string>(times).fill(line);
+  }
+  get total(): number {
+    return this.count + (this.moods ?? []).length;
+  }
+}
+
+// src/index.ts
+interface Server {
+  port: number;
+  options: Options2;
+  greeter?: Greeter;
+}
+function pick({ port, options }: Server, fallback: number = 80): [number, Options2] {
+  return [port ?? fallback, options];
+}
+function serve<S extends Server>(server: S, ...rest: string[]): string {
+  const [port, options] = pick(server);
+  const greeter: Greeter = server.greeter ?? new Polite("hello", 5 as Mood2.Sad /* Sad */);
+  const seen = new Map<string, number>;
+  seen.set(options.name, rest.length);
+  const handlers: Array<(options: Options2) => string> = [(options) => greeter.greet(options), function(this: void, options: Options2) {
+    return options.name;
+  }];
+  return handlers.map((handler) => handler(options)).join(",") + port + (seen.get(options.name) as number);
+}
+export {
+  Mood,
+  Polite,
+  serve
+};
+
+//// sound-bundles/main.ts
+// Bundles: JavaScript as the bundler prints it, with the types of its sources put back.
+import { watch } from "./augments";
+import { Machine, depth, everything, leaf, mark, paint, pick, sum, type Tree } from "./constants";
+import { Polite, serve, type Server } from "./greeter";
+import * as spaces from "./namespaces";
+
+(globalThis as any).injected = 4;
+
+const server: Server = { port: 8080, options: { name: "world", loud: true } };
+console.log("classes and interfaces:", serve(server, "a", "b"), new Polite("hi").greet({ name: "you" }, 2).join());
+
+const tree: Tree = { kind: everything.Kind.Branch, left: leaf(1), right: leaf(2) };
+console.log("inlined enum members:", sum(tree), depth(tree, 3), paint(), paint(everything.Color.Blue), new Machine().step(), new Machine().first);
+const marked = mark({}, "n");
+console.log("unique symbols:", marked.name, Object.getOwnPropertySymbols(marked).length, String(pick("KEY")), String(pick("OTHER")));
+console.log("constants:", pick("NAME"), pick("COUNT"), pick("NIL"), pick("NOTHING"), everything.used());
+console.log("a namespace object:", Object.keys(everything).join(), typeof everything.Unused);
+console.log("enum objects:", JSON.stringify(everything.Kind), JSON.stringify(everything.Color));
+
+const made = spaces.box(4);
+console.log("another bundle:", made.get(), String(spaces.pick("NAME")), spaces.names().join(), spaces.everything.used());
+console.log("its class through the namespace object:", new spaces.everything.Box("x").get(), spaces.everything.Color.Blue, Object.getOwnPropertySymbols(made).length);
+console.log("a global that is augmented:", Object.keys(watch(1)).length, Object.getOwnPropertySymbols(watch(1)).length);
+//// sound-bundles/namespaces.ts
+type Boxed = Box<number>;
+type Color = Color3;
+declare namespace Color { export type Red = Color3.Red; export type Blue = Color3.Blue; }
+declare const KEY2: unique symbol;
+declare namespace exports_keys { export type { Boxed }; }
+declare const exports_keys2: { Box: typeof Box; Color: typeof Color; KEY: typeof KEY; NAME: typeof NAME; used: typeof used };
+var __defProp = Object.defineProperty;
+var __returnValue = (v: any) => v;
+function __exportSetter(this: any, name: any, newValue: any) {
+  this[name] = __returnValue.bind(null, newValue);
+}
+////= export
+
+// src/keys.ts
+var exports_keys: any = {};
+__export(exports_keys, {
+  Box: () => Box,
+  Color: () => Color,
+  KEY: () => KEY,
+  NAME: () => NAME,
+  used: () => used
+});
+var NAME = "name" as const;
+var KEY: typeof KEY2 = Symbol.for("key") as typeof KEY2;
+declare enum Color3 { Red = "red", Blue = "blue" }
+var Color!: typeof Color3;
+((Color2: any) => {
+  Color2["Red"] = "red";
+  Color2["Blue"] = "blue";
+})(Color ||= {} as any);
+function used(): number {
+  return NAME.length;
+}
+
+class Box<T> {
+  public value: T;
+  constructor(value: T) {
+    this.value = value;
+  }
+  get(): T {
+    return this.value;
+  }
+}
+
+// src/index.ts
+function pick(name: keyof typeof exports_keys2): unknown {
+  return exports_keys[name];
+}
+function box(value: number): Boxed {
+  const made = new Box(value);
+  (made as { [KEY]?: boolean })[KEY] = true;
+  return made;
+}
+function names(): string[] {
+  return Object.keys(Color).concat(Object.keys(exports_keys));
+}
+export {
+  box,
+  exports_keys as everything,
+  names,
+  pick
+};
+
+//// the-variables-of-a-script-are-not-global/main.ts
+// tsc and `bun check` take the variables of a script for globals. Bun runs every file as a module, and nothing loads never-runs.ts: each read is a ReferenceError in plain Bun, and the build says so.
+function attempt(read: () => unknown): string {
+  try {
+    return String(read());
+  } catch (error) {
+    return error instanceof ReferenceError ? "ReferenceError" : "another error";
+  }
+}
+console.log(attempt(() => shared), attempt(() => shared + 1), attempt(() => counted), attempt(() => helper()), typeof shared, typeof helper);
+export {};
+//// the-variables-of-a-script-are-not-global/never-runs.ts
+const shared = 1;
+var counted = 2;
+function helper(): number {
+  return 3;
+}
+//// the-variables-of-a-script-are-not-global/tsconfig.json
+{
+  "extends": "../../tsconfig.json",
+  "files": ["main.ts", "never-runs.ts"],
+  "compilerOptions": { "strict": true }
+}
+//// throwing-initializers/a-bigint-and-a-number.ts
+function sum(a: bigint, b: number): { v: unknown } { return { v: (a as any) + b }; }
+export const made = sum(1n, 1);
+//// throwing-initializers/a-call-of-undefined.ts
+const tools: { make?: () => object } = {};
+export const made = { it: tools.make!() };
+//// throwing-initializers/a-class-that-extends-null-is-constructed.ts
+const Nothing = null as unknown as new () => object;
+function define(): new () => object { return class extends Nothing {}; }
+const Heir = define();
+export const made = new Heir();
+//// throwing-initializers/a-constant-declared-below.ts
+function late(): { a: number } { return { a: below.a }; }
+export const made = late();
+const below = { a: 1 };
+//// throwing-initializers/a-definition-on-a-frozen-object.ts
+export const made = Object.defineProperties(Object.freeze({}), Object.getOwnPropertyDescriptors({ a: 1 }));
+//// throwing-initializers/a-negative-length.ts
+function list(length: number): unknown[] { return new Array(length); }
+export const made = list(-1);
+//// throwing-initializers/a-pattern-that-is-no-pattern.ts
+function pattern(text: string): RegExp { return new RegExp(text); }
+export const made = pattern("(");
+//// throwing-initializers/a-proxy-of-null.ts
+function view(of: object): object { return new Proxy(of, {}); }
+export const made = view(null as unknown as object);
+//// throwing-initializers/a-push-to-a-frozen-list.ts
+function grow(list: number[]): number[] { list.push(1); return list; }
+export const made = grow(Object.freeze([0]) as number[]);
+//// throwing-initializers/a-read-of-null-in-the-second-callback.ts
+type Cell = { n: number };
+const cells: Array<Cell | null> = [{ n: 1 }, null];
+export const made = cells.map(cell => cell!.n);
+//// throwing-initializers/a-read-of-null-in-the-second-iteration.ts
+type Cell = { next: Cell | null; n: number };
+function walk(): { sum: number } { let at: Cell | null = { next: null, n: 1 }; let sum = 0; for (const x of [1, 2]) { sum += at!.n + x; at = at!.next; } return { sum }; }
+export const made = walk();
+//// throwing-initializers/a-read-of-null.ts
+type Cell = { next: Cell | null; n: number };
+function second(cell: Cell): { n: number } { return { n: cell.next!.n }; }
+export const made = second({ next: null, n: 1 });
+//// throwing-initializers/a-spread-of-what-cannot-be-iterated.ts
+function all(from: Iterable<number>): number[] { return [...from]; }
+export const made = all({} as Iterable<number>);
+//// throwing-initializers/a-store-to-a-frozen-object.ts
+function fill(into: { a: number }): { a: number } { into.a = 2; return into; }
+export const made = fill(Object.freeze({ a: 1 }));
+//// throwing-initializers/a-store-to-a-module-namespace.ts
+import * as self from "./a-throw-in-a-getter";
+function fill(into: { tag: string }): { tag: string } { into.tag = "stored"; return into; }
+export const made = fill(self);
+//// throwing-initializers/a-store-under-a-getter.ts
+function fill(into: { a: number }): { a: number } { into.a = 2; return into; }
+export const made = fill({ get a(): number { return 1; } });
+//// throwing-initializers/a-symbol-in-a-template.ts
+function name(of: symbol): { v: string } { return { v: `${of as any}` }; }
+export const made = name(Symbol("s"));
+//// throwing-initializers/a-throw-in-a-constructor.ts
+class Failing { constructor() { throw new RangeError("made"); } }
+export const made = new Failing();
+//// throwing-initializers/a-throw-in-a-function.ts
+function fail(): { a: number } { throw new RangeError("made"); }
+export const made = fail();
+//// throwing-initializers/a-throw-in-a-getter.ts
+export const tag = "tag";
+export const made = { ...{ get a(): number { throw new RangeError("got"); } } };
+//// throwing-initializers/an-assign-to-a-frozen-object.ts
+export const made = Object.assign(Object.freeze({ a: 1 }) as { a: number }, { a: 2 });
+//// throwing-initializers/main.ts
+// Each of these modules declares a constant whose initializer throws. The error is thrown while the module is loaded, not when the constant is first read.
+async function load(name: string, importing: () => Promise<{ made: unknown }>): Promise<void> {
+  let loaded = false;
+  try {
+    const module = await importing();
+    loaded = true;
+    console.log(name + ":", typeof module.made);
+  } catch (error) {
+    console.log(name + ":", (error as Error).name, loaded ? "when it was read" : "while it was loaded");
+  }
+}
+await load("a throw in a function", () => import("./a-throw-in-a-function"));
+await load("a read of null", () => import("./a-read-of-null"));
+await load("a read of null in the second iteration", () => import("./a-read-of-null-in-the-second-iteration"));
+await load("a read of null in the second callback", () => import("./a-read-of-null-in-the-second-callback"));
+await load("a call of undefined", () => import("./a-call-of-undefined"));
+await load("a store to a frozen object", () => import("./a-store-to-a-frozen-object"));
+await load("an assign to a frozen object", () => import("./an-assign-to-a-frozen-object"));
+await load("a push to a frozen list", () => import("./a-push-to-a-frozen-list"));
+await load("a definition on a frozen object", () => import("./a-definition-on-a-frozen-object"));
+await load("a store under a getter", () => import("./a-store-under-a-getter"));
+await load("a store to a module namespace", () => import("./a-store-to-a-module-namespace"));
+await load("a throw in a getter", () => import("./a-throw-in-a-getter"));
+await load("a throw in a constructor", () => import("./a-throw-in-a-constructor"));
+await load("a constant declared below", () => import("./a-constant-declared-below"));
+await load("a bigint and a number", () => import("./a-bigint-and-a-number"));
+await load("a symbol in a template", () => import("./a-symbol-in-a-template"));
+await load("a negative length", () => import("./a-negative-length"));
+await load("a pattern that is no pattern", () => import("./a-pattern-that-is-no-pattern"));
+await load("a spread of what cannot be iterated", () => import("./a-spread-of-what-cannot-be-iterated"));
+await load("a proxy of null", () => import("./a-proxy-of-null"));
+await load("text that is no json", () => import("./text-that-is-no-json"));
+await load("a class that extends null is constructed", () => import("./a-class-that-extends-null-is-constructed"));
+//// throwing-initializers/text-that-is-no-json.ts
+export const made = JSON.parse("{") as object;
+//// var-counter/main.ts
+// A `var` that only sees `= 0`, `++`, `--` and `+= 1` is an integer, provided that nothing reads it before its declaration has run.
+var moduleCount = 0
+function stackOf() {
+  var count = 0
+  var depth = 0
+  var total = 0
+  var items: (string | undefined)[] = []
+  function push(item: string) { items[count] = item; count++; total += 1; moduleCount++ }
+  function pop() { count--; const item = items[count]; items[count] = undefined; return item }
+  function nested(levels: number): number { depth++; const deepest = levels > 0 ? nested(levels - 1) : depth; depth--; return deepest }
+  return { push, pop, nested, state: () => [count, depth, total, items.length].join(",") }
+}
+const stack = stackOf()
+for (const word of ["a", "b", "c", "d"]) stack.push(word)
+console.log(stack.state(), stack.pop(), stack.pop(), stack.state(), stack.nested(5), stack.state())
+stack.push("e"); console.log(stack.state(), stack.pop(), stack.pop(), stack.pop(), stack.state(), moduleCount)
+// Below zero: the index is a property name then.
+console.log(String(stack.pop()), stack.state())
+stack.push("f"); console.log(stack.state())
+
+function readEarly() {
+  const seen: string[] = []
+  bump()
+  var early = 0
+  bump()
+  function bump() { early++; seen.push(String(early)) }
+  return seen.join(",")
+}
+console.log(readEarly())
+function readLate(skip: boolean) {
+  const bump = () => { late++; return String(late) }
+  if (skip) return bump()
+  var late = 10
+  return bump()
+}
+console.log(readLate(false), readLate(true))
+let big = 0
+function many() { var n = 0; for (var i = 0; i < 100000; i++) { n++; if (i % 3 == 0) n-- } return n }
+big += many(); console.log(big)
+//// var-counter/tsconfig.json
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": true
+  }
+}
+//// what-runs-in-a-script-with-code-is-its-own/main.ts
+// Bun runs every file as a module: a constant, a function with a body, and a name that is both an interface and a constant belong to the script that has them. Plain Bun answers `undefined` to each `typeof`, and the build says so.
+import "./with-code";
+console.log(typeof counted, typeof helper, typeof Both);
+const both: Both = { a: 1 };
+console.log(both);
+//// what-runs-in-a-script-with-code-is-its-own/tsconfig.json
+////= lines
+//// what-runs-in-a-script-with-code-is-its-own/with-code.ts
+const counted = 1;
+function helper(): number;
+function helper(n: number): number;
+function helper(n?: number): number {
+  return n ?? counted;
+}
+////= lines-2	Both	a	number
+const Both = { made: helper() };
+console.log(Both.made);

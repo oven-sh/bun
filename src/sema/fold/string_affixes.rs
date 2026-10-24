@@ -2,13 +2,11 @@ use super::Constant;
 use super::evaluate::{Primitive, Value};
 use super::folder::Folder;
 use crate::atom::{Atom, known};
-use crate::bind::{
-    Binding, BindingInitializer, BindingStability, CommonJsVariable, Decl, SymbolId,
+use crate::bind::{BindingInitializer, CommonJsVariable};
+use crate::hir::{BinOp, Branches, Call, Chain, ExprId, ExprKind, IdList, MemberKey};
+use crate::import_sites::{
+    ImportSiteKind, ImportSpecifier, call_site_kind, find_imported_export, settled_symbol,
 };
-use crate::hir::{
-    BinOp, Branches, Call, Chain, ExprId, ExprKind, Flags, IdList, MemberKey, NodeData,
-};
-use crate::import_sites::{ImportSiteKind, ImportSpecifier, call_site_kind};
 use crate::util::FxHashSet;
 use bun_core::strings;
 use smallvec::SmallVec;
@@ -25,7 +23,6 @@ enum Expansion {
     Known(Primitive),
     Parts(Vec<Part>),
     Alternatives(Vec<ExprId>),
-    /// `__dirname`, `import.meta.dir` or `import.meta.dirname` of the file.
     OwnDirectory,
     Unknown,
 }
@@ -45,18 +42,6 @@ struct Affix {
 struct SharedPrefix {
     text: Vec<u8>,
     shortest_whole_value: Option<usize>,
-}
-
-enum BindingSource {
-    Expression {
-        source: ExprId,
-        members: SmallVec<[Atom; 2]>,
-    },
-    ModuleExport {
-        specifier: Atom,
-        export: Option<Atom>,
-    },
-    Unknown,
 }
 
 impl<'s> Folder<'_, 's> {
@@ -84,7 +69,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// Whether the "." at the head of the prefix stands for `__dirname`: the text of the program begins with the folder itself.
     pub(super) fn starts_at_own_directory(&self, argument: ExprId) -> bool {
         self.collect_prefix(argument, Nesting::Outermost)
             .starts_at_own_directory
@@ -207,7 +191,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// `path.join(__dirname, "lib", name + ".js")`: the folder of the file, "/lib/", and the last argument.
     fn expand_path_from_own_directory(&self, call: Call, function: Atom) -> Option<Expansion> {
         let is_join = function == known::join;
         let mut ends_with_slash = false;
@@ -228,7 +211,6 @@ impl<'s> Folder<'_, 's> {
             }
             let mut text = Vec::new();
             self.evaluator.push_text(&mut text, value);
-            // `path.resolve` begins again at an absolute path.
             if !is_join && text.starts_with(b"/") || bun_core::strings::contains_char(&text, b'\\')
             {
                 return None;
@@ -255,7 +237,6 @@ impl<'s> Folder<'_, 's> {
             written.push(b'/');
             written.extend_from_slice(segment);
         }
-        // `path.join` keeps a trailing slash, which names the folder and not a file of that name. `path.resolve` drops it.
         if computed.is_some() || is_join && ends_with_slash {
             written.push(b'/');
         }
@@ -357,7 +338,6 @@ impl<'s> Folder<'_, 's> {
                         stack.extend(parts.into_iter().rev());
                         continue;
                     }
-                    // What follows the folder of the file at the head of a specifier is a path from that folder.
                     Expansion::OwnDirectory
                         if text.is_empty() && matches!(nesting, Nesting::Outermost) =>
                     {
@@ -386,7 +366,6 @@ impl<'s> Folder<'_, 's> {
             }
             strings::push_wtf8(&mut text, &piece);
         };
-        // `__dirname + "2/a.js"` names a file of another folder.
         let is_path_from_folder = text.starts_with(b"./") || is_whole_value && text == b".";
         if starts_at_own_directory && !is_path_from_folder {
             return Affix {
@@ -437,7 +416,6 @@ impl<'s> Folder<'_, 's> {
             return Vec::new();
         };
         let prefix = self.collect_shared_prefix(alternatives, nesting);
-        // The prefix and the suffix of a pattern never share a byte of a value.
         let mut max_length = match prefix.shortest_whole_value {
             Some(length) => length - prefix.text.len(),
             None => usize::MAX,
@@ -527,7 +505,7 @@ impl<'s> Folder<'_, 's> {
     }
 
     fn find_path_joining_function(&self, callee: ExprId) -> Option<Atom> {
-        let hir = self.hir;
+        let (hir, bound) = (self.hir, self.bound);
         let mut pending_members: SmallVec<[Atom; 4]> = SmallVec::new();
         let mut e = callee;
         let is_path_module = loop {
@@ -547,17 +525,27 @@ impl<'s> Folder<'_, 's> {
                         break false;
                     }
                 },
-                ExprKind::Ident(_) => match self.find_binding_source(e) {
-                    BindingSource::Expression { source, members } if source < e => {
-                        pending_members.extend(members.iter().rev().copied());
-                        e = source;
+                ExprKind::Ident(_) => {
+                    let Some(symbol) = settled_symbol(hir, bound, e) else {
+                        break false;
+                    };
+                    match bound.binding_initializer(hir, symbol) {
+                        BindingInitializer::Expression(source) if source < e => e = source,
+                        BindingInitializer::PatternProperty { source, path } if source < e => {
+                            pending_members.extend(path.iter().rev().copied());
+                            e = source;
+                        }
+                        BindingInitializer::Import => {
+                            let imported = find_imported_export(hir, bound, symbol);
+                            let Some((specifier, export)) = imported else {
+                                break false;
+                            };
+                            pending_members.extend(export);
+                            break is_path_specifier(specifier);
+                        }
+                        _ => break false,
                     }
-                    BindingSource::ModuleExport { specifier, export } => {
-                        pending_members.extend(export);
-                        break is_path_specifier(specifier);
-                    }
-                    BindingSource::Expression { .. } | BindingSource::Unknown => break false,
-                },
+                }
                 ExprKind::Call(call) => break self.is_path_module_request(e, hir[call]),
                 _ => break false,
             }
@@ -601,62 +589,6 @@ impl<'s> Folder<'_, 's> {
             Constant::String(text) => is_path_specifier(text),
             _ => false,
         }
-    }
-
-    fn find_binding_source(&self, ident: ExprId) -> BindingSource {
-        let (hir, bound) = (self.hir, self.bound);
-        let symbol = match bound.binding(ident) {
-            Binding::Symbol(symbol) => symbol,
-            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => {
-                return BindingSource::Unknown;
-            }
-        };
-        if bound.dynamic_lookup_scope(NodeData::Expr(ident)).is_some() {
-            return BindingSource::Unknown;
-        }
-        match bound.binding_stability(symbol) {
-            BindingStability::Stable | BindingStability::Linked => {}
-            _ => return BindingSource::Unknown,
-        }
-        match bound.binding_initializer(hir, symbol) {
-            BindingInitializer::Expression(source) => BindingSource::Expression {
-                source,
-                members: SmallVec::new(),
-            },
-            BindingInitializer::PatternProperty { source, path } => BindingSource::Expression {
-                source,
-                members: path,
-            },
-            BindingInitializer::Import => self.find_import_source(symbol),
-            _ => BindingSource::Unknown,
-        }
-    }
-
-    fn find_import_source(&self, symbol: SymbolId) -> BindingSource {
-        let hir = self.hir;
-        for &decl in self.bound.symbol(symbol).decls {
-            let (specifier, export, is_type_only) = match decl {
-                Decl::ImportDefault(import) | Decl::ImportNamespace(import) => {
-                    (hir[import].spec, None, hir[import].type_only)
-                }
-                Decl::ImportSpec(spec) => {
-                    let spec = &hir[spec];
-                    let import = &hir[spec.import];
-                    let export = (spec.imported != known::default).then_some(spec.imported);
-                    (import.spec, export, spec.type_only || import.type_only)
-                }
-                Decl::ImportEquals(import) => {
-                    let import = &hir[import];
-                    let is_type_only = import.flags.contains(Flags::TYPE_ONLY);
-                    (import.target.spec(), None, is_type_only)
-                }
-                _ => continue,
-            };
-            if !is_type_only {
-                return BindingSource::ModuleExport { specifier, export };
-            }
-        }
-        BindingSource::Unknown
     }
 }
 

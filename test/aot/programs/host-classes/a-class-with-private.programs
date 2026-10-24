@@ -1,0 +1,3045 @@
+////: Kept
+class Kept {
+  constructor(value) {
+    this.«1» = value;
+  }
+}
+////: lines-13
+export function «1»(holder) {
+  return holder.headers.get(«2»);
+}
+////: lines-14
+class «1» extends «2» {
+  static get [Symbol.species]() {
+    return Text;
+  }
+}
+////: lines-15
+class «1» extends «2» {
+  «3» = «4»;
+}
+////: lines-19
+export function «1»(holder, name) {
+  return holder.headers.«2»(name);
+}
+////: lines-20
+function «1»() {
+  const answer = «2»(«3» as unknown as «4»);
+  return [answer];
+}
+////: lines-21
+async function «1»(«2»: «3»): Promise<unknown> {
+  return (await «2».json()) as Order;
+}
+////: lines-8
+try {
+  replace();
+  console.log("replaced:", readMany(), read(AbortSignal.abort()));
+} catch (error) {
+  console.log("threw", (error as Error).name, readMany());
+}
+////: readMany
+function readMany(): unknown {
+  let last: unknown;
+  for (let round = 0; round < 100; round++) last = read(signal);
+  return last;
+}
+////: says
+const says = (label, text) => ({
+  toString() {
+    log.push(label);
+    return text;
+  },
+});
+//// a-class-with-private-methods-stands-below-a-host-constructor-that-answers-with-a-string.js
+// The parent of a class is swapped for a constructor of the host that answers `new` with a string. The private methods of the class are not there on a string: asking for one is a TypeError.
+const { CString, ptr } = require("bun:ffi");
+const bytes = Buffer.from("Hi\0");
+const at = ptr(bytes);
+function attempt(name, work) {
+  try {
+    console.log(name, work());
+  } catch (error) {
+    console.log(name, "threw", error.constructor.name);
+  }
+}
+
+class Base {}
+class WithMethod extends Base { #m() { return 4; } static call(made) { return made.#m(); } }
+Object.setPrototypeOf(WithMethod, CString);
+attempt("a private method", () => WithMethod.call(new WithMethod(at)));
+
+class WithGetter extends Base { get #g() { return 5; } static read(made) { return made.#g; } }
+Object.setPrototypeOf(WithGetter, CString);
+attempt("a private getter", () => WithGetter.read(new WithGetter(at)));
+
+class WithBoth extends Base { #m() { return 6; } #f = 7; static call(made) { return made.#m() + made.#f; } }
+Object.setPrototypeOf(WithBoth, CString);
+attempt("a private method and a private field", () => WithBoth.call(new WithBoth(at)));
+
+class Untouched extends Base { #m() { return 8; } static call(made) { return made.#m(); } }
+attempt("the parent as it was written", () => Untouched.call(new Untouched()));
+for (let turn = 0; turn < 3; turn++) attempt("again", () => WithMethod.call(new WithMethod(at)));
+//// a-digest-is-written-into-the-array-that-is-given-validated.ts
+// `digest(bytes)` and `hash(input, bytes)` write into the array they are given and answer it. An element that was read in front of the call is read again behind it.
+function ofAnInstance(): string {
+  const hasher = new Bun.CryptoHasher("sha256");
+  hasher.update("a");
+  const bytes = new Uint8Array(64);
+  const before = bytes[0];
+  const answered = hasher.digest(bytes);
+  return [before, bytes[0], bytes[15], answered === bytes].join();
+}
+function given(hasher: Bun.CryptoHasher, bytes: Uint8Array): string {
+  const before = bytes[0] + bytes[15];
+  hasher.digest(bytes);
+  return [before, bytes[0] + bytes[15]].join();
+}
+function ofTheClass(): string {
+  const bytes = new Uint8Array(64);
+  const before = bytes[0];
+  const answered = Bun.CryptoHasher.hash("sha1", "a", bytes);
+  return [before, bytes[0], answered === bytes].join();
+}
+function ofAStaticHasher(): string {
+  const bytes = new Uint8Array(64);
+  const before = bytes[0];
+  Bun.SHA256.hash("a", bytes);
+  const first = bytes[0];
+  const hasher = new Bun.MD5();
+  hasher.update("b");
+  hasher.digest(bytes);
+  return [before, first, bytes[0]].join();
+}
+function inALoop(): number {
+  let sum = 0;
+  const bytes = new Uint8Array(64);
+  for (let i = 0; i < 500; i++) {
+    const hasher = new Bun.CryptoHasher("md5");
+    hasher.update(String(i));
+    sum = (sum + bytes[0]) | 0;
+    hasher.digest(bytes);
+    sum = (sum + bytes[0]) | 0;
+  }
+  return sum;
+}
+for (let i = 0; i < 3; i++) {
+  console.log("of an instance", ofAnInstance());
+  const hasher = new Bun.CryptoHasher("sha1");
+  hasher.update("b" + i);
+  console.log("given", given(hasher, new Uint8Array(64)));
+  console.log("of the class", ofTheClass());
+  console.log("of a static hasher", ofAStaticHasher());
+}
+console.log("in a loop", inALoop());
+//// a-field-of-what-a-parameter-constructs-is-read-and-a-host-constructor-answers-with-a-string.js
+const { CString, ptr } = require("bun:ffi");
+function make(Class, argument) {
+  return new Class(argument);
+}
+////= Kept	length
+const bytes = Buffer.from("Hi\0");
+console.log(make(CString, ptr(bytes)).length, make(Kept, 5).length);
+console.log(make(Bun.FFI.CString, ptr(bytes)).length, make(Kept, 6).length);
+//// a-file-of-an-s3-path-has-a-prototype-of-its-own.ts
+// Bun.file() makes a Blob of a path and an S3File of an "s3://" path. The prototype object of an S3File lies in front of Blob.prototype and has every member of that one once more.
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const path = join(tmpdir(), `a-file-of-an-s3-path-${process.pid}.txt`);
+await Bun.write(path, "hello");
+
+function describe(file: Blob) {
+  const prototype = Object.getPrototypeOf(file);
+  return [
+    Object.prototype.toString.call(file),
+    file instanceof Blob,
+    prototype === Blob.prototype,
+    Object.getPrototypeOf(prototype) === Blob.prototype,
+    Object.hasOwn(prototype, "text"),
+    file.text === Blob.prototype.text,
+    typeof (file as any).presign,
+    (file as any).bucket,
+    Reflect.ownKeys(file).length,
+  ].join(" ");
+}
+
+const local = Bun.file(path);
+const remote = Bun.file("s3://bucket/key.txt");
+console.log(describe(local));
+console.log(describe(remote));
+console.log(describe(local.slice(1, 3)));
+console.log(describe(remote.slice(1, 3)));
+for (const file of [local, remote] as any[]) console.log(file.name === path, typeof file.stat, file.stat === (Blob.prototype as any).stat);
+
+console.log(await local.text(), local.size, await local.exists(), (await local.bytes()).length, await local.slice(1, 3).text());
+console.log(typeof (remote as any).presign({ accessKeyId: "a", secretAccessKey: "b", endpoint: "http://localhost:1" }));
+try {
+  (remote as any).presign.call(local);
+} catch (error) {
+  console.log((error as NodeJS.ErrnoException).code);
+}
+try {
+  Reflect.get(Object.getPrototypeOf(remote), "bucket", local);
+} catch (error) {
+  console.log((error as Error).name);
+}
+await local.delete();
+//// a-getter-of-a-host-class-is-replaced-on-the-prototype-of-an-instance.ts
+// Compiled code takes the prototype of a host class from an instance, names the member, and replaces the getter: every read afterward finds the replacement, as in plain Bun.
+const signal = AbortSignal.abort();
+const read = (from: AbortSignal): unknown => from.aborted;
+////= readMany
+function replace(): void {
+  Object.defineProperty(Object.getPrototypeOf(signal) as object, "aborted", { get: () => "replaced", configurable: true });
+}
+console.log("before:", readMany());
+////= lines-8
+//// a-getter-of-a-host-class-is-replaced-on-the-prototype-of-an-instance-from-a-declared-getter.ts
+// Compiled code takes the prototype of a host class from an instance that a declared getter gave, names the member, and replaces the getter: every read afterward finds the replacement, as in plain Bun.
+const signal = new AbortController().signal;
+const read = (from: AbortSignal): unknown => from.aborted;
+////= readMany
+function replace(): void {
+  Object.defineProperty(Object.getPrototypeOf(signal) as object, "aborted", { get: () => "replaced", configurable: true });
+}
+console.log("before:", readMany());
+try {
+  replace();
+  console.log("replaced:", readMany(), read(new AbortController().signal));
+} catch (error) {
+  console.log("threw", (error as Error).name, readMany());
+}
+//// a-getter-of-a-host-class-is-replaced-on-the-prototype-that-the-code-names.ts
+// Compiled code names the prototype of a host class and the member, and replaces the getter: every read afterward finds the replacement, as in plain Bun.
+const signal = AbortSignal.abort();
+const read = (from: AbortSignal): unknown => from.aborted;
+////= readMany
+function replace(): void {
+  Object.defineProperty(AbortSignal.prototype, "aborted", { get: () => "replaced", configurable: true });
+}
+console.log("before:", readMany());
+////= lines-8
+//// a-getter-of-a-host-class-is-replaced-under-a-name-that-a-parameter-holds.ts
+// Compiled code names the prototype of a host class and gets the name of the member as an argument, and replaces the getter: every read afterward finds the replacement, as in plain Bun.
+const signal = AbortSignal.abort();
+const read = (from: AbortSignal): unknown => from.aborted;
+////= readMany
+function replaceUnder(name: string): void {
+  Object.defineProperty(AbortSignal.prototype, name, { get: () => "replaced", configurable: true });
+}
+function replace(): void {
+  replaceUnder("aborted");
+}
+console.log("before:", readMany());
+////= lines-8
+//// a-handler-gets-the-error-about-a-file-that-is-not-there.ts
+// Native code rejects the promise of a read of a file that is not there, and the handler that catch() or then() was given gets the error, as a `catch` around an await does.
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const missing = Bun.file(join(tmpdir(), `no-such-file-${process.pid}`, "a.txt"));
+const codeOf = (error: unknown) => (error as NodeJS.ErrnoException).code;
+
+console.log(await missing.text().catch(codeOf));
+console.log(await missing.bytes().catch(codeOf));
+console.log(await missing.arrayBuffer().catch(codeOf));
+console.log(await missing.json().catch(codeOf));
+console.log(await missing.slice(1, 2).text().catch(codeOf));
+console.log(await missing.text().then(() => "read", codeOf));
+console.log(await missing.delete().catch(codeOf));
+console.log(await missing.exists().catch(codeOf));
+try {
+  await missing.text();
+} catch (error) {
+  console.log(codeOf(error), error instanceof Error);
+}
+let seen = "";
+await missing.text().catch(error => {
+  seen = `${error.code} ${error.syscall} ${typeof error.errno} ${error.path === missing.name}`;
+});
+console.log(seen);
+//// a-handler-gets-the-error-of-a-body-that-is-no-json.ts
+// Native code rejects the promise of a Blob's json() where the text is no JSON, and the handler that catch() or then() was given gets the error.
+const nameOf = (error: unknown) => (error as Error).name;
+
+console.log(await new Blob(["{"]).json().catch(error => error.name));
+console.log(await new Blob(["{"]).json().catch(nameOf));
+console.log(await new Blob(["{"]).json().then(() => "parsed", error => error.name));
+console.log(JSON.stringify(await new Blob(['{"a":1}']).json().catch(nameOf)));
+try {
+  await new Blob(["{"]).json();
+} catch (error) {
+  console.log(nameOf(error), error instanceof SyntaxError);
+}
+//// a-handler-gets-the-error-of-a-lookup-that-fails.ts
+// Native code rejects the promise of a lookup of a host that does not exist, and the handler that catch() or then() was given gets the error.
+const codeOf = (error: unknown) => typeof (error as NodeJS.ErrnoException).code;
+
+console.log(await Bun.dns.lookup("no-such-host.invalid").catch(codeOf));
+console.log(await Bun.dns.lookup("no-such-host.invalid").then(() => "found", codeOf));
+try {
+  await Bun.dns.lookup("no-such-host.invalid");
+} catch (error) {
+  console.log(codeOf(error), error instanceof Error);
+}
+console.log(await Bun.sleep(1).then(() => "slept", codeOf));
+//// a-host-constructor-answers-new-with-a-string.ts
+// `new CString(pointer)` of bun:ffi answers with a string primitive, not with an object: a native constructor may. What the compiler believes of `new` may not decide `typeof` and `===` on it.
+import { CString, ptr } from "bun:ffi";
+const bytes = Buffer.from("Hello, world!\0");
+const text = new CString(ptr(bytes));
+console.log(typeof text, text === "Hello, world!", text == "Hello, world!", text.length, typeof text === "string" ? "a string" : "no string", [text].includes("Hello, world!"));
+function same(x: unknown, y: unknown) { return x === y; }
+console.log(same(text, "Hello, world!"), `${text}` === "Hello, world!");
+//// a-host-constructor-that-answers-with-a-string-comes-out-of-a-list-a-bound-function-and-a-proxy.js
+const ffi = require("bun:ffi");
+const bytes = Buffer.from("Hi\0");
+const found = Object.values(ffi).filter(value => typeof value === "function" && value.name === "CString");
+const Bound = ffi.CString.bind(null);
+const Wrapped = new Proxy(ffi.CString, {});
+for (const Class of [found[0], Bound, Wrapped]) {
+  const text = new Class(ffi.ptr(bytes));
+  console.log(typeof text, text === "Hi", typeof text === "string" ? "a string" : "no string");
+}
+console.log(typeof Reflect.construct(ffi.CString, [ffi.ptr(bytes)]), typeof ffi.CString(ffi.ptr(bytes)));
+//// a-host-constructor-that-answers-with-a-string-is-constructed-and-called-in-thirteen-ways.js
+const ffi = require("bun:ffi");
+const bytes = Buffer.from("Hi\0");
+const at = ffi.ptr(bytes);
+function told(name, work) {
+  try {
+    const text = work();
+    console.log(name, typeof text, text === "Hi", typeof text === "string" ? "a string" : "no string", [text].includes("Hi"), text == "Hi", text.length);
+  } catch (error) {
+    console.log(name, "throws", error.name, error.message);
+  }
+}
+function make(Class, argument) {
+  return new Class(argument);
+}
+function makeByReflect(Class, argument) {
+  return Reflect.construct(Class, [argument]);
+}
+function call(work, argument) {
+  return work(argument);
+}
+////= Kept	length
+told("the object's own member", () => new Bun.FFI.CString(at));
+told("the object's own member through a parameter", () => make(Bun.FFI.CString, at));
+told("the module's member through a parameter", () => make(ffi.CString, at));
+told("a class through the same parameter", () => make(Kept, 2));
+told("Reflect.construct through a parameter", () => makeByReflect(Bun.FFI.CString, at));
+told("destructured", () => {
+  const { CString } = Bun.FFI;
+  return new CString(at);
+});
+told("by a computed name", () => new Bun.FFI[["C", "String"].join("")](at));
+told("called through a parameter", () => call(Bun.FFI.CString, at));
+told("one of two", () => make(bytes.length > 2 ? Bun.FFI.CString : Kept, at));
+told("out of an object", () => make({ Class: Bun.FFI.CString }.Class, at));
+told("a subclass", () => new (class extends Bun.FFI.CString {})(at));
+told("new.target is another", () => Reflect.construct(Bun.FFI.CString, [at], Kept));
+told("bound", () => make(Bun.FFI.CString.bind(null), at));
+//// a-host-constructor-that-answers-with-a-string-is-constructed-through-a-parameter.js
+const { CString, ptr } = require("bun:ffi");
+function make(Class, argument) {
+  return new Class(argument);
+}
+////= Kept	value
+const bytes = Buffer.from("Hi\0");
+const text = make(CString, ptr(bytes));
+const kept = make(Kept, 1);
+console.log(typeof text, text === "Hi", typeof text === "string" ? "a string" : "no string", typeof kept, kept.value);
+//// a-host-constructor-that-answers-with-a-string-is-constructed-through-a-typed-parameter.ts
+import { CString, ptr } from "bun:ffi";
+const bytes = Buffer.from("Hi\0");
+function make<T>(Class: new (at: number) => T, at: number): T {
+  return new Class(at);
+}
+class Kept {
+  length: number;
+  constructor(value: number) {
+    this.length = value;
+  }
+}
+const text = make(CString as any, ptr(bytes)) as unknown;
+const kept = make(Kept, 1);
+console.log(typeof text, text === "Hi", typeof text === "string" ? "a string" : "no string", typeof kept, kept.length);
+const direct: unknown = new CString(ptr(bytes));
+console.log(typeof direct, direct === "Hi", typeof direct === "string" ? "a string" : "no string");
+//// a-host-constructor-that-answers-with-a-string-stands-where-a-built-in-makes-its-result.mjs
+import { CString, ptr } from "bun:ffi";
+const bytes = Buffer.from("Hi\0");
+const Text = CString.bind(null, ptr(bytes), 0, 2);
+function told(name, work) {
+  try {
+    const made = work();
+    console.log(name, typeof made, String(made));
+  } catch (error) {
+    console.log(name, "throws", error.name);
+  }
+}
+////= lines-14	List	Array
+////= lines-14	Bytes	Uint8Array
+////= lines-14	Range	ArrayBuffer
+////= lines-14	Pattern	RegExp
+////= lines-14	Later	Promise
+told("new", () => new Text());
+told("Reflect.construct", () => Reflect.construct(Text, []));
+told("a proxy", () => new (new Proxy(Text, {}))());
+told("slice", () => new List(1, 2, 3).slice(0, 2));
+told("splice", () => new List(1, 2, 3).splice(0, 2));
+told("concat", () => new List(1, 2, 3).concat([4]));
+told("map", () => new List(1, 2, 3).map(x => x));
+told("filter", () => new List(1, 2, 3).filter(x => x));
+told("flat", () => new List(1, [2], 3).flat());
+told("flatMap", () => new List(1, 2, 3).flatMap(x => [x]));
+told("an empty slice", () => new List().slice());
+told("an empty map", () => new List().map(x => x));
+told("Array.of", () => Array.of.call(Text, 1, 2));
+told("Array.of nothing", () => Array.of.call(Text));
+told("Array.from a list", () => Array.from.call(Text, [1, 2]));
+told("Array.from what has a length", () => Array.from.call(Text, { length: 2, 0: 1, 1: 2 }));
+told("Array.from nothing", () => Array.from.call(Text, []));
+told("bytes slice", () => new Bytes(3).slice(0, 2));
+told("bytes map", () => new Bytes(3).map(x => x));
+told("bytes subarray", () => new Bytes(3).subarray(1));
+told("Uint8Array.of", () => Uint8Array.of.call(Text, 1, 2));
+told("Uint8Array.from", () => Uint8Array.from.call(Text, [1, 2]));
+told("range slice", () => new Range(8).slice(0, 2));
+told("split", () => "a,b".split(new Pattern(",")));
+told("matchAll", () => [..."a,b".matchAll(new Pattern(",", "g"))]);
+told("then", () => Later.resolve(1).then(x => x));
+told("Promise.resolve", () => Promise.resolve.call(Text, 1));
+told("Promise.all", () => Promise.all.call(Text, []));
+told("Promise.withResolvers", () => Promise.withResolvers.call(Text));
+for (const [name, items] of [["a list", [1, 2]], ["what has a length", { length: 1, 0: 1 }], ["an asynchronous generator", (async function* () { yield 1; })()]]) {
+  try {
+    const made = await Array.fromAsync.call(Text, items);
+    console.log("Array.fromAsync", name, typeof made, String(made));
+  } catch (error) {
+    console.log("Array.fromAsync", name, "throws", error.name);
+  }
+}
+//// a-listener-is-removed-from-the-global-scope-before-any-was-added.ts
+// The global scope is an EventTarget. Taking a listener off it before anything was ever added to it does nothing. An executable once died here.
+const listener = () => console.log("never called");
+removeEventListener("nothing", listener);
+globalThis.removeEventListener("nothing", listener);
+self.removeEventListener("nothing", () => {});
+const remove = removeEventListener;
+remove("nothing", listener);
+console.log("nothing was there to remove");
+console.log(dispatchEvent(new Event("nothing")));
+addEventListener("something", listener);
+removeEventListener("something", listener);
+console.log(dispatchEvent(new Event("something")));
+//// a-method-of-a-host-class-stands-in-the-trace.ts
+////= framesOf	5
+
+function traceOf(run: () => unknown): string {
+  try {
+    run();
+    return "did not throw";
+  } catch (error) {
+    const e = error as Error;
+    return e.name + ": " + e.message + " | " + framesOf(e.stack);
+  }
+}
+
+const capture = Error as unknown as { captureStackTrace(target: object): void };
+const glob = new Bun.Glob("*.ts");
+const hasher = new Bun.CryptoHasher("sha1");
+const decoder = new TextDecoder();
+
+////= lines-20	matchNumber	glob.match	1	string
+////= lines-20	digestUnknown	hasher.digest	"nothing"	"hex"
+////= lines-20	decodeNumber	decoder.decode	5	Uint8Array
+console.log(traceOf(matchNumber));
+console.log(traceOf(digestUnknown));
+console.log(traceOf(decodeNumber));
+
+function capturedUnderTheMethod() {
+  const holder: { stack?: string } = {};
+  const options = {
+    get stream() {
+      capture.captureStackTrace(holder);
+      return false;
+    },
+  };
+  decoder.decode(new Uint8Array([65]), options);
+  return framesOf(holder.stack);
+}
+console.log(capturedUnderTheMethod());
+
+function thrownUnderTheMethod() {
+  const options = {
+    get stream(): boolean {
+      throw new RangeError("from the getter");
+    },
+  };
+  const answer = decoder.decode(new Uint8Array([65]), options);
+  return [answer];
+}
+console.log(traceOf(thrownUnderTheMethod));
+
+function caughtInTheCaller() {
+  let caught = "nothing";
+  try {
+    decoder.decode(new Uint8Array([65]), {
+      get stream(): boolean {
+        throw new RangeError("caught beside the call");
+      },
+    });
+  } catch (error) {
+    caught = (error as Error).message;
+  } finally {
+    caught += ", and the cleanup ran";
+  }
+  return caught;
+}
+console.log(caughtInTheCaller());
+//// a-query-text-is-asked-for-names-walked-and-written-again.js
+// A query text of which names are asked, the pairs are walked and the text is written again.
+// STATISTIC: URLsLeftUnbuilt >= 3
+const texts = ["", "?", "a", "a=", "a=1", "?a=1", "??a=1", "=1", "=", "a=1&b=2", "a=1&a=2", "b=2&a=1", "a=1&", "&a=1", "a=1&&b=2", "a=1=2", "a==", "a+=1", "a=1+2", "a=%31", "%61=1", "b=%zz&a=1", "b=2&a%20=1&a=3", "b=2&c&a=3", "b=2&a=3&c", "a=*-._", "a=~", "a=!", "a=/", "a=é", "a=一", "a=1#f", "A=1", "aa=1", "a=1&b=2&c=3&d=4&e=5", "a=" + "x".repeat(4090), "a=" + "x".repeat(4093), "a=" + "x".repeat(4094), "a=" + "x".repeat(5000)];
+function look(text) {
+  const query = new URLSearchParams(text);
+  return query.get("a") + " | " + query.has("a") + " | " + query.get("c") + " | " + query.has("") + " | " + query.size + " | " + query.toString().slice(0, 60);
+}
+function walk(text) {
+  const query = new URLSearchParams(text);
+  let out = "";
+  for (const [name, value] of query) out += name + ":" + value.slice(0, 20) + ";";
+  return out;
+}
+function names(text) { const query = new URLSearchParams(text); let out = ""; for (const name of query.keys()) out += name + ";"; return out; }
+function values(text) { const query = new URLSearchParams(text); let out = ""; for (const value of query.values()) out += value.slice(0, 20) + ";"; return out; }
+function pairs(text) { const query = new URLSearchParams(text); return JSON.stringify([...query.entries()]).slice(0, 80); }
+for (const text of texts) console.log(JSON.stringify(text.slice(0, 40)), text.length, JSON.stringify(look(text)), JSON.stringify(walk(text)), names(text), values(text), pairs(text));
+for (const other of [1, null, undefined, { a: 1 }, [["a", "1"]], new URLSearchParams("a=7")]) console.log(JSON.stringify(look(other)), walk(other));
+//// a-shadow-realm-evaluates-text-in-a-program-that-also-calls-a-proxy.js
+// What a ShadowRealm evaluates does not depend on whether the program calls a proxy somewhere else.
+const realm = new ShadowRealm();
+console.log(realm.evaluate(`1 + 1`));
+console.log(new Proxy(function () { return 7; }, {})());
+//// a-stack-is-captured-on-an-object-that-may-be-a-built-in.js
+// Error.captureStackTrace defines `stack` on its operand by a store of native code.
+const plain = {};
+Error.captureStackTrace(plain);
+console.log(typeof plain.stack);
+const either = process.argv.length > 99 ? {} : Array.prototype;
+try {
+  Error.captureStackTrace(either);
+} catch (error) {
+  console.log("threw", error.name);
+}
+console.log("stack" in Array.prototype, typeof [].stack);
+Error.stackTraceLimit = 1;
+function lines() {
+  return new Error("x").stack.split("\n").length;
+}
+console.log(lines());
+//// a-url-is-read-by-its-path-its-query-and-names-of-its-query.js
+// A URL of which only the path, the query and names of the query are read: hosts, ports, paths, queries and bases of every kind, each answer as the URL object gives it.
+// STATISTIC: URLsLeftUnbuilt >= 3
+const hosts = ["h", "localhost", "localhost:3000", "a.b", "a-b.c", "a--b.c", "ab--c.d", "xn--a.b", "a.b.", "a..b", "-a.b", "a-.b", "1.2.3.4", "1.2.3", "01.2.3.4", "1.2.3.4.5", "256.1.1.1", "0.0.0.0", "a.1", "a.1b", "1a.b", "0x7f.1", "h:80", "h:443", "h:0", "h:00080", "h:65535", "h:65536", "h:", "H", "u@h", "u:p@h", "[::1]", "h%41", "a_b", "a b", ""];
+const paths = ["", "/", "/a", "/a/b", "/a//b", "/.", "/..", "/a/.", "/a/..", "/a/./b", "/a/../b", "/a/.b", "/a/b.", "/a/b..", "/a/%2e", "/a/%2E%2e/b", "/a/b%2e", "/a%2fb", "/a%", "/a%zz", "/a b", "/a\tb", "/a\nb", "/a\\b", "/\\b", "//b", "/a|b", "/a^b", "/a`b", "/a{b}", "/a[b]", "/a'b", "/a\"b", "/a<b>", "/a:b@c;d=e$f&g!h(i)j*k+l,m-n~o_p", "/é", "/一", "/a\u0000b", "/a\u007fb"];
+const tails = ["", "?", "?a", "?a=", "?a=1", "?=1", "?a=1&b=2", "?b=2&a=1", "?a=1&a=2", "?&a=1", "?a=1&", "?&&a=1&&", "?a=1=2", "?a==", "?a+=1", "?a=1+2", "?a=%31", "?%61=1", "?b=%zz&a=1", "?b+c=1&a=1", "?a=1#f", "?#f", "#f", "#?a=1", "?a=1#a=2", "?a=1?a=2", "?a=/:@", "?a='", "?a=\"", "?a=<", "?a= ", "?a=\t1", "?a=[1]", "?a=|", "?a=é", "?aa=1", "?A=1", "?a=1 ", "?a=1#\t"];
+function parts(text) {
+  try {
+    const url = new URL(text);
+    return url.pathname + " | " + url.search + " | " + url.searchParams.get("a") + " | " + url.searchParams.has("a") + " | " + url.searchParams.get("") + " | " + url.searchParams.has("b");
+  } catch (error) { return error.constructor.name; }
+}
+function partsOn(text, base) {
+  try {
+    const url = new URL(text, base);
+    return url.pathname + " | " + url.search + " | " + url.searchParams.get("a");
+  } catch (error) { return error.constructor.name; }
+}
+function partsOnFixed(text) {
+  try {
+    const url = new URL(text, "http://localhost");
+    return url.pathname + " | " + url.search + " | " + url.searchParams.get("a");
+  } catch (error) { return error.constructor.name; }
+}
+let lines = 0, sum = 0;
+function say(label, answer) { lines++; console.log(JSON.stringify(label), JSON.stringify(answer)); }
+for (const scheme of ["http://", "https://", "HTTP://", "http:/", "http:", "ws://", "file://", " http://"])
+  for (const host of hosts) say(scheme + host + "/p?a=1", parts(scheme + host + "/p?a=1"));
+for (const path of paths) for (const tail of tails) say(path + tail, parts("http://h" + path + tail));
+for (const path of paths) for (const tail of ["", "?a=1", "#f"]) {
+  say("fixed " + path + tail, partsOnFixed(path + tail));
+  for (const base of ["http://h", "http://h/x/y", "http://h/x/y?z=1", "http://h:80#f", "http://H", "file:///x", "about:blank", "nope"]) say(base + " + " + path + tail, partsOn(path + tail, base));
+}
+for (const text of ["a", "a/b", "?a=1", "#f", "", ".", "..", "./a", "../a", "http://o/p?a=3", "https://o/p", "//o/p", "http:p", "http:/p"]) { say("fixed " + text, partsOnFixed(text)); say("based " + text, partsOn(text, "http://h/x/y?a=9")); }
+const long = "/" + "x".repeat(4070);
+for (const extra of ["", "y", "yy", "yyyyyyyyyyyyyyyyyyyy", "?a=1", "yyyyyyyyyy?a=1"]) { const answer = parts("http://h" + long + extra); say("long " + extra, answer.length + answer.slice(-30)); }
+for (const host of ["h".repeat(110), "h".repeat(119), "h".repeat(120), "h".repeat(121), "h".repeat(130)]) { const answer = parts("http://" + host + "/p?a=1"); say("host " + host.length, answer); }
+for (const name of [1, null, undefined, "a", "é", "一", { toString() { return "a"; } }, "a" + String.fromCharCode(0)]) {
+  const url = new URL("http://h/p?a=1&1=2&null=3&undefined=4&%C3%A9=5");
+  say("name " + String(name), String(url.searchParams.get(name)) + url.searchParams.has(name));
+}
+//// abort-controller-that-is-only-made-has-no-member-of-the-package.js
+const controller = new AbortController();
+controller.abort(new Error("why"));
+console.log(controller.signal.aborted, controller.signal.reason.message, controller instanceof AbortController);
+console.log(Object.getOwnPropertyNames(AbortController).sort().join(), AbortController.AbortSignal, AbortController.default);
+//// accessor-names-of-host-classes-at-one-place-untyped.js
+// A place in untyped code that reads or stores `url`, `pathname`, `status`, `size` .. meets host objects, where the name is an accessor of a locked prototype, and the program's own objects, where it is plain data. Each place sees many of one kind, then the others in turn.
+const lines = [];
+const warm = 40;
+const show = value => (typeof value === "string" ? JSON.stringify(value) : typeof value === "object" && value !== null ? Object.prototype.toString.call(value) : String(value));
+const attempt = work => {
+  try {
+    return show(work());
+  } catch (error) {
+    return "throws " + error.constructor.name;
+  }
+};
+
+const readers = {
+  url: o => o.url,
+  method: o => o.method,
+  headers: o => o.headers,
+  body: o => o.body,
+  bodyUsed: o => o.bodyUsed,
+  signal: o => o.signal,
+  status: o => o.status,
+  statusText: o => o.statusText,
+  ok: o => o.ok,
+  type: o => o.type,
+  redirected: o => o.redirected,
+  href: o => o.href,
+  origin: o => o.origin,
+  protocol: o => o.protocol,
+  host: o => o.host,
+  hostname: o => o.hostname,
+  port: o => o.port,
+  pathname: o => o.pathname,
+  search: o => o.search,
+  searchParams: o => o.searchParams,
+  hash: o => o.hash,
+  username: o => o.username,
+  size: o => o.size,
+  count: o => o.count,
+  name: o => o.name,
+  lastModified: o => typeof o.lastModified,
+};
+const writers = {
+  url: (o, v) => { o.url = v; },
+  method: (o, v) => { o.method = v; },
+  status: (o, v) => { o.status = v; },
+  href: (o, v) => { o.href = v; },
+  pathname: (o, v) => { o.pathname = v; },
+  search: (o, v) => { o.search = v; },
+  hash: (o, v) => { o.hash = v; },
+  port: (o, v) => { o.port = v; },
+  size: (o, v) => { o.size = v; },
+  name: (o, v) => { o.name = v; },
+};
+const otherWriters = {
+  url: (o, v) => { o.url = v; },
+  pathname: (o, v) => { o.pathname = v; },
+  status: (o, v) => { o.status = v; },
+  size: (o, v) => { o.size = v; },
+};
+
+class Own {
+  constructor(seed) {
+    for (const name of Object.keys(readers)) this[name] = name + seed;
+  }
+}
+class OwnWithFields {
+  url = "own url";
+  pathname = "own pathname";
+  status = 299;
+  size = 7;
+  name = "own name";
+}
+class Heir extends URL {
+  constructor(address) {
+    super(address);
+    this.extra = 1;
+  }
+}
+class HeirThatHides extends Request {
+  get url() {
+    return "hidden " + super.url;
+  }
+}
+const [URL_NAME, PATHNAME, STATUS] = JSON.parse('["url","pathname","status"]');
+const withGetters = () => {
+  let reads = 0;
+  const o = {};
+  for (const name of [URL_NAME, PATHNAME, STATUS]) Object.defineProperty(o, name, { configurable: true, get() { return name + " read " + ++reads; }, set(v) { reads += v.length ?? 100; } });
+  return o;
+};
+
+const address = "http://user@example.com:8080/a/b?c=d&e=f#g";
+const makers = {
+  request: () => new Request(address.replace("user@", ""), { method: "POST", headers: { "x-one": "1" }, body: "abc" }),
+  response: () => new Response("abc", { status: 201, statusText: "Made", headers: { "x-two": "2" } }),
+  url: () => new URL(address),
+  parameters: () => new URLSearchParams("a=1&b=2&a=3"),
+  headers: () => new Headers({ a: "1", b: "2" }),
+  blob: () => new Blob(["abcd"], { type: "text/plain" }),
+  file: () => new File(["abcde"], "five.txt", { type: "text/plain", lastModified: 5 }),
+  literal: () => ({ url: "/plain", method: "GET", headers: { h: 1 }, status: 200, pathname: "/p", search: "?s", hash: "#h", href: "/p?s#h", size: 3, type: "t", name: "n", ok: false, body: null }),
+  otherOrder: () => ({ name: "n2", size: 4, hash: "", pathname: "/q", url: "/other" }),
+  own: () => new Own(1),
+  fields: () => new OwnWithFields(),
+  heir: () => new Heir(address),
+  hides: () => new HeirThatHides("http://example.com/hidden"),
+  getters: withGetters,
+  inherits: () => Object.create({ url: "inherited url", pathname: "inherited pathname", status: 1, size: 2 }),
+  inheritsHost: () => Object.create(new URL(address)),
+  bare: () => Object.create(null),
+  empty: () => ({}),
+  frozen: () => Object.freeze({ url: "frozen", pathname: "/frozen", status: 5, size: 6, name: "f" }),
+  proxy: () => new Proxy({}, { get: (_, key) => "proxy " + String(key), set: () => true }),
+  map: () => new Map([[1, 2]]),
+  set: () => new Set([1, 2, 3]),
+  array: () => [1, 2],
+  text: () => "text",
+  number: () => 5,
+  func: () => function named() {},
+  nothing: () => null,
+  missing: () => undefined,
+};
+const kinds = Object.keys(makers);
+
+for (const first of ["request", "url", "response", "literal", "own", "file"]) {
+  for (const [name, read] of Object.entries(readers)) {
+    const seen = makers[first]();
+    for (let turn = 0; turn < warm; turn++) read(seen);
+    lines.push(first + " first, " + name + ": " + kinds.map(kind => attempt(() => read(makers[kind]()))).join(" | "));
+    lines.push(first + " again, " + name + ": " + attempt(() => read(seen)));
+  }
+}
+
+for (const [title, all] of [["stores", writers], ["stores at other places", otherWriters]]) {
+  for (const first of ["url", "literal", "request", "own"]) {
+    for (const [name, write] of Object.entries(all)) {
+      const seen = makers[first]();
+      for (let turn = 0; turn < warm; turn++) attempt(() => write(seen, name === "port" ? "81" : name === "href" ? "http://example.org/z" : "/w" + (turn % 3)));
+      lines.push(title + ", " + first + " first, " + name + ": " + kinds.map(kind => {
+        const o = makers[kind]();
+        const said = attempt(() => write(o, name === "port" ? "82" : name === "href" ? "http://example.net/y" : "/v"));
+        return said + " " + attempt(() => readers[name](o));
+      }).join(" | "));
+      lines.push(title + ", " + first + " again, " + name + ": " + attempt(() => readers[name](seen)));
+    }
+  }
+}
+
+{
+  const location = makers.url();
+  const plain = makers.literal();
+  let text = "";
+  for (let turn = 0; turn < 64; turn++) {
+    const o = turn % 2 ? location : plain;
+    writers.pathname(o, "/t" + turn);
+    text = readers.pathname(o) + readers.href(o).length + text.length;
+  }
+  lines.push("in turns: " + text + " " + location.href + " " + plain.pathname);
+}
+
+console.log(lines.join("\n"));
+//// an-error-leaves-a-shadow-realm-as-a-type-error-of-the-outer-realm.js
+// No object crosses the border of a ShadowRealm. What a function of the realm throws reaches its caller as a TypeError of the caller's realm.
+const realm = new ShadowRealm();
+const describe = run => { try { return "answered " + String(run()); } catch (error) { return [error instanceof TypeError ? "the outer TypeError" : error instanceof Error ? "an outer " + error.name : "AN ERROR OF THE INNER REALM: " + error.name, String(error.message).slice(0, 40)].join(": "); } };
+const thrower = realm.evaluate("() => { throw new RangeError('inner'); }");
+console.log(String(thrower), describe(() => thrower()));
+const made = realm.evaluate(["() => {", "throw new RangeError('inner, text made at run time');", "}"].join(" "));
+console.log(describe(() => made()));
+console.log(describe(() => realm.evaluate("throw new RangeError('while evaluating')")));
+console.log(describe(() => realm.evaluate("({})")));
+const adds = realm.evaluate("(a, b) => a + b");
+console.log(adds(1, 2), describe(() => adds({}, 1)));
+//// async-handlers-also-called-by-the-program.ts
+// An async handler that the host enters with a Request is also called by the program with an object that only looks like one,
+// and with a Request that gets its own json() while the handler waits.
+interface Order {
+  id: number;
+  items: string[];
+}
+
+let gate = Promise.resolve();
+
+const handlers = {
+  async fetch(request: Request): Promise<Response> {
+    await gate;
+    const order = (await request.json()) as Order;
+    return new Response(String(order.id + order.items.length));
+  },
+};
+
+const server = Bun.serve({ port: 0, fetch: handlers.fetch });
+const post = (order: Order) => ({ method: "POST", body: JSON.stringify(order) });
+
+console.log("from the host:", await (await fetch(server.url, post({ id: 1, items: ["a", "b"] }))).text());
+
+const lookalike = { json: async () => ({ id: 40, items: [] }) } as unknown as Request;
+console.log("a lookalike:", await (await handlers.fetch(lookalike)).text());
+
+const opened = Promise.withResolvers<void>();
+gate = opened.promise;
+const changed = new Request(server.url, post({ id: 7, items: ["a"] }));
+const pending = handlers.fetch(changed);
+changed.json = async () => ({ id: 100, items: ["x", "y", "z"] });
+opened.resolve();
+console.log("its own json():", await (await pending).text());
+
+gate = Promise.resolve();
+console.log("from the host again:", await (await fetch(server.url, post({ id: 2, items: [] }))).text());
+await server.stop(true);
+//// bodies-of-utf8-bytes.ts
+// request.json(), response.json() and blob.json() on bodies of bytes: whatever the bytes are, twice each. The parser that expects keys tries a text once sixteen that begin like it have gone by, and while texts that begin so serve it well: so sixteen go by first, and four plain bodies are read before every other.
+function describe(value: unknown): string {
+  if (value === null || typeof value !== "object") return typeof value + ":" + String(value);
+  if (Array.isArray(value)) return "[" + value.map(describe).join() + "]";
+  return "{" + Reflect.ownKeys(value).map(key => JSON.stringify(String(key)) + "=" + describe((value as Record<string, unknown>)[key as string])).join() + "}";
+}
+function codes(text: string): string {
+  return [...text].map(character => character.codePointAt(0)!.toString(16)).join(" ");
+}
+const encoder = new TextEncoder();
+const bytesOf = (...parts: (string | number[])[]) => new Uint8Array(parts.flatMap(part => (typeof part === "string" ? [...encoder.encode(part)] : part)));
+const bodies: [string, Uint8Array<ArrayBuffer>][] = [
+  ["plain", bytesOf('{"customer":{"id":1,"name":"n"},"items":[{"sku":"a","quantity":2}]}')],
+  ["two letters outside ASCII", bytesOf('{"customer":{"id":4711,"name":"Zoë Müller"},"items":[{"sku":"a","quantity":2}]}')],
+  ["three and four bytes a character", bytesOf('{"customer":{"id":1,"name":"東京 😀"},"items":[]}')],
+  ["a key outside ASCII", bytesOf('{"customer":{"id":1,"näme":"n","東":2},"items":[]}')],
+  ["escapes beside bytes", bytesOf('{"customer":{"id":1,"name":"ë\\u00eb\\n\\ud83d\\ude00ë"},"items":[]}')],
+  ["a character cut at the end of a string", bytesOf('{"customer":{"id":1,"name":"a', [0xc3], '"},"items":[]}')],
+  ["a stray continuation byte", bytesOf('{"customer":{"id":1,"name":"a', [0xab], 'b"},"items":[]}')],
+  ["an overlong slash", bytesOf('{"customer":{"id":1,"name":"a', [0xc0, 0xaf], 'b"},"items":[]}')],
+  ["a surrogate written as three bytes", bytesOf('{"customer":{"id":1,"name":"a', [0xed, 0xa0, 0x80], 'b"},"items":[]}')],
+  ["beyond U+10FFFF", bytesOf('{"customer":{"id":1,"name":"a', [0xf4, 0x90, 0x80, 0x80], 'b"},"items":[]}')],
+  ["0xff in a key", bytesOf('{"customer":{"id":1,"na', [0xff], 'me":"n"},"items":[]}')],
+  ["a byte outside ASCII between the tokens", bytesOf('{"customer":', [0xc2, 0xa0], '{"id":1,"name":"n"},"items":[]}')],
+  ["the text cut inside a character", bytesOf('{"customer":{"id":1,"name":"', [0xe6, 0x9d])],
+  ["a mark, then letters outside ASCII", bytesOf([0xef, 0xbb, 0xbf], '{"customer":{"id":1,"name":"Zoë"},"items":[]}')],
+  ["two marks", bytesOf([0xef, 0xbb, 0xbf, 0xef, 0xbb, 0xbf], '{"customer":{"id":1,"name":"n"},"items":[]}')],
+  ["a mark in a string", bytesOf('{"customer":{"id":1,"name":"', [0xef, 0xbb, 0xbf], '"},"items":[]}')],
+  ["UTF-16, little end first, with its mark", new Uint8Array([0xff, 0xfe, ...[...'{"a":"ë"}'].flatMap(character => [character.charCodeAt(0) & 0xff, character.charCodeAt(0) >> 8])])],
+  ["a zero byte in a string", bytesOf('{"customer":{"id":1,"name":"a', [0], 'b"},"items":[]}')],
+  ["a zero byte at the end", bytesOf('{"customer":{"id":1,"name":"n"},"items":[]}', [0])],
+  ["indented, with letters outside ASCII", bytesOf(JSON.stringify({ customer: { id: 1, name: "Zoë" }, items: [{ sku: "å", quantity: 1 }] }, null, 2))],
+];
+const readers: [string, (body: Uint8Array<ArrayBuffer>) => Promise<unknown>][] = [
+  ["request", body => new Request("http://localhost/", { method: "POST", body }).json()],
+  ["response", body => new Response(body).json()],
+  ["blob", body => new Blob([body]).json()],
+];
+const plain = bodies[0]![1];
+const beginsLikePlain = (body: Uint8Array<ArrayBuffer>) => plain.subarray(0, 8).every((byte, at) => body[at] === byte);
+for (const [, body] of bodies) {
+  if (body !== plain && beginsLikePlain(body)) continue;
+  for (let turn = 0; turn < 16; turn++) await new Response(body).json().catch(() => {});
+}
+for (const [reader, read] of readers) {
+  for (const [label, body] of bodies) {
+    for (let turn = 0; turn < 2; turn++) {
+      for (let earned = 0; earned < 4; earned++) await read(plain);
+      try {
+        const value = (await read(body)) as { customer?: { name?: string } };
+        console.log(reader, label, turn, describe(value), typeof value?.customer?.name === "string" ? codes(value.customer.name) : "");
+      } catch (error) {
+        console.log(reader, label, turn, "threw", (error as Error).name + ":", (error as Error).message);
+      }
+    }
+  }
+}
+//// bodies-parsed-into-declared-types.ts
+// Whatever object type `await request.json()` goes to, a body that holds an object, an array or null gives what json() gives, whatever its members are, and a body that is no JSON gives the error of json(). So does a body that starts with a byte order mark (rows 20, 22 and 23). A body that holds a number or a string gives that number or string.
+interface Order {
+  customer: { id: number; name: string };
+  items: { sku: string; quantity: number }[];
+  coupon?: string;
+}
+
+function describe(value: unknown): string {
+  if (typeof value !== "object" || value === null) return typeof value + " " + String(value);
+  return JSON.stringify(value) + " " + Reflect.ownKeys(value).map(String).join() + " " + (Object.getPrototypeOf(value) === (Array.isArray(value) ? Array.prototype : Object.prototype));
+}
+
+function failure(error: unknown): string {
+  return error instanceof TypeError ? "TypeError" : (error as Error).name + ": " + (error as Error).message;
+}
+
+////= lines-21	ofRequest	request	Request
+////= lines-21	ofResponse	response	Response
+////= lines-21	ofBlob	blob	Blob
+async function annotated(request: Request): Promise<unknown> {
+  const order: Order = await request.json();
+  return order;
+}
+async function untyped(request: Request): Promise<unknown> {
+  return await request.json();
+}
+async function notAwaited(request: Request): Promise<unknown> {
+  const pending = request.json() as Promise<Order>;
+  return await pending;
+}
+
+const encoder = new TextEncoder();
+type Body = string | Uint8Array<ArrayBuffer>;
+const bodies: Body[] = [
+  '{"customer":{"id":1,"name":"n"},"items":[{"sku":"a","quantity":2}],"coupon":"c"}',
+  '{"customer":{"id":1,"name":"n"},"items":[]}',
+  '{"customer":{"id":1,"name":"Zoë 中文 😀"},"items":[{"sku":"\\u0041\\n","quantity":-0}]}',
+  '{ "customer": { "id": 1, "name": "n" }, "items": [ { "sku": "a", "quantity": 2 } ] }',
+  '{"items":[],"customer":{"name":"n","id":1}}',
+  '{"customer":{"id":1,"name":"n","more":true},"items":[],"__proto__":{"x":1},"0":0}',
+  '{"customer":{"id":"1","name":2},"items":{"length":0}}',
+  '{"customer":null,"items":null}',
+  '{"customer":{"id":1,"name":"n"},"customer":5,"items":[]}',
+  "{}",
+  "[]",
+  "null",
+  "5",
+  '"text"',
+  "",
+  " ",
+  "{",
+  '{"customer":{"id":1,"name":"n"},"items":[]',
+  '{"customer":{"id":1,"name":"n"},"items":[]}x',
+  '{"customer":{"id":01,"name":"n"},"items":[]}',
+  "﻿{}",
+  new Uint8Array([]),
+  new Uint8Array([0xef, 0xbb, 0xbf]),
+  new Uint8Array([0xef, 0xbb, 0xbf, ...encoder.encode('{"customer":{"id":1,"name":"n"},"items":[]}')]),
+  new Uint8Array([...encoder.encode('{"customer":{"id":1,"name":"'), 0xff, 0xc3, 0x28, ...encoder.encode('"},"items":[]}')]),
+  new Uint8Array([0x31, 0x00]),
+];
+
+const readers: [string, (body: Body) => Promise<unknown>][] = [
+  ["request", body => ofRequest(new Request("http://localhost/", { method: "POST", body }))],
+  ["response", body => ofResponse(new Response(body))],
+  ["blob", body => ofBlob(new Blob([body]))],
+  ["annotated", body => annotated(new Request("http://localhost/", { method: "POST", body }))],
+  ["untyped", body => untyped(new Request("http://localhost/", { method: "POST", body }))],
+  ["not awaited", body => notAwaited(new Request("http://localhost/", { method: "POST", body }))],
+];
+for (const [name, read] of readers) {
+  for (let at = 0; at < bodies.length; at++) {
+    try {
+      console.log(name, at, describe(await read(bodies[at]!)));
+    } catch (error) {
+      console.log(name, at, "threw", failure(error));
+    }
+  }
+}
+
+class Overriding extends Request {
+  override json(): Promise<any> {
+    return Promise.resolve({ overridden: true });
+  }
+}
+class Inheriting extends Request {}
+const withOwnProperty = new Request("http://localhost/", { method: "POST", body: "{}" });
+(withOwnProperty as any).json = () => Promise.resolve("own property");
+const lookalike = { json: () => Promise.resolve("no request at all"), bytes: () => Promise.reject(new Error("bytes() was called")) };
+const used = new Request("http://localhost/", { method: "POST", body: "{}" });
+await used.text();
+const others: [string, unknown][] = [
+  ["a subclass that overrides json", new Overriding("http://localhost/", { method: "POST", body: "{}" })],
+  ["a subclass that inherits json", new Inheriting("http://localhost/", { method: "POST", body: '{"customer":{"id":1,"name":"n"},"items":[]}' })],
+  ["an own property", withOwnProperty],
+  ["another object", lookalike],
+  ["a body already used", used],
+  ["without a body", new Request("http://localhost/")],
+];
+for (const [name, value] of others) {
+  try {
+    console.log(name + ":", describe(await ofRequest(value as Request)));
+  } catch (error) {
+    console.log(name + ": threw", failure(error));
+  }
+}
+
+const twice = new Request("http://localhost/", { method: "POST", body: "{}" });
+console.log(twice.bodyUsed, describe(await ofRequest(twice)), twice.bodyUsed);
+try {
+  await ofRequest(twice);
+} catch (error) {
+  console.log("threw", failure(error));
+}
+
+const order: string[] = [];
+const first = ofRequest(new Request("http://localhost/", { method: "POST", body: '{"customer":{"id":1,"name":"n"},"items":[]}' })).then(() => order.push("typed"));
+const second = untyped(new Request("http://localhost/", { method: "POST", body: '{"customer":{"id":1,"name":"n"},"items":[]}' })).then(() => order.push("untyped"));
+Promise.resolve().then(() => order.push("one tick"));
+await Promise.all([first, second]);
+console.log(order.join());
+//// byte-order-marks-in-bodies-parsed-into-declared-types.ts
+// `await body.json()` that goes to a declared type, on bodies that start with a byte order mark. What json() does with a mark depends on what holds the body: a Blob splits off a UTF-8 or a UTF-16 mark and rejects a body that has nothing else, bytes lose a UTF-8 mark only, and a string keeps its first character. The declared type changes none of that.
+interface Order {
+  id: number;
+}
+
+////= lines-21	ofRequest	request	Request
+////= lines-21	ofResponse	response	Response
+////= lines-21	ofBlob	blob	Blob
+
+type Body = string | Uint8Array<ArrayBuffer>;
+const bodies: [string, Body][] = [
+  ["a UTF-8 mark alone", new Uint8Array([0xef, 0xbb, 0xbf])],
+  ["a UTF-8 mark and an object", new Uint8Array([0xef, 0xbb, 0xbf, 0x7b, 0x7d])],
+  ["a UTF-16 mark and half a unit", new Uint8Array([0xff, 0xfe, 0x7b])],
+  ["a UTF-16 mark and an object", new Uint8Array([0xff, 0xfe, 0x7b, 0x00, 0x7d, 0x00])],
+  ["a string of a mark alone", "﻿"],
+  ["a string of a mark and an object", "﻿{}"],
+];
+
+const readers: [string, (body: Body) => Promise<unknown>][] = [
+  ["request", body => ofRequest(new Request("http://localhost/", { method: "POST", body }))],
+  ["response", body => ofResponse(new Response(body))],
+  ["response over a blob", body => ofResponse(new Response(new Blob([body])))],
+  ["blob", body => ofBlob(new Blob([body]))],
+];
+for (const [reader, read] of readers) {
+  for (const [name, body] of bodies) {
+    try {
+      console.log(reader + ", " + name + ":", JSON.stringify(await read(body)));
+    } catch (error) {
+      console.log(reader + ", " + name + ": threw", (error as Error).name + ":", (error as Error).message);
+    }
+  }
+}
+//// bytes-are-set-and-ranges-taken-with-every-kind-of-receiver-source-and-position.js
+// view.set(source, offset) and view.subarray(begin, end) with every kind of receiver, source and position.
+const show = value => value instanceof Error ? "throws " + value.name : ArrayBuffer.isView(value) ? value.constructor.name + "@" + value.byteOffset + "[" + Array.from(value).join() + "]" : String(value);
+const attempt = f => { try { return show(f()); } catch (error) { return show(error); } };
+const bytes = (...list) => Uint8Array.from(list);
+class Below extends Uint8Array {}
+class Other extends Uint8Array { static get [Symbol.species]() { return Uint16Array; } }
+function detached() { const view = new Uint8Array(8); structuredClone(view.buffer, { transfer: [view.buffer] }); return view; }
+function resizable(length, most) { return new Uint8Array(new ArrayBuffer(length, { maxByteLength: most })); }
+function tracking() { const buffer = new ArrayBuffer(8, { maxByteLength: 16 }); const view = new Uint8Array(buffer, 2); buffer.resize(1); return view; }
+const receivers = [() => new Uint8Array(8), () => new Uint8Array(2000), () => new Uint8Array(new ArrayBuffer(16), 4, 8), () => new Uint8Array(0), () => Buffer.alloc(8), () => new Below(8), () => new Other(8), () => new Uint8ClampedArray(8), () => new Int8Array(8), () => new Uint16Array(8), () => new Float64Array(4), () => new BigInt64Array(4), detached, () => resizable(8, 16), tracking, () => new Uint8Array(new SharedArrayBuffer(8)), () => Object.assign(new Uint8Array(8), { extra: 1 }), () => Object.setPrototypeOf(new Uint8Array(8), Uint16Array.prototype), () => new DataView(new ArrayBuffer(8)), () => [1, 2, 3], () => ({ length: 2 }), () => "text", () => 5, () => null, () => undefined];
+const sources = [() => bytes(1, 2, 3), () => bytes(), () => bytes(1, 2, 3, 4, 5, 6, 7, 8), () => bytes(1, 2, 3, 4, 5, 6, 7, 8, 9), () => Buffer.from("ab"), () => new Below(2).fill(7), () => Uint8ClampedArray.from([9, 8]), () => Int8Array.from([-1, -2]), () => Uint16Array.from([257, 2]), () => Float64Array.from([1.9, -1]), () => BigInt64Array.from([1n]), detached, () => resizable(2, 4).fill(3), tracking, () => [4, 5], () => [4, , 6], () => ({ length: 2, 0: 7, 1: 8 }), () => "12", () => 5, () => null, () => undefined, () => new Set([1])];
+const positions = [undefined, 0, 1, 5, 6, 7, 8, 9, -1, -0, 1.5, 2 ** 31, 2 ** 32, NaN, Infinity, -Infinity, "2", null, true, { valueOf() { return 3; } }, 1n, Symbol.iterator];
+function setAt(target, source, offset) { const answer = target.set(source, offset); return answer === undefined ? target : answer; }
+function setAtStart(target, source) { const answer = target.set(source); return answer === undefined ? target : answer; }
+function borrowedSet(target, source, offset) { Uint8Array.prototype.set.call(target, source, offset); return target; }
+function range(view, begin, end) { const part = view.subarray(begin, end); return part; }
+function rest(view, begin) { const part = view.subarray(begin); return part; }
+function whole(view) { const part = view.subarray(); return part; }
+function borrowedRange(view, begin, end) { const part = Uint8Array.prototype.subarray.call(view, begin, end); return part; }
+const fill = view => { if (ArrayBuffer.isView(view) && !(view instanceof DataView) && !(view instanceof BigInt64Array)) for (let i = 0; i < Math.min(view.length, 12); i++) view[i] = i + 1; return view; };
+let lines = [];
+for (let round = 0; round < 3; round++) {
+  lines = [];
+  receivers.forEach((receiver, r) => {
+    const short = view => ArrayBuffer.isView(view) && view.length > 12 ? view.subarray(0, 12) : view;
+    sources.forEach((source, s) => lines.push("set " + r + " " + s + ": " + [0, 1, 6].map(at => attempt(() => short(setAt(receiver(), source(), at)))).join(" ") + " " + attempt(() => short(setAtStart(receiver(), source()))) + " " + attempt(() => short(borrowedSet(receiver(), source(), 2)))));
+    lines.push("set at " + r + ": " + positions.map(at => attempt(() => short(setAt(receiver(), bytes(1, 2), at)))).join(" "));
+    lines.push("range " + r + ": " + positions.map(begin => attempt(() => short(rest(fill(receiver()), begin))) + "|" + attempt(() => short(range(fill(receiver()), 1, begin))) + "|" + attempt(() => short(range(fill(receiver()), begin, -1)))).join(" "));
+    lines.push("whole " + r + ": " + attempt(() => short(whole(fill(receiver())))) + " " + attempt(() => short(borrowedRange(fill(receiver()), 2, 5))));
+  });
+}
+console.log(lines.join("\n"));
+const shared = new Uint8Array(8).fill(1); const part = rest(shared, 4); part[0] = 9; console.log(show(shared), part.buffer === shared.buffer, part.byteOffset, part.byteLength, Object.getPrototypeOf(part) === Uint8Array.prototype);
+const overlapping = bytes(1, 2, 3, 4, 5, 6, 7, 8); setAt(overlapping, range(overlapping, 0, 6), 2); console.log(show(overlapping)); setAt(overlapping, range(overlapping, 2, 8), 0); console.log(show(overlapping));
+const shrinks = resizable(8, 16); console.log(attempt(() => setAt(shrinks, bytes(1), { valueOf() { shrinks.buffer.resize(0); return 0; } })), attempt(() => range(resizable(8, 16), { valueOf() { return 1; } }, 4)));
+for (const [name, change] of [["constructor", () => { Object.defineProperty(Uint8Array.prototype, "constructor", { value: Uint16Array, configurable: true }); }], ["species", () => { Object.defineProperty(Uint8Array, Symbol.species, { value: Uint16Array, configurable: true }); }], ["own constructor", () => 0]]) {
+  let said; try { change(); said = "changed"; } catch (error) { said = "refused " + error.name; }
+  const own = new Uint8Array(8); if (name === "own constructor") own.constructor = Uint16Array;
+  console.log(name, said, attempt(() => range(fill(own), 2, 6)));
+}
+//// crypto-subtle-is-put-on-its-prototype-late.ts
+// Native code puts `subtle` on Crypto.prototype at the first read of the global `crypto`, after the prototype object was made. The program names the member, so the build counts on it, and it is there all the same: an accessor that answers the one SubtleCrypto.
+const prototype = Object.getPrototypeOf(crypto);
+const descriptor = Object.getOwnPropertyDescriptor(prototype, "subtle")!;
+console.log(typeof crypto.subtle, String(crypto.subtle), crypto.subtle === crypto.subtle, crypto.subtle instanceof SubtleCrypto);
+console.log(Object.keys(prototype).join(), "subtle" in crypto, Object.hasOwn(crypto, "subtle"), typeof descriptor.get, descriptor.enumerable, descriptor.configurable);
+const digest = await crypto.subtle.digest("SHA-256", new Uint8Array([1, 2, 3]));
+console.log(digest.byteLength, Buffer.from(digest).toString("hex").slice(0, 16));
+//// empty-bodies-parsed-into-declared-types.ts
+// `await body.json()` that goes to a declared type, on a body without bytes. The error is the one json() rejects with, which is not the error of JSON.parse(""). Bodies that are blank, or hold a byte order mark or a part of one, stand beside it.
+// TODO: the build counts 0: STATISTIC: ParsersCreated >= 1
+interface Order {
+  id: number;
+  items: string[];
+}
+
+////= lines-21	ofRequest	request	Request
+////= lines-21	ofResponse	response	Response
+////= lines-21	ofBlob	blob	Blob
+async function untyped(response: Response): Promise<unknown> {
+  return await response.json();
+}
+
+type Body = string | Uint8Array<ArrayBuffer>;
+const bodies: [string, Body][] = [
+  ["no text", ""],
+  ["no bytes", new Uint8Array([])],
+  ["a UTF-8 mark and a blank", new Uint8Array([0xef, 0xbb, 0xbf, 0x20])],
+  ["a UTF-8 mark and an object", new Uint8Array([0xef, 0xbb, 0xbf, 0x7b, 0x7d])],
+  ["two bytes of a UTF-8 mark", new Uint8Array([0xef, 0xbb])],
+  ["a blank", " "],
+  ["a line break", "\n"],
+  ["a UTF-16 mark alone", new Uint8Array([0xff, 0xfe])],
+  ["an object", '{"id":1,"items":["a"]}'],
+  ["null", "null"],
+];
+
+const readers: [string, (body: Body) => Promise<unknown>][] = [
+  ["request", body => ofRequest(new Request("http://localhost/", { method: "POST", body }))],
+  ["response", body => ofResponse(new Response(body))],
+  ["blob", body => ofBlob(new Blob([body]))],
+  ["untyped", body => untyped(new Response(body))],
+];
+for (const [reader, read] of readers) {
+  for (const [name, body] of bodies) {
+    try {
+      console.log(reader + ", " + name + ":", JSON.stringify(await read(body)));
+    } catch (error) {
+      console.log(reader + ", " + name + ": threw", (error as Error).name + ":", (error as Error).message, error instanceof SyntaxError);
+    }
+  }
+}
+
+try {
+  await ofRequest(new Request("http://localhost/"));
+} catch (error) {
+  console.log("a request without a body: threw", (error as Error).name + ":", (error as Error).message);
+}
+//// escape-html-through-a-constant.ts
+// `const escape = Bun.escapeHTML`: calls through the constant, through a variable that changes, through a property and of another function give what plain Bun gives for every kind of string, for null, undefined and numbers, and after `Bun.escapeHTML` is replaced.
+const escape = Bun.escapeHTML;
+let changing: (text: string) => string = Bun.escapeHTML;
+const other = (text: string) => `(${text})`;
+const another = [other, Bun.escapeHTML][0];
+const holder = { escape: Bun.escapeHTML };
+
+function title(text: string): string {
+  return `<h1>${escape(text)}</h1>`;
+}
+function link(address: string, text: string): string {
+  return `<a href="${escape(address)}">${escape(text)}</a>`;
+}
+function orNothing(text: string | null | undefined): string {
+  return escape(text as string);
+}
+function ofAnything(value: unknown): string {
+  return escape(value as any);
+}
+function ofANumber(value: number): string {
+  return escape(value);
+}
+function throughAVariable(text: string): string {
+  return changing(text);
+}
+function throughAnother(text: string): string {
+  return another(text);
+}
+function asAMethod(text: string): string {
+  return holder.escape(text);
+}
+
+const filler = "0123456789abcdef".repeat(5);
+const texts: string[] = [
+  "",
+  "a",
+  "plain",
+  "&",
+  "<>\"'&",
+  "a<b",
+  "tail>",
+  "<head",
+  filler,
+  filler + "<",
+  "<" + filler,
+  filler + "&" + filler,
+  filler.slice(0, 15) + "'",
+  filler.slice(0, 16) + "\"",
+  filler.slice(0, 17) + ">",
+  "café & crème",
+  "ÿþ<ý",
+  "東京",
+  "東京 <b>大阪</b> & 😀",
+  "lone \ud83d & \ude00 halves",
+  "\u0000<\u0001",
+];
+for (const text of texts) {
+  console.log(JSON.stringify([title(text), link(text, text), orNothing(text), ofAnything(text), throughAVariable(text), throughAnother(text), asAMethod(text)]));
+  const rope = text + "|" + text;
+  console.log(JSON.stringify([title(rope), title(rope.slice(1)), title((filler + text).slice(3, -1)), rope]));
+}
+console.log(JSON.stringify([orNothing(null), orNothing(undefined), ofANumber(1.5), ofANumber(-0), ofANumber(NaN)]));
+for (const value of [null, undefined, true, 12, 12n, { toString: () => "<object>" }, ["<", ">"]]) {
+  try {
+    console.log(JSON.stringify(ofAnything(value)));
+  } catch (error) {
+    console.log((error as Error).constructor.name);
+  }
+}
+for (const value of [Symbol("s"), { toString: () => { throw new RangeError("no text"); } }]) {
+  try {
+    console.log(ofAnything(value));
+  } catch (error) {
+    console.log((error as Error).constructor.name, (error as Error).message);
+  }
+}
+changing = other;
+console.log(throughAVariable("<changed>"));
+const original = Bun.escapeHTML;
+(Bun as unknown as { escapeHTML: unknown }).escapeHTML = other;
+console.log(title("<kept>"), Bun.escapeHTML("<replaced>"));
+(Bun as unknown as { escapeHTML: unknown }).escapeHTML = original;
+let length = 0;
+for (let round = 0; round < 20000; round++) {
+  length += title("round " + round + (round % 3 ? "" : " <&> ") + (round % 7 ? "" : "東")).length;
+  if (round % 5000 === 0) Bun.gc(true);
+}
+console.log(length);
+//// every-member-of-a-file.ts
+// Every member of what Bun.file() answers, on a file that is there and on one that is not.
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const folder = join(tmpdir(), `every-member-of-a-file-${process.pid}`);
+const path = join(folder, "a.json");
+await Bun.write(path, '{"a":[1,2]}');
+const file = Bun.file(path);
+const missing = Bun.file(join(folder, "none", "b.txt"));
+const codeOf = (error: any) => `${error?.name} ${error?.code}`;
+
+console.log(file.size, file.type, file.name === path, typeof file.lastModified, missing.size, missing.type, typeof missing.lastModified);
+console.log(JSON.stringify(await file.json()), (await file.json()).a[1]);
+console.log((await file.arrayBuffer()).byteLength, (await file.bytes())[0], await file.text());
+console.log((await file.stat()).size, await missing.stat().catch(codeOf));
+let length = 0;
+for await (const chunk of file.stream()) length += chunk.length;
+console.log(length);
+try {
+  for await (const chunk of missing.stream()) length += chunk.length;
+} catch (error) {
+  console.log(codeOf(error));
+}
+console.log(await file.slice(1, 4).text(), file.slice(1, 4).size, file.slice(0, 2, "text/plain").type);
+const writer = Bun.file(join(folder, "c.txt")).writer();
+writer.write("ab");
+writer.write("cd");
+console.log(await writer.end(), await Bun.file(join(folder, "c.txt")).text());
+console.log(await Bun.file(join(folder, "d.txt")).write("xyz"), await Bun.file(join(folder, "d.txt")).text());
+console.log(await missing.write("x", { createPath: false } as any).catch(codeOf));
+console.log(await new Response(file).text(), new Response(file).headers.get("content-type"));
+console.log(await Bun.file(join(folder, "bad.json")).json().catch(codeOf));
+await Bun.write(join(folder, "bad.json"), "{");
+console.log(await Bun.file(join(folder, "bad.json")).json().catch(codeOf));
+console.log(await file.formData().catch(codeOf));
+console.log(await file.exists(), await missing.exists());
+console.log(await Bun.file(join(folder, "d.txt")).unlink(), await Bun.file(join(folder, "d.txt")).exists(), await missing.unlink().catch(codeOf));
+console.log(Object.prototype.toString.call(file), file instanceof Blob, String(file), Object.keys(file).length);
+for (const name of ["a.json", "bad.json", "c.txt"]) await Bun.file(join(folder, name)).delete();
+//// every-member-of-a-served-request.ts
+// Every member of the request that Bun.serve hands to a handler, read in the handler.
+const codeOf = (error: any) => `${error?.name}`;
+const server = Bun.serve({
+  port: 0,
+  routes: {
+    "/routed/:id": async request => Response.json({ id: request.params.id, keys: Object.keys(request.params), cookie: request.cookies.get("a") ?? null, tag: Object.prototype.toString.call(request) }),
+  },
+  async fetch(request, server) {
+    const url = new URL(request.url);
+    switch (url.pathname) {
+      case "/plain":
+        return Response.json({ method: request.method, accept: request.headers.get("accept"), has: request.headers.has("x-a"), mode: request.mode, redirect: request.redirect, cache: request.cache, used: request.bodyUsed, body: request.body === null, keepalive: request.keepalive, tag: Object.prototype.toString.call(request), aborted: request.signal.aborted, ip: typeof server.requestIP(request)?.address });
+      case "/text":
+        return new Response((await request.text()) + request.bodyUsed);
+      case "/json":
+        return Response.json(await request.json().catch(codeOf));
+      case "/bytes":
+        return new Response(String((await request.bytes()).length));
+      case "/buffer":
+        return new Response(String((await request.arrayBuffer()).byteLength));
+      case "/blob":
+        return new Response(String((await request.blob()).size));
+      case "/form":
+        return new Response(String((await request.formData().then(form => form.get("a"), codeOf))));
+      case "/twice":
+        await request.text();
+        return new Response(await request.text().catch(codeOf));
+      case "/clone":
+        return new Response((await request.clone().text()) + (await request.text()));
+      case "/headers":
+        return Response.json([...request.headers].filter(([name]) => name.startsWith("x-")));
+      case "/stream": {
+        let length = 0;
+        for await (const chunk of request.body!) length += chunk.length;
+        return new Response(String(length));
+      }
+    }
+    return new Response("none", { status: 404 });
+  },
+});
+async function show(path: string, init?: RequestInit) {
+  const response = await fetch(new URL(path, server.url), init);
+  console.log(path, response.status, await response.text());
+}
+await show("/plain", { headers: { accept: "text/a", "x-a": "1" } });
+await show("/text", { method: "POST", body: "abc" });
+await show("/json", { method: "POST", body: '{"a":[1]}' });
+await show("/json", { method: "POST", body: "{" });
+await show("/bytes", { method: "POST", body: "abc" });
+await show("/buffer", { method: "POST", body: "abcd" });
+await show("/blob", { method: "POST", body: "abcde" });
+await show("/form", { method: "POST", body: new URLSearchParams({ a: "b" }) });
+await show("/form", { method: "POST", body: "x", headers: { "content-type": "text/plain" } });
+await show("/twice", { method: "POST", body: "abc" });
+await show("/clone", { method: "POST", body: "abc" });
+await show("/headers", { headers: { "x-b": "2", "x-a": "1" } });
+await show("/stream", { method: "POST", body: "abcdef" });
+await show("/routed/7", { headers: { cookie: "a=b" } });
+await show("/none");
+server.stop(true);
+//// feature-tests-of-url-classes.js
+// Feature tests that a polyfill (core-js) runs on URL and URLSearchParams when it loads. A test that fails makes the library replace the class or a member of URLSearchParams.prototype, which is locked. Each answers as in plain Bun.
+function attempt(label, run) {
+  try { console.log(label + ": " + String(run())); } catch (error) { console.log(label + ": " + error.constructor.name); }
+}
+
+attempt("parameters deleted while forEach runs", () => {
+  const url = new URL("b?a=1&b=2&c=3", "https://a");
+  const params = url.searchParams;
+  let result = "";
+  url.pathname = "c%20d";
+  params.forEach((value, key) => { params.delete("b"); result += key + value; });
+  return [result, url.href, params.get("c"), params.size, typeof params.sort, typeof params[Symbol.iterator], typeof url.toJSON].join();
+});
+attempt("delete with a value", () => {
+  const params = new URLSearchParams("a=1&a=2&b=3");
+  params.delete("a", 2);
+  params.delete("b", undefined);
+  return [String(params), params.has("a", 1), params.has("a", 2), params.has("a", undefined), params.has("b")].join();
+});
+attempt("delete with the other value", () => { const params = new URLSearchParams("a=1&a=2&b=3"); params.delete("a", 1); params.delete("b", undefined); return params + ""; });
+attempt("has with a value", () => { const params = new URLSearchParams("a=1"); return [params.has("a", 2), params.has("a", undefined), params.has("a", 1), params.has("a")].join(); });
+attempt("size", () => ["size" in URLSearchParams.prototype, new URLSearchParams("a=1&a=2&b=3").size, typeof Object.getOwnPropertyDescriptor(URLSearchParams.prototype, "size").get].join());
+attempt("texts", () => [
+  String(new URLSearchParams("?a=1")), new URL("https://a@b").username, new URLSearchParams(new URLSearchParams("a=b")).get("a"),
+  new URL("https://тест").host, new URL("https://a#б").hash, new URL("https://x", undefined).host,
+].join());
+attempt("parse and canParse", () => [typeof URL.parse, typeof URL.canParse, URL.canParse("https://a"), URL.canParse("a"), URL.canParse("a", "https://b"), URL.parse("a") === null, URL.canParse.length, URL.parse.length].join());
+attempt("canParse without an argument", () => URL.canParse());
+attempt("toJSON", () => new URL("https://a/b?c#d").toJSON());
+attempt("members borrowed", () => {
+  const forEach = Function.prototype.call.bind(URLSearchParams.prototype.forEach);
+  const getAll = Function.prototype.call.bind(URLSearchParams.prototype.getAll);
+  const seen = [];
+  forEach(new URLSearchParams("a=1&b=2"), (value, key) => seen.push(key + value));
+  return [seen.join("+"), getAll(new URLSearchParams("a=1&a=2"), "a").join("+")].join();
+});
+attempt("members borrowed for what is no URLSearchParams", () => URLSearchParams.prototype.forEach.call({}, () => {}));
+//// fields-of-classes-that-extend-host-classes.ts
+// Class fields on instances of classes that extend host classes: defined, not assigned, whatever the host object is.
+const log: string[] = [];
+const say = (...parts: unknown[]) => log.push(parts.map(String).join(" "));
+const describe = (object: object, key: PropertyKey) => JSON.stringify(Object.getOwnPropertyDescriptor(object, key));
+
+class LazyPromise<T> extends Promise<T> {
+  started = false;
+  label = "lazy";
+  count = 0;
+  extra: unknown = null;
+  fifth = 5;
+}
+class CountedMap extends Map<string, number> {
+  reads = 0;
+  writes = 0;
+}
+class TaggedSet extends Set<number> {
+  tag = "set";
+}
+////= lines-15	Stamp	Date	note	"stamp"
+class Rows extends Array<number> {
+  command = "SELECT";
+  count = 0;
+}
+class Failure extends Error {
+  status = 500;
+  message = "replaced";
+  stack = "no stack";
+}
+////= lines-15	Pattern	RegExp	uses	0
+////= lines-15	PatternWithIndex	RegExp	lastIndex	7
+class RowsWithLength extends Array<number> {
+  length = 2;
+}
+////= lines-15	Bytes	Uint8Array	origin	"bytes"
+class Weak extends WeakMap<object, number> {
+  name = "weak";
+}
+////= lines-15	Text	String	kind	"text"
+////= lines-15	Buffered	ArrayBuffer	owner	"me"
+
+function basics(): void {
+  const promise = new LazyPromise<number>(() => {});
+  say(Object.keys(promise).join(), describe(promise, "started"), promise.fifth);
+  const map = new CountedMap([["a", 1]]);
+  say(Object.keys(map).join(), map.size, describe(map, "writes"));
+  say(Object.keys(new TaggedSet([1])).join(), Object.keys(new Stamp(0)).join(), new Stamp(0).getTime());
+  const rows = new Rows(1, 2, 3);
+  say(Object.keys(rows).join(), rows.length, describe(rows, "command"));
+  const failure = new Failure("original");
+  say(Object.keys(failure).join(), failure.message, failure.stack, describe(failure, "message"));
+  const pattern = new Pattern("a", "g");
+  say(Object.keys(pattern).join(), pattern.lastIndex, describe(pattern, "lastIndex"));
+  for (const make of [() => new PatternWithIndex("a"), () => new RowsWithLength(1, 2, 3)]) {
+    try {
+      say(Object.keys(make()).join());
+    } catch (error) {
+      say((error as Error).constructor.name);
+    }
+  }
+  say(Object.keys(new Bytes(2)).join(), Object.keys(new Weak()).join(), Object.keys(new Text("ab")).join(), Object.keys(new Buffered(1)).join());
+}
+
+function definedNotAssigned(): void {
+  class Base extends Map<string, number> {
+    set watched(value: number) {
+      say("the setter ran", value);
+    }
+    get watched(): number {
+      return -1;
+    }
+  }
+  class Derived extends Base {
+    // @ts-expect-error a field over an accessor
+    watched = 3;
+  }
+  const derived = new Derived();
+  say(derived.watched, describe(derived, "watched"));
+}
+
+function refusals(): void {
+  function returns(object: object) {
+    return function () {
+      return object;
+    } as unknown as new () => object;
+  }
+  const attempt = (name: string, object: object) => {
+    class Stamped extends returns(object) {
+      field = 1;
+    }
+    try {
+      new Stamped();
+      say(name, describe(object, "field"));
+    } catch (error) {
+      say(name, (error as Error).constructor.name);
+    }
+  };
+  attempt("a frozen map", Object.freeze(new Map()));
+  attempt("a sealed promise", Object.seal(Promise.resolve()));
+  attempt("a set that cannot grow", Object.preventExtensions(new Set()));
+  attempt("a fixed property", Object.defineProperty(new Map(), "field", { value: 0, configurable: false, writable: false }));
+  attempt("a fixed writable property", Object.defineProperty(new Map(), "field", { value: 0, configurable: false, writable: true, enumerable: true }));
+  attempt("a hidden property", Object.defineProperty(new Map(), "field", { value: 0, configurable: true, writable: false, enumerable: false }));
+  attempt("an accessor", Object.defineProperty(new Date(0), "field", { get: () => 9, configurable: true }));
+  const traps: string[] = [];
+  attempt("a proxy", new Proxy(new Map(), { defineProperty(target, key, descriptor) { traps.push(String(key) + JSON.stringify(descriptor)); return Reflect.defineProperty(target, key, descriptor); } }));
+  say(traps.join());
+  attempt("a refusing proxy", new Proxy(new Map(), { defineProperty: () => false }));
+}
+
+function manyShapes(): void {
+  let total = 0;
+  for (let turn = 0; turn < 3000; turn++) {
+    const promise = new LazyPromise<number>(() => {});
+    const map = new CountedMap();
+    if (turn % 1000 === 999) (map as unknown as Record<string, number>).late = turn;
+    map.reads += turn;
+    promise.count += map.reads;
+    total += promise.count + promise.fifth + Object.keys(map).length;
+  }
+  say(total);
+  class Child extends LazyPromise<void> {
+    sixth = 6;
+    seventh = 7;
+    eighth = 8;
+    ninth = 9;
+  }
+  const child = new Child(() => {});
+  say(Object.keys(child).join(), child.ninth);
+  const asPrototype = new CountedMap();
+  const heir: { reads: number } = Object.create(asPrototype);
+  say(heir.reads, Object.keys(new CountedMap()).join());
+}
+
+basics();
+definedNotAssigned();
+refusals();
+manyShapes();
+console.log(log.join("\n"));
+//// fields-of-host-class-subclasses.ts
+// Subclasses of EventTarget, Event, EventEmitter, URL, Response and DOMException with fields, methods, getters and a private field: the host creates the object, the fields are ordinary properties.
+import { EventEmitter } from "node:events";
+const print = (value: unknown): void => console.log(String(value));
+const gc = (): void => Bun.gc(true);
+class Hub extends EventTarget {
+  count = 0;
+  name: string;
+  #seen = 0;
+  constructor(name: string) { super(); this.name = name; }
+  fire(kind: string) { this.count++; return this.dispatchEvent(new Ping(kind, this.count)); }
+  saw() { return ++this.#seen; }
+}
+class Ping extends Event {
+  n: number;
+  constructor(kind: string, n: number) { super(kind); this.n = n; }
+  twice() { return this.n * 2; }
+}
+const h = new Hub("hub");
+h.addEventListener("a", (e) => { print((e as Ping).n + ":" + (e as Ping).twice() + ":" + e.type + ":" + (e instanceof Ping)); h.saw(); });
+print(h.fire("a"));
+print(h.fire("a"));
+print(h.count);
+print(h.name);
+print(h.saw());
+print(h instanceof Hub);
+print(h instanceof EventTarget);
+print(Object.keys(h).join(","));
+class Bus extends EventEmitter {
+  sent = 0;
+  send(v: number) { this.sent++; return this.emit("v", v); }
+}
+const b = new Bus();
+b.on("v", (v: number) => print("got " + v));
+print(b.send(3));
+print(b.sent);
+print(b instanceof EventEmitter);
+class Link extends URL {
+  tag = "t";
+  get both() { return this.tag + this.host; }
+}
+const u = new Link("https://example.com/x");
+print(u.both);
+print(u.pathname);
+print(u instanceof URL);
+////= lines-15	Reply	Response	note	"n"
+const r = new Reply("body", { status: 201 });
+print(r.status);
+print(r.note);
+print(await r.text());
+////= lines-15	AbortedError	DOMException	extra	5
+const ae = new AbortedError("gone", "AbortError");
+print(ae.name);
+print(ae.message);
+print(ae.extra);
+print(ae instanceof Error);
+const all: Hub[] = [];
+for (let i = 0; i < 2000; i++) all.push(new Hub("h" + i));
+gc();
+let sum = 0;
+for (let i = 0; i < all.length; i++) sum += all[i].name.length + all[i].count + all[i].saw();
+print(sum);
+//// for-of-over-host-iterators-untyped.js
+// `for..of` where the iterator's `next`, or the iterable's `[Symbol.iterator]`, is a function of the host or of the engine and not compiled code.
+const lines = [];
+function say(label, work) {
+  let text;
+  try {
+    text = JSON.stringify(work());
+  } catch (error) {
+    text = "throws " + error.constructor.name;
+  }
+  lines.push(label + ": " + text);
+}
+function collect(iterable) {
+  const seen = [];
+  for (const item of iterable) seen.push(item);
+  return seen;
+}
+function collectPairs(iterable) {
+  const seen = [];
+  for (const [key, value] of iterable) seen.push(key + "=" + value);
+  return seen;
+}
+function firstOf(iterable) {
+  for (const item of iterable) return item;
+  return "none";
+}
+
+const query = () => new URLSearchParams("a=1&b=two&a=3&c=%20x");
+for (let turn = 0; turn < 3; turn++) {
+  say("search parameters " + turn, () => collect(query()));
+  say("entries " + turn, () => collectPairs(query().entries()));
+  say("keys " + turn, () => collect(query().keys()));
+  say("values " + turn, () => collect(query().values()));
+  say("no entries " + turn, () => [collect(new URLSearchParams("")), collectPairs(new URLSearchParams().entries())]);
+  say("headers " + turn, () => collectPairs(new Headers({ "X-B": "2", "x-a": "1", accept: "*/*" })));
+  say("the keys of headers " + turn, () => collect(new Headers([["b", "1"], ["a", "2"]]).keys()));
+  say("a form " + turn, () => { const form = new FormData(); form.append("name", "value"); form.append("other", String(turn)); return collectPairs(form); });
+  say("left early " + turn, () => [firstOf(query()), firstOf(query().keys()), firstOf(new URLSearchParams())]);
+}
+say("one iterator in two loops", () => { const entries = query().entries(); return [firstOf(entries), collect(entries), collect(entries)]; });
+say("appended to while it is walked", () => { const q = new URLSearchParams("a=1"); const seen = []; for (const [key] of q) { seen.push(key); if (seen.length < 4) q.append(key + "x", "1"); } return seen; });
+say("deleted from while it is walked", () => { const q = query(); const seen = []; for (const [key] of q) { seen.push(key); q.delete("b"); } return seen; });
+say("loops inside loops", () => { const seen = []; for (const [a] of query()) for (const b of new URLSearchParams("x=1&y=2").keys()) seen.push(a + b); return seen; });
+say("a throw in the body", () => { const entries = query().entries(); try { for (const pair of entries) throw new Error(pair[0]); } catch (error) { return [error.message, collect(entries).length]; } });
+
+const next = Object.getPrototypeOf(query().entries()).next;
+say("the host's next on another receiver", () => collect({ [Symbol.iterator]() { return { next }; } }));
+say("the host's next, bound", () => { const entries = query().entries(); return collect({ [Symbol.iterator]() { return { next: next.bind(entries) }; } }); });
+say("the host's next on an object that inherits from the iterator", () => collect({ [Symbol.iterator]() { return Object.create(query().entries()); } }));
+say("a next that answers a number", () => collect({ [Symbol.iterator]() { return { next: Math.abs }; } }));
+say("a next that answers a string", () => collect({ [Symbol.iterator]() { return { next: String }; } }));
+say("a next that is a class", () => collect({ [Symbol.iterator]() { return { next: Map }; } }));
+say("a next that is no function", () => collect({ [Symbol.iterator]() { return { next: {} }; } }));
+say("a next that answers objects of its own shape", () => { let left = 3; const results = () => Object.assign(Object.create(null), { extra: 0, value: left, done: left-- === 0 }); return collect({ [Symbol.iterator]() { return { next: results.bind(null) }; } }); });
+say("return is called when the loop is left", () => { const calls = []; const entries = query().entries(); const iterator = { next: next.bind(entries), return() { calls.push("return"); return {}; } }; return [firstOf({ [Symbol.iterator]: () => iterator }), calls]; });
+
+say("the method is the host's", () => { const q = query(); return collectPairs({ [Symbol.iterator]: q.entries.bind(q) }); });
+say("the method is the host's, on another receiver", () => collect({ [Symbol.iterator]: URLSearchParams.prototype.entries }));
+say("the method is the engine's", () => collect({ length: 2, 0: "x", 1: "y", [Symbol.iterator]: Array.prototype.values }));
+say("the method answers a number", () => collect({ [Symbol.iterator]: Math.abs }));
+say("the method is a class", () => collect({ [Symbol.iterator]: Set }));
+say("segments", () => collect(new Intl.Segmenter("en", { granularity: "word" }).segment("to be")).map(part => part.segment));
+say("matches", () => collect("a1b22".matchAll(/\d+/g)).map(match => match[0]));
+
+console.log(lines.join("\n"));
+//// formatters-show-what-an-object-inherits.js
+// What a formatter and its neighbors show of the properties an object inherits. Nobody else reads them.
+import { inspect, isDeepStrictEqual } from "node:util";
+console.log(Object.create({ f1() {}, unit1: "p" }));
+console.log(Bun.inspect(Object.create({ f2() {}, unit2: "p" })));
+console.log(inspect(Object.create({ f3() {}, unit3: "p" })));
+console.log(`${Bun.inspect({ __proto__: { unit4: "p" }, own: 1 })}`);
+class Base5 { constructor() { this.unit5 = "p"; } method5() {} }
+console.log(Object.create(new Base5()));
+console.log(new Base5());
+function Old6() {}
+Old6.prototype.unit6 = "p";
+console.log(new Old6());
+function Old7() {}
+Old7.prototype = { unit7: "p", nested7: { deep7: 1 } };
+console.log(new Old7());
+console.log(Object.create(Object.create({ unit8: "p" })));
+console.log([Object.create({ unit9: "p" })], { holder: Object.create({ unit10: "p" }) });
+console.log(Object.create({ [Symbol.for("nodejs.util.inspect.custom")]() { return "custom 11"; } }));
+console.log(Object.create({ inner12: { [Symbol.for("nodejs.util.inspect.custom")]() { return "custom 12"; } } }));
+console.log(Object.create({ get unit13() { return "from a getter"; } }));
+console.log(Bun.deepEquals(Object.create({ unit14: "p" }), Object.create({ unit14: "q" })), Bun.deepEquals(Object.create({ unit15: "p" }), {}), isDeepStrictEqual(Object.create({ unit16: "p" }), Object.create({ unit16: "q" })));
+console.log(Object.keys(structuredClone(Object.create({ unit17: "p" }))).length, JSON.stringify(Object.create({ unit18: "p" })));
+{ let names = ""; for (const name in Object.create({ unit19: "p", f19() {} })) names += name + " "; console.log(names); }
+console.log(Object.assign({}, Object.create({ unit20: "p" })), { ...Object.create({ unit21: "p" }) });
+console.error(Object.create({ unit22: "p" }));
+console.log("%o", Object.create({ unit23: "p" }));
+console.log(String(new Error("message", { cause: Object.create({ unit24: "p" }) }).cause.unit24));
+console.table([Object.create({ unit25: "p" })]);
+function Old26() {}
+Old26.prototype.method26 = function () {};
+console.log(new Old26());
+class Printed27 { method27() {} get accessor27() { return 1; } static fixed27 = 1; }
+console.log(new Printed27(), Object.create(new Printed27()));
+class Printed28 { method28() {} }
+Printed28.prototype.added28 = { deep28: 1 };
+console.log(new Printed28());
+console.log(Object.create(Object.freeze({ unit29: "p", f29() {} })));
+console.log(Object.create(new Map([[1, 2]])), Object.create([1, 2]), Object.create(function named30() {}));
+//// function-subclasses-of-locked-classes.js
+// Subclasses of Request, Response, Blob, Headers, URL and URLSearchParams written with functions and prototypes, as code from before classes does: assigning `constructor` and methods to an object that inherits from a locked prototype behaves as in plain Bun.
+const util = require("node:util");
+const lines = [];
+function say(label, work) {
+  let text;
+  try {
+    text = JSON.stringify(work()) ?? "undefined";
+  } catch (error) {
+    text = "throws " + error.constructor.name;
+  }
+  lines.push(label + ": " + text);
+}
+const classes = [
+  ["Request", Request, ["http://example.com/a"], "clone", "url"],
+  ["Response", Response, ["body"], "clone", "status"],
+  ["Blob", Blob, [["abc"]], "slice", "size"],
+  ["Headers", Headers, [{ a: "1" }], "get", "count"],
+  ["URL", URL, ["http://example.com/a"], "toJSON", "pathname"],
+  ["URLSearchParams", URLSearchParams, ["a=1"], "get", "size"],
+];
+for (const [name, Base, args, method, getter] of classes) {
+  say(name + ": Object.create, then constructor and a method are assigned", () => {
+    function Sub() {
+      return Reflect.construct(Base, args, Sub);
+    }
+    Sub.prototype = Object.create(Base.prototype);
+    Sub.prototype.constructor = Sub;
+    Sub.prototype[method] = function () {
+      return "assigned";
+    };
+    Sub.prototype.extra = 1;
+    const made = new Sub();
+    return [made.constructor === Sub, Object.hasOwn(Sub.prototype, "constructor"), made[method](), made.extra, made instanceof Base, Base.prototype.constructor === Base, typeof made[getter]];
+  });
+  say(name + ": util.inherits", () => {
+    function Sub() {}
+    util.inherits(Sub, Base);
+    Sub.prototype[method] = () => "inherited and replaced";
+    return [Object.getPrototypeOf(Sub.prototype) === Base.prototype, Sub.super_ === Base, Sub.prototype[method](), Sub.prototype.constructor === Sub];
+  });
+  say(name + ": Object.setPrototypeOf(Sub.prototype, Base.prototype)", () => {
+    function Sub() {}
+    Object.setPrototypeOf(Sub.prototype, Base.prototype);
+    Object.setPrototypeOf(Sub, Base);
+    Sub.prototype.toString = () => "sub";
+    return [String(Sub.prototype), Sub.prototype.constructor === Sub, Object.getPrototypeOf(Sub) === Base];
+  });
+  say(name + ": an instance's constructor, method and toString are assigned", () => {
+    const made = new Base(...args);
+    made.constructor = 1;
+    made[method] = 2;
+    made.toString = () => "own";
+    made[Symbol.toStringTag] = "Own";
+    return [made.constructor, made[method], String(made), Object.prototype.toString.call(made), Object.keys(made)];
+  });
+  say(name + ": the descriptor of constructor", () => {
+    const { value, writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(Base.prototype, "constructor");
+    return [value === Base, typeof writable, enumerable, typeof configurable];
+  });
+  say(name + ": Object.freeze, Object.seal and Object.preventExtensions of the prototype", () => [
+    Object.freeze(Base.prototype) === Base.prototype,
+    Object.seal(Base.prototype) === Base.prototype,
+    Object.preventExtensions(Base.prototype) === Base.prototype,
+    Object.isFrozen(Base.prototype),
+    Object.isSealed(Base.prototype),
+  ]);
+  say(name + ": after that, subclasses and instances still work", () => {
+    class Sub extends Base {
+      [method]() {
+        return "overridden";
+      }
+    }
+    const made = new Sub(...args);
+    made.own = 1;
+    return [made[method](), made.own, made instanceof Base];
+  });
+}
+console.log(lines.join("\n"));
+//// functions-made-for-one-call-of-a-native-function-that-only-looks-at-them.mjs
+// A function that is made for one call of a native function. The native function looks at it and keeps nothing, so nothing else in the program ever holds it.
+function drop(listener) {
+  removeEventListener("nothing", listener);
+}
+function dropThrough(listener) {
+  drop(listener);
+}
+
+removeEventListener("nothing", () => {});
+removeEventListener("nothing", function named() {});
+globalThis.removeEventListener("nothing", () => {});
+self.removeEventListener("nothing", () => {});
+const remove = removeEventListener;
+remove("nothing", () => {});
+drop(() => {});
+drop(() => 1);
+dropThrough(() => 2);
+console.log("removed before any was added");
+
+addEventListener("added", () => {});
+removeEventListener("added", () => {});
+let captured = 0;
+removeEventListener("added", () => captured++);
+for (let i = 0; i < 3; i++) removeEventListener("added", () => i);
+console.log("removed behind another one", captured);
+
+performance.removeEventListener("nothing", () => {});
+new EventTarget().removeEventListener("nothing", () => {});
+new AbortController().signal.removeEventListener("abort", () => {});
+new MessageChannel().port1.removeEventListener("message", () => {});
+console.log("removed from other targets");
+
+clearTimeout(() => {});
+clearInterval(() => {});
+clearImmediate(() => {});
+console.log(
+  Bun.deepEquals(() => {}, () => {}),
+  new Map().get("key", () => {}),
+  new Map().has(() => {}),
+  new Set().has(() => {}),
+  new WeakMap().has(() => {}),
+  new WeakSet().delete(() => {}),
+  Array.isArray(() => {}),
+  Buffer.isBuffer(() => {}),
+  ArrayBuffer.isView(() => {}),
+);
+
+let calls = 0;
+const listener = () => calls++;
+addEventListener("ping", listener);
+dispatchEvent(new Event("ping"));
+removeEventListener("ping", listener);
+dispatchEvent(new Event("ping"));
+console.log("the listener ran", calls);
+//// handlers-get-what-the-host-passes-untyped.js
+// What the host hands to the handlers of a server, a timer and a microtask, read by code without types.
+const seen = [];
+let closes = 0;
+const finished = Promise.withResolvers();
+
+const server = Bun.serve({
+  port: 0,
+  routes: {
+    "/route/:id": (request, passedServer) =>
+      new Response(`route ${request.params.id} ${request.method} ${passedServer === server} ${request instanceof Request}`),
+    "/methods": {
+      GET: request => new Response("get " + new URL(request.url).pathname),
+      POST: async request => new Response("post " + (await request.text())),
+    },
+    "/fixed": new Response("fixed"),
+  },
+  fetch(request, passedServer) {
+    const { pathname } = new URL(request.url);
+    if (pathname === "/socket") {
+      const upgraded = passedServer.upgrade(request, { data: { id: 7, tags: ["a", "b"] } });
+      seen.push(`after upgrade ${upgraded}`);
+      return upgraded ? undefined : new Response("no upgrade", { status: 400 });
+    }
+    if (pathname === "/throws") throw new RangeError("thrown by fetch");
+    const host = typeof request.headers.get("host");
+    return new Response(`fetch ${request.method} ${this === server} ${passedServer === server} ${request instanceof Request} ${host}`);
+  },
+  error(error) {
+    return new Response(`error ${error instanceof RangeError} ${error.message}`, { status: 500 });
+  },
+  websocket: {
+    open(socket) {
+      seen.push(`open ${this === undefined} ${socket.data.id} ${socket.data.tags.join()} ${socket.readyState}`);
+      socket.data.id++;
+      socket.send("hello");
+    },
+    message(socket, message) {
+      seen.push(`message ${typeof message} ${message} ${socket.data.id}`);
+      socket.data = { id: 100, tags: [] };
+      const before = closes;
+      socket.close(1000, "done");
+      seen.push(`closes around close() ${before} ${closes}`);
+    },
+    close(socket, code, reason) {
+      closes++;
+      seen.push(`close ${typeof code} ${code} ${typeof reason} ${reason} ${socket.data.id} ${socket.data.tags.length}`);
+      finished.resolve();
+    },
+  },
+});
+
+const show = async (label, response) => console.log(label, response.status, await response.text());
+const at = path => new URL(path, server.url);
+
+await show("fetch", await fetch(at("/plain")));
+await show("route", await fetch(at("/route/12")));
+await show("get", await fetch(at("/methods")));
+await show("post", await fetch(at("/methods"), { method: "POST", body: "sent" }));
+await show("fixed", await fetch(at("/fixed")));
+await show("error", await fetch(at("/throws")));
+await show("server.fetch", await server.fetch(new Request(at("/plain"), { method: "PUT" })));
+
+const client = new WebSocket(at("/socket").href.replace("http", "ws"));
+client.onmessage = event => client.send("reply to " + event.data);
+await finished.promise;
+for (const line of seen) console.log(line);
+
+const timer = setTimeout(function (first, second) {
+  console.log("timer", this === timer, first, second.name);
+}, 1, 5, { name: "passed" });
+console.log("the callback of the timer", typeof timer._onTimeout, timer._onTimeout.length);
+await new Promise(resolve => setTimeout(resolve, 20));
+
+let ticks = 0;
+await new Promise(resolve => {
+  const interval = setInterval(step => {
+    ticks += step;
+    if (ticks === 6) {
+      clearInterval(interval);
+      resolve();
+    }
+  }, 1, 2);
+});
+console.log("interval", ticks);
+
+const replaced = setTimeout(() => console.log("not called"), 5);
+replaced._onTimeout = function () {
+  console.log("replaced callback", this === replaced, arguments.length);
+};
+await new Promise(resolve => setTimeout(resolve, 30));
+
+queueMicrotask(function () {
+  console.log("microtask", this === undefined, arguments.length);
+});
+await null;
+await server.stop(true);
+console.log("done");
+//// header-names-compared-in-async-functions-untyped.js
+// Methods of `response.headers` whose header name is a parameter, inside async functions, a generator and a try block. The calls pass well-known names, other names, an invalid name and values that are not strings.
+async function putLater(response, name, value) {
+  await null;
+  response.headers.set(name, value);
+  await null;
+  return response.headers.has(name);
+}
+async function putFirst(response, name, value) {
+  response.headers.append(name, value);
+  await null;
+  response.headers.append(name, value);
+}
+function* putInSteps(response, name) {
+  response.headers.set(name, yield "first");
+  response.headers.append(name, yield "second");
+}
+function putInTry(response, name, value) {
+  try {
+    response.headers.set(name, value);
+    return "set";
+  } catch (error) {
+    return error.name;
+  } finally {
+    response.headers.delete("x-other");
+  }
+}
+const names = ["cache-control", "authorization", "x-request-id", "vary", "etag", "location", "x-mine"];
+const list = (response) => JSON.stringify([...response.headers]);
+const a = new Response(null);
+console.log(await putLater(a, "cache-control", "1"), await putLater(a, "authorization", "2"), await putLater(a, "x-request-id", "3"), await putLater(a, "vary", "4"), await putLater(a, "etag", "5"), await putLater(a, "location", "6"), await putLater(a, "x-mine", "7"), list(a));
+const b = new Response(null);
+await putFirst(b, "cache-control", "1");
+await putFirst(b, "authorization", "2");
+await putFirst(b, "x-request-id", "3");
+await putFirst(b, "vary", "4");
+await putFirst(b, "etag", "5");
+await putFirst(b, "x-mine", "7");
+console.log(list(b));
+const c = new Response(null);
+for (const steps of [putInSteps(c, "cache-control"), putInSteps(c, "authorization"), putInSteps(c, "x-request-id"), putInSteps(c, "vary"), putInSteps(c, "etag"), putInSteps(c, "x-mine")]) console.log(steps.next().value, steps.next("one").value, steps.next("two").done);
+console.log(list(c));
+const d = new Response(null);
+console.log(putInTry(d, "cache-control", "1"), putInTry(d, "authorization", "2"), putInTry(d, "x-request-id", "3"), putInTry(d, "vary", "bad\nvalue"), putInTry(d, "etag", "5"), putInTry(d, "bad name", "6"), putInTry(d, "x-mine", "7"), list(d));
+for (const name of [...names, "VARY", "nope", 7, null]) {
+  const e = new Response(null);
+  console.log(String(name), await putLater(e, name, "v").catch((error) => error.name), putInTry(e, name, "w"), list(e));
+}
+
+const server = Bun.serve({
+  port: 0,
+  routes: {
+    "/routed/:name": async (request) => {
+      const response = Response.json({ id: 1 });
+      await putLater(response, "cache-control", "no-store");
+      await putFirst(response, request.params.name, "from the path");
+      return response;
+    },
+  },
+  fetch: () => new Response("not found", { status: 404 }),
+});
+for (const name of ["etag", "x-unheard-of"]) {
+  const response = await fetch(new URL(`/routed/${name}`, server.url));
+  console.log(JSON.stringify([...response.headers].filter(([header]) => header !== "date")), await response.text());
+}
+await server.stop(true);
+//// header-names-passed-as-arguments.ts
+// The same as header-names-passed-as-arguments-untyped.js in typed code: the method is an arrow function in a field, and async middleware calls it.
+class Context {
+  #response: Response;
+  constructor(response: Response) {
+    this.#response = response;
+  }
+  get response(): Response {
+    return this.#response;
+  }
+  header = (name: string, value: string): void => {
+    this.#response.headers.set(name, value);
+  };
+}
+type Middleware = (context: Context) => Promise<void>;
+const middlewares: Middleware[] = [
+  async (context) => {
+    await null;
+    context.header("x-request-id", "seven");
+  },
+  async (context) => {
+    await null;
+    context.header("x-content-type-options", "nosniff");
+    context.header("cache-control", "no-store");
+  },
+];
+const context = new Context(new Response(null));
+for (const middleware of middlewares) await middleware(context);
+context.header(["x", "made"].join("-"), "at run time");
+context.header("CACHE-control".toLowerCase(), "private");
+console.log(JSON.stringify([...context.response.headers]));
+try {
+  context.header("bad name", "v");
+} catch (error) {
+  console.log(`${(error as Error).name}: ${(error as Error).message}`);
+}
+
+const server = Bun.serve({
+  port: 0,
+  routes: {
+    "/routed": async () => {
+      const routed = new Context(Response.json({ id: 1 }));
+      for (const middleware of middlewares) await middleware(routed);
+      return routed.response;
+    },
+  },
+  fetch: () => new Response("not found", { status: 404 }),
+});
+const response = await fetch(new URL("/routed", server.url));
+console.log(JSON.stringify([...response.headers].filter(([name]) => name !== "date")), await response.text());
+await server.stop(true);
+//// header-names-passed-as-arguments-untyped.js
+// set, get and has on `x.headers` whose header name is a parameter of a method. The calls pass well-known names, other names, names created at run time, invalid names and values that are not strings, also in a server.
+class Context {
+  constructor(response, request) {
+    this.response = response;
+    this.request = request;
+  }
+  header(name, value) {
+    this.response.headers.set(name, value);
+  }
+  readHeader(name) {
+    return this.request.headers.get(name);
+  }
+  neverGivenAConstant(name) {
+    return this.response.headers.has(name);
+  }
+}
+function forward(context, name, value) {
+  context.header(name, value);
+}
+
+const list = (holder) => JSON.stringify([...holder.headers]);
+////= attempt
+const fresh = () => new Context(new Response(null), new Request("http://localhost/", { headers: { authorization: "Bearer 1", "x-request-id": "r1", "X-Other": "other" } }));
+
+const context = fresh();
+context.header("cache-control", "no-store");
+context.header("x-request-id", "seven");
+forward(context, "X-Content-Type-Options", "nosniff");
+console.log(list(context.response));
+console.log(context.readHeader("authorization"), context.readHeader("x-request-id"));
+
+const made = ["cache", "control"].join("-");
+const names = [made, "CACHE-CONTROL", "x-request-id".toUpperCase(), "x-content-type-options", "x-new", "content-type", "bad name", "", 7, null, { toString: () => "x-said" }];
+for (const name of names) {
+  const other = fresh();
+  console.log(JSON.stringify(String(name)), String(attempt(() => other.header(name, "v"))), list(other.response), String(attempt(() => other.readHeader(name))), String(attempt(() => other.neverGivenAConstant(name))));
+}
+for (const value of ["two\nlines", " padded ", 7, Symbol("s")]) {
+  const other = fresh();
+  console.log(String(attempt(() => other.header("cache-control", value))), String(attempt(() => other.header("x-request-id", value))), list(other.response));
+}
+
+const server = Bun.serve({
+  port: 0,
+  routes: {
+    "/routed": (request) => {
+      const routed = new Context(Response.json({ id: 1 }), request);
+      routed.header("x-request-id", routed.readHeader("x-request-id") ?? "none");
+      routed.header("cache-control", routed.readHeader("authorization") ? "private" : "no-store");
+      return routed.response;
+    },
+  },
+  fetch: () => new Response("not found", { status: 404 }),
+});
+for (const headers of [{ "x-request-id": "sent", authorization: "Bearer 2" }, {}]) {
+  const response = await fetch(new URL("/routed", server.url), { headers });
+  console.log(JSON.stringify([...response.headers].filter(([name]) => name !== "date")), await response.text());
+}
+await server.stop(true);
+//// header-records-that-are-compiled-objects.ts
+// A record of headers that is an object of compiled code and holds nothing but strings is put into the Headers without a list of pairs in between. Whatever the record is, the Headers, or the error, are plain Bun's.
+const lines: string[] = [];
+function say(label: string, work: () => unknown) {
+  let text: string;
+  try {
+    const value = work();
+    text = JSON.stringify(value instanceof Headers ? [...value] : value) ?? "undefined";
+  } catch (error) {
+    text = "throws " + (error as Error).constructor.name + ": " + (error as Error).message;
+  }
+  lines.push(label + ": " + text);
+}
+
+const kept: object[] = [];
+function keep<T extends object>(record: T): T {
+  kept.push(record);
+  return record;
+}
+const inResponse = (record: object) => new Response("x", { headers: record as HeadersInit }).headers;
+const inRequest = (record: object) => new Request("http://localhost/", { headers: record as HeadersInit }).headers;
+const alone = (record: object) => new Headers(record as HeadersInit);
+function each(label: string, make: () => object) {
+  say(label + ", in a Response", () => inResponse(make()));
+  say(label + ", in a Request", () => inRequest(make()));
+  say(label + ", alone", () => alone(make()));
+}
+function withDefault(contentType: string, more?: Record<string, string>) {
+  return keep({ "Content-Type": contentType, ...more });
+}
+
+each("one header", () => keep({ "Content-Type": "text/plain" }));
+each("a default and nothing more", () => withDefault("application/json"));
+each("a default and more", () => withDefault("application/json", { "x-a": "1", "Cache-Control": "no-store" }));
+each("no header", () => keep({}));
+each("common and uncommon names", () => keep({ ETag: '"e"', "x-b": "2", Location: "/a", "X-C": "3", "content-length": "1" }));
+each("the same name in two cases", () => keep({ "x-a": "1", "X-A": "2", "content-type": "a/b", "Content-Type": "c/d" }));
+each("cookies", () => keep({ "Set-Cookie": "a=1", "set-cookie": "b=2", Cookie: "c=3", cookie: "d=4" }));
+each("spaces around the values", () => keep({ "x-a": "  1  ", "x-b": "\t2\t", "x-c": "" }));
+each("a value made of pieces", () => keep({ "x-a": ["a", "b"].join("-") + String(kept.length % 1) + "c".repeat(3) }));
+each("an invalid name", () => keep({ "x a": "1" }));
+each("an empty name", () => keep({ "": "1" }));
+each("an invalid value", () => keep({ "x-a": "1\n2" }));
+each("a value outside Latin-1", () => keep({ "x-a": "\u{1F600}" }));
+each("the first invalid header is reported", () => keep({ "x-a": "1\n", "x b": "2" }));
+each("an invalid name in front of a symbol", () => keep({ "x a": "1", "x-b": Symbol.iterator }));
+each("an invalid name in front of an object that throws", () =>
+  keep({
+    "x a": "1",
+    "x-b": {
+      toString() {
+        throw new RangeError("no b");
+      },
+    },
+  }),
+);
+each("numbers, booleans, null and undefined", () => keep({ a: 1, b: true, c: null, d: undefined, e: 1.5, f: -0 }));
+each("an object among the strings", () => keep({ a: "1", b: { toString: () => "2" }, c: "3" }));
+each("names like numbers come first", () => keep({ b: "1", "2": "two", a: "3", "1": "one" }));
+each("a computed name", () => keep({ [["x", "computed"].join("-")]: "1", "x-after": "2" }));
+each("a name stored late", () => {
+  const record: Record<string, string> = keep({ "x-a": "1" });
+  record["x-late"] = "2";
+  record[["x", "later"].join("-")] = "3";
+  return record;
+});
+each("a name deleted", () => {
+  const record: Record<string, string> = keep({ "x-a": "1", "x-b": "2", "x-c": "3" });
+  delete record["x-b"];
+  return record;
+});
+each("a name deleted and stored again", () => {
+  const record: Record<string, string> = keep({ "x-a": "1", "x-b": "2", "x-c": "3" });
+  delete record["x-a"];
+  record["x-a"] = "4";
+  return record;
+});
+each("a name that is not enumerable", () => {
+  const record = keep({ "x-a": "1" });
+  Object.defineProperty(record, "x-hidden", { value: "2", enumerable: false });
+  return record;
+});
+each("a getter", () =>
+  keep({
+    "x-a": "1",
+    get "x-b"() {
+      return "2";
+    },
+  }),
+);
+each("a symbol for a name", () => keep({ "x-a": "1", [Symbol("s")]: "2" }));
+each("a symbol for a name that is not enumerable", () => {
+  const record = keep({ "x-a": "1" });
+  Object.defineProperty(record, Symbol("s"), { value: "2", enumerable: false });
+  return record;
+});
+each("an iterator of its own", () =>
+  keep({
+    "x-a": "1",
+    *[Symbol.iterator]() {
+      yield ["x-b", "2"];
+    },
+  }),
+);
+each("an iterator that is undefined", () => keep({ "x-a": "1", [Symbol.iterator]: undefined }));
+each("a name __proto__", () => keep({ ["__proto__"]: "1" }));
+each("another prototype", () => keep({ __proto__: { inherited: "no" }, own: "yes" }));
+each("a prototype with an iterator", () =>
+  keep({
+    __proto__: {
+      *[Symbol.iterator]() {
+        yield ["x-c", "3"];
+      },
+    },
+    own: "yes",
+  }),
+);
+each("no prototype", () => {
+  const record = Object.create(null) as Record<string, string>;
+  record["x-a"] = "1";
+  return keep(record);
+});
+class Fields {
+  "x-a" = "1";
+  "x-b" = "2";
+  get "x-c"() {
+    return "3";
+  }
+}
+each("an instance of a class", () => keep(new Fields()));
+each("a frozen record", () => Object.freeze(keep({ "x-a": "1" })));
+each("many headers", () => keep({ a: "1", b: "2", c: "3", d: "4", e: "5", f: "6", g: "7", h: "8", i: "9", j: "10", k: "11", l: "12" }));
+say("the record is copied", () => {
+  const record = keep({ "x-a": "1" });
+  const headers = alone(record);
+  record["x-a"] = "changed";
+  return headers;
+});
+say("one record many times", () => {
+  const record: Record<string, string> = keep({ "Content-Type": "text/plain", "x-round": "" });
+  let length = 0;
+  for (let round = 0; round < 300; round++) {
+    record["x-round"] = "r" + round;
+    length += inResponse(record).get("x-round")!.length;
+  }
+  return length;
+});
+say("each record is still there", () => kept.length);
+console.log(lines.join("\n"));
+//// headers-methods-without-headers-object.ts
+// The same in typed code, in the shape a framework's context has: the Headers come from the Response at hand or from a field, and three methods are called on what was joined.
+type Options = { append?: boolean };
+
+class Context {
+  #response: Response | undefined;
+  #prepared: Headers | undefined;
+  finalized = false;
+
+  get response(): Response {
+    return (this.#response ??= new Response(null, { headers: (this.#prepared ??= new Headers()) }));
+  }
+  set response(response: Response) {
+    this.#response = response;
+    this.finalized = true;
+  }
+  header = (name: string, value: string | undefined, options?: Options): void => {
+    if (this.finalized) this.#response = new Response((this.#response as Response).body, this.#response);
+    const headers = this.#response ? this.#response.headers : (this.#prepared ??= new Headers());
+    if (value === undefined) headers.delete(name);
+    else if (options?.append) headers.append(name, value);
+    else headers.set(name, value);
+  };
+}
+
+export function vary(response: Response, by: string): void {
+  response.headers.append("vary", by);
+}
+export function cached(response: Response): boolean {
+  const headers = response.headers;
+  return headers.has("etag") || headers.has("Last-Modified");
+}
+
+const show = (headers: Headers) => JSON.stringify([[...headers], headers.getSetCookie()]);
+
+const early = new Context();
+early.header("x-early", "1");
+early.header("x-early", "2", { append: true });
+early.header("content-type", "early/type");
+early.header("x-gone", "soon");
+early.header("x-gone", undefined);
+console.log(show(early.response.headers));
+
+const late = new Context();
+late.response = new Response("body", { status: 201, headers: { "content-type": "first/type", "x-first": "kept" } });
+const first = late.response;
+late.header("x-request-id", "seven");
+late.header("x-content-type-options", "nosniff");
+late.header("cache-control", "no-store");
+late.header("set-cookie", "a=1", { append: true });
+late.header("Set-Cookie", "b=2", { append: true });
+late.header("x-first", undefined);
+console.log(late.response === first, late.response.status, show(late.response.headers), show(first.headers), await late.response.text());
+for (const [name, value] of [["bad name", "v"], ["x-bad-value", "two\nlines"], ["", "v"]]) {
+  try {
+    late.header(name, value);
+    console.log("no error");
+  } catch (error) {
+    console.log(`${(error as Error).name}: ${(error as Error).message}`);
+  }
+}
+
+const varied = new Response("x");
+vary(varied, "accept");
+vary(varied, "origin");
+console.log(show(varied.headers), cached(varied), cached(new Response("", { headers: { ETag: "1" } })), cached(new Response("", { headers: { "last-modified": "now" } })));
+const seen = new Response("x");
+const object = seen.headers;
+vary(seen, "accept");
+console.log(object.get("vary"), cached(seen), (object.set("etag", "2"), cached(seen)));
+
+const server = Bun.serve({
+  port: 0,
+  routes: {
+    "/routed/:id": (request) => {
+      const context = new Context();
+      context.header("x-before", request.params.id);
+      context.response = Response.json({ id: request.params.id }, { headers: context.response.headers });
+      context.header("x-request-id", request.headers.get("x-request-id") ?? "none");
+      context.header("cache-control", "no-store");
+      vary(context.response, "x-request-id");
+      return context.response;
+    },
+  },
+  fetch: () => new Response("not found", { status: 404 }),
+});
+for (let turn = 0; turn < 2; turn++) {
+  const response = await fetch(new URL(`/routed/${turn}`, server.url), { headers: { "x-request-id": `turn-${turn}` } });
+  console.log(response.status, JSON.stringify([...response.headers].filter(([name]) => name !== "date")), await response.text());
+}
+await server.stop(true);
+//// headers-methods-without-headers-object-untyped.js
+// get, has, set, append and delete on the result of `x.headers`: called at once, through a variable, after a join with another Headers object, in a try block and in a loop. For every kind of holder, name and value, and whatever happens to the Headers object or its holder before the call or while the arguments are evaluated.
+export function setOne(holder, value) {
+  holder.headers.set("content-type", value);
+}
+export function appendOne(holder, name, value) {
+  holder.headers.append(name, value);
+}
+////= lines-19	deleteOne	delete
+////= lines-19	hasOne	has
+////= lines-19	getOne	get
+export function setThenRead(holder, name, value) {
+  const headers = holder.headers;
+  headers.set(name, value);
+  return [headers.get(name), headers.has("x-mine")];
+}
+export function joined(state, name, value, options) {
+  const headers = state.response ? state.response.headers : (state.prepared ??= new Headers());
+  if (value === undefined) headers.delete(name);
+  else if (options?.append) headers.append(name, value);
+  else headers.set(name, value);
+}
+export function withCallBetween(holder, between, name, value) {
+  const headers = holder.headers;
+  between(holder);
+  return headers.set(name, value);
+}
+export function insideTry(holder, name, value) {
+  try {
+    holder.headers.set(name, value);
+    return "set";
+  } catch (error) {
+    return describe(error);
+  }
+}
+export function inLoop(holder, count) {
+  for (let i = 0; i < count; i++) holder.headers.append("x-turn", String(i));
+}
+export function computedValue(holder, make) {
+  return holder.headers.set("x-computed", make(holder));
+}
+export function computedName(holder, make) {
+  return holder.headers.has(make(holder));
+}
+export function computedInJoin(state, name, make) {
+  const headers = state.response ? state.response.headers : (state.prepared ??= new Headers());
+  headers.append(name, make(state.response));
+  return headers.get(name);
+}
+export function methodKept(holder, value) {
+  const headers = holder.headers;
+  const set = headers.set;
+  return [set.call(headers, "x-kept", value), typeof set];
+}
+export function escapesByReturn(holder) {
+  const headers = holder.headers;
+  headers.set("x-mine", "kept");
+  return headers;
+}
+export function escapesAsArgument(holder, take) {
+  const headers = holder.headers;
+  headers.set("x-mine", "handed on");
+  return take(headers);
+}
+export function isTested(holder) {
+  const headers = holder.headers;
+  if (headers) headers.set("x-mine", "tested");
+}
+export function otherMethod(holder) {
+  const headers = holder.headers;
+  headers.set("x-mine", "listed");
+  return [...headers.keys()];
+}
+export function tooFewArguments(holder) {
+  holder.headers.set("x-mine");
+}
+export function tooManyArguments(holder) {
+  holder.headers.set("x-mine", "two", "three");
+}
+
+const describe = (error) => (/^(Invalid header name|Header '|Not enough arguments|Cannot convert a symbol|while the argument)/.test(error.message) ? `${error.name}: ${error.message}` : error.name);
+////= attempt-2	describe(error)
+const list = (holder) => attempt(() => JSON.stringify([[...holder.headers], typeof holder.headers.getSetCookie === "function" ? holder.headers.getSetCookie() : "-"]));
+const filled = () => new Headers({ "Content-Type": "a/b", Accept: "*/*", "x-mine": "mine", "X-Other": "other", cookie: "c=1" });
+class Subclass extends Response {}
+class Overriding extends Response {
+  #own = new Headers({ "x-own": "overridden" });
+  get headers() {
+    return this.#own;
+  }
+}
+const holders = {
+  "a Response with headers": () => new Response("", { headers: filled() }),
+  "a Response without": () => new Response(null),
+  "a Response of a Blob with a type": () => new Response(new Blob(["x"], { type: "from/blob" })),
+  "Response.json": () => Response.json({}),
+  "a clone": () => new Response("", { headers: filled() }).clone(),
+  "a Request with headers": () => new Request("http://localhost/", { headers: filled() }),
+  "a Request without": () => new Request("http://localhost/"),
+  "a subclass": () => new Subclass("", { headers: filled() }),
+  "a subclass with its own getter": () => new Overriding(""),
+  "Headers in a plain object": () => ({ headers: filled() }),
+  "a Map in a plain object": () => ({ headers: new Map([["content-type", "of a Map"]]) }),
+  "a Response in a plain object": () => ({ headers: new Response("") }),
+  "nothing in a plain object": () => ({}),
+};
+const log = [];
+////= says
+const names = ["content-type", "CONTENT-TYPE", "x-mine", "X-MINE", "x-new", "set-cookie", "cookie", "bad name", "", "café", 7, null, undefined, says("name", "x-said"), Symbol("s")];
+const values = ["v", "", "  padded ", "two\nlines", "café", "€", 7, null, undefined, says("value", "said"), Symbol("s")];
+
+for (const [label, make] of Object.entries(holders)) {
+  console.log("==", label);
+  for (const value of values) {
+    const holder = make();
+    console.log("setOne", String(attempt(() => setOne(holder, value))), list(holder));
+  }
+  for (const name of names) {
+    log.length = 0;
+    const rows = [];
+    let holder = make();
+    rows.push(attempt(() => appendOne(holder, name, says("value", "appended"))), list(holder));
+    rows.push(attempt(() => appendOne(holder, name, "again")), list(holder));
+    rows.push(attempt(() => hasOne(holder, name)), attempt(() => getOne(holder, name)));
+    rows.push(attempt(() => deleteOne(holder, name)), list(holder), attempt(() => hasOne(holder, name)));
+    holder = make();
+    rows.push(attempt(() => JSON.stringify(setThenRead(holder, name, "set"))), list(holder));
+    rows.push(insideTry(make(), name, "tried"), insideTry(make(), "x-tried", name));
+    console.log(typeof name === "symbol" ? "symbol" : JSON.stringify(String(name)), rows.map(String).join(" | "), log.join(","));
+  }
+  const turned = make();
+  console.log("inLoop", String(attempt(() => inLoop(turned, 3))), list(turned));
+  for (const run of [escapesByReturn, (holder) => escapesAsArgument(holder, (headers) => headers), isTested, otherMethod, tooFewArguments, tooManyArguments]) {
+    const holder = make();
+    const result = attempt(() => run(holder));
+    console.log(run.name || "escapesAsArgument", result === holder.headers ? "the very object" : String(result), list(holder));
+  }
+}
+
+console.log("== the method is read before the arguments are evaluated");
+const during = {
+  "nothing happens": () => "plain",
+  "the object is made": (holder) => typeof holder.headers,
+  "the object gets its own set, has and append": (holder) => {
+    for (const name of ["set", "has", "append"]) holder.headers[name] = () => `own ${name}`;
+    return "x-during";
+  },
+  "the object gets another prototype": (holder) => (Object.setPrototypeOf(holder.headers, { set: () => "other set", has: () => "other has", append: () => "other append", get: () => "other get" }), "x-during"),
+  "the holder gets its own headers": (holder) => (Object.defineProperty(holder, "headers", { value: new Map(), configurable: true }), "x-during"),
+  "it throws": () => {
+    throw new RangeError("while the argument is evaluated");
+  },
+};
+for (const [label, make] of Object.entries(holders)) {
+  for (const [what, run] of Object.entries(during)) {
+    const rows = [];
+    for (const call of [computedValue, computedName]) {
+      const holder = make();
+      rows.push(String(attempt(() => call(holder, run))));
+      if (Object.hasOwn(holder, "headers") && holder instanceof Response) delete holder.headers;
+      rows.push(attempt(() => JSON.stringify([...Headers.prototype.entries.call(holder.headers)])));
+    }
+    const state = { response: make(), prepared: undefined };
+    rows.push(String(attempt(() => computedInJoin(state, "x-joined", run))));
+    console.log(label, "|", what, "|", rows.join(" | "));
+  }
+  const changedBefore = make();
+  attempt(() => (changedBefore.headers.set = () => "own set, there before"));
+  console.log(label, "| changed before |", String(attempt(() => computedValue(changedBefore, () => "v"))), String(attempt(() => JSON.stringify(methodKept(make(), "v")))));
+}
+
+console.log("== joined");
+for (const make of [holders["a Response with headers"], holders["a Response without"], holders["a subclass"], () => undefined, () => new Map(), () => ({ headers: new Response("") })]) {
+  const state = { response: make(), prepared: undefined };
+  const rows = [];
+  for (const [name, value, options] of [["x-a", "1"], ["x-a", "2", { append: true }], ["content-type", "set/joined"], ["accept", undefined], ["set-cookie", "a=1", { append: true }], ["set-cookie", "b=2", { append: true }], ["bad name", "v"]])
+    rows.push(String(attempt(() => joined(state, name, value, options))));
+  console.log(rows.join(" | "), state.response && state.response.headers ? list(state.response) : "-", state.prepared ? JSON.stringify([...state.prepared]) : "-");
+}
+for (const prepared of [new Response("really a Response"), new Request("http://localhost/"), new Map(), filled()]) {
+  const state = { response: undefined, prepared };
+  console.log(String(attempt(() => joined(state, "x-a", "1"))), String(attempt(() => joined(state, "x-a", undefined))), prepared instanceof Map ? JSON.stringify([...prepared]) : prepared.headers ? list(prepared) : JSON.stringify([...prepared]));
+}
+
+console.log("== the object exists already, or comes to exist in between");
+for (const make of [holders["a Response with headers"], holders["a Request with headers"]]) {
+  const seen = make();
+  const object = seen.headers;
+  setOne(seen, "after/seen");
+  appendOne(seen, "x-later", "1");
+  console.log(object === seen.headers, object.get("content-type"), object.get("x-later"), hasOne(seen, "x-later"));
+  object.set("x-by-object", "yes");
+  console.log(hasOne(seen, "x-by-object"), JSON.stringify(setThenRead(seen, "x-by-object", "changed")), object.get("x-by-object"));
+
+  const iterated = make();
+  const entries = iterated.headers.entries();
+  const first = entries.next().value;
+  deleteOne(iterated, "content-type");
+  appendOne(iterated, "x-zz", "last");
+  console.log(JSON.stringify(first), JSON.stringify([...entries]));
+
+  const ownSet = make();
+  ownSet.headers.set = function (name, value) {
+    return `own set of ${name} to ${value}`;
+  };
+  console.log(String(withCallBetween(ownSet, () => {}, "x-a", "1")), String(attempt(() => setOne(ownSet, "own/set"))), list(ownSet));
+
+  const otherPrototype = make();
+  Object.setPrototypeOf(otherPrototype.headers, { set: (name, value) => `another prototype's set of ${name} to ${value}`, has: () => "another prototype's has" });
+  console.log(String(withCallBetween(otherPrototype, () => {}, "x-a", "1")), String(hasOne(otherPrototype, "x-a")));
+
+  const changedBetween = make();
+  console.log(String(withCallBetween(changedBetween, (holder) => void (holder.headers.set = () => "set in between"), "x-a", "1")), list(changedBetween));
+  const ownHeadersBetween = make();
+  console.log(String(withCallBetween(ownHeadersBetween, (holder) => Object.defineProperty(holder, "headers", { value: new Map(), configurable: true }), "x-a", "1")), JSON.stringify([...ownHeadersBetween.headers]), delete ownHeadersBetween.headers, list(ownHeadersBetween));
+  const otherPrototypeBetween = make();
+  console.log(String(withCallBetween(otherPrototypeBetween, (holder) => Object.setPrototypeOf(holder, { headers: new Map() }), "x-a", "1")), JSON.stringify([...otherPrototypeBetween.headers]));
+  const ownHeaders = make();
+  Object.defineProperty(ownHeaders, "headers", { value: new Map() });
+  console.log(String(attempt(() => setOne(ownHeaders, "into/map"))), JSON.stringify([...ownHeaders.headers]));
+}
+
+console.log("== in a server");
+const answer = (request) => {
+  const before = [hasOne(request, "x-sent"), hasOne(request, "x-absent"), getOne(request, "x-sent")];
+  appendOne(request, "x-sent", "more");
+  setOne(request, "set/on-request");
+  deleteOne(request, "accept");
+  const response = Response.json([before, getOne(request, "x-sent"), getOne(request, "content-type"), hasOne(request, "accept"), JSON.stringify(setThenRead(request, "x-mine", "mine"))]);
+  setOne(response, "application/mine");
+  appendOne(response, "set-cookie", "a=1");
+  appendOne(response, "Set-Cookie", "b=2");
+  joined({ response }, "x-joined", "yes");
+  joined({ response }, "x-joined", "again", { append: true });
+  return response;
+};
+const server = Bun.serve({ port: 0, routes: { "/routed/:id": answer }, fetch: answer });
+for (const path of ["/routed/1", "/plain"]) {
+  for (let turn = 0; turn < 2; turn++) {
+    const response = await fetch(new URL(path, server.url), { headers: { "x-sent": `turn-${turn}`, accept: "a/b" } });
+    console.log(path, JSON.stringify([...response.headers].filter(([name]) => name !== "date")), await response.text());
+  }
+}
+await server.stop(true);
+//// headers-objects-called-directly-untyped.js
+// Methods of a Headers object whose header name is a constant, a parameter or a loop variable: on the result of `new Headers(..)` and of `x.headers`, on a subclass, on objects of other classes with methods of the same names, and on a Headers object whose method or prototype was replaced.
+export function madeHere(type, id) {
+  const headers = new Headers();
+  headers.set("content-type", type);
+  headers.append("x-request-id", id);
+  headers.append("Set-Cookie", id);
+  const had = headers.has("X-Request-Id");
+  headers.delete("x-request-id");
+  return [had, new Response("x", { headers })];
+}
+export function madeFromInit(init) {
+  return new Headers(init).get("content-type");
+}
+export function returned(value) {
+  const headers = new Headers({ accept: "*/*" });
+  headers.set("x-mine", value);
+  return headers;
+}
+export function byParameter(name, value) {
+  const headers = new Headers();
+  headers.set(name, value);
+  return headers;
+}
+export function byVariable(names) {
+  const headers = new Headers();
+  for (const name of names) headers.set(name, "v");
+  return headers;
+}
+export function nameThatIsNoToken(value) {
+  const headers = new Headers();
+  headers.set("bad name", value);
+  return headers;
+}
+export function handedOnFirst(holder, take) {
+  const headers = holder.headers;
+  take(headers);
+  headers.set("x-mine", "after");
+  return headers;
+}
+export function joinedWithAnother(given, value) {
+  const headers = given ?? new Headers();
+  headers.set("x-joined", value);
+  return [headers, headers.get("x-joined")];
+}
+export function computedValue(count) {
+  const headers = new Headers();
+  headers.append("x-count", String(count + 1));
+  return headers;
+}
+class Louder extends Headers {
+  set(name, value) {
+    super.set(name, `${value}!`);
+  }
+}
+export function ofAnotherClass(value) {
+  const headers = new Louder();
+  headers.set("x-mine", value);
+  return headers;
+}
+
+const describe = (error) => (/^(Invalid header name|Header '|Not enough arguments|Cannot convert a symbol|from )/.test(error.message) ? `${error.name}: ${error.message}` : error.name);
+const show = (value) => (value instanceof Headers ? JSON.stringify([[...value], value.getSetCookie()]) : value instanceof Response ? show(value.headers) : value instanceof Map ? `Map ${JSON.stringify([...value])}` : Array.isArray(value) ? value.map(show).join(" . ") : String(value));
+function attempt(run) {
+  try {
+    return show(run());
+  } catch (error) {
+    return describe(error);
+  }
+}
+const log = [];
+////= says
+const throws = (label) => ({
+  toString() {
+    log.push(label);
+    throw new RangeError(`from ${label}`);
+  },
+});
+const values = ["v", "", "  padded ", "two\nlines", "café", "€", 7, null, undefined, says("value", "said"), throws("value"), Symbol("s")];
+for (const value of values) {
+  log.length = 0;
+  console.log(attempt(() => madeHere(value, "id")), "|", attempt(() => madeHere("a/b", value)), "|", attempt(() => returned(value)), "|", attempt(() => nameThatIsNoToken(value)), "|", attempt(() => ofAnotherClass(value)), "|", log.join(","));
+}
+for (const init of [undefined, {}, { "Content-Type": "a/b" }, [["content-type", "c/d"], ["CONTENT-TYPE", "e/f"]], new Headers({ "content-type": "g/h" }), new Map([["content-type", "of a Map"]]), null, 7, "text", { "bad name": "v" }]) console.log(attempt(() => madeFromInit(init)));
+for (const name of ["content-type", "CONTENT-TYPE", "x-mine", "cache-control", "bad name", "", "café", 7, null, undefined, says("name", "x-said"), Symbol("s")]) console.log(attempt(() => byParameter(name, "v")), "|", attempt(() => byVariable([name, "x-second"])));
+console.log(attempt(() => byParameter("cache-control", "no-store")), attempt(() => byParameter("x-request-id", "7")), attempt(() => byParameter("Vary", "accept")));
+console.log(attempt(() => computedValue(1)), attempt(() => computedValue("1")));
+
+console.log("== handed on first");
+for (const make of [() => new Response("", { headers: { accept: "*/*" } }), () => new Request("http://localhost/"), () => ({ headers: new Headers() }), () => ({ headers: new Map() }), () => ({ headers: new Louder() }), () => ({})]) {
+  const holder = make();
+  const seen = [];
+  const result = attempt(() => handedOnFirst(holder, (headers) => seen.push(headers)));
+  console.log(result, seen[0] === holder.headers, attempt(() => holder.headers));
+  console.log(
+    attempt(() =>
+      handedOnFirst(make(), (headers) => {
+        headers.set = (name, value) => log.push(`own set of ${name} to ${value}`);
+      }),
+    ),
+    log.pop(),
+  );
+  console.log(attempt(() => handedOnFirst(make(), (headers) => Object.setPrototypeOf(headers, { set: (name, value) => log.push(`another prototype's set of ${name} to ${value}`) })) === undefined), log.pop());
+}
+
+console.log("== joined with another");
+for (const given of [undefined, null, new Headers({ "x-given": "yes" }), new Map(), new Louder(), new Response("").headers, new URLSearchParams("x-joined=before"), new FormData()]) console.log(attempt(() => joinedWithAnother(given, "joined")));
+
+console.log("== in a server");
+const answer = (request) => {
+  const [had, response] = madeHere("text/made", request.headers.get("x-sent"));
+  const more = returned(String(had));
+  handedOnFirst(response, (headers) => headers.append("x-handed", more.get("x-mine")));
+  return response;
+};
+const server = Bun.serve({ port: 0, routes: { "/routed/:id": answer }, fetch: answer });
+for (const path of ["/routed/1", "/plain"]) {
+  for (let turn = 0; turn < 2; turn++) {
+    const response = await fetch(new URL(path, server.url), { headers: { "x-sent": `turn-${turn}` } });
+    console.log(path, JSON.stringify([...response.headers].filter(([name]) => name !== "date")), await response.text());
+  }
+}
+await server.stop(true);
+//// inspectors-of-host-objects-called-by-hand.js
+// The method under Symbol.for("nodejs.util.inspect.custom") by which a class of the host prints itself is native code that calls the printer of node:util. A program may call it as the formatter does.
+// Only texts are printed here, so nothing but the calls by hand needs the printer.
+const custom = Symbol.for("nodejs.util.inspect.custom");
+
+function show(name, make) {
+  try {
+    const object = make();
+    const method = object[custom];
+    console.log(String(name + ": " + typeof method + " " + (typeof method === "function" ? String(method.call(object, 2, {})).split("\n")[0] : "-")));
+  } catch (error) {
+    console.log(String(name + " threw " + error.constructor.name + ": " + error.message.slice(0, 60)));
+  }
+}
+
+show("URLSearchParams", () => new URLSearchParams("a=1&b=2"));
+show("URL", () => new URL("https://example.com/a"));
+show("ReadableStream", () => new ReadableStream());
+show("WritableStream", () => new WritableStream());
+show("TransformStream", () => new TransformStream());
+show("the body of a Response", () => new Response("x").body);
+show("a reader", () => new ReadableStream().getReader());
+show("TextDecoderStream", () => new TextDecoderStream());
+show("a mark", () => performance.mark("m"));
+show("Buffer", () => Buffer.from("ab"));
+show("Headers", () => new Headers({ a: "1" }));
+show("Blob", () => new Blob(["x"]));
+show("an object literal", () => ({}));
+
+const { [custom]: print } = URL.prototype;
+console.log(String(typeof print + " " + print.call(new URL("https://example.com/a?b=c"), 1, {}).length));
+//// instanceof-a-host-class-that-is-given-a-has-instance-by-hidden-names.js
+// The same through a name that is put together at run time and a function that nobody follows.
+function isResponse(x) { return x instanceof Response; }
+function isURL(x) { return x instanceof URL; }
+const values = [new Response("a"), new URL("http://a/"), {}, 5];
+const ask = () => values.map(value => +isResponse(value) + "" + +isURL(value)).join();
+for (let i = 0; i < 50; i++) ask();
+console.log(ask());
+const names = JSON.parse('["Res","ponse","UR","L"]');
+const define = JSON.parse('["define","Property"]').join("");
+for (const name of [names[0] + names[1], names[2] + names[3]]) {
+  try { Object[define](globalThis[name], Symbol[JSON.parse('"hasInstance"')], { value: x => x === 5, configurable: true }); console.log("defined"); } catch (error) { console.log("refused", error.name); }
+}
+console.log(ask());
+//// instanceof-a-host-class-that-is-given-its-own-has-instance.js
+// A program gives a host constructor a Symbol.hasInstance of its own, by the constructor's name.
+function isResponse(x) { return x instanceof Response; }
+function isHeaders(x) { return x instanceof Headers; }
+const values = [new Response("a"), new Headers(), {}, 5];
+const ask = () => values.map(value => +isResponse(value) + "" + +isHeaders(value)).join();
+for (let i = 0; i < 50; i++) ask();
+console.log(ask());
+try { Object.defineProperty(Response, Symbol.hasInstance, { value: x => x === 5, configurable: true }); console.log("defined"); } catch (error) { console.log("refused", error.name); }
+console.log(ask());
+try { delete Response[Symbol.hasInstance]; console.log("deleted"); } catch (error) { console.log("refused", error.name); }
+console.log(ask());
+//// instanceof-a-host-class-whose-binding-is-replaced.js
+// The global binding is replaced, a class of the program stands below, and an object is put under the prototype by hand.
+function isResponse(x) { return x instanceof Response; }
+class Below extends Response {}
+const byHand = Object.create(Response.prototype);
+const moved = Object.setPrototypeOf(new Response("m"), null);
+const values = [new Response("a"), new Below("b"), byHand, moved, new Proxy(new Response("p"), {}), {}];
+const ask = () => values.map(value => +isResponse(value)).join("");
+for (let i = 0; i < 50; i++) ask();
+console.log(ask());
+const original = Response;
+try { globalThis.Response = class Other {}; console.log("replaced", Response !== original); } catch (error) { console.log("refused", error.name); }
+console.log(ask(), values.map(value => +(value instanceof original)).join(""));
+//// instanceof-a-host-class-whose-constructor-is-given-another-parent.js
+// The constructor gets another parent, which has a Symbol.hasInstance.
+function isRequest(x) { return x instanceof Request; }
+function isStream(x) { return x instanceof ReadableStream; }
+const values = [new Request("http://a/"), new ReadableStream(), {}, 5];
+const ask = () => values.map(value => +isRequest(value) + "" + +isStream(value)).join();
+for (let i = 0; i < 50; i++) ask();
+console.log(ask());
+const parent = Object.create(Function.prototype, { [Symbol.hasInstance]: { value: x => x === 5 } });
+for (const constructor of [Request, ReadableStream]) { try { Object.setPrototypeOf(constructor, parent); console.log("moved"); } catch (error) { console.log("refused", error.name); } }
+console.log(ask());
+//// instanceof-ten-host-classes.js
+const box = [new Response("a"), new Request("http://a/"), new Headers(), new URL("http://a/"), new Blob([]), new ReadableStream(), new FormData(), AbortSignal.abort(), {}, null, 5, new Map(), new URLSearchParams(), new WritableStream(), new TransformStream(), new File([], "f"), new EventTarget()];
+function isResponse(x) { return x instanceof Response; }
+function isRequest(x) { return x instanceof Request; }
+function isHeaders(x) { return x instanceof Headers; }
+function isURL(x) { return x instanceof URL; }
+function isBlob(x) { return x instanceof Blob; }
+function isStream(x) { return x instanceof ReadableStream; }
+function isForm(x) { return x instanceof FormData; }
+function isSignal(x) { return x instanceof AbortSignal; }
+function isTarget(x) { return x instanceof EventTarget; }
+function isMap(x) { return x instanceof Map; }
+const tests = [isResponse, isRequest, isHeaders, isURL, isBlob, isStream, isForm, isSignal, isTarget, isMap];
+let lines = [];
+for (let round = 0; round < 50; round++) lines = tests.map(test => test.name + " " + box.map(value => +test(value)).join(""));
+console.log(lines.join("\n"));
+//// known-header-names-untyped.js
+// `x.headers.get(name)` with a constant name: well-known names in lower case and in capitals, set-cookie, another valid name, every character a name may have, invalid names, and a variable beside them. For every kind of holder, before and after its Headers object is changed.
+////= lines-13	contentType	"content-type"
+////= lines-13	contentTypeInCapitals	"CONTENT-Type"
+////= lines-13	firstName	"accept"
+////= lines-13	lastName	"X-XSS-Protection"
+////= lines-13	setCookie	"set-cookie"
+////= lines-13	uncommon	"X-Mine"
+////= lines-13	everyTokenCharacter	"!#$%&'*+-.^_`|~09azAZ"
+////= lines-13	withSpace	"bad name"
+////= lines-13	withColon	"x:y"
+////= lines-13	empty	""
+////= lines-13	notASCII	"café"
+////= lines-19	variable	get
+const reads = [contentType, contentTypeInCapitals, firstName, lastName, setCookie, uncommon, everyTokenCharacter, withSpace, withColon, empty, notASCII];
+////= attempt
+const rowsOf = (holder) => [...reads.map((read) => attempt(() => read(holder))), variable(holder, "content-type"), variable(holder, "x-MINE"), attempt(() => variable(holder, "bad name"))];
+
+const full = () => {
+  const headers = new Headers({ "Content-Type": "a/b", Accept: "*/*", "x-xss-protection": "0", "x-mine": "mine", "!#$%&'*+-.^_`|~09azAZ": "every" });
+  headers.append("set-cookie", "a=1");
+  headers.append("set-cookie", "b=2");
+  headers.append("x-mine", "again");
+  return headers;
+};
+const holders = {
+  "a Response with all": () => new Response("", { headers: full() }),
+  "a Response with none": () => new Response(null),
+  "a Response of a string": () => new Response("text"),
+  "a Response of a Blob with a type": () => new Response(new Blob(["x"], { type: "from/blob" })),
+  "Response.json": () => Response.json({}),
+  "Response.redirect": () => Response.redirect("http://localhost/"),
+  "a clone": () => new Response("", { headers: full() }).clone(),
+  "made from another and its body": () => ((first) => new Response(first.body, first))(new Response("x", { headers: full() })),
+  "a Request with all": () => new Request("http://localhost/", { headers: full() }),
+  "a Request with none": () => new Request("http://localhost/"),
+  "a Request with a Blob": () => new Request("http://localhost/", { method: "POST", body: new Blob(["x"], { type: "from/blob" }) }),
+  "something else": () => ({ headers: new Map([["content-type", "of a Map"], ["X-Mine", "of a Map, by the very key"]]) }),
+  "Headers in a plain object": () => ({ headers: full() }),
+};
+for (const [label, make] of Object.entries(holders)) {
+  console.log(label, JSON.stringify(rowsOf(make())));
+  const holder = make();
+  console.log(label + ", read twice, then with the object in hand", JSON.stringify([contentType(holder), contentType(holder), typeof holder.headers, contentType(holder), uncommon(holder)]));
+}
+
+for (const make of [holders["a Response with all"], holders["a Request with all"]]) {
+  const changed = make();
+  changed.headers.set("content-type", "changed");
+  changed.headers.delete("x-mine");
+  const ownGet = make();
+  ownGet.headers.get = (name) => `own get of ${name}`;
+  const otherPrototype = make();
+  Object.setPrototypeOf(otherPrototype.headers, { get: (name) => `another prototype's get of ${name}` });
+  const ownHeaders = make();
+  Object.defineProperty(ownHeaders, "headers", { value: new Headers({ "content-type": "own headers" }) });
+  console.log(JSON.stringify([changed, ownGet, otherPrototype, ownHeaders].map((holder) => [contentType(holder), uncommon(holder), variable(holder, "accept")])));
+}
+class Subclass extends Response {}
+////= lines-17	Overriding	Response	"content-type"	"overridden"
+console.log(JSON.stringify([contentType(new Subclass("", { headers: { "content-type": "subclass" } })), contentType(new Overriding(""))]));
+
+const server = Bun.serve({
+  port: 0,
+  routes: { "/routed": (request) => Response.json(rowsOf(request), { headers: { "x-mine": "answer", "set-cookie": "s=1" } }) },
+  fetch: (request) => Response.json(rowsOf(request), { headers: { "x-mine": "answer", "set-cookie": "s=1" } }),
+});
+for (const path of ["/routed", "/plain"]) {
+  for (const headers of [full(), new Headers()]) {
+    const response = await fetch(new URL(path, server.url), { headers });
+    console.log(path, JSON.stringify([contentType(response), uncommon(response), setCookie(response), firstName(response), variable(response, "X-MINE")]), await response.text());
+  }
+}
+await server.stop(true);
+//// locked-members-first-touched-late.ts
+// A member of a locked built-in that is created at its first use is locked at that use already: Array.prototype.copyWithin, Number.prototype.toExponential and toFixed, Symbol.prototype.description and the static members Math.hypot, Date.UTC and Reflect.has refuse every change, whichever attempt touches them first, and their attributes read as in plain Bun. The same attempts on what is not fixed (the legacy members of RegExp, Intl.Segmenter.prototype, globalThis.WeakRef and console, a new name on Math) answer as in plain Bun.
+const lines: string[] = [];
+////= say-2
+
+function describeProperty(holder: any, name: string) {
+  const descriptor = Object.getOwnPropertyDescriptor(holder, name)!;
+  const kind = "value" in descriptor ? (descriptor.writable ? "writable data" : "read-only data") : "accessor";
+  return kind + (descriptor.configurable ? ", configurable" : ", not configurable");
+}
+
+type Attempt = "assign" | "define" | "delete" | "Reflect.set" | "Object.values" | "describe" | "use";
+type Use = (holder: any, name: string) => unknown;
+// The holder is `any` and the name comes from a table, so neither the type checker nor the build knows which member is meant. `first` is the first use of the member in this program.
+type Member = [path: string, holder: any, name: string, first: Attempt, use: Use];
+
+const replacement = () => "replaced";
+
+function attempt(kind: Attempt, holder: any, name: string, use: Use) {
+  switch (kind) {
+    case "assign":
+      holder[name] = replacement;
+      return "assigned";
+    case "define":
+      Object.defineProperty(holder, name, { value: replacement });
+      return "defined";
+    case "delete":
+      return delete holder[name];
+    case "Reflect.set":
+      return Reflect.set(holder, name, replacement);
+    case "Object.values":
+      return Object.values(holder).length;
+    case "describe":
+      return describeProperty(holder, name);
+    case "use":
+      return use(holder, name);
+  }
+}
+
+function attemptEach(members: Member[], kinds: Attempt[]) {
+  for (const [path, holder, name, first, use] of members) {
+    for (const kind of [first, ...kinds.filter(other => other !== first)]) {
+      say(`${path}.${name}, ${kind}`, () => attempt(kind, holder, name, use));
+    }
+  }
+}
+
+attemptEach(
+  [
+    ["Array.prototype", Array.prototype, "copyWithin", "assign", (holder, name) => holder[name].call([1, 2, 3, 4], 0, 2).join()],
+    ["Math", Math, "hypot", "delete", (holder, name) => holder[name](3, 4)],
+    ["globalThis", globalThis, "WeakRef", "define", (holder, name) => new holder[name](lines).deref() === lines],
+    ["Intl.Segmenter.prototype", Intl.Segmenter.prototype, "segment", "assign", (holder, name) => Array.from(holder[name].call(new Intl.Segmenter("en"), "ab"), (part: any) => part.segment).join("|")],
+    ["Number.prototype", Number.prototype, "toExponential", "delete", (holder, name) => holder[name].call(1500, 1)],
+    ["Date", Date, "UTC", "Reflect.set", (holder, name) => holder[name](2000, 0, 1)],
+    ["Reflect", Reflect, "has", "describe", (holder, name) => holder[name]({ late: 1 }, "late")],
+    ["Number.prototype", Number.prototype, "toFixed", "use", (holder, name) => holder[name].call(1.5, 2)],
+  ],
+  ["assign", "define", "delete", "Reflect.set", "describe", "use"],
+);
+
+attemptEach(
+  [
+    ["RegExp", RegExp, "input", "define", (holder, name) => ((holder[name] = "stored"), holder[name])],
+    ["RegExp", RegExp, "multiline", "delete", (holder, name) => ((holder[name] = true), holder[name])],
+    ["RegExp", RegExp, "lastParen", "describe", (holder, name) => typeof holder[name]],
+    ["Symbol.prototype", Symbol.prototype, "description", "use", (holder, name) => (Symbol("late") as any)[name]],
+  ],
+  ["define", "delete", "describe", "use"],
+);
+
+attemptEach(
+  [
+    ["Number.prototype", Number.prototype, "toPrecision", "Object.values", (holder, name) => holder[name].call(1500, 2)],
+    ["RegExp", RegExp, "rightContext", "Object.values", (holder, name) => typeof holder[name]],
+    ["Intl.Segmenter.prototype", Intl.Segmenter.prototype, "resolvedOptions", "Object.values", (holder, name) => holder[name].call(new Intl.Segmenter("en")).granularity],
+  ],
+  ["Object.values", "describe", "use"],
+);
+
+function replaceAndRestore(holder: any, name: string) {
+  const original = holder[name];
+  holder[name] = replacement;
+  const replaced = holder[name] === replacement;
+  holder[name] = original;
+  return replaced && holder[name] === original ? "replaced and restored" : "unchanged";
+}
+
+function addAndDelete(holder: any, name: string) {
+  holder[name] = 1;
+  return `${holder[name]}, ${delete holder[name]}, ${name in holder}`;
+}
+
+attemptEach([["globalThis", globalThis, "console", "describe", replaceAndRestore]], ["describe", "use"]);
+attemptEach([["Math", Math, "added", "use", addAndDelete]], ["use"]);
+
+console.log(lines.join("\n"));
+//// locked-prototypes.ts
+// --aot locks the prototypes of Request, Response, Blob, Headers, URL and URLSearchParams: every way to change them is refused, and the attributes of their members read as in plain Bun. Buffer.prototype keeps its members, its prototype and its missing index keys, and takes other names and the program's own symbols. The constructors and global names of the six classes and the prototypes of other host classes stay as in plain Bun.
+const lines: string[] = [];
+////= say-2
+
+type Row = [name: string, constructor: Function, method: string, getter: string];
+const locked: Row[] = [
+  ["Request", Request, "text", "url"],
+  ["Response", Response, "json", "status"],
+  ["Blob", Blob, "slice", "size"],
+  ["Headers", Headers, "get", "count"],
+  ["URL", URL, "toJSON", "pathname"],
+  ["URLSearchParams", URLSearchParams, "get", "size"],
+];
+const unlocked: Row[] = [
+  ["AbortSignal", AbortSignal, "throwIfAborted", "aborted"],
+  ["ReadableStream", ReadableStream, "getReader", "locked"],
+  ["TextEncoder", TextEncoder, "encode", "encoding"],
+  ["TextDecoder", TextDecoder, "decode", "encoding"],
+  ["FormData", FormData, "get", "get"],
+  ["EventTarget", EventTarget, "addEventListener", "addEventListener"],
+];
+const membersFixed: Row[] = [["Buffer", Buffer, "readInt8", "parent"]];
+
+for (const [name, constructor, method, getter] of [...locked, ...unlocked, ...membersFixed]) {
+  const prototype = constructor.prototype as Record<PropertyKey, unknown>;
+  const before = prototype[method];
+  const keysBefore = Reflect.ownKeys(prototype).map(String).join();
+  const at = name + ".prototype";
+  say(`${at}.${method} = f`, () => ((prototype[method] = function replaced() {}), prototype[method] === before ? "unchanged" : "replaced"));
+  try {
+    prototype[method] = before;
+  } catch {}
+  say(`${at}.${method} = the same function`, () => ((prototype[method] = before), "allowed"));
+  say(`Object.defineProperty(${at}, "${method}", value)`, () => (Object.defineProperty(prototype, method, { value: before, writable: true, configurable: true, enumerable: true }), "defined"));
+  say(`Object.defineProperty(${at}, "${getter}", getter)`, () => {
+    const old = Object.getOwnPropertyDescriptor(prototype, getter)!;
+    Object.defineProperty(prototype, getter, { get: () => "replaced", configurable: true });
+    Object.defineProperty(prototype, getter, old);
+    return "replaced and restored";
+  });
+  say(`${at}.added = 1`, () => ((prototype.added = 1), delete prototype.added, "added and deleted"));
+  say(`${at}[0] = 1`, () => ((prototype[0] = 1), delete prototype[0], "added and deleted"));
+  say(`${at}[Symbol.for("added")] = 1`, () => ((prototype[Symbol.for("added")] = 1), delete prototype[Symbol.for("added")], "added and deleted"));
+  say(`Object.defineProperty(${at}, "added", value)`, () => (Object.defineProperty(prototype, "added", { value: 1, configurable: true }), delete prototype.added, "added and deleted"));
+  say(`Object.assign(${at}, { added: 1 })`, () => (Object.assign(prototype, { added: 1 }), delete prototype.added, "added and deleted"));
+  say(`${at}.__defineGetter__("added", f)`, () => ((prototype as any).__defineGetter__("added", () => 1), delete prototype.added, "added and deleted"));
+  say(`Reflect.set(${at}, "added", 1)`, () => {
+    const answer = Reflect.set(prototype, "added", 1);
+    delete prototype.added;
+    return answer;
+  });
+  say(`Reflect.defineProperty(${at}, "added", value)`, () => {
+    const answer = Reflect.defineProperty(prototype, "added", { value: 1, configurable: true });
+    delete prototype.added;
+    return answer;
+  });
+  say(`Reflect.deleteProperty(${at}, "missing")`, () => Reflect.deleteProperty(prototype, "missing"));
+  say(`Object.isExtensible(${at})`, () => Object.isExtensible(prototype));
+  say(`Object.isFrozen(${at})`, () => Object.isFrozen(prototype));
+  say(`Object.setPrototypeOf(${at}, its own prototype)`, () => (Object.setPrototypeOf(prototype, Object.getPrototypeOf(prototype)), "allowed"));
+  say(`Object.setPrototypeOf(${at}, another object)`, () => {
+    const parent = Object.getPrototypeOf(prototype);
+    Object.setPrototypeOf(prototype, Object.create(parent));
+    Object.setPrototypeOf(prototype, parent);
+    return "changed and restored";
+  });
+  say(`${at}.__proto__ = another object`, () => {
+    const parent = Object.getPrototypeOf(prototype);
+    (prototype as any).__proto__ = Object.create(parent);
+    const changed = Object.getPrototypeOf(prototype) !== parent;
+    Object.setPrototypeOf(prototype, parent);
+    return changed ? "changed and restored" : "unchanged";
+  });
+  say(`Reflect.setPrototypeOf(${at}, another object)`, () => {
+    const parent = Object.getPrototypeOf(prototype);
+    const answer = Reflect.setPrototypeOf(prototype, Object.create(parent));
+    Reflect.setPrototypeOf(prototype, parent);
+    return answer;
+  });
+  say(`${at} has the same keys afterwards`, () => Reflect.ownKeys(prototype).map(String).join() === keysBefore);
+  say(`${at}.${method} is the same function afterwards`, () => prototype[method] === before);
+}
+
+for (const [name, constructor, method] of locked) {
+  const prototype = constructor.prototype as Record<PropertyKey, unknown>;
+  say(`delete ${name}.prototype.${method}`, () => delete prototype[method]);
+  say(`Reflect.deleteProperty(${name}.prototype, "${method}")`, () => Reflect.deleteProperty(prototype, method));
+  say(`${name}.prototype.${method} is still a function`, () => typeof prototype[method]);
+  say(`Object.freeze(${name}.prototype)`, () => Object.freeze(prototype) === prototype);
+  say(`Object.seal(${name}.prototype)`, () => Object.seal(prototype) === prototype);
+  say(`Object.preventExtensions(${name}.prototype)`, () => Object.preventExtensions(prototype) === prototype);
+}
+
+for (const [name, constructor] of locked) {
+  const statics = constructor as unknown as Record<string, unknown>;
+  say(`${name}.added = 1`, () => ((statics.added = 1), delete statics.added, "added and deleted"));
+  say(`Object.isExtensible(${name})`, () => Object.isExtensible(constructor));
+}
+const replaceStatic = (holder: Record<string, unknown>, name: string) => {
+  const before = holder[name];
+  const replacement = () => "replaced";
+  holder[name] = replacement;
+  const replaced = holder[name] === replacement;
+  holder[name] = before;
+  return replaced && holder[name] === before ? "replaced and restored" : "unchanged";
+};
+say("File.prototype is Blob.prototype", () => File.prototype === Blob.prototype);
+say("Response.json = f", () => replaceStatic(Response as unknown as Record<string, unknown>, "json"));
+say("Response.redirect = f", () => replaceStatic(Response as unknown as Record<string, unknown>, "redirect"));
+say("URL.canParse = f", () => replaceStatic(URL as unknown as Record<string, unknown>, "canParse"));
+say("URL.createObjectURL = f", () => replaceStatic(URL as unknown as Record<string, unknown>, "createObjectURL"));
+
+console.log(lines.join("\n"));

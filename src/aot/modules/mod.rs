@@ -42,7 +42,8 @@ pub use referents::{Library, LinkedProject};
 pub use wrapped::{InnerModule, InnerModuleKind, WrappedModules};
 
 use crate::builtins::{BuiltinNames, Platforms};
-use crate::ir::{InParallel, for_each_mut};
+use crate::ir::InParallel;
+use crate::ir::parallel::map_each;
 use crate::known_helpers::KnownHelpers;
 use crate::load::{EntryPointKind, SourceKind, Sources};
 use crate::statistics::{Counters, LimitId, StatisticId};
@@ -53,15 +54,15 @@ use bun_sema::util::SharedSort;
 use commonjs_exports::{CommonJsInput, InnerCommonJs, scan_commonjs_modules};
 use core::cmp::Ordering;
 use exports::{ExportTables, collect_export_entries, finish_exports, resolve_exports};
-use failures::{NumberedFailures, PendingFailure, number_failures};
+use failures::{PendingFailure, number_failures};
 use graph::{FileRow, GraphParts};
 use imports::{FileImports, FinishedImports, bind_imports, finish_imports};
 use module_set::{ModuleSet, collect_modules};
-use order::{PlannedSites, SiteKey, SitePosition, compute_order};
+use order::{SiteKey, SitePosition, compute_order};
 use plan::{PlanParts, StoredSite};
 use requests::{Scans, finish_requests, finish_site_answers, scan_files};
 use side_effects::is_declared_free_of_side_effects;
-use synthetic_exports::{SyntheticExports, number_synthetic_exports};
+use synthetic_exports::number_synthetic_exports;
 use unloadable::{drop_errors_of_unloadable_modules, find_unloadable_modules};
 
 pub struct BindInput<'a, 's> {
@@ -98,27 +99,6 @@ pub struct BoundModules {
     pub graph: ModuleGraph,
     pub counters: Counters,
 }
-
-struct FinishInput<'a, 's> {
-    files: &'a Files<'s>,
-    sources: &'a Sources,
-    scans: &'a Scans,
-    modules: &'a ModuleSet,
-    tables: &'a ExportTables,
-    synthetic: &'a SyntheticExports,
-    failures: &'a NumberedFailures,
-    sites: &'a PlannedSites,
-    commonjs_exports: &'a CommonJsExports,
-}
-
-struct FileDraft {
-    file: FileId,
-    is_library: bool,
-    requests: Vec<ModuleRequest>,
-    imports: Option<FileImports>,
-}
-
-type FileSlot = (Option<FileDraft>, Option<FileRow>);
 
 pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     let file_count = input.files.modules.len();
@@ -166,19 +146,92 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         erased_statements.extend(hir.ids(hir.body).map(|statement| (module.file, statement)));
     }
     let requests = finish_requests(&scans, &modules, &tables, &order, &sites);
-    let drafts = create_file_drafts(input, &modules, requests.files, imports);
-    let finish_input = FinishInput {
-        files: input.files,
-        sources: input.sources,
-        scans: &scans,
-        modules: &modules,
-        tables: &tables,
-        synthetic: &synthetic,
-        failures: &failures,
-        sites: &sites,
-        commonjs_exports: &commonjs_exports,
-    };
-    let files = finish_files(input.in_parallel, &finish_input, drafts);
+    let is_library = find_library_files(input);
+    let mut compiled_files = modules.compiled_files.iter().zip(imports).peekable();
+    let record_files = modules.record_files.iter().zip(requests.files);
+    let drafts: Vec<(FileId, Vec<ModuleRequest>, Option<FileImports>)> = record_files
+        .map(|(&file, requests)| {
+            let compiled = compiled_files.next_if(|&(&compiled_file, _)| compiled_file == file);
+            (file, requests, compiled.map(|(_, imports)| imports))
+        })
+        .collect();
+    debug_assert!(compiled_files.next().is_none());
+    let files = map_each(drafts, input.in_parallel, &|(file, requests, imports)| {
+        let (files, sources) = (input.files, input.sources);
+        let interop = modules.interop(ModuleRef::File(file));
+        let runtime_module = match sources.kind(file) {
+            SourceKind::RuntimeModule(module) if interop.kind == ModuleKind::RuntimeSource => {
+                Some(module)
+            }
+            _ => None,
+        };
+        debug_assert_eq!(
+            runtime_module.is_some(),
+            interop.kind == ModuleKind::RuntimeSource
+        );
+        let is_compiled = imports.is_some();
+        let is_code_of_program = sources.kind(file) == SourceKind::Program
+            && matches!(interop.kind, ModuleKind::SourceText | ModuleKind::CommonJs);
+        let (site_answers, exports, imports) = match imports {
+            Some(imports) => (
+                finish_site_answers(files, &scans, file, &failures),
+                finish_exports(files, &tables, &synthetic, file),
+                finish_imports(imports, &synthetic),
+            ),
+            None => (Vec::new(), Vec::new(), FinishedImports::default()),
+        };
+        let evaluating_sites = sites.of(file).iter().filter(|site| site.evaluates);
+        let mut evaluating_sites: Vec<(SiteKey, StoredSite)> = evaluating_sites
+            .map(|site| {
+                // The text of a file that keeps the function around it is lowered into that function, which is not the body.
+                let is_bare = site.position == SitePosition::InOrder
+                    && site.is_proven
+                    && !commonjs_exports.needs_wrapped_body(site.referrer);
+                let stored = StoredSite {
+                    referrer: site.referrer,
+                    target: site.target,
+                    is_bare,
+                };
+                (site.key, stored)
+            })
+            .collect();
+        evaluating_sites.shared_sort_unstable_by_key(|&(key, _)| key);
+        FileRow {
+            file,
+            interop,
+            runtime_module,
+            is_library: is_library[file.idx()],
+            has_dynamic_names: tables.has_dynamic_names(ModuleRef::File(file)),
+            has_top_level_await: is_compiled
+                && interop.kind == ModuleKind::SourceText
+                && files.analysis(file).has_live_top_level_await,
+            has_no_side_effects: is_code_of_program
+                && !is_library[file.idx()]
+                && is_declared_free_of_side_effects(
+                    files.declared_side_effects(file),
+                    files.module(file).file_name(),
+                ),
+            requests,
+            sites: site_answers,
+            spellings: match is_compiled {
+                true => scans.of(file).spellings.clone(),
+                false => Vec::new(),
+            },
+            imports: imports.imports,
+            members: imports.members,
+            accessed: imports.accessed,
+            fixed_members: imports.fixed_members,
+            named_members: imports.named_members,
+            jsx: imports.jsx,
+            namespace_values: imports.namespace_values,
+            evaluating_sites,
+            unread_sites: imports.unread_sites,
+            holders: imports.holders,
+            exports,
+            unread_exports: Vec::new(),
+            required_names: imports.required_names,
+        }
+    });
     let counters = count_modules(&scans, &modules);
     let (errors, failures) = failures.into_lists();
     let plan = PlanParts {
@@ -336,133 +389,4 @@ fn collect_pending_failures(
             (file, lists.concat())
         })
         .collect()
-}
-
-fn create_file_drafts(
-    input: &BindInput<'_, '_>,
-    modules: &ModuleSet,
-    requests: Vec<Vec<ModuleRequest>>,
-    imports: Vec<FileImports>,
-) -> Vec<FileDraft> {
-    debug_assert_eq!(modules.record_files.len(), requests.len());
-    let is_library = find_library_files(input);
-    let mut compiled_files = modules.compiled_files.iter().zip(imports).peekable();
-    let record_files = modules.record_files.iter().zip(requests);
-    let drafts = record_files
-        .map(|(&file, requests)| {
-            let compiled = compiled_files.next_if(|&(&compiled_file, _)| compiled_file == file);
-            FileDraft {
-                file,
-                is_library: is_library[file.idx()],
-                requests,
-                imports: compiled.map(|(_, imports)| imports),
-            }
-        })
-        .collect();
-    debug_assert!(compiled_files.next().is_none());
-    drafts
-}
-
-fn finish_files(
-    in_parallel: InParallel<'_>,
-    finish_input: &FinishInput<'_, '_>,
-    drafts: Vec<FileDraft>,
-) -> Vec<FileRow> {
-    let drafts = drafts.into_iter();
-    let mut slots: Vec<FileSlot> = drafts.map(|draft| (Some(draft), None)).collect();
-    for_each_mut(&mut slots, in_parallel, &|(draft, parts)| {
-        *parts = draft.take().map(|draft| finish_file(finish_input, draft));
-    });
-    let finished = slots.into_iter();
-    finished
-        .map(|(_, parts)| parts.expect("every task ran"))
-        .collect()
-}
-
-fn finish_file(finish_input: &FinishInput<'_, '_>, draft: FileDraft) -> FileRow {
-    let FinishInput {
-        files,
-        sources,
-        scans,
-        modules,
-        tables,
-        synthetic,
-        failures,
-        sites: planned_sites,
-        commonjs_exports,
-    } = *finish_input;
-    let file = draft.file;
-    let interop = modules.interop(ModuleRef::File(file));
-    let runtime_module = match sources.kind(file) {
-        SourceKind::RuntimeModule(module) if interop.kind == ModuleKind::RuntimeSource => {
-            Some(module)
-        }
-        _ => None,
-    };
-    debug_assert_eq!(
-        runtime_module.is_some(),
-        interop.kind == ModuleKind::RuntimeSource
-    );
-    let is_compiled = draft.imports.is_some();
-    let is_code_of_program = sources.kind(file) == SourceKind::Program
-        && matches!(interop.kind, ModuleKind::SourceText | ModuleKind::CommonJs);
-    let (sites, exports, imports) = match draft.imports {
-        Some(imports) => (
-            finish_site_answers(files, scans, file, failures),
-            finish_exports(files, tables, synthetic, file),
-            finish_imports(imports, synthetic),
-        ),
-        None => (Vec::new(), Vec::new(), FinishedImports::default()),
-    };
-    let evaluating_sites = planned_sites.of(file).iter().filter(|site| site.evaluates);
-    let mut evaluating_sites: Vec<(SiteKey, StoredSite)> = evaluating_sites
-        .map(|site| {
-            // The text of a file that keeps the function around it is lowered into that function, which is not the body.
-            let is_bare = site.position == SitePosition::InOrder
-                && site.is_proven
-                && !commonjs_exports.needs_wrapped_body(site.referrer);
-            let stored = StoredSite {
-                referrer: site.referrer,
-                target: site.target,
-                is_bare,
-            };
-            (site.key, stored)
-        })
-        .collect();
-    evaluating_sites.shared_sort_unstable_by_key(|&(key, _)| key);
-    FileRow {
-        file,
-        interop,
-        runtime_module,
-        is_library: draft.is_library,
-        has_dynamic_names: tables.has_dynamic_names(ModuleRef::File(file)),
-        has_top_level_await: is_compiled
-            && interop.kind == ModuleKind::SourceText
-            && files.analysis(file).has_live_top_level_await,
-        has_no_side_effects: is_code_of_program
-            && !draft.is_library
-            && is_declared_free_of_side_effects(
-                files.declared_side_effects(file),
-                files.module(file).file_name(),
-            ),
-        requests: draft.requests,
-        sites,
-        spellings: match is_compiled {
-            true => scans.of(file).spellings.clone(),
-            false => Vec::new(),
-        },
-        imports: imports.imports,
-        members: imports.members,
-        accessed: imports.accessed,
-        fixed_members: imports.fixed_members,
-        named_members: imports.named_members,
-        jsx: imports.jsx,
-        namespace_values: imports.namespace_values,
-        evaluating_sites,
-        unread_sites: imports.unread_sites,
-        holders: imports.holders,
-        exports,
-        unread_exports: Vec::new(),
-        required_names: imports.required_names,
-    }
 }

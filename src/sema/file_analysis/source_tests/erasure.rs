@@ -250,6 +250,11 @@ const TYPED_TEXTS: &[&str] = &[
     "let a // b\n  : T = 1; function f() // c\n  : // d\n  T {}",
     "class A { x // b\n  ?: T; y /* c */\n  : T }",
     "const a = \"//\"; function f()\n  : T {}",
+    "function f() // c\u{2028}: T {}",
+    "class A { x // c\u{2028}: T = 1; y // c\u{2029}: T }",
+    "class A // c\u{2028}implements I {}",
+    "#!x\u{2028}function f(): T {}",
+    "function f()\u{a0}: T {}",
 ];
 
 const KEPT_TEXT_ROWS: &[(&str, &str, &str)] = &[
@@ -495,7 +500,6 @@ fn is_bare_assertion_target(typed: &File<'_>, node: NodeData) -> bool {
     typed.type_assertion_operand(written).is_some() && typed.exprs.iter().any(is_assigned_to)
 }
 
-// `() => <T>{ a: 1 }`: without `<T>` the brace opens a block.
 fn is_object_literal_behind_prefix_assertion(typed: &File<'_>, node: NodeData) -> bool {
     let NodeData::Expr(written) = node else {
         return false;

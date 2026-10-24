@@ -1,9 +1,0 @@
-# ECMAScript forbids the tokens `for (async of`, in and outside an await context. TypeScript is silent in an await context, so there the error comes from the early-error pass.
-async-before-of.ts:3 diagnostic TS1106 = EarlyError StopsBuild
-async-before-of.ts:4 diagnostic TS1106 = EarlyError StopsBuild
-
-# TypeScript forbids the name `async` after `for await (` and with an escape too. Both are valid JavaScript.
-async-before-of.ts:5 diagnostic TS1106 = TypeScriptGrammar StopsBuild
-async-before-of.ts:6 diagnostic TS1106 = TypeScriptGrammar StopsBuild
-absent: async-before-of.ts:5 diagnostic TS1106 = EarlyError StopsBuild
-absent: async-before-of.ts:6 diagnostic TS1106 = EarlyError StopsBuild

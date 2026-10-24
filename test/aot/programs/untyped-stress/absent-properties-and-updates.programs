@@ -1,0 +1,3022 @@
+////: lines-10
+class «1» {
+    get «2»() {
+        if (left-- <= 0)
+            return 0;
+        return this.«2» + 1;
+    }
+}
+////: lines-12
+function «1»(n) {
+    let sum = 0;
+    for (let i = 0; i < n; i++)
+        sum += new «2»;
+    return sum;
+}
+////: lines-9
+function «1»(n) {
+    let sum = 0;
+    for (let i = 0; i < n; i++)
+        sum += new «2»(«3»).«4»;
+    return sum;
+}
+//// absent-properties-and-updates/impl.js
+////= check
+function withDefault({ a, b = 2 }) { return a * b; }
+function missing(i) { return withDefault({ a: i }); }
+function present(i) { return withDefault({ a: i, b: 3 }); }
+function inherited({ a, toString }) { return typeof toString + a; }
+function readsInherited(i) { return inherited({ a: i }); }
+function constructorOf({ constructor }) { return constructor === Object; }
+function protoOf(o) { return o.__proto__ === Object.prototype; }
+function increment(o) { o.n++; return o.n; }
+function decrement(o) { --o.n; return o.n; }
+function postfix(x) { return x++ + x; }
+function coalesce(o) { o.n ??= 5; o.m ||= 6; o.k &&= 7; return o.n + "," + o.m + "," + o.k; }
+for (let round = 0; round < 3; ++round) {
+    check(missing(4), 8, "a property that the literal lacks");
+    check(present(4), 12, "a property that it has");
+    check(readsInherited(1), "function1", "a property of Object.prototype");
+    check(constructorOf({ a: 1 }), true, "constructor");
+    check(protoOf({ a: 1 }), true, "__proto__");
+    check(increment({ n: 1 }), 2, "an integer");
+    check(increment({ n: 1.5 }), 2.5, "a double");
+    check(increment({ n: 2147483647 }), 2147483648, "the largest int32");
+    check(decrement({ n: -2147483648 }), -2147483649, "the smallest int32");
+    check(decrement({ n: 0.5 }), -0.5, "a double, decremented");
+    check(increment({ n: "4" }), 5, "a string");
+    check(increment({ n: 10n }), 11n, "a BigInt");
+    check(increment({ n: undefined }), NaN, "undefined");
+    check(increment({ n: -0 }), 1, "negative zero");
+    check(postfix(1.25), 3.5, "postfix on a double");
+    check(coalesce({ n: null, m: 0, k: 1 }), "5,6,7", "short-circuit assignments, taken");
+    check(coalesce({ n: 1, m: 2, k: 0 }), "1,2,0", "short-circuit assignments, not taken");
+}
+
+function escape(o) { return o; }
+function readsBoth(i) { let { a, b } = { a: i, b: i + 1 }; return a + b; }
+function readsAbsent(i) { let { a, b = 2 } = { a: i }; return a * b; }
+function readsToString(i) { let { a, toString } = { a: i }; return typeof toString + a; }
+function readsProto(i) { let o = { a: i }; return o.__proto__ === Object.prototype; }
+function readsComputed(i, k) { let o = { a: i }; return o[k]; }
+function escapes(i) { let o = { a: i }; escape(o); return o.a; }
+function isReturned(i) { return { a: i }; }
+function isWritten(i) { let o = { a: i }; o.b = 1; return o.a + o.b; }
+function hasGetter(i) { let o = { get a() { return i; } }; return o.a; }
+function hasPrototype(i, p) { let o = { __proto__: p, a: i }; return o.b; }
+for (let round = 0; round < 3; ++round) {
+    check(readsBoth(1), 3, "both properties");
+    check(readsAbsent(4), 8, "a property that is absent");
+    check(readsToString(1), "function1", "toString");
+    check(readsProto(1), true, "__proto__");
+    check(readsComputed(1, "a"), 1, "a computed name");
+    check(escapes(1), 1, "an object that escapes");
+    check(isReturned(1).a, 1, "an object that is returned");
+    check(isWritten(1), 2, "an object that is written to");
+    check(hasGetter(1), 1, "a getter");
+    check(hasPrototype(1, { b: 5 }), 5, "another prototype");
+}
+console.log("passed");
+//// absent-properties-and-updates/main.ts
+// Reads of properties that an object literal lacks, has or inherits, and `++` and `+=` on integers at the edges of the int32 range.
+import "./impl.js";
+//// accesses-on-unknown-values/impl.js
+////= check
+(function () {
+    function make(i) { return { a: i, b: i + 1 }; }
+    function makeOther(i) { return { c: i, a: i }; }
+    function readsPlainObject(o) { try { return o.a; } catch (e) { throw e; } }
+    function readsOneOfTwoPlainObjects(o) { try { return o.a; } catch (e) { throw e; } }
+    function readsPlainObjectOrNull(o) { try { return o.a; } catch (e) { return 0; } }
+    function writesPlainObject(o) { try { o.a = 1; } catch (e) { throw e; } }
+    function readsObject(o) { try { return o.a; } catch (e) { throw e; } }
+    function writesObject(o) { try { o.a = 1; } catch (e) { throw e; } }
+    function readsPrimitive(s) { try { return s.a; } catch (e) { throw e; } }
+    function readsAnything(o) { try { return o.a; } catch (e) { throw e; } }
+    function writesAnything(o) { try { o.a = 1; } catch (e) { throw e; } }
+    function readsObjectOrPrimitive(o) { try { return o.a; } catch (e) { throw e; } }
+    function readsPropertyOfProperty(o) { try { return o.inner.a; } catch (e) { throw e; } }
+    function readsPropertyOfElement(list, i) { try { return list[i].a; } catch (e) { throw e; } }
+    function readsPropertyOfResult(f, i) { try { return f(i).a; } catch (e) { throw e; } }
+    function readsPropertyOfEither(o, p, i) { try { return (i & 1 ? o : p).a; } catch (e) { throw e; } }
+    let sum = 0;
+    for (let i = 0; i < 10; i++) {
+        sum += readsPropertyOfProperty({ inner: make(1) });
+        sum += readsPropertyOfElement([make(1), make(1)], i & 1);
+        sum += readsPropertyOfResult(i & 1 ? make : makeOther, 1);
+        sum += readsPropertyOfEither(make(1), makeOther(1), i);
+        sum += readsPlainObject(make(i));
+        sum += readsOneOfTwoPlainObjects(i & 1 ? make(i) : makeOther(i));
+        sum += readsPlainObjectOrNull(i & 1 ? make(i) : null);
+        writesPlainObject(make(i));
+        sum += readsObject(i & 1 ? make(i) : [i]) ? 1 : 0;
+        writesObject(i & 1 ? make(i) : [i]);
+        sum += readsPrimitive("s" + i) ? 1 : 0;
+        sum += readsAnything(JSON.parse('{"a":1}'));
+        writesAnything(JSON.parse('{"a":1}'));
+        sum += readsObjectOrPrimitive(i & 1 ? make(i) : "s") ? 1 : 0;
+    }
+    check(sum, 175, "the sum");
+})();
+console.log("passed");
+//// accesses-on-unknown-values/main.ts
+// Property and element accesses on values of unknown type.
+import "./impl.js";
+//// accessor-recursion/impl.js
+////= check
+const forever = 100000000;
+let left = 0;
+function outcomeOf(f) {
+    try {
+        return "returned " + f();
+    } catch (error) {
+        return error instanceof RangeError ? "RangeError" : "threw " + error;
+    }
+}
+function exercise(what, f, expectedWhenShallow) {
+    for (let i = 0; i < 20000; ++i) {
+        left = 3;
+        check(f(), expectedWhenShallow, what + " that returns");
+    }
+    for (let round = 0; round < 3; ++round) {
+        left = forever;
+        check(outcomeOf(f), "RangeError", what + " that does not return");
+        left = 3;
+        check(f(), expectedWhenShallow, what + " after the stack has overflowed");
+    }
+}
+
+const literal = {
+    get x() {
+        if (left-- <= 0)
+            return 0;
+        return this.x + 1;
+    }
+};
+exercise("a getter of an object literal", () => literal.x, 3);
+
+////= lines-10	WithGetter	x
+const withGetter = new WithGetter();
+exercise("a getter of a class", () => withGetter.x, 3);
+
+const key = Object.keys({ prop: 1 })[0];
+class WithComputedRead {
+    get prop() {
+        if (left-- <= 0)
+            return 0;
+        return this[key] + 1;
+    }
+}
+const withComputedRead = new WithComputedRead();
+exercise("a getter that reads by value", () => withComputedRead[key], 3);
+exercise("a getter that reads by value, read by name", () => withComputedRead.prop, 3);
+
+class WithoutCondition { get prop() { return this[key]; } }
+check(outcomeOf(() => new WithoutCondition().prop), "RangeError", "a getter that reads by value and was never called before");
+check(outcomeOf(() => new WithoutCondition().prop), "RangeError", "a getter that reads by value, again");
+
+////= lines-10	WithLength	length
+const withLength = new WithLength();
+exercise("a getter called length", () => withLength.length, 3);
+
+class Mutual {
+    get first() {
+        if (left-- <= 0)
+            return 0;
+        return this.second + 1;
+    }
+    get second() {
+        if (left-- <= 0)
+            return 0;
+        return this.first + 1;
+    }
+}
+const mutual = new Mutual();
+exercise("two getters that read each other", () => mutual.first, 3);
+
+const one = { get other() { return left-- <= 0 ? 0 : two.other + 1; } };
+const two = { get other() { return left-- <= 0 ? 0 : one.other + 1; } };
+exercise("getters of two objects that read each other", () => one.other, 3);
+
+let depth = 0;
+class WithSetter {
+    set x(value) {
+        depth = value;
+        if (left-- > 0)
+            this.x = value + 1;
+    }
+}
+const withSetter = new WithSetter();
+exercise("a setter of a class", () => { withSetter.x = 0; return depth; }, 3);
+
+class MutualSetters {
+    set first(value) {
+        depth = value;
+        if (left-- > 0)
+            this.second = value + 1;
+    }
+    set second(value) {
+        depth = value;
+        if (left-- > 0)
+            this.first = value + 1;
+    }
+}
+const mutualSetters = new MutualSetters();
+exercise("two setters that store to each other", () => { mutualSetters.first = 0; return depth; }, 3);
+
+class GetterAndSetter {
+    get x() {
+        if (left-- <= 0)
+            return 0;
+        this.x = 1;
+        return depth + 1;
+    }
+    set x(value) {
+        depth = this.x;
+    }
+}
+const getterAndSetter = new GetterAndSetter();
+exercise("a getter and a setter that use each other", () => getterAndSetter.x, 3);
+
+class CatchesInside {
+    get x() {
+        try {
+            return this.x + 1;
+        } catch (error) {
+            if (!(error instanceof RangeError))
+                throw error;
+            return 0;
+        }
+    }
+}
+const catchesInside = new CatchesInside();
+for (let round = 0; round < 3; ++round)
+    check(catchesInside.x > 100, true, "a getter that catches the error where the stack overflows");
+
+class Derived extends WithGetter { }
+const derived = new Derived();
+exercise("an inherited getter", () => derived.x, 3);
+console.log("passed");
+//// accessor-recursion/main.ts
+// Getters that call themselves until the stack overflows, and getters that catch that error.
+import "./impl.js";
+//// aliases-of-builtins/impl.js
+import { exportedFloor as importedFloor, exportedClz32 as importedClz32 } from "./impl.js";
+
+function check(actual, expected, what)
+////= lines-5
+
+function errorOf(run)
+////= lines-2
+
+export const exportedFloor = Math.floor;
+export var exportedClz32 = Math.clz32 ? Math.clz32 : function () { return -1; };
+function callsImported(x) { return importedFloor(x) + importedClz32(x); }
+check(callsImported(5.5), 34, "aliases imported from a module");
+
+function aliases()
+{
+    check(errorOf(() => callsVariable([])), TypeError, "a variable called before it has a value");
+    check(errorOf(() => callsConstant(1.5)), ReferenceError, "a constant called before it has a value");
+    check(errorOf(() => callsSliceOnArray([1, 2, 3])), TypeError, "a method read of a variable before it has a value");
+
+    const floor = Math.floor;
+    var isArray = Array.isArray;
+    var again = floor;
+    var byTruthiness = Math.clz32 ? Math.clz32 : clz32Fallback;
+    var byOr = Math.sqrt || clz32Fallback;
+    var byTypeof = typeof Object.is === "function" ? Object.is : function (a, b) { return a === b; };
+    var byTypeofUndefined = typeof Math.abs !== "undefined" ? Math.abs : clz32Fallback;
+    var byLooseNull = Math.ceil != null ? Math.ceil : clz32Fallback;
+    var byNullish = Math.trunc ?? clz32Fallback;
+    var slice = Array.prototype.slice;
+    var hasOwnProperty = Object.prototype.hasOwnProperty;
+
+    function clz32Fallback() { return -1; }
+    function callsConstant(x) { return floor(x); }
+    function callsVariable(x) { return isArray(x); }
+    function callsAliasOfAlias(x) { return again(x); }
+    function callsByTruthiness(x) { return byTruthiness(x); }
+    function callsByOr(x) { return byOr(x); }
+    function callsByTypeof(a, b) { return byTypeof(a, b); }
+    function callsByTypeofUndefined(x) { return byTypeofUndefined(x); }
+    function callsByLooseNull(x) { return byLooseNull(x); }
+    function callsByNullish(x) { return byNullish(x); }
+    function callsSliceOnArray(array) { return slice.call(array, 1); }
+    function callsSliceOnString() { return slice.call("abc", 1); }
+    function callsSliceOnAnything(anything) { return slice.call(anything, 1); }
+    function callsHasOwnProperty(object, key) { return hasOwnProperty.call(object, key); }
+    function appliesFloor(list) { return floor.apply(null, list); }
+
+    for (let i = 0; i < 100; ++i) {
+        check(callsConstant(i + 0.5), i, "a constant");
+        check(callsConstant(-0.5), -1, "a constant");
+        check(callsConstant("2.5"), 2, "a constant, with a string");
+        check(callsVariable([i]), true, "a variable");
+        check(callsVariable({ length: 0 }), false, "a variable");
+        check(callsAliasOfAlias(i + 0.25), i, "an alias of an alias");
+        check(callsByTruthiness(1), 31, "chosen by truthiness");
+        check(callsByTruthiness(0), 32, "chosen by truthiness");
+        check(callsByOr(i * i), i, "chosen by ||");
+        check(callsByTypeof(NaN, NaN), true, "chosen by typeof");
+        check(callsByTypeof(0, -0), false, "chosen by typeof");
+        check(callsByTypeofUndefined(-i), i, "chosen by typeof undefined");
+        check(callsByLooseNull(i + 0.5), i + 1, "chosen by != null");
+        check(callsByNullish(i + 0.5), i, "chosen by ??");
+        check(callsSliceOnArray([i, i + 1, i + 2]).join(), (i + 1) + "," + (i + 2), "slice.call on an array");
+        check(callsSliceOnString().join(), "b,c", "slice.call on a string");
+        check(callsSliceOnAnything([i, 7]).join(), "7", "slice.call on anything");
+        check(callsSliceOnAnything({ length: 2, 0: "a", 1: "b" }).join(), "b", "slice.call on anything");
+        check(callsHasOwnProperty({ own: i }, "own"), true, "hasOwnProperty.call");
+        check(callsHasOwnProperty({ own: i }, "toString"), false, "hasOwnProperty.call");
+        check(appliesFloor([i + 0.5]), i, "apply");
+    }
+    check(errorOf(() => callsHasOwnProperty(null, "own")), TypeError, "hasOwnProperty.call on null");
+    check(errorOf(() => callsSliceOnAnything(undefined)), TypeError, "slice.call on undefined");
+}
+aliases();
+
+function variablesThatAreNoAliases()
+{
+    var reassigned = Math.floor;
+    var reassignedToFunction = Math.floor;
+    var absent = Math.notThere ? Math.notThere : function () { return -1; };
+    var oneOfTwo = Date.now() > 0 ? Math.floor : Math.ceil;
+    var floor = Math.floor;
+
+    function reassigns() { reassigned = Math.ceil; }
+    function reassignsToFunction() { reassignedToFunction = function (x) { return x + 100; }; }
+    function callsReassigned(x) { return reassigned(x); }
+    function callsReassignedToFunction(x) { return reassignedToFunction(x); }
+    function callsAbsent(x) { return absent(x); }
+    function callsOneOfTwo(x) { return oneOfTwo(x); }
+    function callsParameter(floor, x) { return floor(x); }
+    function callsLocal(x) { let floor = x > 1 ? Math.ceil : Math.round; return floor(x); }
+
+    for (let i = 0; i < 100; ++i) {
+        check(callsReassigned(1.5), i < 50 ? 1 : 2, "a variable that is assigned again");
+        check(callsReassignedToFunction(1.5), i < 50 ? 1 : 101.5, "a variable that is assigned a function of the program");
+        if (i == 49) {
+            reassigns();
+            reassignsToFunction();
+        }
+        check(callsAbsent(1.5), -1, "a built-in that does not exist");
+        check(callsOneOfTwo(1.5), 1, "one of two built-ins");
+        check(callsParameter(i & 1 ? floor : x => x + 7, 1.5), i & 1 ? 1 : 8.5, "a parameter named like the variable");
+        check(callsLocal(1.5), 2, "a local variable named like the variable");
+        check(callsLocal(0.4), 0, "a local variable named like the variable");
+    }
+}
+variablesThatAreNoAliases();
+
+function variableThatEvalWrites()
+{
+    var writtenByEval = Math.round;
+    function callsWrittenByEval(x) { return writtenByEval(x); }
+
+    check(callsWrittenByEval(1.4), 1, "a variable that eval may write");
+    eval("writtenByEval = Math.ceil");
+    check(callsWrittenByEval(1.4), 2, "a variable that eval has written");
+}
+variableThatEvalWrites();
+console.log("passed");
+//// aliases-of-builtins/main.ts
+// Built-in functions called through variables, constants and imports that alias them, also before the alias has a value.
+import "./impl.js";
+//// arguments-always-spread/impl.js
+////= check
+
+(function () {
+function mix(t, a, b) { t = (t ^ a) + (b | 3); if (t < 0) t = -t; t = t % 1000; t += (a & b) - (t >> 1); if (t > b) t -= b; else t += b; return t; }
+function nine(a, b, c, d, e, f, g, h, i) {
+    let t = a * 2 + b; if (t > c) t -= c; else t += c; t = (t ^ d) + (e | f); if (t < 0) t = -t; t = t % 1000;
+    t += (g & h) + (h & i) - (t >> 1); if (t > c) t -= c; else t += c;
+    return t + a + b + c + d + e + f + g + h + i;
+}
+function reference(a, b, c, d, e, f, g, h, i) {
+    let t = a * 2 + b; if (t > c) t -= c; else t += c; t = (t ^ d) + (e | f); if (t < 0) t = -t; t = t % 1000;
+    t += (g & h) + (h & i) - (t >> 1); if (t > c) t -= c; else t += c;
+    return t + a + b + c + d + e + f + g + h + i;
+}
+let keepsReferenceOpen = [reference];
+function callsNine(x) { return nine(x, 1, 2, 3, 4, 5, 6, 7, 8); }
+function callsNineAgain(x) { return nine(x, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20); }
+check(callsNine(5), keepsReferenceOpen[0](5, 1, 2, 3, 4, 5, 6, 7, 8), "nine arguments, all passed");
+check(callsNineAgain(6), keepsReferenceOpen[0](6, 11, 12, 13, 14, 15, 16, 17, 18), "nine parameters, eleven arguments");
+
+function lastIsOptional(a, b, c, d, e, f, g, h, i) {
+    let t = a * 2 + b; if (t > c) t -= c; else t += c; t = (t ^ d) + (e | f); if (t < 0) t = -t; t = t % 1000;
+    t += (g & h) - (t >> 1); if (t > c) t -= c; else t += c;
+    return i === undefined ? -t : t + i;
+}
+function passesEight(x) { return lastIsOptional(x, 1, 2, 3, 4, 5, 6, 7); }
+function passesNine(x) { return lastIsOptional(x, 1, 2, 3, 4, 5, 6, 7, 100); }
+check(passesNine(5) + passesEight(5), 100, "the last of nine parameters is not always passed");
+
+function undefinedIsPassed(a, b, c, d, e, f, g, h, i) {
+    let t = a * 2 + c; if (t > c) t -= c; else t += c; t = (t ^ d) + (e | f); if (t < 0) t = -t; t = t % 1000;
+    t += (g & h) + (h & i) - (t >> 1); if (t > c) t -= c; else t += c;
+    return b === undefined ? -t : t;
+}
+function passesUndefined(x) { return undefinedIsPassed(x, undefined, 2, 3, 4, 5, 6, 7, 8); }
+function passesNumber(x) { return undefinedIsPassed(x, 1, 2, 3, 4, 5, 6, 7, 8); }
+check(passesUndefined(5) + passesNumber(5), 0, "undefined is passed for the second of nine parameters");
+
+function countsArguments(a, b) { let t = mix(a, b, 7); t = mix(t, a, b); t = mix(t, b, a); return t + arguments.length; }
+function passesTwo(x) { return countsArguments(x, 1); }
+function passesThree(x) { return countsArguments(x, 1, 2); }
+check(passesThree(5) - passesTwo(5), 1, "a function that counts its arguments");
+
+function takesRest(a, ...rest) { let t = mix(a, rest.length, 7); t = mix(t, a, 5); t = mix(t, 5, a); return t * 10 + rest.length; }
+function passesOne(x) { return takesRest(x); }
+function passesFour(x) { return takesRest(x, 1, 2, 3); }
+check(passesOne(5) % 10, 0, "a rest parameter that is empty");
+check(passesFour(5) % 10, 3, "a rest parameter with three elements");
+
+function isTailCalled(a, b, c, d, e, f, g, h, i) {
+    "use strict";
+    let t = a * 2 + b; if (t > c) t -= c; else t += c; t = (t ^ d) + (e | f); if (t < 0) t = -t; t = t % 1000;
+    t += (g & h) + (h & i) - (t >> 1); if (t > c) t -= c; else t += c;
+    return t + i;
+}
+function tailCalls(x) { "use strict"; return isTailCalled(x, 1, 2, 3, 4, 5, 6, 7, 8); }
+function callsToo(x) { "use strict"; return isTailCalled(x, 1, 2, 3, 4, 5, 6, 7, 8) + 1; }
+check(callsToo(5) - tailCalls(5), 1, "a function with nine parameters that is also called in tail position");
+})();
+console.log("passed");
+//// arguments-always-spread/main.ts
+// Functions with nine parameters are called with fewer, exactly nine and more arguments, and with undefined for some of them.
+import "./impl.js";
+//// arithmetic-in-loops/impl.js
+function check(actual, expected, what) {
+    if (!Object.is(actual, expected))
+        throw new Error(what + ": " + (Object.is(actual, -0) ? "-0" : String(actual)) + " instead of " + (Object.is(expected, -0) ? "-0" : String(expected)));
+}
+const products = [
+    [0, -1, -0], [-1, 0, -0], [0, 0, 0], [0, 1, 0], [-0, 1, -0], [-0, -1, 0], [0, -2147483648, -0], [-2147483648, 0, -0], [1, -1, -1], [-1, -1, 1],
+    [46341, 46341, 2147488281], [46340, 46341, 2147441940], [65536, 32768, 2147483648], [65536, -32768, -2147483648], [-65536, 32769, -2147549184],
+    [-2147483648, -1, 2147483648], [-2147483648, 1, -2147483648], [2147483647, 2147483647, 4611686014132420609], [2147483647, 2, 4294967294], [0.5, 2, 1], [0, 0.5, 0], [0, -0.5, -0],
+    [NaN, 0, NaN], [Infinity, 0, NaN], [Infinity, -1, -Infinity],
+];
+const sums = [
+    [2147483647, 1, 2147483648], [2147483647, 2147483647, 4294967294], [-2147483648, -1, -2147483649], [-2147483648, -2147483648, -4294967296], [2147483647, -2147483648, -1],
+    [0, -0, 0], [-0, 0, 0], [-0, -0, -0], [1, -1, 0], [2147483646, 1, 2147483647], [0.1, 0.2, 0.30000000000000004], [9007199254740991, 2, 9007199254740992], [Infinity, -Infinity, NaN],
+];
+const differences = [
+    [-2147483648, 1, -2147483649], [2147483647, -1, 2147483648], [0, -2147483648, 2147483648], [-2147483648, -2147483648, 0], [0, 0, 0], [-0, 0, -0], [0, -0, 0], [-0, -0, 0], [-2147483647, 1, -2147483648],
+];
+const remainders = [
+    [-1, 1, -0], [1, -1, 0], [-4, 2, -0], [4, -2, 0], [5, 0, NaN], [0, 5, 0], [-0, 5, -0], [-2147483648, -1, -0], [-2147483648, 2147483647, -1], [2147483647, -2147483648, 2147483647],
+    [7, 3, 1], [-7, 3, -1], [7, -3, 1], [5.5, 2, 1.5], [-5.5, 2, -1.5], [Infinity, 2, NaN], [2, Infinity, 2],
+];
+// A row that holds a -0 or a NaN is an array of doubles, and what is read from it stays a double. Integers are what this is about.
+function split(table, convert) { return { left: table.map(row => convert(row[0])), right: table.map(row => convert(row[1])), result: table.map(row => row[2]) }; }
+function asInt32(x) { return x | 0; }
+function asItIs(x) { return x; }
+function multiplies(t) { for (let i = 0; i < t.left.length; i++) check(t.left[i] * t.right[i], t.result[i], t.left[i] + " * " + t.right[i]); }
+function adds(t) { for (let i = 0; i < t.left.length; i++) check(t.left[i] + t.right[i], t.result[i], t.left[i] + " + " + t.right[i]); }
+function subtracts(t) { for (let i = 0; i < t.left.length; i++) check(t.left[i] - t.right[i], t.result[i], t.left[i] + " - " + t.right[i]); }
+function takesRemainders(t) { for (let i = 0; i < t.left.length; i++) check(t.left[i] % t.right[i], t.result[i], t.left[i] + " % " + t.right[i]); }
+function isInteger(row) { return Number.isInteger(row[0]) && Number.isInteger(row[1]) && !Object.is(row[0], -0) && !Object.is(row[1], -0) && (row[0] | 0) === row[0] && (row[1] | 0) === row[1]; }
+function multipliesArguments(x, y) { let result; for (let i = 0; i < 3; i++) result = x * y; return result; }
+function addsArguments(x, y) { let result; for (let i = 0; i < 3; i++) result = x + y; return result; }
+function subtractsArguments(x, y) { let result; for (let i = 0; i < 3; i++) result = x - y; return result; }
+function takesRemainderOfArguments(x, y) { let result; for (let i = 0; i < 3; i++) result = x % y; return result; }
+function negates(table) { for (let i = 0; i < table.length; i++) { const row = table[i]; check(-row[0], row[1], "-(" + row[0] + ")"); } }
+function counts(start, steps) { let x = start; for (let i = 0; i < steps; i++) x++; return x; }
+function countsDown(start, steps) { let x = start; for (let i = 0; i < steps; i++) x--; return x; }
+function addsWideConstants(b) { b = 4294967296; return b + b; }
+function addsThreeWideConstants(b) { b = 4294967296; const c = 8589934592; return b + c + b; }
+function scalesWideConstants() { const a = 1073741824; return a * 8 + a * 16; }
+for (let round = 0; round < 20; round++) {
+    check(addsWideConstants(1), 8589934592, "the sum of two wide constants");
+    check(addsThreeWideConstants(1), 17179869184, "the sum of three wide constants");
+    check(scalesWideConstants(), 25769803776, "multiples of a constant");
+    for (const [table, inLoop, ofArguments, sign] of [[products, multiplies, multipliesArguments, "*"], [sums, adds, addsArguments, "+"], [differences, subtracts, subtractsArguments, "-"], [remainders, takesRemainders, takesRemainderOfArguments, "%"]]) {
+        inLoop(split(table.filter(isInteger), asInt32));
+        inLoop(split(table, asItIs));
+        for (const row of table) {
+            check(ofArguments(row[0], row[1]), row[2], "arguments " + row[0] + " " + sign + " " + row[1]);
+            if (isInteger(row))
+                check(ofArguments(row[0] | 0, row[1] | 0), row[2], "integer arguments " + row[0] + " " + sign + " " + row[1]);
+        }
+    }
+    negates([[0, -0], [-0, 0], [-2147483648, 2147483648], [2147483647, -2147483647], [1, -1], [NaN, NaN], [0.5, -0.5]]);
+    check(counts(2147483640, 10), 2147483650, "counting past the largest int32");
+    check(countsDown(-2147483640, 10), -2147483650, "counting past the smallest int32");
+    check(counts(4294967290, 10), 4294967300, "counting past the largest uint32");
+    check(counts(9007199254740990, 5), 9007199254740992, "counting past the largest safe integer");
+}
+console.log("passed");
+//// arithmetic-in-loops/main.ts
+// Integer arithmetic in loops: sums of large constants, multiples, and counters that pass the limits of the int32 range.
+import "./impl.js";
+//// array-iteration-ends-inline/impl.js
+////= check
+(function () {
+    function joined(a) {
+        let s = "";
+        for (const x of a)
+            s += String(x) + ";";
+        return s;
+    }
+    function indexedOnly(a) {
+        let s = "";
+        for (let i = 0; i < a.length; i++)
+            s += String(a[i]) + ";";
+        return s;
+    }
+    function grown(a, limit) {
+        let s = "";
+        for (const x of a) {
+            s += x + ";";
+            if (a.length < limit)
+                a.push(x + 1);
+        }
+        return s;
+    }
+    function truncated(a, length) {
+        let s = "";
+        for (const x of a) {
+            s += x + ";";
+            a.length = length;
+        }
+        return s;
+    }
+    function emptiedAndRefilled(a) {
+        let s = "";
+        for (const x of a) {
+            s += x + ";";
+            if (x === 1) {
+                a.length = 0;
+                a.push("a", "b", "c");
+            }
+        }
+        return s;
+    }
+    function afterTheEnd(a) {
+        const [first, second = (a.push("late"), "default"), third] = a;
+        return first + " " + second + " " + third + " " + a.length;
+    }
+    function pairs(a) {
+        let s = "";
+        for (const x of a) {
+            for (const y of a)
+                s += x + y + ";";
+        }
+        return s;
+    }
+    function untilTwo(a) {
+        let count = 0;
+        for (const x of a) {
+            if (x === 2)
+                return count;
+            count++;
+        }
+        return -1;
+    }
+    function turnedIntoDoubles(a) {
+        let s = "";
+        for (const x of a) {
+            s += x + ";";
+            a[a.length - 1] = 0.5;
+        }
+        return s;
+    }
+
+    check(joined([]), "", "an empty array");
+    check(joined([1]), "1;", "one element");
+    check(joined([1, 2, 3]), "1;2;3;", "integers");
+    check(joined(["a", {}, null]), "a;[object Object];null;", "anything");
+    check(joined([1.5, 2.5]), "1.5;2.5;", "doubles");
+    check(joined([1, , 3]), "1;undefined;3;", "a hole");
+    check(joined([, ]), "undefined;", "only a hole");
+    check(joined(new Array(2)), "undefined;undefined;", "an array of holes");
+    check(joined(Object.freeze([1, 2])), "1;2;", "a frozen array");
+    const sparse = [1];
+    sparse[100000] = 2;
+    sparse.length = 2;
+    check(joined(sparse), "1;undefined;", "an array that was sparse");
+    check(grown([1], 4), "1;2;3;4;", "an array that grows while it is iterated over");
+    check(grown([1], 1), "1;", "an array that does not grow");
+    check(truncated([1, 2, 3], 1), "1;", "an array that is truncated");
+    check(truncated([1, 2, 3], 0), "1;", "an array that is emptied");
+    check(truncated([1, 2, 3], 2), "1;2;", "an array that loses its last element");
+    check(emptiedAndRefilled([1, 2]), "1;b;c;", "an array that is emptied and refilled");
+    check(afterTheEnd([1]), "1 default undefined 2", "an element added after the end was reached");
+    check(afterTheEnd([]), "undefined default undefined 1", "an element added to an empty array after the end was reached");
+    check(afterTheEnd([1, 2, 3]), "1 2 3 3", "a pattern as long as the array");
+    check(pairs(["a", "b"]), "aa;ab;ba;bb;", "nested loops over one array");
+    check(untilTwo([1, 2, 3]), 1, "a loop that is left early");
+    check(untilTwo([1, 3]), -1, "a loop that is not left early");
+    check(turnedIntoDoubles([1, 2, 3]), "1;2;0.5;", "integers that become doubles");
+    check(joined("ab"), "a;b;", "a string");
+    check(joined(new Set([1, 2])), "1;2;", "a set");
+    check(joined([1, 2].values()), "1;2;", "an array iterator");
+    check(joined({ *[Symbol.iterator]() { yield 7; } }), "7;", "a generator");
+    check(indexedOnly([1, 2]), "1;2;", "an indexed loop");
+
+    const doubles = [0.5, 1.5, 2.5, -0, Infinity];
+    doubles[0] = 3.5;
+    for (let round = 0; round < 100; round++)
+        check(joined(doubles), "3.5;1.5;2.5;0;Infinity;", "doubles, many times");
+    let negativeZero;
+    for (const x of doubles) {
+        if (x === 0)
+            negativeZero = x;
+    }
+    check(negativeZero, -0, "negative zero among doubles");
+    check(joined([0.5, , 2.5]), "0.5;undefined;2.5;", "a hole among doubles");
+})();
+console.log("passed");
+//// array-iteration-ends-inline/main.ts
+// `for..of` over arrays: empty arrays, holes, frozen arrays, and arrays that change during the loop.
+import "./impl.js";
+//// atoms-of-the-program/impl.js
+////= check-2
+function join(...parts) { return parts.join(""); }
+function wide(text) { return (text + "Ā").slice(0, -1); }
+
+function readsWrittenFirst(o) { return o.writtenFirstByItsCharacters; }
+function readsParsedFirst(o) { return o.parsedFirstFromJSON; }
+function readsWideFirst(o) { return o.madeFirstFromAWideString; }
+function readsCyrillic(o) { return o.ключ; }
+function readsCyrillicFirst(o) { return o.сначалаПоСимволам; }
+function readsLong(o) { return o.aNameThatIsLongEnoughToAliasTheCharactersInTheFileInsteadOfCopyingThem; }
+function readsLongFirst(o) { return o.anotherNameThatIsLongEnoughToAliasTheCharactersInTheFileAndIsMadeFirst; }
+function hasOwn(o, name) { return Object.prototype.hasOwnProperty.call(o, name); }
+
+{
+    let o = { inTheProgramFirst: 1 };
+    check(o[join("inThe", "Program", "First")], 1, "a name of the program, then its characters");
+    check(o[wide("inTheProgramFirst")], 1, "and from a wide string");
+    check(join("inThe", "Program", "First") in o, true, "and with in");
+    check(hasOwn(o, join("inThe", "Program", "First")), true, "and with hasOwnProperty");
+    check(Object.keys(o)[0], "inTheProgramFirst", "and from Object.keys");
+    check(o[Object.keys(o)[0]], 1, "and by what Object.keys returned");
+}
+{
+    let o = { };
+    o[join("writtenFirst", "ByIts", "Characters")] = 2;
+    check(readsWrittenFirst(o), 2, "the characters, then a name of the program");
+    check(readsParsedFirst(JSON.parse('{"parsedFirstFromJSON":3}')), 3, "a key JSON.parse made first");
+    o[wide("madeFirstFromAWideString")] = 4;
+    check(readsWideFirst(o), 4, "a wide string first");
+}
+{
+    let o = { ключ: 5 };
+    check(o[join("кл", "юч")], 5, "a name that is not Latin-1");
+    check(readsCyrillic(o), 5, "read by name");
+    o[join("сначала", "По", "Символам")] = 6;
+    check(readsCyrillicFirst(o), 6, "its characters first");
+}
+{
+    let o = { aNameThatIsLongEnoughToAliasTheCharactersInTheFileInsteadOfCopyingThem: 7 };
+    check(o[join("aNameThatIsLongEnoughToAlias", "TheCharactersInTheFileInsteadOfCopyingThem")], 7, "a long name");
+    check(readsLong(o), 7, "read by name");
+    o[join("anotherNameThatIsLongEnoughToAlias", "TheCharactersInTheFileAndIsMadeFirst")] = 8;
+    check(readsLongFirst(o), 8, "its characters first");
+}
+{
+    let o = [1, 2, 3];
+    for (let name of ["length", "constructor", "toString", "valueOf", "prototype", "name", "message", "then", "next", "done", "value"]) {
+        let made = join(name.slice(0, 2), name.slice(2));
+        check(o[made], o[name], "a name the engine has: " + name);
+        check(hasOwn(o, made), hasOwn(o, name), "with hasOwnProperty: " + name);
+    }
+    check(o[join("len", "gth")], 3, "length");
+    check((function () { }).name, "", "name");
+}
+{
+    let o = { present: 1 };
+    for (let i = 0; i < 100; ++i) {
+        check(join("notAnywhere", String(i)) in o, false, "a name nothing has");
+        check(o[join("notAnywhere", String(i))], undefined, "read");
+    }
+    check(join("mentionedOnly", "InAFunctionThatNeverRuns") in o, false, "a name of the program that nothing has made");
+    check(o[join("mentionedOnly", "InAFunctionThatNeverRuns")], undefined, "read");
+    function neverRuns(x) { return x.mentionedOnlyInAFunctionThatNeverRuns; }
+}
+{
+    const constant = "aStringConstantUsedAsAKey";
+    let o = { };
+    o[constant] = 9;
+    check(o.aStringConstantUsedAsAKey, 9, "a string constant as a key");
+    check(o[join("aStringConstant", "UsedAsAKey")], 9, "and its characters");
+    let viaMap = new Map([[constant, 1]]);
+    check(viaMap.get(join("aStringConstant", "UsedAsAKey")), 1, "and in a Map");
+    check(Symbol.for(constant), Symbol.for(join("aStringConstant", "UsedAsAKey")), "and in the symbol registry");
+    check(Symbol(constant).description, constant, "and as a description");
+}
+{
+    let o = { ab: 1, a: 2, abc: 3, abcd: 4 };
+    check(o[join("a", "b")], 1, "two characters");
+    check(o[join("a")], 2, "one character");
+    check(o[join("a", "bc")], 3, "three characters");
+    check(o[join("ab", "cd")], 4, "four characters");
+    check(o[""], undefined, "none");
+    o[""] = 5;
+    check(o[join()], 5, "the empty name");
+}
+{
+    class Counter {
+        #count = 0;
+        static created = 0;
+        increment() { return ++this.#count; }
+        get doubled() { return this.#count * 2; }
+    }
+    let counter = new Counter;
+    check(counter[join("incre", "ment")](), 1, "a method");
+    check(counter[join("dou", "bled")], 2, "a getter");
+    check(Counter[join("crea", "ted")], 0, "a static field");
+    check(Reflect.ownKeys(Counter.prototype).join(), "constructor,increment,doubled", "the names of a prototype");
+}
+{
+    let names = [];
+    for (let i = 0; i < 2000; ++i)
+        names.push("made" + i);
+    let o = { };
+    for (let name of names)
+        o[name] = name.length;
+    let total = 0;
+    for (let name in o)
+        total += o[name];
+    check(total, names.reduce((sum, name) => sum + name.length, 0), "many names that are not in the program");
+    check(o.made7, 5, "one of which is");
+    check(o.made1999, 8, "and another");
+}
+console.log("passed");
+//// atoms-of-the-program/main.ts
+// Property names that appear in the source are the same keys as equal strings built at run time, with `in`, `hasOwnProperty` and `Object.keys`.
+import "./impl.js";
+//// bit-operations-with-constants/impl.js
+////= check
+
+(function () {
+    const functions = {
+        orZero(x) { return x | 0; },
+        zeroOr(x) { return 0 | x; },
+        orFive(x) { return x | 5; },
+        andMask(x) { return x & 0xff; },
+        maskAnd(x) { return 0xff00 & x; },
+        andMinusOne(x) { return x & -1; },
+        xorZero(x) { return x ^ 0; },
+        xorMinusOne(x) { return x ^ -1; },
+        shiftLeftThree(x) { return x << 3; },
+        shiftLeftThirtyFive(x) { return x << 35; },
+        oneShiftedLeft(x) { return 1 << x; },
+        shiftRightTwo(x) { return x >> 2; },
+        shiftRightZero(x) { return x >> 0; },
+        minusEightShiftedRight(x) { return -8 >> x; },
+    };
+    globalThis.escapedFunctions = functions;
+    const toInt32 = x => {
+        const number = Number(x);
+        if (!Number.isFinite(number))
+            return 0;
+        const wrapped = ((Math.trunc(number) % 4294967296) + 4294967296) % 4294967296;
+        return wrapped >= 2147483648 ? wrapped - 4294967296 : wrapped;
+    };
+    const bits = x => toInt32(x);
+    const reference = {
+        orZero: x => bits(x),
+        zeroOr: x => bits(x),
+        orFive: x => bits(bits(x) + (5 - (((bits(x) % 8) + 8) % 8 & 5))),
+        andMask: x => ((bits(x) % 256) + 256) % 256,
+        andMinusOne: x => bits(x),
+        xorZero: x => bits(x),
+        xorMinusOne: x => -bits(x) - 1,
+        shiftLeftThree: x => bits(bits(x) * 8),
+        shiftLeftThirtyFive: x => bits(bits(x) * 8),
+        shiftRightTwo: x => Math.floor(bits(x) / 4),
+        shiftRightZero: x => bits(x),
+    };
+    const withValueOf = { valueOf() { return 77; } };
+    const values = [0, 1, -1, 5, 255, 256, 65535, 2147483647, -2147483648, 1.5, -1.5, 4294967296, 4294967301, -4294967301, 1e21, NaN, Infinity, -Infinity, -0,
+        "12", "-3", "x", "", true, false, null, undefined, withValueOf, [9], [ ]];
+    for (let round = 0; round < 30; ++round) {
+        for (const value of values) {
+            for (const name of Object.keys(reference))
+                check(globalThis.escapedFunctions[name](value), reference[name](value) + 0 === 0 ? 0 : reference[name](value), name + " of " + String(value));
+            check(globalThis.escapedFunctions.maskAnd(value), bits(value) & 0xff00, "maskAnd of " + String(value));
+            check(globalThis.escapedFunctions.oneShiftedLeft(value), bits(2 ** (((bits(value) % 32) + 32) % 32)), "oneShiftedLeft of " + String(value));
+            check(globalThis.escapedFunctions.minusEightShiftedRight(value), Math.floor(-8 / 2 ** (((bits(value) % 32) + 32) % 32)), "minusEightShiftedRight of " + String(value));
+        }
+    }
+    let message = "none";
+    try { globalThis.escapedFunctions.orZero(1n); } catch (error) { message = error.constructor.name; }
+    check(message, "TypeError", "a BigInt and a number");
+    message = "none";
+    try { globalThis.escapedFunctions.orZero(Symbol()); } catch (error) { message = error.constructor.name; }
+    check(message, "TypeError", "a symbol");
+})();
+console.log("passed");
+//// bit-operations-with-constants/main.ts
+// Bitwise operators with constant operands, including the TypeError for mixing a BigInt and a number.
+import "./impl.js";
+//// branches-on-known-values/impl.js
+(function () {
+    function check(actual, expected, what) {
+        if (!Object.is(actual, expected))
+            throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
+    }
+
+    let log = [];
+    function effect(x) { try { log.push(x); } catch { } return x; }
+    function changes(o) { try { o.debug = true; o.added = 1; } catch { } return o; }
+
+    function afterReplacement(a) { const o = { x: a, y: undefined }; if (o.y !== undefined) return effect(o.y); return o.x; }
+    function absentProperty(a) { const o = { x: a }; if (o.missing !== undefined) return effect(o); return o.x; }
+    function earlyReturnInDeadArm(d) { const pick = (v, d) => { if (v === undefined) return d; return effect(v); }; return pick(undefined, d); }
+    function truthinessOfConstant(a) { const run = (a, verbose) => { if (verbose) effect(a); return a; }; return run(a, false); }
+    function nullTestOfLiteral(a) { const o = { x: a }; if (o == null) return effect(0); return o.x; }
+    function switchOnConstant(a) { const by = (kind, a) => { switch (kind) { case 0: return effect(a); case 1: return a + 1; default: return effect(-a); } }; return by(1, a); }
+    function typeofClosure(a) { const call = (f, a) => typeof f === "function" ? f(a) : effect(a); return call(x => x + 1, a); }
+    function notFused(a) { const o = { y: undefined, x: a }; const has = o.y !== undefined; if (has) return effect(a); return o.x; }
+    function destructuringDefault(a) { const { x, y = effect(1) } = { x: a, y: 2 }; return x + y; }
+    function escapesOnlyInDeadArm(a) { const o = { x: a, debug: false }; if (o.debug) effect(o); return o.x; }
+    function numbers(a) { const by = (n, a) => { if (n === 0) return effect(a); if (!n) return effect(a); if (n !== 1.5) return effect(a); return a; }; return by(1.5, a); }
+    function keepsOneOfTwo(a) { const pick = (c, a) => { let o; if (c) o = { v: a }; else o = effect({ v: -a }); return o.v; }; return pick(true, a); }
+    function loopInDeadArm(a) { const run = (verbose, a) => { if (verbose) { for (let i = 0; i < a; ++i) effect(i); } return a; }; return run(false, a); }
+    function tryInDeadArm(a) { const o = { on: false }; if (o.on) { try { effect(a); } catch { return -1; } } return a; }
+    function liveArmInTry(a) { const o = { on: false }; try { if (o.on) effect(a); return a; } catch { return -1; } }
+    function deadArmInLoop(n) { const o = { on: false }; let sum = 0; for (let i = 0; i < n; ++i) { if (o.on) effect(i); sum += i; } return sum; }
+    function loopLosesItsBackEdge(a) { const o = { once: true }; let n = 0; for (;;) { n += a; if (o.once) break; effect(n); } return n; }
+    function* yieldInDeadArm(a) { const o = { on: false }; if (o.on) yield effect(a); yield a; }
+    function stringTags(a) { const by = (tag, a) => { if (tag === "image") return effect(a); if (tag !== "text") return effect(-a); if (tag === 1 || tag === undefined || tag == null) return effect(0); return a + 1; }; return by("text", a); }
+    function emptyString(a) { const run = (s, a) => { if (s) return effect(a); return a + 1; }; return run("", a); }
+    function integerSwitch(a) { const by = (k, a) => { switch (k) { case 0: return effect(a); case 1: return effect(a + 1); case 2: return a + 2; case 3: return effect(a + 3); case 4: return effect(a + 4); default: return effect(-a); } }; return by(2, a); }
+    function integerSwitchDefault(a) { const by = (k, a) => { switch (k) { case 0: return effect(a); case 1: return effect(a + 1); case 2: return effect(a + 2); case 3: return effect(a + 3); case 4: return effect(a + 4); default: return -a; } }; return by(7, a) + by(2.5, a) + by("2", a) + by(undefined, a) + by(NaN, a); }
+    function negativeZeroSwitch(a) { const by = (k, a) => { switch (k) { case 0: return a; case 1: return effect(a + 1); case 2: return effect(a + 2); case 3: return effect(a + 3); case 4: return effect(a + 4); default: return effect(-a); } }; return by(-0, a); }
+    function stringSwitch(a) { const by = (k, a) => { switch (k) { case "zero": return effect(a); case "one": return effect(a + 1); case "two": return a + 2; case "three": return effect(a + 3); case "four": return effect(a + 4); default: return effect(-a); } }; return by("two", a); }
+    function stringSwitchDefault(a) { const by = (k, a) => { switch (k) { case "zero": return effect(a); case "one": return effect(a + 1); case "two": return effect(a + 2); case "three": return effect(a + 3); case "four": return effect(a + 4); default: return -a; } }; return by("five", a) + by(2, a) + by(null, a); }
+    function characterSwitch(a) { const by = (k, a) => { switch (k) { case "a": return effect(a); case "b": return effect(a + 1); case "c": return a + 2; case "d": return effect(a + 3); case "e": return effect(a + 4); default: return effect(-a); } }; return by("c", a); }
+    function characterSwitchDefault(a) { const by = (k, a) => { switch (k) { case "a": return effect(a); case "b": return effect(a + 1); case "c": return effect(a + 2); case "d": return effect(a + 3); case "e": return effect(a + 4); default: return -a; } }; return by("cc", a) + by("", a) + by("z", a) + by(99, a); }
+    function fallsThrough(a) { const by = (k, a) => { let n = a; switch (k) { case 0: n += effect(1); case 1: n += effect(10); case 2: n += 100; case 3: n += 1000; break; case 4: n += effect(10000); } return n; }; return by(2, a); }
+    function nested(a) { const outer = (c, a) => { const inner = (c, a) => { if (c) return effect(a); return a + 1; }; if (c) return effect(a); return inner(c, a) + 1; }; return outer(false, a); }
+
+    check(afterReplacement(5), 5, "a property that is undefined");
+    check(absentProperty(5), 5, "a property that is absent");
+    check(earlyReturnInDeadArm(5), 5, "the arm that is left returns");
+    check(truthinessOfConstant(5), 5, "false");
+    check(nullTestOfLiteral(5), 5, "an object is not null");
+    check(switchOnConstant(5), 6, "switch");
+    check(typeofClosure(5), 6, "typeof");
+    check(notFused(5), 5, "a comparison kept in a variable");
+    check(destructuringDefault(5), 7, "a default value that is not needed");
+    check(escapesOnlyInDeadArm(5), 5, "an object that is only passed on in the dead arm");
+    check(numbers(5), 5, "numbers");
+    check(keepsOneOfTwo(5), 5, "a variable that keeps one of two values");
+    check(loopInDeadArm(5), 5, "a loop in the dead arm");
+    check(tryInDeadArm(5), 5, "a handler in the dead arm");
+    check(liveArmInTry(5), 5, "the branch is in a try block");
+    check(deadArmInLoop(4), 6, "the branch is in a loop");
+    check(loopLosesItsBackEdge(5), 5, "a loop that runs once");
+    check([...yieldInDeadArm(5)].join(), "5", "a yield in the dead arm");
+    check(stringTags(5), 6, "strings that are compared");
+    check(emptyString(5), 6, "the empty string");
+    check(integerSwitch(5), 7, "a switch on an integer");
+    check(integerSwitchDefault(5), -25, "what is no case of a switch on integers");
+    check(negativeZeroSwitch(5), 5, "negative zero is case 0");
+    check(stringSwitch(5), 7, "a switch on a string");
+    check(stringSwitchDefault(5), -15, "what is no case of a switch on strings");
+    check(characterSwitch(5), 7, "a switch on a character");
+    check(characterSwitchDefault(5), -20, "what is no case of a switch on characters");
+    check(fallsThrough(5), 1105, "cases that fall through");
+    check(nested(5), 7, "inlined twice");
+    check(log.length, 0, "no dead arm ran");
+
+    function unknownValue(a, c) { if (c) return effect(a); return a + 1; }
+    function notANumber(a) { const same = (x, y, a) => { if (x === y) return effect(a); return a + 1; }; return same(NaN, NaN, a); }
+    function zeros(a) { const same = (x, y, a) => { if (x === y) return effect(a); return a + 1; }; return same(0, -0, a); }
+    function unknownString(a, s) { if (s === "text") return effect(a); if (s) return a + 1; return a + 2; }
+    function unknownSwitch(a, k) { switch (k) { case 0: return effect(a); case 1: return a + 1; case 2: return a + 2; case 3: return a + 3; case 4: return a + 4; default: return -a; } }
+    function stringThatIsNotEmpty(a) { const run = (s, a) => { if (s) return effect(a); return a + 1; }; return run("s", a); }
+    function changedBeforeTheRead(a) { const o = { x: a, debug: false }; changes(o); if (o.debug) return effect(a); return a + 1; }
+    function addedBeforeTheRead(a) { const o = { x: a }; changes(o); if (o.added !== undefined) return effect(a); return a + 1; }
+    function storedBeforeTheRead(a, c) { const o = { x: a, debug: false }; o.debug = c; if (o.debug) return effect(a); return a + 1; }
+    function inheritedName(a) { const o = { x: a }; if (o.toString !== undefined) return effect(a); return a + 1; }
+    function getter(a) { const o = { get debug() { return a > 0; } }; if (o.debug) return effect(a); return a + 1; }
+    function bothArmsInLoop(n) { let sum = 0; for (let i = 0; i < n; ++i) { const o = { odd: i & 1 }; if (o.odd) sum += effect(i); else sum -= 1; } return sum; }
+    log = [];
+    check(unknownValue(5, true) + unknownValue(5, false), 11, "a value that is not known");
+    check(notANumber(5), 6, "NaN is not equal to itself");
+    check(zeros(5), 5, "the zeros are equal");
+    check(unknownString(5, "text") + unknownString(5, "other") + unknownString(5, ""), 18, "a string that is not known");
+    check(unknownSwitch(5, 0) + unknownSwitch(5, 3) + unknownSwitch(5, "0"), 8, "a switch on a value that is not known");
+    check(stringThatIsNotEmpty(5), 5, "a string that is not empty");
+    check(changedBeforeTheRead(5), 5, "a property changed by a callee");
+    check(addedBeforeTheRead(5), 5, "a property added by a callee");
+    check(storedBeforeTheRead(5, true) + storedBeforeTheRead(5, false), 11, "a property stored to");
+    check(inheritedName(5), 5, "an inherited property");
+    check(getter(5) + getter(-5), 1, "a getter");
+    check(bothArmsInLoop(4), 2, "both arms run");
+    check(log.join(), "5,5,5,5,5,5,5,5,5,5,1,3", "the live arms ran");
+
+    function undefinedOnly(x) { try { } catch { } if (x !== undefined) return effect(x); return 0; }
+    function nullOnly(x) { try { } catch { } if (x === null) return 0; return effect(x); }
+    function objectOnly(o) { try { } catch { } if (!o) return effect(0); return 1; }
+    function objectIsNotNull(o) { try { } catch { } if (o == null) return effect(0); return 1; }
+    function numberIsNoString(n) { try { } catch { } if (typeof n === "string") return effect(n); return n + 1; }
+    function testedTwice(x) { try { } catch { } if (x === undefined) return 0; if (x === undefined) return effect(x); return x + 1; }
+    function optionalParameter(a, options) { try { } catch { } let sum = a; if (options !== undefined) { for (let name in options) sum += effect(options[name]); } return sum; }
+    function undefinedOrNumber(x) { try { } catch { } if (x !== undefined) return effect(x); return 0; }
+    function objectOrNull(o) { try { } catch { } if (!o) return effect(0); return 1; }
+    function functionIsComparedWithNull(f) { try { } catch { } if (f == null) return effect(0); return 1; }
+    function numberMayBeZero(n) { try { } catch { } if (!n) return effect(n); return 1; }
+    log = [];
+    check(undefinedOnly(undefined) + undefinedOnly(), 0, "only undefined is passed");
+    check(nullOnly(null), 0, "only null is passed");
+    check(objectOnly({ }) + objectOnly([]), 2, "only objects are passed");
+    check(objectIsNotNull({ }), 1, "an object is not null");
+    check(numberIsNoString(1) + numberIsNoString(1.5), 4.5, "only numbers are passed");
+    check(testedTwice(1) + testedTwice(undefined), 2, "the same test again");
+    check(optionalParameter(1) + optionalParameter(2, undefined), 3, "a parameter that is never passed");
+    check(log.length, 0, "no dead arm ran");
+    check(undefinedOrNumber(undefined) + undefinedOrNumber(3), 3, "undefined or a number");
+    check(objectOrNull({ }) + objectOrNull(null), 1, "an object or null");
+    check(functionIsComparedWithNull(() => 1), 1, "a function is not told from one that masquerades as undefined");
+    check(numberMayBeZero(0) + numberMayBeZero(2), 1, "a number may be zero");
+    check(log.join(), "3,0,0", "the live arms ran");
+})();
+console.log("passed");
+//// branches-on-known-values/main.ts
+// Conditions whose outcome the compiler can determine: undefined and missing properties, objects compared with null, defaults that are not needed.
+import "./impl.js";
+//// branches-that-never-run/impl.js
+(function () {
+    function check(actual, expected, what) {
+        if (!Object.is(actual, expected))
+            throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
+    }
+    let everything = [];
+
+    function addsOne(x) { try { } catch { } return x + 1; }
+    function passesNumber(a, options) { try { } catch { } if (options !== undefined) return addsOne("text" + a); return addsOne(a); }
+    check(passesNumber(1) + passesNumber(2, undefined), 5, "the arm that passes a string is never reached");
+
+    function isOnlyCalledFromDeadArm(x) { try { } catch { } return x * 2; }
+    function neverGetsThere(a, options) { try { } catch { } if (options !== undefined) return isOnlyCalledFromDeadArm(a); return a; }
+    check(neverGetsThere(1), 1, "the only call is never reached");
+
+    let count = 0;
+    function readsCount() { try { } catch { } return count + 1; }
+    function storesCount(a, options) { try { } catch { } if (options !== undefined) count = "text"; else count = a | 0; }
+    storesCount(4);
+    check(readsCount(), 5, "the arm that stores a string is never reached");
+
+    function staysHere(x) { try { } catch { } return x + 1; }
+    function letsOutInDeadArm(a, options) { try { } catch { } if (options !== undefined) everything.push(staysHere); return staysHere(a); }
+    check(letsOutInDeadArm(1), 2, "the arm that lets the function out is never reached");
+
+    function returnsNumber(a, options) { try { } catch { } if (options !== undefined) return "text"; return a | 0; }
+    function usesResult(a) { try { } catch { } return returnsNumber(a) + 1; }
+    check(usesResult(1), 2, "the arm that returns a string is never reached");
+
+    function mergesNumber(a, options) { try { } catch { } let merged; if (options !== undefined) merged = "text"; else merged = a | 0; return addsOneToMerged(merged); }
+    function addsOneToMerged(x) { try { } catch { } return x + 1; }
+    check(mergesNumber(1), 2, "a variable that only gets a number");
+
+    function chainEnd(x) { try { } catch { } return x + 1; }
+    function chainMiddle(x, options) { try { } catch { } if (options !== undefined) return chainEnd("text"); return chainEnd(x); }
+    function chainStart(x, options) { try { } catch { } if (options !== undefined) return chainMiddle(x, { }); return chainMiddle(x); }
+    check(chainStart(1), 2, "an arm that is dead because another one is");
+
+    function addsOneToAnything(x) { try { } catch { } return x + 1; }
+    function passesEither(a, options) { try { } catch { } if (options !== undefined) return addsOneToAnything("text" + a); return addsOneToAnything(a); }
+    check(passesEither(1) + passesEither(2, { }), "2text21", "one caller passes the options");
+
+    function isCalledAfterAll(x) { try { } catch { } return x * 2; }
+    function getsThere(a, options) { try { } catch { } if (options !== undefined) return isCalledAfterAll(a); return a; }
+    check(getsThere(1) + getsThere(1, null), 3, "null is not undefined");
+
+    function getsOut(x) { try { } catch { } return x + 1; }
+    function letsOut(a, options) { try { } catch { } if (options !== undefined) everything.push(getsOut); return getsOut(a); }
+    check(letsOut(1) + letsOut(1, true), 4, "the function gets out");
+    check(everything[0]("text"), "text1", "and is called with anything");
+
+    function returnsEither(a, options) { try { } catch { } if (options !== undefined) return "text"; return a | 0; }
+    function usesEither(a, options) { try { } catch { } return returnsEither(a, options) + 1; }
+    check(usesEither(1) + usesEither(1, 0), "2text1", "both arms return");
+
+    function makesPair(a) { try { } catch { } return { first: a, second: a + 1 }; }
+    function keepsPairInDeadArm(a, options) { try { } catch { } const pair = makesPair(a); if (options !== undefined) everything.push(pair); return pair.first + pair.second; }
+    check(keepsPairInDeadArm(1), 3, "an object that is only kept in an arm that is never reached");
+})();
+console.log("passed");
+//// branches-that-never-run/main.ts
+// Branches that never run (they would pass, store or return a string) do not affect what the compiler assumes about the code that does run.
+import "./impl.js";
+//// builtin-method-called-on-wrong-receiver/impl.js
+function shouldBe(actual, expected) {
+    if (actual !== expected)
+        throw new Error(`expected ${String(expected)} but got ${String(actual)}`);
+}
+
+function shouldThrowTypeError(func) {
+    let error;
+    try {
+        func();
+    } catch (e) {
+        error = e;
+    }
+    if (!(error instanceof TypeError))
+        throw new Error(`expected a TypeError but got ${String(error)}`);
+}
+
+for (let i = 0; i < 100; ++i) {
+    shouldBe(String.prototype.trim.call(123), "123");
+    shouldBe(String.prototype.toUpperCase.call(true), "TRUE");
+    shouldBe(String.prototype.indexOf.call(12345, "34"), 2);
+    shouldBe(String.prototype.slice.call(12345, 1, 3), "23");
+    shouldBe(String.prototype.startsWith.call(12345, "12"), true);
+    shouldBe(String.prototype.concat.call(1, "2"), "12");
+    shouldBe(String.prototype.split.call(102, "0").length, 2);
+    shouldBe(Array.prototype.join.call({ length: 2, 0: "a", 1: "b" }, "-"), "a-b");
+    shouldBe(Array.prototype.join.call("abc", "-"), "a-b-c");
+    shouldBe(Array.prototype.indexOf.call("abc", "b"), 1);
+    shouldBe(Array.prototype.includes.call({ length: 1, 0: 7 }, 7), true);
+    shouldBe(Array.prototype.shift.call({ length: 1, 0: "x" }), "x");
+    shouldBe(Array.prototype.unshift.call({ length: 0 }, 1), 1);
+    shouldBe(Array.prototype.push.call({ length: 0 }, 1, 2), 2);
+    shouldBe(Array.prototype.slice.call("abc", 1).length, 2);
+    shouldThrowTypeError(() => Array.prototype.shift.call("abc"));
+    shouldThrowTypeError(() => Array.prototype.unshift.call("abc", 1));
+    shouldThrowTypeError(() => String.prototype.trim.call(null));
+    shouldThrowTypeError(() => String.prototype.trim.call(undefined));
+
+    for (const receiver of [{}, [], "s", 1, null, undefined, new Set, new WeakMap]) {
+        shouldThrowTypeError(() => Map.prototype.get.call(receiver, 1));
+        shouldThrowTypeError(() => Map.prototype.has.call(receiver, 1));
+        shouldThrowTypeError(() => Map.prototype.set.call(receiver, 1, 1));
+        shouldThrowTypeError(() => Date.prototype.getTime.call(receiver));
+        shouldThrowTypeError(() => Date.prototype.getFullYear.call(receiver));
+        shouldThrowTypeError(() => RegExp.prototype.exec.call(receiver, "a"));
+    }
+    for (const receiver of [{}, [], "s", 1, null, undefined, new Map, new WeakSet]) {
+        shouldThrowTypeError(() => Set.prototype.has.call(receiver, 1));
+        shouldThrowTypeError(() => Set.prototype.add.call(receiver, 1));
+        shouldThrowTypeError(() => WeakMap.prototype.get.call(receiver, {}));
+    }
+    shouldThrowTypeError(() => Number.prototype.toString.call("1"));
+    shouldThrowTypeError(() => Number.prototype.toFixed.call({}, 1));
+
+    shouldBe(Array.prototype.shift.call([5, 6]), 5);
+    shouldBe(String.prototype.trim.call(" a "), "a");
+    shouldBe(Map.prototype.get.call(new Map([[1, 2]]), 1), 2);
+    shouldBe(Set.prototype.has.call(new Set([1]), 1), true);
+    shouldBe(Date.prototype.getTime.call(new Date(5)), 5);
+    shouldBe(Number.prototype.toString.call(5), "5");
+}
+console.log("passed");
+//// builtin-method-called-on-wrong-receiver/main.ts
+// Built-in methods called on receivers of the wrong kind throw the right TypeError.
+import "./impl.js";
+//// caches-in-rarely-called-functions/impl.js
+////= check
+function double(x) { return x * 2; }
+function reads(o) { return o.value; }
+function readsThree(o) { return o.first + o.second + o.third; }
+function readsAndCalls(o, f, x) { const result = f(x); return result + o.value; }
+function readsAndCallsInLoop(o, f, n) {
+    let sum = 0;
+    for (let i = 0; i < n; ++i)
+        sum += f(o.value);
+    return sum;
+}
+function readsAfterRecursion(o, depth) {
+    if (depth)
+        return readsAfterRecursion(o, depth - 1) + o.value;
+    return o.value;
+}
+
+const warmUp = 200;
+let o = { unrelated: 0, value: 3 };
+for (let i = 0; i < warmUp; ++i)
+    check(reads(o), 3, "a read in a function that starts cold");
+for (let i = 0; i < 2000; ++i)
+    check(reads(o), 3, "a read in a function that has its own caches");
+
+o = { first: 1, other: 0, second: 2, third: 4 };
+for (let i = 0; i < warmUp; ++i)
+    check(readsThree(o), 7, "three reads in a function that starts cold");
+for (let i = 0; i < 2000; ++i)
+    check(readsThree(o), 7, "three reads in a function that has its own caches");
+
+o = { withCall: 0, value: 5 };
+for (let i = 0; i < warmUp; ++i)
+    check(readsAndCalls(o, double, i), i * 2 + 5, "a read and a call in a function that starts cold");
+for (let i = 0; i < 2000; ++i)
+    check(readsAndCalls(o, double, i), i * 2 + 5, "a read and a call in a function that has its own caches");
+
+o = { inLoop: 0, value: 2 };
+check(readsAndCallsInLoop(o, double, 5000), 20000, "reads and calls in the loop of a function that is entered once");
+
+o = { recursive: 0, value: 1 };
+check(readsAfterRecursion(o, 400), 401, "reads in activations that began before the function had its own caches");
+check(readsAfterRecursion(o, 400), 401, "reads in activations that began afterwards");
+check(readsAfterRecursion(o, 400), 401, "reads in still later activations");
+console.log("passed");
+//// caches-in-rarely-called-functions/main.ts
+// Property reads and calls in functions that are called a few hundred times and then thousands of times, in a loop that is entered once, and in deep recursion.
+import "./impl.js";
+//// callee-caches-in-rarely-called-functions/impl.js
+////= check
+function double(x) { return x * 2; }
+function triple(x) { return x * 3; }
+function callsOnly(f, x) { const result = f(x); return result + 1; }
+function callsHostFunctionOnly(f, x) { const result = f(x); return !result; }
+function callsTwice(f, g, x) { const first = f(x); const second = g(x); return first + second; }
+function callsLast(f, x) { "use strict"; return f(x); }
+function callsFunctionThatCallsLast(f, x) { const result = callsLast(f, x); return result + 1; }
+function neverReads(f, x, o) {
+    if (o !== undefined)
+        o.value;
+    const result = f(x);
+    return result + 1;
+}
+
+for (let i = 0; i < 100; ++i)
+    check(callsOnly(double, i), i * 2 + 1, "a call");
+for (let i = 0; i < 2000; ++i)
+    check(callsOnly(double, i), i * 2 + 1, "a call");
+
+for (let i = 0; i < 100; ++i)
+    check(callsHostFunctionOnly(Number.isSafeInteger, i), false, "a call of a host function");
+for (let i = 0; i < 2000; ++i)
+    check(callsHostFunctionOnly(Number.isSafeInteger, i), false, "a call of a host function");
+
+for (let i = 0; i < 100; ++i)
+    check(callsTwice(double, triple, i), i * 5, "two calls");
+for (let i = 0; i < 2000; ++i)
+    check(callsTwice(double, triple, i), i * 5, "two calls");
+
+for (let i = 0; i < 100; ++i)
+    check(neverReads(double, i, undefined), i * 2 + 1, "a call behind a read that is skipped");
+for (let i = 0; i < 2000; ++i)
+    check(neverReads(double, i, undefined), i * 2 + 1, "a call behind a read that is skipped");
+
+for (let i = 0; i < 100; ++i)
+    check(callsFunctionThatCallsLast(double, i), i * 2 + 1, "a call in tail position");
+for (let i = 0; i < 2000; ++i)
+    check(callsFunctionThatCallsLast(double, i), i * 2 + 1, "a call in tail position");
+console.log("passed");
+//// callee-caches-in-rarely-called-functions/main.ts
+// Calls of functions and of host functions, two calls in one function and calls in tail position, a hundred times and then thousands of times.
+import "./impl.js";
+//// calling-string-variable/impl.js
+////= check
+function thrownBy(f) {
+    try {
+        return "returned " + f();
+    } catch (error) {
+        return error.constructor.name;
+    }
+}
+
+function holdsString(flag) {
+    let f = "text";
+    if (flag)
+        f = () => 42;
+    const keep = () => f;
+    const result = f();
+    return result + (keep() === f ? 0 : 1);
+}
+check(holdsString(true), 42, "the function");
+check(thrownBy(() => holdsString(false)), "TypeError", "a string");
+
+function holdsOtherCells(which) {
+    let f = which === 0 ? [1] : which === 1 ? { a: 1 } : which === 2 ? Symbol.iterator : which === 3 ? 10n ** 30n : null;
+    if (which === 5)
+        f = () => "called";
+    const keep = () => f;
+    const result = f();
+    return result + typeof keep();
+}
+check(holdsOtherCells(5), "calledfunction", "the function");
+for (let which = 0; which < 5; ++which)
+    check(thrownBy(() => holdsOtherCells(which)), "TypeError", "case " + which);
+
+function outer(k) {
+    function readsScope(flag) {
+        let f = "text" + k;
+        if (flag)
+            f = () => k * 2;
+        const keep = () => f;
+        const result = f();
+        return result + (keep() ? 0 : 1);
+    }
+    return readsScope;
+}
+check(outer(21)(true), 42, "a function that reads its scope");
+check(thrownBy(() => outer(21)(false)), "TypeError", "a string in place of a function that reads its scope");
+
+function constructs(flag) {
+    let C = "text";
+    if (flag)
+        C = function () { this.made = 1; };
+    const keep = () => C;
+    const result = new C();
+    return result.made + (keep() ? 0 : 1);
+}
+check(constructs(true), 1, "constructed");
+check(thrownBy(() => constructs(false)), "TypeError", "a string constructed");
+console.log("passed");
+//// calling-string-variable/main.ts
+// A variable that usually holds a function is called or constructed while it holds a string.
+import "./impl.js";
+//// calls-and-eval-in-module-code/impl.js
+////= check
+const object = { number: 5, nothing: undefined, text: "text" };
+let variable = 1;
+let caught = [];
+let ranFinally = 0;
+
+try { object.missing(1); caught.push("none"); } catch (error) { caught.push(error instanceof TypeError); }
+try { object.missing(); caught.push("none"); } catch (error) { caught.push(error instanceof TypeError); }
+try { object.number(1, 2); caught.push("none"); } catch (error) { caught.push(error instanceof TypeError); }
+try { object.text(); caught.push("none"); } catch (error) { caught.push(error instanceof TypeError); }
+try { object.missing(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12); caught.push("none"); } catch (error) { caught.push(error instanceof TypeError); }
+try { object.missing(...[1, 2]); caught.push("none"); } catch (error) { caught.push(error instanceof TypeError); }
+try { object.missing`text`; caught.push("none"); } catch (error) { caught.push(error instanceof TypeError); }
+try { (void 0)(); caught.push("none"); } catch (error) { caught.push(error instanceof TypeError); }
+try { let callee = object.nothing; callee(1); caught.push("none"); } catch (error) { caught.push(error instanceof TypeError); }
+try { new object.missing(); caught.push("none"); } catch (error) { caught.push(error instanceof TypeError); }
+try { new object.number(1); caught.push("none"); } catch (error) { caught.push(error instanceof TypeError); }
+try { new object.missing(...[1]); caught.push("none"); } catch (error) { caught.push(error instanceof TypeError); }
+try { new (() => 1)(); caught.push("none"); } catch (error) { caught.push(error instanceof TypeError); }
+try { ({}).toString.missing.call(1); caught.push("none"); } catch (error) { caught.push(error instanceof TypeError); }
+check(caught.join(), new Array(14).fill(true).join(), "calls and constructions of what is not callable");
+
+check(object.missing?.(1), undefined, "an optional call of nothing");
+let order = [];
+try { object.missing(order.push("first"), order.push("second")); } catch (error) { order.push(error.constructor.name); } finally { ++ranFinally; }
+check(order.join(), "first,second,TypeError", "the arguments are evaluated before the call fails");
+check(ranFinally, 1, "the finally block");
+
+let count = 0;
+for (let i = 0; i < 100; ++i) {
+    try {
+        (i & 1 ? object.missing : Math.abs)(-i);
+        ++count;
+    } catch (error) {
+        count += error instanceof TypeError ? 1000 : 0;
+    }
+}
+check(count, 50050, "failing calls in a loop");
+
+try {
+    try { object.missing(); } finally { ++ranFinally; }
+} catch (error) {
+    check(error instanceof TypeError, true, "an error that passes a finally block");
+}
+check(ranFinally, 2, "the inner finally block");
+
+let stack;
+try { object.missing(); } catch (error) { stack = error.stack; }
+check(typeof stack, "string", "the stack of the error");
+check(stack.includes("impl.js"), true, "the stack names the module");
+
+const plainProxy = new Proxy(function (a, b) { return a + b; }, { });
+const trappingProxy = new Proxy(function () { }, {
+    apply(target, receiver, list) { return "applied " + list.join(); },
+    construct(target, list, newTarget) { return { text: "constructed " + list.join(), isNewTarget: newTarget === trappingProxy }; },
+});
+const classProxy = new Proxy(class { constructor(value) { this.value = value; } }, { });
+const throwingProxy = new Proxy(function () { }, { apply() { throw new RangeError("trap"); }, construct() { throw new RangeError("trap"); } });
+check(plainProxy(1, 2), 3, "a call of a proxy");
+check(plainProxy(...[3, 4]), 7, "a call of a proxy with spread arguments");
+check(trappingProxy(1, 2, 3), "applied 1,2,3", "a call of a proxy with a trap");
+check(trappingProxy(), "applied ", "a call of a proxy without arguments");
+check(trappingProxy(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), "applied 1,2,3,4,5,6,7,8,9,10,11,12", "a call of a proxy with many arguments");
+check(new trappingProxy(4, 5).text, "constructed 4,5", "a construction of a proxy with a trap");
+check(new trappingProxy().isNewTarget, true, "new.target of a construction of a proxy");
+check(new classProxy(6).value, 6, "a construction of a proxy of a class");
+check({ method: trappingProxy }.method(7), "applied 7", "a proxy called as a method");
+caught = [];
+try { throwingProxy(); } catch (error) { caught.push(error instanceof RangeError); }
+try { new throwingProxy(); } catch (error) { caught.push(error instanceof RangeError); }
+try { classProxy(); } catch (error) { caught.push(error instanceof TypeError); }
+try { new (new Proxy(() => 1, { }))(); } catch (error) { caught.push(error instanceof TypeError); }
+check(caught.join(), "true,true,true,true", "proxies that throw");
+let total = 0;
+for (let i = 0; i < 100; ++i)
+    total += plainProxy(i, 1) + new classProxy(i).value;
+check(total, 10000, "proxies in a loop");
+
+check(eval("1 + 1"), 2, "direct eval");
+check(eval("variable + object.number"), 6, "direct eval reads the variables of the module");
+eval("variable = 7");
+check(variable, 7, "direct eval assigns to a variable of the module");
+check(eval("var local = 3; local + variable"), 10, "direct eval with a variable of its own");
+check(typeof local, "undefined", "which stays inside");
+check(eval("this"), undefined, "this in direct eval");
+check(eval("(() => variable * 2)")(), 14, "a closure made by direct eval");
+let evalError;
+try { eval("object.missing()"); } catch (error) { evalError = error; }
+check(evalError instanceof TypeError, true, "a failing call in direct eval");
+try { eval("("); } catch (error) { evalError = error; }
+check(evalError instanceof SyntaxError, true, "a syntax error in direct eval");
+for (let i = 0; i < 20; ++i)
+    check(eval("variable + " + i), 7 + i, "direct eval in a loop");
+
+await 0;
+caught = "none";
+try { object.missing(1); } catch (error) { caught = error instanceof TypeError; }
+check(caught, true, "a failing call after await");
+check(eval("variable"), 7, "direct eval after await");
+check(plainProxy(5, 6), 11, "a call of a proxy after await");
+
+function inFunction() { try { object.missing(1); } catch (error) { return error instanceof TypeError; } }
+check(inFunction(), true, "a failing call in a function");
+console.log("passed");
+//// calls-and-eval-in-module-code/main.ts
+// Calls and `new` on values that are not callable, at module level: arguments are evaluated first, and `finally` blocks run.
+import "./impl.js";
+//// calls-with-integers-doubles-and-booleans/impl.js
+////= check
+
+(function () {
+    "use strict";
+    function Item(a, b, c) {
+        this.a = a;
+        this.b = b;
+        this.c = c;
+    }
+    function build(...pairs) {
+        let object = { };
+        for (let i = 0; i < pairs.length; i += 2)
+            object[pairs[i]] = pairs[i + 1];
+        return object;
+    }
+    function addsInts(x, y, z) { return (x + y | 0) + z | 0; }
+    function addsDoubles(x, y, z) { return x * 0.5 + y * 0.5 + z * 0.5; }
+    function tests(x, flag) { return flag ? x > 1 : x < 1; }
+    function Pair(x, y) {
+        this.x = x;
+        this.y = y;
+    }
+
+    function callsWithInts(o) { let first = o.a | 0; return addsInts(first, o.b | 0, o.c | 0) + 1; }
+    function callsWithDoubles(o) { let first = +o.a; return addsDoubles(first, +o.b, +o.c) + 1; }
+    function callsWithBoolean(o) { let first = o.a | 0; return tests(first, o.b === 2) === (o.c === 3) ? 1 : 0; }
+    function tailCallsWithInts(o) { let first = o.a | 0; return addsInts(first, o.b | 0, o.c | 0); }
+    function usesTailCallWithInts(o) { return tailCallsWithInts(o) * 2 | 0; }
+    function tailCallsWithDoubles(o) { let first = +o.a; return addsDoubles(first, +o.b, +o.c); }
+    function usesTailCallWithDoubles(o) { return tailCallsWithDoubles(o) * 2; }
+    function constructs(o) { let first = o.a | 0; let pair = new Pair(first, o.b | 0); return pair.x + pair.y + o.c; }
+
+    const receivers = [
+        () => new Item(1, 2, 3),
+        () => build("c", 3, "b", 2, "a", 1),
+        () => build("a", 1, "c", 3, "b", 2),
+        () => build("a", 1, "b", 2, "other", 0, "c", 3),
+    ];
+    for (let i = 0; i < 400; ++i) {
+        let make = receivers[i % 9 < receivers.length ? i % 9 : 0];
+        check(callsWithInts(make()), 7, "integers are passed");
+        check(callsWithDoubles(make()), 4, "doubles are passed");
+        check(callsWithBoolean(make()), 0, "a boolean is passed");
+        check(usesTailCallWithInts(make()), 12, "a tail call returns an integer");
+        check(usesTailCallWithDoubles(make()), 6, "a tail call returns a double");
+        check(constructs(make()), 6, "integers are passed to a constructor");
+    }
+})();
+console.log("passed");
+//// calls-with-integers-doubles-and-booleans/main.ts
+// Functions are called with integers, doubles and booleans in turn, also through tail calls and constructors.
+import "./impl.js";
+//// captures-read-by-inlined-closures/impl.js
+////= check
+
+(function () {
+    let later = [];
+    const results = () => { let all = later.map(f => f()).join(); later = []; return all; };
+
+    const probe = a => {
+        const probeInner = b => a + b;
+        return probeInner(1);
+    };
+    check(probe(1), 2, "the probe");
+
+    const afterLoop = a => {
+        const afterLoopInner = b => {
+            for (let i = 0; i < 3; i++)
+                later.push(() => b + i);
+            return a;
+        };
+        return afterLoopInner(3);
+    };
+    check(afterLoop("A"), "A", "read after a loop with scopes of its own");
+    check(results(), "3,4,5", "the closures of the loop");
+    check(afterLoop(1.5), 1.5, "another type");
+    results();
+
+    const capturedInLoop = a => {
+        const capturedInLoopInner = b => {
+            for (let i = 0; i < 3; i++)
+                later.push(() => a + b + i);
+        };
+        capturedInLoopInner(3);
+    };
+    capturedInLoop("A");
+    check(results(), "A30,A31,A32", "captured again by the closures of the loop");
+
+    const twoLevels = a => {
+        const twoLevelsMiddle = m => {
+            const twoLevelsInner = b => {
+                for (let i = 0; i < 2; i++)
+                    later.push(() => b + i);
+                return a + m;
+            };
+            return twoLevelsInner(3);
+        };
+        return twoLevelsMiddle("M");
+    };
+    check(twoLevels("A"), "AM", "variables of the maker and of the maker's maker");
+    check(results(), "3,4", "the closures of the loop");
+
+    const blockInWhile = a => {
+        const blockInWhileInner = b => {
+            let n = 0;
+            while (n < 2) {
+                const k = n * 10;
+                later.push(() => b + k);
+                n++;
+            }
+            return a;
+        };
+        return blockInWhileInner(3);
+    };
+    check(blockInWhile("A"), "A", "read after a while loop with a block scope");
+    check(results(), "3,13", "the closures of the loop");
+
+    function ordinaryFunctions(a) {
+        const ordinaryFunctionsInner = function (b) {
+            for (let i = 0; i < 3; i++)
+                later.push(() => b + i);
+            return a;
+        };
+        return ordinaryFunctionsInner(3);
+    }
+    check(ordinaryFunctions("A"), "A", "function expressions");
+    check(results(), "3,4,5", "the closures of the loop");
+
+    const insideLoop = a => {
+        const insideLoopInner = b => {
+            let s = "";
+            for (let i = 0; i < 3; i++) {
+                later.push(() => b + i);
+                s += a;
+            }
+            return s;
+        };
+        return insideLoopInner(3);
+    };
+    check(insideLoop("A"), "AAA", "read inside the loop");
+    results();
+
+    const alsoReturned = a => {
+        const alsoReturnedInner = b => {
+            for (let i = 0; i < 2; i++)
+                later.push(() => b + i);
+            return a;
+        };
+        return [alsoReturnedInner(3), alsoReturnedInner];
+    };
+    {
+        let [first, inner] = alsoReturned("A");
+        check(first, "A", "inlined");
+        check(inner(7), "A", "the same closure called from outside holds the value");
+        check(results(), "3,4,7,8", "the closures of both calls");
+    }
+
+    const makerInLoop = n => {
+        let all = "";
+        for (let j = 0; j < n; j++) {
+            const a = "a" + j;
+            const makerInLoopInner = b => {
+                for (let i = 0; i < 2; i++)
+                    later.push(() => b + i);
+                return a;
+            };
+            all += makerInLoopInner(j);
+        }
+        return all;
+    };
+    check(makerInLoop(3), "a0a1a2", "the maker's scope is made once for each iteration");
+    check(results(), "0,1,1,2,2,3", "the closures of the loops");
+
+    const uninitialized = () => {
+        const uninitializedInner = b => {
+            for (let i = 0; i < 2; i++)
+                later.push(() => b + i);
+            return late;
+        };
+        try {
+            return uninitializedInner(3);
+        } catch (error) {
+            return error.constructor.name;
+        }
+        let late = 1;
+    };
+    check(uninitialized(), "ReferenceError", "a variable that is never initialized");
+    results();
+
+    const afterBlock = a => {
+        {
+            const t = 1;
+            later.push(() => t);
+        }
+        const afterBlockInner = b => {
+            for (let i = 0; i < 2; i++)
+                later.push(() => b + i);
+            return a;
+        };
+        return afterBlockInner(3);
+    };
+    check(afterBlock("A"), "A", "made after a block scope of the maker was left");
+    check(results(), "1,3,4", "the closures");
+
+    const afterLoopOfMaker = a => {
+        for (let j = 0; j < 2; j++)
+            later.push(() => j);
+        const afterLoopOfMakerInner = b => a + b;
+        return afterLoopOfMakerInner(3);
+    };
+    check(afterLoopOfMaker("A"), "A3", "made after a loop of the maker with scopes of its own");
+    check(results(), "0,1", "the closures");
+
+    const afterBothLoops = a => {
+        for (let j = 0; j < 2; j++)
+            later.push(() => j);
+        const afterBothLoopsInner = b => {
+            for (let i = 0; i < 2; i++)
+                later.push(() => b + i);
+            return a;
+        };
+        return afterBothLoopsInner(3);
+    };
+    check(afterBothLoops("A"), "A", "a loop in the maker and a loop in the closure");
+    check(results(), "0,1,3,4", "the closures");
+
+    const inBlockOfMaker = a => {
+        {
+            const t = a + "t";
+            const inBlockOfMakerInner = b => {
+                for (let i = 0; i < 2; i++)
+                    later.push(() => b + i);
+                return a + t;
+            };
+            return inBlockOfMakerInner(3);
+        }
+    };
+    check(inBlockOfMaker("A"), "AAt", "a variable of a block and a variable of the function");
+    check(results(), "3,4", "the closures");
+
+    function readsInLoop(list) {
+        const kept = list;
+        const readsInLoopInner = a => {
+            kept.push(() => a);
+            for (let j = 0; j < 2; j++)
+                kept.push(() => j);
+            return kept.length;
+        };
+        return readsInLoopInner("A");
+    }
+    check(readsInLoop(later), 3, "read in and after the loop");
+    check(results(), "A,0,1", "the closures");
+
+    function returnsClosureMadeAfterLoop(list) {
+        const kept = list;
+        const returnsClosureMadeAfterLoopInner = a => {
+            for (let j = 0; j < 2; j++)
+                kept.push(() => j);
+            return b => a + b + kept.length;
+        };
+        return returnsClosureMadeAfterLoopInner("A");
+    }
+    check(returnsClosureMadeAfterLoop(later)(3), "A32", "captured again by a closure that is made after the loop");
+    check(results(), "0,1", "the closures");
+
+    const inBranches = (a, c) => {
+        const inBranchesInner = b => {
+            if (c) {
+                const k = 1;
+                later.push(() => b + k);
+            } else {
+                const j = 2;
+                later.push(() => b + j);
+            }
+            return a;
+        };
+        return inBranchesInner(3);
+    };
+    check(inBranches("A", true) + inBranches("B", false), "AB", "scopes in branches");
+    check(results(), "4,5", "the closures of the branches");
+})();
+console.log("passed");
+//// captures-read-by-inlined-closures/main.ts
+// Inlined closures read captured variables, also after loops whose iterations have their own scopes.
+import "./impl.js";
+//// classes-with-declared-fields/impl.js
+////= check
+
+(function () {
+    const classes = [];
+    classes.push((function () { class Declares0 { first0; second0; third0; constructor(x) { this.first0 = x; this.second0 = x + 1; this.third0 = x + 2; } sum0() { return this.first0 + this.second0 + this.third0; } } return Declares0; })());
+    classes.push((function () { class Declares1 { first1; second1; third1; constructor(x) { this.first1 = x; this.second1 = x + 1; this.third1 = x + 2; } sum1() { return this.first1 + this.second1 + this.third1; } } return Declares1; })());
+    classes.push((function () { class Declares2 { first2; second2; third2; constructor(x) { this.first2 = x; this.second2 = x + 1; this.third2 = x + 2; } sum2() { return this.first2 + this.second2 + this.third2; } } return Declares2; })());
+    classes.push((function () { class Declares3 { first3; second3; third3; constructor(x) { this.first3 = x; this.second3 = x + 1; this.third3 = x + 2; } sum3() { return this.first3 + this.second3 + this.third3; } } return Declares3; })());
+    classes.push((function () { class Declares4 { first4; second4; third4; constructor(x) { this.first4 = x; this.second4 = x + 1; this.third4 = x + 2; } sum4() { return this.first4 + this.second4 + this.third4; } } return Declares4; })());
+    classes.push((function () { class Declares5 { first5; second5; third5; constructor(x) { this.first5 = x; this.second5 = x + 1; this.third5 = x + 2; } sum5() { return this.first5 + this.second5 + this.third5; } } return Declares5; })());
+    classes.push((function () { class Declares6 { first6; second6; third6; constructor(x) { this.first6 = x; this.second6 = x + 1; this.third6 = x + 2; } sum6() { return this.first6 + this.second6 + this.third6; } } return Declares6; })());
+    classes.push((function () { class Declares7 { first7; second7; third7; constructor(x) { this.first7 = x; this.second7 = x + 1; this.third7 = x + 2; } sum7() { return this.first7 + this.second7 + this.third7; } } return Declares7; })());
+    classes.push((function () { class Declares8 { first8; second8; third8; constructor(x) { this.first8 = x; this.second8 = x + 1; this.third8 = x + 2; } sum8() { return this.first8 + this.second8 + this.third8; } } return Declares8; })());
+    classes.push((function () { class Declares9 { first9; second9; third9; constructor(x) { this.first9 = x; this.second9 = x + 1; this.third9 = x + 2; } sum9() { return this.first9 + this.second9 + this.third9; } } return Declares9; })());
+    classes.push((function () { class Declares10 { first10; second10; third10; constructor(x) { this.first10 = x; this.second10 = x + 1; this.third10 = x + 2; } sum10() { return this.first10 + this.second10 + this.third10; } } return Declares10; })());
+    classes.push((function () { class Declares11 { first11; second11; third11; constructor(x) { this.first11 = x; this.second11 = x + 1; this.third11 = x + 2; } sum11() { return this.first11 + this.second11 + this.third11; } } return Declares11; })());
+    classes.push((function () { class Initializes { first = 1; second = 2; third = 3; constructor(x) { this.first = x; } sumOfInitialized() { return this.first + this.second + this.third; } } return Initializes; })());
+
+    for (let round = 0; round < 200; ++round) {
+        for (let i = 0; i < classes.length - 1; ++i)
+            check(new classes[i](round)["sum" + i](), 3 * round + 3, "the sum of the fields of class " + i);
+        check(new classes[classes.length - 1](round).sumOfInitialized(), round + 5, "the sum of fields with initializers");
+    }
+})();
+console.log("passed");
+//// classes-with-declared-fields/main.ts
+// Classes with declared fields, with and without initializers, and their subclasses.
+import "./impl.js";
+//// closures-created-only-under-new/impl.js
+(function () {
+    function shouldBe(actual, expected, what) {
+        if (actual !== expected)
+            throw new Error(what + ": " + actual + " instead of " + expected);
+    }
+    function Differs() { return new.target ? function constructed(x) { return x + 1; } : function called(x) { return x + 2; }; }
+    function Guarded(start) {
+        if (!new.target)
+            return new Guarded(start);
+        this.next = function next(step) { return start + step; };
+    }
+    for (let i = 0; i < 20; ++i) {
+        shouldBe(new Differs()(1), 2, "the function that only the construct code makes");
+        shouldBe(Differs()(1), 3, "the function that only the call code makes");
+        shouldBe(new Guarded(i).next(1), i + 1, "a closure made after a test of new.target, constructed");
+        shouldBe(Guarded(i).next(2), i + 2, "a closure made after a test of new.target, called");
+    }
+})();
+console.log("passed");
+//// closures-created-only-under-new/main.ts
+// Closures that are created only when the enclosing function is called with `new`, or only when it is called without.
+import "./impl.js";
+//// closures-in-nullish-branches/impl.js
+(function () {
+////= check
+let log = [];
+function note(value) { log.push(value); }
+
+function testsUndefined(c) {
+    for (let i = 0; i < 2; i++) { }
+    if (undefined) {
+        for (let i = 0; i < 2; i++) {
+            const reads = () => c[1];
+            note(reads());
+        }
+    }
+    return log.length;
+}
+check(testsUndefined([1, 2]), 0, "a closure that is made and called where undefined is true");
+
+function testsNull(c) {
+    if (null) {
+        const reads = () => c[0];
+        return reads();
+    }
+    return "skipped";
+}
+check(testsNull([1, 2]), "skipped", "where null is true");
+
+function testsNotUndefined(c) {
+    if (!undefined) {
+        const reads = () => c[1];
+        return reads();
+    }
+    return "skipped";
+}
+check(testsNotUndefined([1, 2]), 2, "where undefined is false");
+
+function testsBoth(c, which) {
+    const inDeadBranch = () => c[0];
+    const inLiveBranch = () => c[1];
+    let result = 0;
+    for (let i = 0; i < 3; i++) {
+        if (undefined)
+            result += inDeadBranch();
+        else
+            result += inLiveBranch();
+    }
+    return result;
+}
+check(testsBoth([100, 2]), 6, "one closure for each branch");
+
+function typeOf(flag) { return typeof flag; }
+function hasDefault(flag = false) { return typeOf(flag); }
+check(hasDefault(), "boolean", "the default");
+check(hasDefault(undefined), "boolean", "the default for undefined");
+check(hasDefault(true), "boolean", "an argument");
+
+function addsOne(value) { return value + 1; }
+function isAlwaysCalledWithout(value = 7) { return addsOne(value); }
+check(isAlwaysCalledWithout(), 8, "a parameter that is never passed");
+check(isAlwaysCalledWithout(), 8, "a parameter that is never passed, again");
+
+function isAlwaysCalledWith(value = 7) { return addsOne(value); }
+check(isAlwaysCalledWith(1), 2, "a parameter that is always passed");
+check(isAlwaysCalledWith(2.5), 3.5, "a parameter that is always passed, again");
+
+let assignedLater;
+function callsAssignedLater(x) { return assignedLater(x); }
+let threw = false;
+try {
+    callsAssignedLater({ });
+} catch (error) {
+    threw = error instanceof TypeError;
+}
+check(threw, true, "a call of a variable that is still undefined");
+assignedLater = x => x.value;
+check(callsAssignedLater({ value: 5 }), 5, "once it holds a function");
+
+let neverAssigned;
+function callsNeverAssigned(x) { return neverAssigned(x); }
+threw = false;
+try {
+    callsNeverAssigned({ });
+} catch (error) {
+    threw = error instanceof TypeError;
+}
+check(threw, true, "a call of a variable that never holds a function");
+})();
+console.log("passed");
+//// closures-in-nullish-branches/main.ts
+// Closures that are created in branches which depend on undefined, null or default values.
+import "./impl.js";
+//// closures-passed-in-loops/impl.js
+////= check
+function collector() {
+    let seen = new Set, calls = 0;
+    return {
+        forEach(f) { seen.add(f); calls++; f.marks = (f.marks || 0) + 1; this.last = f; },
+        get summary() { return seen.size + " of " + calls + ", marked " + this.last.marks; },
+    };
+}
+let sum = 0;
+
+function madeBeforeLoop(list) {
+    const callback = (x) => { sum += x; };
+    for (let i = 0; i < 3; i++)
+        list.forEach(callback);
+}
+function madeBeforeWhileLoop(list, n) {
+    const callback = (x) => { sum += x; };
+    while (n-- > 0)
+        list.forEach(callback);
+}
+function madeBeforeNestedLoops(list) {
+    const callback = (x) => { sum += x; };
+    for (let i = 0; i < 2; i++) {
+        for (let j = 0; j < 2; j++)
+            list.forEach(callback);
+    }
+}
+function madeInOuterLoop(list) {
+    for (let i = 0; i < 2; i++) {
+        const callback = (x) => { sum += x + i; };
+        for (let j = 0; j < 3; j++)
+            list.forEach(callback);
+    }
+}
+function madeBeforeLoopWithBranch(list, skips) {
+    const callback = (x) => { sum += x; };
+    for (let i = 0; i < 4; i++) {
+        if (i === skips)
+            continue;
+        list.forEach(callback);
+    }
+}
+function madeInLoop(list) {
+    for (let i = 0; i < 3; i++) {
+        const callback = (x) => { sum += x + i; };
+        list.forEach(callback);
+    }
+}
+function madeInLoopInline(list) {
+    for (let i = 0; i < 3; i++)
+        list.forEach((x) => { sum += x + i; });
+}
+function withoutLoop(list) {
+    const callback = (x) => { sum += x; };
+    list.forEach(callback);
+}
+function withoutLoopOnOnePath(list, really) {
+    const callback = (x) => { sum += x; };
+    if (really)
+        list.forEach(callback);
+}
+function afterLoop(list) {
+    const callback = (x) => { sum += x; };
+    let n = 0;
+    for (let i = 0; i < 3; i++)
+        n += i;
+    list.forEach(callback);
+    return n;
+}
+function retries(list) {
+    const callback = (x) => { sum += x; };
+    for (let attempt = 0; ; attempt++) {
+        try {
+            list.forEach(callback);
+            if (attempt < 2)
+                throw new Error("again");
+            return attempt;
+        } catch {
+        }
+    }
+}
+
+function summaryOf(f, ...rest) {
+    let list = collector();
+    f(list, ...rest);
+    return list.summary;
+}
+function sumOf(f, ...rest) {
+    sum = 0;
+    f([1, 2, 3], ...rest);
+    return sum;
+}
+for (let round = 0; round < 2; round++) {
+    check(summaryOf(madeBeforeLoop), "1 of 3, marked 3", "a closure made before a loop");
+    check(summaryOf(madeBeforeWhileLoop, 4), "1 of 4, marked 4", "a closure made before a while loop");
+    check(summaryOf(madeBeforeNestedLoops), "1 of 4, marked 4", "a closure made before two loops");
+    check(summaryOf(madeInOuterLoop), "2 of 6, marked 3", "a closure made in the outer loop and passed in the inner one");
+    check(summaryOf(madeBeforeLoopWithBranch, 1), "1 of 3, marked 3", "a closure made before a loop that skips a call");
+    check(summaryOf(madeInLoop), "3 of 3, marked 1", "a closure made in the loop");
+    check(summaryOf(madeInLoopInline), "3 of 3, marked 1", "a closure made where it is passed");
+    check(summaryOf(withoutLoop), "1 of 1, marked 1", "no loop");
+    check(summaryOf(withoutLoopOnOnePath, true), "1 of 1, marked 1", "no loop, on one path");
+    check(summaryOf(afterLoop), "1 of 1, marked 1", "a call after a loop");
+    check(summaryOf(retries), "1 of 3, marked 3", "a loop that only goes round through a handler");
+
+    check(sumOf(madeBeforeLoop), 18, "an array, a closure made before a loop");
+    check(sumOf(madeBeforeWhileLoop, 4), 24, "an array, a closure made before a while loop");
+    check(sumOf(madeBeforeNestedLoops), 24, "an array, a closure made before two loops");
+    check(sumOf(madeInOuterLoop), 45, "an array, a closure made in the outer loop");
+    check(sumOf(madeBeforeLoopWithBranch, 1), 18, "an array, a loop that skips a call");
+    check(sumOf(madeInLoop), 27, "an array, a closure made in the loop");
+    check(sumOf(madeInLoopInline), 27, "an array, a closure made where it is passed");
+    check(sumOf(withoutLoop), 6, "an array, no loop");
+    check(sumOf(withoutLoopOnOnePath, false), 0, "an array, the path without the call");
+    check(sumOf(afterLoop), 6, "an array, a call after a loop");
+    check(sumOf(retries), 18, "an array, a loop that only goes round through a handler");
+}
+
+console.log("passed");
+//// closures-passed-in-loops/main.ts
+// Closures created before or inside loops and passed to calls in those loops.
+import "./impl.js";
+//// code-reached-only-by-catching/impl.js
+////= check
+
+(function () {
+function small(a, b) { return a + b; }
+function may(x) { if (x < 0) throw new Error("negative"); return x; }
+function inTry(x) { let sum = 0; for (let i = 0; i < 3; i++) { try { sum += small(may(x), i); } catch (e) { sum -= 1; } } return sum; }
+function inHandler(x) { let sum = 0; for (let i = 0; i < 3; i++) { try { sum += may(x); } catch (e) { sum += small(i, 100); } } return sum; }
+function afterMerge(x) { let sum = 0; for (let i = 0; i < 3; i++) { try { sum += may(x); } catch (e) { sum -= 1; } sum += small(i, 1); } return sum; }
+function inFinally(x) { let sum = 0; for (let i = 0; i < 3; i++) { try { sum += may(x); } catch (e) { sum -= 1; } finally { sum += small(i, 2); } } return sum; }
+function inNestedHandler(x) { let sum = 0; for (let i = 0; i < 3; i++) { try { sum += may(x); } catch (e) { try { sum += may(x + 1); } catch (f) { sum += small(i, 10); } } } return sum; }
+function noHandler(x) { let sum = 0; for (let i = 0; i < 3; i++) sum += small(x, i); return sum; }
+
+check(inTry(1), 6, "a call in a try block");
+check(inTry(-1), -3, "a call in a try block that throws");
+check(inHandler(1), 3, "a call in a handler that does not run");
+check(inHandler(-1), 303, "a call in a handler that runs");
+check(afterMerge(1), 9, "a call behind a try statement");
+check(afterMerge(-1), 3, "a call behind a try statement that caught");
+check(inFinally(1), 12, "a call in a finally block");
+check(inFinally(-1), 6, "a call in a finally block, after catching");
+check(inNestedHandler(1), 3, "a call in a handler in a handler, neither runs");
+check(inNestedHandler(-1), 0, "a call in a handler in a handler, the outer one runs");
+check(inNestedHandler(-2), 33, "a call in a handler in a handler, both run");
+check(noHandler(1), 6, "a call in a function without a handler");
+})();
+console.log("passed");
+//// code-reached-only-by-catching/main.ts
+// Calls inside `try` blocks, inside `catch` blocks that do and do not run, and after `try` statements.
+import "./impl.js";
+//// collection-while-compiling/impl.js
+////= check
+
+function outer(a) {
+    function inner(b) { return function innermost(c) { return a + b + c; }; }
+    return inner(1)(2);
+}
+class Point {
+    constructor(x, y) { this.x = x; this.y = y; }
+    get sum() { return this.x + this.y; }
+    static origin() { return new Point(0, 0); }
+}
+class Point3 extends Point {
+    constructor(x, y, z) { super(x, y); this.z = z; }
+    get sum() { return super.sum + this.z; }
+}
+function* yields(n) {
+    for (let i = 0; i < n; i++)
+        yield i;
+}
+const matches = text => /^a+b$/.test(text);
+
+check(outer(3), 6, "nested functions");
+check(new Point(1, 2).sum, 3, "a class");
+check(Point.origin().sum, 0, "a static method");
+check(new Point3(1, 2, 3).sum, 6, "a derived class");
+check([...yields(3)].join(), "0,1,2", "a generator");
+check(matches("aab"), true, "a regular expression");
+console.log("passed");
+//// collection-while-compiling/main.ts
+// Nested functions, static methods, derived classes, generators and regular expressions in a program whose compilation is interrupted by garbage collections.
+// ENV JSC_slowPathAllocsBetweenGCs=1
+import "./impl.js";
+//// compare-with-short-string-literals/impl.js
+////= check
+function is0(s) { return s === ""; }
+function is1(s) { return s === "a"; }
+function is2(s) { return s === "ab"; }
+function is3(s) { return s === "abc"; }
+function is4(s) { return s === "abcd"; }
+function is5(s) { return s === "abcde"; }
+function is6(s) { return s === "abcdef"; }
+function is7(s) { return s === "abcdefg"; }
+function is8(s) { return s === "abcdefgh"; }
+function is9(s) { return s === "abcdefghi"; }
+function isNot4(s) { return "abcd" !== s; }
+function isHigh(s) { return s === "\xe9\xff"; }
+let tests = [is0, is1, is2, is3, is4, is5, is6, is7, is8, is9];
+let full = "abcdefghi";
+function flat(s) { return JSON.parse(JSON.stringify(s)); }
+function rope(s) { return s.length < 2 ? s : flat(s.slice(0, 1)) + flat(s.slice(1)); }
+function substring(s) { return flat("xx" + s + "yy").slice(2, 2 + s.length); }
+function wide(s) { return flat("ሴ" + s).slice(1); }
+for (let round = 0; round < 3; ++round) {
+    for (let length = 0; length < tests.length; ++length) {
+        let literal = full.slice(0, length);
+        for (let make of [flat, rope, substring, wide]) {
+            check(tests[length](make(literal)), true, "equal, length " + length + ", " + make.name);
+            for (let other = 0; other < tests.length; ++other) {
+                if (other != length)
+                    check(tests[other](make(literal)), false, "another length, " + length + " and " + other + ", " + make.name);
+            }
+            for (let at = 0; at < length; ++at) {
+                let changed = literal.slice(0, at) + "z" + literal.slice(at + 1);
+                check(tests[length](make(changed)), false, "differs at " + at + ", length " + length + ", " + make.name);
+            }
+        }
+        for (let value of [undefined, null, 0, 1.5, true, {}, [], Symbol(), 10n, new String(literal)])
+            check(tests[length](value), false, "not a string, length " + length);
+    }
+    check(isNot4(flat("abcd")), false, "!==, equal");
+    check(isNot4(flat("abce")), true, "!==, different");
+    check(isHigh(flat("\xe9\xff")), true, "Latin-1 above 127");
+    check(isHigh(flat("\xe9\xfe")), false, "Latin-1 above 127, different");
+    check(isHigh(wide("\xe9\xff")), true, "Latin-1 above 127, in a 16-bit string");
+    check(is2(flat("šb")), false, "a 16-bit character whose low byte matches");
+}
+
+function isWide(s) { return s === "\u1234"; }
+function isEither(a, b) { return a === b; }
+function isLoose(s) { return s == "ab"; }
+check(isWide("\u1234"), true, "a 16-bit literal");
+check(isWide("4"), false, "a 16-bit literal, and its low byte");
+check(isEither("ab", "ab"), true, "two variables");
+check(isLoose("ab"), true, "==");
+check(isLoose({ toString() { return "ab"; } }), true, "==, with a conversion");
+console.log("passed");
+//// compare-with-short-string-literals/main.ts
+// `===` with string literals of up to four characters: 8-bit, Latin-1, and 16-bit strings whose low bytes match.
+import "./impl.js";
+//// comparisons-with-long-literals/impl.js
+(function () {
+    function check(actual, expected, what) {
+        if (!Object.is(actual, expected))
+            throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
+    }
+    let calls = 0;
+    const called = { f() { ++calls; } };
+
+    function is1(a) { return a === "a"; }
+    function is3(a) { return a === "abc"; }
+    function is7(a) { return a === "abcdefg"; }
+    function is8(a) { return a === "abcdefgh"; }
+    function is9(a) { return a === "abcdefghi"; }
+    function is10(a) { return a === "abcdefghij"; }
+    function is12(a) { return a === "abcdefghijkl"; }
+    function is15(a) { return a === "abcdefghijklmno"; }
+    function is16(a) { return a === "abcdefghijklmnop"; }
+    function is17(a) { return a === "abcdefghijklmnopq"; }
+    function is23(a) { return a === "abcdefghijklmnopqrstuvw"; }
+    function is24(a) { return a === "abcdefghijklmnopqrstuvwx"; }
+    function is25(a) { return a === "abcdefghijklmnopqrstuvwxy"; }
+    function count1(list) {
+        let count = 0;
+        for (let i = 0; i < list.length; ++i) {
+            called.f();
+            if (list[i] === "a")
+                ++count;
+        }
+        return count;
+    }
+    function count3(list) {
+        let count = 0;
+        for (let i = 0; i < list.length; ++i) {
+            called.f();
+            if (list[i] === "abc")
+                ++count;
+        }
+        return count;
+    }
+    function count7(list) {
+        let count = 0;
+        for (let i = 0; i < list.length; ++i) {
+            called.f();
+            if (list[i] === "abcdefg")
+                ++count;
+        }
+        return count;
+    }
+    function count8(list) {
+        let count = 0;
+        for (let i = 0; i < list.length; ++i) {
+            called.f();
+            if (list[i] === "abcdefgh")
+                ++count;
+        }
+        return count;
+    }
+    function count9(list) {
+        let count = 0;
+        for (let i = 0; i < list.length; ++i) {
+            called.f();
+            if (list[i] === "abcdefghi")
+                ++count;
+        }
+        return count;
+    }
+    function count10(list) {
+        let count = 0;
+        for (let i = 0; i < list.length; ++i) {
+            called.f();
+            if (list[i] === "abcdefghij")
+                ++count;
+        }
+        return count;
+    }
+    function count12(list) {
+        let count = 0;
+        for (let i = 0; i < list.length; ++i) {
+            called.f();
+            if (list[i] === "abcdefghijkl")
+                ++count;
+        }
+        return count;
+    }
+    function count15(list) {
+        let count = 0;
+        for (let i = 0; i < list.length; ++i) {
+            called.f();
+            if (list[i] === "abcdefghijklmno")
+                ++count;
+        }
+        return count;
+    }
+    function count16(list) {
+        let count = 0;
+        for (let i = 0; i < list.length; ++i) {
+            called.f();
+            if (list[i] === "abcdefghijklmnop")
+                ++count;
+        }
+        return count;
+    }
+    function count17(list) {
+        let count = 0;
+        for (let i = 0; i < list.length; ++i) {
+            called.f();
+            if (list[i] === "abcdefghijklmnopq")
+                ++count;
+        }
+        return count;
+    }
+    function count23(list) {
+        let count = 0;
+        for (let i = 0; i < list.length; ++i) {
+            called.f();
+            if (list[i] === "abcdefghijklmnopqrstuvw")
+                ++count;
+        }
+        return count;
+    }
+    function count24(list) {
+        let count = 0;
+        for (let i = 0; i < list.length; ++i) {
+            called.f();
+            if (list[i] === "abcdefghijklmnopqrstuvwx")
+                ++count;
+        }
+        return count;
+    }
+    function count25(list) {
+        let count = 0;
+        for (let i = 0; i < list.length; ++i) {
+            called.f();
+            if (list[i] === "abcdefghijklmnopqrstuvwxy")
+                ++count;
+        }
+        return count;
+    }
+    const cases = [
+        ["a", is1, count1],
+        ["abc", is3, count3],
+        ["abcdefg", is7, count7],
+        ["abcdefgh", is8, count8],
+        ["abcdefghi", is9, count9],
+        ["abcdefghij", is10, count10],
+        ["abcdefghijkl", is12, count12],
+        ["abcdefghijklmno", is15, count15],
+        ["abcdefghijklmnop", is16, count16],
+        ["abcdefghijklmnopq", is17, count17],
+        ["abcdefghijklmnopqrstuvw", is23, count23],
+        ["abcdefghijklmnopqrstuvwx", is24, count24],
+        ["abcdefghijklmnopqrstuvwxy", is25, count25],
+    ];
+
+    function copyOf(text) { return String.fromCharCode(...Array.from(text, character => character.charCodeAt(0))); }
+    function sliceOf(text, offset) { return ("#".repeat(offset) + text + "################").slice(offset, offset + text.length); }
+    function wideSliceOf(text) { return (text + "\u2603 and more text behind it").slice(0, text.length); }
+    function ropeOf(text) { return copyOf(text.slice(0, text.length >> 1)) + copyOf(text.slice(text.length >> 1)); }
+    function withCharacter(text, at, character) { return copyOf(text.slice(0, at) + character + text.slice(at + 1)); }
+
+    for (let [text, is, count] of cases) {
+        let equal = [text, copyOf(text), wideSliceOf(text), ropeOf(text)];
+        for (let offset = 0; offset < 9; ++offset)
+            equal.push(sliceOf(text, offset));
+        let atom = copyOf(text);
+        ({ })[atom] = 1;
+        equal.push(atom);
+        let different = [text + "z", copyOf(text + "z"), text.slice(1), copyOf(text.slice(0, -1)), "", undefined, null, 0, text.length, true, { }, [text], Symbol(text), { toString() { return text; } }];
+        for (let at = 0; at < text.length; ++at) {
+            different.push(withCharacter(text, at, "Z"), withCharacter(text, at, "\0"), withCharacter(text, at, "\xff"), withCharacter(text, at, "\u2603"));
+            different.push(sliceOf(withCharacter(text, at, "Z"), at % 5));
+            different.push(ropeOf(withCharacter(text, at, "Z")));
+        }
+        for (let round = 0; round < 2; ++round) {
+            for (let i = 0; i < equal.length; ++i)
+                check(is(equal[i]), true, text + " and equal operand " + i);
+            for (let i = 0; i < different.length; ++i)
+                check(is(different[i]), false, text + " and different operand " + i);
+        }
+        let fresh = [ropeOf(text), wideSliceOf(text), sliceOf(text, 3), copyOf(text), ropeOf(withCharacter(text, text.length - 1, "Z"))];
+        check(count(fresh), 4, text + " in a loop, operands never seen before");
+        check(count(equal), equal.length, text + " in a loop, equal operands");
+        check(count(different), 0, text + " in a loop, different operands");
+    }
+    check(calls > 0, true, "the loops call something");
+})();
+console.log("passed");
+//// comparisons-with-long-literals/main.ts
+// Strings are compared with long string literals in loops.
+import "./impl.js";
+//// concatenation-of-two-strings/impl.js
+////= check
+// What `f` returns is read: a text that nobody reads need not be made, however long it would be.
+////= throws
+
+function add(a, b) { return a + b; }
+function subtract(a, b) { return a - b; }
+function addIntegers(a, b) { return (a | 0) + (b | 0); }
+function addToInteger(a, b) { return a + (b | 0); }
+let text = "";
+function append(piece) { text += piece; }
+
+////= codes
+
+const narrow = ["a", "bc", "item 123", "\xe9\xff", "x".repeat(40)];
+const wide = ["中", "文字", "aĀ", "😀", "Ж".repeat(40)];
+////= for-3
+
+////= for-5
+check(add("", ""), "", "nothing and nothing");
+
+////= for-2
+
+////= lines-4
+
+text = "";
+let expected = [];
+for (let i = 0; i < 20000; ++i) {
+    let piece = i % 11 ? "<td>" : "cell " + i;
+    append(piece);
+    expected.push(piece);
+}
+check(text.length, expected.join("").length, "the length of a text built piece by piece");
+check(text, expected.join(""), "a text built piece by piece");
+
+check(add(1, 2), 3, "integers");
+check(add(2147483647, 1), 2147483648, "integers whose sum is no int32");
+check(add(-2147483648, -1), -2147483649, "integers whose sum is no int32");
+check(add(1.5, 2), 3.5, "a double and an integer");
+check(add(0.1, 0.2), 0.1 + 0.2, "doubles");
+check(add(-0, -0), -0, "negative zeros");
+check(add(NaN, 1), NaN, "not a number");
+check(add("a", 1), "a1", "a string and an integer");
+check(add(1, "a"), "1a", "an integer and a string");
+check(add("a", 1.5), "a1.5", "a string and a double");
+check(add("a", -0), "a0", "a string and negative zero");
+check(add("a", null), "anull", "a string and null");
+check(add(undefined, "a"), "undefineda", "undefined and a string");
+check(add("a", true), "atrue", "a string and a boolean");
+check(add(null, 1), 1, "null and an integer");
+check(add(undefined, 1), NaN, "undefined and an integer");
+check(add("a", 10n), "a10", "a string and a BigInt");
+check(add(1n, 2n), 3n, "BigInts");
+throws(() => add(1n, 2), TypeError, "a BigInt and a number");
+throws(() => add("a", Symbol()), TypeError, "a string and a symbol");
+throws(() => add(Symbol(), "a"), TypeError, "a symbol and a string");
+check(add(new String("a"), "b"), "ab", "a String object and a string");
+check(add("a", new String("b")), "ab", "a string and a String object");
+check(add(new String("a"), new String("b")), "ab", "two String objects");
+check(add("a", {}), "a[object Object]", "a string and an object");
+check(add({}, "a"), "[object Object]a", "an object and a string");
+check(add("a", [1, 2]), "a1,2", "a string and an array");
+check(add([], []), "", "two arrays");
+check(add("a", { toString() { return "t"; } }), "at", "an object with toString");
+check(add("a", { valueOf() { return 7; }, toString() { return "t"; } }), "a7", "an object with valueOf");
+check(add({ [Symbol.toPrimitive](hint) { return hint; } }, "!"), "default!", "an object with Symbol.toPrimitive");
+throws(() => add("a", { toString() { throw new RangeError("thrown"); } }), RangeError, "an object whose toString throws");
+{
+    let order = [];
+    let result = add({ toString() { order.push("left"); return "l"; } }, { toString() { order.push("right"); return "r"; } });
+    check(result + ":" + order.join(), "lr:left,right", "the order of conversions");
+}
+check(subtract("5", "3"), 2, "strings subtracted");
+check(addIntegers("5", "3"), 8, "strings made integers");
+check(addToInteger("5", "3"), "53", "a string and an integer made of a string");
+
+////= lines
+
+console.log("passed");
+//// concatenation-of-two-strings/main.ts
+// `+` on two strings: the length, characters and internal representation of the result, and empty operands.
+import "./impl.js";
+//// constant-indices-in-loops/impl.js
+////= check
+function readsMinusOne(a) { let last; for (let i = 0; i < a.length; i++) last = a[-1]; return last; }
+function readsMinimum(a) { let last; for (let i = 0; i < a.length; i++) last = a[-2147483648]; return last; }
+function readsMaximum(a) { let last; for (let i = 0; i < a.length; i++) last = a[2147483647]; return last; }
+function readsLarge(a) { let last; for (let i = 0; i < a.length; i++) last = a[536870912]; return last; }
+function writesMinusOne(a) { for (let i = 0; i < a.length; i++) a[-1] = i; return a[-1]; }
+function writesLarge(a) { for (let i = 0, n = a.length; i < n; i++) a[1073741824] = i; return a[1073741824]; }
+const typedArrays = [Uint8Array, Int8Array, Uint16Array, Int16Array, Int32Array, Uint32Array, Float32Array, Float64Array, Uint8ClampedArray];
+for (let round = 0; round < 3; round++) {
+    for (const f of [readsMinusOne, readsMinimum, readsMaximum, readsLarge]) {
+        check(f([1, 2, 3]), undefined, f.name + " of an array");
+        check(f([1.5, 2.5]), undefined, f.name + " of an array of doubles");
+        check(f("abc"), undefined, f.name + " of a string");
+        for (const type of typedArrays)
+            check(f(new type(3)), undefined, f.name + " of a " + type.name);
+    }
+    const named = [1, 2, 3];
+    named[-1] = "named";
+    check(readsMinusOne(named), "named", "a property whose name is a negative number");
+    check(writesMinusOne([1, 2, 3]), 2, "writesMinusOne of an array");
+    check(writesLarge({ length: 2 }), 1, "writesLarge of an array-like");
+    for (const type of typedArrays) {
+        check(writesMinusOne(new type(3)), undefined, "writesMinusOne of a " + type.name);
+        check(writesLarge(new type(3)), undefined, "writesLarge of a " + type.name);
+    }
+}
+console.log("passed");
+//// constant-indices-in-loops/main.ts
+// Element accesses with constant indices in loops, including negative and very large indices on arrays and array-like objects.
+import "./impl.js";
+//// construct-known-classes/impl.js
+(function () {
+////= check-2
+function checkThrows(f, type, what) {
+    try {
+        f();
+    } catch (error) {
+        if (!(error instanceof type))
+            throw new Error(what + ": threw " + error);
+        return error;
+    }
+    throw new Error(what + ": did not throw");
+}
+
+class Point {
+    constructor(x, y) { this.x = x; this.y = y; }
+    plus(other) { return new Point(this.x + other.x, this.y + other.y); }
+}
+////= lines-12	sumsPoints	Point(i, 1).x
+check(sumsPoints(100), 4950, "points made in a loop");
+check(new Point(1, 2).plus(new Point(3, 4)).y, 6, "a point made by a method of its class");
+check(new Point(1, 2).plus(new Point(3, 4)) instanceof Point, true, "what a method of the class makes is of the class");
+check(Object.getPrototypeOf(new Point(1, 2).plus(new Point(3, 4))), Point.prototype, "its prototype");
+
+class WithoutConstructor {
+    twin() { return new WithoutConstructor; }
+    value() { return 7; }
+}
+function makesManyWithoutConstructor(n) {
+    let sum = 0;
+    let first = new WithoutConstructor;
+    for (let i = 0; i < n; i++)
+        sum += first.twin().value();
+    return sum;
+}
+check(makesManyWithoutConstructor(20000), 140000, "a class without a constructor, made many times");
+
+class WithFields {
+    a = 1;
+    #b = 2;
+    constructor(c) { this.c = c; }
+    sum() { return this.a + this.#b + this.c; }
+    twin() { return new WithFields(this.c); }
+}
+////= lines-12	sumsWithFields	WithFields(i).twin().sum()
+check(sumsWithFields(100), 5250, "fields and private fields");
+
+class Base {
+    constructor(v) { this.v = v; this.made = new.target; }
+}
+class Derived extends Base {
+    constructor(v) { super(v + 1); this.w = v; }
+}
+function sumsDerived(n) {
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+        let object = new Derived(i);
+        sum += object.v + object.w;
+        if (object.made !== Derived || Object.getPrototypeOf(object) !== Derived.prototype)
+            throw new Error("a derived object is not what it should be");
+    }
+    return sum;
+}
+function sumsBase(n) {
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+        let object = new Base(i);
+        sum += object.v;
+        if (object.made !== Base)
+            throw new Error("new.target is not the class");
+    }
+    return sum;
+}
+check(sumsDerived(100), 10000, "a derived class");
+check(sumsBase(100), 4950, "new.target in a constructor");
+check(Reflect.construct(Base, [1], Derived).made, Derived, "new.target that is not the callee");
+check(Object.getPrototypeOf(Reflect.construct(Base, [1], Derived)), Derived.prototype, "the prototype with a new.target that is not the callee");
+
+class ReturnsObject {
+    constructor(other) {
+        this.own = 1;
+        if (other)
+            return other;
+    }
+}
+function makesReturnsObject(other) {
+    let last;
+    for (let i = 0; i < 3; i++)
+        last = new ReturnsObject(other);
+    return last;
+}
+let returned = { returned: true };
+check(makesReturnsObject(returned), returned, "a constructor that returns an object");
+check(makesReturnsObject(null).own, 1, "a constructor that returns nothing");
+
+function Plain(x) { this.x = x; return 5; }
+////= lines-9	sumsPlain	Plain	i	x
+check(sumsPlain(100), 4950, "a function that is not a class and returns a number");
+
+let stored = [];
+class WithSetter {
+    constructor(x) { this.x = x; this.y = 2; }
+    set x(value) { stored.push(value); }
+    get x() { return "from the getter"; }
+}
+function makesWithSetter(n) {
+    let last;
+    for (let i = 0; i < n; i++)
+        last = new WithSetter(i).x;
+    return last;
+}
+check(makesWithSetter(3), "from the getter", "a getter of the class");
+check(stored.join(), "0,1,2", "a setter of the class");
+
+class GetsSetterLater {
+    constructor(x) { this.late = x; }
+}
+////= lines-9	makesGetsSetterLater	GetsSetterLater	1	late
+check(makesGetsSetterLater(200), 200, "before the prototype has a setter");
+let storedLater = 0;
+Object.defineProperty(GetsSetterLater.prototype, "late", { set(value) { storedLater += value; }, get() { return 10; }, configurable: true });
+check(makesGetsSetterLater(200), 2000, "after the prototype has a getter");
+check(storedLater, 200, "after the prototype has a setter");
+Object.defineProperty(GetsSetterLater.prototype, "late", { value: 3, writable: false, configurable: true });
+checkThrows(() => makesGetsSetterLater(1), TypeError, "after the prototype has a property that is read only");
+delete GetsSetterLater.prototype.late;
+check(makesGetsSetterLater(200), 200, "after the prototype has it no more");
+
+function makesEarly() {
+    let last;
+    for (let i = 0; i < 2; i++)
+        last = new Late(i);
+    return last;
+}
+checkThrows(makesEarly, TypeError, "a variable that has no class yet");
+var Late = class { constructor(x) { this.x = x; } };
+check(makesEarly().x, 1, "the variable once it has its class");
+
+function makesInDeadZone() {
+    let last;
+    for (let i = 0; i < 2; i++)
+        last = new Later(i);
+    return last;
+}
+checkThrows(makesInDeadZone, ReferenceError, "a class that is not declared yet");
+class Later { constructor(x) { this.x = x; } }
+check(makesInDeadZone().x, 1, "the class once it is declared");
+
+let Reassigned = class { constructor() { this.which = 1; } };
+function makesReassigned() {
+    let last;
+    for (let i = 0; i < 2; i++)
+        last = new Reassigned;
+    return last.which;
+}
+check(makesReassigned(), 1, "a variable before it is given another class");
+Reassigned = class { constructor() { this.which = 2; } };
+check(makesReassigned(), 2, "a variable after it is given another class");
+
+function makesParameter(C, n) {
+    let sum = 0;
+    for (let i = 0; i < n; i++)
+        sum += new C(i, 1).x;
+    return sum;
+}
+check(makesParameter(Point, 10), 45, "a class that is a parameter");
+check(makesParameter(Plain, 10), 45, "a function that is a parameter");
+checkThrows(() => makesParameter(() => { }, 1), TypeError, "an arrow function that is a parameter");
+
+class Catches {
+    constructor(x) {
+        try {
+            this.x = x.length;
+        } catch {
+            this.x = -1;
+        }
+    }
+}
+////= lines-12	sumsCatches	Catches(i & 1 ? "ab" : null).x
+check(sumsCatches(10), 5, "a constructor that catches");
+
+class Throws {
+    constructor(x) {
+        if (x === 3)
+            throw new Error("thrown by the constructor");
+        this.x = x;
+    }
+}
+////= lines-9	makesThrows	Throws	i	x
+check(makesThrows(3), 3, "a constructor that does not throw yet");
+let thrown = checkThrows(() => makesThrows(5), Error, "a constructor that throws");
+let frames = thrown.stack.split("\n").map(line => line.split("@")[0]);
+check(frames[0], "Throws", "the innermost frame of what the constructor throws");
+check(frames[1], "makesThrows", "the frame of the caller of the constructor");
+
+class Node {
+    constructor(depth) {
+        this.depth = depth;
+        this.next = depth ? new Node(depth - 1) : null;
+    }
+}
+function countsNodes(depth) {
+    let count = 0;
+    for (let node = new Node(depth); node; node = node.next)
+        count++;
+    return count;
+}
+check(countsNodes(50), 51, "a constructor that makes another of its class");
+
+checkThrows(() => Point(1, 2), TypeError, "a class called without new");
+check(new Point(1, 2).constructor, Point, "the constructor property");
+})();
+console.log("passed");
+//// construct-known-classes/main.ts
+// `new` on classes the compiler knows: instances created in loops and by methods, their prototype, fields and private fields.
+import "./impl.js";
+//// counts-of-callee-cache-misses/impl.js
+////= check
+function callsOneFunction(f) { const result = f(); return result + 1; }
+function callsNewClosures(f) { const result = f(); return result + 1; }
+function callsTwoFunctions(f) { const result = f(); return result + 1; }
+function callsHostFunctions(f, x) { const result = f(x); return !result; }
+function returnsOne() { return 1; }
+function returnsTwo() { return 2; }
+function makeClosure(x) { return () => x; }
+
+for (let i = 0; i < 100; ++i)
+    check(callsOneFunction(returnsOne), 2, "a call of one function");
+
+for (let i = 0; i < 1000; ++i)
+    check(callsOneFunction(returnsOne), 2, "a call of one function");
+for (let i = 0; i < 100; ++i)
+    check(callsNewClosures(makeClosure(i)), i + 1, "a call of a new closure");
+for (let i = 0; i < 1000; ++i)
+    check(callsNewClosures(makeClosure(i)), i + 1, "a call of a new closure");
+
+for (let i = 0; i < 100; ++i)
+    check(callsTwoFunctions(i & 1 ? returnsOne : returnsTwo), i & 1 ? 2 : 3, "a call of one of two functions");
+for (let i = 0; i < 1000; ++i)
+    check(callsTwoFunctions(i & 1 ? returnsOne : returnsTwo), i & 1 ? 2 : 3, "a call of one of two functions");
+
+for (let i = 0; i < 100; ++i)
+    check(callsHostFunctions(i & 1 ? Number.isSafeInteger : Number.isNaN, i), !(i & 1), "a call of one of two host functions");
+for (let i = 0; i < 1000; ++i)
+    check(callsHostFunctions(i & 1 ? Number.isSafeInteger : Number.isNaN, i), !(i & 1), "a call of one of two host functions");
+console.log("passed");
+//// counts-of-callee-cache-misses/main.ts
+// Calls through one site of one function, of a new closure every time, of two functions in turn and of two host functions in turn.
+import "./impl.js";
+//// duplicated-tails/impl.js
+(function () {
+////= check
+function comparesWithInt32(x) { return x < 10 ? "less" : "not less"; }
+function comparesInLoop(list) { let n = 0; for (let i = 0; i < list.length; ++i) { if (list[i] >= 3) ++n; } return n; }
+function testsObjectOrString(which) { let o = which === 0 ? { a: 1 } : which === 1 ? "" : which === 2 ? "text" : undefined; return o ? "yes" : "no"; }
+function negates(x) { if (!(x > 2)) return "small"; return "large"; }
+function straightLine(a, b) { return (a | 0) + (b | 0); }
+function onlyCalls(f) { return f(); }
+function returnsConstant() { return 42; }
+
+const values = [1, 10, 11, 2.5, 10.5, -0, NaN, "9", "10", "x", null, undefined, true, { valueOf() { return 3; } }, 5n, 50n];
+check(values.map(comparesWithInt32).join(), "less,not less,not less,less,not less,less,not less,less,not less,not less,less,not less,less,less,less,not less", "compared with 10");
+check(values.map(negates).join(), "small,large,large,large,large,small,small,large,large,small,small,small,small,large,large,large", "negated");
+check(comparesInLoop([1, 2, 3, 4.5, "5", null, undefined, {}, 3n]), 4, "in a loop");
+check([0, 1, 2, 3].map(testsObjectOrString).join(), "yes,no,yes,no", "truthiness");
+check(straightLine(2, 3.7), 5, "no branches");
+check(onlyCalls(() => 7), 7, "only a call");
+check(returnsConstant(), 42, "a constant");
+let thrown = "nothing";
+try { comparesWithInt32(Symbol()); } catch (error) { thrown = error.constructor.name; }
+check(thrown, "TypeError", "a symbol");
+})();
+console.log("passed");
+//// duplicated-tails/main.ts
+// Functions whose branches end in the same code.
+import "./impl.js";
+//// functions-called-directly-and-as-callbacks/impl.js
+////= check
+(function () {
+function throughArrayMethods(array) {
+    const addsOne = function (x) { try { return x + 1; } catch { return 0; } };
+    const adds = function (sum, x) { try { return sum + x; } catch { return 0; } };
+    let sum = 0;
+    for (let i = 0; i < 100; i++)
+        sum += addsOne(i) + adds(i, 1);
+    return [sum, array.map(addsOne).join(), array.filter(addsOne).join(), array.some(addsOne), array.every(addsOne), array.find(addsOne), array.findIndex(addsOne), array.reduce(adds)].join(" ");
+}
+check(throughArrayMethods([1, 2, 3]), "10100 2,3,4 1,2,3 true true 1 0 6", "integers, as in the direct calls");
+check(throughArrayMethods([1.5, 2.5]), "10100 2.5,3.5 1.5,2.5 true true 1.5 0 4", "doubles");
+check(throughArrayMethods(["a", "b"]), "10100 a1,b1 a,b true true a 0 ab", "strings");
+check(throughArrayMethods([undefined, null]), "10100 NaN,1  true false  1 NaN", "undefined and null");
+
+function throughLiteral(value) {
+    const addsOne = function (x) { try { return x + 1; } catch { return 0; } };
+    let sum = 0;
+    for (let i = 0; i < 100; i++)
+        sum += addsOne(i);
+    return sum + " " + ({ callback: addsOne }).callback(value);
+}
+check(throughLiteral(1), "5050 2", "an integer, as in the direct calls");
+check(throughLiteral(1.5), "5050 2.5", "a double");
+check(throughLiteral("a"), "5050 a1", "a string");
+check(throughLiteral({ }), "5050 [object Object]1", "an object");
+check(throughLiteral(undefined), "5050 NaN", "undefined");
+
+function readsThisThroughLiteral(value) {
+    const kindOfThis = function (x) { "use strict"; try { return typeof this + x; } catch { return 0; } };
+    let text = "";
+    for (let i = 0; i < 3; i++)
+        text += kindOfThis(i);
+    return text + " " + ({ callback: kindOfThis }).callback(value);
+}
+check(readsThisThroughLiteral(7), "undefined0undefined1undefined2 object7", "this is the literal there, and undefined in the direct calls");
+})();
+console.log("passed");
+//// functions-called-directly-and-as-callbacks/main.ts
+// Functions that are called directly with integers are also passed as callbacks and then receive other values and another `this`.
+import "./impl.js";
+//// functions-ending-in-conditional/impl.js
+////= check
+
+(function () {
+"use strict";
+function joins(x) { return x ?? 0; }
+function joinsTwice(x, y) { return [x ?? 0, y ?? 1]; }
+function joinsInLoop(x) { let r = 0; for (let i = 0; i < 2; i++) r = x ?? r; return r; }
+function joinsAfterOr(x) { return x || 0; }
+function orZero(x) { return x ?? 0; }
+function callsInlined(x) { let a = orZero(x); return a === 0 ? 1 : a; }
+function guardsAfterTest(x, n) { let s = 0; for (let i = 0; i < n; i++) { if (x != null) s += x.v; } return s; }
+function hasBytecodeAfter(x) { if (x != null) return x.v; return 0; }
+function testsNothing(x) { return x; }
+
+let kinds = [];
+for (let round = 0; round < 3; round++) {
+    let value = round ? { v: round } : undefined;
+    kinds.push(typeof joins(value), joinsTwice(value, value).map(one => typeof one).join("+"), typeof joinsInLoop(value), typeof joinsAfterOr(value), typeof callsInlined(value), guardsAfterTest(value, 3), hasBytecodeAfter(value), typeof testsNothing(value));
+}
+check(kinds.join(), "number,number+number,number,number,number,0,0,undefined,object,object+object,object,object,object,3,1,object,object,object+object,object,object,object,6,2,object", "what the functions return");
+})();
+console.log("passed");
+//// functions-ending-in-conditional/main.ts
+// Functions that end with `??`, `||` or a conditional expression return the right value.
+import "./impl.js";
+//// has-own-property-of-enumerated-keys/impl.js
+function check(actual, expected, what)
+////= lines-5
+
+function test()
+{
+    var hasOwnProperty = Object.prototype.hasOwnProperty;
+
+    function ownKeysByAlias(object)
+    {
+        var keys = "";
+        for (var key in object) {
+            if (hasOwnProperty.call(object, key))
+                keys += key;
+        }
+        return keys;
+    }
+
+    function ownKeysByPath(object)
+    {
+        var keys = "";
+        for (var key in object) {
+            if (Object.prototype.hasOwnProperty.call(object, key))
+                keys += key;
+        }
+        return keys;
+    }
+
+    function ownKeysWhileDeleting(object, doomed)
+    {
+        var keys = "";
+        for (var key in object) {
+            delete object[doomed];
+            if (hasOwnProperty.call(object, key))
+                keys += key;
+        }
+        return keys;
+    }
+
+    function ownKeysWhileAdding(object)
+    {
+        var keys = "";
+        for (var key in object) {
+            object["added" + key] = 1;
+            if (hasOwnProperty.call(object, key))
+                keys += key;
+        }
+        return keys;
+    }
+
+    function keysOwnedByAnother(object, another)
+    {
+        var keys = "";
+        for (var key in object) {
+            if (hasOwnProperty.call(another, key))
+                keys += key;
+        }
+        return keys;
+    }
+
+    function changedKeys(object)
+    {
+        var keys = "";
+        for (var key in object) {
+            if (hasOwnProperty.call(object, key + "x"))
+                keys += key;
+        }
+        return keys;
+    }
+
+    function outerKeysOwnedByInner(outer, inner)
+    {
+        var keys = "";
+        for (var outerKey in outer) {
+            for (var innerKey in inner) {
+                if (hasOwnProperty.call(inner, outerKey))
+                    keys += outerKey + innerKey;
+            }
+        }
+        return keys;
+    }
+
+    function keyKeptAfterTheLoop(object)
+    {
+        var last;
+        for (var key in object)
+            last = key;
+        delete object[last];
+        return hasOwnProperty.call(object, last);
+    }
+
+    function withoutKey(object)
+    {
+        var count = 0;
+        for (var key in object) {
+            if (hasOwnProperty.call(object))
+                ++count;
+        }
+        return count;
+    }
+
+    function Inherits() { this.own = 1; }
+    Inherits.prototype.inherited = 2;
+
+    for (let i = 0; i < 200; ++i) {
+        for (const ownKeys of [ownKeysByAlias, ownKeysByPath]) {
+            check(ownKeys({ a: 1, b: i, c: null }), "abc", "a literal");
+            check(ownKeys({}), "", "an empty object");
+            check(ownKeys({ ["k" + (i & 3)]: 1, z: 2 }), "k" + (i & 3) + "z", "several shapes");
+            check(ownKeys(new Inherits), "own", "an inherited key");
+            check(ownKeys(Object.create({ above: 1 }, { here: { value: 1, enumerable: true } })), "here", "an inherited key");
+            check(ownKeys([7, 8]), "01", "an array");
+            check(ownKeys(Object.assign([7], { named: 1 })), "0named", "an array with a named property");
+            check(ownKeys("ab"), "01", "a string");
+            check(ownKeys(5), "", "a number");
+            check(ownKeys(null), "", "null");
+            check(ownKeys(undefined), "", "undefined");
+            check(ownKeys(new Proxy({ p: 1, q: 2 }, { getOwnPropertyDescriptor(target, key) { return key == "q" ? undefined : Reflect.getOwnPropertyDescriptor(target, key); } })), "p", "a proxy");
+        }
+        check(ownKeysWhileDeleting({ a: 1, b: 2, c: 3 }, "a"), "bc", "the first key is deleted");
+        check(ownKeysWhileDeleting({ a: 1, b: 2, c: 3 }, "c"), "ab", "the last key is deleted");
+        check(ownKeysWhileDeleting({ a: 1, b: 2, c: 3 }, "absent"), "abc", "nothing is deleted");
+        check(ownKeysWhileAdding({ a: 1, b: 2 }), "ab", "keys are added");
+        check(keysOwnedByAnother({ a: 1, b: 2 }, { b: 1 }), "b", "another object");
+        check(keysOwnedByAnother({ a: 1, b: 2 }, { a: 1, b: 2 }), "ab", "another object of the same shape");
+        check(keysOwnedByAnother({ a: 1, b: 2 }, {}), "", "another object");
+        check(changedKeys({ a: 1, ax: 2 }), "a", "another key");
+        check(outerKeysOwnedByInner({ a: 1, b: 2 }, { b: 1, c: 2 }), "bbbc", "the key of an outer loop");
+        check(keyKeptAfterTheLoop({ a: 1, b: 2 }), false, "a key kept after the loop");
+        check(withoutKey({ a: 1, undefined: 2 }), 2, "no key");
+        check(withoutKey({ a: 1 }), 0, "no key");
+    }
+
+    const dictionary = {};
+    for (let i = 0; i < 200; ++i)
+        dictionary["key" + i] = i;
+    delete dictionary.key7;
+    check(ownKeysByAlias(dictionary).length, ownKeysByPath(dictionary).length, "a dictionary");
+    check(ownKeysByAlias(dictionary).includes("key7key"), false, "a dictionary");
+    check(ownKeysByAlias(dictionary).startsWith("key0key1key2"), true, "a dictionary");
+}
+test();
+console.log("passed");
+//// has-own-property-of-enumerated-keys/main.ts
+// `hasOwnProperty(key)` inside `for (key in object)`: several shapes, inherited keys, arrays, and keys deleted during the loop.
+import "./impl.js";
+//// inline-fast-paths-in-recursion/impl.js
+////= check
+
+(function () {
+    function marksTree(node) {
+        if (node === null)
+            return 0;
+        node.isMarked = true;
+        return 1 + marksTree(node.left) + marksTree(node.right);
+    }
+    function marksAfterwards(node) {
+        if (node === null)
+            return 0;
+        const count = 1 + marksAfterwards(node.left) + marksAfterwards(node.right);
+        node.count = count;
+        return count;
+    }
+    function dispatchesInFewArms(node, kind) {
+        switch (kind) {
+        case 0: return node.a + node.b;
+        case 1: node.c = node.a; return node.c;
+        case 2: node.isVisited = true; return dispatchesInFewArms(node.inner, node.innerKind);
+        default: return node.e;
+        }
+    }
+    function dispatchesInManyArms(node, kind) {
+        switch (kind) {
+        case 0: return node.a + node.b;
+        case 1: node.c = node.a; return node.c;
+        case 2: node.isVisited = true; return dispatchesInManyArms(node.inner, node.innerKind);
+        case 3: node.f3 = node.a + 3; return node.f3;
+        case 4: node.f4 = node.a + 4; return node.f4;
+        case 5: node.f5 = node.a + 5; return node.f5;
+        case 6: node.f6 = node.a + 6; return node.f6;
+        case 7: node.f7 = node.a + 7; return node.f7;
+        case 8: node.f8 = node.a + 8; return node.f8;
+        case 9: node.f9 = node.a + 9; return node.f9;
+        case 10: node.f10 = node.a + 10; return node.f10;
+        case 11: node.f11 = node.a + 11; return node.f11;
+        case 12: node.f12 = node.a + 12; return node.f12;
+        case 13: node.f13 = node.a + 13; return node.f13;
+        case 14: node.f14 = node.a + 14; return node.f14;
+        case 15: node.f15 = node.a + 15; return node.f15;
+        case 16: node.f16 = node.a + 16; return node.f16;
+        case 17: node.f17 = node.a + 17; return node.f17;
+        case 18: node.f18 = node.a + 18; return node.f18;
+        case 19: node.f19 = node.a + 19; return node.f19;
+        case 20: node.f20 = node.a + 20; return node.f20;
+        case 21: node.f21 = node.a + 21; return node.f21;
+        case 22: node.f22 = node.a + 22; return node.f22;
+        case 23: node.f23 = node.a + 23; return node.f23;
+        case 24: node.f24 = node.a + 24; return node.f24;
+        case 25: node.f25 = node.a + 25; return node.f25;
+        case 26: node.f26 = node.a + 26; return node.f26;
+        case 27: node.f27 = node.a + 27; return node.f27;
+        case 28: node.f28 = node.a + 28; return node.f28;
+        case 29: node.f29 = node.a + 29; return node.f29;
+        case 30: node.f30 = node.a + 30; return node.f30;
+        case 31: node.f31 = node.a + 31; return node.f31;
+        case 32: node.f32 = node.a + 32; return node.f32;
+        case 33: node.f33 = node.a + 33; return node.f33;
+        case 34: node.f34 = node.a + 34; return node.f34;
+        default: return node.e;
+        }
+    }
+    function callsNothing(node) {
+        node.c = node.a;
+        return node.c;
+    }
+    function makeTree(depth) { return depth ? { left: makeTree(depth - 1), right: makeTree(depth - 1), isMarked: false, count: 0 } : null; }
+
+    for (let i = 0; i < 20; ++i) {
+        const tree = makeTree(5);
+        check(marksTree(tree), 31, "the nodes of a tree");
+        check(tree.left.right.isMarked, true, "a node is marked");
+        check(marksAfterwards(tree), 31, "the nodes of a tree");
+        check(tree.left.count, 15, "the count of a subtree");
+        for (const dispatches of [dispatchesInFewArms, dispatchesInManyArms]) {
+            const node = { a: 1, b: 2, e: 5, inner: { a: 3, b: 4, e: 6 }, innerKind: i & 1 };
+            check(dispatches(node, 0), 3, "the first arm");
+            check(dispatches(node, 1), 1, "the second arm");
+            check(dispatches(node, 2), i & 1 ? 3 : 7, "the arm that calls the function itself");
+            check(node.isVisited, true, "the store ahead of that call");
+            check(dispatches(node, 99), 5, "the last arm");
+        }
+        check(dispatchesInManyArms({ a: 1 }, 20), 21, "one of the many arms");
+        check(callsNothing({ a: 2 }), 2, "a function that calls nothing");
+    }
+})();
+
+console.log("passed");
+//// inline-fast-paths-in-recursion/main.ts
+// A recursive walk over a tree with property reads and stores in each branch.
+import "./impl.js";
+//// inlined-loop-shares-names-with-caller/impl.js
+////= check
+var firstGlobal = 3, secondGlobal = 50;
+let firstLexical = 4, secondLexical = 60;
+
+(function () {
+    function countValue(o, n) {
+        let s = 0;
+        for (let i = 0; i < n; i++) {
+            if (o.value === i)
+                s++;
+        }
+        return s;
+    }
+    function countThirdAndValue(a, m) {
+        let t = 0;
+        for (let j = 0; j < m; j++) {
+            if (a.third === j)
+                t++;
+        }
+        return t * 10 + countValue(a, m);
+    }
+    for (let k = 0; k < 4; k++) {
+        check(countThirdAndValue({ other: 1, third: 3, value: 50 }, 10), 10, "only the property of the caller matches");
+        check(countThirdAndValue({ other: 1, third: 50, value: 3 }, 10), 1, "only the property of the inlined function matches");
+        check(countThirdAndValue({ other: 1, third: 3, value: 4 }, 10), 11, "both properties match");
+    }
+
+    function countSecondGlobal(n) {
+        let s = 0;
+        for (let i = 0; i < n; i++) {
+            if (secondGlobal === i)
+                s++;
+        }
+        return s;
+    }
+    function countBothGlobals(m) {
+        let t = 0;
+        for (let j = 0; j < m; j++) {
+            if (firstGlobal === j)
+                t++;
+        }
+        return t * 10 + countSecondGlobal(m);
+    }
+    for (let k = 0; k < 4; k++)
+        check(countBothGlobals(10), 10, "only the global variable of the caller matches");
+    secondGlobal = 5;
+    firstGlobal = 70;
+    for (let k = 0; k < 4; k++)
+        check(countBothGlobals(10), 1, "only the global variable of the inlined function matches");
+
+    function countSecondLexical(n) {
+        let s = 0;
+        for (let i = 0; i < n; i++) {
+            if (secondLexical === i)
+                s++;
+        }
+        return s;
+    }
+    function countBothLexicals(m) {
+        let t = 0;
+        for (let j = 0; j < m; j++) {
+            if (firstLexical === j)
+                t++;
+        }
+        return t * 10 + countSecondLexical(m);
+    }
+    for (let k = 0; k < 4; k++)
+        check(countBothLexicals(10), 10, "only the lexical variable of the caller matches");
+    secondLexical = 6;
+    firstLexical = 80;
+    for (let k = 0; k < 4; k++)
+        check(countBothLexicals(10), 1, "only the lexical variable of the inlined function matches");
+
+    function countFourth(o, n) {
+        let s = o.a + o.b + o.c;
+        for (let i = 0; i < n; i++) {
+            if (o.d === i)
+                s++;
+        }
+        return s;
+    }
+    function hasFewerNames(list, o) {
+        let t = 0;
+        for (let j = 0; j < 4; j++) {
+            if (list[j] === j)
+                t++;
+        }
+        return t * 100 + countFourth(o, 10);
+    }
+    for (let k = 0; k < 4; k++)
+        check(hasFewerNames([0, 1, 5, 5], { a: 1, b: 2, c: 3, d: 4 }), 207, "the inlined function has more names than its caller");
+
+    function innermost(o, n) {
+        let s = 0;
+        for (let i = 0; i < n; i++) {
+            if (o.z === i)
+                s++;
+        }
+        return s;
+    }
+    function middle(o, n) {
+        let s = 0;
+        for (let i = 0; i < n; i++) {
+            if (o.y === i)
+                s++;
+        }
+        return s * 10 + innermost(o, n);
+    }
+    function outermost(o, n) {
+        let s = 0;
+        for (let i = 0; i < n; i++) {
+            if (o.x === i)
+                s++;
+        }
+        return s * 100 + middle(o, n);
+    }
+    for (let k = 0; k < 4; k++) {
+        check(outermost({ x: 1, y: 20, z: 30 }, 10), 100, "three levels, the first matches");
+        check(outermost({ x: 10, y: 2, z: 30 }, 10), 10, "three levels, the second matches");
+        check(outermost({ x: 10, y: 20, z: 3 }, 10), 1, "three levels, the third matches");
+    }
+})();
+console.log("passed");
+//// inlined-loop-shares-names-with-caller/main.ts
+// An inlined function with a loop reads properties and global variables with the same names as those its caller reads.
+import "./impl.js";

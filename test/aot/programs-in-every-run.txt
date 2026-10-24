@@ -342,6 +342,7 @@ data-from-outside/validation-compiled-and-interpreted-agree
 data-from-outside/validation-error-message-is-the-path-and-the-first-issue
 data-from-outside/validation-issues-from-shared-routine
 data-from-outside/validation-leaves-the-last-match-of-the-program-in-RegExp
+data-from-outside/validators-beside-entry-points-that-print-bun-and-store-into-json
 declarations/class-and-function-bindings-that-are-assigned-again
 declarations/constants-copied-from-returned-object
 definitions-by-descriptor/a-computed-name-among-the-written-names-of-a-map
@@ -707,6 +708,9 @@ objects/every-way-an-allocation-site-meets-its-record
 objects/extra-property-reads-avoid-runtime
 objects/fields-created-by-name-beside-extra-properties-keep-the-order-of-keys
 objects/functions-that-make-makers-of-objects-below-their-own-prototype
+objects/indexed-stores-below-typed-arrays-before-and-after-a-prototype-gets-an-indexed-accessor
+objects/indexed-stores-below-typed-arrays-before-and-after-a-prototype-gets-an-indexed-accessor-typed
+objects/indexed-stores-on-instances-and-records
 objects/literals-with-computed-index-keys
 objects/makers-of-makers-that-other-modules-call
 objects/object-constructed-or-called-without-arguments-makes-what-an-empty-literal-makes

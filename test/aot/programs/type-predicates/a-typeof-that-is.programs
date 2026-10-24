@@ -1,0 +1,723 @@
+//// a-typeof-that-is-kept-or-switched-on.js
+// `const kind = typeof value` and `switch (typeof value)` are tests of the type of the value only while the value is still the one that was asked.
+const values = () => [undefined, null, true, 0, 1.5, 10n, "", "text", Symbol.iterator, {}, [], () => 1, function () {}, class {}, new Date(0), /r/, new Proxy({}, {}), new Proxy(function () {}, {})];
+const plus = value => { try { return typeof (value + 1); } catch (error) { return error.constructor.name; } };
+const show = (label, ask) => console.log(label, values().map(value => { try { return String(ask(value)); } catch (error) { return error.constructor.name; } }).join(" "));
+
+show("kept", function (x) { const kind = typeof x; return kind === "string" ? x.length : kind === "number" ? x + 1 : kind === "object" ? (x === null ? "null" : "object") : kind; });
+show("kept, the name on the left", function (x) { const kind = typeof x; return "function" === kind ? x.length : "bigint" == kind ? x + 1n : "undefined" !== kind ? "some" : "none"; });
+show("kept, not equal", function (x) { const kind = typeof x; if (kind !== "string") return "no text"; return x.length; });
+show("kept, object alone", function (x) { const kind = typeof x; return kind === "object"; });
+show("kept, not object", function (x) { const kind = typeof x; return kind !== "object" ? typeof x : "object"; });
+show("kept, a name that is none", function (x) { const kind = typeof x; return kind === "array" || kind === "null" || kind === "String"; });
+show("kept, two of them", function (x) { const kind = typeof x; return kind === "string" || kind === "number" ? `${x}!` : "other"; });
+show("kept and printed", function (x) { const kind = typeof x; return kind === "symbol" ? kind : kind.length; });
+show("kept, compared with what is no constant", function (x) { const kind = typeof x, wanted = ["string"][0]; return kind === wanted ? x.length : -1; });
+show("kept, switched on", function (x) { const kind = typeof x; switch (kind) { case "string": return x.length; case "number": return x + 1; case "object": return x === null; default: return kind; } });
+
+show("the value changes behind the question", function (x) { let value = x; const kind = typeof value; value = "changed"; return kind === "string" ? value.length : `${kind} ${value.length}`; });
+show("the parameter changes behind the question", function (x) { const kind = typeof x; x = 5; return kind === "number" ? x + 1 : `${kind} ${x + 1}`; });
+show("the parameter changes through arguments", function (x) { const kind = typeof x; arguments[0] = 5; return kind === "number" ? x + 1 : `${kind} ${plus(x)}`; });
+show("the value changes in a closure", function (x) { let value = x; const kind = typeof value; (() => { value = 7; })(); return kind === "number" ? value + 1 : `${kind} ${value + 1}`; });
+show("the value changes only sometimes", function (x) { let value = x; const kind = typeof value; if (kind === "boolean") value = "was a boolean"; return kind === "boolean" ? value.length : kind === "string" ? value.length : kind; });
+show("the kind changes", function (x) { let kind = typeof x; if (x === null) kind = "null"; return kind === "object" ? "object" : kind === "null" ? "nothing" : kind; });
+show("the kind changes in a closure", function (x) { let kind = typeof x; (() => { kind = "string"; })(); return kind === "string" ? typeof x : "never"; });
+show("the kind is a var read too early", function (x) { const early = kind === "string" ? "text" : String(kind); var kind = typeof x; return `${early} ${kind === "string"}`; });
+show("the kind is a var in a loop", function (x) { let all = ""; for (let turn = 0; turn < 2; turn++) { all += kind === "string" ? "T" : "-"; var kind = typeof (turn ? 1 : x); } return all; });
+show("the kind in its dead zone", function (x) { const ask = () => (kind === "string" ? x.length : -1); const early = (() => { try { return ask(); } catch (error) { return error.constructor.name; } })(); const kind = typeof x; return `${early} ${ask()}`; });
+show("the value is a var asked too early", function (x) { const kind = typeof value; var value = x; return kind === "undefined" ? typeof value : `never ${kind}`; });
+show("the value is a let without a value yet", function (x) { let value; const kind = typeof value; value = x; return kind === "undefined" ? typeof value : `never ${kind}`; });
+show("the value is a function declared below", function (x) { const kind = typeof declared; function declared() { return x; } return kind === "function" ? typeof declared() : kind; });
+show("the value is caught", function (x) { try { throw x; } catch (caught) { const kind = typeof caught; return kind === "string" ? caught.length : kind === "object" ? "object" : kind; } });
+show("the value in its dead zone", function (x) { try { const kind = typeof later; const later = x; return kind === "string" ? later.length : kind; } catch (error) { return error.constructor.name; } });
+show("asked in a closure", function (x) { const kind = typeof x; return [0].map(() => (kind === "string" ? x.length : kind === "function" ? x.name.length : kind))[0]; });
+show("asked of what a closure holds", function (x) { return (() => { const kind = typeof x; return kind === "string" ? x.length : kind; })(); });
+show("behind eval", function (x) { const kind = typeof x; try { eval("x = 5"); } catch {} return kind === "number" ? x + 1 : `${kind} ${typeof x}`; });
+show("a fresh one each turn", function (x) { let all = ""; for (const value of [x, 1, "s"]) { const kind = typeof value; all += kind === "string" ? value.length : kind === "number" ? value + 1 : kind[0]; } return all; });
+show("of a pattern", function ({ length } = "abc", [first] = [1]) { const kind = typeof length, other = typeof first; return `${kind === "number" ? length + 1 : kind} ${other === "number" ? first + 1 : other}`; });
+show("of a default", function (x = "default") { const kind = typeof x; return kind === "string" ? x.length : kind; });
+show("of this", function (x) { return (function () { const self = this, kind = typeof self; return kind === "object" ? self === null : kind; }).call(x); });
+show("of a member", function (x) { let reads = 0; const holder = { get held() { reads++; return x; } }; const kind = typeof holder.held; return `${kind === "string" ? holder.held.length : kind} ${reads}`; });
+show("of a call", function (x) { let calls = 0; const give = () => (calls++, x); const kind = typeof give(); return `${kind === "string" ? "text" : kind} ${calls}`; });
+
+show("switched", function (x) { switch (typeof x) { case "string": return x.length; case "number": return x + 1; case "boolean": return !x; case "bigint": return x + 1n; case "symbol": return x.description; case "undefined": return "none"; case "function": return x.length; case "object": return x === null ? "null" : Object.keys(x).length; } return "never"; });
+show("switched, object without function", function (x) { switch (typeof x) { case "object": return x === null ? "null" : "object"; default: return typeof x; } });
+show("switched, object in front of function", function (x) { switch (typeof x) { case "object": return "object"; case "function": return x.length; default: return "other"; } });
+show("switched, function in front of object", function (x) { switch (typeof x) { case "function": return x.length; case "object": return "object"; } return "other"; });
+show("switched, function alone", function (x) { switch (typeof x) { case "function": return x.length; } return "other"; });
+show("switched, falling through", function (x) { let all = ""; switch (typeof x) { case "string": all += "s"; case "number": all += "n"; break; case "object": all += "o"; default: all += "d"; case "boolean": all += "b"; } return all; });
+show("switched, the default first", function (x) { switch (typeof x) { default: return "other"; case "string": return x.length; case "object": return "object"; } });
+show("switched, the default in the middle", function (x) { let all = ""; switch (typeof x) { case "string": all += "s"; break; default: all += "d"; case "number": all += "n"; } return all; });
+show("switched, a name twice", function (x) { switch (typeof x) { case "string": return "first"; case "string": return "second"; case "object": return "o1"; case "object": return "o2"; default: return "other"; } });
+show("switched, several names for one body", function (x) { switch (typeof x) { case "string": case "number": case "bigint": return `${x}`; case "object": case "function": return "reference"; default: return "rest"; } });
+show("switched, a name that is none", function (x) { switch (typeof x) { case "array": return "never"; case "null": return "never"; case "": return "never"; case "string": return x.length; default: return "other"; } });
+show("switched, no case", function (x) { switch (typeof x) { } return "behind"; });
+show("switched, only a default", function (x) { switch (typeof x) { default: return typeof x; } });
+show("switched, a case that is no constant", function (x) { const name = ["string"][0]; switch (typeof x) { case name: return x.length; case "number": return x + 1; default: return "other"; } });
+show("switched, a case that is a number", function (x) { switch (typeof x) { case 1: return "never"; case "number": return x + 1; default: return "other"; } });
+show("switched, the value changes in a body", function (x) { let value = x, all = ""; switch (typeof value) { case "string": value = 5; all += typeof value; case "number": all += typeof value; value = null; case "object": all += typeof value; } return all; });
+show("switched, a declaration in the block", function (x) { switch (typeof x) { case "string": let size = x.length; return size; case "number": try { return size; } catch (error) { return error.constructor.name; } default: return "other"; } });
+show("switched, a break out of a loop", function (x) { let all = ""; outer: for (const value of [x, "s", 1]) { switch (typeof value) { case "number": all += "n"; break outer; case "string": all += value.length; continue; default: all += "?"; } all += "."; } return all; });
+show("switched, a member read once", function (x) { let reads = 0; const holder = { get held() { reads++; return x; } }; switch (typeof holder.held) { case "string": return `text ${reads}`; case "object": return `object ${reads}`; default: return `other ${reads}`; } });
+show("switched, a name nobody declared", function () { switch (typeof neverDeclaredAnywhere) { case "undefined": return "none"; case "object": return "object"; default: return "other"; } });
+show("switched, in its dead zone", function (x) { try { switch (typeof later) { case "undefined": return "none"; default: return "other"; } const later = x; } catch (error) { return error.constructor.name; } });
+show("switched, in parentheses and negated", function (x) { switch ((typeof (x))) { case "string": return "text"; } switch (!typeof x) { case false: return "false"; } return "never"; });
+show("switched, in a generator", function (x) { return [...(function* (value) { const kind = typeof value; yield 1; switch (typeof value) { case "string": yield value.length; break; case "object": yield kind === "object"; break; default: yield kind; } })(x)].join("/"); });
+const later = await Promise.all(values().map(async x => { const kind = typeof x; await null; switch (kind) { case "string": return x.length; case "number": return x + 1; default: return kind === "object" ? "o" : kind[0]; } }));
+console.log("behind an await", later.join(" "));
+//// a-typeof-that-is-kept-or-switched-on-with-types.ts
+// The same under declared types: the arms go by what the test proves, also where a cast stands around the question or the value.
+type Any = string | number | boolean | null | undefined | bigint | symbol | object | (() => number);
+const values = (): Any[] => [undefined, null, true, 0, 1.5, 10n, "", "text", Symbol.iterator, {}, [], () => 1, new Date(0)];
+const show = (label: string, ask: (value: Any) => unknown) => console.log(label, values().map(value => String(ask(value))).join(" "));
+
+show("kept", (x: Any) => { const kind = typeof x; return kind === "string" ? (x as string).length : kind === "number" ? (x as number) + 1 : kind === "function" ? (x as () => number).length : kind; });
+show("kept, under a cast", (x: Any) => { const kind = typeof x as string; return kind === "string" ? (x as string).length : kind; });
+show("kept, of a cast", (x: Any) => { const kind = typeof (x as unknown); return kind === "number" ? (x as number) + 1 : kind; });
+show("kept, of what is asserted", (x: Any) => { const kind = typeof x!; return kind === "object" ? "object" : kind; });
+show("kept, declared", (x: Any) => { const kind: string = typeof x; return kind === "bigint" ? (x as bigint) + 1n : kind; });
+show("switched", (x: Any) => { switch (typeof x) { case "string": return x.length; case "number": return x + 1; case "function": return x(); case "object": return x === null ? "null" : Object.keys(x).length; case "bigint": return x * 2n; default: return String(x); } });
+show("switched on what is kept", (x: Any) => { const kind = typeof x; switch (kind) { case "string": return (x as string).length; case "boolean": return !x; default: return kind; } });
+function either(x: string | number[]): number { switch (typeof x) { case "string": return x.length; case "object": return x.length + 100; } }
+console.log(either("abc"), either([1, 2]));
+function lying(x: string): string { const kind = typeof x; return kind === "string" ? "text" : `a ${kind} where the type says text`; }
+try { console.log(lying(JSON.parse("5"))); } catch (error) { console.log((error as Error).constructor.name); }
+//// array-is-array-narrows-a-union.ts
+function lengthOf(value: string | number[]): number {
+  if (Array.isArray(value)) return value.length;
+  return -value.length;
+}
+
+function firstOf(value: string | number[] | undefined): number | string {
+  if (!Array.isArray(value)) return value === undefined ? "none" : value;
+  return value[0];
+}
+
+class Stack extends Array<number> {
+  top(): number {
+    return this[this.length - 1];
+  }
+}
+
+function describe(value: Stack | string): string {
+  return Array.isArray(value) ? `list of ${value.length}, top ${value.top()}` : `text ${value}`;
+}
+
+const many = process.argv.length > 100;
+console.log(lengthOf(many ? "x" : [1, 2, 3]), lengthOf(many ? [1] : "four"));
+console.log(firstOf(many ? "x" : [7, 8]), firstOf(many ? [1] : "text"), firstOf(undefined));
+const stack = new Stack();
+stack.push(4, 5);
+console.log(describe(stack), describe("plain"));
+console.log(ArrayBuffer.isView(many ? "x" : new Uint8Array(2)), ArrayBuffer.isView(many ? new DataView(new ArrayBuffer(1)) : "x"));
+//// callable-proxies.ts
+function make() {
+  return new Proxy(function () { return 1; }, {});
+}
+const p = make();
+console.log(typeof p);
+console.log(typeof p === "function");
+if (typeof p === "function") console.log("callable", p());
+else console.log("not callable");
+const q = new Proxy(class A {}, {});
+console.log(typeof q, typeof q === "function" ? new q().constructor.name : "no");
+function kind(x: unknown): string {
+  return typeof x === "function" ? "f" : typeof x === "object" ? "o" : "p";
+}
+console.log(kind(p), kind(new Proxy({}, {})), kind(new Proxy([], {})));
+function call(f: Function | string): unknown {
+  return typeof f === "function" ? f() : f;
+}
+console.log(call(p), call("text"));
+import { inspect, types } from "node:util";
+console.log(types.isProxy(p), inspect(p, { showProxy: true }), inspect(p));
+function shown(f: () => number): string {
+  return inspect(f, { showProxy: true });
+}
+console.log(shown(p), shown(() => 2));
+//// classes-that-are-told-by-their-class-info.ts
+// The classes of the engine whose instances have no kind of cell of their own: WeakRef, FinalizationRegistry, Intl.DateTimeFormat, Intl.NumberFormat, generators, bound functions.
+// A parameter of such a type is handed instances, instances of classes below, objects that only have the prototype, and everything else.
+class Reference extends WeakRef<object> {}
+class Registry extends FinalizationRegistry<number> {}
+class Dates extends Intl.DateTimeFormat {}
+class Numbers extends Intl.NumberFormat {}
+const kept = { a: 1 };
+function* count(to: number): Generator<number> {
+  for (let k = 0; k < to; k++) yield k;
+}
+function named(this: unknown, a: number, b: number): number {
+  return a + b;
+}
+
+function alive(reference: WeakRef<object>): boolean {
+  return reference.deref() === kept;
+}
+function registers(registry: FinalizationRegistry<number>): boolean {
+  registry.register(kept, 1, kept);
+  return registry.unregister(kept);
+}
+function zone(dates: Intl.DateTimeFormat): string {
+  return dates.resolvedOptions().timeZone;
+}
+function digits(numbers: Intl.NumberFormat): string {
+  return numbers.format(1234.5);
+}
+function total(steps: Generator<number>): number {
+  let sum = 0;
+  for (const step of steps) sum += step;
+  return sum;
+}
+function totalOfAny(steps: IterableIterator<number>): number {
+  let sum = 0;
+  for (const step of steps) sum += step;
+  return sum;
+}
+
+function values(): any[] {
+  return [
+    new WeakRef(kept), new Reference(kept), Object.create(WeakRef.prototype),
+    new FinalizationRegistry<number>(() => {}), new Registry(() => {}), Object.create(FinalizationRegistry.prototype),
+    new Intl.DateTimeFormat("en-US", { timeZone: "UTC" }), new Dates("en-US", { timeZone: "UTC" }), Object.create(Intl.DateTimeFormat.prototype),
+    new Intl.NumberFormat("en-US"), new Numbers("en-US"), Object.create(Intl.NumberFormat.prototype),
+    count(4), Object.create(count.prototype), Object.setPrototypeOf(count(3), null), [1, 2, 3].values(), new Set([5, 6]).values(), new Map([[7, 8]]).keys(), "12"[Symbol.iterator](),
+    named.bind(null, 1), named, () => 1, kept, {}, [], new Map(), new Proxy(new WeakRef(kept), {}), undefined, null, 0, "text", Symbol.iterator, 1n,
+  ];
+}
+const asked: Record<string, (value: any) => unknown> = { alive, registers, zone, digits, total, totalOfAny };
+for (const name of Object.keys(asked)) {
+  const answers: string[] = [];
+  const size = values().length;
+  for (let round = 0; round < 3; round++) {
+    for (let which = 0; which < size; which++) {
+      let answer: string;
+      try {
+        answer = String(asked[name](values()[which]));
+      } catch (error) {
+        answer = "!" + (error as Error).constructor.name;
+      }
+      if (round === 2) answers.push(answer);
+    }
+  }
+  console.log(name + ": " + answers.join(" "));
+}
+console.log(values().map(value => (typeof value === "function" ? value.name + "/" + value.length : typeof value)).join(" "));
+//// instanceof-asks-a-method-defined-by-a-descriptor-on-what-a-bound-function-was-made-of.js
+// `value instanceof bound` asks Symbol.hasInstance of the function that was bound. Here that is a method written in a descriptor, and the same test is also given a bound proxy. The method is called, so it is part of the executable.
+function ask(value, ctor) { return value instanceof ctor; }
+let calls = 0;
+const D = () => {};
+Object.defineProperty(D, Symbol.hasInstance, { value(value) { calls++; return value === 1; } });
+const boundD = D.bind();
+try { console.log("bound", ask(1, boundD), ask(2, boundD), calls); } catch (e) { console.log("bound threw", String(e).slice(0, 70)); }
+const arrow = () => {};
+const proxy = new Proxy(arrow, { get(target, key, receiver) { return Reflect.get(target, key, receiver); } });
+const boundProxy = proxy.bind();
+try { console.log("proxy", ask(1, boundProxy)); } catch (e) { console.log("proxy threw", String(e).slice(0, 70)); }
+//// instanceof-on-functions-that-stand-under-functions.js
+// Constructor functions that stand under other functions (Object.setPrototypeOf(Below, Above), as node's streams do), asked with instanceof from inside and outside: the answer follows
+// Symbol.hasInstance wherever it appears on the chain of functions, the prototype property, and the chain of the value, whenever any of them changes.
+function Root() { if (!(this instanceof Root)) return { refusedBy: "Root" }; this.root = 1; }
+function Middle() { if (!(this instanceof Middle)) return { refusedBy: "Middle" }; Root.call(this); this.middle = 1; }
+function Leaf() { if (!(this instanceof Leaf)) return { refusedBy: "Leaf" }; Middle.call(this); this.leaf = 1; }
+function OnlyBase() { if (!(this instanceof OnlyBase)) return "called without new"; this.base = 1; }
+function Heir() { OnlyBase.call(this); this.heir = 1; }
+function Alone() { this.alone = 1; }
+for (const [below, above] of [[Middle, Root], [Leaf, Middle], [Heir, OnlyBase]]) { Object.setPrototypeOf(below.prototype, above.prototype); Object.setPrototypeOf(below, above); }
+const all = { Root, Middle, Leaf, OnlyBase, Heir, Alone };
+function ask(v) { let line = ""; for (const name in all) line += v instanceof all[name] ? "1" : "0"; return line; }
+function askEach(v) { return [v instanceof Root, v instanceof Middle, v instanceof Leaf, v instanceof OnlyBase, v instanceof Heir, v instanceof Alone].map(Number).join(""); }
+function attempt(run) { try { return run(); } catch (e) { return e.constructor.name; } }
+function make() { return [() => new Root(), () => new Middle(), () => new Leaf(), () => new Heir(), () => new Alone(), () => Root(), () => Middle(), () => Leaf(), () => ({}), () => null, () => 5, () => Object.create(Leaf.prototype), () => Object.create(null), () => Leaf, () => Leaf.prototype].map(attempt); }
+function round(title) { let line = ""; for (let i = 0; i < 40; i++) line = make().map(v => (typeof v === "string" ? v : "") + ask(v) + "/" + askEach(v)).join(" "); console.log(title + ": " + line); }
+round("as made");
+console.log(OnlyBase(), typeof OnlyBase.call({}), Heir.prototype instanceof OnlyBase);
+Object.defineProperty(Root, Symbol.hasInstance, { value: v => v === 5, configurable: true }); round("the top function answers for itself and for all below");
+delete Root[Symbol.hasInstance]; round("no longer");
+Object.defineProperty(Middle, Symbol.hasInstance, { value: () => true, configurable: true }); round("the middle one says yes");
+delete Middle[Symbol.hasInstance]; round("no longer");
+const between = Object.create(Root, { [Symbol.hasInstance]: { value: () => false, configurable: true } }); Object.setPrototypeOf(Middle, between); round("an object between two functions says no");
+delete between[Symbol.hasInstance]; round("it says nothing");
+Object.setPrototypeOf(Middle, Function.prototype); round("the middle one stands alone");
+Object.setPrototypeOf(Middle, Root); round("and under the top again");
+Object.setPrototypeOf(Leaf, null); let thrown; try { ({}) instanceof Leaf; thrown = "no"; } catch (e) { thrown = e.constructor.name; } console.log("a function under nothing:", thrown, new (Object.setPrototypeOf(Leaf, Middle))() instanceof Leaf);
+const oldPrototype = Middle.prototype; Middle.prototype = { fresh: true }; round("another prototype property");
+Middle.prototype = oldPrototype; round("the old one again");
+Object.setPrototypeOf(Leaf.prototype, Root.prototype); round("the chain of the values skips the middle");
+Object.setPrototypeOf(Leaf.prototype, Middle.prototype); round("and has it again");
+Object.defineProperty(OnlyBase, Symbol.hasInstance, { value: () => true, configurable: true }); console.log(attempt(() => OnlyBase.call(5) === undefined), 5 instanceof OnlyBase, 5 instanceof Heir); round("the base that makes nothing says yes");
+delete OnlyBase[Symbol.hasInstance]; console.log(new OnlyBase().base, ask(new OnlyBase())); round("and now it has made one");
+//// library-cell-type-tests.ts
+import { inspect, promisify } from "node:util";
+
+class Deferred extends Promise<number> {}
+class Rows extends Array<number> {}
+class Index extends Map<string, number> {}
+
+console.log(Bun.peek(Promise.resolve(5)), Bun.peek(7), Bun.peek(Deferred.resolve(6)));
+console.log(Bun.peek.status(Promise.resolve(1)), Bun.peek.status(new Promise(() => {})), Bun.peek.status("text" as never));
+console.log(inspect([1, 2, new Map([[1, 2]]), new Set([3])]));
+console.log(inspect(Rows.from([1, 2])), inspect(new Index([["a", 1]])));
+console.log(inspect(new Proxy([1], {}), { showProxy: true }), inspect(new Proxy({ a: 1 }, {})));
+console.log(Buffer.from(new Uint8Array([1, 2])), Buffer.from(new Float32Array([1])).length, Buffer.from(new DataView(new ArrayBuffer(2)) as never).length);
+new Map([[1, 2]]).forEach((value, key) => console.log(key, value));
+try {
+  Map.prototype.forEach.call(new Set([1]), () => {});
+} catch (error) {
+  console.log((error as Error).name);
+}
+const sleep = promisify((done: (error: null, value: number) => void) => done(null, 3));
+console.log(await sleep());
+//// lists-of-classes-below-array.ts
+// An instance of a class of the program below Array is an array: Array.isArray says so in place, through a parameter declared as the class or a string, below two classes, and in a loop.
+class Stack extends Array<number> {}
+const s = new Stack();
+console.log(Array.isArray(s));
+function f(x: Stack | string) { return Array.isArray(x) ? "list" : "text"; }
+console.log(f(s), f("t"));
+class Deep extends Stack { extra = 1; }
+function g(x: Deep | number | null) { return Array.isArray(x) ? "list" : "other"; }
+console.log(g(new Deep()), g(5), g(null), Array.isArray(new Deep()));
+let lists = 0;
+for (let i = 0; i < 20000; i++) { if (Array.isArray(i & 1 ? s : "t")) lists++; if (f(i & 1 ? s : "t") === "list") lists++; }
+console.log(lists);
+//// methods-of-dates-that-are-not-plain.ts
+// The members of Date.prototype are fixed in a compiled program, so a call on a parameter declared as a Date goes to the built-in function. Not where one date has a property of that name, where a class below Date has the method, where another prototype lies above the date, or where the value is a Proxy or no date at all.
+const log: string[] = [];
+function time(d: Date): number { return d.getTime(); }
+function year(d: Date): number { return d.getUTCFullYear(); }
+function iso(d: Date): string { return d.toISOString(); }
+function json(d: Date): string | null { return d.toJSON(); }
+function plus(d: Date): number { return +d; }
+function minus(a: Date, b: Date): number { return (a as any) - (b as any); }
+function less(a: Date, b: Date): boolean { return a < b; }
+function moved(d: Date): number { return d.setUTCDate(d.getUTCDate() + 1); }
+function text(d: Date): number { return `${d}`.length > 0 ? 1 : 0; }
+function isDate(d: unknown): boolean { return d instanceof Date; }
+function tag(d: unknown): string { return Object.prototype.toString.call(d); }
+class Shifted extends Date { getTime(): number { log.push("Shifted.getTime"); return super.getTime() + 1000; } valueOf(): number { log.push("Shifted.valueOf"); return 42; } getUTCFullYear(): number { return -1; } }
+class Quiet extends Date {}
+function own(name: PropertyKey, value: unknown): Date { const d = new Date(86400000); Object.defineProperty(d, name, { value, configurable: true, writable: true }); return d; }
+const dates: [string, () => any][] = [
+  ["plain", () => new Date(86400000)],
+  ["invalid", () => new Date(NaN)],
+  ["own getTime", () => own("getTime", () => { log.push("own getTime"); return 7; })],
+  ["own valueOf", () => own("valueOf", () => { log.push("own valueOf"); return 8; })],
+  ["own toISOString", () => own("toISOString", () => { log.push("own toISOString"); return "own"; })],
+  ["own toJSON", () => own("toJSON", () => "own json")],
+  ["own toPrimitive", () => own(Symbol.toPrimitive, (hint: string) => { log.push(hint); return 9; })],
+  ["own getUTCFullYear", () => own("getUTCFullYear", () => 1)],
+  ["own getUTCDate", () => own("getUTCDate", () => 30)],
+  ["another name", () => own("label", 1)],
+  ["class with methods", () => new Shifted(86400000)],
+  ["class with nothing", () => new Quiet(86400000)],
+  ["the prototype of a class", () => Object.setPrototypeOf(new Date(86400000), Shifted.prototype)],
+  ["no prototype", () => Object.setPrototypeOf(new Date(86400000), null)],
+  ["a proxy", () => new Proxy(new Date(86400000), {})],
+  ["an object under the prototype", () => Object.create(Date.prototype)],
+  ["an object with the methods", () => ({ getTime: () => 1, getUTCFullYear: () => 2, toISOString: () => "3", toJSON: () => "4", valueOf: () => 5, setUTCDate: () => 6, getUTCDate: () => 7 })],
+  ["a number", () => 5],
+  ["nothing", () => undefined],
+];
+function attempt(run: () => unknown): string { try { return String(run()); } catch (e) { return (e as Error).name; } }
+for (let i = 0; i < 3000; i++) { const d = new Date(i); time(d); year(d); iso(d); json(d); plus(d); minus(d, d); less(d, d); moved(d); text(d); isDate(d); tag(d); }
+for (const [label, make] of dates) {
+  let line = "";
+  for (let round = 0; round < 3; round++) {
+    log.length = 0;
+    line = [time, year, iso, json, plus, moved, text, isDate, tag].map(f => attempt(() => (f as any)(make()))).join(" ") + " " + attempt(() => minus(make(), new Date(1))) + " " + attempt(() => less(new Date(1), make()));
+  }
+  console.log(label + ": " + line + " | " + log.join());
+}
+(Date.prototype as any).ago = function (this: Date) { return 100 - this.getTime(); };
+(Date.prototype as any).next = function (this: Date) { return new Date(this.getTime() + 1); };
+const kept = Date.prototype.toString;
+Date.prototype.toString = function () { return "replaced " + this.getTime(); };
+console.log((new Date(1) as any).ago(), (new Date(1) as any).next().getTime(), String(new Date(1)), `${new Date(2)}`, new Date(3) + "", new Date(4).toString());
+Date.prototype.toString = kept;
+console.log(typeof String(new Date(1)), String(new Date(NaN)));
+//// own-names-of-lists.js
+// Whether a list has a name of its own: asked of plain lists, which have none but `length`, and of lists that were given names, lost them again, got them by a definition, by a class, by a match or by a template; of names that a list inherits, of `length`, of indexes and of symbols; in a function that gets nothing but lists, and before and behind a store and a delete.
+const has = Object.prototype.hasOwnProperty;
+function test(list, label) {
+  console.log(label, has.call(list, "pos"), Object.hasOwn(list, "pos"), has.call(list, "length"), has.call(list, "0"), has.call(list, 0), has.call(list, "map"), has.call(list, "constructor"), has.call(list, "__proto__"), has.call(list, Symbol.iterator), has.call(list, "index"), has.call(list, "raw"));
+}
+function onlyLists(list) { return [has.call(list, "pos"), has.call(list, "end"), Object.hasOwn(list, "index"), Object.hasOwn(list, "raw"), Object.hasOwn(list, "map"), Object.hasOwn(list, "length")].join(); }
+const plain = [1, 2, 3];
+const nodes = [1, 2, 3]; nodes.pos = 0; nodes.end = 1;
+const removed = [1]; removed.pos = 1; delete removed.pos;
+const defined = Object.defineProperty([1], "pos", { get() { return 1; } });
+const hidden = Object.defineProperty([1], "pos", { value: 1, enumerable: false });
+const symbolic = [1]; symbolic[Symbol.iterator] = function* () {};
+class Stack extends Array { pos = 1; }
+class Bare extends Array {}
+const match = /a/.exec("a");
+const template = (strings => strings)`x`;
+const frozen = Object.freeze([1]);
+const sparse = []; sparse[100000] = 1;
+const many = []; for (let i = 0; i < 100; i++) many["name" + i] = i; many.pos = 1;
+const manyRemoved = []; for (let i = 0; i < 100; i++) manyRemoved["name" + i] = i; for (let i = 0; i < 100; i++) delete manyRemoved["name" + i];
+for (const [label, list] of Object.entries({ plain, nodes, removed, defined, hidden, symbolic, stack: new Stack(), bare: new Bare(), match, template, frozen, sparse, many, manyRemoved, prototype: Array.prototype, empty: [], made: new Array(5), from: Array.from("ab"), args: (function () { return Array.prototype.slice.call(arguments); })(1) })) {
+  test(list, label);
+  console.log(label, onlyLists(list));
+}
+const later = [1];
+console.log(onlyLists(later)); later.pos = 5; console.log(onlyLists(later)); delete later.pos; console.log(onlyLists(later));
+//// own-names-of-lists-with-types.ts
+// Whether a list has a name of its own, asked in a function whose parameter is declared a list: of plain lists, which have none but `length`, and of lists that were given names, lost them again, or got them by a definition, a class, a match or a template.
+const has = Object.prototype.hasOwnProperty;
+function onlyLists(list: readonly unknown[]): string {
+  return [has.call(list, "pos"), has.call(list, "end"), Object.hasOwn(list, "index"), Object.hasOwn(list, "raw"), Object.hasOwn(list, "map"), Object.hasOwn(list, "length"), Object.hasOwn(list, "0"), Object.hasOwn(list, "constructor"), Object.hasOwn(list, "__proto__"), Object.hasOwn(list, Symbol.iterator), Object.hasOwn(list, "name7")].join();
+}
+const plain: unknown[] = [1, 2, 3];
+const nodes: any = [1, 2, 3]; nodes.pos = 0; nodes.end = 1;
+const removed: any = [1]; removed.pos = 1; delete removed.pos;
+const defined: any = Object.defineProperty([1], "pos", { get() { return 1; } });
+const hidden: any = Object.defineProperty([1], "pos", { value: 1, enumerable: false });
+const symbolic: any = [1]; symbolic[Symbol.iterator] = function* () {};
+class Stack extends Array<unknown> { pos = 1; }
+class Bare extends Array<unknown> {}
+const match: any = /a/.exec("a");
+const template: any = ((strings: TemplateStringsArray) => strings)`x`;
+const frozen = Object.freeze([1]);
+const sparse: unknown[] = []; sparse[100000] = 1;
+const many: any = []; for (let i = 0; i < 100; i++) many["name" + i] = i; many.pos = 1;
+const manyRemoved: any = []; for (let i = 0; i < 100; i++) manyRemoved["name" + i] = i; for (let i = 0; i < 100; i++) delete manyRemoved["name" + i];
+const own: any = [1]; Object.defineProperty(own, "__proto__", { value: 1 });
+const all: Record<string, readonly unknown[]> = { plain, nodes, removed, defined, hidden, symbolic, stack: new Stack(), bare: new Bare(), match, template, frozen, sparse, many, manyRemoved, own, prototype: Array.prototype, empty: [], made: new Array(5), from: Array.from("ab"), sliced: plain.slice(1), mapped: nodes.map((value: unknown) => value), keys: Object.keys({ a: 1 }) };
+for (const label in all) console.log(label, onlyLists(all[label]));
+const later: any = [1];
+console.log(onlyLists(later)); later.pos = 5; console.log(onlyLists(later)); delete later.pos; console.log(onlyLists(later));
+//// own-property-tests-through-call.js
+// hasOwnProperty.call(x, "name") and Object.hasOwn(x, "name") where x may be undefined or null, an object, a list or a primitive: what they answer, what they throw and say, and in which order the operands are converted.
+function attempt(run) { try { return String(run()); } catch (error) { return error.name; } }
+const has = Object.prototype.hasOwnProperty, tag = Object.prototype.toString, slice = Array.prototype.slice;
+// A store that no build can place: with it nobody can prove that the functions above are as they were, but for the lock on them.
+const poke = (target, key, value) => { target[key] = value; };
+poke(globalThis[["pro", "cess"].join("")].env, String(Math.random()), "1");
+console.log("on nothing: " + [attempt(() => has.call(undefined, "a")), attempt(() => has.call(null, "a")), attempt(() => Object.hasOwn(undefined, "a")), attempt(() => Object.hasOwn(null, "a")), attempt(() => slice.call(undefined)), tag.call(undefined)].join(" "));
+const messageOf = run => { try { run(); return "nothing thrown"; } catch (error) { return error.message.replace(/ \(.*/, ""); } };
+const maybe = flag => (flag ? undefined : { a: 1 }), orNull = flag => (flag ? null : [1]);
+console.log("what it says: " + [messageOf(() => has.call(maybe(true), "a")), messageOf(() => has.call(orNull(true), "a")), messageOf(() => Object.hasOwn(maybe(true), "a")), messageOf(() => Object.hasOwn(orNull(true), "length"))].join(" | "));
+console.log("what may be missing and is not: " + [has.call(maybe(false), "a"), has.call(orNull(false), "length"), has.call(orNull(false), 0), has.call(orNull(false), "pos"), Object.hasOwn(maybe(false), "b"), Object.hasOwn(orNull(false), "0")].join(" "));
+let order = "";
+const key = { toString() { order += "key "; return "a"; } };
+console.log("the key is converted first by the method, second by the function: " + [attempt(() => has.call(maybe(true), key)), attempt(() => Object.hasOwn(maybe(true), key)), order].join(" "));
+const hasProperty = (map, key) => has.call(map, key);
+const isNodeArray = list => hasProperty(list, "pos") && hasProperty(list, "end");
+const marked = Object.assign([1, 2], { pos: 0, end: 5 }), half = Object.assign([1], { pos: 0 });
+console.log("lists with names of their own: " + [isNodeArray(marked), isNodeArray(half), isNodeArray([1]), isNodeArray({ pos: 1, end: 2 }), isNodeArray("text"), attempt(() => isNodeArray(undefined)), attempt(() => isNodeArray(null))].join(" "));
+const kinds = [{ a: 1 }, Object.create({ a: 1 }), Object.create(null), [], "a", 5, true, 10n, Symbol.iterator, () => 1, new Proxy({ a: 1 }, {}), new Proxy({}, { getOwnPropertyDescriptor() { return { value: 1, configurable: true }; } }), new String("a"), Object.freeze({ a: undefined }), { get a() { throw new RangeError("never read"); } }, undefined, null];
+console.log("every kind, by the method: " + kinds.map(kind => attempt(() => has.call(kind, "a"))).join(" "));
+console.log("every kind, by the function: " + kinds.map(kind => attempt(() => Object.hasOwn(kind, "a"))).join(" "));
+console.log("every kind, an index: " + kinds.map(kind => attempt(() => has.call(kind, 0))).join(" "));
+console.log("every kind, length: " + kinds.map(kind => attempt(() => has.call(kind, "length"))).join(" "));
+console.log("every kind, its tag: " + kinds.map(kind => attempt(() => tag.call(kind))).join(" "));
+//// questions-about-integers-at-the-edge-of-the-safe-ones.ts
+function answersFor(value: number): string {
+  return [isFinite(value), Number.isFinite(value), Number.isSafeInteger(value), Number.isInteger(value), isNaN(value)].join();
+}
+
+const edges = [
+  9007199254740990, 9007199254740991, 9007199254740992, 9007199254740994, -9007199254740991, -9007199254740992, 4611686018427387904,
+  2147483647, 2147483648, 0, -0, 1.5, NaN, Infinity, -Infinity,
+];
+for (const edge of edges) console.log(edge, answersFor(edge));
+
+for (let integer = 9007199254740989; integer <= 9007199254740991; integer++) {
+  console.log(Number.isSafeInteger(integer), Number.isSafeInteger(integer + 1), isFinite(integer + 1), Number.isSafeInteger(-integer - 1));
+}
+
+function answersForInt32(value: number): string {
+  const integer = value | 0;
+  return [isFinite(integer), Number.isSafeInteger(integer), isFinite(integer * 4294967296), Number.isSafeInteger(integer * 4294967296)].join();
+}
+for (const value of [0, 1, -1, 2097151, 2097152, -2097152, 2147483647, -2147483648, 1e300]) console.log(value, answersForInt32(value));
+
+function textOf(text: string): unknown[] {
+  const same = String(text);
+  const wrapped = new String(text);
+  return [same === text, typeof same, typeof wrapped, wrapped == text, (wrapped as unknown) === text, same.length];
+}
+for (const text of ["", "a", "a" + edges.length, "\u{1F600}"]) console.log(textOf(text));
+console.log(String(Symbol("s")), String(), String(undefined), String(null));
+//// questions-about-numbers-in-conditions.js
+// Number.isFinite, isInteger, isSafeInteger and isNaN in a condition test the type first and ask the number behind it: no conversion runs, and a replaced or shadowed one is an ordinary call.
+const log = [];
+const watched = { valueOf() { log.push("valueOf"); return 1; }, toString() { log.push("toString"); return "1"; }, [Symbol.toPrimitive]() { log.push("toPrimitive"); return 1; } };
+const values = () => [undefined, null, true, 0, -0, 1, -1, 1.5, NaN, Infinity, -Infinity, 2 ** 31, 2 ** 53, 2 ** 53 - 1, -(2 ** 53), 1e308, 5e-324, 10n, "", "1", "NaN", Symbol.iterator, {}, [], [1], watched, new Number(1), new Number(NaN), () => 1, new Date(0), new Proxy({}, {})];
+const show = (label, ask) => console.log(label, values().map(value => { try { return String(ask(value)); } catch (error) { return error.constructor.name; } }).join(" "), "|", log.splice(0).join());
+
+show("isFinite", function (x) { return Number.isFinite(x) ? x + 1 : "-"; });
+show("isInteger", function (x) { return Number.isInteger(x) ? x % 7 : "-"; });
+show("isSafeInteger", function (x) { return Number.isSafeInteger(x) ? x - 1 : "-"; });
+show("isNaN", function (x) { return Number.isNaN(x) ? typeof x : "-"; });
+show("not", function (x) { if (!Number.isFinite(x)) return typeof x; return x * 2; });
+show("and", function (x) { return Number.isInteger(x) && x >= 0 ? x | 0 : "-"; });
+show("or", function (x) { return Number.isNaN(x) || x === undefined ? "none" : typeof x; });
+show("both", function (x) { return Number.isFinite(x) && !Number.isInteger(x) ? Math.floor(x) : "-"; });
+show("in a loop", function (x) { let turns = 0; while (Number.isFinite(x) && turns < 3) { x = turns === 1 ? "text" : x + 1; turns++; } return `${turns} ${typeof x}`; });
+show("as a value", function (x) { const answer = Number.isFinite(x); return answer ? x + 1 : answer; });
+show("of an expression", function (x) { return Number.isFinite(x?.length) ? x.length : "-"; });
+show("of an assignment", function (x) { let kept; return Number.isFinite((kept = x)) ? kept + 1 : typeof kept; });
+show("of a call", function (x) { let calls = 0; const give = () => (calls++, x); return `${Number.isInteger(give()) ? "whole" : "-"}${calls}`; });
+show("no operand", function () { return Number.isFinite() ? "never" : Number.isNaN() ? "never" : "-"; });
+show("two operands", function (x) { let seen = 0; return `${Number.isFinite(x, seen++) ? x + 1 : "-"}${seen}`; });
+show("a spread", function (x) { return Number.isFinite(...[x]) ? x + 1 : "-"; });
+show("optional call", function (x) { return Number.isFinite?.(x) ? x + 1 : "-"; });
+show("optional member", function (x) { return Number?.isFinite(x) ? x + 1 : "-"; });
+show("by a key", function (x) { return Number["isFinite"](x) ? x + 1 : "-"; });
+show("taken off", function (x) { const { isFinite: ask } = Number; return ask(x) ? x + 1 : "-"; });
+show("through call", function (x) { return Number.isFinite.call(null, x) ? x + 1 : "-"; });
+show("the global ones convert", function (x) { return `${isFinite(x) ? "f" : "-"}${isNaN(x) ? "n" : "-"}`; });
+show("another Number", function (x) { const Number = { isFinite: value => value === "1", isNaN: () => true }; return `${Number.isFinite(x) ? "mine" : "-"}${Number.isNaN(x) ? "!" : ""}`; });
+show("a parameter called Number", (x, Number = { isInteger: value => typeof value === "string" }) => (Number.isInteger(x) ? "text" : "-"));
+{
+  class Number { static isFinite(value) { return value === null; } }
+  show("a class called Number", x => (Number.isFinite(x) ? "null" : "-"));
+}
+//// the-tag-appears-changes-and-goes.js
+// Object.prototype.toString.call(x) on values nobody knows: the answer is asked many times, then Symbol.toStringTag appears, changes and goes: on the object, on the prototype of its class, two steps up, as a getter, as a value that is no string; on records, instances of classes, of constructor functions, lists, maps, dates, functions, errors, typed arrays, proxies, objects without a prototype.
+const toString = Object.prototype.toString;
+const box = { v: null };
+function tag(x) { box.v = x; return toString.call(box.v); }
+function many(x) { let last = ""; for (let i = 0; i < 300; i++) last = tag(x); return last; }
+class Animal {} class Dog extends Animal {}
+function Old() {} 
+const subjects = {
+  record: () => ({ a: 1 }), animal: () => new Animal(), dog: () => new Dog(), old: () => new Old(), list: () => [1], map: () => new Map(), date: () => new Date(0), fn: () => function () {}, arrow: () => () => 1,
+  error: () => new Error("e"), bytes: () => new Uint8Array(1), bare: () => Object.create(null), under: () => Object.create({ a: 1 }), proxy: () => new Proxy({}, {}), proxyOfList: () => new Proxy([], {}), args: () => (function () { return arguments; })(),
+  regexp: () => /a/, promise: () => Promise.resolve(1), set: () => new Set(), weak: () => new WeakMap(), symbolObject: () => Object(Symbol.iterator), numberObject: () => Object(1), textObject: () => Object("a"), booleanObject: () => Object(true), bigintObject: () => Object(1n), generator: () => (function* () {})(), global: () => globalThis,
+};
+for (const name in subjects) {
+  const x = subjects[name](), line = [many(x)];
+  try { x[Symbol.toStringTag] = "Own"; line.push(many(x)); x[Symbol.toStringTag] = 5; line.push(many(x)); delete x[Symbol.toStringTag]; line.push(many(x)); } catch (e) { line.push(e.name); }
+  try { Object.defineProperty(x, Symbol.toStringTag, { get() { return "Got"; }, configurable: true }); line.push(many(x)); delete x[Symbol.toStringTag]; line.push(many(x)); } catch (e) { line.push(e.name); }
+  console.log(name + ": " + line.join(" "));
+}
+const a = new Animal(), d = new Dog(), o = new Old(), r = { a: 1 };
+console.log(many(a), many(d), many(o), many(r));
+Animal.prototype[Symbol.toStringTag] = "Beast";
+console.log(many(a), many(d), many(new Dog()), many(o), many(r));
+Dog.prototype[Symbol.toStringTag] = "Hound";
+console.log(many(a), many(d), many(new Dog()));
+delete Animal.prototype[Symbol.toStringTag];
+console.log(many(a), many(d));
+delete Dog.prototype[Symbol.toStringTag];
+console.log(many(a), many(d));
+Old.prototype[Symbol.toStringTag] = "Elder";
+console.log(many(o), many(new Old()));
+Object.setPrototypeOf(o, Dog.prototype); Object.defineProperty(Animal.prototype, Symbol.toStringTag, { get() { return "By getter " + this.constructor.name; }, configurable: true });
+console.log(many(o), many(a), many(d));
+Object.setPrototypeOf(r, { [Symbol.toStringTag]: "Above" });
+console.log(many(r), many({ a: 1 }));
+for (const v of [undefined, null, 1, "a", true, 1n, Symbol.iterator]) console.log(many(v));
+try { Error.prototype[Symbol.toStringTag] = "Failure"; console.log(many(new Error("e")), many(new TypeError("t"))); delete Error.prototype[Symbol.toStringTag]; console.log(many(new Error("e"))); } catch (e) { console.log(e.name); }
+//// views-and-errors-that-nobody-knows.js
+// ArrayBuffer.isView and Error.isError ask what kind of cell a value is: of twenty-eight kinds of value that nobody knows, proxies, objects under the prototypes, classes of the program below the built-in classes and a DOMException among them; once, in a loop, and with a read behind the answer.
+const values = [[1, 2], { a: 1 }, new Date(0), "text", 5, null, undefined, Buffer.from("ab"), new Map(), new Error("e"), new TypeError("t"), new Uint8Array(2), new Float64Array(1), new DataView(new ArrayBuffer(2)), new ArrayBuffer(2), new BigInt64Array(1), () => 1, new Proxy(new Uint8Array(1), {}), new Proxy(new Error("p"), {}), Object.create(Error.prototype), Object.create(Uint8Array.prototype), new (class E extends Error {})("x"), new (class U extends Uint8Array {})(1), new (class D extends DataView {})(new ArrayBuffer(1)), new DOMException("d"), new AggregateError([]), Symbol("s"), 5n];
+const box = { v: null }; const pick = i => { box.v = values[i % values.length]; return box.v; };
+function view(x) { return ArrayBuffer.isView(x) ? 1 : 0; }
+function error(x) { return Error.isError(x) ? 1 : 0; }
+let views = "", errors = "", sumViews = 0, sumErrors = 0;
+for (let i = 0; i < values.length; i++) { views += view(pick(i)); errors += error(pick(i)); }
+for (let i = 0; i < 50000; i++) { sumViews += view(pick(i)); sumErrors += error(pick(i)); }
+console.log(views, errors, sumViews, sumErrors);
+function narrowed(x) { return ArrayBuffer.isView(x) ? x.byteLength : Error.isError(x) ? x.message : -1; }
+console.log(values.map(narrowed).join());
+//// views-and-lists-handed-to-the-modules.js
+// Bun's own modules ask whether a value is a typed array ($isTypedArrayView) or an array ($isJSArray) before they take its bytes or its elements. Each function gets every kind of view, a DataView, a Buffer, instances of classes below, the prototype objects, objects under them, proxies, buffers, arrays and primitives.
+const { types, inspect, isDeepStrictEqual } = require("node:util");
+const fs = require("node:fs"), zlib = require("node:zlib"), crypto = require("node:crypto"), { Readable, Writable } = require("node:stream"), { StringDecoder } = require("node:string_decoder");
+class U extends Uint8Array {} class L extends Array {}
+const values = () => [new Int8Array(2), new Uint8Array(2), new Uint8ClampedArray(2), new Int16Array(2), new Uint16Array(2), new Int32Array(2), new Uint32Array(2), new Float16Array(2), new Float32Array(2), new Float64Array(2), new BigInt64Array(2), new BigUint64Array(2), new DataView(new ArrayBuffer(2)), Buffer.from("ab"), new U(2), Uint8Array.prototype, Object.getPrototypeOf(Uint8Array.prototype), Object.create(Uint8Array.prototype), new Proxy(new Uint8Array(2), {}), new ArrayBuffer(2), new SharedArrayBuffer(2), [1, 2], new L(1, 2), Array.prototype, Object.create(Array.prototype), new Proxy([1, 2], {}), { length: 2, 0: 1, 1: 2 }, "ab", 5, null, undefined];
+function attempt(run) { try { const r = run(); return typeof r === "object" && r !== null ? Object.prototype.toString.call(r) : String(r); } catch (e) { return e.code ?? e.constructor.name; } }
+const sink = fs.openSync(process.platform === "win32" ? "\\\\.\\nul" : "/dev/null", "w");
+const asked = {
+  isTypedArray: v => types.isTypedArray(v),
+  isUint8Array: v => types.isUint8Array(v),
+  isArrayBufferView: v => types.isArrayBufferView(v),
+  isAnyArrayBuffer: v => types.isAnyArrayBuffer(v),
+  byteLength: v => Buffer.byteLength(v),
+  from: v => Buffer.from(v).length,
+  concat: v => Buffer.concat([v]).length,
+  concatOf: v => Buffer.concat(v).length,
+  compare: v => Buffer.compare(v, Buffer.from("ab")),
+  equals: v => Buffer.from("ab").equals(v),
+  copy: v => Buffer.from("ab").copy(v),
+  isBuffer: v => Buffer.isBuffer(v),
+  writeSync: v => fs.writeSync(sink, v),
+  writevSync: v => fs.writevSync(sink, [v]),
+  writevOf: v => fs.writevSync(sink, v),
+  gzip: v => zlib.gzipSync(v).length > 0,
+  hash: v => crypto.createHash("md5").update(v).digest("hex").length,
+  timingSafeEqual: v => crypto.timingSafeEqual(v, v),
+  push: v => new Readable({ read() {} }).on("error", () => {}).push(v),
+  write: v => new Writable({ write(c, e, done) { done(); } }).on("error", () => {}).write(v),
+  decode: v => new StringDecoder("utf8").write(v).length,
+  textDecode: v => new TextDecoder().decode(v).length,
+  blob: v => new Blob([v]).size,
+  blobOf: v => new Blob(v).size,
+  response: v => typeof new Response(v).body,
+  inspected: v => inspect(v).length > 0,
+  deepEqual: v => isDeepStrictEqual(v, v),
+  spawnArguments: v => typeof require("node:child_process").spawnSync("true", v).status,
+  pathJoin: v => require("node:path").join("a", ...(Array.isArray(v) ? v.map(String) : [])),
+  format: v => require("node:util").format("%o", v).length > 0,
+  emit: v => new (require("node:events"))().emit("x", v),
+  assertArray: v => { require("node:assert").deepStrictEqual(v, v); return "equal"; },
+};
+for (const name in asked) { let line = ""; for (let round = 0; round < 12; round++) line = values().map(v => attempt(() => asked[name](v))).join(" "); console.log(name + ": " + line); }
+//// what-a-built-in-constructor-makes-as-the-species.js
+// A class below Array whose species is a built-in constructor of another class: concat, slice, map, filter, splice, flat and flatMap construct that one, with a length as its argument, and fill what it makes. `new Object(0)` is a Number, `new Map(0)` throws, `new Set(0)` throws, `new String(0)` is a String. Each result is asked, out of a variable, what it is.
+const describe = (label, run) => {
+  let made;
+  try { made = run(); } catch (error) { console.log(label, "throws", error.constructor.name); return; }
+  const constructor = made.constructor;
+  const above = Object.getPrototypeOf(made);
+  console.log(label, constructor.name, constructor === Array, constructor === Object, constructor === Number, above === Array.prototype, above === Object.prototype, above === Number.prototype, Array.isArray(made), made instanceof Array, made instanceof Number, typeof made.valueOf(), Object.prototype.toString.call(made), JSON.stringify(Object.entries(made)));
+};
+const classWith = species => class extends Array { static get [Symbol.species]() { return species; } };
+for (const species of [Object, Number, String, Boolean, Map, Set, Date, Promise, Error, RegExp, Uint8Array, ArrayBuffer, Symbol, undefined, null]) {
+  const List = classWith(species);
+  const name = species ? species.name : String(species);
+  describe(name + " concat", () => new List(1, 2).concat([3]));
+  describe(name + " slice", () => new List(1, 2).slice(1));
+  describe(name + " map", () => new List(1, 2).map(value => value * 2));
+  describe(name + " filter", () => new List(1, 2).filter(value => value > 1));
+  describe(name + " splice", () => new List(1, 2).splice(0, 1));
+  describe(name + " flat", () => new List(1, [2]).flat());
+  describe(name + " flatMap", () => new List(1, 2).flatMap(value => [value]));
+}
+class OfObjects extends Array { static get [Symbol.species]() { return Object; } }
+const joined = new OfObjects(1, 2).concat([3]);
+const constructorOfJoined = joined.constructor;
+console.log(constructorOfJoined === Number, constructorOfJoined === Object, constructorOfJoined === OfObjects, constructorOfJoined === Array, joined instanceof Number, typeof joined, joined[0], joined[2], joined.length);
+const list = [1, 2];
+list.constructor = { [Symbol.species]: Object };
+const mapped = list.map(value => value + 1);
+const constructorOfMapped = mapped.constructor;
+console.log(constructorOfMapped === Number, constructorOfMapped === Array, mapped[0], mapped[1], mapped.length, Array.isArray(mapped));
+//// what-kind-of-cell-the-library-asks-for.js
+// The library asks what kind of cell a value is ($isMap, $isSet, $isPromise, $isRegExpObject, $isProxyObject ..) where its methods are borrowed, awaited, inspected or cloned. Each method is called on every kind of value: instances, instances of classes below, the prototype objects, objects under the prototypes, proxies of instances, and primitives.
+class M extends Map {} class S extends Set {} class P extends Promise {} class R extends RegExp {}
+const values = () => [new Map([[1, 2]]), new M([[1, 2]]), Map.prototype, Object.create(Map.prototype), new Proxy(new Map(), {}), new Set([1]), new S([1]), Set.prototype, Object.create(Set.prototype), new Proxy(new Set(), {}), Promise.resolve(1), P.resolve(1), Promise.prototype, Object.create(Promise.prototype), new Proxy(Promise.resolve(1), {}), /a/g, new R("a"), RegExp.prototype, Object.create(RegExp.prototype), new Proxy(/a/, {}), new WeakMap(), new WeakSet(), [], {}, () => 1, "text", 5, null, undefined, Symbol.iterator, 5n, new Date(0), new Error("e"), new Uint8Array(1), new ArrayBuffer(1), new DisposableStack(), new AsyncDisposableStack()];
+function attempt(run) { try { const r = run(); return r instanceof Promise ? "promise" : typeof r === "object" && r !== null ? Object.prototype.toString.call(r) : String(r); } catch (e) { return e.constructor.name; } }
+const asked = {
+  mapForEach: v => Map.prototype.forEach.call(v, () => {}),
+  setForEach: v => Set.prototype.forEach.call(v, () => {}),
+  mapGroupBy: v => Map.groupBy([1], () => v).size,
+  then: v => Promise.prototype.then.call(v, () => {}),
+  finally: v => Promise.prototype.finally.call(v, () => {}),
+  resolve: v => Promise.resolve(v) === v,
+  resolveBelow: v => P.resolve(v) === v,
+  all: v => Promise.all([v]),
+  race: v => Promise.race([v]),
+  matchAll: v => typeof "aa".matchAll(v).next,
+  replaceAll: v => "aa".replaceAll(v, "b"),
+  startsWith: v => "aa".startsWith(v),
+  includes: v => "aa".includes(v),
+  split: v => "aXa".split(v).length,
+  regExp: v => RegExp(v) === v,
+  symbolSplit: v => RegExp.prototype[Symbol.split].call(v, "aXa").length,
+  union: v => new Set([1]).union(v).size,
+  isSubsetOf: v => new Set([1]).isSubsetOf(v),
+  disposed: v => Reflect.get(DisposableStack.prototype, "disposed", v),
+  dispose: v => DisposableStack.prototype.dispose.call(v),
+  asyncDisposed: v => Reflect.get(AsyncDisposableStack.prototype, "disposed", v),
+  clone: v => typeof structuredClone(v),
+  inspect: v => typeof Bun.inspect(v),
+  isArray: v => Array.isArray(v),
+  concat: v => [0].concat(v).length,
+  flat: v => [[v]].flat(2).length,
+  from: v => Array.from(v).length,
+  newMap: v => new Map(v).size,
+  newSet: v => new Set(v).size,
+  fromEntries: v => Object.keys(Object.fromEntries(v)).length,
+};
+for (const name in asked) { let line = ""; for (let round = 0; round < 30; round++) line = values().map(v => attempt(() => asked[name](v))).join(" "); console.log(name + ": " + line); }
+process.on("unhandledRejection", () => {});
+//// what-lies-above-what-built-ins-make.js
+// A built-in that is said to make "a typed array", "a Uint8Array" or "an error" makes an object of some class at or below the one that is named: each result is asked, out of a variable, for the prototype object of its own class and for those beside and above it.
+const shared = Object.getPrototypeOf(Uint8Array.prototype);
+const report = (label, above, own, ...others) => console.log(label, above === own, others.map(other => above === other).join(" "), above === shared, above === Object.prototype, above === null);
+
+const bytes = new Uint8Array([1, 2, 3]), doubles = new Float64Array([1, 2, 3]), shorts = new Int16Array([1, 2, 3]), buffer = Buffer.from([1, 2, 3]);
+const aboveFiltered = Object.getPrototypeOf(bytes.filter(() => true));
+report("filter of bytes", aboveFiltered, Uint8Array.prototype, Buffer.prototype, Float64Array.prototype);
+const aboveFilteredDoubles = Object.getPrototypeOf(doubles.filter(() => true));
+report("filter of doubles", aboveFilteredDoubles, Float64Array.prototype, Uint8Array.prototype);
+const aboveFilteredBuffer = Object.getPrototypeOf(buffer.filter(() => true));
+report("filter of a buffer", aboveFilteredBuffer, Buffer.prototype, Uint8Array.prototype);
+const aboveMapped = Object.getPrototypeOf(shorts.map(value => value));
+report("map", aboveMapped, Int16Array.prototype, Uint8Array.prototype);
+const aboveSliced = Object.getPrototypeOf(shorts.slice(1));
+report("slice", aboveSliced, Int16Array.prototype, Uint8Array.prototype);
+const aboveSlicedBuffer = Object.getPrototypeOf(buffer.slice(1));
+report("slice of a buffer", aboveSlicedBuffer, Buffer.prototype, Uint8Array.prototype);
+const aboveView = Object.getPrototypeOf(doubles.subarray(1));
+report("subarray", aboveView, Float64Array.prototype, Uint8Array.prototype);
+const aboveViewOfBuffer = Object.getPrototypeOf(buffer.subarray(1));
+report("subarray of a buffer", aboveViewOfBuffer, Buffer.prototype, Uint8Array.prototype);
+const aboveReversed = Object.getPrototypeOf(buffer.toReversed());
+report("toReversed of a buffer", aboveReversed, Uint8Array.prototype, Buffer.prototype);
+const aboveSorted = Object.getPrototypeOf(shorts.toSorted());
+report("toSorted", aboveSorted, Int16Array.prototype, Uint8Array.prototype);
+const aboveChanged = Object.getPrototypeOf(doubles.with(0, 5));
+report("with", aboveChanged, Float64Array.prototype, Uint8Array.prototype);
+const aboveFrom = Object.getPrototypeOf(Uint32Array.from([1, 2]));
+report("from", aboveFrom, Uint32Array.prototype, Uint8Array.prototype);
+const aboveOf = Object.getPrototypeOf(Float32Array.of(1, 2));
+report("of", aboveOf, Float32Array.prototype, Uint8Array.prototype);
+
+class Species extends Uint8Array { static get [Symbol.species]() { return Int8Array; } }
+const aboveSpecies = Object.getPrototypeOf(new Species([1, 2]).filter(() => true));
+report("filter by species", aboveSpecies, Int8Array.prototype, Uint8Array.prototype, Species.prototype);
+class Own extends Uint8Array {}
+const aboveOwn = Object.getPrototypeOf(new Own([1, 2]).filter(() => true));
+report("filter below a class of the program", aboveOwn, Own.prototype, Uint8Array.prototype);
+const changing = new Uint8Array([1, 2]);
+const aboveChanging = Object.getPrototypeOf(changing.filter(() => { changing.constructor = Int32Array; return true; }));
+report("filter whose callback changes the constructor", aboveChanging, Int32Array.prototype, Uint8Array.prototype);
+
+const aboveEncoded = Object.getPrototypeOf(new TextEncoder().encode("text"));
+report("encode", aboveEncoded, Uint8Array.prototype, Buffer.prototype);
+const aboveHex = Object.getPrototypeOf(Uint8Array.fromHex("00ff"));
+report("fromHex", aboveHex, Uint8Array.prototype, Buffer.prototype);
+const aboveBase64 = Object.getPrototypeOf(Uint8Array.fromBase64("AAECAw=="));
+report("fromBase64", aboveBase64, Uint8Array.prototype, Buffer.prototype);
+const aboveBody = Object.getPrototypeOf(await new Response("text").bytes());
+report("bytes of a response", aboveBody, Uint8Array.prototype, Buffer.prototype);
+const aboveBlob = Object.getPrototypeOf(await new Blob(["text"]).bytes());
+report("bytes of a blob", aboveBlob, Uint8Array.prototype, Buffer.prototype);
+
+const caught = run => { try { run(); } catch (error) { return error; } };
+const aboveTypeError = Object.getPrototypeOf(caught(() => null.x));
+report("what a read of null throws", aboveTypeError, TypeError.prototype, Error.prototype, RangeError.prototype);
+const aboveRangeError = Object.getPrototypeOf(caught(() => new Array(-1)));
+report("what a length that is refused throws", aboveRangeError, RangeError.prototype, Error.prototype, TypeError.prototype);
+const aboveSyntaxError = Object.getPrototypeOf(caught(() => JSON.parse("{")));
+report("what JSON.parse throws", aboveSyntaxError, SyntaxError.prototype, Error.prototype);
+const aboveMade = Object.getPrototypeOf(new Error("made"));
+report("new Error", aboveMade, Error.prototype, TypeError.prototype);
+const aboveCalled = Object.getPrototypeOf(RangeError("called"));
+report("RangeError called", aboveCalled, RangeError.prototype, Error.prototype);
+const aboveReason = Object.getPrototypeOf(await Promise.any([Promise.reject(1)]).catch(error => error));
+report("what Promise.any rejects with", aboveReason, AggregateError.prototype, Error.prototype);
+
+const aboveKeys = Object.getPrototypeOf([1].keys());
+report("keys of a list", aboveKeys, Object.getPrototypeOf([][Symbol.iterator]()), Iterator.prototype);
+const aboveHelper = Object.getPrototypeOf([1].values().map(value => value));
+report("an iterator helper", aboveHelper, Object.getPrototypeOf(Iterator.from([]).map(value => value)), Iterator.prototype);
+const aboveWrapped = Object.getPrototypeOf(Iterator.from({ next() { return { done: true }; } }));
+report("Iterator.from", aboveWrapped, Object.getPrototypeOf(Iterator.from({ next() {} })), Iterator.prototype);
+const aboveBound = Object.getPrototypeOf(function () {}.bind(null));
+report("a bound function", aboveBound, Function.prototype);
+const aboveBoundAsync = Object.getPrototypeOf(async function () {}.bind(null));
+report("a bound async function", aboveBoundAsync, Object.getPrototypeOf(async function () {}), Function.prototype);
+const aboveSignal = Object.getPrototypeOf(new AbortController().signal);
+report("the signal of a controller", aboveSignal, AbortSignal.prototype, EventTarget.prototype);
+const aboveTimeout = Object.getPrototypeOf(AbortSignal.abort());
+report("AbortSignal.abort", aboveTimeout, AbortSignal.prototype, EventTarget.prototype);
+const aboveMark = Object.getPrototypeOf(performance.mark("m"));
+report("performance.mark", aboveMark, PerformanceMark.prototype, PerformanceEntry.prototype);

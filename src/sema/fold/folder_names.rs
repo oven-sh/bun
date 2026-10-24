@@ -30,7 +30,6 @@ impl<'s> Folder<'_, 's> {
             }
             Binding::Symbol(symbol) if self.is_process_import(symbol) && self.is_define_root(e) => {
                 let root = DefineRoot::Global(self.atoms.intern(b"process"));
-                // What the build was told to write in place of `process.x` is not written in place of another name: as behind `?.`, only what every run has there counts.
                 let state = self.inputs.root(root).map(|root| PathState {
                     has_optional_link: true,
                     has_dynamic_root: !self.has_static_lookup(e),
@@ -44,7 +43,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// `import process from "node:process"`: the object that the global `process` holds.
     fn is_process_import(&self, symbol: SymbolId) -> bool {
         if self.bound.binding_kind(symbol) != BindingKind::Import {
             return false;
@@ -122,7 +120,6 @@ impl<'s> Folder<'_, 's> {
         self.find_only_initializer(ident, &[BindingKind::Const])
     }
 
-    /// The initializer of a variable of one of `kinds` that nothing else stores to, where it has run when `ident` is read.
     fn find_only_initializer(&self, ident: ExprId, kinds: &[BindingKind]) -> Option<ExprId> {
         let bound = self.bound;
         let symbol = match bound.binding(ident) {
@@ -138,7 +135,6 @@ impl<'s> Folder<'_, 's> {
         }
         match bound.binding_initializer(self.hir, symbol) {
             BindingInitializer::Expression(init) if init < ident => {
-                // A read of the other two that comes first throws.
                 let is_read_behind = kind != BindingKind::Var || self.is_read_behind(ident, init);
                 is_read_behind.then_some(init)
             }
@@ -146,9 +142,7 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// A `var` holds `undefined` until its initializer has run.
     fn is_read_behind(&self, ident: ExprId, init: ExprId) -> bool {
-        // Most files have no such variable, and the order of their functions is not worked out.
         let is_known = matches!(self.folded(init).value, Value::Known(_));
         if !is_known && self.find_runtime_value_kind(init).is_none() {
             return false;
@@ -181,7 +175,6 @@ impl<'s> Folder<'_, 's> {
             }
             _ => {
                 self.copy_condition(ident, init);
-                // A `let` or a `var` is still read where it is written: its value only decides tests.
                 let effects = match is_const {
                     true => Effects::DeadZoneCheck,
                     false => Effects::Unknown,
@@ -226,7 +219,6 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// Whether the object that `object` reads has a property called `name` in every run.
     pub(super) fn has_member_in_every_run(&self, object: ExprId, name: Atom) -> bool {
         let member = self.path_states.get(&object);
         let member = member.and_then(|&state| self.inputs.child(state, name, false));

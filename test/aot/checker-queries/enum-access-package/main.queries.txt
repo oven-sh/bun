@@ -1,6 +1,0 @@
-# A package whose `exports` give one file for types and another for code: only the file with the code is compiled, and no constant comes from the file with the types.
-output/index.js:0 role `` = Inferred
-main.ts:3 type `Level.Info` = Level.Info
-
-absent: source/index.ts:0 role `` = Checked
-absent: main.ts:3 enum `Level.Info` = 1

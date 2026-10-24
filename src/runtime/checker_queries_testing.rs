@@ -66,8 +66,8 @@ fn write_diagnostic(reported: &BuildDiagnostic, files: &Files<'_>, root: &[u8], 
         }
         None => out.extend_from_slice(b"-:0"),
     }
-    let (class, effect) = (diagnostic.class.name(), reported.effect.name());
-    let answer = format!(" diagnostic TS{} = {class} {effect}\n", diagnostic.code);
+    let (class, effect) = (diagnostic.class, reported.effect);
+    let answer = format!(" diagnostic TS{} = {class:?} {effect:?}\n", diagnostic.code);
     out.extend_from_slice(answer.as_bytes());
 }
 

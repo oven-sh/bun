@@ -14,7 +14,7 @@ fn is_node_module(specifier: Atom) -> bool {
     specifier == known::module || specifier == known::node_module
 }
 
-fn settled_symbol(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<SymbolId> {
+pub(crate) fn settled_symbol(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<SymbolId> {
     let Some(ExprKind::Ident(_)) = expr_kind(hir, e) else {
         return None;
     };
@@ -30,14 +30,13 @@ fn settled_symbol(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<Symbol
     }
 }
 
-// What the import that declares `symbol` takes from `node:module`: `None` is the module's object.
-fn import_from_node_module(
+pub(crate) fn find_imported_export(
     hir: &File<'_>,
     bound: &Bound<'_>,
     symbol: SymbolId,
-) -> Option<Option<Atom>> {
-    let declarations = bound.symbol(symbol).decls.iter();
-    let mut imports = declarations.filter_map(|&declaration| match declaration {
+) -> Option<(Atom, Option<Atom>)> {
+    let mut declarations = bound.symbol(symbol).decls.iter();
+    declarations.find_map(|&declaration| match declaration {
         Decl::ImportDefault(import) | Decl::ImportNamespace(import) => {
             (!hir[import].type_only).then_some((hir[import].spec, None))
         }
@@ -52,8 +51,15 @@ fn import_from_node_module(
             (!import.flags.contains(Flags::TYPE_ONLY)).then_some((import.target.spec(), None))
         }
         _ => None,
-    });
-    let (specifier, export) = imports.next()?;
+    })
+}
+
+fn import_from_node_module(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    symbol: SymbolId,
+) -> Option<Option<Atom>> {
+    let (specifier, export) = find_imported_export(hir, bound, symbol)?;
     is_node_module(specifier).then_some(export)
 }
 
@@ -189,8 +195,6 @@ fn live_branch(hir: &File<'_>, decisions: &Decisions<'_>, e: ExprId) -> Option<E
     }
 }
 
-// The expression whose value `e` evaluates to: the live branch of a folded `?:`, or what an IIFE returns.
-// esbuild writes `var __require = (x => typeof require !== "undefined" ? require : ..)(function (x) { .. })`.
 pub fn find_result_expression(
     hir: &File<'_>,
     decisions: &Decisions<'_>,
@@ -199,7 +203,6 @@ pub fn find_result_expression(
     live_branch(hir, decisions, e).or_else(|| iife_return_value(hir, e))
 }
 
-// The parameter that `e` names, where nothing stores to it: its function, and its place among the parameters.
 fn find_settled_parameter(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<(FnId, usize)> {
     let Some(ExprKind::Ident(_)) = expr_kind(hir, e) else {
         return None;
@@ -232,7 +235,6 @@ fn argument_at(hir: &File<'_>, arguments: IdList<ExprId>, index: usize) -> Optio
     }
 }
 
-// The call in which a function expression stands, as what is called or as an argument.
 fn find_call_around(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<(ExprId, Call)> {
     let FnOwner::Expr(expression) = bound.fns[function.idx()].owner else {
         return None;
@@ -246,8 +248,6 @@ fn find_call_around(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option
     }
 }
 
-// `(function (load) { .. })(require)`, and what TypeScript writes for "module": "umd": `(function (factory) { .. factory(require, exports) .. })(function (require, exports) { .. })`.
-// Another call may pass something else, so a call of the parameter tests what it holds.
 fn is_given_require_of_file(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -296,7 +296,6 @@ fn is_given_require_of_file(
     })
 }
 
-// The `require` of the file, or `createRequire(import.meta.url)`, which resolves what it is given as that one does: written on the spot, or held by a binding that nothing stores to, which may start as another such binding. The `require` of the file also where a parameter gets it.
 pub fn find_own_require(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -330,84 +329,51 @@ fn follow_to_own_require(
             e = hir.skip_type_assertions(result);
             continue;
         }
-        let Some(symbol) = settled_symbol(hir, bound, e) else {
+        let Some(source) = settled_initializer(hir, bound, e) else {
             if is_made_for_own_file(hir, bound, e) {
                 return Some(OwnRequire::Made);
             }
             return is_parameter_with_require_of_file(e).then_some(OwnRequire::OfFile);
         };
-        match bound.binding_initializer(hir, symbol) {
-            BindingInitializer::Expression(source) => e = hir.skip_type_assertions(source),
-            _ => return is_parameter_with_require_of_file(e).then_some(OwnRequire::OfFile),
-        }
+        e = source;
     }
     None
 }
 
-// What `e` stands for: a binding that nothing stores to stands for what it starts as, which may be another such binding.
+fn settled_initializer(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<ExprId> {
+    match bound.binding_initializer(hir, settled_symbol(hir, bound, e)?) {
+        BindingInitializer::Expression(source) => Some(hir.skip_type_assertions(source)),
+        _ => None,
+    }
+}
+
+fn settled_chain(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> impl Iterator<Item = ExprId> {
+    let first = hir.skip_type_assertions(e);
+    let chain = std::iter::successors(Some(first), move |&e| settled_initializer(hir, bound, e));
+    chain.take(LONGEST_CHAIN_OF_BINDINGS + 1)
+}
+
 pub(super) fn follow_settled_bindings(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> ExprId {
-    let mut e = hir.skip_type_assertions(e);
-    for _ in 0..LONGEST_CHAIN_OF_BINDINGS {
-        let Some(symbol) = settled_symbol(hir, bound, e) else {
-            break;
-        };
-        match bound.binding_initializer(hir, symbol) {
-            BindingInitializer::Expression(source) => e = hir.skip_type_assertions(source),
-            _ => break,
-        }
-    }
-    e
+    settled_chain(hir, bound, e).last().unwrap_or(e)
 }
 
-// `import.meta.require` held by a binding that nothing stores to, which may start as another such binding: `var __require = import.meta.require;` stands at the top of what `bun build --target=bun` writes.
 pub fn holds_import_meta_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
-    let mut e = hir.skip_type_assertions(e);
-    for _ in 0..LONGEST_CHAIN_OF_BINDINGS {
-        let Some(symbol) = settled_symbol(hir, bound, e) else {
-            return false;
-        };
-        match bound.binding_initializer(hir, symbol) {
-            BindingInitializer::Expression(source) => e = hir.skip_type_assertions(source),
-            _ => return false,
-        }
-        if is_import_meta_require(hir, e) {
-            return true;
-        }
-    }
-    false
+    let mut held = settled_chain(hir, bound, e).skip(1);
+    held.any(|e| is_import_meta_require(hir, e))
 }
 
-// What `createRequire` makes, for whichever file: written on the spot, or held by a binding that nothing stores to.
 pub fn is_made_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
-    let mut e = hir.skip_type_assertions(e);
-    for _ in 0..LONGEST_CHAIN_OF_BINDINGS {
-        let Some(symbol) = settled_symbol(hir, bound, e) else {
-            return matches!(expr_kind(hir, e), Some(ExprKind::Call(call)) if is_create_require(hir, bound, hir[call].callee));
-        };
-        match bound.binding_initializer(hir, symbol) {
-            BindingInitializer::Expression(source) => e = hir.skip_type_assertions(source),
-            _ => return false,
-        }
-    }
-    false
+    let chain = settled_chain(hir, bound, e).take(LONGEST_CHAIN_OF_BINDINGS);
+    let written = chain.last().and_then(|e| expr_kind(hir, e));
+    matches!(written, Some(ExprKind::Call(call)) if is_create_require(hir, bound, hir[call].callee))
 }
 
-// Whether one of the bindings that lead from `e` to what is written on the spot is a `var`, which holds `undefined` above its statement.
 pub fn may_still_be_undefined(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
-    let mut e = hir.skip_type_assertions(e);
-    for _ in 0..LONGEST_CHAIN_OF_BINDINGS {
-        let Some(symbol) = settled_symbol(hir, bound, e) else {
-            return false;
-        };
-        if bound.initial_state(symbol) == InitialState::Undefined {
-            return true;
-        }
-        let BindingInitializer::Expression(source) = bound.binding_initializer(hir, symbol) else {
-            return false;
-        };
-        e = hir.skip_type_assertions(source);
-    }
-    false
+    let mut chain = settled_chain(hir, bound, e).take(LONGEST_CHAIN_OF_BINDINGS);
+    chain.any(|e| {
+        let symbol = settled_symbol(hir, bound, e);
+        symbol.is_some_and(|symbol| bound.initial_state(symbol) == InitialState::Undefined)
+    })
 }
 
 pub fn is_require_made_for_own_file(hir: &File<'_>, bound: &Bound<'_>, callee: ExprId) -> bool {

@@ -417,6 +417,53 @@ fn directories_below_configuration_file_share_options() {
 }
 
 #[test]
+fn only_projects_with_configuration_file_name_types() {
+    let host = host_of(&[]);
+    let types = Some(vec![b"listed".to_vec()]);
+    let build = TestBuild {
+        options: Options {
+            config_path: b"/p/tsconfig.json".to_vec(),
+            types: types.clone(),
+            ..Options::default()
+        },
+        ..TestBuild::new(&host, &[])
+    };
+    let orders: [[&[u8]; 3]; 2] = [
+        [
+            b"/p/b/tsconfig.json",
+            b"/p/a/tsconfig.json",
+            b"/p/b/tsconfig.json",
+        ],
+        [
+            b"/p/a/tsconfig.json",
+            b"/p/b/tsconfig.json",
+            b"/p/a/tsconfig.json",
+        ],
+    ];
+    for order in orders {
+        with_compile_context(&build, |context| {
+            for config_path in order {
+                let package = [&b"/p/node_modules"[..], &config_path[2..4], b"/index.js"].concat();
+                let lenient = context.projects.governing_code(context, &package);
+                assert_eq!(lenient.map(|it| &it.types), Some(&types));
+                context.projects.note_types(context.session.keep(Options {
+                    config_path: config_path.to_vec(),
+                    types: types.clone(),
+                    ..Options::default()
+                }));
+            }
+            let naming_types = context.projects.naming_types();
+            let config_paths: Vec<&[u8]> =
+                naming_types.iter().map(|it| &it.config_path[..]).collect();
+            assert_eq!(
+                config_paths,
+                [&b"/p/a/tsconfig.json"[..], b"/p/b/tsconfig.json"]
+            );
+        });
+    }
+}
+
+#[test]
 fn installed_package_directory_is_of_innermost_package() {
     let cases: [(&[u8], &[u8]); 5] = [
         (b"/p/node_modules/dep", b"/p/node_modules/dep"),

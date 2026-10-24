@@ -1,4 +1,5 @@
 use bstr::BStr;
+use bun_ast::op::Level;
 use bun_sema::atom::Interner;
 use bun_sema::check::Checker;
 use bun_sema::check::services::{
@@ -17,9 +18,9 @@ use bun_sema::types::TypeId;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 
-pub struct Source<'a> {
-    pub path: &'a [u8],
-    pub text: &'a [u8],
+struct Source<'a> {
+    path: &'a [u8],
+    text: &'a [u8],
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -46,80 +47,34 @@ struct Slot {
     end: u32,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-enum Level {
-    Lowest,
-    Comma,
-    Yield,
-    Assign,
-    Conditional,
-    Nullish,
-    LogicalOr,
-    LogicalAnd,
-    BitwiseOr,
-    BitwiseXor,
-    BitwiseAnd,
-    Equals,
-    Compare,
-    Shift,
-    Add,
-    Multiply,
-    Exponent,
-    Prefix,
-    Postfix,
-    New,
-    Call,
-    Member,
+impl Slot {
+    fn new(place: Place, key: u32, (start, end): (u32, u32)) -> Slot {
+        Slot {
+            place,
+            key,
+            start,
+            end,
+        }
+    }
 }
 
-impl Level {
-    fn next(self) -> Level {
-        use Level::*;
-        const ALL: [Level; 22] = [
-            Lowest,
-            Comma,
-            Yield,
-            Assign,
-            Conditional,
-            Nullish,
-            LogicalOr,
-            LogicalAnd,
-            BitwiseOr,
-            BitwiseXor,
-            BitwiseAnd,
-            Equals,
-            Compare,
-            Shift,
-            Add,
-            Multiply,
-            Exponent,
-            Prefix,
-            Postfix,
-            New,
-            Call,
-            Member,
-        ];
-        ALL[(self as usize + 1).min(ALL.len() - 1)]
-    }
-
-    fn of_operator(op: BinOp) -> Level {
-        match op {
-            BinOp::Comma => Level::Comma,
-            BinOp::Nullish => Level::Nullish,
-            BinOp::Or => Level::LogicalOr,
-            BinOp::And => Level::LogicalAnd,
-            BinOp::BitOr => Level::BitwiseOr,
-            BinOp::BitXor => Level::BitwiseXor,
-            BinOp::BitAnd => Level::BitwiseAnd,
-            BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => Level::Equals,
-            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::In | BinOp::Instanceof => {
-                Level::Compare
-            }
-            BinOp::Shl | BinOp::Shr | BinOp::UShr => Level::Shift,
-            BinOp::Add | BinOp::Sub => Level::Add,
-            BinOp::Mul | BinOp::Div | BinOp::Rem => Level::Multiply,
-            BinOp::Pow => Level::Exponent,
+fn level_of_operator(op: BinOp) -> Level {
+    match op {
+        BinOp::Comma => Level::Comma,
+        BinOp::Nullish => Level::NullishCoalescing,
+        BinOp::Or => Level::LogicalOr,
+        BinOp::And => Level::LogicalAnd,
+        BinOp::BitOr => Level::BitwiseOr,
+        BinOp::BitXor => Level::BitwiseXor,
+        BinOp::BitAnd => Level::BitwiseAnd,
+        BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => Level::Equals,
+        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::In | BinOp::Instanceof => {
+            Level::Compare
         }
+        BinOp::Shl | BinOp::Shr | BinOp::UShr => Level::Shift,
+        BinOp::Add | BinOp::Sub => Level::Add,
+        BinOp::Mul | BinOp::Div | BinOp::Rem => Level::Multiply,
+        BinOp::Pow => Level::Exponentiation,
     }
 }
 
@@ -235,16 +190,6 @@ impl<'a, 's> Syntax<'a, 's> {
         skip_trivia_back(self.text, at as usize) as u32
     }
 
-    fn documentation_before(&self, at: u32) -> Option<&'a [u8]> {
-        let trivia: &'a [u8] = &self.text[self.before_trivia(at) as usize..at as usize];
-        let start = bun_core::strings::last_index_of(trivia, b"/**")?;
-        let end = start + 3 + bun_core::strings::index_of(&trivia[start + 3..], b"*/")? + 2;
-        trivia[end..]
-            .iter()
-            .all(u8::is_ascii_whitespace)
-            .then_some(&trivia[start..end])
-    }
-
     fn byte(&self, at: u32) -> u8 {
         self.text.get(at as usize).copied().unwrap_or(0)
     }
@@ -254,10 +199,7 @@ impl<'a, 's> Syntax<'a, 's> {
     }
 
     fn parentheses(&self, expr: ExprId) -> &'a [(ExprId, u32, u32)] {
-        let all: &'a [(ExprId, u32, u32)] = &self.file.parens;
-        let from = all.partition_point(|pair| pair.0 < expr);
-        let until = all.partition_point(|pair| pair.0 <= expr);
-        &all[from..until]
+        parentheses_around(self.file, expr)
     }
 
     fn outer_span(&self, expr: ExprId) -> (u32, u32) {
@@ -322,16 +264,7 @@ impl<'a, 's> Syntax<'a, 's> {
     }
 
     fn has_javascript(function: &Func) -> bool {
-        matches!(
-            function.kind,
-            FnKind::Decl
-                | FnKind::Expr
-                | FnKind::Arrow
-                | FnKind::Method
-                | FnKind::Getter
-                | FnKind::Setter
-                | FnKind::Constructor
-        ) && !matches!(function.body, FnBody::None)
+        function.kind != FnKind::StaticBlock && has_body(function)
     }
 
     fn open_parenthesis(&self, function: &Func) -> Option<u32> {
@@ -371,12 +304,7 @@ impl<'a, 's> Syntax<'a, 's> {
             }
             None => start,
         };
-        Some(Slot {
-            place: Place::Binding,
-            key,
-            start,
-            end,
-        })
+        Some(Slot::new(Place::Binding, key, (start, end)))
     }
 
     fn function_slots(&self, id: FnId, slots: &mut Vec<Slot>) {
@@ -391,12 +319,7 @@ impl<'a, 's> Syntax<'a, 's> {
         let (start, end) = self
             .type_parameters_span(function.type_params)
             .unwrap_or((open, open));
-        slots.push(Slot {
-            place: Place::TypeParameters,
-            key,
-            start,
-            end,
-        });
+        slots.push(Slot::new(Place::TypeParameters, key, (start, end)));
         let (start, end) = match function.this_param.some() {
             Some(this) => {
                 let this = &self.file[this];
@@ -413,12 +336,7 @@ impl<'a, 's> Syntax<'a, 's> {
             }
             None => (open + 1, open + 1),
         };
-        slots.push(Slot {
-            place: Place::ThisParameter,
-            key,
-            start,
-            end,
-        });
+        slots.push(Slot::new(Place::ThisParameter, key, (start, end)));
         let (start, end) = match function.ret.some() {
             Some(annotation) => {
                 let (start, end) = self.type_span(annotation);
@@ -438,12 +356,7 @@ impl<'a, 's> Syntax<'a, 's> {
             }
         };
         if start > 0 && self.byte(start - 1) == b')' {
-            slots.push(Slot {
-                place: Place::ReturnType,
-                key,
-                start,
-                end,
-            });
+            slots.push(Slot::new(Place::ReturnType, key, (start, end)));
         }
     }
 
@@ -461,7 +374,6 @@ impl<'a, 's> Syntax<'a, 's> {
         })
     }
 
-    /// The position of the `{` of its body.
     fn class_body_pos(&self, class: &Class) -> u32 {
         let mut at = if class.name.is_some() {
             self.token_end(class.name_pos)
@@ -503,12 +415,7 @@ impl<'a, 's> Syntax<'a, 's> {
             Some(at) => (at, self.after_trivia(self.token_end(at))),
             None => (keyword, keyword),
         };
-        slots.push(Slot {
-            place: Place::ClassKeyword,
-            key,
-            start,
-            end,
-        });
+        slots.push(Slot::new(Place::ClassKeyword, key, (start, end)));
         let mut at = if class.name.is_some() {
             self.token_end(class.name_pos)
         } else {
@@ -517,24 +424,14 @@ impl<'a, 's> Syntax<'a, 's> {
         let (start, end) = self
             .type_parameters_span(class.type_params)
             .unwrap_or((at, at));
-        slots.push(Slot {
-            place: Place::ClassTypeParameters,
-            key,
-            start,
-            end,
-        });
+        slots.push(Slot::new(Place::ClassTypeParameters, key, (start, end)));
         at = end;
         if class.extends.is_some() {
             at = self.outer_span(class.extends).1;
             let (start, end) = self
                 .type_arguments_span(class.extends_args)
                 .unwrap_or((at, at));
-            slots.push(Slot {
-                place: Place::ExtendsTypeArguments,
-                key,
-                start,
-                end,
-            });
+            slots.push(Slot::new(Place::ExtendsTypeArguments, key, (start, end)));
             at = end;
         }
         let end = self
@@ -542,12 +439,7 @@ impl<'a, 's> Syntax<'a, 's> {
             .ids(class.implements)
             .next_back()
             .map_or(at, |last| self.type_span(last).1);
-        slots.push(Slot {
-            place: Place::Implements,
-            key,
-            start: at,
-            end,
-        });
+        slots.push(Slot::new(Place::Implements, key, (at, end)));
     }
 
     fn is_type_only_member(&self, member: &Member) -> bool {
@@ -628,24 +520,14 @@ impl<'a, 's> Syntax<'a, 's> {
         };
         let (start, end) =
             span_of(Flags::PUBLIC | Flags::PRIVATE | Flags::PROTECTED).unwrap_or((first, first));
-        slots.push(Slot {
-            place: Place::MemberStart,
-            key,
-            start,
-            end,
-        });
+        slots.push(Slot::new(Place::MemberStart, key, (start, end)));
         let behind_static = match self.file.find_modifier(member.modifiers, Flags::STATIC) {
             Some(at) => self.after_trivia(self.token_end(at)),
             None => end,
         };
         let (start, end) =
             span_of(Flags::OVERRIDE | Flags::READONLY).unwrap_or((behind_static, behind_static));
-        slots.push(Slot {
-            place: Place::MemberName,
-            key,
-            start,
-            end,
-        });
+        slots.push(Slot::new(Place::MemberName, key, (start, end)));
         if member.kind == MemberKind::Property {
             let start = self.member_name_end(member);
             let mark = self.after_trivia(start);
@@ -658,12 +540,7 @@ impl<'a, 's> Syntax<'a, 's> {
                 }
                 None => start,
             };
-            slots.push(Slot {
-                place: Place::MemberType,
-                key,
-                start,
-                end,
-            });
+            slots.push(Slot::new(Place::MemberType, key, (start, end)));
         }
     }
 
@@ -682,12 +559,7 @@ impl<'a, 's> Syntax<'a, 's> {
         let (start, end) = self
             .type_arguments_span(self.file.list_at(call.type_args))
             .unwrap_or((at, at));
-        Some(Slot {
-            place: Place::TypeArguments,
-            key,
-            start,
-            end,
-        })
+        Some(Slot::new(Place::TypeArguments, key, (start, end)))
     }
 
     fn slots(&self) -> Vec<Slot> {
@@ -865,17 +737,6 @@ impl<'a, 's> Syntax<'a, 's> {
         (start, end + blanks as u32)
     }
 
-    fn operand_of_cast(&self, expr: ExprId) -> Option<ExprId> {
-        match self.file[expr].kind {
-            ExprKind::As { expr, .. }
-            | ExprKind::Satisfies { expr, .. }
-            | ExprKind::AsConst(expr)
-            | ExprKind::NonNull(expr)
-            | ExprKind::Instantiation { expr, .. } => Some(expr),
-            _ => None,
-        }
-    }
-
     fn children(&self, expr: ExprId) -> Vec<ExprId> {
         let file = self.file;
         match file[expr].kind {
@@ -907,7 +768,7 @@ impl<'a, 's> Syntax<'a, 's> {
                 FnBody::Expr(body) => vec![body],
                 _ => Vec::new(),
             },
-            _ => self.operand_of_cast(expr).into_iter().collect(),
+            _ => file.type_assertion_operand(expr).into_iter().collect(),
         }
     }
 
@@ -928,7 +789,7 @@ impl<'a, 's> Syntax<'a, 's> {
         let count = self.file.exprs.len();
         let mut is_operand = vec![false; count];
         for index in 0..count {
-            if let Some(operand) = self.operand_of_cast(ExprId(index as u32)) {
+            if let Some(operand) = self.file.type_assertion_operand(ExprId(index as u32)) {
                 is_operand[operand.idx()] = true;
             }
         }
@@ -936,7 +797,7 @@ impl<'a, 's> Syntax<'a, 's> {
         for index in (0..count).filter(|&index| !is_operand[index]) {
             let outermost = ExprId(index as u32);
             let (mut casts, mut operand) = (Vec::new(), outermost);
-            while let Some(inner) = self.operand_of_cast(operand) {
+            while let Some(inner) = self.file.type_assertion_operand(operand) {
                 casts.push(operand);
                 operand = inner;
             }
@@ -954,7 +815,7 @@ impl<'a, 's> Syntax<'a, 's> {
 
     fn level(&self, expr: ExprId) -> Level {
         match self.file[expr].kind {
-            ExprKind::Binary { op, .. } => Level::of_operator(op),
+            ExprKind::Binary { op, .. } => level_of_operator(op),
             ExprKind::Assign { .. } => Level::Assign,
             ExprKind::Cond { .. } => Level::Conditional,
             ExprKind::Yield { .. } => Level::Yield,
@@ -1021,11 +882,11 @@ impl<'a, 's> Syntax<'a, 's> {
                     right,
                 } => {
                     set(left, Level::Postfix);
-                    set(right, Level::Exponent);
+                    set(right, Level::Exponentiation);
                 }
                 ExprKind::Binary { op, left, right } => {
-                    set(left, Level::of_operator(op));
-                    set(right, Level::of_operator(op).next());
+                    set(left, level_of_operator(op));
+                    set(right, level_of_operator(op).add_f(1));
                 }
                 ExprKind::Assign { target, value, .. } => {
                     set(target, Level::Postfix);
@@ -1033,7 +894,7 @@ impl<'a, 's> Syntax<'a, 's> {
                 }
                 ExprKind::Cond { test, branches } => {
                     let Branches { yes, no } = file.branches(branches);
-                    set(test, Level::Nullish);
+                    set(test, Level::NullishCoalescing);
                     set(yes, Level::Yield);
                     set(no, Level::Yield);
                 }
@@ -1115,7 +976,7 @@ impl<'a, 's> Syntax<'a, 's> {
     }
 
     fn needs_parentheses(&self, context: &Context, operand: ExprId, slot: ExprId) -> bool {
-        if self.level(operand) < context.required[slot.idx()] {
+        if self.level(operand).lt(context.required[slot.idx()]) {
             return true;
         }
         let kind = self.file[operand].kind;
@@ -1153,7 +1014,7 @@ impl<'a, 's> Syntax<'a, 's> {
             .some()
             .map(|parent| self.file[parent].kind);
         if chain_of(kind) != Chain::No
-            && context.required[slot.idx()] >= Level::Call
+            && context.required[slot.idx()].gte(Level::Call)
             && parent.is_some_and(|parent| chain_of(parent) == Chain::No)
         {
             return true;
@@ -1215,43 +1076,36 @@ impl<'a, 's> Syntax<'a, 's> {
         }
     }
 
-    fn why_not_erasable(&self, erased: &[(u32, u32)]) -> Option<String> {
+    fn is_javascript_without(&self, erased: &[(u32, u32)]) -> bool {
         let file = self.file;
-        let is_kept = |at: u32| !is_inside(erased, at);
         let statements = file
             .stmts
             .iter()
-            .filter_map(|statement| match statement.kind {
-                StmtKind::Enum(_) => Some(("an enum", statement.start)),
-                StmtKind::Module(_) => Some(("a namespace", statement.start)),
-                StmtKind::ImportEquals(_) => Some(("import =", statement.start)),
-                StmtKind::ExportAssign(_) => Some(("export =", statement.start)),
-                _ => None,
-            });
+            .filter(|statement| {
+                matches!(
+                    statement.kind,
+                    StmtKind::Enum(_)
+                        | StmtKind::Module(_)
+                        | StmtKind::ImportEquals(_)
+                        | StmtKind::ExportAssign(_)
+                )
+            })
+            .map(|statement| statement.start);
         let parameters = file
             .params
             .iter()
             .filter(|parameter| parameter.flags.contains(Flags::PARAMETER_PROPERTY))
-            .map(|parameter| ("a parameter property", parameter.pos));
-        let imports = file
-            .import_specs
-            .iter()
-            .filter(|specifier| specifier.type_only)
-            .map(|specifier| ("a type among the names of an import", specifier.start));
-        let exports = file
-            .export_specs
-            .iter()
-            .filter(|specifier| specifier.type_only)
-            .map(|specifier| ("a type among the names of an export", specifier.start));
-        let (what, at) = statements
+            .map(|parameter| parameter.pos);
+        let imports = file.import_specs.iter().map(|it| (it.type_only, it.start));
+        let exports = file.export_specs.iter().map(|it| (it.type_only, it.start));
+        let names = imports.chain(exports).filter(|it| it.0).map(|it| it.1);
+        statements
             .chain(parameters)
-            .chain(imports)
-            .chain(exports)
-            .find(|found| is_kept(found.1))?;
-        Some(format!("{what} at offset {at} cannot be erased"))
+            .chain(names)
+            .all(|at| is_inside(erased, at))
     }
 
-    fn erasable_ranges(&self) -> Result<Vec<(u32, u32)>, String> {
+    fn erasable_ranges(&self) -> Option<Vec<(u32, u32)>> {
         let file = self.file;
         let mut ranges: Vec<(u32, u32)> = self
             .slots()
@@ -1259,23 +1113,8 @@ impl<'a, 's> Syntax<'a, 's> {
             .filter(|slot| slot.end > slot.start)
             .map(|slot| (slot.start, slot.end))
             .collect();
-        for index in
-            (0..file.stmts.len()).filter(|&index| self.is_type_only_statement(StmtId(index as u32)))
-        {
-            ranges.push(
-                self.with_trailing_whitespace(file.stmts[index].start, file.stmts[index].loc.end),
-            );
-        }
-        for class in file.classes.iter() {
-            for member in class
-                .members
-                .iter()
-                .map(|member| &file[member])
-                .filter(|member| self.is_type_only_member(member))
-            {
-                ranges.push(self.with_trailing_whitespace(member.start, member.loc.end));
-            }
-        }
+        let declarations = self.type_only_declarations().into_iter();
+        ranges.extend(declarations.map(|(start, end)| self.with_trailing_whitespace(start, end)));
         for directive in file.comment_directives.iter() {
             ranges.push(self.with_trailing_whitespace(directive.start, directive.end));
         }
@@ -1285,10 +1124,7 @@ impl<'a, 's> Syntax<'a, 's> {
             for &cast in &chain.casts {
                 let start = self.outer_span(inner).1;
                 if self.byte(file[cast].pos) == b'<' && file[cast].pos < self.outer_span(inner).0 {
-                    return Err(format!(
-                        "the type assertion at offset {} is written in front of its operand",
-                        file[cast].pos
-                    ));
+                    return None;
                 }
                 ranges.push((start, file[cast].end));
                 for &(_, open, close) in self.parentheses(cast) {
@@ -1305,12 +1141,7 @@ impl<'a, 's> Syntax<'a, 's> {
                         ranges.push((close - 1, *close));
                     }
                 }
-                _ => {
-                    return Err(format!(
-                        "the operand of the cast at offset {} is in more than one pair of parentheses",
-                        file[chain.operand].pos
-                    ));
-                }
+                _ => return None,
             }
         }
         for property in file.props.iter().filter(|property| {
@@ -1319,8 +1150,8 @@ impl<'a, 's> Syntax<'a, 's> {
                 && matches!(property.key, PropKey::Name(_))
         }) {
             let mut operand = property.value;
-            while let Some(inner) = self
-                .operand_of_cast(operand)
+            while let Some(inner) = file
+                .type_assertion_operand(operand)
                 .filter(|_| self.parentheses(operand).is_empty())
             {
                 operand = inner;
@@ -1343,41 +1174,25 @@ impl<'a, 's> Syntax<'a, 's> {
         for range in ranges {
             match outermost.last() {
                 Some(last) if range.1 <= last.1 => {}
-                Some(last) if range.0 < last.1 => {
-                    return Err(format!(
-                        "the types at offsets {} and {} overlap",
-                        last.0, range.0
-                    ));
-                }
+                Some(last) if range.0 < last.1 => return None,
                 _ => outermost.push(range),
             }
         }
-        Ok(outermost)
+        Some(outermost)
     }
 }
 
-pub struct Erased {
-    pub javascript: Vec<u8>,
-    pub has_default_export: bool,
-    pub has_untyped_exports: bool,
-    pub relative_imports: Vec<Vec<u8>>,
-}
-
-pub fn erase_types(path: &[u8], typescript: &[u8]) -> Result<Vec<u8>, String> {
-    erase(path, typescript).map(|erased| erased.javascript)
-}
-
-pub fn erase(path: &[u8], typescript: &[u8]) -> Result<Erased, String> {
+fn erase_types(path: &[u8], typescript: &[u8]) -> Option<Vec<u8>> {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
-    let file = parse(&session, &atoms, path, typescript)?;
+    let file = parse(&session, &atoms, path, typescript).ok()?;
     let syntax = Syntax {
         file: &file,
         text: typescript,
     };
     let ranges = syntax.erasable_ranges()?;
-    if let Some(why) = syntax.why_not_erasable(&ranges) {
-        return Err(why);
+    if !syntax.is_javascript_without(&ranges) {
+        return None;
     }
     let mut javascript = Vec::with_capacity(typescript.len());
     let mut at = 0;
@@ -1386,32 +1201,7 @@ pub fn erase(path: &[u8], typescript: &[u8]) -> Result<Erased, String> {
         at = end as usize;
     }
     javascript.extend_from_slice(&typescript[at..]);
-    let specifiers = file
-        .stmts
-        .iter()
-        .filter_map(|statement| match statement.kind {
-            StmtKind::Import(import) if !file[import].type_only => Some(file[import].spec),
-            StmtKind::ExportNamed(export) if !file[export].type_only => Some(file[export].spec),
-            StmtKind::ExportStar {
-                spec,
-                type_only: false,
-                ..
-            } => Some(spec),
-            _ => None,
-        });
-    let mut relative_imports: Vec<Vec<u8>> = specifiers
-        .filter(|specifier| specifier.is_some())
-        .map(|specifier| atoms.bytes(specifier).to_vec())
-        .filter(|specifier| specifier.starts_with(b"./") || specifier.starts_with(b"../"))
-        .collect();
-    relative_imports.sort_unstable();
-    relative_imports.dedup();
-    Ok(Erased {
-        javascript,
-        has_default_export: syntax.has_default_export(),
-        has_untyped_exports: syntax.has_untyped_exports(),
-        relative_imports,
-    })
+    Some(javascript)
 }
 
 struct Mappings {
@@ -1523,7 +1313,6 @@ impl Mappings {
 enum Order {
     Line,
     Signature,
-    Documentation,
     Directive,
     MemberStart,
     MemberName,
@@ -1571,7 +1360,6 @@ impl Insertions {
     fn apply(mut self, javascript: &[u8]) -> Vec<u8> {
         self.list.sort_by_key(|a| (a.0, a.1, a.2));
         let mut text = Vec::with_capacity(javascript.len() * 2);
-        // Minified: not `staticreadonly [key]` for `static[key]`, not `a!===b` for `a===b`.
         let append = |text: &mut Vec<u8>, bytes: &[u8]| {
             let is_word_byte =
                 |byte: &u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..);
@@ -1593,18 +1381,6 @@ impl Insertions {
     }
 }
 
-fn trimmed(text: &[u8]) -> &[u8] {
-    let start = text
-        .iter()
-        .position(|byte| !byte.is_ascii_whitespace())
-        .unwrap_or(text.len());
-    let end = text
-        .iter()
-        .rposition(|byte| !byte.is_ascii_whitespace())
-        .map_or(start, |last| last + 1);
-    &text[start..end]
-}
-
 fn outermost_only(mut slots: Vec<Slot>, regions: &[(u32, u32)]) -> Vec<Slot> {
     slots.retain(|slot| slot.end > slot.start);
     slots.sort_by_key(|slot| (slot.start, std::cmp::Reverse(slot.end)));
@@ -1622,21 +1398,18 @@ fn outermost_only(mut slots: Vec<Slot>, regions: &[(u32, u32)]) -> Vec<Slot> {
     retained
 }
 
-pub struct TypedText {
-    pub text: Vec<u8>,
-    pub dropped_casts: usize,
-    pub has_default_export: bool,
-    pub untyped_exports: Vec<Vec<u8>>,
-    pub modules_of_untyped_values: Vec<Vec<u8>>,
-    pub source: Option<Vec<u8>>,
+struct TypedText {
+    text: Vec<u8>,
+    dropped_casts: usize,
+    has_default_export: bool,
+    modules_of_untyped_values: Vec<Vec<u8>>,
+    source: Option<Vec<u8>>,
 }
 
-pub struct Bundle<'a> {
-    pub modules: &'a [ModuleTypes],
-    pub emitted_declarations: &'a [ModuleTypes],
-    pub entry_point: Option<&'a [u8]>,
-    pub is_for_declarations: bool,
-    pub keeps_modules_apart: bool,
+struct Bundle<'a> {
+    modules: &'a [ModuleTypes],
+    emitted_declarations: &'a [ModuleTypes],
+    entry_point: Option<&'a [u8]>,
 }
 
 struct Written<'a, 's> {
@@ -1667,7 +1440,7 @@ impl Written<'_, '_> {
     }
 
     fn trimmed_text(&self, start: u32, end: u32) -> Vec<u8> {
-        trimmed(&self.text(start, end)).to_vec()
+        self.text(start, end).trim_ascii().to_vec()
     }
 
     fn types_of_namespace(&self, id: StmtId, dropped_modifiers: Flags) -> Option<Vec<u8>> {
@@ -1804,40 +1577,6 @@ impl<'a, 's> Syntax<'a, 's> {
                 .modifiers_of_stmts
                 .iter()
                 .any(|of| self.file.modifiers_to_flags(of.1).contains(Flags::DEFAULT))
-    }
-
-    fn has_untyped_exports(&self) -> bool {
-        let file = self.file;
-        let mut untyped: FxHashSet<&[u8]> = FxHashSet::default();
-        for id in file.ids(file.body) {
-            let StmtKind::Var(declarations) = file[id].kind else {
-                continue;
-            };
-            let is_any = |declaration: &&VarDecl| {
-                file.types
-                    .get(declaration.ty.idx())
-                    .is_some_and(|node| matches!(node.kind, TypeNodeKind::Keyword(Keyword::Any)))
-            };
-            let names = declarations
-                .iter()
-                .map(|declaration| &file[declaration])
-                .filter(is_any)
-                .filter_map(|declaration| self.first_identifier(declaration.pat));
-            let names: Vec<&[u8]> = names.map(|at| self.word(at)).collect();
-            if !names.is_empty()
-                && file
-                    .modifiers_to_flags(file.stmt_modifiers(id))
-                    .contains(Flags::EXPORT)
-            {
-                return true;
-            }
-            untyped.extend(names);
-        }
-        file.export_specs.iter().any(|specifier| {
-            !specifier.type_only
-                && file[specifier.export].spec.is_none()
-                && untyped.contains(self.word(specifier.local_pos))
-        })
     }
 
     fn identifiers(&self, pattern: PatId, found: &mut Vec<u32>) {
@@ -1978,25 +1717,6 @@ impl<'a, 's> Syntax<'a, 's> {
             .collect()
     }
 
-    fn javascript_extension_edit(&self, literal: u32) -> Option<(u32, u32, Vec<u8>)> {
-        const EXTENSIONS: [(&[u8], &[u8], &[u8]); 4] = [
-            (b".ts", b".d.ts", b".js"),
-            (b".tsx", b".d.tsx", b".js"),
-            (b".mts", b".d.mts", b".mjs"),
-            (b".cts", b".d.cts", b".cjs"),
-        ];
-        let end = self.token_end(literal).checked_sub(1)?;
-        let specifier = self.text.get(literal as usize + 1..end as usize)?;
-        if !specifier.starts_with(b"./") && !specifier.starts_with(b"../") {
-            return None;
-        }
-        let (typescript, _, javascript) =
-            EXTENSIONS.iter().find(|(typescript, declarations, _)| {
-                specifier.ends_with(typescript) && !specifier.ends_with(declarations)
-            })?;
-        Some((end - typescript.len() as u32, end, javascript.to_vec()))
-    }
-
     fn anchored_expressions(&self) -> impl Iterator<Item = (u32, ExprId)> + '_ {
         let file = self.file;
         let initializers = file
@@ -2020,44 +1740,80 @@ impl<'a, 's> Syntax<'a, 's> {
         initializers.chain(statements)
     }
 
-    fn nested_names(&self) -> FxHashSet<&'a [u8]> {
+    fn value_names(&self) -> impl Iterator<Item = u32> + '_ {
         let file = self.file;
-        let top_level: FxHashSet<StmtId> = file.ids(file.body).collect();
-        let mut at_top_level = Vec::new();
-        for &id in &top_level {
-            match file[id].kind {
-                StmtKind::Var(declarations) => {
-                    declarations.iter().for_each(|declaration: VarDeclId| {
-                        self.identifiers(file[declaration].pat, &mut at_top_level)
-                    })
-                }
-                StmtKind::Fn(function) => at_top_level.push(file[function].name_pos),
-                StmtKind::Class(class) => at_top_level.push(file[class].name_pos),
-                _ => {}
-            }
-        }
-        let at_top_level: FxHashSet<u32> = at_top_level.into_iter().collect();
-        let is_nested = |statement: &StmtId| !top_level.contains(statement);
-        let values = (file
+        let variables = file
             .pats
             .iter()
             .filter(|pattern| matches!(pattern.kind, PatKind::Ident(_)))
-            .map(|pattern| pattern.pos))
-        .chain(
-            file.fns
-                .iter()
-                .filter(|function| {
-                    function.name.is_some() && matches!(function.kind, FnKind::Decl | FnKind::Expr)
-                })
-                .map(|function| function.name_pos),
-        )
-        .chain(
-            file.classes
-                .iter()
-                .filter(|class| class.name.is_some())
-                .map(|class| class.name_pos),
-        )
-        .filter(|at| !at_top_level.contains(at));
+            .map(|pattern| pattern.pos);
+        let functions = file
+            .fns
+            .iter()
+            .filter(|function| {
+                function.name.is_some() && matches!(function.kind, FnKind::Decl | FnKind::Expr)
+            })
+            .map(|function| function.name_pos);
+        let classes = file
+            .classes
+            .iter()
+            .filter(|class| class.name.is_some())
+            .map(|class| class.name_pos);
+        variables.chain(functions).chain(classes)
+    }
+
+    fn used_names(&self) -> impl Iterator<Item = u32> + '_ {
+        let expressions = self.file.exprs.iter();
+        expressions
+            .filter(|expr| matches!(expr.kind, ExprKind::Ident(_)))
+            .map(|expr| expr.pos)
+    }
+
+    fn imported_names(&self) -> impl Iterator<Item = u32> + '_ {
+        let file = self.file;
+        let named = file.import_specs.iter().map(|specifier| specifier.pos);
+        let defaults = file
+            .imports
+            .iter()
+            .filter(|import| import.default.is_some())
+            .map(|import| import.default_pos);
+        let namespaces = file
+            .imports
+            .iter()
+            .filter(|import| import.namespace.is_some())
+            .map(|import| import.namespace_pos);
+        named.chain(defaults).chain(namespaces)
+    }
+
+    fn exported_names(&self) -> FxHashSet<&'a [u8]> {
+        let specifiers = self.file.export_specs.iter();
+        specifiers.map(|it| self.word(it.pos)).collect()
+    }
+
+    fn top_level_value_names(&self) -> Vec<u32> {
+        let file = self.file;
+        let mut names = Vec::new();
+        for id in file.ids(file.body) {
+            match file[id].kind {
+                StmtKind::Var(declarations) => {
+                    declarations.iter().for_each(|declaration: VarDeclId| {
+                        self.identifiers(file[declaration].pat, &mut names)
+                    })
+                }
+                StmtKind::Fn(function) => names.push(file[function].name_pos),
+                StmtKind::Class(class) => names.push(file[class].name_pos),
+                _ => {}
+            }
+        }
+        names
+    }
+
+    fn nested_names(&self) -> FxHashSet<&'a [u8]> {
+        let file = self.file;
+        let top_level: FxHashSet<StmtId> = file.ids(file.body).collect();
+        let at_top_level: FxHashSet<u32> = self.top_level_value_names().into_iter().collect();
+        let is_nested = |statement: &StmtId| !top_level.contains(statement);
+        let values = self.value_names().filter(|at| !at_top_level.contains(at));
         let types = (file.type_params.iter().map(|parameter| parameter.pos))
             .chain(
                 file.interfaces
@@ -2128,10 +1884,8 @@ impl<'a, 's> Syntax<'a, 's> {
                         entry.import = Some((id, imported_as));
                     }
                 }
-                StmtKind::ExportDefault(mut value) => {
-                    while let Some(inner) = self.operand_of_cast(value) {
-                        value = inner;
-                    }
+                StmtKind::ExportDefault(value) => {
+                    let value = file.skip_type_assertions(value);
                     let entry = declared.entry(b"default").or_default();
                     entry
                         .bindings
@@ -2176,65 +1930,14 @@ struct NamespaceObject<'a> {
     members: Vec<(&'a [u8], &'a [u8])>,
 }
 
-const RESERVED_WORDS: [&[u8]; 57] = [
-    b"any",
-    b"bigint",
-    b"boolean",
-    b"break",
-    b"case",
-    b"catch",
-    b"class",
-    b"const",
-    b"continue",
-    b"debugger",
-    b"default",
-    b"delete",
-    b"do",
-    b"else",
-    b"enum",
-    b"export",
-    b"extends",
-    b"false",
-    b"finally",
-    b"for",
-    b"function",
-    b"if",
-    b"import",
-    b"in",
-    b"instanceof",
-    b"never",
-    b"new",
-    b"null",
-    b"number",
-    b"object",
-    b"return",
-    b"string",
-    b"super",
-    b"switch",
-    b"symbol",
-    b"this",
-    b"throw",
-    b"true",
-    b"try",
-    b"typeof",
-    b"undefined",
-    b"unknown",
-    b"var",
-    b"void",
-    b"while",
-    b"with",
-    b"yield",
-    b"let",
-    b"static",
-    b"await",
-    b"intrinsic",
-    b"infer",
-    b"keyof",
-    b"readonly",
-    b"unique",
-    b"asserts",
-    b"abstract",
-];
+fn reserved_words() -> impl Iterator<Item = &'static [u8]> {
+    const WORDS: &[u8] = b"any bigint boolean break case catch class const continue debugger \
+        default delete do else enum export extends false finally for function if import in \
+        instanceof never new null number object return string super switch symbol this throw true \
+        try typeof undefined unknown var void while with yield let static await intrinsic infer \
+        keyof readonly unique asserts abstract";
+    bun_core::strings::split(WORDS, b" ")
+}
 
 #[derive(Default)]
 struct Linked {
@@ -2245,7 +1948,6 @@ struct Linked {
     modules_of_untyped_values: Vec<Vec<u8>>,
     emitted_enums: FxHashMap<(u32, u32), Vec<u8>>,
     enum_names: FxHashMap<(u32, u32), Vec<u8>>,
-    untyped_exports: Vec<Vec<u8>>,
 }
 
 fn link(
@@ -2256,10 +1958,6 @@ fn link(
     mappings: &Mappings,
     bundle: &Bundle<'_>,
 ) -> Linked {
-    let (entry_point, is_for_declarations) = (
-        bundle.entry_point.filter(|_| !bundle.keeps_modules_apart),
-        bundle.is_for_declarations,
-    );
     let index_of: FxHashMap<&[u8], usize> = paths
         .iter()
         .enumerate()
@@ -2285,50 +1983,14 @@ fn link(
             .map(|&offset| output.word(offset))
     };
 
-    let mut taken: FxHashSet<Vec<u8>> = RESERVED_WORDS.iter().map(|word| word.to_vec()).collect();
-    let file = output.file;
+    let reserved: FxHashSet<&[u8]> = reserved_words().collect();
+    let mut taken: FxHashSet<Vec<u8>> = reserved.iter().map(|word| word.to_vec()).collect();
     taken.extend(
-        file.pats
-            .iter()
-            .filter(|pattern| matches!(pattern.kind, PatKind::Ident(_)))
-            .map(|pattern| output.word(pattern.pos).to_vec()),
-    );
-    taken.extend(
-        file.fns
-            .iter()
-            .filter(|function| {
-                function.name.is_some() && matches!(function.kind, FnKind::Decl | FnKind::Expr)
-            })
-            .map(|function| output.word(function.name_pos).to_vec()),
-    );
-    taken.extend(
-        file.classes
-            .iter()
-            .filter(|class| class.name.is_some())
-            .map(|class| output.word(class.name_pos).to_vec()),
-    );
-    taken.extend(
-        file.exprs
-            .iter()
-            .filter(|expr| matches!(expr.kind, ExprKind::Ident(_)))
-            .map(|expr| output.word(expr.pos).to_vec()),
-    );
-    taken.extend(
-        file.import_specs
-            .iter()
-            .map(|specifier| output.word(specifier.pos).to_vec()),
-    );
-    taken.extend(
-        file.imports
-            .iter()
-            .filter(|import| import.default.is_some())
-            .map(|import| output.word(import.default_pos).to_vec()),
-    );
-    taken.extend(
-        file.imports
-            .iter()
-            .filter(|import| import.namespace.is_some())
-            .map(|import| output.word(import.namespace_pos).to_vec()),
+        output
+            .value_names()
+            .chain(output.used_names())
+            .chain(output.imported_names())
+            .map(|at| output.word(at).to_vec()),
     );
     for module in written.iter().flatten() {
         let Some(types) = module.types else { continue };
@@ -2421,7 +2083,8 @@ fn link(
                 .filter_map(|reference| place_of(&reference.1))
         }));
     }
-    let entry = entry_point
+    let entry = bundle
+        .entry_point
         .and_then(|path| index_of.get(path))
         .and_then(|&index| written[index].as_ref())
         .and_then(|module| module.types);
@@ -2442,20 +2105,6 @@ fn link(
         .map(|pair| &pair[0].0[..])
         .collect();
     taken.extend(exported_twice.iter().map(|name| name.to_vec()));
-    let mut namespaces_with_code: Vec<Vec<u8>> = Vec::new();
-    for module in written.iter().take(mapped).flatten() {
-        let file = module.syntax.file;
-        let with_code = file.ids(file.body).filter(|&id| {
-            matches!(file[id].kind, StmtKind::Module(_))
-                && !module.syntax.is_type_only_statement(id)
-        });
-        namespaces_with_code.extend(with_code.filter_map(|id| match file[id].kind {
-            StmtKind::Module(declared) => {
-                Some(module.syntax.word(file[declared].name_pos).to_vec())
-            }
-            _ => None,
-        }));
-    }
     let mut augmentations: Vec<(usize, StmtId)> = Vec::new();
     for (index, module) in written.iter().enumerate().skip(mapped) {
         let Some((module, types)) = module
@@ -2515,30 +2164,15 @@ fn link(
         }
     }
 
-    let mut declared_in_output: Vec<u32> = Vec::new();
-    for statement in output.file.ids(output.file.body).map(|id| &output.file[id]) {
-        match statement.kind {
-            StmtKind::Var(declarations) => {
-                declarations.iter().for_each(|declaration: VarDeclId| {
-                    output.identifiers(output.file[declaration].pat, &mut declared_in_output)
-                })
-            }
-            StmtKind::Fn(function) => declared_in_output.push(output.file[function].name_pos),
-            StmtKind::Class(class) => declared_in_output.push(output.file[class].name_pos),
-            _ => {}
-        }
-    }
-    let declared_in_output: FxHashSet<&[u8]> = declared_in_output
+    let declared_in_output: FxHashSet<&[u8]> = output
+        .top_level_value_names()
         .into_iter()
         .map(|at| output.word(at))
         .collect();
     let mut names: Vec<FxHashMap<&[u8], Vec<u8>>> = vec![FxHashMap::default(); written.len()];
     let mut values: Vec<FxHashMap<&[u8], &[u8]>> = vec![FxHashMap::default(); written.len()];
     let mut imports: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
-    let mut linked = Linked {
-        untyped_exports: namespaces_with_code,
-        ..Default::default()
-    };
+    let mut linked = Linked::default();
     let mut ambient_values: Vec<(usize, Vec<Piece>)> = Vec::new();
     let unique = |name: &[u8], taken: &mut FxHashSet<Vec<u8>>| {
         let mut candidate = name.to_vec();
@@ -2603,7 +2237,7 @@ fn link(
                         member.name_kind == NameKind::Identifier && member.name.is_some()
                     })
                     .map(|member| module.syntax.word(member.pos))
-                    .filter(|name| !RESERVED_WORDS.contains(name));
+                    .filter(|&name| !reserved.contains(name));
                 let members: Vec<Vec<u8>> = members
                     .map(|member| {
                         [
@@ -2662,22 +2296,13 @@ fn link(
             {
                 continue;
             }
-            if found.import.is_some() && bundle.keeps_modules_apart {
-                continue;
-            }
-            if bundle.keeps_modules_apart && index < mapped && !found.bindings.is_empty() {
-                names[index].insert(name, name.to_vec());
-                continue;
-            }
             if let Some((statement, imported_as)) = found.import {
                 let (file, statement) = (module.syntax.file, &module.syntax.file[statement]);
                 let StmtKind::Import(import) = statement.kind else {
                     continue;
                 };
-                let tail = trimmed(
-                    &module.syntax.text
-                        [file[import].clause_end as usize..statement.loc.end as usize],
-                );
+                let span = file[import].clause_end as usize..statement.loc.end as usize;
+                let tail = module.syntax.text[span].trim_ascii();
                 let is_relative = bun_core::strings::index_of_any(tail, b"\"'")
                     .is_some_and(|quote| matches!(tail.get(quote + 1), Some(b'.' | b'/')));
                 if is_relative && found.statements.is_empty() {
@@ -2735,11 +2360,7 @@ fn link(
                 names[index].insert(name, name.to_vec());
                 continue;
             }
-            let local = if bundle.keeps_modules_apart {
-                name.to_vec()
-            } else {
-                unique(name, &mut taken)
-            };
+            let local = unique(name, &mut taken);
             if let Some(enum_statement) = found.enum_statement {
                 linked.ambient_enums.insert((index, enum_statement.0));
             } else if let signatures = module.syntax.overload_signatures(found)
@@ -2756,7 +2377,6 @@ fn link(
             }) {
                 ambient_values.push((index, pieces));
             } else if !found.bindings.is_empty() {
-                linked.untyped_exports.push(name.to_vec());
                 linked.modules_of_untyped_values.push(paths[index].to_vec());
                 let parameters: Vec<Vec<u8>> = (0..found.type_parameters)
                     .map(|number| format!("T{number} = any").into_bytes())
@@ -2867,16 +2487,7 @@ fn link(
     let mut shadowed: Vec<Vec<u8>> = Vec::new();
     let namespace_pairs: FxHashMap<&[u8], Vec<u8>> = objects
         .iter()
-        .map(|object| {
-            (
-                object.name,
-                if is_for_declarations {
-                    object.name.to_vec()
-                } else {
-                    unique(object.name, &mut taken)
-                },
-            )
-        })
+        .map(|object| (object.name, unique(object.name, &mut taken)))
         .collect();
     let mut pending_pairs: Vec<&[u8]> = Vec::new();
     let mut all_edits: Vec<Vec<(u32, u32, Vec<u8>)>> = Vec::new();
@@ -2988,20 +2599,7 @@ fn link(
                     _ => {}
                 }
             }
-            if types.rewrites_relative_import_extensions && bundle.keeps_modules_apart {
-                edits.extend(
-                    syntax
-                        .file
-                        .specifier_uses
-                        .iter()
-                        .filter_map(|used| syntax.javascript_extension_edit(used.pos)),
-                );
-            }
-            for (start, path) in types
-                .augmented_modules
-                .iter()
-                .filter(|_| !bundle.keeps_modules_apart)
-            {
+            for (start, path) in &types.augmented_modules {
                 let Some(&augmented) = index_of.get(&path[..]) else {
                     continue;
                 };
@@ -3098,7 +2696,7 @@ fn link(
         );
     }
     let mut declared_pairs: FxHashSet<&[u8]> = FxHashSet::default();
-    while let Some(name) = pending_pairs.pop().filter(|_| !is_for_declarations) {
+    while let Some(name) = pending_pairs.pop() {
         let Some(object) = objects
             .iter()
             .find(|object| object.name == name)
@@ -3129,19 +2727,8 @@ fn link(
             .concat(),
         );
     }
-    let exported: FxHashSet<&[u8]> = output
-        .file
-        .export_specs
-        .iter()
-        .map(|specifier| output.word(specifier.pos))
-        .collect();
+    let exported = output.exported_names();
     for (name, target) in entry.iter().flat_map(|types| types.exports.iter()) {
-        if !is_for_declarations && matches!(target, Target::Module { .. }) {
-            linked.untyped_exports.push(name.to_vec());
-        }
-        if !exported.contains(&name[..]) && final_name(target).is_none() {
-            linked.untyped_exports.push(name.to_vec());
-        }
         if exported.contains(&name[..])
             && exported_twice.contains(&name[..])
             && matches!(target, Target::Declaration { .. })
@@ -3149,11 +2736,10 @@ fn link(
             let is_generic = place_of(target)
                 .and_then(|(index, name)| declared[index].get(&name[..]))
                 .is_none_or(|found| found.type_parameters > 0);
-            match final_name(target).filter(|_| !is_generic) {
-                Some(local) => linked.hoisted.extend_from_slice(
+            if let Some(local) = final_name(target).filter(|_| !is_generic) {
+                linked.hoisted.extend_from_slice(
                     &[&b"export type "[..], &name[..], b" = ", &local[..], b";\n"].concat(),
-                ),
-                None => linked.untyped_exports.push(name.to_vec()),
+                );
             }
         }
         let Some(local) = final_name(target).filter(|_| !exported.contains(&name[..])) else {
@@ -3216,21 +2802,12 @@ fn link(
         {
             declarations.extend_from_slice(b"// @ts-ignore\n");
         }
-        if let Some(documentation) = module
-            .syntax
-            .documentation_before(module.syntax.file[statement].start)
-            .filter(|_| is_for_declarations)
-        {
-            declarations.extend_from_slice(&[documentation, b"\n"].concat());
-        }
         if linked.ambient_enums.contains(&(index, statement.0))
             || linked.ambient_signatures.contains(&(index, statement.0))
         {
             declarations.extend_from_slice(b"declare ");
         }
-        let merged = module
-            .merged_augmentation_text(&module.syntax.file[statement])
-            .filter(|_| !bundle.keeps_modules_apart);
+        let merged = module.merged_augmentation_text(&module.syntax.file[statement]);
         declarations.extend_from_slice(
             &merged.unwrap_or_else(|| {
                 module.statement_text(statement, Flags::EXPORT | Flags::DEFAULT)
@@ -3255,7 +2832,7 @@ fn link(
     linked
 }
 
-pub fn add_types(
+fn add_types(
     path: &[u8],
     javascript: &[u8],
     mappings: &[u8],
@@ -3266,7 +2843,6 @@ pub fn add_types(
     let atoms = Interner::new_in(&session);
     let mut mappings = Mappings::decode(mappings, javascript, sources)?;
     let mut output_file = parse(&session, &atoms, &[path, b".ts"].concat(), javascript)?;
-    // `// @ts-ignore` covers one line, which must not be the whole bundle.
     let line_breaks = Syntax {
         file: &output_file,
         text: javascript,
@@ -3300,16 +2876,14 @@ pub fn add_types(
             )
         })
         .collect();
-    if !bundle.is_some_and(|bundle| bundle.keeps_modules_apart) {
-        let emitted_declarations = bundle.map_or(&[][..], |bundle| bundle.emitted_declarations);
-        texts.extend(
-            modules
-                .iter()
-                .chain(emitted_declarations)
-                .filter(|module| !sources.iter().any(|source| source.path == &module.path[..]))
-                .map(|module| (&module.path[..], &module.text[..], Some(module))),
-        );
-    }
+    let emitted_declarations = bundle.map_or(&[][..], |bundle| bundle.emitted_declarations);
+    texts.extend(
+        modules
+            .iter()
+            .chain(emitted_declarations)
+            .filter(|module| !sources.iter().any(|source| source.path == &module.path[..]))
+            .map(|module| (&module.path[..], &module.text[..], Some(module))),
+    );
     let mut files = Vec::new();
     for &(path, text, _) in &texts {
         files.push(match is_typescript(path) {
@@ -3422,8 +2996,7 @@ pub fn add_types(
         modules: &written[..sources.len()],
         linked: &linked,
         type_references,
-        is_bundle: bundle.is_some_and(|bundle| !bundle.keeps_modules_apart),
-        is_for_declarations: bundle.is_some_and(|bundle| bundle.is_for_declarations),
+        is_bundle: bundle.is_some(),
         insertions: Insertions { list: Vec::new() },
         dropped_casts: 0,
         hoisted: Vec::new(),
@@ -3447,7 +3020,6 @@ struct Transfer<'t, 'a, 's> {
     linked: &'t Linked,
     type_references: FxHashSet<(&'t [u8], &'t [u8])>,
     is_bundle: bool,
-    is_for_declarations: bool,
     insertions: Insertions,
     dropped_casts: usize,
     hoisted: Vec<u8>,
@@ -3552,7 +3124,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                 }
                 Place::MemberStart => (Order::MemberStart, [&text[..], b" "].concat()),
                 Place::ThisParameter => {
-                    let text = trimmed(text.strip_suffix(b",").unwrap_or(&text));
+                    let text = text.strip_suffix(b",").unwrap_or(&text).trim_ascii();
                     let has_more = parameter_count_of
                         .get(&slot.key)
                         .is_some_and(|&count| count > 0);
@@ -3561,8 +3133,6 @@ impl<'a> Transfer<'_, 'a, '_> {
                         [text, if has_more { &b", "[..] } else { b"" }].concat(),
                     )
                 }
-                // `new Map` is printed without parentheses, so a cast of the whole expression ends where its type
-                // arguments do: behind what ends inside the callee, before what starts at `new` or earlier.
                 Place::TypeArguments
                     if slot.key < slot.start && output.word(slot.key) == b"new" =>
                 {
@@ -3729,12 +3299,7 @@ impl<'a> Transfer<'_, 'a, '_> {
             };
             let syntax = &module.syntax;
             let places = syntax.parent_links();
-            let without_casts = |mut expr: ExprId| {
-                while let Some(operand) = syntax.operand_of_cast(expr) {
-                    expr = operand;
-                }
-                expr
-            };
+            let without_casts = |expr: ExprId| syntax.file.skip_type_assertions(expr);
             let default_exports = syntax
                 .file
                 .stmts
@@ -3769,7 +3334,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                     }
                     let (parent, place) = places[at.idx()]?;
                     at = parent;
-                    if syntax.operand_of_cast(parent).is_some() {
+                    if syntax.file.type_assertion_operand(parent).is_some() {
                         continue;
                     }
                     way.push((parent, place));
@@ -3904,7 +3469,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                     }
                 }
                 for &cast in &chain.casts {
-                    if level < syntax.level_required_by_cast(cast) {
+                    if level.lt(syntax.level_required_by_cast(cast)) {
                         opens += 1;
                         suffix.push(b')');
                     }
@@ -3919,7 +3484,6 @@ impl<'a> Transfer<'_, 'a, '_> {
                         ExprKind::Satisfies { ty, .. } => {
                             suffix.extend_from_slice(&[&b" satisfies "[..], &text_of(ty)].concat())
                         }
-                        // `!0 as const` is TS1355.
                         ExprKind::AsConst(_)
                             if matches!(output_file[operand].kind, ExprKind::Unary { .. })
                                 && matches!(
@@ -3946,7 +3510,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                 let is_loose = level == Level::Compare
                     && (output_context.is_before_operator[operand.idx()]
                         || output.next_token_extends_type(end));
-                if level < output_context.required[operand.idx()] || is_loose {
+                if level.lt(output_context.required[operand.idx()]) || is_loose {
                     opens += 1;
                     suffix.push(b')');
                 }
@@ -4003,28 +3567,10 @@ impl<'a> Transfer<'_, 'a, '_> {
             }
         }
         for object in output.namespace_objects().iter().filter(|_| self.is_bundle) {
-            if !self.is_for_declarations {
-                insertions.add(
-                    output_file[object.variable.pat].end,
-                    Order::Slot,
-                    b": any".to_vec(),
-                );
-                continue;
-            }
-            let members: Vec<Vec<u8>> = object
-                .members
-                .iter()
-                .map(|&(name, local)| [name, &b": typeof "[..], local].concat())
-                .collect();
             insertions.add(
                 output_file[object.variable.pat].end,
                 Order::Slot,
-                [&b": { "[..], &members.join(&b"; "[..]), b" }"].concat(),
-            );
-            insertions.add(
-                output_file[object.variable.init].end,
-                Order::Slot,
-                b" as any".to_vec(),
+                b": any".to_vec(),
             );
         }
     }
@@ -4039,10 +3585,8 @@ impl<'a> Transfer<'_, 'a, '_> {
         );
         let (output_file, insertions) = (output.file, &mut self.insertions);
         let mut ambient_values: FxHashSet<&[u8]> = FxHashSet::default();
-        let output_identifiers: FxHashSet<&[u8]> = (output_file.exprs.iter())
-            .filter(|expr| matches!(expr.kind, ExprKind::Ident(_)))
-            .map(|expr| output.word(expr.pos))
-            .collect();
+        let output_identifiers: FxHashSet<&[u8]> =
+            output.used_names().map(|at| output.word(at)).collect();
         let mut output_statements: FxHashMap<(u32, u32), u32> = FxHashMap::default();
         for (id, statement) in output_file.stmts.iter().enumerate() {
             for key in [statement.start, output.after_modifiers(StmtId(id as u32))] {
@@ -4055,31 +3599,9 @@ impl<'a> Transfer<'_, 'a, '_> {
             .ids(output_file.body)
             .map(|id| output_file[id].start)
             .collect();
-        let exported_names: FxHashSet<&[u8]> = output_file
-            .export_specs
-            .iter()
-            .map(|specifier| output.word(specifier.pos))
-            .collect();
-        let imported_names: FxHashSet<&[u8]> = (output_file
-            .import_specs
-            .iter()
-            .map(|specifier| specifier.pos))
-        .chain(
-            output_file
-                .imports
-                .iter()
-                .filter(|import| import.default.is_some())
-                .map(|import| import.default_pos),
-        )
-        .chain(
-            output_file
-                .imports
-                .iter()
-                .filter(|import| import.namespace.is_some())
-                .map(|import| import.namespace_pos),
-        )
-        .map(|at| output.word(at))
-        .collect();
+        let exported_names = output.exported_names();
+        let imported_names: FxHashSet<&[u8]> =
+            output.imported_names().map(|at| output.word(at)).collect();
         for (index, module) in written.iter().enumerate() {
             let Some(module) = module else { continue };
             let (syntax, file) = (&module.syntax, module.syntax.file);
@@ -4105,29 +3627,6 @@ impl<'a> Transfer<'_, 'a, '_> {
                         .flatten()
                         .find_map(|&key| output_statements.get(&(index as u32, key)).copied())
                     };
-                    let documentation = syntax
-                        .documentation_before(statement.start)
-                        .filter(|_| self.is_for_declarations && depth == 0);
-                    if let (
-                        Some(documentation),
-                        StmtKind::Fn(_)
-                        | StmtKind::Class(_)
-                        | StmtKind::Var(_)
-                        | StmtKind::ExportDefault(_),
-                        false,
-                    ) = (
-                        documentation,
-                        statement.kind,
-                        syntax.is_type_only_statement(id),
-                    ) && let Some(at) = anchor_of(id)
-                    {
-                        insertions.add_line_in_order(
-                            javascript,
-                            at,
-                            Order::Documentation,
-                            documentation,
-                        );
-                    }
                     let text: Vec<u8> = match statement.kind {
                         StmtKind::Import(_)
                         | StmtKind::ExportNamed(_)
@@ -4323,10 +3822,6 @@ impl<'a> Transfer<'_, 'a, '_> {
                     } else {
                         text
                     };
-                    let text = documentation.map_or_else(
-                        || text.clone(),
-                        |documentation| [documentation, b"\n", &text].concat(),
-                    );
                     let next = statements[place..].iter().copied().find_map(anchor_of);
                     let next = next.map(|next| {
                         if depth == 0 {
@@ -4560,12 +4055,6 @@ impl<'a> Transfer<'_, 'a, '_> {
                     }
                 };
                 for (place, member) in members.iter().enumerate() {
-                    if let Some(documentation) = syntax
-                        .documentation_before(member.start)
-                        .filter(|_| self.is_for_declarations)
-                    {
-                        add(place, documentation);
-                    }
                     if syntax.is_type_only_member(member) {
                         add(place, &module.text(member.start, member.loc.end));
                     } else if member.kind == MemberKind::Property
@@ -4641,7 +4130,6 @@ impl<'a> Transfer<'_, 'a, '_> {
             text,
             dropped_casts: self.dropped_casts,
             has_default_export,
-            untyped_exports: self.linked.untyped_exports.clone(),
             modules_of_untyped_values: self.linked.modules_of_untyped_values.clone(),
             source: None,
         })
@@ -4680,7 +4168,7 @@ fn absolute(directory: &[u8], path: &[u8]) -> Vec<u8> {
     [&b"/"[..], &parts.join(&b"/"[..])].concat()
 }
 
-pub fn add_types_by_source_map(
+fn add_types_by_source_map(
     path: &[u8],
     javascript: &[u8],
     source_map: &[u8],
@@ -4749,7 +4237,6 @@ pub struct ModuleTypes {
     pub constants: Vec<(u32, Box<[u8]>)>,
     pub functions_returning_undefined: Vec<u32>,
     pub globals: Vec<u32>,
-    pub rewrites_relative_import_extensions: bool,
     pub augmented_modules: Vec<(u32, Box<[u8]>)>,
     pub locals: Vec<(u32, u32)>,
     pub emitted_declarations: Box<[u8]>,
@@ -4881,16 +4368,8 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
         text: &hir.text[..],
     }
     .type_ranges();
-    let (
-        references,
-        enum_objects,
-        exports,
-        constants,
-        functions_returning_undefined,
-        globals,
-        augmented_modules,
-        locals,
-    ) = checker.with_services(file, None, |services| {
+    let path = paths[file.idx()].clone()?;
+    Some(checker.with_services(file, None, |services| {
         let mut references = Vec::new();
         let mut globals = Vec::new();
         let mut locals = Vec::new();
@@ -5082,7 +4561,9 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
                 augmented_modules.push((statement.start, path));
             }
         }
-        (
+        ModuleTypes {
+            path,
+            text: hir.text[..].into(),
             references,
             enum_objects,
             exports,
@@ -5091,26 +4572,9 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
             globals,
             augmented_modules,
             locals,
-        )
-    });
-    Some(ModuleTypes {
-        path: paths[file.idx()].clone()?,
-        text: hir.text[..].into(),
-        references,
-        enum_objects,
-        exports,
-        constants,
-        functions_returning_undefined,
-        globals,
-        rewrites_relative_import_extensions: checker
-            .p
-            .files
-            .options
-            .rewrite_relative_import_extensions,
-        augmented_modules,
-        locals,
-        emitted_declarations: Box::default(),
-    })
+            emitted_declarations: Box::default(),
+        }
+    }))
 }
 
 pub struct Output<'a> {
@@ -5131,7 +4595,7 @@ fn inside<'a>(directory: &[u8], path: &'a [u8]) -> Option<&'a [u8]> {
     path.strip_prefix(directory)?.strip_prefix(b"/")
 }
 
-pub fn emitted_declarations_path(source: &[u8]) -> Option<Vec<u8>> {
+fn emitted_declarations_path(source: &[u8]) -> Option<Vec<u8>> {
     const EXTENSIONS: [(&[u8], &[u8]); 7] = [
         (b".d.ts", b""),
         (b".d.mts", b""),
@@ -5153,7 +4617,6 @@ pub fn tsconfig_of_sources(outputs: &[Output<'_>], modules: &[ModuleTypes]) -> O
     tsconfig_of_package(source)
 }
 
-/// The configuration file that `PlanOptions::stays_inside_package` finds for `source`, as a path of the host.
 pub fn tsconfig_of_package(source: &[u8]) -> Option<Vec<u8>> {
     let disk = crate::host::Disk::with_already_read(1, Default::default(), source);
     let found = find_config_of_package(&disk, ancestors(source).nth(1)?)?;
@@ -5178,13 +4641,11 @@ pub fn emitted_declarations_of(
         .collect()
 }
 
-pub fn typed_outputs(
+fn typed_outputs(
     outdir: &[u8],
     outputs: &[Output<'_>],
     modules: Option<&[ModuleTypes]>,
     emitted_declarations: &[ModuleTypes],
-    is_for_declarations: bool,
-    keeps_modules_apart: bool,
 ) -> Result<Vec<(Vec<u8>, TypedText)>, String> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let mut found = Vec::new();
@@ -5194,8 +4655,6 @@ pub fn typed_outputs(
             modules,
             emitted_declarations,
             entry_point: output.entry_point,
-            is_for_declarations,
-            keeps_modules_apart,
         });
         let typed = add_types_by_source_map(
             output.path,
@@ -5211,8 +4670,6 @@ pub fn typed_outputs(
     Ok(found)
 }
 
-/// Why a program that installs the package would compile the JavaScript and leave the full-types file unused. It is the
-/// program's own question, asked of the same two trees.
 pub fn why_programs_refuse(
     (typed_path, typed): (&[u8], &[u8]),
     (javascript_path, javascript): (&[u8], &[u8]),
@@ -5289,9 +4746,8 @@ pub fn annotate_implicit_any(
             written.splice(at..at, annotation.iter().copied());
         }
         if !places.is_empty()
-            && erase_types(path, &written)
-                .ok()
-                .is_some_and(|erased| erase_types(path, text).is_ok_and(|before| before == erased))
+            && let Some(erased) = erase_types(path, &written)
+            && erase_types(path, text) == Some(erased)
         {
             *text = written;
             is_changed = true;
@@ -5305,7 +4761,6 @@ pub fn sound_files(
     outputs: &[Output<'_>],
     modules: Option<&[ModuleTypes]>,
     emitted_declarations: &[ModuleTypes],
-    keeps_modules_apart: bool,
 ) -> Result<SoundFiles, String> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let mut found = SoundFiles {
@@ -5319,8 +4774,6 @@ pub fn sound_files(
         outputs,
         modules,
         emitted_declarations,
-        false,
-        keeps_modules_apart,
     )?) {
         let name_of = |path: &[u8]| {
             path[bun_core::strings::last_index_of_char(path, b'/').map_or(0, |slash| slash + 1)..]
@@ -5330,8 +4783,7 @@ pub fn sound_files(
         found
             .modules_of_untyped_values
             .extend(typed.modules_of_untyped_values);
-        // A program that installs the package reads the full-types file where one output imports another.
-        if (keeps_modules_apart || outputs.len() > 1)
+        if outputs.len() > 1
             && let Some(stem) = output.path.strip_suffix(b".js")
         {
             let name = name_of(&typed_path);

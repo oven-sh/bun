@@ -1,5 +1,0 @@
-# `import * as all` of a module whose value is a primitive: what runs has a namespace object with `default`, so that is its type.
-namespace-of-primitive-module.ts:4 type `all` = { default: string; }
-namespace-of-primitive-module.ts:5 type `all.default` = string
-namespace-of-primitive-module.ts:6 type `text` = string
-absent: namespace-of-primitive-module.ts:5 diagnostic TS2339 = Semantic StopsBuild

@@ -1,5 +1,0 @@
-# Each clause of `switch (typeof x)` narrows `x`, and `default` gets the remaining members.
-switch-typeof.ts:3 type `x` = string | number | boolean
-switch-typeof.ts:5 type `x` = string
-switch-typeof.ts:8 type `x` = number
-switch-typeof.ts:11 type `x` = boolean

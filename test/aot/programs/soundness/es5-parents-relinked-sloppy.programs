@@ -1,0 +1,2967 @@
+////: lines-25
+function «1»() {
+  function «2»() { this.x = 1; }
+  const «3» = «4» ? «4»(new «2»()) : "first";
+  «2».prototype.m = function () { return 1; };
+  «4» = o => attempt(() => o.m());
+  return «3»;
+}
+//// es5-parents-relinked-sloppy.cjs
+// Constructor functions whose prototype objects seen code links to those of other constructor functions, handed to code that no build sees.
+// Each pair is changed in one way, before its first construction or after it: a prototype object is replaced or relinked, an accessor, a read-only property, a proxy or another method
+// comes to stand above the new objects. Every store of a constructor, every call of an inherited method and every instanceof answers as the language says.
+// The same text is strict as a module and sloppy as CommonJS.
+var unseen = new Function("x", "return x");
+var lines = [];
+var noted = [];
+
+function inherits(constructor, parent) {
+  constructor.super_ = parent;
+  Object.setPrototypeOf(constructor.prototype, parent.prototype);
+}
+
+////= attempt-7
+
+////= describe
+
+// A step runs a few times: what a store, a read or a call keeps from one run is there in the next.
+////= construct
+
+////= accessor
+
+////= notingProxy
+
+// What a change returns is its second step.
+////= changes
+
+////= run
+
+function Base1() {}
+Base1.prototype.tag = "Base1";
+Base1.prototype.c = 0;
+Base1.prototype.who = function () { return "Base1 " + this.a; };
+////= lines-3	Made1
+Object.setPrototypeOf(Made1.prototype, Base1.prototype);
+Made1.prototype.tag = "Made1";
+function make1(x) { return new Made1(x); }
+function probe1(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base1) + " " + (made instanceof Made1); }
+run("replacePrototypeObject", "setPrototypeOf", Made1, Base1, make1, probe1, false);
+
+function Base2() {}
+Base2.prototype.tag = "Base2";
+Base2.prototype.c = 0;
+Base2.prototype.who = function () { return "Base2 " + this.a; };
+////= lines-3	Made2
+Made2.prototype = Object.create(Base2.prototype);
+Made2.prototype.tag = "Made2";
+function make2(x) { return new Made2(x); }
+function probe2(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base2) + " " + (made instanceof Made2); }
+run("replacePrototypeObject", "create", Made2, Base2, make2, probe2, false);
+
+function Base3() {}
+Base3.prototype.tag = "Base3";
+Base3.prototype.c = 0;
+Base3.prototype.who = function () { return "Base3 " + this.a; };
+////= lines-3	Made3
+Made3.prototype = new Base3();
+Made3.prototype.tag = "Made3";
+function make3(x) { return new Made3(x); }
+function probe3(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base3) + " " + (made instanceof Made3); }
+run("replacePrototypeObject", "instance", Made3, Base3, make3, probe3, false);
+
+function Base4() {}
+Base4.prototype.tag = "Base4";
+Base4.prototype.c = 0;
+Base4.prototype.who = function () { return "Base4 " + this.a; };
+////= lines-3	Made4
+Made4.prototype.__proto__ = Base4.prototype;
+Made4.prototype.tag = "Made4";
+function make4(x) { return new Made4(x); }
+function probe4(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base4) + " " + (made instanceof Made4); }
+run("replacePrototypeObject", "protoAccessor", Made4, Base4, make4, probe4, true);
+
+function Base5() {}
+Base5.prototype.tag = "Base5";
+Base5.prototype.c = 0;
+Base5.prototype.who = function () { return "Base5 " + this.a; };
+////= lines-3	Made5
+Made5.prototype = { __proto__: Base5.prototype, constructor: Made5 };
+Made5.prototype.tag = "Made5";
+function make5(x) { return new Made5(x); }
+function probe5(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base5) + " " + (made instanceof Made5); }
+run("replacePrototypeObject", "literal", Made5, Base5, make5, probe5, true);
+
+function Base6() {}
+Base6.prototype.tag = "Base6";
+Base6.prototype.c = 0;
+Base6.prototype.who = function () { return "Base6 " + this.a; };
+////= lines-3	Made6
+Made6.prototype = new Base6();
+Made6.prototype.tag = "Made6";
+function make6(x) { return new Made6(x); }
+function probe6(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base6) + " " + (made instanceof Made6); }
+run("replacePrototypeObject", "instance", Made6, Base6, make6, probe6, true);
+
+function Base7() {}
+Base7.prototype.tag = "Base7";
+Base7.prototype.c = 0;
+Base7.prototype.who = function () { return "Base7 " + this.a; };
+////= lines-3	Made7
+Made7.prototype.__proto__ = Base7.prototype;
+Made7.prototype.tag = "Made7";
+function make7(x) { return new Made7(x); }
+function probe7(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base7) + " " + (made instanceof Made7); }
+run("replacePrototypeObjectByNumber", "protoAccessor", Made7, Base7, make7, probe7, false);
+
+function Base8() {}
+Base8.prototype.tag = "Base8";
+Base8.prototype.c = 0;
+Base8.prototype.who = function () { return "Base8 " + this.a; };
+////= lines-3	Made8
+Made8.prototype = { __proto__: Base8.prototype, constructor: Made8 };
+Made8.prototype.tag = "Made8";
+function make8(x) { return new Made8(x); }
+function probe8(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base8) + " " + (made instanceof Made8); }
+run("replacePrototypeObjectByNumber", "literal", Made8, Base8, make8, probe8, false);
+
+function Base9() {}
+Base9.prototype.tag = "Base9";
+Base9.prototype.c = 0;
+Base9.prototype.who = function () { return "Base9 " + this.a; };
+////= lines-3	Made9
+Made9.prototype = new Base9();
+Made9.prototype.tag = "Made9";
+function make9(x) { return new Made9(x); }
+function probe9(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base9) + " " + (made instanceof Made9); }
+run("replacePrototypeObjectByNumber", "instance", Made9, Base9, make9, probe9, false);
+
+function Base10() {}
+Base10.prototype.tag = "Base10";
+Base10.prototype.c = 0;
+Base10.prototype.who = function () { return "Base10 " + this.a; };
+////= lines-3	Made10
+inherits(Made10, Base10);
+Made10.prototype.tag = "Made10";
+function make10(x) { return new Made10(x); }
+function probe10(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base10) + " " + (made instanceof Made10); }
+run("replacePrototypeObjectByNumber", "inherits", Made10, Base10, make10, probe10, true);
+
+function Base11() {}
+Base11.prototype.tag = "Base11";
+Base11.prototype.c = 0;
+Base11.prototype.who = function () { return "Base11 " + this.a; };
+////= lines-3	Made11
+Made11.prototype = Object.assign(Object.create(Base11.prototype), { constructor: Made11 });
+Made11.prototype.tag = "Made11";
+function make11(x) { return new Made11(x); }
+function probe11(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base11) + " " + (made instanceof Made11); }
+run("replacePrototypeObjectByNumber", "assign", Made11, Base11, make11, probe11, true);
+
+function Base12() {}
+Base12.prototype.tag = "Base12";
+Base12.prototype.c = 0;
+Base12.prototype.who = function () { return "Base12 " + this.a; };
+////= lines-3	Made12
+Made12.prototype = new Base12();
+Made12.prototype.tag = "Made12";
+function make12(x) { return new Made12(x); }
+function probe12(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base12) + " " + (made instanceof Made12); }
+run("replacePrototypeObjectByNumber", "instance", Made12, Base12, make12, probe12, true);
+
+function Base13() {}
+Base13.prototype.tag = "Base13";
+Base13.prototype.c = 0;
+Base13.prototype.who = function () { return "Base13 " + this.a; };
+////= lines-3	Made13
+inherits(Made13, Base13);
+Made13.prototype.tag = "Made13";
+function make13(x) { return new Made13(x); }
+function probe13(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base13) + " " + (made instanceof Made13); }
+run("relinkParent", "inherits", Made13, Base13, make13, probe13, false);
+
+function Base14() {}
+Base14.prototype.tag = "Base14";
+Base14.prototype.c = 0;
+Base14.prototype.who = function () { return "Base14 " + this.a; };
+////= lines-3	Made14
+Made14.prototype = Object.assign(Object.create(Base14.prototype), { constructor: Made14 });
+Made14.prototype.tag = "Made14";
+function make14(x) { return new Made14(x); }
+function probe14(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base14) + " " + (made instanceof Made14); }
+run("relinkParent", "assign", Made14, Base14, make14, probe14, false);
+
+function Base15() {}
+Base15.prototype.tag = "Base15";
+Base15.prototype.c = 0;
+Base15.prototype.who = function () { return "Base15 " + this.a; };
+////= lines-3	Made15
+Made15.prototype = new Base15();
+Made15.prototype.tag = "Made15";
+function make15(x) { return new Made15(x); }
+function probe15(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base15) + " " + (made instanceof Made15); }
+run("relinkParent", "instance", Made15, Base15, make15, probe15, false);
+
+function Base16() {}
+Base16.prototype.tag = "Base16";
+Base16.prototype.c = 0;
+Base16.prototype.who = function () { return "Base16 " + this.a; };
+////= lines-3	Made16
+Reflect.setPrototypeOf(Made16.prototype, Base16.prototype);
+Made16.prototype.tag = "Made16";
+function make16(x) { return new Made16(x); }
+function probe16(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base16) + " " + (made instanceof Made16); }
+run("relinkParent", "reflect", Made16, Base16, make16, probe16, true);
+
+function Base17() {}
+Base17.prototype.tag = "Base17";
+Base17.prototype.c = 0;
+Base17.prototype.who = function () { return "Base17 " + this.a; };
+////= lines-3	Made17
+Made17.prototype = Object.create(Base17.prototype, { constructor: { value: Made17, writable: true, configurable: true } });
+Made17.prototype.tag = "Made17";
+function make17(x) { return new Made17(x); }
+function probe17(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base17) + " " + (made instanceof Made17); }
+run("relinkParent", "descriptors", Made17, Base17, make17, probe17, true);
+
+function Base18() {}
+Base18.prototype.tag = "Base18";
+Base18.prototype.c = 0;
+Base18.prototype.who = function () { return "Base18 " + this.a; };
+////= lines-3	Made18
+Made18.prototype = new Base18();
+Made18.prototype.tag = "Made18";
+function make18(x) { return new Made18(x); }
+function probe18(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base18) + " " + (made instanceof Made18); }
+run("relinkParent", "instance", Made18, Base18, make18, probe18, true);
+
+function Base19() {}
+Base19.prototype.tag = "Base19";
+Base19.prototype.c = 0;
+Base19.prototype.who = function () { return "Base19 " + this.a; };
+////= lines-3	Made19
+Reflect.setPrototypeOf(Made19.prototype, Base19.prototype);
+Made19.prototype.tag = "Made19";
+function make19(x) { return new Made19(x); }
+function probe19(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base19) + " " + (made instanceof Made19); }
+run("plantSetterOnParent", "reflect", Made19, Base19, make19, probe19, false);
+
+function Base20() {}
+Base20.prototype.tag = "Base20";
+Base20.prototype.c = 0;
+Base20.prototype.who = function () { return "Base20 " + this.a; };
+////= lines-3	Made20
+Made20.prototype = Object.create(Base20.prototype, { constructor: { value: Made20, writable: true, configurable: true } });
+Made20.prototype.tag = "Made20";
+function make20(x) { return new Made20(x); }
+function probe20(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base20) + " " + (made instanceof Made20); }
+run("plantSetterOnParent", "descriptors", Made20, Base20, make20, probe20, false);
+
+function Base21() {}
+Base21.prototype.tag = "Base21";
+Base21.prototype.c = 0;
+Base21.prototype.who = function () { return "Base21 " + this.a; };
+////= lines-3	Made21
+Made21.prototype = new Base21();
+Made21.prototype.tag = "Made21";
+function make21(x) { return new Made21(x); }
+function probe21(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base21) + " " + (made instanceof Made21); }
+run("plantSetterOnParent", "instance", Made21, Base21, make21, probe21, false);
+
+function Base22() {}
+Base22.prototype.tag = "Base22";
+Base22.prototype.c = 0;
+Base22.prototype.who = function () { return "Base22 " + this.a; };
+////= lines-3	Made22
+Object.setPrototypeOf(Made22.prototype, Base22.prototype);
+Made22.prototype.tag = "Made22";
+function make22(x) { return new Made22(x); }
+function probe22(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base22) + " " + (made instanceof Made22); }
+run("plantSetterOnParent", "setPrototypeOf", Made22, Base22, make22, probe22, true);
+
+function Base23() {}
+Base23.prototype.tag = "Base23";
+Base23.prototype.c = 0;
+Base23.prototype.who = function () { return "Base23 " + this.a; };
+////= lines-3	Made23
+Made23.prototype = Object.setPrototypeOf({ constructor: Made23 }, Base23.prototype);
+Made23.prototype.tag = "Made23";
+function make23(x) { return new Made23(x); }
+function probe23(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base23) + " " + (made instanceof Made23); }
+run("plantSetterOnParent", "relinkedLiteral", Made23, Base23, make23, probe23, true);
+
+function Base24() {}
+Base24.prototype.tag = "Base24";
+Base24.prototype.c = 0;
+Base24.prototype.who = function () { return "Base24 " + this.a; };
+////= lines-3	Made24
+Made24.prototype = new Base24();
+Made24.prototype.tag = "Made24";
+function make24(x) { return new Made24(x); }
+function probe24(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base24) + " " + (made instanceof Made24); }
+run("plantSetterOnParent", "instance", Made24, Base24, make24, probe24, true);
+
+function Base25() {}
+Base25.prototype.tag = "Base25";
+Base25.prototype.c = 0;
+Base25.prototype.who = function () { return "Base25 " + this.a; };
+////= lines-3	Made25
+Object.setPrototypeOf(Made25.prototype, Base25.prototype);
+Made25.prototype.tag = "Made25";
+function make25(x) { return new Made25(x); }
+function probe25(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base25) + " " + (made instanceof Made25); }
+run("plantReadOnlyOnParent", "setPrototypeOf", Made25, Base25, make25, probe25, false);
+
+function Base26() {}
+Base26.prototype.tag = "Base26";
+Base26.prototype.c = 0;
+Base26.prototype.who = function () { return "Base26 " + this.a; };
+////= lines-3	Made26
+Made26.prototype = Object.setPrototypeOf({ constructor: Made26 }, Base26.prototype);
+Made26.prototype.tag = "Made26";
+function make26(x) { return new Made26(x); }
+function probe26(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base26) + " " + (made instanceof Made26); }
+run("plantReadOnlyOnParent", "relinkedLiteral", Made26, Base26, make26, probe26, false);
+
+function Base27() {}
+Base27.prototype.tag = "Base27";
+Base27.prototype.c = 0;
+Base27.prototype.who = function () { return "Base27 " + this.a; };
+////= lines-3	Made27
+Made27.prototype = new Base27();
+Made27.prototype.tag = "Made27";
+function make27(x) { return new Made27(x); }
+function probe27(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base27) + " " + (made instanceof Made27); }
+run("plantReadOnlyOnParent", "instance", Made27, Base27, make27, probe27, false);
+
+function Base28() {}
+Base28.prototype.tag = "Base28";
+Base28.prototype.c = 0;
+Base28.prototype.who = function () { return "Base28 " + this.a; };
+////= lines-3	Made28
+inherits(Made28, Base28);
+Made28.prototype.tag = "Made28";
+function make28(x) { return new Made28(x); }
+function probe28(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base28) + " " + (made instanceof Made28); }
+run("plantReadOnlyOnParent", "inherits", Made28, Base28, make28, probe28, true);
+
+function Base29() {}
+Base29.prototype.tag = "Base29";
+Base29.prototype.c = 0;
+Base29.prototype.who = function () { return "Base29 " + this.a; };
+////= lines-3	Made29
+Made29.prototype = Object.create(Base29.prototype);
+Made29.prototype.tag = "Made29";
+function make29(x) { return new Made29(x); }
+function probe29(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base29) + " " + (made instanceof Made29); }
+run("plantReadOnlyOnParent", "create", Made29, Base29, make29, probe29, true);
+
+function Base30() {}
+Base30.prototype.tag = "Base30";
+Base30.prototype.c = 0;
+Base30.prototype.who = function () { return "Base30 " + this.a; };
+////= lines-3	Made30
+Made30.prototype = new Base30();
+Made30.prototype.tag = "Made30";
+function make30(x) { return new Made30(x); }
+function probe30(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base30) + " " + (made instanceof Made30); }
+run("plantReadOnlyOnParent", "instance", Made30, Base30, make30, probe30, true);
+
+function Base31() {}
+Base31.prototype.tag = "Base31";
+Base31.prototype.c = 0;
+Base31.prototype.who = function () { return "Base31 " + this.a; };
+////= lines-3	Made31
+Made31.prototype.__proto__ = Base31.prototype;
+Made31.prototype.tag = "Made31";
+function make31(x) { return new Made31(x); }
+function probe31(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base31) + " " + (made instanceof Made31); }
+run("plantGetterOnParent", "protoAccessor", Made31, Base31, make31, probe31, false);
+
+function Base32() {}
+Base32.prototype.tag = "Base32";
+Base32.prototype.c = 0;
+Base32.prototype.who = function () { return "Base32 " + this.a; };
+////= lines-3	Made32
+Made32.prototype = Object.create(Base32.prototype);
+Made32.prototype.tag = "Made32";
+function make32(x) { return new Made32(x); }
+function probe32(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base32) + " " + (made instanceof Made32); }
+run("plantGetterOnParent", "create", Made32, Base32, make32, probe32, false);
+
+function Base33() {}
+Base33.prototype.tag = "Base33";
+Base33.prototype.c = 0;
+Base33.prototype.who = function () { return "Base33 " + this.a; };
+////= lines-3	Made33
+Made33.prototype = new Base33();
+Made33.prototype.tag = "Made33";
+function make33(x) { return new Made33(x); }
+function probe33(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base33) + " " + (made instanceof Made33); }
+run("plantGetterOnParent", "instance", Made33, Base33, make33, probe33, false);
+
+function Base34() {}
+Base34.prototype.tag = "Base34";
+Base34.prototype.c = 0;
+Base34.prototype.who = function () { return "Base34 " + this.a; };
+////= lines-3	Made34
+Reflect.setPrototypeOf(Made34.prototype, Base34.prototype);
+Made34.prototype.tag = "Made34";
+function make34(x) { return new Made34(x); }
+function probe34(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base34) + " " + (made instanceof Made34); }
+run("plantGetterOnParent", "reflect", Made34, Base34, make34, probe34, true);
+
+function Base35() {}
+Base35.prototype.tag = "Base35";
+Base35.prototype.c = 0;
+Base35.prototype.who = function () { return "Base35 " + this.a; };
+////= lines-3	Made35
+Made35.prototype = Object.assign(Object.create(Base35.prototype), { constructor: Made35 });
+Made35.prototype.tag = "Made35";
+function make35(x) { return new Made35(x); }
+function probe35(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base35) + " " + (made instanceof Made35); }
+run("plantGetterOnParent", "assign", Made35, Base35, make35, probe35, true);
+
+function Base36() {}
+Base36.prototype.tag = "Base36";
+Base36.prototype.c = 0;
+Base36.prototype.who = function () { return "Base36 " + this.a; };
+////= lines-3	Made36
+Made36.prototype = new Base36();
+Made36.prototype.tag = "Made36";
+function make36(x) { return new Made36(x); }
+function probe36(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base36) + " " + (made instanceof Made36); }
+run("plantGetterOnParent", "instance", Made36, Base36, make36, probe36, true);
+
+function Base37() {}
+Base37.prototype.tag = "Base37";
+Base37.prototype.c = 0;
+Base37.prototype.who = function () { return "Base37 " + this.a; };
+////= lines-3	Made37
+inherits(Made37, Base37);
+Made37.prototype.tag = "Made37";
+function make37(x) { return new Made37(x); }
+function probe37(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base37) + " " + (made instanceof Made37); }
+run("freezeParent", "inherits", Made37, Base37, make37, probe37, false);
+
+function Base38() {}
+Base38.prototype.tag = "Base38";
+Base38.prototype.c = 0;
+Base38.prototype.who = function () { return "Base38 " + this.a; };
+////= lines-3	Made38
+Made38.prototype = { __proto__: Base38.prototype, constructor: Made38 };
+Made38.prototype.tag = "Made38";
+function make38(x) { return new Made38(x); }
+function probe38(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base38) + " " + (made instanceof Made38); }
+run("freezeParent", "literal", Made38, Base38, make38, probe38, false);
+
+function Base39() {}
+Base39.prototype.tag = "Base39";
+Base39.prototype.c = 0;
+Base39.prototype.who = function () { return "Base39 " + this.a; };
+////= lines-3	Made39
+Made39.prototype = new Base39();
+Made39.prototype.tag = "Made39";
+function make39(x) { return new Made39(x); }
+function probe39(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base39) + " " + (made instanceof Made39); }
+run("freezeParent", "instance", Made39, Base39, make39, probe39, false);
+
+function Base40() {}
+Base40.prototype.tag = "Base40";
+Base40.prototype.c = 0;
+Base40.prototype.who = function () { return "Base40 " + this.a; };
+////= lines-3	Made40
+Object.setPrototypeOf(Made40.prototype, Base40.prototype);
+Made40.prototype.tag = "Made40";
+function make40(x) { return new Made40(x); }
+function probe40(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base40) + " " + (made instanceof Made40); }
+run("freezeParent", "setPrototypeOf", Made40, Base40, make40, probe40, true);
+
+function Base41() {}
+Base41.prototype.tag = "Base41";
+Base41.prototype.c = 0;
+Base41.prototype.who = function () { return "Base41 " + this.a; };
+////= lines-3	Made41
+Made41.prototype = Object.create(Base41.prototype, { constructor: { value: Made41, writable: true, configurable: true } });
+Made41.prototype.tag = "Made41";
+function make41(x) { return new Made41(x); }
+function probe41(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base41) + " " + (made instanceof Made41); }
+run("freezeParent", "descriptors", Made41, Base41, make41, probe41, true);
+
+function Base42() {}
+Base42.prototype.tag = "Base42";
+Base42.prototype.c = 0;
+Base42.prototype.who = function () { return "Base42 " + this.a; };
+////= lines-3	Made42
+Made42.prototype = new Base42();
+Made42.prototype.tag = "Made42";
+function make42(x) { return new Made42(x); }
+function probe42(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base42) + " " + (made instanceof Made42); }
+run("freezeParent", "instance", Made42, Base42, make42, probe42, true);
+
+function Base43() {}
+Base43.prototype.tag = "Base43";
+Base43.prototype.c = 0;
+Base43.prototype.who = function () { return "Base43 " + this.a; };
+////= lines-3	Made43
+Reflect.setPrototypeOf(Made43.prototype, Base43.prototype);
+Made43.prototype.tag = "Made43";
+function make43(x) { return new Made43(x); }
+function probe43(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base43) + " " + (made instanceof Made43); }
+run("putProxyBetween", "reflect", Made43, Base43, make43, probe43, false);
+
+function Base44() {}
+Base44.prototype.tag = "Base44";
+Base44.prototype.c = 0;
+Base44.prototype.who = function () { return "Base44 " + this.a; };
+////= lines-3	Made44
+Made44.prototype = Object.assign(Object.create(Base44.prototype), { constructor: Made44 });
+Made44.prototype.tag = "Made44";
+function make44(x) { return new Made44(x); }
+function probe44(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base44) + " " + (made instanceof Made44); }
+run("putProxyBetween", "assign", Made44, Base44, make44, probe44, false);
+
+function Base45() {}
+Base45.prototype.tag = "Base45";
+Base45.prototype.c = 0;
+Base45.prototype.who = function () { return "Base45 " + this.a; };
+////= lines-3	Made45
+Made45.prototype = new Base45();
+Made45.prototype.tag = "Made45";
+function make45(x) { return new Made45(x); }
+function probe45(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base45) + " " + (made instanceof Made45); }
+run("putProxyBetween", "instance", Made45, Base45, make45, probe45, false);
+
+function Base46() {}
+Base46.prototype.tag = "Base46";
+Base46.prototype.c = 0;
+Base46.prototype.who = function () { return "Base46 " + this.a; };
+////= lines-3	Made46
+Made46.prototype.__proto__ = Base46.prototype;
+Made46.prototype.tag = "Made46";
+function make46(x) { return new Made46(x); }
+function probe46(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base46) + " " + (made instanceof Made46); }
+run("putProxyBetween", "protoAccessor", Made46, Base46, make46, probe46, true);
+
+function Base47() {}
+Base47.prototype.tag = "Base47";
+Base47.prototype.c = 0;
+Base47.prototype.who = function () { return "Base47 " + this.a; };
+////= lines-3	Made47
+Made47.prototype = Object.setPrototypeOf({ constructor: Made47 }, Base47.prototype);
+Made47.prototype.tag = "Made47";
+function make47(x) { return new Made47(x); }
+function probe47(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base47) + " " + (made instanceof Made47); }
+run("putProxyBetween", "relinkedLiteral", Made47, Base47, make47, probe47, true);
+
+function Base48() {}
+Base48.prototype.tag = "Base48";
+Base48.prototype.c = 0;
+Base48.prototype.who = function () { return "Base48 " + this.a; };
+////= lines-3	Made48
+Made48.prototype = new Base48();
+Made48.prototype.tag = "Made48";
+function make48(x) { return new Made48(x); }
+function probe48(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base48) + " " + (made instanceof Made48); }
+run("putProxyBetween", "instance", Made48, Base48, make48, probe48, true);
+
+function Base49() {}
+Base49.prototype.tag = "Base49";
+Base49.prototype.c = 0;
+Base49.prototype.who = function () { return "Base49 " + this.a; };
+////= lines-3	Made49
+Object.setPrototypeOf(Made49.prototype, Base49.prototype);
+Made49.prototype.tag = "Made49";
+function make49(x) { return new Made49(x); }
+function probe49(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base49) + " " + (made instanceof Made49); }
+run("putProxyAboveParent", "setPrototypeOf", Made49, Base49, make49, probe49, false);
+
+function Base50() {}
+Base50.prototype.tag = "Base50";
+Base50.prototype.c = 0;
+Base50.prototype.who = function () { return "Base50 " + this.a; };
+////= lines-3	Made50
+Made50.prototype = Object.create(Base50.prototype, { constructor: { value: Made50, writable: true, configurable: true } });
+Made50.prototype.tag = "Made50";
+function make50(x) { return new Made50(x); }
+function probe50(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base50) + " " + (made instanceof Made50); }
+run("putProxyAboveParent", "descriptors", Made50, Base50, make50, probe50, false);
+
+function Base51() {}
+Base51.prototype.tag = "Base51";
+Base51.prototype.c = 0;
+Base51.prototype.who = function () { return "Base51 " + this.a; };
+////= lines-3	Made51
+Made51.prototype = new Base51();
+Made51.prototype.tag = "Made51";
+function make51(x) { return new Made51(x); }
+function probe51(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base51) + " " + (made instanceof Made51); }
+run("putProxyAboveParent", "instance", Made51, Base51, make51, probe51, false);
+
+function Base52() {}
+Base52.prototype.tag = "Base52";
+Base52.prototype.c = 0;
+Base52.prototype.who = function () { return "Base52 " + this.a; };
+////= lines-3	Made52
+Reflect.setPrototypeOf(Made52.prototype, Base52.prototype);
+Made52.prototype.tag = "Made52";
+function make52(x) { return new Made52(x); }
+function probe52(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base52) + " " + (made instanceof Made52); }
+run("putProxyAboveParent", "reflect", Made52, Base52, make52, probe52, true);
+
+function Base53() {}
+Base53.prototype.tag = "Base53";
+Base53.prototype.c = 0;
+Base53.prototype.who = function () { return "Base53 " + this.a; };
+////= lines-3	Made53
+Made53.prototype = Object.create(Base53.prototype);
+Made53.prototype.tag = "Made53";
+function make53(x) { return new Made53(x); }
+function probe53(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base53) + " " + (made instanceof Made53); }
+run("putProxyAboveParent", "create", Made53, Base53, make53, probe53, true);
+
+function Base54() {}
+Base54.prototype.tag = "Base54";
+Base54.prototype.c = 0;
+Base54.prototype.who = function () { return "Base54 " + this.a; };
+////= lines-3	Made54
+Made54.prototype = new Base54();
+Made54.prototype.tag = "Made54";
+function make54(x) { return new Made54(x); }
+function probe54(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base54) + " " + (made instanceof Made54); }
+run("putProxyAboveParent", "instance", Made54, Base54, make54, probe54, true);
+
+function Base55() {}
+Base55.prototype.tag = "Base55";
+Base55.prototype.c = 0;
+Base55.prototype.who = function () { return "Base55 " + this.a; };
+////= lines-3	Made55
+Made55.prototype.__proto__ = Base55.prototype;
+Made55.prototype.tag = "Made55";
+function make55(x) { return new Made55(x); }
+function probe55(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base55) + " " + (made instanceof Made55); }
+run("relinkToOtherParent", "protoAccessor", Made55, Base55, make55, probe55, false);
+
+function Base56() {}
+Base56.prototype.tag = "Base56";
+Base56.prototype.c = 0;
+Base56.prototype.who = function () { return "Base56 " + this.a; };
+////= lines-3	Made56
+Made56.prototype = Object.setPrototypeOf({ constructor: Made56 }, Base56.prototype);
+Made56.prototype.tag = "Made56";
+function make56(x) { return new Made56(x); }
+function probe56(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base56) + " " + (made instanceof Made56); }
+run("relinkToOtherParent", "relinkedLiteral", Made56, Base56, make56, probe56, false);
+
+function Base57() {}
+Base57.prototype.tag = "Base57";
+Base57.prototype.c = 0;
+Base57.prototype.who = function () { return "Base57 " + this.a; };
+////= lines-3	Made57
+Made57.prototype = new Base57();
+Made57.prototype.tag = "Made57";
+function make57(x) { return new Made57(x); }
+function probe57(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base57) + " " + (made instanceof Made57); }
+run("relinkToOtherParent", "instance", Made57, Base57, make57, probe57, false);
+
+function Base58() {}
+Base58.prototype.tag = "Base58";
+Base58.prototype.c = 0;
+Base58.prototype.who = function () { return "Base58 " + this.a; };
+////= lines-3	Made58
+Object.setPrototypeOf(Made58.prototype, Base58.prototype);
+Made58.prototype.tag = "Made58";
+function make58(x) { return new Made58(x); }
+function probe58(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base58) + " " + (made instanceof Made58); }
+run("relinkToOtherParent", "setPrototypeOf", Made58, Base58, make58, probe58, true);
+
+function Base59() {}
+Base59.prototype.tag = "Base59";
+Base59.prototype.c = 0;
+Base59.prototype.who = function () { return "Base59 " + this.a; };
+////= lines-3	Made59
+Made59.prototype = { __proto__: Base59.prototype, constructor: Made59 };
+Made59.prototype.tag = "Made59";
+function make59(x) { return new Made59(x); }
+function probe59(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base59) + " " + (made instanceof Made59); }
+run("relinkToOtherParent", "literal", Made59, Base59, make59, probe59, true);
+
+function Base60() {}
+Base60.prototype.tag = "Base60";
+Base60.prototype.c = 0;
+Base60.prototype.who = function () { return "Base60 " + this.a; };
+////= lines-3	Made60
+Made60.prototype = new Base60();
+Made60.prototype.tag = "Made60";
+function make60(x) { return new Made60(x); }
+function probe60(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base60) + " " + (made instanceof Made60); }
+run("relinkToOtherParent", "instance", Made60, Base60, make60, probe60, true);
+
+function Base61() {}
+Base61.prototype.tag = "Base61";
+Base61.prototype.c = 0;
+Base61.prototype.who = function () { return "Base61 " + this.a; };
+////= lines-3	Made61
+inherits(Made61, Base61);
+Made61.prototype.tag = "Made61";
+function make61(x) { return new Made61(x); }
+function probe61(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base61) + " " + (made instanceof Made61); }
+run("relinkToNull", "inherits", Made61, Base61, make61, probe61, false);
+
+function Base62() {}
+Base62.prototype.tag = "Base62";
+Base62.prototype.c = 0;
+Base62.prototype.who = function () { return "Base62 " + this.a; };
+////= lines-3	Made62
+Made62.prototype = Object.create(Base62.prototype);
+Made62.prototype.tag = "Made62";
+function make62(x) { return new Made62(x); }
+function probe62(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base62) + " " + (made instanceof Made62); }
+run("relinkToNull", "create", Made62, Base62, make62, probe62, false);
+
+function Base63() {}
+Base63.prototype.tag = "Base63";
+Base63.prototype.c = 0;
+Base63.prototype.who = function () { return "Base63 " + this.a; };
+////= lines-3	Made63
+Made63.prototype = new Base63();
+Made63.prototype.tag = "Made63";
+function make63(x) { return new Made63(x); }
+function probe63(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base63) + " " + (made instanceof Made63); }
+run("relinkToNull", "instance", Made63, Base63, make63, probe63, false);
+
+function Base64() {}
+Base64.prototype.tag = "Base64";
+Base64.prototype.c = 0;
+Base64.prototype.who = function () { return "Base64 " + this.a; };
+////= lines-3	Made64
+Made64.prototype.__proto__ = Base64.prototype;
+Made64.prototype.tag = "Made64";
+function make64(x) { return new Made64(x); }
+function probe64(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base64) + " " + (made instanceof Made64); }
+run("relinkToNull", "protoAccessor", Made64, Base64, make64, probe64, true);
+
+function Base65() {}
+Base65.prototype.tag = "Base65";
+Base65.prototype.c = 0;
+Base65.prototype.who = function () { return "Base65 " + this.a; };
+////= lines-3	Made65
+Made65.prototype = Object.create(Base65.prototype, { constructor: { value: Made65, writable: true, configurable: true } });
+Made65.prototype.tag = "Made65";
+function make65(x) { return new Made65(x); }
+function probe65(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base65) + " " + (made instanceof Made65); }
+run("relinkToNull", "descriptors", Made65, Base65, make65, probe65, true);
+
+function Base66() {}
+Base66.prototype.tag = "Base66";
+Base66.prototype.c = 0;
+Base66.prototype.who = function () { return "Base66 " + this.a; };
+////= lines-3	Made66
+Made66.prototype = new Base66();
+Made66.prototype.tag = "Made66";
+function make66(x) { return new Made66(x); }
+function probe66(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base66) + " " + (made instanceof Made66); }
+run("relinkToNull", "instance", Made66, Base66, make66, probe66, true);
+
+function Base67() {}
+Base67.prototype.tag = "Base67";
+Base67.prototype.c = 0;
+Base67.prototype.who = function () { return "Base67 " + this.a; };
+////= lines-3	Made67
+Reflect.setPrototypeOf(Made67.prototype, Base67.prototype);
+Made67.prototype.tag = "Made67";
+function make67(x) { return new Made67(x); }
+function probe67(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base67) + " " + (made instanceof Made67); }
+run("plantSetterOnOwnPrototype", "reflect", Made67, Base67, make67, probe67, false);
+
+function Base68() {}
+Base68.prototype.tag = "Base68";
+Base68.prototype.c = 0;
+Base68.prototype.who = function () { return "Base68 " + this.a; };
+////= lines-3	Made68
+Made68.prototype = { __proto__: Base68.prototype, constructor: Made68 };
+Made68.prototype.tag = "Made68";
+function make68(x) { return new Made68(x); }
+function probe68(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base68) + " " + (made instanceof Made68); }
+run("plantSetterOnOwnPrototype", "literal", Made68, Base68, make68, probe68, false);
+
+function Base69() {}
+Base69.prototype.tag = "Base69";
+Base69.prototype.c = 0;
+Base69.prototype.who = function () { return "Base69 " + this.a; };
+////= lines-3	Made69
+Made69.prototype = new Base69();
+Made69.prototype.tag = "Made69";
+function make69(x) { return new Made69(x); }
+function probe69(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base69) + " " + (made instanceof Made69); }
+run("plantSetterOnOwnPrototype", "instance", Made69, Base69, make69, probe69, false);
+
+function Base70() {}
+Base70.prototype.tag = "Base70";
+Base70.prototype.c = 0;
+Base70.prototype.who = function () { return "Base70 " + this.a; };
+////= lines-3	Made70
+inherits(Made70, Base70);
+Made70.prototype.tag = "Made70";
+function make70(x) { return new Made70(x); }
+function probe70(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base70) + " " + (made instanceof Made70); }
+run("plantSetterOnOwnPrototype", "inherits", Made70, Base70, make70, probe70, true);
+
+function Base71() {}
+Base71.prototype.tag = "Base71";
+Base71.prototype.c = 0;
+Base71.prototype.who = function () { return "Base71 " + this.a; };
+////= lines-3	Made71
+Made71.prototype = Object.setPrototypeOf({ constructor: Made71 }, Base71.prototype);
+Made71.prototype.tag = "Made71";
+function make71(x) { return new Made71(x); }
+function probe71(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base71) + " " + (made instanceof Made71); }
+run("plantSetterOnOwnPrototype", "relinkedLiteral", Made71, Base71, make71, probe71, true);
+
+function Base72() {}
+Base72.prototype.tag = "Base72";
+Base72.prototype.c = 0;
+Base72.prototype.who = function () { return "Base72 " + this.a; };
+////= lines-3	Made72
+Made72.prototype = new Base72();
+Made72.prototype.tag = "Made72";
+function make72(x) { return new Made72(x); }
+function probe72(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base72) + " " + (made instanceof Made72); }
+run("plantSetterOnOwnPrototype", "instance", Made72, Base72, make72, probe72, true);
+
+function Base73() {}
+Base73.prototype.tag = "Base73";
+Base73.prototype.c = 0;
+Base73.prototype.who = function () { return "Base73 " + this.a; };
+////= lines-3	Made73
+Object.setPrototypeOf(Made73.prototype, Base73.prototype);
+Made73.prototype.tag = "Made73";
+function make73(x) { return new Made73(x); }
+function probe73(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base73) + " " + (made instanceof Made73); }
+run("replacePrototypeOfParent", "setPrototypeOf", Made73, Base73, make73, probe73, false);
+
+function Base74() {}
+Base74.prototype.tag = "Base74";
+Base74.prototype.c = 0;
+Base74.prototype.who = function () { return "Base74 " + this.a; };
+////= lines-3	Made74
+Made74.prototype = Object.assign(Object.create(Base74.prototype), { constructor: Made74 });
+Made74.prototype.tag = "Made74";
+function make74(x) { return new Made74(x); }
+function probe74(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base74) + " " + (made instanceof Made74); }
+run("replacePrototypeOfParent", "assign", Made74, Base74, make74, probe74, false);
+
+function Base75() {}
+Base75.prototype.tag = "Base75";
+Base75.prototype.c = 0;
+Base75.prototype.who = function () { return "Base75 " + this.a; };
+////= lines-3	Made75
+Made75.prototype = new Base75();
+Made75.prototype.tag = "Made75";
+function make75(x) { return new Made75(x); }
+function probe75(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base75) + " " + (made instanceof Made75); }
+run("replacePrototypeOfParent", "instance", Made75, Base75, make75, probe75, false);
+
+function Base76() {}
+Base76.prototype.tag = "Base76";
+Base76.prototype.c = 0;
+Base76.prototype.who = function () { return "Base76 " + this.a; };
+////= lines-3	Made76
+Object.setPrototypeOf(Made76.prototype, Base76.prototype);
+Made76.prototype.tag = "Made76";
+function make76(x) { return new Made76(x); }
+function probe76(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base76) + " " + (made instanceof Made76); }
+run("replacePrototypeOfParent", "setPrototypeOf", Made76, Base76, make76, probe76, true);
+
+function Base77() {}
+Base77.prototype.tag = "Base77";
+Base77.prototype.c = 0;
+Base77.prototype.who = function () { return "Base77 " + this.a; };
+////= lines-3	Made77
+Made77.prototype = Object.create(Base77.prototype);
+Made77.prototype.tag = "Made77";
+function make77(x) { return new Made77(x); }
+function probe77(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base77) + " " + (made instanceof Made77); }
+run("replacePrototypeOfParent", "create", Made77, Base77, make77, probe77, true);
+
+function Base78() {}
+Base78.prototype.tag = "Base78";
+Base78.prototype.c = 0;
+Base78.prototype.who = function () { return "Base78 " + this.a; };
+////= lines-3	Made78
+Made78.prototype = new Base78();
+Made78.prototype.tag = "Made78";
+function make78(x) { return new Made78(x); }
+function probe78(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base78) + " " + (made instanceof Made78); }
+run("replacePrototypeOfParent", "instance", Made78, Base78, make78, probe78, true);
+
+function Base79() {}
+Base79.prototype.tag = "Base79";
+Base79.prototype.c = 0;
+Base79.prototype.who = function () { return "Base79 " + this.a; };
+////= lines-3	Made79
+Made79.prototype.__proto__ = Base79.prototype;
+Made79.prototype.tag = "Made79";
+function make79(x) { return new Made79(x); }
+function probe79(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base79) + " " + (made instanceof Made79); }
+run("plantSetterAboveParent", "protoAccessor", Made79, Base79, make79, probe79, false);
+
+function Base80() {}
+Base80.prototype.tag = "Base80";
+Base80.prototype.c = 0;
+Base80.prototype.who = function () { return "Base80 " + this.a; };
+////= lines-3	Made80
+Made80.prototype = Object.create(Base80.prototype, { constructor: { value: Made80, writable: true, configurable: true } });
+Made80.prototype.tag = "Made80";
+function make80(x) { return new Made80(x); }
+function probe80(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base80) + " " + (made instanceof Made80); }
+run("plantSetterAboveParent", "descriptors", Made80, Base80, make80, probe80, false);
+
+function Base81() {}
+Base81.prototype.tag = "Base81";
+Base81.prototype.c = 0;
+Base81.prototype.who = function () { return "Base81 " + this.a; };
+////= lines-3	Made81
+Made81.prototype = new Base81();
+Made81.prototype.tag = "Made81";
+function make81(x) { return new Made81(x); }
+function probe81(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base81) + " " + (made instanceof Made81); }
+run("plantSetterAboveParent", "instance", Made81, Base81, make81, probe81, false);
+
+function Base82() {}
+Base82.prototype.tag = "Base82";
+Base82.prototype.c = 0;
+Base82.prototype.who = function () { return "Base82 " + this.a; };
+////= lines-3	Made82
+Made82.prototype.__proto__ = Base82.prototype;
+Made82.prototype.tag = "Made82";
+function make82(x) { return new Made82(x); }
+function probe82(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base82) + " " + (made instanceof Made82); }
+run("plantSetterAboveParent", "protoAccessor", Made82, Base82, make82, probe82, true);
+
+function Base83() {}
+Base83.prototype.tag = "Base83";
+Base83.prototype.c = 0;
+Base83.prototype.who = function () { return "Base83 " + this.a; };
+////= lines-3	Made83
+Made83.prototype = { __proto__: Base83.prototype, constructor: Made83 };
+Made83.prototype.tag = "Made83";
+function make83(x) { return new Made83(x); }
+function probe83(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base83) + " " + (made instanceof Made83); }
+run("plantSetterAboveParent", "literal", Made83, Base83, make83, probe83, true);
+
+function Base84() {}
+Base84.prototype.tag = "Base84";
+Base84.prototype.c = 0;
+Base84.prototype.who = function () { return "Base84 " + this.a; };
+////= lines-3	Made84
+Made84.prototype = new Base84();
+Made84.prototype.tag = "Made84";
+function make84(x) { return new Made84(x); }
+function probe84(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base84) + " " + (made instanceof Made84); }
+run("plantSetterAboveParent", "instance", Made84, Base84, make84, probe84, true);
+
+function Base85() {}
+Base85.prototype.tag = "Base85";
+Base85.prototype.c = 0;
+Base85.prototype.who = function () { return "Base85 " + this.a; };
+////= lines-3	Made85
+inherits(Made85, Base85);
+Made85.prototype.tag = "Made85";
+function make85(x) { return new Made85(x); }
+function probe85(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base85) + " " + (made instanceof Made85); }
+run("hideMethodOnOwnPrototype", "inherits", Made85, Base85, make85, probe85, false);
+
+function Base86() {}
+Base86.prototype.tag = "Base86";
+Base86.prototype.c = 0;
+Base86.prototype.who = function () { return "Base86 " + this.a; };
+////= lines-3	Made86
+Made86.prototype = Object.setPrototypeOf({ constructor: Made86 }, Base86.prototype);
+Made86.prototype.tag = "Made86";
+function make86(x) { return new Made86(x); }
+function probe86(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base86) + " " + (made instanceof Made86); }
+run("hideMethodOnOwnPrototype", "relinkedLiteral", Made86, Base86, make86, probe86, false);
+
+function Base87() {}
+Base87.prototype.tag = "Base87";
+Base87.prototype.c = 0;
+Base87.prototype.who = function () { return "Base87 " + this.a; };
+////= lines-3	Made87
+Made87.prototype = new Base87();
+Made87.prototype.tag = "Made87";
+function make87(x) { return new Made87(x); }
+function probe87(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base87) + " " + (made instanceof Made87); }
+run("hideMethodOnOwnPrototype", "instance", Made87, Base87, make87, probe87, false);
+
+function Base88() {}
+Base88.prototype.tag = "Base88";
+Base88.prototype.c = 0;
+Base88.prototype.who = function () { return "Base88 " + this.a; };
+////= lines-3	Made88
+inherits(Made88, Base88);
+Made88.prototype.tag = "Made88";
+function make88(x) { return new Made88(x); }
+function probe88(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base88) + " " + (made instanceof Made88); }
+run("hideMethodOnOwnPrototype", "inherits", Made88, Base88, make88, probe88, true);
+
+function Base89() {}
+Base89.prototype.tag = "Base89";
+Base89.prototype.c = 0;
+Base89.prototype.who = function () { return "Base89 " + this.a; };
+////= lines-3	Made89
+Made89.prototype = Object.assign(Object.create(Base89.prototype), { constructor: Made89 });
+Made89.prototype.tag = "Made89";
+function make89(x) { return new Made89(x); }
+function probe89(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base89) + " " + (made instanceof Made89); }
+run("hideMethodOnOwnPrototype", "assign", Made89, Base89, make89, probe89, true);
+
+function Base90() {}
+Base90.prototype.tag = "Base90";
+Base90.prototype.c = 0;
+Base90.prototype.who = function () { return "Base90 " + this.a; };
+////= lines-3	Made90
+Made90.prototype = new Base90();
+Made90.prototype.tag = "Made90";
+function make90(x) { return new Made90(x); }
+function probe90(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base90) + " " + (made instanceof Made90); }
+run("hideMethodOnOwnPrototype", "instance", Made90, Base90, make90, probe90, true);
+
+function Base91() {}
+Base91.prototype.tag = "Base91";
+Base91.prototype.c = 0;
+Base91.prototype.who = function () { return "Base91 " + this.a; };
+////= lines-3	Made91
+Reflect.setPrototypeOf(Made91.prototype, Base91.prototype);
+Made91.prototype.tag = "Made91";
+function make91(x) { return new Made91(x); }
+function probe91(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base91) + " " + (made instanceof Made91); }
+run("replaceMethodOnParent", "reflect", Made91, Base91, make91, probe91, false);
+
+function Base92() {}
+Base92.prototype.tag = "Base92";
+Base92.prototype.c = 0;
+Base92.prototype.who = function () { return "Base92 " + this.a; };
+////= lines-3	Made92
+Made92.prototype = Object.create(Base92.prototype);
+Made92.prototype.tag = "Made92";
+function make92(x) { return new Made92(x); }
+function probe92(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base92) + " " + (made instanceof Made92); }
+run("replaceMethodOnParent", "create", Made92, Base92, make92, probe92, false);
+
+function Base93() {}
+Base93.prototype.tag = "Base93";
+Base93.prototype.c = 0;
+Base93.prototype.who = function () { return "Base93 " + this.a; };
+////= lines-3	Made93
+Made93.prototype = new Base93();
+Made93.prototype.tag = "Made93";
+function make93(x) { return new Made93(x); }
+function probe93(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base93) + " " + (made instanceof Made93); }
+run("replaceMethodOnParent", "instance", Made93, Base93, make93, probe93, false);
+
+function Base94() {}
+Base94.prototype.tag = "Base94";
+Base94.prototype.c = 0;
+Base94.prototype.who = function () { return "Base94 " + this.a; };
+////= lines-3	Made94
+Reflect.setPrototypeOf(Made94.prototype, Base94.prototype);
+Made94.prototype.tag = "Made94";
+function make94(x) { return new Made94(x); }
+function probe94(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base94) + " " + (made instanceof Made94); }
+run("replaceMethodOnParent", "reflect", Made94, Base94, make94, probe94, true);
+
+function Base95() {}
+Base95.prototype.tag = "Base95";
+Base95.prototype.c = 0;
+Base95.prototype.who = function () { return "Base95 " + this.a; };
+////= lines-3	Made95
+Made95.prototype = Object.setPrototypeOf({ constructor: Made95 }, Base95.prototype);
+Made95.prototype.tag = "Made95";
+function make95(x) { return new Made95(x); }
+function probe95(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base95) + " " + (made instanceof Made95); }
+run("replaceMethodOnParent", "relinkedLiteral", Made95, Base95, make95, probe95, true);
+
+function Base96() {}
+Base96.prototype.tag = "Base96";
+Base96.prototype.c = 0;
+Base96.prototype.who = function () { return "Base96 " + this.a; };
+////= lines-3	Made96
+Made96.prototype = new Base96();
+Made96.prototype.tag = "Made96";
+function make96(x) { return new Made96(x); }
+function probe96(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base96) + " " + (made instanceof Made96); }
+run("replaceMethodOnParent", "instance", Made96, Base96, make96, probe96, true);
+
+function Base97() {}
+Base97.prototype.tag = "Base97";
+Base97.prototype.c = 0;
+Base97.prototype.who = function () { return "Base97 " + this.a; };
+////= lines-3	Made97
+Object.setPrototypeOf(Made97.prototype, Base97.prototype);
+Made97.prototype.tag = "Made97";
+function make97(x) { return new Made97(x); }
+function probe97(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base97) + " " + (made instanceof Made97); }
+run("answerInstanceofOtherwise", "setPrototypeOf", Made97, Base97, make97, probe97, false);
+
+function Base98() {}
+Base98.prototype.tag = "Base98";
+Base98.prototype.c = 0;
+Base98.prototype.who = function () { return "Base98 " + this.a; };
+////= lines-3	Made98
+Made98.prototype = { __proto__: Base98.prototype, constructor: Made98 };
+Made98.prototype.tag = "Made98";
+function make98(x) { return new Made98(x); }
+function probe98(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base98) + " " + (made instanceof Made98); }
+run("answerInstanceofOtherwise", "literal", Made98, Base98, make98, probe98, false);
+
+function Base99() {}
+Base99.prototype.tag = "Base99";
+Base99.prototype.c = 0;
+Base99.prototype.who = function () { return "Base99 " + this.a; };
+////= lines-3	Made99
+Made99.prototype = new Base99();
+Made99.prototype.tag = "Made99";
+function make99(x) { return new Made99(x); }
+function probe99(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base99) + " " + (made instanceof Made99); }
+run("answerInstanceofOtherwise", "instance", Made99, Base99, make99, probe99, false);
+
+function Base100() {}
+Base100.prototype.tag = "Base100";
+Base100.prototype.c = 0;
+Base100.prototype.who = function () { return "Base100 " + this.a; };
+////= lines-3	Made100
+Made100.prototype.__proto__ = Base100.prototype;
+Made100.prototype.tag = "Made100";
+function make100(x) { return new Made100(x); }
+function probe100(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base100) + " " + (made instanceof Made100); }
+run("answerInstanceofOtherwise", "protoAccessor", Made100, Base100, make100, probe100, true);
+
+function Base101() {}
+Base101.prototype.tag = "Base101";
+Base101.prototype.c = 0;
+Base101.prototype.who = function () { return "Base101 " + this.a; };
+////= lines-3	Made101
+Made101.prototype = Object.create(Base101.prototype);
+Made101.prototype.tag = "Made101";
+function make101(x) { return new Made101(x); }
+function probe101(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base101) + " " + (made instanceof Made101); }
+run("answerInstanceofOtherwise", "create", Made101, Base101, make101, probe101, true);
+
+function Base102() {}
+Base102.prototype.tag = "Base102";
+Base102.prototype.c = 0;
+Base102.prototype.who = function () { return "Base102 " + this.a; };
+////= lines-3	Made102
+Made102.prototype = new Base102();
+Made102.prototype.tag = "Made102";
+function make102(x) { return new Made102(x); }
+function probe102(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base102) + " " + (made instanceof Made102); }
+run("answerInstanceofOtherwise", "instance", Made102, Base102, make102, probe102, true);
+
+// Each call makes the two functions and their prototype objects again.
+////= factories
+////= Object-keys
+
+// The first object is constructed before the link is made.
+function LateBase() {}
+LateBase.prototype.tag = "LateBase";
+Object.defineProperty(LateBase.prototype, "b", accessor("late base"));
+////= lines-7	LateMade	x	a	b
+LateMade.prototype.tag = "LateMade";
+function makeLate(x) { return new LateMade(x); }
+unseen(LateMade);
+construct("constructed before the link", makeLate, 1);
+Object.setPrototypeOf(LateMade.prototype, LateBase.prototype);
+construct("constructed after the link", makeLate, 2);
+
+// The same where the link replaces the prototype object. The first object keeps the one it was made under.
+function LateCreatedBase() {}
+LateCreatedBase.prototype.tag = "LateCreatedBase";
+Object.defineProperty(LateCreatedBase.prototype, "late", accessor("late created base"));
+////= lines-7	LateCreated	x	a	b
+LateCreated.prototype.tag = "first prototype object";
+////= lines-35	storeLate
+unseen(LateCreated);
+var early = new LateCreated(1);
+LateCreated.prototype = Object.create(LateCreatedBase.prototype);
+LateCreated.prototype.tag = "LateCreated";
+construct("constructed after the prototype object was replaced", function (x) { return storeLate(new LateCreated(x)); }, 2);
+construct("constructed before the prototype object was replaced", function () { return storeLate(early); });
+
+// Two calls give two parents.
+function FirstParent() {}
+FirstParent.prototype.tag = "FirstParent";
+function SecondParent() {}
+SecondParent.prototype.tag = "SecondParent";
+Object.defineProperty(SecondParent.prototype, "b", accessor("second"));
+////= lines-7	TwoParents	x	a	b
+function makeTwoParents(x) { return new TwoParents(x); }
+function probeTwoParents(made) { return (made instanceof FirstParent) + " " + (made instanceof SecondParent); }
+unseen(TwoParents);
+inherits(TwoParents, FirstParent);
+construct("under the first parent", makeTwoParents, 1, probeTwoParents);
+inherits(TwoParents, SecondParent);
+construct("under the second parent", makeTwoParents, 2, probeTwoParents);
+
+// The text has a link that the program never makes.
+function NeverBase() {}
+NeverBase.prototype.tag = "NeverBase";
+NeverBase.prototype.who = function () { return "NeverBase"; };
+Object.defineProperty(NeverBase.prototype, "b", accessor("never"));
+////= lines-7	NeverLinked	x	a	b
+NeverLinked.prototype.tag = "NeverLinked";
+function linkNever() { inherits(NeverLinked, NeverBase); }
+function makeNeverLinked(x) { return new NeverLinked(x); }
+function probeNeverLinked(made) { return typeof made.who + " " + (made instanceof NeverBase); }
+unseen(NeverLinked);
+unseen(linkNever);
+construct("the link stands in a function that never runs", makeNeverLinked, 1, probeNeverLinked);
+
+function SkippedBase() {}
+SkippedBase.prototype.tag = "SkippedBase";
+SkippedBase.prototype.who = function () { return "SkippedBase"; };
+Object.defineProperty(SkippedBase.prototype, "b", accessor("skipped"));
+////= lines-7	Skipped	x	a	b
+Skipped.prototype.tag = "Skipped";
+if (unseen(false))
+  Object.setPrototypeOf(Skipped.prototype, SkippedBase.prototype);
+function makeSkipped(x) { return new Skipped(x); }
+function probeSkipped(made) { return typeof made.who + " " + (made instanceof SkippedBase); }
+unseen(Skipped);
+construct("the link stands under a condition that fails", makeSkipped, 1, probeSkipped);
+
+function UndoneBase() {}
+UndoneBase.prototype.tag = "UndoneBase";
+UndoneBase.prototype.who = function () { return "UndoneBase"; };
+Object.defineProperty(UndoneBase.prototype, "b", accessor("undone"));
+////= lines-7	Undone	x	a	b
+Undone.prototype.tag = "Undone";
+Object.setPrototypeOf(Undone.prototype, UndoneBase.prototype);
+Object.setPrototypeOf(unseen(Undone).prototype, Object.prototype);
+function makeUndone(x) { return new Undone(x); }
+function probeUndone(made) { return typeof made.who + " " + (made instanceof UndoneBase); }
+construct("the link is undone before the first construction", makeUndone, 1, probeUndone);
+
+// The second link would close a circle, so it throws.
+////= lines-7	Ring1	x	a	b
+Ring1.prototype.tag = "Ring1";
+function Ring2() {}
+Ring2.prototype.tag = "Ring2";
+inherits(Ring1, Ring2);
+lines.push("links that come back: " + attempt(function () { inherits(Ring2, Ring1); return "linked"; }));
+lines.push("a link to itself: " + attempt(function () { Object.setPrototypeOf(Ring2.prototype, Ring2.prototype); return "linked"; }));
+unseen(Ring1);
+construct("in what is left of the circle", function (x) { return new Ring1(x); }, 1);
+
+// The name of the parent gets another function after the link.
+var Moving = function () {};
+Moving.prototype.tag = "first Moving";
+////= lines-7	BelowMoving	x	a	b
+inherits(BelowMoving, Moving);
+BelowMoving.prototype.tag = "BelowMoving";
+Moving = function () {};
+Moving.prototype.tag = "second Moving";
+Object.defineProperty(Moving.prototype, "b", accessor("second moving"));
+unseen(BelowMoving);
+construct("the name of the parent holds another function", function (x) { return new BelowMoving(x); }, 1, function (made) { return made instanceof Moving; });
+
+// Three classes, each constructor calls the one above, and the accessor arrives on the topmost.
+////= lines-28	Top	top	1
+Top.prototype.tag = "Top";
+////= lines-33	Middle	Top	middle
+inherits(Middle, Top);
+Middle.prototype.tag = "Middle";
+////= lines-29	Bottom	Middle
+inherits(Bottom, Middle);
+Bottom.prototype.tag = "Bottom";
+function makeBottom(x) { return new Bottom(x); }
+function probeBottom(made) { return (made instanceof Top) + " " + (made instanceof Middle); }
+unseen(Bottom);
+construct("three classes", makeBottom, 1, probeBottom);
+Object.defineProperty(unseen(Top).prototype, "middle", accessor("top"));
+construct("three classes, accessor for a field of the middle one", makeBottom, 2, probeBottom);
+Object.defineProperty(unseen(Top).prototype, "b", accessor("top"));
+construct("three classes, accessor for a field of the lowest one", makeBottom, 3, probeBottom);
+construct("the middle one", function () { return new Middle(); });
+Object.setPrototypeOf(unseen(Middle).prototype, Object.prototype);
+construct("three classes, the middle one has left the topmost", makeBottom, 4, probeBottom);
+
+// The lowest class is constructed before its parent has got a parent.
+////= lines-28	Root	root	1
+Root.prototype.tag = "Root";
+Object.defineProperty(Root.prototype, "b", accessor("root"));
+////= lines-33	Inner	Root	inner
+Inner.prototype.tag = "Inner";
+////= lines-29	Leaf	Inner
+inherits(Leaf, Inner);
+Leaf.prototype.tag = "Leaf";
+function makeLeaf(x) { return new Leaf(x); }
+unseen(Leaf);
+construct("the parent has no parent yet", makeLeaf, 1);
+inherits(Inner, Root);
+construct("the parent has got its parent", makeLeaf, 2);
+
+// Two children of one parent. One of them leaves.
+function Shared() {}
+Shared.prototype.tag = "Shared";
+////= lines-7	FirstChild	x	a	b
+inherits(FirstChild, Shared);
+FirstChild.prototype.tag = "FirstChild";
+////= lines-7	SecondChild	x	a	b
+inherits(SecondChild, Shared);
+SecondChild.prototype.tag = "SecondChild";
+function makeFirstChild(x) { return new FirstChild(x); }
+function makeSecondChild(x) { return new SecondChild(x); }
+function probeChild(made) { return made instanceof Shared; }
+unseen(FirstChild);
+unseen(SecondChild);
+construct("the first child", makeFirstChild, 1, probeChild);
+construct("the second child", makeSecondChild, 1, probeChild);
+Object.setPrototypeOf(unseen(FirstChild).prototype, Object.defineProperty({ tag: "elsewhere" }, "b", accessor("elsewhere")));
+construct("the first child has left", makeFirstChild, 2, probeChild);
+construct("the second child has stayed", makeSecondChild, 2, probeChild);
+Object.defineProperty(unseen(Shared).prototype, "b", accessor("shared"));
+construct("the first child, accessor on the parent it has left", makeFirstChild, 3, probeChild);
+construct("the second child, accessor on its parent", makeSecondChild, 3, probeChild);
+
+// The parent is a class.
+class ClassParent {
+  get tag() { return "ClassParent"; }
+  who() { return "ClassParent " + this.a; }
+}
+////= lines-7	UnderClass	x	a	b
+Object.setPrototypeOf(UnderClass.prototype, ClassParent.prototype);
+function makeUnderClass(x) { return new UnderClass(x); }
+function probeUnderClass(made) { return made.who() + " " + (made instanceof ClassParent); }
+unseen(UnderClass);
+construct("under a class", makeUnderClass, 1, probeUnderClass);
+Object.defineProperty(unseen(ClassParent).prototype, "b", accessor("class"));
+construct("under a class with an accessor", makeUnderClass, 2, probeUnderClass);
+////= lines-26	CallsClass	ClassParent
+inherits(CallsClass, ClassParent);
+construct("the constructor calls the class", function (x) { return new CallsClass(x); }, 3);
+
+// The function objects are linked as well.
+function StaticBase() {}
+StaticBase.label = "StaticBase";
+StaticBase.create = function () { return "created by " + this.label; };
+function StaticMade() {}
+inherits(StaticMade, StaticBase);
+function readStatic() { return (StaticMade.create ? StaticMade.create() : "nothing") + " " + StaticMade.label; }
+unseen(StaticMade);
+lines.push("before the function objects are linked: " + readStatic());
+Object.setPrototypeOf(StaticMade, StaticBase);
+lines.push("after the function objects are linked: " + readStatic());
+StaticMade.label = "StaticMade";
+lines.push("with a property of its own: " + readStatic());
+Object.setPrototypeOf(unseen(StaticMade), Function.prototype);
+lines.push("after the link is undone: " + readStatic());
+
+// Another new.target, another receiver, and an object that is relinked before a function stores a name for the first time.
+function Target() {}
+Target.prototype = Object.defineProperty({ tag: "Target" }, "b", accessor("target"));
+function ReflectBase() {}
+ReflectBase.prototype.tag = "ReflectBase";
+////= lines-7	Reflected	x	a	b
+inherits(Reflected, ReflectBase);
+Reflected.prototype.tag = "Reflected";
+////= lines-35	extend
+unseen(Reflected);
+construct("own new.target", function (x) { return new Reflected(x); }, 1);
+construct("other new.target", function (x) { return Reflect.construct(Reflected, [x], Target); }, 2);
+construct("the parent as new.target", function (x) { return Reflect.construct(Reflected, [x], ReflectBase); }, 3);
+construct("called on an object literal", function (x) {
+  var plain = { tag: "plain" };
+  Reflected.call(plain, x);
+  return plain;
+}, 4);
+construct("called on an object of the parent", function (x) {
+  var base = new ReflectBase();
+  Reflected.call(base, x);
+  return base;
+}, 5);
+construct("a name stored later", function (x) { return extend(new Reflected(x)); }, 6);
+construct("a name stored later under an accessor", function (x) {
+  return extend(Object.setPrototypeOf(new Reflected(x), Object.defineProperty({ tag: "relinked" }, "late", accessor("relinked"))));
+}, 7);
+Object.defineProperty(unseen(ReflectBase).prototype, "late", accessor("base"));
+construct("a name stored later under an accessor of the parent", function (x) { return extend(new Reflected(x)); }, 8);
+
+// What a function stores that is called with the new object: between the stores of the constructor, under a condition, late, under a name of the constructor.
+////= lines-27	Emitter	events	0	limit	10
+Emitter.prototype.tag = "Emitter";
+function Stream(x) {
+  this.a = x;
+  Emitter.call(this);
+  this.b = x + 1;
+}
+inherits(Stream, Emitter);
+Stream.prototype.tag = "Stream";
+function makeStream(x) { return new Stream(x); }
+unseen(Stream);
+construct("the parent is called between two stores", makeStream, 1);
+Object.defineProperty(unseen(Emitter).prototype, "limit", accessor("emitter"));
+construct("accessor for a field that the parent stores", makeStream, 2);
+delete unseen(Emitter).prototype.limit;
+construct("the accessor is gone", makeStream, 3);
+Object.defineProperty(unseen(Emitter), "call", { value: function () { noted.push("own call"); }, configurable: true });
+construct("the parent has a call of its own", makeStream, 4);
+delete unseen(Emitter).call;
+construct("the parent has lost it", makeStream, 5);
+
+////= Optional
+var flips = false;
+unseen(Optional);
+construct("the call is made", function (x) { return new Optional(x, true); }, 1);
+construct("the call is left out", function (x) { return new Optional(x, false); }, 2);
+////= construct-2	"the call is made every other time"	Optional	3
+
+////= Reordered
+unseen(Reordered);
+////= construct-2	"the call comes early or late"	Reordered	1
+
+////= lines-27	Counter	count	0	b	"stored by the callee"
+function Counting(x) {
+  this.b = x;
+  Counter.call(this);
+  this.count++;
+}
+unseen(Counting);
+construct("both store one name", function (x) { return new Counting(x); }, 1);
+
+////= lines-34	Named	first	second
+function Forwarding() {
+  Named.apply(this, arguments);
+  this.b = arguments.length;
+}
+unseen(Forwarding);
+construct("the arguments are handed on", function (x) { return new Forwarding(x); }, 1);
+construct("two arguments are handed on", function (x) { return new Forwarding(x, x + 1); }, 2);
+
+function Holder(x) {
+  this.inner = {};
+  Emitter.call(this.inner);
+  this.b = x;
+}
+unseen(Holder);
+construct("the callee gets another object", function (x) { return new Holder(x); }, 1);
+
+function Returning() {
+  this.kept = 1;
+  return { tag: "returned" };
+}
+////= lines-26	UsesReturning	Returning
+unseen(UsesReturning);
+construct("the callee returns an object", function (x) { return new UsesReturning(x); }, 1);
+
+////= Again
+unseen(Again);
+construct("the constructor calls itself", function (x) { return new Again(x); }, 2);
+
+var Swapped = function () {
+  this.first = 1;
+};
+////= lines-26	UsesSwapped	Swapped
+unseen(UsesSwapped);
+construct("the callee before its name gets another function", function (x) { return new UsesSwapped(x); }, 1);
+Swapped = function () {
+  this.second = 2;
+};
+construct("the callee after its name got another function", function (x) { return new UsesSwapped(x); }, 2);
+
+// Members that are copied into the prototype object. The copy reads each property once: it stores what a getter returns, and undefined where there is only a setter.
+var reads = 0;
+////= lines-7	Mixed	x	a	b
+////= Object-assign
+function makeMixed(x) { return new Mixed(x); }
+function probeMixed(made) { return made.who() + " " + made.counted + " " + reads + " " + Object.keys(Mixed.prototype).join(); }
+unseen(Mixed);
+construct("members copied into the prototype object", makeMixed, 1, probeMixed);
+unseen(Mixed).prototype.who = function () { return "changed " + this.a; };
+Object.defineProperty(unseen(Mixed).prototype, "b", accessor("mixed"));
+construct("copied members are replaced", makeMixed, 2, probeMixed);
+
+// The parent is a built-in class.
+function Failure(message) {
+  Error.call(this, message);
+  this.name = "Failure";
+  this.message = message;
+}
+inherits(Failure, Error);
+Failure.prototype.tag = "Failure";
+unseen(Failure);
+construct("under Error", function (x) { return new Failure("text " + x); }, 1, function (made) { return String(made) + " " + (made instanceof Error); });
+
+////= lines-28	List	length	0
+List.prototype = Object.create(Array.prototype);
+List.prototype.constructor = List;
+List.prototype.tag = "List";
+unseen(List);
+construct("under Array", function (x) {
+  var list = new List();
+  list.push(x, x + 1);
+  return list;
+}, 1, function (made) { return made.join("+") + " " + (made instanceof Array) + " " + Array.isArray(made); });
+
+// The parent is a generator function.
+function* Steps() {}
+////= lines-7	Walker	x	a	b
+Object.setPrototypeOf(Walker.prototype, Steps.prototype);
+Walker.prototype.tag = "Walker";
+unseen(Walker);
+construct("under a generator function", function (x) { return new Walker(x); }, 1, function (made) {
+  return typeof made.next + " " + attempt(function () { return made.next(); }) + " " + (made instanceof Steps);
+});
+
+console.log(lines.join("\n"));
+//// esm-body-throws-and-timer-reads-dead-zone/main.js
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+process.on("uncaughtException", e => console.log("uncaught", e.message));
+setTimeout(() => console.log(attempt(() => later.x), attempt(() => new K().m()), attempt(() => count + 1)), 1);
+if (JSON.parse("true")) throw new RangeError("midway");
+const later = { x: 1 };
+class K { m() { return 1; } }
+let count = 41;
+//// esm-dynamic-import-retried-after-throw/main.js
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+for (let i = 0; i < 2; i++) {
+  try { const m = await import("./state.js"); console.log("loaded", m.early.x, m.later.x); } catch (e) { console.log("failed", e.constructor.name, e.message); }
+  console.log(globalThis.runs, attempt(globalThis.hook));
+}
+//// esm-dynamic-import-retried-after-throw/state.js
+globalThis.runs = (globalThis.runs || 0) + 1;
+globalThis.hook = () => later.x;
+export const early = { x: globalThis.runs };
+if (globalThis.runs === 1) throw new RangeError("first");
+const later = { x: 1 };
+export { later };
+//// esm-imported-and-required/main.js
+import * as a from "./state.js";
+////= report
+
+const b = require("./state.js");
+report(a, b);
+//// esm-imported-and-required/state.js
+let c = 0;
+class K { static s = 0; }
+const sym = Symbol("s");
+const obj = { n: 0 };
+globalThis.runs = (globalThis.runs || 0) + 1;
+export const inc = () => ++c;
+export { K, sym, obj };
+export const id = globalThis.runs;
+//// esm-imported-through-two-paths/main.js
+////= report
+
+const a = await import("./state.js");
+const b = await import("./sub/../state.js");
+const c = await import(import.meta.dir + "/state.js");
+const d = await import(new URL("./state.js", import.meta.url).href);
+console.log(a === c, a === d);
+report(a, b);
+//// esm-imported-through-two-paths/state.js
+let c = 0;
+class K { static s = 0; }
+const sym = Symbol("s");
+const obj = { n: 0 };
+globalThis.runs = (globalThis.runs || 0) + 1;
+export const inc = () => ++c;
+export { K, sym, obj };
+export const id = globalThis.runs;
+//// esm-registry-entry-deleted/main.js
+////= report
+
+const a = await import("./state.js");
+let cleared = "no Loader";
+try { for (const k of [...Loader.registry.keys()]) if (k.endsWith("state.js")) { Loader.registry.delete(k); cleared = "deleted"; } } catch (e) { cleared = "threw " + e.constructor.name; }
+const b = await import("./state.js");
+console.log(cleared);
+report(a, b);
+//// esm-registry-entry-deleted/state.js
+let c = 0;
+class K { static s = 0; }
+const sym = Symbol("s");
+const obj = { n: 0 };
+globalThis.runs = (globalThis.runs || 0) + 1;
+export const inc = () => ++c;
+export { K, sym, obj };
+export const id = globalThis.runs;
+//// evaluated-text-calls-the-listeners-of-process/main.mjs
+// Text put together at run time reads the listeners that the program has added to process and calls them with another kind of operand.
+const glue = (a, b) => [a, b].join(process.argv.length > 99 ? "x" : "");
+class C { constructor(n) { this.n = n; this.list = [1, 2]; } twice() { return this.n * 2; } total() { let s = 0; for (let i = 0; i < this.list.length; i++) s += this.list[i]; return s; } }
+const o = new C(21);
+const spoil = 'o.n = "x"; o.list.push("y");';
+{ let calls = 0; const mine = n => { calls += n; }; process.on("ping", mine); new Function(glue('for (const f of process.listeners("ping")) f("x")', ''))(); console.log("listeners", typeof calls, calls); }
+//// evaluated-text-finds-an-object-stored-on-a-built-in-function/main.mjs
+// The program stores an object on a built-in function, where text put together at run time finds it.
+const glue = (a, b) => [a, b].join(process.argv.length > 99 ? "x" : "");
+class C { constructor(n) { this.n = n; this.list = [1, 2]; } twice() { return this.n * 2; } total() { let s = 0; for (let i = 0; i < this.list.length; i++) s += this.list[i]; return s; } }
+const o = new C(21);
+const spoil = 'o.n = "x"; o.list.push("y");';
+{ setTimeout.o = o; new Function(glue('const o = setTimeout.o; ', spoil))(); console.log("stored on setTimeout", typeof o.n, o.twice(), o.total()); }
+//// evaluated-text-finds-an-object-stored-on-process-stdout/main.mjs
+// The program stores an object on process.stdout, where text put together at run time finds it.
+const glue = (a, b) => [a, b].join(process.argv.length > 99 ? "x" : "");
+class C { constructor(n) { this.n = n; this.list = [1, 2]; } twice() { return this.n * 2; } total() { let s = 0; for (let i = 0; i < this.list.length; i++) s += this.list[i]; return s; } }
+const o = new C(21);
+const spoil = 'o.n = "x"; o.list.push("y");';
+{ process.stdout.o = o; new Function(glue('const o = process.stdout.o; ', spoil))(); console.log("stored on process.stdout", typeof o.n, o.twice(), o.total()); }
+//// evaluated-text-listens-for-an-event-dispatched-on-performance/main.mjs
+// Text put together at run time adds a listener to performance, which it is not handed. The program dispatches an event of a class of its own there, and the listener changes the event and the object it carries.
+const glue = (a, b) => [a, b].join(process.argv.length > 99 ? "x" : "");
+class C { constructor(n) { this.n = n; this.list = [1, 2]; } twice() { return this.n * 2; } total() { let s = 0; for (let i = 0; i < this.list.length; i++) s += this.list[i]; return s; } }
+const o = new C(21);
+const spoil = 'o.n = "x"; o.list.push("y");';
+{ class Ping extends Event { constructor(p) { super("ping"); this.payload = p; this.k = 21; } } new Function(glue('performance.addEventListener("ping", e => { const o = e.payload; e.k = "x"; ', spoil + ' })'))(); const e = new Ping(o); performance.dispatchEvent(e); console.log("event class on performance", typeof o.n, o.twice(), o.total(), typeof e.k, e.k * 2); }
+//// evaluated-text-listens-for-an-event-dispatched-on-the-global-object/main.mjs
+// Text put together at run time adds a listener to the global object, which it is not handed. The program dispatches an event of a class of its own there, and the listener changes the event and the object it carries.
+const glue = (a, b) => [a, b].join(process.argv.length > 99 ? "x" : "");
+class C { constructor(n) { this.n = n; this.list = [1, 2]; } twice() { return this.n * 2; } total() { let s = 0; for (let i = 0; i < this.list.length; i++) s += this.list[i]; return s; } }
+const o = new C(21);
+const spoil = 'o.n = "x"; o.list.push("y");';
+{ class Ping extends Event { constructor(p) { super("ping"); this.payload = p; this.k = 21; } } new Function(glue('globalThis.addEventListener("ping", e => { const o = e.payload; e.k = "x"; ', spoil + ' })'))(); const e = new Ping(o); globalThis.dispatchEvent(e); console.log("event class on the global object", typeof o.n, o.twice(), o.total(), typeof e.k, e.k * 2); }
+//// evaluated-text-listens-for-uncaught-exceptions/main.mjs
+// Text put together at run time listens on process for uncaught exceptions, so an object that the program throws in a timer and nobody catches reaches it.
+const glue = (a, b) => [a, b].join(process.argv.length > 99 ? "x" : "");
+class C { constructor(n) { this.n = n; this.list = [1, 2]; } twice() { return this.n * 2; } total() { let s = 0; for (let i = 0; i < this.list.length; i++) s += this.list[i]; return s; } }
+const o = new C(21);
+const spoil = 'o.n = "x"; o.list.push("y");';
+{ new Function(glue('process.on("uncaughtException", o => { ', spoil + ' })'))(); setTimeout(() => { throw o; }, 0); await new Promise(r => setTimeout(r, 10)); console.log("thrown in a timer", typeof o.n, o.twice(), o.total()); }
+//// evaluated-text-listens-for-unhandled-rejections/main.mjs
+// Text put together at run time listens on process for unhandled rejections, so the reason of a promise that nobody handles reaches it.
+const glue = (a, b) => [a, b].join(process.argv.length > 99 ? "x" : "");
+class C { constructor(n) { this.n = n; this.list = [1, 2]; } twice() { return this.n * 2; } total() { let s = 0; for (let i = 0; i < this.list.length; i++) s += this.list[i]; return s; } }
+const o = new C(21);
+const spoil = 'o.n = "x"; o.list.push("y");';
+{ new Function(glue('process.on("unhandledRejection", o => { ', spoil + ' })'))(); Promise.reject(o); await new Promise(r => setTimeout(r, 10)); console.log("rejection reason", typeof o.n, o.twice(), o.total()); }
+//// evaluated-text-plants-next-on-a-prototype-that-is-not-locked/main.mjs
+// Text that is evaluated at run time puts `next` and `return` on built-in prototypes that stay open. A loop asks whatever Symbol.iterator answers for them, and the functions change their receiver.
+const glue = (first, second) => [first, second].join(process.argv.length > 99 ? "x" : "");
+const plant = text => new Function(glue(text, ""))();
+
+const when = new WeakRef({});
+when.turns = 0;
+when.closed = 0;
+const overReference = { [Symbol.iterator]() { return when; } };
+function twice(read) {
+  let sum = 0;
+  for (let round = 0; round < 2; round++) sum += read();
+  return sum;
+}
+plant(`WeakRef.prototype.next = function () { this.turns = this.turns + "t"; return { done: this.turns.length > 3, value: this.turns }; }`);
+plant(`WeakRef.prototype.return = function () { this.closed = "closed"; return {}; }`);
+let seen = "";
+for (const value of overReference) seen += value + " ";
+console.log("a weak reference as an iterator:", seen, twice(() => when.turns), twice(() => when.closed));
+when.turns = 0;
+for (const value of overReference) break;
+console.log("left early:", twice(() => when.turns), twice(() => when.closed));
+
+const failure = new RangeError("out of range");
+failure.turns = 0;
+const overError = { [Symbol.iterator]() { return failure; } };
+plant(`Error.prototype.next = function () { this.turns = this.turns + "e"; return { done: this.turns.length > 2, value: 1 }; }`);
+console.log("an error as an iterator:", [...overError].length, twice(() => failure.turns));
+console.log("handed to a built-in:", Array.from(overError).length, new Set(overError).size, twice(() => failure.turns));
+
+const day = new Date(0);
+day.turns = 0;
+const overDate = { [Symbol.iterator]() { return day; } };
+plant(`Date.prototype.next = function () { this.turns = this.turns + "d"; return { done: this.turns.length > 3, value: this.turns }; }`);
+console.log("a date as an iterator, by the one name that is open there:", [...overDate].join(), twice(() => day.turns));
+//// evaluated-text-plants-the-custom-inspect-function-on-array-prototype/main.mjs
+// Text put together at run time plants the custom inspect function on Array.prototype, so printing an array of the program hands the array to it.
+const glue = (a, b) => [a, b].join(process.argv.length > 99 ? "x" : "");
+class C { constructor(n) { this.n = n; this.list = [1, 2]; } twice() { return this.n * 2; } total() { let s = 0; for (let i = 0; i < this.list.length; i++) s += this.list[i]; return s; } }
+const o = new C(21);
+const spoil = 'o.n = "x"; o.list.push("y");';
+{ new Function(glue('Array.prototype[Symbol.for("nodejs.util.inspect.custom")] = function () { this.push("y"); return "planted"; ', '}'))(); console.log(o.list); console.log("custom inspect on Array.prototype", o.total()); }
+//// evaluated-text-plants-to-json-on-map-prototype/main.mjs
+// Text put together at run time plants toJSON on Map.prototype, so serializing a map of the program hands the map to it.
+const glue = (a, b) => [a, b].join(process.argv.length > 99 ? "x" : "");
+class C { constructor(n) { this.n = n; this.list = [1, 2]; } twice() { return this.n * 2; } total() { let s = 0; for (let i = 0; i < this.list.length; i++) s += this.list[i]; return s; } }
+const o = new C(21);
+const spoil = 'o.n = "x"; o.list.push("y");';
+{ const m = new Map([[1, 2]]); new Function(glue('Map.prototype.toJSON = function () { this.set(1, "x"); return 1; ', '}'))(); console.log("toJSON on Map.prototype", JSON.stringify({ m }), typeof m.get(1), m.get(1) * 2); }
+//// evaluated-text-plants-to-json-that-changes-its-receiver/main.mjs
+// Text that is evaluated at run time puts `toJSON` on built-in prototypes that have no such member. JSON.stringify finds the function and calls it on the value, and the function changes the value.
+const glue = (first, second) => [first, second].join(process.argv.length > 99 ? "x" : "");
+const plant = text => new Function(glue(text, ""))();
+
+const set = new Set([1, 2]);
+function sumOfSet() {
+  let sum = 0;
+  for (const value of set) sum += value;
+  return sum;
+}
+plant(`Set.prototype.toJSON = function () { this.add("w"); return 1; }`);
+console.log("a set:", JSON.stringify(set), sumOfSet());
+
+////= lines-17	Counted	Map	count	1
+const counted = new Counted();
+function twiceTheCount() {
+  let sum = 0;
+  for (let round = 0; round < 2; round++) sum += counted.count;
+  return sum;
+}
+plant(`Map.prototype.toJSON = function () { this.count = "c"; return 2; }`);
+console.log("an instance of a class below Map:", JSON.stringify(counted), twiceTheCount());
+
+const failure = new RangeError("out of range");
+failure.code = 1;
+function twiceTheCode() {
+  let sum = 0;
+  for (let round = 0; round < 2; round++) sum += failure.code;
+  return sum;
+}
+plant(`Error.prototype.toJSON = function () { this.code = "e"; return 3; }`);
+console.log("an error:", JSON.stringify(failure), twiceTheCode());
+//// evaluated-text-prepares-the-stack-trace-of-a-captured-object/main.mjs
+// Text put together at run time sets Error.prepareStackTrace, which is called with the object that the program hands to Error.captureStackTrace.
+const glue = (a, b) => [a, b].join(process.argv.length > 99 ? "x" : "");
+class C { constructor(n) { this.n = n; this.list = [1, 2]; } twice() { return this.n * 2; } total() { let s = 0; for (let i = 0; i < this.list.length; i++) s += this.list[i]; return s; } }
+const o = new C(21);
+const spoil = 'o.n = "x"; o.list.push("y");';
+{ new Function(glue('Error.prepareStackTrace = (o, sites) => { ', spoil + ' return "planted"; }'))(); Error.captureStackTrace(o); console.log("prepareStackTrace at captureStackTrace", o.stack, typeof o.n, o.twice(), o.total()); }
+//// evaluated-text-prepares-the-stack-trace-of-an-error/main.mjs
+// Text put together at run time sets Error.prepareStackTrace, which is called with an error of a class of the program when its stack is read.
+const glue = (a, b) => [a, b].join(process.argv.length > 99 ? "x" : "");
+class C { constructor(n) { this.n = n; this.list = [1, 2]; } twice() { return this.n * 2; } total() { let s = 0; for (let i = 0; i < this.list.length; i++) s += this.list[i]; return s; } }
+const o = new C(21);
+const spoil = 'o.n = "x"; o.list.push("y");';
+{ class E extends Error { constructor() { super("m"); this.k = 21; } } new Function(glue('Error.prepareStackTrace = (e, sites) => { e.k = "x"; return "planted"; ', '}'))(); const e = new E(); console.log("prepareStackTrace at a read of stack", e.stack, typeof e.k, e.k * 2); }
+//// evaluated-text-reads-a-global-stored-after-it-ran/main.mjs
+// Text put together at run time starts a timer that reads a property of the global object which the program stores only afterwards.
+const glue = (a, b) => [a, b].join(process.argv.length > 99 ? "x" : "");
+class C { constructor(n) { this.n = n; this.list = [1, 2]; } twice() { return this.n * 2; } total() { let s = 0; for (let i = 0; i < this.list.length; i++) s += this.list[i]; return s; } }
+const o = new C(21);
+const spoil = 'o.n = "x"; o.list.push("y");';
+{ new Function(glue('setTimeout(() => { const o = globalThis.late; ', spoil + ' }, 5)'))(); globalThis.late = o; await new Promise(r => setTimeout(r, 20)); console.log("a global stored after the text ran", typeof o.n, o.twice(), o.total()); }
+//// evaluated-text-reads-a-namespace-object-on-the-global-object/exports.mjs
+export const used = 1;
+export const unread = "kept";
+export function neverCalled() { return "called"; }
+export let counter = 0;
+export function bump() { return ++counter; }
+export const holder = { n: 21, list: [1, 2] };
+export function twice() { return holder.n * 2; }
+export function total() { let s = 0; for (let i = 0; i < holder.list.length; i++) s += holder.list[i]; return s; }
+export default class Unused { }
+//// evaluated-text-reads-a-namespace-object-on-the-global-object/loaded-later.mjs
+export const unread = "kept later";
+export function neverCalled() { return "called later"; }
+//// evaluated-text-reads-a-namespace-object-on-the-global-object/main.mjs
+// A namespace object that the program stores on the global object is read by text put together at run time: exports that the program never reads, functions it never calls, bindings that change later.
+import * as whole from "./exports.mjs";
+import { used, bump } from "./exports.mjs";
+import * as again from "./passes-on.mjs";
+const glue = (a, b) => [a, b].join(process.argv.length > 99 ? "x" : "");
+globalThis.whole = whole;
+console.log(used, new Function(glue("return whole.unread + ' ' + whole.neverCalled() + ' ' + Object.keys(whole).join()", ""))());
+bump();
+console.log(new Function(glue("return whole.counter + ' ' + whole.bump() + ' ' + whole.counter", ""))(), whole.counter);
+console.log(new Function(glue("try { whole.counter = 9; return 'stored'; } catch (e) { return e.name; }", ""))(), whole.counter);
+console.log(new Function(glue("whole.holder.n = 'x'; whole.holder.list.push('y'); return typeof whole.default", ""))(), typeof whole.holder.n, whole.twice(), whole.total());
+globalThis.again = again;
+console.log(new Function(glue("return Object.keys(again).join() + ' ' + again.renamed + ' ' + again.inner.unread", ""))());
+globalThis.later = import("./loaded-later.mjs");
+console.log(await new Function(glue("return later.then(m => m.unread + ' ' + m.neverCalled())", ""))());
+//// evaluated-text-reads-a-namespace-object-on-the-global-object/more-exports.mjs
+export const starred = "starred";
+//// evaluated-text-reads-a-namespace-object-on-the-global-object/passes-on.mjs
+export { unread as renamed } from "./exports.mjs";
+export * as inner from "./exports.mjs";
+export * from "./more-exports.mjs";
+//// event-emitter-calls-reflect-construct-for-a-subclass.js
+let leaked;
+class A { constructor(p) { leaked = this; this.x = p; this.r = this.m(); } m() { return "A.m"; } }
+class B extends A { s = 5; m() { return "B.m"; } }
+function report(label) { console.log(label, leaked.r, leaked instanceof B, leaked.s, Object.keys(leaked).join(), Object.getPrototypeOf(leaked) === B.prototype, leaked.m()); }
+const { EventEmitter } = require("node:events");
+const e = new EventEmitter(); e.on("make", Reflect.construct); e.emit("make", A, [1], B);
+report("emit");
+//// event-listener-constructs-the-base-for-a-subclass.js
+let leaked;
+class A { constructor(p) { leaked = this; this.x = p; this.r = this.m(); } m() { return "A.m"; } }
+class B extends A { s = 5; m() { return "B.m"; } }
+function report(label) { console.log(label, leaked.r, leaked instanceof B, leaked.s, Object.keys(leaked).join(), Object.getPrototypeOf(leaked) === B.prototype, leaked.m()); }
+const t = new EventTarget(); t.addEventListener("x", Reflect.construct.bind(null, A, [1], B)); t.dispatchEvent(new Event("x"));
+report("listener");
+//// every-kind-of-object-stored-under-numbers-that-are-no-index.js
+// A store under a number that is no array index adds a property to whatever kind of object takes it (a typed array swallows it), and every listing of the keys shows it.
+const rows = [];
+function put(o, k, v) { try { o[k] = v; } catch (e) { return e.name; } return o[k]; }
+function list(o) { let names = ""; for (const name in o) names += name + ";"; return Object.keys(o).join() + " | " + names + " | " + Reflect.ownKeys(o).map(String).join() + " | " + JSON.stringify(Object.entries(o)); }
+function tell(label, o) {
+  const got = [put(o, -1, "minus"), put(o, 1.5, "half"), put(o, 2, "two"), put(o, 4294967295, "big")];
+  rows.push(label + ": " + got.join() + " | " + list(o) + " | " + (-1 in o) + " " + (1.5 in o) + " " + Object.hasOwn(o, "-1") + " " + o["-1"] + " " + o[-1]);
+}
+tell("function", function () {});
+tell("arrow", () => {});
+tell("map", new Map());
+tell("set", new Set());
+tell("regexp", /x/);
+tell("date", new Date(0));
+tell("error", new RangeError("m"));
+tell("promise", Promise.resolve(1));
+tell("literal", { a: 1 });
+tell("instance", new (class P { x = 1; })());
+tell("no prototype", Object.create(null));
+tell("typed array", new Uint8Array(4));
+tell("float array", new Float64Array(1));
+tell("array buffer", new ArrayBuffer(2));
+tell("boxed string", new String("abcd"));
+tell("boxed number", new Number(5));
+tell("generator", (function* () {})());
+tell("bound", function () {}.bind(null));
+tell("class", class Q {});
+tell("array subclass", new (class R extends Array {})(1));
+tell("weak map", new WeakMap());
+tell("symbol object", Object(Symbol.iterator));
+console.log(rows.join("\n"));
+//// every-way-of-asking-a-namespace-in-a-cycle/early.js
+import * as cycle from "./late.js";
+const lateKey = ["la", "te"].join("");
+const attempt = ask => { try { return String(ask()); } catch (error) { return error.name; } };
+export const ways = [
+  ["in", () => "late" in cycle],
+  ["Object.hasOwn", () => Object.hasOwn(cycle, "late")],
+  ["hasOwnProperty", () => cycle.hasOwnProperty("late")],
+  ["hasOwnProperty.call", () => Object.prototype.hasOwnProperty.call(cycle, "late")],
+  ["propertyIsEnumerable", () => cycle.propertyIsEnumerable("late")],
+  ["Reflect.has", () => Reflect.has(cycle, "late")],
+  ["Object.keys", () => Object.keys(cycle).includes("late")],
+  ["Object.getOwnPropertyNames", () => Object.getOwnPropertyNames(cycle).includes("late")],
+  ["Reflect.ownKeys", () => Reflect.ownKeys(cycle).includes("late")],
+  ["Object.getOwnPropertyDescriptor", () => Object.getOwnPropertyDescriptor(cycle, "late") !== undefined],
+  ["Reflect.getOwnPropertyDescriptor", () => Reflect.getOwnPropertyDescriptor(cycle, "late") !== undefined],
+  ["Object.getOwnPropertyDescriptors", () => "late" in Object.getOwnPropertyDescriptors(cycle)],
+  ["Object.entries", () => Object.entries(cycle).some(([key]) => key === "late")],
+  ["Object.values", () => Object.values(cycle).includes(1)],
+  ["spread", () => "late" in { ...cycle }],
+  ["JSON.stringify of a spread", () => JSON.stringify({ ...cycle }).includes("late")],
+  ["Object.assign", () => "late" in Object.assign({}, cycle)],
+  ["rest", () => (({ other, ...rest }) => "late" in rest)(cycle)],
+  ["for-in", () => (() => { for (const key in cycle) if (key === "late") return true; return false; })()],
+  ["read", () => cycle.late],
+  ["read by a computed key", () => cycle[lateKey]],
+  ["Reflect.get", () => Reflect.get(cycle, "late")],
+  ["destructuring", () => (({ late }) => late)(cycle)],
+  ["destructuring with a default", () => (({ late = "default" }) => late)(cycle)],
+  ["typeof", () => typeof cycle.late],
+  ["??", () => cycle.late ?? "absent"],
+  ["delete", () => delete cycle.late],
+];
+export const before = ways.map(([, ask]) => attempt(ask));
+export const askAgain = () => ways.map(([, ask]) => attempt(ask));
+export const direct = [];
+try { direct.push(String("late" in cycle)); } catch (error) { direct.push(error.name); }
+try { direct.push(String(Object.hasOwn(cycle, "late"))); } catch (error) { direct.push(error.name); }
+try { direct.push(String(cycle.hasOwnProperty("late"))); } catch (error) { direct.push(error.name); }
+try { direct.push(String(Object.prototype.hasOwnProperty.call(cycle, "late"))); } catch (error) { direct.push(error.name); }
+try { direct.push(String(cycle.propertyIsEnumerable("late"))); } catch (error) { direct.push(error.name); }
+try { direct.push(String(Reflect.has(cycle, "late"))); } catch (error) { direct.push(error.name); }
+try { direct.push(String(Object.keys(cycle).includes("late"))); } catch (error) { direct.push(error.name); }
+try { direct.push(String(Object.getOwnPropertyNames(cycle).includes("late"))); } catch (error) { direct.push(error.name); }
+try { direct.push(String(Reflect.ownKeys(cycle).includes("late"))); } catch (error) { direct.push(error.name); }
+try { direct.push(String(Object.getOwnPropertyDescriptor(cycle, "late") !== undefined)); } catch (error) { direct.push(error.name); }
+try { direct.push(String(Reflect.getOwnPropertyDescriptor(cycle, "late") !== undefined)); } catch (error) { direct.push(error.name); }
+try { direct.push(String("late" in Object.getOwnPropertyDescriptors(cycle))); } catch (error) { direct.push(error.name); }
+try { direct.push(String(Object.entries(cycle).some(([key]) => key === "late"))); } catch (error) { direct.push(error.name); }
+try { direct.push(String(Object.values(cycle).includes(1))); } catch (error) { direct.push(error.name); }
+try { direct.push(String("late" in { ...cycle })); } catch (error) { direct.push(error.name); }
+try { direct.push(String(JSON.stringify({ ...cycle }).includes("late"))); } catch (error) { direct.push(error.name); }
+try { direct.push(String("late" in Object.assign({}, cycle))); } catch (error) { direct.push(error.name); }
+try { direct.push(String((({ other, ...rest }) => "late" in rest)(cycle))); } catch (error) { direct.push(error.name); }
+try { direct.push(String((() => { for (const key in cycle) if (key === "late") return true; return false; })())); } catch (error) { direct.push(error.name); }
+try { direct.push(String(cycle.late)); } catch (error) { direct.push(error.name); }
+try { direct.push(String(cycle[lateKey])); } catch (error) { direct.push(error.name); }
+try { direct.push(String(Reflect.get(cycle, "late"))); } catch (error) { direct.push(error.name); }
+try { direct.push(String((({ late }) => late)(cycle))); } catch (error) { direct.push(error.name); }
+try { direct.push(String((({ late = "default" }) => late)(cycle))); } catch (error) { direct.push(error.name); }
+try { direct.push(String(typeof cycle.late)); } catch (error) { direct.push(error.name); }
+try { direct.push(String(cycle.late ?? "absent")); } catch (error) { direct.push(error.name); }
+try { direct.push(String(delete cycle.late)); } catch (error) { direct.push(error.name); }
+//// every-way-of-asking-a-namespace-in-a-cycle/late.js
+import "./early.js";
+export const other = 0;
+export let late = 1;
+//// every-way-of-asking-a-namespace-in-a-cycle/main.js
+// The module early.js asks the namespace of late.js for the binding "late" while late.js has not run (the two import each other), and again when it has.
+import "./late.js";
+import { ways, before, direct, askAgain } from "./early.js";
+const behind = askAgain();
+ways.forEach(([name], index) => console.log(name, "|", before[index], direct[index], behind[index]));
+//// every-way-of-asking-for-a-field-nobody-reads.js
+// Nobody reads the value of the field "late". Each row asks in one way whether the object has it, of an instance of a class of its own and of a literal of its own, so no other row keeps the field alive.
+const key = ["la", "te"].join("");
+class Made1 { constructor() { this.late = 1; } }
+class Field1 { late = 1; }
+console.log("Object.hasOwn, computed key |", Object.hasOwn(new Made1(), key), Object.hasOwn(new Field1(), key), Object.hasOwn({ late: 1 }, key));
+class Made2 { constructor() { this.late = 2; } }
+class Field2 { late = 2; }
+console.log("hasOwnProperty, computed key |", new Made2().hasOwnProperty(key), new Field2().hasOwnProperty(key), ({ late: 2 }).hasOwnProperty(key));
+class Made3 { constructor() { this.late = 3; } }
+class Field3 { late = 3; }
+console.log("hasOwnProperty.call, computed key |", Object.prototype.hasOwnProperty.call(new Made3(), key), Object.prototype.hasOwnProperty.call(new Field3(), key), Object.prototype.hasOwnProperty.call({ late: 3 }, key));
+class Made4 { constructor() { this.late = 4; } }
+class Field4 { late = 4; }
+console.log("propertyIsEnumerable, computed key |", new Made4().propertyIsEnumerable(key), new Field4().propertyIsEnumerable(key), ({ late: 4 }).propertyIsEnumerable(key));
+class Made5 { constructor() { this.late = 5; } }
+class Field5 { late = 5; }
+console.log("in, computed key |", key in new Made5(), key in new Field5(), key in { late: 5 });
+class Made6 { constructor() { this.late = 6; } }
+class Field6 { late = 6; }
+console.log("Reflect.has, computed key |", Reflect.has(new Made6(), key), Reflect.has(new Field6(), key), Reflect.has({ late: 6 }, key));
+class Made7 { constructor() { this.late = 7; } }
+class Field7 { late = 7; }
+console.log("Object.getOwnPropertyDescriptor, computed key |", Object.getOwnPropertyDescriptor(new Made7(), key) !== undefined, Object.getOwnPropertyDescriptor(new Field7(), key) !== undefined, Object.getOwnPropertyDescriptor({ late: 7 }, key) !== undefined);
+class Made8 { constructor() { this.late = 8; } }
+class Field8 { late = 8; }
+console.log("Object.hasOwn |", Object.hasOwn(new Made8(), "late"), Object.hasOwn(new Field8(), "late"), Object.hasOwn({ late: 8 }, "late"));
+class Made9 { constructor() { this.late = 9; } }
+class Field9 { late = 9; }
+console.log("hasOwnProperty |", new Made9().hasOwnProperty("late"), new Field9().hasOwnProperty("late"), ({ late: 9 }).hasOwnProperty("late"));
+class Made10 { constructor() { this.late = 10; } }
+class Field10 { late = 10; }
+console.log("propertyIsEnumerable |", new Made10().propertyIsEnumerable("late"), new Field10().propertyIsEnumerable("late"), ({ late: 10 }).propertyIsEnumerable("late"));
+class Made11 { constructor() { this.late = 11; } }
+class Field11 { late = 11; }
+console.log("in |", "late" in new Made11(), "late" in new Field11(), "late" in { late: 11 });
+class Made12 { constructor() { this.late = 12; } }
+class Field12 { late = 12; }
+console.log("Reflect.has |", Reflect.has(new Made12(), "late"), Reflect.has(new Field12(), "late"), Reflect.has({ late: 12 }, "late"));
+class Made13 { constructor() { this.late = 13; } }
+class Field13 { late = 13; }
+console.log("Reflect.getOwnPropertyDescriptor |", Reflect.getOwnPropertyDescriptor(new Made13(), "late") !== undefined, Reflect.getOwnPropertyDescriptor(new Field13(), "late") !== undefined, Reflect.getOwnPropertyDescriptor({ late: 13 }, "late") !== undefined);
+class Made14 { constructor() { this.late = 14; } }
+class Field14 { late = 14; }
+console.log("__lookupGetter__ |", typeof new Made14().__lookupGetter__("late"), typeof new Field14().__lookupGetter__("late"), typeof { late: 14 }.__lookupGetter__("late"));
+class Made15 { constructor() { this.late = 15; } }
+class Field15 { late = 15; }
+console.log("Object.keys |", Object.keys(new Made15()).length, Object.keys(new Field15()).length, Object.keys({ late: 15 }).length);
+class Made16 { constructor() { this.late = 16; } }
+class Field16 { late = 16; }
+console.log("Reflect.ownKeys |", Reflect.ownKeys(new Made16()).length, Reflect.ownKeys(new Field16()).length, Reflect.ownKeys({ late: 16 }).length);
+class Made17 { constructor() { this.late = 17; } }
+class Field17 { late = 17; }
+console.log("Object.getOwnPropertyNames |", Object.getOwnPropertyNames(new Made17()).length, Object.getOwnPropertyNames(new Field17()).length, Object.getOwnPropertyNames({ late: 17 }).length);
+class Made18 { constructor() { this.late = 18; } }
+class Field18 { late = 18; }
+console.log("Object.entries |", Object.entries(new Made18()).length, Object.entries(new Field18()).length, Object.entries({ late: 18 }).length);
+class Made19 { constructor() { this.late = 19; } }
+class Field19 { late = 19; }
+console.log("Object.values |", Object.values(new Made19()).length, Object.values(new Field19()).length, Object.values({ late: 19 }).length);
+class Made20 { constructor() { this.late = 20; } }
+class Field20 { late = 20; }
+console.log("JSON.stringify |", JSON.stringify(new Made20()), JSON.stringify(new Field20()), JSON.stringify({ late: 20 }));
+class Made21 { constructor() { this.late = 21; } }
+class Field21 { late = 21; }
+console.log("spread |", Object.keys({ ...new Made21() }).length, Object.keys({ ...new Field21() }).length, Object.keys({ ...{ late: 21 } }).length);
+class Made22 { constructor() { this.late = 22; } }
+class Field22 { late = 22; }
+console.log("Object.assign |", Object.keys(Object.assign({}, new Made22())).length, Object.keys(Object.assign({}, new Field22())).length, Object.keys(Object.assign({}, { late: 22 })).length);
+class Made23 { constructor() { this.late = 23; } }
+class Field23 { late = 23; }
+console.log("for-in |", (() => { let count = 0; for (const name in new Made23()) count++; return count; })(), (() => { let count = 0; for (const name in new Field23()) count++; return count; })(), (() => { let count = 0; for (const name in { late: 23 }) count++; return count; })());
+class Made24 { constructor() { this.late = 24; } }
+class Field24 { late = 24; }
+console.log("Object.isFrozen of a closed object |", Object.isFrozen(Object.preventExtensions(new Made24())), Object.isFrozen(Object.preventExtensions(new Field24())), Object.isFrozen(Object.preventExtensions({ late: 24 })));
+class Made25 { constructor() { this.late = 25; } }
+class Field25 { late = 25; }
+console.log("Object.isSealed of a closed object |", Object.isSealed(Object.preventExtensions(new Made25())), Object.isSealed(Object.preventExtensions(new Field25())), Object.isSealed(Object.preventExtensions({ late: 25 })));
+class Made26 { constructor() { this.late = 26; } }
+class Field26 { late = 26; }
+console.log("Object.isFrozen of a sealed object |", Object.isFrozen(Object.seal(new Made26())), Object.isFrozen(Object.seal(new Field26())), Object.isFrozen(Object.seal({ late: 26 })));
+class Made27 { constructor() { this.late = 27; } }
+class Field27 { late = 27; }
+console.log("structuredClone |", Object.keys(structuredClone(new Made27())).length, Object.keys(structuredClone(new Field27())).length, Object.keys(structuredClone({ late: 27 })).length);
+class Made28 { constructor() { this.late = 28; } }
+class Field28 { late = 28; }
+console.log("delete |", delete new Made28().late, delete new Field28().late, delete { late: 28 }.late);
+class Made29 { constructor() { this.late = 29; } }
+class Field29 { late = 29; }
+console.log("a definition that keeps the value |", Object.getOwnPropertyNames(Object.defineProperty(new Made29(), "late", { enumerable: false })).length, Object.getOwnPropertyNames(Object.defineProperty(new Field29(), "late", { enumerable: false })).length, Object.getOwnPropertyNames(Object.defineProperty({ late: 29 }, "late", { enumerable: false })).length);
+//// every-way-of-asking-for-a-property-around-its-definition.js
+// Each row asks an object for the property "late" in one way, once before the property is defined and once behind the definition.
+const lateKey = ["la", "te"].join("");
+class Named1 { static before = "late" in Named1; static late = 1; static behind = "late" in Named1; }
+console.log("static field, class by name |", "in", "|", Named1.before, Named1.behind);
+class This1 { static before = "late" in this; static late = 1; static behind = "late" in this; }
+console.log("static field, this |", "in", "|", This1.before, This1.behind);
+class Block1 { static before; static behind; static { this.before = "late" in Block1; } static late = 1; static { this.behind = "late" in Block1; } }
+console.log("static block |", "in", "|", Block1.before, Block1.behind);
+class Field1 { before = "late" in this; late = 1; behind = "late" in this; }
+{ const made = new Field1(); console.log("instance field |", "in", "|", made.before, made.behind); }
+class Made1 { constructor() { this.before = "late" in this; this.late = 1; this.behind = "late" in this; } }
+{ const made = new Made1(); console.log("store in the constructor |", "in", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = "late" in object; object.late = 1; console.log("store behind a literal |", "in", "|", before, "late" in object); }
+function fill1(object) { const before = "late" in object; object.late = 1; return [before, "late" in object].join(" "); }
+console.log("store in a callee |", "in", "|", fill1({ first: 0 }));
+class Named2 { static before = Object.hasOwn(Named2, "late"); static late = 1; static behind = Object.hasOwn(Named2, "late"); }
+console.log("static field, class by name |", "Object.hasOwn", "|", Named2.before, Named2.behind);
+class This2 { static before = Object.hasOwn(this, "late"); static late = 1; static behind = Object.hasOwn(this, "late"); }
+console.log("static field, this |", "Object.hasOwn", "|", This2.before, This2.behind);
+class Block2 { static before; static behind; static { this.before = Object.hasOwn(Block2, "late"); } static late = 1; static { this.behind = Object.hasOwn(Block2, "late"); } }
+console.log("static block |", "Object.hasOwn", "|", Block2.before, Block2.behind);
+class Field2 { before = Object.hasOwn(this, "late"); late = 1; behind = Object.hasOwn(this, "late"); }
+{ const made = new Field2(); console.log("instance field |", "Object.hasOwn", "|", made.before, made.behind); }
+class Made2 { constructor() { this.before = Object.hasOwn(this, "late"); this.late = 1; this.behind = Object.hasOwn(this, "late"); } }
+{ const made = new Made2(); console.log("store in the constructor |", "Object.hasOwn", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = Object.hasOwn(object, "late"); object.late = 1; console.log("store behind a literal |", "Object.hasOwn", "|", before, Object.hasOwn(object, "late")); }
+function fill2(object) { const before = Object.hasOwn(object, "late"); object.late = 1; return [before, Object.hasOwn(object, "late")].join(" "); }
+console.log("store in a callee |", "Object.hasOwn", "|", fill2({ first: 0 }));
+class Named3 { static before = Named3.hasOwnProperty("late"); static late = 1; static behind = Named3.hasOwnProperty("late"); }
+console.log("static field, class by name |", "hasOwnProperty", "|", Named3.before, Named3.behind);
+class This3 { static before = this.hasOwnProperty("late"); static late = 1; static behind = this.hasOwnProperty("late"); }
+console.log("static field, this |", "hasOwnProperty", "|", This3.before, This3.behind);
+class Block3 { static before; static behind; static { this.before = Block3.hasOwnProperty("late"); } static late = 1; static { this.behind = Block3.hasOwnProperty("late"); } }
+console.log("static block |", "hasOwnProperty", "|", Block3.before, Block3.behind);
+class Field3 { before = this.hasOwnProperty("late"); late = 1; behind = this.hasOwnProperty("late"); }
+{ const made = new Field3(); console.log("instance field |", "hasOwnProperty", "|", made.before, made.behind); }
+class Made3 { constructor() { this.before = this.hasOwnProperty("late"); this.late = 1; this.behind = this.hasOwnProperty("late"); } }
+{ const made = new Made3(); console.log("store in the constructor |", "hasOwnProperty", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = object.hasOwnProperty("late"); object.late = 1; console.log("store behind a literal |", "hasOwnProperty", "|", before, object.hasOwnProperty("late")); }
+function fill3(object) { const before = object.hasOwnProperty("late"); object.late = 1; return [before, object.hasOwnProperty("late")].join(" "); }
+console.log("store in a callee |", "hasOwnProperty", "|", fill3({ first: 0 }));
+class Named4 { static before = Object.prototype.hasOwnProperty.call(Named4, "late"); static late = 1; static behind = Object.prototype.hasOwnProperty.call(Named4, "late"); }
+console.log("static field, class by name |", "hasOwnProperty.call", "|", Named4.before, Named4.behind);
+class This4 { static before = Object.prototype.hasOwnProperty.call(this, "late"); static late = 1; static behind = Object.prototype.hasOwnProperty.call(this, "late"); }
+console.log("static field, this |", "hasOwnProperty.call", "|", This4.before, This4.behind);
+class Block4 { static before; static behind; static { this.before = Object.prototype.hasOwnProperty.call(Block4, "late"); } static late = 1; static { this.behind = Object.prototype.hasOwnProperty.call(Block4, "late"); } }
+console.log("static block |", "hasOwnProperty.call", "|", Block4.before, Block4.behind);
+class Field4 { before = Object.prototype.hasOwnProperty.call(this, "late"); late = 1; behind = Object.prototype.hasOwnProperty.call(this, "late"); }
+{ const made = new Field4(); console.log("instance field |", "hasOwnProperty.call", "|", made.before, made.behind); }
+class Made4 { constructor() { this.before = Object.prototype.hasOwnProperty.call(this, "late"); this.late = 1; this.behind = Object.prototype.hasOwnProperty.call(this, "late"); } }
+{ const made = new Made4(); console.log("store in the constructor |", "hasOwnProperty.call", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = Object.prototype.hasOwnProperty.call(object, "late"); object.late = 1; console.log("store behind a literal |", "hasOwnProperty.call", "|", before, Object.prototype.hasOwnProperty.call(object, "late")); }
+function fill4(object) { const before = Object.prototype.hasOwnProperty.call(object, "late"); object.late = 1; return [before, Object.prototype.hasOwnProperty.call(object, "late")].join(" "); }
+console.log("store in a callee |", "hasOwnProperty.call", "|", fill4({ first: 0 }));
+class Named5 { static before = Named5.propertyIsEnumerable("late"); static late = 1; static behind = Named5.propertyIsEnumerable("late"); }
+console.log("static field, class by name |", "propertyIsEnumerable", "|", Named5.before, Named5.behind);
+class This5 { static before = this.propertyIsEnumerable("late"); static late = 1; static behind = this.propertyIsEnumerable("late"); }
+console.log("static field, this |", "propertyIsEnumerable", "|", This5.before, This5.behind);
+class Block5 { static before; static behind; static { this.before = Block5.propertyIsEnumerable("late"); } static late = 1; static { this.behind = Block5.propertyIsEnumerable("late"); } }
+console.log("static block |", "propertyIsEnumerable", "|", Block5.before, Block5.behind);
+class Field5 { before = this.propertyIsEnumerable("late"); late = 1; behind = this.propertyIsEnumerable("late"); }
+{ const made = new Field5(); console.log("instance field |", "propertyIsEnumerable", "|", made.before, made.behind); }
+class Made5 { constructor() { this.before = this.propertyIsEnumerable("late"); this.late = 1; this.behind = this.propertyIsEnumerable("late"); } }
+{ const made = new Made5(); console.log("store in the constructor |", "propertyIsEnumerable", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = object.propertyIsEnumerable("late"); object.late = 1; console.log("store behind a literal |", "propertyIsEnumerable", "|", before, object.propertyIsEnumerable("late")); }
+function fill5(object) { const before = object.propertyIsEnumerable("late"); object.late = 1; return [before, object.propertyIsEnumerable("late")].join(" "); }
+console.log("store in a callee |", "propertyIsEnumerable", "|", fill5({ first: 0 }));
+class Named6 { static before = Reflect.has(Named6, "late"); static late = 1; static behind = Reflect.has(Named6, "late"); }
+console.log("static field, class by name |", "Reflect.has", "|", Named6.before, Named6.behind);
+class This6 { static before = Reflect.has(this, "late"); static late = 1; static behind = Reflect.has(this, "late"); }
+console.log("static field, this |", "Reflect.has", "|", This6.before, This6.behind);
+class Block6 { static before; static behind; static { this.before = Reflect.has(Block6, "late"); } static late = 1; static { this.behind = Reflect.has(Block6, "late"); } }
+console.log("static block |", "Reflect.has", "|", Block6.before, Block6.behind);
+class Field6 { before = Reflect.has(this, "late"); late = 1; behind = Reflect.has(this, "late"); }
+{ const made = new Field6(); console.log("instance field |", "Reflect.has", "|", made.before, made.behind); }
+class Made6 { constructor() { this.before = Reflect.has(this, "late"); this.late = 1; this.behind = Reflect.has(this, "late"); } }
+{ const made = new Made6(); console.log("store in the constructor |", "Reflect.has", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = Reflect.has(object, "late"); object.late = 1; console.log("store behind a literal |", "Reflect.has", "|", before, Reflect.has(object, "late")); }
+function fill6(object) { const before = Reflect.has(object, "late"); object.late = 1; return [before, Reflect.has(object, "late")].join(" "); }
+console.log("store in a callee |", "Reflect.has", "|", fill6({ first: 0 }));
+class Named7 { static before = Object.keys(Named7).includes("late"); static late = 1; static behind = Object.keys(Named7).includes("late"); }
+console.log("static field, class by name |", "Object.keys", "|", Named7.before, Named7.behind);
+class This7 { static before = Object.keys(this).includes("late"); static late = 1; static behind = Object.keys(this).includes("late"); }
+console.log("static field, this |", "Object.keys", "|", This7.before, This7.behind);
+class Block7 { static before; static behind; static { this.before = Object.keys(Block7).includes("late"); } static late = 1; static { this.behind = Object.keys(Block7).includes("late"); } }
+console.log("static block |", "Object.keys", "|", Block7.before, Block7.behind);
+class Field7 { before = Object.keys(this).includes("late"); late = 1; behind = Object.keys(this).includes("late"); }
+{ const made = new Field7(); console.log("instance field |", "Object.keys", "|", made.before, made.behind); }
+class Made7 { constructor() { this.before = Object.keys(this).includes("late"); this.late = 1; this.behind = Object.keys(this).includes("late"); } }
+{ const made = new Made7(); console.log("store in the constructor |", "Object.keys", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = Object.keys(object).includes("late"); object.late = 1; console.log("store behind a literal |", "Object.keys", "|", before, Object.keys(object).includes("late")); }
+function fill7(object) { const before = Object.keys(object).includes("late"); object.late = 1; return [before, Object.keys(object).includes("late")].join(" "); }
+console.log("store in a callee |", "Object.keys", "|", fill7({ first: 0 }));
+class Named8 { static before = Object.getOwnPropertyNames(Named8).includes("late"); static late = 1; static behind = Object.getOwnPropertyNames(Named8).includes("late"); }
+console.log("static field, class by name |", "Object.getOwnPropertyNames", "|", Named8.before, Named8.behind);
+class This8 { static before = Object.getOwnPropertyNames(this).includes("late"); static late = 1; static behind = Object.getOwnPropertyNames(this).includes("late"); }
+console.log("static field, this |", "Object.getOwnPropertyNames", "|", This8.before, This8.behind);
+class Block8 { static before; static behind; static { this.before = Object.getOwnPropertyNames(Block8).includes("late"); } static late = 1; static { this.behind = Object.getOwnPropertyNames(Block8).includes("late"); } }
+console.log("static block |", "Object.getOwnPropertyNames", "|", Block8.before, Block8.behind);
+class Field8 { before = Object.getOwnPropertyNames(this).includes("late"); late = 1; behind = Object.getOwnPropertyNames(this).includes("late"); }
+{ const made = new Field8(); console.log("instance field |", "Object.getOwnPropertyNames", "|", made.before, made.behind); }
+class Made8 { constructor() { this.before = Object.getOwnPropertyNames(this).includes("late"); this.late = 1; this.behind = Object.getOwnPropertyNames(this).includes("late"); } }
+{ const made = new Made8(); console.log("store in the constructor |", "Object.getOwnPropertyNames", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = Object.getOwnPropertyNames(object).includes("late"); object.late = 1; console.log("store behind a literal |", "Object.getOwnPropertyNames", "|", before, Object.getOwnPropertyNames(object).includes("late")); }
+function fill8(object) { const before = Object.getOwnPropertyNames(object).includes("late"); object.late = 1; return [before, Object.getOwnPropertyNames(object).includes("late")].join(" "); }
+console.log("store in a callee |", "Object.getOwnPropertyNames", "|", fill8({ first: 0 }));
+class Named9 { static before = Reflect.ownKeys(Named9).includes("late"); static late = 1; static behind = Reflect.ownKeys(Named9).includes("late"); }
+console.log("static field, class by name |", "Reflect.ownKeys", "|", Named9.before, Named9.behind);
+class This9 { static before = Reflect.ownKeys(this).includes("late"); static late = 1; static behind = Reflect.ownKeys(this).includes("late"); }
+console.log("static field, this |", "Reflect.ownKeys", "|", This9.before, This9.behind);
+class Block9 { static before; static behind; static { this.before = Reflect.ownKeys(Block9).includes("late"); } static late = 1; static { this.behind = Reflect.ownKeys(Block9).includes("late"); } }
+console.log("static block |", "Reflect.ownKeys", "|", Block9.before, Block9.behind);
+class Field9 { before = Reflect.ownKeys(this).includes("late"); late = 1; behind = Reflect.ownKeys(this).includes("late"); }
+{ const made = new Field9(); console.log("instance field |", "Reflect.ownKeys", "|", made.before, made.behind); }
+class Made9 { constructor() { this.before = Reflect.ownKeys(this).includes("late"); this.late = 1; this.behind = Reflect.ownKeys(this).includes("late"); } }
+{ const made = new Made9(); console.log("store in the constructor |", "Reflect.ownKeys", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = Reflect.ownKeys(object).includes("late"); object.late = 1; console.log("store behind a literal |", "Reflect.ownKeys", "|", before, Reflect.ownKeys(object).includes("late")); }
+function fill9(object) { const before = Reflect.ownKeys(object).includes("late"); object.late = 1; return [before, Reflect.ownKeys(object).includes("late")].join(" "); }
+console.log("store in a callee |", "Reflect.ownKeys", "|", fill9({ first: 0 }));
+class Named10 { static before = Object.getOwnPropertyDescriptor(Named10, "late") !== undefined; static late = 1; static behind = Object.getOwnPropertyDescriptor(Named10, "late") !== undefined; }
+console.log("static field, class by name |", "Object.getOwnPropertyDescriptor", "|", Named10.before, Named10.behind);
+class This10 { static before = Object.getOwnPropertyDescriptor(this, "late") !== undefined; static late = 1; static behind = Object.getOwnPropertyDescriptor(this, "late") !== undefined; }
+console.log("static field, this |", "Object.getOwnPropertyDescriptor", "|", This10.before, This10.behind);
+class Block10 { static before; static behind; static { this.before = Object.getOwnPropertyDescriptor(Block10, "late") !== undefined; } static late = 1; static { this.behind = Object.getOwnPropertyDescriptor(Block10, "late") !== undefined; } }
+console.log("static block |", "Object.getOwnPropertyDescriptor", "|", Block10.before, Block10.behind);
+class Field10 { before = Object.getOwnPropertyDescriptor(this, "late") !== undefined; late = 1; behind = Object.getOwnPropertyDescriptor(this, "late") !== undefined; }
+{ const made = new Field10(); console.log("instance field |", "Object.getOwnPropertyDescriptor", "|", made.before, made.behind); }
+class Made10 { constructor() { this.before = Object.getOwnPropertyDescriptor(this, "late") !== undefined; this.late = 1; this.behind = Object.getOwnPropertyDescriptor(this, "late") !== undefined; } }
+{ const made = new Made10(); console.log("store in the constructor |", "Object.getOwnPropertyDescriptor", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = Object.getOwnPropertyDescriptor(object, "late") !== undefined; object.late = 1; console.log("store behind a literal |", "Object.getOwnPropertyDescriptor", "|", before, Object.getOwnPropertyDescriptor(object, "late") !== undefined); }
+function fill10(object) { const before = Object.getOwnPropertyDescriptor(object, "late") !== undefined; object.late = 1; return [before, Object.getOwnPropertyDescriptor(object, "late") !== undefined].join(" "); }
+console.log("store in a callee |", "Object.getOwnPropertyDescriptor", "|", fill10({ first: 0 }));
+class Named11 { static before = Reflect.getOwnPropertyDescriptor(Named11, "late") !== undefined; static late = 1; static behind = Reflect.getOwnPropertyDescriptor(Named11, "late") !== undefined; }
+console.log("static field, class by name |", "Reflect.getOwnPropertyDescriptor", "|", Named11.before, Named11.behind);
+class This11 { static before = Reflect.getOwnPropertyDescriptor(this, "late") !== undefined; static late = 1; static behind = Reflect.getOwnPropertyDescriptor(this, "late") !== undefined; }
+console.log("static field, this |", "Reflect.getOwnPropertyDescriptor", "|", This11.before, This11.behind);
+class Block11 { static before; static behind; static { this.before = Reflect.getOwnPropertyDescriptor(Block11, "late") !== undefined; } static late = 1; static { this.behind = Reflect.getOwnPropertyDescriptor(Block11, "late") !== undefined; } }
+console.log("static block |", "Reflect.getOwnPropertyDescriptor", "|", Block11.before, Block11.behind);
+class Field11 { before = Reflect.getOwnPropertyDescriptor(this, "late") !== undefined; late = 1; behind = Reflect.getOwnPropertyDescriptor(this, "late") !== undefined; }
+{ const made = new Field11(); console.log("instance field |", "Reflect.getOwnPropertyDescriptor", "|", made.before, made.behind); }
+class Made11 { constructor() { this.before = Reflect.getOwnPropertyDescriptor(this, "late") !== undefined; this.late = 1; this.behind = Reflect.getOwnPropertyDescriptor(this, "late") !== undefined; } }
+{ const made = new Made11(); console.log("store in the constructor |", "Reflect.getOwnPropertyDescriptor", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = Reflect.getOwnPropertyDescriptor(object, "late") !== undefined; object.late = 1; console.log("store behind a literal |", "Reflect.getOwnPropertyDescriptor", "|", before, Reflect.getOwnPropertyDescriptor(object, "late") !== undefined); }
+function fill11(object) { const before = Reflect.getOwnPropertyDescriptor(object, "late") !== undefined; object.late = 1; return [before, Reflect.getOwnPropertyDescriptor(object, "late") !== undefined].join(" "); }
+console.log("store in a callee |", "Reflect.getOwnPropertyDescriptor", "|", fill11({ first: 0 }));
+class Named12 { static before = "late" in Object.getOwnPropertyDescriptors(Named12); static late = 1; static behind = "late" in Object.getOwnPropertyDescriptors(Named12); }
+console.log("static field, class by name |", "Object.getOwnPropertyDescriptors", "|", Named12.before, Named12.behind);
+class This12 { static before = "late" in Object.getOwnPropertyDescriptors(this); static late = 1; static behind = "late" in Object.getOwnPropertyDescriptors(this); }
+console.log("static field, this |", "Object.getOwnPropertyDescriptors", "|", This12.before, This12.behind);
+class Block12 { static before; static behind; static { this.before = "late" in Object.getOwnPropertyDescriptors(Block12); } static late = 1; static { this.behind = "late" in Object.getOwnPropertyDescriptors(Block12); } }
+console.log("static block |", "Object.getOwnPropertyDescriptors", "|", Block12.before, Block12.behind);
+class Field12 { before = "late" in Object.getOwnPropertyDescriptors(this); late = 1; behind = "late" in Object.getOwnPropertyDescriptors(this); }
+{ const made = new Field12(); console.log("instance field |", "Object.getOwnPropertyDescriptors", "|", made.before, made.behind); }
+class Made12 { constructor() { this.before = "late" in Object.getOwnPropertyDescriptors(this); this.late = 1; this.behind = "late" in Object.getOwnPropertyDescriptors(this); } }
+{ const made = new Made12(); console.log("store in the constructor |", "Object.getOwnPropertyDescriptors", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = "late" in Object.getOwnPropertyDescriptors(object); object.late = 1; console.log("store behind a literal |", "Object.getOwnPropertyDescriptors", "|", before, "late" in Object.getOwnPropertyDescriptors(object)); }
+function fill12(object) { const before = "late" in Object.getOwnPropertyDescriptors(object); object.late = 1; return [before, "late" in Object.getOwnPropertyDescriptors(object)].join(" "); }
+console.log("store in a callee |", "Object.getOwnPropertyDescriptors", "|", fill12({ first: 0 }));
+class Named13 { static before = Object.entries(Named13).some(([key]) => key === "late"); static late = 1; static behind = Object.entries(Named13).some(([key]) => key === "late"); }
+console.log("static field, class by name |", "Object.entries", "|", Named13.before, Named13.behind);
+class This13 { static before = Object.entries(this).some(([key]) => key === "late"); static late = 1; static behind = Object.entries(this).some(([key]) => key === "late"); }
+console.log("static field, this |", "Object.entries", "|", This13.before, This13.behind);
+class Block13 { static before; static behind; static { this.before = Object.entries(Block13).some(([key]) => key === "late"); } static late = 1; static { this.behind = Object.entries(Block13).some(([key]) => key === "late"); } }
+console.log("static block |", "Object.entries", "|", Block13.before, Block13.behind);
+class Field13 { before = Object.entries(this).some(([key]) => key === "late"); late = 1; behind = Object.entries(this).some(([key]) => key === "late"); }
+{ const made = new Field13(); console.log("instance field |", "Object.entries", "|", made.before, made.behind); }
+class Made13 { constructor() { this.before = Object.entries(this).some(([key]) => key === "late"); this.late = 1; this.behind = Object.entries(this).some(([key]) => key === "late"); } }
+{ const made = new Made13(); console.log("store in the constructor |", "Object.entries", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = Object.entries(object).some(([key]) => key === "late"); object.late = 1; console.log("store behind a literal |", "Object.entries", "|", before, Object.entries(object).some(([key]) => key === "late")); }
+function fill13(object) { const before = Object.entries(object).some(([key]) => key === "late"); object.late = 1; return [before, Object.entries(object).some(([key]) => key === "late")].join(" "); }
+console.log("store in a callee |", "Object.entries", "|", fill13({ first: 0 }));
+class Named14 { static before = Object.values(Named14).includes(1); static late = 1; static behind = Object.values(Named14).includes(1); }
+console.log("static field, class by name |", "Object.values", "|", Named14.before, Named14.behind);
+class This14 { static before = Object.values(this).includes(1); static late = 1; static behind = Object.values(this).includes(1); }
+console.log("static field, this |", "Object.values", "|", This14.before, This14.behind);
+class Block14 { static before; static behind; static { this.before = Object.values(Block14).includes(1); } static late = 1; static { this.behind = Object.values(Block14).includes(1); } }
+console.log("static block |", "Object.values", "|", Block14.before, Block14.behind);
+class Field14 { before = Object.values(this).includes(1); late = 1; behind = Object.values(this).includes(1); }
+{ const made = new Field14(); console.log("instance field |", "Object.values", "|", made.before, made.behind); }
+class Made14 { constructor() { this.before = Object.values(this).includes(1); this.late = 1; this.behind = Object.values(this).includes(1); } }
+{ const made = new Made14(); console.log("store in the constructor |", "Object.values", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = Object.values(object).includes(1); object.late = 1; console.log("store behind a literal |", "Object.values", "|", before, Object.values(object).includes(1)); }
+function fill14(object) { const before = Object.values(object).includes(1); object.late = 1; return [before, Object.values(object).includes(1)].join(" "); }
+console.log("store in a callee |", "Object.values", "|", fill14({ first: 0 }));
+class Named15 { static before = "late" in { ...Named15 }; static late = 1; static behind = "late" in { ...Named15 }; }
+console.log("static field, class by name |", "spread", "|", Named15.before, Named15.behind);
+class This15 { static before = "late" in { ...this }; static late = 1; static behind = "late" in { ...this }; }
+console.log("static field, this |", "spread", "|", This15.before, This15.behind);
+class Block15 { static before; static behind; static { this.before = "late" in { ...Block15 }; } static late = 1; static { this.behind = "late" in { ...Block15 }; } }
+console.log("static block |", "spread", "|", Block15.before, Block15.behind);
+class Field15 { before = "late" in { ...this }; late = 1; behind = "late" in { ...this }; }
+{ const made = new Field15(); console.log("instance field |", "spread", "|", made.before, made.behind); }
+class Made15 { constructor() { this.before = "late" in { ...this }; this.late = 1; this.behind = "late" in { ...this }; } }
+{ const made = new Made15(); console.log("store in the constructor |", "spread", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = "late" in { ...object }; object.late = 1; console.log("store behind a literal |", "spread", "|", before, "late" in { ...object }); }
+function fill15(object) { const before = "late" in { ...object }; object.late = 1; return [before, "late" in { ...object }].join(" "); }
+console.log("store in a callee |", "spread", "|", fill15({ first: 0 }));
+class Named16 { static before = JSON.stringify({ ...Named16 }).includes("late"); static late = 1; static behind = JSON.stringify({ ...Named16 }).includes("late"); }
+console.log("static field, class by name |", "JSON.stringify of a spread", "|", Named16.before, Named16.behind);
+class This16 { static before = JSON.stringify({ ...this }).includes("late"); static late = 1; static behind = JSON.stringify({ ...this }).includes("late"); }
+console.log("static field, this |", "JSON.stringify of a spread", "|", This16.before, This16.behind);
+class Block16 { static before; static behind; static { this.before = JSON.stringify({ ...Block16 }).includes("late"); } static late = 1; static { this.behind = JSON.stringify({ ...Block16 }).includes("late"); } }
+console.log("static block |", "JSON.stringify of a spread", "|", Block16.before, Block16.behind);
+class Field16 { before = JSON.stringify({ ...this }).includes("late"); late = 1; behind = JSON.stringify({ ...this }).includes("late"); }
+{ const made = new Field16(); console.log("instance field |", "JSON.stringify of a spread", "|", made.before, made.behind); }
+class Made16 { constructor() { this.before = JSON.stringify({ ...this }).includes("late"); this.late = 1; this.behind = JSON.stringify({ ...this }).includes("late"); } }
+{ const made = new Made16(); console.log("store in the constructor |", "JSON.stringify of a spread", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = JSON.stringify({ ...object }).includes("late"); object.late = 1; console.log("store behind a literal |", "JSON.stringify of a spread", "|", before, JSON.stringify({ ...object }).includes("late")); }
+function fill16(object) { const before = JSON.stringify({ ...object }).includes("late"); object.late = 1; return [before, JSON.stringify({ ...object }).includes("late")].join(" "); }
+console.log("store in a callee |", "JSON.stringify of a spread", "|", fill16({ first: 0 }));
+class Named17 { static before = "late" in Object.assign({}, Named17); static late = 1; static behind = "late" in Object.assign({}, Named17); }
+console.log("static field, class by name |", "Object.assign", "|", Named17.before, Named17.behind);
+class This17 { static before = "late" in Object.assign({}, this); static late = 1; static behind = "late" in Object.assign({}, this); }
+console.log("static field, this |", "Object.assign", "|", This17.before, This17.behind);
+class Block17 { static before; static behind; static { this.before = "late" in Object.assign({}, Block17); } static late = 1; static { this.behind = "late" in Object.assign({}, Block17); } }
+console.log("static block |", "Object.assign", "|", Block17.before, Block17.behind);
+class Field17 { before = "late" in Object.assign({}, this); late = 1; behind = "late" in Object.assign({}, this); }
+{ const made = new Field17(); console.log("instance field |", "Object.assign", "|", made.before, made.behind); }
+class Made17 { constructor() { this.before = "late" in Object.assign({}, this); this.late = 1; this.behind = "late" in Object.assign({}, this); } }
+{ const made = new Made17(); console.log("store in the constructor |", "Object.assign", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = "late" in Object.assign({}, object); object.late = 1; console.log("store behind a literal |", "Object.assign", "|", before, "late" in Object.assign({}, object)); }
+function fill17(object) { const before = "late" in Object.assign({}, object); object.late = 1; return [before, "late" in Object.assign({}, object)].join(" "); }
+console.log("store in a callee |", "Object.assign", "|", fill17({ first: 0 }));
+class Named18 { static before = (({ before, ...rest }) => "late" in rest)(Named18); static late = 1; static behind = (({ before, ...rest }) => "late" in rest)(Named18); }
+console.log("static field, class by name |", "rest", "|", Named18.before, Named18.behind);
+class This18 { static before = (({ before, ...rest }) => "late" in rest)(this); static late = 1; static behind = (({ before, ...rest }) => "late" in rest)(this); }
+console.log("static field, this |", "rest", "|", This18.before, This18.behind);
+class Block18 { static before; static behind; static { this.before = (({ before, ...rest }) => "late" in rest)(Block18); } static late = 1; static { this.behind = (({ before, ...rest }) => "late" in rest)(Block18); } }
+console.log("static block |", "rest", "|", Block18.before, Block18.behind);
+class Field18 { before = (({ before, ...rest }) => "late" in rest)(this); late = 1; behind = (({ before, ...rest }) => "late" in rest)(this); }
+{ const made = new Field18(); console.log("instance field |", "rest", "|", made.before, made.behind); }
+class Made18 { constructor() { this.before = (({ before, ...rest }) => "late" in rest)(this); this.late = 1; this.behind = (({ before, ...rest }) => "late" in rest)(this); } }
+{ const made = new Made18(); console.log("store in the constructor |", "rest", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = (({ before, ...rest }) => "late" in rest)(object); object.late = 1; console.log("store behind a literal |", "rest", "|", before, (({ before, ...rest }) => "late" in rest)(object)); }
+function fill18(object) { const before = (({ before, ...rest }) => "late" in rest)(object); object.late = 1; return [before, (({ before, ...rest }) => "late" in rest)(object)].join(" "); }
+console.log("store in a callee |", "rest", "|", fill18({ first: 0 }));
+class Named19 { static before = (() => { for (const key in Named19) if (key === "late") return true; return false; })(); static late = 1; static behind = (() => { for (const key in Named19) if (key === "late") return true; return false; })(); }
+console.log("static field, class by name |", "for-in", "|", Named19.before, Named19.behind);
+class This19 { static before = (() => { for (const key in this) if (key === "late") return true; return false; })(); static late = 1; static behind = (() => { for (const key in this) if (key === "late") return true; return false; })(); }
+console.log("static field, this |", "for-in", "|", This19.before, This19.behind);
+class Block19 { static before; static behind; static { this.before = (() => { for (const key in Block19) if (key === "late") return true; return false; })(); } static late = 1; static { this.behind = (() => { for (const key in Block19) if (key === "late") return true; return false; })(); } }
+console.log("static block |", "for-in", "|", Block19.before, Block19.behind);
+class Field19 { before = (() => { for (const key in this) if (key === "late") return true; return false; })(); late = 1; behind = (() => { for (const key in this) if (key === "late") return true; return false; })(); }
+{ const made = new Field19(); console.log("instance field |", "for-in", "|", made.before, made.behind); }
+class Made19 { constructor() { this.before = (() => { for (const key in this) if (key === "late") return true; return false; })(); this.late = 1; this.behind = (() => { for (const key in this) if (key === "late") return true; return false; })(); } }
+{ const made = new Made19(); console.log("store in the constructor |", "for-in", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = (() => { for (const key in object) if (key === "late") return true; return false; })(); object.late = 1; console.log("store behind a literal |", "for-in", "|", before, (() => { for (const key in object) if (key === "late") return true; return false; })()); }
+function fill19(object) { const before = (() => { for (const key in object) if (key === "late") return true; return false; })(); object.late = 1; return [before, (() => { for (const key in object) if (key === "late") return true; return false; })()].join(" "); }
+console.log("store in a callee |", "for-in", "|", fill19({ first: 0 }));
+class Named20 { static before = Named20.late; static late = 1; static behind = Named20.late; }
+console.log("static field, class by name |", "read", "|", Named20.before, Named20.behind);
+class This20 { static before = this.late; static late = 1; static behind = this.late; }
+console.log("static field, this |", "read", "|", This20.before, This20.behind);
+class Block20 { static before; static behind; static { this.before = Block20.late; } static late = 1; static { this.behind = Block20.late; } }
+console.log("static block |", "read", "|", Block20.before, Block20.behind);
+class Field20 { before = this.late; late = 1; behind = this.late; }
+{ const made = new Field20(); console.log("instance field |", "read", "|", made.before, made.behind); }
+class Made20 { constructor() { this.before = this.late; this.late = 1; this.behind = this.late; } }
+{ const made = new Made20(); console.log("store in the constructor |", "read", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = object.late; object.late = 1; console.log("store behind a literal |", "read", "|", before, object.late); }
+function fill20(object) { const before = object.late; object.late = 1; return [before, object.late].join(" "); }
+console.log("store in a callee |", "read", "|", fill20({ first: 0 }));
+class Named21 { static before = Named21[lateKey]; static late = 1; static behind = Named21[lateKey]; }
+console.log("static field, class by name |", "read by a computed key", "|", Named21.before, Named21.behind);
+class This21 { static before = this[lateKey]; static late = 1; static behind = this[lateKey]; }
+console.log("static field, this |", "read by a computed key", "|", This21.before, This21.behind);
+class Block21 { static before; static behind; static { this.before = Block21[lateKey]; } static late = 1; static { this.behind = Block21[lateKey]; } }
+console.log("static block |", "read by a computed key", "|", Block21.before, Block21.behind);
+class Field21 { before = this[lateKey]; late = 1; behind = this[lateKey]; }
+{ const made = new Field21(); console.log("instance field |", "read by a computed key", "|", made.before, made.behind); }
+class Made21 { constructor() { this.before = this[lateKey]; this.late = 1; this.behind = this[lateKey]; } }
+{ const made = new Made21(); console.log("store in the constructor |", "read by a computed key", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = object[lateKey]; object.late = 1; console.log("store behind a literal |", "read by a computed key", "|", before, object[lateKey]); }
+function fill21(object) { const before = object[lateKey]; object.late = 1; return [before, object[lateKey]].join(" "); }
+console.log("store in a callee |", "read by a computed key", "|", fill21({ first: 0 }));
+class Named22 { static before = Reflect.get(Named22, "late"); static late = 1; static behind = Reflect.get(Named22, "late"); }
+console.log("static field, class by name |", "Reflect.get", "|", Named22.before, Named22.behind);
+class This22 { static before = Reflect.get(this, "late"); static late = 1; static behind = Reflect.get(this, "late"); }
+console.log("static field, this |", "Reflect.get", "|", This22.before, This22.behind);
+class Block22 { static before; static behind; static { this.before = Reflect.get(Block22, "late"); } static late = 1; static { this.behind = Reflect.get(Block22, "late"); } }
+console.log("static block |", "Reflect.get", "|", Block22.before, Block22.behind);
+class Field22 { before = Reflect.get(this, "late"); late = 1; behind = Reflect.get(this, "late"); }
+{ const made = new Field22(); console.log("instance field |", "Reflect.get", "|", made.before, made.behind); }
+class Made22 { constructor() { this.before = Reflect.get(this, "late"); this.late = 1; this.behind = Reflect.get(this, "late"); } }
+{ const made = new Made22(); console.log("store in the constructor |", "Reflect.get", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = Reflect.get(object, "late"); object.late = 1; console.log("store behind a literal |", "Reflect.get", "|", before, Reflect.get(object, "late")); }
+function fill22(object) { const before = Reflect.get(object, "late"); object.late = 1; return [before, Reflect.get(object, "late")].join(" "); }
+console.log("store in a callee |", "Reflect.get", "|", fill22({ first: 0 }));
+class Named23 { static before = (({ late }) => late)(Named23); static late = 1; static behind = (({ late }) => late)(Named23); }
+console.log("static field, class by name |", "destructuring", "|", Named23.before, Named23.behind);
+class This23 { static before = (({ late }) => late)(this); static late = 1; static behind = (({ late }) => late)(this); }
+console.log("static field, this |", "destructuring", "|", This23.before, This23.behind);
+class Block23 { static before; static behind; static { this.before = (({ late }) => late)(Block23); } static late = 1; static { this.behind = (({ late }) => late)(Block23); } }
+console.log("static block |", "destructuring", "|", Block23.before, Block23.behind);
+class Field23 { before = (({ late }) => late)(this); late = 1; behind = (({ late }) => late)(this); }
+{ const made = new Field23(); console.log("instance field |", "destructuring", "|", made.before, made.behind); }
+class Made23 { constructor() { this.before = (({ late }) => late)(this); this.late = 1; this.behind = (({ late }) => late)(this); } }
+{ const made = new Made23(); console.log("store in the constructor |", "destructuring", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = (({ late }) => late)(object); object.late = 1; console.log("store behind a literal |", "destructuring", "|", before, (({ late }) => late)(object)); }
+function fill23(object) { const before = (({ late }) => late)(object); object.late = 1; return [before, (({ late }) => late)(object)].join(" "); }
+console.log("store in a callee |", "destructuring", "|", fill23({ first: 0 }));
+class Named24 { static before = (({ late = "default" }) => late)(Named24); static late = 1; static behind = (({ late = "default" }) => late)(Named24); }
+console.log("static field, class by name |", "destructuring with a default", "|", Named24.before, Named24.behind);
+class This24 { static before = (({ late = "default" }) => late)(this); static late = 1; static behind = (({ late = "default" }) => late)(this); }
+console.log("static field, this |", "destructuring with a default", "|", This24.before, This24.behind);
+class Block24 { static before; static behind; static { this.before = (({ late = "default" }) => late)(Block24); } static late = 1; static { this.behind = (({ late = "default" }) => late)(Block24); } }
+console.log("static block |", "destructuring with a default", "|", Block24.before, Block24.behind);
+class Field24 { before = (({ late = "default" }) => late)(this); late = 1; behind = (({ late = "default" }) => late)(this); }
+{ const made = new Field24(); console.log("instance field |", "destructuring with a default", "|", made.before, made.behind); }
+class Made24 { constructor() { this.before = (({ late = "default" }) => late)(this); this.late = 1; this.behind = (({ late = "default" }) => late)(this); } }
+{ const made = new Made24(); console.log("store in the constructor |", "destructuring with a default", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = (({ late = "default" }) => late)(object); object.late = 1; console.log("store behind a literal |", "destructuring with a default", "|", before, (({ late = "default" }) => late)(object)); }
+function fill24(object) { const before = (({ late = "default" }) => late)(object); object.late = 1; return [before, (({ late = "default" }) => late)(object)].join(" "); }
+console.log("store in a callee |", "destructuring with a default", "|", fill24({ first: 0 }));
+class Named25 { static before = typeof Named25.late; static late = 1; static behind = typeof Named25.late; }
+console.log("static field, class by name |", "typeof", "|", Named25.before, Named25.behind);
+class This25 { static before = typeof this.late; static late = 1; static behind = typeof this.late; }
+console.log("static field, this |", "typeof", "|", This25.before, This25.behind);
+class Block25 { static before; static behind; static { this.before = typeof Block25.late; } static late = 1; static { this.behind = typeof Block25.late; } }
+console.log("static block |", "typeof", "|", Block25.before, Block25.behind);
+class Field25 { before = typeof this.late; late = 1; behind = typeof this.late; }
+{ const made = new Field25(); console.log("instance field |", "typeof", "|", made.before, made.behind); }
+class Made25 { constructor() { this.before = typeof this.late; this.late = 1; this.behind = typeof this.late; } }
+{ const made = new Made25(); console.log("store in the constructor |", "typeof", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = typeof object.late; object.late = 1; console.log("store behind a literal |", "typeof", "|", before, typeof object.late); }
+function fill25(object) { const before = typeof object.late; object.late = 1; return [before, typeof object.late].join(" "); }
+console.log("store in a callee |", "typeof", "|", fill25({ first: 0 }));
+class Named26 { static before = Named26.late ?? "absent"; static late = 1; static behind = Named26.late ?? "absent"; }
+console.log("static field, class by name |", "??", "|", Named26.before, Named26.behind);
+class This26 { static before = this.late ?? "absent"; static late = 1; static behind = this.late ?? "absent"; }
+console.log("static field, this |", "??", "|", This26.before, This26.behind);
+class Block26 { static before; static behind; static { this.before = Block26.late ?? "absent"; } static late = 1; static { this.behind = Block26.late ?? "absent"; } }
+console.log("static block |", "??", "|", Block26.before, Block26.behind);
+class Field26 { before = this.late ?? "absent"; late = 1; behind = this.late ?? "absent"; }
+{ const made = new Field26(); console.log("instance field |", "??", "|", made.before, made.behind); }
+class Made26 { constructor() { this.before = this.late ?? "absent"; this.late = 1; this.behind = this.late ?? "absent"; } }
+{ const made = new Made26(); console.log("store in the constructor |", "??", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = object.late ?? "absent"; object.late = 1; console.log("store behind a literal |", "??", "|", before, object.late ?? "absent"); }
+function fill26(object) { const before = object.late ?? "absent"; object.late = 1; return [before, object.late ?? "absent"].join(" "); }
+console.log("store in a callee |", "??", "|", fill26({ first: 0 }));
+class Named27 { static before = delete Named27.late; static late = 1; static behind = delete Named27.late; }
+console.log("static field, class by name |", "delete", "|", Named27.before, Named27.behind);
+class This27 { static before = delete this.late; static late = 1; static behind = delete this.late; }
+console.log("static field, this |", "delete", "|", This27.before, This27.behind);
+class Block27 { static before; static behind; static { this.before = delete Block27.late; } static late = 1; static { this.behind = delete Block27.late; } }
+console.log("static block |", "delete", "|", Block27.before, Block27.behind);
+class Field27 { before = delete this.late; late = 1; behind = delete this.late; }
+{ const made = new Field27(); console.log("instance field |", "delete", "|", made.before, made.behind); }
+class Made27 { constructor() { this.before = delete this.late; this.late = 1; this.behind = delete this.late; } }
+{ const made = new Made27(); console.log("store in the constructor |", "delete", "|", made.before, made.behind); }
+{ const object = { first: 0 }; const before = delete object.late; object.late = 1; console.log("store behind a literal |", "delete", "|", before, delete object.late); }
+function fill27(object) { const before = delete object.late; object.late = 1; return [before, delete object.late].join(" "); }
+console.log("store in a callee |", "delete", "|", fill27({ first: 0 }));
+//// fields-change-type-through-aliases.js
+// Fields get other types through aliases: computed keys, Object.assign, entries loops, JSON data.
+class Config { constructor() { this.port = 80; this.host = "h"; this.on = true; this.list = [1, 2, 3]; } twice() { return this.port * 2; } }
+const c = new Config();
+const data = JSON.parse('{"port":"8080","host":5,"on":null,"list":{"length":1},"extra":[1]}');
+for (const [k, v] of Object.entries(data)) c[k] = v;
+console.log(c.twice(), typeof c.port, c.host + 1, c.on, c.list.length, c.extra[0], Object.keys(c).join());
+const c2 = Object.assign(new Config(), data);
+console.log(c2.twice(), typeof c2.port, c2.host + 1, c2.on, c2.list.length);
+const c3 = new Config();
+const key = JSON.parse('"port"');
+c3[key] = { valueOf() { return 21; } };
+console.log(c3.twice(), typeof c3.port);
+const c4 = { ...new Config(), ...data };
+console.log(c4.port + 1, typeof c4.host);
+function setAll(o, src) { for (const k in src) o[k] = src[k]; return o; }
+const c5 = setAll(new Config(), { port: 1.5, host: undefined });
+console.log(c5.twice(), c5.host, c5.port | 0);
+const c6 = new Config(); delete c6.port; console.log(c6.twice(), "port" in c6, Object.keys(c6).join());
+const c7 = new Config(); Object.defineProperty(c7, "port", { get() { return "g"; }, configurable: true }); console.log(c7.twice(), c7.port);
+//// fields-changed-through-built-ins-are-read-back.js
+////= attempt-3
+const point = { x: 1, y: 2 };
+const read = o => o.x + ":" + o.y + ":" + Object.keys(o).join();
+attempt("as made", () => read(point));
+attempt("assign", () => read(Object.assign(point, { x: "s", z: 3 })));
+attempt("defineProperty", () => read(Object.defineProperty(point, "y", { get() { return "got"; }, enumerable: true, configurable: true })));
+attempt("defineProperties", () => read(Object.defineProperties(point, { w: { value: 4, enumerable: true }, x: { value: null, writable: true, enumerable: true, configurable: true } })));
+attempt("Reflect.set", () => (Reflect.set(point, "x", 5n), read(point)));
+attempt("Reflect.defineProperty", () => (Reflect.defineProperty(point, "x", { value: Symbol.iterator.description }), read(point)));
+attempt("Reflect.deleteProperty", () => (Reflect.deleteProperty(point, "x"), read(point)));
+attempt("setPrototypeOf", () => (Object.setPrototypeOf(point, { x: "inherited" }), read(point)));
+attempt("__proto__", () => ((point.__proto__ = { x: "by __proto__" }), read(point)));
+attempt("__defineGetter__", () => (point.__defineGetter__("x", () => "old style"), read(point)));
+attempt("computed", () => { const key = ["x"].join(""); delete point[key]; point[key] = [1]; return read(point); });
+attempt("entries", () => read(Object.fromEntries(Object.entries(point).map(([k, v]) => [k, typeof v]))));
+attempt("spread", () => read({ ...point, x: undefined }));
+attempt("with a proxy", () => { const p = new Proxy(point, { set(t, k, v) { t[k] = v + "!"; return true; } }); p.x = "through"; return read(point); });
+attempt("structuredClone", () => read(structuredClone({ x: new Date(0), y: /r/g })).length);
+attempt("JSON", () => read(JSON.parse(JSON.stringify({ x: { toJSON() { return [2]; } }, y: undefined }))));
+attempt("array methods", () => { const a = [point]; a.fill({ x: "filled", y: 0 }); return read(a[0]) + read(a.with(0, { x: "with", y: 1 })[0]) + read(a.toSpliced(0, 1, { x: "spliced", y: 2 })[0]) + read(a.copyWithin(0, 0)[0]); });
+attempt("sort moves", () => { const a = [{ x: 2, y: "b" }, { x: 1, y: 7 }]; a.sort((p, q) => p.x - q.x); return read(a[0]) + read(a.reverse()[0]) + read(a.toSorted((p, q) => p.x - q.x)[0]); });
+attempt("freeze then store", () => { const f = Object.freeze({ x: 1, y: 2 }); f.x = 9; return read(f); });
+attempt("class fields redefined", () => { class C { x = 1; y = 2; } const c = new C(); Object.defineProperty(c, "x", { get: () => "getter", enumerable: true }); return read(c); });
+attempt("instance gets another prototype", () => { class C { x = 1; get y() { return "from C"; } } class D { get y() { return "from D"; } } const c = new C(); Object.setPrototypeOf(c, D.prototype); return read(c) + (c instanceof C); });
+attempt("prototype method replaced", () => { class C { m() { return 1; } } const c = new C(); const before = c.m(); C.prototype.m = () => "replaced"; return before + c.m(); });
+attempt("arguments alias", () => (function (a) { "sloppy"; arguments[0] = "aliased"; return typeof a + arguments.length; })(1));
+//// fields-get-values-of-other-kinds-by-nine-roads.js
+// Data redefinitions with another kind of value; accessors over fields; fields over accessors.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+const seen = [];
+class A { ga = { qd: 1 }; gb = 1.5; gc = "text"; gd = [1]; }
+function all(o) { return [attempt(() => o.ga.qd), attempt(() => o.gb + 1), attempt(() => o.gc.length), attempt(() => o.gd.length)].join(); }
+const a = new A();
+Object.defineProperty(a, "ga", { value: 5 }); Object.defineProperty(a, "gb", { value: "s" }); Object.defineProperty(a, "gc", { value: undefined }); Object.defineProperty(a, "gd", { value: { length: "L" } });
+console.log(all(a));
+const b = new A();
+Object.defineProperties(b, { ga: { value: null }, gb: { get() { return { valueOf() { return 41; } }; } }, gc: { value: 12 }, gd: { value: "abc" } });
+console.log(all(b));
+const c = new A();
+for (const [k, v] of Object.entries({ ga: true, gb: 2n, gc: Symbol.iterator, gd: () => 1 })) c[k] = v;
+console.log(all(c));
+const d = Object.assign(new A(), JSON.parse('{"ga":[1],"gb":{"x":1},"gc":3,"gd":"q"}'));
+console.log(all(d));
+const e = new A(); Object.entries(e).forEach(([k]) => Reflect.set(e, k, k));
+console.log(all(e));
+const f = new A(); ({ ga: f.gb, gb: f.ga, gc: f.gd, gd: f.gc } = f);
+console.log(all(f));
+const g = new A(); [g.ga, g.gb, g.gc, g.gd] = [1, "2", 3, 4];
+console.log(all(g));
+const h = new A(); for (h.ga of [7]); for (h.gc in { k: 1 }); for (h.gb in { z: 1 });
+console.log(all(h));
+console.log(all(new A()));
+//// fields-inherited-by-the-class-of-a-mixin-are-missing-stored-again-or-replaced.ts
+// The class of a mixin inherits fields that its base stores on some paths only, stores once, or fills with functions. What holds for the base's own instances need not hold for these.
+const names: string[] = JSON.parse('["id", "x", "handler"]');
+{
+  class P {
+    x?: number;
+    constructor(withX: boolean) {
+      if (withX) this.x = 1;
+    }
+    get(): number {
+      return this.x === undefined ? -1 : this.x;
+    }
+  }
+  const Mix = <B extends new (...a: any[]) => P>(b: B) => class extends b { w: number = 4; };
+  const C = Mix(P);
+  const a: P = new C(true);
+  const b: P = new C(false);
+  console.log("some paths", a.get(), b.get(), "x" in a, "x" in b, Object.keys(a).join("+"), Object.keys(b).join("+"), JSON.stringify(a), JSON.stringify(b));
+  b.x = 2;
+  console.log("some paths", b.get(), Object.keys(b).join("+"));
+}
+{
+  class P {
+    id: number = 1;
+    twice(): number {
+      return this.id * 2;
+    }
+  }
+  const Mix = <B extends new (...a: any[]) => P>(b: B) => class extends b { w: number = 4; };
+  const C = Mix(P);
+  const a: P = new C();
+  const b: P = new C();
+  function bump(o: any): void {
+    o[names[0]] = 5;
+  }
+  let total = 0;
+  for (let i = 0; i < 3000; i++) {
+    total += a.twice() + b.twice();
+    if (i === 1500) bump(b);
+  }
+  console.log("stored once", total, a.id, b.id);
+}
+{
+  class P {
+    x: number = 3;
+    handler = (): number => this.x + 1;
+  }
+  const Mix = <B extends new (...a: any[]) => P>(b: B) => class extends b { w: number = 4; };
+  const C = Mix(P);
+  const a: P = new C();
+  const b: P = new C();
+  (b as any)[names[2]] = () => 100;
+  const c: P = new C();
+  (c as any).handler = function (this: P) { return this.x * 2; };
+  console.log("functions", a.handler(), b.handler(), c.handler(), typeof a.handler, a.handler === a.handler);
+}
+{
+  class P {
+    x: number = 1;
+  }
+  const Mix = <B extends new (...a: any[]) => P>(b: B) => class extends b { w: number = 4; };
+  const C = Mix(P);
+  const a: P = new C();
+  const b: P = new C();
+  delete (a as any).x;
+  Object.defineProperty(b, "x", { get() { return 9; }, configurable: true, enumerable: true });
+  console.log("removed and redefined", String((a as any).x), "x" in a, Object.keys(a).join("+"), (b as any).x, Object.keys(b).join("+"), JSON.stringify(a), JSON.stringify(b));
+}
+//// fields-not-stored-on-every-way-through-a-constructor.js
+// Fields that are not stored on every way through a constructor, and objects that a constructor never finishes.
+const out = [];
+function show(name, ...v) { out.push(name + ": " + v.map(x => typeof x + " " + String(x)).join(", ")); }
+function boom() { throw new Error("boom"); }
+function fine() {}
+
+class T1 { constructor(f) { try { f(); this.a = 1; } catch { } } }
+show("try", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new T1(boom).a), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new T1(fine).a));
+class T2 { constructor(f) { try { this.a = 1; f(); this.b = 2; } catch { this.c = 3; } } }
+{ const p = new T2(boom), q = new T2(fine); show("try 2", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(p.a), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(p.b), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(p.c), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(q.a), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(q.b), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(q.c)); }
+class T3 { constructor(c) { if (c) this.a = 1; this.b = 2; } }
+show("if", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new T3(false).a), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new T3(true).a));
+class T4 { constructor(c) { if (c) return; this.a = 1; } }
+show("return", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new T4(true).a), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new T4(false).a));
+class T5 { constructor(n) { for (let i = 0; i < n; i++) this.a = i; } }
+show("loop", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new T5(0).a), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new T5(2).a));
+class T6 { constructor(c) { c && (this.a = 1); c || (this.b = 2); } }
+show("logical", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new T6(false).a), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new T6(true).b));
+class T7 { constructor(k) { switch (k) { case 1: this.a = 1; break; case 2: this.a = 2; } } }
+show("switch", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new T7(3).a), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new T7(2).a));
+class T8 { constructor(f) { try { f(); } finally { this.a = 1; } this.b = 2; } }
+{ let kept; class T8b extends T8 { constructor(f) { try { super(f); } catch { } } } try { kept = new T8(boom); } catch { } show("finally", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(typeof kept)); }
+
+let leaked9;
+class T9 { constructor(f) { leaked9 = this; f(); this.v = 1; } }
+try { new T9(boom); } catch { }
+show("leaked and thrown", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(leaked9.v));
+new T9(fine);
+show("leaked", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(leaked9.v));
+
+let leaked10;
+class B10 { constructor() { leaked10 = this; } }
+class D10 extends B10 { constructor(f) { super(); f(); this.v = 1; } }
+try { new D10(boom); } catch { }
+show("base leaks, derived throws", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(leaked10.v));
+
+class B11 { constructor() { this.init(); } init() { } }
+class D11 extends B11 { x = 5; init() { this.seen = this.x; } }
+show("overridden method", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new D11().seen), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new D11().x));
+class B12 { constructor() { this.seen = this.x; } }
+class D12 extends B12 { x = 5; }
+show("base reads", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new D12().seen));
+class B13 { constructor() { this.seen = Object.keys(this).join(); } }
+class D13 extends B13 { x = 5; }
+show("base lists", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new D13().seen), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(Object.keys(new D13()).join()));
+
+class F14 { a = this.b; b = 1; }
+show("field order", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new F14().a));
+class F15 { a = (() => this.b)(); b = 1; }
+show("field arrow", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new F15().a));
+class F16 { static make() { return new F16(); } a = F16.peek(this); b = 1; static peek(o) { return o.b; } }
+show("static peek", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(F16.make().a));
+
+class P17 { #p = this.#q(); #r = 1; #q() { try { return this.#r; } catch (e) { return e.constructor.name; } } get p() { return this.#p; } }
+show("private", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new P17().p));
+
+class B18 { constructor() { this.b = 1; } }
+class D18 extends B18 { constructor() { super(); this.d = 2; } }
+const o18 = Reflect.construct(B18, [], D18);
+function rd18(q) { return q.d; }
+show("Reflect.construct", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(rd18(o18)), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(rd18(new D18())), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(o18 instanceof D18), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(o18.b));
+
+function F19() { } F19.prototype = D18.prototype;
+const o19 = Reflect.construct(B18, [], F19);
+show("prototype of another function", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(rd18(o19)), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(o19 instanceof D18));
+
+const o20 = Object.create(D18.prototype);
+show("Object.create", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(rd18(o20)), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(o20 instanceof D18));
+const o21 = { __proto__: D18.prototype };
+show("__proto__", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(rd18(o21)), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(o21.b));
+const o22 = {}; Object.setPrototypeOf(o22, D18.prototype);
+show("setPrototypeOf", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(rd18(o22)));
+
+let cache23;
+class R23 { constructor() { if (cache23) return cache23; cache23 = this; this.v = 1; } }
+show("returns another", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new R23().v), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new R23().v));
+class R24 { constructor() { this.v = 1; return { w: 2 }; } }
+show("returns literal", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new R24().v), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new R24().w));
+class B25 { constructor() { return Object.create(new.target.prototype); } }
+class D25 extends B25 { x = 1; constructor() { super(); this.y = 2; } }
+show("base returns", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new D25().x), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new D25().y));
+
+function K26(c) { if (c) this.a = 1; }
+show("function constructor", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new K26(false).a), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new K26(true).a));
+function K27() { this.a = 1; }
+const o27 = {}; K27.call(o27); const p27 = Object.create(K27.prototype);
+function rd27(o) { return o.a; }
+show("function called", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(rd27(o27)), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(rd27(new K27())), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(rd27(p27)));
+
+class S28 { constructor(c) { c ? this.one() : this.two(); } one() { this.a = 1; } two() { this.b = 2; } }
+show("two helpers", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new S28(true).b), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new S28(false).a));
+class S29 { constructor(h) { h(this); } }
+show("helper parameter", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new S29(o => { o.a = 1; }).a), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new S29(o => { }).a));
+class S30 { constructor(h) { this[h](); } one() { this.a = 1; } two() { } }
+show("helper by key", (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new S30("one").a), (t => t === undefined ? "missing" : typeof t === "number" ? t + 1 : t)(new S30("two").a));
+
+console.log(out.join("\n"));
+//// fields-of-an-instance-go-away-by-seven-roads.js
+// A field goes away again, or is never a plain one.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+function mayThrow() { if (JSON.parse("true")) throw new RangeError("midway"); }
+const seen = [];
+class A { ga = { qf: 1 }; gb = { qf: 2 }; }
+const a = new A(); delete a.ga;
+console.log(attempt(() => a.ga.qf), a.gb.qf, Object.keys(a).join());
+const a2 = new A(); Reflect.deleteProperty(a2, "gb");
+console.log(attempt(() => a2.gb.qf));
+const a3 = new A(); Object.defineProperty(a3, "ga", { get() { return undefined; } });
+console.log(attempt(() => a3.ga.qf));
+const a4 = new A(); const key = JSON.parse('"ga"'); delete a4[key];
+console.log(attempt(() => a4.ga.qf));
+const a5 = new A(); a5.ga = undefined;
+console.log(attempt(() => a5.ga.qf));
+const a6 = new A(); Object.assign(a6, JSON.parse('{"ga":null}'));
+console.log(attempt(() => a6.ga.qf));
+const a7 = new A(); for (const k in a7) delete a7[k];
+console.log(attempt(() => a7.gb.qf), Object.keys(a7).length);
+const a8 = new A(); Object.setPrototypeOf(a8, null); console.log(a8.ga.qf);
+function readAll(o) { return attempt(() => o.ga.qf + o.gb.qf); }
+console.log([a, a2, a3, a4, a5, a6, a7, a8, new A()].map(readAll).join());
+//// fields-of-an-instance-with-very-many-added-properties.js
+class C {
+  constructor() {
+    this.first = 1;
+    this.second = "s";
+  }
+  set(v) {
+    this.first = v;
+    this.second = v + "!";
+    return this.first;
+  }
+}
+const o = new C();
+for (let i = 0; i < 70000; i++) o["k" + i] = i;
+const name = ["fir", "st"].join("");
+console.log(o.set(5), o.first, o[name], o.second, Object.entries(o)[0].join(), Object.entries(o)[1].join(), JSON.stringify(o).slice(0, 28), Object.getOwnPropertyDescriptor(o, "first").value, { ...o }.first, Object.assign({}, o).second, Reflect.get(o, "first"), Object.values(o)[0]);
+o[name] = 9;
+console.log(o.first, o.set(o.first + 1), o[name], structuredClone(o).first);
+//// fields-read-before-the-constructor-sets-them.js
+// A virtual call from a base constructor reads a subclass field before it is set; `this` registered before fields are set.
+const registry = [];
+class Base {
+  constructor() { registry.push(this); this.kind = this.describe(); }
+  describe() { return "base"; }
+}
+class Derived extends Base {
+  size = 7;
+  constructor(n) { super(); this.n = n; }
+  describe() { return "derived:" + this.size + ":" + this.n + ":" + typeof this.size; }
+}
+const d = new Derived(3);
+console.log(d.kind, d.size, d.n, registry[0] === d);
+class Late { constructor(cb) { cb(this); this.a = 1; this.b = "x"; } sum() { return this.a + this.b; } }
+let seen;
+const l = new Late(o => { seen = [o.a, o.b, typeof o.a, "a" in o, Object.keys(o).length, o.sum()]; });
+console.log(JSON.stringify(seen), l.sum());
+class Ret { constructor(o) { this.z = 1; if (o) return o; } }
+class Sub extends Ret { w = 2; constructor(o) { super(o); this.v = 3; } }
+const target = { q: 0 };
+const s = new Sub(target);
+console.log(s === target, JSON.stringify(s), s instanceof Sub, JSON.stringify(new Sub()));
+//// fields-that-some-instances-never-get.js
+// A lookup ends at a field that is assumed to be filled.
+function id(x) { return x; }
+function chain(x) { return id(id(id(id(id(id(id(id(x)))))))); }
+function show(...parts) { let text = ""; for (let i = 0; i < parts.length; i++) text += (i ? " | " : "") + String(parts[i]); console.log(text); }
+function dynamic(text) { return (text + "!").slice(0, text.length); }
+function read(o) { return o.x; }
+// 1: stored on one path of the constructor
+{ class C { constructor(f) { if (f) this.x = 1; } } C.prototype.x = "proto"; function r(o) { return o.x; } show("1", r(new C(true)) + 1, r(new C(false)).length); }
+// 2: the constructor leaves early
+{ class C { constructor(f) { if (!f) return; this.x = 1; } } C.prototype.x = "proto"; function r(o) { return o.x; } show("2", r(new C(true)) + 1, r(new C(false)).length); }
+// 3: stored by a helper that a subclass replaces
+{ class C { constructor() { this.init(); } init() { this.x = 1; } } class D extends C { init() {} } C.prototype.x = "proto"; function r(o) { return o.x; } show("3", r(new C()) + 1, r(new D()).length); }
+// 4: the object leaks before the store, and the reader runs then
+{ const seen = []; function r(o) { return o.x; } function peek(o) { seen.push(typeof r(o)); } class C { constructor() { peek(this); this.x = 1; peek(this); } } C.prototype.x = "proto"; new C(); show("4", seen.join()); }
+// 5: the constructor throws after the leak
+{ let leaked; function r(o) { return o.x; } class C { constructor() { leaked = this; throw new Error("stop"); this.x = 1; } } C.prototype.x = "proto"; try { new C(); } catch (e) {} show("5", r(leaked).length); }
+// 6: a getter above a field that is deleted in a function reached through that getter's result
+{ const proto = { get x() { return () => "from getter"; } }; const o = { __proto__: proto, x: null }; function r(v) { return v.x; } show("6a", r(o)); delete chain(o).x; show("6b", r(o)()); }
+// 7: an inherited field of a subclass instance
+{ class B { constructor(f) { if (f) this.x = 1; } } class C extends B { constructor(f) { super(f); this.y = 2; } } B.prototype.x = "proto"; function r(o) { return o.x; } show("7", r(new C(true)) + 1, r(new C(false)).length); }
+// 8: Reflect.construct: the constructor of the new target never runs
+{ class A { constructor() { this.a = 1; } } class B { constructor() { this.x = 1; } } B.prototype.x = "proto"; function r(o) { return o.x; } show("8", r(new B()) + 1, r(Reflect.construct(A, [], B)).length); }
+// 9: Object.create of the class prototype
+{ class B { constructor() { this.x = 1; } } B.prototype.x = "proto"; function r(o) { return o.x; } show("9", r(new B()) + 1, r(Object.create(B.prototype)).length); }
+// 10: a method of the same name above a field that is emptied late, called
+{ class B { x() { return "method"; } } class C extends B { constructor() { super(); this.x = () => 7; } } const o = new C(); function call(v) { return v.x(); } show("10a", call(o) + 1); delete chain(o).x; show("10b", call(o).length); }
+// 11: `in` with a field that goes away
+{ const proto = {}; const o = { __proto__: proto, x: 1 }; function has(v) { return "x" in v; } show("11a", has(o)); delete chain(o).x; show("11b", has(o)); chain(proto).x = 1; show("11c", has(o)); }
+// 12: a literal field under a key nobody can name is deleted, then the prototype gets the name late
+{ const proto = {}; const o = { __proto__: proto, x: 1 }; function r(v) { return v.x; } show("12a", r(o) + 1); delete o[dynamic("x")]; show("12b", r(o)); chain(proto).x = "late"; show("12c", r(o).length); }
+// 13: the field is emptied through a receiver nobody tracks, after the reader ran
+{ const proto = { x: "proto" }; const o = { __proto__: proto, x: 1 }; function r(v) { return v.x; } show("13a", r(o) + 1); globalThis.lostBox13 = o; const u = globalThis.lostBox13; delete u[dynamic("x")]; show("13b", r(o).length); }
+// 14: an accessor defined through a receiver nobody tracks
+{ const o = { x: 1 }; function r(v) { return v.x; } show("14a", r(o) + 1); globalThis.lostBox14 = o; Object.defineProperty(globalThis.lostBox14, "x", { get() { return "getter"; } }); show("14b", r(o).length); }
+//// for-in-over-a-subclass-lists-its-own-static-fields.js
+// for-in over a class object lists its own static fields first, then those of the classes it extends.
+function keysOf(object) {
+  const found = [];
+  for (const key in object) found.push(key);
+  return found.join();
+}
+
+class Base {
+  static a = 1;
+  static b = 2;
+  static hidden() {}
+}
+class Heir extends Base {
+  static z = 3;
+  static y = 4;
+}
+console.log(keysOf(Heir));
+console.log(keysOf(Base));
+
+class Lowest extends Heir {
+  static a = "shadows";
+  static last = 5;
+}
+for (const key in Lowest) console.log(key, Lowest[key]);
+
+function make(tag) {
+  return class extends Base {
+    static tag = tag;
+  };
+}
+console.log(keysOf(make("one")), keysOf(make("two")));
+
+class Alone {
+  static only = 1;
+}
+console.log(keysOf(Alone));
+
+// What TypeScript's __extends does for a target without Object.setPrototypeOf.
+function copyStatics(to, from) {
+  for (const key in from) if (Object.prototype.hasOwnProperty.call(from, key)) to[key] = from[key];
+  return to;
+}
+console.log(JSON.stringify(copyStatics({}, Heir)));
+//// format-of-a-formatter-and-import-value-asked-in-place.js
+// `format` of an Intl.NumberFormat | DateTimeFormat is a getter that answers a function bound to the formatter, the same one each time; ShadowRealm.prototype.importValue answers a promise.
+// Each case is a function of its own; what the built-in answers is stored and read again right behind the call, and every question stands in place.
+// A compiled program differs in two lines, on purpose: a module that was compiled ahead of time cannot be imported inside a ShadowRealm, so the promise is rejected with a TypeError that says so.
+function formatOfNumberFormat() {
+  const formatter = new Intl.NumberFormat("en");
+  const format = formatter.format;
+  const holder = { kept: format };
+  const read = holder.kept;
+  console.log("NumberFormat.format is", typeof format === "function", typeof format === "object", typeof format === "string", format === undefined, format === null);
+  console.log("NumberFormat.format, again and read back:", formatter.format === format, read === format, typeof read === "function");
+  console.log("NumberFormat.format, its own members:", typeof format.name === "string", format.name === "", typeof format.length === "number", format.length, Object.hasOwn(format, "prototype"));
+  const text = format(1234.5);
+  const texts = { kept: text };
+  console.log("NumberFormat.format(1234.5) is", typeof text === "string", typeof text === "number", typeof text === "object", text === undefined, texts.kept, texts.kept.length);
+}
+function formatOfNumberFormatOverOperands() {
+  const format = new Intl.NumberFormat("en").format;
+  for (const operand of [0, -0, NaN, 12n, "7", undefined, null, true, { valueOf() { return 3; } }]) {
+    const text = format(operand);
+    console.log("NumberFormat.format of", typeof operand, "is a string:", typeof text === "string", text);
+  }
+  for (const text of [1, 2000].map(format)) console.log("mapped:", typeof text === "string", typeof text === "undefined", text);
+  try { format(Symbol("no number")); console.log("no error"); } catch (error) { console.log("a symbol:", error instanceof TypeError, typeof error === "object"); }
+}
+function formatOfDateTimeFormat() {
+  const formatter = new Intl.DateTimeFormat("en", { timeZone: "UTC" });
+  const format = formatter.format;
+  const holder = [format];
+  const read = holder[0];
+  console.log("DateTimeFormat.format is", typeof format === "function", typeof format === "object", format === undefined, formatter.format === format, read === format, format.length);
+  const text = format(0);
+  console.log("DateTimeFormat.format(0) is", typeof text === "string", typeof text === "object", text === undefined, text);
+  const ofDate = format(new Date(86400000));
+  console.log("DateTimeFormat.format(a Date) is", typeof ofDate === "string", ofDate);
+  const now = format();
+  console.log("DateTimeFormat.format() is", typeof now === "string", now.length > 0);
+  try { format(NaN); console.log("no error"); } catch (error) { console.log("not a time:", error instanceof RangeError, error instanceof TypeError); }
+}
+function formatReadOffSomethingElse() {
+  for (const holder of [Intl.NumberFormat.prototype, Intl.DateTimeFormat.prototype]) {
+    const getter = Object.getOwnPropertyDescriptor(holder, "format").get;
+    console.log("the getter is", typeof getter === "function", typeof getter === "undefined");
+    try { const got = getter.call({}); console.log("no error", typeof got); } catch (error) { console.log("on an object that is no formatter:", error instanceof TypeError); }
+    try { const got = holder.format; console.log("no error", typeof got); } catch (error) { console.log("on the prototype object:", error instanceof TypeError); }
+  }
+}
+async function importValue() {
+  console.log("ShadowRealm is", typeof ShadowRealm === "function", typeof ShadowRealm === "undefined");
+  if (typeof ShadowRealm !== "function") return;
+  const realm = new ShadowRealm();
+  let promise;
+  try { promise = realm.importValue("node:path", "sep"); } catch (error) { console.log("importValue threw", error.constructor.name); return; }
+  const holder = { kept: promise };
+  const read = holder.kept;
+  console.log("importValue answers", typeof promise === "object", promise instanceof Promise, typeof promise === "function", promise === undefined, read === promise, typeof read.then === "function");
+  try { const value = await read; console.log("fulfilled with", typeof value === "string", typeof value === "object", typeof value === "undefined", value); } catch (error) { console.log("rejected with", typeof error === "object", error instanceof TypeError, error instanceof Error); }
+  try { const missing = realm.importValue("node:path", "no such export"); console.log("a missing export answers", missing instanceof Promise); await missing; console.log("fulfilled"); } catch (error) { console.log("a missing export:", typeof error === "object", error instanceof TypeError); }
+  try { const wrong = realm.importValue("node:path", 5); console.log("a number for the name answers", typeof wrong); await wrong; } catch (error) { console.log("a number for the name:", error instanceof TypeError); }
+  try { const made = await realm.importValue("node:path", "basename"); console.log("a function comes wrapped:", typeof made === "function", typeof made === "object", made("/a/b.txt")); } catch (error) { console.log("a function:", error.constructor.name); }
+}
+formatOfNumberFormat();
+formatOfNumberFormatOverOperands();
+formatOfDateTimeFormat();
+formatReadOffSomethingElse();
+await importValue();
+//// functions-assigned-to-prototypes-and-their-reads.js
+// A function is assigned to a property of a prototype or of a function object. Each case asks for the property before, after or beside the assignment.
+function attempt(f) { try { return f(); } catch (e) { return e.constructor.name; } }
+// 01
+function F_01() { this.x = 1; }
+function use_01(o) { return o.m(); }
+const r_01 = attempt(() => use_01(new F_01()));
+F_01.prototype.m = function () { return 1; };
+console.log("01", r_01, use_01(new F_01()));
+// 02
+function F_02() { this.x = 1; }
+function use_02(o) { return o.m(); }
+function flag_02() { return false; }
+if (flag_02()) F_02.prototype.m = function () { return 1; };
+console.log("02", attempt(() => use_02(new F_02())));
+// 03
+function F_03() { this.x = 1; }
+function use_03(o) { return o.m(); }
+function boom_03() { throw 0; }
+try { boom_03(); F_03.prototype.m = function () { return 1; }; } catch { }
+console.log("03", attempt(() => use_03(new F_03())));
+// 04
+function F_04() { this.x = 1; }
+function use_04(o) { return o.m(); }
+Object.freeze(F_04.prototype);
+try { F_04.prototype.m = function () { return 1; }; } catch { }
+console.log("04", attempt(() => use_04(new F_04())));
+// 05
+function F_05() { this.x = 1; }
+function use_05(o) { return o.m(); }
+Object.defineProperty(F_05.prototype, "m", { value: function () { return "first"; }, writable: false });
+try { F_05.prototype.m = function () { return 1; }; } catch { }
+console.log("05", attempt(() => use_05(new F_05())));
+// 07
+function F_07() { this.x = 1; }
+function use_07(o) { return o.m(); }
+F_07.prototype.m = function () { return 1; };
+const a_07 = use_07(new F_07());
+delete F_07.prototype.m;
+console.log("07", a_07, attempt(() => use_07(new F_07())));
+// 08
+function F_08() { this.x = 1; }
+function use_08(o) { return o.m(); }
+F_08.prototype.m = function () { return 1; };
+const a_08 = use_08(new F_08());
+F_08.prototype.m = function () { return "two"; };
+console.log("08", a_08, use_08(new F_08()));
+// 09
+function F_09() { this.x = 1; }
+function use_09(o) { return o.m(); }
+function other_09() { F_09.prototype.m = function () { return "two"; }; }
+F_09.prototype.m = function () { return 1; };
+const a_09 = use_09(new F_09());
+[0].forEach(other_09);
+console.log("09", a_09, use_09(new F_09()));
+// 10
+let hook_10 = null;
+////= lines-25	mk_10	F_10	r_10	hook_10
+console.log("10", mk_10(), mk_10());
+// 11
+let hook_11 = null;
+////= lines-25	mk_11	F_11	r_11	hook_11
+const out_11 = []; for (let i_11 = 0; i_11 < 2; i_11++) out_11.push(mk_11());
+console.log("11", out_11.join());
+// 12
+function F_12() { this.x = 1; }
+function a_12(o) { return typeof Reflect.get(o, "m"); } function b_12(o) { return typeof o["m"]; } function c_12(o) { const { m } = o; return typeof m; } function d_12(o) { return "m" in o; }
+const r_12 = [a_12(new F_12()), b_12(new F_12()), c_12(new F_12()), d_12(new F_12())].join();
+F_12.prototype.m = function () { return 1; };
+console.log("12", r_12, [a_12(new F_12()), b_12(new F_12()), c_12(new F_12()), d_12(new F_12())].join());
+// 13
+function F_13() { this.x = 1; }
+function G_13() { this.y = 1; } G_13.prototype = Object.create(F_13.prototype);
+function use_13(o) { return o.m(); }
+const r_13 = attempt(() => use_13(new G_13()));
+F_13.prototype.m = function () { return 1; };
+console.log("13", r_13, use_13(new G_13()));
+// 14
+function F_14() { }
+function use_14() { return F_14.helper(); }
+const r_14 = attempt(use_14);
+F_14.helper = function () { return 1; };
+console.log("14", r_14, use_14());
+// 15
+function F_15() { this.x = 1; }
+function use_15(o) { return o.m(); }
+const list_15 = [];
+list_15.forEach(() => { F_15.prototype.m = function () { return 1; }; });
+console.log("15", attempt(() => use_15(new F_15())));
+// 17
+function F_17() { this.x = 1; }
+function use_17(o) { return o.m(); }
+var k_17; const T_17 = { a() { return "early"; }, undefined() { return attempt(() => use_17(new F_17())); } };
+function key_17() { return k_17; }
+const r_17 = T_17[key_17()]();
+var k_17 = "a";
+F_17.prototype.m = function () { return 1; };
+console.log("17", r_17, use_17(new F_17()));
+// 19
+function F_19() { this.x = 1; }
+function G_19() { this.y = 1; }
+const T_19 = { a: F_19.prototype, undefined: G_19.prototype };
+function key_19() { return k_19; }
+T_19[key_19()].m = function () { return 1; };
+var k_19 = "a";
+function use_19(o) { return o.m(); }
+console.log("19", attempt(() => use_19(new F_19())), attempt(() => use_19(new G_19())));
+// 20
+class F_20 { }
+function use_20(o) { return o.m(); }
+function install_20(c) { c.prototype.m = function () { return 1; }; }
+class G_20 { }
+install_20(G_20);
+console.log("20", attempt(() => use_20(new F_20())), use_20(new G_20()));
+install_20(F_20);
+console.log("20", use_20(new F_20()));
+// 21
+function F_21() { this.x = 1; }
+function use_21(o) { return o.m(); }
+F_21.prototype.m = function () { return 1; };
+const a_21 = use_21(new F_21());
+F_21.prototype = { m() { return "replaced"; } };
+console.log("21", a_21, use_21(new F_21()));
+// 22
+function F_22() { this.x = 1; }
+function use_22(o_22) { return o_22.m(); }
+F_22.prototype.m = function () { return 1; };
+const o_22 = new F_22();
+const a_22 = use_22(o_22);
+Object.setPrototypeOf(o_22, { m() { return "other"; } });
+console.log("22", a_22, use_22(o_22));
+// 23
+function F_23() { this.x = 1; }
+function use_23(o_23) { return o_23.m(); }
+F_23.prototype.m = function () { return 1; };
+const o_23 = new F_23();
+const a_23 = use_23(o_23);
+o_23.m = function () { return "own"; };
+console.log("23", a_23, use_23(o_23), use_23(new F_23()));
+// 24
+function F_24() { this.x = 1; }
+function use_24(o) { return o.m(); }
+const key_24 = "m";
+F_24.prototype.m = function () { return 1; };
+const a_24 = use_24(new F_24());
+F_24.prototype[key_24] = function () { return "two"; };
+console.log("24", a_24, use_24(new F_24()));
+// 25
+function F_25() { this.x = 1; }
+function use_25(o) { return o.m(); }
+F_25.prototype.m = function () { return 1; };
+const a_25 = use_25(new F_25());
+Object.assign(F_25.prototype, { m() { return "two"; } });
+console.log("25", a_25, use_25(new F_25()));
+//// functions-called-with-other-arguments-indirectly.js
+// Functions called with other argument types or counts through call, apply, bind, host callbacks, computed names.
+function add(a, b) { return a + b; }
+console.log(add(1, 2));
+console.log(add.call(null, "1", 2), add.apply(null, [1]), add.bind(null, 1.5)(2), Reflect.apply(add, null, [{}, 1]));
+const table = { add, neg(x) { return -x; } };
+const name = JSON.parse('"neg"');
+console.log(table[name]("3"), table[name](), Object.is(table[name](0), -0));
+function inc(x) { return x + 1; }
+console.log([1, "2", null, undefined, 3n].map(v => { try { return String(inc(v)); } catch (e) { return e.name; } }).join());
+console.log(["1", "2", "3"].map(parseInt).join(), [1, 2, 3].map(inc).join());
+function opt(a, b = a * 2, ...rest) { return [a, b, rest.length, arguments.length].join(); }
+console.log(opt(1), opt(1, undefined, 3), opt(), opt.length);
+function sloppy(a) { arguments[0] = "changed"; return a; }
+console.log(sloppy(1), sloppy());
+setTimeout(inc, 0, "late");
+setTimeout((a, b) => console.log("timer", a, typeof b), 0, 5);
+Promise.resolve("p").then(inc).then(console.log);
+queueMicrotask(() => console.log("micro", inc(1)));
+const { EventEmitter } = require("node:events");
+const em = new EventEmitter();
+function on(x) { console.log("event", x * 2, typeof x); }
+em.on("e", on); em.emit("e", 2); em.emit("e", "3"); em.emit("e");
+function ctor(v) { this.v = v; } ctor.prototype.get = function () { return this.v + 1; };
+console.log(new ctor(1).get(), new ctor("1").get(), Reflect.construct(ctor, [2]).get(), ctor.prototype.get.call({ v: 10 }));
+const bound = ctor.prototype.get.bind({ v: "b" }); console.log(bound());

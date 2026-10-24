@@ -49,7 +49,6 @@ pub fn load_program<'s>(
         .errors
         .retain(|error| error.code != 18003 && error.code != 18002);
     let unlisted_files = project.unlisted_files.take();
-    // First, so that where the installed types declare a name of the compiler's too, the compiler's declaration is the one that counts.
     let first_files = host.compiler_declarations();
     let mut last_files = Vec::new();
     let options = &mut project.options;
@@ -64,7 +63,6 @@ pub fn load_program<'s>(
     let brings_bun_types =
         is_application && !has_bun_types_installed && take_bun_types_of_host(host, options);
     let has_bun_types = has_bun_types_installed || brings_bun_types;
-    // What a file of Bun's own says is the same in every program, whichever of the others the program asks for.
     options.orders_files_as_listed = !is_application;
     if is_application && has_bun_types {
         last_files.append(&mut host.declarations_beside_bun_types(has_bun_types_installed));
@@ -145,7 +143,6 @@ pub fn load_program<'s>(
     })
 }
 
-/// A leaf is read only by the task that checks it, and a build checks a source file only if it compiles it.
 fn free_unread_leaves(files: &Files<'_>, host: &dyn CodeHost) {
     let is_unread = |&file: &FileId| {
         let module = files.module(file);
@@ -263,8 +260,6 @@ fn find_project(
     })
 }
 
-/// For each entry point the configuration file of the program that begins at it, which is empty where there is none. Entry points
-/// with the same one can be loaded together. `None`: an entry point or a configuration file does not load, which the load reports.
 pub fn find_configuration_of_each_entry_point(
     host: &dyn CodeHost,
     request: &CompileRequest<'_, '_>,
@@ -275,7 +270,6 @@ pub fn find_configuration_of_each_entry_point(
         }
         EntryPoints::Resolved(paths) | EntryPoints::Configured(paths, _) => paths.to_vec(),
     };
-    // Under a configuration file that only has references the entry point chooses among them.
     let mut of_folder: FxHashMap<Vec<u8>, Option<Vec<u8>>> = FxHashMap::default();
     let mut found = Vec::with_capacity(entry_paths.len());
     for entry_path in &entry_paths {
@@ -308,7 +302,6 @@ fn options_of_working_directory(host: &dyn CodeHost, code: &CodeOptions) -> Opti
         .options
 }
 
-// Under a tsconfig.json that only has references, the program is the first of the referenced projects that has the entry point.
 fn find_project_of_first_entry_point(
     host: &dyn CodeHost,
     nearest: config::Project,
@@ -328,7 +321,6 @@ fn find_project_of_first_entry_point(
         .unwrap_or(nearest)
 }
 
-// What a project declares globally is known to its own files, so the files of the project of each entry point are in the program.
 fn add_files_of_other_projects(
     host: &dyn CodeHost,
     program: &mut config::Project,
@@ -380,7 +372,6 @@ fn add_files_of_other_projects(
     }
 }
 
-// The projects that a tsconfig.json of references alone names.
 struct ReferencedProjects {
     projects: Vec<Option<config::Project>>,
     project_of_file: FxHashMap<Vec<u8>, usize>,
@@ -423,7 +414,6 @@ fn default_project(
     let mut options = default_compiler_options();
     if let Json::Object(options) = &mut options {
         config::merge_compiler_options(options, config::compile_build_overrides(), &[]);
-        // Nobody has asked for it, and Bun runs a .cts file that exports in the ordinary way.
         options.retain(|option| option.0 != b"verbatimModuleSyntax");
     }
     let directory = &code.working_directory;
@@ -447,7 +437,6 @@ fn choose_libraries(host: &dyn Host, options: &mut Options, libs: Libs<'_>) -> b
     has_bun_types_installed
 }
 
-// The run time provides what they declare, whatever `types` lists.
 fn name_bun_types(options: &mut Options) {
     let types = options.types.get_or_insert_default();
     let is_named = (types.iter()).any(|name| matches!(&name[..], b"bun" | b"bun-types" | b"*"));
@@ -461,14 +450,12 @@ fn take_bun_types_of_host(host: &dyn CodeHost, options: &mut Options) -> bool {
         return false;
     };
     let roots = options.effective_type_roots();
-    // The package that `@types/bun` refers to. A project may have installed it alone.
     let has_bun_types_package = roots.iter().any(|root| {
         let directories = [Some(&root[..]), root.strip_suffix(b"/@types")];
         (directories.into_iter().flatten())
             .any(|it| host.is_file(&[it, b"/bun-types/package.json"].concat()))
     });
     options.type_root_of_last_resort = Some(root);
-    // One of the two, so that nothing is declared twice. What the installed one refers to and is not installed comes from the host.
     let (named, other): (&[u8], &[u8]) = match has_bun_types_package {
         true => (b"bun-types", b"bun"),
         false => (b"bun", b"bun-types"),

@@ -1,5 +1,6 @@
 // A type that holds what no data can be, such as a function, a Date or a type parameter, cannot be given to `JSON.parse<T>()` or
-// `validate<T>()`: the build stops and names the member. It stops too where a type argument stands on a function that takes none.
+// `validate<T>()`: the build stops and names the member. It stops too where a type argument stands on a function that takes none,
+// where the type does not resolve, and where a rule of `Schema` is not as it was written or has arguments that say no rule.
 // Another spelling of `JSON.parse` is the same function, so it validates as well.
 import { expect } from "bun:test";
 import { bunExe, isWindows, tempDir } from "harness";
@@ -42,6 +43,42 @@ test.each([
   [
     'import { validate } from "bun:bundle";\nconsole.log(validate<{ run: () => void }>({}));',
     "validate<{ run: () => void; }>() cannot validate 'run: () => void'.",
+  ],
+  ['// @ts-ignore\nimport type { User } from "./no-such-file";\nconsole.log(JSON.parse<User>("{}"));', "TS100518"],
+  [
+    '// @ts-ignore\nimport type { User } from "./no-such-file";\nconsole.log(JSON.parse<{ id: number; user: User }>("{}"));',
+    "TS100518",
+  ],
+  ['// @ts-ignore\nimport type { User } from "./no-such-file";\nconsole.log(JSON.parse<User[]>("[]"));', "TS100518"],
+  ['// @ts-expect-error\nconsole.log(JSON.parse<Missing>("5"));', "TS100518"],
+  ['import { validate } from "bun:bundle";\n// @ts-expect-error\nconsole.log(validate<Missing>(5));', "TS100518"],
+  [
+    'import type { Schema } from "bun";\ntype Writable<T> = { -readonly [K in keyof T]: T[K] };\nconsole.log(JSON.parse<Writable<{ readonly id: number } & Schema.Strict>>("{}"));',
+    "cannot validate",
+  ],
+  [
+    'import type { Schema } from "bun";\nconsole.log(JSON.parse<Partial<{ id: number } & Schema.Strict>>("{}"));',
+    "cannot validate",
+  ],
+  [
+    'import type { Schema } from "bun";\nconsole.log(JSON.parse<string & Readonly<Schema.MinLength<8>>>("1"));',
+    "cannot validate",
+  ],
+  [
+    'import type { Schema } from "bun";\nconsole.log(JSON.parse<{ name: Schema.MinLength<3> }>("{}"));',
+    "cannot validate",
+  ],
+  [
+    'import type { Schema } from "bun";\nconst limits = { least: 5 };\nconsole.log(JSON.parse<number & Schema.Min<typeof limits.least>>("1"));',
+    "cannot validate",
+  ],
+  [
+    'import type { Schema } from "bun";\nconsole.log(JSON.parse<string & Schema.MinLength<-1>>("1"));',
+    "cannot validate",
+  ],
+  [
+    'import type { Schema } from "bun";\nconsole.log(JSON.parse<string & Schema.Format<"email" | "uuid">>("1"));',
+    "cannot validate",
   ],
 ])(
   "%s",

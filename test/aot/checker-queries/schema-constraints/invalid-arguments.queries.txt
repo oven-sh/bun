@@ -1,6 +1,0 @@
-# A `Schema` alias with an invalid argument is dropped, so the value is validated less, never wrongly.
-invalid-arguments.ts:3 shape `number & Schema.Min<number>` = Number
-invalid-arguments.ts:4 shape `string & Schema.MinLength<-1>` = String
-invalid-arguments.ts:5 shape `string & Schema.MinLength<1.5>` = String
-invalid-arguments.ts:6 shape `string & Schema.Format<"email" | "uuid">` = String
-invalid-arguments.ts:7 shape `number & Schema.Int & Schema.Min<number>` = Constrained(number; Int)

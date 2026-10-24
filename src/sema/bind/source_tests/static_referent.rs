@@ -828,7 +828,6 @@ fn members_that_no_one_store_decides() {
             assert_eq!(found, StaticReferent::Unknown(reason), "{text}");
         });
     }
-    // Only the walk from an export reads whole files.
     assert_unknown(
         "a.mjs",
         "function f() {} function g() {} f.g = g; f.g;",

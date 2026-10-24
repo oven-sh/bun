@@ -1,6 +1,0 @@
-# A computed object type is described by its structure, and the primitives it accepts are part of that: a string has a `length` that is a number.
-computed-type-accepted-primitives.ts:4 origin `typeof a` = computed
-computed-type-accepted-primitives.ts:5 origin `typeof b` = computed
-computed-type-accepted-primitives.ts:4 primitives `typeof a` = string
-computed-type-accepted-primitives.ts:5 primitives `typeof b` = none
-different: computed-type-accepted-primitives.ts:4 identity `typeof a` <=> computed-type-accepted-primitives.ts:5 identity `typeof b`

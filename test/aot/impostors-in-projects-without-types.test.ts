@@ -17,6 +17,7 @@ import { expect } from "bun:test";
 import { existsSync, readdirSync, readFileSync, renameSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join, relative } from "path";
+import { unpacked } from "./generate";
 import {
   built,
   expectCompiledOutput,
@@ -29,7 +30,7 @@ import {
 } from "./run-programs";
 import { describe, test } from "./supported";
 
-const projects = join(import.meta.dir, "impostors-projects");
+const projects = unpacked(join(import.meta.dir, "impostors-projects"));
 const names = readdirSync(projects, { withFileTypes: true })
   .filter(entry => entry.isDirectory())
   .map(entry => entry.name)

@@ -155,7 +155,9 @@ for (const seed of seeds)
     async () => {
       using root = tempDir("aot-mutated-programs", {});
       const kept = join(import.meta.dir, "programs");
-      const { paths: programs, textOf } = withPackedPrograms(kept, singleFilePrograms(kept), /(?<!\.d)\.ts$/);
+      const { paths: programs, textOf } = withPackedPrograms(kept, singleFilePrograms(kept), /(?<!\.d)\.ts$/, [
+        ".json",
+      ]);
       const hashed = programs.map(path => ({
         path,
         hash: Number(Bun.hash.crc32(seed + ":" + path.slice(import.meta.dir.length + 1))),

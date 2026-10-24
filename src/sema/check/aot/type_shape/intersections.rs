@@ -88,7 +88,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             match self.schema_part(part) {
                 SchemaPart::NotSchema => rest.push(part),
                 SchemaPart::Constraint(constraint) => constraints.push(constraint),
-                SchemaPart::Invalid => self.note_invalid_schema_argument(),
+                SchemaPart::Invalid => {
+                    self.note_invalid_schema_argument();
+                    return Err(GaveUp::Unresolved);
+                }
             }
         }
         if rest.len() == parts.len() {
@@ -102,7 +105,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         };
         let base = match rest[..] {
             [] if constraints.iter().any(closes_object) => TypeId::EMPTY_TYPE_LITERAL,
-            [] => TypeId::UNKNOWN,
+            [] => return Err(GaveUp::Unresolved),
             [only] => only,
             _ => self.c.intersection(&rest),
         };
@@ -151,6 +154,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return Ok(TypeShape::undeclared(ShapeKind::Never));
         }
         if let Some(primitive) = summary.narrow_primitive.or(summary.wide_primitive) {
+            for &part in parts {
+                if self.has_schema_key(part)? {
+                    return Err(GaveUp::Unresolved);
+                }
+            }
             return Ok(primitive);
         }
         let Some(first_object) = summary.first_object else {

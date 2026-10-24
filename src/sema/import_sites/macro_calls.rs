@@ -2,7 +2,7 @@ use super::call_sites::{CallForm, expr_kind, find_call_form};
 use super::statements::{is_macro_import, value_import_symbols};
 use crate::atom::Atom;
 use crate::bind::{Binding, Bound, Decl, Parent, SymbolId};
-use crate::fold::{Decisions, TreeNode, push_children};
+use crate::fold::{Decisions, TreeNode, mark_nodes_below};
 use crate::hir::{
     BinOp, Branches, ExprId, ExprKind, File, ImportId, MemberKey, StmtId, StmtKind, VarDeclId,
 };
@@ -83,7 +83,7 @@ pub(super) fn find_pending_macro_calls<'s>(
             flow.add_dependent_expr(e);
         }
     }
-    let guarded = flow.find_guarded_exprs();
+    let guarded = mark_nodes_below(hir, flow.guarded_nodes).exprs;
     let is_unguarded = |call: &&ExprId| !guarded.contains(call.idx());
     let unguarded_count = pending.iter().skip(1).take_while(is_unguarded).count();
     pending.truncate(1 + unguarded_count);
@@ -194,26 +194,5 @@ impl<'a, 's> PendingResultFlow<'a, 's> {
         {
             self.dependent_variables.insert(symbol.idx());
         }
-    }
-
-    fn find_guarded_exprs(self) -> PositionSet {
-        let mut stack = self.guarded_nodes;
-        let mut exprs = PositionSet::new(self.hir.exprs.len());
-        let mut stmts = PositionSet::new(self.hir.stmts.len());
-        while let Some(node) = stack.pop() {
-            let visited = match node {
-                TreeNode::Expr(e) => Some((&mut exprs, e.idx())),
-                TreeNode::Stmt(stmt) => Some((&mut stmts, stmt.idx())),
-                TreeNode::Function(_) | TreeNode::Class(_) | TreeNode::Pattern(_) => None,
-            };
-            if let Some((set, position)) = visited {
-                if set.contains(position) {
-                    continue;
-                }
-                set.insert(position);
-            }
-            push_children(self.hir, node, &mut stack);
-        }
-        exprs
     }
 }

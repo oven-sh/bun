@@ -1,0 +1,854 @@
+////: started
+function started(label, url) {
+  return new Promise(resolve => {
+    try {
+      const worker = new Worker(url);
+      worker.onmessage = event => resolve(label + ": " + event.data);
+      worker.onerror = event => resolve(label + ": " + outcome(event));
+    } catch (error) {
+      resolve(label + ": " + outcome(error));
+    }
+  });
+}
+//// package-outside-sees-no-module-object-of-the-program/inner.cjs
+const other = require("./other.cjs");
+exports.secret = function secret() { return "secret of inner, " + other.hidden(); };
+exports.ask = async function ask() {
+  const outside = require("outside-package");
+  const lines = outside.look();
+  const esm = await import("outside-esm");
+  return lines.concat(esm.look(), await esm.lookLater(), outside.lookFromCallee(function calledBack() { return outside.frames(); }), outside.ownFiles());
+};
+//// package-outside-sees-no-module-object-of-the-program/main.cjs
+// A package marked --external is interpreted. It sees no module object of the program, as in an executable that `bun build --compile` makes without --aot:
+// the compiler relies on that, and what the files of the program export to each other stays in the program. One line for each road from outside to a module object.
+const inner = require("./inner.cjs");
+inner.ask().then(lines => { for (const line of lines) console.log(line); console.log("the program goes on: " + inner.secret()); });
+//// package-outside-sees-no-module-object-of-the-program/node_modules/outside-esm/index.js
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const { road } = require("outside-package");
+const root = process.platform === "win32" ? "B:\\~BUN\\root\\" : "/$bunfs/root/";
+export const look = () => [
+  road("import.meta.require.cache of an ES module outside", () => import.meta.require.cache),
+  road("import.meta.require.main", () => import.meta.require.main),
+  road("import.meta.require of a file in the executable", () => import.meta.require(root + "inner.cjs")),
+  road("createRequire(import.meta.url).cache", () => require.cache),
+  road("import.meta.main and its relatives", () => [import.meta.main, import.meta.url, import.meta.dir]),
+];
+export const lookLater = async () => {
+  let found;
+  try { found = await import(root + "inner.cjs"); } catch (error) { return ["import() of a file in the executable: rejects " + error.name]; }
+  return [road("import() of a file in the executable", () => found)];
+};
+//// package-outside-sees-no-module-object-of-the-program/node_modules/outside-esm/package.json
+{ "name": "outside-esm", "version": "1.0.0", "type": "module", "main": "index.js" }
+//// package-outside-sees-no-module-object-of-the-program/node_modules/outside-package/index.js
+const Module = require("node:module");
+// Where the files of an executable are.
+const root = process.platform === "win32" ? "B:\\~BUN\\root\\" : "/$bunfs/root/";
+// Does the value lead to what a file of the program exports?
+function leaks(value, seen = new Set(), depth = 0) {
+  if ((typeof value !== "object" && typeof value !== "function") || value === null || seen.has(value) || depth > 6) return false;
+  seen.add(value);
+  if (typeof value === "function" && (value.name === "secret" || value.name === "hidden" || value.name === "ask")) return true;
+  let keys = [];
+  try { keys = Reflect.ownKeys(value); } catch { return false; }
+  for (const key of keys) {
+    let member;
+    try { member = value[key]; } catch { continue; }
+    if (leaks(member, seen, depth + 1)) return true;
+  }
+  return false;
+}
+function road(label, walk) {
+  let found;
+  try { found = walk(); } catch (error) { return label + ": throws " + error.name; }
+  return label + ": " + (leaks(found) ? "LEAKS" : "nothing of the program") + " (" + (found === null ? "null" : typeof found) + ")";
+}
+exports.road = road;
+exports.look = () => [
+  road("module.parent", () => module.parent),
+  road("module.parent.parent", () => module.parent.parent),
+  road("module.parent.children", () => module.parent.children),
+  road("module.parent.require", () => module.parent.require("./other.cjs")),
+  road("module.children", () => module.children),
+  road("require.main", () => require.main),
+  road("process.mainModule", () => process.mainModule),
+  road("require.cache", () => require.cache),
+  road("keys of require.cache", () => Object.keys(require.cache).map(key => require.cache[key])),
+  road("for-in over require.cache", () => { const found = []; for (const key in require.cache) found.push(require.cache[key]); return found; }),
+  road("values of require.cache", () => Object.values(require.cache)),
+  road("Module._cache", () => Module._cache),
+  road("module.constructor._cache", () => module.constructor._cache),
+  road("Module._load of a file of the program", () => Module._load(process.argv[1].replace(/[^\\/]*$/, "inner.cjs"), module, false)),
+  road("require of a file of the program", () => require(process.argv[1].replace(/[^\\/]*$/, "inner.cjs"))),
+  road("require of it in the executable", () => require(root + "inner.cjs")),
+  road("Module._resolveFilename wrapped", () => { const original = Module._resolveFilename; const seen = []; Module._resolveFilename = function (request, parent) { seen.push(parent); return original.apply(this, arguments); }; try { require("node:path"); } finally { Module._resolveFilename = original; } return seen; }),
+  road("Module._load wrapped", () => { const original = Module._load; const seen = []; Module._load = function (request, parent) { seen.push(parent); return original.apply(this, arguments); }; try { require("node:os"); } finally { Module._load = original; } return seen; }),
+  road("Module.prototype.require wrapped", () => { const original = Module.prototype.require; const seen = []; Module.prototype.require = function () { seen.push(this); return original.apply(this, arguments); }; try { require("node:url"); } finally { Module.prototype.require = original; } return seen; }),
+  road("createRequire of the executable", () => Module.createRequire(root + "main.cjs")("./inner.cjs")),
+  road("the cache of a created require", () => Module.createRequire(root + "main.cjs").cache),
+  road("the main of a created require", () => Module.createRequire(root + "main.cjs").main),
+  road("process.getBuiltinModule", () => process.getBuiltinModule("node:module")._cache),
+  road("a descriptor in require.cache", () => Object.getOwnPropertyDescriptor(require.cache, root + "inner.cjs")),
+  road("an entry stored into require.cache", () => { require.cache[root + "inner.cjs"] = module; return require.cache[root + "inner.cjs"]; }),
+  road("the registry of the loader", () => (typeof Loader === "object" ? [...Loader.registry.values()] : undefined)),
+  road("the keys of the registry", () => (typeof Loader === "object" ? [...Loader.registry.keys()].filter(key => key.includes("inner") || key.includes("other")) : undefined)),
+  road("Module._extensions wrapped", () => { const original = Module._extensions[".js"]; const seen = []; Module._extensions[".js"] = function (loaded) { seen.push(loaded, loaded.parent); return original.apply(this, arguments); }; try { require("./second.js"); } finally { Module._extensions[".js"] = original; } return seen; }),
+  road("the parent of a file that the package requires", () => require("./third.js").parent.parent),
+  road("Module.prototype", () => Object.getPrototypeOf(module.parent)),
+];
+exports.ownFiles = () => {
+  const short = path => String(path).replace(/^.*[\\/]/, "");
+  const listed = Object.keys(require.cache).map(short).sort().join();
+  const own = require.cache[__filename] === module;
+  delete require.cache[__filename];
+  return ["the files from outside in require.cache: " + listed, "the package finds itself there: " + own + ", and takes itself out: " + !(__filename in require.cache)];
+};
+exports.lookFromCallee = callback => [road("what a callback of the program answers", callback)];
+exports.frames = () => {
+  const original = Error.prepareStackTrace;
+  Error.prepareStackTrace = (error, sites) => sites;
+  const sites = new Error("frames").stack;
+  Error.prepareStackTrace = original;
+  const found = [];
+  for (const site of Array.isArray(sites) ? sites : []) {
+    try { found.push(site.getFunction()); } catch {}
+    try { found.push(site.getThis()); } catch {}
+  }
+  let caller = null;
+  try { caller = exports.frames.caller; } catch {}
+  found.push(caller);
+  try { found.push(caller && caller.caller); } catch {}
+  return found.filter(value => value !== undefined && value !== null && value !== globalThis && value.name !== "calledBack");
+};
+//// package-outside-sees-no-module-object-of-the-program/node_modules/outside-package/package.json
+{ "name": "outside-package", "version": "1.0.0", "main": "index.js" }
+//// package-outside-sees-no-module-object-of-the-program/node_modules/outside-package/second.js
+module.exports = 2;
+//// package-outside-sees-no-module-object-of-the-program/node_modules/outside-package/third.js
+exports.parent = module.parent;
+//// package-outside-sees-no-module-object-of-the-program/other.cjs
+exports.hidden = function hidden() { return "hidden of other"; };
+//// parsed-values-and-caught-errors-are-printed-without-a-custom-inspect-method.js
+function make(text) { return JSON.parse(text); }
+const parsed = make(process.env.TEXT ?? '{"a":{"b":[1,2,{"c":null}]},"d":"e"}');
+console.log(parsed, parsed.a.b[2]);
+try { null.x; } catch (error) { console.log(error.code, error.message.length > 0, Object.keys(error)); }
+//// plugins-admitted.js
+// closed-world/plugins-refused built with --compile-inspector. A debugger can run any code, so the compiler counts on nothing about the code that such a build runs: Bun.plugin answers as in plain Bun.
+// What native code hands back is unknown to the compiler, and so is text that is decoded at run time.
+const unknown = value => new CustomEvent("unknown", { detail: value }).detail;
+const decoded = text => Buffer.from(text).toString();
+////= outcome-4
+////= attempt
+
+attempt("Bun.plugin", () => unknown(Bun)[decoded("plugin")]({ name: "nothing", setup() {} }));
+//// plugins-refused.js
+// The compiler sees no place where this program installs a plugin, and counts on it: a plugin decides at run time what a module is. Bun.plugin throws when the program reaches it in a way the compiler cannot follow, and the error has the code ERR_CODE_NOT_COMPILED. closed-world/plugins-admitted is the same program built with --compile-inspector.
+// What native code hands back is unknown to the compiler, and so is text that is decoded at run time.
+const unknown = value => new CustomEvent("unknown", { detail: value }).detail;
+const decoded = text => Buffer.from(text).toString();
+////= outcome-4
+////= attempt
+
+attempt("Bun.plugin", () => unknown(Bun)[decoded("plugin")]({ name: "nothing", setup() {} }));
+//// plugins-seen.js
+// A program that calls Bun.plugin where the compiler sees it gets the answers of plain Bun, with no option.
+// What native code hands back is unknown to the compiler, and so is text that is decoded at run time.
+const unknown = value => new CustomEvent("unknown", { detail: value }).detail;
+const decoded = text => Buffer.from(text).toString();
+////= outcome-4
+////= attempt
+
+attempt("Bun.plugin", () => Bun.plugin({ name: "nothing", setup() {} }));
+attempt("Bun.plugin, reached in a way the compiler cannot follow", () => unknown(Bun)[decoded("plugin")]({ name: "nothing more", setup() {} }));
+//// protocols-by-which-built-ins-call-the-program.js
+// The protocols by which built-in functions call functions of the program, with the arguments they pass.
+const log = (...a) => console.log(a.map(String).join(" "));
+class M1 extends Map { set(k, v) { log(1, "set", k, v); return super.set(k, v * 2); } } log(1, new M1([[1, 2]]).get(1));
+class S2 extends Set { add(v) { log(2, "add", v); return super.add(v + 1); } } log(2, [...new S2([1, 2])].join());
+class P3 extends Promise { static get [Symbol.species]() { log(3, "species"); return Promise; } } log(3, new P3(r => r(1)).then(x => x) instanceof P3);
+class A4 extends Array { static get [Symbol.species]() { return Array; } } log(4, new A4(1, 2, 3).map(x => x) instanceof A4, A4.from([1]) instanceof A4);
+const t5 = { then(res) { log(5, "then", typeof res); res(42); } }; (async () => log(5, await t5))();
+const o6 = { toJSON(k) { return "json:" + k; } }; log(6, JSON.stringify({ a: o6, b: [o6] }));
+const o7 = { [Symbol.toPrimitive](h) { return h === "number" ? 7 : h; } }; log(7, +o7, `${o7}`, o7 + "", o7 * 2, [1][o7], new Date(o7).getTime() !== 0);
+const o8 = { valueOf() { return 8; }, toString() { return "eight"; } }; log(8, o8 + 1, `${o8}`, o8 > 7, [o8].join(), "x".repeat(o8).length, Math.max(o8, 1));
+const r9 = /a/; r9.exec = function (s) { log(9, "exec", s); return null; }; log(9, r9.test("aaa"), "aaa".replace(r9, "b"));
+const d10 = new Date(0); d10.toISOString = () => "iso!"; log(10, JSON.stringify(d10), d10.toJSON());
+const a11 = [1, 2]; a11.join = () => "joined"; log(11, String(a11), `${a11}`, a11 + "");
+const e12 = new Error("m"); e12.name = { toString() { return "N"; } }; log(12, String(e12)); class E12 extends Error { get message() { return "got"; } get name() { return "E"; } } log(12, String(new E12("x")));
+const al13 = { get length() { log(13, "length"); return 2; }, 0: "a", get 1() { log(13, "one"); return "b"; } }; log(13, Array.from(al13).join(), Array.prototype.map.call(al13, x => x + x).join());
+const it14 = { [Symbol.iterator]() { let i = 0; return { next() { return { done: i > 1, value: i++ }; }, return() { log(14, "return"); return {}; } }; } }; const [x14] = it14; log(14, x14, [...it14].join(), Math.max(...it14), new Set(it14).size);
+const desc15 = { get value() { log(15, "value"); return 5; }, get enumerable() { log(15, "enum"); return true; } }; log(15, Object.defineProperty({}, "x", desc15).x);
+const c16 = { [Symbol.isConcatSpreadable]: true, length: 2, 0: "x", 1: "y" }; log(16, [1].concat(c16).join());
+const m17 = { [Symbol.match](s) { return ["m:" + s]; }, [Symbol.replace](s, r) { return "r:" + s + r; }, [Symbol.split](s) { return ["s", s]; }, [Symbol.search](s) { return 17; } }; log(17, "q".match(m17), "q".replace(m17, "z"), "q".split(m17), "q".search(m17));
+class H18 { static [Symbol.hasInstance](v) { return v === 18; } } log(18, 18 instanceof H18, {} instanceof H18);
+const p19 = new Proxy({}, { get(t, k) { return typeof k === "string" ? "got " + k : undefined; }, has() { return true; }, ownKeys() { return ["a"]; }, getOwnPropertyDescriptor() { return { value: 1, enumerable: true, configurable: true }; } }); log(19, p19.zz, "q" in p19, Object.keys(p19).join(), JSON.stringify(p19), { ...p19 }.a);
+function f20(a, b, c) { return [typeof a, typeof b, typeof c, arguments.length].join(); } log(20, f20(1, 2, 3), [5].map(f20), ["x"].reduce(f20, 0), "a".replace(/a/, f20), [2, 1].sort(f20).join(), Reflect.apply(f20, null, []), f20.call(), f20.apply(null, { length: 1 }), f20.bind(null, "s")(), new Function("f", "return f(null)")(f20));
+function g21(x) { return x * 2; } log(21, g21(2), [1, "3", undefined, null, {}, 2n === 2n].map(g21).join());
+function h22(o) { return o.v; } log(22, h22({ v: 1 }), [{ v: "s" }, { w: 1 }, [], "str", 5].map(h22).join());
+class T23 { constructor() { this.v = 1; } get() { return this.v; } } const get23 = T23.prototype.get; log(23, new T23().get(), get23.call({ v: "other" }), [{ v: 3 }].map(function () { return get23.call(this); }, { v: "thisArg" }).join()); try { get23(); } catch (e) { log(23, e.constructor.name); }
+const o24 = { get [Symbol.toStringTag]() { return "Tag"; } }; log(24, Object.prototype.toString.call(o24), String(o24));
+const l25 = { toLocaleString() { return "loc"; } }; log(25, [l25, 1].toLocaleString());
+const raw26 = { get raw() { return ["a", "b"]; } }; log(26, String.raw(raw26, 1));
+const opt27 = { get cause() { log(27, "cause"); return 1; } }; log(27, new Error("x", opt27).cause);
+class PR28 { static resolve(v) { log(28, "resolve", v); return Promise.resolve(v); } constructor(f) { return new Promise(f); } } try { Promise.all.call(PR28, [1]).then(v => log(28, v)); } catch (e) { log(28, e.constructor.name); }
+const fin29 = { [Symbol.dispose]() { log(29, "disposed"); } }; { using x = fin29; log(29, "in"); }
+const w30 = { f() { return this === w30; } }; log(30, w30.f(), (0, w30.f)(), [w30.f][0]() === false, setTimeout(w30.f, 0) !== 0);
+function k31() { return this; } log(31, typeof k31(), typeof k31.call(1), k31.call(null) === globalThis, [1].map(k31)[0] === globalThis);
+function s32() { "use strict"; return this; } log(32, s32(), typeof s32.call(1), [1].map(s32)[0], [1].map(s32, "t")[0]);
+const cmp33 = { valueOf() { arr33.length = 0; return 0; } }; const arr33 = [1, 2, 3, 4]; log(33, arr33.fill(9, cmp33).join(), arr33.length);
+const arr34 = [1, 2, 3, 4, 5]; log(34, arr34.map((x, i) => { if (i === 0) arr34.length = 2; return x; }).join(), arr34.length);
+const arr35 = [1.5, 2.5, 3.5]; log(35, arr35.map((x, i) => { if (i === 0) arr35[2] = "s"; return typeof x; }).join());
+const arr36 = [1, 2, 3]; let sum36 = 0; for (const x of arr36) { if (x === 1) { arr36.push("four"); arr36[1] = { o: 1 }; } sum36 += x; } log(36, sum36);
+//// replaceable-members-out-of-a-table-beside-an-external-package/main.mjs
+import one from "outside-package";
+// The members of built-in prototypes that a compiled program lets be replaced, each found under names out of a table: `globalThis[holder].prototype[name] = f`.
+// A package that the build has left outside is loaded too, so every object of the realm is in unknown hands. The program's own store arrives all the same.
+const replaced = function replaced() {
+  return "replaced!";
+};
+const table = [
+  ["Set", "union"],
+  ["Set", "isSubsetOf"],
+  ["Map", "getOrInsert"],
+  ["String", "at"],
+  ["String", "bold"],
+  ["String", "trim"],
+  ["Iterator", "chunks"],
+  ["Function", "toString"],
+  ["Uint8Array", "toHex"],
+  ["Date", "toLocaleString"],
+  ["Error", "toString"],
+  ["WeakRef", "deref"],
+];
+for (const [holder, name] of table) {
+  const object = globalThis[holder].prototype;
+  try {
+    object[name] = replaced;
+    console.log(holder, name, object[name] === replaced ? "stored" : "ignored");
+  } catch (error) {
+    console.log(holder, name, "refused (" + error.constructor.name + ")");
+  }
+}
+console.log(String(new Set([1]).union(new Set([2]))), new Set().isSubsetOf(new Set()), new Map().getOrInsert(1, 2));
+console.log("abc".at(0), "b".bold(), " x ".trim(), [1].values().chunks(1), String(replaced), new Uint8Array(1).toHex());
+console.log(new Date(0).toLocaleString(), String(new Error("e")), new WeakRef(replaced).deref());
+console.log(one);
+//// replaceable-members-out-of-a-table-beside-an-external-package/node_modules/outside-package/index.js
+module.exports = 1;
+//// replaceable-members-out-of-a-table-beside-an-external-package/node_modules/outside-package/package.json
+{ "name": "outside-package", "version": "1.0.0", "main": "index.js" }
+//// script-declarations-over-constant-globals.js
+// closed-world/script-declarations-over-locked-globals for the globals that a program may replace: they are constants in a program that reads them and does not write them, and then a script may not shadow them either. So is one that the program only tests with typeof. A name that the global object lacks is looked up at run time and can be shadowed.
+const vm = require("node:vm");
+const print = console.log;
+function attempt(label, action) {
+  try { print(label + ": " + action()); } catch (error) { print(label + ": " + error.name + ": " + error.message); }
+}
+function readGlobals() {
+  return [typeof process.pid, new URL("http://host/path").pathname, Buffer.from("a").length, typeof navigator, typeof widget].join(" ");
+}
+
+attempt("before", readGlobals);
+attempt("let process", () => vm.runInThisContext("let process = { pid: 'of the script' }; process.pid"));
+attempt("class URL", () => new vm.Script("class URL { get pathname() { return 'of the script'; } } new URL().pathname").runInThisContext());
+attempt("const Buffer", () => vm.runInThisContext("const Buffer = { from: () => 'of the script' }; Buffer.from('a')"));
+attempt("let navigator", () => vm.runInThisContext("let navigator = 'of the script'; navigator"));
+attempt("let widget", () => vm.runInThisContext("let widget = 'of the script'; widget"));
+attempt("after", readGlobals);
+attempt("in a later script", () => vm.runInThisContext("[typeof process.pid, new URL('http://host/path').pathname, Buffer.from('a').length, typeof navigator, typeof widget].join(' ')"));
+attempt("var process", () => vm.runInThisContext("var process = 'of the script'; typeof process"));
+attempt("function URL", () => vm.runInThisContext("function URL() { } typeof URL"));
+attempt("in a new context", () => vm.runInNewContext("let process = 'of the context'; class URL { } process"));
+//// script-declarations-over-constant-globals-admitted.js
+// closed-world/script-declarations-over-constant-globals built with --compile-inspector. A debugger can run any code, so the compiler takes none of these globals for a constant: a script may shadow each of them, and compiled code sees the binding from then on, as in plain Bun.
+const vm = require("node:vm");
+const print = console.log;
+function attempt(label, action) {
+  try { print(label + ": " + action()); } catch (error) { print(label + ": " + error.name + ": " + error.message); }
+}
+function readGlobals() {
+  return [typeof process.pid, new URL("http://host/path").pathname, Buffer.from("a").length, typeof navigator].join(" ");
+}
+
+attempt("before", readGlobals);
+attempt("let process", () => vm.runInThisContext("let process = { pid: 'of the script' }; process.pid"));
+attempt("class URL", () => new vm.Script("class URL { get pathname() { return 'of the script'; } } new URL().pathname").runInThisContext());
+attempt("const Buffer", () => vm.runInThisContext("const Buffer = { from: () => 'of the script' }; Buffer.from('a')"));
+attempt("let navigator", () => vm.runInThisContext("let navigator = 'of the script'; navigator"));
+attempt("after", readGlobals);
+attempt("in a later script", () => vm.runInThisContext("[typeof process.pid, new URL('http://host/path').pathname, Buffer.from('a').length, typeof navigator].join(' ')"));
+attempt("var process", () => vm.runInThisContext("var process = 'of the script'; typeof process"));
+attempt("function URL", () => vm.runInThisContext("function URL() { } typeof URL"));
+attempt("in a new context", () => vm.runInNewContext("let process = 'of the context'; class URL { } process"));
+//// script-declarations-over-every-global-validated.js
+// Each global in turn: a script declares `let` under its name. Either the declaration is refused and compiled code goes on seeing the global, or it is admitted and compiled code sees the binding from then on, although it has read the global before.
+const vm = require("node:vm");
+const print = console.log;
+const isSame = Object.is;
+const reads = {
+  AbortController: () => AbortController, AbortSignal: () => AbortSignal, AggregateError: () => AggregateError, Array: () => Array, ArrayBuffer: () => ArrayBuffer,
+  AsyncDisposableStack: () => AsyncDisposableStack, Atomics: () => Atomics, BigInt: () => BigInt, BigInt64Array: () => BigInt64Array,
+  BigUint64Array: () => BigUint64Array, Blob: () => Blob, Boolean: () => Boolean, BroadcastChannel: () => BroadcastChannel, Buffer: () => Buffer,
+  BuildError: () => BuildError, BuildMessage: () => BuildMessage, Bun: () => Bun, ByteLengthQueuingStrategy: () => ByteLengthQueuingStrategy,
+  CloseEvent: () => CloseEvent, CompressionStream: () => CompressionStream, CountQueuingStrategy: () => CountQueuingStrategy, Crypto: () => Crypto,
+  CryptoKey: () => CryptoKey, CustomEvent: () => CustomEvent, DOMException: () => DOMException, DataView: () => DataView, Date: () => Date,
+  DecompressionStream: () => DecompressionStream, DisposableStack: () => DisposableStack, Error: () => Error, ErrorEvent: () => ErrorEvent, EvalError: () => EvalError,
+  Event: () => Event, EventTarget: () => EventTarget, File: () => File, FinalizationRegistry: () => FinalizationRegistry, Float16Array: () => Float16Array,
+  Float32Array: () => Float32Array, Float64Array: () => Float64Array, FormData: () => FormData, Function: () => Function, HTMLRewriter: () => HTMLRewriter,
+  Headers: () => Headers, Infinity: () => Infinity, Int16Array: () => Int16Array, Int32Array: () => Int32Array, Int8Array: () => Int8Array, Intl: () => Intl,
+  Iterator: () => Iterator, JSON: () => JSON, Map: () => Map, Math: () => Math, MessageChannel: () => MessageChannel, MessageEvent: () => MessageEvent,
+  MessagePort: () => MessagePort, NaN: () => NaN, Number: () => Number, Object: () => Object, Performance: () => Performance, PerformanceEntry: () => PerformanceEntry,
+  PerformanceMark: () => PerformanceMark, PerformanceMeasure: () => PerformanceMeasure, PerformanceObserver: () => PerformanceObserver,
+  PerformanceObserverEntryList: () => PerformanceObserverEntryList, PerformanceResourceTiming: () => PerformanceResourceTiming,
+  PerformanceServerTiming: () => PerformanceServerTiming, PerformanceTiming: () => PerformanceTiming, Promise: () => Promise, Proxy: () => Proxy,
+  RangeError: () => RangeError, ReadableByteStreamController: () => ReadableByteStreamController, ReadableStream: () => ReadableStream,
+  ReadableStreamBYOBReader: () => ReadableStreamBYOBReader, ReadableStreamBYOBRequest: () => ReadableStreamBYOBRequest,
+  ReadableStreamDefaultController: () => ReadableStreamDefaultController, ReadableStreamDefaultReader: () => ReadableStreamDefaultReader,
+  ReferenceError: () => ReferenceError, Reflect: () => Reflect, RegExp: () => RegExp, Request: () => Request, ResolveError: () => ResolveError,
+  ResolveMessage: () => ResolveMessage, Response: () => Response, Set: () => Set, ShadowRealm: () => ShadowRealm, SharedArrayBuffer: () => SharedArrayBuffer,
+  String: () => String, SubtleCrypto: () => SubtleCrypto, SuppressedError: () => SuppressedError, Symbol: () => Symbol, SyntaxError: () => SyntaxError,
+  Temporal: () => Temporal, TextDecoder: () => TextDecoder, TextDecoderStream: () => TextDecoderStream, TextEncoder: () => TextEncoder,
+  TextEncoderStream: () => TextEncoderStream, TransformStream: () => TransformStream, TransformStreamDefaultController: () => TransformStreamDefaultController,
+  TypeError: () => TypeError, URIError: () => URIError, URL: () => URL, URLPattern: () => URLPattern, URLSearchParams: () => URLSearchParams,
+  Uint16Array: () => Uint16Array, Uint32Array: () => Uint32Array, Uint8Array: () => Uint8Array, Uint8ClampedArray: () => Uint8ClampedArray, WeakMap: () => WeakMap,
+  WeakRef: () => WeakRef, WeakSet: () => WeakSet, WebAssembly: () => WebAssembly, WebSocket: () => WebSocket, Worker: () => Worker, WritableStream: () => WritableStream,
+  WritableStreamDefaultController: () => WritableStreamDefaultController, WritableStreamDefaultWriter: () => WritableStreamDefaultWriter,
+  addEventListener: () => addEventListener, alert: () => alert, atob: () => atob, btoa: () => btoa, clearImmediate: () => clearImmediate,
+  clearInterval: () => clearInterval, clearTimeout: () => clearTimeout, confirm: () => confirm, console: () => console, crypto: () => crypto, decodeURI: () => decodeURI,
+  decodeURIComponent: () => decodeURIComponent, dispatchEvent: () => dispatchEvent, encodeURI: () => encodeURI, encodeURIComponent: () => encodeURIComponent,
+  escape: () => escape, eval: () => eval, fetch: () => fetch, global: () => global, globalThis: () => globalThis, isFinite: () => isFinite, isNaN: () => isNaN,
+  navigator: () => navigator, onerror: () => onerror, onmessage: () => onmessage, parseFloat: () => parseFloat, parseInt: () => parseInt, performance: () => performance,
+  postMessage: () => postMessage, process: () => process, prompt: () => prompt, queueMicrotask: () => queueMicrotask, removeEventListener: () => removeEventListener,
+  reportError: () => reportError, self: () => self, setImmediate: () => setImmediate, setInterval: () => setInterval, setTimeout: () => setTimeout,
+  structuredClone: () => structuredClone, undefined: () => undefined, unescape: () => unescape,
+};
+const absent = {};
+function valueOf(read) {
+  try { return read(); } catch { return absent; }
+}
+
+const wrong = [];
+for (const name in reads) {
+  const before = valueOf(reads[name]);
+  let expected = "of the script";
+  try {
+    vm.runInThisContext("let " + name + " = 'of the script'");
+  } catch (error) {
+    if (error.name !== "SyntaxError") wrong.push(name + " (" + error.name + ")");
+    expected = before;
+  }
+  if (!isSame(valueOf(reads[name]), expected)) wrong.push(name);
+}
+print(wrong.length ? "compiled code does not see what was declared: " + wrong.join(" ") : "compiled code sees what was declared");
+//// script-declarations-over-locked-globals.js
+// A script that runs in this realm declares no `let`, `const` or `class` under the name of a global that compiled code takes for a constant: every free name is looked up among those bindings first, so the declaration would replace the global. It is a SyntaxError, as `let undefined` is in the language, and the script declares nothing and does not run.
+const vm = require("node:vm");
+const print = console.log;
+const realm = globalThis;
+function attempt(label, action) {
+  try { print(label + ": " + action()); } catch (error) { print(label + ": " + error.name + ": " + error.message); }
+}
+const ways = {
+  "vm.runInThisContext": text => vm.runInThisContext(text),
+  "vm.Script": text => new vm.Script(text).runInThisContext(),
+};
+
+realm.realmOfTheProgram = realm;
+attempt("a name nobody has declared yet", () => typeof ofTheScript);
+for (const way in ways) {
+  const run = ways[way];
+  attempt(way + ", let Math", () => run("let Math = { max: () => 'of the script' }; Math.max(1, 2)"));
+  attempt(way + ", const JSON", () => run("const JSON = { stringify: () => 'of the script' }; JSON.stringify([1])"));
+  attempt(way + ", class Map", () => run("class Map { get size() { return 'of the script'; } } new Map().size"));
+  attempt(way + ", let Array in strict code", () => run("'use strict'; let Array = { isArray: () => 'of the script' }; Array.isArray([])"));
+  attempt(way + ", let globalThis", () => run("let globalThis = 'of the script'; globalThis"));
+  attempt(way + ", let undefined", () => run("let undefined = 'of the script'; undefined"));
+  attempt(way + ", a second declaration and a statement beside it", () => run("realmOfTheProgram.didRun = true; let besideObject = 1, Object = 2;"));
+}
+attempt("nothing of a refused script was declared or run", () => [typeof besideObject, realm.didRun].join(" "));
+attempt("compiled code sees the globals", () => [Math.max(1, 2), JSON.stringify([1]), new Map().size, Array.isArray([]), globalThis === realm, typeof Object.keys].join(" "));
+attempt("so does a later script", () => vm.runInThisContext("[Math.max(1, 2), JSON.stringify([1]), new Map().size, Array.isArray([]), globalThis === realmOfTheProgram, typeof Object.keys].join(' ')"));
+
+attempt("var Math in sloppy code", () => vm.runInThisContext("var Math = 'of the script'; typeof Math"));
+attempt("var Math in strict code", () => vm.runInThisContext("'use strict'; var Math = 'of the script'; typeof Math"));
+attempt("function Math", () => vm.runInThisContext("function Math() { } typeof Math"));
+attempt("a store to globalThis.globalThis", () => vm.runInThisContext("'use strict'; globalThis.globalThis = 'of the script'; typeof globalThis"));
+attempt("compiled code still sees the globals", () => [Math.max(1, 2), globalThis === realm].join(" "));
+
+attempt("a block of a script", () => vm.runInThisContext("{ let Math = 'of the script'; class Map { } Math }"));
+attempt("a function of a script", () => vm.runInThisContext("(function () { const JSON = 'of the script'; return JSON; })()"));
+attempt("vm.compileFunction", () => vm.compileFunction("let Math = 'of the function'; return Math;")());
+attempt("indirect eval", () => (0, eval)("let Math = 'of the text'; Math"));
+attempt("Function", () => new Function("let Math = 'of the function'; return Math;")());
+attempt("vm.runInNewContext", () => vm.runInNewContext("let Math = { max: () => 'of the context' }; class Map { } const globalThis = 1; Math.max(1, 2)"));
+attempt("vm.runInContext", () => vm.runInContext("let JSON = 'of the context'; JSON", vm.createContext({})));
+attempt("vm.Script in a new context", () => new vm.Script("class Array { } typeof Array").runInNewContext());
+
+attempt("names that shadow nothing", () => vm.runInThisContext("let ofTheScript = 'of the script'; const alsoOfTheScript = 1; class ClassOfTheScript { } typeof ofTheScript"));
+attempt("a later script sees them", () => new vm.Script("[ofTheScript, alsoOfTheScript, typeof ClassOfTheScript].join(' ')").runInThisContext());
+attempt("compiled code sees them", () => [ofTheScript, alsoOfTheScript, typeof ClassOfTheScript].join(" "));
+attempt("compiled code stores to them", () => { ofTheScript = "of the program"; return vm.runInThisContext("ofTheScript"); });
+attempt("they are no properties of the global object", () => "ofTheScript" in realm);
+attempt("a second declaration of one of them", () => vm.runInThisContext("let ofTheScript = 2"));
+//// seventy-operations-that-throw-each-inside-try.js
+// Operations of the language and of the built-ins that throw, each inside try.
+const log = (...a) => console.log(a.map(String).join(" "));
+const t = (n, f) => { try { log(n, "value", typeof f()); } catch (e) { log(n, e.constructor.name); } };
+
+
+t(8, () => new Array(-1)); t(9, () => { const a = []; a.length = -1; return a; }); t(10, () => { const a = []; a.length = 2 ** 32; return a; }); t(11, () => new Array(1.5)); t(12, () => "a".repeat(-1)); t(13, () => (1).toFixed(101)); t(14, () => (1).toString(1)); t(15, () => String.fromCodePoint(-1)); t(16, () => "a".normalize("x"));
+t(17, () => 1n + 1); t(18, () => Symbol() + ""); t(19, () => `${Symbol()}`); t(20, () => +Symbol()); t(21, () => +1n); t(22, () => 2n ** -1n); t(23, () => 1n / 0n); t(24, () => BigInt(1.5)); t(25, () => 1n << (2n ** 64n)); t(26, () => Math.max(1n)); t(27, () => 1n >>> 0n); t(28, () => BigInt.asIntN(-1, 1n));
+t(29, () => ({}) instanceof 5); t(30, () => "a" in "b"); t(31, () => { const { x } = null; return x; }); t(32, () => [...5]); t(33, () => { const [a] = {}; return a; }); t(34, () => new (class A extends Object { constructor() { } })()); t(35, () => new (class A extends Object { constructor() { super(); super(); } })()); t(36, () => new (class A extends null { })()); t(37, () => class A extends 5 { }); t(38, () => { function* g() { it.next(); yield 1; } const it = g(); return it.next(); });
+t(39, () => decodeURIComponent("%")); t(40, () => new RegExp("(")); t(41, () => JSON.parse("{")); t(42, () => { const c = {}; c.c = c; return JSON.stringify(c); }); t(43, () => JSON.stringify(1n)); t(44, () => structuredClone(() => 1)); t(45, () => new Intl.NumberFormat("xx-invalid-locale-zzzzzzzzzzzz")); t(46, () => new Date(NaN).toISOString()); t(47, () => new ArrayBuffer(2 ** 53)); t(48, () => new Uint8Array(-1)); t(49, () => new Uint32Array(new ArrayBuffer(3))); t(50, () => new DataView(new ArrayBuffer(1)).getInt32(0));
+t(51, () => Object.defineProperty(Object.freeze({}), "x", { value: 1 })); t(52, () => Object.setPrototypeOf(Object.preventExtensions({}), {})); t(53, () => { const a = {}, b = Object.create(a); Object.setPrototypeOf(a, b); }); t(54, () => Reflect.ownKeys(1)); t(55, () => new WeakMap().set(1, 1)); t(56, () => new WeakRef(1)); t(57, () => Symbol.keyFor("x")); t(58, () => new Symbol()); t(59, () => new (() => { })()); t(60, () => Promise.resolve.call(1)); t(61, () => Map.prototype.get.call({}, 1)); t(62, () => [].reduce((a, b) => a)); t(63, () => Array.from({ length: -1 }).length); t(64, () => Array.from({ length: 2 ** 53 })); t(65, () => [].at.call(null)); t(66, () => "".at.call(undefined)); t(67, () => new Proxy({}, null)); t(68, () => { const r = Proxy.revocable({}, {}); r.revoke(); return r.proxy.x; }); t(69, () => Object.fromEntries([1])); t(70, () => new Set(5)); t(71, () => (void 0)()); t(72, () => null.x); t(73, () => { undefined.x = 1; }); t(74, () => { "use strict"; "s".x = 1; }); t(75, () => { "use strict"; undeclared75 = 1; }); t(76, () => typeof undeclared76); t(77, () => undeclared77);
+//// stores-into-host-objects-under-computed-keys.cjs
+// A store under a key that is computed at run time replaces a member of a host object. It runs none of the code that would make the member's value, so that code need not be in the executable.
+// A definition and a deletion look for the property first, which makes the value, so they need it.
+const print = console.log;
+////= attempt-3
+const lists = JSON.parse(process.argv[2] ?? `{
+  "stored": ["allowedNodeEnvironmentFlags", "channel", "config", "features", "finalization", "release", "report", "stdin", "versions", "binding", "openStdin", "send", "disconnect", "hrtime", "memoryUsage", "pid", "arch", "aNameOfMyOwn"],
+  "refused": ["exitCode", "debugPort"],
+  "ofConsole": ["table", "Console", "aNameOfMyOwn"]
+}`);
+for (const name of lists.stored) attempt("process." + name, () => { process[name] = "mine"; return "stored"; });
+for (const name of lists.refused) attempt("process." + name, () => { process[name] = "mine"; return "stored"; });
+for (const name of lists.ofConsole) attempt("console." + name, () => { console[name] = "mine"; return "stored"; });
+attempt("in strict code", () => { "use strict"; for (const name of lists.stored) process[name] = "mine again"; return "stored"; });
+attempt("what a read that names the member finds", () => [process.report, process.config, process.pid, process.aNameOfMyOwn, console.aNameOfMyOwn, console.table].join(" "));
+attempt("a member that nothing was stored to", () => [typeof process.platform, typeof process.cwd(), typeof process.title].join(" "));
+attempt("Reflect.set", () => lists.stored.map(name => Reflect.set(process, name, "by Reflect")).join(" "));
+attempt("after Reflect.set", () => process.report);
+//// stores-to-members-of-the-loader-that-nothing-reads/inner.cjs
+module.parent = module;
+module.children = [];
+exports.answer = "inner " + require("./other.cjs").answer;
+//// stores-to-members-of-the-loader-that-nothing-reads/main.cjs
+// The members of a module object, of `require` and of node:module that the host makes or keeps up with functions of the library: a program that only stores to them reads none of them,
+// and the files that it loads afterwards are linked to their parents as always.
+const print = console.log;
+function attempt(label, action) {
+  try { print(label + ": " + action()); } catch (error) { print(label + ": " + error.name + (error.code ? " " + error.code : "") + ": " + error.message.slice(0, 60)); }
+}
+attempt("module.children", () => { module.children = []; return "stored"; });
+attempt("module.parent", () => { module.parent = null; return "stored"; });
+attempt("a file loaded behind the stores", () => require("./inner.cjs").answer);
+attempt("process.mainModule", () => { process.mainModule = "mine"; return "stored"; });
+attempt("console.Console", () => { console.Console = "mine"; return "stored"; });
+attempt("another file", () => require("./other.cjs").answer);
+//// stores-to-members-of-the-loader-that-nothing-reads/other.cjs
+exports.answer = "other";
+//// text-made-at-run-time-in-a-validating-build.js
+// The text of these functions is put together at run time, so code that the compiler has not seen may run. Functions of the runtime's own modules that nothing calls get an entry that refuses such code, and a validating build accepts that entry.
+const storing = statement => new Function("list", "list.tag = 1; " + statement);
+const stores = [storing("list.label = 'plain';"), storing("list.other = 2;")];
+for (const store of stores) {
+  const list = [1, 2, 3];
+  store(list);
+  console.log(Object.keys(list).join());
+}
+//// the-global-object-is-an-instance-of-a-function-whose-prototype-is-object-prototype.cjs
+// THE CORNER: the function's prototype property is given Object.prototype, so the global object IS an instance of it.
+function Weird(options) {
+  if (!(this instanceof Weird)) return new Weird(options);
+  for (var key in options) this[key] = options[key];
+}
+Weird.prototype = Object.prototype;
+var kept = process, said = "nothing is thrown";
+try {
+  Weird({ process: { pid: "replaced" }, ownName: 5 });
+} catch (error) {
+  said = error.constructor.name;
+}
+console.log(said, process.pid === kept.pid ? "and process is as it was" : process.pid, globalThis.ownName);
+//// the-parent-that-a-package-outside-sees-outlives-collections/main.cjs
+// Two packages marked --external ask for what leads from their module objects to others: while they load, and after collections.
+// What such a package sees as its parent stands in for the file of the program that required it. It is in no cache, and once nothing held it: module.parent was undefined from the first collection on.
+const outside = require("outside-package");
+const second = require("second-package");
+function show(label) {
+  console.log(label, "| parent:", outside.parent(), second.parent(), "| its filename ends as mine:", outside.parentFilename().endsWith("main.cjs"), "| children:", outside.children(), "| paths:", outside.paths(), "| cached:", outside.cached());
+}
+console.log("while they load:", outside.atLoad, second.atLoad);
+show("before a collection");
+Bun.gc(true);
+show("after a collection");
+const garbage = [];
+for (let i = 0; i < 200000; i++) garbage.push({ i });
+garbage.length = 0;
+Bun.gc(true);
+Bun.gc(true);
+show("after three");
+console.log("one object every time:", outside.sameParentAsAtLoad());
+//// the-parent-that-a-package-outside-sees-outlives-collections/node_modules/outside-package/index.js
+const inner = require("./inner.js");
+const atLoad = module.parent;
+exports.atLoad = typeof module.parent;
+exports.parent = () => typeof module.parent;
+exports.parentFilename = () => String(module.parent && module.parent.filename);
+exports.sameParentAsAtLoad = () => module.parent === atLoad;
+exports.children = () => module.children.length + " " + typeof module.children[0] + " " + (inner.parent() === module);
+exports.paths = () => module.paths.length > 0;
+exports.cached = () => require.cache[module.filename] === module;
+//// the-parent-that-a-package-outside-sees-outlives-collections/node_modules/outside-package/inner.js
+exports.parent = () => module.parent;
+//// the-parent-that-a-package-outside-sees-outlives-collections/node_modules/outside-package/package.json
+{ "name": "outside-package", "version": "1.0.0", "main": "index.js" }
+//// the-parent-that-a-package-outside-sees-outlives-collections/node_modules/second-package/index.js
+exports.atLoad = typeof module.parent;
+exports.parent = () => typeof module.parent;
+//// the-parent-that-a-package-outside-sees-outlives-collections/node_modules/second-package/package.json
+{ "name": "second-package", "version": "1.0.0", "main": "index.js" }
+//// the-stack-ends-in-the-middle-of-a-constructor-an-initializer-or-a-literal.js
+// Each level of a deep recursion tries once on its way back up, so some tries run out of stack between two stores.
+const log = (...a) => console.log(a.map(String).join(" "));
+// Every level on the way back up tries once; the first tries run out of stack somewhere inside.
+function atEveryDepth(attempt) { let failures = 0; function dive(n) { try { dive(n + 1); } catch (e) { } try { attempt(); } catch (e) { if (e instanceof RangeError) failures++; else throw e; } } try { dive(0); } catch (e) { } return failures > 0; }
+function rec(n) { return n === 0 ? 0 : rec(n - 1) + 1; } function h1(x) { return rec(60) + x; }
+// 1: a variable that is stored behind a call
+let v1; let seen1 = new Set(); function init1() { h1(1); v1 = { n: 1 }; } function use1() { return v1 === undefined ? "undefined" : v1.n; }
+log(1, atEveryDepth(() => { if (v1 === undefined) { try { init1(); } finally { seen1.add(use1()); } } }), [...seen1].sort().join());
+// 2: two variables that change together
+let a2 = 0, b2 = 0, torn2 = false; function step2() { a2++; h1(1); b2++; } atEveryDepth(() => { try { step2(); } finally { if (a2 !== b2) torn2 = true; } }); log(2, torn2, a2 > b2);
+// 3: an object kept by the caller of a constructor through a parameter
+const kept3 = []; class C3 { constructor(sink) { this.a = 1; sink.push(this); this.b = h1(1); this.c = { n: 3 }; } read() { return this.c === undefined ? "none" : this.c.n; } }
+atEveryDepth(() => { new C3(kept3); }); log(3, [...new Set(kept3.map(o => o.read() + ":" + Object.keys(o).join("")))].sort().join());
+// 4: a literal whose later members call
+const kept4 = []; function make4() { const o = { a: 1 }; kept4.push(o); o.b = h1(1); o.c = "c"; return o; } atEveryDepth(make4); log(4, [...new Set(kept4.map(o => Object.keys(o).join("")))].sort().join());
+// 5: an array that is filled behind a call
+const kept5 = []; function make5() { const a = []; kept5.push(a); a.push(1.5); a.push(h1(1) + 0.5); a.push(3.5); } atEveryDepth(make5); log(5, [...new Set(kept5.map(a => a.length))].sort().join());
+// 6: let in a block, closure made first
+const kept6 = []; function make6() { kept6.push(() => late); h1(1); let late = 6; kept6.push(() => late); } atEveryDepth(make6); log(6, [...new Set(kept6.map(f => { try { return f(); } catch (e) { return e.constructor.name; } }))].sort().join());
+// 7: field initializers
+const kept7 = []; class A7 { constructor() { kept7.push(this); } } class B7 extends A7 { x = 1; y = h1(1); z = [7]; len() { return this.z === undefined ? -1 : this.z.length; } } atEveryDepth(() => new B7()); log(7, [...new Set(kept7.map(o => o.len() + ":" + Object.keys(o).join("")))].sort().join());
+// 8: finally and the value of a counter
+let open8 = 0, worst8 = 0; function with8() { open8++; try { h1(1); } finally { open8--; } } atEveryDepth(() => { with8(); worst8 = Math.max(worst8, open8); }); log(8, open8, worst8);
+// 9: a getter, a string conversion and a callback at the end of the stack
+const o9 = { get g() { return h1(1); }, toString() { return "s" + h1(1); } }; let done9 = 0; log(9, atEveryDepth(() => { o9.g; `${o9}`; [1].map(h1); done9++; }), done9 > 0);
+// 10: a class evaluated at the end of the stack
+const kept10 = []; function make10() { class K { static a = 1; static b = (kept10.push(K), h1(1)); static c = "c"; } return K; } atEveryDepth(make10); log(10, [...new Set(kept10.map(K => Object.keys(K).join("")))].sort().join());
+// 11: generator and async function started at the end of the stack
+function* g11() { const x = h1(1); yield x; } async function a11() { return h1(1); } let ok11 = 0; atEveryDepth(() => { g11().next(); a11().catch(() => {}); ok11++; }); log(11, ok11 > 0);
+// 12: destructuring with defaults
+let p12, q12; function d12() { [p12 = h1(1), q12 = h1(2)] = []; } let torn12 = false; atEveryDepth(() => { p12 = q12 = undefined; try { d12(); } finally { if ((p12 === undefined) !== (q12 === undefined)) torn12 = true; } }); log(12, typeof torn12);
+//// thirty-values-that-do-not-have-their-declared-type.ts
+// Thirty ways in which TypeScript lets a value into a position of another type; nothing may throw or answer otherwise than plain Bun.
+const log = (...a: unknown[]) => console.log(a.map(String).join(" "));
+class Animal { name: string; constructor(n: string) { this.name = n; } }
+class Dog extends Animal { barks: number = 3; tail: { len: number } = { len: 7 }; bark(): number { return this.barks + this.tail.len; } }
+class Cat extends Animal { lives: string = "nine"; meow(): string { return this.lives; } }
+{ const dogs: Dog[] = [new Dog("d")]; const animals: Animal[] = dogs; animals.push(new Cat("c")); for (const d of dogs) { try { log(1, d.name, d.barks, d.tail?.len, typeof d.bark); log(1, d.bark()); } catch (e) { log(1, (e as Error).constructor.name); } } }
+{ const a: number[] = [1, 2]; const x: number = a[5]; log(2, x, x + 1, typeof x, x === undefined); const o: Dog[] = []; const d: Dog = o[0]; try { log(2, d.barks); } catch (e) { log(2, (e as Error).constructor.name); } }
+{ class U { x!: number; y!: Dog; z!: string; sum(): number { return this.x + 1; } } const u = new U(); log(3, u.x, u.sum(), u.z, Object.keys(u).length); try { log(3, u.y.barks); } catch (e) { log(3, (e as Error).constructor.name); } }
+{ const v = JSON.parse('{"barks":"many","tail":null}') as Dog; log(4, v.barks, typeof v.barks, v.tail); try { log(4, v.tail.len); } catch (e) { log(4, (e as Error).constructor.name); } try { log(4, v.bark()); } catch (e) { log(4, (e as Error).constructor.name); } }
+{ function isDog(a: Animal): a is Dog { return true; } const c: Animal = new Cat("c"); if (isDog(c)) { log(5, c.barks, typeof c.bark); try { log(5, c.tail.len); } catch (e) { log(5, (e as Error).constructor.name); } } }
+{ function assertDog(a: Animal): asserts a is Dog { } const c: Animal = new Cat("c"); assertDog(c); log(6, c.barks, c.name); }
+{ interface H { handle(a: Animal): string; } const h: H = { handle(d: Dog) { return String(d.barks) + typeof d.tail; } } as H; log(7, h.handle(new Cat("c"))); }
+{ const rec: Record<string, Dog> = {}; const d = rec["nobody"]; try { log(8, d.barks); } catch (e) { log(8, (e as Error).constructor.name); } const m = new Map<string, Dog>(); const g = m.get("x")!; try { log(8, g.barks); } catch (e) { log(8, (e as Error).constructor.name); } }
+{ enum E { A, B } const e: E = 7 as E; const names: string[] = ["a", "b"]; log(9, e, names[e], E[e]); switch (e) { case E.A: log(9, "A"); break; case E.B: log(9, "B"); break; default: { const n: never = e; log(9, "never", n); } } }
+{ function f(x: number): number; function f(x: any): any { return String(x) + "!"; } const n: number = f(1); log(10, n, typeof n, n + 1); }
+{ const n: number = "text" as unknown as number; log(11, n + 1, typeof n, n * 2, Math.abs(n)); const arr: number[] = [1.5, 2.5]; arr.push(n); let s = 0; for (const x of arr) s += x; log(11, s); }
+{ const o: { a: number; b?: number } = { a: 1 }; const p: { a: number; b: number } = o as { a: number; b: number }; log(12, p.b, p.b + 1, "b" in p); }
+{ function gen<T>(x: unknown): T { return x as T; } const d = gen<Dog>({ barks: "q" }); log(13, d.barks, typeof d.bark); const n = gen<number>(null); log(13, n, n + 1); const s = gen<string>(5); try { log(13, s.length, s.toUpperCase()); } catch (e) { log(13, (e as Error).constructor.name); } }
+{ const t: [number, string] = [1, "a"]; (t as unknown as unknown[]).length = 0; log(14, t[0], t[1], t.length); const u: [number, number] = [1, 2]; u.push(3); u.pop(); u.pop(); u.pop(); log(14, u[0], u[1], u.length); }
+{ const ro: readonly number[] = [1, 2, 3]; (ro as number[]).push("x" as unknown as number); (ro as number[])[0] = 0.5; log(15, ro.join(), ro.length); const fz: Readonly<{ v: number }> = { v: 1 }; (fz as { v: number }).v = 2; log(15, fz.v); }
+{ class P { private secret: number = 1; get(): number { return this.secret; } } const p = new P(); (p as any).secret = "changed"; log(16, p.get(), typeof p.get()); delete (p as any).secret; log(16, p.get()); (p as any).extra = 1; log(16, Object.keys(p).join()); }
+{ class Q { readonly id: number = 1; twice(): number { return this.id * 2; } } const q = new Q(); (q as { id: number }).id = 21; log(17, q.twice()); Object.defineProperty(q, "id", { get() { return 100; } }); log(17, q.twice()); }
+{ function th(this: Dog): number { return this.barks; } log(18, th.call(new Cat("c") as unknown as Dog), th.call({ barks: "own" } as unknown as Dog)); try { log(18, (th as any)()); } catch (e) { log(18, (e as Error).constructor.name); } }
+{ const cb: (d: Dog) => number = d => d.barks; const list: Animal[] = [new Dog("d"), new Cat("c")]; log(19, (list as Dog[]).map(cb).join()); }
+{ let x: string | number = "s"; const set = () => { x = 5; }; if (typeof x === "string") { set(); log(20, typeof x, (x as string).length); } }
+{ const o: { v: string | number } = { v: "s" }; const set = () => { o.v = 5; }; if (typeof o.v === "string") { set(); log(21, typeof o.v, o.v.length); } }
+{ abstract class Base { constructor() { this.init(); } abstract init(): void; } class Der extends Base { n: number = 5; seen!: string; init() { this.seen = String(this.n); } } const d = new Der(); log(22, d.seen, d.n); }
+{ const d = Object.create(Dog.prototype) as Dog; log(23, d.barks, d instanceof Dog); try { log(23, d.bark()); } catch (e) { log(23, (e as Error).constructor.name); } }
+{ const d = new Dog("d"); Object.setPrototypeOf(d, Cat.prototype); log(24, d instanceof Dog, typeof d.bark, (d as unknown as Cat).meow()); }
+{ const d = new Dog("d"); const spread: Dog = { ...d } as Dog; log(25, spread.barks, typeof spread.bark, spread instanceof Dog); const as: Dog = Object.assign({}, d) as Dog; try { as.bark(); } catch (e) { log(25, (e as Error).constructor.name); } }
+{ const big: number = 2 ** 53; const i: number = big + 1; log(26, i, (i | 0), 2 ** 31 | 0, (2 ** 31) >>> 0); let c: number = 2147483647; c++; log(26, c); c = -2147483648; c--; log(26, c); const z: number = -0; log(26, Object.is(z * 1, -0), 1 / z, Object.is(Math.round(-0.4), -0), 0 * -1 === 0, Object.is(0 * -1, -0)); }
+{ function opt(a: number, b?: number): number { return a + (b as number); } log(27, opt(1), opt(1, 2), (opt as any)(), (opt as any)("s", "t")); }
+{ function rest(...n: number[]): number { let s = 0; for (const x of n) s += x; return s; } log(28, rest(), rest(1, 2), (rest as any)("a", "b"), rest(...([1, undefined] as number[]))); }
+{ type Sh = { k: "c"; r: number } | { k: "s"; w: number }; const bad = { k: "c", w: 2 } as unknown as Sh; const area = (s: Sh): number => s.k === "c" ? s.r * 2 : s.w; log(29, area(bad), area({ k: "x" } as unknown as Sh)); }
+{ const sym: unique symbol = Symbol("u"); const o: { [sym]: number } = { [sym]: 1 }; (o as any)[sym] = "s"; log(30, typeof o[sym]); const idx: { [k: number]: string } = ["a"]; log(30, idx[3], idx[-1]); }
+//// thirty-ways-to-replace-a-member-of-a-class.js
+// Thirty ways to replace, remove or hide a member of a class, each on a class of its own.
+const log = (...a) => console.log(a.map(String).join(" "));
+const id = x => x; const key = (...p) => p.join("");
+class C1 { m() { return 1; } } const c1 = new C1(); log(1, c1.m()); Object.getPrototypeOf(c1).m = function () { return 2; }; log(1, c1.m(), new C1().m());
+class C2 { m() { return 1; } } const c2 = new C2(); c2.__proto__.m = () => 2; log(2, c2.m());
+class C3 { m() { return 1; } } const c3 = new C3(); c3.constructor.prototype.m = () => 2; log(3, c3.m());
+class C4 { m() { return 1; } } const c4 = new C4(); Reflect.set(C4.prototype, "m", () => 2); log(4, c4.m());
+class C5 { m() { return 1; } } const c5 = new C5(); Object.assign(C5.prototype, { m() { return 2; } }); log(5, c5.m());
+class C6 { m() { return 1; } } const c6 = new C6(); Object.defineProperty(C6.prototype, key("", "m"), { value: () => 2 }); log(6, c6.m());
+class C7 { m() { return 1; } } const c7 = new C7(); delete C7.prototype.m; try { log(7, c7.m()); } catch (e) { log(7, e.constructor.name); }
+class C8 { m() { return 1; } } const c8 = new C8(); Reflect.deleteProperty(C8.prototype, "m"); log(8, typeof c8.m);
+class A9 { m() { return "A"; } } class B9 extends A9 {} class X9 { m() { return "X"; } } const b9 = new B9(); log(9, b9.m()); Object.setPrototypeOf(B9.prototype, X9.prototype); log(9, b9.m(), b9 instanceof A9, b9 instanceof X9);
+class C10 { m() { return 1; } } const c10 = new C10(); Object.setPrototypeOf(c10, { m() { return 2; } }); log(10, c10.m(), c10 instanceof C10);
+class C11 { m() { return 1; } } const c11 = new C11(); c11.m = () => 2; log(11, c11.m(), new C11().m());
+class C12 { get g() { return 1; } } const c12 = new C12(); Object.defineProperty(c12, "g", { value: 2 }); log(12, c12.g, new C12().g);
+class C13 { get g() { return 1; } } const c13 = new C13(); Object.defineProperty(C13.prototype, "g", { get() { return 2; } }); log(13, c13.g);
+class C14 { static s() { return 1; } } C14.s = () => 2; log(14, C14.s());
+class A15 { static s() { return "A"; } } class B15 extends A15 {} log(15, B15.s()); Object.setPrototypeOf(B15, { s() { return "X"; } }); log(15, B15.s());
+class A16 { constructor() { this.k = "A"; } } class X16 { constructor() { this.k = "X"; } } class B16 extends A16 {} Object.setPrototypeOf(B16, X16); log(16, new B16().k, new B16() instanceof A16);
+class C17 { m() { return 1; } } for (const k of Object.getOwnPropertyNames(C17.prototype)) if (k !== "constructor") C17.prototype[k] = () => 2; log(17, new C17().m());
+class C18 { m() { return 1; } } const d18 = Object.getOwnPropertyDescriptors({ m() { return 2; } }); Object.defineProperties(C18.prototype, d18); log(18, new C18().m());
+class C19 { m() { return 1; } } const p19 = new Proxy(C19.prototype, {}); p19.m = () => 2; log(19, new C19().m());
+class C20 { m() { return 1; } n() { return this.m(); } } const c20 = new C20(); log(20, c20.n.call({ m: () => 2 }), C20.prototype.n.call(Object.create(c20, { m: { value: () => 3 } })));
+class C21 { m() { return 1; } } [C21.prototype].forEach(p => { p.m = () => 2; }); log(21, new C21().m());
+class C22 { m() { return 1; } } JSON.parse('{"a":1}', function (k, v) { if (k === "a") C22.prototype.m = () => 2; return v; }); log(22, new C22().m());
+class C23 { m() { return 1; } } const c23 = new C23(); C23.prototype.constructor = Object; log(23, c23.constructor === Object, c23.constructor.name);
+class C24 { } log(24, new C24().constructor === C24); Object.defineProperty(C24.prototype, "constructor", { get() { return Array; } }); log(24, new C24().constructor === Array);
+function F25() {} F25.prototype.m = function () { return 1; }; const f25 = new F25(); F25.prototype = { m() { return 2; } }; log(25, f25.m(), new F25().m(), f25 instanceof F25);
+class C26 { m() { return 1; } } const w26 = new WeakMap([[C26, C26.prototype]]); w26.get(C26).m = () => 2; log(26, new C26().m());
+class C27 { m() { return 1; } } const s27 = Symbol.for("x"); globalThis[s27] = C27; globalThis[Symbol.for("x")].prototype.m = () => 2; log(27, new C27().m());
+class C28 { m() { return 1; } } class D28 extends C28 { m() { return super.m() + 10; } } const d28 = new D28(); log(28, d28.m()); C28.prototype.m = () => 5; log(28, d28.m());
+class C29 { m() { return 1; } } class D29 extends C29 { set() { super.m = () => 7; } } const d29 = new D29(); d29.set(); log(29, d29.m(), new D29().m(), Object.keys(d29).join());
+class C30 { static #p = 1; static read() { return C30.#p; } static [Symbol.hasInstance](v) { return v === 1; } } log(30, 1 instanceof C30, new C30() instanceof C30);
+//// uncalled-functions-beside-evaluated-text-in-a-validating-build.js
+// Nothing calls `never` and `neverWithTwo`: their closures are made, their bodies are not compiled, and beside text that is evaluated at run time their entries refuse.
+const table = {
+  never(value) { return value + 1; },
+  neverWithTwo(first, second) { return first + second; },
+  used(value) { return value * 2; },
+};
+function neverDeclared() { return table; }
+console.log(table.used(21), typeof table.never, typeof table.neverWithTwo, typeof neverDeclared);
+console.log((0, eval)(globalThis.text ?? "1 + 1"));
+//// uncalled-library-functions-from-evaluated-text-admitted.js
+// closed-world/library-class-above-process-from-evaluated-text built with --compile-inspector. A debugger can call any function, so such a build leaves out none: the text uses the class as in plain Bun.
+import { EventEmitter } from "node:events";
+// Text that is decoded at run time is unknown to the compiler.
+const decoded = text => Buffer.from(text).toString();
+////= outcome-3
+function attempt(label, text) {
+  try { console.log(label + ": " + (0, eval)(decoded(text))); } catch (error) { console.log(label + ": " + outcome(error)); }
+}
+const emitterClass = "(() => { let above = process; while (Object.getPrototypeOf(above) !== Object.prototype) above = Object.getPrototypeOf(above); return above.constructor; })()";
+
+console.log("imported: " + typeof EventEmitter);
+attempt("the class above process", "typeof " + emitterClass + " + ' ' + " + emitterClass + ".name");
+attempt("constructed in the text", "new (" + emitterClass + ")().listenerCount('x')");
+attempt("a setter of the class", emitterClass + ".defaultMaxListeners = 11");
+attempt("constructed again", "typeof new (" + emitterClass + ")().on");
+console.log("the program goes on");
+//// unlisted-global-defined-by-a-function-that-is-handed-the-global-object.js
+function install(root, name, value) { root[name] = value; }
+[install].forEach(each => each(globalThis, "__installed", () => "installed"));
+(function (root) { root.__umd = { version: 3 }; })(typeof self !== "undefined" ? self : this);
+console.log(globalThis.__installed(), globalThis.__umd.version);
+//// unlisted-global-defined-by-define-property.js
+let reads = 0;
+Object.defineProperty(globalThis, "__byDescriptor", { get() { reads++; return () => "from the getter"; }, configurable: true });
+Object.defineProperties(globalThis, { __byDescriptors: { value: () => "a value", writable: true } });
+Reflect.defineProperty(globalThis, process.env.NAME ?? "__byReflect", { value: () => "by Reflect" });
+console.log(globalThis.__byDescriptor(), reads, globalThis.__byDescriptors(), globalThis.__byReflect());
+//// unlisted-global-defined-by-evaluated-text.js
+console.log(globalThis.__byEvaluatedText);
+try {
+  new Function("globalThis.__byEvaluatedText = () => 'by a function made of text'")();
+  (0, eval)("var __byAVarOfAScript = () => 'a var'; function __byAFunctionOfAScript() { return 'a function'; }");
+} catch (error) { console.log("refused:", error.name); }
+console.log(globalThis.__byEvaluatedText?.(), globalThis.__byAVarOfAScript?.(), globalThis.__byAFunctionOfAScript?.());
+//// unlisted-global-defined-by-object-assign-of-parsed-text.js
+console.log(globalThis.__fromParsedText);
+Object.assign(globalThis, JSON.parse(process.env.TEXT ?? '{"__fromParsedText":{"deep":[1,2]}}'));
+console.log(JSON.stringify(globalThis.__fromParsedText), globalThis.__fromParsedText.deep.length);
+//// unlisted-global-defined-by-reflect-set.js
+Reflect.set(globalThis, "__byReflectSet", () => "set");
+Reflect.set(globalThis, process.env.NAME ?? "__byReflectSetComputed", () => "set under a computed key");
+console.log(globalThis.__byReflectSet(), globalThis.__byReflectSetComputed());
+//// unlisted-global-defined-by-this-in-sloppy-code.cjs
+function viaThis() { this.__viaThis = () => "this is the global object"; }
+viaThis();
+(function () { __viaAnUndeclaredName = () => "an assignment to a name nobody declares"; })();
+console.log(globalThis.__viaThis(), globalThis.__viaAnUndeclaredName());
+//// unlisted-global-defined-in-a-worker-stays-in-its-realm.js
+import { Worker, isMainThread, parentPort } from "node:worker_threads";
+if (isMainThread) {
+  globalThis.__ofTheMainThread = 1;
+  const worker = new Worker(new URL(import.meta.url));
+  worker.on("message", message => { console.log("worker:", message, "main:", typeof globalThis.__ofTheWorker, typeof globalThis.__ofTheMainThread); });
+} else {
+  globalThis.__ofTheWorker = () => 2;
+  parentPort.postMessage([typeof globalThis.__ofTheWorker, typeof globalThis.__ofTheMainThread].join());
+}
+//// unlisted-global-defined-later-by-name.js
+function read() { return globalThis.__definedLater?.post; }
+console.log(typeof read());
+globalThis.__definedLater = { post(value) { return value + 1; } };
+console.log(typeof read(), read()(1));
+//// unlisted-global-defined-through-a-holder-nobody-knows.js
+const holders = [{}, globalThis, {}];
+const holder = holders[Number(process.env.INDEX ?? 1)];
+holder.__throughAHolder = () => "through a holder";
+const parsed = JSON.parse(process.env.TEXT ?? '{"at":1}');
+holders[parsed.at]["__throughAHolder" + "Too"] = () => "too";
+console.log(globalThis.__throughAHolder(), globalThis.__throughAHolderToo());
+//// unlisted-global-defined-through-global-and-self.js
+global.__throughGlobal = () => 1;
+self.__throughSelf = () => 2;
+console.log(globalThis.__throughGlobal(), globalThis.__throughSelf(), globalThis.globalThis === globalThis, globalThis.self === globalThis, typeof globalThis.globalThis.__throughGlobal);
+//// unlisted-global-defined-under-a-computed-key.js
+function read() { return globalThis.__underAComputedKey; }
+console.log(read());
+globalThis["__underA" + (process.env.REST ?? "ComputedKey")] = () => "called";
+console.log(typeof read(), read()());
+//// unlisted-global-deleted-and-defined-again.js
+globalThis.__deleted = () => 1;
+console.log(typeof globalThis.__deleted, delete globalThis.__deleted, typeof globalThis.__deleted);
+globalThis.__deleted = 5;
+console.log(globalThis.__deleted + 1, Object.keys(globalThis).includes("__deleted"));
+//// unlisted-global-found-above-the-global-object.js
+console.log(typeof globalThis.hasOwnProperty, typeof globalThis.toString, globalThis.constructor === Object, typeof globalThis.__proto__, globalThis.valueOf() === globalThis, typeof globalThis.isPrototypeOf);
+//// unlisted-global-listed-globals-read-as-members.js
+console.log(typeof globalThis.process, typeof globalThis.Bun, typeof globalThis.fetch, typeof globalThis.structuredClone, typeof globalThis.navigator, typeof globalThis.WebSocket, typeof globalThis.window, typeof globalThis.document, typeof globalThis.Deno, typeof globalThis.require, typeof globalThis.module, typeof globalThis.gc, typeof globalThis.$vm, typeof globalThis.Loader);
+//// unlisted-global-never-defined.js
+const post = globalThis.__configOfSomePackage?.post;
+if (post) post(1);
+globalThis.__hookOfSomeTool?.(2);
+console.log(globalThis.__configOfSomePackage === undefined, typeof globalThis.__hookOfSomeTool, "__hookOfSomeTool" in globalThis, Object.hasOwn(globalThis, "__configOfSomePackage"));
+//// unlisted-global-stored-config-is-shared-between-modules/main.js
+import { read } from "./reads-the-config.js";
+const config = (globalThis.__sharedConfig ??= {});
+Object.assign(config, { localeError: issue => "bad " + issue.code + " " + (issue.values ?? []).join("|") });
+console.log(read({ code: "value", values: [1, 2] }));
+//// unlisted-global-stored-config-is-shared-between-modules/reads-the-config.js
+export function read(issue) { return (globalThis.__sharedConfig ??= {}).localeError?.(issue) ?? "no config"; }
+//// unlisted-global-stored-function-called-by-a-free-name.js
+globalThis.__calledByAFreeName = value => "called with " + value;
+console.log(__calledByAFreeName(1), typeof __calledByAFreeName);
+//// unlisted-global-stored-function-called-by-evaluated-text.js
+globalThis.__calledByText = value => "called by text with " + value;
+try {
+  console.log(new Function("return __calledByText(5)")(), (0, eval)("globalThis.__calledByText(6)"));
+} catch (error) { console.log("refused:", error.name); }
+//// unlisted-global-stored-function-called-in-sloppy-code.cjs
+globalThis.__calledInSloppyCode = function () { return this === globalThis ? "this is the global object" : typeof this; };
+console.log(__calledInSloppyCode(), globalThis.__calledInSloppyCode(), (0, globalThis.__calledInSloppyCode)());
+with (globalThis) { console.log(__calledInSloppyCode()); }
+//// unlisted-global-stored-function-called-under-a-computed-key.js
+globalThis.__calledUnderAKey = value => "called with " + value;
+const key = "__calledUnder" + (process.env.REST ?? "AKey");
+console.log(globalThis[key](2), Reflect.get(globalThis, key)(3), Reflect.apply(globalThis[key], undefined, [4]));
+//// unlisted-global-stored-function-found-by-walking-the-global-object.js
+globalThis.__foundByAWalk = () => "found by a walk";
+const found = [];
+for (const key in globalThis) if (key.startsWith("__foundBy")) found.push(globalThis[key]());
+for (const [key, value] of Object.entries(globalThis)) if (key.startsWith("__foundBy")) found.push(value());
+for (const key of Object.getOwnPropertyNames(globalThis)) if (key.startsWith("__foundBy")) found.push(Object.getOwnPropertyDescriptor(globalThis, key).value());
+console.log(found.join());
+//// unlisted-global-stored-function-handed-to-timers-and-events.js
+globalThis.__handedOn = value => console.log("handed on:", value);
+queueMicrotask(() => globalThis.__handedOn("a microtask"));
+setTimeout(globalThis.__handedOn, 1, "a timer");
+process.once("exit", () => globalThis.__handedOn("exit"));
+const target = new EventTarget();
+target.addEventListener("ping", event => globalThis.__handedOn(event.type));
+target.dispatchEvent(new Event("ping"));
+//// unlisted-global-stored-getter-read-by-a-free-name.js
+let reads = 0;
+Object.defineProperty(globalThis, "__getterReadByAFreeName", { get() { reads++; return { deep: () => "from the getter" }; }, set(value) { reads += value; }, configurable: true });
+console.log(__getterReadByAFreeName.deep(), reads);
+globalThis.__getterReadByAFreeName = 10;
+console.log(reads);
+//// unlisted-global-stored-object-is-printed-and-copied.js
+class Config { constructor() { this.level = 3; this.hooks = [() => "a hook"]; } get doubled() { return this.level * 2; } }
+globalThis.__printedAndCopied = new Config();
+console.log(globalThis.__printedAndCopied, JSON.stringify(globalThis.__printedAndCopied), structuredClone({ level: globalThis.__printedAndCopied.level }));
+console.log(Object.assign({}, globalThis).__printedAndCopied.hooks[0](), { ...globalThis }.__printedAndCopied.doubled);
+//// url-search-params-print-themselves.js
+console.log(new URLSearchParams("a=1&b=2"));
+console.log({ nested: new URLSearchParams("c=3") });
+//// values-handed-to-setters-of-the-host.cjs
+// A store to an accessor of the host runs its setter, which keeps what it is handed: native code reads it back or calls it later. A store to a data property that native code looks up later is found by it too.
+// The receivers and the keys come in ways that the compiler follows and in ways that it does not.
+const print = console.log;
+////= attempt-3
+const words = JSON.parse(process.argv[2] ?? `{ "title": "title", "proto": "__proto__", "prepare": "prepareStackTrace", "emit": "emit", "onmessage": "onmessage", "href": "href", "exitCode": "exitCode" }`);
+const hidden = value => new Proxy({ value }, {}).value;
+
+attempt("process.title", () => { process.title = "named"; return process.title; });
+attempt("process[title]", () => { process[words.title] = "computed"; return process.title; });
+attempt("hidden(process)[title]", () => { hidden(process)[words.title] = "hidden"; return process.title; });
+
+let prepared = 0;
+attempt("Error.prepareStackTrace", () => { Error.prepareStackTrace = (error, frames) => { prepared++; return "named " + Array.isArray(frames); }; return new Error("x").stack; });
+attempt("Error[prepareStackTrace]", () => { Error[words.prepare] = (error, frames) => { prepared++; return "computed " + Array.isArray(frames); }; return new Error("x").stack; });
+attempt("hidden(Error)[prepareStackTrace]", () => { hidden(Error)[words.prepare] = (error, frames) => { prepared++; return "hidden " + Array.isArray(frames); }; return new Error("x").stack; });
+attempt("calls of the three", () => prepared);
+Error.prepareStackTrace = undefined;
+
+class Above { greet() { return "from above " + this.name; } }
+attempt("__proto__", () => { const object = { name: "named" }; object.__proto__ = Above.prototype; return object.greet(); });
+attempt("[__proto__]", () => { const object = { name: "computed" }; object[words.proto] = Above.prototype; return object.greet(); });
+attempt("hidden()[__proto__]", () => { const object = { name: "hidden" }; hidden(object)[words.proto] = Above.prototype; return object.greet(); });
+
+attempt("URL.href", () => { const url = new URL("http://a/b"); url.href = "http://named/"; return url.host; });
+attempt("URL[href]", () => { const url = new URL("http://a/b"); url[words.href] = "http://computed/"; return url.host; });
+attempt("hidden(URL)[href]", () => { const url = new URL("http://a/b"); hidden(url)[words.href] = "http://hidden/"; return url.host; });
+
+let emitted = [];
+attempt("process[emit]", () => { const emit = process.emit; process[words.emit] = function (name, ...rest) { emitted.push(String(name)); return emit.call(this, name, ...rest); }; process.emit("mine"); return emitted.join(); });
+attempt("process[exitCode]", () => { process[words.exitCode] = 3; const seen = process.exitCode; process.exitCode = 0; return seen; });
+
+const channel = new MessageChannel();
+let got = [];
+channel.port1[words.onmessage] = event => { got.push("computed " + event.data); channel.port1.close(); channel.port2.close(); print("what native code called: " + got.join()); print("events that native code emitted through the stored emit: " + emitted.filter(name => name === "beforeExit" || name === "exit").length); };
+channel.port2.postMessage("sent");
+process.on("exit", () => print("at exit: " + emitted.filter(name => name === "exit").join()));
+//// web-streams-print-themselves.js
+console.log(new ReadableStream());
+console.log(new WritableStream(), new TransformStream());
+//// worker-from-text-admitted.js
+// closed-world/worker-from-text-refused built with --compile-inspector. A debugger can run any code, so such a build runs text too: both Workers run as in plain Bun.
+// What native code hands back is unknown to the compiler, and so is text that is decoded at run time.
+const unknown = value => new CustomEvent("unknown", { detail: value }).detail;
+const decoded = text => Buffer.from(text).toString();
+////= outcome-5	e compiler couldn't tell at build time") ? "refused: " + message : error.nam
+////= attempt
+////= started
+async function main() {
+  const text = decoded("postMessage(1 + 1); close();");
+  console.log(await started("a Worker from a blob: URL", URL.createObjectURL(new Blob([text], { type: "text/javascript" }))));
+  console.log(await started("a Worker from a data: URL", "data:text/javascript," + encodeURIComponent(text)));
+}
+main();
+//// worker-from-text-refused.js
+// The compiler finds nothing in this program that evaluates text, and counts on it. A Worker whose script is text that the program makes at run time throws the error of an evaluator that the compiler could not follow. closed-world/worker-from-text-admitted is the same program built with --compile-inspector.
+// What native code hands back is unknown to the compiler, and so is text that is decoded at run time.
+const unknown = value => new CustomEvent("unknown", { detail: value }).detail;
+const decoded = text => Buffer.from(text).toString();
+////= outcome-5	e compiler couldn't tell at build time") ? "refused: " + message : error.nam
+////= attempt
+////= started
+async function main() {
+  const text = decoded("postMessage(1 + 1); close();");
+  console.log(await started("a Worker from a blob: URL", URL.createObjectURL(new Blob([text], { type: "text/javascript" }))));
+  console.log(await started("a Worker from a data: URL", "data:text/javascript," + encodeURIComponent(text)));
+}
+main();
+//// writers-that-do-not-name-what-they-write.js
+// Stores that reach an object through a computed __proto__, the receiver of Reflect.set, a proxy, or a generic array method.
+const log = (...a) => console.log(a.map(String).join(" "));
+const join = (...p) => p.join("");
+class C1 { constructor() { this.v = 1; } m() { return "C"; } } { const o = new C1(); o[join("__pro", "to__")] = { m() { return "moved"; } }; log(1, o.m(), o instanceof C1, o.v, Object.keys(o).join()); }
+class C2 { constructor() { this.v = 1; } m() { return "C"; } } { const o = new C2(); Object.assign(o, JSON.parse('{"__proto__": {"x": 5}, "v": "s"}')); log(2, typeof o.m, o.x, o.v, o instanceof C2); }
+class C3 { constructor() { this.v = 1; } m() { return "C"; } } { const o = new C3(); Object.getOwnPropertyDescriptor(Object.prototype, "__proto__").set.call(o, { m() { return "moved"; } }); log(3, o.m()); }
+class C4 { constructor() { this.v = 1; } m() { return "C"; } } { const o = new C4(); Object.prototype.__lookupSetter__("__proto__").call(o, null); log(4, typeof o.m, o.v); }
+class C5 { constructor() { this.v = 1; } m() { return "C"; } } { const o = new C5(); Reflect.set({}, "v", "by receiver", o); Reflect.set({}, "w", 2, o); log(5, o.v, o.w, Object.keys(o).join()); }
+class C6 { constructor() { this.v = 1; } m() { return "C"; } } { Reflect.set({}, "m", () => "by receiver", C6.prototype); log(6, new C6().m()); }
+class C7 { constructor() { this.v = 1; } m() { return "C"; } } { const o = new C7(); const p = new Proxy(o, {}); p.v = "through proxy"; delete p.v; p.z = 1; log(7, o.v, o.z, Object.keys(o).join()); Object.setPrototypeOf(p, null); log(7, typeof o.m); }
+class C8 { constructor() { this.v = 1; this.length = 0; } } { const o = new C8(); Array.prototype.push.call(o, "a", "b"); log(8, o.length, o[0], o[1], Object.keys(o).join()); Array.prototype.pop.call(o); log(8, o.length, Object.keys(o).join()); }
+class C9 { constructor() { this.v = 1; } } { const o = new C9(); const r = Array.from.call(function () { return o; }, ["x", "y"]); log(9, r === o, o.length, o[1], Object.keys(o).join()); }
+class C10 { constructor() { this.lastIndex = 5; this.flags = ""; } exec() { return null; } } { const o = new C10(); RegExp.prototype[Symbol.replace].call(o, "s", "r"); o.flags = "g"; RegExp.prototype[Symbol.replace].call(o, "s", "r"); log(10, o.lastIndex); }
+class C11 { constructor() { this.stack = 11; } twice() { return this.stack * 2; } } { const o = new C11(); log(11, o.twice()); Error.captureStackTrace(o); log(11, typeof o.stack, Number.isNaN(o.twice())); }
+class C12 { constructor() { this.v = 1; } } { const o = new C12(); o.__defineGetter__("v", () => "getter"); log(12, o.v); Object.prototype.__defineSetter__.call(o, "w", function (x) { this.got = x; }); o.w = 3; log(12, o.got, Object.keys(o).join()); }
+class C13 { constructor() { this.v = 1; } m() { return "C"; } } { C13.prototype.__defineGetter__("m", () => () => "getter"); log(13, new C13().m()); }
+class A14 { set v(x) { this.caught = x; } } class C14 extends A14 { constructor() { super(); Object.defineProperty(this, "v", { value: 1, writable: true, configurable: true, enumerable: true }); } } { const o = new C14(); delete o.v; o.v = 9; log(14, o.v, o.caught); }
+class C15 { constructor() { this.v = 1; } } { const o = new C15(); const child = Object.create(o); child.v = 2; log(15, o.v, child.v); Object.freeze(o); try { child.w = 1; child.v = 3; const c2 = Object.create(o); c2.v = 5; log(15, c2.v); } catch (e) { log(15, e.constructor.name); } }
+class C16 { static n = 1; static get() { return C16.n; } } { Reflect.set({}, "n", "by receiver", C16); log(16, C16.get()); Object.assign(C16, { n: "assigned", get: () => "replaced" }); log(16, C16.get(), C16.n); }
+{ const o = { a: 1, b: 2 }; for (const k of ["a", "b", join("__pro", "to__")]) o[k] = { z: k }; log(17, o.a.z, o.z, Object.keys(o).join()); }
+{ const o = { a: 1 }; const src = { get a() { delete o.b; o.c = "added"; return "from getter"; }, b: "b" }; o.b = 0; Object.assign(o, src); log(18, JSON.stringify(o)); }
+{ const o = { a: 1, b: 2 }; const e = Object.entries(o); e[0][1] = "changed"; log(19, o.a, e.join(";")); const d = Object.getOwnPropertyDescriptor(o, "a"); d.value = 9; log(19, o.a); }
+{ function F() { this.a = 1; } const b = F.bind(null); const o = new b(); log(20, o.a, o instanceof F, o instanceof b); F.prototype.x = "late"; log(20, o.x); }

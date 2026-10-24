@@ -1,0 +1,1311 @@
+//// runtime-intrinsics.ts
+function describeError(run: () => unknown) {
+  try {
+    console.log("no error", run());
+  } catch (error) {
+    console.log((error as Error).name, (error as Error).message);
+  }
+}
+
+function describeKeys(object: object) {
+  return Reflect.ownKeys(object).map(String).join(",");
+}
+
+const path = require("node:path");
+console.log(path.join("a", "..", "b"), path.basename("/x/y.ts", ".ts"), require("node:path") === path);
+
+const fromLength = (length: unknown) => Array.from({ length } as any);
+console.log(fromLength(-1).length, fromLength(0).length, fromLength(3).length, fromLength(2.7).length, fromLength(NaN).length, fromLength("2").length);
+describeError(() => fromLength(2 ** 53).length);
+let lengthReads = 0;
+console.log(
+  fromLength({
+    valueOf() {
+      lengthReads++;
+      return 2;
+    },
+  }).length,
+  lengthReads,
+);
+describeError(() =>
+  fromLength({
+    valueOf() {
+      throw new Error("length failed");
+    },
+  }),
+);
+
+console.log(Array.from({ length: 3, 0: "a", 2: "c" } as any));
+console.log(Array.from({ length: 40 }, (_, index) => index * 2).reduce((sum, item) => sum + item, 0));
+console.log(Array.from([1, , 3]), Array.from("abc"), Array.from(new Set([1, 1, 2])));
+
+for (let round = 0; round < 3; round++) {
+  const entries = Object.fromEntries([
+    ["0", 1],
+    ["a", 2],
+    [Symbol.iterator, 3],
+  ]);
+  console.log(describeKeys(entries), entries["0"], entries.a);
+}
+console.log(describeKeys(Object.fromEntries([[1.5, "x"], [-1, "y"], [4294967295, "z"], [0, "w"]])));
+console.log(Object.fromEntries([["a", 1], ["a", 2]]).a);
+const protoEntry = Object.fromEntries([["__proto__", 1]]);
+console.log(describeKeys(protoEntry), Object.getPrototypeOf(protoEntry) === Object.prototype);
+
+class Numbers extends Array<number> {}
+const numbers = Numbers.from([1, 2, 3]);
+console.log(numbers instanceof Numbers, numbers.length, numbers[2]);
+
+function* countTo(last: number) {
+  try {
+    for (let item = 1; item <= last; item++) yield item;
+  } finally {
+    console.log("closed", last);
+  }
+}
+for (const item of countTo(3)) {
+  if (item === 2) break;
+  console.log(item);
+}
+console.log(Array.from(countTo(2)));
+const generator = countTo(1);
+console.log(generator.next(), generator.next(), generator.next());
+
+function* entriesWithThrowingKey() {
+  try {
+    const key: any = {
+      toString() {
+        throw new Error("key failed");
+      },
+    };
+    yield [key, 1];
+    console.log("not reached");
+  } finally {
+    console.log("entries closed");
+  }
+}
+describeError(() => Object.fromEntries(entriesWithThrowingKey()));
+
+const target = (Array.from as any).call(Object, [1, 2]);
+console.log(Array.isArray(target), describeKeys(target), target[1], target.length);
+//// slow-buffer-to-json.js
+// SlowBuffer of node:buffer makes a Buffer, and Buffer.prototype.toJSON is written in JavaScript. Nothing else in this program uses Buffer.
+// What a SlowBuffer holds at birth is what the memory held before, so of its data only the length is printed.
+import { SlowBuffer } from "node:buffer";
+const json = SlowBuffer(2).toJSON();
+console.log(json.type, json.data.length, SlowBuffer.prototype.toJSON.call(new Uint8Array(1)));
+//// stream-api-odd-arguments.js
+const stream = require("node:stream");
+const { Readable, Writable, Duplex, Transform, PassThrough } = stream;
+const show = value => { try { return typeof value === "symbol" ? String(value) : typeof value === "bigint" ? value + "n" : typeof value === "string" ? JSON.stringify(value.slice(0, 40)) : typeof value === "function" ? "function" : value instanceof Error ? value.name + " " + (value.code ?? "") : value instanceof stream.Stream ? "a stream" : value instanceof Promise ? "a promise" : Array.isArray(value) ? "[" + value.map(show).join() + "]" : ArrayBuffer.isView(value) ? "bytes " + value.length : typeof value === "object" && value !== null ? "object" : String(value); } catch (error) { return "unshowable"; } };
+let notes = [];
+process.on("uncaughtException", error => notes.push("UNCAUGHT " + show(error)));
+process.on("unhandledRejection", error => notes.push("UNHANDLED " + show(error)));
+const odd = () => [undefined, null, 0, -1, 1.5, NaN, Infinity, "", "x", "utf8", "nonsense", true, false, Symbol("s"), 5n, {}, [], () => {}, Buffer.from("b"), new Uint8Array(2), new Date(0), { length: 3 }, { then() {} }, Object.create(null)];
+const makers = {
+  readable: () => new Readable({ read() {} }),
+  "readable of objects": () => new Readable({ objectMode: true, read() {} }),
+  writable: () => new Writable({ write(chunk, encoding, callback) { callback(); } }),
+  "writable of objects": () => new Writable({ objectMode: true, write(chunk, encoding, callback) { callback(); } }),
+  duplex: () => new Duplex({ read() {}, write(chunk, encoding, callback) { callback(); } }),
+  transform: () => new Transform({ transform(chunk, encoding, callback) { callback(null, chunk); } }),
+  passthrough: () => new PassThrough(),
+};
+const methods = ["read", "push", "unshift", "setEncoding", "pipe", "unpipe", "wrap", "write", "end", "setDefaultEncoding", "destroy", "cork", "uncork", "pause", "resume", "isPaused", "on", "once", "off", "emit", "iterator", "map", "filter", "forEach", "toArray", "some", "find", "every", "flatMap", "drop", "take", "reduce", "compose", "setMaxListeners", "_read", "_write", "_final", "_destroy", "_undestroy"];
+const properties = ["readable", "writable", "destroyed", "readableFlowing", "readableHighWaterMark", "writableHighWaterMark", "readableLength", "writableLength", "readableObjectMode", "writableObjectMode", "readableEncoding", "readableEnded", "writableEnded", "writableFinished", "writableCorked", "writableNeedDrain", "errored", "closed", "readableAborted", "writableAborted", "readableDidRead", "allowHalfOpen"];
+const statics = { "Readable.from": Readable.from, "Readable.fromWeb": Readable.fromWeb, "Readable.toWeb": Readable.toWeb, "Readable.wrap": Readable.wrap, "Writable.fromWeb": Writable.fromWeb, "Writable.toWeb": Writable.toWeb, "Duplex.from": Duplex.from, "Duplex.fromWeb": Duplex.fromWeb, "Duplex.toWeb": Duplex.toWeb, isReadable: stream.isReadable, isWritable: stream.isWritable, isErrored: stream.isErrored, isDisturbed: stream.isDisturbed, isDestroyed: stream.isDestroyed, finished: stream.finished, pipeline: stream.pipeline, compose: stream.compose, addAbortSignal: stream.addAbortSignal, destroy: stream.destroy, getDefaultHighWaterMark: stream.getDefaultHighWaterMark, setDefaultHighWaterMark: stream.setDefaultHighWaterMark, duplexPair: stream.duplexPair, "new Readable": options => new Readable(options), "new Writable": options => new Writable(options), "new Duplex": options => new Duplex(options), "new Transform": options => new Transform(options), "new PassThrough": options => new PassThrough(options), "new Stream": options => new stream.Stream(options) };
+const optionNames = ["highWaterMark", "readableHighWaterMark", "writableHighWaterMark", "objectMode", "readableObjectMode", "writableObjectMode", "encoding", "defaultEncoding", "decodeStrings", "emitClose", "autoDestroy", "signal", "read", "write", "writev", "final", "destroy", "construct", "transform", "flush", "allowHalfOpen", "readable", "writable", "captureRejections"];
+const attempt = (title, run) => {
+  notes = [];
+  let said;
+  try {
+    const result = run();
+    if (result instanceof Promise) result.catch(() => {});
+    said = show(result);
+  } catch (error) {
+    said = "throws " + show(error);
+  }
+  return title + ": " + said;
+};
+const tick = () => new Promise(resolve => setImmediate(resolve));
+(async () => {
+  const high = stream.getDefaultHighWaterMark(false);
+  const highOfObjects = stream.getDefaultHighWaterMark(true);
+  const line = async text => { await tick(); console.log(text + (notes.length ? " . " + notes.join(" . ") : "")); };
+  for (const [kind, make] of Object.entries(makers)) {
+    for (const method of methods) {
+      for (const value of odd()) {
+        const made = make();
+        made.on("error", error => notes.push("error " + show(error)));
+        if (typeof made[method] !== "function") continue;
+        await line(attempt(kind + "." + method + "(" + show(value) + ")", () => made[method](value)));
+        await line(attempt(kind + "." + method + "(\"a\", " + show(value) + ")", () => made[method]("a", value)));
+        made.destroy();
+      }
+    }
+    for (const property of properties) {
+      for (const value of odd()) {
+        const made = make();
+        made.on("error", error => notes.push("error " + show(error)));
+        await line(attempt(kind + "." + property + " = " + show(value), () => { made[property] = value; return made[property]; }));
+        made.destroy();
+      }
+    }
+  }
+  for (const [name, call] of Object.entries(statics)) {
+    for (const value of odd()) {
+      await line(attempt(name + "(" + show(value) + ")", () => call(value)));
+      await line(attempt(name + "(a stream, " + show(value) + ")", () => call(new PassThrough().on("error", () => {}), value)));
+      stream.setDefaultHighWaterMark(false, high);
+      stream.setDefaultHighWaterMark(true, highOfObjects);
+    }
+  }
+  for (const name of optionNames) {
+    for (const value of odd()) {
+      for (const [kind, Class] of Object.entries({ Readable, Writable, Duplex, Transform })) {
+        await line(attempt("new " + kind + "({ " + name + ": " + show(value) + " })", () => { const made = new Class({ [name]: value }); made.on("error", error => notes.push("error " + show(error))); return [made.readableHighWaterMark, made.writableHighWaterMark, made.readableObjectMode, made.writableObjectMode, made.readableEncoding, made.readable, made.writable]; }));
+      }
+    }
+  }
+})();
+//// stream-constructor-property-attributes.js
+// The constructors of node:stream are plain functions that Bun's modules turn into classes with $toClass. Their `prototype` and `name` properties have the attributes they have in plain Bun, both prototype chains are linked, and a replaced `prototype` is what the next `new` uses.
+const EventEmitter = require("node:events");
+const { Stream, Readable, Writable, Duplex, Transform, PassThrough } = require("node:stream");
+
+function describe(holder, name) {
+  const descriptor = Object.getOwnPropertyDescriptor(holder, name);
+  if (!descriptor) return "absent";
+  const value = typeof descriptor.value === "string" ? JSON.stringify(descriptor.value) : typeof descriptor.value;
+  return `${value} writable=${descriptor.writable} enumerable=${descriptor.enumerable} configurable=${descriptor.configurable}`;
+}
+
+const constructors = [
+  ["Stream", Stream, EventEmitter],
+  ["Readable", Readable, Stream],
+  ["Writable", Writable, Stream],
+  ["Duplex", Duplex, Readable],
+  ["Transform", Transform, Duplex],
+  ["PassThrough", PassThrough, Transform],
+];
+
+for (const [title, constructor, base] of constructors) {
+  console.log(title);
+  console.log("  prototype: " + describe(constructor, "prototype"));
+  console.log("  name: " + describe(constructor, "name"));
+  console.log("  prototype.constructor: " + describe(constructor.prototype, "constructor"));
+  console.log("  constructor is itself: " + (constructor.prototype.constructor === constructor));
+  console.log("  inherits statics: " + (Object.getPrototypeOf(constructor) === base));
+  console.log("  inherits methods: " + (Object.getPrototypeOf(constructor.prototype) === base.prototype));
+}
+
+const original = PassThrough.prototype;
+for (let i = 0; i < 100; i++) {
+  if (Object.getPrototypeOf(new PassThrough()) !== original) console.log("wrong prototype at " + i);
+}
+
+const replacement = Object.create(Transform.prototype);
+Object.defineProperty(PassThrough, "prototype", { value: replacement, writable: false, enumerable: true, configurable: false });
+console.log("replaced: " + describe(PassThrough, "prototype"));
+const stream = new PassThrough();
+console.log("new uses the replacement: " + (Object.getPrototypeOf(stream) === replacement));
+console.log("instanceof PassThrough: " + (stream instanceof PassThrough));
+console.log("instanceof Transform: " + (stream instanceof Transform));
+console.log("an earlier instance: " + (Object.create(original) instanceof PassThrough));
+
+Object.defineProperty(Writable, "name", { value: "Renamed" });
+console.log("renamed: " + describe(Writable, "name"));
+//// stream-state-mutated.js
+const { Readable, Writable, Duplex } = require("stream");
+// What programs do to `stream._readableState` and `stream._writableState`. PART 1: idioms of packages (ws, undici, got, readable-stream's helpers, split2, duplexify, stream-shift, end-of-stream). PART 2: what a public object allows in principle:
+// a value of another kind in a field, a field removed or made an accessor, a frozen or sealed state, another prototype, heirs, proxies. The stream goes on working with such a state as it does in plain Bun.
+function attempt(name, f) { try { console.log(name + ": " + String(f())); } catch (e) { console.log(name + ": THROWS " + String(e)); } }
+const R = () => new Readable({ read() {} }), W = () => new Writable({ write(c, e, cb) { cb(); } }), D = () => new Duplex({ read() {}, write(c, e, cb) { cb(); } });
+console.log("PART 1");
+attempt("ws: reads", () => { const d = D(), r = d._readableState, w = d._writableState; return [r.endEmitted, r.ended, w.finished, w.errorEmitted, w.needDrain, w.length, w.ending, w.destroyed].join(); });
+attempt("undici: buffer walk", () => { const r = R(); r.push("ab"); r.push("cd"); const s = r._readableState; let n = 0; if (s.bufferIndex) { for (let i = s.bufferIndex; i < s.buffer.length; i++) n += s.buffer[i].length; } else for (const c of s.buffer) n += c.length; return n + " " + s.length + " " + s.dataEmitted + " " + s.errorEmitted; });
+attempt("got: autoDestroy = false", () => { const r = R(); r._readableState.autoDestroy = false; return r._readableState.autoDestroy; });
+attempt("split2 / JSONStream: objectMode = true after construction", () => { const d = D(); d._readableState.objectMode = true; d._writableState.objectMode = true; d.push({ a: 1 }); return d.readableObjectMode + " " + d.writableObjectMode + " " + d._readableState.length; });
+attempt("highWaterMark = n", () => { const d = D(); d._readableState.highWaterMark = 1; d._writableState.highWaterMark = 0; return d.readableHighWaterMark + " " + d.writableHighWaterMark; });
+attempt("flags by name", () => { const r = R()._readableState; r.flowing = false; r.reading = true; r.needReadable = true; r.sync = false; r.ended = true; r.endEmitted = true; r.destroyed = true; r.emitClose = false; return [r.flowing, r.reading, r.needReadable, r.sync, r.ended, r.endEmitted, r.destroyed, r.emitClose].join(); });
+attempt("flowing = null", () => { const r = R()._readableState; r.flowing = true; r.flowing = null; return r.flowing; });
+attempt("truthy and falsy values for flags", () => { const r = R()._readableState; r.ended = 1; const a = r.ended; r.ended = ""; return a + " " + r.ended; });
+attempt("stream-shift", () => { const r = R(); r.push("abc"); const s = r._readableState; return s.buffer.length + " " + (s.objectMode ? 1 : s.buffer[s.bufferIndex || 0].length); });
+attempt("length = 0, buffer.length = 0", () => { const r = R(); r.push("abc"); const s = r._readableState; s.buffer.length = 0; s.length = 0; s.bufferIndex = 0; return r.readableLength; });
+attempt("buffer = []", () => { const r = R(); r.push("abc"); r._readableState.buffer = []; r._readableState.length = 0; return r.readableBuffer.length; });
+attempt("pipes, pipesCount", () => { const r = R(), w = W(); r.pipe(w); return r._readableState.pipes.length + " " + r._readableState.pipesCount + " " + (r._readableState.pipes[0] === w); });
+attempt("decoder, encoding", () => { const r = R(); r.setEncoding("utf8"); const s = r._readableState; return typeof s.decoder + " " + s.encoding + " " + s.defaultEncoding; });
+attempt("decoder = null", () => { const r = R(); r.setEncoding("utf8"); r._readableState.decoder = null; r._readableState.encoding = null; return r._readableState.decoder + " " + r.readableEncoding; });
+attempt("errored", () => { const w = W(); const e = new Error("x"); w._writableState.errored = e; return (w.errored === e) + " " + (w._writableState.errored === e); });
+attempt("writable side", () => { const w = W(), s = w._writableState; w.cork(); w.write("a"); w.write("b"); return [s.corked, s.bufferedRequestCount, s.getBuffer().length, s.getBuffer()[0].encoding, typeof s.getBuffer()[0].callback, s.pendingcb, s.writing, s.allBuffers, s.allNoop].join(); });
+attempt("decodeStrings = false", () => { const w = W(); w._writableState.decodeStrings = false; return w._writableState.decodeStrings; });
+attempt("onwrite called by hand", () => { let cb; const w = new Writable({ write(c, e, f) { cb = f; } }); w.write("a"); const same = cb === w._writableState.onwrite; w._writableState.onwrite(); return same + " " + w._writableState.writing; });
+attempt("onwrite wrapped", () => { let called = 0; const w = W(), s = w._writableState, o = s.onwrite; s.onwrite = function (er) { called++; return o(er); }; w.write("a"); return called; });
+attempt("writecb, afterWriteTickInfo, buffered", () => { const s = W()._writableState; return typeof s.writecb + " " + s.afterWriteTickInfo + " " + s.buffered.length; });
+attempt("delete pendingcb (test-stream-finished.js)", () => { const w = W(); delete w._writableState.pendingcb; return w._writableState.pendingcb; });
+attempt("extra properties", () => { const s = R()._readableState; s.awaitDrain = 0; s.mine = "x"; return s.awaitDrain + s.mine + " " + ("mine" in s); });
+attempt("state shared with a wrapper", () => { const inner = W(); const outer = Object.create(Writable.prototype); outer._writableState = inner._writableState; return outer.writable + " " + outer.writableLength + " " + (outer instanceof Writable); });
+attempt("state made again", () => { const r = R(); r._readableState = new Readable.ReadableState({ objectMode: true }, r, false); return r.readableObjectMode + " " + r.push({}); });
+attempt("instanceof", () => (R()._readableState instanceof Readable.ReadableState) + " " + (W()._writableState instanceof Writable.WritableState) + " " + ({ _writableState: W()._writableState } instanceof Writable));
+attempt("a mock state on a real prototype", () => { const f = Object.create(Readable.prototype); f._readableState = { destroyed: true, endEmitted: false, length: 3, flowing: null, objectMode: true }; return [f.destroyed, f.readableEnded, f.readableLength, f.readableFlowing, f.readableObjectMode, f.readable].join(); });
+attempt("a mock state on a real Writable prototype", () => { const f = Object.create(Writable.prototype); f._writableState = { length: 3, highWaterMark: 7, corked: 1 }; f.destroyed = true; return [f.destroyed, f.writableFinished, f.writableLength, f.writableHighWaterMark, f.writableCorked, f.writable].join(); });
+attempt("no state at all", () => { const f = Object.create(Duplex.prototype); return [f.destroyed, f.readable, f.writable, f.readableEnded, f.writableFinished, f.closed, f.errored].join(); });
+console.log("PART 2");
+attempt("keys", () => Object.keys(R()._readableState).join() + " | " + Object.keys(W()._writableState).join());
+attempt("JSON", () => JSON.stringify(R()._readableState));
+attempt("Object.assign, spread", () => Object.keys(Object.assign({}, R()._readableState)).length + " " + Object.keys({ ...W()._writableState }).length);
+attempt("field of another type: length = '5'", () => { const s = R()._readableState; s.length = "5"; return typeof s.length; });
+attempt("field of another type: highWaterMark = undefined", () => { const s = R()._readableState; s.highWaterMark = undefined; return s.highWaterMark; });
+attempt("field of another type: highWaterMark = null", () => { const s = W()._writableState; s.highWaterMark = null; return s.highWaterMark; });
+attempt("field of another type: pipes = null", () => { const s = R()._readableState; s.pipes = null; return s.pipes; });
+attempt("field of another type: buffer = a list object", () => { const s = R()._readableState; s.buffer = { head: null, tail: null, length: 0 }; return typeof s.buffer; });
+attempt("field of another type: onwrite = null", () => { const s = W()._writableState; s.onwrite = null; return s.onwrite; });
+attempt("field of another type: corked = true", () => { const s = W()._writableState; s.corked = true; return s.corked; });
+attempt("field of another type: flags = 1.5", () => { const s = W()._writableState; s.flags = 1.5; return s.flags; });
+attempt("delete a field", () => { const s = R()._readableState; delete s.awaitDrainWriters; return "awaitDrainWriters" in s; });
+attempt("delete length", () => { const s = R()._readableState; delete s.length; return s.length; });
+attempt("defineProperty: a field made an accessor", () => { const s = R()._readableState; let n = 0; Object.defineProperty(s, "length", { get() { n++; return 0; }, set() {}, configurable: true }); return s.length + " " + n; });
+attempt("defineProperty: a field made read-only", () => { const s = R()._readableState; Object.defineProperty(s, "highWaterMark", { value: 5, writable: false }); try { s.highWaterMark = 6; } catch {} return s.highWaterMark; });
+attempt("freeze", () => { const s = R()._readableState; Object.freeze(s); return Object.isFrozen(s); });
+attempt("seal", () => { const s = R()._readableState; Object.seal(s); return Object.isSealed(s); });
+attempt("preventExtensions", () => { const s = R()._readableState; Object.preventExtensions(s); return Object.isExtensible(s); });
+attempt("setPrototypeOf", () => { const s = R()._readableState; Object.setPrototypeOf(s, { hello: 1 }); return s.hello + " " + s.ended; });
+attempt("heir", () => { class H extends Readable.ReadableState { get mine() { return 1; } } const h = new H({ objectMode: true }); return h.mine + " " + h.objectMode + " " + (h instanceof Readable.ReadableState); });
+attempt("called without new", () => { const o = {}; Readable.ReadableState.call(o, {}, null, false); return Object.keys(o).length > 0; });
+attempt("Reflect.construct with another new.target", () => { function T() {} const s = Reflect.construct(Readable.ReadableState, [{}], T); return (s instanceof T) + " " + s.highWaterMark; });
+attempt("Proxy around a state", () => { const r = R(); r._readableState = new Proxy(r._readableState, {}); return r.readableLength + " " + r.push("a"); });
+attempt("Proxy around a stream", () => { const p = new Proxy(R(), {}); return p.readableLength + " " + p.push("a") + " " + p.readableLength; });
+attempt("heir of a state (Object.create)", () => { const r = R(); r._readableState = Object.create(r._readableState); return r.readableLength + " " + r.push("a"); });
+console.log("PART 3");
+// The stream is used after its state was altered in a way that leaves every field what it was.
+function use(r) { const pushed = r.push("ab"); const first = String(r.read()); r.push("cd"); return [pushed, first, r.readableLength, r.readableFlowing, r.readableEnded, r.destroyed, String(r.read(1)), r._readableState.length].join(); }
+function write(w) { const a = w.write("ab"); w.cork(); w.write("cd"); const buffered = w.writableLength; w.uncork(); return [a, buffered, w.writableLength, w.writableCorked, w.writableNeedDrain, w.writableEnded, w._writableState.pendingcb].join(); }
+const alterations = [
+  ["nothing", s => s],
+  ["a field removed and stored again", s => { const n = s.length; delete s.length; s.length = n; }],
+  ["a field that holds anything removed", s => { delete s.erroredValue; }],
+  ["an accessor over highWaterMark", s => { let n = s.highWaterMark; Object.defineProperty(s, "highWaterMark", { get() { return n; }, set(v) { n = v; }, configurable: true, enumerable: true }); }],
+  ["a field hidden", s => { Object.defineProperty(s, "length", { enumerable: false }); }],
+  ["sealed", s => { Object.seal(s); }],
+  ["not extensible", s => { Object.preventExtensions(s); }],
+  ["an heir of its prototype for a prototype", s => { Object.setPrototypeOf(s, Object.create(Object.getPrototypeOf(s))); }],
+  ["more properties", s => { s.mine = 1; s[0] = "zero"; s[Symbol.for("mine")] = 2; }],
+];
+for (const [name, alter] of alterations) {
+  attempt("a readable, " + name, () => { const r = R(); alter(r._readableState); return use(r) + " | " + Object.keys(r._readableState).join(); });
+  attempt("a readable in use, " + name, () => { const r = R(); r.push("xy"); alter(r._readableState); return use(r); });
+  attempt("a writable, " + name, () => { const w = W(); alter(w._writableState); return write(w) + " | " + Object.keys(w._writableState).join(); });
+  attempt("a duplex, " + name, () => { const d = D(); alter(d._readableState); alter(d._writableState); return use(d) + " | " + write(d); });
+}
+attempt("altered by a listener in the middle of a read", () => { const r = R(); r.once("data", () => { delete r._readableState.erroredValue; r._readableState.mine = 1; Object.seal(r._readableState); }); r.push("ab"); r.resume(); r.push("cd"); return [r.readableLength, r.readableFlowing, "mine" in r._readableState].join(); });
+attempt("a frozen state", () => { const r = R(); Object.freeze(r._readableState); try { r.push("ab"); return "pushed"; } catch (e) { return e.constructor.name; } });
+//// stream-throws-non-object.js
+const stream = require("node:stream");
+const { Readable, Writable, Duplex, Transform, PassThrough, pipeline, finished, compose, addAbortSignal } = stream;
+const promises = require("node:stream/promises");
+const { once } = require("node:events");
+
+const show = value => (typeof value === "symbol" ? String(value) : typeof value === "bigint" ? value + "n" : typeof value === "string" ? JSON.stringify(value) : value instanceof Error ? value.name + " " + (value.code ?? "") + (value.cause !== undefined ? " cause " + show(value.cause) : "") + (value.errors ? " [" + value.errors.map(show).join() + "]" : "") : typeof value === "object" && value !== null ? "object" : String(value));
+let notes = [];
+const note = text => notes.push(text);
+process.on("uncaughtException", error => note("UNCAUGHT " + show(error)));
+process.on("unhandledRejection", error => note("UNHANDLED " + show(error)));
+const watch = (title, emitter) => {
+  for (const name of ["error", "close", "end", "finish"]) emitter.on(name, argument => note(title + " " + name + (name === "error" ? " " + show(argument) : "")));
+  return emitter;
+};
+const settle = async (title, promise) => {
+  try {
+    note(title + " resolves " + show(await promise));
+  } catch (error) {
+    note(title + " rejects " + show(error));
+  }
+};
+const drain = async readable => {
+  for await (const chunk of readable) note("chunk " + show(chunk));
+};
+const sink = () => new Writable({ objectMode: true, write(chunk, encoding, callback) { callback(); } });
+const source = () => Readable.from(["a", "b", "c"]);
+
+const roads = {
+  "from an async generator that throws": x => settle("for await", drain(Readable.from((async function* () { throw x; })()))),
+  "from an async generator that throws behind a chunk": x => settle("for await", drain(Readable.from((async function* () { yield 1; throw x; })()))),
+  "from a generator that throws": x => settle("for await", drain(Readable.from((function* () { yield 1; throw x; })()))),
+  "from a generator that yields a rejected promise": x => settle("for await", drain(Readable.from((function* () { yield Promise.reject(x); })()))),
+  "from an async generator that yields a rejected promise": x => settle("for await", drain(Readable.from((async function* () { yield Promise.reject(x); })()))),
+  "from an iterator whose next rejects": x => settle("for await", drain(Readable.from({ [Symbol.asyncIterator]() { return { next: () => Promise.reject(x) }; } }))),
+  "from an iterator whose next throws": x => settle("for await", drain(Readable.from({ [Symbol.iterator]() { return { next() { throw x; } }; } }))),
+  "from, listened to": x => new Promise(resolve => watch("readable", Readable.from((async function* () { throw x; })())).on("close", resolve).resume()),
+  "from, whose return throws": x => settle("for await", (async () => { for await (const chunk of Readable.from({ [Symbol.asyncIterator]() { return { next: async () => ({ done: false, value: 1 }), return() { throw x; } }; } })) break; })()),
+  map: x => settle("toArray", source().map(() => { throw x; }).toArray()),
+  "map, async": x => settle("toArray", source().map(async () => { throw x; }).toArray()),
+  filter: x => settle("toArray", source().filter(() => { throw x; }).toArray()),
+  flatMap: x => settle("toArray", source().flatMap(() => { throw x; }).toArray()),
+  forEach: x => settle("forEach", source().forEach(() => { throw x; })),
+  some: x => settle("some", source().some(() => { throw x; })),
+  every: x => settle("every", source().every(() => { throw x; })),
+  find: x => settle("find", source().find(() => { throw x; })),
+  reduce: x => settle("reduce", source().reduce(() => { throw x; }, 0)),
+  "toArray of a stream that fails": x => settle("toArray", Readable.from((async function* () { yield 1; throw x; })()).toArray()),
+  "take of a stream that fails": x => settle("toArray", Readable.from((async function* () { throw x; })()).take(2).toArray()),
+  "drop of a stream that fails": x => settle("toArray", Readable.from((async function* () { throw x; })()).drop(1).toArray()),
+  "fromWeb of a stream that errors": x => settle("for await", drain(Readable.fromWeb(new ReadableStream({ start(controller) { controller.error(x); } })))),
+  "fromWeb of a stream whose pull throws": x => settle("for await", drain(Readable.fromWeb(new ReadableStream({ pull() { throw x; } })))),
+  "toWeb of a stream that is destroyed": async x => { const readable = watch("readable", new Readable({ read() {} })); const reader = Readable.toWeb(readable).getReader(); readable.destroy(x); await settle("read", reader.read()); },
+  "Writable.fromWeb whose write throws": x => new Promise(resolve => { const writable = watch("writable", Writable.fromWeb(new WritableStream({ write() { throw x; } }))); writable.on("close", resolve); writable.write("a", error => note("callback " + show(error))); }),
+  "destroy of a readable": x => new Promise(resolve => watch("readable", new Readable({ read() {} })).on("close", resolve).destroy(x)),
+  "destroy of a writable": x => new Promise(resolve => watch("writable", sink()).on("close", resolve).destroy(x)),
+  "destroy of a duplex": x => new Promise(resolve => watch("duplex", new PassThrough()).on("close", resolve).destroy(x)),
+  "destroy with a callback": x => new Promise(resolve => watch("readable", new Readable({ read() {} })).on("close", resolve).destroy(x, error => note("callback " + show(error)))),
+  "destroy, then errored": async x => { const readable = watch("readable", new Readable({ read() {} })); readable.destroy(x); note("errored " + show(readable.errored)); await once(readable, "close"); note("errored " + show(readable.errored)); },
+  "destroy while it is iterated": x => { const readable = new Readable({ read() {} }); const promise = settle("for await", drain(readable)); readable.destroy(x); return promise; },
+  "_read throws": x => new Promise(resolve => watch("readable", new Readable({ read() { throw x; } })).on("close", resolve).resume()),
+  "_read destroys": x => new Promise(resolve => watch("readable", new Readable({ read() { this.destroy(x); } })).on("close", resolve).resume()),
+  "_destroy hands it on": x => new Promise(resolve => watch("readable", new Readable({ read() {}, destroy(error, callback) { callback(x); } })).on("close", resolve).destroy()),
+  "_destroy throws": x => new Promise(resolve => { const readable = watch("readable", new Readable({ read() {}, destroy() { throw x; } })); readable.on("close", resolve); readable.destroy(); }),
+  "_construct hands it on": x => new Promise(resolve => { const readable = watch("readable", new Readable({ read() {}, construct(callback) { callback(x); } })).on("close", resolve); setImmediate(() => readable.destroy()); }),
+  "_construct throws": x => new Promise(resolve => { const writable = watch("writable", new Writable({ write() {}, construct() { throw x; } })).on("close", resolve); setImmediate(() => writable.destroy()); }),
+  "_write hands it on": x => new Promise(resolve => { const writable = watch("writable", new Writable({ write(chunk, encoding, callback) { callback(x); } })); writable.on("close", resolve); writable.write("a", error => note("callback " + show(error))); if (!x) writable.end(); }),
+  "_write hands it on later": x => new Promise(resolve => { const writable = watch("writable", new Writable({ write(chunk, encoding, callback) { setImmediate(callback, x); } })); writable.on("close", resolve); writable.write("a", error => note("callback " + show(error))); writable.write("b", error => note("second callback " + show(error))); if (!x) writable.end(); }),
+  "_write throws": x => new Promise(resolve => { const writable = watch("writable", new Writable({ write() { throw x; } })); writable.on("close", resolve); try { writable.write("a", error => note("callback " + show(error))); } catch (error) { note("write throws " + show(error)); writable.destroy(); } }),
+  "_writev hands it on": x => new Promise(resolve => { const writable = watch("writable", new Writable({ writev(chunks, callback) { callback(x); } })); writable.on("close", resolve); writable.cork(); writable.write("a", error => note("callback " + show(error))); writable.write("b"); writable.uncork(); if (!x) writable.end(); }),
+  "_final hands it on": x => new Promise(resolve => { const writable = watch("writable", new Writable({ write(chunk, encoding, callback) { callback(); }, final(callback) { callback(x); } })); writable.on("close", resolve); writable.end(error => note("callback " + show(error))); }),
+  "_final throws": x => new Promise(resolve => { const writable = watch("writable", new Writable({ write(chunk, encoding, callback) { callback(); }, final() { throw x; } })); writable.on("close", resolve); writable.end(); }),
+  "_transform hands it on": x => new Promise(resolve => { const transform = watch("transform", new Transform({ transform(chunk, encoding, callback) { callback(x); } })); transform.on("close", resolve); transform.resume(); transform.end("a"); }),
+  "_transform throws": x => new Promise(resolve => { const transform = watch("transform", new Transform({ transform() { throw x; } })); transform.on("close", resolve); transform.resume(); try { transform.end("a"); } catch (error) { note("end throws " + show(error)); transform.destroy(); } }),
+  "_flush hands it on": x => new Promise(resolve => { const transform = watch("transform", new Transform({ transform(chunk, encoding, callback) { callback(); }, flush(callback) { callback(x); } })); transform.on("close", resolve); transform.resume(); transform.end("a"); }),
+  "emit error": x => new Promise(resolve => { const readable = watch("readable", new Readable({ read() {} })); readable.emit("error", x); readable.on("close", resolve); readable.destroy(); }),
+  "finished of a stream that is destroyed": x => new Promise(resolve => { const readable = watch("readable", new Readable({ read() {} })); finished(readable, error => { note("finished " + show(error)); resolve(); }); readable.destroy(x); }),
+  "finished, as a promise": x => { const writable = watch("writable", sink()); const promise = settle("finished", promises.finished(writable)); writable.destroy(x); return promise; },
+  "finished of a stream that had failed": async x => { const readable = watch("readable", new Readable({ read() {} })); readable.destroy(x); await once(readable, "close"); await settle("finished", promises.finished(readable)); },
+  "finished with a signal": x => { const controller = new AbortController(); const promise = settle("finished", promises.finished(new Readable({ read() {} }), { signal: controller.signal })); controller.abort(x); return promise; },
+  "pipeline whose source throws": x => new Promise(resolve => pipeline((async function* () { yield "a"; throw x; })(), sink(), error => { note("pipeline " + show(error)); resolve(); })),
+  "pipeline whose source function throws": x => new Promise(resolve => pipeline(async function* () { throw x; }, sink(), error => { note("pipeline " + show(error)); resolve(); })),
+  "pipeline whose transform throws": x => new Promise(resolve => pipeline(source(), async function* (chunks) { for await (const chunk of chunks) throw x; }, sink(), error => { note("pipeline " + show(error)); resolve(); })),
+  "pipeline whose last function rejects": x => new Promise(resolve => pipeline(source(), async chunks => { throw x; }, (error, value) => { note("pipeline " + show(error) + " " + show(value)); resolve(); })),
+  "pipeline whose source stream is destroyed": x => new Promise(resolve => { const readable = new Readable({ read() {} }); pipeline(readable, new PassThrough(), sink(), error => { note("pipeline " + show(error)); resolve(); }); readable.destroy(x); }),
+  "pipeline whose middle is destroyed": x => new Promise(resolve => { const middle = new PassThrough(); pipeline(new Readable({ read() {} }), middle, sink(), error => { note("pipeline " + show(error)); resolve(); }); middle.destroy(x); }),
+  "pipeline whose sink fails": x => new Promise(resolve => pipeline(source(), new Writable({ objectMode: true, write(chunk, encoding, callback) { callback(x); } }), error => { note("pipeline " + show(error)); resolve(); })),
+  "pipeline whose two ends fail": x => new Promise(resolve => { const readable = new Readable({ read() {} }); const writable = sink(); pipeline(readable, writable, error => { note("pipeline " + show(error)); resolve(); }); readable.destroy(x); writable.destroy(x); }),
+  "pipeline from a web stream that errors": x => new Promise(resolve => pipeline(new ReadableStream({ start(controller) { controller.error(x); } }), sink(), error => { note("pipeline " + show(error)); resolve(); })),
+  "pipeline from a web stream": x => new Promise(resolve => pipeline(new ReadableStream({ start(controller) { controller.enqueue(x ?? "nothing"); controller.close(); } }), sink(), error => { note("pipeline " + show(error)); resolve(); })),
+  "pipeline through a web transform that throws": x => new Promise(resolve => pipeline(source(), new TransformStream({ transform() { throw x; } }), sink(), error => { note("pipeline " + show(error)); resolve(); })),
+  "pipeline through a web transform": x => new Promise(resolve => pipeline(source(), new TransformStream(), sink(), error => { note("pipeline " + show(error)); resolve(); })),
+  "pipeline whose function returns a web stream that errors": x => new Promise(resolve => pipeline(source(), () => new ReadableStream({ start(controller) { controller.error(x); } }), sink(), error => { note("pipeline " + show(error)); resolve(); })),
+  "pipeline whose last function returns a web stream": x => new Promise(resolve => pipeline(source(), () => new ReadableStream({ start(controller) { controller.error(x); } }), error => { note("pipeline " + show(error)); resolve(); }).on("error", () => {}).resume()),
+  "pipeline into a web stream whose write throws": x => new Promise(resolve => pipeline(source(), new WritableStream({ write() { throw x; } }), error => { note("pipeline " + show(error)); resolve(); })),
+  "pipeline, as a promise": x => settle("pipeline", promises.pipeline((async function* () { throw x; })(), sink())),
+  "pipeline with a signal": x => { const controller = new AbortController(); const promise = settle("pipeline", promises.pipeline(new Readable({ read() {} }), sink(), { signal: controller.signal })); controller.abort(x); return promise; },
+  "pipe, and the source fails": x => new Promise(resolve => { const readable = watch("readable", new Readable({ read() {} })); const writable = watch("writable", sink()); readable.pipe(writable); readable.on("close", resolve); readable.destroy(x); }),
+  "pipe, and the sink fails": x => new Promise(resolve => { const readable = watch("readable", source()); const writable = watch("writable", new Writable({ objectMode: true, write(chunk, encoding, callback) { callback(x); } })); readable.pipe(writable); writable.on("close", () => setImmediate(resolve)); if (!x) readable.on("end", () => setImmediate(resolve)); }),
+  "compose whose function throws": x => settle("for await", drain(compose(source(), async function* (chunks) { for await (const chunk of chunks) throw x; }))),
+  "compose that is destroyed": x => new Promise(resolve => watch("composed", compose(new PassThrough(), new PassThrough())).on("close", resolve).destroy(x)),
+  "addAbortSignal": x => new Promise(resolve => { const controller = new AbortController(); watch("readable", addAbortSignal(controller.signal, new Readable({ read() {} }))).on("close", resolve); controller.abort(x); }),
+  "a signal in the options": x => new Promise(resolve => { const controller = new AbortController(); watch("writable", new Writable({ write() {}, signal: controller.signal })).on("close", resolve); controller.abort(x); }),
+  "Duplex.from an async function that rejects": x => new Promise(resolve => { const duplex = watch("duplex", Duplex.from(async chunks => { throw x; })); duplex.on("close", resolve); duplex.end("a"); }),
+  "Duplex.from an async generator function that throws": x => settle("for await", drain(Duplex.from(async function* (chunks) { throw x; }))),
+  "Duplex.from a promise that rejects": x => settle("for await", drain(Duplex.from(Promise.reject(x)))),
+  "Duplex.from a pair, and the readable fails": x => new Promise(resolve => { const readable = new Readable({ read() {} }); watch("duplex", Duplex.from({ readable, writable: sink() })).on("close", resolve); readable.destroy(x); }),
+  "an iterator that does not destroy on return": async x => { const readable = watch("readable", new Readable({ read() {} })); const promise = settle("for await", (async () => { for await (const chunk of readable.iterator({ destroyOnReturn: false })) note("chunk"); })()); readable.destroy(x); await promise; },
+  "the body of for await throws": x => { const readable = watch("readable", source()); return settle("for await", (async () => { for await (const chunk of readable) throw x; })()); },
+  "once error": x => { const readable = new Readable({ read() {} }); const promise = settle("once", Promise.race([once(readable, "end"), new Promise(resolve => readable.on("close", () => setImmediate(resolve, "closed")))])); readable.destroy(x); return promise; },
+  "unshift behind a failure": x => new Promise(resolve => { const readable = watch("readable", new Readable({ read() {} })); readable.on("close", resolve); readable.destroy(x); readable.unshift("a"); readable.push("b"); }),
+  "write behind a failure": x => new Promise(resolve => { const writable = watch("writable", sink()); writable.on("close", () => setImmediate(resolve)); writable.destroy(x); writable.write("a", error => note("callback " + show(error))); writable.end(error => note("end callback " + show(error))); }),
+  "stream.destroy": x => new Promise(resolve => { const readable = watch("readable", new Readable({ read() {} })); readable.on("close", resolve); stream.destroy(readable, x); }),
+};
+
+const values = ["text", "", 7, 0, NaN, true, false, null, undefined, Symbol("mine"), 10n];
+(async () => {
+  for (const road of Object.keys(roads)) {
+    for (const value of values) {
+      notes = [];
+      let timer;
+      try {
+        const late = new Promise(resolve => (timer = setTimeout(resolve, 3000, "late")));
+        if ((await Promise.race([roads[road](value), late])) === "late") note("LATE");
+      } catch (error) {
+        note("the road throws " + show(error));
+      }
+      clearTimeout(timer);
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+      console.log(road + " | " + show(value) + ": " + notes.join(" . "));
+    }
+  }
+})();
+//// system-error-names.ts
+// util.getSystemErrorName() and the errors that are named through it: one function, whoever asks for it; its checks, its name and its length are plain Bun's.
+import util from "node:util";
+import { constants } from "node:os";
+
+const known = [constants.errno.ENOENT, constants.errno.EACCES, constants.errno.ECONNREFUSED, 1, 4058, 4092];
+for (const number of known) console.log(-number, util.getSystemErrorName(-number), util.getSystemErrorMessage(-number));
+console.log(util.getSystemErrorName.name, util.getSystemErrorName.length, Object.keys(util).includes("getSystemErrorName"));
+for (const value of [0, 1, -1.5, -(2 ** 53), NaN, -Infinity, "-2", undefined, null, {}, 2n]) {
+  try {
+    console.log(util.getSystemErrorName(value as any));
+  } catch (error) {
+    console.log((error as any).name, (error as any).code, (error as Error).message);
+  }
+}
+const failed: any = (util as any)._errnoException(-constants.errno.ENOENT, "open", "a file");
+console.log(failed.message, failed.code, failed.errno === -constants.errno.ENOENT, failed.syscall, failed.constructor === Error, failed instanceof Error);
+try {
+  (util as any)._errnoException("no number", "open");
+} catch (error) {
+  console.log((error as any).code, (error as Error).message);
+}
+const replaced = util.getSystemErrorName;
+(util as any).getSystemErrorName = () => "REPLACED";
+console.log((util as any)._errnoException(-constants.errno.EACCES, "read").code);
+(util as any).getSystemErrorName = replaced;
+//// the-console-class-writes-to-the-streams-it-was-given.ts
+// console.Console is the class that a function of the library makes at the first read: an instance writes to the streams that it was given, and a method that only it calls is in the program.
+import { Console } from "node:console";
+import { Writable } from "node:stream";
+class Collected extends Writable {
+  text = "";
+  _write(chunk: Buffer, _encoding: string, done: () => void) { this.text += chunk.toString(); done(); }
+}
+const out = new Collected(), err = new Collected();
+const mine = new Console(out, err);
+mine.log("to %s", "out", { a: 1 }); mine.error("to err"); mine.warn([1, 2]); mine.info(new Map([[1, 2]]));
+mine.group("group"); mine.log("indented"); mine.groupEnd(); mine.table([{ a: 1 }]); mine.count(); mine.assert(false, "asserted");
+console.log(JSON.stringify(out.text), JSON.stringify(err.text));
+console.log(Console === console.Console, console.Console === console.Console, mine instanceof Console, typeof Console, Console.name, require("node:console") === console, console instanceof Console);
+const withOptions = new console.Console({ stdout: out, stderr: err, colorMode: false, inspectOptions: { depth: 0 } });
+out.text = ""; withOptions.log({ deep: { deeper: 1 } }); console.log(JSON.stringify(out.text));
+try { new Console({} as any); } catch (e) { console.log((e as any).code); }
+console.log((console as any)._stdout === process.stdout, (console as any)._stderr === process.stderr, typeof (console as any)._stdout.write, Object.getOwnPropertyDescriptor(console, "_stdout")!.enumerable, "value" in Object.getOwnPropertyDescriptor(console, "Console")!);
+//// the-environment-holds-strings-whatever-is-stored.ts
+// process.env, Bun.env and import.meta.env are one object. It holds strings alone: whatever is stored or defined is made a string, by code that only the object calls.
+const say = (...values: unknown[]) => console.log(...values);
+const env = process.env as Record<string, any>;
+if (env.IS_THE_CHILD) { say(env.CONVERTED, env.NUMBER); process.exit(0); }
+say(process.env === Bun.env, process.env === import.meta.env, typeof env.PATH, env.NOBODY_HAS_SET_THIS, typeof env.toString, env.constructor === Object, "PATH" in env, "NOBODY_HAS_SET_THIS" in env);
+env.TEXT = "text"; env.NUMBER = 1.5; env.FLAG = true; say(env.TEXT, env.NUMBER, typeof env.NUMBER, env.FLAG, typeof env.FLAG, Bun.env.TEXT, import.meta.env.TEXT);
+env.CONVERTED = { toString() { say("toString ran"); return "from toString"; } }; say(env.CONVERTED, typeof env.CONVERTED);
+env.PRIMITIVE = { [Symbol.toPrimitive](hint: string) { say("toPrimitive ran with", hint); return 7; } }; say(env.PRIMITIVE, typeof env.PRIMITIVE);
+env.VALUE = { toString: undefined, valueOf() { say("valueOf ran"); return "from valueOf"; } }; say(env.VALUE);
+env.NOTHING = undefined; env.NULL = null; env.LIST = [1, [2, 3]]; env.BIG = 10n; say(env.NOTHING, typeof env.NOTHING, env.NULL, typeof env.NULL, env.LIST, env.BIG);
+env[7] = { toString: () => "under an index" }; say(env[7], env["7"], typeof env[7]);
+const key = ["COM", "PUTED"].join(""); env[key] = { toString: () => "under a computed key" }; say(env.COMPUTED, env[key].length);
+Object.defineProperty(env, "DEFINED", { value: { toString: () => "defined" }, writable: true, enumerable: true, configurable: true }); say(env.DEFINED, typeof env.DEFINED);
+Object.assign(env, { ASSIGNED: { toString: () => "assigned" } }); say(env.ASSIGNED, typeof env.ASSIGNED);
+say(Reflect.set(env, "REFLECTED", { toString: () => "reflected" }), env.REFLECTED, typeof env.REFLECTED);
+for (const refused of [() => { env.SYMBOL = Symbol("s"); }, () => { env[Symbol("key") as any] = "x"; }, () => { env.THROWS = { toString() { throw new RangeError("from toString"); } }; }, () => Object.defineProperty(env, "ACCESSOR", { get: () => 1 }), () => Object.defineProperty(env, "HIDDEN", { value: "x" })])
+  try { refused(); say("no error"); } catch (e) { say((e as Error).name, (e as any).code); }
+say(delete env.TEXT, env.TEXT, "TEXT" in env, Object.keys(env).includes("NUMBER"), Object.entries(env).every(([name, value]) => typeof name === "string" && typeof value === "string"));
+const copy = { ...env }; say(copy.NUMBER, typeof copy.CONVERTED, JSON.parse(JSON.stringify(env)).LIST);
+let strings = 0; for (const name in env) if (typeof env[name] === "string") strings++; say(strings === Object.keys(env).length);
+env.TZ = "America/New_York"; say(env.TZ, new Date(0).getHours()); env.TZ = { toString: () => "UTC" }; say(env.TZ, new Date(0).getHours());
+const heir = Object.create(env); const kept = { toString() { say("never run"); return ""; } }; heir.OWN = kept; say(heir.OWN === kept, env.OWN, heir.NUMBER);
+say(Bun.spawnSync({ cmd: [process.execPath, Bun.main], env: { ...env, IS_THE_CHILD: "1" } }).stdout.toString().trim());
+Object.setPrototypeOf(env, { INHERITED: () => "a function above the environment" }); say(env.INHERITED(), typeof env.toString, env.NUMBER); Object.setPrototypeOf(env, Object.prototype);
+const replaced = { HOME: () => "a function of the program" }; (process as any).env = replaced; say((process.env as any).HOME(), process.env === (replaced as any), Bun.env === (replaced as any));
+//// the-environment-warns-about-what-is-no-string-number-or-boolean.ts
+// With pending deprecations on, the first value stored into process.env that is no string, number or boolean is warned about: the listeners of the program hear of it.
+process.on("warning", warning => console.log("listener ran:", warning.name, (warning as any).code, warning.message.slice(0, 40)));
+process.env.A = "text"; process.env.B = 1 as any; process.env.C = true as any;
+console.log("nothing was warned about so far");
+process.env.D = undefined; process.env.E = null as any;
+console.log(process.env.D, process.env.E);
+//// the-exports-of-a-native-module-are-captured-when-it-is-first-loaded/imports-the-name-later.mjs
+import { argv } from "node:process";
+import * as everything from "node:process";
+export const read = () => argv;
+export const star = () => everything.argv;
+//// the-exports-of-a-native-module-are-captured-when-it-is-first-loaded/is-the-first-to-import-the-buffer-module.mjs
+import { INSPECT_MAX_BYTES } from "node:buffer";
+import * as everything from "node:buffer";
+export const read = () => INSPECT_MAX_BYTES;
+export const star = () => everything.INSPECT_MAX_BYTES;
+//// the-exports-of-a-native-module-are-captured-when-it-is-first-loaded/is-the-second-to-import-the-buffer-module.mjs
+import { INSPECT_MAX_BYTES } from "node:buffer";
+export const read = () => INSPECT_MAX_BYTES;
+//// the-exports-of-a-native-module-are-captured-when-it-is-first-loaded/main.mjs
+// The exports of a module that native code makes are captured once, when the module is first loaded as an ES module: not when an importer runs, and not at the first use of the name.
+import { titleAtTheStart } from "./runs-first-and-stores.mjs";
+import process, { argv, title } from "node:process";
+console.log("a module that ran in front of this one has stored:", argv[0] === "stored by the first module", title === process.title, title === titleAtTheStart, process.argv[0]);
+process.title = title;
+
+process.argv = ["stored by main"];
+const later = await import("./imports-the-name-later.mjs");
+console.log("a module that is loaded behind a store, of a module that was loaded in front of it:", later.read()[0] === argv[0], later.read() === argv, later.star()[0] === argv[0]);
+
+const buffer = process.getBuiltinModule("node:buffer");
+buffer.INSPECT_MAX_BYTES = 7;
+const first = await import("./is-the-first-to-import-the-buffer-module.mjs");
+console.log("a module that is the first to load it, behind a store:", first.read(), first.star());
+buffer.INSPECT_MAX_BYTES = 8;
+const second = await import("./is-the-second-to-import-the-buffer-module.mjs");
+console.log("and the second, behind another store:", second.read(), first.read(), buffer.INSPECT_MAX_BYTES);
+
+const namespace = await import("node:buffer");
+buffer.INSPECT_MAX_BYTES = 9;
+console.log("the namespace object:", namespace.INSPECT_MAX_BYTES, namespace["INSPECT" + "_MAX_BYTES"], namespace.default.INSPECT_MAX_BYTES);
+//// the-exports-of-a-native-module-are-captured-when-it-is-first-loaded/runs-first-and-stores.mjs
+// On Windows the title is the console's: a process starts with what the last one there has left. Only a text made out of it is known to differ from it.
+export const titleAtTheStart = process.title;
+process.argv = ["stored by the first module"];
+process.title = titleAtTheStart + ", stored by the first module";
+//// the-formatter-of-console-log-calls-to-json-with-no-operand.ts
+// console.log prints some objects of the host by what their toJSON answers. It calls what it finds under the name, on the object and with no operand; a function that only it calls is in the program.
+const say = (...values: unknown[]) => console.log(...values);
+const headers = new Headers({ a: "1" }); say(headers);
+(headers as any).toJSON = function (this: Headers, ...operands: unknown[]) { say("toJSON of the program ran", operands.length, this === headers); return { replaced: true, inner: { toJSON() { say("never run"); return 1; } } }; };
+say(headers); say(Bun.inspect(headers).length > 0);
+const params = new URLSearchParams("x=1&y=2"); say(params);
+(params as any).toJSON = () => ["from", "an", "arrow"]; say(params);
+const form = new FormData(); form.append("k", "v"); say(form);
+Object.defineProperty(form, "toJSON", { value: function () { return { size: arguments.length }; } }); say(form);
+say(JSON.parse('{"a":[1,{"b":null}],"toJSON":1}'), JSON.parse("[1,2]"), JSON.parse('"text"'), { toJSON() { say("never run either"); return 1; } });
+try { (headers as any).toJSON = () => { throw new RangeError("from toJSON"); }; say(headers); } catch (e) { say((e as Error).name); }
+//// the-library-describes-a-proxy-in-its-error-without-asking-it.cjs
+// The text of ERR_INVALID_ARG_TYPE says what was received. Plain Bun asks a proxy around an array and calls it an instance of Array.
+// An executable writes the description without running a trap: a handler without `get` has none to run, and the proxy is described by its target.
+const vm = require("node:vm");
+for (const value of [new Proxy([], {}), [], new Proxy(function named() {}, {}), 1, "text", Symbol("s"), null]) {
+  try {
+    vm.createContext({}, value);
+    console.log("accepted");
+  } catch (error) {
+    console.log(error.code, error.message);
+  }
+}
+//// the-names-of-bun-are-listed-by-for-in.js
+// A for-in looks for each name that it hands out, and the host makes a member when it is first looked for. What makes the members of `Bun` is in the executable, so the walk ends as in plain Bun.
+let count = 0;
+for (const name in Bun) count++;
+console.log(count > 3);
+//// the-names-of-process-are-listed-by-for-in.js
+// A for-in looks for each name that it hands out, and the host makes a member when it is first looked for. What makes the members of `process` is in the executable, so the walk ends as in plain Bun.
+let count = 0;
+for (const name in process) count++;
+console.log(count > 3);
+//// the-namespace-object-of-a-native-module-reads-every-export.mjs
+// The loader fills the namespace object of a module that native code makes by reading each export off the module's object. One of node:module's is made at its first read, by a function of Bun that is written in JavaScript.
+import * as nodeModule from "node:module";
+const read = (object, name) => object[name];
+console.log(typeof read(nodeModule, "wrapper"), typeof read(nodeModule, "_cache"), read(nodeModule, "_cache") === require.cache);
+//// the-process-object-is-whole-at-the-first-statement.ts
+// The run time looks up the built-ins that compiled code names while the global object is still being created, and that builds the lazy members of `process`.
+// Whatever they are built from has to be there by then: the standard streams queue ticks from native code, and a tick queued that way has to reach the one queue of the thread.
+declare const console: { log(...values: unknown[]): void };
+const order: string[] = [];
+// A member that the program may replace is looked up before the program starts, so that compiled code can tell the original from the replacement.
+if (process.argv.length > 7) {
+  process.nextTick = (() => order.push("replaced")) as typeof process.nextTick;
+  Object.defineProperty(process, "stdin", { value: undefined });
+}
+process.nextTick(() => order.push("tick 1"));
+console.log(typeof process.stdin, typeof process.stdout, typeof process.stderr, typeof process.nextTick);
+console.log(typeof process.stdin.isTTY === "boolean" || process.stdin.isTTY === undefined, typeof process.stdin.on, typeof process.stdout.write);
+process.stdin.pause();
+process.nextTick((a: string, b: number) => order.push("tick 2 " + a + b), "x", 1);
+queueMicrotask(() => order.push("microtask"));
+Promise.resolve().then(() => order.push("promise"));
+setTimeout(() => {
+  process.nextTick(() => { order.push("tick 3"); console.log(order.join(" | ")); });
+}, 0);
+process.stdout.write("written\n", () => order.push("write callback"));
+//// the-text-of-a-buffer-with-every-kind-of-receiver-encoding-and-bound.js
+// buffer.toString(encoding, start, end): every kind of receiver, encoding and bound.
+const show = value => value instanceof Error ? "throws " + value.name + (value.code ? " " + value.code : "") : typeof value === "string" ? JSON.stringify(value) : String(value);
+const attempt = f => { try { return show(f()); } catch (error) { return show(error); } };
+function detached() { const view = Buffer.from(new ArrayBuffer(8)); structuredClone(view.buffer, { transfer: [view.buffer] }); return view; }
+class Below extends Buffer {}
+const receivers = [() => Buffer.from("Product 17"), () => Buffer.from(""), () => Buffer.from("x"), () => Buffer.from("héllo"), () => Buffer.from("日本語"), () => Buffer.from([0xff, 0xfe, 0x41, 0x80, 0xc3]), () => Buffer.from([0xc3, 0xa9, 0xe6, 0x97]), () => Buffer.from([0, 1, 127, 128]), () => Buffer.from("a".repeat(300)), () => Buffer.from("0123456789").subarray(2, 8), () => Buffer.from(new ArrayBuffer(16), 4, 4).fill(66), () => Buffer.from("😀!"), () => Buffer.from([0xef, 0xbb, 0xbf, 0x41]), detached, () => Buffer.from(new ArrayBuffer(4, { maxByteLength: 8 })).fill(67), () => Buffer.from(new SharedArrayBuffer(4)).fill(68), () => Object.assign(Buffer.from("own"), { extra: 1 })];
+const encodings = [undefined, "utf8", "utf-8", "UTF8", "Utf-8", "ascii", "ASCII", "latin1", "binary", "LATIN1", "hex", "base64", "base64url", "ucs2", "utf16le", "ucs-2", "", "nope", null, 5, true, {}, { toString() { return "hex"; } }, "utf" + JSON.parse('"8"'), Symbol.iterator];
+const bounds = [undefined, 0, 1, 2, 5, 9, 10, 11, 1000, -1, -5, -0, 1.5, 2.9, NaN, Infinity, -Infinity, "2", "x", null, true, {}, { valueOf() { return 3; } }, 2 ** 31, 2 ** 32 + 1, 1n];
+function plain(buffer) { const text = buffer.toString(); return text; }
+function named(buffer, encoding) { const text = buffer.toString(encoding); return text; }
+function ranged(buffer, encoding, start, end) { const text = buffer.toString(encoding, start, end); return text; }
+function from(buffer, start) { const text = buffer.toString("utf8", start); return text; }
+function borrowed(view, encoding, start, end) { return Buffer.prototype.toString.call(view, encoding, start, end); }
+function known(text) { const buffer = Buffer.from(text); return buffer.toString() + "|" + buffer.toString("latin1") + "|" + buffer.toString("utf8", 1, 3) + "|" + buffer.toString("ascii"); }
+let lines = [];
+for (let round = 0; round < 3; round++) {
+  lines = [];
+  receivers.forEach((receiver, r) => {
+    lines.push("by call " + r + ": " + encodings.map(encoding => attempt(() => borrowed(receiver(), encoding))).join(" "));
+    for (const encoding of [undefined, "utf-8", "latin1", "binary", "ascii", "base64"]) lines.push("range by call " + r + " " + encoding + ": " + bounds.map(bound => attempt(() => borrowed(receiver(), encoding, bound, 6)) + attempt(() => borrowed(receiver(), encoding, 1, bound)) + attempt(() => borrowed(receiver(), encoding, bound))).join(" "));
+    lines.push("plain " + r + ": " + attempt(() => plain(receiver())) + " " + encodings.map(encoding => attempt(() => named(receiver(), encoding))).join(" "));
+    lines.push("from " + r + ": " + bounds.map(start => attempt(() => from(receiver(), start))).join(" "));
+    for (const encoding of [undefined, "latin1", "ascii", "hex"]) lines.push("range " + r + " " + encoding + ": " + bounds.map(bound => attempt(() => ranged(receiver(), encoding, bound, 6)) + attempt(() => ranged(receiver(), encoding, 1, bound))).join(" "));
+  });
+  for (const other of [() => new Uint8Array([65, 66, 200]), () => new Below(3).fill(69), () => new Uint8ClampedArray([65]), () => new Int8Array([65]), () => new Uint16Array([65]), () => new DataView(new ArrayBuffer(2)), () => new ArrayBuffer(2), () => [65], () => "text", () => 5, () => null, () => undefined, () => ({ length: 1, 0: 65 })]) lines.push("borrowed: " + attempt(() => borrowed(other())) + " " + attempt(() => borrowed(other(), "latin1", 0, 2)) + " " + attempt(() => borrowed(other(), "hex")));
+  lines.push(["row", "", "hé", "日本", "abcdef"].map(text => attempt(() => known(text))).join(" "));
+}
+console.log(lines.join("\n"));
+const shrinking = Buffer.from(new ArrayBuffer(8, { maxByteLength: 16 })).fill(70); console.log(attempt(() => ranged(shrinking, "utf8", { valueOf() { shrinking.buffer.resize(2); return 0; } }, 8)));
+const order = []; attempt(() => ranged(Buffer.from("abc"), { toString() { order.push("encoding"); return "utf8"; } }, { valueOf() { order.push("start"); return 0; } }, { valueOf() { order.push("end"); return 2; } })); console.log(order.join());
+const text = plain(Buffer.from("same")); console.log(text === "same", text.length, text + "!", new Map([["same", 1]]).get(text), ({ same: 2 })[text]);
+//// the-three-standard-blobs-of-bun-are-made-once-and-kept.ts
+// Bun.stdin, Bun.stdout and Bun.stderr are blobs that the realm makes once and keeps.
+const say = (...values: unknown[]) => console.log(...values);
+say(Bun.stdout === Bun.stdout, Bun.stdout === (Bun.stderr as unknown), Bun.stdout instanceof Blob, Bun.stdin instanceof Blob, Object.getPrototypeOf(Bun.stderr) === Blob.prototype, typeof Bun.stdout.size, typeof Bun.stdout.type);
+(Bun.stdout as any).marker = () => "a function put on the kept blob"; say((Bun.stdout as any).marker(), Object.keys(Bun.stdout).join());
+const writer = Bun.stdout.writer(); say(typeof writer.write("written through a writer\n"), typeof writer.flush());
+Bun.write(Bun.stdout, "written by Bun.write\n").then(bytes => {
+  say(bytes, typeof Bun.stdin.stream, typeof Bun.stdin.text, (Bun.stderr as any).name, (Bun.stdout as any).nothing);
+  (Bun as any).stdout = { replaced: () => "replaced" }; say((Bun.stdout as any).replaced?.() ?? "Bun.stdout cannot be replaced");
+});
+//// tick-object-changed-before-its-tick-runs.ts
+// The TickObject that an `init` hook of node:async_hooks is given is what process.nextTick() queued: its `callback`, `args` and `frame` are read when the tick runs, once each, in that order, outside the tick's async context. A tick is called from the same depth with a hook enabled and without.
+import { AsyncLocalStorage, createHook } from "node:async_hooks";
+
+const lines: string[] = [];
+const kept: any[] = [];
+const hook = createHook({
+  init(_id, type, _trigger, resource) {
+    if (type === "TickObject") kept.push(resource);
+  },
+}).enable();
+const last = () => kept[kept.length - 1];
+const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+function first(...all: unknown[]) {
+  lines.push("first given " + JSON.stringify(all));
+}
+function second(...all: unknown[]) {
+  lines.push("second given " + JSON.stringify(all));
+}
+
+process.nextTick(first, 1, 2);
+last().callback = second;
+process.nextTick(first, 1, 2);
+last().args = ["other"];
+process.nextTick(first);
+last().args = [1, 2, 3, 4, 5, 6];
+process.nextTick(first, 1);
+last().args = undefined;
+process.nextTick(first, 1, 2, 3, 4, 5);
+last().args.length = 2;
+process.nextTick(first, 1);
+last().args = [];
+await turn();
+
+lines.push("-- frames");
+const storage = new AsyncLocalStorage<string>();
+const report = (name: string) => lines.push(name + " sees " + storage.getStore());
+storage.run("a", () => process.nextTick(report, "queued under a"));
+const underA = last();
+storage.run("b", () => process.nextTick(report, "queued under b"));
+const underB = last();
+[underA.frame, underB.frame] = [underB.frame, underA.frame];
+await turn();
+
+lines.push("-- changed by a hook");
+const changing = createHook({
+  init(_id, type, _trigger, resource: any) {
+    if (type === "TickObject" && resource.callback === first) resource.args = ["from the hook"];
+  },
+}).enable();
+process.nextTick(first, "from the caller");
+changing.disable();
+await turn();
+
+lines.push("-- accessors");
+storage.run("c", () => process.nextTick(report, "behind accessors"));
+const watched = last();
+for (const key of ["frame", "args", "callback"]) {
+  const value = watched[key];
+  Object.defineProperty(watched, key, {
+    get() {
+      lines.push(key + " read, store " + storage.getStore());
+      return value;
+    },
+  });
+}
+await turn();
+
+lines.push("-- not a function");
+process.once("uncaughtException", error => lines.push("uncaught: " + (error as Error).name));
+process.nextTick(first, 1);
+last().callback = 5;
+process.nextTick(second, "behind it");
+await turn();
+
+lines.push("-- depth");
+const depths: number[] = [];
+const measure = (..._all: unknown[]) => depths.push(new Error().stack!.split("\n").length);
+process.nextTick(measure);
+process.nextTick(measure, 1, 2);
+process.nextTick(measure, 1, 2, 3, 4, 5, 6);
+await turn();
+hook.disable();
+process.nextTick(measure);
+process.nextTick(measure, 1, 2);
+process.nextTick(measure, 1, 2, 3, 4, 5, 6);
+await turn();
+lines.push(depths.length + " depths, all the same: " + depths.every(depth => depth === depths[0]));
+console.log(lines.join("\n"));
+//// tty-streams-define-their-prototypes.ts
+// node:tty replaces the `prototype` of its two constructor functions by accessors that fill in the real one at the first read. Express loads it through `debug`.
+import tty from "node:tty";
+console.log(typeof tty.WriteStream, typeof tty.ReadStream, typeof tty.isatty);
+console.log(typeof tty.WriteStream.prototype.clearLine, typeof tty.ReadStream.prototype.setRawMode);
+console.log(Object.getOwnPropertyDescriptor(tty.WriteStream, "prototype")!.configurable, tty.isatty(-1));
+//// util-types-function-kinds.ts
+// util.types.isAsyncFunction, isGeneratorFunction and isGeneratorObject classify every kind of function and generator object by its declaration, before and after a property is added to it.
+import { types } from "node:util";
+
+function declaration() {}
+const expression = function () {};
+const arrow = () => {};
+async function asyncFunction() {}
+const asyncArrow = async () => {};
+function* generator() {
+  yield 1;
+}
+async function* asyncGenerator() {
+  yield 1;
+}
+class C {
+  method() {}
+  async asyncMethod() {}
+  *generatorMethod() {
+    yield 1;
+  }
+  async *asyncGeneratorMethod() {
+    yield 1;
+  }
+  static async staticAsyncMethod() {}
+  get getter() {
+    return 1;
+  }
+}
+
+function classify(name: string, value: unknown) {
+  console.log(name, types.isAsyncFunction(value), types.isGeneratorFunction(value), types.isGeneratorObject(value));
+}
+function classifyTwice(entries: [string, unknown][]) {
+  for (const [name, value] of entries) {
+    classify(name, value);
+    (value as any).extra = 1;
+    classify(name + " with a property", value);
+  }
+}
+
+classifyTwice([
+  ["function declaration", declaration],
+  ["function expression", expression],
+  ["arrow function", arrow],
+  ["async function", asyncFunction],
+  ["async arrow function", asyncArrow],
+  ["generator function", generator],
+  ["async generator function", asyncGenerator],
+  ["method", C.prototype.method],
+  ["async method", C.prototype.asyncMethod],
+  ["generator method", C.prototype.generatorMethod],
+  ["async generator method", C.prototype.asyncGeneratorMethod],
+  ["static async method", C.staticAsyncMethod],
+  ["getter", Object.getOwnPropertyDescriptor(C.prototype, "getter")!.get],
+  ["class", C],
+  ["bound async function", asyncFunction.bind(null)],
+  ["bound generator function", generator.bind(null)],
+]);
+
+const finished = generator();
+while (!finished.next().done);
+classifyTwice([
+  ["generator object", generator()],
+  ["async generator object", asyncGenerator()],
+  ["generator method object", new C().generatorMethod()],
+  ["finished generator object", finished],
+]);
+
+const others: [string, unknown][] = [
+  ["Math.max", Math.max],
+  ["Promise.resolve", Promise.resolve],
+  ["object with next", { next() {} }],
+  ["array iterator", [][Symbol.iterator]()],
+  ["promise", Promise.resolve()],
+  ["null", null],
+  ["number", 1],
+  ["string", "function*"],
+];
+for (const [name, value] of others) classify(name, value);
+//// validators-of-node-modules-pass-and-refuse.ts
+// The native validators of node's modules (src/runtime/node/node_validators.bind.ts) pass and refuse as in plain Bun, with two, three and four arguments, and compiled code calls them without a host call.
+// The count is of emitted calls, one for each copy of a function: 98 places in the source call a validator directly (84 when the count was 152 and functions had more copies).
+// STATISTIC: NativeFunctionsCalledDirectly >= 100
+// STATISTIC: NativeFunctionTestsEmitted = 0
+import { Buffer } from "node:buffer";
+import child_process from "node:child_process";
+import dns from "node:dns";
+import events, { EventEmitter } from "node:events";
+import fs from "node:fs";
+import net from "node:net";
+import { Readable } from "node:stream";
+import util from "node:util";
+import zlib from "node:zlib";
+
+const emitter = new EventEmitter();
+const descriptor = fs.openSync(process.execPath, "r");
+const attempts: [string, () => unknown][] = [
+  ["setMaxListeners 5", () => emitter.setMaxListeners(5).getMaxListeners()],
+  ["setMaxListeners -1", () => emitter.setMaxListeners(-1)],
+  ["setMaxListeners text", () => emitter.setMaxListeners("x" as any)],
+  ["events.setMaxListeners NaN", () => events.setMaxListeners(NaN)],
+  ["readSync offset -1", () => fs.readSync(descriptor, Buffer.alloc(1), -1 as any)],
+  ["readSync offset 1.5", () => fs.readSync(descriptor, Buffer.alloc(4), 1.5 as any)],
+  ["readSync length text", () => fs.readSync(descriptor, Buffer.alloc(4), 0, "2" as any, null)],
+  ["createReadStream start -1", () => fs.createReadStream("nowhere", { start: -1 })],
+  ["createReadStream start 2 end 1", () => fs.createReadStream("nowhere", { start: 2, end: 1 })],
+  ["listen port 70000", () => net.createServer().listen({ port: 70000 })],
+  ["listen port text", () => net.createServer().listen({ port: "x" as any })],
+  ["connect port -1", () => net.connect({ port: -1 })],
+  ["setTimeout text", () => new net.Socket().setTimeout("a" as any)],
+  ["setTimeout 10", () => typeof new net.Socket().setTimeout(0)],
+  ["deflate level 99", () => zlib.deflateSync("a", { level: 99 })],
+  ["deflate level 5", () => zlib.inflateSync(zlib.deflateSync("abc", { level: 5 })).toString()],
+  ["deflate chunkSize 1", () => zlib.deflateSync("a", { chunkSize: 1 })],
+  ["deflate windowBits text", () => zlib.deflateSync("a", { windowBits: "9" as any })],
+  ["Readable highWaterMark -1", () => new Readable({ highWaterMark: -1 })],
+  ["Readable highWaterMark 8", () => new Readable({ highWaterMark: 8 }).readableHighWaterMark],
+  ["spawnSync timeout -1", () => child_process.spawnSync("true", { timeout: -1 })],
+  ["spawnSync maxBuffer text", () => child_process.spawnSync("true", { maxBuffer: "1" as any })],
+  ["once signal 5", () => events.once(emitter, "x", { signal: 5 as any })],
+  ["once signal object", () => typeof events.once(emitter, "x", { signal: { aborted: false, addEventListener() {}, removeEventListener() {} } as any })],
+  ["lookup family 9", () => dns.lookup("localhost", { family: 9 as any }, () => {})],
+  ["parseArgs args 5", () => util.parseArgs({ args: 5 as any })],
+  ["parseArgs options 5", () => util.parseArgs({ args: [], options: 5 as any })],
+  ["parseArgs", () => JSON.stringify(util.parseArgs({ args: ["-a"], options: { a: { type: "boolean", short: "a" } } }).values)],
+  ["inspect options", () => util.inspect({ a: 1 }, { depth: 0 })],
+  ["Buffer.alloc -1", () => Buffer.alloc(-1)],
+  ["Buffer.alloc text", () => Buffer.alloc("1" as any)],
+  ["readUInt8 9", () => Buffer.alloc(4).readUInt8(9)],
+  ["readUIntBE 0 7", () => Buffer.alloc(8).readUIntBE(0, 7)],
+  ["write hex odd", () => Buffer.alloc(4).write("abc", "hex")],
+  ["mkdtemp object", () => fs.mkdtempSync({} as any)],
+  ["truncate len text", () => fs.truncateSync("nowhere", "1" as any)],
+  ["watchFile interval text", () => fs.watchFile("nowhere", { interval: "1" as any }, () => {})],
+];
+for (const [label, attempt] of attempts) {
+  try {
+    const answer = attempt();
+    console.log(label, "->", typeof answer === "object" && answer !== null ? Object.prototype.toString.call(answer) : String(answer));
+  } catch (error) {
+    const { name, code, message } = error as NodeJS.ErrnoException;
+    console.log(label, "throws", name, code, message);
+  }
+}
+process.exit(0);
+//// views-of-buffers-that-can-be-resized-are-filled-and-read-in-a-validating-build.js
+// A typed array or a DataView over a buffer that can be resized, or over shared memory that can grow, is made, filled and read by the same functions as one over an ordinary buffer, before and behind a change of the size. As in plain Bun, and a validating build has nothing to find.
+function fill(memory) { const bytes = new Uint8Array(memory); for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 37 + 129) & 255; return memory; }
+function sum(memory) { const bytes = new Uint8Array(memory); let total = 0; for (let i = 0; i < bytes.length; i++) total += bytes[i]; return total; }
+function words(memory) { const view = new Uint16Array(memory); let total = 0; for (const word of view) total += word; return [view.length, total, view.byteLength, view.byteOffset].join(); }
+function floats(memory) { const view = new Float64Array(memory); view[0] = 1.5; return [view.length, view[0], view.at(-1)].join(); }
+function viewed(memory) { const view = new DataView(memory); view.setUint8(0, 7); return [view.byteLength, view.getUint8(0), view.getUint16(0, true)].join(); }
+function tracked(bytes) { let total = 0; for (let i = 0; i < bytes.length; i++) total += bytes[i]; return bytes.length + ":" + total; }
+const makers = {
+  ordinary: () => new ArrayBuffer(16),
+  resizable: () => new ArrayBuffer(16, { maxByteLength: 64 }),
+  shared: () => new SharedArrayBuffer(16),
+  growable: () => new SharedArrayBuffer(16, { maxByteLength: 64 }),
+};
+for (let round = 0; round < 3; round++) {
+  for (const kind in makers) {
+    const memory = fill(makers[kind]());
+    const kept = new Uint8Array(memory), fixed = new Uint8Array(memory, 0, 8);
+    const line = [sum(memory), words(memory), floats(memory), viewed(memory), tracked(kept), tracked(fixed)];
+    if (kind === "resizable") { memory.resize(32); line.push(sum(fill(memory)), words(memory), tracked(kept), tracked(fixed)); memory.resize(8); line.push(sum(memory), tracked(kept), tracked(fixed)); memory.resize(4); line.push(tracked(kept), tracked(fixed)); }
+    if (kind === "growable") { memory.grow(32); line.push(sum(fill(memory)), words(memory), tracked(kept), tracked(fixed)); }
+    if (round === 2) console.log(kind, line.join(" "));
+  }
+}
+//// what-a-new-event-takes-and-what-temporal-values-answer-to-a-conversion.ts
+// What `new Event(..)` takes and answers, and the three methods of Temporal's classes and of Intl.Locale that a conversion or JSON.stringify may find on a value.
+const say = (...values: unknown[]) => console.log(...values);
+const plain = new Event("ping");
+say(plain.type, plain.bubbles, plain.cancelable, plain.composed, plain.defaultPrevented, plain.eventPhase, plain instanceof Event, Object.getPrototypeOf(plain) === Event.prototype, plain.isTrusted);
+const asked = new Event({ toString() { say("toString of the type ran"); return "made"; } } as any, { get bubbles() { say("the getter of bubbles ran"); return 1 as any; }, cancelable: true });
+say(asked.type, asked.bubbles, asked.cancelable); asked.preventDefault(); say(asked.defaultPrevented, asked.stopPropagation(), asked.stopImmediatePropagation());
+say(new Event(1 as any).type, new Event(null as any).type, new Event("a", null as any).bubbles, new Event("a", Object.create({ composed: true })).composed);
+class Loud extends Event { volume = 11; } const loud = new Loud("loud"); say(loud.volume, loud.type, loud instanceof Event, Object.getPrototypeOf(loud) === Loud.prototype);
+const target = new EventTarget(); target.addEventListener("loud", event => say("listener ran", event === loud, (event as Loud).volume, event.eventPhase, event.target === target)); say(target.dispatchEvent(loud));
+for (const wrong of [() => (Event as any)("a"), () => new (Event as any)(), () => new Event(Symbol("s") as any), () => new Event("a", 1 as any), () => new Event({ toString() { throw new RangeError("from toString"); } } as any), () => Object.getOwnPropertyDescriptor(Event.prototype, "type")!.get!.call({}), () => Event.prototype.preventDefault.call({})])
+  try { say(typeof wrong()); } catch (e) { say((e as Error).name, (e as any).code); }
+say(new Intl.Locale("en-US").toString(), String(new Intl.Locale("de")), `${new Intl.Locale("fr-CA")}`);
+try { Intl.Locale.prototype.toString.call({}); } catch (e) { say((e as Error).name); }
+const T = (globalThis as any).Temporal;
+if (T) {
+  const values = [new T.Duration(1), new T.Instant(0n), new T.PlainDate(2020, 1, 2), new T.PlainDateTime(2020, 1, 2, 3), new T.PlainMonthDay(1, 2), new T.PlainTime(1, 2), new T.PlainYearMonth(2020, 1), new T.ZonedDateTime(0n, "UTC")];
+  for (const value of values) {
+    say(value.toString(), value.toJSON(), JSON.stringify({ value }), `${value}`);
+    try { say(value.valueOf()); } catch (e) { say((e as Error).name); }
+    try { say(value > 1); } catch (e) { say((e as Error).name); }
+    try { value.toJSON.call({}); } catch (e) { say((e as Error).name); }
+  }
+  say(new T.PlainTime(1, 2, 3).toString({ get smallestUnit() { say("the getter of smallestUnit ran"); return "minute"; } }));
+} else say("this build has no Temporal");
+//// what-a-program-keeps-on-process-under-its-own-names-is-still-there.js
+// A program keeps functions and objects on `process`, and on the native prototype above it, under names that native code never looks up. Only the program finds them: it reads them back, calls them, lists and deletes them.
+const say = (...values) => console.log(...values);
+class Registry { entries = []; add(entry) { this.entries.push(entry); return this; } }
+
+process.helper = function (value) { return [this === process, value * 2]; };
+process.registry = new Registry().add("first");
+const nativePrototype = Object.getPrototypeOf(process);
+nativePrototype.inherited = function () { return ["inherited", this === process]; };
+Object.defineProperty(nativePrototype, "computed", { get() { return ["computed", this === process]; }, configurable: true });
+
+say(process.helper(21), process.registry.add("second").entries.join(), process.inherited(), process.computed);
+const name = ["hel", "per"].join("");
+say(process[name](4), name in process, Object.hasOwn(process, name), Object.hasOwn(process, "inherited"), "inherited" in process);
+say(Object.keys(process).filter(key => key === "helper" || key === "registry").join(), Object.keys(nativePrototype).includes("inherited"));
+const { helper, registry } = process;
+say(typeof helper, registry instanceof Registry, helper.call(process, 1));
+say(delete process.helper, process.helper, delete nativePrototype.inherited, process.inherited, delete nativePrototype.computed, process.computed);
+
+// The listener methods are still the native ones, and an event still arrives.
+process.on("exit", code => say("exit", code, process.registry.entries.length));
+say(process.listenerCount("exit"), Object.hasOwn(nativePrototype, "on"), typeof process.emit);
+//// what-a-request-and-its-response-keep-of-their-own.ts
+// The own keys of a request of node:http from its start to its close, its signal, its headers once they are built, replaced or emptied, and where a response takes its lenient header validation from.
+import { createServer, IncomingMessage, OutgoingMessage } from "node:http";
+import type { ServerResponse } from "node:http";
+
+const lines: string[] = [];
+type Handler = (req: IncomingMessage, res: ServerResponse) => void;
+type Options = { httpValidation?: string; insecureHTTPParser?: boolean };
+let handler: Handler = (_req, res) => void res.end("plain");
+let atTheEnd: ((req: IncomingMessage) => void) | undefined;
+let settle = () => {};
+
+const server = createServer((req, res) => {
+  handler(req, res);
+  res.on("close", () =>
+    setImmediate(() => {
+      atTheEnd?.(req);
+      settle();
+    }),
+  );
+});
+await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+const url = "http://127.0.0.1:" + (server.address() as { port: number }).port;
+
+function keysOf(object: object) {
+  return Reflect.ownKeys(object)
+    .map(key => (typeof key === "symbol" ? String(key) + (Symbol.keyFor(key) === undefined ? "" : " registered") : key))
+    .join(" ");
+}
+
+async function ask(title: string, how: Handler, init?: RequestInit, last?: (req: IncomingMessage) => void) {
+  lines.push("-- " + title);
+  handler = how;
+  atTheEnd = last;
+  for (let i = 0; i < 2; i++) {
+    const settled = new Promise<void>(resolve => void (settle = resolve));
+    const response = await fetch(url + "/" + i, init);
+    const answer = await response.text();
+    await settled;
+    lines.push("answer: " + response.status + " " + answer);
+  }
+}
+
+await ask("two hundred requests first", (_req, res) => void res.end("warm"));
+for (let i = 0; i < 200; i++) await (await fetch(url + "/warm")).text();
+
+lines.push("length " + IncomingMessage.length + " " + OutgoingMessage.length);
+lines.push("made by hand: " + keysOf(new IncomingMessage(null as never)));
+
+await ask(
+  "the own keys of a request without a body",
+  (req, res) => {
+    lines.push("at the start: " + keysOf(req));
+    res.end("keys");
+  },
+  undefined,
+  req => lines.push("behind the close: " + keysOf(req)),
+);
+
+await ask(
+  "the own keys of a request with a body",
+  (req, res) => {
+    lines.push("at the start: " + keysOf(req));
+    let length = 0;
+    req.on("data", chunk => void (length += chunk.length));
+    req.on("end", () => res.end("read " + length));
+  },
+  { method: "POST", body: "twelve bytes" },
+  req => lines.push("behind the close: " + keysOf(req)),
+);
+
+await ask("the signal of a request", (req, res) => {
+  const signal = req.signal;
+  const registered = (req as unknown as Record<symbol, unknown>)[Symbol.for("kAbortController")];
+  lines.push("one signal " + (signal === req.signal) + ", aborted " + signal.aborted + ", under a registered key " + String(registered));
+  signal.addEventListener("abort", () => lines.push("abort, destroyed " + req.destroyed));
+  res.end("signal");
+});
+
+await ask(
+  "the signal of a request that is closed already",
+  (_req, res) => void res.end("late"),
+  undefined,
+  req => lines.push("asked late, aborted " + req.signal.aborted),
+);
+
+await ask("headers that are read, replaced and emptied", (req, res) => {
+  const first = req.headers;
+  lines.push("the same object " + (first === req.headers) + ", host " + (first.host === new URL(url).host));
+  const mine = { mine: "1" };
+  req.headers = mine;
+  lines.push("mine " + (req.headers === mine));
+  const callable: unknown = () => {};
+  req.headers = callable as never;
+  lines.push("a function " + ((req.headers as unknown) === callable));
+  for (const empty of [null, undefined, 0, "", false]) {
+    req.headers = empty as never;
+    const built = req.headers;
+    lines.push("behind " + String(empty) + ": " + typeof built + " " + (built === first) + " " + Object.keys(built).sort().join());
+  }
+  res.end("headers");
+});
+
+function tryOddHeader(res: ServerResponse) {
+  try {
+    res.setHeader("X-Odd", "a\u0001b");
+    res.removeHeader("X-Odd");
+    return "taken";
+  } catch (error) {
+    return (error as { code: string }).code;
+  }
+}
+
+await ask("a strict response", (_req, res) => void res.end(tryOddHeader(res)));
+
+await ask("a response with an option of its own", (_req, res) => {
+  (res as unknown as Options).httpValidation = "relaxed";
+  res.end(tryOddHeader(res));
+});
+
+await ask("the answer is kept for the life of the response", (_req, res) => {
+  const before = tryOddHeader(res);
+  (res as unknown as Options).insecureHTTPParser = true;
+  res.end(before + " " + tryOddHeader(res));
+});
+
+(server as unknown as Options).insecureHTTPParser = true;
+await ask("the server turns lenient between two requests", (_req, res) => void res.end(tryOddHeader(res)));
+
+(server as unknown as Options).httpValidation = "strict";
+await ask("the newer option of the server comes first", (_req, res) => void res.end(tryOddHeader(res)));
+
+await ask("the option of the response comes before the server's", (_req, res) => {
+  (res as unknown as Options).httpValidation = "insecure";
+  res.end(tryOddHeader(res));
+});
+
+const alone = new OutgoingMessage();
+lines.push("a message without a request: " + (alone as unknown as { _isLenientHeaderValidation(): boolean })._isLenientHeaderValidation());
+
+server.close();
+console.log(lines.join("\n"));
+//// what-event-target-abort-controller-url-request-and-response-make-and-keep.ts
+// What the constructors of EventTarget and AbortController answer, and the objects that a URL, a Request and a Response keep: each used as what it is, with functions that only they call.
+const say = (...values: unknown[]) => console.log(...values);
+const target = new EventTarget();
+target.addEventListener("ping", event => say("listener ran", event.type, event.target === target, event instanceof Event));
+say(target.dispatchEvent(new Event("ping")), target instanceof EventTarget, Object.getPrototypeOf(target) === EventTarget.prototype);
+class Louder extends EventTarget { shout() { return this.dispatchEvent(new Event("shout")); } }
+const louder = new Louder(); louder.addEventListener("shout", { handleEvent(event: Event) { say("handleEvent ran", event.type); } }); say(louder.shout(), louder instanceof Louder);
+const controller = new AbortController();
+say(controller.signal === controller.signal, controller.signal instanceof AbortSignal, controller.signal.aborted, controller instanceof AbortController);
+controller.signal.addEventListener("abort", () => say("abort listener ran", controller.signal.aborted, (controller.signal.reason as { why: string }).why));
+controller.signal.throwIfAborted();
+const reason = { why: "the reason is kept" };
+say(controller.abort(reason), controller.signal.reason === reason);
+try { controller.signal.throwIfAborted(); } catch (thrown) { say(thrown === reason); }
+const plain = new AbortController(); plain.abort(); say((plain.signal.reason as Error).name, plain.signal.aborted);
+const url = new URL("http://a/?x=1&y=2");
+say(url.searchParams === url.searchParams, url.searchParams.get("x"), url.searchParams instanceof URLSearchParams);
+url.searchParams.set("x", "3"); say(url.href, [...url.searchParams.keys()].join());
+(url.searchParams as any).marker = () => "a function put on the kept object"; say((url.searchParams as any).marker());
+const handed = new Headers({ a: "1" });
+const request = new Request("http://a/", { headers: handed });
+say(request.headers === request.headers, request.headers === handed, request.headers.get("a"), request.headers instanceof Headers);
+request.headers.set("a", "2"); say(handed.get("a"), request.headers.get("a"));
+const response = new Response("body", { headers: handed, status: 201 });
+say(response.headers === response.headers, response.headers === handed, response.headers.get("a"), new Response().headers.get("a"), Response.json({}).headers.get("content-type"));
+(response.headers as any).marker = () => "and on the headers"; say((response.headers as any).marker());
+for (const wrong of [() => (EventTarget as any)(), () => (AbortController as any)(), () => Object.getOwnPropertyDescriptor(AbortController.prototype, "signal")!.get!.call({}), () => AbortController.prototype.abort.call({})])
+  try { say(wrong()); } catch (e) { say((e as Error).name); }
+//// what-native-code-looks-up-on-process-is-what-the-program-put-there.js
+// Native code looks ten names up on `process`: emit, nextTick, reallyExit, _kill, _fatalException, stdout, stderr, stdin, noDeprecation, throwDeprecation. It finds, and calls, what a program has stored under each.
+const say = (...values) => console.log(...values);
+
+const nativeEmit = process.emit;
+process.emit = function (event, ...values) {
+  say("emit", String(event), this === process, values.length);
+  return nativeEmit.call(this, event, ...values);
+};
+process.on("warning", warning => say("listener: warning", warning.name, warning.message));
+process.on("beforeExit", code => say("listener: beforeExit", code));
+process.on("exit", code => say("listener: exit", code));
+process.on("uncaughtException", (error, origin) => say("listener: uncaughtException", error.message, origin));
+
+const written = [];
+const errorStream = { write(text) { written.push([this === errorStream, String(text).replace(/\d+/g, "N").replace(/`[^`]*`/, "`..`")]); return true; } };
+process.stderr = errorStream;
+say("console._stderr", console._stderr === errorStream);
+const outputStream = { write() { return true; }, marker: "the program's" };
+const nativeOutput = process.stdout;
+process.stdout = outputStream;
+say("console._stdout", console._stdout === outputStream, console._stdout.marker);
+process.stdout = nativeOutput;
+
+const inputStream = { resume() { say("stdin.resume", this === inputStream); return this; } };
+process.stdin = inputStream;
+say("openStdin", process.openStdin() === inputStream);
+
+process._kill = function (pid, signal) { say("_kill", pid === process.pid, signal, this === globalThis || this === undefined); return 0; };
+say("kill", process.kill(process.pid, 0));
+
+process._fatalException = function () { say("_fatalException was called"); return true; };
+process.reallyExit = function (code) { say("reallyExit", code, this === process); };
+
+process.emitWarning("first warning");
+setTimeout(() => { throw new Error("thrown in a timer"); }, 1);
+setTimeout(() => {
+  say("written", JSON.stringify(written));
+  process.exit(0);
+  say("after process.exit, which called the program's reallyExit");
+}, 20);
+//// what-spawn-sync-answers.ts
+// What Bun.spawnSync answers, each member used as what it is: for output that is collected, ignored, inherited or sent to a descriptor, for a signal, a timeout and a limit.
+import { openSync, closeSync, readFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+const say = (...values: unknown[]) => console.log(...values);
+const printed = Bun.spawnSync(["echo", "printed"]);
+say(printed.stdout.toString().trim(), printed.stdout.length, printed.stdout instanceof Buffer, (printed.stdout.constructor as typeof Buffer).from("abc").length, (printed.stdout.constructor as typeof Buffer).isBuffer(printed.stdout));
+say(printed.stderr.length, printed.exitCode + 1, printed.success, printed.signalCode, "signalCode" in printed, typeof printed.pid, printed.pid > 0, Object.keys(printed).join());
+say(typeof printed.resourceUsage!.maxRSS, typeof printed.resourceUsage!.cpuTime.user, Object.getPrototypeOf(printed) === Object.prototype, JSON.stringify(printed.stdout.toJSON().data.slice(0, 2)));
+const ignored = Bun.spawnSync({ cmd: ["echo", "ignored"], stdout: "ignore", stderr: "inherit" });
+say(ignored.stdout, ignored.stderr, ignored.exitCode);
+const path = `${tmpdir()}/spawn-sync-output-${process.pid}.txt`;
+const descriptor = openSync(path, "w");
+const sent = Bun.spawnSync(["echo", "to a descriptor"], { stdout: descriptor });
+closeSync(descriptor);
+say(typeof sent.stdout, (sent.stdout as unknown as number) === descriptor, readFileSync(path, "utf8").trim());
+unlinkSync(path);
+const failed = Bun.spawnSync(["sh", "-c", "echo oops >&2; exit 3"]);
+say(failed.exitCode, failed.success, failed.stderr.toString().trim(), failed.stdout.length);
+const killed = Bun.spawnSync(["sh", "-c", "kill -TERM $$"]);
+say(killed.exitCode, killed.signalCode, killed.success);
+const late = Bun.spawnSync(["sleep", "5"], { timeout: 50 });
+say(late.exitedDueToTimeout, late.signalCode, late.exitCode, "exitedDueToMaxBuffer" in late);
+const limited = Bun.spawnSync(["sh", "-c", "yes | head -c 100000"], { maxBuffer: 10 });
+say(limited.exitedDueToMaxBuffer, "exitedDueToTimeout" in limited, typeof limited.stdout);
+try { Bun.spawnSync(["/does/not/exist"]); } catch (e) { say((e as any).code, (e as Error).name); }
+//// what-the-getters-of-webassembly-answer.ts
+// Every kind of value that the getters of the WebAssembly classes answer, each used as what it is.
+const say = (...values: unknown[]) => console.log(...values);
+function caught(run: () => unknown): unknown {
+  try { return run(); } catch (e) { return `${(e as Error).name}: ${(e as Error).message}`; }
+}
+const table = new WebAssembly.Table({ element: "anyfunc", initial: 3 });
+say(table.length + 1, typeof table.length);
+say(caught(() => { const wide = new WebAssembly.Table({ element: "anyfunc", initial: 2n, address: "i64" } as any); return [typeof wide.length, String(wide.length)]; }));
+const memory = new WebAssembly.Memory({ initial: 1 });
+say(memory.buffer.byteLength, memory.buffer === memory.buffer, memory.buffer instanceof ArrayBuffer, new Uint8Array(memory.buffer)[0]);
+const before = memory.buffer; memory.grow(1); say(before === memory.buffer, before.byteLength, memory.buffer.byteLength);
+const shared = new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true });
+say(shared.buffer instanceof SharedArrayBuffer, shared.buffer.byteLength, Object.isFrozen(shared.buffer));
+const tag = new WebAssembly.Tag({ parameters: ["i32"] });
+say(new WebAssembly.Exception(tag, [1]).stack, typeof new WebAssembly.Exception(tag, [1], { traceStack: true }).stack);
+const kept = { a: 1 };
+const holder = new WebAssembly.Global({ value: "externref", mutable: true }, kept);
+say(holder.value === kept, holder.valueOf() === kept, (holder.value as typeof kept).a);
+holder.value = say; (holder.value as typeof say)("called through the global");
+holder.value = "text"; say((holder.value as string).length);
+const number = new WebAssembly.Global({ value: "i32", mutable: true }, 5);
+number.value = 6.7; say(number.value + 1, new WebAssembly.Global({ value: "i64" }, 5n).value + 1n, new WebAssembly.Global({ value: "f64" }, 1.5).valueOf());
+say(new WebAssembly.Global({ value: "anyfunc", mutable: true }, null as any).value);
+for (const read of [() => (WebAssembly.Table.prototype as any).length, () => (WebAssembly.Global.prototype as any).value, () => (WebAssembly.Memory.prototype as any).buffer, () => (WebAssembly.Instance.prototype as any).exports, () => (WebAssembly.Exception.prototype as any).stack, () => WebAssembly.Global.prototype.valueOf.call({})])
+  say(caught(read));
+const bytes = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 7, 1, 96, 2, 127, 127, 1, 127, 3, 2, 1, 0, 7, 7, 1, 3, 97, 100, 100, 0, 0, 10, 9, 1, 7, 0, 32, 0, 32, 1, 106, 11]);
+const instance = new WebAssembly.Instance(new WebAssembly.Module(bytes));
+say(Object.keys(instance.exports), (instance.exports.add as (a: number, b: number) => number)(2, 3), Object.getPrototypeOf(instance.exports), instance.exports === instance.exports);
+const { instance: other } = await WebAssembly.instantiate(bytes);
+say((other.exports.add as (a: number, b: number) => number)(4, 5));
+const functionHolder = new WebAssembly.Global({ value: "anyfunc", mutable: true }, instance.exports.add as any);
+say((functionHolder.value as (a: number, b: number) => number)(6, 7));
+//// what-the-segments-of-intl-and-the-attributes-of-html-rewriter-answer-to-an-iteration.ts
+// @ts-nocheck
+// What Intl's segments and HTMLRewriter's attributes answer under Symbol.iterator and next: a new iterator at each call of the first, the receiver itself for the second; each refuses a receiver of another sort.
+const say = (...values) => console.log(...values);
+const segments = new Intl.Segmenter("en", { granularity: "word" }).segment("one two");
+const make = segments[Symbol.iterator];
+const first = segments[Symbol.iterator](), second = segments[Symbol.iterator]();
+say(first !== second, typeof first.next, Object.getPrototypeOf(Object.getPrototypeOf(first)) === Iterator.prototype, first[Symbol.iterator]() === first);
+say([...segments].map(part => part.segment).join("|"), first.next().value.segment, second.next().value.segment, first.next().value.segment);
+for (const wrong of [[1, 2], {}, undefined, null, 1, "text", new Map()])
+  try { make.call(wrong); say("no error"); } catch (e) { say(e.name, e.message); }
+const list = [1, 2, 3];
+say(new Map(list.map(n => [n, n * 2])).get(2), [...list].length, list[Symbol.iterator]().next().value);
+let kept;
+const rewritten = new HTMLRewriter()
+  .on("a", {
+    element(element) {
+      const attributes = element.attributes;
+      kept = attributes;
+      say(attributes[Symbol.iterator]() === attributes, typeof attributes.next);
+      const seen = [];
+      for (const [name, value] of attributes) seen.push(name + "=" + value);
+      say(seen.join());
+      const last = attributes.next();
+      say(last.done, last.value, Object.keys(last).join());
+      const prototype = Object.getPrototypeOf(attributes);
+      for (const wrong of [[1], {}, undefined]) {
+        try { prototype[Symbol.iterator].call(wrong); say("no error"); } catch (e) { say(e.name); }
+        try { prototype.next.call(wrong); say("no error"); } catch (e) { say(e.name); }
+      }
+    },
+  })
+  .transform(new Response('<a href="x" id="y">t</a>'));
+say(await rewritten.text());
+say(kept.next().done);
+//// what-the-versions-the-release-and-the-features-of-process-hold.ts
+// process.versions, process.release and process.features are ordinary objects that native code fills: strings, and booleans among the features. What a program stores there stays what it is.
+const say = (...values: unknown[]) => console.log(...values);
+say(typeof process.versions.bun, typeof process.versions.node, process.versions.v8.length > 0, (process.versions as any).nobody, process.versions === process.versions, Object.values(process.versions).every(version => typeof version === "string"));
+say(process.release.name.toUpperCase(), typeof process.release.sourceUrl, typeof process.release.headersUrl, (process.release as any).lts, Object.keys(process.release).join());
+const features = process.features as unknown as Record<string, unknown>;
+say(features.tls, features.ipv6, typeof features.typescript, features.nobody, Object.values(features).every(feature => typeof feature === "boolean" || typeof feature === "string"));
+say(typeof process.versions.toString, process.versions.hasOwnProperty("bun"), Object.getPrototypeOf(process.release) === Object.prototype, JSON.stringify(process.release).length > 10);
+const kept = { toString() { say("never run"); return ""; }, call: () => "a function of the program" };
+(process.versions as any).mine = kept; say((process.versions as any).mine === kept, (process.versions as any).mine.call());
+(process.features as any).mine = () => "called"; say((process.features as any).mine());
+(process.release as any).name = 7; say(process.release.name, delete (process.release as any).sourceUrl, process.release.sourceUrl);
+(process as any).versions = { other: () => "replaced" }; say((process.versions as any).other());
+//// what-writable-transform-and-text-encoder-streams-make-and-call.ts
+// What the constructors of WritableStream, TransformStream and TextEncoderStream answer, with and without operands; the functions of a sink and of a transformer are called by nobody but native code.
+const say = (...values: unknown[]) => console.log(...values);
+const empty = new WritableStream();
+say(empty.locked, empty instanceof WritableStream, Object.getPrototypeOf(empty) === WritableStream.prototype);
+const written: string[] = [];
+const sink = new WritableStream<string>({
+  start(controller) { written.push("start " + typeof controller.error); },
+  write(chunk) { written.push("write " + chunk); },
+  close() { written.push("close"); },
+}, { highWaterMark: { valueOf() { written.push("the mark is converted"); return 2; } } as unknown as number, size(chunk) { written.push("size " + chunk); return 1; } });
+const writer = sink.getWriter();
+say(sink.locked); await writer.write("a"); await writer.write("b"); await writer.close(); say(written.join(", "));
+const plain = new TransformStream();
+say(plain.readable === plain.readable, plain.writable === plain.writable, plain.readable instanceof ReadableStream, plain.writable instanceof WritableStream, plain.readable.locked, plain.writable.locked);
+const upper = new TransformStream<string, string>({ transform(chunk, controller) { controller.enqueue(chunk.toUpperCase()); }, flush(controller) { controller.enqueue("flushed"); } });
+const upperWriter = upper.writable.getWriter(); upperWriter.write("shout"); upperWriter.close();
+const chunks: string[] = []; for await (const chunk of upper.readable) chunks.push(chunk); say(chunks.join());
+const encoder = new TextEncoderStream();
+say(encoder.encoding.toUpperCase(), encoder.readable === encoder.readable, encoder.writable instanceof WritableStream);
+const encoderWriter = encoder.writable.getWriter(); encoderWriter.write("é"); encoderWriter.close();
+for await (const bytes of encoder.readable) say(bytes instanceof Uint8Array, [...bytes].join());
+class Counting extends WritableStream<number> { count = 0; }
+say(new Counting().count, new Counting() instanceof WritableStream, Object.getPrototypeOf(new Counting()) === Counting.prototype);
+for (const wrong of [() => (WritableStream as any)(), () => (TransformStream as any)(), () => (TextEncoderStream as any)(), () => new WritableStream(1 as any), () => new TransformStream("x" as any), () => new WritableStream({ type: "bytes" } as any), () => new WritableStream({ start() { throw new RangeError("from start"); } }), () => Object.getOwnPropertyDescriptor(WritableStream.prototype, "locked")!.get!.call({})])
+  try { say(typeof wrong()); } catch (e) { say((e as Error).name, (e as Error).message.slice(0, 40)); }

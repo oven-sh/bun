@@ -1,8 +1,0 @@
-# The compiler knows a function type by the declaration of its signature. Two that are written alike are two types, and so are the tuples that hold them. One declaration has one identity wherever it is named.
-different: function-types.ts:3 identity `() => number` <=> function-types.ts:4 identity `() => number`
-different: function-types.ts:3 identity `() => number` <=> function-types.ts:5 identity `F`
-different: function-types.ts:7 identity `[F]` <=> function-types.ts:9 identity `[() => number]`
-
-same: function-types.ts:5 identity `F` <=> function-types.ts:6 identity `F`
-same: function-types.ts:5 identity `F` <=> function-types.ts:2 identity `() => number`
-same: function-types.ts:7 identity `[F]` <=> function-types.ts:8 identity `[F]`

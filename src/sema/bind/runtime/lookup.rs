@@ -61,7 +61,7 @@ impl Lookup<'_, '_> {
             return Some(binding);
         }
         if is_appended_visible(from)
-            && let Some(&appended) = self.scopes.appended_bindings.get(&(at, name))
+            && let Some(&(appended, _)) = self.scopes.appended_bindings.get(&(at, name))
         {
             return Some(Binding::Symbol(appended));
         }
@@ -146,7 +146,6 @@ impl Lookup<'_, '_> {
         } else {
             (SymFlags::VALUE | SymFlags::ALIAS) & SymFlags::MODULE_MEMBER
         };
-        // A variable that a namespace exports is a property of the namespace's object, also where it is only declared.
         let is_variable_of_namespace =
             matches!(scope.kind, ScopeKind::Module(_)) && flags.intersects(SymFlags::VARIABLE);
         let has_value = !has_bit(&bound.runtime.declarations.valueless_symbols, member.idx());

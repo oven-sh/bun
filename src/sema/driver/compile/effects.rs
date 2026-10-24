@@ -42,7 +42,6 @@ fn origin_of(
         compiled.typed_source_path.is_some()
             && compiled.typed_version_origin == Some(TypedVersionOrigin::Host)
     });
-    // The program of a typed package starts from the package's files.
     let is_dependency = files.module(file).is_from_external_library
         || project_origin == FileOrigin::DependencySource;
     match (files.role(file), is_dependency) {
@@ -115,19 +114,15 @@ pub(super) struct ProgramOrigins<'a, 's> {
     pub lacks_installed_bun_types: bool,
 }
 
-/// `Cannot find module '{0}'` and `Could not find a declaration file for module '{0}'`, for an import with and without names.
 const UNKNOWN_MODULE_CODES: [u32; 4] = [2307, 2792, 2882, 7016];
 
-/// `Untyped function calls may not accept type arguments`, and `Cannot use namespace '{0}' as a type`: what TypeScript says of a name that is imported from a module without declarations and stands where a type does.
 const USES_OF_WHAT_HAS_NO_DECLARATION_CODES: [u32; 2] = [2347, 2709];
 
-/// `Cannot find type definition file for '{0}'`. `"types": ["bun"]` is among the options that `bun init` writes.
 const UNKNOWN_TYPE_LIBRARY_CODE: u32 = 2688;
 const UNUSED_EXPECT_ERROR_CODE: u32 = 2578;
 
 const EXACT_OPTIONAL_PROPERTY_CODES: [u32; 3] = [2375, 2379, 2412];
 
-/// `Property '{0}' does not exist on type '{1}'` and `'{0}' has no exported member '{1}'`, with and without advice.
 const UNKNOWN_MEMBER_CODES: [u32; 5] = [2305, 2339, 2551, 2694, 2724];
 
 fn is_about_exact_optional_property(code: u32, chain: &[MessageChain]) -> bool {
@@ -154,15 +149,13 @@ impl ProgramOrigins<'_, '_> {
         }
     }
 
-    /// Whether `@types/bun` would have kept TypeScript from saying this.
     fn is_for_lack_of_bun_types(&self, origin: FileOrigin, diagnostic: &Diagnostic) -> bool {
         let Some(missing) = self.without_bun_types else {
             return false;
         };
         let code = diagnostic.code;
-        match origin {
-            FileOrigin::ProgramSource => {}
-            _ => return false,
+        if origin != FileOrigin::ProgramSource {
+            return false;
         }
         if UNKNOWN_MODULE_CODES.contains(&code) {
             match diagnostic.subject {
@@ -180,14 +173,12 @@ impl ProgramOrigins<'_, '_> {
                 DiagnosticSubject::None | DiagnosticSubject::ModuleSpecifier(_) => false,
             }
         } else if diagnostic.class == DiagnosticClass::Style {
-            // A callback that is passed to what has no declaration has parameters without types.
             !missing.has_configuration_file
         } else {
             USES_OF_WHAT_HAS_NO_DECLARATION_CODES.contains(&code)
         }
     }
 
-    /// TypeScript's libraries for browsers declare classes that Bun has too, without what Bun adds to them.
     fn is_declared_for_browsers(&self, container: Sym) -> bool {
         let Some(files) = self.files else {
             return false;
@@ -199,7 +190,6 @@ impl ProgramOrigins<'_, '_> {
         })
     }
 
-    /// The checker applies the program's `exactOptionalPropertyTypes` to every file.
     fn is_from_option_the_file_does_not_have(&self, diagnostic: &Diagnostic) -> bool {
         let (Some(files), Some(file)) = (self.files, diagnostic.file) else {
             return false;
@@ -208,7 +198,6 @@ impl ProgramOrigins<'_, '_> {
             && is_about_exact_optional_property(diagnostic.code, &diagnostic.message_chain)
     }
 
-    /// `@types/bun` declares what an import of a text file, of a TOML file and the like yields.
     fn is_import_that_the_build_loads(&self, file: Option<FileId>, specifier: Atom) -> bool {
         let (Some(files), Some(file)) = (self.files, file) else {
             return false;
@@ -246,34 +235,23 @@ impl ProgramOrigins<'_, '_> {
             let is_for_lack_of_bun_types = self.is_for_lack_of_bun_types(origin, &diagnostic);
             let names_missing_type_library =
                 self.lacks_installed_bun_types && diagnostic.code == UNKNOWN_TYPE_LIBRARY_CODE;
-            match effect_of(origin, diagnostic.class, diagnostic.category) {
-                Effect::Dropped => None,
+            let effect = match effect_of(origin, diagnostic.class, diagnostic.category) {
+                Effect::Dropped => return None,
                 Effect::StopsBuild | Effect::WithdrawsTrust
                     if self.is_from_option_the_file_does_not_have(&diagnostic) =>
                 {
-                    None
+                    return None;
                 }
-                Effect::StopsBuild if diagnostic.code == UNUSED_EXPECT_ERROR_CODE => {
-                    Some(BuildDiagnostic {
-                        diagnostic,
-                        effect: Effect::Warns,
-                    })
-                }
-                Effect::StopsBuild if is_for_lack_of_bun_types => None,
-                Effect::StopsBuild if names_missing_type_library => Some(BuildDiagnostic {
-                    diagnostic,
-                    effect: Effect::Warns,
-                }),
-                // Trust is a file's.
-                Effect::WithdrawsTrust if diagnostic.file.is_none() => Some(BuildDiagnostic {
-                    diagnostic,
-                    effect: Effect::InternalError,
-                }),
+                Effect::StopsBuild if diagnostic.code == UNUSED_EXPECT_ERROR_CODE => Effect::Warns,
+                Effect::StopsBuild if is_for_lack_of_bun_types => return None,
+                Effect::StopsBuild if names_missing_type_library => Effect::Warns,
+                Effect::WithdrawsTrust if diagnostic.file.is_none() => Effect::InternalError,
                 effect @ (Effect::StopsBuild
                 | Effect::Warns
                 | Effect::WithdrawsTrust
-                | Effect::InternalError) => Some(BuildDiagnostic { diagnostic, effect }),
-            }
+                | Effect::InternalError) => effect,
+            };
+            Some(BuildDiagnostic { diagnostic, effect })
         });
         with_effects.collect()
     }

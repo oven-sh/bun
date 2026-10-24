@@ -29,20 +29,6 @@ impl FileOrigin {
         FileOrigin::EvaluatedText,
     ];
 
-    pub fn name(self) -> &'static str {
-        match self {
-            FileOrigin::NoFile => "NoFile",
-            FileOrigin::ProgramSource => "ProgramSource",
-            FileOrigin::ProgramJavaScript => "ProgramJavaScript",
-            FileOrigin::ProjectTypedVersion => "ProjectTypedVersion",
-            FileOrigin::DependencySource => "DependencySource",
-            FileOrigin::DependencyJavaScript => "DependencyJavaScript",
-            FileOrigin::Declarations => "Declarations",
-            FileOrigin::Runtime => "Runtime",
-            FileOrigin::EvaluatedText => "EvaluatedText",
-        }
-    }
-
     pub fn can_lose_trust(self) -> bool {
         DiagnosticClass::ALL
             .into_iter()
@@ -58,18 +44,6 @@ pub enum Effect {
     WithdrawsTrust,
     Dropped,
     InternalError,
-}
-
-impl Effect {
-    pub fn name(self) -> &'static str {
-        match self {
-            Effect::StopsBuild => "StopsBuild",
-            Effect::Warns => "Warns",
-            Effect::WithdrawsTrust => "WithdrawsTrust",
-            Effect::Dropped => "Dropped",
-            Effect::InternalError => "InternalError",
-        }
-    }
 }
 
 fn effect_of_error(origin: FileOrigin, class: DiagnosticClass) -> Effect {
@@ -228,13 +202,9 @@ mod tests {
     }
 
     #[test]
-    fn names_are_variant_names() {
+    fn origins_are_listed_in_order() {
         for (index, origin) in FileOrigin::ALL.into_iter().enumerate() {
             assert_eq!(origin as usize, index);
-            assert_eq!(origin.name(), format!("{origin:?}"));
-        }
-        for effect in [S, W, T, D, I] {
-            assert_eq!(effect.name(), format!("{effect:?}"));
         }
     }
 }

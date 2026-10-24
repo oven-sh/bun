@@ -1,0 +1,3031 @@
+////: Counter
+class Counter {
+  constructor() {
+    this.n = 1;
+  }
+  add(x) {
+    this.n = (this.n + x) | 0;
+    return this.n;
+  }
+}
+////: Counter-2
+////= Counter
+////= fastestOf
+////: Shape
+var Shape = class {
+  constructor(sides) {
+    this.sides = sides;
+  }
+  describe() {
+    return "a shape with " + this.sides + " sides";
+  }
+};
+////: copyProps
+var __copyProps = (to, from, except, desc) => {
+  if (from && typeof from === "object" || typeof from === "function") {
+    for (let key of __getOwnPropNames(from))
+      if (!__hasOwnProp.call(to, key) && key !== except)
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
+  }
+  return to;
+};
+////: export
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+////: export-10
+////= export
+////= copyProps
+////: export-5
+__export(index_exports, {
+  x: () => x
+});
+////: export-6
+__export(index_exports, {
+  Shape: () => Shape,
+  Kind: () => Kind,
+  add: () => add,
+  limit: () => limit,
+  table: () => table,
+  default: () => index_default,
+  renamed: () => original
+});
+////: export-7
+__export(index_exports, {
+  «1»: () => «1»,
+  «2»: () => «3»,
+  «4»: () => «5»
+});
+////: export-8
+__export(index_exports, {
+  «1»: () => «1»,
+  «2»: () => «2»
+});
+////: fastestOf
+function fastestOf(runs, loop) {
+  let fastest = Infinity;
+  for (let run = 0; run < runs; run++) {
+    const began = performance.now();
+    loop();
+    fastest = Math.min(fastest, performance.now() - began);
+  }
+  return fastest;
+}
+////: for
+for (const [name, row] of Object.entries(rows as Record<string, () => unknown>)) {
+  try {
+    console.log(name + ": " + row());
+  } catch (error) {
+    console.log(name + ": " + (error as Error).constructor.name);
+  }
+}
+////: lines
+0 && (module.exports = {
+  Shape,
+  Kind,
+  add,
+  limit,
+  table,
+  renamed
+});
+////: lines-2
+0 && (module.exports = {
+  x
+});
+////: lines-3
+0 && (module.exports = {
+  «1»,
+  «2»
+});
+////: lines-4
+0 && (module.exports = {
+  «1»,
+  «2»,
+  «3»
+});
+////: lines-5
+function «1»() {
+  return «2»;
+}
+////: local
+const local = fastestOf(5, () => {
+  let sum = 0;
+  for (let i = 0; i < 2_000_000; i++) sum = (sum + new Counter().add(i)) | 0;
+  sums = (sums + sum) | 0;
+});
+////: local-2
+////= local
+////= required
+////: required
+const required = fastestOf(5, () => {
+  let sum = 0;
+  for (let i = 0; i < 2_000_000; i++) sum = (sum + new Required().add(i)) | 0;
+  sums = (sums + sum) | 0;
+});
+//// a-built-in-module-is-required-through-a-binding-that-holds-the-module-object-or-false.cjs
+// A binding holds the module object where there is one, else false, and a built-in module is required through it under a constant name that nothing else in the program names.
+var freeExports = typeof exports == "object" && exports && !exports.nodeType && exports;
+var freeModule = freeExports && typeof module == "object" && module && !module.nodeType && module;
+var types = freeModule && freeModule.require && freeModule.require("util").types;
+console.log(typeof types, typeof types.isTypedArray, types.isTypedArray(new Uint8Array(1)));
+//// a-bundle-in-the-commonjs-format-of-bun-build-is-required/m.cjs
+// @bun @bun-cjs
+(function(exports, require, module, __filename, __dirname) {console.log("m's body runs");
+exports.a = 1;
+module.exports.b = require("./n.cjs").v;
+})
+//// a-bundle-in-the-commonjs-format-of-bun-build-is-required/main.cjs
+// A bundle in the commonjs format of bun build is required.
+const m = require("./m.cjs");
+console.log(JSON.stringify(m), typeof m);
+//// a-bundle-in-the-commonjs-format-of-bun-build-is-required/n.cjs
+exports.v = "n";
+//// a-child-is-listed-once-the-require-has-returned/back.cjs
+const main = require("./main.cjs");
+console.log("in the cycle:", module.children.map(child => child.id.split(/[\\/]/).pop()).join(), "|", main.names());
+//// a-child-is-listed-once-the-require-has-returned/child.cjs
+console.log("in the child:", module.parent.children.includes(module), module.parent.children.length);
+//// a-child-is-listed-once-the-require-has-returned/main.cjs
+// `module.children` lists a file once the require() of it has returned: not while its body runs, never if the body throws, and at once where the file is still running further up (a cycle).
+const names = () => module.children.map(child => child.id.split(/[\\/]/).pop()).join();
+exports.names = names;
+require("./child.cjs");
+console.log("behind the child:", names());
+try {
+  require("./thrower.cjs");
+} catch (error) {
+  console.log(error.message, "|", names());
+}
+require("./back.cjs");
+console.log("behind the cycle:", names());
+require("./child.cjs");
+console.log("required again:", names());
+//// a-child-is-listed-once-the-require-has-returned/thrower.cjs
+console.log("in the thrower:", module.parent.children.length);
+throw new Error("thrown by the child");
+//// a-class-required-by-a-file-that-asks-for-the-type-of-its-parent-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/counter.cjs
+////= module-exports
+//// a-class-required-by-a-file-that-asks-for-the-type-of-its-parent-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/main.cjs
+// This file asks only for `typeof module.parent`. A class out of a required file is used beside a class with the same text in this file. A turn with the first may cost a few times what a turn with the second costs, not five times.
+const Required = require("./counter.cjs");
+////= Counter-2
+let sums = 0;
+////= local-2
+console.log(sums, typeof module.parent);
+console.log(required < local * 5 ? "under five times the time" : "over five times the time");
+//// a-class-required-by-a-file-that-asks-whether-it-has-a-parent-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/counter.cjs
+////= module-exports
+//// a-class-required-by-a-file-that-asks-whether-it-has-a-parent-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/main.cjs
+// This file asks only whether another file has required it: `!module.parent`. A class out of a required file is used beside a class with the same text in this file. A turn with the first may cost a few times what a turn with the second costs, not five times.
+const Required = require("./counter.cjs");
+////= Counter-2
+let sums = 0;
+////= local-2
+console.log(sums, !module.parent);
+console.log(required < local * 5 ? "under five times the time" : "over five times the time");
+//// a-class-required-by-a-file-that-asks-whether-there-is-a-main-module-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/counter.cjs
+////= module-exports
+//// a-class-required-by-a-file-that-asks-whether-there-is-a-main-module-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/main.cjs
+// This file asks only whether there is a main module: `!require.main`. A class out of a required file is used beside a class with the same text in this file. A turn with the first may cost a few times what a turn with the second costs, not five times.
+const Required = require("./counter.cjs");
+////= Counter-2
+let sums = 0;
+////= local-2
+console.log(sums, !require.main);
+console.log(required < local * 5 ? "under five times the time" : "over five times the time");
+//// a-class-required-by-a-file-that-compares-its-id-with-a-dot-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/counter.cjs
+////= module-exports
+//// a-class-required-by-a-file-that-compares-its-id-with-a-dot-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/main.cjs
+// This file asks whether it is the entry point: `module.id === "."`. A class out of a required file is used beside a class with the same text in this file. A turn with the first may cost a few times what a turn with the second costs, not five times.
+const Required = require("./counter.cjs");
+////= Counter-2
+let sums = 0;
+////= local-2
+console.log(sums, module.id === ".");
+console.log(required < local * 5 ? "under five times the time" : "over five times the time");
+//// a-class-required-by-a-file-that-compares-its-parent-with-null-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/counter.cjs
+////= module-exports
+//// a-class-required-by-a-file-that-compares-its-parent-with-null-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/main.cjs
+// This file compares `module.parent` with null and undefined. A class out of a required file is used beside a class with the same text in this file. A turn with the first may cost a few times what a turn with the second costs, not five times.
+const Required = require("./counter.cjs");
+////= Counter-2
+let sums = 0;
+////= local-2
+console.log(sums, module.parent === null, module.parent == null, module.parent === undefined);
+console.log(required < local * 5 ? "under five times the time" : "over five times the time");
+//// a-class-required-by-a-file-that-compares-the-main-module-of-process-with-its-own-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/counter.cjs
+////= module-exports
+//// a-class-required-by-a-file-that-compares-the-main-module-of-process-with-its-own-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/main.cjs
+// This file asks whether it is the entry point: `process.mainModule === module`. A class out of a required file is used beside a class with the same text in this file. A turn with the first may cost a few times what a turn with the second costs, not five times.
+const Required = require("./counter.cjs");
+////= Counter-2
+let sums = 0;
+////= local-2
+console.log(sums, process.mainModule === module);
+console.log(required < local * 5 ? "under five times the time" : "over five times the time");
+//// a-class-required-by-a-file-that-compares-the-main-module-with-its-own-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/counter.cjs
+////= module-exports
+//// a-class-required-by-a-file-that-compares-the-main-module-with-its-own-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/main.cjs
+// This file asks whether it is the entry point: `require.main === module`. A class out of a required file is used beside a class with the same text in this file. A turn with the first may cost a few times what a turn with the second costs, not five times.
+const Required = require("./counter.cjs");
+////= Counter-2
+let sums = 0;
+////= local-2
+console.log(sums, require.main === module);
+console.log(required < local * 5 ? "under five times the time" : "over five times the time");
+//// a-class-required-by-a-file-that-compares-what-its-first-child-exports-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/counter.cjs
+////= module-exports
+//// a-class-required-by-a-file-that-compares-what-its-first-child-exports-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/main.cjs
+// This file compares what the first file that it has required exports with what `require` has answered. A class out of a required file is used beside a class with the same text in this file. A turn with the first may cost a few times what a turn with the second costs, not five times.
+const Required = require("./counter.cjs");
+////= Counter-2
+let sums = 0;
+////= local-2
+console.log(sums, module.children[0].exports === Required);
+console.log(required < local * 5 ? "under five times the time" : "over five times the time");
+//// a-class-required-by-a-file-that-counts-its-children-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/counter.cjs
+////= module-exports
+//// a-class-required-by-a-file-that-counts-its-children-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/main.cjs
+// This file asks only how many files it has required: `module.children.length`. A class out of a required file is used beside a class with the same text in this file. A turn with the first may cost a few times what a turn with the second costs, not five times.
+const Required = require("./counter.cjs");
+////= Counter-2
+let sums = 0;
+////= local-2
+console.log(sums, module.children.length);
+console.log(required < local * 5 ? "under five times the time" : "over five times the time");
+//// a-class-required-by-a-file-that-counts-the-children-of-the-main-module-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/counter.cjs
+////= module-exports
+//// a-class-required-by-a-file-that-counts-the-children-of-the-main-module-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/main.cjs
+// This file asks only how many files the entry point has required: `require.main.children.length`. A class out of a required file is used beside a class with the same text in this file. A turn with the first may cost a few times what a turn with the second costs, not five times.
+const Required = require("./counter.cjs");
+////= Counter-2
+let sums = 0;
+////= local-2
+console.log(sums, require.main.children.length);
+console.log(required < local * 5 ? "under five times the time" : "over five times the time");
+//// a-class-required-by-a-file-that-reads-the-id-of-its-first-child-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/counter.cjs
+////= module-exports
+//// a-class-required-by-a-file-that-reads-the-id-of-its-first-child-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/main.cjs
+// This file reads the id of the first file that it has required: `module.children[0].id`. A class out of a required file is used beside a class with the same text in this file. A turn with the first may cost a few times what a turn with the second costs, not five times.
+const Required = require("./counter.cjs");
+////= Counter-2
+let sums = 0;
+////= local-2
+console.log(sums, module.children[0].id.endsWith("counter.cjs"));
+console.log(required < local * 5 ? "under five times the time" : "over five times the time");
+//// a-class-required-through-a-binding-that-holds-require-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/counter.cjs
+////= module-exports
+//// a-class-required-through-a-binding-that-holds-require-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file/main.cjs
+// `const load = require` and the file is loaded through `load`. A class out of the required file is used beside a class with the same text in this file. A turn with the first may cost a few times what a turn with the second costs, not five times.
+const load = require; const Required = load("./counter.cjs");
+////= Counter-2
+let sums = 0;
+////= local-2
+console.log(sums, 0);
+console.log(required < local * 5 ? "under five times the time" : "over five times the time");
+//// a-commonjs-file-catches-what-requiring-the-entry-point-throws/file.cjs
+const told = error => `${error?.name}: ${error?.message.replace(/'[^']*[\\/]/, "'")}`;
+process.on("uncaughtException", error => console.log("nobody catches", told(error)));
+process.on("exit", code => console.log("the end", code));
+
+console.log("the file begins");
+exports.first = 1;
+for (const turn of [1, 2]) {
+  try {
+    console.log("required", turn, Object.keys(require("./main.mjs")).join());
+  } catch (error) {
+    console.log("require throws", turn, told(error));
+  }
+}
+exports.second = 2;
+console.log("the file ends");
+//// a-commonjs-file-catches-what-requiring-the-entry-point-throws/main.mjs
+// The entry point imports a name of a CommonJS file, and the file requires the entry point before it has stored the name.
+import { second } from "./file.cjs";
+console.log("the entry point runs", second);
+export const own = "own";
+//// a-commonjs-file-lets-pass-what-requiring-the-entry-point-throws/file.cjs
+const told = error => `${error?.name}: ${error?.message.replace(/'[^']*[\\/]/, "'")}`;
+process.on("uncaughtException", error => console.log("nobody catches", told(error)));
+process.on("exit", code => console.log("the end", code));
+
+console.log("the file begins");
+exports.first = 1;
+console.log("required", Object.keys(require("./main.mjs")).join());
+exports.second = 2;
+console.log("the file ends");
+//// a-commonjs-file-lets-pass-what-requiring-the-entry-point-throws/main.mjs
+// The entry point imports a name of a CommonJS file, and the file requires the entry point before it has stored the name.
+import { second } from "./file.cjs";
+console.log("the entry point runs", second);
+export const own = "own";
+//// a-commonjs-file-requires-the-entry-point-above-a-module-that-hands-on-a-name-it-has-not-stored/both.cjs
+exports.first = 1;
+exports.second = 2;
+//// a-commonjs-file-requires-the-entry-point-above-a-module-that-hands-on-a-name-it-has-not-stored/file.cjs
+process.on("uncaughtException", error => console.log("nobody catches", error.name));
+process.on("exit", code => console.log("the end", code));
+
+globalThis.ran ??= [];
+console.log("the file begins");
+require("./main.mjs");
+exports.count = 1;
+//// a-commonjs-file-requires-the-entry-point-above-a-module-that-hands-on-a-name-it-has-not-stored/hands-on.mjs
+export { count as handedOn } from "./file.cjs";
+globalThis.ran.push("hands-on");
+//// a-commonjs-file-requires-the-entry-point-above-a-module-that-hands-on-a-name-it-has-not-stored/main.mjs
+// The entry point imports a CommonJS file by its default and by a name, a module that hands on a name of a second file, and hands on all names of a third.
+// The second file requires the entry point, which has not come to the third file yet.
+import whole, { second } from "./both.cjs";
+import * as handsOn from "./hands-on.mjs";
+export * from "./stars.cjs";
+globalThis.ran.push(`main ${typeof whole} ${second} ${Object.keys(handsOn).join()}`);
+//// a-commonjs-file-requires-the-entry-point-above-a-module-that-hands-on-a-name-it-has-not-stored/stars.cjs
+(globalThis.ran ??= []).push("stars");
+exports.first = 1;
+exports.last = 2;
+//// a-commonjs-file-requires-the-entry-point-ahead-of-the-file-whose-names-it-hands-on/both.cjs
+exports.first = 1;
+exports.second = 2;
+//// a-commonjs-file-requires-the-entry-point-ahead-of-the-file-whose-names-it-hands-on/file.cjs
+// Which module runs first is not told: the lines are sorted.
+process.on("exit", code => console.log([...globalThis.ran].sort().join("\n") + "\nthe end " + code));
+
+(globalThis.ran ??= []).push("file");
+exports.count = 1;
+console.log("the file sees", Object.keys(require("./main.mjs")).join());
+//// a-commonjs-file-requires-the-entry-point-ahead-of-the-file-whose-names-it-hands-on/hands-on.mjs
+export { count as handedOn } from "./file.cjs";
+globalThis.ran.push("hands-on");
+//// a-commonjs-file-requires-the-entry-point-ahead-of-the-file-whose-names-it-hands-on/main.mjs
+// The entry point imports a CommonJS file by its default and by a name, a module that hands on a name of a second file, and hands on all names of a third.
+// The second file requires the entry point, which has not come to the third file yet.
+import whole, { second } from "./both.cjs";
+import * as handsOn from "./hands-on.mjs";
+export * from "./stars.cjs";
+globalThis.ran.push(`main ${typeof whole} ${second} ${Object.keys(handsOn).join()}`);
+//// a-commonjs-file-requires-the-entry-point-ahead-of-the-file-whose-names-it-hands-on/stars.cjs
+(globalThis.ran ??= []).push("stars");
+exports.first = 1;
+exports.last = 2;
+//// a-commonjs-file-requires-the-entry-point-that-hands-on-all-its-names/lib.cjs
+console.log("lib begins");
+exports.first = 1;
+const main = require("./main.mjs");
+console.log("lib: required", Object.keys(main).join(), main.first, main.second, main.own);
+exports.second = 2;
+console.log("lib ends");
+//// a-commonjs-file-requires-the-entry-point-that-hands-on-all-its-names/main.mjs
+export * from "./lib.cjs";
+export const own = "main.own";
+console.log("main runs");
+//// a-commonjs-file-requires-the-entry-point-whose-first-import-takes-another-file-whole-and-by-name/both.cjs
+exports.first = 1;
+exports.second = 2;
+//// a-commonjs-file-requires-the-entry-point-whose-first-import-takes-another-file-whole-and-by-name/file.cjs
+exports.count = 1;
+const main = require("./main.mjs");
+console.log("the file sees", Object.keys(main).join(), "|", Object.keys(main.stars).join(), "|", main.stars.first, main.stars.last, "|", main.first, main.last);
+//// a-commonjs-file-requires-the-entry-point-whose-first-import-takes-another-file-whole-and-by-name/hands-on.mjs
+export { count as handedOn } from "./file.cjs";
+console.log("hands-on runs");
+//// a-commonjs-file-requires-the-entry-point-whose-first-import-takes-another-file-whole-and-by-name/main.mjs
+// The entry point first imports a CommonJS file by its default and by a name, then a module that hands on a name of a second file, then a third file. The second file requires the entry point, which has not begun: it runs there and then, and the file reads what it exports.
+import whole, { second } from "./both.cjs";
+import * as handsOn from "./hands-on.mjs";
+import * as stars from "./stars.cjs";
+export { stars };
+export { first, last } from "./stars.cjs";
+console.log("main runs", typeof whole, second, Object.keys(handsOn).join(), Object.keys(stars).join());
+//// a-commonjs-file-requires-the-entry-point-whose-first-import-takes-another-file-whole-and-by-name/stars.cjs
+exports.first = 1;
+exports.last = 2;
+//// a-commonjs-file-requires-the-es-module-that-an-import-call-is-loading/ma.mjs
+import x, { first } from "./mb.cjs";
+export const early = typeof x + ":" + Object.keys(x).join() + ":" + first;
+export const late = () => Object.keys(x).join() + ":" + first;
+//// a-commonjs-file-requires-the-es-module-that-an-import-call-is-loading/main.mjs
+let loaded;
+try {
+  loaded = await import("./ma.mjs");
+} catch (error) {
+  console.log("main:", error.name);
+}
+console.log("early:", loaded?.early, "late:", loaded?.late());
+//// a-commonjs-file-requires-the-es-module-that-an-import-call-is-loading/mb.cjs
+globalThis.exportsOfMb = exports;
+exports.first = 1;
+try {
+  console.log("mb: required", Object.keys(require("./ma.mjs")).join());
+} catch (error) {
+  console.log("mb:", error.name);
+}
+exports.second = 2;
+//// a-commonjs-file-requires-the-es-module-that-hands-on-all-its-names/ma.mjs
+export * from "./mb.cjs";
+export const own = "ma.own";
+console.log("ma runs");
+//// a-commonjs-file-requires-the-es-module-that-hands-on-all-its-names/main.mjs
+// ma.mjs hands on every name of mb.cjs, and mb.cjs requires ma.mjs half-way: the namespace object that the `require` answers lists what mb.cjs has exported by then.
+const n = await import("./ma.mjs");
+console.log("main", Object.keys(n).join(), n.first, n.second);
+//// a-commonjs-file-requires-the-es-module-that-hands-on-all-its-names/mb.cjs
+console.log("mb begins");
+exports.first = 1;
+let m; try { m = require("./ma.mjs"); console.log("mb: required", Object.keys(m).join()); } catch (e) { console.log("mb:", e.name); }
+exports.second = 2;
+console.log("mb ends");
+//// a-constructor-function-that-only-unseen-code-constructs/main.cjs
+// Only text that the compiler has not seen constructs with the function, and does to the objects what it likes: another own method, another prototype, a deleted field, a frozen object, a name more.
+"use strict";
+const Reply = require("./reply.cjs");
+const text = process.env.TEXT_NOBODY_HAS_SEEN || "const made = new Reply(list, how); if (how === 1) made.send = () => 'own'; if (how === 2) Object.setPrototypeOf(made, other); if (how === 3) delete made.raw; if (how === 4) Object.freeze(made); if (how === 5) made.late = 'late'; return made";
+const construct = new Function("Reply", "list", "how", "other", text);
+const other = { send() { return "other"; }, get sent() { return "other's"; } };
+function use(reply) {
+  let answer;
+  try {
+    answer = reply.send("x");
+  } catch (error) {
+    answer = error.constructor.name;
+  }
+  return [typeof answer === "object" ? "itself" : answer, reply.sent, typeof reply.raw, reply.late, Reflect.ownKeys(reply).map(String).join(",")].join(" ");
+}
+const list = [];
+for (let how = 0; how < 6; how++) console.log(how, use(construct(Reply, list, how, other)));
+console.log(list.join("|"), Reply.call({ plain: true }, list, 9), use(Reflect.construct(Reply, [list, 7], class Other {})));
+//// a-constructor-function-that-only-unseen-code-constructs/reply.cjs
+"use strict";
+const kState = Symbol("state"), kSent = Symbol("sent");
+function Reply(raw, state) {
+  this.raw = raw;
+  this[kState] = state;
+  this[kSent] = false;
+}
+Object.defineProperty(Reply.prototype, "sent", {
+  get() {
+    return this[kSent];
+  },
+});
+Reply.prototype.send = function (value) {
+  this[kSent] = true;
+  this.raw.push(value + this[kState]);
+  return this;
+};
+module.exports = Reply;
+//// a-function-stored-as-push-on-the-list-of-children-is-called-for-each-file-required/first.cjs
+exports.name = "first";
+//// a-function-stored-as-push-on-the-list-of-children-is-called-for-each-file-required/main.cjs
+// The loader appends a required file's module object to `module.children` by calling the `push` that it finds on the list. Each line reads the list first, so it says the same whether the call comes at the require or at the next read.
+const list = module.children;
+const push = list.push;
+const seen = [];
+list.push = function (child) {
+  seen.push(this === list, child.exports.name);
+  return push.call(this, child);
+};
+require("./first.cjs");
+console.log(module.children.length, seen.join());
+list.push = function (child) {
+  seen.push("again", typeof child.exports.greet);
+  return push.call(this, { exports: { name: "in place of " + child.exports.name } });
+};
+require("./second.cjs");
+console.log(module.children.length, seen.join(), module.children[1].exports.name);
+delete list.push;
+console.log(module.children === list, Object.hasOwn(list, "push"), list[0].exports.name, list[1].exports.name);
+//// a-function-stored-as-push-on-the-list-of-children-is-called-for-each-file-required/second.cjs
+exports.name = "second";
+exports.greet = () => "hello";
+//// a-getter-in-the-literal-that-the-entry-point-exports-runs-behind-it.cjs
+// See getters-among-the-exports-of-the-entry-point-run-behind-it.cjs: here the getter is written in an object literal, and nothing in the program reads it.
+module.exports = {
+  plain: 1,
+  get computed() {
+    console.log("computed is read");
+    return this.plain + 1;
+  },
+};
+console.log("the last statement");
+//// a-hashbang-line-heads-the-entry-point-and-a-required-file/m.cjs
+#!/usr/bin/env node
+exports.v = "and in a required file";
+//// a-hashbang-line-heads-the-entry-point-and-a-required-file/main.cjs
+#!/usr/bin/env bun
+console.log("behind a hashbang", require("./m.cjs").v);
+//// a-pattern-over-require-reads-names-that-an-es-module-passes-on-from-a-commonjs-file/index.mjs
+export { go, n, n as renamed } from "./lib.cjs";
+export { default as lib } from "./lib.cjs";
+import * as all from "./lib.cjs";
+export const keys = Object.keys(all).sort().join();
+export const own = "own";
+//// a-pattern-over-require-reads-names-that-an-es-module-passes-on-from-a-commonjs-file/lib.cjs
+exports.go = function () {
+  return "go";
+};
+exports.n = 3;
+//// a-pattern-over-require-reads-names-that-an-es-module-passes-on-from-a-commonjs-file/main.cjs
+// `const { a } = require("./index.mjs")`, where the ES module has `export { a } from "./lib.cjs"`: the pattern reads what the CommonJS file exports, as a member access does. The output is that of plain Bun.
+const { go, n, lib, keys, own, missing = "a default" } = require("./index.mjs");
+console.log(typeof go, go(), n, JSON.stringify(lib), keys, own, missing);
+
+const whole = require("./index.mjs");
+console.log(whole.go === go, whole.n === n, whole.lib === lib);
+
+function later() {
+  const { go: again, renamed } = require("./index.mjs");
+  return [again === go, renamed];
+}
+console.log(later().join());
+//// a-required-file-changes-what-its-parent-exports/child.cjs
+try {
+  module.parent.exports.limit = 7;
+  module.parent.exports.bump(3);
+} catch (error) {
+  console.log("threw", error.constructor.name);
+}
+//// a-required-file-changes-what-its-parent-exports/lib.cjs
+let calls = 0;
+exports.limit = 5;
+exports.bump = n => (calls += n);
+function read() {
+  let sum = 0;
+  for (let round = 0; round < 100; round++) sum += exports.limit;
+  return sum;
+}
+const before = read();
+require("./child.cjs");
+exports.report = () => [before, read(), calls].join();
+//// a-required-file-changes-what-its-parent-exports/main.mjs
+// The entry point is an ES module. lib.cjs, which it imports, requires child.cjs, and child.cjs stores into and calls what lib.cjs exports through `module.parent`: lib.cjs sees both.
+import lib from "./lib.cjs";
+console.log(lib.report());
+//// a-return-in-a-finally-block-ends-the-body/m.cjs
+exports.a = 1;
+try { exports.c = 3; } finally { if (Date.now() > 0) return; }
+exports.b = 2;
+//// a-return-in-a-finally-block-ends-the-body/main.cjs
+// A return in a finally block ends the body.
+const m = require("./m.cjs");
+console.log(m.a, m.b, m.c);
+//// an-es-module-that-its-own-commonjs-import-requires-reads-that-import-early/ma.mjs
+import x, { first } from "./mb.cjs";
+let seen;
+try {
+  seen = typeof x + ":" + Object.keys(x).join() + ":" + first;
+} catch (error) {
+  seen = error.name;
+}
+export const early = seen;
+export const late = () => typeof x + ":" + Object.keys(x).join() + ":" + first + ":" + (x === globalThis.exportsOfMb);
+//// an-es-module-that-its-own-commonjs-import-requires-reads-that-import-early/main.mjs
+// main.mjs imports ma.mjs, ma.mjs imports mb.cjs, and mb.cjs requires ma.mjs: the body of ma.mjs runs there and then, as under `bun run`, in front of the rest of mb.cjs.
+// Its imports from mb.cjs are what mb.cjs has exported by then. `bun run` runs main.mjs inside that `require` too. An executable runs it behind mb.cjs.
+import { early, late } from "./ma.mjs";
+console.log("main:", early, late());
+//// an-es-module-that-its-own-commonjs-import-requires-reads-that-import-early/mb.cjs
+globalThis.exportsOfMb = exports;
+exports.first = 1;
+const ma = require("./ma.mjs");
+exports.second = 2;
+console.log("mb:", ma.early);
+//// an-imported-commonjs-file-requires-a-module-that-imports-its-importer/catching-file.cjs
+console.log("the catching file begins");
+try {
+  require("./other-above-the-throw.mjs");
+  console.log("the require returns");
+} catch (error) {
+  console.log("the require throws:", error.message);
+}
+console.log("the catching file ends");
+//// an-imported-commonjs-file-requires-a-module-that-imports-its-importer/file.cjs
+console.log("the file begins");
+require("./other.mjs");
+console.log("the file ends");
+//// an-imported-commonjs-file-requires-a-module-that-imports-its-importer/importer.mjs
+import "./file.cjs";
+console.log("the importer runs");
+//// an-imported-commonjs-file-requires-a-module-that-imports-its-importer/later.mjs
+import "./other-above-the-throw.mjs";
+console.log("the later module runs");
+//// an-imported-commonjs-file-requires-a-module-that-imports-its-importer/main.mjs
+// A module imports a CommonJS file, which requires a second module, which imports the first. The first has not begun while the file runs: it runs inside the require, ahead of the second. In the other three files the first module throws there: the require throws, and whoever imports the second module later gets the same error.
+const outcome = (name, promise) => promise.then(() => console.log(`import(${name}) resolves`), error => console.log(`import(${name}) rejects:`, error.message));
+await outcome("importer", import("./importer.mjs"));
+await outcome("throwing-importer", import("./throwing-importer.mjs"));
+await outcome("later", import("./later.mjs"));
+//// an-imported-commonjs-file-requires-a-module-that-imports-its-importer/other-above-the-throw.mjs
+import "./throwing-importer.mjs";
+console.log("the module above the throw runs");
+//// an-imported-commonjs-file-requires-a-module-that-imports-its-importer/other.mjs
+import "./importer.mjs";
+console.log("the other module runs");
+//// an-imported-commonjs-file-requires-a-module-that-imports-its-importer/throwing-importer.mjs
+import "./catching-file.cjs";
+console.log("the throwing importer begins");
+throw new Error("thrown by the importer");
+//// an-object-stored-as-the-children-changes-what-each-later-child-exports/counter.cjs
+////= module-exports
+//// an-object-stored-as-the-children-changes-what-each-later-child-exports/main.cjs
+// What stands in the list's place gets each file that is required from then on, and changes a method of the class that the file exports.
+const seen = [];
+////= module-children
+const Counter = require("./counter.cjs");
+const read = typeof module.children;
+let sum = 0;
+for (let i = 0; i < 1000; i++) sum += new Counter().add(i);
+console.log(sum, seen.join());
+//// arguments-alias-read-only/main.ts
+// Sloppy functions that keep `arguments` in a variable and only read it: by numbers, by keys that may be anything (`callee`, `length`, a symbol), through `apply`. The object is not made unless a key asks for it.
+import * as sloppy from "./sloppy.cjs";
+for (const name of Object.keys(sloppy).sort()) {
+  const f = (sloppy as any)[name];
+  if (typeof f !== "function") continue;
+  for (const list of [[], [1], [1, 2], [1, 2, 3], ["callee", { b: 1 }, [3], 4], ["length", null], [undefined, "0"], [1.5, -1], ["1", "toString"]]) {
+    let shown: string;
+    try { shown = JSON.stringify(f(...list)) ?? "undefined"; } catch (e: any) { shown = "threw " + e.name + ": " + e.message; }
+    console.log(name + "(" + JSON.stringify(list).slice(1, -1) + "): " + shown);
+  }
+}
+//// arguments-alias-read-only/sloppy.cjs
+function show(value) { return typeof value == "function" ? "function " + value.name : typeof value == "symbol" ? "symbol" : value === undefined ? "undefined" : value; }
+function withRest(func, start) {
+  return function () {
+    var args = arguments, index = -1, length = Math.max(args.length - start, 0), rest = Array(length);
+    while (++index < length) rest[index] = args[start + index];
+    index = -1;
+    var others = Array(start + 1);
+    while (++index < start) others[index] = args[index];
+    others[start] = rest;
+    return func.apply(this, others);
+  };
+}
+exports.restFromOne = withRest(function (first, rest) { return [show(first), rest.map(show)]; }, 1);
+exports.restFromZero = withRest(function (rest) { return rest.map(show); }, 0);
+exports.restFromText = withRest(function () { return Array.prototype.map.call(arguments, show); }, "1");
+exports.restFromCall = withRest(function () { return Array.prototype.map.call(arguments, show); }, "call");
+exports.byTheFirstArgument = function named(key) { var args = arguments; return [show(args[key]), args.length]; };
+exports.byTheFirstArgumentDirectly = function direct(key) { return [show(arguments[key]), arguments.length]; };
+exports.calleeByAKey = function itself(key) { var args = arguments; return [args[key] === itself, args["cal" + "lee"] === itself, args[String(key)] === itself]; };
+exports.anonymous = function (key) { var args = arguments; var found = args[key]; return [typeof found, found === exports.anonymous]; };
+exports.bySymbol = function () { var args = arguments; return [show(args[Symbol.iterator]), show(args[Symbol.toStringTag])]; };
+exports.keyIsConvertedOnce = function (a) { var args = arguments, log = []; var key = { toString: function () { log.push("toString"); return "0"; } }; return [show(args[key]), log]; };
+exports.keyThatThrows = function (a) { var args = arguments; return args[{ toString: function () { throw new RangeError("key"); } }]; };
+exports.inATry = function (key) { var args = arguments; try { return [show(args[key]), show(args[{ toString: function () { throw new RangeError("key"); } }])]; } catch (error) { return [error.name, args.length]; } };
+exports.parametersAreRead = function (a, b) { var args = arguments; return [show(a), show(b), show(args[a]), show(args[b]), args.length]; };
+exports.moreParametersThanArguments = function (a, b, c) { var args = arguments; return [show(args[a]), show(args["2"]), show(args[2]), show(c), args.length]; };
+exports.passedOn = function (key) { var args = arguments; return [exports.byTheFirstArgument.apply(null, args), show(args[key])]; };
+exports.readBeforeItIsBound = function (key) { var early = typeof args; var args = arguments; return [early, show(args[key])]; };
+exports.inALoop = function (key) { var args = arguments, found = []; for (var i = 0; i < 3; i++) found.push(show(args[i == 1 ? key : i])); return found; };
+exports.storedToTells = function (a, key) { var args = arguments; a = "stored"; return [show(args[0]), show(args[key])]; };
+exports.writtenThroughTells = function (a, key) { var args = arguments; args[0] = "written"; return [show(a), show(args[key])]; };
+exports.calledThroughTells = function (f) { var args = arguments; return typeof f == "function" ? args[0]() : show(args[f]); };
+exports.handedOutTells = function (key) { var args = arguments; return [show(args[key]), Object.prototype.toString.call(args)]; };
+exports.reboundTells = function (key) { var args = arguments; var first = show(args[key]); args = [7, 8, 9]; return [first, show(args[key])]; };
+exports.seenByAnInnerFunctionTells = function (key) { var args = arguments; return [function () { return show(args[key]); }(), (() => show(arguments[key]))()]; };
+function declared(key) { var args = arguments; return [show(args[key]), args[key] === declared, args.length]; }
+exports.declared = declared;
+function declaredAndCalledByName(key) { var args = arguments; return key === "again" ? "done" : [show(args[key]), declaredAndCalledByName("again")]; }
+exports.declaredAndCalledByName = declaredAndCalledByName;
+exports.nested = function (key) { function inner(k) { var args = arguments; return [show(args[k]), args[k] === inner]; } return [inner(key), inner("callee"), inner(0)]; };
+function reassigned(key) { var args = arguments; return [show(args[key]), typeof args[key]]; }
+exports.reassigned = reassigned;
+reassigned = null;
+//// arguments-reassigned/main.js
+// Sloppy functions that assign to `arguments`: the variable changes, and the object that mapped parameters live in stays. Stores in branches, loops, `try`, arrows and direct eval. Plain Bun's transpiler rejects a store to `arguments` in sloppy code too, so the expected output follows ECMAScript.
+import * as sloppy from "./sloppy.cjs";
+for (const name of Object.keys(sloppy).sort()) {
+  const f = sloppy[name];
+  if (typeof f !== "function") continue;
+  for (const list of [[], [1], [1, 2], ["a", { b: 1 }, [3]], [undefined, null]]) {
+    let shown;
+    try { shown = JSON.stringify(f(...list)) ?? "undefined"; } catch (e) { shown = "threw " + e.name + ": " + e.message; }
+    console.log(name + "(" + JSON.stringify(list).slice(1, -1) + "): " + shown);
+  }
+}
+//// arguments-reassigned/sloppy.cjs
+function show(value) { return Object.prototype.toString.call(value) === "[object Arguments]" ? ["arguments object"].concat(Array.prototype.slice.call(value)) : value; }
+exports.storeKeepsParameter = function (a) { arguments = [a]; return a; };
+exports.storedValueIsRead = function (a) { arguments = [a]; return arguments; };
+exports.objectOutlivesStore = function (x) { var a = arguments; arguments = 1; a[0] = 5; return x; };
+exports.parameterStoreReachesObject = function (x) { var a = arguments; arguments = 1; x = "stored"; return [show(a), arguments]; };
+exports.storedOnOneBranch = function (c) { if (c) arguments = 1; return show(arguments); };
+exports.returnedFromLoop = function () { for (var i = 0; i < 2; i++) { if (i === 1) return arguments; arguments = 7; } };
+exports.readAfterLoop = function () { var i = 0; while (i < 3) { arguments = i; i++; } return arguments; };
+exports.readBeforeStoreInLoop = function () { var seen = []; for (var i = 0; i < 3; i++) { seen.push(show(arguments)); arguments = i; } return seen; };
+exports.storedInInnerLoop = function () { var seen = []; for (var i = 0; i < 2; i++) { seen.push(show(arguments)); for (var j = 0; j < 2; j++) arguments = i + "," + j; } return seen; };
+exports.forOfTarget = function () { for (arguments of [1, 2]); return arguments; };
+exports.forInTarget = function () { for (arguments in { key: 1 }); return arguments; };
+exports.storedInTry = function () { try { arguments = "try"; throw 1; } catch (e) { return arguments; } };
+exports.storedInFinally = function () { try { return show(arguments); } finally { arguments = "finally"; } };
+exports.compoundStore = function () { arguments += "!"; return arguments; };
+exports.incremented = function () { arguments++; return String(arguments); };
+exports.destructured = function (a) { [arguments] = [[a]]; return [arguments, a]; };
+exports.declaredWithoutInitializer = function () { var arguments; return show(arguments); };
+exports.declaredWithInitializer = function (a) { var arguments = [a, a]; return arguments; };
+exports.storedByArrow = function (a) { (() => { arguments = "arrow"; })(); return [arguments, a]; };
+exports.readByArrowAfterStore = function () { arguments = "outer"; return (() => arguments)(); };
+exports.mappedAfterArrowStore = function (a) { var object = arguments; (() => { arguments = "arrow"; })(); object[0] = "mapped"; return [arguments, a]; };
+exports.readByEval = function () { arguments = 1; return eval("arguments"); };
+exports.storedByEval = function () { eval("arguments = 5"); return arguments; };
+exports.mappedAfterEvalStore = function (a) { var object = arguments; eval("arguments = 5"); object[0] = "mapped"; return [arguments, a]; };
+exports.storedByEvalInLoop = function () { var seen = []; for (var i = 0; i < 2; i++) { seen.push(show(arguments)); eval("arguments = i"); } return seen; };
+//// call-sites-of-sloppy-and-strict-functions/main.ts
+// What Error.prepareStackTrace's call sites say of sloppy and strict functions: isToplevel() and isNative(), and that a strict frame makes every frame below it answer as a strict one.
+import { rows } from "./sloppy.cjs";
+for (const [name, row] of Object.entries(rows as Record<string, () => unknown>)) {
+  try {
+    console.log(name + ": " + (await row()));
+  } catch (error) {
+    console.log(name + ": " + (error as Error).constructor.name);
+  }
+}
+//// call-sites-of-sloppy-and-strict-functions/sloppy.cjs
+function sites(count) {
+  const before = Error.prepareStackTrace;
+  Error.prepareStackTrace = (error, frames) => frames;
+  const frames = new Error().stack;
+  Error.prepareStackTrace = before;
+  return frames
+    .slice(1, count + 1)
+    .map(frame => (frame.getFunctionName() || "anonymous") + (frame.isToplevel() ? " toplevel" : "") + (frame.isNative() ? " native" : "") + (frame.isConstructor() ? " constructor" : ""))
+    .join(" < ");
+}
+function declared() { return sites(1); }
+const expression = function () { return sites(1); };
+const arrow = () => sites(1);
+const literal = { method() { return sites(1); }, get getter() { return sites(1); }, arrow: () => sites(1) };
+class Class {
+  method() { return sites(2) + ""; }
+  static method() { return sites(2) + ""; }
+  static callback() { return sites(3) + ""; }
+  withArrow() { return (() => sites(3) + "")() + ""; }
+  callsSloppy() { return declaredTwo() + ""; }
+}
+class WithConstructor { constructor() { this.at = sites(2) + ""; } }
+function declaredTwo() { return sites(3); }
+function callsArrowInMethod() { return new Class().withArrow(); }
+function sloppyBelowAndAboveStrict() { return new Class().callsSloppy(); }
+function callsMethod() { return new Class().method(); }
+function callsStaticMethod() { return Class.method(); }
+function constructsClass() { return new WithConstructor().at; }
+function Made() { this.at = sites(2); }
+function constructs() { return new Made().at; }
+function belowMap() { return [0].map(function inMap() { return sites(3); })[0]; }
+function belowForEach() { let said; [0].forEach(function inForEach() { said = sites(3); }); return said; }
+function belowFilter() { let said; [0].filter(function inFilter() { said = sites(3); }); return said; }
+function belowReduce() { return [0, 1].reduce(function inReduce() { return sites(3); }); }
+function belowSort() { let said; [1, 0].sort(function inSort() { said ??= sites(3); return 0; }); return said; }
+function belowMapForEach() { let said; new Map([[1, 2]]).forEach(function inMapForEach() { said = sites(3); }); return said; }
+function belowStrictCallback() { return [0].map(Class.callback)[0]; }
+async function asyncBeforeAwait() { return sites(1); }
+async function asyncAfterAwait() { await 1; return sites(1); }
+function* generator() { yield sites(1); }
+function viaCall() { return declared.call(undefined); }
+function viaApply() { return declared.apply({}, []); }
+function viaBind() { return declared.bind(null)(); }
+function twoSloppy() { return (function inner() { return sites(2); })(); }
+exports.rows = {
+  "a declared function": declared,
+  "a function expression": expression,
+  "an arrow function": arrow,
+  "a method of a literal": () => literal.method(),
+  "a getter of a literal": () => literal.getter,
+  "an arrow in a literal": () => literal.arrow(),
+  "two sloppy functions": twoSloppy,
+  "an arrow in a method of a class": callsArrowInMethod,
+  "a sloppy function called by a method called by a sloppy function": sloppyBelowAndAboveStrict,
+  "a method of a class": callsMethod,
+  "a static method": callsStaticMethod,
+  "the constructor of a class": constructsClass,
+  "a sloppy constructor": constructs,
+  "below map": belowMap,
+  "below forEach": belowForEach,
+  "below filter": belowFilter,
+  "below reduce": belowReduce,
+  "below sort": belowSort,
+  "below Map.prototype.forEach": belowMapForEach,
+  "a strict callback below map": belowStrictCallback,
+  "an async function before its first await": asyncBeforeAwait,
+  "an async function after an await": asyncAfterAwait,
+  "a generator": () => generator().next().value,
+  "through call": viaCall,
+  "through apply": viaApply,
+  "through bind": viaBind,
+  "down to the module that is strict": () => sites(4),
+};
+//// caller-and-arguments-by-function-kind/kinds.cjs
+function attempt(label, run) { try { console.log(label + ": " + String(run())); } catch (error) { console.log(label + ": " + error.constructor.name); } }
+function plain() { return 1; }
+const arrow = () => 1;
+const object = { method() { return 1; }, get got() { return 1; } };
+class Box { method() {} static make() {} }
+async function waits() {}
+function* yields() {}
+const bound = plain.bind(null);
+const expression = function () {};
+const kinds = { plain, arrow, method: object.method, getter: Object.getOwnPropertyDescriptor(object, "got").get, "class": Box, "class method": Box.prototype.method, "static method": Box.make, waits, yields, bound, expression, native: Math.max, "no function": {} };
+const getCaller = Object.getOwnPropertyDescriptor(Function.prototype, "caller").get;
+const getArguments = Object.getOwnPropertyDescriptor(Function.prototype, "arguments").get;
+for (const [name, f] of Object.entries(kinds)) {
+  attempt(name + ".caller", () => f.caller);
+  attempt(name + ".arguments", () => f.arguments);
+  attempt(name + ".caller = 1", () => { f.caller = 1; return "stored"; });
+  attempt(name + ".arguments = 1", () => { f.arguments = 1; return "stored"; });
+  attempt(name + ": the getters borrowed", () => [getCaller.call(f), getArguments.call(f)]);
+  attempt(name + ": Reflect.get", () => [Reflect.get(Function.prototype, "caller", f), Reflect.get(Function.prototype, "arguments", f)]);
+  attempt(name + ": own", () => [Object.hasOwn(f, "caller"), Object.hasOwn(f, "arguments"), "caller" in f]);
+}
+function ofArguments() { return [typeof arguments.callee, arguments.callee === ofArguments, arguments.caller, "caller" in arguments, Object.hasOwn(arguments, "callee")]; }
+attempt("the arguments object of sloppy code", ofArguments);
+function toss() { return new Error("failed", { cause: [toss.caller] }); }
+attempt("read while it runs, the error is still made", () => toss().message);
+module.exports = {};
+//// caller-and-arguments-by-function-kind/main.ts
+// `caller` and `arguments` of a function that is not running: null for a sloppy function, and a store to them does nothing; every other kind of function throws. By a read, by the getters of Function.prototype borrowed, by Reflect.get. A library reads `toss.caller` to say where a stack trace should start.
+import "./kinds.cjs";
+//// children-are-listed-in-the-order-of-the-first-requires/a.cjs
+require("./c.cjs");
+//// children-are-listed-in-the-order-of-the-first-requires/b.cjs
+require("./c.cjs"); require("./a.cjs");
+//// children-are-listed-in-the-order-of-the-first-requires/c.cjs
+exports.c = 1;
+//// children-are-listed-in-the-order-of-the-first-requires/main.cjs
+// Children are listed in the order of the first requires.
+const path = require("path");
+const names = m => m.children.map(c => path.basename(c.id)).join("+");
+console.log(names(module));
+require("./a.cjs"); console.log(names(module));
+require("./b.cjs"); require("./a.cjs"); console.log(names(module), names(module.children[0]), names(module.children[1]));
+//// closures-of-an-exports-object-that-an-es-module-imported/lib.cjs
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) module.exports = factory();
+  else root.lib = factory();
+})(this, function () {
+  var calls = 0;
+  return {
+    used: function () { return "used " + ++calls; },
+    wrapped: function () { return "wrapped " + ++calls; },
+    replaced: function () { return "replaced " + ++calls; },
+    deleted: function () { return "deleted " + ++calls; },
+    redefined: function () { return "redefined " + ++calls; },
+    readThenDeleted: function () { return "readThenDeleted " + ++calls; },
+    untouched: function () { return "untouched " + ++calls; },
+    neverAsked: function () { return "neverAsked " + ++calls; },
+  };
+});
+//// closures-of-an-exports-object-that-an-es-module-imported/main.mjs
+// An ES importer holds what a CommonJS file exported when it was first imported, whatever happens to the exports object afterwards.
+import lib, { used } from "./lib.cjs";
+const key = name => (process.argv.length > 99 ? "other" : name);
+console.log(used(), lib.used === used);
+
+const original = lib[key("wrapped")];
+lib[key("wrapped")] = function () { return "[" + original() + "]"; };
+lib[key("replaced")] = function () { return "another function"; };
+delete lib[key("deleted")];
+Object.defineProperty(lib, key("redefined"), { get() { return "a getter"; }, configurable: true, enumerable: true });
+const seen = lib[key("readThenDeleted")];
+delete lib[key("readThenDeleted")];
+
+const namespace = await import("./lib.cjs");
+console.log(namespace.wrapped === original, namespace.wrapped(), lib.wrapped());
+console.log(typeof namespace.replaced, namespace.replaced(), lib.replaced(), namespace.replaced === lib.replaced);
+console.log(typeof namespace.deleted, namespace.deleted(), "deleted" in lib);
+console.log(typeof namespace.redefined, namespace.redefined(), lib.redefined);
+console.log(namespace.readThenDeleted === seen, namespace.readThenDeleted(), "readThenDeleted" in lib);
+console.log(namespace.untouched === lib.untouched, namespace.untouched(), lib.untouched());
+console.log(namespace.default === lib, namespace.used === used);
+console.log(Object.keys(namespace).sort().join());
+console.log(Object.keys(lib).join());
+const again = await import("./lib.cjs");
+console.log(again === namespace, again.replaced === namespace.replaced, again.deleted === namespace.deleted);
+//// constructor-function-of-a-module-required-late/main.cjs
+"use strict";
+// The module is required inside a function, so nothing proves that its body runs once: after its eviction it runs again, and each evaluation has functions and prototype objects of its own.
+let loaded;
+function library() {
+  return loaded || (loaded = require("./parameters.cjs"));
+}
+function check(title, made) {
+  let text = "";
+  for (let round = 0; round < 200; round++) {
+    const { parameters, pairs } = made.parse("charset=utf-" + (round & 7) + ";q=" + round);
+    text = [
+      pairs,
+      parameters.charset.describe(),
+      parameters.q.describe(),
+      Object.getPrototypeOf(parameters) === made.NullObject.prototype,
+      Object.getPrototypeOf(Object.getPrototypeOf(parameters)),
+      parameters instanceof made.NullObject,
+      parameters.q instanceof made.Pair,
+      Object.getPrototypeOf(parameters.q) === made.Pair.prototype,
+      "toString" in parameters,
+    ].join(" ");
+  }
+  console.log(title + ": " + text);
+}
+const first = library();
+check("first", first);
+
+delete require.cache[require.resolve("./parameters.cjs")];
+loaded = undefined;
+const second = library();
+console.log("evaluated again:", second !== first, second.NullObject !== first.NullObject, second.NullObject.prototype !== first.NullObject.prototype, second.Pair.prototype !== first.Pair.prototype);
+check("second", second);
+check("first again", first);
+console.log("across:", first.parse("a=1").parameters instanceof second.NullObject, second.parse("a=1").parameters.a instanceof first.Pair);
+
+first.NullObject.prototype = { marked: true };
+first.Pair.prototype = { describe() { return "replaced"; } };
+check("first with other prototypes", first);
+check("second untouched", second);
+console.log(first.parse("a=1").parameters.marked, second.parse("a=1").parameters.marked);
+//// constructor-function-of-a-module-required-late/parameters.cjs
+"use strict";
+// A constructor function made in a function that runs once for each evaluation of the module, with a prototype object that the module stores.
+const NullObject = (() => {
+  const C = function () {};
+  C.prototype = Object.create(null);
+  return C;
+})();
+function Pair(key, value) {
+  this.key = key;
+  this.value = value;
+}
+Pair.prototype.describe = function () {
+  return this.key + "=" + this.value;
+};
+function parse(header) {
+  const parameters = new NullObject();
+  let index = 0;
+  let start = 0;
+  let pairs = 0;
+  while (index <= header.length) {
+    if (index === header.length || header.charCodeAt(index) === 59) {
+      const equals = header.indexOf("=", start);
+      const pair = new Pair(header.slice(start, equals), header.slice(equals + 1, index));
+      if (parameters[pair.key] === undefined) parameters[pair.key] = pair;
+      start = index + 1;
+      pairs++;
+    }
+    index++;
+  }
+  return { parameters, pairs };
+}
+module.exports = { NullObject, Pair, parse };
+//// debug-style-setup-function/cjs_debug_common.js
+function setup(env) {
+	createDebug.debug = createDebug;
+	createDebug.default = createDebug;
+	createDebug.enable = enable;
+	Object.keys(env).forEach(key => {
+		createDebug[key] = env[key];
+	});
+	createDebug.names = [];
+	function createDebug(namespace) {
+		function debug(...args) { return namespace + ":" + args.join(); }
+		debug.namespace = namespace;
+		return debug;
+	}
+	function enable(namespaces) {
+		createDebug.save(namespaces);
+		createDebug.namespaces = namespaces;
+	}
+	createDebug.enable(createDebug.load());
+	return createDebug;
+}
+module.exports = setup;
+//// debug-style-setup-function/cjs_debug_index.js
+if (typeof process === 'undefined' || process.type === 'renderer') {
+	module.exports = require('./cjs_debug_node.js');
+} else {
+	module.exports = require('./cjs_debug_node.js');
+}
+//// debug-style-setup-function/cjs_debug_node.js
+exports.init = init;
+exports.log = log;
+exports.save = save;
+exports.load = load;
+exports.colors = [6, 2, 3];
+function log(...args) { return args.length; }
+function save(namespaces) { if (namespaces) { saved = namespaces; } }
+function load() { return "from-load"; }
+function init(debug) { debug.inspectOpts = {}; }
+let saved;
+module.exports = require('./cjs_debug_common.js')(exports);
+const {formatters} = module.exports;
+//// debug-style-setup-function/main.ts
+// A CommonJS module written like the `debug` package: a setup function that copies properties onto the function it exports.
+import createDebug from "./cjs_debug_index.js";
+const d = (createDebug as any)("x");
+console.log(d("a", 1), (createDebug as any).namespaces, Object.keys(createDebug as any).join());
+//// descriptor-copied-under-a-computed-name/copy.cjs
+"use strict";
+var count = (this && this.__count) || function (from) { return Object.keys(from).length; };
+var made = require("./made.cjs");
+for (var name in made) Object.defineProperty(exports, name, Object.getOwnPropertyDescriptor(made, name));
+exports.count = count(made);
+//// descriptor-copied-under-a-computed-name/made.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.TWO = exports.ONE = void 0;
+exports.ONE = "one";
+exports.TWO = 2;
+Object.defineProperty(exports, "THREE", { enumerable: true, get: function () { return exports.TWO + 1; } });
+//// descriptor-copied-under-a-computed-name/main.cjs
+// A module copies the descriptors of another module's exports under names that the build does not know, and has a helper that it first looks for on `this`, as compilers write it. A descriptor holds
+// what the object itself has, so nothing that nobody follows gets into the copy, and the program stays as small as it is.
+// STATISTIC: AccessesUnknown <= 40
+const copy = require("./copy.cjs");
+console.log(copy.ONE, copy.TWO, copy.count, Object.keys(copy).join());
+const one = Object.getOwnPropertyDescriptor(copy, "ONE");
+console.log(one.value, one.writable, one.enumerable, one.configurable, typeof Object.getOwnPropertyDescriptor(copy, "THREE").get, copy.THREE);
+//// destructuring-under-with.js
+// A destructured name under `with` is resolved when its value is stored: after the read and the default, in an assignment and in a `var` alike.
+function iterableThatRuns(effect) {
+  return {
+    [Symbol.iterator]() {
+      return {
+        next() {
+          effect();
+          return { value: "stored", done: false };
+        },
+        return() {
+          return {};
+        },
+      };
+    },
+  };
+}
+
+function assignmentWhoseStepDeletes() {
+  var a = "variable";
+  var scope = { a: "property" };
+  var iterable = iterableThatRuns(() => delete scope.a);
+  with (scope) {
+    [a] = iterable;
+  }
+  return scope.a + " " + a;
+}
+console.log("array assignment, the step deletes the property:", assignmentWhoseStepDeletes());
+
+function declarationWhoseStepDeletes() {
+  var scope = { a: "property" };
+  var iterable = iterableThatRuns(() => delete scope.a);
+  with (scope) {
+    var [a] = iterable;
+  }
+  return scope.a + " " + a;
+}
+console.log("array declaration, the step deletes the property:", declarationWhoseStepDeletes());
+
+function assignmentWhoseStepAdds() {
+  var a = "variable";
+  var scope = {};
+  var iterable = iterableThatRuns(() => (scope.a = "property"));
+  with (scope) {
+    [a] = iterable;
+  }
+  return scope.a + " " + a;
+}
+console.log("array assignment, the step adds the property:", assignmentWhoseStepAdds());
+
+function declarationWhoseStepAdds() {
+  var scope = {};
+  var iterable = iterableThatRuns(() => (scope.a = "property"));
+  with (scope) {
+    var [a] = iterable;
+  }
+  return scope.a + " " + a;
+}
+console.log("array declaration, the step adds the property:", declarationWhoseStepAdds());
+
+function assignmentWhoseGetterDeletes() {
+  var a = "variable";
+  var scope = { a: "property" };
+  var source = {
+    get a() {
+      delete scope.a;
+      return "stored";
+    },
+  };
+  with (scope) {
+    ({ a } = source);
+  }
+  return scope.a + " " + a;
+}
+console.log("object assignment, the getter deletes the property:", assignmentWhoseGetterDeletes());
+
+function declarationWhoseGetterDeletes() {
+  var scope = { a: "property" };
+  var source = {
+    get a() {
+      delete scope.a;
+      return "stored";
+    },
+  };
+  with (scope) {
+    var { a } = source;
+  }
+  return scope.a + " " + a;
+}
+console.log("object declaration, the getter deletes the property:", declarationWhoseGetterDeletes());
+
+function defaultAddsProperty() {
+  var a = "variable";
+  var holder = {};
+  var scope = holder;
+  with (scope) {
+    [a = ((holder.a = "property"), "stored")] = [];
+  }
+  return holder.a + " " + a;
+}
+console.log("the default adds the property:", defaultAddsProperty());
+
+function lookupFollowsRead() {
+  var a;
+  var order = [];
+  var scope = new Proxy(
+    {},
+    {
+      has(target, key) {
+        if (key === "a") order.push("has a");
+        return Reflect.has(target, key);
+      },
+    },
+  );
+  var source = {
+    get a() {
+      order.push("get a");
+      return 1;
+    },
+  };
+  with (scope) {
+    ({ a } = source);
+  }
+  return order.join() + " " + a;
+}
+console.log("the lookup follows the read:", lookupFollowsRead());
+
+function memberTargetComesFirst() {
+  var order = [];
+  var target = {};
+  var scope = {
+    get holder() {
+      order.push("holder");
+      return target;
+    },
+  };
+  var iterable = iterableThatRuns(() => order.push("next"));
+  with (scope) {
+    [holder.a] = iterable;
+  }
+  return order.join() + " " + target.a;
+}
+console.log("the object of a member target comes before the step:", memberTargetComesFirst());
+
+function loopHeadsStoreThroughScope() {
+  var scope = { a: "property", b: "property" };
+  with (scope) {
+    for (var a of ["stored"]);
+    for (var [b] of [["stored"]]);
+  }
+  return scope.a + " " + a + " " + scope.b + " " + b;
+}
+console.log("`var` in a loop head:", loopHeadsStoreThroughScope());
+//// direct-eval-beside-require-in-typescript.ts
+// A direct eval at the top level of a TypeScript file that calls `require`, and so runs as CommonJS, is handed the file's `this` without a TypeError.
+try { console.log(eval("1 + 1")) } catch (e) { console.log(String(e)) }; console.log(typeof require("node:path").join)
+//// direct-eval-in-function-expression.js
+// A function expression has no home object, so one that holds a direct eval captures none. The text still sees the function's `this` and `arguments`, and in a method of an object literal it may use `super`.
+module.exports = function () {
+  return eval("1");
+};
+console.log(module.exports());
+
+const throughArrow = function (text) {
+  return (() => eval(text))();
+};
+console.log(throughArrow("arguments.length"), throughArrow.call("receiver", "String(this)"), throughArrow("typeof new.target"));
+
+function superInText(text) {
+  try {
+    return eval(text);
+  } catch (error) {
+    return error.name;
+  }
+}
+console.log(superInText("super.name()"));
+
+const base = {
+  name() {
+    return "base";
+  },
+};
+const derived = {
+  __proto__: base,
+  name() {
+    return "derived, then " + eval("super.name()");
+  },
+  throughArrow() {
+    return (() => eval("super.name()"))();
+  },
+  get read() {
+    return eval("super.name()");
+  },
+};
+console.log(derived.name(), derived.throughArrow(), derived.read);
+//// direct-eval-reads-wrapper-arguments/main.cjs
+// The text of a direct eval names `arguments` at the top of a CommonJS file and in an arrow function there: it is the wrapper function's arguments object, mapped to the five parameters in sloppy code. In a function it is that function's.
+console.log(eval("arguments.length"), eval("arguments[0] === exports"), eval("arguments[2] === module"));
+const inArrow = (text) => eval(text);
+console.log(inArrow("arguments.length"), inArrow("arguments[1] === require"));
+function inFunction(text) { return eval(text); }
+console.log(inFunction("arguments.length"), inFunction("arguments[0]"), inFunction("typeof exports"));
+
+const firstExports = exports;
+eval("arguments[0] = 'stored by the text'");
+console.log(exports);
+exports = "stored by the file";
+console.log(eval("arguments[0]"), inArrow("exports"), inFunction("exports"));
+inFunction("exports = 'stored in a function'");
+console.log(eval("arguments[0]"));
+exports = firstExports;
+
+eval("arguments = ['replaced']");
+console.log(eval("arguments.length"), inArrow("arguments[0]"));
+eval("var arguments = 'declared by the text'");
+console.log(eval("arguments"));
+require("./strict.cjs");
+//// direct-eval-reads-wrapper-arguments/strict.cjs
+"use strict";
+console.log(eval("arguments.length"), eval("arguments[0] === exports"));
+eval("arguments[0] = 'stored by the text'");
+console.log(exports === module.exports, eval("arguments[0]"));
+console.log(((text) => eval(text))("arguments.length"));
+//// direct-eval-reads-wrapper-variables/main.js
+// The text of a direct eval names `require`, `module`, `exports`, `__filename` and `__dirname` in a CommonJS file whose own code names none of them: at its top, in a function, in an arrow function, and in the shape ncc emits for an external module, whose parameter shadows `module`. Plain Bun takes such a file for an ES module, in which `require` is not defined, so the output is stored.
+import "./named-in-text-only.cjs";
+//// direct-eval-reads-wrapper-variables/named-in-text-only.cjs
+const external = function (module) {
+  module.exports = eval("require")("node:path");
+};
+const loaded = { exports: {} };
+external(loaded);
+console.log(typeof loaded.exports.join, loaded.exports.posix.join("a", "b"));
+
+function readInFunction(text) {
+  return eval(text);
+}
+const readInArrow = (text) => eval(text);
+for (const read of [readInFunction, readInArrow]) {
+  console.log(["exports", "require", "module", "__filename", "__dirname"].map((name) => typeof read(name)).join(" "));
+  console.log(read("module.exports === exports"), read("require('node:path')") === loaded.exports);
+}
+console.log(eval("typeof exports"), eval("module.exports === exports"), eval("__filename.startsWith(__dirname)"));
+//// direct-eval-stores-wrapper-variables/arguments.cjs
+function stored() { eval("arguments = 1"); return arguments; }
+console.log("arguments after eval:", stored(5, 6));
+function storedThroughArrow() { (() => eval("arguments = 'arrow'"))(); return arguments; }
+console.log("arguments stored through an arrow:", storedThroughArrow(5));
+function readByFunction() { var read = () => arguments; eval("arguments = 'seen'"); return read(); }
+console.log("arguments read by an arrow:", readByFunction(5));
+class Strict { static store() { try { eval("arguments = 1"); } catch (e) { return e.name + ", " + arguments.length; } return arguments; } }
+console.log("strict code rejects the text:", Strict.store(5, 6));
+//// direct-eval-stores-wrapper-variables/exports.cjs
+eval("exports = module.exports = { a: 1 }");
+exports.b = 2;
+console.log("module.exports.b:", module.exports.b, JSON.stringify(module.exports));
+function readExports() { return exports; }
+console.log("a function reads the stored object:", readExports() === module.exports);
+(function () { eval("exports = 'stored in a function'"); })();
+console.log("stored by an eval in a function:", exports, readExports(), typeof module.exports);
+console.log("read by a later eval:", eval("exports"));
+//// direct-eval-stores-wrapper-variables/main.js
+// The text of a direct eval stores to `exports`, `module`, `require`, `__filename`, `__dirname` and, in sloppy code, to `arguments`: code after the eval, inner functions and later evals read the stored value. Plain Bun takes arguments.cjs, whose own code names none of the five, for an ES module, which is strict, and has no fixed order for imported CommonJS files, so the output is stored: the files in import order.
+import "./exports.cjs";
+import "./module.cjs";
+import "./paths.cjs";
+import "./arguments.cjs";
+//// direct-eval-stores-wrapper-variables/module.cjs
+var original = module;
+eval("module = { exports: 'replaced' }");
+console.log("module after eval:", JSON.stringify(module), module === original);
+for (var i = 0; i < 2; i++) { console.log("module at the start of iteration " + i + ":", JSON.stringify(module)); eval("module = i"); }
+console.log("module after the loop:", module, typeof original.exports);
+var load = require;
+eval("require = 'no function'");
+console.log("require after eval:", require, typeof load);
+//// direct-eval-stores-wrapper-variables/paths.cjs
+console.log("paths at the start:", typeof __filename, typeof __dirname, __filename.startsWith(__dirname));
+eval("__filename = 'file'; __dirname = 'directory'");
+console.log("paths after eval:", __filename, __dirname);
+var read = () => [__filename, __dirname].join();
+eval("__dirname += '!'");
+console.log("paths read by an arrow:", read());
+//// dynamic-import-commonjs-thenable/files/d1.cjs
+exports.a = 1;
+exports.then = (r) => r({ a: 2 });
+//// dynamic-import-commonjs-thenable/files/d2.cjs
+exports.a = 1;
+exports.then = 1;
+//// dynamic-import-commonjs-thenable/files/d3.cjs
+exports.a = 1;
+//// dynamic-import-commonjs-thenable/files/d4.cjs
+const m = require("./d1.cjs");
+exports.a = 1;
+Object.defineProperty(exports, "then", { enumerable: true, get: function () { return m.then; } });
+//// dynamic-import-commonjs-thenable/files/d5.cjs
+////= createBinding-2
+exports.a = 1;
+__exportStar(require("./d5o.cjs"), exports);
+//// dynamic-import-commonjs-thenable/files/d5o.cjs
+exports.then = (r) => r({ a: 2 });
+//// dynamic-import-commonjs-thenable/files/d6.cjs
+module.exports = { a: 1, then: (r) => r({ a: 2 }) };
+//// dynamic-import-commonjs-thenable/main.js
+// Dynamic `import()` of a CommonJS module that exports a function named `then`.
+function show(label, v) { console.log(label + ": " + v); }
+show("then is a function", (await import("./files/d1.cjs")).a);
+{ const { a } = await import("./files/d1.cjs"); show("a pattern", a); }
+show("control: then is a number", (await import("./files/d2.cjs")).a);
+show("control: no then", (await import("./files/d3.cjs")).a);
+show("then by a getter", (await import("./files/d4.cjs")).a);
+show("then by a star", (await import("./files/d5.cjs")).a);
+show("then by module.exports = { .. }", (await import("./files/d6.cjs")).a);
+//// esbuild-output/files/another_helper.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: name !== "x" });
+};
+////= copyProps
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-5
+module.exports = __toCommonJS(index_exports);
+var x = 1;
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-2
+//// esbuild-output/files/as_a_value.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-7	x	y	y	default	z
+module.exports = __toCommonJS(index_exports);
+var x = 1;
+function y() {}
+var z = 3;
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-3	x	y
+//// esbuild-output/files/cycle_a.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-7	early	late	late	seen	seen
+module.exports = __toCommonJS(index_exports);
+////= lines-5	early	"early"
+var import_b = require("./cycle_b.js");
+var late = "late";
+var seen = import_b.seen;
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-4	early	late	seen
+//// esbuild-output/files/cycle_b.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+__export(index_exports, {
+  seen: () => seen
+});
+module.exports = __toCommonJS(index_exports);
+var import_a = require("./cycle_a.js");
+var seen = [typeof import_a.early, typeof import_a.late, Object.keys(import_a).join()].join(" ");
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  seen
+});
+//// esbuild-output/files/dead_zone_a.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-8	value	seen
+module.exports = __toCommonJS(index_exports);
+var import_b = require("./dead_zone_b.js");
+const value = 1;
+var seen = import_b.seen;
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-3	value	seen
+//// esbuild-output/files/dead_zone_b.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+__export(index_exports, {
+  seen: () => seen
+});
+module.exports = __toCommonJS(index_exports);
+var import_a = require("./dead_zone_a.js");
+var seen;
+try {
+  seen = String(import_a.value);
+} catch (error) {
+  seen = error.name;
+}
+// Annotate the CommonJS export names for ESM import in node:
+0 && (module.exports = {
+  seen
+});
+//// esbuild-output/files/declared_with_let.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-7	a	B	B	c	c
+module.exports = __toCommonJS(index_exports);
+let a = 1;
+class B {
+  static label = "B";
+}
+const c = a + 2;
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-4	a	B	c
+//// esbuild-output/files/exported_in_a_branch.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-5
+if (Date.now() > 0) module.exports = __toCommonJS(index_exports);
+var x = 1;
+//// esbuild-output/files/getter_of_a_member.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+__export(index_exports, {
+  x: () => import_plain.limit,
+  y: () => y
+});
+module.exports = __toCommonJS(index_exports);
+var import_plain = require("./plain.js");
+var y = 2;
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-3	x	y
+//// esbuild-output/files/helper_stored_to.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+__export = (target, all) => {
+  target.replaced = Object.keys(all).join();
+};
+var index_exports = {};
+////= export-5
+module.exports = __toCommonJS(index_exports);
+var x = 1;
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-2
+//// esbuild-output/files/holder_filled.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-5
+index_exports.extra = "extra";
+module.exports = __toCommonJS(index_exports);
+var x = 1;
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-2
+//// esbuild-output/files/holder_used.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-8	x	own
+module.exports = __toCommonJS(index_exports);
+var x = 1;
+var own = Object.keys(index_exports).join();
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-3	x	own
+//// esbuild-output/files/live.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-8	count	increment
+module.exports = __toCommonJS(index_exports);
+var count = 0;
+function increment() {
+  count++;
+  return count;
+}
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-3	count	increment
+//// esbuild-output/files/more_exports.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-5
+module.exports = __toCommonJS(index_exports);
+var x = 1;
+module.exports.added = 2;
+//// esbuild-output/files/odd_names.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-7	then	"a-b"	dashed	toString	text
+module.exports = __toCommonJS(index_exports);
+var then = "no function";
+var dashed = "a-b";
+////= lines-5	text	"text"
+//// esbuild-output/files/plain.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-6
+module.exports = __toCommonJS(index_exports);
+function add(a, b) {
+  return a + b;
+}
+var limit = 10;
+////= Shape
+var Kind = /* @__PURE__ */ ((Kind2) => {
+  Kind2[Kind2["Round"] = 0] = "Round";
+  Kind2[Kind2["Square"] = 1] = "Square";
+  return Kind2;
+})(Kind || {});
+var table = { one: 1, two: add(1, 1) };
+////= lines-5	original	"original"
+var index_default = function named() {
+  return "default";
+};
+// Annotate the CommonJS export names for ESM import in node:
+////= lines
+//// esbuild-output/files/required_late.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-5
+module.exports = __toCommonJS(index_exports);
+var x = "required by a function";
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-2
+//// esbuild-output/files/stored_by_a_field.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-7	Counter	made	made	seen	seen
+module.exports = __toCommonJS(index_exports);
+var made = 0;
+var seen = "nothing";
+var Counter = class {
+  number = made = made + 1;
+  constructor(label = seen = "a default") {
+    this.label = label;
+  }
+};
+//// esbuild-output/files/stored_by_a_function.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-8	state	set
+module.exports = __toCommonJS(index_exports);
+var state = "first";
+function set(next) {
+  state = next;
+}
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-3	state	set
+//// esbuild-output/files/stored_from_outside.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-5
+module.exports = __toCommonJS(index_exports);
+var x = 1;
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-2
+//// esbuild-output/files/stored_twice.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-7	first	second	second	third	third
+module.exports = __toCommonJS(index_exports);
+var first = 1;
+first = 2;
+var second;
+if (first === 2) second = "set in a branch";
+var third;
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-4	first	second	third
+//// esbuild-output/files/strict_user.js
+"use strict";
+const outside = require("./stored_from_outside.js");
+exports.store = function () {
+  outside.x = 3;
+  return outside.x;
+};
+exports.add = function () {
+  outside.fresh = 4;
+  return outside.fresh;
+};
+//// esbuild-output/files/throws.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-8	before	after
+module.exports = __toCommonJS(index_exports);
+var before = 1;
+globalThis.timesEvaluated = (globalThis.timesEvaluated || 0) + 1;
+if (globalThis.timesEvaluated === 1) throw new RangeError("half-way");
+var after = 2;
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-3	before	after
+//// esbuild-output/files/uses_this.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-8	who	x
+module.exports = __toCommonJS(index_exports);
+function who() {
+  return this === void 0 ? "undefined" : Object.keys(this).join();
+}
+var x = 1;
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-3	who	x
+//// esbuild-output/main.js
+// CommonJS modules in the form esbuild gives to what was an ES module: `__export(x, { name: () => local })` and `module.exports = __toCommonJS(x)`.
+function row(label, f) { let said; try { said = f(); } catch (e) { said = "threw " + e.name; } console.log(label + ": " + (typeof said === "function" ? "F" : String(said))); }
+const plain = require("./files/plain.js");
+row("a function", () => plain.add(2, 3));
+row("a variable", () => plain.limit);
+row("a class", () => new plain.Shape(4).describe());
+row("an enum", () => plain.Kind.Square + " " + plain.Kind[0]);
+row("an object that calls", () => plain.table.one + plain.table.two);
+row("another name", () => plain.renamed());
+row("default", () => plain.default() + " " + plain.default.name);
+row("the marker", () => plain.__esModule);
+row("a name that is not there", () => plain.missing);
+const { add, limit: bound, missing = "a default" } = require("./files/plain.js");
+row("a pattern", () => add(bound, 1) + " " + missing);
+const live = require("./files/live.js");
+row("a binding that a function stores to", () => [live.count, live.increment(), live.count, live.increment(), live.count].join());
+const state = require("./files/stored_by_a_function.js");
+row("stored to by a call from outside", () => { const before = state.state; state.set("second"); return before + " " + state.state; });
+const field = require("./files/stored_by_a_field.js");
+row("stored to by a field and by a default", () => { const before = field.made + " " + field.seen; new field.Counter(); new field.Counter(); return before + " | " + field.made + " " + field.seen; });
+const twice = require("./files/stored_twice.js");
+row("stored to twice by the body", () => [twice.first, twice.second, twice.third].join());
+const declared = require("./files/declared_with_let.js");
+row("let, class and const", () => [declared.a, declared.B.label, declared.c].join());
+const cycle = require("./files/cycle_a.js");
+row("a cycle", () => [cycle.early(), cycle.late, cycle.seen].join(" | "));
+const zone = require("./files/dead_zone_a.js");
+row("a dead zone in a cycle", () => zone.value + " " + zone.seen);
+const value = require("./files/as_a_value.js");
+row("keys", () => Object.keys(value).join());
+row("own names", () => Object.getOwnPropertyNames(value).join());
+row("a descriptor", () => { const d = Object.getOwnPropertyDescriptor(value, "x"); return [typeof d.get, d.set, d.enumerable, d.configurable, "value" in d].join(); });
+row("the marker's descriptor", () => JSON.stringify(Object.getOwnPropertyDescriptor(value, "__esModule")));
+row("in", () => ("x" in value) + " " + ("w" in value));
+row("spread", () => JSON.stringify({ ...value }));
+row("JSON", () => JSON.stringify(value));
+row("a computed key", () => ["x", "default"].map(key => value[key]).join());
+const outside = require("./files/stored_from_outside.js");
+row("a store from sloppy code", () => { outside.x = 2; return outside.x; });
+const strict = require("./files/strict_user.js");
+row("a store from strict code", () => strict.store());
+row("a new name from strict code", () => strict.add());
+row("delete", () => { const was = delete outside.x; return was + " " + outside.x; });
+row("another text for __export", () => { const m = require("./files/another_helper.js"); return m.x + " " + Object.keys(m).join(); });
+row("__export is stored to", () => { const m = require("./files/helper_stored_to.js"); return m.x + " " + m.replaced; });
+row("the object is read by the module", () => { const m = require("./files/holder_used.js"); return m.x + " " + m.own; });
+row("the object gets one more property", () => { const m = require("./files/holder_filled.js"); return m.x + " " + m.extra; });
+row("a getter that reads a member", () => { const m = require("./files/getter_of_a_member.js"); return m.x + " " + m.y; });
+const uses = require("./files/uses_this.js");
+row("a method that looks at this", () => uses.who());
+row("the same function, taken off", () => { const who = uses.who; return who(); });
+const odd = require("./files/odd_names.js");
+row("odd names", () => [odd.then, odd["a-b"], odd.toString(), String(odd)].join());
+row("a body that throws", () => require("./files/throws.js").before);
+row("the same module again", () => { const m = require("./files/throws.js"); return m.before + " " + m.after + " " + globalThis.timesEvaluated; });
+row("one more export after it", () => { const m = require("./files/more_exports.js"); return m.x + " " + m.added; });
+row("exported in a branch", () => require("./files/exported_in_a_branch.js").x);
+function late() { return require("./files/required_late.js").x; }
+row("required by a function", late);
+//// esbuild-output-imported/files/as_a_namespace.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-7	b	a	a	default	c
+module.exports = __toCommonJS(index_exports);
+var a = "a";
+var b = "b";
+var c = "c";
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-3	b	a
+//// esbuild-output-imported/files/live.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-8	count	increment
+module.exports = __toCommonJS(index_exports);
+var count = 0;
+function increment() {
+  count++;
+  return count;
+}
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-3	count	increment
+//// esbuild-output-imported/files/plain.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-6
+module.exports = __toCommonJS(index_exports);
+function add(a, b) {
+  return a + b;
+}
+var limit = 10;
+////= Shape
+var Kind = /* @__PURE__ */ ((Kind2) => {
+  Kind2[Kind2["Round"] = 0] = "Round";
+  Kind2[Kind2["Square"] = 1] = "Square";
+  return Kind2;
+})(Kind || {});
+var table = { one: 1, two: add(1, 1) };
+////= lines-5	original	"original"
+var index_default = function named() {
+  return "default";
+};
+// Annotate the CommonJS export names for ESM import in node:
+////= lines
+//// esbuild-output-imported/files/without_default.js
+"use strict";
+var __defProp = Object.defineProperty;
+var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
+var __getOwnPropNames = Object.getOwnPropertyNames;
+var __hasOwnProp = Object.prototype.hasOwnProperty;
+////= export-10
+var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+var index_exports = {};
+////= export-8	one	two
+module.exports = __toCommonJS(index_exports);
+var one = 1;
+////= lines-5	two	2
+// Annotate the CommonJS export names for ESM import in node:
+////= lines-3	one	two
+//// esbuild-output-imported/main.js
+// ES modules import CommonJS modules in the form esbuild gives to what was an ES module.
+import main, { add, limit, Shape, Kind, renamed } from "./files/plain.js";
+import { count, increment } from "./files/live.js";
+import whole, { one, two } from "./files/without_default.js";
+import * as all from "./files/as_a_namespace.js";
+import * as some from "./files/without_default.js";
+console.log(add(limit, 1), new Shape(3).describe(), Kind.Round, renamed(), typeof main, typeof main === "function" ? main() : Object.keys(main).join());
+console.log(count, increment(), count, increment(), count);
+console.log(one, two(), typeof whole, Object.keys(whole).join());
+console.log(Object.keys(all).join(), all.a, all.b, typeof all.default, JSON.stringify(all.default));
+console.log(some.one, some.two(), "default" in some, Object.keys(some).join());
+import("./files/plain.js").then(ns => console.log(Object.keys(ns).join(), ns.add(1, 1), typeof ns.default));
+//// esm-commonjs-cycle/cjs/a.js
+const b = require("./b.js")
+exports.name = "a"
+exports.twice = function (n) { return n * 2 }
+exports.fromB = b.value + 1
+exports.self = this === exports && module.exports === exports
+function Counter(start) { this.count = start }
+Counter.prototype.bump = function () { this.count++; return this }
+Counter.create = function (n) { return new Counter(n) }
+exports.Counter = Counter
+exports.kinds = [typeof module, typeof exports].join()
+//// esm-commonjs-cycle/cjs/b.js
+globalThis.order = (globalThis.order || []).concat("b")
+module.exports = { value: 41, later: undefined, get computed() { return this.value * 2 } }
+module.exports.later = "set later"
+//// esm-commonjs-cycle/cjs/c.js
+"use strict"
+Object.defineProperty(exports, "__esModule", { value: true })
+exports.default = function hello() { return "hello from c" }
+exports.named = 7
+//// esm-commonjs-cycle/cjs/cycle1.js
+exports.early = "early1"
+const other = require("./cycle2.js")
+exports.seen = other.seen
+exports.late = "late1"
+//// esm-commonjs-cycle/cjs/cycle2.js
+const first = require("./cycle1.js")
+exports.seen = first.early + "/" + first.late
+//// esm-commonjs-cycle/cjs/data.json
+{ "title": "data", "list": [1, 2, 3], "nested": { "ok": true } }
+//// esm-commonjs-cycle/cjs/esm.ts
+export const fromEsm = "esm value"
+export function shout(s: string): string { return s.toUpperCase() }
+export default 12
+//// esm-commonjs-cycle/cjs/fn.js
+module.exports = function area(w, h) { return w * h }
+module.exports.unit = "m2"
+//// esm-commonjs-cycle/cjs/umd.js
+(function (root, factory) {
+  if (typeof define === "function" && define.amd) define([], factory)
+  else if (typeof module === "object" && module.exports) module.exports = factory()
+  else root.umd = factory()
+})(this, function () { return { kind: "umd" } })
+//// esm-commonjs-cycle/main.ts
+// ES modules and CommonJS modules importing each other.
+import * as a from "./cjs/a.js"
+import aDefault, { name, twice, Counter } from "./cjs/a.js"
+import b from "./cjs/b.js"
+import c, { named } from "./cjs/c.js"
+import area from "./cjs/fn.js"
+import umd from "./cjs/umd.js"
+import data, { title } from "./cjs/data.json"
+import { seen, late } from "./cjs/cycle1.js"
+declare const require: (name: string) => any
+console.log(name, twice(4), a.fromB, a.self, aDefault === (a as any).default, Object.keys(a).sort().join())
+console.log(new (Counter as any)(1).bump().bump().count, Counter.create(5).bump().count, a.kinds)
+console.log(b.value, b.later, b.computed, (globalThis as any).order.join())
+console.log(typeof c, JSON.stringify(Object.keys(c as any)), named)
+console.log(area(2, 3), (area as any).unit, umd.kind, data.title, title, data.list.length, data.nested.ok)
+console.log(seen, late)
+function lazy(): string { const esm = require("./cjs/esm.ts"); return esm.fromEsm + " " + esm.shout("x") + " " + esm.default }
+console.log(lazy(), require("./cjs/b.js") === b, require("./cjs/data.json").list[2])
+// So that the type checker, which does not look at `require` in TypeScript, loads the file.
+function never() { return import("./cjs/esm.ts") }
+import("./cjs/fn.js").then(ns => console.log(typeof ns.default, ns.default(3, 3), (ns as any).unit))
+//// every-key-that-require-cache-lists-can-be-read/common.cjs
+exports.kind = "CommonJS";
+//// every-key-that-require-cache-lists-can-be-read/data.json
+{ "kind": "JSON" }
+//// every-key-that-require-cache-lists-can-be-read/main.cjs
+// Whatever key require.cache and Module._cache list can be read, and what is read is a module with its exports: after modules of every kind were loaded, some of the program and one from the disk.
+const { mkdtempSync, rmSync, writeFileSync } = require("node:fs");
+const { tmpdir } = require("node:os");
+const { basename, join } = require("node:path");
+const Module = require("node:module");
+
+console.log(require("./common.cjs").kind, require("./standard.mjs").kind, require("./typed.ts").kind, require("./data.json").kind);
+
+const folder = mkdtempSync(join(tmpdir(), "listed-keys-"));
+const onDisk = join(folder, "written-at-run-time.json");
+writeFileSync(onDisk, '{ "kind": "from the disk" }\n');
+try {
+  console.log(require(onDisk).kind);
+  for (const [name, cache] of [["require.cache", require.cache], ["Module._cache", Module._cache]]) {
+    const failures = [];
+    const ways = {
+      "Object.keys": Object.keys(cache),
+      "Reflect.ownKeys": Reflect.ownKeys(cache),
+      "for-in": (() => { const keys = []; for (const key in cache) keys.push(key); return keys; })(),
+      "Object.entries": Object.entries(cache).map(([key]) => key),
+    };
+    for (const [way, keys] of Object.entries(ways)) {
+      for (const key of keys) {
+        try {
+          const found = cache[key];
+          if (typeof found !== "object" || found === null || !("exports" in found)) failures.push(way + ": " + basename(key) + " is " + typeof found);
+          else if (!(key in cache) || !Object.hasOwn(cache, key) || Object.getOwnPropertyDescriptor(cache, key) === undefined) failures.push(way + ": " + basename(key) + " is listed and is not there");
+        } catch (error) {
+          failures.push(way + ": " + basename(key) + " threw " + error.message);
+        }
+      }
+      console.log(name, way, "lists the file from the disk:", keys.includes(onDisk));
+    }
+    console.log(name, "keys that cannot be read:", failures.length === 0 ? "none" : failures.join("; "));
+    console.log(name, "the file from the disk:", cache[onDisk].exports.kind);
+  }
+} finally {
+  rmSync(folder, { recursive: true, force: true });
+}
+//// every-key-that-require-cache-lists-can-be-read/standard.mjs
+export const kind = "ES module";
+//// every-key-that-require-cache-lists-can-be-read/typed.ts
+export const kind: string = "TypeScript";
+//// exports-alias-store-before-declaration/files/i1.js
+const log = [];
+try { u.a = log.push("right side"); } catch (e) { log.push("caught " + e.name); }
+var u = exports;
+exports.log = log.join();
+//// exports-alias-store-before-declaration/files/i2.js
+const log = [];
+try { u.a = log.push("right side"); } catch (e) { log.push("caught " + e.name); }
+var u = module.exports;
+exports.log = log.join();
+//// exports-alias-store-before-declaration/files/i3.js
+const log = [];
+try { u.a += log.push("right side"); } catch (e) { log.push("caught " + e.name); }
+var u = exports;
+exports.log = log.join();
+//// exports-alias-store-before-declaration/files/i4.js
+const log = [];
+try { m.a = log.push("right side"); } catch (e) { log.push("caught " + e.name); }
+var m = require("./io");
+exports.log = log.join();
+//// exports-alias-store-before-declaration/files/i5.js
+const log = [];
+try { c.a = log.push("right side"); } catch (e) { log.push("caught " + e.name); }
+const c = exports;
+exports.log = log.join();
+//// exports-alias-store-before-declaration/files/io.js
+exports.a = 0;
+//// exports-alias-store-before-declaration/main.js
+// CommonJS modules that store to a property of `var u = exports` (or of a required module) before that declaration has run.
+function said(f) { try { const v = f(); return typeof v === "function" ? "F" : String(v); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+function show(v) { return typeof v === "function" ? "F" : String(v); }
+try { console.log("i1: " + show(require("./files/i1").log)); } catch (e) { console.log("i1: threw " + e.name); }
+try { console.log("i2: " + show(require("./files/i2").log)); } catch (e) { console.log("i2: threw " + e.name); }
+try { console.log("i3: " + show(require("./files/i3").log)); } catch (e) { console.log("i3: threw " + e.name); }
+try { console.log("i4: " + show(require("./files/i4").log)); } catch (e) { console.log("i4: threw " + e.name); }
+try { console.log("i5: " + show(require("./files/i5").log)); } catch (e) { console.log("i5: threw " + e.name); }
+//// exports-filled-where-unknown-code-runs/index.cjs
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __exportStar = (this && this.__exportStar) || function(m, exports) {
+    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+__exportStar(require("./made.cjs"), exports);
+//// exports-filled-where-unknown-code-runs/made.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.NAME_19 = exports.NAME_18 = exports.NAME_17 = exports.NAME_16 = exports.NAME_15 = exports.NAME_14 = exports.NAME_13 = exports.NAME_12 = exports.NAME_11 = exports.NAME_10 = exports.NAME_9 = exports.NAME_8 = exports.NAME_7 = exports.NAME_6 = exports.NAME_5 = exports.NAME_4 = exports.NAME_3 = exports.NAME_2 = exports.NAME_1 = exports.NAME_0 = void 0;
+exports.NAME_39 = exports.NAME_38 = exports.NAME_37 = exports.NAME_36 = exports.NAME_35 = exports.NAME_34 = exports.NAME_33 = exports.NAME_32 = exports.NAME_31 = exports.NAME_30 = exports.NAME_29 = exports.NAME_28 = exports.NAME_27 = exports.NAME_26 = exports.NAME_25 = exports.NAME_24 = exports.NAME_23 = exports.NAME_22 = exports.NAME_21 = exports.NAME_20 = void 0;
+exports.NAME_59 = exports.NAME_58 = exports.NAME_57 = exports.NAME_56 = exports.NAME_55 = exports.NAME_54 = exports.NAME_53 = exports.NAME_52 = exports.NAME_51 = exports.NAME_50 = exports.NAME_49 = exports.NAME_48 = exports.NAME_47 = exports.NAME_46 = exports.NAME_45 = exports.NAME_44 = exports.NAME_43 = exports.NAME_42 = exports.NAME_41 = exports.NAME_40 = void 0;
+exports.NAME_0 = "name_0";
+exports.NAME_1 = "name_1";
+exports.NAME_2 = "name_2";
+exports.NAME_3 = "name_3";
+exports.NAME_4 = "name_4";
+exports.NAME_5 = "name_5";
+exports.NAME_6 = "name_6";
+exports.NAME_7 = "name_7";
+exports.NAME_8 = "name_8";
+exports.NAME_9 = "name_9";
+exports.NAME_10 = "name_10";
+exports.NAME_11 = "name_11";
+exports.NAME_12 = "name_12";
+exports.NAME_13 = "name_13";
+exports.NAME_14 = "name_14";
+exports.NAME_15 = "name_15";
+exports.NAME_16 = "name_16";
+exports.NAME_17 = "name_17";
+exports.NAME_18 = "name_18";
+exports.NAME_19 = "name_19";
+exports.NAME_20 = "name_20";
+exports.NAME_21 = "name_21";
+exports.NAME_22 = "name_22";
+exports.NAME_23 = "name_23";
+exports.NAME_24 = "name_24";
+exports.NAME_25 = "name_25";
+exports.NAME_26 = "name_26";
+exports.NAME_27 = "name_27";
+exports.NAME_28 = "name_28";
+exports.NAME_29 = "name_29";
+exports.NAME_30 = "name_30";
+exports.NAME_31 = "name_31";
+exports.NAME_32 = "name_32";
+exports.NAME_33 = "name_33";
+exports.NAME_34 = "name_34";
+exports.NAME_35 = "name_35";
+exports.NAME_36 = "name_36";
+exports.NAME_37 = "name_37";
+exports.NAME_38 = "name_38";
+exports.NAME_39 = "name_39";
+exports.NAME_40 = "name_40";
+exports.NAME_41 = "name_41";
+exports.NAME_42 = "name_42";
+exports.NAME_43 = "name_43";
+exports.NAME_44 = "name_44";
+exports.NAME_45 = "name_45";
+exports.NAME_46 = "name_46";
+exports.NAME_47 = "name_47";
+exports.NAME_48 = "name_48";
+exports.NAME_49 = "name_49";
+exports.NAME_50 = "name_50";
+exports.NAME_51 = "name_51";
+exports.NAME_52 = "name_52";
+exports.NAME_53 = "name_53";
+exports.NAME_54 = "name_54";
+exports.NAME_55 = "name_55";
+exports.NAME_56 = "name_56";
+exports.NAME_57 = "name_57";
+exports.NAME_58 = "name_58";
+exports.NAME_59 = "name_59";
+//// exports-filled-where-unknown-code-runs/main.cjs
+// The program evaluates text, and a file re-exports what another exports, as TypeScript writes it: nothing about that object is proven. Its body still fills it as a constructor fills
+// `this`: a store there expects an empty slot and creates the field behind its tests, and stores that follow each other do so in one step. A store that expected a filled slot went by name.
+// STATISTIC: SlotStoreRunGroups >= 6
+const made = require("./index.cjs");
+console.log(made.NAME_0, made.NAME_59, Object.keys(made).length, Object.keys(made).slice(0, 3).join(), made.__esModule);
+console.log((0, eval)(process.argv[9] || "1 + 1"));
+const source = require("./made.cjs");
+source.NAME_0 = "changed";
+console.log(made.NAME_0);
+//// exports-is-a-module-variable/cjs/reassign.js
+exports = module.exports = function main() { return "main" }
+exports.helper = function () { return "helper" }
+//// exports-is-a-module-variable/main.ts
+// `exports` is an ordinary variable of a CommonJS module and can be reassigned.
+import main from "./cjs/reassign.js"
+console.log(main(), (main as any).helper())
+//// exports-object-imported-by-es-modules/imported-late.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+let reads = 0;
+Object.defineProperty(exports, "counted", {
+  enumerable: true,
+  get: function () {
+    return ++reads;
+  },
+});
+Object.defineProperty(exports, "hidden", { value: "hidden" });
+exports.first = 1;
+exports.second = 2;
+//// exports-object-imported-by-es-modules/main.mjs
+// ES modules import compiled CommonJS modules (default, named, namespace and dynamic imports) and see the same exports as in plain Bun.
+import whole, { alpha, beta, gamma } from "./plain.cjs";
+import * as plain from "./plain.cjs";
+import marked, { value as markedValue } from "./marked.cjs";
+import * as markedNamespace from "./marked.cjs";
+import replaced, { member } from "./replaced.cjs";
+import * as replacedNamespace from "./replaced.cjs";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+console.log(alpha, beta, gamma(1), Object.keys(whole).join(), whole === require("./plain.cjs"));
+console.log(whole.alpha, whole.beta, whole.neverStored, whole.storedLater, whole.default, typeof whole.constructor, whole.hidden);
+console.log(Object.keys(plain).join(), plain.default === whole, plain.alpha, typeof plain.gamma, plain.absent);
+console.log("neverStored" in plain, plain.neverStored, "storedLater" in plain, typeof plain.constructor, plain.hidden);
+
+const markedExports = require("./marked.cjs");
+console.log(typeof marked, JSON.stringify(marked), markedValue, Object.keys(markedNamespace).join(), markedNamespace.__esModule, markedNamespace.hidden);
+console.log(markedExports.__esModule, markedExports.value, markedExports.default === marked, markedExports.hidden, Object.keys(markedExports).join());
+
+console.log(typeof replaced, replaced(), member, Object.keys(replacedNamespace).join(), replacedNamespace.default === replaced, replacedNamespace.lost);
+console.log(Object.keys(replaced.original).join(), replaced.original.lost, replaced.original.member);
+
+whole.alpha = "changed after the import";
+whole.beta = 40;
+whole.added = "added after the import";
+whole.storeLater();
+try {
+  whole.hidden = "stored";
+} catch (error) {
+  console.log(error.constructor.name, whole.hidden);
+}
+console.log(alpha, beta, gamma(1), plain.alpha, plain.added, plain.storedLater, require("./plain.cjs").alpha);
+console.log(whole.alpha, whole.beta, whole.added, whole.storedLater, Object.keys(whole).join());
+const dynamic = await import("./plain.cjs");
+console.log(dynamic === plain, dynamic.default === whole, Object.keys(dynamic).join());
+
+const changed = whole.changeImportedLate();
+const late = await import("./imported-late.cjs");
+console.log(Object.keys(late).join(), late.default === changed, late.first, late.second, late.added, late.hidden, changed.hidden);
+console.log(late.counted, changed.counted, late.counted, JSON.stringify(late.default));
+//// exports-object-imported-by-es-modules/marked.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.value = void 0;
+exports.value = "value";
+exports.default = { isDefault: true };
+Object.defineProperty(exports, "hidden", { value: "hidden" });
+//// exports-object-imported-by-es-modules/plain.cjs
+exports.alpha = "alpha";
+exports.beta = 2;
+exports.gamma = function gamma(n) {
+  return n + exports.beta;
+};
+if (process.argv.length > 100) exports.neverStored = 1;
+exports.storeLater = function storeLater() {
+  exports.storedLater = "stored later";
+};
+exports.default = "a property named default";
+exports.constructor = function Plain() {};
+Object.defineProperty(exports, "hidden", { value: "hidden" });
+exports.changeImportedLate = function changeImportedLate() {
+  const late = require("./imported-late.cjs");
+  late.second = "changed before the import";
+  late.added = "added before the import";
+  delete late.first;
+  return late;
+};
+//// exports-object-imported-by-es-modules/replaced.cjs
+exports.lost = 1;
+module.exports = function replaced() {
+  return "called";
+};
+module.exports.member = "member";
+module.exports.original = exports;
+//// exports-redefined-beside-plain-ones/made.cjs
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.c = exports.b = exports.a = void 0;
+exports.a = 1;
+exports.b = 10;
+Object.defineProperty(exports, "b", { enumerable: true, get() { return exports.a + 1; } });
+exports.c = 3;
+Object.defineProperty(exports, "d", { value: 4, writable: false });
+exports.e = "five";
+Object.defineProperty(exports, "a", { enumerable: false });
+exports.f = [6];
+exports.bump = function () {
+  exports.a += 10;
+  exports.c += 10;
+  exports.e += "!";
+  return exports;
+};
+//// exports-redefined-beside-plain-ones/main.cjs
+// Object.defineProperty() with a constant name gives one property of the exports object another form: an accessor, a constant, a hidden one. The properties beside it stay what they were, are stored and
+// read as before, and keep their places among the keys.
+const m = require("./made.cjs");
+function show() {
+  return [m.a, m.b, m.c, m.d, m.e, m.f[0], Object.keys(m).join(), JSON.stringify(Object.getOwnPropertyDescriptor(m, "a")), typeof Object.getOwnPropertyDescriptor(m, "b").get].join(" | ");
+}
+console.log(show());
+for (let i = 0; i < 3; i++) m.bump();
+console.log(show());
+m.d = 5;
+console.log(m.d, m.__esModule, "__esModule" in m, Object.keys(m).includes("__esModule"));
+//// exports-stored-behind-a-plain-return/m.cjs
+exports.a = 1;
+return;
+exports.b = 2;
+exports.f = function () { return exports.b; };
+//// exports-stored-behind-a-plain-return/main.cjs
+// Exports stored behind a plain return.
+const m = require("./m.cjs");
+console.log(m.a, m.b, typeof m.f, Object.keys(m).join());
+//// exports-stored-behind-a-return-that-folding-removes/m.cjs
+exports.a = 1;
+if (false) return;
+exports.b = 2;
+exports.f = function () { return exports.b; };
+//// exports-stored-behind-a-return-that-folding-removes/main.cjs
+// Exports stored behind a return that folding removes.
+const m = require("./m.cjs");
+console.log(m.a, m.b, m.f());
+//// exports-stored-behind-a-return-that-is-not-taken/m.cjs
+exports.a = 1;
+if (process.argv.length > 99) return;
+exports.b = 2;
+exports.f = function () {};
+//// exports-stored-behind-a-return-that-is-not-taken/main.cjs
+// Exports stored behind a return that is not taken.
+const m = require("./m.cjs");
+console.log(m.a, m.b, typeof m.f, "b" in m, Object.keys(m).join());
+//// exports-stored-behind-a-return-that-is-taken/m.cjs
+exports.a = 1;
+if (process.argv.length < 99) return;
+exports.b = 2;
+exports.f = function () {};
+//// exports-stored-behind-a-return-that-is-taken/main.cjs
+// Exports stored behind a return that is taken.
+const m = require("./m.cjs");
+console.log(m.a, m.b, typeof m.f, "b" in m, Object.keys(m).join());
+//// exports-stored-in-an-arm-that-the-build-folds-away/by-constant.js
+if (false) {
+  module.exports = require("./not-there.js");
+} else {
+  module.exports = require("./development.js");
+}
+//// exports-stored-in-an-arm-that-the-build-folds-away/development.js
+"use strict";
+exports.useState = function (x) { return ["development", x]; };
+exports.version = "19.development";
+//// exports-stored-in-an-arm-that-the-build-folds-away/handed-on.js
+module.exports = require("./index.js");
+//// exports-stored-in-an-arm-that-the-build-folds-away/index.js
+'use strict';
+if (process.env.NODE_ENV === 'production') {
+  module.exports = require('./production.js');
+} else {
+  module.exports = require('./development.js');
+}
+//// exports-stored-in-an-arm-that-the-build-folds-away/main.ts
+// `module.exports = require(..)` in each arm of a test that the build folds: the arm that is folded away stores nothing, and the
+// file that it names is not in the program. A TypeScript file imports the names of the other arm.
+declare const console: { log(...values: unknown[]): void };
+import { useState, version } from "./index.js";
+import * as React from "./index.js";
+import Default from "./index.js";
+import { version as handedOn } from "./handed-on.js";
+import { version as byConstant } from "./by-constant.js";
+import { kept, alsoKept } from "./names.js";
+import { viaRequire } from "./user.cjs";
+console.log(useState(1).join(), version, React.useState(2).join(), React.version, Default.useState(3).join());
+console.log(handedOn, byConstant, kept, alsoKept(), viaRequire());
+//// exports-stored-in-an-arm-that-the-build-folds-away/names.js
+if (process.env.NODE_ENV === "production") {
+  exports.kept = require("./not-there.js");
+  exports.alsoKept = 5;
+} else {
+  exports.kept = "kept";
+  exports.alsoKept = function () { return "called"; };
+}
+//// exports-stored-in-an-arm-that-the-build-folds-away/production.js
+"use strict";
+exports.useState = function (x) { return ["production", x]; };
+exports.version = "19.production";
+//// exports-stored-in-an-arm-that-the-build-folds-away/user.cjs
+const React = require("./index.js");
+exports.viaRequire = function () { return React.useState(4).join() + React.version; };
+//// files-whose-exports-are-made-by-a-call/cycle.cjs
+function make() { return { early: "early", seenByImporter: undefined }; }
+module.exports = make();
+module.exports.seenByImporter = require("./imports-back.mjs").seen;
+module.exports.late = "late";
+//// files-whose-exports-are-made-by-a-call/failing.cjs
+function make(v) { return { value: v }; } module.exports = make("half"); throw new Error("failing.cjs threw");
+//// files-whose-exports-are-made-by-a-call/imports-back.mjs
+import * as back from "./cycle.cjs"; export const seen = Object.keys(back).sort().join() + " " + back.early + " " + back.late;
+//// files-whose-exports-are-made-by-a-call/imports-failing.mjs
+export { value } from "./failing.cjs";
+//// files-whose-exports-are-made-by-a-call/main.mjs
+// ES modules import names of CommonJS files whose exports object is the result of a call: required earlier, imported twice, failing, and in a cycle with an ES module.
+import { createRequire } from "node:module";
+import { value as early } from "./required-earlier.cjs";
+import { value as plain, later } from "./plain.cjs";
+import { seenByImporter } from "./cycle.cjs";
+import "./requires-first.cjs";
+console.log(early, plain, later, seenByImporter);
+const require = createRequire(import.meta.url);
+require("./plain.cjs").value = "changed";
+console.log(plain, (await import("./plain.cjs")).value, require("./plain.cjs").value);
+for (let round = 0; round < 2; round++) {
+  try { console.log((await import("./imports-failing.mjs")).value); } catch (error) { console.log("import", round, error.message); }
+  try { console.log(require("./failing.cjs").value); } catch (error) { console.log("require", round, error.message); }
+}
+console.log((await import("./second-graph.mjs")).default);
+//// files-whose-exports-are-made-by-a-call/plain.cjs
+function make(v) { return { value: v, later: undefined }; } module.exports = make("plain"); module.exports.later = "stored later";
+//// files-whose-exports-are-made-by-a-call/required-earlier.cjs
+function make(v) { return { value: v }; } module.exports = make("required earlier"); console.log("required-earlier runs");
+//// files-whose-exports-are-made-by-a-call/requires-first.cjs
+console.log("requires-first", require("./required-earlier.cjs").value);
+//// files-whose-exports-are-made-by-a-call/second-graph.mjs
+import { value, later } from "./plain.cjs"; import { value as early } from "./required-earlier.cjs"; export default [value, later, early].join();
+//// for-in-head-initializer/main.ts
+import { atTheTop, rows } from "./sloppy.cjs";
+////= for
+console.log(atTheTop);
+//// for-in-head-initializer/sloppy.cjs
+var order = [];
+function noted(name, value) {
+  order.push(name);
+  return value;
+}
+exports.rows = {
+  "over nothing the initializer stays"() {
+    for (var k = "first" in {});
+    return k;
+  },
+  "over something the keys follow"() {
+    var seen = [];
+    for (var k = "first" in { a: 1, b: 2 }) seen.push(k);
+    return seen.join() + " " + k;
+  },
+  "the initializer comes ahead of the object"() {
+    order.length = 0;
+    for (var k = noted("initializer", 1) in noted("object", {}));
+    return order.join() + " " + k;
+  },
+  "over null and undefined"() {
+    for (var k = 1 in null);
+    for (var j = 2 in undefined);
+    return k + j;
+  },
+  "a function is named by the variable"() {
+    for (var named = function () {} in {});
+    return named.name;
+  },
+  "a closure sees it"() {
+    var read = function () { return k; };
+    for (var k = "held" in {});
+    return read();
+  },
+  "the object may name the variable"() {
+    var seen = [];
+    for (var k = { a: 1 } in k) seen.push(k);
+    return seen.join();
+  },
+};
+for (var atTheTop = "top" in {});
+exports.atTheTop = atTheTop;
+//// four-files-change-what-the-loader-finds-on-their-lists-of-children/a-class-below-array.cjs
+class Mine extends Array { push(child) { console.log("below", child.exports.name); return super.push(child); } }
+module.children = new Mine();
+require("./leaf-3.cjs");
+console.log(module.children.length, module.children[0].exports.name);
+//// four-files-change-what-the-loader-finds-on-their-lists-of-children/an-index-of-on-the-list.cjs
+const list = module.children;
+list.indexOf = function (child) { console.log("asked", child.exports.name, this === list); return -1; };
+require("./leaf-2.cjs");
+console.log(module.children.length);
+//// four-files-change-what-the-loader-finds-on-their-lists-of-children/an-object-between-the-list-and-its-prototype.cjs
+Object.setPrototypeOf(module.children, { __proto__: Array.prototype, push(child) { console.log("between", child.exports.name); return Array.prototype.push.call(this, child); } });
+require("./leaf-4.cjs");
+console.log(module.children.length, module.children[0].exports.name);
+//// four-files-change-what-the-loader-finds-on-their-lists-of-children/an-object-in-place-of-the-list.cjs
+const mine = { push(child) { console.log("mine", child.exports.name); return 1; }, indexOf() { return -1; } };
+module.children = mine;
+require("./leaf-1.cjs");
+console.log(module.children === mine);
+//// four-files-change-what-the-loader-finds-on-their-lists-of-children/leaf-1.cjs
+exports.name = "leaf 1";
+//// four-files-change-what-the-loader-finds-on-their-lists-of-children/leaf-2.cjs
+exports.name = "leaf 2";
+//// four-files-change-what-the-loader-finds-on-their-lists-of-children/leaf-3.cjs
+exports.name = "leaf 3";
+//// four-files-change-what-the-loader-finds-on-their-lists-of-children/leaf-4.cjs
+exports.name = "leaf 4";
+//// four-files-change-what-the-loader-finds-on-their-lists-of-children/main.cjs
+// The loader appends to `module.children` through the `indexOf` and the `push` that it finds on the list. Each file reads its list before it prints, so it says the same whether the calls come at the require or at the next read.
+require("./an-object-in-place-of-the-list.cjs");
+require("./an-index-of-on-the-list.cjs");
+require("./a-class-below-array.cjs");
+require("./an-object-between-the-list-and-its-prototype.cjs");
+console.log(module.children.length, module.children.map(child => child.children.length ?? "none").join());
+//// function-expression-name-escaping-arguments/main.ts
+import "./shapes.cjs";
+//// function-expression-name-escaping-arguments/shapes.cjs
+// Sloppy code: a function expression that is evaluated once, whose `arguments` object gets out, and whose own name an inner function uses.
+exports.named = function named(n) { var args = arguments; return function () { return [named.name, args.length]; }; };
+exports.itself = function itself(n) { var args = arguments; return function () { return [itself, args.callee]; }; };
+exports.deeper = function deeper(n) { var args = arguments; return function () { return function () { return deeper; }; }; };
+exports.called = function called(n) { var args = arguments; if (n > 0) return function () { return called(n - 1); }; return args.length + ":" + n; };
+exports.arrow = function arrow(n) { var args = arguments; return () => [arrow.length, args[0], n]; };
+exports.declared = function declared(n) { var args = arguments; function inner() { return declared.name + args.length; } return inner; };
+exports.handed = function handed(n) { keep(arguments); return function () { return handed.name; }; };
+function keep(it) { return it; }
+exports.mapped = function mapped(n) { var args = arguments; return function () { args[0] = "stored"; return [mapped.name, n]; }; };
+exports.holder = { method: function method(n) { var args = arguments; return function () { return [method, args.callee]; }; } };
+console.log(String(exports.named(1)()));
+var both = exports.itself(1)();
+console.log(both[0] === exports.itself, both[1] === exports.itself);
+console.log(exports.deeper(1)()() === exports.deeper);
+console.log(exports.called(1)(), exports.called(0));
+console.log(String(exports.arrow(7)()));
+console.log(exports.declared(1, 2)());
+console.log(exports.handed(1)());
+console.log(String(exports.mapped(1)()));
+var held = exports.holder.method(1)();
+console.log(held[0] === exports.holder.method, held[1] === exports.holder.method);
+//// functions-extracted-oddly/files/a_literal.js
+function literal(a) {
+  return "literal " + a;
+}
+module.exports = { literal };
+//// functions-extracted-oddly/files/cycle_a.js
+const b = require("./cycle_b.js");
+exports.fromTheCycle = function () {
+  return "from the cycle";
+};
+exports.seenEarly = function () {
+  return b.callsWhatItTookOut();
+};
+//// functions-extracted-oddly/files/cycle_b.js
+const { fromTheCycle } = require("./cycle_a.js");
+exports.callsWhatItTookOut = function () {
+  try {
+    return fromTheCycle();
+  } catch (e) {
+    return "threw " + e.name + " in the other module";
+  }
+};
+//// functions-extracted-oddly/files/re_exports.js
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.plain = void 0;
+var tools_1 = require("./tools.js");
+Object.defineProperty(exports, "plain", { enumerable: true, get: function () { return tools_1.plain; } });
+//// functions-extracted-oddly/files/tools.js
+exports.plain = function (a) {
+  return "plain " + a;
+};
+exports.storeLate = function () {
+  exports.storedLate = function () {
+    return "stored late";
+  };
+};
+exports.replaced = function () {
+  return "the first";
+};
+exports.replace = function () {
+  exports.replaced = function () {
+    return "the second";
+  };
+};
+//// functions-extracted-oddly/main.js
+function row(label, f) {
+  let said;
+  try {
+    said = f();
+  } catch (e) {
+    said = "threw " + e.name;
+  }
+  console.log(label + ": " + String(said));
+}
+const tools = require("./files/tools.js");
+const { plain, plain: renamed, missing, storedLate, replaced, absent = () => "the default" } = require("./files/tools.js");
+let { plain: reassigned } = require("./files/tools.js");
+const { literal } = require("./files/a_literal.js");
+const { plain: throughAGetter } = require("./files/re_exports.js");
+const { fromTheCycle, seenEarly } = require("./files/cycle_a.js");
+
+row("an export", () => plain(1));
+row("under another name", () => renamed(2));
+row("the same closure", () => plain === renamed && plain === tools.plain);
+row("a name that is not there", () => missing());
+row("an export that is stored late", () => storedLate());
+tools.storeLate();
+row("the copy stays as it was", () => storedLate());
+row("the export is there now", () => tools.storedLate());
+row("an export that is replaced", () => replaced());
+tools.replace();
+row("the copy is not replaced", () => replaced());
+row("the export is", () => tools.replaced());
+row("a default in the pattern", () => absent());
+row("a copy before it is stored to", () => reassigned(3));
+reassigned = a => "reassigned " + a;
+row("a copy that was stored to", () => reassigned(3));
+row("module.exports = { .. }", () => literal(4));
+row("re-exported through a getter", () => throughAGetter(5));
+row("out of a cycle, afterwards", () => fromTheCycle());
+row("what the other module of the cycle took out early", () => seenEarly());
+//// functions-in-class-are-strict/main.ts
+import { rows } from "./sloppy.cjs";
+////= for
+//// functions-in-class-are-strict/sloppy.cjs
+const which = "return this === undefined ? 'strict' : 'sloppy'";
+exports.rows = {
+  "outside a class"() {
+    const f = function () { return this === undefined ? "strict" : "sloppy"; };
+    return f();
+  },
+  "in a field initializer"() {
+    class A { f = function () { return this === undefined ? "strict" : "sloppy"; }; }
+    const f = new A().f;
+    return f();
+  },
+  "in a static field initializer"() {
+    class A { static f = function () { return this === undefined ? "strict" : "sloppy"; }; }
+    const f = A.f;
+    return f();
+  },
+  "in a computed key"() {
+    let f;
+    class A { [(f = function () { return this === undefined ? "strict" : "sloppy"; }, "m")]() {} }
+    return f();
+  },
+  "in the heritage"() {
+    let f;
+    class A extends (f = function () { return this === undefined ? "strict" : "sloppy"; }, Object) {}
+    return f();
+  },
+  "in a method"() {
+    class A { m() { return (function () { return this === undefined ? "strict" : "sloppy"; })(); } }
+    return new A().m();
+  },
+  "in a static block"() {
+    let f;
+    class A { static { f = function () { return this === undefined ? "strict" : "sloppy"; }; } }
+    return f();
+  },
+  "declared in a function in a field initializer"() {
+    class A { f = function () { function inner() { return this === undefined ? "strict" : "sloppy"; } return inner(); }; }
+    return new A().f();
+  },
+  "in an object literal in the heritage of a class expression"() {
+    const held = {};
+    const A = class extends (Object.assign(held, { f: function () { return this === undefined ? "strict" : "sloppy"; } }), Object) {};
+    const f = held.f;
+    return f() + " " + typeof A;
+  },
+  "arguments.callee in a field initializer's function"() {
+    class A { f = function () { return typeof arguments.callee; }; }
+    return new A().f();
+  },
+  "arguments and parameters in a field initializer's function are not one"() {
+    class A { f = function (a) { arguments[0] = 2; return a; }; }
+    return new A().f(1);
+  },
+  "a primitive receiver stays one"() {
+    class A { f = function () { return typeof this; }; }
+    return new A().f.call(1);
+  },
+  "behind the class the code is sloppy again"() {
+    class A { f = 1; }
+    const f = function () { return this === undefined ? "strict" : "sloppy"; };
+    return f() + " " + new A().f + " " + which.length;
+  },
+};
+//// generator-function-prototype-store.js
+// Sloppy code (CommonJS). The `prototype` of a generator function is writable: after a store, new generator objects inherit from the stored object.
+function* gen() { yield 1; }
+async function* agen() { yield 1; }
+function t(what, f) { try { console.log(what + ":", f()); } catch (e) { console.log(what + ":", e.name); } }
+var first = gen.prototype, afirst = agen.prototype;
+t("a generator function", function () { gen.prototype = {}; return Object.getPrototypeOf(gen()) === first ? "the old one" : "replaced"; });
+t("an async generator function", function () { agen.prototype = {}; return Object.getPrototypeOf(agen()) === afirst ? "the old one" : "replaced"; });
+t("by a computed key", function () { var key = ["proto", "type"].join(""); gen[key] = {}; return Object.getPrototypeOf(gen()) === first ? "the old one" : "replaced"; });
+t("the object it has already", function () { gen.prototype = first; return Object.getPrototypeOf(gen()) === first; });
+t("by Reflect.set", function () { return [Reflect.set(gen, "prototype", {}), Object.getPrototypeOf(gen()) === first].join(); });
+t("an ordinary function", function () { function plain() {} plain.prototype = { a: 1 }; return new plain().a; });
+module.exports = 0;
+//// getters-among-the-exports-of-the-entry-point-run-behind-it.cjs
+// When the entry point has run, Bun looks at what it exports for a server to start. For a CommonJS file that reads every enumerable property of module.exports, so the getters among them run, once each, behind the last statement.
+class Validator {}
+module.exports = exports = Validator;
+let reads = 0;
+Object.defineProperty(exports, "shown", { enumerable: true, get: function () { console.log("shown is read", ++reads); return 1; } });
+Object.defineProperty(exports, "hidden", { enumerable: false, get: function () { console.log("hidden is read", ++reads); return 2; } });
+Object.defineProperty(exports, "failing", { enumerable: true, get: function () { console.log("failing is read", ++reads); throw new Error("from a getter"); } });
+Object.defineProperty(exports, "last", { enumerable: true, get() { console.log("last is read", ++reads); return this === Validator; } });
+process.on("exit", () => console.log("reads at the exit", reads));
+console.log("the last statement");
+//// getters-behind-other-code-seen-half-done/a.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+console.log(globalThis.hook("in front of the definitions"));
+Object.defineProperty(exports, "f", { enumerable: true, get: function() { return f; } });
+console.log(globalThis.hook("between the definitions"));
+Object.defineProperty(exports, "x", { enumerable: true, get: function() { return x; } });
+console.log(globalThis.hook("behind the definitions"));
+const x = 1;
+function f() { return "f"; }
+//// getters-behind-other-code-seen-half-done/b.cjs
+"use strict";
+const _a = require("./a.cjs");
+function look(read) { try { const value = read(); return typeof value === "function" ? "function " + value.name : String(value); } catch (error) { return error.name + ": " + error.message; } }
+exports.peek = function () {
+  return [look(() => _a.f), look(() => _a.x), look(() => _a.__esModule)].join(" | ");
+};
+//// getters-behind-other-code-seen-half-done/main.cjs
+// The getters of a.cjs are defined behind a call that runs other code: whoever looks in front of them finds no such names, so a.cjs keeps its object.
+// STATISTIC: ModulesWithValue = 2
+"use strict";
+globalThis.hook = function (where) { const b = require("./b.cjs"); return where + ": " + b.peek(); };
+const a = require("./a.cjs");
+console.log(globalThis.hook("after"));
+console.log(a.f(), a.x);
+//// imported-require/files/lib.cjs
+exports.a = 2;
+//// imported-require/files/mine.mjs
+export const require = () => ({ a: 1 });
+//// imported-require/main.js
+// An ES module imports a binding named `require`, which must not be mistaken for CommonJS's `require`.
+import { require } from "./files/mine.mjs";
+console.log("an imported require: " + require("./files/lib.cjs").a);
+//// index-of-on-the-list-of-children-gets-each-child/counter.cjs
+////= module-exports
+//// index-of-on-the-list-of-children-gets-each-child/main.cjs
+// The list itself stays, and a function of the program stands under `indexOf` on it.
+module.children.indexOf = function (child) {
+  child.exports.prototype.add = function (x) {
+    return x * 3;
+  };
+  return Array.prototype.indexOf.call(this, child);
+};
+const Counter = require("./counter.cjs");
+const read = typeof module.children;
+let sum = 0;
+for (let i = 0; i < 1000; i++) sum += new Counter().add(i);
+console.log(sum, module.children.length);
+//// inspect-shows-fields-that-are-not-enumerable.cjs
+// Bun.inspect shows the own properties of an object that are not enumerable too, `__esModule` among them where Object.defineProperty() made it, as TypeScript and Babel emit it.
+// In a compiled object such a property can be a field.
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.early = "early";
+Object.defineProperty(exports, "hidden", { value: "hidden", enumerable: false, writable: true, configurable: true });
+exports.late = "late";
+console.log(Bun.inspect(exports));
+console.log(Reflect.ownKeys(exports).join(), "|", Object.keys(exports).join());
+const literal = { first: 1 };
+Object.defineProperty(literal, "__esModule", { value: true });
+Object.defineProperty(literal, "hidden", { value: 2 });
+literal.last = 3;
+console.log(Bun.inspect(literal));
+literal[globalThis.name ?? "added"] = 4;
+console.log(Bun.inspect(literal));
+//// keys-that-are-symbols-of-a-module-that-exports-one-literal/cycle.cjs
+"use strict";
+// The helper requires this module while its body runs, so it meets the first exports object.
+function look() {
+  const seen = require("./cycle.cjs");
+  return [typeof seen, Object.keys(seen).join(), seen === module.exports, typeof seen.kInside].join(" ");
+}
+const early = look();
+module.exports = { kInside: Symbol("inside"), early, late: look };
+//// keys-that-are-symbols-of-a-module-that-exports-one-literal/first-object-kept.cjs
+"use strict";
+// The first exports object is used before another value takes its place, and afterwards.
+const first = exports;
+exports.onFirst = Symbol("on the first object");
+module.exports = { kSecond: Symbol("second"), first, isThis: this === first };
+first.afterwards = 1;
+//// keys-that-are-symbols-of-a-module-that-exports-one-literal/keys.cjs
+"use strict";
+const keys = {
+  kValue: Symbol("thing.value"),
+  kCount: Symbol("thing.count"),
+  kNext: Symbol("thing.next"),
+  kChanged: Symbol("thing.changed"),
+};
+module.exports = keys;
+//// keys-that-are-symbols-of-a-module-that-exports-one-literal/late.cjs
+"use strict";
+// Loaded after somebody has stored another value under a name of the literal.
+const { kChanged, kValue, kAdded, kRemoved } = require("./keys.cjs");
+module.exports = function describe(object) {
+  return [typeof kChanged, String(kChanged), typeof kAdded, String(kAdded), typeof kRemoved, object[kChanged], object[kValue]].join(" | ");
+};
+//// keys-that-are-symbols-of-a-module-that-exports-one-literal/main.ts
+// `const { kValue } = require("./keys.cjs")`, where keys.cjs makes one literal of symbols and stores it into module.exports: the idiom of many packages for their private names.
+// The names are constants for whoever reads them while nothing has been stored under them again, and every other way through the same modules gives what plain JavaScript gives.
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const out: string[] = [];
+const suffix = process.argv[2] ?? "";
+const hide = new Function("value", "return value" + suffix) as <V>(value: V) => V;
+const storeUnseen = new Function("object", "key", "value", "object[key] = value" + suffix) as (object: object, key: PropertyKey, value: unknown) => void;
+
+const keys = require("./keys.cjs");
+const Thing = require("./thing.cjs");
+const things: any[] = [];
+for (let i = 0; i < 6; i++) things.push(hide(new Thing(i)));
+for (let i = 0; i + 1 < things.length; i++) things[i].link(things[i + 1]);
+let sum = 0;
+for (let turn = 0; turn < 500; turn++) for (const thing of things) sum += thing.touch();
+out.push(`sum ${sum}, count ${things[3].count()}, length ${things[0].length()} ${things[4].length()}`);
+out.push("own symbols: " + Object.getOwnPropertySymbols(things[0]).map(String).join());
+out.push("own names: " + JSON.stringify(Object.keys(things[0])) + " " + JSON.stringify(things[0]));
+out.push(`through the literal: ${things[2][keys.kValue]} ${things[2][keys.kCount]} ${things[2][keys.kNext] === things[3]}`);
+out.push(`the same literal again: ${require("./keys.cjs") === keys} ${Object.keys(keys).join()}`);
+out.push(`another symbol of the same description finds nothing: ${things[2][Symbol("thing.value")]}`);
+
+storeUnseen(things[1], keys.kValue, "stored by code that nobody sees");
+delete things[2][keys.kCount];
+Object.defineProperty(things[3], keys.kValue, { get: () => "from a getter", configurable: true });
+out.push(`after changes: ${things[1].touch()} | ${things[2].touch()} ${things[2].count()} | ${things[3].touch()} | ${things[4].touch()}`);
+
+const replacement = Symbol("replacement");
+keys.kChanged = replacement;
+storeUnseen(keys, "kAdded", Symbol("added"));
+delete keys.kRemoved;
+const marked = hide(new Thing("marked"));
+marked[replacement] = "under the replacement";
+out.push("a module loaded after the literal has changed: " + require("./late.cjs")(marked));
+
+const cycle = require("./cycle.cjs");
+out.push(`a module that requires itself: early ${cycle.early} | late ${cycle.late()} | ${String(cycle.kInside)}`);
+const kept = require("./first-object-kept.cjs");
+out.push(`the first exports object: ${Object.keys(kept).join()} | ${Object.keys(kept.first).join()} | ${String(kept.first.onFirst)} | ${kept.isThis} | ${kept.first === kept}`);
+console.log(out.join("\n"));
+//// keys-that-are-symbols-of-a-module-that-exports-one-literal/thing.cjs
+"use strict";
+const { kValue, kCount, kNext } = require("./keys.cjs");
+function Thing(value) {
+  this[kValue] = value;
+  this[kCount] = 0;
+  this[kNext] = null;
+}
+Thing.prototype.touch = function () {
+  this[kCount]++;
+  return this[kValue];
+};
+Thing.prototype.count = function () {
+  return this[kCount];
+};
+Thing.prototype.link = function (next) {
+  this[kNext] = next;
+  return this;
+};
+Thing.prototype.length = function () {
+  let length = 0;
+  for (let thing = this; thing !== null; thing = thing[kNext]) length++;
+  return length;
+};
+module.exports = Thing;
+//// lazy-require-getter-exports/files/b1.js
+Object.defineProperty(exports, "a", { enumerable: true, get: function () { return require("./b1o").a; } });
+//// lazy-require-getter-exports/files/b10.js
+////= createBinding-2
+__exportStar(require("./b10_bo"), exports);
+if (globalThis.never) exports.x = "own";
+//// lazy-require-getter-exports/files/b10_bo.js
+exports.x = "o.x";
+exports.f = () => "o.f";
+//// lazy-require-getter-exports/files/b11.js
+////= createBinding-2
+exports.early = exports.x;
+__exportStar(require("./b11_bo"), exports);
+//// lazy-require-getter-exports/files/b11_bo.js
+exports.x = "o.x";
+exports.f = () => "o.f";
+//// lazy-require-getter-exports/files/b12.js
+////= createBinding-2
+__exportStar(require("./b12_bo"), exports);
+exports.late = exports.x;
+//// lazy-require-getter-exports/files/b12_bo.js
+exports.x = "o.x";
+exports.f = () => "o.f";
+//// lazy-require-getter-exports/files/b13.js
+////= createBinding-2
+try { exports.early = exports.f(); } catch (e) { exports.early = e.name; }
+__exportStar(require("./b13_bo"), exports);
+//// lazy-require-getter-exports/files/b13_bo.js
+exports.x = "o.x";
+exports.f = () => "o.f";
+//// lazy-require-getter-exports/files/b14.js
+Object.defineProperty(exports, "a", { enumerable: true, get: () => require("./b14o").a });
+//// lazy-require-getter-exports/files/b14o.js
+console.log("b14o runs");
+exports.a = "from o";
+//// lazy-require-getter-exports/files/b1o.js
+console.log("b1o runs");
+exports.a = "from o";
+//// lazy-require-getter-exports/files/b2.js
+if (globalThis.never) var m = require("./b2o");
+Object.defineProperty(exports, "a", { enumerable: true, get: function () { return m.a; } });
+//// lazy-require-getter-exports/files/b2o.js
+exports.a = 1;
+//// lazy-require-getter-exports/files/b3.js
+var m = require("./b3_bo");
+Object.defineProperty(exports, "a", { enumerable: true, get: function () { return m.x; } });
+//// lazy-require-getter-exports/files/b3_bo.js
+exports.x = "o.x";
+exports.f = () => "o.f";
+//// lazy-require-getter-exports/files/b4.js
+try { if (!globalThis.never) throw 0; var m = require("./b4_bo"); } catch {}
+Object.defineProperty(exports, "a", { enumerable: true, get: function () { return m.x; } });
+//// lazy-require-getter-exports/files/b4_bo.js
+exports.x = "o.x";
+exports.f = () => "o.f";
+//// lazy-require-getter-exports/files/b5.js
+Object.defineProperty(exports, "a", { enumerable: true, get: function () { return m.x; } });
+var m = require("./b5_bo");
+//// lazy-require-getter-exports/files/b5_bo.js
+exports.x = "o.x";
+exports.f = () => "o.f";
+//// lazy-require-getter-exports/files/b6.js
+let m;
+{ m = require("./b6_bo"); }
+Object.defineProperty(exports, "a", { enumerable: true, get: function () { return m.x; } });
+//// lazy-require-getter-exports/files/b6_bo.js
+exports.x = "o.x";
+exports.f = () => "o.f";
+//// lazy-require-getter-exports/files/b7.js
+////= createBinding-2
+if (globalThis.never) exports.x = "own";
+__exportStar(require("./b7_bo"), exports);
+//// lazy-require-getter-exports/files/b7_bo.js
+exports.x = "o.x";
+exports.f = () => "o.f";
+//// lazy-require-getter-exports/files/b8.js
+////= createBinding-2
+function never() { exports.x = "own"; }
+__exportStar(require("./b8_bo"), exports);
+//// lazy-require-getter-exports/files/b8_bo.js
+exports.x = "o.x";
+exports.f = () => "o.f";
+//// lazy-require-getter-exports/files/b9.js
+////= createBinding-2
+exports.x = "own";
+__exportStar(require("./b9_bo"), exports);
+//// lazy-require-getter-exports/files/b9_bo.js
+exports.x = "o.x";
+exports.f = () => "o.f";
+//// lazy-require-getter-exports/main.js
+// CommonJS modules whose exports are getters that call `require` themselves.
+function said(f) { try { const v = f(); return typeof v === "function" ? "F" : String(v); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+function show(v) { return typeof v === "function" ? "F" : String(v); }
+try { console.log("a getter that requires: " + show(require("./files/b1").a)); } catch (e) { console.log("a getter that requires: threw " + e.name); }
+try { console.log("a getter over a holder that never ran: " + show(require("./files/b2").a)); } catch (e) { console.log("a getter over a holder that never ran: threw " + e.name); }
+try { require("./files/b2o");  console.log("the same, the other module evaluated: " + show(require("./files/b2").a)); } catch (e) { console.log("the same, the other module evaluated: threw " + e.name); }
+try { console.log("control: a getter over a holder: " + show(require("./files/b3").a)); } catch (e) { console.log("control: a getter over a holder: threw " + e.name); }
+try { console.log("a getter over a holder in a try: " + show(require("./files/b4").a)); } catch (e) { console.log("a getter over a holder in a try: threw " + e.name); }
+try { console.log("a getter over a holder declared behind it: " + show(require("./files/b5").a)); } catch (e) { console.log("a getter over a holder declared behind it: threw " + e.name); }
+try { console.log("a getter over a let in a block: " + show(require("./files/b6").a)); } catch (e) { console.log("a getter over a let in a block: threw " + e.name); }
+try { console.log("a store above the star that does not run: " + show(require("./files/b7").x)); } catch (e) { console.log("a store above the star that does not run: threw " + e.name); }
+try { console.log("a store above the star in a function: " + show(require("./files/b8").x)); } catch (e) { console.log("a store above the star in a function: threw " + e.name); }
+try { console.log("control: the store above the star runs: " + show(require("./files/b9").x)); } catch (e) { console.log("control: the store above the star runs: threw " + e.name); }
+try { console.log("control: a dead store below the star: " + show(require("./files/b10").x)); } catch (e) { console.log("control: a dead store below the star: threw " + e.name); }
+try { require("./files/b11_bo");  console.log("a read above the star: " + show(require("./files/b11").early)); } catch (e) { console.log("a read above the star: threw " + e.name); }
+try { console.log("a read below the star: " + show(require("./files/b12").late)); } catch (e) { console.log("a read below the star: threw " + e.name); }
+try { require("./files/b13_bo");  console.log("a call above the star: " + show(require("./files/b13").early)); } catch (e) { console.log("a call above the star: threw " + e.name); }
+try { console.log("an arrow as the getter, which requires: " + show(require("./files/b14").a)); } catch (e) { console.log("an arrow as the getter, which requires: threw " + e.name); }
+//// let-and-yield-name-variables/main.cjs
+// Let and yield name variables.
+var let = 1; var yield = 2;
+console.log(let + yield);
+//// loaded-is-read-in-the-body-behind-the-require-on-a-cycle-and-in-a-timer/a.cjs
+exports.inBody = module.loaded;
+exports.loaded = () => module.loaded;
+exports.mainLoaded = () => module.parent.loaded;
+exports.seenByB = require("./b.cjs").seen;
+//// loaded-is-read-in-the-body-behind-the-require-on-a-cycle-and-in-a-timer/b.cjs
+exports.seen = module.parent.loaded + "," + require.main.loaded + "," + module.loaded;
+//// loaded-is-read-in-the-body-behind-the-require-on-a-cycle-and-in-a-timer/main.cjs
+// Loaded is read in the body behind the require on a cycle and in a timer.
+console.log("main in body", module.loaded);
+const a = require("./a.cjs");
+console.log("a behind its require", a.loaded(), a.inBody, a.seenByB);
+setTimeout(() => console.log("main later", module.loaded, require.main.loaded, a.mainLoaded()), 0);
+//// loader-hooks-are-asked-for-what-is-resolved-at-run-time/a.cjs
+exports.name = "a";
+//// loader-hooks-are-asked-for-what-is-resolved-at-run-time/b.cjs
+exports.name = "b";
+//// loader-hooks-are-asked-for-what-is-resolved-at-run-time/main.cjs
+// The four functions of the loader that a program can replace. Under `bun run` Module._resolveFilename and Module.prototype.require are asked for every require(); Module._load is asked for none.
+// In an executable they are asked for what is resolved at run time: a computed name, require.resolve(). A require() with a constant name is the module that the build has found, and asks nobody:
+// three lines of `bun run` are not there. The expected output is written down.
+const Module = require("node:module");
+const glue = (...parts) => parts.join("");
+function keep() { return [require("./a.cjs"), require("./b.cjs")]; }
+const attempt = (what, f) => { try { console.log(what, "|", String(f())); } catch (e) { console.log(what, "| threw", e.code ?? e.constructor.name, String(e.message).slice(0, 90)); } };
+const originalResolve = Module._resolveFilename;
+attempt("assign _resolveFilename", () => { Module._resolveFilename = function (request, parent, isMain, options) { console.log("  _resolveFilename asked for", request, typeof parent, isMain); return originalResolve.call(this, request === "alias" ? "./a.cjs" : request, parent, isMain, options); }; return Module._resolveFilename !== originalResolve; });
+attempt("a constant require", () => require("./b.cjs").name);
+attempt("a computed require", () => require(glue("./b", ".cjs")).name);
+attempt("a computed alias", () => require(glue("ali", "as")).name);
+attempt("require.resolve of the alias", () => require.resolve(glue("ali", "as")).endsWith("a.cjs"));
+attempt("a computed built-in", () => typeof require(glue("node:", "path")).join);
+const originalRequire = Module.prototype.require;
+attempt("assign prototype.require", () => { Module.prototype.require = function (request) { console.log("  prototype.require asked for", request); return originalRequire.call(this, request === "other" ? "./b.cjs" : request); }; return Module.prototype.require !== originalRequire; });
+attempt("a constant require", () => require("./a.cjs").name);
+attempt("a computed require", () => require(glue("./a", ".cjs")).name);
+attempt("a computed name that the hook turns", () => require(glue("oth", "er")).name);
+attempt("module.require computed", () => module.require(glue("oth", "er")).name);
+attempt("put both back", () => { Module._resolveFilename = originalResolve; Module.prototype.require = originalRequire; return require(glue("./a", ".cjs")).name; });
+const originalLoad = Module._load;
+attempt("assign _load", () => { Module._load = function (request, parent, isMain) { console.log("  _load asked for", request); return originalLoad.call(this, request, parent, isMain); }; return Module._load !== originalLoad; });
+attempt("a computed require", () => require(glue("./b", ".cjs")).name);
+attempt("assign wrap", () => { const w = Module.wrap; Module.wrap = s => w(s); return Module.wrap !== w; });
+console.log(typeof keep);
+//// loader-lists-the-exports-in-a-validating-build/filled-by-another.cjs
+exports.early = "early";
+require("./fills.cjs").fill(exports, "la" + "te");
+//// loader-lists-the-exports-in-a-validating-build/fills.cjs
+exports.fill = (object, name) => { object[name] = "late"; };
+//// loader-lists-the-exports-in-a-validating-build/main.mjs
+// The loader lists the own keys of what a CommonJS module exports when an ES module imports it. Nothing in the program lists them, so the build has proven that their order is never seen, which
+// holds: an importer binds names, and the names of a namespace object are sorted. A validating build must not take the loader's listing for a broken proof.
+import { plain, viaGetter } from "./with-a-getter.cjs";
+import { late } from "./filled-by-another.cjs";
+console.log(plain, viaGetter, late);
+const names = await import("./with-a-getter.cjs");
+console.log(names.plain, names.viaGetter, typeof names.default);
+//// loader-lists-the-exports-in-a-validating-build/with-a-getter.cjs
+exports.plain = 1;
+Object.defineProperty(exports, "viaGetter", { enumerable: true, get() { return exports.plain + 1; } });
+//// locked-writes-in-class-code.js
+// The mode of a store or a delete is that of the innermost scope. This file is sloppy. A store to a fixed member of a built-in prototype throws there too, and a store to a frozen object of the program's own is ignored. Class code is strict wherever it stands: a method, a static block, the `extends` clause and a computed key throw a TypeError. A frozen object of the program answers the same way, in plain Bun too.
+const frozen = Object.freeze({ held: 1 });
+function attempt(label, f) { try { console.log(label + ":", String(f())); } catch (e) { console.log(label + ":", e.name); } }
+function cases(name, target, member) {
+  attempt(name + ", a function of this file, store", () => { target[member] = 2; return "no error"; });
+  attempt(name + ", a function of this file, delete", () => delete target[member]);
+  attempt(name + ", a method, store", () => new (class { run() { target[member] = 2; return "no error"; } })().run());
+  attempt(name + ", a method, delete", () => new (class { run() { return delete target[member]; } })().run());
+  attempt(name + ", a static block", () => { class Block { static { target[member] = 2; } } return "no error"; });
+  attempt(name + ", the extends clause", () => { class Derived extends (target[member] = 2, Object) {} return "no error"; });
+  attempt(name + ", a computed key", () => { class Keyed { [(target[member] = 2, "key")]() {} } return "no error"; });
+  attempt(name + ", a function inside a method", () => new (class { run() { return (function () { target[member] = 2; return "no error"; })(); } })().run());
+}
+cases("Array.prototype", Array.prototype, "push");
+cases("a frozen object", frozen, "held");
+console.log(typeof Array.prototype.push, frozen.held);
+module.exports = {};

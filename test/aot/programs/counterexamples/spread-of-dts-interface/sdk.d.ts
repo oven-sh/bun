@@ -1,2 +1,0 @@
-export interface CallOptions { k1?: string; k2?: number; timeout?: number; headers?: Record<string, string>; retries?: number; o0?: number; o1?: number; o2?: number; o3?: number; o4?: number; o5?: number; o6?: number; o7?: number; o8?: number; o9?: number; o10?: number; o11?: number; o12?: number; o13?: number; o14?: number; o15?: number; o16?: number; o17?: number; }
-export declare class C { callService(a: string, opts?: CallOptions): void }

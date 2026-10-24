@@ -1,6 +1,0 @@
-# `noImplicitAny` decides whether a function under a type with two call signatures gets one signature made of both. `inner/` is written without it, the program with it.
-main.ts:0 option noImplicitAny `` = true
-inner/handler.ts:0 option noImplicitAny `` = false
-inner/handler.ts:0 role `` = Checked
-inner/handler.ts:2 parameter `value` = any
-absent: inner/handler.ts:2 diagnostic TS2339 = Semantic StopsBuild

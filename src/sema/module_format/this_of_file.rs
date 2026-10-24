@@ -5,7 +5,6 @@ use crate::hir::{
 use crate::util::PositionSet;
 use std::ops::ControlFlow;
 
-// Each live `this` that no function, field initializer, namespace or enum encloses.
 fn visit_this_of_file(
     hir: &File<'_>,
     decisions: &Decisions<'_>,
@@ -15,14 +14,12 @@ fn visit_this_of_file(
     visit_this_below(hir, decisions, stack, ParameterDecorators::PassedBy, visit);
 }
 
-// The decorators of a method's parameters are evaluated where the class is, on the `this` of that place.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ParameterDecorators {
     PassedBy,
     Visited,
 }
 
-// The same below the nodes of `stack`.
 fn visit_this_below(
     hir: &File<'_>,
     decisions: &Decisions<'_>,
@@ -74,7 +71,6 @@ fn push_parameter_decorators(hir: &File<'_>, function: FnId, stack: &mut Vec<Tre
     }
 }
 
-/// Whether live code evaluates a `this` that no function, field initializer, namespace or enum encloses.
 pub(crate) fn has_live_this_of_file(hir: &File<'_>, decisions: &Decisions<'_>) -> bool {
     let mut is_found = false;
     visit_this_of_file(hir, decisions, |_| {
@@ -84,7 +80,6 @@ pub(crate) fn has_live_this_of_file(hir: &File<'_>, decisions: &Decisions<'_>) -
     is_found
 }
 
-/// Whether the function can evaluate a `this` that is its own: in its parameters and its body, in arrow functions there, and in the computed names and the decorators of the methods, accessors, fields and parameters of an object or a class that it makes.
 pub fn evaluates_own_this(hir: &File<'_>, function: FnId) -> bool {
     let mut stack = Vec::new();
     push_children(hir, TreeNode::Function(function), &mut stack);
@@ -97,7 +92,6 @@ pub fn evaluates_own_this(hir: &File<'_>, function: FnId) -> bool {
     is_found
 }
 
-/// Where a file says `this`, in the order of its text.
 #[derive(Default)]
 pub struct ThisPositions(Box<[u32]>);
 
@@ -112,14 +106,12 @@ impl ThisPositions {
         ThisPositions(positions.into_boxed_slice())
     }
 
-    /// `evaluates_own_this`
     pub fn evaluates_own_this(&self, hir: &File<'_>, function: FnId) -> bool {
         let start = hir[function].start;
         let last_statement = match hir[function].body {
             FnBody::Block(statements) => hir.ids(statements).last(),
             FnBody::None | FnBody::Expr(_) => None,
         };
-        // Without one, what the parameters say lies somewhere behind the start.
         let end = last_statement.map_or(u32::MAX, |statement| hir[statement].loc.end);
         let first_inside = self.0.partition_point(|&position| position < start);
         let has_this_in_its_text = self
@@ -130,7 +122,6 @@ impl ThisPositions {
     }
 }
 
-/// Every such `this`, before anything is known to be dead.
 pub(crate) fn collect_this_of_file(hir: &File<'_>) -> PositionSet {
     let mut found = PositionSet::new(hir.exprs.len());
     visit_this_of_file(hir, &Decisions::default(), |this| {

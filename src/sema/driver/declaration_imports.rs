@@ -16,8 +16,6 @@ const SOURCES_AND_JAVASCRIPT: [(&[u8], &[u8], &[u8]); 4] = [
     (b".cts", b".d.cts", b".cjs"),
 ];
 
-/// `./area` becomes `./area.js` and `./tools` becomes `./tools/index.js`, which `moduleResolution: node16` needs to find
-/// `area.d.ts`. `path` and what `is_written` is asked are relative to the folder the declaration files are written to.
 pub fn name_imported_files(
     path: &[u8],
     text: &[u8],

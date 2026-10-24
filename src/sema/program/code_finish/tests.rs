@@ -45,7 +45,8 @@ fn load_module<'s, 'r>(context: &CodeLoadContext<'_, 's, 'r>, path: &str) -> Box
     let path = context.resolver.keep(path.as_bytes());
     let target = CodeTarget::of_path(path, HostLoader::default());
     let arena = context.session.arena();
-    let parsed = load_code_file(context, arena, target, context.host.read_source(path));
+    let text = context.host.read_source(path);
+    let parsed = load_code_file(context, arena, target, text, false);
     context.answer_types_question(arena, target.key, parsed).0
 }
 

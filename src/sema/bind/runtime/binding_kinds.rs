@@ -1,8 +1,6 @@
 use super::BindingKind;
 use super::bits::has_bit;
-use super::declaration_kinds::{
-    Declaration, DeclarationKind, SymbolColumn, symbol_column, variable_declaration,
-};
+use super::declaration_kinds::{DeclarationKind, declaration_kind, variable_declaration};
 use crate::bind::{BoundBuilder, ClassOwner, Decl, SymbolId};
 use crate::hir::*;
 
@@ -39,7 +37,7 @@ fn declared_binding_kind(hir: &File<'_>, bound: &BoundBuilder, symbol: SymbolId)
     }
     let decls = bound.symbols[symbol.idx()].decls.iter();
     let kinds = decls.map(|&decl| {
-        let kind = declaration_binding_kind(hir, bound, Declaration::new(hir, bound, decl));
+        let kind = declaration_binding_kind(hir, bound, decl);
         if kind != BindingKind::NoBinding && runtime_symbol(bound, decl) == symbol {
             kind
         } else {
@@ -49,51 +47,47 @@ fn declared_binding_kind(hir: &File<'_>, bound: &BoundBuilder, symbol: SymbolId)
     kinds.max().unwrap_or(BindingKind::NoBinding)
 }
 
-fn declaration_binding_kind(
-    hir: &File<'_>,
-    bound: &BoundBuilder,
-    declaration: Declaration,
-) -> BindingKind {
-    match declaration.kind {
+fn declaration_binding_kind(hir: &File<'_>, bound: &BoundBuilder, decl: Decl) -> BindingKind {
+    match declaration_kind(hir, bound, decl) {
         DeclarationKind::Var => BindingKind::Var,
         DeclarationKind::Parameter => BindingKind::Parameter,
         DeclarationKind::TopLevelFunction | DeclarationKind::BlockFunction => BindingKind::Function,
-        DeclarationKind::Lexical => lexical_binding_kind(hir, bound, declaration.decl),
+        DeclarationKind::Lexical => lexical_binding_kind(hir, bound, decl),
         DeclarationKind::Import => BindingKind::Import,
         DeclarationKind::SimpleCatchParameter => BindingKind::SimpleCatchParameter,
-        DeclarationKind::TypeScriptValue => typescript_binding_kind(declaration.decl),
+        DeclarationKind::TypeScriptValue => typescript_binding_kind(decl),
         DeclarationKind::ImplicitBlockFunction | DeclarationKind::BlockScopedRequire => {
             BindingKind::NoBinding
         }
-        DeclarationKind::NoBinding => exported_binding_kind(hir, declaration.decl),
+        DeclarationKind::NoBinding => exported_binding_kind(hir, decl),
     }
 }
 
 fn lexical_binding_kind(hir: &File<'_>, bound: &BoundBuilder, decl: Decl) -> BindingKind {
-    match symbol_column(decl) {
-        SymbolColumn::Pattern(pat) => variable_binding_kind(hir, bound, pat),
-        SymbolColumn::Function(f) => match hir[f].kind {
+    match decl {
+        Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => {
+            variable_binding_kind(hir, bound, pat)
+        }
+        Decl::Fn(f) => match hir[f].kind {
             FnKind::Expr => BindingKind::FunctionName,
             FnKind::Decl => BindingKind::Function,
             _ => BindingKind::NoBinding,
         },
-        SymbolColumn::Class(c) => match bound.class_owner[c.idx()] {
+        Decl::Class(c) => match bound.class_owner[c.idx()] {
             ClassOwner::Stmt(_) => BindingKind::Class,
             ClassOwner::Expr(_) => BindingKind::NoBinding,
         },
-        SymbolColumn::Enum(_) | SymbolColumn::Module(_) | SymbolColumn::None => {
-            BindingKind::NoBinding
-        }
+        _ => BindingKind::NoBinding,
     }
 }
 
 fn typescript_binding_kind(decl: Decl) -> BindingKind {
-    match symbol_column(decl) {
-        SymbolColumn::Enum(_) | SymbolColumn::Module(_) => BindingKind::TypeScriptContainer,
-        SymbolColumn::None => BindingKind::Const,
-        SymbolColumn::Pattern(_) | SymbolColumn::Function(_) | SymbolColumn::Class(_) => {
+    match decl {
+        Decl::Enum(_) | Decl::Module(_) => BindingKind::TypeScriptContainer,
+        Decl::Var(_) | Decl::Param(_) | Decl::Require(_) | Decl::Fn(_) | Decl::Class(_) => {
             BindingKind::NoBinding
         }
+        _ => BindingKind::Const,
     }
 }
 

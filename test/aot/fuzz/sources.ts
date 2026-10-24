@@ -76,6 +76,7 @@ export type Source = (seed: number, bed: Bed) => Generated | undefined;
 /** The programs in a single file that print the same compiled and plain, with nothing stored beside them. */
 function singleFilePrograms(root: string) {
   const found: string[] = [];
+  const stored = [".json", ".expected.txt", ".erased.txt", ".build-errors.txt", ".todo.txt"];
   const visit = (folder: string) => {
     const entries = readdirSync(folder, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1));
     if (entries.some(entry => entry.isFile() && entry.name.startsWith("main."))) return;
@@ -84,12 +85,12 @@ function singleFilePrograms(root: string) {
       if (entry.isDirectory()) entry.name === "ways-into-library-modules" || visit(join(folder, entry.name));
       else if (/\.(ts|js)$/.test(entry.name) && !entry.name.endsWith(".d.ts")) {
         const stem = entry.name.replace(/\.\w+$/, "");
-        if (![".json", ".expected.txt", ".erased.txt", ".build-errors.txt", ".todo.txt"].some(suffix => names.has(stem + suffix))) found.push(join(folder, entry.name));
+        if (!stored.some(suffix => names.has(stem + suffix))) found.push(join(folder, entry.name));
       }
     }
   };
   if (existsSync(root)) visit(root);
-  return withPackedPrograms(root, found, /(?<!\.d)\.(ts|js)$/);
+  return withPackedPrograms(root, found, /(?<!\.d)\.(ts|js)$/, stored);
 }
 
 // Depends on where the file lies, on the clock or on chance, or prints what differs by design (positions, source text).

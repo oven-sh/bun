@@ -1,7 +1,0 @@
-{
-  "name": "two-copies",
-  "dependencies": {
-    "left": "1.0.0",
-    "right": "1.0.0"
-  }
-}

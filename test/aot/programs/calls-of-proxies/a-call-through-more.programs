@@ -1,0 +1,1320 @@
+//// a-call-through-more-proxies-than-the-stack-holds-is-a-range-error.js
+// A function behind 200,000 proxies without an apply trap. Each proxy hands the call on to its target and waits for the answer, so the call needs more stack than there is: a RangeError,
+// however the call is made and whatever stands at the end of the chain.
+function behindProxies(target) {
+  let chain = target;
+  for (let i = 0; i < 200000; i++) chain = new Proxy(chain, {});
+  return chain;
+}
+
+function report(label, run) {
+  try {
+    console.log(label + ":", "answers", run());
+  } catch (error) {
+    console.log(label + ":", error instanceof RangeError ? "RangeError" : String(error));
+  }
+}
+
+const chain = behindProxies(function () { return 1; });
+const list = [1, 2, 3];
+const tailCall = () => { "use strict"; return chain(); };
+const revocable = Proxy.revocable(function () {}, {});
+const revoked = behindProxies(revocable.proxy);
+revocable.revoke();
+
+report("called", () => chain());
+report("with arguments", () => chain(1, 2, 3));
+report("with more arguments than there are registers", () => chain(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12));
+report("with a list", () => chain(...list));
+report("as a method", () => ({ method: chain }).method());
+report("as a tag", () => chain`text`);
+report("as the last step of a function", () => tailCall());
+report("as a callback of map", () => [1].map(chain));
+report("as a comparator", () => [2, 1].sort(chain));
+report("as a replacer", () => "a".replace("a", chain));
+report("as a getter", () => Object.defineProperty({}, "value", { get: chain }).value);
+report("as a setter", () => { Object.defineProperty({}, "value", { set: chain }).value = 1; });
+report("as toString", () => `${{ toString: chain }}`);
+report("as the next of an iterator", () => [...{ [Symbol.iterator]: () => ({ next: chain }) }]);
+report("by call", () => chain.call(null));
+report("by apply", () => chain.apply(null, list));
+report("by Reflect.apply", () => Reflect.apply(chain, null, list));
+report("bound", () => chain.bind(null)());
+report("constructed", () => new chain());
+report("over a native function", () => behindProxies(Math.abs)(-1));
+report("over a bound function", () => behindProxies((function () {}).bind(null))());
+report("over a class", () => behindProxies(class {})());
+report("over a revoked proxy", () => revoked());
+
+try {
+  console.log("as a reaction:", "answers", await Promise.resolve(0).then(chain));
+} catch (error) {
+  console.log("as a reaction:", error instanceof RangeError ? "RangeError" : String(error));
+}
+
+let short = function () { return "the function"; };
+for (let i = 0; i < 100; i++) short = new Proxy(short, {});
+report("through a hundred, afterward", () => short());
+//// apply--empty.mjs
+// A call of a Proxy answers as in plain Bun: apply, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p.apply("given", [1, 2])))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// apply--trap.mjs
+// A call of a Proxy answers as in plain Bun: apply, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p.apply("given", [1, 2])))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// arguments-trap--twice.mjs
+// A call of a Proxy answers as in plain Bun: arguments-trap, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply() { log.push("arguments", arguments.length); return Reflect.apply(arguments[0], arguments[1], arguments[2]); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// arguments-trap--two.mjs
+// A call of a Proxy answers as in plain Bun: arguments-trap, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply() { log.push("arguments", arguments.length); return Reflect.apply(arguments[0], arguments[1], arguments[2]); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// array-handler--twice.mjs
+// A call of a Proxy answers as in plain Bun: array-handler, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = Object.assign([], { apply(t, r, l) { log.push("array"); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// array-handler--two.mjs
+// A call of a Proxy answers as in plain Bun: array-handler, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = Object.assign([], { apply(t, r, l) { log.push("array"); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// arrow--empty--two.mjs
+// A call of a Proxy answers as in plain Bun: arrow, empty, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+const target = (a, b) => [a, b].join();
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// arrow--trap--method.mjs
+// A call of a Proxy answers as in plain Bun: arrow, trap, method.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+const target = (a, b) => [a, b].join();
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(({ name: "holder", p }).p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// arrow-trap--twice.mjs
+// A call of a Proxy answers as in plain Bun: arrow-trap, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply: (t, r, l) => { log.push("arrow"); return l.length; } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// arrow-trap--two.mjs
+// A call of a Proxy answers as in plain Bun: arrow-trap, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply: (t, r, l) => { log.push("arrow"); return l.length; } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// async--empty--two.mjs
+// A call of a Proxy answers as in plain Bun: async, empty, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+async function target(a) { return a; }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// async--trap--method.mjs
+// A call of a Proxy answers as in plain Bun: async, trap, method.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+async function target(a) { return a; }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(({ name: "holder", p }).p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// async-trap--twice.mjs
+// A call of a Proxy answers as in plain Bun: async-trap, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ async apply(t, r, l) { log.push("async"); return (await 1) + l.length; } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// async-trap--two.mjs
+// A call of a Proxy answers as in plain Bun: async-trap, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ async apply(t, r, l) { log.push("async"); return (await 1) + l.length; } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// bind--empty.mjs
+// A call of a Proxy answers as in plain Bun: bind, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p.bind("later", 1)(2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// bind--trap.mjs
+// A call of a Proxy answers as in plain Bun: bind, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p.bind("later", 1)(2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// bound--empty--two.mjs
+// A call of a Proxy answers as in plain Bun: bound, empty, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+const target = function (x, a, b) { return [show(this), x, a, b].join(); }.bind("bound this", "bound");
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// bound--trap--method.mjs
+// A call of a Proxy answers as in plain Bun: bound, trap, method.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+const target = function (x, a, b) { return [show(this), x, a, b].join(); }.bind("bound this", "bound");
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(({ name: "holder", p }).p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// bound-trap--twice.mjs
+// A call of a Proxy answers as in plain Bun: bound-trap, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply: function (extra, t, r, l) { log.push("bound", extra); return Reflect.apply(t, r, l); }.bind(null, "x") });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// bound-trap--two.mjs
+// A call of a Proxy answers as in plain Bun: bound-trap, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply: function (extra, t, r, l) { log.push("bound", extra); return Reflect.apply(t, r, l); }.bind(null, "x") });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// call--empty.mjs
+// A call of a Proxy answers as in plain Bun: call, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p.call("given", 1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// call--trap.mjs
+// A call of a Proxy answers as in plain Bun: call, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p.call("given", 1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// callback--empty.mjs
+// A call of a Proxy answers as in plain Bun: callback, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([7, 8].map(p).join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// callback--trap.mjs
+// A call of a Proxy answers as in plain Bun: callback, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([7, 8].map(p).join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// caller-sloppy.mjs
+// A call of a Proxy answers as in plain Bun: caller-sloppy.
+const p = new Proxy(function inner() { return typeof inner.caller; }, {}); try { console.log(Function("p", "return p()")(p)); } catch (e) { console.log(e.name); }
+//// capture.mjs
+// A call of a Proxy answers as in plain Bun: capture.
+const p = new Proxy(function inner() { const o = {}; Error.captureStackTrace(o, inner); return o.stack.split("\n").length; }, {}); console.log(p());
+//// caught-in-trap.mjs
+// A call of a Proxy answers as in plain Bun: caught-in-trap.
+const p = new Proxy(function () { throw new Error("deep"); }, { apply(t, r, l) { try { return Reflect.apply(t, r, l); } catch (e) { return "caught " + e.message; } } }); console.log(p());
+//// caught-outside.mjs
+// A call of a Proxy answers as in plain Bun: caught-outside.
+function outer(f) { let kept = [1, 2, 3], n = 5.5, s = "text"; try { f(1); } catch (e) { return [e.message, kept.join(), n, s].join("|"); } } console.log(outer(new Proxy(function () { throw new Error("deep"); }, { apply(t, r, l) { return Reflect.apply(t, r, l); } })), outer(new Proxy(function () { throw new Error("deep"); }, {})));
+//// chain.mjs
+// A call of a Proxy answers as in plain Bun: chain.
+let f = function (a) { return a + 1; }; for (let i = 0; i < 20; i++) f = new Proxy(f, i & 1 ? {} : { apply(t, r, l) { return Reflect.apply(t, r, l) + 1; } }); console.log(f(0));
+//// changes-list--twice.mjs
+// A call of a Proxy answers as in plain Bun: changes-list, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { l.push("more"); l[0] = "first"; return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// changes-list--two.mjs
+// A call of a Proxy answers as in plain Bun: changes-list, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { l.push("more"); l[0] = "first"; return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// class--empty--two.mjs
+// A call of a Proxy answers as in plain Bun: class, empty, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+class target { constructor() { this.made = 1; } }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// class--trap--method.mjs
+// A call of a Proxy answers as in plain Bun: class, trap, method.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+class target { constructor() { this.made = 1; } }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(({ name: "holder", p }).p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// class-instance--twice.mjs
+// A call of a Proxy answers as in plain Bun: class-instance, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = new (class { apply(t, r, l) { log.push("method", this.constructor.name !== ""); return Reflect.apply(t, r, l); } })();
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// class-instance--two.mjs
+// A call of a Proxy answers as in plain Bun: class-instance, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = new (class { apply(t, r, l) { log.push("method", this.constructor.name !== ""); return Reflect.apply(t, r, l); } })();
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// collect.mjs
+// A call of a Proxy answers as in plain Bun: collect.
+const p = new Proxy(function (a) { return a.length; }, { apply(t, r, l) { const waste = []; for (let i = 0; i < 2000; i++) waste.push({ i }); return Reflect.apply(t, r, l) + waste.length; } }); let s = 0; for (let i = 0; i < 3000; i++) s += p("abc" + i); Bun.gc(true); console.log(s);
+//// construct.mjs
+// A call of a Proxy answers as in plain Bun: construct.
+const p = new Proxy(function F(a) { this.a = a; }, { apply() { return "called"; } }); console.log(p(1), new p(2).a);
+//// empty--twice.mjs
+// A call of a Proxy answers as in plain Bun: empty, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// empty--two.mjs
+// A call of a Proxy answers as in plain Bun: empty, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// few-parameters--twice.mjs
+// A call of a Proxy answers as in plain Bun: few-parameters, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t) { log.push("one parameter"); return t(); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// few-parameters--two.mjs
+// A call of a Proxy answers as in plain Bun: few-parameters, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t) { log.push("one parameter"); return t(); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// finally-outside.mjs
+// A call of a Proxy answers as in plain Bun: finally-outside.
+function outer(f) { const seen = []; try { try { f(); } finally { seen.push("finally"); } } catch (e) { seen.push(e.message); } return seen.join(); } console.log(outer(new Proxy(function () { throw new Error("deep"); }, { apply(t, r, l) { try { return Reflect.apply(t, r, l); } finally { } } })));
+//// five--empty.mjs
+// A call of a Proxy answers as in plain Bun: five, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2, 3, 4, 5)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// five--trap.mjs
+// A call of a Proxy answers as in plain Bun: five, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2, 3, 4, 5)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// four--empty.mjs
+// A call of a Proxy answers as in plain Bun: four, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2, 3, 4)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// four--trap.mjs
+// A call of a Proxy answers as in plain Bun: four, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2, 3, 4)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// frozen--twice.mjs
+// A call of a Proxy answers as in plain Bun: frozen, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = Object.freeze({ apply(t, r, l) { log.push("frozen"); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// frozen--two.mjs
+// A call of a Proxy answers as in plain Bun: frozen, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = Object.freeze({ apply(t, r, l) { log.push("frozen"); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// function--empty--two.mjs
+// A call of a Proxy answers as in plain Bun: function, empty, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// function--trap--method.mjs
+// A call of a Proxy answers as in plain Bun: function, trap, method.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(({ name: "holder", p }).p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// function-handler--twice.mjs
+// A call of a Proxy answers as in plain Bun: function-handler, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = Object.assign(function () {}, { });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// function-handler--two.mjs
+// A call of a Proxy answers as in plain Bun: function-handler, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = Object.assign(function () {}, { });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// generator-trap--twice.mjs
+// A call of a Proxy answers as in plain Bun: generator-trap, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ *apply(t, r, l) { log.push("generator"); yield* l; } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// generator-trap--two.mjs
+// A call of a Proxy answers as in plain Bun: generator-trap, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ *apply(t, r, l) { log.push("generator"); yield* l; } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// getter--twice.mjs
+// A call of a Proxy answers as in plain Bun: getter, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ get apply() { log.push("getter"); return (t, r, l) => Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// getter--two.mjs
+// A call of a Proxy answers as in plain Bun: getter, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ get apply() { log.push("getter"); return (t, r, l) => Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// global-replaced.mjs
+// A call of a Proxy answers as in plain Bun: global-replaced.
+const real = globalThis.setTimeout; globalThis.setTimeout = new Proxy(real, { apply(t, r, l) { console.log("asked for", l[1]); return Reflect.apply(t, r, l); } }); await new Promise(done => setTimeout(done, 1)); console.log("fired");
+//// handler-swapped.mjs
+// A call of a Proxy answers as in plain Bun: handler-swapped.
+const h = { apply: () => "first" }; const p = new Proxy(function () { return "target"; }, h); let s = p(); h.apply = () => "second"; s += p(); delete h.apply; s += p(); Object.setPrototypeOf(h, { apply: () => "above" }); s += p(); console.log(s);
+//// holes--empty.mjs
+// A call of a Proxy answers as in plain Bun: holes, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(undefined, null)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// holes--trap.mjs
+// A call of a Proxy answers as in plain Bun: holes, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(undefined, null)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// inherited--twice.mjs
+// A call of a Proxy answers as in plain Bun: inherited, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = Object.create({ apply(t, r, l) { log.push("inherited"); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// inherited--two.mjs
+// A call of a Proxy answers as in plain Bun: inherited, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = Object.create({ apply(t, r, l) { log.push("inherited"); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// list-kept.mjs
+// A call of a Proxy answers as in plain Bun: list-kept.
+const kept = []; const p = new Proxy(function () {}, { apply(t, r, l) { kept.push(l); } }); p(1, "a"); p(2.5, {}); p(); console.log(JSON.stringify(kept), kept[0] !== kept[1]);
+//// loop--empty.mjs
+// A call of a Proxy answers as in plain Bun: loop, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle((() => { let s = ""; for (let i = 0; i < 3; i++) s += p(i, i); return s; })()))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// loop--trap.mjs
+// A call of a Proxy answers as in plain Bun: loop, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle((() => { let s = ""; for (let i = 0; i < 3; i++) s += p(i, i); return s; })()))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// method--empty.mjs
+// A call of a Proxy answers as in plain Bun: method, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(({ name: "holder", p }).p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// method--trap.mjs
+// A call of a Proxy answers as in plain Bun: method, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(({ name: "holder", p }).p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// native--empty--two.mjs
+// A call of a Proxy answers as in plain Bun: native, empty, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+const target = Math.max;
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// native--trap--method.mjs
+// A call of a Proxy answers as in plain Bun: native, trap, method.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+const target = Math.max;
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(({ name: "holder", p }).p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// native-trap--twice.mjs
+// A call of a Proxy answers as in plain Bun: native-trap, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply: Reflect.apply });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// native-trap--two.mjs
+// A call of a Proxy answers as in plain Bun: native-trap, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply: Reflect.apply });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// nine--empty.mjs
+// A call of a Proxy answers as in plain Bun: nine, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2, 3, 4, 5, 6, 7, 8, 9)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// nine--trap.mjs
+// A call of a Proxy answers as in plain Bun: nine, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2, 3, 4, 5, 6, 7, 8, 9)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// none--empty.mjs
+// A call of a Proxy answers as in plain Bun: none, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p()))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// none--trap.mjs
+// A call of a Proxy answers as in plain Bun: none, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p()))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// null-prototype--twice.mjs
+// A call of a Proxy answers as in plain Bun: null-prototype, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = Object.assign(Object.create(null), { apply(t, r, l) { log.push("bare"); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// null-prototype--two.mjs
+// A call of a Proxy answers as in plain Bun: null-prototype, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = Object.assign(Object.create(null), { apply(t, r, l) { log.push("bare"); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// null-trap--twice.mjs
+// A call of a Proxy answers as in plain Bun: null-trap, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply: null });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// null-trap--two.mjs
+// A call of a Proxy answers as in plain Bun: null-trap, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply: null });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// number-trap--twice.mjs
+// A call of a Proxy answers as in plain Bun: number-trap, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply: 5 });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// number-trap--two.mjs
+// A call of a Proxy answers as in plain Bun: number-trap, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply: 5 });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// objects--empty.mjs
+// A call of a Proxy answers as in plain Bun: objects, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p({ a: 1 }.a, [2][0])))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// objects--trap.mjs
+// A call of a Proxy answers as in plain Bun: objects, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p({ a: 1 }.a, [2][0])))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// one--empty.mjs
+// A call of a Proxy answers as in plain Bun: one, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// one--trap.mjs
+// A call of a Proxy answers as in plain Bun: one, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// optional--empty.mjs
+// A call of a Proxy answers as in plain Bun: optional, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p?.(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// optional--trap.mjs
+// A call of a Proxy answers as in plain Bun: optional, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p?.(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// other-traps--twice.mjs
+// A call of a Proxy answers as in plain Bun: other-traps, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ get(t, k, r) { return Reflect.get(t, k, r); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// other-traps--two.mjs
+// A call of a Proxy answers as in plain Bun: other-traps, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ get(t, k, r) { return Reflect.get(t, k, r); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// primitive-this.mjs
+// A call of a Proxy answers as in plain Bun: primitive-this.
+const p = new Proxy(function () { "use strict"; return typeof this; }, { apply(t, r, l) { return typeof r + " " + Reflect.apply(t, r, l); } }); console.log(p.call(5), p.call("s"), p.call(null), p.call(true), p.call(Symbol.iterator), p.call(5n));
+//// proxy--empty--two.mjs
+// A call of a Proxy answers as in plain Bun: proxy, empty, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+const target = new Proxy(function (a, b) { return [show(this), a, b].join(); }, { apply(t, r, l) { log.push("inner"); return Reflect.apply(t, r, l); } });
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// proxy--trap--method.mjs
+// A call of a Proxy answers as in plain Bun: proxy, trap, method.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+const target = new Proxy(function (a, b) { return [show(this), a, b].join(); }, { apply(t, r, l) { log.push("inner"); return Reflect.apply(t, r, l); } });
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(({ name: "holder", p }).p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// proxy-handler--twice.mjs
+// A call of a Proxy answers as in plain Bun: proxy-handler, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = new Proxy({}, { get(t, k) { log.push("asked " + String(k)); return undefined; } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// proxy-handler--two.mjs
+// A call of a Proxy answers as in plain Bun: proxy-handler, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = new Proxy({}, { get(t, k) { log.push("asked " + String(k)); return undefined; } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// proxy-trap--twice.mjs
+// A call of a Proxy answers as in plain Bun: proxy-trap, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply: new Proxy(function (t, r, l) { log.push("inner trap"); return Reflect.apply(t, r, l); }, {}) });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// proxy-trap--two.mjs
+// A call of a Proxy answers as in plain Bun: proxy-trap, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply: new Proxy(function (t, r, l) { log.push("inner trap"); return Reflect.apply(t, r, l); }, {}) });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// recursion.mjs
+// A call of a Proxy answers as in plain Bun: recursion.
+let depth = 0; const p = new Proxy(function f() { depth++; return p(); }, { apply(t, r, l) { return Reflect.apply(t, r, l); } }); try { p(); } catch (e) { console.log(e.name, depth > 100); }
+//// recursion-without-trap.mjs
+// A call of a Proxy answers as in plain Bun: recursion-without-trap.
+let depth = 0; const p = new Proxy(function f() { depth++; return p() + 1; }, {}); try { p(); } catch (e) { console.log(e.name, depth > 100); }
+//// reflect--empty.mjs
+// A call of a Proxy answers as in plain Bun: reflect, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(Reflect.apply(p, "given", [1, 2])))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// reflect--trap.mjs
+// A call of a Proxy answers as in plain Bun: reflect, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(Reflect.apply(p, "given", [1, 2])))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// reflect--twice.mjs
+// A call of a Proxy answers as in plain Bun: reflect, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = Reflect;
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// reflect--two.mjs
+// A call of a Proxy answers as in plain Bun: reflect, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = Reflect;
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// replaces-itself--twice.mjs
+// A call of a Proxy answers as in plain Bun: replaces-itself, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("once"); delete this.apply; return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// replaces-itself--two.mjs
+// A call of a Proxy answers as in plain Bun: replaces-itself, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("once"); delete this.apply; return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// rest--empty--two.mjs
+// A call of a Proxy answers as in plain Bun: rest, empty, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(...all) { return all.join("+"); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// rest--trap--method.mjs
+// A call of a Proxy answers as in plain Bun: rest, trap, method.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(...all) { return all.join("+"); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(({ name: "holder", p }).p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// rest-trap--twice.mjs
+// A call of a Proxy answers as in plain Bun: rest-trap, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(...all) { log.push("rest", all.length); return Reflect.apply(all[0], all[1], all[2]); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// rest-trap--two.mjs
+// A call of a Proxy answers as in plain Bun: rest-trap, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(...all) { log.push("rest", all.length); return Reflect.apply(all[0], all[1], all[2]); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// revoked.mjs
+// A call of a Proxy answers as in plain Bun: revoked.
+const { proxy, revoke } = Proxy.revocable(function () { return 1; }, {}); console.log(proxy()); revoke(); try { proxy(); } catch (e) { console.log(e.name, e.message); }
+//// revoked-in-trap.mjs
+// A call of a Proxy answers as in plain Bun: revoked-in-trap.
+let r; const made = Proxy.revocable(function (a) { return a; }, { apply(t, s, l) { r(); return Reflect.apply(t, s, l); } }); r = made.revoke; console.log(made.proxy(4)); try { made.proxy(5); } catch (e) { console.log(e.name, e.message); }
+//// spread--empty.mjs
+// A call of a Proxy answers as in plain Bun: spread, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(...[1, 2, 3])))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// spread--trap.mjs
+// A call of a Proxy answers as in plain Bun: spread, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(...[1, 2, 3])))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// stack-depth.mjs
+// A call of a Proxy answers as in plain Bun: stack-depth.
+const p = new Proxy(function () { return new Error("x").stack.split("\n").length; }, { apply(t, r, l) { return Reflect.apply(t, r, l); } }); const q = new Proxy(function () { return new Error("x").stack.split("\n").length; }, {}); function a() { return [p(), q()].join(); } console.log(a());
+//// strict--empty--two.mjs
+// A call of a Proxy answers as in plain Bun: strict, empty, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// strict--trap--method.mjs
+// A call of a Proxy answers as in plain Bun: strict, trap, method.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(({ name: "holder", p }).p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// tagged--empty.mjs
+// A call of a Proxy answers as in plain Bun: tagged, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p`a${1}b`))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// tagged--trap.mjs
+// A call of a Proxy answers as in plain Bun: tagged, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p`a${1}b`))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// tail--empty.mjs
+// A call of a Proxy answers as in plain Bun: tail, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle((function () { "use strict"; return p(1, 2); })()))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// tail--trap.mjs
+// A call of a Proxy answers as in plain Bun: tail, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle((function () { "use strict"; return p(1, 2); })()))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// this-global-sloppy.mjs
+// A call of a Proxy answers as in plain Bun: this-global-sloppy.
+const p = new Proxy(Function("return this === globalThis"), { apply(t, r, l) { console.log(r === undefined); return Reflect.apply(t, r, l); } }); console.log(p());
+//// three--empty.mjs
+// A call of a Proxy answers as in plain Bun: three, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2, 3)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// three--trap.mjs
+// A call of a Proxy answers as in plain Bun: three, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2, 3)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// through-helper--empty.mjs
+// A call of a Proxy answers as in plain Bun: through-helper, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(((f, ...l) => f(...l))(p, 1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// through-helper--trap.mjs
+// A call of a Proxy answers as in plain Bun: through-helper, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(((f, ...l) => f(...l))(p, 1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// throwing-trap--twice.mjs
+// A call of a Proxy answers as in plain Bun: throwing-trap, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply() { throw new RangeError("from the trap"); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// throwing-trap--two.mjs
+// A call of a Proxy answers as in plain Bun: throwing-trap, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply() { throw new RangeError("from the trap"); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// throws--empty--two.mjs
+// A call of a Proxy answers as in plain Bun: throws, empty, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target() { throw new TypeError("from the target"); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// throws--trap--method.mjs
+// A call of a Proxy answers as in plain Bun: throws, trap, method.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target() { throw new TypeError("from the target"); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(({ name: "holder", p }).p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// timer.mjs
+// A call of a Proxy answers as in plain Bun: timer.
+const real = setTimeout; const guarded = new Proxy(real, { apply(t, r, l) { if (l[1] > 10) l[1] = 1; return Reflect.apply(t, r, l); } }); await new Promise(done => guarded(done, 100000)); console.log("fired");
+//// trap--twice.mjs
+// A call of a Proxy answers as in plain Bun: trap, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// trap--two.mjs
+// A call of a Proxy answers as in plain Bun: trap, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// twice--empty.mjs
+// A call of a Proxy answers as in plain Bun: twice, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// twice--trap.mjs
+// A call of a Proxy answers as in plain Bun: twice, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// two--empty.mjs
+// A call of a Proxy answers as in plain Bun: two, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// two--trap.mjs
+// A call of a Proxy answers as in plain Bun: two, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// typeof.mjs
+// A call of a Proxy answers as in plain Bun: typeof.
+const p = new Proxy(function () {}, {}); console.log(typeof p, p instanceof Function, Object.prototype.toString.call(p), p.name, p.length);
+//// undefined-trap--twice.mjs
+// A call of a Proxy answers as in plain Bun: undefined-trap, twice.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply: undefined });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle([p(1), p(2)].join("|")))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// undefined-trap--two.mjs
+// A call of a Proxy answers as in plain Bun: undefined-trap, two.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply: undefined });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(p(1, 2)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// value--empty.mjs
+// A call of a Proxy answers as in plain Bun: value, empty.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({});
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(((f) => f(1, 2))(p)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// value--trap.mjs
+// A call of a Proxy answers as in plain Bun: value, trap.
+const log = [];
+function show(v) { return v === undefined ? "undefined" : v === null ? "null" : v === globalThis ? "global" : typeof v === "object" || typeof v === "function" ? "[" + typeof v + (v.name ? " " + v.name : "") + "]" : typeof v + ":" + String(v); }
+async function settle(v) { if (v && typeof v.next === "function") return "yields " + [...v].join(); return v && typeof v.then === "function" ? "resolves " + (await v) : v; }
+function target(a, b) { "use strict"; return [show(this), a, b, arguments.length].join(); }
+const handler = ({ apply(t, r, l) { log.push("trap", typeof t, show(r), l.length, Array.isArray(l), Object.getPrototypeOf(l) === Array.prototype); return Reflect.apply(t, r, l); } });
+const p = new Proxy(target, handler);
+try { console.log(String(await settle(((f) => f(1, 2))(p)))); } catch (e) { console.log(e.name, e.message); }
+console.log(log.join());
+//// worker-like.mjs
+// A call of a Proxy answers as in plain Bun: worker-like.
+const handlers = [{}, { apply: (t, r, l) => "a" }, { apply: (t, r, l) => "b" }]; const f = function () { return "t"; }; let s = ""; for (let i = 0; i < 9; i++) s += new Proxy(f, handlers[i % 3])(); console.log(s);

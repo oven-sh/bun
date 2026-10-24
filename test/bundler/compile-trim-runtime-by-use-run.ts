@@ -3,6 +3,7 @@ import { test as plainTest } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
+import { unpacked } from "../aot/generate";
 import { slot, spawned, unsupported } from "../aot/run-programs";
 import { canTrim, featureNamed, featureOf, findFeature, modulesLoadedFor, saysFeatureWasRemoved, textOf, withoutFeatures } from "./compile-trim-features";
 import { run } from "../aot/harness/run";
@@ -189,7 +190,7 @@ const files = {
   ...Object.fromEntries(Object.entries(features).map(([name, feature]) => [`uses-${name}.ts`, feature.program])),
 };
 
-const programs = join(import.meta.dir, "compile-trim-runtime-by-use");
+const programs = unpacked(join(import.meta.dir, "compile-trim-runtime-by-use"));
 
 export interface ProgramOptions {
   features?: string[];

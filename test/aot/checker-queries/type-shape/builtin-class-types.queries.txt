@@ -1,8 +1,0 @@
-# A type of the default library that names a built-in class is that class. It is exact where only instances of the class fit the type, and a view where other objects fit it too: a read-only form, or a type that a declaration file outside the default library extends, as bun-types does with `Promise` and `Error`.
-builtin-class-types.ts:2 shape `Map<string, number>` = Builtin(0.0 Exact; string, number)
-builtin-class-types.ts:3 shape `ReadonlyMap<string, number>` = Builtin(0.1 View; string, number)
-builtin-class-types.ts:4 shape `Promise<string>` = Builtin(2.0 View; string)
-builtin-class-types.ts:5 shape `Error` = Builtin(3.0 View)
-builtin-class-types.ts:6 shape `Intl.DateTimeFormat` = Builtin(7.0 Exact)
-builtin-class-types.ts:7 shape `Set<number>` = Builtin(1.0 Exact; number)
-builtin-class-types.ts:8 shape `ReadonlySet<number>` = Builtin(1.1 View; number)

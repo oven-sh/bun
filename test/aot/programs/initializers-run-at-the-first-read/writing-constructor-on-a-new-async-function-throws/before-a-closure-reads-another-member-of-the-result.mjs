@@ -1,3 +1,0 @@
-function make() { const made = async function () {}.constructor = 2; }
-function run() { const o = make(); console.log("before"); const f = () => { try { o.other; } catch (e) {} }; f(); }
-try { run(); } catch (e) { console.log("run threw", e.name, e.message); }

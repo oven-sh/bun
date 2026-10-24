@@ -377,7 +377,6 @@ const SPECIFIERS: &[SpecifierRow] = &[
     ("a.cjs", r"require(`\ud83d${x}\ude00`);", Specifier::Unknown),
 ];
 
-// The last four leave the folder, or may: their head is not followed.
 const PATHS_FROM_OWN_DIRECTORY: &[SpecifierRow] = &[
     (
         "a.cjs",
@@ -1015,7 +1014,6 @@ fn path_joined_to_own_directory_is_a_path_from_the_folder_of_the_file() {
     check_specifiers(PATHS_FROM_OWN_DIRECTORY);
 }
 
-// Whether the constant of the last load is what a call of `path.join` or `path.resolve` gave.
 const PATHS_MADE_BY_CALLS: &[(&str, &str, bool)] = &[
     (
         "a.cjs",

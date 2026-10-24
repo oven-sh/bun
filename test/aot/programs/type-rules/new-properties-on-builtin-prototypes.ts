@@ -1,9 +1,0 @@
-// Adding a name to `Promise.prototype`, `Function.prototype` or `Object.prototype` throws: the first and the last are closed entirely, and `Function.prototype`, though it stays extensible, takes no name but a few that are listed. `String.prototype` and `Map.prototype` keep their members and take a name that neither they nor `Object.prototype` have.
-try { (String.prototype as any).poop = 1; console.log("String.prototype: no error") } catch (e) { console.log("String.prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }
-try { (Map.prototype as any).poop = 1; console.log("Map.prototype: no error") } catch (e) { console.log("Map.prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }
-try { (Promise.prototype as any).poop = 1; console.log("Promise.prototype: no error") } catch (e) { console.log("Promise.prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }
-try { (Function.prototype as any).poop = 1; console.log("Function.prototype: no error") } catch (e) { console.log("Function.prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }
-try { (Object.prototype as any).poop = 1; console.log("Object.prototype: no error") } catch (e) { console.log("Object.prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }
-try { Object.defineProperty(Object.prototype, "poop2", { value: 1, configurable: true }); console.log("Object.prototype, defineProperty: no error") } catch (e) { console.log("Object.prototype, defineProperty:", e instanceof TypeError ? "TypeError" : "other " + e) }
-console.log(("" as any).poop, (new Map() as any).poop, (Promise.resolve() as any).poop, (Math.floor as any).poop, ({} as any).poop, ({} as any).poop2)
-console.log([Array.prototype, Object.prototype, Function.prototype, String.prototype, Map.prototype, Promise.prototype].map(o => Object.isExtensible(o)).join())

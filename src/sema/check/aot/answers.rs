@@ -21,15 +21,6 @@ impl GaveUp {
         GaveUp::UnreachedNode,
     ];
 
-    pub fn name(self) -> &'static str {
-        match self {
-            GaveUp::Unresolved => "Unresolved",
-            GaveUp::ErrorType => "ErrorType",
-            GaveUp::FlowAnalysisDisabled => "FlowAnalysisDisabled",
-            GaveUp::UnreachedNode => "UnreachedNode",
-        }
-    }
-
     pub(super) fn is_function_of_key(self) -> bool {
         match self {
             GaveUp::Unresolved | GaveUp::FlowAnalysisDisabled => false,
@@ -343,7 +334,6 @@ mod tests {
         assert_eq!(GaveUp::ALL.len(), GaveUp::COUNT);
         for (index, reason) in GaveUp::ALL.into_iter().enumerate() {
             assert_eq!(reason as usize, index);
-            assert_eq!(reason.name(), format!("{reason:?}"));
         }
     }
 

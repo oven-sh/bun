@@ -11,8 +11,18 @@
 // The same script, table and Bun write the same bytes every time, however many processes share the work.
 //
 // A folder of ./programs may also hold files `*.programs`, each with many programs in it: `packedFiles` below. They are written out in the same way.
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { availableParallelism } from "os";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
+import { availableParallelism, tmpdir } from "os";
 import { basename, dirname, join, resolve, sep } from "path";
 import type { Row } from "./built-ins-alone/table";
 
@@ -111,7 +121,7 @@ export function untypedTwins(
 const topics = () =>
   readdirSync(join(import.meta.dir, "programs"), { withFileTypes: true }).filter(entry => entry.isDirectory());
 const packsOf = (topic: string) =>
-  readdirSync(join(import.meta.dir, "programs", topic))
+  readdirSync(resolve(import.meta.dir, "programs", topic))
     .filter(name => name.endsWith(".programs"))
     .sort();
 
@@ -122,19 +132,19 @@ const packsOf = (topic: string) =>
  *   ////: <name>                       a piece begins: text that stands in several places. «1» to «9» in it stand for arguments
  *   ////= <name><tab><argument>..      here stands that piece
  *
- * A piece is known in every such file of its folder.
+ * A piece is known in every such file of its folder. `topic`: a folder of ./programs, or the whole path of any other folder.
  */
 export function packedFiles(topic: string): Record<string, string> {
   const pieces = new Map<string, string>();
   const files: Record<string, string> = {};
   const expanded = (body: string, given: string[] = []): string =>
-    (given.length ? body.replace(/«(\d)»/g, (_, n) => given[n - 1]) : body).replace(/^\/\/\/\/= (.*)\n/gm, (_, use) => {
+    (given.length ? body.replace(/«(\d)»/g, (_, n) => given[n - 1]) : body).replace(/^\/\/\/\/= ([^\n]*)\n/gm, (_, use) => {
       const [name, ...passed] = use.split("\t");
       return expanded(pieces.get(name)!, passed);
     });
   for (const pack of packsOf(topic)) {
-    const text = readFileSync(join(import.meta.dir, "programs", topic, pack), "utf8").replaceAll("\r\n", "\n");
-    const marks = [...text.matchAll(/^\/\/\/\/([ !:]) ?(.*)\n/gm)];
+    const text = readFileSync(resolve(import.meta.dir, "programs", topic, pack), "utf8").replaceAll("\r\n", "\n");
+    const marks = [...text.matchAll(/^\/\/\/\/([ !:]) ?([^\n]*)\n/gm)];
     for (const [index, { 0: line, 1: mark, 2: name, index: start }] of marks.entries()) {
       const body = () => text.slice(start + line.length, marks[index + 1]?.index);
       if (mark === ":") pieces.set(name, body());
@@ -151,14 +161,19 @@ export function packedFiles(topic: string): Record<string, string> {
 
 /**
  * For whoever walks ./programs by himself and draws from the programs that are one file: `kept`, what the walk of `root` found, with the packed ones whose names match
- * among them, each where it would lie if it were kept. `textOf` reads either.
+ * among them, each where it would lie if it were kept. `textOf` reads either. `stored`: not those beside which a file with one of these endings is kept.
  */
-export function withPackedPrograms(root: string, kept: string[], matches: RegExp) {
+export function withPackedPrograms(root: string, kept: string[], matches: RegExp, stored: string[] = []) {
   const packed = new Map<string, () => string>();
   const programs = join(import.meta.dir, "programs");
   for (const { name: topic } of resolve(root) === programs ? topics() : [])
     for (const { entry, files } of packsOf(topic).length ? programsOf(packedFiles(topic)) : [])
-      if (Object.keys(files).length === 1 && matches.test(entry) && !basename(entry).startsWith("main."))
+      if (
+        Object.keys(files).length === 1 &&
+        matches.test(entry) &&
+        !basename(entry).startsWith("main.") &&
+        !stored.some(suffix => existsSync(join(programs, topic, entry.replace(/\.[a-z]+$/, suffix))))
+      )
         packed.set(join(programs, topic, entry), () => files[entry]);
   const parts = new Map([...kept, ...packed.keys()].map(path => [path, path.split(sep)]));
   const inOrderOfWalk = (a: string[], b: string[]) => {
@@ -255,7 +270,13 @@ for (const { name: topic } of topics()) {
   const script = generators[topic];
   generators[topic] = () => {
     const generator: Generator | undefined = script?.();
-    return { ...generator, programs: () => [...(generator?.programs() ?? []), ...programsOf(packedFiles(topic))] };
+    // What is packed under the name of a program that the script writes takes its place, as what is kept does.
+    const programs = () => {
+      const packed = programsOf(packedFiles(topic));
+      const entries = new Set(packed.map(program => program.entry));
+      return [...(generator?.programs() ?? []).filter(program => !entries.has(program.entry)), ...packed];
+    };
+    return { ...generator, programs };
   };
 }
 
@@ -275,6 +296,20 @@ export function writeProgram(folder: string, program: WrittenProgram) {
     mkdirSync(dirname(join(folder, name)), { recursive: true });
     writeFileSync(join(folder, name), text);
   }
+}
+
+/**
+ * For a test whose many small files lie in `*.programs` files: a temporary folder with all that `folder` holds, written out. It is gone when the process ends.
+ * A tsconfig.json at the top of `folder` is inherited from: what it names by a path stays where it is.
+ */
+export function unpacked(folder: string): string {
+  const where = realpathSync(mkdtempSync(join(tmpdir(), `${basename(folder)}-`)));
+  process.on("exit", () => rmSync(where, { recursive: true, force: true }));
+  cpSync(folder, where, { recursive: true, filter: source => !source.endsWith(".programs") });
+  if (existsSync(join(folder, "tsconfig.json")))
+    writeFileSync(join(where, "tsconfig.json"), JSON.stringify({ extends: join(folder, "tsconfig.json") }));
+  writeProgram(where, { entry: "", files: packedFiles(folder) });
+  return where;
 }
 
 /** Writes the programs of these groups into <where>/<topic>, in `jobs` processes at a time. Answers the entry points of each group. */

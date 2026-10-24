@@ -1,5 +1,5 @@
 use super::evaluate::Value;
-use super::feature_flags::evaluate_feature_call;
+use super::feature_flags::find_feature_flag;
 use super::folder::{Effects, Folded, Folder};
 use super::{Constant, Decision};
 use crate::bind::Binding;
@@ -25,7 +25,6 @@ impl<'s> Folder<'_, 's> {
             .unwrap_or(Folded::UNKNOWN)
     }
 
-    // `"quire".replace(/^/, "re")`.
     fn fold_replace_at_end_of_text(&self, call: Call) -> Option<Folded> {
         let hir = self.hir;
         let callee = hir.skip_type_assertions(call.callee);
@@ -91,11 +90,13 @@ impl<'s> Folder<'_, 's> {
     }
 
     fn fold_feature_call(&mut self, e: ExprId) -> Folded {
-        let (hir, bound, inputs, atoms) = (self.hir, self.bound, self.inputs, self.atoms);
-        let mut errors = Vec::new();
-        let is_enabled = evaluate_feature_call(hir, bound, inputs, atoms, e, &mut errors);
-        let call_errors = errors.into_iter().map(|error| (e, error));
-        self.call_errors.extend(call_errors);
+        let is_enabled = match find_feature_flag(self.hir, self.bound, self.atoms, e) {
+            Ok(flag) => self.inputs.has_feature(flag),
+            Err(error) => {
+                self.call_errors.push((e, error));
+                false
+            }
+        };
         self.decide(e, Decision::Constant(Constant::Boolean(is_enabled)))
     }
 

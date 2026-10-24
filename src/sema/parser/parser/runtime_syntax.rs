@@ -63,7 +63,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// What is nested too deep has no expression.
     #[inline(always)]
     pub(super) fn note_parentheses(&mut self, expression: ExprId) {
         if expression.is_some() {
@@ -80,7 +79,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let text = self.lx.text();
         let start = self.lx.start as usize;
-        // An unterminated literal has no closing slash.
         let close = match bun_core::strings::last_index_of_char(text, b'/') {
             Some(at) if at > 0 => at,
             _ => text.len(),
@@ -95,7 +93,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     pub(super) fn push_template_part(&mut self) {
-        // After a refusal the token is the end of the file.
         if self.has_failed() {
             return self.push_missing_template_part();
         }
@@ -108,7 +105,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.s.template_parts.push(EMPTY_TEMPLATE_PART);
     }
 
-    /// The parts are those of the expression that is added next.
     pub(super) fn take_template_parts(&mut self, base: usize) {
         let first = self.f.template_parts.len() as u32;
         let parts = self.s.template_parts.get(base..).unwrap_or_default();
@@ -149,7 +145,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 true => self.context |= ctx::STRICT,
                 false if self.options.keeps_function_directives => {
                     self.context |= ctx::STRICT;
-                    // `function_block` sets the bit only for a body that starts with a string.
                     self.f.rare_syntax |= rare::DIRECTIVE_IN_FUNCTION;
                 }
                 false => self.f.rare_syntax |= rare::DROPPED_STRICT_DIRECTIVE,
@@ -165,7 +160,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 && self.f.has_use_strict_directive(body)
     }
 
-    /// `bun run` drops an `import` of a TypeScript file that nothing uses, so only an `export` makes such a file a module.
     pub(super) fn is_module_declaration(&self, statement: StmtId) -> bool {
         let is_import = |it: &Stmt| matches!(it.kind, StmtKind::Import(_));
         self.f.is_export_declaration(statement)
@@ -200,7 +194,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if !self.f.bigint_names.is_sorted_by_key(|it| it.0) {
             self.f.bigint_names.shared_sort_unstable_by_key(|it| it.0);
         }
-        // A type in a JSDoc comment is parsed once for each node it is the type of.
         self.f.bigint_names.dedup_by_key(|it| it.0);
     }
 
@@ -213,7 +206,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             .map_or_else(|| self.pos(), |it| it.pos)
     }
 
-    /// A `with { .. }` that is nested in another comes before it.
     pub(super) fn attributes_since(&self, base: usize) -> ExprId {
         let parsed = self.f.import_attributes.get(base..).unwrap_or_default();
         parsed.last().map_or(ExprId::NONE, |it| it.1)

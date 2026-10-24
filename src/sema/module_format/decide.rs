@@ -139,7 +139,6 @@ fn find_statement_evidence(
     if has_with_statement(hir, bound) {
         evidence |= CommonJsEvidence::WITH_STATEMENT;
     }
-    // `bun run` reads the variable `exports` for the `this` of a file without ES module syntax.
     if file_esm_syntax(hir) == EsmSyntax::None && has_live_this_of_file(hir, decisions) {
         evidence |= CommonJsEvidence::EXPORTS;
     }

@@ -1,4 +1,0 @@
-# A callee declared in a `.d.ts` has a declaration, but nothing in it counts as written.
-declaration-file-callee.ts:3 call `host(1)` = declaration declaration-file-callee.d.ts:2
-declaration-file-callee.ts:3 call result `host(1)` = unwritten checked string
-declaration-file-callee.ts:3 call signature `host(1)` = (unwritten checked number) this unwritten checked any returns unwritten checked string

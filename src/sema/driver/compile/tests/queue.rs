@@ -1,7 +1,7 @@
 use super::support::{TestProgram, check, with_program};
 use crate::Report;
 use crate::compile::FileWork;
-use crate::compile::queue::{LOWERING_ROUNDS, QueuePass, ROLE_ROUNDS, run_queue};
+use crate::compile::queue::{LOWERING_ROUNDS, ROLE_ROUNDS, run_queue};
 use bun_sema::check::{Checker, Requested};
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
@@ -32,12 +32,12 @@ fn run_pass<'s>(
     let files = program.files();
     let mut to_check: Vec<FileId> = (0..files.modules.len() as u32).map(FileId).collect();
     to_check.shared_sort_by_key(|&file| files.rank_of_file(file));
-    run_queue(QueuePass {
-        loaded: program.loaded,
-        host: program.host,
-        request: program.request,
+    run_queue(
+        program.loaded,
+        program.host,
+        program.request,
         to_check,
-        work: FileWork {
+        &FileWork {
             requested,
             after_file: Some(after_file),
             after_commit: &|_| {},
@@ -45,7 +45,7 @@ fn run_pass<'s>(
             first_round: options.first_round,
             left_out_bodies: None,
         },
-    })
+    )
 }
 
 fn check_all_files<'s>(

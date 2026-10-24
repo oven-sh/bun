@@ -1,5 +1,0 @@
-# Computing the identity of a recursive type terminates, and distinct types get distinct identities.
-different: recursive.ts:5 identity `N<number>` <=> recursive.ts:6 identity `N<string>`
-# The compiler knows a function type by the declaration of its signature: two declarations are two types.
-different: recursive.ts:7 identity `F` <=> recursive.ts:8 identity `G`
-different: recursive.ts:9 identity `{ g: typeof f }` <=> recursive.ts:10 identity `{ g: typeof h; x: 1 }`

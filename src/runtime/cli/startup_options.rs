@@ -554,6 +554,3 @@ pub(crate) fn exit_for_unadmitted_debugger(flag: Option<&'static str>) -> ! {
         obstacle: Obstacle::BuiltWithoutInspector,
     })
 }
-
-#[cfg(test)]
-mod tests;

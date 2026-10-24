@@ -1,4 +1,0 @@
-# A member declared in a `.d.ts` is unwritten, also in a merged interface; one the program declares is written.
-declaration-file-member.ts:6 member `h.port` = member port Field unwritten checked number
-declaration-file-member.ts:7 member `m.a` = member a Field unwritten checked number
-declaration-file-member.ts:8 member `m.b` = member b Field number checked number

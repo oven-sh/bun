@@ -2,7 +2,6 @@
 
 use bun_core::strings;
 
-/// What stands in front of a `/`: behind an operand it divides, behind an operator it opens a regular expression.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Before {
     Operand,
@@ -38,7 +37,6 @@ fn is_line_end(byte: u8) -> bool {
     matches!(byte, b'\n' | b'\r')
 }
 
-/// `code` ends in front of a `/` and begins behind the last comment.
 fn find_what_stands_before(code: &[u8]) -> Before {
     let is_blank = |byte: &u8| matches!(byte, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C);
     let Some(last) = code.iter().rposition(|byte| !is_blank(byte)) else {
@@ -64,7 +62,6 @@ fn find_what_stands_before(code: &[u8]) -> Before {
     }
 }
 
-/// A module that the block loads is part of the program.
 fn names_what_loads_modules(block: &[u8]) -> bool {
     [&b"import"[..], b"require"].iter().any(|&word| {
         let mut from = 0;
@@ -94,7 +91,6 @@ fn skip_string(text: &[u8], at: usize) -> Option<usize> {
     }
 }
 
-/// Returns the place behind what ends the text, and whether that is `${`.
 fn skip_template_text(text: &[u8], mut at: usize) -> Option<(usize, bool)> {
     loop {
         at += strings::index_of_any(text.get(at..)?, b"`\\$")?;
@@ -128,7 +124,6 @@ fn skip_regular_expression(text: &[u8], at: usize) -> Option<usize> {
     Some(at)
 }
 
-/// `open` is a `{`. Returns the place of the `}` that closes it. `None`: the block has to be parsed.
 pub(crate) fn find_end_of_block(text: &[u8], open: usize) -> Option<usize> {
     debug_assert_eq!(text.get(open), Some(&b'{'));
     let mut at = open + 1;

@@ -1,5 +1,5 @@
 use super::code_barrels::{BarrelRequests, NOT_LOADED, erase_waiting_sites};
-use super::code_file::load_code_file_of_graph;
+use super::code_file::load_code_file;
 use super::code_load::{CodeEntry, CodeTarget, LoadKey, ParsedCodeFile};
 use super::code_types::predicted_type_files;
 use super::*;
@@ -22,7 +22,6 @@ struct WalkedFile<'s, 'r> {
     target: CodeTarget<'r>,
     parsed: Option<Box<ParsedCodeFile<'s, 'r>>>,
     targets: Vec<u32>,
-    /// It lies on a cycle of imports, and its first analysis took for granted that it does not.
     is_called_before_it_runs: bool,
 }
 
@@ -39,17 +38,14 @@ impl<'r> WalkedFile<'_, 'r> {
 struct WalkState<'s, 'r> {
     files: Vec<WalkedFile<'s, 'r>>,
     index_of: FxHashMap<LoadKey<'r>, u32>,
-    /// What `enqueue` has added, until `queue_found_files` says who reads it.
     found: Vec<u32>,
     to_read: VecDeque<u32>,
-    /// A plugin can take seconds for a file, most of them waiting: for a process it has started, for a file, for its turn on the one thread that the plugins of a build run on.
     to_read_by_plugin: VecDeque<u32>,
     plugin_readers: usize,
     idle_plugin_readers: usize,
     pending_assets: Vec<u32>,
     background_reads_disabled: bool,
     early_loaders: usize,
-    /// Without a thread of their own, one thread that reads waits for one plugin at a time: there may be no more than two that read.
     has_plugin_reader: bool,
     is_finished: bool,
     ready: Vec<(u32, Cow<'static, [u8]>)>,
@@ -59,7 +55,6 @@ struct WalkState<'s, 'r> {
 }
 
 impl WalkState<'_, '_> {
-    /// Each file that can be read or parsed now is in the hands of a thread, which may wait for a plugin.
     fn has_idle_threads(&self) -> bool {
         self.to_read.is_empty() && self.ready.is_empty() && self.in_progress > 0
     }
@@ -90,7 +85,6 @@ pub(super) type SpawnBackgroundReaders<'w> = &'w (dyn Fn(Vec<Vec<u8>>) + Sync);
 pub(super) const MAX_BACKGROUND_READERS: usize = MAX_PLUGIN_READERS;
 
 impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
-    /// `meanwhile` runs on the calling thread during the walk.
     pub(super) fn load_code_files(
         &self,
         spawn_background_readers: SpawnBackgroundReaders<'_>,
@@ -241,7 +235,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         state.barrels = barrels;
     }
 
-    /// A file that a plugin reads is asked for at once.
     fn queue_found_files(&self, start_plugin_reader: StartPluginReader<'_>) -> bool {
         let mut state = self.state.lock();
         let found = std::mem::take(&mut state.found);
@@ -339,7 +332,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
     }
 
     fn allow_early_load(&self, state: &mut WalkState<'s, 'r>, start: StartEarlyLoader<'_>) {
-        /// The walk of a program with fewer files is over before a thread has started.
         const FEWEST_RUNS_OF_FILES: usize = 64;
         let Some(prefetch) = self.early_prefetch.get() else {
             return;
@@ -357,7 +349,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         }
     }
 
-    /// Loads the files of `early_prefetch` while the walk leaves threads idle, and starts one more loader while many files wait.
     fn load_early(&self, start_another: StartEarlyLoader<'_>) {
         let Some(prefetch) = self.early_prefetch.get() else {
             return;
@@ -402,10 +393,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             if let Some(index) = state.to_read_by_plugin.pop_front() {
                 state.in_progress += 1;
                 drop(state);
-                let [path] = self.paths_of(&[index])[..] else {
-                    unreachable!("one path for one file");
-                };
-                self.read_one(index, path);
+                self.read(vec![index]);
                 state = self.state.lock();
                 if state.in_progress == 0 {
                     self.has_changed.notify_all();
@@ -432,10 +420,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 state.has_plugin_reader = true;
                 state.in_progress += 1;
                 drop(state);
-                let [path] = self.paths_of(&[index])[..] else {
-                    unreachable!("one path for one file");
-                };
-                self.read_one(index, path);
+                self.read(vec![index]);
                 state = self.state.lock();
                 state.has_plugin_reader = false;
                 self.has_to_read.notify_one();
@@ -454,7 +439,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 let (target, is_called_early) = (file.target, file.is_called_before_it_runs);
                 drop(state);
                 let arena = *arena.get_or_insert_with(|| context.session.arena());
-                let parsed = load_code_file_of_graph(context, arena, target, text, is_called_early);
+                let parsed = load_code_file(context, arena, target, text, is_called_early);
                 let parsed = Box::new(parsed);
                 self.add_parsed_file(&mut self.state.lock(), index, parsed);
                 let has_more = self.queue_found_files(start.plugin_reader);
@@ -484,7 +469,6 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     continue;
                 }
                 if state.deferred.is_empty() && forget_files_called_before_they_run(&mut state) {
-                    // Until the files are queued, the walk is not over for the other threads either.
                     state.in_progress += 1;
                     drop(state);
                     self.queue_found_files(start.plugin_reader);
@@ -616,7 +600,6 @@ fn is_on_cycle(files: &[WalkedFile<'_, '_>], start: u32) -> bool {
     false
 }
 
-/// Nothing is left to read, so every cycle of imports is there. Whether a file was queued again.
 fn forget_files_called_before_they_run(state: &mut WalkState<'_, '_>) -> bool {
     let relies_on_order = |file: &WalkedFile<'_, '_>| {
         let analysis = file.parsed.as_ref().map(|it| &it.code.analyzed.analysis);
@@ -646,7 +629,6 @@ fn erase_sites_nothing_asked_for(state: &mut WalkState<'_, '_>) {
     }
 }
 
-/// A package that has one file for `import` and another for `require` is in the program once: where anything requires it, the imports get that file too.
 fn import_what_is_required<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     state: &mut WalkState<'_, 'r>,
@@ -735,7 +717,6 @@ fn order_files<'s, 'r>(
             }
         }
     }
-    // `import_what_is_required` leaves files that nothing loads.
     debug_assert!(order.len() <= files.len());
 
     let mut entry_of = vec![0u32; files.len()];

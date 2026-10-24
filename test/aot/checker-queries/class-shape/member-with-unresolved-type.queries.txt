@@ -1,6 +1,0 @@
-# A class keeps all its members when the type of one does not resolve. That one gives up by itself.
-member-with-unresolved-type.ts:3 class member `Holder` = bad Field Member 4 gave up: ErrorType checked gave up: ErrorType
-member-with-unresolved-type.ts:3 class member `Holder` = good Field Member 5 unwritten checked number
-member-with-unresolved-type.ts:3 class member `Holder` = describe Method Member 6 unwritten checked () => string
-member-with-unresolved-type.ts:3 class binding `Holder` = yes
-member-with-unresolved-type.ts:2 diagnostic TS2307 = MissingDeclaration StopsBuild

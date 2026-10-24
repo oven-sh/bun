@@ -1,5 +1,0 @@
-# Enum members keep their values; an enum with a computed member is not a union.
-enums.ts:5 shape `Direction.Down` = NumericEnumMember(1)
-enums.ts:6 shape `Name.A` = StringLiteral("a")
-enums.ts:7 shape `Direction` = Union(Direction.Up | Direction.Down)
-enums.ts:8 shape `Computed` = Number

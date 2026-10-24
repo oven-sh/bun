@@ -1,1 +1,0 @@
-console.log(typeof globalThis.hasOwnProperty, typeof globalThis.toString, globalThis.constructor === Object, typeof globalThis.__proto__, globalThis.valueOf() === globalThis, typeof globalThis.isPrototypeOf);

@@ -3,9 +3,6 @@ mod entry_points;
 mod package_files;
 mod typed_files;
 
-#[cfg(test)]
-mod tests;
-
 use bstr::BStr;
 use bun_alloc::Arena;
 use bun_ast::Expr;

@@ -1,1 +1,0 @@
-exports.kind = "CommonJS";

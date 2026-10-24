@@ -1,11 +1,14 @@
 use super::{
-    BindingStabilitiesIn, ImplicitReference, ImplicitReferenceKind, PrivateNamesIn,
-    RuntimeBindings, RuntimeBindingsIn, RuntimeDeclarationsIn, RuntimeReferencesIn,
-    RuntimeTablesIn,
+    AnnexBFunction, Binding, BindingKind, BindingStability, CodeUnit, CommonJsVariable,
+    EarlyRedeclaration, EvalScope, FunctionFlags, ImplicitReference, ImplicitReferenceKind,
+    ParameterVarCopy, PrivateName, PrivateNameId, RuntimeBindings, RuntimeBindingsIn, StoreKind,
+    SymbolStore,
 };
 use crate::bind::decorator_metadata::MetadataReference;
+use crate::bind::{Decl, ScopeId, SymbolId};
 use crate::hir::*;
 use crate::session::{Arena, ArenaBox};
+use crate::util::SharedSort;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum ImplicitReferenceOrder {
@@ -30,154 +33,173 @@ fn implicit_reference_order(reference: &ImplicitReference) -> ImplicitReferenceO
     }
 }
 
-fn share_few<'s, T: Clone>(list: &ArenaFew<'_, T>, arena: &'s Arena) -> ArenaFew<'s, T> {
-    ArenaFew::from_iter_in(list.iter().cloned(), arena)
+fn sort_by_key<T, K: Ord>(list: &mut [T], mut key: impl FnMut(&T) -> K) {
+    if !list.is_sorted_by_key(&mut key) {
+        list.shared_sort_by_key(key);
+    }
 }
 
-impl RuntimeDeclarationsIn<Growable> {
-    fn is_sorted(&self) -> bool {
-        self.pattern_symbols.is_sorted_by_key(|entry| entry.0)
-            && self.function_symbols.is_sorted_by_key(|entry| entry.0)
-            && self.class_symbols.is_sorted_by_key(|entry| entry.0)
-            && self.enum_symbols.is_sorted_by_key(|entry| entry.0)
-            && self.module_symbols.is_sorted_by_key(|entry| entry.0)
-            && self.inner_class_symbols.is_sorted_by_key(|entry| entry.0)
-            && self
-                .export_expression_symbols
-                .is_sorted_by_key(|entry| entry.0)
-            && self.own_scopes.is_sorted_by_key(|entry| entry.0)
-            && self
-                .annex_b_functions
-                .is_sorted_by_key(|entry| entry.function)
-            && self
-                .parameter_var_copies
-                .is_sorted_by_key(|entry| entry.function)
-    }
+trait Stored<'s, T> {
+    fn from_growable(list: Vec<T>, arena: &'s Arena) -> Self;
+}
 
-    fn into_arena<'s>(mut self, arena: &'s Arena) -> RuntimeDeclarationsIn<InArena<'s>> {
-        RuntimeDeclarationsIn {
-            pattern_symbols: few_to_arena(self.pattern_symbols, arena),
-            function_symbols: few_to_arena(self.function_symbols, arena),
-            class_symbols: few_to_arena(self.class_symbols, arena),
-            enum_symbols: few_to_arena(self.enum_symbols, arena),
-            module_symbols: few_to_arena(self.module_symbols, arena),
-            inner_class_symbols: few_to_arena(self.inner_class_symbols, arena),
-            import_default_symbols: copy_to_arena(&mut self.import_default_symbols, arena),
-            import_namespace_symbols: copy_to_arena(&mut self.import_namespace_symbols, arena),
-            import_spec_symbols: copy_to_arena(&mut self.import_spec_symbols, arena),
-            import_equals_symbols: few_to_arena(self.import_equals_symbols, arena),
-            export_expression_symbols: few_to_arena(self.export_expression_symbols, arena),
-            own_scopes: copy_to_arena(&mut self.own_scopes, arena),
-            symbol_scopes: copy_to_arena(&mut self.symbol_scopes, arena),
-            scope_units: copy_to_arena(&mut self.scope_units, arena),
-            valueless_symbols: copy_to_arena(&mut self.valueless_symbols, arena),
-            binding_kinds: copy_to_arena(&mut self.binding_kinds, arena),
-            annex_b_functions: few_to_arena(self.annex_b_functions, arena),
-            parameter_var_copies: few_to_arena(self.parameter_var_copies, arena),
-            early_redeclarations: few_to_arena(self.early_redeclarations, arena),
-            goal_independent_redeclaration_count: self.goal_independent_redeclaration_count,
+impl<'s, T: Copy> Stored<'s, T> for Fixed<'s, T> {
+    fn from_growable(mut list: Vec<T>, arena: &'s Arena) -> Self {
+        copy_to_arena(&mut list, arena)
+    }
+}
+
+impl<'s, T> Stored<'s, T> for ArenaFew<'s, T> {
+    fn from_growable(list: Vec<T>, arena: &'s Arena) -> Self {
+        few_to_arena(list, arena)
+    }
+}
+
+macro_rules! define_tables {
+    ($visibility:vis struct $name:ident<$storage:ident> {
+        $(values { $($value:ident: $value_type:ty,)* })?
+        $(tables { $($table:ident: $table_type:ty,)* })?
+        $(maps { $($map:ident: $map_type:ty,)* })?
+        $(sorted { $($sorted:ident: $sorted_type:ty = $key:expr,)* })?
+        $(lists { $($list:ident: $list_type:ty,)* })?
+    }) => {
+        #[derive(Default)]
+        $visibility struct $name<$storage: Storage> {
+            $($(pub(in crate::bind) $value: $value_type,)*)?
+            $($(pub(in crate::bind) $table: $table_type,)*)?
+            $($(pub(in crate::bind) $map: $map_type,)*)?
+            $($(pub(in crate::bind) $sorted: $sorted_type,)*)?
+            $($(pub(in crate::bind) $list: $list_type,)*)?
+        }
+
+        impl $name<Growable> {
+            pub(super) fn sort(&mut self) {
+                $($(self.$table.sort();)*)?
+                $($(sort_by_key(&mut self.$map, |entry| entry.0);)*)?
+                $($(sort_by_key(&mut self.$sorted, $key);)*)?
+            }
+
+            pub(super) fn is_sorted(&self) -> bool {
+                true
+                    $($(&& self.$table.is_sorted())*)?
+                    $($(&& self.$map.is_sorted_by_key(|entry| entry.0))*)?
+                    $($(&& self.$sorted.is_sorted_by_key($key))*)?
+            }
+
+            fn into_arena<'s>(self, arena: &'s Arena) -> $name<InArena<'s>> {
+                $name {
+                    $($($value: self.$value,)*)?
+                    $($($table: self.$table.into_arena(arena),)*)?
+                    $($($map: Stored::from_growable(self.$map, arena),)*)?
+                    $($($sorted: Stored::from_growable(self.$sorted, arena),)*)?
+                    $($($list: Stored::from_growable(self.$list, arena),)*)?
+                }
+            }
+        }
+    };
+}
+
+define_tables! {
+    pub struct RuntimeTablesIn<S> {
+        values {
+            is_module: bool,
+            depends_on_sloppy_mode: bool,
+            file_uses_arguments: bool,
+            import_meta_may_be_modified: bool,
+            hoists_top_level_variables: bool,
+            first_appended_symbol: u32,
+            appended_symbol_end: u32,
+        }
+        tables {
+            declarations: RuntimeDeclarationsIn<S>,
+            references: RuntimeReferencesIn<S>,
+            private_names: PrivateNamesIn<S>,
+            stability: BindingStabilitiesIn<S>,
+        }
+        maps {
+            field_initializer_scopes: S::Few<(MemberId, ScopeId)>,
+        }
+        sorted {
+            early_error_redeclarations: S::Few<u32> = |&index| index,
+        }
+        lists {
+            strict_scopes: S::List<u64>,
+            function_flags: S::List<FunctionFlags>,
         }
     }
 }
 
-impl RuntimeReferencesIn<Growable> {
-    fn is_sorted(&self) -> bool {
-        self.ident_bindings.is_sorted_by_key(|entry| entry.0)
-            && self.initialized_bindings.is_sorted_by_key(|entry| entry.0)
-            && self.exported_bindings.is_sorted_by_key(|entry| entry.0)
-            && self.entity_root_bindings.is_sorted_by_key(|entry| entry.0)
-            && self
-                .redeclared_commonjs_variables
-                .is_sorted_by_key(|entry| entry.0)
-            && self
-                .stores
-                .is_sorted_by_key(|store| (store.symbol, store.target))
-            && self.unbound_name_stores.is_sorted_by_key(|entry| entry.0)
-            && self.dynamic_ident_lookups.is_sorted_by_key(|entry| entry.0)
-            && self
-                .dynamic_declarator_lookups
-                .is_sorted_by_key(|entry| entry.0)
-            && self.eval_scopes.is_sorted_by_key(|entry| entry.0)
-            && self.jump_targets.is_sorted_by_key(|entry| entry.0)
-            && self
-                .implicit_references
-                .is_sorted_by_key(implicit_reference_order)
-    }
-
-    fn into_arena<'s>(mut self, arena: &'s Arena) -> RuntimeReferencesIn<InArena<'s>> {
-        RuntimeReferencesIn {
-            evaluated_idents: copy_to_arena(&mut self.evaluated_idents, arena),
-            ident_bindings: copy_to_arena(&mut self.ident_bindings, arena),
-            initialized_bindings: few_to_arena(self.initialized_bindings, arena),
-            exported_bindings: few_to_arena(self.exported_bindings, arena),
-            entity_root_bindings: few_to_arena(self.entity_root_bindings, arena),
-            redeclared_commonjs_variables: few_to_arena(self.redeclared_commonjs_variables, arena),
-            eval_visible_symbols: copy_to_arena(&mut self.eval_visible_symbols, arena),
-            stores: copy_to_arena(&mut self.stores, arena),
-            unbound_name_stores: few_to_arena(self.unbound_name_stores, arena),
-            store_targets: copy_to_arena(&mut self.store_targets, arena),
-            dynamic_ident_lookups: few_to_arena(self.dynamic_ident_lookups, arena),
-            dynamic_declarator_lookups: few_to_arena(self.dynamic_declarator_lookups, arena),
-            eval_scopes: few_to_arena(self.eval_scopes, arena),
-            jump_targets: few_to_arena(self.jump_targets, arena),
-            implicit_references: few_to_arena(self.implicit_references, arena),
+define_tables! {
+    pub(in crate::bind) struct RuntimeDeclarationsIn<S> {
+        values {
+            goal_independent_redeclaration_count: u32,
+        }
+        maps {
+            declared_symbols: S::Few<(Decl, SymbolId)>,
+            inner_class_symbols: S::Few<(ClassId, SymbolId)>,
+            own_scopes: S::List<(StmtId, ScopeId)>,
+        }
+        sorted {
+            annex_b_functions: S::Few<AnnexBFunction> = |entry| entry.function,
+            parameter_var_copies: S::Few<ParameterVarCopy> = |entry| entry.function,
+        }
+        lists {
+            import_default_symbols: S::List<SymbolId>,
+            import_namespace_symbols: S::List<SymbolId>,
+            import_spec_symbols: S::List<SymbolId>,
+            import_equals_symbols: S::Few<SymbolId>,
+            symbol_scopes: S::List<ScopeId>,
+            scope_units: S::List<CodeUnit>,
+            valueless_symbols: S::List<u64>,
+            binding_kinds: S::List<BindingKind>,
+            early_redeclarations: S::Few<EarlyRedeclaration>,
         }
     }
 }
 
-impl PrivateNamesIn<Growable> {
-    fn is_sorted(&self) -> bool {
-        self.names
-            .is_sorted_by_key(|name| (name.class, name.first_member))
-            && self.references.is_sorted_by_key(|entry| entry.0)
-            && self.members.is_sorted_by_key(|entry| entry.0)
-    }
-
-    fn into_arena<'s>(self, arena: &'s Arena) -> PrivateNamesIn<InArena<'s>> {
-        PrivateNamesIn {
-            names: few_to_arena(self.names, arena),
-            references: few_to_arena(self.references, arena),
-            members: few_to_arena(self.members, arena),
+define_tables! {
+    pub(in crate::bind) struct RuntimeReferencesIn<S> {
+        maps {
+            ident_bindings: S::List<(ExprId, Binding)>,
+            initialized_bindings: S::Few<(PatId, Binding)>,
+            exported_bindings: S::Few<(ExportSpecId, Binding)>,
+            entity_root_bindings: S::Few<(ImportEqualsId, Binding)>,
+            redeclared_commonjs_variables: S::Few<(SymbolId, CommonJsVariable)>,
+            unbound_name_stores: S::Few<(ExprId, StoreKind)>,
+            dynamic_ident_lookups: S::Few<(ExprId, ScopeId)>,
+            dynamic_declarator_lookups: S::Few<(PatId, ScopeId)>,
+            eval_scopes: S::Few<(ExprId, EvalScope)>,
+            jump_targets: S::Few<(StmtId, StmtId)>,
+        }
+        sorted {
+            stores: S::List<SymbolStore> = |store| (store.symbol, store.target),
+            implicit_references: S::Few<ImplicitReference> = implicit_reference_order,
+        }
+        lists {
+            evaluated_idents: S::List<u64>,
+            eval_visible_symbols: S::List<u64>,
+            store_targets: S::List<u64>,
         }
     }
 }
 
-impl BindingStabilitiesIn<Growable> {
-    fn into_arena<'s>(mut self, arena: &'s Arena) -> BindingStabilitiesIn<InArena<'s>> {
-        BindingStabilitiesIn {
-            stabilities: copy_to_arena(&mut self.stabilities, arena),
-            initializers: copy_to_arena(&mut self.initializers, arena),
+define_tables! {
+    pub(in crate::bind) struct PrivateNamesIn<S> {
+        maps {
+            references: S::Few<(ExprId, PrivateNameId)>,
+            members: S::Few<(MemberId, PrivateNameId)>,
+        }
+        sorted {
+            names: S::Few<PrivateName> = |name| (name.class, name.first_member),
         }
     }
 }
 
-impl RuntimeTablesIn<Growable> {
-    pub(super) fn is_sorted(&self) -> bool {
-        self.field_initializer_scopes
-            .is_sorted_by_key(|entry| entry.0)
-            && self.early_error_redeclarations.is_sorted()
-            && self.declarations.is_sorted()
-            && self.references.is_sorted()
-            && self.private_names.is_sorted()
-    }
-
-    fn into_arena<'s>(mut self, arena: &'s Arena) -> RuntimeTablesIn<InArena<'s>> {
-        RuntimeTablesIn {
-            is_module: self.is_module,
-            depends_on_sloppy_mode: self.depends_on_sloppy_mode,
-            file_uses_arguments: self.file_uses_arguments,
-            import_meta_may_be_modified: self.import_meta_may_be_modified,
-            hoists_top_level_variables: self.hoists_top_level_variables,
-            first_appended_symbol: self.first_appended_symbol,
-            appended_symbol_end: self.appended_symbol_end,
-            strict_scopes: copy_to_arena(&mut self.strict_scopes, arena),
-            function_flags: copy_to_arena(&mut self.function_flags, arena),
-            field_initializer_scopes: few_to_arena(self.field_initializer_scopes, arena),
-            early_error_redeclarations: few_to_arena(self.early_error_redeclarations, arena),
-            declarations: self.declarations.into_arena(arena),
-            references: self.references.into_arena(arena),
-            private_names: self.private_names.into_arena(arena),
-            stability: self.stability.into_arena(arena),
+define_tables! {
+    pub(in crate::bind) struct BindingStabilitiesIn<S> {
+        lists {
+            stabilities: S::List<BindingStability>,
+            initializers: S::List<Option<Decl>>,
         }
     }
 }
@@ -195,101 +217,9 @@ impl RuntimeBindingsIn<Growable> {
     }
 }
 
-impl RuntimeDeclarationsIn<InArena<'_>> {
-    fn share<'s>(&'s self, arena: &'s Arena) -> RuntimeDeclarationsIn<InArena<'s>> {
-        RuntimeDeclarationsIn {
-            pattern_symbols: share_few(&self.pattern_symbols, arena),
-            function_symbols: share_few(&self.function_symbols, arena),
-            class_symbols: share_few(&self.class_symbols, arena),
-            enum_symbols: share_few(&self.enum_symbols, arena),
-            module_symbols: share_few(&self.module_symbols, arena),
-            inner_class_symbols: share_few(&self.inner_class_symbols, arena),
-            import_default_symbols: Fixed::shared(&self.import_default_symbols),
-            import_namespace_symbols: Fixed::shared(&self.import_namespace_symbols),
-            import_spec_symbols: Fixed::shared(&self.import_spec_symbols),
-            import_equals_symbols: share_few(&self.import_equals_symbols, arena),
-            export_expression_symbols: share_few(&self.export_expression_symbols, arena),
-            own_scopes: Fixed::shared(&self.own_scopes),
-            symbol_scopes: Fixed::shared(&self.symbol_scopes),
-            scope_units: Fixed::shared(&self.scope_units),
-            valueless_symbols: Fixed::shared(&self.valueless_symbols),
-            binding_kinds: Fixed::shared(&self.binding_kinds),
-            annex_b_functions: share_few(&self.annex_b_functions, arena),
-            parameter_var_copies: share_few(&self.parameter_var_copies, arena),
-            early_redeclarations: share_few(&self.early_redeclarations, arena),
-            goal_independent_redeclaration_count: self.goal_independent_redeclaration_count,
-        }
-    }
-}
-
-impl RuntimeReferencesIn<InArena<'_>> {
-    fn share<'s>(&'s self, arena: &'s Arena) -> RuntimeReferencesIn<InArena<'s>> {
-        RuntimeReferencesIn {
-            evaluated_idents: Fixed::shared(&self.evaluated_idents),
-            ident_bindings: Fixed::shared(&self.ident_bindings),
-            initialized_bindings: share_few(&self.initialized_bindings, arena),
-            exported_bindings: share_few(&self.exported_bindings, arena),
-            entity_root_bindings: share_few(&self.entity_root_bindings, arena),
-            redeclared_commonjs_variables: share_few(&self.redeclared_commonjs_variables, arena),
-            eval_visible_symbols: Fixed::shared(&self.eval_visible_symbols),
-            stores: Fixed::shared(&self.stores),
-            unbound_name_stores: share_few(&self.unbound_name_stores, arena),
-            store_targets: Fixed::shared(&self.store_targets),
-            dynamic_ident_lookups: share_few(&self.dynamic_ident_lookups, arena),
-            dynamic_declarator_lookups: share_few(&self.dynamic_declarator_lookups, arena),
-            eval_scopes: share_few(&self.eval_scopes, arena),
-            jump_targets: share_few(&self.jump_targets, arena),
-            implicit_references: share_few(&self.implicit_references, arena),
-        }
-    }
-}
-
-impl PrivateNamesIn<InArena<'_>> {
-    fn share<'s>(&'s self, arena: &'s Arena) -> PrivateNamesIn<InArena<'s>> {
-        PrivateNamesIn {
-            names: share_few(&self.names, arena),
-            references: share_few(&self.references, arena),
-            members: share_few(&self.members, arena),
-        }
-    }
-}
-
-impl BindingStabilitiesIn<InArena<'_>> {
-    fn share(&self) -> BindingStabilitiesIn<InArena<'_>> {
-        BindingStabilitiesIn {
-            stabilities: Fixed::shared(&self.stabilities),
-            initializers: Fixed::shared(&self.initializers),
-        }
-    }
-}
-
-impl RuntimeTablesIn<InArena<'_>> {
-    fn share<'s>(&'s self, arena: &'s Arena) -> RuntimeTablesIn<InArena<'s>> {
-        RuntimeTablesIn {
-            is_module: self.is_module,
-            depends_on_sloppy_mode: self.depends_on_sloppy_mode,
-            file_uses_arguments: self.file_uses_arguments,
-            import_meta_may_be_modified: self.import_meta_may_be_modified,
-            hoists_top_level_variables: self.hoists_top_level_variables,
-            first_appended_symbol: self.first_appended_symbol,
-            appended_symbol_end: self.appended_symbol_end,
-            strict_scopes: Fixed::shared(&self.strict_scopes),
-            function_flags: Fixed::shared(&self.function_flags),
-            field_initializer_scopes: share_few(&self.field_initializer_scopes, arena),
-            early_error_redeclarations: share_few(&self.early_error_redeclarations, arena),
-            declarations: self.declarations.share(arena),
-            references: self.references.share(arena),
-            private_names: self.private_names.share(arena),
-            stability: self.stability.share(),
-        }
-    }
-}
-
 impl RuntimeBindings<'_> {
-    pub(in crate::bind) fn share<'s>(&'s self, arena: &'s Arena) -> RuntimeBindings<'s> {
-        let tables = self.tables.as_deref();
-        RuntimeBindingsIn {
-            tables: tables.map(|tables| ArenaBox::new_in(tables.share(arena), arena)),
-        }
+    pub(in crate::bind) fn share<'s>(&self) -> RuntimeBindings<'s> {
+        debug_assert!(!self.is_computed());
+        RuntimeBindingsIn { tables: None }
     }
 }

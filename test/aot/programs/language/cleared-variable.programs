@@ -1,0 +1,3053 @@
+////: lines-16
+function «1»(b: «2»): string {
+  return answerDigit(b === "", b !== "", b == "", b != "", ("" === b ? 8 : 0) + ("" !== b ? 4 : 0) + ("" == b ? 2 : 0) + ("" != b ? 1 : 0))
+    + answerDigit(b === "a", b !== "a", b == "a", b != "a", ("a" === b ? 8 : 0) + ("a" !== b ? 4 : 0) + ("a" == b ? 2 : 0) + ("a" != b ? 1 : 0))
+    + answerDigit(b === "1", b !== "1", b == "1", b != "1", ("1" === b ? 8 : 0) + ("1" !== b ? 4 : 0) + ("1" == b ? 2 : 0) + ("1" != b ? 1 : 0))
+    + answerDigit(b === "é", b !== "é", b == "é", b != "é", ("é" === b ? 8 : 0) + ("é" !== b ? 4 : 0) + ("é" == b ? 2 : 0) + ("é" != b ? 1 : 0))
+    + answerDigit(b === "ab", b !== "ab", b == "ab", b != "ab", ("ab" === b ? 8 : 0) + ("ab" !== b ? 4 : 0) + ("ab" == b ? 2 : 0) + ("ab" != b ? 1 : 0))
+    + answerDigit(b === "abcdefghijklmnopqrstuvwxyz0123456789", b !== "abcdefghijklmnopqrstuvwxyz0123456789", b == "abcdefghijklmnopqrstuvwxyz0123456789", b != "abcdefghijklmnopqrstuvwxyz0123456789", ("abcdefghijklmnopqrstuvwxyz0123456789" === b ? 8 : 0) + ("abcdefghijklmnopqrstuvwxyz0123456789" !== b ? 4 : 0) + ("abcdefghijklmnopqrstuvwxyz0123456789" == b ? 2 : 0) + ("abcdefghijklmnopqrstuvwxyz0123456789" != b ? 1 : 0));
+}
+////: lines-2
+function «1»(a: unknown, b: unknown): string {
+  if (typeof a !== «2») return "?";
+  const u = a as unknown;
+  if (b === undefined) return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (b === null) return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "number") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "boolean") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "string") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "bigint") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "symbol") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "object") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  return "?";
+}
+////: lines-3
+function «1»(xs: «2»[], y: «3»): number {
+  let count = 0;
+  for (let i = 0; i < xs.length; i++) {
+    if (xs[i] === y) count += 1;
+    if (xs[i] != y) count += 100;
+    count += 10000 * Number(y !== xs[i]) + 1000000 * Number(y == xs[i]);
+  }
+  return count;
+}
+////: lines-7
+function «1»(a: unknown, b: unknown): string {
+  if (a !== «2») return "?";
+  const u = a as unknown;
+  if (b === undefined) return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (b === null) return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "number") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "boolean") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "string") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "bigint") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "symbol") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "object") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  return "?";
+}
+////: lines-9
+function «1»() {
+  try {
+    throw 1;
+  } catch (e) {
+    eval(«2»);
+    return e;
+  }
+}
+////: show
+function show(label, run) {
+  try {
+    console.log(label, run());
+  } catch (error) {
+    console.log(label, "throws", error.name);
+  }
+}
+//// cleared-variable/main.ts
+// A `var`, or a variable declared without an initializer, can hold `undefined` whatever its declared type.
+const text = (value: unknown) => String(value)
+const show = (...values: unknown[]) => console.log(values.map(text).join(" "))
+enum Target { ES5, ES2015 }
+
+// variables had their room; then it was, and they lost it.
+function binder() {
+  var depth = 0
+  var version = 0 as Target
+  var enabled = false
+  var list = [0]
+  function bind(start: number) {
+    depth = start * 2; version = Target.ES2015; enabled = true; list = [start]
+    const seen = [depth + 1, version | 4, enabled, list.length]
+    depth = undefined!; version = undefined!; enabled = undefined!; list = null!
+    return seen
+  }
+  const state = () => [text(depth), text(version), text(enabled), text(list)]
+  return { bind, state }
+}
+const b = binder()
+show(...b.state()); show(...b.bind(1)); show(...b.state()); show(...b.bind(2)); show(...b.state())
+
+// Declared without a value, captured: another function clears them.
+function session(start: number) {
+  var position: number
+  var isStrict: boolean
+  var target: Target
+  let count: number
+  const clear = () => { position = undefined!; isStrict = undefined!; target = undefined!; count = undefined! }
+  position = start; isStrict = start > 1; target = Target.ES2015; count = start + 1
+  const before = [position + 1, isStrict, target | 2, count + 1]
+  clear()
+  return [...before, text(position), text(isStrict), text(target), text(count)]
+}
+show(...session(1)); show(...session(2))
+
+// Not captured: one function declares, stores, reads and clears.
+function local(start: number) {
+  var position: number
+  var isStrict: boolean
+  var target: Target
+  var depth = 0
+  var version = Target.ES5
+  let count: number
+  position = start; isStrict = true; target = Target.ES2015; depth = start; version = Target.ES2015; count = start
+  const sum = position + depth + target + version + count
+  position = undefined!; isStrict = undefined!; target = undefined!; depth = undefined!; version = undefined!; count = undefined!
+  return [sum, text(position), text(isStrict), text(target), text(depth), text(version), text(count)]
+}
+show(...local(3))
+
+// Of the module.
+var moduleDepth = 0
+var moduleTarget = Target.ES5
+function enter() { moduleDepth++; moduleTarget = Target.ES2015; return moduleDepth + moduleTarget }
+function leave() { moduleDepth = undefined!; moduleTarget = undefined! }
+show(enter(), enter()); leave(); show(text(moduleDepth), text(moduleTarget)); moduleDepth = 5; show(enter())
+
+// In parentheses.
+function wrapped() { var n = 1; const read = () => text(n); const first = read(); n = (undefined!); return [first, read()] }
+show(...wrapped())
+// Not cleared: it stays an integer.
+function counter() { var n = 0; const bump = () => ++n; bump(); bump(); return n }
+show(counter())
+//// cleared-variable/tsconfig.json
+////= lines
+//// closed-and-extensible-locked-builtins.js
+// The built-in objects that a compiled program closes entirely, one per line: no key can be stored, and the object is not extensible. Below them stand objects under the usual lock: a member cannot be stored, a new ordinary name can, and the object stays extensible; an index can be stored on a constructor and on a namespace object, and not on a prototype. Last come built-ins that are not locked, a member that real packages replace, and a class of the program: this program stores to them, and every store holds as in plain Bun. language/function-prototype-is-locked, language/regexp-prototype-is-locked and language/string-prototype-keeps-its-members with its neighbors have the other locked objects.
+function store(object, key, value) {
+  const had = Object.getOwnPropertyDescriptor(object, key);
+  try { object[key] = value; } catch (e) { return e.name; }
+  const stored = object[key] === value;
+  if (had) Object.defineProperty(object, key, had); else delete object[key];
+  return stored ? "stored" : "ignored";
+}
+function row(name, object, member) {
+  console.log(name + ": a new name " + store(object, "addedByTheProgram", 1) + ", " + String(member) + " " + store(object, member, () => 1) + ", index 0 " + store(object, 0, 1) + ", extensible " + Object.isExtensible(object));
+}
+function* generator() {}
+async function* asyncGenerator() {}
+class Own { method() {} }
+const prototypeOf = Object.getPrototypeOf;
+
+console.log("closed entirely");
+row("Object.prototype", Object.prototype, "hasOwnProperty");
+row("Promise.prototype", Promise.prototype, "then");
+row("the prototype of generators", prototypeOf(generator.prototype), "next");
+row("the prototype of async generators", prototypeOf(asyncGenerator.prototype), "next");
+
+console.log("members fixed, new names allowed");
+row("Array.prototype", Array.prototype, "push");
+row("Date.prototype", Date.prototype, "toJSON");
+row("Promise", Promise, "resolve");
+row("Symbol", Symbol, "for");
+row("Array", Array, "from");
+row("Object", Object, "keys");
+row("Math", Math, "max");
+row("JSON", JSON, "rawJSON");
+row("Reflect", Reflect, "get");
+row("the prototype of all iterators", prototypeOf(prototypeOf([][Symbol.iterator]())), Symbol.iterator);
+row("the prototype of array iterators", prototypeOf([][Symbol.iterator]()), "next");
+row("the prototype of map iterators", prototypeOf(new Map()[Symbol.iterator]()), "next");
+row("the prototype of set iterators", prototypeOf(new Set()[Symbol.iterator]()), "next");
+row("the prototype of string iterators", prototypeOf(""[Symbol.iterator]()), "next");
+row("the prototype of regexp string iterators", prototypeOf("".matchAll(/a/g)), "next");
+row("the prototype of iterator helpers", prototypeOf([][Symbol.iterator]().map(value => value)), "next");
+row("the prototype of what Iterator.from wraps", prototypeOf(Iterator.from({ next() { return { done: true }; } })), "next");
+row("the prototype of async iterators", prototypeOf(prototypeOf(asyncGenerator.prototype)), Symbol.asyncIterator);
+console.log("globalThis.Symbol: " + store(globalThis, "Symbol", function () {}));
+console.log("globalThis.Map: " + store(globalThis, "Map", function () {}));
+console.log("globalThis.Math: " + store(globalThis, "Math", {}));
+
+console.log("not locked");
+row("Error.prototype", Error.prototype, "toString");
+row("Error", Error, "captureStackTrace");
+row("Intl", Intl, "getCanonicalLocales");
+row("a generator function's own prototype", generator.prototype, "next");
+row("a class of the program", Own.prototype, "method");
+console.log("JSON.parse, a member that packages replace: " + store(JSON, "parse", () => 1));
+console.log("Date.prototype.toString, a member that packages replace: " + store(Date.prototype, "toString", () => 1));
+console.log("Date.prototype.next, a name that a package adds: " + store(Date.prototype, "next", () => 1));
+console.log("globalThis.Date: " + store(globalThis, "Date", function () {}));
+console.log("globalThis.Promise: " + store(globalThis, "Promise", function () {}));
+export {};
+//// closed-key-write-stops-the-build.js
+// String.prototype stays extensible in a compiled program, but it takes no well-known symbol. A store that would add one and that every run reaches stops the build. language/string-prototype-keeps-its-members has the keys that can be added.
+String.prototype[Symbol.replace] = function () { return "replaced"; };
+console.log("a-b".replace("-", "+"));
+export {};
+//// closure-of-an-expected-function.js
+// A call whose callee is expected to be a closure of one function tests for it. Every kind of value goes through the test:
+// closures of the function as created, with properties, with another prototype, frozen; closures of other functions; what is no closure; what is no cell.
+function makeAdder(amount) {
+    return function add(value) {
+        return value + amount;
+    };
+}
+function makeOther(amount) {
+    return function subtract(value) {
+        return value - amount;
+    };
+}
+function makeAsync(amount) {
+    return async function addLater(value) {
+        return value + amount;
+    };
+}
+
+function describe(result) {
+    if (result instanceof Promise)
+        return "promise";
+    return typeof result + " " + String(result);
+}
+
+function callIt(callee, value) {
+    try {
+        return describe(callee(value));
+    } catch (error) {
+        return error.constructor.name;
+    }
+}
+
+function callOften(callee) {
+    let sum = 0;
+    for (let i = 0; i < 2000; i++)
+        sum += callee(i);
+    return sum;
+}
+
+const withProperty = makeAdder(2);
+withProperty.label = "two";
+const withManyProperties = makeAdder(3);
+for (let i = 0; i < 12; i++)
+    withManyProperties["key" + i] = i;
+const withPrototype = makeAdder(4);
+Object.setPrototypeOf(withPrototype, { inherited: true });
+const frozen = Object.freeze(makeAdder(5));
+const named = makeAdder(6);
+Object.defineProperty(named, "name", { value: "renamed" });
+const otherWithProperty = makeOther(7);
+otherWithProperty.label = "seven";
+
+class Callable {
+    static call(value) {
+        return value;
+    }
+}
+
+const callees = [
+    makeAdder(1), withProperty, withManyProperties, withPrototype, frozen, named,
+    makeOther(1), otherWithProperty, makeAsync(1),
+    makeAdder(8).bind(null), value => value * 2, Math.abs, parseInt, Callable, Callable.call,
+    new Proxy(makeAdder(9), {}), function* generate(value) { yield value; },
+    undefined, null, true, false, 0, -0, 1.5, NaN, 12345678901234, 10n, "text", "", Symbol.iterator,
+    {}, [], /x/, new Date(0), new Map(), Object.create(null), { call() {} },
+];
+
+for (let round = 0; round < 3; round++) {
+    for (const callee of callees)
+        console.log(round, callIt(callee, 10));
+}
+console.log(callOften(makeAdder(1)), callOften(withProperty), callOften(makeOther(1)), callOften(frozen));
+console.log(withProperty.label, withManyProperties.key11, withPrototype.inherited, named.name, otherWithProperty.label);
+//// closures-that-are-the-same-to-the-letter-close-over-different-variables.js
+// closures whose text is the same to the letter over different variables
+function makeA() { let n = 1.5; return () => n; } function makeB() { let n = 2.5; return () => n; }
+function counterA() { let n = 0; return () => ++n; } function counterB() { let n = 0; return () => ++n; }
+const a = counterA(), b = counterB(), a2 = counterA(); a(); a(); b();
+console.log(makeA()(), makeB()(), a(), b(), a2());
+const getters = [{ get v() { return this.w; }, w: 1.5 }, { get v() { return this.w; }, w: 2.5 }]; console.log(getters[0].v, getters[1].v);
+class P { static tag = 1.5; static read() { return this.tag; } } class Q { static tag = 2.5; static read() { return this.tag; } } console.log(P.read(), Q.read(), P.read.call(Q));
+class S1 { m() { return "s1"; } } class S2 { m() { return "s2"; } } class T1 extends S1 { m() { return super.m(); } } class T2 extends S2 { m() { return super.m(); } } console.log(new T1().m(), new T2().m(), T1.prototype.m.call(new T2()));
+function na() { return new.target === na; } function nb() { return new.target === nb; } console.log(String(new na() instanceof na), String(new nb() instanceof nb), Reflect.construct(na, [], nb) instanceof nb);
+//// code-after-a-statement-that-leaves.ts
+// What follows a `return`, `throw`, `break` or `continue` in its list never runs, and the compiler drops it. What is declared there still counts: a function declaration is created when the list is entered, a `var` is `undefined`, and a `let`, a `const` or a `class` stays in its dead zone.
+////= attempt-4	read	String
+
+function hoistedFunction(): number {
+  return later() + 1;
+  function later() {
+    return 41;
+  }
+}
+
+function hoistedVariable(): string {
+  return typeof late + " " + String(late);
+  var late: number | undefined = 1;
+}
+
+function deadZoneOfLet(): string {
+  return attempt(read);
+  let value = 1;
+  function read() {
+    return value;
+  }
+}
+
+function deadZoneOfClass(): string {
+  return attempt(() => new Late());
+  class Late {}
+}
+
+function afterFoldedTest(): string {
+  if (true) {
+    return "taken";
+  }
+  console.log("never printed");
+  return "not taken";
+}
+
+function afterBothArms(flag: boolean): string {
+  if (flag) {
+    return "yes";
+  } else {
+    return "no";
+  }
+  console.log("never printed");
+}
+
+function inLoops(): number[] {
+  const kept: number[] = [];
+  for (const item of [1, 2, 3, 4]) {
+    if (item === 2) {
+      continue;
+      kept.push(-item);
+    }
+    if (item === 4) {
+      break;
+      kept.push(-item);
+    }
+    kept.push(item);
+  }
+  return kept;
+}
+
+function inSwitch(key: number): string {
+  let found = "";
+  switch (key) {
+    case 1:
+      found += "one";
+      break;
+      found += " never";
+    case 2:
+      found += "two";
+    default:
+      found += " default";
+  }
+  return found;
+}
+
+function leavesLabeledBlock(flag: boolean): string {
+  let trail = "";
+  block: {
+    if (flag) break block;
+    trail += "inside ";
+  }
+  return trail + "after";
+}
+
+function throwsFirst(): string {
+  return attempt(() => {
+    throw new RangeError("first");
+    console.log("never printed");
+  });
+}
+
+console.log(hoistedFunction());
+console.log(hoistedVariable());
+console.log(deadZoneOfLet());
+console.log(deadZoneOfClass());
+console.log(afterFoldedTest());
+console.log(afterBothArms(true), afterBothArms(false));
+console.log(inLoops().join(","));
+console.log(inSwitch(1), "|", inSwitch(2), "|", inSwitch(3));
+console.log(leavesLabeledBlock(true), "|", leavesLabeledBlock(false));
+console.log(throwsFirst());
+//// code-that-always-throws.ts
+// Code that always throws: a variable read before its declaration, a call of a method that does not exist.
+declare const console: any;
+const log: any[] = [];
+function say(name: string, e: any, asked: string) { log.push(name + " threw " + e.constructor.name + (String(e.message).includes(asked) ? " naming " + asked : " WITHOUT " + asked)); }
+function attempt(name: string, asked: string, f: () => any) { try { log.push(name + ": " + f()); } catch (e: any) { say(name, e, asked); } }
+const five = () => log.length >= 0 ? 5 : 4;
+function early(flag: boolean): number { const read = () => later; if (flag) { const v = read(); return v + 0; } const later = five(); return read() + later; }
+function earlyHandled(flag: boolean): string { try { const read = () => other; if (flag) return "got " + read(); const other = five() + 1; return "fine " + read(); } catch (e: any) { return "handled " + e.constructor.name + " " + String(e.message).includes("other"); } }
+attempt("early false", "later", () => early(false)); attempt("early true", "later", () => early(true));
+attempt("earlyHandled false", "other", () => earlyHandled(false)); attempt("earlyHandled true", "other", () => earlyHandled(true));
+attempt("module variable", "declaredBelow", () => readsBelow());
+function readsBelow() { return declaredBelow; }
+const hide = (v: unknown): any => v;
+interface P { a: number; b: number }
+const p: P = { a: 1, b: 2 };
+function missing(o: any, x: number, y: number, z: number): number { const s = x * 2 + y * 3 + z * 5; return o.absent(x, y) + s; }
+function missingHandled(o: any): string { try { return "got " + o.nowhere(); } catch (e: any) { return "handled " + e.constructor.name + " " + String(e.message).includes("nowhere"); } }
+function notCallable(o: any): any { return o.a(); }
+function present(o: any): any { return o.there(2); }
+for (const [name, o] of [["object", hide(p)], ["empty", {}], ["array", []], ["string", "s"], ["number", 5], ["function", () => 1]] as [string, any][]) {
+    attempt("missing on " + name, "absent", () => missing(o, 1, 2, 3)); attempt("missingHandled on " + name, "nowhere", () => missingHandled(o));
+}
+attempt("missing on undefined", "absent", () => missing(undefined, 1, 2, 3)); attempt("missing on null", "absent", () => missing(null, 1, 2, 3));
+attempt("not callable: a number", "a", () => notCallable(hide(p))); attempt("not callable: an object", "a", () => notCallable({ a: {} })); attempt("not callable: a string", "a", () => notCallable({ a: "s" }));
+attempt("present", "there", () => present({ there: (k: number) => k + 1 })); attempt("present on a class", "there", () => present(new (class { there(k: number) { return k * 2; } })()));
+let n = 0; for (let i = 0; i < 20000; i++) { try { missing(i & 1 ? {} : hide(p), i, 2, 3); } catch (e: any) { n += e instanceof TypeError ? 1 : 1000000; } try { early((i & 3) === 0); n += 2; } catch (e: any) { n += e instanceof ReferenceError ? 3 : 1000000; } }
+log.push(n);
+function names(e: any) { return String(e.stack).split("\n").map(line => /\b(missing|early|outer)\b/.exec(line)?.[1]).filter(Boolean).join(">"); }
+function outer(which: number) { const v = which ? missing({}, 1, 2, 3) : early(true); return [v]; }
+for (const which of [0, 1]) { try { outer(which); } catch (e: any) { log.push("stack " + which + ": " + names(e)); } }
+const declaredBelow = five() + 2;
+attempt("module variable, later", "declaredBelow", () => readsBelow());
+console.log(log.join("\n"));
+export {};
+//// comparisons-of-constants-after-inlining/main.ts
+// `===`, `==`, `!`, truthiness and `== null` on constants are folded once inlining has made the constants visible.
+// @ts-ignore
+import untyped from "./untyped.js";
+declare const console: any;
+const m: any = untyped;
+console.log(m.all().join());
+console.log(m.watched(), m.given("x", "x"), m.given("y", null), m.given(0, undefined), m.given(null, 0), m.given({ valueOf() { return "x"; } }, "x"));
+export {};
+//// comparisons-of-constants-after-inlining/untyped.js
+"use strict";
+function strict(a, b) { return a === b; }
+function loose(a, b) { return a == b; }
+function not(a) { return !a; }
+function truthy(a) { return a ? "t" : "f"; }
+function nil(a) { return a == null; }
+function pick(type) { if (type === "error") return "E"; if (type === "x") return "X"; return "other"; }
+function all() {
+  const out = [];
+  out.push(strict("x", "x"), strict("x", "y"), strict("", ""), strict("x", "x "), strict("é", "é"), strict("é", "é"), strict("a\0b", "a\0b"), strict("a\0b", "a\0c"));
+  out.push(strict(1, 1), strict(1, 2), strict(1, 1.0), strict(0, -0), strict(-0, 0), strict(NaN, NaN), strict(0.1 + 0.2, 0.3), strict(1.5, 1.5), strict(9007199254740992, 9007199254740993), strict(1e308 * 10, Infinity));
+  out.push(strict(1, "1"), strict(true, 1), strict(null, undefined), strict(null, null), strict(undefined, undefined), strict(undefined, 0), strict(null, false), strict(true, true), strict(true, false), strict("true", true));
+  out.push(loose(1, "1"), loose(true, 1), loose(null, undefined), loose(null, null), loose(undefined, 0), loose(null, false), loose(null, ""), loose("", 0), loose("x", "x"), loose("x", "y"), loose(0, -0), loose(NaN, NaN), loose(true, "1"), loose(false, ""), loose(2, true));
+  out.push(not(0), not(1), not(-0), not(NaN), not(""), not("0"), not(null), not(undefined), not(true), not(false), not(0.5));
+  out.push(truthy(0), truthy(1), truthy(-1), truthy(""), truthy("a"), truthy(null), truthy(undefined), truthy(NaN), truthy(true), truthy(false));
+  out.push(nil(null), nil(undefined), nil(0), nil(""), nil(false), nil(NaN), nil("null"));
+  out.push(pick("error"), pick("x"), pick("y"), pick(1), pick(null));
+  return out;
+}
+// Inside a handler, and where the compared value is not a constant after all.
+function watched() { try { return strict("a", "a") + ":" + loose(null, 0) + ":" + not(1); } catch (e) { return "caught"; } }
+function given(a, b) { return [strict(a, "x"), strict("x", a), loose(a, b), not(a), nil(b), pick(a)].join(); }
+module.exports = { all, watched, given };
+//// comparisons-of-integers-that-may-be-undefined.ts
+// An element of a typed array is an integer, or undefined beyond the end. Every relation with undefined is false, whichever side it stands on; and two tests of the sign may be compared with each other.
+function relations(values: Int32Array, upTo: number, bound: number): string {
+  let text = "";
+  for (let i = 0; i < upTo; i++) {
+    const v = values[i]!;
+    text += (v < 0 ? "a" : "-") + (v <= 0 ? "b" : "-") + (v > 0 ? "c" : "-") + (v >= 0 ? "d" : "-");
+    text += (0 < v ? "e" : "-") + (0 <= v ? "f" : "-") + (0 > v ? "g" : "-") + (0 >= v ? "h" : "-");
+    text += (v < bound ? "i" : "-") + (v <= bound ? "j" : "-") + (v > bound ? "k" : "-") + (v >= bound ? "l" : "-");
+    text += (bound < v ? "m" : "-") + (bound <= v ? "n" : "-") + (bound > v ? "o" : "-") + (bound >= v ? "p" : "-");
+    text += (v < 2147483647 ? "q" : "-") + (v <= -2147483648 ? "r" : "-") + (v < 9007199254740991 ? "s" : "-") + " ";
+  }
+  return text;
+}
+function bytes(values: Uint8Array, upTo: number): string {
+  let text = "";
+  for (let i = 0; i < upTo; i++) {
+    const v = values[i]!;
+    text += (v < 1 ? "a" : "-") + (v <= 255 ? "b" : "-") + (v < 0 ? "c" : "-") + (v < 256 ? "d" : "-") + (300 > v ? "e" : "-") + (v >= 0 ? "f" : "-") + " ";
+  }
+  return text;
+}
+function signs(values: Int32Array, upTo: number): string {
+  let differ = 0;
+  let agree = 0;
+  let mixed = 0;
+  let mixedAgree = 0;
+  let neither = 0;
+  let previous = 0;
+  for (let i = 0; i < upTo; i++) {
+    const v = values[i]!;
+    if (v < 0 !== previous < 0) differ++;
+    if (v < 0 === previous < 0) agree++;
+    if (v >= 0 !== previous < 0) mixed++;
+    if (v < 0 === previous >= 0) mixedAgree++;
+    if (v >= 0 === previous >= 0) neither++;
+    previous = v;
+  }
+  return [differ, agree, mixed, mixedAgree, neither].join(",");
+}
+function signsOfNumbers(values: number[]): string {
+  let differ = 0;
+  let previous = 0;
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i]!;
+    if (v < 0 !== previous < 0) differ++;
+    previous = v;
+  }
+  return "" + differ;
+}
+class Longer extends Int32Array {
+  get length(): number {
+    return 4;
+  }
+}
+function throughItsOwnLength(values: Int32Array): string {
+  let text = "";
+  let previous = 0;
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i]!;
+    text += v + ":" + (v < 0 !== previous < 0) + ",";
+    previous = v;
+  }
+  return text;
+}
+const values = new Int32Array([0, -1, 1, 2147483647, -2147483648, 7, -7]);
+console.log(relations(values, 9, 0));
+console.log(relations(values, 9, 7));
+console.log(relations(values, 8, -2147483648));
+console.log(relations(values, 8, 2147483647));
+console.log(bytes(new Uint8Array([0, 1, 255]), 5));
+console.log(signs(values, 7), signs(values, 10), signs(new Int32Array(0), 3), signs(new Int32Array([-5]), 2));
+console.log(signsOfNumbers([1, -1, -0, 0, -0.5, NaN, -Infinity, 3]), signsOfNumbers([-1e300, 1e300, -4294967296, 4294967296]));
+const withOwnLength = new Int32Array([1, -2]);
+Object.defineProperty(withOwnLength, "length", { value: 3 });
+console.log(throughItsOwnLength(new Int32Array([1, -2])), throughItsOwnLength(new Longer([5, -6])), throughItsOwnLength(withOwnLength));
+//// comparisons-of-two-integers-that-may-be-undefined.ts
+const heights = new Int32Array([4, -9, 2147483647, 0, -2147483648, 4, 17]);
+const depths = new Int16Array([4, 30000, -1, 0]);
+const none = new Int32Array(0);
+
+function answers(a: Int32Array, i: number, b: Int16Array, j: number): string {
+  const x = a[i]!;
+  const y = b[j]!;
+  let said = "";
+  if (x < y) said += "<";
+  if (x > y) said += ">";
+  if (x <= y) said += "[";
+  if (x >= y) said += "]";
+  const asValues = [x < y, x > y, x <= y, x >= y, !(x < y), !(x >= y)];
+  return said + " " + asValues.map(answer => (answer ? 1 : 0)).join("");
+}
+
+function highestAndWhere(a: Int32Array, turns: number): string {
+  let highest = a[0]!;
+  let where = -1;
+  let lowest = a[turns - 1]!;
+  let changes = 0;
+  for (let i = 0; i < turns; i++) {
+    const now = a[i]!;
+    if (now >= highest) {
+      highest = now;
+      where = i;
+    }
+    if (now < lowest) {
+      lowest = now;
+      changes++;
+    }
+  }
+  return highest + " " + where + " " + lowest + " " + changes;
+}
+
+function startsUndefined(a: Int32Array): string {
+  let most = a[a.length]!;
+  let least = a[-1]!;
+  let kept = 0;
+  for (let i = 0; i < a.length; i++) {
+    const now = a[i]!;
+    if (now > most) most = now;
+    else kept++;
+    if (!(now >= least)) least = now;
+  }
+  return most + " " + least + " " + kept;
+}
+
+function ascents(a: Int32Array): number {
+  let count = 0;
+  for (let i = 0; i <= a.length; i++) {
+    if (a[i]! <= a[i + 1]!) count++;
+    if (a[i - 1]! > a[i]!) count += 100;
+  }
+  return count;
+}
+
+for (let round = 0; round < 2; round++) {
+  const lines: string[] = [];
+  for (const i of [0, 1, 2, 4, 7, -1]) for (const j of [0, 1, 2, 4]) lines.push(answers(heights, i, depths, j));
+  console.log(lines.join(" | "));
+  console.log(highestAndWhere(heights, heights.length), "|", highestAndWhere(heights, heights.length + 2), "|", highestAndWhere(heights, 1), "|", highestAndWhere(none, 0), "|", highestAndWhere(none, 3));
+  console.log(startsUndefined(heights), "|", startsUndefined(none), "|", ascents(heights), ascents(none));
+}
+
+class Short extends Int32Array {
+  get length(): number {
+    return 9;
+  }
+}
+const short = new Short([5, 1, 8]);
+console.log(startsUndefined(short), "|", ascents(short), "|", highestAndWhere(short, short.length));
+//// concat-behind-a-frozen-array-prototype.mjs
+// Array.prototype.concat looks for the species of its receiver. Behind Object.freeze(Array.prototype) the engine asks the getter where it otherwise knows the answer.
+Object.freeze(Array.prototype);
+const holes = [1, , 3];
+console.log([].concat(holes, [4]).length, [1].concat(2, [3]).join(), holes.slice(1).length, holes.filter(() => true).join(), holes.map(x => x).length);
+//// constant-nan-bits.ts
+// A NaN that the build computes has the bits of the one NaN that JavaScript source can name, whatever machine the build ran on: on x86-64 the hardware's own 0 / 0 has its sign bit set.
+const view = new DataView(new ArrayBuffer(8));
+view.setFloat64(0, 0 / 0);
+console.log(view.getBigUint64(0).toString(16));
+view.setFloat64(0, NaN);
+console.log(view.getBigUint64(0).toString(16));
+console.log(new BigUint64Array(new Float64Array([0 / 0]).buffer)[0]!.toString(16), new Uint32Array(new Float32Array([0 / 0]).buffer)[0]!.toString(16));
+const nothing = 0 / 0;
+const doubles = new Float64Array(2);
+doubles[0] = nothing;
+doubles.fill(nothing, 1);
+console.log(new BigUint64Array(doubles.buffer).join(), Object.is(nothing, NaN), nothing !== nothing);
+//// constant-pow-matches-engine.ts
+// A power of two written numbers is one number wherever it stands: what the build computes ahead (an enum member, a template literal, the left of `||`) is what the engine computes when the program runs, to the last digit, as in plain Bun.
+const unknown = <T,>(x: T): T => x;
+const shown = (value: unknown): string => (typeof value === "number" ? value.toPrecision(17) : String(value));
+enum Big { A = 3 ** 100, B = 5 ** 33, C = A * 1, D = 7 ** 0.5, E = 2147483647 ** 0.1, F = 10 ** -5, G = 1.1 ** 1001, H = (-8) ** 3, I = 2 ** -0.5 }
+const enum Inlined { A = 3 ** 100, B = 9 ** 77 }
+console.log("enum members", shown(Big.A), shown(Big.B), shown(Big.C), shown(Big.D), shown(Big.E), shown(Big.F), shown(Big.G), shown(Big.H), shown(Big.I));
+console.log("at run time ", shown(unknown(3) ** unknown(100)), shown(unknown(5) ** unknown(33)), shown(unknown(3) ** unknown(100) * 1), shown(unknown(7) ** unknown(0.5)), shown(unknown(2147483647) ** unknown(0.1)), shown(unknown(10) ** unknown(-5)), shown(unknown(1.1) ** unknown(1001)), shown(unknown(-8) ** unknown(3)), shown(unknown(2) ** unknown(-0.5)));
+console.log("const enums ", shown(Inlined.A), shown(Inlined.B), Inlined.B === unknown(9) ** unknown(77));
+console.log("the same    ", Big.A === 3 ** 100, Big.A === unknown(3) ** unknown(100), Big[Big.A], Math.pow(3, 100) === Big.A);
+console.log("templates   ", `${3 ** 100}`, `${5 ** 33}`, `${2147483647 ** 0.1}`);
+console.log("left of ||  ", shown((3 ** 100) || "s"), shown((5 ** 33) || "s"), shown((2147483647 ** 0.1) || "s"));
+console.log("edges       ", shown((1 ** Infinity) || "s"), shown(((-1) ** -Infinity) || "s"), shown((0 ** 0.5) || "s"), shown((0 ** -0.5) || "s"), shown((Infinity ** -0.5) || "s"), shown((2 ** NaN) || "s"), shown((NaN ** 0) || "s"), shown((2 ** 1024) || "s"));
+//// constant-quotients-as-int32.ts
+// A division of two constants whose quotient is taken as an int32: shifted by a count that is only known at run time, used as a count, masked, or dropped.
+declare const console: { log(...values: unknown[]): void };
+const small: number[] = [10, 11, 12, 13, 14, 15, 16, 17];
+function a(): number { return (2 / 2) >> small.length; }
+function b(): number { return (2 / 2) >> Math.trunc(small.length / 2); }
+function c(): void { let v = (2 / 2) >> Math.trunc(small.length / 2); }
+function d(): number { return (1000 / 3) >> (small.length - 6); }
+function e(): number { return (-1000 / 3) >> (small.length - 6); }
+function f(): number { return (1000 / 3) << (small.length - 6); }
+function g(): number { return (-1000 / 3) >>> (small.length + 16); }
+function h(): number { return small.length >> (8 / 4); }
+function i(): number { return ((7 / 2) | 0) + ((-7 / 2) | 0) + ((7 / -2) | 0) + ((0 / 5) | 0) + ((-0 / 5) | 0); }
+function j(): number { return ((4294967296 / 2) | 0) + ((4294967295 / 1) | 0) + ((9007199254740991 / 3) | 0) + ((-4294967297 / 1) | 0); }
+function k(): number { return ((1 / 0) | 0) + ((-1 / 0) | 0) + ((0 / 0) | 0); }
+function l(): number { return ((6 / 3) & small.length) + ((6 / 4) ^ small.length) + (~(9 / 2)); }
+function m(n: number): number { return (12 / 4) >> n; }
+function o(n: number): number { return (n / 4) >> (12 / 4); }
+const fns: (() => number | void)[] = [a, b, c, d, e, f, g, h, i, j, k, l];
+console.log(fns.map(x => String(x())).join(" "));
+const taking = [m, o]; console.log(taking.map(x => [0, 1, 2, 31, 32, 33, -1, 1.5, 1e21, NaN].map(n => x(n)).join()).join(" "));
+//// constant-symbol-identity.ts
+// Symbol() at the top level of a module is one symbol wherever it is read, Symbol.for() agrees with the registry, and Symbol() in a loop or a function is new each time.
+export {};
+
+const same = (left: unknown, right: unknown): boolean => left === right;
+
+const key = Symbol("x");
+////= lines-23	readInOneFunction	symbol	key
+////= lines-23	readInAnotherFunction	symbol	key
+console.log("read from two functions:", readInOneFunction() === readInAnotherFunction(), readInOneFunction() === key, typeof readInOneFunction(), readInAnotherFunction().toString());
+
+const keyed = { [key]: "symbol key", x: "string key" };
+function readKeyed(): string {
+  return keyed[key];
+}
+function writeKeyed(value: string): void {
+  keyed[key] = value;
+}
+console.log("as a key:", readKeyed(), keyed.x, key in keyed, Object.getOwnPropertySymbols(keyed).length, Object.getOwnPropertySymbols(keyed)[0] === key, Object.keys(keyed).join());
+writeKeyed("stored");
+console.log("after a store:", readKeyed(), Reflect.get(keyed, readInAnotherFunction()), keyed.x, Object.getOwnPropertySymbols(keyed).length);
+
+class Keyed {
+  [key] = "field";
+  static [key] = "static field";
+}
+console.log("in a class:", new Keyed()[key], Keyed[key], Reflect.get(new Keyed(), readInOneFunction()));
+
+const withoutDescription = Symbol();
+const withEmptyDescription = Symbol("");
+const accented = Symbol("é");
+const wide = Symbol("日本語 😀");
+const loneSurrogate = Symbol("\ud800");
+console.log("descriptions:", withoutDescription.description === undefined, JSON.stringify(withEmptyDescription.description), accented.description, wide.description, JSON.stringify(loneSurrogate.description));
+console.log("as strings:", withoutDescription.toString(), withEmptyDescription.toString(), accented.toString(), wide.toString());
+console.log("no description and an empty one:", same(withoutDescription, withEmptyDescription), same(withoutDescription, Symbol()), same(withEmptyDescription, Symbol("")));
+
+const registered = Symbol.for("k");
+const registeredByComputedKey = Symbol.for(["", "k"].join(""));
+console.log("Symbol.for, constant key first:", same(registered, registeredByComputedKey), Symbol.keyFor(registered), Symbol.keyFor(registeredByComputedKey), registered.description);
+const earlierByComputedKey = Symbol.for(["ear", "lier"].join(""));
+const laterByConstantKey = Symbol.for("earlier");
+console.log("Symbol.for, computed key first:", same(earlierByComputedKey, laterByConstantKey), Symbol.keyFor(laterByConstantKey));
+console.log("Symbol.for, other keys:", JSON.stringify(Symbol.keyFor(Symbol.for(""))), same(Symbol.for(""), Symbol.for([].join(""))), Symbol.keyFor(Symbol.for("é")), same(Symbol.for("é"), Symbol.for(["é"].join(""))));
+
+function countRegistered(iterations: number): number {
+  const seen = new Set<symbol>();
+  for (let i = 0; i < iterations; i++) seen.add(Symbol.for("in a loop"));
+  return seen.size;
+}
+console.log("Symbol.for in a loop:", countRegistered(3), same(Symbol.for("in a loop"), Symbol.for(["in", "a", "loop"].join(" "))));
+console.log("not registered:", Symbol.keyFor(key), Symbol.keyFor(withoutDescription), same(key, Symbol.for("x")), same(registered, Symbol("k")));
+
+const first = Symbol("x");
+const second = Symbol("x");
+console.log("two top-level symbols, one description:", same(first, second), same(first, key), same(second, key), first.description === second.description);
+const keyedByBoth = { [first]: 1, [second]: 2 };
+console.log("two keys:", keyedByBoth[first], keyedByBoth[second], Object.getOwnPropertySymbols(keyedByBoth).length, Reflect.has(keyedByBoth, key));
+
+const fromLoop: symbol[] = [];
+for (let i = 0; i < 3; i++) fromLoop.push(Symbol("x"));
+console.log("in a loop:", new Set(fromLoop).size, fromLoop[0] === fromLoop[1], fromLoop[1] === fromLoop[2], same(fromLoop[0], first));
+
+const create = (): symbol => Symbol("x");
+console.log("in a function:", create() === create(), same(create(), first), create().description);
+//// constant-text-with-early-error.js
+// Constant text given to `Function` or `eval` that parses but has an early error (a jump without a target, a label declared twice, `super` outside a method, `delete` of a name in strict code) does not stop the build. The call stays an ordinary call and throws a SyntaxError each time it runs. The text beside it that has no error is compiled as usual.
+function attempt(label, create) {
+  for (let round = 0; round < 2; round++) {
+    try {
+      console.log(label + ":", typeof create());
+    } catch (error) {
+      console.log(label + ":", error.name);
+    }
+  }
+}
+////= lines-21	neverCalled	return	Function	"continue;"
+
+attempt("break outside a loop", () => new Function("break"));
+attempt("continue outside a loop", () => Function("continue;"));
+attempt("break in a function inside a loop", () => new Function("for (;;) { (function () { break; }); }"));
+attempt("break to a label that is not there", () => new Function("a: for (;;) { break b; }"));
+attempt("a label declared twice", () => new Function("a: a: ;"));
+attempt("super in a function body", () => new Function("super.x;"));
+attempt("super in indirect eval", () => (0, eval)("super.x"));
+attempt("delete of a name in strict code", () => new Function("'use strict'; delete a;"));
+
+attempt("break inside a loop", () => new Function("for (;;) { break; }"));
+attempt("continue to a label", () => new Function("a: for (;;) { continue a; }"));
+attempt("delete of a name in sloppy code", () => new Function("delete a;"));
+console.log(new Function("limit", "let count = 0; for (;;) { if (++count === limit) break; } return count;")(3));
+console.log(typeof neverCalled);
+//// constant-text-with-syntax-error.js
+// Constant text given to `Function` or `eval` that does not parse, or that has an early error, does not stop the build: the call stays an ordinary call and throws its SyntaxError when it runs, and only then.
+function attempt(label, f) {
+  try { console.log(label + ":", String(f())); } catch (e) { console.log(label + ":", e.name); }
+}
+function neverCalled() { return new Function("return (")(); }
+
+attempt("new Function, a body that does not parse", () => new Function("return ("));
+attempt("Function without new", () => Function("a b c"));
+attempt("parameters that do not parse", () => new Function("a b", "return a"));
+attempt("a name declared twice", () => new Function("let a; let a;"));
+attempt("break outside a loop", () => new Function("break;"));
+attempt("indirect eval", () => (0, eval)("1 +"));
+attempt("direct eval", () => eval("var ;"));
+attempt("direct eval, a name declared twice", () => eval("let b; let b;"));
+attempt("new Function, a body that parses", () => new Function("return 1 + 1")());
+attempt("direct eval of text that parses", () => eval("1 + 1"));
+attempt("a function that holds such a call and is never called", () => typeof neverCalled);
+if (process.argv.length > 100) eval(") (");
+console.log("the end is reached");
+//// constants-live-into-catch.ts
+// A constant assigned inside `try` is an argument of the handler edge, so its code is emitted in the landing pad.
+// JSON.parse throws from native code, so the exception is still pending in the VM when control reaches the pad.
+function bigintConstant(text: string) { let n = 1n; try { n = 2n; JSON.parse(text); n = 3n; } catch {} return n; }
+function stringConstant(text: string) { let s = "before"; try { s = "inside"; JSON.parse(text); s = "after"; } catch {} return s; }
+function symbolConstant(text: string) { let s: symbol = Symbol.iterator; try { s = Symbol.asyncIterator; JSON.parse(text); s = Symbol.hasInstance; } catch {} return s.toString(); }
+function builtinConstant(text: string) { let f: (x: number) => number = Math.abs; try { f = Math.floor; JSON.parse(text); f = Math.ceil; } catch {} return f(-1.5); }
+function readsCaughtValue(text: string) { let n = 1n; let name = "none"; try { n = 2n; JSON.parse(text); n = 3n; } catch (e) { name = (e as Error).name; } return name + " " + n; }
+function throughFinally(text: string) { let n = 1n; const seen: bigint[] = []; try { try { n = 2n; JSON.parse(text); n = 3n; } finally { seen.push(n); } } catch (e) { return (e as Error).name + " " + seen.join(); } return "none " + seen.join(); }
+function thrownByCompiledCode(fail: boolean) { let n = 1n; try { n = 2n; if (fail) throw new RangeError("compiled"); n = 3n; } catch {} return n; }
+function severalSites(first: string, second: string) { let n = 1n; let s = "a"; try { n = 2n; JSON.parse(first); s = "b"; JSON.parse(second); n = 3n; } catch {} return s + n; }
+for (const text of ["{", "{}"]) {
+  console.log(bigintConstant(text), stringConstant(text), symbolConstant(text), builtinConstant(text), readsCaughtValue(text), throughFinally(text), thrownByCompiledCode(text === "{"));
+  console.log(severalSites(text, "{}"), severalSites("{}", text));
+}
+
+export {};
+//// constants-taken-in-several-forms.ts
+// One constant is an index here, a fraction's partner there, a boxed argument, a field of a narrow slot, a key: each use takes it in its own form.
+declare const console: { log(...values: unknown[]): void };
+
+class Record { count = 0; ratio = 0.5; label = "zero"; maybe: number | undefined = undefined; any: unknown = null; on = false; }
+function show(...values: unknown[]): string { return values.map(value => typeof value + ":" + String(value)).join(" "); }
+
+function seven(list: number[], record: Record): string {
+    const n = 7;
+    list[n] = n;
+    record.count = n;
+    record.ratio = n;
+    record.maybe = n;
+    record.any = n;
+    return show(n, n + 0.5, n | 8, n / 2, list[n], "x".repeat(n).length, n === record.count, String(n));
+}
+
+function words(record: Record, pick: boolean): string {
+    const word = "word";
+    record.label = word;
+    record.any = word;
+    const other = pick ? word : "other";
+    return show(word, word.length, word + other, word === other, { word }[word], other.charCodeAt(0), [word].includes(other));
+}
+
+function nothings(record: Record, pick: number): string {
+    record.maybe = undefined;
+    record.any = undefined;
+    const value = pick === 0 ? undefined : pick === 1 ? null : pick === 2 ? false : 0;
+    record.any = value;
+    return show(value, value ?? "default", value == null, !value, record.maybe, record.any, [undefined, null, true, false]);
+}
+
+const list: number[] = [];
+const record = new Record();
+console.log(seven(list, record), JSON.stringify(record), list.length);
+console.log(words(record, true), "|", words(record, false), JSON.stringify(record));
+for (let pick = 0; pick < 4; pick++) console.log(nothings(record, pick));
+//// constructors-of-the-engine-keep-call-apply-and-bind.mjs
+// `Error.call(this, message)`, `x instanceof Error`: a built-in constructor is called like every built-in function. It takes no `call`, `apply`, `bind` or Symbol.hasInstance of its own and no other prototype,
+// also where the constructor goes through native code, so that the compiler does not see what the change is made to. Every other name may be added, and a class below such a constructor is the program's own.
+////= handedThroughNativeCode
+////= lines-11	planted	"planted ran"
+function attempt(f) {
+  try {
+    return String(f());
+  } catch (error) {
+    return error.constructor.name;
+  }
+}
+const above = Object.create(Function.prototype);
+above.call = planted;
+for (const [name, constructor, run] of [
+  ["Error", Error, () => typeof Error.call(null, "m")],
+  ["RangeError", RangeError, () => typeof RangeError.call(null, "m")],
+  ["AggregateError", AggregateError, () => typeof AggregateError.call(null, [])],
+  ["Function", Function, () => typeof Function.call],
+  ["WeakRef", WeakRef, () => typeof WeakRef.call(null, {})],
+  ["FinalizationRegistry", FinalizationRegistry, () => typeof FinalizationRegistry.call(null, planted)],
+  ["DataView", DataView, () => typeof DataView.call(null, new ArrayBuffer(1))],
+  ["Intl.Collator", Intl.Collator, () => typeof Intl.Collator.call(null)],
+  ["Iterator", Iterator, () => typeof Iterator.call(null)],
+  ["DisposableStack", DisposableStack, () => typeof DisposableStack.call(null)],
+]) {
+  const unseen = handedThroughNativeCode(constructor);
+  const ways = [
+    attempt(() => ((unseen.call = planted), "stored")),
+    attempt(() => Reflect.set(unseen, "apply", planted)),
+    attempt(() => (Object.defineProperty(unseen, "bind", { value: planted }), "defined")),
+    attempt(() => Reflect.defineProperty(unseen, Symbol.hasInstance, { value: () => true })),
+    attempt(() => Reflect.setPrototypeOf(unseen, above)),
+    attempt(() => (Object.setPrototypeOf(unseen, above), "changed")),
+    attempt(() => Reflect.setPrototypeOf(unseen, Object.getPrototypeOf(constructor))),
+  ];
+  const answer = attempt(run);
+  unseen.added = 1;
+  console.log(name, "|", ways.join(", "), "|", answer, "|", 1 instanceof constructor, Object.hasOwn(constructor, "call"), constructor.added, delete constructor.added);
+}
+
+Error.stackTraceLimit = 7;
+console.log(Error.stackTraceLimit);
+
+class Below extends Error {}
+Below.call = planted;
+Below.count = 2;
+Object.defineProperty(Below, Symbol.hasInstance, { value: () => true });
+console.log(Below.call(null), Below.count, 1 instanceof Below, new Below("m") instanceof Error, Object.getPrototypeOf(Below) === Error);
+Object.setPrototypeOf(Below, RangeError);
+console.log(Object.getPrototypeOf(Below) === RangeError);
+
+function plain() {}
+plain.call = planted;
+plain.displayName = "a name";
+console.log(plain.call(), plain.displayName);
+//// conversions-on-any-value.js
+// Operators and conversions on any value run user code in order and throw what JavaScript throws.
+module.exports = {};
+
+const log = [];
+function show(name, f) {
+  log.length = 0;
+  let text;
+  try {
+    const value = f();
+    text = typeof value + " " + String(value);
+  } catch (e) {
+    text = "throws " + e.constructor.name;
+  }
+  console.log(name + ": " + text + (log.length ? " after " + log.join(",") : ""));
+}
+const operands = {
+  "valueOf": () => ({ valueOf() { log.push("valueOf"); return 3; }, toString() { log.push("toString"); return "4"; } }),
+  "toString": () => ({ valueOf() { log.push("valueOf"); return {}; }, toString() { log.push("toString"); return "4"; } }),
+  "toPrimitive": () => ({ [Symbol.toPrimitive](hint) { log.push(hint); return hint === "string" ? "text" : 5; } }),
+  "toPrimitive bigint": () => ({ [Symbol.toPrimitive](hint) { log.push(hint); return 7n; } }),
+  "valueOf throws": () => ({ valueOf() { log.push("valueOf"); throw new RangeError("no"); }, toString() { log.push("toString"); throw new SyntaxError("no"); } }),
+  "no primitive": () => ({ valueOf() { log.push("valueOf"); return {}; }, toString() { log.push("toString"); return {}; } }),
+  "bigint": () => 6n,
+  "symbol": () => Symbol("s"),
+  "string": () => "12",
+  "empty string": () => "",
+  "text": () => "abc",
+  "boolean": () => true,
+  "null": () => null,
+  "undefined": () => undefined,
+  "array": () => [8],
+  "number": () => 2,
+  "double": () => 2.5,
+  "negative zero": () => -0,
+  "NaN": () => NaN,
+  "large": () => 2 ** 40,
+};
+function power(a, b) { return a ** b; }
+function negate(a) { return -a; }
+function bitNot(a) { return ~a; }
+function plus(a) { return +a; }
+function template(a) { return `<${a}>`; }
+function computedKey(a) { const object = {}; object[a] = 1; return Reflect.ownKeys(object).map(String).join(); }
+function computedRead(a) { return { 12: "twelve", 3: "three", text: "word" }[a]; }
+function literalKey(a) { return Object.keys({ [a]: 1 }).join(); }
+function typeOf(a) { return typeof a; }
+function stringOf(a) { return String(a); }
+function numberOf(a) { return Number(a); }
+for (const name in operands) {
+  const make = operands[name];
+  show(name + " ** 2", () => power(make(), 2));
+  show("2 ** " + name, () => power(2, make()));
+  show("2n ** " + name, () => power(2n, make()));
+  show("-" + name, () => negate(make()));
+  show("~" + name, () => bitNot(make()));
+  show("+" + name, () => plus(make()));
+  show("template " + name, () => template(make()));
+  show("key " + name, () => computedKey(make()));
+  show("read " + name, () => computedRead(make()));
+  show("literal key " + name, () => literalKey(make()));
+  show("typeof " + name, () => typeOf(make()));
+  show("String " + name, () => stringOf(make()));
+  show("Number " + name, () => numberOf(make()));
+}
+show("left first", () => power({ valueOf() { log.push("left"); return 2; } }, { valueOf() { log.push("right"); return 3; } }));
+show("negate bigint zero", () => negate(0n));
+show("negative exponent", () => power(2n, -1n));
+console.log(Object.is(negate(0), -0), Object.is(negate(-0), 0), bitNot(2 ** 32 + 1), bitNot(-1n), power(-8, 1 / 3), power(1, Infinity), power(NaN, 0));
+
+function receiver() { return this; }
+function receiverKind() { return typeof this; }
+const strictReceiver = function () { "use strict"; return this; };
+console.log(receiver.call(null) === globalThis, receiver.call(undefined) === globalThis, receiver() === globalThis);
+console.log(receiverKind.call(5), receiverKind.call("s"), receiverKind.call(true), receiverKind.call(Symbol.iterator), receiverKind.call(1n));
+console.log(receiver.call(5) instanceof Number, receiver.call(5).valueOf(), receiver.call("s") instanceof String, receiver.call("s").length, receiver.call(5) === receiver.call(5));
+const self = {};
+// A "use strict" at the head of a function follows the file, and this file is sloppy. The receivers are compared and not printed: the global object shows the command line and the environment.
+console.log(receiver.call(self) === self, typeof strictReceiver.call(5), strictReceiver.call(null) === globalThis, strictReceiver.call(undefined) === globalThis);
+
+function destructureEmpty(value) { const {} = value; return "done"; }
+function destructureField(value) { const { a } = value; return a; }
+function destructureParameter({ a }) { return a; }
+function destructureNested({ a: { b } }) { return b; }
+function destructureRest(value) { const { ...rest } = value; return Object.keys(rest).join(); }
+for (const value of [null, undefined, 0, "", "ab", false, 1n, Symbol.iterator, { a: 1 }, { a: null }, { a: { b: 2 } }]) {
+  const name = String(value && typeof value === "object" ? JSON.stringify(value) : value);
+  show("empty pattern " + name, () => destructureEmpty(value));
+  show("field " + name, () => destructureField(value));
+  show("parameter " + name, () => destructureParameter(value));
+  show("nested " + name, () => destructureNested(value));
+  show("rest " + name, () => destructureRest(value));
+}
+show("Object of null", () => Object(null) instanceof Object);
+show("Object of number", () => Object(1) instanceof Number);
+show("member of null", () => null.x);
+show("member of undefined", () => undefined[0]);
+//// counters-in-closures.ts
+declare const console: { log(...values: unknown[]): void };
+function makeCounter(start: number) {
+    var value: number = start;
+    var other: number | undefined;
+    return {
+        up(): number { value++; return value; },
+        down(): number { value--; return value; },
+        twice(): number { value = value * 2; return value; },
+        plus(step: number): number { value += step; return value; },
+        set(next: number): void { value = next; },
+        setOther(next: number | undefined): void { other = next; },
+        both(): number { return value + (other ?? -1) + 1; },
+        isBig(): boolean { return value >= 65536; },
+        half(): number { return value * 0.5 - 1; },
+    };
+}
+function describe(value: number): string { return Object.is(value, -0) ? "-0" : String(value); }
+const starts = [0, -0, 1, -1, 0.5, -0.5, 1.5, 65535, 65536, 2147483647, -2147483648, 4294967295, 9007199254740991, 9007199254740992, -9007199254740992, 1e300, -1e300, 5e-324, NaN, Infinity, -Infinity];
+for (let round = 0; round < 2; round++) {
+    for (const start of starts) {
+        const counter = makeCounter(start);
+        const row: string[] = [describe(counter.up()), describe(counter.up()), describe(counter.down()), describe(counter.down()), describe(counter.down()), describe(counter.twice()), describe(counter.plus(1)), describe(counter.plus(-1)), describe(counter.half()), String(counter.isBig()), describe(counter.both())];
+        counter.setOther(start); row.push(describe(counter.both())); counter.setOther(undefined); row.push(describe(counter.both()));
+        console.log(describe(start) + ": " + row.join(" "));
+    }
+}
+function sumTo(limit: number): number { let total = 0.5; for (let x = 0.25; x < limit; x += 1) total += x * 2 - 1; return total; }
+console.log(sumTo(1000), sumTo(0), sumTo(NaN), sumTo(1.25));
+//// counters-read-before-declaration.ts
+// Counters of closures that functions declared above them can read before `var count = 0` has run: `undefined`, then NaN, then integers; used as keys. `keyed` casts its counter, a number, to `string`: where types are tested the cast throws a TypeError, and with types erased the number is the key.
+declare const console: { log(...values: unknown[]): void };
+function show(value: unknown): string { return typeof value === "number" && Object.is(value, -0) ? "-0" : String(value); }
+function attempt(run: () => unknown): string { try { return show(run()); } catch (error) { return (error as Error).constructor.name; } }
+function makeStack() {
+    const api = { push, pop, top, find, size, at, put, jump, double, half, shrink, keyed };
+    early.push(show(api.top()), show(api.size()), show(api.find("a")), show(api.at()), show(api.keyed()));
+    var items: (string | undefined)[] = [];
+    var named: Record<string, string | undefined> = { NaN: "named NaN", undefined: "named undefined", Infinity: "named Infinity", "-1": "named -1", "9007199254740992": "named 2^53", "1e+21": "named 1e21" };
+    var count = 0;
+    var cursor = 0;
+    var ratio = 0;
+    function push(item: string): number { items[count] = item; count++; return count; }
+    function pop(): string | undefined { count--; const item = items[count]; items[count] = undefined; return item; }
+    function top(): string | undefined { return items === undefined ? "no items yet" : items[count - 1]; }
+    function find(item: string): number { for (let i = count - 1; i >= 0; i--) { if (items[i] === item) return i; } return -1; }
+    function size(): number | undefined { return count; }
+    function at(): string | undefined { return items === undefined ? "no items yet" : items[cursor]; }
+    function put(item: string): void { items[cursor] = item; }
+    function jump(by: number): number { cursor = cursor + (by | 0); return cursor; }
+    function double(): number { cursor = cursor + cursor; return cursor; }
+    function half(): string | undefined { ratio = ratio + 0.5; return items[ratio]; }
+    function shrink(): number { cursor = cursor - cursor; return cursor; }
+    function keyed(): string | undefined { return named === undefined ? "no names yet" : named[cursor as unknown as string]; }
+    return api;
+}
+const early: string[] = [];
+const stack = makeStack();
+console.log(early.join(" | "));
+console.log(stack.push("a"), stack.push("b"), stack.push("c"), show(stack.top()), stack.find("a"), stack.find("c"), stack.find("z"), stack.size());
+console.log(show(stack.pop()), show(stack.pop()), show(stack.top()), stack.size(), show(stack.pop()), show(stack.pop()), stack.size(), show(stack.top()), stack.find("a"), stack.push("d"), stack.size());
+console.log(show(stack.at()), stack.jump(1), show(stack.at()), stack.jump(-2), show(stack.at()), attempt(() => stack.keyed()), stack.jump(1), show(stack.at()));
+stack.jump(5); stack.put("far"); console.log(show(stack.at()), stack.jump(-5), show(stack.at()));
+console.log(show(stack.half()), show(stack.half()), show(stack.half()));
+stack.jump(1);
+let doubled = 0; for (let i = 0; i < 1100; i++) { doubled = stack.double(); if (i === 52 || i === 62 || i === 63 || i === 69 || i === 1022 || i === 1023) console.log(i, show(doubled), show(stack.at()), attempt(() => stack.keyed())); }
+console.log(show(stack.shrink()), show(stack.at()), attempt(() => stack.keyed()), show(stack.jump(1)), show(stack.at()));
+function makeEarly() {
+    const bump = () => { seen++; return seen; };
+    const read = () => list[seen];
+    const list: (string | undefined)[] = ["zero", "one", "two"];
+    const before = [show(bump()), show(read()), show(bump())];
+    var seen = 0;
+    return [...before, show(read()), show(bump()), show(read()), show(bump()), show(read()), show(bump()), show(read())].join(" ");
+}
+console.log(makeEarly());
+//// crash-nested-catch.ts
+// The parameter of an outer `catch` clause is thrown again and used in an inner `catch` clause.
+function used(p: number) { const out: number[] = []; try { throw p + p; } catch (e1: any) { try { throw e1; } catch (e2: any) { out.push(e1); } } return out.join(); }
+function added(p: number) { const out: number[] = []; try { throw p + p; } catch (e1: any) { try { throw e1; } catch (e2: any) { out.push(e1 + e2); } } return out.join(); }
+function captured(p: number) { const fs: (() => number)[] = []; try { throw p + p; } catch (e1: any) { try { throw e1; } catch (e2: any) { fs.push(() => e1); } } return fs.map(f => f()).join(); }
+function capturedBoth(p: number) { const fs: (() => number)[] = []; try { throw p + p; } catch (e1: any) { try { throw e1; } catch (e2: any) { fs.push(() => e1 + e2 + e2); fs.push(() => e2); } } return fs.map(f => f()).join(); }
+function withClass(p: number) { const out: number[] = []; const fs: (() => number)[] = []; try { throw p + p; } catch (e1: any) { try { throw e1; } catch (e2: any) { fs.push(() => e1 + e2 + e2); } class C { f: number = e1; static s(): number { return e1 + p; } } out.push(new C().f + C.s()); } return out.join() + fs.map(f => f()).join(); }
+function threeDeep(p: number) { const out: number[] = []; try { throw p; } catch (e1: any) { try { throw e1; } catch (e2: any) { try { throw e2; } catch (e3: any) { out.push(e1 + e2 + e3); } out.push(e1 + e2); } out.push(e1); } return out.join(); }
+function anObject(p: number) { const out: string[] = []; try { throw new Error("x" + p); } catch (e1) { try { throw e1; } catch (e2) { out.push((e1 as Error).message, (e2 as Error).message, String(e1 === e2)); } } return out.join(); }
+// These were right all along.
+function anotherValue(p: number) { const out: number[] = []; try { throw p + p; } catch (e1: any) { try { throw 1; } catch (e2: any) { out.push(e1 + e2); } } return out.join(); }
+function aConstant(p: number) { const out: number[] = []; const k: any = p + p; try { throw k; } catch (e2: any) { out.push(k + e2); } return out.join(); }
+console.log(anotherValue(4), aConstant(4));
+console.log(used(4));
+console.log(added(4));
+console.log(captured(4));
+console.log(capturedBoth(4));
+console.log(withClass(4));
+console.log(threeDeep(4));
+console.log(anObject(4));
+//// creation-points.ts
+// Which fields an object gets right after its allocation is only a hint for the compiler: the program behaves the same when the hint is wrong.
+interface Sym { flags: number; name: string; parent: Sym | undefined; decls?: string[] }
+interface Links { type?: Ty; target?: Sym; mapper?: string; nameType?: Ty }
+interface TransientLinks extends Links { check: number }
+interface TransientSym extends Sym { links: TransientLinks }
+interface NodeLinks { flags: number; resolved?: Sym }
+interface Ty { flags: number; id: number; sym?: Sym }
+interface Ref extends Ty { target: Ty; args: Ty[] | undefined; node?: string }
+function SymCtor(this: Sym, flags: number, name: string) { this.flags = flags; this.name = name; this.parent = undefined }
+function NodeLinksCtor(this: NodeLinks) { this.flags = 0 }
+function TyCtor(this: Ty, flags: number) { this.flags = flags }
+const Sym = SymCtor as unknown as new (flags: number, name: string) => Sym
+const Ty = TyCtor as unknown as new (flags: number) => Ty
+const LinksClass = class implements Links {}
+let types = 0
+function createSym(flags: number, name: string, check?: number) {
+  const sym = new Sym(flags | 1, name) as TransientSym
+  sym.links = new LinksClass() as TransientLinks
+  sym.links.check = check || 0
+  return sym
+}
+function createSymWithType(source: Sym, type: Ty) {
+  const sym = createSym(source.flags, source.name)
+  sym.links.type = type
+  sym.links.target = source
+  if (source.decls) sym.decls = source.decls
+  return sym
+}
+const nodeLinks: NodeLinks[] = []
+function getNodeLinks(id: number): NodeLinks { return nodeLinks[id] || (nodeLinks[id] = new (NodeLinksCtor as any)()) }
+function createTy(flags: number) { const result = new Ty(flags); types++; result.id = types; return result }
+function createTyWithSym(flags: number, sym: Sym) { const result = createTy(flags); result.sym = sym; return result }
+const refs = new Map<number, Ref>()
+function createRef(target: Ty, args: Ty[] | undefined): Ref {
+  let type = refs.get(target.id)
+  if (!type) {
+    type = createTyWithSym(4, createSym(0, "ref")) as Ref
+    refs.set(target.id, type)
+    type.target = target
+    type.args = args
+  }
+  return type
+}
+class Point { y = 0; tag?: string; constructor(public x: number) { if (x < 0) this.tag = "left" } }
+const plain = createSym(2, "plain")
+const typed = createSymWithType(plain, createTy(8))
+const ref = createRef(createTy(16), undefined)
+const points: Point[] = [new Point(1)]
+for (let i = 0; i < 2; i++) { points.push(new Point(-i)); for (let j = 0; j < 2; j++) points.push(new Point(j)) }
+getNodeLinks(3).resolved = plain
+console.log(plain.flags, plain.links.check, typed.links.type!.id, typed.links.target === plain, typed.decls, ref.id, ref.target.id, ref.sym!.name, createRef(ref.target, undefined) === ref)
+console.log(getNodeLinks(3).flags, getNodeLinks(3).resolved === plain, points.length, points.map(p => p.x + ":" + p.y + ":" + p.tag).join())
+//// date-fields-and-view-sizes.ts
+// Date getters, setTime and toISOString, and byteLength and byteOffset of typed arrays: the inline fast path, and every receiver and state that must take the slow path.
+declare global {
+  interface Date {
+    getYear(): number;
+  }
+}
+export {};
+
+const lines: string[] = [];
+
+function formatNumber(value: number): string {
+  return Object.is(value, -0) ? "-0" : String(value);
+}
+
+function localFieldsOf(date: Date): string {
+  return [
+    date.getFullYear(),
+    date.getMonth(),
+    date.getDate(),
+    date.getDay(),
+    date.getHours(),
+    date.getMinutes(),
+    date.getSeconds(),
+    date.getMilliseconds(),
+    date.getTimezoneOffset(),
+    date.getYear(),
+  ]
+    .map(formatNumber)
+    .join(" ");
+}
+
+function utcFieldsOf(date: Date): string {
+  return [
+    date.getUTCFullYear(),
+    date.getUTCMonth(),
+    date.getUTCDate(),
+    date.getUTCDay(),
+    date.getUTCHours(),
+    date.getUTCMinutes(),
+    date.getUTCSeconds(),
+    date.getUTCMilliseconds(),
+  ]
+    .map(formatNumber)
+    .join(" ");
+}
+
+function fieldsOf(date: Date): string {
+  return localFieldsOf(date) + " | " + utcFieldsOf(date) + " | " + formatNumber(date.getTime()) + " " + formatNumber(date.valueOf());
+}
+
+function isoOf(date: Date): string {
+  try {
+    return date.toISOString();
+  } catch (error) {
+    return (error as Error).name + ": " + (error as Error).message;
+  }
+}
+
+const leapDay = Date.UTC(2024, 1, 29, 23, 59, 59, 999);
+const instants: [string, number][] = [
+  ["epoch", 0],
+  ["one millisecond earlier", -1],
+  ["leap day", leapDay],
+  ["year -1", Date.parse("-000001-03-04T05:06:07.089Z")],
+  ["year 0", Date.parse("0000-01-01T00:00:00.000Z")],
+  ["invalid", NaN],
+  ["year 9999", Date.parse("9999-12-31T23:59:59.999Z")],
+  ["year 10000", Date.parse("+010000-01-01T00:00:00.000Z")],
+  ["year 275760", 8.64e15],
+  ["year -271821", -8.64e15],
+];
+
+for (const [label, time] of instants) {
+  const date = new Date(time);
+  lines.push(label + ", first read: " + fieldsOf(date));
+  lines.push(label + ", second read: " + fieldsOf(date));
+  lines.push(label + ", ISO: " + isoOf(date));
+}
+
+const reused = new Date(leapDay);
+lines.push("before setTime: " + fieldsOf(reused));
+for (const [label, time] of instants) {
+  const result = reused.setTime(time);
+  lines.push(label + ", after setTime: " + formatNumber(result) + " " + fieldsOf(reused) + " " + isoOf(reused));
+}
+reused.setUTCHours(5);
+lines.push("after setUTCHours: " + fieldsOf(reused));
+
+for (const time of [8.64e15, 8.64e15 + 1, -8.64e15, -8.64e15 - 1, -0, 1.9, -1.9, -0.5, NaN, Infinity, -Infinity]) {
+  const date = new Date(leapDay);
+  const seconds = [date.getUTCSeconds()];
+  const result = date.setTime(time);
+  seconds.push(date.getUTCSeconds());
+  lines.push("setTime(" + formatNumber(time) + "): " + formatNumber(result) + " " + formatNumber(date.getTime()) + " " + seconds.join(" "));
+}
+
+const now = Date.now();
+lines.push("now: " + (Number.isInteger(now) && now > 1.6e12 && Math.abs(new Date().getTime() - now) < 60_000));
+
+class Stamp extends Date {
+  getMinutes(): number {
+    return -1;
+  }
+  getUTCFullYear(): number {
+    return super.getUTCFullYear() + 1000;
+  }
+  toISOString(): string {
+    return "stamp " + super.toISOString();
+  }
+}
+const stamp = new Stamp(leapDay);
+lines.push("subclass: " + fieldsOf(stamp) + " " + isoOf(stamp));
+lines.push("subclass, after setTime: " + formatNumber(stamp.setTime(1.9)) + " " + fieldsOf(stamp) + " " + isoOf(stamp));
+lines.push("invalid subclass: " + fieldsOf(new Stamp(NaN)) + " " + isoOf(new Stamp(NaN)));
+
+const patched = new Date(leapDay);
+lines.push("before own methods: " + fieldsOf(patched));
+patched.getHours = () => 99;
+patched.getTime = () => -7;
+patched.toISOString = () => "patched";
+lines.push("own methods: " + fieldsOf(patched) + " " + isoOf(patched));
+
+function matchesShiftedUTC(date: Date): boolean {
+  const shifted = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return (
+    date.getFullYear() === shifted.getUTCFullYear() &&
+    date.getYear() === shifted.getUTCFullYear() - 1900 &&
+    date.getMonth() === shifted.getUTCMonth() &&
+    date.getDate() === shifted.getUTCDate() &&
+    date.getDay() === shifted.getUTCDay() &&
+    date.getHours() === shifted.getUTCHours() &&
+    date.getMinutes() === shifted.getUTCMinutes() &&
+    date.getSeconds() === shifted.getUTCSeconds() &&
+    date.getMilliseconds() === shifted.getUTCMilliseconds()
+  );
+}
+
+const environment = (globalThis as unknown as { process?: { env: Record<string, string | undefined> } }).process?.env;
+const longLived = [
+  new Date(leapDay),
+  new Date(Date.UTC(2021, 5, 15, 12, 30, 45, 678)),
+  new Date(Date.UTC(1969, 11, 31, 23, 59, 59, 1)),
+];
+for (const date of longLived) lines.push("before the zone changes: " + fieldsOf(date));
+for (const zone of ["America/Los_Angeles", "Asia/Kolkata", "Australia/Lord_Howe", "Etc/UTC"]) {
+  if (environment) environment.TZ = zone;
+  for (const date of longLived) {
+    lines.push(zone + ": " + (fieldsOf(date) === fieldsOf(new Date(date.getTime()))) + " " + matchesShiftedUTC(date));
+  }
+}
+
+function checksumOf(date: Date): number {
+  return (
+    date.getFullYear() +
+    date.getYear() * 3 +
+    date.getMonth() * 5 +
+    date.getDate() * 7 +
+    date.getDay() * 11 +
+    date.getHours() * 13 +
+    date.getMinutes() * 17 +
+    date.getSeconds() * 19 +
+    date.getMilliseconds() * 23 +
+    date.getTimezoneOffset() * 29 +
+    date.getUTCFullYear() * 31 +
+    date.getUTCMonth() * 37 +
+    date.getUTCDate() * 41 +
+    date.getUTCDay() * 43 +
+    date.getUTCHours() * 47 +
+    date.getUTCMinutes() * 53 +
+    date.getUTCSeconds() * 59 +
+    date.getUTCMilliseconds() * 61
+  );
+}
+
+let checksum = 0;
+let differences = 0;
+for (let i = 0; i < 5000; i++) {
+  const time = -7e13 + i * 31_556_952_123 + (i % 977);
+  const fresh = checksumOf(new Date(time));
+  reused.setTime(time);
+  if (checksumOf(reused) !== fresh) differences++;
+  checksum = (checksum * 31 + fresh + 1_000_000) % 1_000_000_007;
+}
+lines.push("5000 dates: " + checksum + " " + differences);
+
+const sizesOfInt8 = (view: Int8Array): string => view.byteLength + "@" + view.byteOffset;
+const sizesOfUint8 = (view: Uint8Array): string => view.byteLength + "@" + view.byteOffset;
+const sizesOfUint8Clamped = (view: Uint8ClampedArray): string => view.byteLength + "@" + view.byteOffset;
+const sizesOfInt16 = (view: Int16Array): string => view.byteLength + "@" + view.byteOffset;
+const sizesOfUint16 = (view: Uint16Array): string => view.byteLength + "@" + view.byteOffset;
+const sizesOfInt32 = (view: Int32Array): string => view.byteLength + "@" + view.byteOffset;
+const sizesOfUint32 = (view: Uint32Array): string => view.byteLength + "@" + view.byteOffset;
+const sizesOfFloat16 = (view: Float16Array): string => view.byteLength + "@" + view.byteOffset;
+const sizesOfFloat32 = (view: Float32Array): string => view.byteLength + "@" + view.byteOffset;
+const sizesOfFloat64 = (view: Float64Array): string => view.byteLength + "@" + view.byteOffset;
+const sizesOfBigInt64 = (view: BigInt64Array): string => view.byteLength + "@" + view.byteOffset;
+const sizesOfBigUint64 = (view: BigUint64Array): string => view.byteLength + "@" + view.byteOffset;
+const sizesOfEither = (view: Uint8Array | Float64Array): string => view.byteLength + "@" + view.byteOffset;
+
+const backing = new ArrayBuffer(128);
+const int8 = new Int8Array(backing, 8, 3);
+const uint8 = new Uint8Array(backing, 9, 5);
+const uint8Clamped = new Uint8ClampedArray(backing, 1, 7);
+const int16 = new Int16Array(backing, 2, 3);
+const uint16 = new Uint16Array(backing, 6);
+const int32 = new Int32Array(backing, 4, 5);
+const uint32 = new Uint32Array(backing, 12, 1);
+const float16 = new Float16Array(backing, 10, 4);
+const float32 = new Float32Array(backing, 16, 0);
+const float64 = new Float64Array(backing, 24, 2);
+const bigInt64 = new BigInt64Array(backing, 32, 3);
+const bigUint64 = new BigUint64Array(backing, 40);
+
+function sizesOfOffsetViews(): string {
+  return [
+    sizesOfInt8(int8),
+    sizesOfUint8(uint8),
+    sizesOfUint8Clamped(uint8Clamped),
+    sizesOfInt16(int16),
+    sizesOfUint16(uint16),
+    sizesOfInt32(int32),
+    sizesOfUint32(uint32),
+    sizesOfFloat16(float16),
+    sizesOfFloat32(float32),
+    sizesOfFloat64(float64),
+    sizesOfBigInt64(bigInt64),
+    sizesOfBigUint64(bigUint64),
+    sizesOfEither(uint8),
+    sizesOfEither(float64),
+  ].join(" ");
+}
+
+lines.push("offset views: " + sizesOfOffsetViews());
+let total = 0;
+for (let round = 0; round < 1000; round++) {
+  total += int16.byteLength + float64.byteLength + bigUint64.byteOffset + round;
+}
+lines.push("1000 rounds: " + total);
+backing.transfer();
+lines.push("detached: " + sizesOfOffsetViews());
+
+lines.push(
+  "own storage: " +
+    [
+      sizesOfUint32(new Uint32Array(5)),
+      sizesOfFloat64(new Float64Array(3000)),
+      sizesOfInt16(new Int16Array(0)),
+      sizesOfUint8(new Uint8Array(16).subarray(3, 9)),
+    ].join(" "),
+);
+
+const resizable = new ArrayBuffer(16, { maxByteLength: 64 });
+const tracking = new Uint16Array(resizable, 4);
+const bounded = new Uint16Array(resizable, 4, 4);
+lines.push("resizable, 16 bytes: " + sizesOfUint16(tracking) + " " + sizesOfUint16(bounded));
+for (const size of [40, 8, 2, 64, 12, 11, 5]) {
+  resizable.resize(size);
+  lines.push("resized to " + size + " bytes: " + sizesOfUint16(tracking) + " " + sizesOfUint16(bounded));
+}
+
+const growable = new SharedArrayBuffer(8, { maxByteLength: 32 });
+const growing = new Int32Array(growable, 4);
+lines.push("growable, 8 bytes: " + sizesOfInt32(growing));
+growable.grow(24);
+lines.push("grown to 24 bytes: " + sizesOfInt32(growing));
+
+class Odd extends Uint16Array {
+  get byteLength(): number {
+    return -1;
+  }
+}
+lines.push("subclass: " + sizesOfUint16(new Odd(4)));
+
+const labeled = new Uint16Array(4);
+lines.push("before the own property: " + sizesOfUint16(labeled));
+Object.defineProperty(labeled, "byteOffset", { value: 77 });
+lines.push("own property: " + sizesOfUint16(labeled));
+
+console.log(lines.join("\n"));
+//// delete-in-sloppy-and-strict-code.js
+function attempt(label, action) {
+  try {
+    console.log(`${label}: ${action()}`);
+  } catch (error) {
+    console.log(`${label}: ${error.name}: ${error.message}`);
+  }
+}
+
+function sloppyDeleteName(base) {
+  return delete base.target;
+}
+
+function strictDeleteName(base) {
+  "use strict";
+  return delete base.target;
+}
+
+function sloppyDeleteLength(base) {
+  return delete base.length;
+}
+
+function strictDeleteLength(base) {
+  "use strict";
+  return delete base.length;
+}
+
+function sloppyDeleteKey(base, key) {
+  return delete base[key];
+}
+
+function strictDeleteKey(base, key) {
+  "use strict";
+  return delete base[key];
+}
+
+function nonConfigurable() {
+  return Object.defineProperty({}, "target", { value: 1, configurable: false });
+}
+
+const cases = [
+  ["non-configurable", nonConfigurable],
+  ["frozen", () => Object.freeze({ target: 1 })],
+  ["sealed", () => Object.seal({ target: 1 })],
+  ["absent", () => ({ other: 1 })],
+  ["absent on frozen", () => Object.freeze({ other: 1 })],
+  ["configurable", () => ({ target: 1 })],
+];
+
+for (const [label, create] of cases) {
+  attempt(`${label}, sloppy by name`, () => sloppyDeleteName(create()));
+  attempt(`${label}, strict by name`, () => strictDeleteName(create()));
+  attempt(`${label}, sloppy by key`, () => sloppyDeleteKey(create(), "target"));
+  attempt(`${label}, strict by key`, () => strictDeleteKey(create(), "target"));
+}
+
+attempt("array length, sloppy by name", () => sloppyDeleteLength([]));
+attempt("array length, strict by name", () => strictDeleteLength([]));
+attempt("array length, sloppy by key", () => sloppyDeleteKey([], "length"));
+attempt("array length, strict by key", () => strictDeleteKey([], "length"));
+attempt("string length, sloppy by name", () => sloppyDeleteLength("text"));
+attempt("string length, strict by name", () => strictDeleteLength("text"));
+attempt("string index, sloppy by key", () => sloppyDeleteKey("text", 0));
+attempt("string index, strict by key", () => strictDeleteKey("text", 0));
+attempt("frozen array element, sloppy", () => sloppyDeleteKey(Object.freeze([1]), 0));
+attempt("frozen array element, strict", () => strictDeleteKey(Object.freeze([1]), 0));
+attempt("array element past the end, strict", () => strictDeleteKey([1], 5));
+
+const configurable = { target: 1, kept: 2 };
+console.log(sloppyDeleteName(configurable), Object.keys(configurable).join());
+const configurableStrict = { target: 1, kept: 2 };
+console.log(strictDeleteKey(configurableStrict, "target"), Object.keys(configurableStrict).join());
+const elements = [1, 2, 3];
+console.log(strictDeleteKey(elements, 1), 1 in elements, elements.length);
+//// delete-optional.ts
+// `delete` of a property that is optional in the type through which it is deleted.
+interface Base { kind: number; }
+interface WithFlags extends Base { flags?: number; }
+interface Everything extends Base { flags: number; }
+function full(kind: number, flags: number): WithFlags { return { kind, flags }; }
+function everything(kind: number, flags: number): Everything { return { kind, flags }; }
+function maybeFlags(base: Base): number | undefined { return (base as Everything).flags; }
+const deleted = full(3, 4);
+delete deleted.flags;
+console.log(deleted.flags, Object.keys(deleted).join()); // undefined kind
+console.log(maybeFlags(everything(1, 2)), maybeFlags(full(5, 6)), maybeFlags(deleted)); // 2 6 undefined
+//// delete-super-property.js
+// `delete super.x` throws a ReferenceError, once `this` is there and the key has been evaluated, and before the key is made a property key.
+const log = [];
+function tell(name, f) {
+  try {
+    console.log(name, f());
+  } catch (error) {
+    console.log(name, error.constructor.name, log.splice(0).join());
+  }
+}
+const key = { toString() { log.push("the key is made a property key"); return "x"; } };
+class Base { x() {} }
+tell("by name", () => { class C extends Base { m() { return delete super.x; } } return new C().m(); });
+tell("by key", () => { class C extends Base { m() { return delete super[(log.push("the key"), key)]; } } return new C().m(); });
+tell("in an object", () => ({ m() { return delete super.x; } }).m());
+tell("a static method", () => { class C extends Base { static m() { return delete super.x; } } return C.m(); });
+tell("without a prototype", () => { const o = { m() { return delete super.x; } }; Object.setPrototypeOf(o, null); return o.m(); });
+tell("a key that throws", () => { class C extends Base { m() { return delete super[(() => { throw new RangeError(); })()]; } } return new C().m(); });
+tell("ahead of super()", () => { class C extends Base { constructor() { delete super.x; super(); } } return new C(); });
+tell("in an arrow function", () => { class C extends Base { m() { return (() => delete super.x)(); } } return new C().m(); });
+tell("the method is still there", () => typeof new Base().x);
+//// direct-eval-before-super.js
+// A direct eval is handed `this` of the function around it. In the constructor of a derived class there is none until super() has returned, and an eval ahead of it runs all the same.
+class Base { constructor() { this.id = "base"; } }
+function row(name, run) { try { console.log(name + ": " + String(run())); } catch (error) { console.log(name + ": THROWS " + error.name); } }
+row("ahead of super()", () => new (class extends Base { constructor() { const seen = eval("1 + 1"); super(); this.seen = seen; } })().seen);
+row("a variable of the eval's own", () => new (class extends Base { constructor() { eval("var x = 20"); super(); this.seen = typeof x; } })().seen);
+row("a variable of the constructor", () => new (class extends Base { constructor(given) { const seen = eval("given + 1"); super(); this.seen = seen; } })(1).seen);
+row("in an arrow function ahead of super()", () => new (class extends Base { constructor() { const run = () => eval("2"); const seen = run(); super(); this.seen = seen; } })().seen);
+row("behind super()", () => new (class extends Base { constructor() { super(); this.seen = eval("this.id"); } })().seen);
+row("in an arrow function made ahead of super() and called behind it", () => new (class extends Base { constructor() { const run = () => eval("this.id"); super(); this.seen = run(); } })().seen);
+row("a class that extends nothing", () => new (class { constructor() { this.id = "own"; this.seen = eval("this.id"); } })().seen);
+row("no super() at all", () => new (class extends Base { constructor() { eval("1"); } })());
+//// direct-eval-catch-parameter.js
+// The parameter of catch (e) has a scope of its own, and the declarations of a sloppy direct eval pass it (ECMA-262 B.3.4).
+module.exports = {};
+
+////= show
+
+////= lines-9	declaresWithoutValue	"var e"
+show("var without a value", declaresWithoutValue);
+
+function declaresInFunction() {
+  try {
+    throw 1;
+  } catch (e) {
+    eval("var e = 2");
+  }
+  return [typeof e, e];
+}
+show("the variable belongs to the function", declaresInFunction);
+
+function declaresFunction() {
+  let inside;
+  try {
+    throw 1;
+  } catch (e) {
+    eval("function e() { return 3 }");
+    inside = typeof e;
+  }
+  return [inside, typeof e, e()];
+}
+show("function declaration", declaresFunction);
+
+function readsAndStores() {
+  try {
+    throw 1;
+  } catch (e) {
+    const read = eval("e");
+    eval("e += 10");
+    return [read, e];
+  }
+}
+show("read and store", readsAndStores);
+
+function deletes() {
+  try {
+    throw 1;
+  } catch (e) {
+    return [eval("delete e"), e];
+  }
+}
+show("delete", deletes);
+
+function createAccessors() {
+  try {
+    throw 1;
+  } catch (e) {
+    return { set: eval("(function (value) { e = value })"), get: () => e };
+  }
+}
+const accessors = createAccessors();
+accessors.set(5);
+show("closure stores after return", () => accessors.get());
+
+function nests() {
+  try {
+    throw 1;
+  } catch (e) {
+    let inner;
+    try {
+      throw 2;
+    } catch (e) {
+      eval("var e = 3");
+      inner = e;
+    }
+    return [inner, e];
+  }
+}
+show("nested catch", nests);
+
+function storesUnderWith() {
+  const object = { e: 5 };
+  try {
+    throw 1;
+  } catch (e) {
+    with (object) {
+      eval("var e = 6");
+    }
+    return [object.e, e];
+  }
+}
+show("with inside catch", storesUnderWith);
+
+function catchesUnderWith() {
+  const object = { e: 5 };
+  with (object) {
+    try {
+      throw 1;
+    } catch (e) {
+      eval("var e = 6");
+      return [object.e, e];
+    }
+  }
+}
+show("catch inside with", catchesUnderWith);
+
+function readsOuterNames(parameter) {
+  let local = 2;
+  try {
+    throw 1;
+  } catch (e) {
+    return eval("local += e; [parameter, local, typeof show, typeof missing]");
+  }
+}
+show("names outside the catch", () => readsOuterNames(7));
+
+function redeclaresBlockLet() {
+  try {
+    throw 1;
+  } catch (e) {
+    let x = 1;
+    eval("var x = 2");
+    return x;
+  }
+}
+show("var over let in the block of the catch", redeclaresBlockLet);
+
+function redeclaresArrayPattern() {
+  try {
+    throw [1];
+  } catch ([e]) {
+    eval("var e = 2");
+    return e;
+  }
+}
+show("var over a destructured parameter", redeclaresArrayPattern);
+
+////= lines-9	redeclaresInForOf	"for (var e of [2]);"
+show("for (var e of ..)", redeclaresInForOf);
+
+try {
+  throw 1;
+} catch (e) {
+  console.log("outside any function", eval("e += 1; e"), e);
+}
+show("nothing on the global object", () => typeof globalThis.e);
+//// direct-eval-declarations-meet-lexical-declarations/main.cjs
+// A `var` or a function declaration of a sloppy direct eval is hoisted to the variables of the enclosing function. Where it meets a `let`, `const` or `class` on the way, at the top level of the function too, the eval throws a SyntaxError before it runs anything, and the binding keeps its value.
+function attempt(work) { try { return String(work()); } catch (error) { return error.name; } }
+function overLet() { let taken = 1; const answer = attempt(() => eval("var taken = 2")); return answer + " " + taken; }
+function overLetDirectly() { let taken = 1; let answer; try { answer = eval("var taken = 2; 'declared'"); } catch (error) { answer = error.name; } return answer + " " + taken; }
+function overConst() { const taken = 1; let answer; try { answer = eval("var taken = 2; 'declared'"); } catch (error) { answer = error.name; } return answer + " " + taken; }
+function overClass() { class Taken {} let answer; try { answer = eval("var Taken = 2; 'declared'"); } catch (error) { answer = error.name; } return answer + " " + typeof Taken; }
+function overLetInBlock() { { let taken = 1; let answer; try { answer = eval("var taken = 2; 'declared'"); } catch (error) { answer = error.name; } return answer + " " + taken; } }
+function functionOverLet() { let taken = 1; let answer; try { answer = eval("function taken() {} 'declared'"); } catch (error) { answer = error.name; } return answer + " " + typeof taken; }
+function blockFunctionOverLet() { let taken = 1; let answer; try { answer = eval("{ function taken() {} } 'declared'"); } catch (error) { answer = error.name; } return answer + " " + typeof taken; }
+function nothingRunsBefore() { let taken = 1; let ran = "no"; try { eval("ran = 'yes'; var taken = 2"); } catch {} return ran + " " + taken; }
+function beforeTheDeclaration() { let answer; try { answer = eval("var later = 2; 'declared'"); } catch (error) { answer = error.name; } let later = 1; return answer + " " + later; }
+function overVar() { var free = 1; let answer; try { answer = eval("var free = 2; 'declared'"); } catch (error) { answer = error.name; } return answer + " " + free; }
+function overParameter(free) { let answer; try { answer = eval("var free = 2; 'declared'"); } catch (error) { answer = error.name; } return answer + " " + free; }
+function overFunction() { function free() {} let answer; try { answer = eval("var free = 2; 'declared'"); } catch (error) { answer = error.name; } return answer + " " + free; }
+function overCatchParameter() { try { throw 1; } catch (free) { let answer; try { answer = eval("var free = 2; 'declared'"); } catch (error) { answer = error.name; } return answer + " " + free; } }
+function overCatchPattern() { try { throw { taken: 1 }; } catch ({ taken }) { let answer; try { answer = eval("var taken = 2; 'declared'"); } catch (error) { answer = error.name; } return answer + " " + taken; } }
+function inArrow() { let free = 1; const answer = (() => { try { return eval("var free = 2; 'declared ' + free"); } catch (error) { return error.name; } })(); return answer + " " + free; }
+function inInnerFunction() { let free = 1; function inner() { try { return eval("var free = 2; 'declared ' + free"); } catch (error) { return error.name; } } return inner() + " " + free; }
+function strictText() { let free = 1; let answer; try { answer = eval("'use strict'; var free = 2; 'declared ' + free"); } catch (error) { answer = error.name; } return answer + " " + free; }
+function letInText() { let free = 1; let answer; try { answer = eval("let free = 2; 'declared ' + free"); } catch (error) { answer = error.name; } return answer + " " + free; }
+function newName() { let other = 1; let answer; try { answer = eval("var added = 2; 'declared'"); } catch (error) { answer = error.name; } return answer + " " + added + " " + other; }
+function readsAndStores() { let kept = 1; const fixed = 2; eval("kept = kept + fixed"); return kept; }
+function storeToConst() { const fixed = 1; return attempt(() => eval("fixed = 2")) + " " + fixed; }
+let topLevel = 1;
+let atTopLevel; try { atTopLevel = eval("var topLevel = 2; 'declared'"); } catch (error) { atTopLevel = error.name; }
+for (const row of [overLet, overLetDirectly, overConst, overClass, overLetInBlock, functionOverLet, blockFunctionOverLet, nothingRunsBefore, beforeTheDeclaration, overVar, overParameter, overFunction, overCatchParameter,
+  overCatchPattern, inArrow, inInnerFunction, strictText, letInText, newName, readsAndStores, storeToConst])
+  console.log(row.name, "|", row(1));
+console.log("at the top level of a CommonJS module |", atTopLevel, topLevel);
+//// direct-eval-finds-names-scope-by-scope.js
+// A name in the text of a direct eval is looked for scope by scope: the innermost declaration wins, the object of a `with` or a catch parameter between two scopes is asked in its turn, and a name that no scope has is the global object's.
+module.exports = {};
+
+let shadowed = "module";
+let onlyInModule = "module only";
+globalThis.onlyGlobal = "global";
+
+function innermostWins(shadowed) {
+  {
+    let shadowed = "block";
+    return [eval("shadowed"), eval("onlyInModule"), eval("onlyGlobal"), eval("typeof neverDeclared")];
+  }
+}
+console.log(innermostWins("parameter"));
+
+function parameterBeforeModule(shadowed) {
+  return eval("shadowed");
+}
+console.log(parameterBeforeModule("parameter"), eval("shadowed"));
+
+function withObjectBetween(shadowed, object) {
+  with (object) {
+    let inner = "inner";
+    return [eval("shadowed"), eval("inner"), eval("onlyInModule")];
+  }
+}
+console.log(withObjectBetween("parameter", {}));
+console.log(withObjectBetween("parameter", { shadowed: "object" }));
+console.log(withObjectBetween("parameter", { inner: "object", onlyInModule: "object" }));
+
+function storesIntoInnermost(shadowed) {
+  var block;
+  {
+    let shadowed = "block";
+    eval("shadowed = 'stored'");
+    block = shadowed;
+  }
+  return [block, shadowed];
+}
+console.log(storesIntoInnermost("parameter"), shadowed);
+
+function catchParameterBetween(shadowed) {
+  try {
+    throw "caught";
+  } catch (shadowed) {
+    return [eval("shadowed"), eval("onlyInModule")];
+  }
+}
+console.log(catchParameterBetween("parameter"));
+
+function declaredByText(shadowed) {
+  eval("var shadowed = 'declared by the text'; var fresh = 'fresh'");
+  return [shadowed, eval("fresh"), typeof fresh];
+}
+console.log(declaredByText("parameter"));
+
+function manyNames(a, b, c, d, e, f, g, h) {
+  let i = 9, j = 10, k = 11, l = 12;
+  return eval("[a, b, c, d, e, f, g, h, i, j, k, l].join()") + " " + eval("[l, k, j, i, h, g, f, e, d, c, b, a].join()");
+}
+console.log(manyNames(1, 2, 3, 4, 5, 6, 7, 8));
+
+class Holder {
+  #hidden = "private";
+  read(hidden) {
+    return [eval("this.#hidden"), eval("hidden")];
+  }
+}
+console.log(new Holder().read("parameter"));
+
+function closureKeepsScopes(shadowed) {
+  let own = "own";
+  return eval("() => [shadowed, own, onlyInModule, typeof neverDeclared]");
+}
+console.log(closureKeepsScopes("parameter")());
+//// direct-eval-live-bindings.js
+// The text of a direct eval reads and stores the variables of its caller where they live.
+module.exports = {};
+
+let moduleCounter = 1;
+const moduleConstant = 2;
+
+////= show
+
+function storesParameter(a) {
+  eval("a = a + 1");
+  return a;
+}
+show("parameter", () => storesParameter(1));
+
+function storesLet() {
+  let value = 1;
+  const add = () => eval("value += 1");
+  add();
+  value += 10;
+  return [value, eval("value")];
+}
+show("let", storesLet);
+
+function storesConst() {
+  const value = 1;
+  eval("value = 2");
+  return value;
+}
+show("const", storesConst);
+
+function readsDeadZone() {
+  eval("early");
+  let early = 1;
+  return early;
+}
+show("read in dead zone", readsDeadZone);
+
+function storesDeadZone() {
+  eval("early = 2");
+  let early = 1;
+  return early;
+}
+show("store in dead zone", storesDeadZone);
+
+const sloppyName = function self() {
+  eval("self = 1");
+  return typeof self;
+};
+show("function name", sloppyName);
+
+////= lines-15	storesModuleVariable	"moduleCounter = moduleCounter + 1"	moduleCounter
+show("module variable", storesModuleVariable);
+show("module variable again", () => [eval("moduleCounter"), moduleCounter]);
+show("module constant", () => eval("moduleConstant = 3"));
+
+function readsArguments() {
+  eval("arguments[0] = 9");
+  return [eval("arguments.length"), arguments[0]];
+}
+show("arguments", () => readsArguments(1, 2));
+
+const outsideObject = { outside: 1 };
+let readsOutsideWith;
+with (outsideObject) {
+  readsOutsideWith = function () {
+    return eval("outside = outside + 1");
+  };
+}
+show("with outside the function", () => [readsOutsideWith(), outsideObject.outside]);
+
+function storesInsideWith(object) {
+  let value = 10;
+  with (object) {
+    eval("value = 20");
+  }
+  return [object.value, value];
+}
+show("with inside, name on the object", () => storesInsideWith({ value: 1 }));
+show("with inside, name on the variable", () => storesInsideWith({}));
+
+////= lines-24	readsUnbound	eval	"nameNothingBinds"
+show("unbound name", readsUnbound);
+//// direct-eval-lone-catch-parameter.js
+// The parameter of catch (e) is the only binding the text of a direct eval can see: every other name is looked up on the global object.
+export {};
+
+try {
+  throw 1;
+} catch (e) {
+  console.log(eval("e += 1; [e, typeof missing, Math.max(e, 1)]"), e);
+  try {
+    eval("missing");
+  } catch (error) {
+    console.log(error.name);
+  }
+}
+//// direct-eval-lone-local.js
+// The text of a direct eval reads and stores a local whose name no property, export or other binding of the program has.
+export {};
+
+function readThroughEval() {
+  let heldOnlyByEvalScope = 1;
+  return eval("heldOnlyByEvalScope");
+}
+console.log(readThroughEval());
+
+function storeThroughEval(text) {
+  let seenOnlyByAssembledText = 2;
+  eval(text);
+  return seenOnlyByAssembledText;
+}
+console.log(storeThroughEval(["seenOnly", "ByAssembledText", " += 40"].join("")));
+//// direct-eval-reads-new-target.js
+// `new.target` in the text of a direct eval. `module.exports` makes this file CommonJS, so plain functions are sloppy and the module body is a function.
+module.exports = {};
+
+function show(value) { return typeof value === "function" ? "function " + value.name : String(value); }
+function row(name, run) { try { console.log(name + ": " + show(run())); } catch (error) { console.log(name + ": throws " + error.name); } }
+
+function Plain() { return { target: eval("new.target") }; }
+function Other() {}
+class Base { constructor() { this.target = eval("new.target"); } }
+class Child extends Base {}
+class Derived extends Base {
+  constructor() {
+    const before = eval("new.target");
+    super();
+    this.before = before;
+    this.after = eval("new.target");
+  }
+}
+
+row("function with new", () => new Plain().target);
+row("function without new", () => Plain().target);
+row("function with call", () => Plain.call({}).target);
+row("compared in the text", () => new (function Compared() { return { same: eval("new.target === Compared") }; })().same);
+row("base constructor", () => new Base().target);
+row("inherited constructor", () => new Child().target);
+row("derived constructor before super", () => new Derived().before);
+row("derived constructor after super", () => new Derived().after);
+row("value from base through derived", () => new Derived().target);
+row("Reflect.construct of function", () => Reflect.construct(Plain, [], Other).target);
+row("Reflect.construct of base", () => Reflect.construct(Base, [], Other).target);
+row("Reflect.construct of derived before super", () => Reflect.construct(Derived, [], Other).before);
+row("Reflect.construct of derived after super", () => Reflect.construct(Derived, [], Other).after);
+
+function InArrow() { const read = () => eval("new.target"); return { target: read() }; }
+class ArrowBeforeSuper extends Base {
+  constructor() {
+    const read = () => eval("new.target");
+    const before = read();
+    super();
+    this.before = before;
+  }
+}
+row("arrow in function with new", () => new InArrow().target);
+row("arrow in function without new", () => InArrow().target);
+row("arrow in derived constructor", () => new ArrowBeforeSuper().before);
+row("arrow in the text", () => new (function ArrowText() { return { target: eval("(() => new.target)()") }; })().target);
+
+function Nested() { return { target: eval("eval('new.target')") }; }
+row("nested eval with new", () => new Nested().target);
+row("nested eval without new", () => Nested().target);
+
+function LocalTarget() {
+  let target = "local";
+  const before = eval("target");
+  eval("target = 'stored'");
+  return { seen: [before, target, eval("target"), show(eval("new.target"))].join(" ") };
+}
+row("local named target with new", () => new LocalTarget().seen);
+row("local named target without new", () => LocalTarget().seen);
+row("store to new.target", () => new (function Store() { return { target: eval("new.target = 1") }; })().target);
+
+function deleteBound(x) { return [eval("delete x"), eval("x"), eval("delete unboundName")].join(" "); }
+function deleteStrict(x) { "use strict"; return eval("delete x"); }
+row("delete in sloppy code", () => deleteBound(1));
+row("delete in strict code", () => deleteStrict(1));
+
+try { console.log("module body: " + show(eval("new.target"))); } catch (error) { console.log("module body: throws " + error.name); }
+row("arrow in module body", () => eval("new.target"));
+row("field initializer in module body", () => new (class { seen = eval("new.target"); })().seen);
+//// direct-eval-scopes-of-many-calls.js
+// Every direct eval gets scopes of its own, whatever the calls before it left behind: closures made by one call keep its bindings, and collections in between change nothing.
+const text = {
+  read: "x + y",
+  write: "x = x + 1; y += 10; x + y",
+  capture: "() => [x, y, ++x]",
+  declare: "var made = x * 2; made + (typeof earlier)",
+  nested: "eval('eval(\"x * y\")')",
+  caught: "error + x",
+  secret: "this.#hidden + other.#hidden",
+};
+
+function plain(x, source) {
+  let y = x + 1;
+  const result = eval(source);
+  return [result, x, y];
+}
+
+function sloppyDeclarations(x, source) {
+  const first = eval(source);
+  const second = typeof made;
+  return [first, second];
+}
+
+function inCatch(x, source) {
+  try {
+    throw "caught ";
+  } catch (error) {
+    return eval(source);
+  }
+}
+
+class Vault {
+  #hidden;
+  constructor(value) { this.#hidden = value; }
+  sum(other, source) { return eval(source); }
+}
+
+const kept = [];
+for (let i = 0; i < 40; i++) {
+  kept.push(plain(i, text.capture)[0]);
+  if (i % 8 === 0) Bun.gc(true);
+  if (i % 10 === 0) {
+    console.log(
+      plain(i, text.read).join(),
+      plain(i, text.write).join(),
+      plain(i, text.nested).join(),
+      sloppyDeclarations(i, text.declare).join(),
+      inCatch(i, text.caught),
+      new Vault(i).sum(new Vault(100), text.secret),
+    );
+  }
+}
+Bun.gc(true);
+console.log(kept.map(read => read().join("/")).filter((_, index) => index % 13 === 0).join(" "));
+console.log(kept[3]().join("/"), kept[3]().join("/"), kept[4]().join("/"));
+//// direct-eval-sees-const-enums/colors.ts
+export const enum Color { Red = 1, Green = 2, Blue = Red | Green }
+export const enum Word { Yes = "yes", No = "no" }
+export enum Shape { Round = 1, Square = 2 }
+//// direct-eval-sees-const-enums/main.ts
+// A direct eval sees the `const` enums that its file declares, or imports and uses, as objects, the same as it sees other enums: plain Bun keeps them, and a file that has both must build.
+import { Color, Shape, Word } from "./colors";
+const enum Size { Small = 1, Large = Small * 4 }
+function show(label: string, run: () => unknown): void {
+  try {
+    console.log(label, JSON.stringify(run()));
+  } catch (error) {
+    console.log(label, (error as Error).constructor.name);
+  }
+}
+console.log(Color.Green, Color.Blue, Word.No, Shape.Square, Size.Large);
+show("types", () => eval("[typeof Color, typeof Word, typeof Shape, typeof Size]"));
+show("members", () => eval("[Color.Green, Color.Blue, Word.No, Shape.Square, Size.Large]"));
+show("names of values", () => eval("[Color[2], Shape[1], Size[4], Word.yes]"));
+show("keys", () => eval("[Object.keys(Color), Object.keys(Word), Object.keys(Size)]"));
+show("the same object each time", () => eval("Color") === eval("Color") && eval("Size") === eval("Size"));
+function inner(): unknown {
+  const enum Local { One = 1 }
+  return [Local.One, eval("typeof Local"), eval("Local.One")];
+}
+show("declared in a function", inner);
+//// direct-eval-sees-exports/counter.js
+export let total = 1;
+export function storeByEval(text) { eval(text); }
+export const readByEval = text => eval(text);
+//// direct-eval-sees-exports/main.js
+// A direct eval sees the declarations of its module that carry the word `export`: it reads them and stores to them from wherever it stands, and an importer sees the stores.
+import { total, storeByEval, readByEval } from "./counter.js";
+export const limit = 5;
+export let count = 0;
+export var old = "var";
+export function double(n) { return n * 2; }
+export class Box { constructor(v) { this.v = v; } }
+export default function named() { return "the default export"; }
+export const { first, second: [inner] } = { first: 1, second: ["inner"] };
+const hidden = "not exported";
+function listed() { return "listed at the foot"; }
+export { listed as renamed };
+
+console.log(eval("typeof limit"), eval("typeof count"), eval("typeof old"), eval("typeof double"), eval("typeof Box"), eval("typeof named"), eval("typeof first"), eval("typeof inner"));
+console.log(eval("typeof hidden"), eval("typeof listed"), eval("typeof renamed"), eval("typeof nowhere"));
+console.log(eval("limit"), eval("double(limit)"), eval("new Box(limit).v"), eval("named()"), eval("first + inner"));
+
+eval("count = 5"); console.log(count);
+eval("count++"); console.log(count, eval("count"));
+eval("old = 'stored'"); console.log(old);
+try { eval("limit = 6"); } catch (error) { console.log(error.name, limit); }
+
+function inFunction(text) { return eval(text); }
+const inArrow = text => eval(text);
+class Holder { method(text) { return eval(text); } static field = eval("limit + 1"); }
+async function inAsync(text) { return eval(text); }
+function* inGenerator(text) { yield eval(text); }
+function shadows(limit) { return eval("limit"); }
+function nested() { return (() => { { return eval("double(limit) + count"); } })(); }
+console.log(inFunction("limit + count"), inArrow("double(count)"), new Holder().method("typeof Box"), Holder.field, [...inGenerator("named()")][0], shadows("the parameter"), nested());
+console.log(await inAsync("limit"));
+inFunction("count = 40"); console.log(count);
+
+console.log(total, readByEval("total"));
+storeByEval("total = 7"); console.log(total, readByEval("total + 1"));
+storeByEval("total += 1"); console.log(total);
+//// direct-eval-sees-imports/main.ts
+// In a TypeScript file a direct eval sees an imported binding that the file's own code uses as a value, and what the file itself exports. An import that only the eval's text names is dropped, as in plain Bun.
+import fallback, { bump, count, name } from "./other";
+import * as all from "./other";
+import type { Shape } from "./other";
+import { onlyInTheText } from "./other";
+export const own: number = 3;
+export let stored: string = "before";
+export enum Color { Red, Green }
+export function twice(n: number): number { return n * 2; }
+const shape: Shape = { size: 1 };
+
+console.log(typeof name, typeof fallback, typeof all, typeof bump, count, shape.size);
+console.log(eval("typeof name"), eval("typeof fallback"), eval("typeof all"), eval("typeof bump"), eval("typeof count"));
+console.log(eval("typeof own"), eval("typeof stored"), eval("typeof Color"), eval("typeof twice"), eval("typeof Shape"), eval("typeof onlyInTheText"));
+console.log(eval("name"), eval("fallback()"), eval("all.name"), eval("own + 1"), eval("Color.Green"), eval("twice(own)"));
+bump(); console.log(count, eval("count"));
+eval("stored = 'behind'"); console.log(stored);
+try { eval("name = 1"); } catch (error) { console.log((error as Error).name, name); }
+try { eval("own = 1"); } catch (error) { console.log((error as Error).name, own); }
+function inside(text: string): unknown { return eval(text); }
+class Holder { method(text: string): unknown { return eval(text); } }
+console.log(inside("name + own"), new Holder().method("fallback() + all.count"));
+//// direct-eval-sees-imports/other.ts
+export interface Shape { size: number }
+export const name: string = "the import";
+export const onlyInTheText: string = "named by nothing but the text of an eval";
+export let count: number = 0;
+export function bump(): void { count++; }
+export default function fallback(): string { return "the default"; }
+//// direct-eval-sloppy-declarations.js
+// A sloppy direct eval declares in the function that called it, also from inside catch (e). In a strict caller the eval keeps its declarations.
+module.exports = {};
+
+////= show
+
+function declares(a) {
+  eval("var x = 1; var a = 2; function g() { return x }");
+  return [x, a, g()];
+}
+show("var, parameter and function", () => declares(0));
+show("declared again on the next call", () => declares(0));
+
+function declaresTwice() {
+  eval("var t = 1; function h() { return 1 }");
+  eval("var t = t + 1; function h() { return 2 }");
+  return [t, h()];
+}
+show("same name from two calls", declaresTwice);
+
+function deletes() {
+  eval("var d = 1");
+  const didDelete = delete d;
+  return [didDelete, typeof d];
+}
+show("delete", deletes);
+
+function createCounter() {
+  eval("var count = 1; var setCount = function (value) { count = value };");
+  return { setCount, getCount: () => count };
+}
+const counter = createCounter();
+counter.setCount(5);
+show("closure stores after return", () => counter.getCount());
+
+function redeclaresBlockLet() {
+  {
+    let y = 1;
+    eval("var y = 2");
+    return y;
+  }
+}
+show("var over let in a block", redeclaresBlockLet);
+
+////= lines-9	redeclaresCatchParameter	"var e = 2"
+show("var over the parameter of catch (e)", redeclaresCatchParameter);
+
+function redeclaresCatchPattern() {
+  try {
+    throw { e: 1 };
+  } catch ({ e }) {
+    eval("var e");
+    return e;
+  }
+}
+show("var over the parameter of catch ({ e })", redeclaresCatchPattern);
+
+// Class code is always strict. Plain Bun's transpiler drops a "use strict" directive inside a function, which would leave the reference run without a strict caller.
+class StrictCode {
+  static declares = function () {
+    eval("var z = 1");
+    return typeof z;
+  };
+}
+show("var in a strict caller", StrictCode.declares);
+show("nothing on the global object", () => [typeof globalThis.x, typeof globalThis.g, typeof globalThis.e, typeof globalThis.z]);
+//// direct-eval-strict.js
+"use strict";
+// A direct eval in strict code. The file is strict as a whole: `bun run` drops a "use strict" that only a function has.
+module.exports = {};
+
+////= show
+
+function declares() {
+  eval("var z = 1");
+  return typeof z;
+}
+show("eval keeps its variable", declares);
+show("nothing on the global object", () => typeof globalThis.z);
+
+const named = function self() {
+  eval("self = 1");
+  return typeof self;
+};
+show("function name", named);
+//// direct-eval-this-super-new-target.js
+// What the text of a direct eval sees as this, super and new.target.
+export {};
+
+////= show
+
+const receiver = {
+  id: "receiver",
+  method() {
+    return eval("this.id");
+  },
+  arrow() {
+    return (() => eval("this.id"))();
+  },
+};
+show("this in a method", () => receiver.method());
+show("this in an arrow function", () => receiver.arrow());
+
+class Fields {
+  id = "field";
+  seen = eval("this.id");
+}
+show("this in a field initializer", () => new Fields().seen);
+
+class Base {
+  constructor() {
+    this.id = "base";
+  }
+  method() {
+    return "base method";
+  }
+}
+class Derived extends Base {
+  constructor() {
+    let before;
+    try {
+      eval("this");
+    } catch (error) {
+      before = error.name;
+    }
+    super();
+    this.before = before;
+    this.after = eval("this.id");
+  }
+  method() {
+    return eval("super.method()");
+  }
+}
+const derived = new Derived();
+show("this before super()", () => derived.before);
+show("this after super()", () => derived.after);
+show("super in a class method", () => derived.method());
+
+class MentionsThis extends Base {
+  constructor() {
+    const skipped = eval("false && this");
+    const steps = [];
+    try {
+      eval("steps.push('ran'); this");
+    } catch (error) {
+      steps.push(error.name);
+    }
+    super();
+    this.skipped = skipped;
+    this.steps = steps;
+  }
+}
+show("this mentioned but not read before super()", () => new MentionsThis().skipped);
+show("this read after other code before super()", () => new MentionsThis().steps);
+
+const parent = {
+  method() {
+    return "parent";
+  },
+};
+const other = {
+  method() {
+    return "other";
+  },
+};
+const home = {
+  __proto__: parent,
+  method() {
+    return eval("super.method()");
+  },
+};
+show("super in an object method", () => home.method());
+Object.setPrototypeOf(home, other);
+show("super after setPrototypeOf", () => home.method());
+
+////= lines-24	readsNewTarget	eval	"new.target"
+function StoresNewTarget() {
+  this.isSelf = eval("new.target") === StoresNewTarget;
+  this.isSelfInArrow = (() => eval("new.target"))() === StoresNewTarget;
+}
+show("new.target in a call", () => readsNewTarget());
+show("new.target in a construct", () => new StoresNewTarget().isSelf);
+show("new.target in an arrow function", () => new StoresNewTarget().isSelfInArrow);
+
+////= lines-24	readsSuperProperty	eval	"super.x"
+show("super in a plain function", readsSuperProperty);
+show("new.target at top level", () => eval("new.target"));
+//// direct-eval-typed-variables.ts
+// A store from the text of a direct eval is tested against the type the variable was declared with.
+let moduleNumber: number = 1;
+
+function report(label: string, run: () => unknown): void {
+  try {
+    console.log(label, String(run()));
+  } catch (error) {
+    console.log(label, String(error));
+  }
+}
+
+report("module variable, number", () => eval("moduleNumber = 2"));
+report("module variable, string", () => eval("moduleNumber = 'a'"));
+console.log(typeof moduleNumber, moduleNumber);
+
+function storesLocal(): string {
+  let count: number = 1;
+  report("local variable, number", () => eval("count = 3"));
+  report("local variable, string", () => eval("count = 'b'"));
+  return typeof count + " " + count;
+}
+console.log(storesLocal());
+
+function storesString(): string {
+  let text: string = "a";
+  report("string variable, string", () => eval("text = 'c'"));
+  report("string variable, number", () => eval("text = 1"));
+  report("string variable, object", () => eval("text = {}"));
+  const length = text.length;
+  report("string variable, null", () => eval("text = null"));
+  return length + " " + text;
+}
+console.log(storesString());
+
+class Point {
+  x: number = 1;
+}
+function storesObject(): number {
+  let point: Point = new Point();
+  report("class variable, string", () => eval("point = 'd'"));
+  report("class variable, object", () => eval("point = { x: 2 }; point.x"));
+  return point.x;
+}
+console.log(storesObject());
+//// disposal-and-eval.ts
+// `using`, `await using` with disposers that throw, and direct eval that reads this, new.target, a capture and a private name.
+const log: string[] = [];
+function resource(name: string, failure?: string): any {
+  return { [Symbol.dispose]() { log.push("dispose " + name); if (failure) throw failure; } };
+}
+function asyncResource(name: string, failure?: string): any {
+  return { async [Symbol.asyncDispose]() { log.push("begin " + name); await undefined; log.push("end " + name); if (failure) throw failure; } };
+}
+function chain(e: any): string {
+  return e && e.constructor && e.constructor.name === "SuppressedError" ? "S(" + chain(e.error) + ", " + chain(e.suppressed) + ")" : String(e);
+}
+function report(name: string, run: () => unknown) {
+  log.length = 0;
+  let outcome: string;
+  try { outcome = "returned " + run(); } catch (e: any) { outcome = "threw " + chain(e); }
+  console.log(name + ": " + outcome + " | " + log.join(", "));
+}
+async function reportAsync(name: string, run: () => Promise<unknown>) {
+  log.length = 0;
+  let outcome: string;
+  try { outcome = "returned " + await run(); } catch (e: any) { outcome = "threw " + chain(e); }
+  console.log(name + ": " + outcome + " | " + log.join(", "));
+}
+
+report("reverse order", () => { using a = resource("a"); using b = resource("b"); return "body"; });
+report("one disposer throws", () => { using a = resource("a", "A"); using b = resource("b"); return "body"; });
+report("two disposers throw", () => { using a = resource("a", "A"); using b = resource("b", "B"); return "body"; });
+report("body and disposers throw", () => { using a = resource("a", "A"); using b = resource("b", "B"); throw "body"; });
+report("null and undefined", () => { using a = null as any; using b = undefined as any; return "nothing to dispose"; });
+report("not disposable", () => { using x = 1 as any; return "not reached"; });
+report("no method", () => { using x = {} as any; return "not reached"; });
+
+await reportAsync("await using", async () => { await using a = asyncResource("a"); await using b = asyncResource("b"); return "body"; });
+await reportAsync("await using throws", async () => { await using a = asyncResource("a", "A"); await using b = asyncResource("b", "B"); throw "body"; });
+await reportAsync("await using, sync fallback", async () => { await using a = resource("a", "A"); return "body"; });
+
+const direct: any = eval;
+class Secret {
+  #hidden = "private value";
+  seenTarget: boolean;
+  constructor() {
+    this.seenTarget = eval("new.target") === Secret;
+  }
+  readThis(): unknown { return eval("this") === this; }
+  readPrivate(): unknown { return eval("this.#hidden"); }
+  writePrivate(value: string): unknown { eval("this.#hidden = value"); return this.#hidden; }
+  readArrow(): unknown { return (() => eval("this.#hidden"))(); }
+}
+const secret = new Secret();
+console.log(secret.seenTarget, secret.readThis(), secret.readPrivate(), secret.writePrivate("changed"), secret.readArrow());
+function readCapture(): unknown {
+  let captured = 1;
+  const read = () => eval("captured += 1; captured");
+  read();
+  return [read(), captured];
+}
+console.log(readCapture());
+function plainFunction(this: any): unknown { return eval("new.target === undefined ? this : 'constructed'"); }
+console.log(plainFunction.call("receiver"), new (plainFunction as any)() === undefined);
+console.log(direct("typeof secret"), eval("typeof secret"));
+export {};
+//// enums-with-computed-members.ts
+const order: string[] = [];
+function noted(name: string, value: number): number {
+  order.push(name);
+  return value;
+}
+order.push("ahead");
+enum Sizes {
+  None,
+  Small = "abc".length,
+  Large = noted("Large", 7) * 2,
+  Larger = Large + Small,
+  Fixed = 100,
+}
+order.push("behind");
+console.log(order.join());
+console.log(Sizes.None, Sizes.Small, Sizes.Large, Sizes.Larger, Sizes.Fixed);
+console.log(Sizes[3], Sizes[14], Sizes[17], Sizes[100], Sizes[0]);
+console.log(Object.keys(Sizes).join());
+
+function sum(a: Sizes, b: Sizes): number {
+  return a + b;
+}
+console.log(sum(Sizes.Large, Sizes.Fixed), sum(Sizes.Small, Sizes.None));
+
+export enum Exported {
+  First = Math.max(1, 2),
+  Second = First << 2,
+}
+console.log(Exported.First, Exported.Second, Exported[8]);
+
+function local(seed: number) {
+  enum Local {
+    Seed = seed,
+    Twice = seed * 2,
+    Both = Seed + Twice,
+  }
+  return [Local.Seed, Local.Twice, Local.Both, Local[seed * 3]];
+}
+console.log(local(2).join(), local(5).join());
+
+enum Merged {
+  A = 1,
+}
+enum Merged {
+  B = noted("B", 40) + 2,
+}
+console.log(Merged.A, Merged.B, Merged[42], order.join());
+
+namespace Inner {
+  export enum Flags {
+    Read = 1 << 0,
+    Write = noted("Write", 2),
+    Both = Read | Write,
+  }
+}
+console.log(Inner.Flags.Read, Inner.Flags.Write, Inner.Flags.Both, Inner.Flags[3]);
+
+function pick(): Sizes {
+  return Sizes.Larger;
+}
+switch (pick()) {
+  case Sizes.Small:
+    console.log("small");
+    break;
+  case Sizes.Larger:
+    console.log("larger");
+    break;
+}
+const fraction: Record<string, unknown> = {};
+enum Odd {
+  Half = 1 / noted("Half", 2),
+  NotANumber = 0 / noted("NotANumber", 0),
+  Negative = -noted("Negative", 1),
+}
+fraction.keys = Object.keys(Odd).join();
+console.log(Odd.Half, Odd.NotANumber, Odd.Negative, Odd[0.5], Odd["NaN"], Odd[-1], fraction.keys);
+//// equalities-joined-by-or-and-switches-within-64-values.ts
+// STATISTIC: SwitchesTestedByWindow >= 6
+function withoutGap(kind: number): boolean {
+  return kind === 243 || kind === 244 || kind === 245 || kind === 246 || kind === 247;
+}
+function withGaps(kind: number): boolean {
+  return kind === 10 || kind === 12 || kind === 40 || kind === 73 || kind === 11 || kind === 41;
+}
+function exactly64Wide(kind: number): boolean {
+  return kind === 100 || kind === 163 || kind === 130 || kind === 131;
+}
+function wider(kind: number): boolean {
+  return kind === 100 || kind === 164 || kind === 130 || kind === 131;
+}
+function aroundZero(kind: number): boolean {
+  return kind === -3 || kind === 0 || kind === 2 || kind === -1 || kind === 5;
+}
+function atTheEnds(kind: number): boolean {
+  return kind === 2147483647 || kind === 2147483646 || kind === 2147483640 || kind === 2147483600;
+}
+function atTheLowEnd(kind: number): boolean {
+  return kind === -2147483648 || kind === -2147483647 || kind === -2147483640 || kind === -2147483600;
+}
+function threePlaces(kind: number): string {
+  switch (kind) {
+    case 1: case 5: case 9: case 13:
+      return "odd";
+    case 2: case 6: case 10:
+      return "even";
+    case 3: case 33:
+      return "third";
+    default:
+      return "none";
+  }
+}
+function fourPlaces(kind: number): string {
+  switch (kind) {
+    case 1: case 5:
+      return "a";
+    case 2: case 6:
+      return "b";
+    case 3:
+      return "c";
+    case 4:
+      return "d";
+    default:
+      return "none";
+  }
+}
+function leftValueIsKept(kind: number, text: string): boolean | string {
+  return kind === 7 || kind === 8 || kind === 9 || kind === 11 || text;
+}
+function joinedByAnd(kind: number, other: number): boolean {
+  return kind !== 7 && kind !== 8 && kind !== 9 && kind !== 11 && other === 1;
+}
+function ofAnything(kind: unknown): boolean {
+  return kind === 20 || kind === 21 || kind === 22 || kind === 25 || kind === 30;
+}
+const numbers: number[] = [];
+for (let i = -70; i <= 330; i++) numbers.push(i);
+numbers.push(-0, 0.5, 243.5, 246.0000001, NaN, Infinity, -Infinity, 4294967296 + 243, 4294967296 + 10, -4294967296 + 1, 2147483647, 2147483646, 2147483645, 2147483640, 2147483600, 2147483599, 2147483648,
+  -2147483648, -2147483647, -2147483646, -2147483640, -2147483600, -2147483649, 9007199254740991, 1e300);
+const lines: string[] = [];
+for (const predicate of [withoutGap, withGaps, exactly64Wide, wider, aroundZero, atTheEnds, atTheLowEnd]) {
+  const passing: number[] = [];
+  for (const n of numbers) if (predicate(n)) passing.push(Object.is(n, -0) ? -0.5 : n);
+  lines.push(predicate.name + ": " + passing.join(" "));
+}
+for (const classify of [threePlaces, fourPlaces]) {
+  let text = "";
+  for (const n of numbers) { const place = classify(n); if (place !== "none") text += " " + n + "=" + place; }
+  lines.push(classify.name + ":" + text);
+}
+let kept = "";
+for (let i = 5; i < 14; i++) kept += " " + String(leftValueIsKept(i, i % 2 ? "" : "t")) + "|" + joinedByAnd(i, i % 3);
+lines.push("kept:" + kept);
+const odd: unknown[] = [20, 21.0, "20", 25n, null, undefined, true, { valueOf() { return 22; } }, [30], 30, 22, -0, 26, new Number(25)];
+lines.push("anything: " + odd.map(ofAnything).join(" "));
+console.log(lines.join("\n"));
+//// equality-operand-kinds.ts
+// `===`, `!==`, `==` and `!=` over every pair of operand kinds. Each operand is typed precisely, as an optional, as a literal union and as unknown; each comparison is a value and a branch condition, in hot loops and in code that runs once.
+const digits = "0123456789abcdef";
+function answerDigit(strict: boolean, notStrict: boolean, loose: boolean, notLoose: boolean, branches: number): string {
+  const answers = (strict ? 8 : 0) + (notStrict ? 4 : 0) + (loose ? 2 : 0) + (notLoose ? 1 : 0);
+  return answers === branches ? digits[answers] : "<" + answers + " " + branches + ">";
+}
+function join(a: string, b: string): string {
+  return a + b;
+}
+const values: unknown[] = [0, -0, 1, 1.5, NaN, 2 ** 31, undefined, null, true, false, "", "a", "1", "é", join("a", ""), "ab", join("a", "b"), 1n, Symbol.iterator, {}, []];
+const boxedAsDoubles = new Float64Array([0, -0, 1, 2 ** 31]);
+for (let i = 0; i < boxedAsDoubles.length; i++) values.push(Reflect.get(boxedAsDoubles, i));
+
+function unknownAndUnknown(a: unknown, b: unknown): string {
+  return answerDigit(a === b, a !== b, a == b, a != b, (b === a ? 8 : 0) + (b !== a ? 4 : 0) + (b == a ? 2 : 0) + (b != a ? 1 : 0));
+}
+
+////= lines-7	withUndefined	undefined
+////= lines-7	withNull	null
+////= lines-2	withNumber	"number"
+////= lines-2	withBoolean	"boolean"
+////= lines-2	withString	"string"
+////= lines-2	withBigInt	"bigint"
+////= lines-2	withSymbol	"symbol"
+function withObject(a: unknown, b: unknown): string {
+  if (a === null) return "?";
+  if (typeof a !== "object") return "?";
+  const u = a as unknown;
+  if (b === undefined) return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (b === null) return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "number") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "boolean") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "string") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "bigint") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "symbol") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  if (typeof b === "object") return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0));
+  return "?";
+}
+
+function numberAndNumber(a: number | undefined, b: number | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function numberAndBoolean(a: number | undefined, b: boolean | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function numberAndString(a: number | undefined, b: string | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function numberAndBigInt(a: number | undefined, b: bigint | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function numberAndSymbol(a: number | undefined, b: symbol | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function numberAndObject(a: number | undefined, b: object | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function numberAndUnknown(a: number | undefined, b: unknown): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function booleanAndNumber(a: boolean | undefined, b: number | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function booleanAndBoolean(a: boolean | undefined, b: boolean | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function booleanAndString(a: boolean | undefined, b: string | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function booleanAndBigInt(a: boolean | undefined, b: bigint | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function booleanAndSymbol(a: boolean | undefined, b: symbol | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function booleanAndObject(a: boolean | undefined, b: object | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function booleanAndUnknown(a: boolean | undefined, b: unknown): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function stringAndNumber(a: string | undefined, b: number | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function stringAndBoolean(a: string | undefined, b: boolean | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function stringAndString(a: string | undefined, b: string | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function stringAndBigInt(a: string | undefined, b: bigint | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function stringAndSymbol(a: string | undefined, b: symbol | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function stringAndObject(a: string | undefined, b: object | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function stringAndUnknown(a: string | undefined, b: unknown): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function bigIntAndNumber(a: bigint | undefined, b: number | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function bigIntAndBoolean(a: bigint | undefined, b: boolean | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function bigIntAndString(a: bigint | undefined, b: string | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function bigIntAndBigInt(a: bigint | undefined, b: bigint | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function bigIntAndSymbol(a: bigint | undefined, b: symbol | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function bigIntAndObject(a: bigint | undefined, b: object | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function bigIntAndUnknown(a: bigint | undefined, b: unknown): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function symbolAndNumber(a: symbol | undefined, b: number | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function symbolAndBoolean(a: symbol | undefined, b: boolean | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function symbolAndString(a: symbol | undefined, b: string | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function symbolAndBigInt(a: symbol | undefined, b: bigint | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function symbolAndSymbol(a: symbol | undefined, b: symbol | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function symbolAndObject(a: symbol | undefined, b: object | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function symbolAndUnknown(a: symbol | undefined, b: unknown): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function objectAndNumber(a: object | undefined, b: number | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function objectAndBoolean(a: object | undefined, b: boolean | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function objectAndString(a: object | undefined, b: string | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function objectAndBigInt(a: object | undefined, b: bigint | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function objectAndSymbol(a: object | undefined, b: symbol | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function objectAndObject(a: object | undefined, b: object | undefined): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function objectAndUnknown(a: object | undefined, b: unknown): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+
+function precisely(a: unknown, b: unknown): string {
+  if (a === undefined) return withUndefined(a, b);
+  if (a === null) return withNull(a, b);
+  if (typeof a === "number") return withNumber(a, b);
+  if (typeof a === "boolean") return withBoolean(a, b);
+  if (typeof a === "string") return withString(a, b);
+  if (typeof a === "bigint") return withBigInt(a, b);
+  if (typeof a === "symbol") return withSymbol(a, b);
+  return withObject(a, b);
+}
+
+type Comparison = (a: any, b: any) => string;
+const kinds = ["number", "boolean", "string", "bigint", "symbol", "object"];
+const optionals: Comparison[][] = [
+  [numberAndNumber, numberAndBoolean, numberAndString, numberAndBigInt, numberAndSymbol, numberAndObject, numberAndUnknown],
+  [booleanAndNumber, booleanAndBoolean, booleanAndString, booleanAndBigInt, booleanAndSymbol, booleanAndObject, booleanAndUnknown],
+  [stringAndNumber, stringAndBoolean, stringAndString, stringAndBigInt, stringAndSymbol, stringAndObject, stringAndUnknown],
+  [bigIntAndNumber, bigIntAndBoolean, bigIntAndString, bigIntAndBigInt, bigIntAndSymbol, bigIntAndObject, bigIntAndUnknown],
+  [symbolAndNumber, symbolAndBoolean, symbolAndString, symbolAndBigInt, symbolAndSymbol, symbolAndObject, symbolAndUnknown],
+  [objectAndNumber, objectAndBoolean, objectAndString, objectAndBigInt, objectAndSymbol, objectAndObject, objectAndUnknown],
+];
+function fits(value: unknown, kind: number): boolean {
+  return kind === kinds.length || value == null || typeof value === kinds[kind];
+}
+function table(compare: Comparison, left: unknown[], right: unknown[]): string {
+  let out = "";
+  for (const a of left) {
+    for (const b of right) out += compare(a, b);
+    out += " ";
+  }
+  return out;
+}
+function list(describe: (value: any) => string, items: unknown[]): string {
+  let out = "";
+  for (const item of items) out += describe(item) + " ";
+  return out;
+}
+
+const integers = new Int32Array([0, 1, -1, 2 ** 31 - 1]);
+const fractions = new Float64Array([0, -0, 1, 1.5, NaN, 2 ** 31 - 1]);
+function integerElements(xs: Int32Array, i: number, ys: Int32Array, j: number): string { const a = xs[i], b = ys[j]; return answerDigit(a === b, a !== b, a == b, a != b, (b === a ? 8 : 0) + (b !== a ? 4 : 0) + (b == a ? 2 : 0) + (b != a ? 1 : 0)); }
+function integerAndFractionElements(xs: Int32Array, i: number, ys: Float64Array, j: number): string { const a = xs[i], b = ys[j]; return answerDigit(a === b, a !== b, a == b, a != b, (b === a ? 8 : 0) + (b !== a ? 4 : 0) + (b == a ? 2 : 0) + (b != a ? 1 : 0)); }
+function fractionElements(xs: Float64Array, i: number, ys: Float64Array, j: number): string { const a = xs[i], b = ys[j]; return answerDigit(a === b, a !== b, a == b, a != b, (b === a ? 8 : 0) + (b !== a ? 4 : 0) + (b == a ? 2 : 0) + (b != a ? 1 : 0)); }
+
+type Letter = "a" | "b";
+type Pair = "ab" | "cd";
+function letterAndLetter(a: Letter, b: Letter): string { return answerDigit(a === b, a !== b, a == b, a != b, (b === a ? 8 : 0) + (b !== a ? 4 : 0) + (b == a ? 2 : 0) + (b != a ? 1 : 0)); }
+function letterAndOtherUnion(a: Letter, b: "b" | "c"): string { return answerDigit(a === b, a !== b, a == b, a != b, (b === a ? 8 : 0) + (b !== a ? 4 : 0) + (b == a ? 2 : 0) + (b != a ? 1 : 0)); }
+function letterAndString(a: Letter, b: string): string { return answerDigit(a === b, a !== b, a == b, a != b, (b === a ? 8 : 0) + (b !== a ? 4 : 0) + (b == a ? 2 : 0) + (b != a ? 1 : 0)); }
+function letterAndUnknown(a: Letter, b: unknown): string { return answerDigit(a === b, a !== b, a == b, a != b, (b === a ? 8 : 0) + (b !== a ? 4 : 0) + (b == a ? 2 : 0) + (b != a ? 1 : 0)); }
+function letterAndNumber(a: Letter, b: number): string { const u = a as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function pairAndPair(a: Pair, b: Pair): string { return answerDigit(a === b, a !== b, a == b, a != b, (b === a ? 8 : 0) + (b !== a ? 4 : 0) + (b == a ? 2 : 0) + (b != a ? 1 : 0)); }
+function pairAndString(a: Pair, b: string): string { return answerDigit(a === b, a !== b, a == b, a != b, (b === a ? 8 : 0) + (b !== a ? 4 : 0) + (b == a ? 2 : 0) + (b != a ? 1 : 0)); }
+function letterIsConstant(a: Letter): string {
+  return answerDigit(a === "a", a !== "a", a == "a", a != "a", ("a" === a ? 8 : 0) + ("a" !== a ? 4 : 0) + ("a" == a ? 2 : 0) + ("a" != a ? 1 : 0))
+    + answerDigit(a === "b", a !== "b", a == "b", a != "b", ("b" === a ? 8 : 0) + ("b" !== a ? 4 : 0) + ("b" == a ? 2 : 0) + ("b" != a ? 1 : 0));
+}
+function isTextA(text: string): boolean { return text === "a"; }
+function areSameText(a: string, b: string): boolean { return a === b; }
+function widenedLetters(a: Letter, b: Letter): string { return (isTextA(a) ? "1" : "0") + (areSameText(a, b) ? "1" : "0") + (areSameText("b", a) ? "1" : "0"); }
+const letterValues: unknown[] = ["a", "b", String.fromCharCode(97), "xb".slice(1), undefined, null];
+const otherUnionValues: unknown[] = ["b", "c", String.fromCharCode(99), undefined];
+const pairValues: unknown[] = ["ab", "cd", join("a", "b"), "abcd".slice(2), undefined, null];
+
+function numberAndItself(x: unknown): string { if (typeof x !== "number") return "?"; return answerDigit(x === x, x !== x, x == x, x != x, (x === x ? 8 : 0) + (x !== x ? 4 : 0) + (x == x ? 2 : 0) + (x != x ? 1 : 0)); }
+function optionalNumberAndItself(x: number | undefined): string { return answerDigit(x === x, x !== x, x == x, x != x, (x === x ? 8 : 0) + (x !== x ? 4 : 0) + (x == x ? 2 : 0) + (x != x ? 1 : 0)); }
+function unknownAndItself(x: unknown): string { return answerDigit(x === x, x !== x, x == x, x != x, (x === x ? 8 : 0) + (x !== x ? 4 : 0) + (x == x ? 2 : 0) + (x != x ? 1 : 0)); }
+function elementAndItself(xs: Float64Array, i: number): string { const x = xs[i]; return answerDigit(x === x, x !== x, x == x, x != x, (x === x ? 8 : 0) + (x !== x ? 4 : 0) + (x == x ? 2 : 0) + (x != x ? 1 : 0)); }
+function codeUnitAndItself(text: string, i: number): string { const x = text.charCodeAt(i); return answerDigit(x === x, x !== x, x == x, x != x, (x === x ? 8 : 0) + (x !== x ? 4 : 0) + (x == x ? 2 : 0) + (x != x ? 1 : 0)); }
+function codeUnits(s: string, i: number, t: string, j: number): string { const a = s.charCodeAt(i), b = t.charCodeAt(j); return answerDigit(a === b, a !== b, a == b, a != b, (b === a ? 8 : 0) + (b !== a ? 4 : 0) + (b == a ? 2 : 0) + (b != a ? 1 : 0)); }
+function codeUnitIsConstant(text: string, i: number): string { const a = text.charCodeAt(i); return answerDigit(a === 97, a !== 97, a == 97, a != 97, (97 === a ? 8 : 0) + (97 !== a ? 4 : 0) + (97 == a ? 2 : 0) + (97 != a ? 1 : 0)); }
+
+interface Entry { id: number; next?: Entry | null; label?: string | null }
+class Link { next?: Link | null; label?: string | null; constructor(public id: number) {} }
+function fieldsOf(entry: Entry): string {
+  const next = entry.next, label = entry.label, nothing = undefined, none = null, yes: unknown = true;
+  return answerDigit(next === nothing, next !== nothing, next == nothing, next != nothing, (nothing === next ? 8 : 0) + (nothing !== next ? 4 : 0) + (nothing == next ? 2 : 0) + (nothing != next ? 1 : 0))
+    + answerDigit(next === none, next !== none, next == none, next != none, (none === next ? 8 : 0) + (none !== next ? 4 : 0) + (none == next ? 2 : 0) + (none != next ? 1 : 0))
+    + answerDigit(next === yes, next !== yes, next == yes, next != yes, (yes === next ? 8 : 0) + (yes !== next ? 4 : 0) + (yes == next ? 2 : 0) + (yes != next ? 1 : 0))
+    + answerDigit(label === nothing, label !== nothing, label == nothing, label != nothing, (nothing === label ? 8 : 0) + (nothing !== label ? 4 : 0) + (nothing == label ? 2 : 0) + (nothing != label ? 1 : 0))
+    + answerDigit(label === none, label !== none, label == none, label != none, (none === label ? 8 : 0) + (none !== label ? 4 : 0) + (none == label ? 2 : 0) + (none != label ? 1 : 0))
+    + answerDigit(label === "a", label !== "a", label == "a", label != "a", ("a" === label ? 8 : 0) + ("a" !== label ? 4 : 0) + ("a" == label ? 2 : 0) + ("a" != label ? 1 : 0))
+    + (entry.next === undefined ? "u" : "-") + (entry.next === null ? "n" : "-") + (undefined !== entry.label ? "-" : "u") + (null !== entry.label ? "-" : "n");
+}
+const lastEntry: Entry = { id: 1 };
+const clearedEntry: Entry = { id: 2, next: lastEntry, label: "b" };
+clearedEntry.next = undefined;
+clearedEntry.label = undefined;
+const deletedEntry: Entry = { id: 3, next: lastEntry, label: "b" };
+delete deletedEntry.next;
+delete deletedEntry.label;
+const lastLink = new Link(4);
+const firstLink = new Link(5);
+firstLink.next = lastLink;
+firstLink.label = String.fromCharCode(97);
+const entries: Entry[] = [lastEntry, clearedEntry, deletedEntry, { id: 6, next: undefined, label: undefined }, { id: 7, next: null, label: null }, { id: 8, next: lastEntry, label: "a" }, firstLink, lastLink];
+
+function int32AndUnknown(i: number, b: unknown): string { const u = (i | 0) as unknown; return answerDigit(u === b, u !== b, u == b, u != b, (b === u ? 8 : 0) + (b !== u ? 4 : 0) + (b == u ? 2 : 0) + (b != u ? 1 : 0)); }
+function unknownIsInteger(b: unknown): string {
+  return answerDigit(b === 1, b !== 1, b == 1, b != 1, (1 === b ? 8 : 0) + (1 !== b ? 4 : 0) + (1 == b ? 2 : 0) + (1 != b ? 1 : 0))
+    + answerDigit(b === 0, b !== 0, b == 0, b != 0, (0 === b ? 8 : 0) + (0 !== b ? 4 : 0) + (0 == b ? 2 : 0) + (0 != b ? 1 : 0))
+    + answerDigit(b === -1, b !== -1, b == -1, b != -1, (-1 === b ? 8 : 0) + (-1 !== b ? 4 : 0) + (-1 == b ? 2 : 0) + (-1 != b ? 1 : 0));
+}
+function zeroOrTextAndNumber(a: 0 | "a", b: number): string {
+  const negativeZero = -0;
+  return answerDigit(a === b, a !== b, a == b, a != b, (b === a ? 8 : 0) + (b !== a ? 4 : 0) + (b == a ? 2 : 0) + (b != a ? 1 : 0))
+    + answerDigit(a === negativeZero, a !== negativeZero, a == negativeZero, a != negativeZero, (negativeZero === a ? 8 : 0) + (negativeZero !== a ? 4 : 0) + (negativeZero == a ? 2 : 0) + (negativeZero != a ? 1 : 0));
+}
+////= lines-16	unknownIsText	unknown
+////= lines-16	stringIsText	string
+const converting: unknown[] = [{ toString() { return "a"; } }, new String("ab"), ["a"], [1], join("abcdefghijklmnopqrstuvwxyz", "0123456789"), "abcdefghijklmnopqrstuvwxyz012345678x"];
+
+////= lines-3	countUnknown	unknown	unknown
+////= lines-3	countNumbers	number	number
+////= lines-3	countStrings	string	string
+////= lines-3	countStringAmongUnknown	unknown	string
+////= lines-3	countLetters	Letter	Letter
+function countInt32AmongUnknown(xs: unknown[], n: number): number {
+  const y = n | 0;
+  let count = 0;
+  for (let i = 0; i < xs.length; i++) {
+    if (xs[i] === y) count += 1;
+    if (xs[i] != y) count += 100;
+    count += 10000 * Number(y !== xs[i]) + 1000000 * Number(y == xs[i]);
+  }
+  return count;
+}
+function countTextAmongUnknown(xs: unknown[]): number {
+  let count = 0;
+  for (let i = 0; i < xs.length; i++) {
+    if (xs[i] === "a") count += 1;
+    if ("ab" != xs[i]) count += 100;
+    count += 10000 * Number("é" !== xs[i]) + 1000000 * Number(xs[i] == "1");
+  }
+  return count;
+}
+function countEqualToItself(xs: unknown[]): number {
+  let count = 0;
+  for (let i = 0; i < xs.length; i++) {
+    const x = xs[i];
+    if (x === x) count += 1;
+    if (x != x) count += 100;
+  }
+  return count;
+}
+
+function once(): string {
+  const one = values[2] as number, alsoOne = values[23] as number, notANumber = values[4] as number, zero = values[0] as number, negativeZero = values[1] as number;
+  const text = values[15] as string, rope = values[16] as string, letter = values[11] as Letter, sameLetter = values[14] as Letter;
+  const object = values[19] as object, array = values[20] as object, big = values[17] as bigint, alsoBig = BigInt(1), anything = values[16], nothing = values[6];
+  return answerDigit(one === alsoOne, one !== alsoOne, one == alsoOne, one != alsoOne, (alsoOne === one ? 8 : 0) + (alsoOne !== one ? 4 : 0) + (alsoOne == one ? 2 : 0) + (alsoOne != one ? 1 : 0))
+    + answerDigit(notANumber === notANumber, notANumber !== notANumber, notANumber == notANumber, notANumber != notANumber, (notANumber === notANumber ? 8 : 0) + (notANumber !== notANumber ? 4 : 0) + (notANumber == notANumber ? 2 : 0) + (notANumber != notANumber ? 1 : 0))
+    + answerDigit(zero === negativeZero, zero !== negativeZero, zero == negativeZero, zero != negativeZero, (negativeZero === zero ? 8 : 0) + (negativeZero !== zero ? 4 : 0) + (negativeZero == zero ? 2 : 0) + (negativeZero != zero ? 1 : 0))
+    + answerDigit(text === rope, text !== rope, text == rope, text != rope, (rope === text ? 8 : 0) + (rope !== text ? 4 : 0) + (rope == text ? 2 : 0) + (rope != text ? 1 : 0))
+    + answerDigit(letter === sameLetter, letter !== sameLetter, letter == sameLetter, letter != sameLetter, (sameLetter === letter ? 8 : 0) + (sameLetter !== letter ? 4 : 0) + (sameLetter == letter ? 2 : 0) + (sameLetter != letter ? 1 : 0))
+    + answerDigit(letter === text, letter !== text, letter == text, letter != text, (text === letter ? 8 : 0) + (text !== letter ? 4 : 0) + (text == letter ? 2 : 0) + (text != letter ? 1 : 0))
+    + answerDigit(object === array, object !== array, object == array, object != array, (array === object ? 8 : 0) + (array !== object ? 4 : 0) + (array == object ? 2 : 0) + (array != object ? 1 : 0))
+    + answerDigit(object === object, object !== object, object == object, object != object, (object === object ? 8 : 0) + (object !== object ? 4 : 0) + (object == object ? 2 : 0) + (object != object ? 1 : 0))
+    + answerDigit(big === alsoBig, big !== alsoBig, big == alsoBig, big != alsoBig, (alsoBig === big ? 8 : 0) + (alsoBig !== big ? 4 : 0) + (alsoBig == big ? 2 : 0) + (alsoBig != big ? 1 : 0))
+    + answerDigit(anything === text, anything !== text, anything == text, anything != text, (text === anything ? 8 : 0) + (text !== anything ? 4 : 0) + (text == anything ? 2 : 0) + (text != anything ? 1 : 0))
+    + answerDigit(anything === nothing, anything !== nothing, anything == nothing, anything != nothing, (nothing === anything ? 8 : 0) + (nothing !== anything ? 4 : 0) + (nothing == anything ? 2 : 0) + (nothing != anything ? 1 : 0))
+    + answerDigit(one === anything, one !== anything, one == anything, one != anything, (anything === one ? 8 : 0) + (anything !== one ? 4 : 0) + (anything == one ? 2 : 0) + (anything != one ? 1 : 0))
+    + answerDigit(nothing === nothing, nothing !== nothing, nothing == nothing, nothing != nothing, (nothing === nothing ? 8 : 0) + (nothing !== nothing ? 4 : 0) + (nothing == nothing ? 2 : 0) + (nothing != nothing ? 1 : 0))
+    + answerDigit(anything === "ab", anything !== "ab", anything == "ab", anything != "ab", ("ab" === anything ? 8 : 0) + ("ab" !== anything ? 4 : 0) + ("ab" == anything ? 2 : 0) + ("ab" != anything ? 1 : 0))
+    + answerDigit(anything === 1, anything !== 1, anything == 1, anything != 1, (1 === anything ? 8 : 0) + (1 !== anything ? 4 : 0) + (1 == anything ? 2 : 0) + (1 != anything ? 1 : 0))
+    + answerDigit(letter === "a", letter !== "a", letter == "a", letter != "a", ("a" === letter ? 8 : 0) + ("a" !== letter ? 4 : 0) + ("a" == letter ? 2 : 0) + ("a" != letter ? 1 : 0));
+}
+
+function allTables(): string[] {
+  const lines: string[] = [];
+  lines.push("unknown, unknown: " + table(unknownAndUnknown, values, values));
+  lines.push("precise, precise: " + table(precisely, values, values));
+  for (let i = 0; i < optionals.length; i++) {
+    for (let j = 0; j < optionals[i].length; j++)
+      lines.push(kinds[i] + "?, " + (j < kinds.length ? kinds[j] + "?" : "unknown") + ": " + table(optionals[i][j], values.filter(value => fits(value, i)), values.filter(value => fits(value, j))));
+  }
+  let elements = "";
+  for (let i = 0; i <= integers.length; i++) for (let j = 0; j <= integers.length; j++) elements += integerElements(integers, i, integers, j);
+  elements += " ";
+  for (let i = 0; i <= integers.length; i++) for (let j = 0; j <= fractions.length; j++) elements += integerAndFractionElements(integers, i, fractions, j);
+  elements += " ";
+  for (let i = 0; i <= fractions.length; i++) for (let j = 0; j <= fractions.length; j++) elements += fractionElements(fractions, i, fractions, j);
+  lines.push("elements: " + elements);
+  const numbers = values.filter(value => fits(value, 0));
+  const texts = values.filter(value => fits(value, 2));
+  lines.push("letter, letter: " + table(letterAndLetter, letterValues, letterValues));
+  lines.push("letter, other union: " + table(letterAndOtherUnion, letterValues, otherUnionValues));
+  lines.push("letter, string: " + table(letterAndString, letterValues, texts));
+  lines.push("letter, unknown: " + table(letterAndUnknown, letterValues, values));
+  lines.push("letter, number: " + table(letterAndNumber, letterValues, numbers));
+  lines.push("pair, pair: " + table(pairAndPair, pairValues, pairValues));
+  lines.push("pair, string: " + table(pairAndString, pairValues, texts));
+  lines.push("letter, constant: " + list(letterIsConstant, letterValues));
+  lines.push("widened letters: " + table(widenedLetters, letterValues, letterValues));
+  lines.push("number and itself: " + list(numberAndItself, values));
+  lines.push("number? and itself: " + list(optionalNumberAndItself, numbers));
+  lines.push("unknown and itself: " + list(unknownAndItself, values));
+  let reads = "";
+  for (let i = 0; i <= fractions.length; i++) reads += elementAndItself(fractions, i);
+  reads += " ";
+  for (let i = -1; i <= 2; i++) reads += codeUnitAndItself("aé", i) + codeUnitIsConstant("aé", i);
+  reads += " ";
+  for (let i = -1; i <= 2; i++) for (let j = -1; j <= 2; j++) reads += codeUnits("aé", i, "éa", j);
+  lines.push("reads: " + reads);
+  lines.push("fields: " + list(fieldsOf, entries));
+  lines.push("int32, unknown: " + table(int32AndUnknown, [0, 1, -1, 2 ** 31 - 1], values));
+  lines.push("unknown, integer constant: " + list(unknownIsInteger, values));
+  lines.push("zero or text, number: " + table(zeroOrTextAndNumber, [0, "a", undefined], [0, -0, 1, NaN, undefined]));
+  lines.push("unknown, text constant: " + list(unknownIsText, values.concat(converting)));
+  lines.push("string, text constant: " + list(stringIsText, texts.concat(converting.slice(4))));
+  const counts: number[] = [];
+  for (const value of values) counts.push(countUnknown(values, value));
+  for (const value of numbers) counts.push(countNumbers(numbers as number[], value as number));
+  for (const value of texts) counts.push(countStrings(texts as string[], value as string), countStringAmongUnknown(values, value as string));
+  for (const value of letterValues) counts.push(countLetters(letterValues as Letter[], value as Letter));
+  for (const value of [0, 1, -1]) counts.push(countInt32AmongUnknown(values, value));
+  counts.push(countTextAmongUnknown(values), countEqualToItself(values));
+  lines.push("loops: " + counts.join(" "));
+  return lines;
+}
+
+const first = allTables();
+console.log(first.join("\n"));
+for (let round = 0; round < 20; round++) {
+  const again = allTables();
+  for (let i = 0; i < first.length; i++) if (again[i] !== first[i]) console.log("round " + round + " changed line " + i);
+}
+console.log("once: " + once());
+//// error-message-source.js
+// An error message quotes source text only from the frame that raised the error. Compiled code has no text to quote, so its message must not quote a caller that was created from text. Constant text given to `new Function` is compiled with the program, so that caller quotes nothing either, where under plain Bun it quotes itself.
+function messageOf(run) {
+  try {
+    run();
+  } catch (error) {
+    return error instanceof TypeError ? error.message : "not a TypeError";
+  }
+  return "no error";
+}
+const callsFromText = new Function("callback", "return callback()");
+const cases = [
+  ["new Math.max()", () => [new Math.max()], new Function("return new Math.max()")],
+  ["new Symbol()", () => [new Symbol()], new Function("return new Symbol()")],
+];
+for (const [text, raise, raiseInText] of cases) {
+  const calledFromText = messageOf(() => [callsFromText(raise)]);
+  const raisedInText = messageOf(() => [raiseInText()]);
+  console.log(`${text}: quotes its caller ${calledFromText.includes("callback")}, text quotes itself ${raisedInText.includes(text)}`);
+}
+//// error-positions-in-static-blocks.ts
+// An error that is created or thrown in a static block is where the block says it: the block has a frame of its own, without a name, above the code that evaluates the class.
+let calls = 0;
+function describe(error: unknown): string {
+  const { name, message, line, column, stack } = error as any;
+  const frames: string[] = [];
+  for (const text of String(stack).split("\n")) {
+    const frame = /^\s*at (?:(.*?) \()?[^()]*?:(\d+):(\d+)\)?$/.exec(text);
+    if (frame) frames.push((frame[1] === "module code" || frame[1] === "<anonymous>" ? "" : frame[1] ?? "") + ":" + frame[2] + ":" + frame[3]);
+  }
+  return name + ": " + message + " at " + line + ":" + column + ", stack " + frames.slice(0, 2).join(" | ");
+}
+class WithBlock {
+  static fromBlock: Error;
+  static {
+    WithBlock.fromBlock = new URIError("static block");
+  }
+}
+function throwInStaticBlock(): void {
+  class Local {
+    static {
+      if (calls >= 0) throw new TypeError("thrown in a static block");
+    }
+  }
+  calls++;
+}
+function caught(run: () => void): unknown {
+  try {
+    run();
+  } catch (error) {
+    return error;
+  }
+  return "nothing was thrown";
+}
+console.log(describe(WithBlock.fromBlock));
+console.log(describe(caught(throwInStaticBlock)));
+//// errors-that-nobody-looks-at.ts
+// An Error that is thrown and caught in one function and never looked at need not be created. Everything that creating it can be seen to do stays: converting the message, reading `cause`, the constructor of a subclass, and the hooks that format a stack, which run when `stack` is read.
+const log: string[] = [];
+
+function caughtHere(r: number): number {
+  try { if (r >= 0) throw new Error("x"); } catch { r += 1; }
+  try { if (r >= 0) throw new TypeError("y"); } catch (e) { r += 2; }
+  try { if (r >= 0) throw RangeError("z"); } catch { r += 3; }
+  try { if (r < 0) throw new Error("never"); r += 4; } catch { r = -1; }
+  return r;
+}
+
+function unusedOutsideTry(): number {
+  new Error("unused");
+  new SyntaxError();
+  Error("called");
+  return 1;
+}
+
+function messageIsConverted(): void {
+  try { throw new Error({ toString() { log.push("toString"); return "m"; } } as unknown as string); } catch { log.push("caught 1"); }
+  try { throw new Error(Symbol("s") as unknown as string); } catch (e) { log.push((e as Error).constructor.name); }
+  new Error({ toString() { log.push("unused toString"); return "m"; } } as unknown as string);
+  try { new Error({ toString() { throw new RangeError("from toString"); } } as unknown as string); } catch (e) { log.push((e as Error).message); }
+}
+
+function causeIsRead(): void {
+  try { throw new Error("x", { get cause() { log.push("cause"); return 1; } }); } catch { log.push("caught 2"); }
+  new Error("x", { get cause() { log.push("unused cause"); return 1; } });
+  try { new Error("x", { get cause(): number { throw new TypeError("from cause"); } }); } catch (e) { log.push((e as Error).message); }
+  new Error("x", new Proxy({}, { has(_, key) { log.push("has " + String(key)); return false; } }));
+}
+
+class Counted extends Error {
+  static made = 0;
+  constructor(message: string) {
+    super(message);
+    Counted.made++;
+  }
+}
+
+function subclass(): number {
+  try { throw new Counted("x"); } catch { }
+  new Counted("y");
+  return Counted.made;
+}
+
+function hooks(): void {
+  const previous = (Error as any).prepareStackTrace;
+  (Error as any).prepareStackTrace = (error: Error) => { log.push("prepare " + error.message); return "formatted"; };
+  try { throw new Error("not looked at"); } catch { log.push("caught 3"); }
+  try { throw new Error("looked at"); } catch (e) { log.push(String((e as Error).stack)); }
+  (Error as any).prepareStackTrace = previous;
+  const limit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 0;
+  try { throw new Error("no frames"); } catch { log.push("caught 4"); }
+  Error.stackTraceLimit = limit;
+}
+
+function looksAtIt(r: number): string {
+  try { if (r >= 0) throw new Error("seen"); return "none"; } catch (e) { return (e as Error).message + " " + (e instanceof Error) + " " + typeof (e as Error).stack; }
+}
+
+function escapes(): unknown[] {
+  const kept: unknown[] = [];
+  try { throw new Error("kept"); } catch (e) { kept.push(e); }
+  return kept;
+}
+
+console.log(caughtHere(0), caughtHere(5), caughtHere(-10), unusedOutsideTry());
+messageIsConverted();
+causeIsRead();
+console.log(subclass());
+hooks();
+console.log(looksAtIt(1), looksAtIt(-1), (escapes()[0] as Error).message);
+console.log(log.join("\n"));
+//// every-door-of-sloppy-code-to-a-built-in-throws.cjs
+// Sloppy code: every door by which it may try to change a locked built-in object. The refusal is a TypeError here as in strict code.
+const f = function () {};
+const key = ["pu", "sh"].join(""), index = [3].length + 2;
+const unknown = value => new CustomEvent("unknown", { detail: value }).detail;
+function door(name, change, stays) {
+  let said;
+  try { change(); said = "silent"; } catch (error) { said = error.constructor.name + ": " + String(error.message).slice(0, 58); }
+  console.log(name + " | " + said + " | " + (stays() ? "as it was" : "CHANGED"));
+}
+const push = Array.prototype.push, map = Array.prototype.map, max = Math.max, then = Promise.prototype.then, exec = RegExp.prototype.exec, call = Function.prototype.call, iterator = Array.prototype[Symbol.iterator];
+door("a store by name", () => { Array.prototype.push = f; }, () => Array.prototype.push === push);
+door("a store by a literal key", () => { Array.prototype["push"] = f; }, () => Array.prototype.push === push);
+door("a store by a computed key", () => { Array.prototype[key] = f; }, () => Array.prototype.push === push);
+door("a store by a symbol", () => { Array.prototype[Symbol.iterator] = f; }, () => Array.prototype[Symbol.iterator] === iterator);
+door("a store through a value nobody knows", () => { unknown(Array.prototype).push = f; }, () => Array.prototype.push === push);
+door("a deletion by name", () => { delete Array.prototype.map; }, () => Array.prototype.map === map);
+door("a deletion by a computed key", () => { delete Array.prototype[key]; }, () => Array.prototype.push === push);
+door("a deletion through a value nobody knows", () => { delete unknown(Array.prototype).map; }, () => Array.prototype.map === map);
+door("a new name on Object.prototype", () => { Object.prototype.extra = 1; }, () => !("extra" in {}));
+door("a new name on Object.prototype by a computed key", () => { Object.prototype[key + "ed"] = 1; }, () => !("pushed" in {}));
+door("a member of Object.prototype", () => { Object.prototype.toString = f; }, () => Object.prototype.toString !== f);
+door("a deletion on Object.prototype", () => { delete Object.prototype.toString; }, () => "toString" in {});
+door("a new name on Function.prototype", () => { Function.prototype.mine = 1; }, () => !("mine" in f));
+door("a member of Function.prototype", () => { Function.prototype.call = f; }, () => Function.prototype.call === call);
+door("a member of Promise.prototype", () => { Promise.prototype.then = f; }, () => Promise.prototype.then === then);
+door("a member of RegExp.prototype", () => { RegExp.prototype.exec = f; }, () => RegExp.prototype.exec === exec);
+door("a compound assignment", () => { Array.prototype.push += 1; }, () => Array.prototype.push === push);
+door("a logical assignment", () => { Array.prototype.push &&= f; }, () => Array.prototype.push === push);
+door("an increment", () => { Array.prototype.push++; }, () => Array.prototype.push === push);
+door("an array pattern", () => { [Array.prototype.push] = [f]; }, () => Array.prototype.push === push);
+door("an object pattern", () => { ({ a: Array.prototype.push } = { a: f }); }, () => Array.prototype.push === push);
+door("the target of for-of", () => { for (Array.prototype.push of [f]); }, () => Array.prototype.push === push);
+door("the target of for-in", () => { for (Array.prototype.push in { a: 1 }); }, () => Array.prototype.push === push);
+door("with", () => { with (Array.prototype) { push = f; } }, () => Array.prototype.push === push);
+door("Object.assign", () => { Object.assign(Array.prototype, { push: f }); }, () => Array.prototype.push === push);
+door("a numeric key", () => { Array.prototype[index] = 1; }, () => !(index in []));
+door("the length of Array.prototype", () => { Array.prototype.length = 3; }, () => Array.prototype.length === 0);
+door("__proto__", () => { Array.prototype.__proto__ = {}; }, () => Object.getPrototypeOf(Array.prototype) === Object.prototype);
+door("a member of a namespace", () => { Math.max = f; }, () => Math.max === max);
+door("a member of a constructor", () => { Array.from = f; }, () => Array.from !== f);
+door("a global by its name", () => { Array = f; }, () => Array !== f);
+door("a global as a member", () => { globalThis.Array = f; }, () => Array !== f);
+door("a deletion of a global", () => { delete globalThis.Array; }, () => typeof Array === "function");
+door("call on a built-in function", () => { Math.max.call = f; }, () => Math.max.call === call);
+door("a host prototype", () => { Request.prototype.json = f; }, () => Request.prototype.json !== f);
+const throughSuper = { member() { super.push = f; }, newName() { super.extra = 1; } };
+door("super, with the built-in as this", () => { throughSuper.member.call(Array.prototype); }, () => Array.prototype.push === push);
+door("super, a new name", () => { throughSuper.newName.call(Object.prototype); }, () => !("extra" in {}));
+door("text that is evaluated", () => { new Function("f", "Array.prototype.push = f;")(f); }, () => Array.prototype.push === push);
+// What the language itself refuses in silence stays silent, and what answers false goes on answering false.
+door("Math.PI, read-only by the language", () => { Math.PI = 3; }, () => Math.PI > 3.1);
+door("undefined, read-only by the language", () => { undefined = 1; }, () => undefined === void 0);
+door("the same value again", () => { Array.prototype.push = push; }, () => Array.prototype.push === push);
+console.log("Reflect", Reflect.set(Array.prototype, "push", f), Reflect.deleteProperty(Array.prototype, "map"), Reflect.defineProperty(Array.prototype, "push", { value: f }), Reflect.setPrototypeOf(Array.prototype, {}), Reflect.set(Object.prototype, "extra", 1));

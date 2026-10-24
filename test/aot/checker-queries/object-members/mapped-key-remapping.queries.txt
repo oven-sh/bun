@@ -1,7 +1,0 @@
-# An `as` clause that only filters keys follows the modifiers type; one that renames keys is unwritten.
-mapped-key-remapping.ts:6 has `Without<Config, "b">` = a Field number checked number
-absent: mapped-key-remapping.ts:6 has `Without<Config, "b">` = b Field number checked number
-absent: mapped-key-remapping.ts:6 has `Without<Config, "b">` = b Field unwritten checked number
-mapped-key-remapping.ts:7 has `Renamed<Config>` = get_a Field unwritten checked number
-mapped-key-remapping.ts:7 has `Renamed<Config>` = get_b Field unwritten checked number
-mapped-key-remapping.ts:8 index `Without<Table, "b">` = String number checked number

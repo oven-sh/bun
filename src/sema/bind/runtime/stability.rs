@@ -245,8 +245,10 @@ impl StabilityPass<'_, '_> {
 
     fn add_expressions(&mut self) {
         let declarations = &self.bound.runtime.declarations;
-        for &(statement, symbol) in declarations.export_expression_symbols.iter() {
-            self.add(symbol, Decl::ExportExpr(statement));
+        for &(decl, symbol) in declarations.declared_symbols.iter() {
+            if matches!(decl, Decl::ExportExpr(_)) {
+                self.add(symbol, decl);
+            }
         }
         for (index, &symbol) in declarations.import_equals_symbols.iter().enumerate() {
             self.add(symbol, Decl::ImportEquals(ImportEqualsId(index as u32)));

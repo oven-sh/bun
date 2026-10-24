@@ -2986,7 +2986,7 @@ impl Bound<'_> {
             expr_kinds: Fixed::shared(&self.expr_kinds),
             expr_kind_counts: Fixed::shared(&self.expr_kind_counts),
             kind_counts: Fixed::shared(&self.kind_counts),
-            runtime: self.runtime.share(arena),
+            runtime: self.runtime.share(),
         }
     }
 }

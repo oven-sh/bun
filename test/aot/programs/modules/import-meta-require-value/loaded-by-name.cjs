@@ -1,1 +1,0 @@
-exports.readOnlyByName = "read";

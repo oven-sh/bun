@@ -7,7 +7,6 @@ pub fn drop_thread_caches(caches: &ThreadCaches) {
     caches.idle.lock().clear();
 }
 
-/// Runs `on_one_thread` on a thread of the pool, which keeps the parallel regions that it starts to itself, while the calling thread runs `meanwhile`.
 pub fn run_on_one_thread_while<A: Send, B>(
     caches: &ThreadCaches,
     on_one_thread: impl FnOnce() -> A + Send,
@@ -29,7 +28,6 @@ pub fn run_on_one_thread_while<A: Send, B>(
     )
 }
 
-/// Calls `run(argument)` once, on a thread of the pool that parallel regions run on.
 pub unsafe extern "C" fn run_on_region_thread(
     run: unsafe extern "C" fn(*mut c_void),
     argument: *mut c_void,
@@ -136,7 +134,6 @@ mod tests {
         for_each_parallel_in_runs(&caches, threads, threads, 1, &|outer| {
             busy.fetch_add(1, Ordering::SeqCst);
             if outer != 0 {
-                // Keeps its thread until the region below has begun.
                 while !has_begun.load(Ordering::SeqCst) && !gives_up.load(Ordering::SeqCst) {
                     std::thread::yield_now();
                 }
@@ -144,7 +141,6 @@ mod tests {
             }
             while busy.load(Ordering::SeqCst) < threads {
                 if is_late(5) {
-                    // Other tests hold threads of the pool.
                     return gives_up.store(true, Ordering::SeqCst);
                 }
                 std::thread::yield_now();
@@ -247,7 +243,6 @@ mod tests {
             || ARRIVED.load(Ordering::SeqCst) == 4,
             "a task has no thread",
         );
-        // From a thread of the pool, which keeps what it schedules in its own queue.
         schedule_on(pool, move || {
             for _ in 0..3 {
                 pool.schedule_inside_thread_pool(task_that_calls(move || meet(8)));

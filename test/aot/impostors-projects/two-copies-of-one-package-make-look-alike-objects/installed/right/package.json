@@ -1,7 +1,0 @@
-{
-  "name": "right",
-  "version": "1.0.0",
-  "dependencies": {
-    "vector": "2.0.0"
-  }
-}

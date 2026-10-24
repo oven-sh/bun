@@ -183,7 +183,7 @@ fn load<'s, 'r>(context: &CodeLoadContext<'_, 's, 'r>, path: &str) -> ParsedCode
     let path = context.resolver.keep(path.as_bytes());
     let target = CodeTarget::of_path(path, HostLoader::default());
     let text = context.host.read_source(path);
-    load_code_file(context, context.session.arena(), target, text)
+    load_code_file(context, context.session.arena(), target, text, false)
 }
 
 fn load_types<'s, 'r>(context: &CodeLoadContext<'_, 's, 'r>, path: &str) -> Box<Loaded<'s, 'r>> {

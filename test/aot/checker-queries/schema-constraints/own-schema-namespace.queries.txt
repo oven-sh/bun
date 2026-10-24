@@ -1,2 +1,0 @@
-# A program's own `namespace Schema` adds no constraint: only `Schema` from "bun" does.
-own-schema-namespace.ts:3 shape `number & Schema.Min<1>` = Number

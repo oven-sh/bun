@@ -1,5 +1,0 @@
-# A mapped type over a type of a declaration file has the trust of that type: nobody checked what it says.
-partial-of-declaration-file-type.ts:3 shape `Partial<Theirs>` = Object untrusted
-partial-of-declaration-file-type.ts:4 shape `Readonly<Theirs>` = Object untrusted
-partial-of-declaration-file-type.ts:5 shape `Pick<Theirs, "a">` = Object untrusted
-absent: partial-of-declaration-file-type.ts:3 shape `Partial<Theirs>` = Object

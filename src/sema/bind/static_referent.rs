@@ -56,10 +56,8 @@ pub enum LinkedBinding<B, M> {
     Unknown,
 }
 
-// What a call that loads a module evaluates to.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum LoadedValue<M> {
-    // An object that has the exports of the module as its properties.
     Namespace(M),
     DefaultExport(FileId),
     ModuleExports(FileId),
@@ -75,7 +73,6 @@ pub trait ReferentContext<'s> {
 
     fn builtin_of_expression(&self, file: FileId, expr: ExprId) -> Option<Self::Builtin>;
 
-    // What the property `name` of `holder` holds until the program stores there.
     fn builtin_member(&self, holder: Self::Builtin, name: Atom) -> Option<Self::Builtin>;
 
     fn linked_binding(
@@ -90,12 +87,10 @@ pub trait ReferentContext<'s> {
         name: Atom,
     ) -> LinkedBinding<Self::Builtin, Self::Module>;
 
-    // `None`: the call loads no module, or one that the build does not know.
     fn loaded_value(&self, file: FileId, call: ExprId) -> Option<LoadedValue<Self::Module>>;
 
     fn is_dead_store(&self, file: FileId, target: ExprId) -> bool;
 
-    // The position of the argument into which a call of `builtin` stores the properties of the arguments behind it.
     fn find_target_of_copied_properties(&self, _: Self::Builtin) -> Option<u32> {
         None
     }
@@ -109,7 +104,6 @@ pub fn static_referent<'s, C: ReferentContext<'s>>(
     walk::ReferentWalk::new(context).resolve_expression(file, expr)
 }
 
-// What another module finds in the export `name` of `file`, or in the member `member` of that value.
 pub fn export_referent<'s, C: ReferentContext<'s>>(
     context: &C,
     file: FileId,

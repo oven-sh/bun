@@ -1,0 +1,498 @@
+////: Point-2
+class Point {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+}
+////: Point-3
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+////: attempt-2
+function attempt(action) {
+  try {
+    return action();
+  } catch (error) {
+    return error.name + ": " + error.message;
+  }
+}
+////: disturb
+function disturb(o: any, name: string, how: number): void {
+  if (how === 1) delete o[name];
+  else if (how === 2) Object.defineProperty(o, name, { get() { return 1; }, configurable: true });
+  else if (how === 3) o[name] = how;
+  else if (how === 4) Object.setPrototypeOf(o, null);
+  else if (how === 5) Object.freeze(o);
+}
+////: kinds
+const kinds: [string, KeyAt][] = [
+  ["strings", index => "k" + index],
+  ["integers", index => index],
+  ["doubles", index => index + 0.5],
+  ["objects", index => objects[index]],
+  ["«1»],
+  ["mixed", index => (index === 0 ? undefined : index === 1 ? null : ["k" + index, index, index + 0.5, objects[index], «2»][index % 6])],
+];
+////: lines-100
+{
+  const print = printer(«1»);
+  class B { «2»() { return «3» } }
+  class C extends B {}
+  const o = new C();
+  print(«4»(o));
+}
+////: lines-109
+{
+  const print = printer(«1»);
+  function F() {}
+  F.prototype.«2» = function () { return «3» };
+  const o = new F();
+  print(«4» + «5»);
+}
+////: lines-110
+{
+  const print = printer(«1»);
+  function F() {}
+  F.prototype = { «2»() { return «3» } };
+  const o = new F();
+  print(«4» + «5»);
+}
+////: lines-111
+{
+  const print = printer(«1»);
+  function make() { return { «2»() { return «3» } }; }
+  make();
+  const o = make();
+  print(«4» + «5»);
+}
+////: lines-112
+{
+  const print = printer(«1»);
+  const p = { «2»() { return «3» } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(«4» + «5»);
+}
+////: lines-113
+{
+  const print = printer(«1»);
+  const p = { «2»() { return «3» } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(«4» + «5»);
+}
+////: lines-114
+{
+  const print = printer(«1»);
+  class C { x = 1; }
+  const o = new C();
+  o.«2» = function () { return «3» };
+  print(«4» + «5»);
+}
+////: lines-115
+{
+  const print = printer(«1»);
+  const p = {};
+  p.«2» = function () { return «3» };
+  const o = Object.create(p);
+  print(«4» + «5»);
+}
+////: lines-116
+{
+  const print = printer(«1»);
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.«2» = function () { return «3» };
+  print(«4» + «5»);
+}
+////: lines-117
+{
+  const print = printer(«1»);
+  class C { x = 1; }
+  C.prototype.«2» = function () { return «3» };
+  const o = new C();
+  print(«4» + «5»);
+}
+////: lines-118
+{
+  const print = printer(«1»);
+  class B { «2»() { return «3» } }
+  class C extends B {}
+  const o = new C();
+  print(«4» + «5»);
+}
+////: lines-127
+{
+  const print = printer(«1»);
+  function F() {}
+  F.prototype.«2» = function () { return «3» };
+  const o = new F();
+  print(«4»(o), «5»(o));
+}
+////: lines-128
+{
+  const print = printer(«1»);
+  function F() {}
+  F.prototype = { «2»() { return «3» } };
+  const o = new F();
+  print(«4»(o), «5»(o));
+}
+////: lines-129
+{
+  const print = printer(«1»);
+  function make() { return { «2»() { return «3» } }; }
+  make();
+  const o = make();
+  print(«4»(o), «5»(o));
+}
+////: lines-130
+{
+  const print = printer(«1»);
+  const p = { «2»() { return «3» } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(«4»(o), «5»(o));
+}
+////: lines-131
+{
+  const print = printer(«1»);
+  const p = { «2»() { return «3» } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(«4»(o), «5»(o));
+}
+////: lines-132
+{
+  const print = printer(«1»);
+  class C { x = 1; }
+  const o = new C();
+  o.«2» = function () { return «3» };
+  print(«4»(o), «5»(o));
+}
+////: lines-133
+{
+  const print = printer(«1»);
+  const p = {};
+  p.«2» = function () { return «3» };
+  const o = Object.create(p);
+  print(«4»(o), «5»(o));
+}
+////: lines-134
+{
+  const print = printer(«1»);
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.«2» = function () { return «3» };
+  print(«4»(o), «5»(o));
+}
+////: lines-135
+{
+  const print = printer(«1»);
+  class C { x = 1; }
+  C.prototype.«2» = function () { return «3» };
+  const o = new C();
+  print(«4»(o), «5»(o));
+}
+////: lines-136
+{
+  const print = printer(«1»);
+  class B { «2»() { return «3» } }
+  class C extends B {}
+  const o = new C();
+  print(«4»(o), «5»(o));
+}
+////: lines-137
+{
+  const print = printer(«1»);
+  function F() {}
+  F.prototype.«2» = function () { return «3» };
+  const o = new F();
+  print(«4»(o));
+}
+////: lines-138
+{
+  const print = printer(«1»);
+  function F() {}
+  F.prototype = { «2»() { return «3» } };
+  const o = new F();
+  print(«4»(o));
+}
+////: lines-139
+{
+  const print = printer(«1»);
+  function make() { return { «2»() { return «3» } }; }
+  make();
+  const o = make();
+  print(«4»(o));
+}
+////: lines-140
+{
+  const print = printer(«1»);
+  const p = { «2»() { return «3» } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(«4»(o));
+}
+////: lines-141
+{
+  const print = printer(«1»);
+  const p = { «2»() { return «3» } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(«4»(o));
+}
+////: lines-142
+{
+  const print = printer(«1»);
+  class C { x = 1; }
+  const o = new C();
+  o.«2» = function () { return «3» };
+  print(«4»(o));
+}
+////: lines-143
+{
+  const print = printer(«1»);
+  const p = {};
+  p.«2» = function () { return «3» };
+  const o = Object.create(p);
+  print(«4»(o));
+}
+////: lines-144
+{
+  const print = printer(«1»);
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.«2» = function () { return «3» };
+  print(«4»(o));
+}
+////: lines-145
+{
+  const print = printer(«1»);
+  class C { x = 1; }
+  C.prototype.«2» = function () { return «3» };
+  const o = new C();
+  print(«4»(o));
+}
+////: lines-146
+{
+  const print = printer(«1»);
+  class B { «2»() { return «3» } }
+  class C extends B {}
+  const o = new C();
+  print(«4»(o));
+}
+////: lines-15
+{
+  const print = printer(«1»);
+  const p = { «2»() { return «3» } };
+  const o = { x: 1 };
+  «4».setPrototypeOf(o, p);
+  print(«5»(o));
+}
+////: lines-16
+{
+  const print = printer(«1»);
+  const p = { «2»() { return «3» } };
+  const o = { x: 1 };
+  «4».setPrototypeOf(o, p);
+  print(«5» + «6»);
+}
+////: lines-162
+class «1» extends «2» {
+  «3» = «4»;
+}
+////: lines-17
+{
+  const print = printer(«1»);
+  const p = { «2»() { return «3» } };
+  const o = { x: 1 };
+  «4».setPrototypeOf(o, p);
+  print(«5»(o), «6»(o));
+}
+////: lines-18
+{
+  const print = printer(«1»);
+  const p = { «2»() { return «3» } };
+  const o = { x: 1 };
+  «4».setPrototypeOf(o, p);
+  print(«5»(o));
+}
+////: lines-20
+function «1»(«2», key) {
+  return «3»(key);
+}
+////: lines-207
+{
+  const print = printer(«1»);
+  const p = { «2» } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  print(+o);
+}
+////: lines-21
+function «1»(«2», value) {
+  «3» = value;
+}
+////: lines-22
+function «1»(object) {
+  const «2» = [];
+  for (const «3» in object) «2».push(«3»);
+  return «2».join();
+}
+////: lines-25
+class «1» {
+  «2»: number;
+  constructor(«2»: number) {
+    this.«2» = «2»;
+  }
+}
+////: lines-31
+{
+  const print = printer(«1»);
+  const p = { «2»() { return «3» } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  print(«4»(o));
+}
+////: lines-32
+{
+  const print = printer(«1»);
+  const p = { «2»() { return «3» } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  print(«4» + «5»);
+}
+////: lines-33
+{
+  const print = printer(«1»);
+  const p = { «2»() { return «3» } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  print(«4»(o), «5»(o));
+}
+////: lines-34
+{
+  const print = printer(«1»);
+  const p = { «2»() { return «3» } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  print(«4»(o));
+}
+////: lines-35
+function «1»(«2») {
+  return «3»;
+}
+////: lines-91
+{
+  const print = printer(«1»);
+  function F() {}
+  F.prototype.«2» = function () { return «3» };
+  const o = new F();
+  print(«4»(o));
+}
+////: lines-92
+{
+  const print = printer(«1»);
+  function F() {}
+  F.prototype = { «2»() { return «3» } };
+  const o = new F();
+  print(«4»(o));
+}
+////: lines-93
+{
+  const print = printer(«1»);
+  function make() { return { «2»() { return «3» } }; }
+  make();
+  const o = make();
+  print(«4»(o));
+}
+////: lines-94
+{
+  const print = printer(«1»);
+  const p = { «2»() { return «3» } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(«4»(o));
+}
+////: lines-95
+{
+  const print = printer(«1»);
+  const p = { «2»() { return «3» } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(«4»(o));
+}
+////: lines-96
+{
+  const print = printer(«1»);
+  class C { x = 1; }
+  const o = new C();
+  o.«2» = function () { return «3» };
+  print(«4»(o));
+}
+////: lines-97
+{
+  const print = printer(«1»);
+  const p = {};
+  p.«2» = function () { return «3» };
+  const o = Object.create(p);
+  print(«4»(o));
+}
+////: lines-98
+{
+  const print = printer(«1»);
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.«2» = function () { return «3» };
+  print(«4»(o));
+}
+////: lines-99
+{
+  const print = printer(«1»);
+  class C { x = 1; }
+  C.prototype.«2» = function () { return «3» };
+  const o = new C();
+  print(«4»(o));
+}
+////: permutations
+function permutations(list) {
+  if (list.length < 2) return [list]
+  const result = []
+  for (let i = 0; i < list.length; i++)
+    for (const rest of permutations([...list.slice(0, i), ...list.slice(i + 1)])) result.push([list[i], ...rest])
+  return result
+}
+////: printer
+function printer(label) {
+  return (...values) => {
+    let text = label + ":";
+    for (let i = 0; i < values.length; i++) text += " " + String(values[i]);
+    lines.push(text);
+  };
+}
+////: shorten
+function shorten(parts: string[]): string {
+  if (parts.length <= 6) return parts.join(",");
+  let sum = 0;
+  for (const part of parts) for (let i = 0; i < part.length; i++) sum = (Math.imul(sum, 31) + part.charCodeAt(i)) | 0;
+  return parts.slice(0, 2).join(",") + ",..(" + parts.length + " in all, checksum " + sum + ")..," + parts.slice(-2).join(",");
+}
+////: show-2
+function show(name: string, ...values: unknown[]) {
+    lines.push(name + ": " + values.map(value => {
+        if (typeof value === "function") return "function " + value.name;
+        if (typeof value === "symbol") return value.toString();
+        try { return JSON.stringify(value) ?? String(value); } catch (error) { return "unprintable " + (error as Error).name; }
+    }).join(" | "));
+}

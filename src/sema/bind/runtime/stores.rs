@@ -113,10 +113,10 @@ impl ReferencePass<'_, '_> {
     }
 
     fn record_store(&mut self, target: ExprId, kind: StoreKind) {
-        if !has_bit(&self.evaluated_idents, target.idx()) {
+        if !has_bit(&self.references.evaluated_idents, target.idx()) {
             return;
         }
-        insert_bit(&mut self.store_targets, target.idx());
+        insert_bit(&mut self.references.store_targets, target.idx());
         match self.evaluated_ident_binding(target) {
             Binding::Symbol(symbol) => self.references.stores.push(SymbolStore {
                 symbol,
@@ -138,7 +138,7 @@ impl ReferencePass<'_, '_> {
     }
 }
 
-fn find_outermost_cast(hir: &File<'_>, bound: &BoundBuilder, e: ExprId) -> ExprId {
+pub(super) fn find_outermost_cast(hir: &File<'_>, bound: &BoundBuilder, e: ExprId) -> ExprId {
     let mut outermost = e;
     while let Parent::Expr(parent) = bound.parent_of_expr(outermost)
         && hir.type_assertion_operand(parent).is_some()
@@ -148,7 +148,6 @@ fn find_outermost_cast(hir: &File<'_>, bound: &BoundBuilder, e: ExprId) -> ExprI
     outermost
 }
 
-// False only for a read of a member, `const { dir } = import.meta`, and a call of `import.meta.require` or `import.meta.resolve`.
 fn may_modify_import_meta(hir: &File<'_>, bound: &BoundBuilder, import_meta: ExprId) -> bool {
     let object = find_outermost_cast(hir, bound, import_meta);
     let access = match bound.parent_of_expr(object) {

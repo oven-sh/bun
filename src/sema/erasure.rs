@@ -33,7 +33,6 @@ pub enum ErasureMismatchKind {
 }
 
 impl ErasureMismatchKind {
-    /// `package.json` leads to no full-types file: the file is one that the package has no types for.
     pub fn is_fault_of_manifest(self) -> bool {
         matches!(
             self,
@@ -99,7 +98,6 @@ enum Subtree {
     Statements(IdList<StmtId>),
     Stmt(StmtId),
     Expr(ExprId),
-    /// The object of `a.b` and `a[b]`, what `a()` and `new a()` call, the tag of a template: parentheses round `a` end an optional chain.
     Accessed(ExprId),
     AssignmentTarget(ExprId),
     Pattern(PatId),

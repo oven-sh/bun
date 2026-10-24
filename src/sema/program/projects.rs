@@ -27,14 +27,12 @@ enum Governing<'s> {
     FileByFile(&'s Solution),
 }
 
-// A tsconfig.json that only has references. It governs no file: the first of the referenced projects that has a file does.
 struct Solution {
     projects: Vec<ReferencedProject>,
 }
 
 struct ReferencedProject {
     files: FxHashSet<Vec<u8>>,
-    // `None`: it is the program's own.
     options: Option<Options>,
 }
 
@@ -62,7 +60,6 @@ impl<'s> Projects<'s> {
         }
     }
 
-    // The projects that govern a file with code and list `types`, in the order of their configuration files.
     pub(super) fn naming_types(&self) -> Vec<&'s Options> {
         let mut projects = self.naming_types.lock().clone();
         projects.shared_sort_unstable_by(|a, b| a.config_path.cmp(&b.config_path));
@@ -79,7 +76,8 @@ impl<'s> Projects<'s> {
     }
 
     fn note_types(&self, project: &'s Options) -> &'s Options {
-        if project.types.as_ref().is_some_and(|it| !it.is_empty()) {
+        let lists_types = project.types.as_ref().is_some_and(|it| !it.is_empty());
+        if lists_types && !project.config_path.is_empty() {
             let mut naming_types = self.naming_types.lock();
             if !naming_types.iter().any(|&it| std::ptr::eq(it, project)) {
                 naming_types.push(project);

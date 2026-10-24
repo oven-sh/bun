@@ -10,7 +10,6 @@ use bun_sema::resolve::{
 use bun_sema::session::Arena;
 use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 
-/// A JSON file that runs is a module made from data, as in a build. Nothing reads the data through this host.
 const MODULE_WITHOUT_DATA: DataModule<'static> = DataModule::Value {
     default: &DataValue::Null,
     exports_keys: false,

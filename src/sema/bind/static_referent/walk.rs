@@ -21,12 +21,10 @@ enum DeclaredValue {
     Class(ClassId),
 }
 
-// A store of a CommonJS module into `module.exports` or into a property of its exports object.
 #[derive(Copy, Clone)]
 struct ExportStore {
     node: ExprId,
     target: ExprId,
-    // `None`: a call defines the property.
     value: Option<ExprId>,
 }
 
@@ -43,7 +41,6 @@ fn unknown<B, M>(reason: UnknownReferent) -> Step<B, M> {
     Step::Found(StaticReferent::Unknown(reason))
 }
 
-// What every call of `function` that returns evaluates to: the value of its one `return`, which is a statement of its body.
 fn find_only_returned_value(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<ExprId> {
     if hir[function]
         .flags
@@ -65,7 +62,6 @@ fn find_only_returned_value(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -
     }
 }
 
-// The argument that a parameter of a function expression stands for, where the function runs where it is written and at no other time.
 fn find_argument_of_only_call(hir: &File<'_>, bound: &Bound<'_>, id: SymbolId) -> Option<ExprId> {
     let &[Decl::Param(pattern)] = bound.symbol(id).decls else {
         return None;
@@ -82,7 +78,6 @@ fn find_argument_of_only_call(hir: &File<'_>, bound: &Bound<'_>, id: SymbolId) -
         return None;
     }
     let call = bound.get_immediately_invoked_function_expression(hir, function)?;
-    // It looks at every expression of the file where the function has a name.
     if bound.finds_itself(hir, function) {
         return None;
     }
@@ -128,7 +123,6 @@ fn find_assignment(hir: &File<'_>, node: ExprId) -> Option<ExportStore> {
     })
 }
 
-// The binder declares an export wherever the text reads `module.exports` or `exports`.
 type FindExportStore = fn(&File<'_>, &Bound<'_>, Decl) -> Option<ExportStore>;
 
 fn find_store_of_whole(
@@ -164,7 +158,6 @@ fn find_store_of_property(
     reads_exports_object(hir, bound, object).then_some(store)
 }
 
-// `None`: an expression, a function, a class, a pattern or an object literal lies between.
 fn find_statement_around(bound: &Bound<'_>, parent: Parent) -> Option<StmtId> {
     match parent {
         Parent::Stmt(statement) => statement.some(),
@@ -174,7 +167,6 @@ fn find_statement_around(bound: &Bound<'_>, parent: Parent) -> Option<StmtId> {
     }
 }
 
-// The expression is a statement of the body of the file, the initializer of a variable declared there, or the value that such an expression assigns.
 fn is_evaluated_by_file_body(hir: &File<'_>, bound: &Bound<'_>, mut expr: ExprId) -> bool {
     let mut parent = bound.parent_of_expr(expr);
     while let Parent::Expr(outer) = parent {
@@ -212,7 +204,6 @@ fn is_in_catch_clause(hir: &File<'_>, bound: &Bound<'_>, expr: ExprId) -> bool {
     false
 }
 
-// The store that is expected to give the value that another module finds.
 fn find_deciding_store(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -242,7 +233,6 @@ pub(super) struct ReferentWalk<'c, 's, C: ReferentContext<'s>> {
     visited: SmallVec<[Sym; 8]>,
     pending_members: SmallVec<[Atom; 4]>,
     certainty: ReferentCertainty,
-    // It reads the whole text of each file on the way.
     follows_stored_members: bool,
     session: PhantomData<&'s ()>,
 }
@@ -309,7 +299,6 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         }
     }
 
-    // `false`: the walk has been there.
     fn visit(&mut self, symbol: Sym) -> bool {
         let is_first_visit = !self.visited.contains(&symbol);
         if is_first_visit {
@@ -414,7 +403,6 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
                 PropKey::Name(_) | PropKey::None | PropKey::Computed(_) => value = None,
             }
         }
-        // The object may have changed since the literal created it.
         self.certainty = ReferentCertainty::Expected;
         match value {
             Some(value) => Step::Expression(file, value),
@@ -423,7 +411,6 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
     }
 
     fn step_loaded_value(&mut self, loaded: LoadedValue<C::Module>) -> StepOf<'s, C> {
-        // Only the namespace object of an ES module is out of the reach of stores.
         self.certainty = ReferentCertainty::Expected;
         match loaded {
             LoadedValue::Namespace(module) => Step::Linked(LinkedBinding::Namespace(module)),
@@ -432,7 +419,6 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         }
     }
 
-    // A module that lists its exports and has no default one is loaded as an object with those names.
     fn step_default_export(&mut self, file: FileId) -> StepOf<'s, C> {
         let bound = self.context.bound(file);
         let exports = bound.symbol(bound.file_symbol).exports;
@@ -478,7 +464,6 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             .collect()
     }
 
-    // A store into a property of the exports object counts also where another store replaces the object.
     fn step_module_exports(&mut self, file: FileId) -> StepOf<'s, C> {
         let context = self.context;
         let bound = context.bound(file);
@@ -612,7 +597,6 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
         }
     }
 
-    // `f.name = value` and `Object.assign(f, { name: value })` in the body of a file, where `f` is one of the bindings that led to the function or the class.
     fn step_stored_member(&mut self, name: Atom) -> StepOf<'s, C> {
         let mut stored = None;
         for &holder in &self.visited {
@@ -624,7 +608,6 @@ impl<'c, 's, C: ReferentContext<'s>> ReferentWalk<'c, 's, C> {
             }
         }
         self.certainty = ReferentCertainty::Expected;
-        // The walk goes on with another value, which may be the same one: `f.f = f`.
         self.visited.clear();
         match stored {
             Some((file, value)) => Step::Expression(file, value),

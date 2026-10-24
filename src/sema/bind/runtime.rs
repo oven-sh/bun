@@ -22,7 +22,8 @@ mod stores;
 mod tests;
 mod type_only_code;
 
-use self::declaration_kinds::{FunctionPosition, statement_position};
+use self::declaration_kinds::{Declaration, FunctionPosition, statement_position};
+pub use self::storage::RuntimeTablesIn;
 use super::decorator_metadata::MetadataReference;
 use super::{BoundBuilder, Decl, ScopeId, SymbolId};
 use crate::atom::{Atom, Intern, known};
@@ -37,7 +38,6 @@ pub struct RuntimeBindOptions {
     pub jsx_factory_root: Option<Atom>,
     pub jsx_fragment_root: Option<Atom>,
     pub emits_decorator_metadata: bool,
-    /// `BoundIn::variable_kind`
     pub hoists_top_level_variables: bool,
 }
 
@@ -250,80 +250,6 @@ pub struct RuntimeBindingsIn<S: Storage> {
 
 pub type RuntimeBindings<'s> = RuntimeBindingsIn<InArena<'s>>;
 
-pub struct RuntimeTablesIn<S: Storage> {
-    pub(in crate::bind) is_module: bool,
-    pub(in crate::bind) depends_on_sloppy_mode: bool,
-    pub(in crate::bind) file_uses_arguments: bool,
-    pub(in crate::bind) import_meta_may_be_modified: bool,
-    pub(in crate::bind) hoists_top_level_variables: bool,
-    pub(in crate::bind) first_appended_symbol: u32,
-    pub(in crate::bind) appended_symbol_end: u32,
-    pub(in crate::bind) strict_scopes: S::List<u64>,
-    pub(in crate::bind) function_flags: S::List<FunctionFlags>,
-    pub(in crate::bind) field_initializer_scopes: S::Few<(MemberId, ScopeId)>,
-    pub(in crate::bind) early_error_redeclarations: S::Few<u32>,
-    pub(in crate::bind) declarations: RuntimeDeclarationsIn<S>,
-    pub(in crate::bind) references: RuntimeReferencesIn<S>,
-    pub(in crate::bind) private_names: PrivateNamesIn<S>,
-    pub(in crate::bind) stability: BindingStabilitiesIn<S>,
-}
-
-#[derive(Default)]
-pub(in crate::bind) struct RuntimeDeclarationsIn<S: Storage> {
-    pub pattern_symbols: S::Few<(PatId, SymbolId)>,
-    pub function_symbols: S::Few<(FnId, SymbolId)>,
-    pub class_symbols: S::Few<(ClassId, SymbolId)>,
-    pub enum_symbols: S::Few<(EnumId, SymbolId)>,
-    pub module_symbols: S::Few<(ModuleId, SymbolId)>,
-    pub inner_class_symbols: S::Few<(ClassId, SymbolId)>,
-    pub import_default_symbols: S::List<SymbolId>,
-    pub import_namespace_symbols: S::List<SymbolId>,
-    pub import_spec_symbols: S::List<SymbolId>,
-    pub import_equals_symbols: S::Few<SymbolId>,
-    pub export_expression_symbols: S::Few<(StmtId, SymbolId)>,
-    pub own_scopes: S::List<(StmtId, ScopeId)>,
-    pub symbol_scopes: S::List<ScopeId>,
-    pub scope_units: S::List<CodeUnit>,
-    pub valueless_symbols: S::List<u64>,
-    pub binding_kinds: S::List<BindingKind>,
-    pub annex_b_functions: S::Few<AnnexBFunction>,
-    pub parameter_var_copies: S::Few<ParameterVarCopy>,
-    pub early_redeclarations: S::Few<EarlyRedeclaration>,
-    pub goal_independent_redeclaration_count: u32,
-}
-
-#[derive(Default)]
-pub(in crate::bind) struct RuntimeReferencesIn<S: Storage> {
-    pub evaluated_idents: S::List<u64>,
-    pub ident_bindings: S::List<(ExprId, Binding)>,
-    pub initialized_bindings: S::Few<(PatId, Binding)>,
-    pub exported_bindings: S::Few<(ExportSpecId, Binding)>,
-    pub entity_root_bindings: S::Few<(ImportEqualsId, Binding)>,
-    pub redeclared_commonjs_variables: S::Few<(SymbolId, CommonJsVariable)>,
-    pub eval_visible_symbols: S::List<u64>,
-    pub stores: S::List<SymbolStore>,
-    pub unbound_name_stores: S::Few<(ExprId, StoreKind)>,
-    pub store_targets: S::List<u64>,
-    pub dynamic_ident_lookups: S::Few<(ExprId, ScopeId)>,
-    pub dynamic_declarator_lookups: S::Few<(PatId, ScopeId)>,
-    pub eval_scopes: S::Few<(ExprId, EvalScope)>,
-    pub jump_targets: S::Few<(StmtId, StmtId)>,
-    pub implicit_references: S::Few<ImplicitReference>,
-}
-
-#[derive(Default)]
-pub(in crate::bind) struct PrivateNamesIn<S: Storage> {
-    pub names: S::Few<PrivateName>,
-    pub references: S::Few<(ExprId, PrivateNameId)>,
-    pub members: S::Few<(MemberId, PrivateNameId)>,
-}
-
-#[derive(Default)]
-pub(in crate::bind) struct BindingStabilitiesIn<S: Storage> {
-    pub stabilities: S::List<BindingStability>,
-    pub initializers: S::List<Option<Decl>>,
-}
-
 impl<S: Storage> Default for RuntimeBindingsIn<S> {
     #[inline]
     fn default() -> Self {
@@ -349,28 +275,6 @@ impl<S: Storage> std::ops::DerefMut for RuntimeBindingsIn<S> {
     }
 }
 
-impl Default for RuntimeTablesIn<Growable> {
-    fn default() -> Self {
-        RuntimeTablesIn {
-            is_module: false,
-            depends_on_sloppy_mode: false,
-            file_uses_arguments: false,
-            import_meta_may_be_modified: false,
-            hoists_top_level_variables: false,
-            first_appended_symbol: 0,
-            appended_symbol_end: 0,
-            strict_scopes: Vec::new(),
-            function_flags: Vec::new(),
-            field_initializer_scopes: Vec::new(),
-            early_error_redeclarations: Vec::new(),
-            declarations: RuntimeDeclarationsIn::default(),
-            references: RuntimeReferencesIn::default(),
-            private_names: PrivateNamesIn::default(),
-            stability: BindingStabilitiesIn::default(),
-        }
-    }
-}
-
 const _: () = assert!(size_of::<(ExprId, Binding)>() <= 12 && size_of::<CodeUnit>() <= 8);
 const _: () = assert!(size_of::<Option<Decl>>() == size_of::<Decl>());
 const _: () = assert!(size_of::<RuntimeBindings<'static>>() == size_of::<usize>());
@@ -385,7 +289,7 @@ pub(in crate::bind) struct RuntimeInput<'a, 's> {
 
 #[derive(Default)]
 struct RuntimeScopes {
-    appended_bindings: FxHashMap<(ScopeId, Atom), SymbolId>,
+    appended_bindings: FxHashMap<(ScopeId, Atom), (SymbolId, Declaration)>,
     hoisted_requires: Vec<(PatId, ScopeId)>,
     hidden_symbols: Vec<u64>,
     body_variables: Vec<(SymbolId, SymbolId)>,

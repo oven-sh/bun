@@ -1,8 +1,0 @@
-# A type parameter has the trust of the file that declares it. The declarations of a merged interface share one type parameter, which is that of the first declaration.
-type-parameter-of-declaration-file.ts:3 written `T` = T
-type-parameter-of-declaration-file.ts:3 shape `T` = TypeVariable(none) untrusted
-absent: type-parameter-of-declaration-file.ts:3 shape `T` = TypeVariable(none)
-
-type-parameter-of-declaration-file.ts:4 shape `T` = TypeVariable(none; type-parameter-of-declaration-file.ts:1)
-type-parameter-of-declaration-file.ts:5 shape `T` = TypeVariable(string; type-parameter-of-declaration-file.ts:2)
-absent: type-parameter-of-declaration-file.ts:4 shape `T` = TypeVariable(none) untrusted

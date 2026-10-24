@@ -1,5 +1,0 @@
-this file is strict: true
-a sloppy CommonJS file Object{top: "object", isTheExportsObject: true, inAnArrow: "object"}
-a strict CommonJS file Object{top: "object", isTheExportsObject: true, inAnArrow: "object"}
-an ES module Object{inAnArrow: "undefined", top: "undefined"}
-the main ES module "undefined"

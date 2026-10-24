@@ -3,15 +3,12 @@ use super::declaration_kinds::{DeclarationKind, declaration_kind};
 use super::direct_evals::{DirectEval, compute_dynamic_scopes, find_direct_evals};
 use super::lookup::{COMMONJS_VARIABLES, Lookup};
 use super::namespace_exports::ExportedBlockBindings;
+use super::storage::RuntimeReferencesIn;
 use super::type_only_code::TypeOnlyCode;
-use super::{
-    Binding, CodeUnit, FunctionFlags, RuntimeBindOptions, RuntimeInput, RuntimeReferencesIn,
-    RuntimeScopes,
-};
+use super::{Binding, CodeUnit, FunctionFlags, RuntimeBindOptions, RuntimeInput, RuntimeScopes};
 use crate::atom::{Atom, Intern, known};
 use crate::bind::{BoundBuilder, Decl, Parent, ScopeId, ScopeKind, SymbolId};
 use crate::hir::*;
-use crate::util::SharedSort;
 
 pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &RuntimeScopes) {
     let (hir, idents, options, atoms) = (input.hir, input.idents, input.options, input.atoms);
@@ -35,9 +32,6 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         direct_evals,
         first_eval_id: bound.ids.len() as u32,
         eval_symbol_ids: Vec::new(),
-        evaluated_idents: Vec::new(),
-        eval_visible_symbols: Vec::new(),
-        store_targets: Vec::new(),
         references: RuntimeReferencesIn::<Growable>::default(),
         uses_arguments: Vec::new(),
         has_direct_eval: Vec::new(),
@@ -93,9 +87,6 @@ pub(super) struct ReferencePass<'a, 's> {
     pub(super) direct_evals: Vec<DirectEval>,
     pub(super) first_eval_id: u32,
     pub(super) eval_symbol_ids: Vec<u32>,
-    pub(super) evaluated_idents: Vec<u64>,
-    pub(super) eval_visible_symbols: Vec<u64>,
-    pub(super) store_targets: Vec<u64>,
     pub(super) references: RuntimeReferencesIn<Growable>,
     pub(super) uses_arguments: Vec<CodeUnit>,
     pub(super) has_direct_eval: Vec<FnId>,
@@ -112,7 +103,7 @@ impl ReferencePass<'_, '_> {
             if self.is_unevaluated_ident(ident, scope, name) {
                 continue;
             }
-            insert_bit(&mut self.evaluated_idents, ident.idx());
+            insert_bit(&mut self.references.evaluated_idents, ident.idx());
             let found = self.lookup.find(scope, name);
             if found.binding != bound.default_binding(ident) {
                 self.references.ident_bindings.push((ident, found.binding));
@@ -126,9 +117,7 @@ impl ReferencePass<'_, '_> {
                     .push((ident, found.dynamic_scope));
             }
         }
-        self.references
-            .ident_bindings
-            .shared_sort_unstable_by_key(|entry| entry.0);
+        self.references.sort();
     }
 
     fn is_unevaluated_ident(&self, ident: ExprId, scope: ScopeId, name: Atom) -> bool {
@@ -307,37 +296,10 @@ impl ReferencePass<'_, '_> {
     }
 
     fn finish_results(&mut self) {
-        let references = &mut self.references;
-        references.evaluated_idents = std::mem::take(&mut self.evaluated_idents);
-        references.eval_visible_symbols = std::mem::take(&mut self.eval_visible_symbols);
-        references.store_targets = std::mem::take(&mut self.store_targets);
-        references
-            .initialized_bindings
-            .shared_sort_by_key(|entry| entry.0);
-        references
+        self.references.sort();
+        self.references
             .initialized_bindings
             .dedup_by_key(|entry| entry.0);
-        references
-            .redeclared_commonjs_variables
-            .shared_sort_unstable_by_key(|entry| entry.0);
-        references
-            .dynamic_ident_lookups
-            .shared_sort_unstable_by_key(|entry| entry.0);
-        references
-            .dynamic_declarator_lookups
-            .shared_sort_unstable_by_key(|entry| entry.0);
-        references
-            .eval_scopes
-            .shared_sort_unstable_by_key(|entry| entry.0);
-        references
-            .unbound_name_stores
-            .shared_sort_unstable_by_key(|entry| entry.0);
-        references
-            .exported_bindings
-            .shared_sort_unstable_by_key(|entry| entry.0);
-        references
-            .stores
-            .shared_sort_unstable_by_key(|store| (store.symbol, store.target));
     }
 }
 

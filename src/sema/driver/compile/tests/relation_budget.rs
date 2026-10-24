@@ -18,7 +18,6 @@ impl NamedValues for NoNamedValues {
     }
 }
 
-// Level `l` has `l + 1` interfaces, and each has four members that lead one level down: to its own index or to the next.
 fn write_family(text: &mut String, name: char, levels: usize, steps: [usize; 4], last_leaf: &str) {
     for level in 0..levels {
         for index in 0..=level {
@@ -43,7 +42,6 @@ fn write_families(levels: usize, last_leaf_of_b: &str) -> String {
     text
 }
 
-// Every leaf leads back to the top of its family, so that no pair is settled before the pair of the two tops is.
 fn write_closed_families(levels: usize) -> String {
     let mut text = write_families(levels, "number");
     for name in ['A', 'B'] {
@@ -93,7 +91,6 @@ fn write_unions_over_size_limit() -> String {
 type Answer = Result<bool, GaveUp>;
 
 struct Asked {
-    // One for each time asks.ts was lowered. A task that is thrown away has its files visited again.
     answers: Vec<Answer>,
     statistics: QueryStatistics,
     codes: Vec<u32>,
@@ -118,7 +115,6 @@ fn check_only_codes(families: &str) -> Vec<u32> {
     })
 }
 
-// The lowering of asks.ts asks whether A0_0 is assignable to B0_0.
 fn ask(families: &str, main: &str) -> Asked {
     let files = list_files(families, main);
     with_program(&files, &["./main.ts"], 1, |program| {
@@ -165,7 +161,6 @@ fn ask(families: &str, main: &str) -> Asked {
 
 const ASKS_ONLY: &str = "import \"./asks\";\n";
 const ASSIGNS_ONLY: &str = "import \"./assigns\";\n";
-// After asks.ts the checker comes to assigns.ts, which assigns an A0_0 to a B0_0.
 const ASKS_THEN_ASSIGNS: &str = "import \"./asks\";\nimport \"./assigns\";\n";
 const ASSIGNS_THEN_ASKS: &str = "import \"./assigns\";\nimport \"./asks\";\n";
 
@@ -237,7 +232,6 @@ fn check_after_question_over_budget_gets_the_true_answer() {
     assert_eq!(asked.codes, [0; 0]);
 }
 
-// Which comparisons are settled when a question is asked is a matter of timing where there are threads.
 #[test]
 fn answer_does_not_depend_on_what_is_settled() {
     for (last_leaf_of_b, codes) in [("number", &[][..]), ("string", &[2322][..])] {

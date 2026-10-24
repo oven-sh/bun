@@ -26,7 +26,6 @@ pub fn compile_build_overrides() -> Vec<(Vec<u8>, Json)> {
     ]
 }
 
-// They say what tsc writes and where, and a build writes none of it.
 const OUTPUT_OPTIONS: [&[u8]; 20] = [
     b"charset",
     b"declarationDir",
@@ -50,7 +49,6 @@ const OUTPUT_OPTIONS: [&[u8]; 20] = [
     b"tsBuildInfoFile",
 ];
 
-// TypeScript 7 has removed them, and `bun run` never looked at them.
 fn is_removed_and_means_nothing(option: &(Vec<u8>, Json)) -> bool {
     let is_one_of = |values: &[&[u8]]| {
         let written = option.1.as_str();
@@ -78,7 +76,6 @@ pub fn load_for_build(
     load(host, session, path, RootFiles::Listed)
 }
 
-/// `load_for_build` without reading a directory.
 pub fn load_for_build_with_unlisted_files(
     host: &dyn Host,
     session: &Session,
@@ -100,7 +97,6 @@ pub fn load_options_for_build(
 }
 
 impl Project {
-    // A solution: it lists projects and has no file of its own, so its options are written for no file.
     pub fn only_has_references(&self) -> bool {
         debug_assert!(self.unlisted_files.is_none() || self.references.is_empty());
         self.files.is_empty() && !self.references.is_empty()
@@ -114,7 +110,6 @@ impl Project {
     }
 }
 
-// The projects that `project` references, directly or indirectly, each before its own references: the order in which the language service looks for the project of an open file.
 fn load_referenced_projects(
     host: &dyn Host,
     project: &Project,
@@ -146,14 +141,12 @@ fn load_referenced_projects(
     projects
 }
 
-// Each with its root files.
 pub fn load_referenced_projects_for_build(host: &dyn Host, solution: &Project) -> Vec<Project> {
     load_referenced_projects(host, solution, |path| {
         load_for_build(host, &Session::new(), path).ok()
     })
 }
 
-// The sources of a referenced project stand in for the declaration files that it would write, so nothing has to be built first: for each that writes into a directory of its own, that directory and the directory of sources that it mirrors.
 fn find_outputs_of_referenced_projects(
     host: &dyn Host,
     project: &Project,
@@ -250,7 +243,6 @@ fn project_for_build(
     }
     let mut project = project_from_raw(host, session, path, base, raw, errors);
     project.options.imports_need_no_extension = true;
-    // `bun run` leaves class fields where they are written unless the option is false, whatever the target.
     project.options.use_define_for_class_fields = !assigns_class_fields;
     project.options.emit_standard_class_fields = !assigns_class_fields;
     project.options.referenced_outputs = find_outputs_of_referenced_projects(host, &project);
@@ -313,7 +305,6 @@ pub fn load_for_full_types(host: &dyn Host, session: &Session, manifest_path: &[
         errors,
         RootFiles::Skipped,
     );
-    // What Bun itself provides is declared there, as what the language provides is declared in `lib`.
     let options = &mut project.options;
     let type_roots = options.effective_type_roots();
     let has_bun_types = |root: &Vec<u8>| host.is_file(&join(root, b"bun/package.json"));
@@ -340,7 +331,6 @@ impl Project {
     }
 }
 
-// Emitted files aren't read back in as input. `project_from_raw` no longer sees where they were written.
 fn exclude_output_directories(raw: &mut Raw, base: &[u8]) {
     if raw.exclude.is_array {
         return;

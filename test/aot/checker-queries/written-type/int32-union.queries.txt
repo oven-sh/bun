@@ -1,6 +1,0 @@
-# `int32` is a member of a union like any other type. The checker joins it with nothing, not even with `number`.
-int32-union.ts:3 written `int32 | number` = number | int32
-int32-union.ts:3 shape `int32 | number` = Union(number | int32)
-int32-union.ts:3 variable `a` = number | int32
-int32-union.ts:4 written `int32 | null` = int32 | null
-int32-union.ts:4 shape `int32 | null` = Union(null | int32)

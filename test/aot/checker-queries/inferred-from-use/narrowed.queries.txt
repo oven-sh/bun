@@ -1,6 +1,0 @@
-# A reference that the checker has narrowed has that type, and its context says nothing more.
-narrowed.js:3 parameter `x` = string
-narrowed.js:5 parameter `x` = any[]
-narrowed.js:7 parameter `x` = Date
-narrowed.js:9 parameter `x` = string | { value?: any; }
-narrowed.js:11 parameter `x` = number | Function

@@ -1,2 +1,0 @@
-import "./first";
-import "./second";

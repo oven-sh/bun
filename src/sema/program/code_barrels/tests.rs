@@ -6,9 +6,7 @@ const C: Atom = Atom(3);
 const D: Atom = Atom(4);
 
 struct TestFile {
-    // The file that each target is, and what is asked of it.
     targets: Vec<(u32, Asked)>,
-    // The targets of the sites that can wait, and which of those sites each export comes from.
     barrel: Option<(Vec<Option<u32>>, Vec<(Atom, u32)>)>,
 }
 
@@ -23,7 +21,6 @@ fn module(targets: &[(u32, Asked)]) -> TestFile {
     }
 }
 
-// Every target is behind one export and can wait.
 fn barrel(exports: &[(Atom, u32, Asked)]) -> TestFile {
     let targets = exports
         .iter()

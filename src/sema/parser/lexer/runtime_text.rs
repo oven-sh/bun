@@ -74,7 +74,6 @@ impl Lexer<'_> {
         let text = self.text();
         let closer_len = match self.token {
             T::TemplateHead | T::TemplateMiddle => 2,
-            // An unterminated piece has no closing backtick.
             T::NoSubstitutionTemplate | T::TemplateTail => usize::from(text.last() == Some(&b'`')),
             _ => {
                 debug_assert!(false);
@@ -102,7 +101,6 @@ impl Lexer<'_> {
         atom
     }
 
-    /// TypeScript trims U+0085 and U+200B from a line of JSX text. `bun run` keeps them.
     pub(super) fn jsx_text_value(&self, text: &[u8]) -> Vec<u8> {
         match self.decodes_ill_formed_text {
             true => fix_whitespace_and_decode_jsx_entities(text, is_whitespace),
@@ -113,7 +111,6 @@ impl Lexer<'_> {
     pub(crate) fn jsx_attribute_text(&mut self) -> Atom {
         let token = self.text();
         let after_quote = token.get(1..).unwrap_or_default();
-        // An unterminated string has no closing quote.
         let written = after_quote
             .strip_suffix(token.get(..1).unwrap_or_default())
             .unwrap_or(after_quote);
@@ -131,7 +128,6 @@ impl Lexer<'_> {
             };
             return (self.names).atom(Text::not_in_source(self.src, &decoded), self.atoms);
         }
-        // Only a string scanned as JavaScript, with its escapes decoded, has another `atom`.
         if !has_backslash {
             return self.atom;
         }

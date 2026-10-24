@@ -1,8 +1,8 @@
 use super::binding_kinds::variable_binding_kind;
 use super::bits::insert_bit;
 use super::declaration_kinds::{
-    Declaration, DeclarationKind, SymbolColumn, declaration_kind, declaration_symbol,
-    is_block_level, needs_unique_parameters, pattern_scope, symbol_column,
+    Declaration, DeclarationKind, declaration_kind, declaration_symbol, is_block_level,
+    needs_unique_parameters, pattern_scope,
 };
 use super::declarations::{Declarations, append_symbol, is_var_scope};
 use super::{BindingKind, EarlyRedeclaration, FunctionFlags, ParameterVarCopy};
@@ -69,7 +69,7 @@ impl Declarations<'_, '_> {
             binding: None,
             first_by_kind: SmallVec::new(),
         };
-        if let Some(&(appended, first)) = self.appended_declarations.get(&(scope, name)) {
+        if let Some(&(appended, first)) = self.scopes.appended_bindings.get(&(scope, name)) {
             names.add(appended, first);
         }
         let mut has_inner_declaration = false;
@@ -108,7 +108,9 @@ impl Declarations<'_, '_> {
         let Some(binding) = names.binding else {
             if let Some(own) = declaration_symbol(self.bound, decl).some() {
                 let key = (names.scope, names.name);
-                self.appended_declarations.insert(key, (own, declaration));
+                self.scopes
+                    .appended_bindings
+                    .insert(key, (own, declaration));
                 names.add(own, declaration);
             } else if declaration.kind == DeclarationKind::Import {
                 let own = self.append_import(names.scope, names.name, declaration);
@@ -125,7 +127,6 @@ impl Declarations<'_, '_> {
         }
     }
 
-    // `/** @import { a } from "m" */ import { a } from "m";`: the name in the table is that of the tag, which is no binding.
     fn append_import(&mut self, scope: ScopeId, name: Atom, declaration: Declaration) -> SymbolId {
         let (flags, kind) = (SymFlags::ALIAS, BindingKind::Import);
         let symbol = self.append_binding(scope, name, flags, kind, declaration);
@@ -161,8 +162,8 @@ impl Declarations<'_, '_> {
     }
 
     fn declare_block_scoped_require(&mut self, name: Atom, declaration: Declaration) {
-        let (DeclarationKind::BlockScopedRequire, SymbolColumn::Pattern(pat)) =
-            (declaration.kind, symbol_column(declaration.decl))
+        let (DeclarationKind::BlockScopedRequire, Decl::Require(pat)) =
+            (declaration.kind, declaration.decl)
         else {
             return;
         };
@@ -181,8 +182,8 @@ impl Declarations<'_, '_> {
         self.bound
             .runtime
             .declarations
-            .pattern_symbols
-            .push((pat, symbol));
+            .declared_symbols
+            .push((Decl::Var(pat), symbol));
     }
 
     fn record_hoisted_require(&mut self, declaration: Declaration) {
@@ -200,9 +201,8 @@ impl Declarations<'_, '_> {
         let is_body_declaration = later.kind != DeclarationKind::Parameter
             && flags.contains(SymFlags::PARAMETER)
             && self.has_body_variables(scope);
-        let column = symbol_column(later.decl);
         let target = if is_body_declaration {
-            if matches!(column, SymbolColumn::Function(_)) {
+            if matches!(later.decl, Decl::Fn(_)) {
                 self.parameters_with_body_function.insert(binding);
             }
             self.body_variable(scope, binding, later.decl)
@@ -210,15 +210,13 @@ impl Declarations<'_, '_> {
             self.bound
                 .export_symbol_of_value_symbol_if_exported(binding)
         };
+        let key = match later.decl {
+            Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => Decl::Var(pat),
+            Decl::Fn(_) => later.decl,
+            _ => return,
+        };
         let declarations = &mut self.bound.runtime.declarations;
-        match column {
-            SymbolColumn::Pattern(pat) => declarations.pattern_symbols.push((pat, target)),
-            SymbolColumn::Function(f) => declarations.function_symbols.push((f, target)),
-            SymbolColumn::Class(_)
-            | SymbolColumn::Enum(_)
-            | SymbolColumn::Module(_)
-            | SymbolColumn::None => {}
-        }
+        declarations.declared_symbols.push((key, target));
     }
 
     fn has_body_variables(&self, scope: ScopeId) -> bool {
@@ -231,8 +229,8 @@ impl Declarations<'_, '_> {
     fn var_declarations(&self, symbol: SymbolId) -> SmallVec<[(Decl, PatId); 2]> {
         let (hir, bound) = (self.hir, &*self.bound);
         let decls = bound.symbols[symbol.idx()].decls.iter();
-        let vars = decls.filter_map(|&decl| match symbol_column(decl) {
-            SymbolColumn::Pattern(pat)
+        let vars = decls.filter_map(|&decl| match decl {
+            Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat)
                 if declaration_kind(hir, bound, decl) == DeclarationKind::Var =>
             {
                 Some((decl, pat))
@@ -309,7 +307,7 @@ impl Declarations<'_, '_> {
         let ScopeKind::Fn(f) = self.bound.scopes[scope.idx()].kind else {
             return Conflict::No;
         };
-        if needs_unique_parameters(self.hir, &self.hir[f])
+        if needs_unique_parameters(self.hir, f)
             || !self.is_sloppy(scope)
             || self.hir.has_parameters_read_as_strict(f)
         {
@@ -405,7 +403,9 @@ impl Declarations<'_, '_> {
         };
         let declarations = &mut self.bound.runtime.declarations;
         for (_, pat) in vars {
-            declarations.pattern_symbols.push((pat, variable));
+            declarations
+                .declared_symbols
+                .push((Decl::Var(pat), variable));
         }
         self.scopes.body_variables.push((parameter, variable));
         if !has_function {

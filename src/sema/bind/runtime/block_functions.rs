@@ -101,8 +101,8 @@ impl Declarations<'_, '_> {
         self.bound
             .runtime
             .declarations
-            .function_symbols
-            .push((f, block_symbol));
+            .declared_symbols
+            .push((decl, block_symbol));
         let declared = self.bound.fn_symbol[f.idx()];
         if self.bound.symbols[declared.idx()].decls.len() == 1 {
             insert_bit(&mut self.scopes.hidden_symbols, declared.idx());

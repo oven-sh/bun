@@ -1,8 +1,0 @@
-# An object type is identified by who declared it. An interface, an alias and a type literal with the same members have three identities, in one file or in two. One declaration has one identity wherever it is named.
-different: same-structure.ts:5 identity `A` <=> same-structure.ts:6 identity `B`
-different: same-structure.ts:7 identity `A` <=> same-structure.ts:8 identity `{ x: number }`
-different: same-structure.ts:9 identity `A` <=> same-structure-other.ts:2 identity `{ x: number }`
-different: same-structure.ts:8 identity `{ x: number }` <=> same-structure-other.ts:2 identity `{ x: number }`
-
-same: same-structure.ts:5 identity `A` <=> same-structure.ts:7 identity `A`
-same: same-structure.ts:6 identity `B` <=> same-structure.ts:4 identity `{ x: number }`

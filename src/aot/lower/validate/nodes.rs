@@ -453,6 +453,9 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
                 return Err(self.unsupported(source));
             }
         };
+        if self.file.queries.is_schema_key(name) {
+            return Err(self.unsupported(source));
+        }
         let key = self.file.name_key(name);
         let origin = Origin {
             parent: source.node,

@@ -1,5 +1,0 @@
-# Fields absent at creation are optional: `x?`, `declare x` and `abstract x`, but not an initialized field.
-optional-fields.ts:2 class member `O` = a Field Member 3 number checked number | undefined optional
-optional-fields.ts:2 class member `O` = b Field Member 4 string checked string optional
-optional-fields.ts:2 class member `O` = c Field Member 5 boolean checked boolean optional
-optional-fields.ts:2 class member `O` = d Field Member 6 number checked number

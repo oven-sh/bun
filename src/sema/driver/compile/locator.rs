@@ -61,7 +61,6 @@ impl<'t> TextLocator<'t> {
         }
     }
 
-    /// The 1-based line of `offset` and its 1-based column in UTF-16 code units.
     pub fn line_and_column(&self, offset: u32) -> (u32, u32) {
         let (line, character) = line_and_character(self.text, &self.starts, offset, &self.counted);
         (line + 1, character + 1)

@@ -40,7 +40,6 @@ impl<'s> FoldInputs<'s> {
         }
     }
 
-    /// For a file on a cycle of imports: another file of the cycle can call a function that this one declares and exports before the body of this one has run.
     pub fn for_file_called_before_it_runs(self) -> FoldInputs<'s> {
         FoldInputs {
             is_called_before_it_runs: true,
@@ -94,7 +93,6 @@ impl<'s> FoldInputs<'s> {
     #[inline]
     pub(super) fn value_of(&self, state: PathState) -> Option<DefineValue<'s>> {
         let value = self.nodes[state.node? as usize].value?;
-        // Every object on the way to what a run has in any case is there too, so `a?.b` reads what `a.b` reads.
         let is_there_in_every_run = matches!(
             value,
             DefineValue::RuntimeValue(_) | DefineValue::RuntimeConstant(_)
@@ -104,7 +102,6 @@ impl<'s> FoldInputs<'s> {
         }
         match value {
             _ if is_there_in_every_run && state.has_dynamic_root => None,
-            // `bun run` writes this number as the name `NaN`, which a direct eval can have declared.
             DefineValue::Constant(Constant::Number(number))
                 if state.has_dynamic_root && number.is_nan() =>
             {

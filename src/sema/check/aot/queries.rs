@@ -5,7 +5,6 @@ use super::answers::{
 };
 use super::builtin_types::BuiltinTypeSymbols;
 use super::declared_signatures::DeclaredSignatures;
-use super::enum_constants::ConstantInputs;
 use super::inferred_from_use::{ReferenceIndex, Subject, TypeState, TypesInProgress, UsageState};
 use super::kept_answers::{
     GaveUpAnswers, KeptFact, KeptMemo, ObjectAnswers, TypeAnswers, TypeQuestion,
@@ -77,7 +76,6 @@ pub(super) struct Memo<'c> {
     literal_contexts: FxHashMap<ExprId, TypeId>,
     pub(super) unwritten_forms: FxHashMap<(FileId, TypeNodeId), GaveUp>,
     pub(super) alias_forms: FxHashMap<Sym, AliasForm>,
-    pub(super) enum_member_inputs: FxHashMap<(FileId, EnumMemberId), ConstantInputs>,
     pub(super) reference_index: Option<ReferenceIndex<'c>>,
     pub(super) usages: FxHashMap<Subject, UsageState>,
     pub(super) inferred_types: FxHashMap<Subject, TypeState>,

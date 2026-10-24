@@ -1,0 +1,3549 @@
+////: K
+const K = class P {
+    static #m() { return «1»; }
+    static async #a() { return «1»; }
+    static *#g() { yield «1»; }
+    static async *#ag() { yield «1»; }
+    static m() { return P.#m; }
+    static viaThis() { return this.#m; }
+    static viaArrow() { return (() => P.#m)(); }
+    static viaFunction() { return (function () { return P.#m; })(); }
+    static get viaGetter() { return P.#m; }
+    static viaDefault(f = P.#m) { return f; }
+    static viaTry() { try { return P.#m; } finally { } }
+    static viaLoop() { let f; for (let i = 0; i < 3; i++) f = P.#m; return f; }
+    static viaCond(c) { return c ? P.#m : P.#m; }
+    static *viaGenerator() { yield P.#m; }
+    static viaInner() { return class Q { static q() { return P.#m; } }.q(); }
+    static viaLiteral() { return { f: P.#m }.f; }
+    static viaArray() { return [P.#m][0]; }
+    static viaSpread() { return [...[P.#m]][0]; }
+    static viaTemplate() { return ((s, f) => f)`${P.#m}`; }
+    static viaComma() { return (P.name, P.#m); }
+    static viaChain() { return P?.#m; }
+    static viaParen() { return (P).#m; }
+    static viaNullish() { return P.early ?? P.#m; }
+    static viaAssign() { let f; f = P.#m; return f; }
+    static viaPattern() { const { f } = { f: P.#m }; return f; }
+    static viaHeritage() { let f; class X extends (f = P.#m, Object) {} return f; }
+    static viaKeyOfInner() { let f; class X { [(f = P.#m, "k")]() {} } return f; }
+    static viaLiteralMethod() { return { m() { return P.#m; } }.m(); }
+    static viaLiteralGetter() { return { get g() { return P.#m; } }.g; }
+    static viaCatch() { try { throw 0; } catch { return P.#m; } }
+    static viaRest(...a) { return [P.#m, ...a][0]; }
+    static viaFieldOfInner() { return new (class { v = P.#m; })().v; }
+    static viaStaticBlockOfInner() { let f; class X { static { f = P.#m; } } return f; }
+    static viaDeepArrows() { return (() => () => () => P.#m)()()(); }
+    static viaSwitch(k = 1) { switch (k) { case 1: return P.#m; default: return undefined; } }
+    static viaLabel() { out: { if (P.name !== undefined) break out; return undefined; } return P.#m; }
+    field = P.#m;
+    viaInstance() { return P.#m; }
+    static early = undefined;
+    static viaNullishEarly = P.viaNullish();
+    static { P.early = P.#m; }
+    static same() { return P.#m === P.#m; }
+    static sameInlined() { return P.m() === P.m(); }
+    static a() { return P.#a; }
+    static g() { return P.#g; }
+    static ag() { return P.#ag; }
+};
+////: K-2
+const K = class P {
+    static #m() { return «1»; }
+    static async #a() { return «1»; }
+    static *#g() { yield «1»; }
+    static async *#ag() { yield «1»; }
+    static m() { return P.#m; }
+    static viaThis() { return this.#m; }
+    static viaArrow() { return (() => P.#m)(); }
+    static viaFunction() { return (function () { return P.#m; })(); }
+    static get viaGetter() { return P.#m; }
+    static viaDefault(f = P.#m) { return f; }
+    static viaTry() { try { return P.#m; } finally { } }
+    static viaLoop() { let f; for (let i = 0; i < 3; i++) f = P.#m; return f; }
+    static viaCond(c?: boolean) { return c ? P.#m : P.#m; }
+    static *viaGenerator() { yield P.#m; }
+    static viaInner() { return class Q { static q() { return P.#m; } }.q(); }
+    static viaLiteral() { return { f: P.#m }.f; }
+    static viaArray() { return [P.#m][0]; }
+    static viaSpread() { return [...[P.#m]][0]; }
+    static viaTemplate() { return ((s: TemplateStringsArray, f: unknown) => f)`${P.#m}`; }
+    static viaComma() { return (P.name, P.#m); }
+    static viaChain() { return P.#m; }
+    static viaParen() { return (P).#m; }
+    static viaNullish() { return P.early ?? P.#m; }
+    static viaAssign() { let f; f = P.#m; return f; }
+    static viaPattern() { const { f } = { f: P.#m }; return f; }
+    static viaHeritage() { let f; class X extends (f = P.#m, Object) {} return f; }
+    static viaKeyOfInner() { let f; class X { [(f = P.#m, "k")]() {} } return f; }
+    static viaLiteralMethod() { return { m() { return P.#m; } }.m(); }
+    static viaLiteralGetter() { return { get g() { return P.#m; } }.g; }
+    static viaCatch() { try { throw 0; } catch { return P.#m; } }
+    static viaRest(...a: unknown[]) { return [P.#m, ...a][0]; }
+    static viaFieldOfInner() { return new (class { v = P.#m; })().v; }
+    static viaStaticBlockOfInner() { let f; class X { static { f = P.#m; } } return f; }
+    static viaDeepArrows() { return (() => () => () => P.#m)()()(); }
+    static viaSwitch(k = 1) { switch (k) { case 1: return P.#m; default: return undefined; } }
+    static viaLabel() { out: { if (P.name !== undefined) break out; return undefined; } return P.#m; }
+    field = P.#m;
+    viaInstance() { return P.#m; }
+    static early: unknown = undefined;
+    static viaNullishEarly = P.viaNullish();
+    static { P.early = P.#m; }
+    static same() { return P.#m === P.#m; }
+    static sameInlined() { return P.m() === P.m(); }
+    static a() { return P.#a; }
+    static g() { return P.#g; }
+    static ag() { return P.#ag; }
+};
+////: check
+function check(label, A, B) {
+  const f = A.m();
+  for (const way of ways) row(label + " " + way, () => A[way]() === f);
+  row(label + " viaGetter", () => A.viaGetter === f);
+  row(label + " viaGenerator", () => A.viaGenerator().next().value === f);
+  row(label + " viaInstance", () => new A().viaInstance() === f && new A().field === f);
+  row(label + " early", () => A.early === f && A.viaNullishEarly === f);
+  row(label + " same", () => A.same());
+  row(label + " sameInlined", () => A.sameInlined());
+  row(label + " called", () => f());
+  row(label + " what it is", () => f.name + " " + f.length + " " + typeof f + " " + ("prototype" in f));
+  row(label + " no constructor", () => new f());
+  row(label + " kinds", () => [A.a() === A.a(), A.g() === A.g(), A.ag() === A.ag(), A.a() === A.m(), A.g() === A.ag()].join());
+  row(label + " kinds run", () => [A.g()().next().value, typeof A.a()().then, typeof A.ag()().next].join());
+  row(label + " mark", () => { f.mark = label; return A.viaThis().mark; });
+  row(label + " mark behind a collection", () => { collect(); return A.viaArrow().mark; });
+  row(label + " set", () => { const s = new Set(); s.add(A.m()); s.add(A.viaThis()); const n = s.size; s.delete(A.viaArrow()); return n + " " + s.size; });
+  row(label + " weak map", () => { const w = new WeakMap(); w.set(A.m(), 5); return w.get(A.viaTry()); });
+  row(label + " index", () => [A.a(), A.m(), A.g()].indexOf(A.viaLoop()));
+  row(label + " switch", () => { switch (A.m()) { case A.a(): return "a"; case A.viaChain(): return "m"; default: return "none"; } });
+  row(label + " its generator's prototype is kept", () => A.g().prototype === A.g().prototype);
+  if (!B) return;
+  row(label + " another evaluation", () => A.m() === B.m());
+  row(label + " another evaluation's kinds", () => [A.a() === B.a(), A.g() === B.g(), A.ag() === B.ag()].join());
+  row(label + " another evaluation called", () => B.m()() + " " + A.m()());
+  row(label + " another evaluation's mark", () => B.m().mark);
+  row(label + " two in a set", () => new Set([A.m(), B.m(), A.viaThis(), B.viaThis()]).size);
+}
+////: check-2
+function check(label: string, A: any, B: any) {
+  const f = A.m();
+  for (const way of ways) row(label + " " + way, () => A[way]() === f);
+  row(label + " viaGetter", () => A.viaGetter === f);
+  row(label + " viaGenerator", () => A.viaGenerator().next().value === f);
+  row(label + " viaInstance", () => new A().viaInstance() === f && new A().field === f);
+  row(label + " early", () => A.early === f && A.viaNullishEarly === f);
+  row(label + " same", () => A.same());
+  row(label + " sameInlined", () => A.sameInlined());
+  row(label + " called", () => f());
+  row(label + " what it is", () => f.name + " " + f.length + " " + typeof f + " " + ("prototype" in f));
+  row(label + " no constructor", () => new f());
+  row(label + " kinds", () => [A.a() === A.a(), A.g() === A.g(), A.ag() === A.ag(), A.a() === A.m(), A.g() === A.ag()].join());
+  row(label + " kinds run", () => [A.g()().next().value, typeof A.a()().then, typeof A.ag()().next].join());
+  row(label + " mark", () => { f.mark = label; return A.viaThis().mark; });
+  row(label + " mark behind a collection", () => { collect(); return A.viaArrow().mark; });
+  row(label + " set", () => { const s = new Set(); s.add(A.m()); s.add(A.viaThis()); const n = s.size; s.delete(A.viaArrow()); return n + " " + s.size; });
+  row(label + " weak map", () => { const w = new WeakMap(); w.set(A.m(), 5); return w.get(A.viaTry()); });
+  row(label + " index", () => [A.a(), A.m(), A.g()].indexOf(A.viaLoop()));
+  row(label + " switch", () => { switch (A.m()) { case A.a(): return "a"; case A.viaChain(): return "m"; default: return "none"; } });
+  row(label + " its generator's prototype is kept", () => A.g().prototype === A.g().prototype);
+  if (!B) return;
+  row(label + " another evaluation", () => A.m() === B.m());
+  row(label + " another evaluation's kinds", () => [A.a() === B.a(), A.g() === B.g(), A.ag() === B.ag()].join());
+  row(label + " another evaluation called", () => B.m()() + " " + A.m()());
+  row(label + " another evaluation's mark", () => B.m().mark);
+  row(label + " two in a set", () => new Set([A.m(), B.m(), A.viaThis(), B.viaThis()]).size);
+}
+////: for
+for (let n = 1; n <= 2; n++) { made.push(class P {
+    static #m() { return «1»; }
+    static async #a() { return «1»; }
+    static *#g() { yield «1»; }
+    static async *#ag() { yield «1»; }
+    static m() { return P.#m; }
+    static viaThis() { return this.#m; }
+    static viaArrow() { return (() => P.#m)(); }
+    static viaFunction() { return (function () { return P.#m; })(); }
+    static get viaGetter() { return P.#m; }
+    static viaDefault(f = P.#m) { return f; }
+    static viaTry() { try { return P.#m; } finally { } }
+    static viaLoop() { let f; for (let i = 0; i < 3; i++) f = P.#m; return f; }
+    static viaCond(c) { return c ? P.#m : P.#m; }
+    static *viaGenerator() { yield P.#m; }
+    static viaInner() { return class Q { static q() { return P.#m; } }.q(); }
+    static viaLiteral() { return { f: P.#m }.f; }
+    static viaArray() { return [P.#m][0]; }
+    static viaSpread() { return [...[P.#m]][0]; }
+    static viaTemplate() { return ((s, f) => f)`${P.#m}`; }
+    static viaComma() { return (P.name, P.#m); }
+    static viaChain() { return P?.#m; }
+    static viaParen() { return (P).#m; }
+    static viaNullish() { return P.early ?? P.#m; }
+    static viaAssign() { let f; f = P.#m; return f; }
+    static viaPattern() { const { f } = { f: P.#m }; return f; }
+    static viaHeritage() { let f; class X extends (f = P.#m, Object) {} return f; }
+    static viaKeyOfInner() { let f; class X { [(f = P.#m, "k")]() {} } return f; }
+    static viaLiteralMethod() { return { m() { return P.#m; } }.m(); }
+    static viaLiteralGetter() { return { get g() { return P.#m; } }.g; }
+    static viaCatch() { try { throw 0; } catch { return P.#m; } }
+    static viaRest(...a) { return [P.#m, ...a][0]; }
+    static viaFieldOfInner() { return new (class { v = P.#m; })().v; }
+    static viaStaticBlockOfInner() { let f; class X { static { f = P.#m; } } return f; }
+    static viaDeepArrows() { return (() => () => () => P.#m)()()(); }
+    static viaSwitch(k = 1) { switch (k) { case 1: return P.#m; default: return undefined; } }
+    static viaLabel() { out: { if (P.name !== undefined) break out; return undefined; } return P.#m; }
+    field = P.#m;
+    viaInstance() { return P.#m; }
+    static early = undefined;
+    static viaNullishEarly = P.viaNullish();
+    static { P.early = P.#m; }
+    static same() { return P.#m === P.#m; }
+    static sameInlined() { return P.m() === P.m(); }
+    static a() { return P.#a; }
+    static g() { return P.#g; }
+    static ag() { return P.#ag; }
+}); }
+////: for-2
+for (let n = 1; n <= 2; n++) { made.push(class P {
+    static #m() { return «1»; }
+    static async #a() { return «1»; }
+    static *#g() { yield «1»; }
+    static async *#ag() { yield «1»; }
+    static m() { return P.#m; }
+    static viaThis() { return this.#m; }
+    static viaArrow() { return (() => P.#m)(); }
+    static viaFunction() { return (function () { return P.#m; })(); }
+    static get viaGetter() { return P.#m; }
+    static viaDefault(f = P.#m) { return f; }
+    static viaTry() { try { return P.#m; } finally { } }
+    static viaLoop() { let f; for (let i = 0; i < 3; i++) f = P.#m; return f; }
+    static viaCond(c?: boolean) { return c ? P.#m : P.#m; }
+    static *viaGenerator() { yield P.#m; }
+    static viaInner() { return class Q { static q() { return P.#m; } }.q(); }
+    static viaLiteral() { return { f: P.#m }.f; }
+    static viaArray() { return [P.#m][0]; }
+    static viaSpread() { return [...[P.#m]][0]; }
+    static viaTemplate() { return ((s: TemplateStringsArray, f: unknown) => f)`${P.#m}`; }
+    static viaComma() { return (P.name, P.#m); }
+    static viaChain() { return P.#m; }
+    static viaParen() { return (P).#m; }
+    static viaNullish() { return P.early ?? P.#m; }
+    static viaAssign() { let f; f = P.#m; return f; }
+    static viaPattern() { const { f } = { f: P.#m }; return f; }
+    static viaHeritage() { let f; class X extends (f = P.#m, Object) {} return f; }
+    static viaKeyOfInner() { let f; class X { [(f = P.#m, "k")]() {} } return f; }
+    static viaLiteralMethod() { return { m() { return P.#m; } }.m(); }
+    static viaLiteralGetter() { return { get g() { return P.#m; } }.g; }
+    static viaCatch() { try { throw 0; } catch { return P.#m; } }
+    static viaRest(...a: unknown[]) { return [P.#m, ...a][0]; }
+    static viaFieldOfInner() { return new (class { v = P.#m; })().v; }
+    static viaStaticBlockOfInner() { let f; class X { static { f = P.#m; } } return f; }
+    static viaDeepArrows() { return (() => () => () => P.#m)()()(); }
+    static viaSwitch(k = 1) { switch (k) { case 1: return P.#m; default: return undefined; } }
+    static viaLabel() { out: { if (P.name !== undefined) break out; return undefined; } return P.#m; }
+    field = P.#m;
+    viaInstance() { return P.#m; }
+    static early: unknown = undefined;
+    static viaNullishEarly = P.viaNullish();
+    static { P.early = P.#m; }
+    static same() { return P.#m === P.#m; }
+    static sameInlined() { return P.m() === P.m(); }
+    static a() { return P.#a; }
+    static g() { return P.#g; }
+    static ag() { return P.#ag; }
+}); }
+////: make
+const make = (n) => class P {
+    static #m() { return «1»; }
+    static async #a() { return «1»; }
+    static *#g() { yield «1»; }
+    static async *#ag() { yield «1»; }
+    static m() { return P.#m; }
+    static viaThis() { return this.#m; }
+    static viaArrow() { return (() => P.#m)(); }
+    static viaFunction() { return (function () { return P.#m; })(); }
+    static get viaGetter() { return P.#m; }
+    static viaDefault(f = P.#m) { return f; }
+    static viaTry() { try { return P.#m; } finally { } }
+    static viaLoop() { let f; for (let i = 0; i < 3; i++) f = P.#m; return f; }
+    static viaCond(c) { return c ? P.#m : P.#m; }
+    static *viaGenerator() { yield P.#m; }
+    static viaInner() { return class Q { static q() { return P.#m; } }.q(); }
+    static viaLiteral() { return { f: P.#m }.f; }
+    static viaArray() { return [P.#m][0]; }
+    static viaSpread() { return [...[P.#m]][0]; }
+    static viaTemplate() { return ((s, f) => f)`${P.#m}`; }
+    static viaComma() { return (P.name, P.#m); }
+    static viaChain() { return P?.#m; }
+    static viaParen() { return (P).#m; }
+    static viaNullish() { return P.early ?? P.#m; }
+    static viaAssign() { let f; f = P.#m; return f; }
+    static viaPattern() { const { f } = { f: P.#m }; return f; }
+    static viaHeritage() { let f; class X extends (f = P.#m, Object) {} return f; }
+    static viaKeyOfInner() { let f; class X { [(f = P.#m, "k")]() {} } return f; }
+    static viaLiteralMethod() { return { m() { return P.#m; } }.m(); }
+    static viaLiteralGetter() { return { get g() { return P.#m; } }.g; }
+    static viaCatch() { try { throw 0; } catch { return P.#m; } }
+    static viaRest(...a) { return [P.#m, ...a][0]; }
+    static viaFieldOfInner() { return new (class { v = P.#m; })().v; }
+    static viaStaticBlockOfInner() { let f; class X { static { f = P.#m; } } return f; }
+    static viaDeepArrows() { return (() => () => () => P.#m)()()(); }
+    static viaSwitch(k = 1) { switch (k) { case 1: return P.#m; default: return undefined; } }
+    static viaLabel() { out: { if (P.name !== undefined) break out; return undefined; } return P.#m; }
+    field = P.#m;
+    viaInstance() { return P.#m; }
+    static early = undefined;
+    static viaNullishEarly = P.viaNullish();
+    static { P.early = P.#m; }
+    static same() { return P.#m === P.#m; }
+    static sameInlined() { return P.m() === P.m(); }
+    static a() { return P.#a; }
+    static g() { return P.#g; }
+    static ag() { return P.#ag; }
+};
+////: make-2
+const make = (n: number) => class P {
+    static #m() { return «1»; }
+    static async #a() { return «1»; }
+    static *#g() { yield «1»; }
+    static async *#ag() { yield «1»; }
+    static m() { return P.#m; }
+    static viaThis() { return this.#m; }
+    static viaArrow() { return (() => P.#m)(); }
+    static viaFunction() { return (function () { return P.#m; })(); }
+    static get viaGetter() { return P.#m; }
+    static viaDefault(f = P.#m) { return f; }
+    static viaTry() { try { return P.#m; } finally { } }
+    static viaLoop() { let f; for (let i = 0; i < 3; i++) f = P.#m; return f; }
+    static viaCond(c?: boolean) { return c ? P.#m : P.#m; }
+    static *viaGenerator() { yield P.#m; }
+    static viaInner() { return class Q { static q() { return P.#m; } }.q(); }
+    static viaLiteral() { return { f: P.#m }.f; }
+    static viaArray() { return [P.#m][0]; }
+    static viaSpread() { return [...[P.#m]][0]; }
+    static viaTemplate() { return ((s: TemplateStringsArray, f: unknown) => f)`${P.#m}`; }
+    static viaComma() { return (P.name, P.#m); }
+    static viaChain() { return P.#m; }
+    static viaParen() { return (P).#m; }
+    static viaNullish() { return P.early ?? P.#m; }
+    static viaAssign() { let f; f = P.#m; return f; }
+    static viaPattern() { const { f } = { f: P.#m }; return f; }
+    static viaHeritage() { let f; class X extends (f = P.#m, Object) {} return f; }
+    static viaKeyOfInner() { let f; class X { [(f = P.#m, "k")]() {} } return f; }
+    static viaLiteralMethod() { return { m() { return P.#m; } }.m(); }
+    static viaLiteralGetter() { return { get g() { return P.#m; } }.g; }
+    static viaCatch() { try { throw 0; } catch { return P.#m; } }
+    static viaRest(...a: unknown[]) { return [P.#m, ...a][0]; }
+    static viaFieldOfInner() { return new (class { v = P.#m; })().v; }
+    static viaStaticBlockOfInner() { let f; class X { static { f = P.#m; } } return f; }
+    static viaDeepArrows() { return (() => () => () => P.#m)()()(); }
+    static viaSwitch(k = 1) { switch (k) { case 1: return P.#m; default: return undefined; } }
+    static viaLabel() { out: { if (P.name !== undefined) break out; return undefined; } return P.#m; }
+    field = P.#m;
+    viaInstance() { return P.#m; }
+    static early: unknown = undefined;
+    static viaNullishEarly = P.viaNullish();
+    static { P.early = P.#m; }
+    static same() { return P.#m === P.#m; }
+    static sameInlined() { return P.m() === P.m(); }
+    static a() { return P.#a; }
+    static g() { return P.#g; }
+    static ag() { return P.#ag; }
+};
+////: make-3
+function make(n) { class P {
+    static #m() { return «1»; }
+    static async #a() { return «1»; }
+    static *#g() { yield «1»; }
+    static async *#ag() { yield «1»; }
+    static m() { return P.#m; }
+    static viaThis() { return this.#m; }
+    static viaArrow() { return (() => P.#m)(); }
+    static viaFunction() { return (function () { return P.#m; })(); }
+    static get viaGetter() { return P.#m; }
+    static viaDefault(f = P.#m) { return f; }
+    static viaTry() { try { return P.#m; } finally { } }
+    static viaLoop() { let f; for (let i = 0; i < 3; i++) f = P.#m; return f; }
+    static viaCond(c) { return c ? P.#m : P.#m; }
+    static *viaGenerator() { yield P.#m; }
+    static viaInner() { return class Q { static q() { return P.#m; } }.q(); }
+    static viaLiteral() { return { f: P.#m }.f; }
+    static viaArray() { return [P.#m][0]; }
+    static viaSpread() { return [...[P.#m]][0]; }
+    static viaTemplate() { return ((s, f) => f)`${P.#m}`; }
+    static viaComma() { return (P.name, P.#m); }
+    static viaChain() { return P?.#m; }
+    static viaParen() { return (P).#m; }
+    static viaNullish() { return P.early ?? P.#m; }
+    static viaAssign() { let f; f = P.#m; return f; }
+    static viaPattern() { const { f } = { f: P.#m }; return f; }
+    static viaHeritage() { let f; class X extends (f = P.#m, Object) {} return f; }
+    static viaKeyOfInner() { let f; class X { [(f = P.#m, "k")]() {} } return f; }
+    static viaLiteralMethod() { return { m() { return P.#m; } }.m(); }
+    static viaLiteralGetter() { return { get g() { return P.#m; } }.g; }
+    static viaCatch() { try { throw 0; } catch { return P.#m; } }
+    static viaRest(...a) { return [P.#m, ...a][0]; }
+    static viaFieldOfInner() { return new (class { v = P.#m; })().v; }
+    static viaStaticBlockOfInner() { let f; class X { static { f = P.#m; } } return f; }
+    static viaDeepArrows() { return (() => () => () => P.#m)()()(); }
+    static viaSwitch(k = 1) { switch (k) { case 1: return P.#m; default: return undefined; } }
+    static viaLabel() { out: { if (P.name !== undefined) break out; return undefined; } return P.#m; }
+    field = P.#m;
+    viaInstance() { return P.#m; }
+    static early = undefined;
+    static viaNullishEarly = P.viaNullish();
+    static { P.early = P.#m; }
+    static same() { return P.#m === P.#m; }
+    static sameInlined() { return P.m() === P.m(); }
+    static a() { return P.#a; }
+    static g() { return P.#g; }
+    static ag() { return P.#ag; }
+} return P; }
+////: make-4
+function make(n: number) { class P {
+    static #m() { return «1»; }
+    static async #a() { return «1»; }
+    static *#g() { yield «1»; }
+    static async *#ag() { yield «1»; }
+    static m() { return P.#m; }
+    static viaThis() { return this.#m; }
+    static viaArrow() { return (() => P.#m)(); }
+    static viaFunction() { return (function () { return P.#m; })(); }
+    static get viaGetter() { return P.#m; }
+    static viaDefault(f = P.#m) { return f; }
+    static viaTry() { try { return P.#m; } finally { } }
+    static viaLoop() { let f; for (let i = 0; i < 3; i++) f = P.#m; return f; }
+    static viaCond(c?: boolean) { return c ? P.#m : P.#m; }
+    static *viaGenerator() { yield P.#m; }
+    static viaInner() { return class Q { static q() { return P.#m; } }.q(); }
+    static viaLiteral() { return { f: P.#m }.f; }
+    static viaArray() { return [P.#m][0]; }
+    static viaSpread() { return [...[P.#m]][0]; }
+    static viaTemplate() { return ((s: TemplateStringsArray, f: unknown) => f)`${P.#m}`; }
+    static viaComma() { return (P.name, P.#m); }
+    static viaChain() { return P.#m; }
+    static viaParen() { return (P).#m; }
+    static viaNullish() { return P.early ?? P.#m; }
+    static viaAssign() { let f; f = P.#m; return f; }
+    static viaPattern() { const { f } = { f: P.#m }; return f; }
+    static viaHeritage() { let f; class X extends (f = P.#m, Object) {} return f; }
+    static viaKeyOfInner() { let f; class X { [(f = P.#m, "k")]() {} } return f; }
+    static viaLiteralMethod() { return { m() { return P.#m; } }.m(); }
+    static viaLiteralGetter() { return { get g() { return P.#m; } }.g; }
+    static viaCatch() { try { throw 0; } catch { return P.#m; } }
+    static viaRest(...a: unknown[]) { return [P.#m, ...a][0]; }
+    static viaFieldOfInner() { return new (class { v = P.#m; })().v; }
+    static viaStaticBlockOfInner() { let f; class X { static { f = P.#m; } } return f; }
+    static viaDeepArrows() { return (() => () => () => P.#m)()()(); }
+    static viaSwitch(k = 1) { switch (k) { case 1: return P.#m; default: return undefined; } }
+    static viaLabel() { out: { if (P.name !== undefined) break out; return undefined; } return P.#m; }
+    field = P.#m;
+    viaInstance() { return P.#m; }
+    static early: unknown = undefined;
+    static viaNullishEarly = P.viaNullish();
+    static { P.early = P.#m; }
+    static same() { return P.#m === P.#m; }
+    static sameInlined() { return P.m() === P.m(); }
+    static a() { return P.#a; }
+    static g() { return P.#g; }
+    static ag() { return P.#ag; }
+} return P; }
+////: make-5
+function* make(n) { for (;;) { yield class P {
+    static #m() { return «1»; }
+    static async #a() { return «1»; }
+    static *#g() { yield «1»; }
+    static async *#ag() { yield «1»; }
+    static m() { return P.#m; }
+    static viaThis() { return this.#m; }
+    static viaArrow() { return (() => P.#m)(); }
+    static viaFunction() { return (function () { return P.#m; })(); }
+    static get viaGetter() { return P.#m; }
+    static viaDefault(f = P.#m) { return f; }
+    static viaTry() { try { return P.#m; } finally { } }
+    static viaLoop() { let f; for (let i = 0; i < 3; i++) f = P.#m; return f; }
+    static viaCond(c) { return c ? P.#m : P.#m; }
+    static *viaGenerator() { yield P.#m; }
+    static viaInner() { return class Q { static q() { return P.#m; } }.q(); }
+    static viaLiteral() { return { f: P.#m }.f; }
+    static viaArray() { return [P.#m][0]; }
+    static viaSpread() { return [...[P.#m]][0]; }
+    static viaTemplate() { return ((s, f) => f)`${P.#m}`; }
+    static viaComma() { return (P.name, P.#m); }
+    static viaChain() { return P?.#m; }
+    static viaParen() { return (P).#m; }
+    static viaNullish() { return P.early ?? P.#m; }
+    static viaAssign() { let f; f = P.#m; return f; }
+    static viaPattern() { const { f } = { f: P.#m }; return f; }
+    static viaHeritage() { let f; class X extends (f = P.#m, Object) {} return f; }
+    static viaKeyOfInner() { let f; class X { [(f = P.#m, "k")]() {} } return f; }
+    static viaLiteralMethod() { return { m() { return P.#m; } }.m(); }
+    static viaLiteralGetter() { return { get g() { return P.#m; } }.g; }
+    static viaCatch() { try { throw 0; } catch { return P.#m; } }
+    static viaRest(...a) { return [P.#m, ...a][0]; }
+    static viaFieldOfInner() { return new (class { v = P.#m; })().v; }
+    static viaStaticBlockOfInner() { let f; class X { static { f = P.#m; } } return f; }
+    static viaDeepArrows() { return (() => () => () => P.#m)()()(); }
+    static viaSwitch(k = 1) { switch (k) { case 1: return P.#m; default: return undefined; } }
+    static viaLabel() { out: { if (P.name !== undefined) break out; return undefined; } return P.#m; }
+    field = P.#m;
+    viaInstance() { return P.#m; }
+    static early = undefined;
+    static viaNullishEarly = P.viaNullish();
+    static { P.early = P.#m; }
+    static same() { return P.#m === P.#m; }
+    static sameInlined() { return P.m() === P.m(); }
+    static a() { return P.#a; }
+    static g() { return P.#g; }
+    static ag() { return P.#ag; }
+}; n++; } }
+////: make-6
+function* make(n: number) { for (;;) { yield class P {
+    static #m() { return «1»; }
+    static async #a() { return «1»; }
+    static *#g() { yield «1»; }
+    static async *#ag() { yield «1»; }
+    static m() { return P.#m; }
+    static viaThis() { return this.#m; }
+    static viaArrow() { return (() => P.#m)(); }
+    static viaFunction() { return (function () { return P.#m; })(); }
+    static get viaGetter() { return P.#m; }
+    static viaDefault(f = P.#m) { return f; }
+    static viaTry() { try { return P.#m; } finally { } }
+    static viaLoop() { let f; for (let i = 0; i < 3; i++) f = P.#m; return f; }
+    static viaCond(c?: boolean) { return c ? P.#m : P.#m; }
+    static *viaGenerator() { yield P.#m; }
+    static viaInner() { return class Q { static q() { return P.#m; } }.q(); }
+    static viaLiteral() { return { f: P.#m }.f; }
+    static viaArray() { return [P.#m][0]; }
+    static viaSpread() { return [...[P.#m]][0]; }
+    static viaTemplate() { return ((s: TemplateStringsArray, f: unknown) => f)`${P.#m}`; }
+    static viaComma() { return (P.name, P.#m); }
+    static viaChain() { return P.#m; }
+    static viaParen() { return (P).#m; }
+    static viaNullish() { return P.early ?? P.#m; }
+    static viaAssign() { let f; f = P.#m; return f; }
+    static viaPattern() { const { f } = { f: P.#m }; return f; }
+    static viaHeritage() { let f; class X extends (f = P.#m, Object) {} return f; }
+    static viaKeyOfInner() { let f; class X { [(f = P.#m, "k")]() {} } return f; }
+    static viaLiteralMethod() { return { m() { return P.#m; } }.m(); }
+    static viaLiteralGetter() { return { get g() { return P.#m; } }.g; }
+    static viaCatch() { try { throw 0; } catch { return P.#m; } }
+    static viaRest(...a: unknown[]) { return [P.#m, ...a][0]; }
+    static viaFieldOfInner() { return new (class { v = P.#m; })().v; }
+    static viaStaticBlockOfInner() { let f; class X { static { f = P.#m; } } return f; }
+    static viaDeepArrows() { return (() => () => () => P.#m)()()(); }
+    static viaSwitch(k = 1) { switch (k) { case 1: return P.#m; default: return undefined; } }
+    static viaLabel() { out: { if (P.name !== undefined) break out; return undefined; } return P.#m; }
+    field = P.#m;
+    viaInstance() { return P.#m; }
+    static early: unknown = undefined;
+    static viaNullishEarly = P.viaNullish();
+    static { P.early = P.#m; }
+    static same() { return P.#m === P.#m; }
+    static sameInlined() { return P.m() === P.m(); }
+    static a() { return P.#a; }
+    static g() { return P.#g; }
+    static ag() { return P.#ag; }
+}; n++; } }
+////: show
+show(
+  «1»,
+  collectOutcomes(() => Stamp.readStatic(«2»)),
+  collectOutcomes(() => Stamp.callStatic(«2»)),
+  collectOutcomes(() => Stamp.readStaticAccessor(«2»)),
+  collectOutcomes(() => Stamp.hasStatic(«2»)),
+);
+//// a-private-field-is-read-from-values-that-are-no-instances.ts
+// A static method with a typed parameter returns a private field of it. Through `any` it also gets an object from JSON.parse, a literal, null and undefined: each of those reads throws a TypeError, as in plain Bun.
+class Safe {
+  #code = 42;
+  static codeOf(safe: Safe): number {
+    return safe.#code;
+  }
+}
+
+const parsed: Safe = JSON.parse("{}");
+const others: any[] = [new Safe(), parsed, {}, null, undefined];
+console.log(Safe.codeOf(new Safe()));
+for (const other of others) {
+  try {
+    console.log(Safe.codeOf(other));
+  } catch (error) {
+    console.log(error instanceof TypeError);
+  }
+}
+
+export {};
+//// a-private-name-is-asked-for-in-objects-that-gain-it-later.ts
+// `#name in value` for values of every kind, again and again, while ordinary objects gain the name by a constructor that returns them, turn into dictionaries, or belong to another evaluation of the class.
+const lines: string[] = [];
+function say(label: string, value: unknown): void {
+  lines.push(label + ": " + String(value));
+}
+
+class Branded {
+  #brand = 1;
+  static is(value: object): boolean {
+    return #brand in value;
+  }
+}
+
+const Returns = function (this: unknown, value: object): object {
+  return value;
+} as unknown as new (value: object) => object;
+class Stamp extends Returns {
+  #mark = 7;
+  #method(): number {
+    return this.#mark;
+  }
+  static has(value: object): boolean {
+    return #mark in value;
+  }
+  static hasMethod(value: object): boolean {
+    return #method in value;
+  }
+  static read(value: object): number {
+    return (value as Stamp).#method();
+  }
+}
+
+function makeClass() {
+  return class Evaluated extends Returns {
+    #own = 1;
+    static has(value: object): boolean {
+      return #own in value;
+    }
+  };
+}
+const First = makeClass();
+const Second = makeClass();
+
+const plain = { a: 1 };
+const sameShape = { a: 2 };
+const list = [1, 2];
+const sameList = [3, 4];
+const fn = function () {};
+const proxy = new Proxy({ a: 1 }, {});
+const frozen = Object.freeze({ a: 3 });
+const bare = Object.create(null) as object;
+const dictionary: Record<string, number> = {};
+for (let i = 0; i < 200; i++) dictionary["k" + i] = i;
+for (let i = 0; i < 150; i++) delete dictionary["k" + i];
+const map = new Map<number, number>();
+const all: object[] = [new Branded(), plain, sameShape, list, sameList, fn, proxy, frozen, bare, dictionary, map, new Branded()];
+
+function ask(): string {
+  let text = "";
+  for (const value of all) text += (Branded.is(value) ? "B" : "-") + (Stamp.has(value) ? "S" : "-") + (Stamp.hasMethod(value) ? "M" : "-") + (First.has(value) ? "1" : "-") + (Second.has(value) ? "2" : "-") + " ";
+  return text;
+}
+let last = "";
+for (let turn = 0; turn < 40; turn++) last = ask();
+say("before", last);
+
+new Stamp(plain);
+say("one of two objects of a shape is stamped", ask());
+say("read", Stamp.read(plain));
+new Stamp(list);
+say("one of two arrays", ask());
+new Stamp(dictionary);
+say("a dictionary", ask());
+new Stamp(proxy);
+new Stamp(fn);
+new Stamp(bare);
+new Stamp(map);
+say("a proxy, a function, an object below nothing, a map", ask());
+new First(sameShape);
+say("the first evaluation", ask());
+new Second(sameShape);
+new Second(sameList);
+say("the second evaluation", ask());
+say("a frozen object", (() => {
+  try {
+    new Stamp(frozen);
+    return ask();
+  } catch (error) {
+    return (error as Error).constructor.name + " " + ask();
+  }
+})());
+say("twice", (() => {
+  try {
+    new Stamp(plain);
+    return "stamped again";
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+})());
+say("no object", (() => {
+  try {
+    return Branded.is(1 as unknown as object);
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+})());
+// Many shapes in turn: more than anything remembers.
+let count = 0;
+for (let turn = 0; turn < 400; turn++) {
+  const value: Record<string, number> = {};
+  value["p" + (turn % 37)] = turn;
+  if (turn % 5 === 0) new Stamp(value);
+  if (Stamp.has(value)) count++;
+  if (Branded.is(value)) count += 1000;
+}
+say("many shapes", count);
+console.log(lines.join("\n"));
+//// accessors.ts
+// Private accessors: reading one that has only a setter and writing one that has only a getter throw, in every kind of expression.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+function make(n: number) {
+  return class C {
+    static log: string[] = [];
+    static #kept = n;
+    static set #w(v: number) { C.log.push("set " + v + " " + (this === C)); C.#kept = v; }
+    static get #r() { C.log.push("get " + (this === C)); return C.#kept; }
+    static get #rw() { C.log.push("get"); return C.#kept; }
+    static set #rw(v: number) { C.log.push("set " + v); C.#kept = v; }
+    static rows(label: string) {
+      const t = (what: string, f: () => unknown) => { C.log.length = 0; const r = said(f); console.log(label + " " + what + ": " + r + " [" + C.log.join() + "] " + C.#kept); };
+      t("read of a setter alone", () => (C as any).#w);
+      t("read of a setter alone on this", () => C.readOnThis());
+      t("typeof a setter alone", () => typeof (C as any).#w);
+      t("a setter alone called", () => (C as any).#w());
+      t("a setter alone as a tag", () => (C as any).#w`a`);
+      t("a setter alone +=", () => (C as any).#w += 1);
+      t("a setter alone ++", () => (C as any).#w++);
+      t("a setter alone ??=", () => (C as any).#w ??= 5);
+      t("a setter alone ||=", () => (C as any).#w ||= 5);
+      t("a setter alone &&=", () => (C as any).#w &&= 5);
+      t("a setter alone =", () => C.#w = 4);
+      t("a setter alone in a pattern", () => { [C.#w] = [8]; });
+      t("a setter alone in", () => #w in C);
+      t("a getter alone read", () => C.#r);
+      t("a getter alone =", () => (C as any).#r = 4);
+      t("a getter alone +=", () => (C as any).#r += 1);
+      t("a getter alone ++", () => (C as any).#r++);
+      t("a getter alone ||=", () => (C as any).#r ||= 5);
+      t("a getter alone &&=", () => (C as any).#r &&= 5);
+      t("a getter alone ??=", () => (C as any).#r ??= 5);
+      t("a getter alone in a pattern", () => { [(C as any).#r] = [8]; });
+      t("both read", () => C.#rw);
+      t("both =", () => C.#rw = 6);
+      t("both +=", () => C.#rw += 1);
+      t("both ++", () => C.#rw++);
+      t("both prefix --", () => --C.#rw);
+      t("both ||=", () => C.#rw ||= 5);
+      t("both &&=", () => C.#rw &&= 5);
+      t("both ??=", () => C.#rw ??= 5);
+    }
+    static readOnThis() { return (this as any).#w; }
+  };
+}
+make(1).rows("first");
+make(20).rows("second");
+class T {
+  static set #w(v: number) {}
+  static get #r() { return 1; }
+  static #m() {}
+  static {
+    row("top read of a setter alone", () => (T as any).#w);
+    row("top a setter alone +=", () => (T as any).#w += 1);
+    row("top a getter alone =", () => (T as any).#r = 1);
+  }
+}
+//// accessors-untyped.js
+// Private accessors: reading one that has only a setter and writing one that has only a getter throw, in every kind of expression (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return "threw " + (e).name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const collect = (globalThis).gc ?? (() => (globalThis).Bun.gc(true));
+
+function make(n) {
+  return class C {
+    static log = [];
+    static #kept = n;
+    static set #w(v) { C.log.push("set " + v + " " + (this === C)); C.#kept = v; }
+    static get #r() { C.log.push("get " + (this === C)); return C.#kept; }
+    static get #rw() { C.log.push("get"); return C.#kept; }
+    static set #rw(v) { C.log.push("set " + v); C.#kept = v; }
+    static rows(label) {
+      const t = (what, f) => { C.log.length = 0; const r = said(f); console.log(label + " " + what + ": " + r + " [" + C.log.join() + "] " + C.#kept); };
+      t("read of a setter alone", () => (C).#w);
+      t("read of a setter alone on this", () => C.readOnThis());
+      t("typeof a setter alone", () => typeof (C).#w);
+      t("a setter alone called", () => (C).#w());
+      t("a setter alone as a tag", () => (C).#w`a`);
+      t("a setter alone, chained", () => C?.#w);
+      t("a setter alone +=", () => (C).#w += 1);
+      t("a setter alone ++", () => (C).#w++);
+      t("a setter alone ??=", () => (C).#w ??= 5);
+      t("a setter alone ||=", () => (C).#w ||= 5);
+      t("a setter alone &&=", () => (C).#w &&= 5);
+      t("a setter alone =", () => C.#w = 4);
+      t("a setter alone in a pattern", () => { [C.#w] = [8]; });
+      t("a setter alone in", () => #w in C);
+      t("a getter alone read", () => C.#r);
+      t("a getter alone =", () => (C).#r = 4);
+      t("a getter alone +=", () => (C).#r += 1);
+      t("a getter alone ++", () => (C).#r++);
+      t("a getter alone ||=", () => (C).#r ||= 5);
+      t("a getter alone &&=", () => (C).#r &&= 5);
+      t("a getter alone ??=", () => (C).#r ??= 5);
+      t("a getter alone in a pattern", () => { [(C).#r] = [8]; });
+      t("both read", () => C.#rw);
+      t("both =", () => C.#rw = 6);
+      t("both +=", () => C.#rw += 1);
+      t("both ++", () => C.#rw++);
+      t("both prefix --", () => --C.#rw);
+      t("both ||=", () => C.#rw ||= 5);
+      t("both &&=", () => C.#rw &&= 5);
+      t("both ??=", () => C.#rw ??= 5);
+    }
+    static readOnThis() { return (this).#w; }
+  };
+}
+make(1).rows("first");
+make(20).rows("second");
+class T {
+  static set #w(v) {}
+  static get #r() { return 1; }
+  static #m() {}
+  static {
+    row("top read of a setter alone", () => (T).#w);
+    row("top a setter alone +=", () => (T).#w += 1);
+    row("top a getter alone =", () => (T).#r = 1);
+    row("top a method =", () => (T).#m = 1);
+    row("top a method +=", () => (T).#m += 1);
+    row("top a method ++", () => (T).#m++);
+    row("top a method ||=", () => typeof ((T).#m ||= 1));
+    row("top a method &&=", () => (T).#m &&= 1);
+    row("top a method in a pattern", () => { [(T).#m] = [1]; });
+  }
+}
+//// added-by-another-realm.ts
+// Private members are added to typed objects by code that is evaluated in another realm.
+declare const console: { log(...values: unknown[]): void };
+const other: any = (globalThis as any).$262.createRealm().global;
+const kit = other.eval(`(() => {
+  class ReturnsArgument { constructor(o) { return o; } }
+  class Field extends ReturnsArgument { #stamp = "stamp"; static read(o) { return o.#stamp; } static write(o, v) { o.#stamp = v; } static has(o) { return #stamp in o; } }
+  class Method extends ReturnsArgument { #m() { return "method"; } static call(o) { return o.#m(); } static has(o) { return #m in o; } }
+  class Accessor extends ReturnsArgument { #v = 1; get #a() { return "got " + this.#v; } static get(o) { return o.#a; } }
+  class Public extends ReturnsArgument { plain = 1; 0 = 2; }
+  return { Field, Method, Accessor, Public, store(o, v) { o.stored = v; }, define(o) { Object.defineProperty(o, "defined", { value: 1 }); } };
+})()`);
+let one = 1, two = 2;
+const makers: [string, () => any][] = [
+  ["function", () => function () { return 7; }],
+  ["arrow", () => () => 7],
+  ["one capture", () => () => 6 + one],
+  ["two captures", () => () => 4 + one + two],
+  ["async", () => async () => 7],
+  ["bound", () => (() => 6 + one).bind(null)],
+];
+function called(f: any): unknown { const r = f(); return r && typeof r.then === "function" ? "promise" : r; }
+function line(name: string, f: () => unknown): void {
+  try { console.log(name + ":", JSON.stringify(f())); } catch (e) { console.log(name + ": throws", String(e)); }
+}
+for (const [kind, make] of makers) {
+  line(kind + ": field", () => { const f = make(); new kit.Field(f); kit.Field.write(f, "again"); return [kit.Field.read(f), kit.Field.has(f), called(f)]; });
+  line(kind + ": method", () => { const f = make(); new kit.Method(f); return [kit.Method.call(f), kit.Method.has(f), called(f)]; });
+  line(kind + ": accessor", () => { const f = make(); new kit.Accessor(f); return [kit.Accessor.get(f), called(f)]; });
+  line(kind + ": public", () => { const f = make(); new kit.Public(f); return [f.plain, f[0], Object.keys(f), called(f)]; });
+  line(kind + ": all of them", () => { const f = make(); new kit.Method(f); new kit.Field(f); new kit.Public(f); new kit.Accessor(f); kit.store(f, 5); kit.define(f); return [kit.Method.call(f), kit.Field.read(f), f.plain, kit.Accessor.get(f), f.stored, f.defined, called(f)]; });
+  line(kind + ": twice", () => { const f = make(); new kit.Method(f); new kit.Method(f); return "no error"; });
+  line(kind + ": 300 through one site", () => {
+    let right = 0;
+    const kept: any[] = [];
+    for (let i = 0; i < 300; i++) {
+      const f = make();
+      if (i % 2 === 0) new kit.Field(f);
+      if (i % 3 === 0) new kit.Method(f);
+      if (i % 5 === 0) new kit.Public(f);
+      if (i % 7 === 0) kit.store(f, i);
+      kept.push(f);
+    }
+    for (let i = 0; i < 300; i++) {
+      const f = kept[i];
+      const r = called(f);
+      if (kit.Field.has(f) === (i % 2 === 0) && kit.Method.has(f) === (i % 3 === 0) && (f.plain === 1) === (i % 5 === 0) && (f.stored === i) === (i % 7 === 0) && (r === 7 || r === "promise") && typeof f === "function") right++;
+    }
+    return right;
+  });
+}
+export {};
+//// added-to-base-constructor-result/main.ts
+// Private fields and methods are added to whatever object a base constructor returns, including typed objects.
+declare const console: { log(...values: unknown[]): void };
+import { run } from "./untyped.js";
+run((line: string) => console.log(line));
+//// added-to-base-constructor-result/untyped.js
+class ReturnsArgument { constructor(o) { return o; } }
+class PrivateField extends ReturnsArgument { #stamp = "stamp"; static read(o) { return o.#stamp; } static write(o, v) { o.#stamp = v; } static has(o) { return #stamp in o; } }
+class PrivateMethod extends ReturnsArgument { #m() { return "method"; } static call(o) { return o.#m(); } static has(o) { return #m in o; } }
+class PrivateAccessor extends ReturnsArgument { #v = 1; get #a() { return "got " + this.#v; } set #a(v) { this.#v = v; } static get(o) { return o.#a; } static set(o, v) { o.#a = v; } }
+const key = "computed", symbol = Symbol("s");
+class PublicFields extends ReturnsArgument { plain = 1; [key] = 2; 0 = 3; [symbol] = 4; "quoted name" = 5; }
+class ManyFields extends ReturnsArgument { a = 1; b = 2; c = 3; d = 4; e = 5; f = 6; g = 7; h = 8; i = 9; #j = 10; static j(o) { return o.#j; } }
+
+function makers() {
+  let one = 1, two = 2, three = 3;
+  const holder = { method() { return one; }, get getter() { return () => two; } };
+  return [
+    ["function", () => function () { return 7; }],
+    ["named function", () => function named(a, b) { return 7; }],
+    ["arrow", () => () => 7],
+    ["arrow with one capture", () => () => 6 + one],
+    ["arrow with three captures", () => () => one + two + three + 1],
+    ["async arrow", () => async () => 7],
+    ["async function", () => async function later() { return 7; }],
+    ["method", () => ({ method() { return 6 + one; } }).method],
+    ["bound", () => (function () { return this.v; }).bind({ v: 7 })],
+    ["bound arrow", () => (() => 6 + one).bind(null)],
+    ["from a getter", () => holder.getter],
+  ];
+}
+
+function show(v) {
+  if (typeof v === "function") return "function";
+  if (typeof v === "symbol") return v.toString();
+  if (v && typeof v.then === "function") return "promise";
+  return JSON.stringify(v);
+}
+function attempt(f) { try { return show(f()); } catch (e) { return "throws " + e.constructor.name; } }
+
+const doors = [
+  ["private field", f => { new PrivateField(f); return [PrivateField.read(f), PrivateField.has(f)]; }],
+  ["private field written", f => { new PrivateField(f); PrivateField.write(f, "again"); return PrivateField.read(f); }],
+  ["private field twice", f => { new PrivateField(f); new PrivateField(f); }],
+  ["private field never given", f => PrivateField.read(f)],
+  ["private field asked for", f => PrivateField.has(f)],
+  ["private method", f => { new PrivateMethod(f); return [PrivateMethod.call(f), PrivateMethod.has(f)]; }],
+  ["private method twice", f => { new PrivateMethod(f); new PrivateMethod(f); }],
+  ["private accessor", f => { new PrivateAccessor(f); const first = PrivateAccessor.get(f); PrivateAccessor.set(f, 2); return [first, PrivateAccessor.get(f)]; }],
+  ["public fields", f => { new PublicFields(f); return [f.plain, f.computed, f[0], f[symbol], f["quoted name"], Object.keys(f), Object.getOwnPropertySymbols(f).length]; }],
+  ["many fields", f => { new ManyFields(f); return [Object.keys(f).join(""), ManyFields.j(f)]; }],
+  ["private, then public, then private", f => { new PrivateField(f); new PublicFields(f); new PrivateMethod(f); return [PrivateField.read(f), f.plain, PrivateMethod.call(f), Object.keys(f)]; }],
+  ["a property, then private", f => { f.x = 1; new PrivateField(f); return [f.x, PrivateField.read(f)]; }],
+  ["name asked, then private", f => { const n = f.name, l = f.length; new PrivateField(f); return [n, l, f.name, f.length, PrivateField.read(f)]; }],
+  ["frozen, then private", f => { Object.freeze(f); new PrivateField(f); return PrivateField.read(f); }],
+  ["frozen, then public", f => { Object.freeze(f); new PublicFields(f); }],
+  ["not extensible, then private method", f => { Object.preventExtensions(f); new PrivateMethod(f); return PrivateMethod.call(f); }],
+  ["private names are not listed", f => { new PrivateField(f); new PrivateMethod(f); return [Reflect.ownKeys(f).map(String), Object.getOwnPropertyNames(f)]; }],
+  ["Object.assign", f => { Object.assign(f, { a: 1, [symbol]: 2 }); return [f.a, f[symbol]]; }],
+  ["Object.defineProperties", f => { Object.defineProperties(f, { a: { value: 1 }, b: { get() { return 2; } } }); return [f.a, f.b, Object.keys(f)]; }],
+  ["Reflect.set with it as the receiver", f => [Reflect.set({}, "x", 1, f), f.x]],
+  ["Reflect.defineProperty", f => [Reflect.defineProperty(f, "x", { value: 1 }), f.x]],
+  ["an index", f => { f[0] = 1; f[5] = 2; return [f[0], f[5], Object.keys(f)]; }],
+  ["a large index", f => { const n = Number("4294967295"); f[n] = 1; f[n - 1] = 2; return Object.keys(f); }],
+  ["an index with a getter", f => { Object.defineProperty(f, 1, { get() { return "got"; } }); return f[1]; }],
+  ["Error.captureStackTrace", f => { Error.captureStackTrace(f); return typeof f.stack; }],
+  ["another prototype", f => { const p = { inherited: 1 }; Object.setPrototypeOf(f, p); return [f.inherited, typeof f.call]; }],
+  ["no prototype", f => { Object.setPrototypeOf(f, null); return [typeof f.call, typeof f]; }],
+  ["__proto__ assigned", f => { f.__proto__ = { inherited: 2 }; return f.inherited; }],
+  ["sealed", f => { Object.seal(f); f.x = 1; return [Object.isSealed(f), f.x, Object.isExtensible(f)]; }],
+  ["as a prototype", f => { const o = Object.create(f); f.given = 1; return [o.given, typeof o, Object.getPrototypeOf(o) === f]; }],
+  ["as a prototype, then private", f => { const o = Object.create(f); new PrivateField(f); return [PrivateField.has(f), PrivateField.has(o)]; }],
+  ["weak holders", f => { const m = new WeakMap([[f, 1]]), s = new WeakSet([f]), r = new WeakRef(f); new FinalizationRegistry(() => { }).register(f, 1); return [m.get(f), s.has(f), r.deref() === f]; }],
+  ["behind a proxy", f => { const p = new Proxy(f, {}); p.x = 1; new PrivateField(p); return [f.x, PrivateField.has(p), PrivateField.has(f), typeof p]; }],
+  ["deleted name", f => [delete f.name, delete f.length, f.name, f.length, Object.getOwnPropertyNames(f).filter(n => n !== "prototype")]],
+];
+
+export function run(log) {
+  for (const [door, pass] of doors) {
+    const answers = [];
+    for (const [kind, make] of makers()) {
+      const f = make();
+      const answer = attempt(() => pass(f));
+      let called;
+      try { const r = f(); called = r && typeof r.then === "function" ? "promise" : r; } catch (e) { called = "throws " + e.constructor.name; }
+      answers.push([kind, answer + " | typeof " + typeof f + " | called " + called]);
+    }
+    const first = answers[0][1];
+    if (answers.every(a => a[1] === first)) log(door + ": all: " + first);
+    else for (const [kind, answer] of answers) log(door + ": " + kind + ": " + answer);
+  }
+  for (const [kind, make] of makers()) {
+    let right = 0;
+    for (let i = 0; i < 400; i++) { const f = make(); if (i % 3 === 0) new PrivateField(f); if (i % 5 === 0) new PublicFields(f); if (PrivateField.has(f) === (i % 3 === 0) && (f.plain === 1) === (i % 5 === 0)) right++; }
+    log("many of them: " + kind + ": " + right);
+  }
+}
+//// brand-of-an-evaluated-class-on-one-of-two-instances.ts
+// Two instances of one compiled class. An evaluated subclass made one of them, so only that one has the subclass's brand and private field.
+class Base {
+  id: number;
+  constructor(id: number) {
+    this.id = id;
+  }
+}
+const Derived = (0, eval)(`(function (Base) {
+  return class Derived extends Base {
+    #field = "field";
+    #method() { return "method " + this.id; }
+    get #accessor() { return "accessor " + this.id; }
+    static call(object) { return object.#method(); }
+    static read(object) { return object.#field; }
+    static get(object) { return object.#accessor; }
+    static write(object, value) { object.#field = value; return object.#field; }
+    static hasMethod(object) { return #method in object; }
+    static hasField(object) { return #field in object; }
+  };
+})`)(Base);
+
+function attempt(run: () => unknown): string {
+  try {
+    return String(run());
+  } catch (error) {
+    return "throws " + (error as Error).constructor.name;
+  }
+}
+
+const branded = new Derived(1);
+const plain = new Base(2);
+const later = new Base(3);
+for (const name of ["call", "read", "get", "hasMethod", "hasField"]) {
+  const seen = new Set<string>();
+  for (let turn = 0; turn < 200; turn++) {
+    seen.add(attempt(() => Derived[name](branded)) + " | " + attempt(() => Derived[name](plain)) + " | " + attempt(() => Derived[name](turn % 2 ? branded : later)));
+  }
+  console.log(name + ": " + [...seen].join(" ; "));
+}
+const written = new Set<string>();
+for (let turn = 0; turn < 200; turn++)
+  written.add(attempt(() => Derived.write(branded, "again")) + " | " + attempt(() => Derived.write(plain, "never")));
+console.log("write: " + [...written].join(" ; "));
+console.log(Object.keys(branded).join(","), Object.keys(plain).join(","), branded instanceof Base, plain instanceof Derived);
+//// computed-key-with-brand-checks-outside.js
+// A class with a computed member key, and `#name in object` tests in every other position of the class body.
+function said(f) { try { return String(f()); } catch (e) { return "threw " + e.name; } }
+const name = () => "k";
+const o = JSON.parse("{}");
+class Top {
+  static #f = 1; static #m() { return 2; } static get #g() { return 3; }
+  [name()]() { return "dynamic"; }
+  static a0(x) { return x.#f; }
+  static a1(x) { return x.#m(); }
+  static a2(x) { return x.#g; }
+  static a3(x) { return #f in x; }
+  static a4(x) { return (x.#f = 4); }
+  static a5(x) { return x.#f; }
+  static a6(x) { return x.#m(); }
+  static a7(x) { return x.#g; }
+  static a8(x) { return #f in x; }
+  static a9(x) { return (x.#f = 9); }
+  static a10(x) { return x.#f; }
+  static a11(x) { return x.#m(); }
+  static a12(x) { return x.#g; }
+  static a13(x) { return #f in x; }
+  static a14(x) { return (x.#f = 14); }
+  static a15(x) { return x.#f; }
+  static a16(x) { return x.#m(); }
+  static a17(x) { return x.#g; }
+  static a18(x) { return #f in x; }
+  static a19(x) { return (x.#f = 19); }
+  static a20(x) { return x.#f; }
+  static a21(x) { return x.#m(); }
+  static a22(x) { return x.#g; }
+  static a23(x) { return #f in x; }
+  static a24(x) { return (x.#f = 24); }
+  static a25(x) { return x.#f; }
+  static a26(x) { return x.#m(); }
+  static a27(x) { return x.#g; }
+  static a28(x) { return #f in x; }
+  static a29(x) { return (x.#f = 29); }
+  static a30(x) { return x.#f; }
+  static a31(x) { return x.#m(); }
+  static a32(x) { return x.#g; }
+  static a33(x) { return #f in x; }
+  static a34(x) { return (x.#f = 34); }
+  static a35(x) { return x.#f; }
+  static a36(x) { return x.#m(); }
+  static a37(x) { return x.#g; }
+  static a38(x) { return #f in x; }
+  static a39(x) { return (x.#f = 39); }
+}
+function make(n) { return class Made {
+  static #f = n; static #m() { return n; }
+  [name() + n]() { return "dynamic"; }
+  static a0(x) { return x.#f; }
+  static a1(x) { return x.#m(); }
+  static a2(x) { return #m in x; }
+  static a3(x) { return (x.#f = 3); }
+  static a4(x) { return x.#f; }
+  static a5(x) { return x.#m(); }
+  static a6(x) { return #m in x; }
+  static a7(x) { return (x.#f = 7); }
+  static a8(x) { return x.#f; }
+  static a9(x) { return x.#m(); }
+  static a10(x) { return #m in x; }
+  static a11(x) { return (x.#f = 11); }
+  static a12(x) { return x.#f; }
+  static a13(x) { return x.#m(); }
+  static a14(x) { return #m in x; }
+  static a15(x) { return (x.#f = 15); }
+  static a16(x) { return x.#f; }
+  static a17(x) { return x.#m(); }
+  static a18(x) { return #m in x; }
+  static a19(x) { return (x.#f = 19); }
+  static a20(x) { return x.#f; }
+  static a21(x) { return x.#m(); }
+  static a22(x) { return #m in x; }
+  static a23(x) { return (x.#f = 23); }
+  static a24(x) { return x.#f; }
+  static a25(x) { return x.#m(); }
+  static a26(x) { return #m in x; }
+  static a27(x) { return (x.#f = 27); }
+  static a28(x) { return x.#f; }
+  static a29(x) { return x.#m(); }
+  static a30(x) { return #m in x; }
+  static a31(x) { return (x.#f = 31); }
+  static a32(x) { return x.#f; }
+  static a33(x) { return x.#m(); }
+  static a34(x) { return #m in x; }
+  static a35(x) { return (x.#f = 35); }
+  static a36(x) { return x.#f; }
+  static a37(x) { return x.#m(); }
+  static a38(x) { return #m in x; }
+  static a39(x) { return (x.#f = 39); }
+}; }
+const M = make(5); let right = 0, threw = 0;
+for (let i = 0; i < 40; i++) { if (!said(() => Top["a" + i](Top)).startsWith("threw")) right++; if (!said(() => M["a" + i](M)).startsWith("threw")) right++; if (said(() => Top["a" + i](o)) === "threw TypeError") threw++; if (said(() => M["a" + i](o)) === "threw TypeError") threw++; }
+console.log("found: " + right); console.log("threw: " + threw); console.log(new Top().k() + " " + new M().k5());
+//// computed-keys-use-undefined-names.js
+// A computed member key uses a private name of the class that is being defined, before that private member exists.
+function said(f) { try { return String(f()); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const other = JSON.parse("{}");
+const log = [];
+function note(s, v) { log.push(s); return v; }
+row("a field, in a field's key", () => { class C { [other.#f] = 1; #f = 2; } return "made"; });
+row("a field, in a method's key", () => { class C { [other.#f]() {} #f = 2; } return "made"; });
+row("a field, in an accessor's key", () => { class C { get [other.#f]() { return 1; } #f = 2; } return "made"; });
+row("a method, in a field's key", () => { class C { [other.#m()] = 1; #m() { return "k"; } } return "made"; });
+row("a getter, in a field's key", () => { class C { [other.#g] = 1; get #g() { return "k"; } } return "made"; });
+row("a setter, stored to in a key", () => { class C { [(other.#s = 1)] = 1; set #s(v) {} } return "made"; });
+row("in, ahead of the field", () => { class C { [(#f in other) + ""] = 1; #f = 2; } return Object.keys(new C()).join(); });
+row("in, ahead of the method", () => { class C { [(#m in other) + ""] = 1; #m() {} } return Object.keys(new C()).join(); });
+row("in, of what is no object", () => { class C { [(#f in 1) + ""] = 1; #f = 2; } return "made"; });
+row("null", () => { class C { [null.#f] = 1; #f = 2; } return "made"; });
+row("two keys around the declaration", () => { class C { [said(() => other.#f)] = 1; #f = 2; [said(() => other.#f) + "2"] = 2; } return Object.keys(new C()).join(); });
+row("the keys keep their order", () => { log.length = 0; class C { [note("a", "a")] = 1; #f = 2; [note("b", "b")]() {} #g = 3; static [note("c", "c")] = 4; } return log.join(); });
+row("an arrow made in a key, called later", () => { let read; class C { [(read = (o) => o.#f, "k")] = 1; #f = 2; } return read(new C()) + " " + said(() => read({})); });
+row("a class expression", () => { const K = class { [said(() => other.#f)] = 1; #f = 2; }; return Object.keys(new K()).join(); });
+function make(o) { return class C { [o ? said(() => o.#f) : "none"] = 1; #f = "k"; }; }
+row("an instance of another evaluation", () => Object.keys(new (make(new (make(null))()))()).join());
+row("made twice, each its own name", () => { const A = make(null), B = make(null); return Object.keys(new A()).join() + Object.keys(new B()).join(); });
+for (let i = 0; i < 2; i++) row("in a loop " + i, () => { class C { [said(() => other.#f) + i] = 1; #f = 2; } return Object.keys(new C()).join(); });
+//// computed-keys-use-undefined-names-typed.ts
+// A computed member key uses a private name of the class that is being defined, before that private member exists, with type annotations.
+declare const console: { log(...a: unknown[]): void };
+declare const JSON: { parse(s: string): any };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown) { console.log(label + ": " + said(f)); }
+const o: any = JSON.parse("{}");
+const log: string[] = [];
+function note(s: string, v: string): string { log.push(s); return v; }
+row("a field, in a method's key", () => { class C { [o.#f]() {} #f = 2; } return "made"; });
+row("a field, in an accessor's key", () => { class C { get [o.#f]() { return 1; } #f = 2; } return "made"; });
+row("a method, in a method's key", () => { class C { [o.#m()]() {} #m() { return "k"; } } return "made"; });
+row("a getter, in a method's key", () => { class C { [o.#g]() {} get #g() { return "k"; } } return "made"; });
+row("a setter, stored to in a key", () => { class C { [(o.#s = 1)]() {} set #s(v: number) {} } return "made"; });
+row("in, ahead of the field", () => { class C { [(#f in o) + ""]() {} #f = 2; } return Object.getOwnPropertyNames(C.prototype).join(); });
+row("in, ahead of the method", () => { class C { [(#m in o) + ""]() {} #m() {} } return Object.getOwnPropertyNames(C.prototype).join(); });
+row("two keys around the declaration", () => { class C { [said(() => o.#f)]() {} #f = 2; [said(() => o.#f) + "2"]() {} } return Object.getOwnPropertyNames(C.prototype).join(); });
+row("the keys keep their order", () => { log.length = 0; class C { [note("a", "a")]() {} #f = 2; [note("b", "b")]() {} #g = 3; static [note("c", "c")]() {} } return log.join(); });
+row("an arrow made in a key, called later", () => { let read: any; class C { [(read = (x: any) => x.#f, "k")]() {} #f = 2; } return read(new C()) + " " + said(() => read({})); });
+row("a class expression", () => { const K = class { [said(() => o.#f)]() {} #f = 2; }; return Object.getOwnPropertyNames(K.prototype).join(); });
+function make(x: any) { return class C { [x ? said(() => x.#f) : "none"]() {} #f = "k"; }; }
+row("an instance of another evaluation", () => Object.getOwnPropertyNames(make(new (make(null))()).prototype).join());
+for (let i = 0; i < 2; i++) row("in a loop " + i, () => { class C { [said(() => o.#f) + i]() {} #f = 2; } return Object.getOwnPropertyNames(C.prototype).join(); });
+class Top { [said(() => o.#f)]() {} #f = 2; static names() { return Object.getOwnPropertyNames(Top.prototype).join(); } }
+row("at the top level", () => Top.names());
+//// destructuring-getters-rest-computed-keys.js
+// The order of evaluation in destructuring patterns with getters, rest elements and computed keys.
+const log = [];
+function note(s, v) { log.push(s); return v; }
+function row(label, f) { log.length = 0; let r; try { r = String(f()); } catch (e) { r = "threw " + e.name; } console.log(label + ": " + r + " [" + log.join(" ") + "]"); }
+const src = () => ({ get a() { return note("get a", 7); }, get b() { return note("get b", 8); } });
+const key = (s) => ({ toString() { note(s + "-tostring"); return s; } });
+row("rest", () => { const o = {}; ({ ...note("target", o).r } = new Proxy({ a: 1, b: 2 }, { ownKeys(t) { note("keys"); return Reflect.ownKeys(t); } })); return Object.keys(o.r).join(); });
+row("rest behind a property", () => { const o = {}; ({ a: note("t1", o).x, ...note("t2", o).r } = src()); return o.x + " " + Object.keys(o.r).join(); });
+row("computed keys on both sides", () => { const o = {}; ({ [note("source-key", key("a"))]: note("target", o)[note("target-key", key("k"))] } = src()); return o.k; });
+row("a nested object pattern", () => { const o = {}; ({ a: { c: note("target", o).y } } = { get a() { note("get a"); return { get c() { return note("get c", 3); } }; } }); return o.y; });
+row("a nested array pattern", () => { const o = {}; ({ a: [note("target", o).y] } = { get a() { note("get a"); return [4]; } }); return o.y; });
+row("two properties", () => { const o = {}; ({ a: note("t1", o).x, b: note("t2", o).y } = src()); return o.x + " " + o.y; });
+row("an identifier", () => { let x; ({ a: x } = src()); return x; });
+row("shorthand with a default", () => { let a; ({ a = note("default", 1) } = { get a() { note("get a"); } }); return a; });
+row("an identifier in its dead zone", () => { ({ a: late } = src()); let late; });
+row("a setter", () => { const o = { set x(v) { note("set " + v); } }; ({ a: note("target", o).x } = src()); return "done"; });
+row("the target throws", () => { ({ a: (() => { note("target"); throw new RangeError(); })().x } = src()); });
+row("the getter throws", () => { const o = {}; ({ a: note("target", o).x } = { get a() { note("get a"); throw new RangeError(); } }); });
+row("undefined as the target's object", () => { ({ a: note("target", undefined).x } = src()); });
+row("the source is null", () => { const o = {}; ({ a: note("target", o).x } = null); });
+class B { set x(v) { note("super set " + v); } }
+class D extends B { m() { ({ a: super.x } = src()); return "done"; } n() { ({ a: super[note("super-key", "x")] } = src()); return "done"; } }
+row("a super property", () => new D().m());
+row("a computed super property", () => new D().n());
+row("in a for-of head", () => { const o = {}; for ({ a: note("target", o).x } of [src(), src()]) note("body " + o.x); return o.x; });
+row("in a loop", () => { const o = { x: 0 }; let t = 0; for (let i = 0; i < 3; i++) { ({ a: o.x } = { a: i }); t += o.x; } return t; });
+row("the value of the expression", () => { const o = {}; const s = src(); return ({ a: o.x } = s) === s; });
+//// destructuring-into-private-and-public-fields.js
+// The order of evaluation in destructuring assignments whose targets are private and public fields.
+const log = [];
+function note(s, v) { log.push(s); return v; }
+function row(label, f) { log.length = 0; let r; try { r = String(f()); } catch (e) { r = "threw " + e.name; } console.log(label + ": " + r + " [" + log.join(" ") + "]"); }
+class C {
+  #x = 0; y = 0; static #s = 0;
+  static priv(o, src) { ({ a: note("target", o).#x } = src); return o.#x; }
+  static pub(o, src) { ({ a: note("target", o).y } = src); return o.y; }
+  static stat(src) { ({ a: note("target", C).#s } = src); return C.#s; }
+  static arr(o, src) { [note("target", o).#x] = src; return o.#x; }
+  static arrPub(o, src) { [note("target", o).y] = src; return o.y; }
+  static dflt(o, src) { ({ a: note("target", o).#x = note("default", 5) } = src); return o.#x; }
+  static nul(src) { ({ a: note("target", null).#x } = src); }
+  static nulPub(src) { ({ a: note("target", null).y } = src); }
+}
+const src = () => ({ get a() { return note("get", 7); } });
+const it = () => ({ [Symbol.iterator]() { note("iter"); return { next() { note("next"); return { done: false, value: 8 }; }, return() { note("return"); return {}; } }; } });
+row("a private field", () => C.priv(new C(), src()));
+row("a public field", () => C.pub(new C(), src()));
+row("a static private field", () => C.stat(src()));
+row("in an array pattern, private", () => C.arr(new C(), it()));
+row("in an array pattern, public", () => C.arrPub(new C(), it()));
+row("with a default", () => C.dflt(new C(), { get a() { note("get"); return undefined; } }));
+row("an object without the name", () => C.priv({}, src()));
+row("null, private", () => C.nul(src()));
+row("null, public", () => C.nulPub(src()));
+class D extends class {} { #f; constructor() { const init = () => super(); ({ a: this.#f } = { get a() { note("get"); init(); } }); } }
+class E extends class {} { f; constructor() { const init = () => super(); ({ a: this.f } = { get a() { note("get"); init(); } }); } }
+row("this ahead of super(), private", () => new D());
+row("this ahead of super(), public", () => new E());
+//// destructuring-into-private-and-public-fields-typed.ts
+// The order of evaluation in destructuring assignments whose targets are private and public fields, with type annotations.
+declare const console: { log(...a: unknown[]): void };
+const log: string[] = [];
+function note<T>(s: string, v: T): T { log.push(s); return v; }
+function row(label: string, f: () => unknown) { log.length = 0; let r: string; try { r = String(f()); } catch (e) { r = "threw " + (e as Error).name; } console.log(label + ": " + r + " [" + log.join(" ") + "]"); }
+class Source { get a(): number { return note("get a", 7); } get b(): string { return note("get b", "s"); } }
+const src = (): Source => new Source();
+class P {
+  x = 0; t = ""; #p = 0; static #s = 0; static q = 0;
+  static priv(o: P, s: Source) { ({ a: note("target", o).#p } = s); return o.#p; }
+  static pub(o: P, s: Source) { ({ a: note("target", o).x } = s); return o.x; }
+  static two(o: P, s: Source) { ({ a: note("t1", o).x, b: note("t2", o).t } = s); return o.x + o.t; }
+  static stat(s: Source) { ({ a: note("target", P).#s } = s); return P.#s; }
+  static statPub(s: Source) { ({ a: note("target", P).q } = s); return P.q; }
+  static dflt(o: P, s: { a?: number }) { ({ a: note("target", o).x = note("default", 5) } = s); return o.x; }
+  own(s: Source) { ({ a: this.x, b: this.t } = s); return this.x + this.t; }
+}
+row("a private field", () => P.priv(new P(), src()));
+row("a public field", () => P.pub(new P(), src()));
+row("two fields", () => P.two(new P(), src()));
+row("a static private field", () => P.stat(src()));
+row("a static public field", () => P.statPub(src()));
+row("with a default", () => P.dflt(new P(), { get a() { note("get a", 0); return undefined; } }));
+row("this", () => new P().own(src()));
+row("a literal's field", () => { const o = { k: 0 }; ({ a: note("target", o).k } = src()); return o.k; });
+row("an element", () => { const l = [0, 0]; ({ a: note("target", l)[note("index", 1)] } = src()); return l.join(); });
+row("locals", () => { let a = 0, b = ""; ({ a, b } = src()); return a + b; });
+row("rest", () => { const o: { r?: { b: string } } = {}; let a = 0; ({ a, ...note("target", o).r } = { a: note("made", 1), b: "s" }); return a + " " + Object.keys(o.r!).join(); });
+row("in a hot loop", () => { const o = new P(); let t = 0; for (let i = 0; i < 1000; i++) { ({ a: o.x } = { a: i }); t += o.x; } return t; });
+//// direct-eval-private-names.ts
+// Text run by a direct eval in a class body reads, stores, tests and calls the private members of objects that compiled code created, and compiled code sees what the text stored.
+function attempt(action: () => unknown): string {
+  try {
+    return JSON.stringify(action()) ?? "undefined";
+  } catch (error) {
+    return (error as Error).name;
+  }
+}
+
+class Vault {
+  #x = 1;
+  #anything: unknown = "initial";
+  label = "vault";
+  static #count = 0;
+  #m(): string {
+    return "m sees " + this.#x;
+  }
+  get #a(): number {
+    return this.#x * 10;
+  }
+  set #a(value: number) {
+    this.#x = value / 10;
+  }
+  static #s(): string {
+    return "s sees " + Vault.#count;
+  }
+
+  run(text: string, o?: unknown, v?: unknown): unknown {
+    return eval(text);
+  }
+  static run(text: string, o?: unknown, v?: unknown): unknown {
+    return eval(text);
+  }
+  runInArrow(text: string, o?: unknown, v?: unknown): unknown {
+    return (() => eval(text))();
+  }
+  readConstantText(): unknown {
+    return eval("this.#x");
+  }
+  storeConstantText(v: number): unknown {
+    return eval("this.#x = v");
+  }
+  hasConstantText(o: unknown): unknown {
+    return eval("#x in o");
+  }
+  callConstantText(): unknown {
+    return eval("this.#m()");
+  }
+
+  compiled(): string {
+    return [this.#x, JSON.stringify(this.#anything), this.#m(), this.#a, this.label].join(" ");
+  }
+  storeCompiled(value: number): void {
+    this.#x = value;
+  }
+  static hasCompiled(o: object): string {
+    return [#x in o, #anything in o, #m in o, #a in o].join();
+  }
+  static countCompiled(): string {
+    return Vault.#count + " " + Vault.#s();
+  }
+}
+////= lines-2	SafeBox	Vault	"subclass"
+class Other {
+  #x = "x of another class";
+  read(): string {
+    return this.#x;
+  }
+}
+
+function exercise(kind: string, create: () => Vault): void {
+  const vault = create();
+  console.log(kind);
+  console.log("  read:", attempt(() => vault.run("this.#x")), attempt(() => vault.run("this.#anything")), attempt(() => vault.run("o.#x", vault)), attempt(() => vault.runInArrow("this.#x")));
+  console.log("  compiled after the read:", attempt(() => vault.compiled()), Vault.hasCompiled(vault));
+  console.log("  store:", attempt(() => vault.run("this.#x = v", null, 2)), attempt(() => vault.compiled()));
+  console.log("  store:", attempt(() => vault.run("o.#x = v", vault, 3)), attempt(() => vault.runInArrow("this.#x = v + 1", null, 3)), attempt(() => vault.compiled()));
+  console.log("  update:", attempt(() => vault.run("this.#x += v", null, 5)), attempt(() => vault.run("this.#x++")), attempt(() => vault.run("--this.#x")), attempt(() => vault.compiled()));
+  console.log("  other types:", ["text", 1.5, null, [1, 2], { k: 1 }, true].map(value => attempt(() => vault.run("this.#anything = v", null, value)) + " " + attempt(() => vault.compiled())).join(" | "));
+  vault.storeCompiled(6);
+  console.log("  read after a compiled store:", attempt(() => vault.run("this.#x")), attempt(() => vault.run("this.#m()")), attempt(() => vault.run("this.#a")));
+  console.log("  in:", attempt(() => vault.run("[#x in o, #anything in o, #m in o, #a in o]", vault)), attempt(() => vault.run("#x in this")));
+  console.log("  call:", attempt(() => vault.run("this.#m()")), attempt(() => vault.run("o.#m()", vault)), attempt(() => vault.run("this.#m.call(o)", create())), attempt(() => vault.run("this.#m === o.#m", create())));
+  console.log("  accessor:", attempt(() => vault.run("this.#a")), attempt(() => vault.run("this.#a = v", null, 70)), attempt(() => vault.compiled()));
+  console.log("  not allowed:", attempt(() => vault.run("this.#m = v", null, 1)), attempt(() => vault.run("delete this.label")), attempt(() => vault.compiled()), Vault.hasCompiled(vault));
+  console.log("  constant text:", attempt(() => vault.readConstantText()), attempt(() => vault.storeConstantText(8)), attempt(() => vault.hasConstantText(vault)), attempt(() => vault.callConstantText()), attempt(() => vault.compiled()));
+}
+
+exercise("instance", () => new Vault());
+exercise("instance of a subclass", () => new SafeBox());
+exercise("instance with an added property", () => Object.assign(new Vault(), { added: 1 }));
+exercise("frozen instance", () => {
+  const vault = new Vault();
+  Object.freeze(vault);
+  return vault;
+});
+exercise("sealed instance", () => Object.seal(new Vault()));
+exercise("instance used by compiled code first", () => {
+  const vault = new Vault();
+  vault.storeCompiled(1);
+  vault.compiled();
+  return vault;
+});
+
+const probe = new Vault();
+const otherValues: [string, unknown][] = [
+  ["plain object", {}],
+  ["instance of another class", new Other()],
+  ["object that inherits from an instance", Object.create(new Vault())],
+  ["proxy of an instance", new Proxy(new Vault(), {})],
+  ["the class", Vault],
+  ["array", [1]],
+  ["function", () => 1],
+];
+for (const [kind, otherValue] of otherValues) {
+  console.log(`${kind}:`, attempt(() => probe.run("#x in o", otherValue)), attempt(() => probe.run("#m in o", otherValue)), attempt(() => probe.run("o.#x", otherValue)), attempt(() => probe.run("o.#x = v", otherValue, 1)), attempt(() => probe.run("o.#m()", otherValue)), attempt(() => probe.run("o.#a", otherValue)));
+}
+for (const primitive of [1, "text", null, undefined, true, 1n]) {
+  console.log(`${typeof primitive}:`, attempt(() => probe.run("#x in o", primitive)), attempt(() => probe.run("o.#x", primitive)), attempt(() => probe.run("o.#m()", primitive)));
+}
+
+console.log("static:", attempt(() => Vault.run("Vault.#count")), attempt(() => Vault.run("this.#count = v", null, 4)), Vault.countCompiled());
+console.log("static:", attempt(() => Vault.run("Vault.#count++")), attempt(() => Vault.run("this.#s()")), attempt(() => Vault.run("[#count in Vault, #s in Vault, #count in o, #x in Vault]", new Vault())), Vault.countCompiled());
+console.log("static through a subclass:", attempt(() => SafeBox.run("this.#count")), attempt(() => SafeBox.run("Vault.#count")), attempt(() => SafeBox.run("this.#s()")), attempt(() => SafeBox.run("#count in this")));
+console.log("from an instance method:", attempt(() => probe.run("Vault.#count = v", null, 9)), attempt(() => probe.run("Vault.#s()")), Vault.countCompiled());
+
+const many: Vault[] = [];
+for (let i = 0; i < 200; i++) many.push(i % 2 ? new SafeBox() : new Vault());
+let sum = 0;
+for (let i = 0; i < many.length; i++) {
+  if (i % 3 === 0) many[i].run("this.#x = v", null, i);
+  sum += many[i].run("this.#x") as number;
+  many[i].storeCompiled(i % 7);
+  sum += many[i].run("#m in this ? this.#x : -1000") as number;
+}
+console.log("200 objects:", sum, new Other().read());
+
+export {};
+//// evaluated-class-extends-a-compiled-class.ts
+// A class in evaluated text extends a compiled class and has private fields, methods, accessors and static brand tests. Its instances are objects that the compiled
+// constructor made: typed code goes on reading and writing their fields, and keys, JSON, spread and structuredClone see no private name.
+function outcome(f: () => unknown): string { try { return JSON.stringify(f()) ?? "undefined" } catch (e) { return "throws " + (e as Error).name } }
+function show(label: string, ...parts: unknown[]): void { console.log(label + ": " + parts.map(String).join(" | ")) }
+
+class Point {
+  #id: number
+  static #count = 0
+  constructor(public x: number, public y: number) { this.#id = ++Point.#count }
+  #scaled(by: number): number { return (this.x + this.y) * by }
+  sum(): number { return this.x + this.y }
+  id(): number { return this.#id }
+  twice(): number { return this.#scaled(2) }
+  move(dx: number, dy: number): this { this.x += dx; this.y += dy; return this }
+  static is(o: unknown): boolean { return typeof o === "object" && o !== null && #id in o && #scaled in o }
+}
+class Point3 extends Point {
+  constructor(x: number, y: number, public z: number) { super(x, y) }
+  override sum(): number { return super.sum() + this.z }
+}
+
+const derive: any = (0, eval)(`(Base, ...rest) => class Derived extends Base {
+  #field = "field";
+  #counter = 0;
+  static #made = 0;
+  constructor(...args) { super(...args, ...rest); Derived.#made++; }
+  #method() { return "method " + this.#field + " " + this.sum(); }
+  get #accessor() { return "accessor " + this.#counter; }
+  set #accessor(v) { this.#counter = v; }
+  static #staticMethod(o) { return #method in o; }
+  call() { return this.#method(); }
+  read() { return this.#field; }
+  write(v) { this.#field = v; return this; }
+  count() { this.#accessor = this.#counter + 1; return this.#accessor; }
+  static hasField(o) { return #field in o; }
+  static hasMethod(o) { return Derived.#staticMethod(o); }
+  static hasAccessor(o) { return #accessor in o; }
+  static made() { return Derived.#made; }
+  static readOf(o) { return o.#field; }
+  static callOf(o) { return o.#method(); }
+}`)
+
+function sumTyped(p: Point): number { return p.x + p.y + p.sum() + p.twice() }
+function moveTyped(p: Point): Point { p.x = p.x + 1; p.y = p.y * 2; return p.move(1, 1) }
+function seen(o: any): string {
+  return [Reflect.ownKeys(o).join(), Object.keys(o).join(), JSON.stringify(o), JSON.stringify({ ...o }), outcome(() => structuredClone(o)), JSON.stringify(Object.getOwnPropertyDescriptors(o)), Object.entries(o).join(";")].join(" ; ")
+}
+
+for (const [name, Base, args] of [["Point", Point, [1, 2]], ["Point3", Point3, [1, 2, 3]]] as const) {
+  const A = derive(Base)
+  const B = derive(Base)
+  const a = new A(...args)
+  const b = new B(...args)
+  const plain = new (Base as any)(...args)
+  show(name + ", members", a.call(), a.read(), a.write("again").read(), a.count(), a.count(), a.call())
+  show(name + ", brands of its own class", A.hasField(a), A.hasMethod(a), A.hasAccessor(a), A.made())
+  show(name + ", brands of the other class", B.hasField(a), B.hasMethod(a), B.hasAccessor(a), A.hasField(b), A.hasMethod(b), A.hasField(plain), A.hasMethod(plain), A.hasField({}), outcome(() => A.hasField(1)))
+  show(name + ", wrong receivers", outcome(() => A.readOf(b)), outcome(() => A.callOf(b)), outcome(() => A.readOf(plain)), outcome(() => A.callOf(plain)), outcome(() => A.prototype.count.call(plain)), outcome(() => A.prototype.write.call(b, 1)))
+  show(name + ", the compiled class", Point.is(a), Point.is(b), Point.is(plain), a.id() < b.id(), a instanceof Base, a instanceof A, a instanceof B, a.twice())
+  show(name + ", typed code", sumTyped(a), sumTyped(moveTyped(a)), a.x, a.y, a.call(), sumTyped(plain))
+  show(name + ", what is seen", seen(a))
+  a.added = "added"
+  delete a.y
+  a.y = 9
+  Object.defineProperty(a, "x", { get() { return 100 }, enumerable: true, configurable: true })
+  show(name + ", altered", seen(a), a.call(), sumTyped(a), A.hasField(a), A.hasMethod(a), Point.is(a))
+  Object.freeze(b)
+  show(name + ", frozen", Object.isFrozen(b), b.write("in a frozen object").read(), b.count(), b.call(), outcome(() => moveTyped(b)), seen(b))
+}
+
+// A class of evaluated text puts its private names on a finished object, also on one that cannot be extended.
+const stamp: any = (0, eval)(`(() => {
+  class Returns { constructor(o) { return o; } }
+  return class Stamp extends Returns { #mark = 1; #m() { return this.#mark; } static bump(o) { return ++o.#mark + o.#m(); } static has(o) { return #mark in o && #m in o; } };
+})()`)
+type Pair = { left: number, right: string }
+function leftOf(p: Pair): number { return p.left }
+for (const [name, create] of [["literal", (): Pair => ({ left: 1, right: "r" })], ["frozen literal", (): Pair => Object.freeze({ left: 1, right: "r" })], ["sealed instance", () => Object.seal(new Point(1, 2))]] as const) {
+  const o: any = create()
+  show(name, stamp.has(o), outcome(() => stamp.bump(o)), new stamp(o) === o, stamp.has(o), stamp.bump(o), stamp.bump(o), outcome(() => new stamp(o)), seen(o), "left" in o ? leftOf(o) : sumTyped(o), Object.isFrozen(o), Object.isSealed(o))
+}
+
+const D = derive(Point)
+const many: Point[] = []
+for (let i = 0; i < 300; i++) many.push(i % 2 ? new D(i, 1) : new Point(i, 1))
+let total = 0, branded = 0
+for (const p of many) { total += sumTyped(p); if (D.hasMethod(p)) branded++ }
+show("300 through one site", total, branded, D.made())
+export {}
+//// evaluation-order.ts
+// The order of evaluation around private members: receiver, value, default, element and argument.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+const log: string[] = [];
+function note<T>(what: string, v: T): T { log.push(what); return v; }
+function told(f: () => unknown) { log.length = 0; const r = said(f); return log.join(" ") + " -> " + r; }
+function boom(): number { log.push("boom"); throw new RangeError("boom"); }
+class C {
+  static #f = 0;
+  static #x: any = 0;
+  static #hidden = 0;
+  static set #s(v: number) { log.push("setter " + v); C.#hidden = v; }
+  static get #s() { log.push("getter"); return C.#hidden; }
+  static get #g() { log.push("getter"); return 1; }
+  static set #w(v: number) { log.push("setter " + v); }
+  static #m() { return 1; }
+  static field(o: any) { o.#f = note("value", 5); }
+  static fieldThrows(o: any) { o.#f = boom(); }
+  static viaThis() { this.#f = note("value", 5); }
+  static receiver(o: () => any) { o().#f = note("value", 5); }
+  static setter(o: any) { o.#s = note("value", 5); }
+  static getterOnly(o: any) { o.#g = note("value", 5); }
+  static add(o: any) { o.#f += note("value", 5); }
+  static addSetter(o: any) { o.#s += note("value", 5); }
+  static addGetterOnly(o: any) { o.#g += note("value", 5); }
+  static addSetterOnly(o: any) { o.#w += note("value", 5); }
+  static increment(o: any) { return o.#f++; }
+  static incrementSetterOnly(o: any) { return o.#w++; }
+  static incrementGetterOnly(o: any) { return ++o.#g; }
+  static or(o: any) { return o.#f ||= note("value", 5); }
+  static and(o: any) { return o.#f &&= note("value", 6); }
+  static nullish(o: any) { return o.#f ??= note("value", 7); }
+  static nullishSetterOnly(o: any) { return o.#w ??= note("value", 7); }
+  static orGetterOnly(o: any) { return o.#g ||= note("value", 7); }
+  static andGetterOnly(o: any) { return o.#g &&= note("value", 7); }
+  static array(o: any, it: Iterable<number>) { [o.#f] = it; }
+  static arrayDefault(o: any) { [o.#f = note("default", 3)] = []; }
+  static arrayRest(o: any, it: Iterable<number>) { [...o.#x] = it; }
+  static object(o: any) { ({ a: o.#f } = { a: 9 }); }
+  static objectRest(o: any) { ({ ...o.#x } = { a: 9 }); }
+  static forOf(o: any) { for (o.#f of [note("element", 1)]) log.push("body"); }
+  static forIn(o: any) { for (o.#x in { a: 1 }) log.push("body"); }
+  static call(o: any) { return o.#m(note("argument", 1)); }
+  static read(o: any) { return o.#f; }
+  static chain(o: any) { return o.#f; }
+  static reset() { C.#f = 0; C.#x = 0; }
+  static now() { return C.#f + " " + String(C.#x); }
+}
+class D extends C {}
+function steps(): Iterable<number> {
+  return { [Symbol.iterator]() { log.push("open"); return { next() { log.push("next"); return { done: false, value: 4 }; }, return() { log.push("return"); return {}; } }; } } as Iterable<number>;
+}
+const others: [string, any][] = [["an heir", D], ["an object below", Object.create(C)], ["a proxy", new Proxy(C, {})], ["an instance", new C()], ["a function", function () {}], ["null", null], ["undefined", undefined], ["a number", 1], ["a string", "s"], ["a boolean", true], ["a symbol", Symbol()], ["a bigint", 1n]];
+const doors = ["field", "fieldThrows", "setter", "getterOnly", "method", "add", "addSetter", "addGetterOnly", "addSetterOnly", "addMethod", "increment", "incrementSetterOnly", "incrementGetterOnly", "or", "and", "nullish", "nullishSetterOnly", "orGetterOnly", "andGetterOnly", "arrayDefault", "object", "objectRest", "forOf", "forIn", "call", "read", "chain"];
+for (const door of doors) {
+  C.reset();
+  console.log(door + " on the class: " + told(() => (C as any)[door](C)) + " now " + C.now());
+  for (const [name, o] of others) console.log(door + " on " + name + ": " + told(() => (C as any)[door](o)) + " now " + C.now());
+}
+for (const [name, o] of [["the class", C] as [string, any], ...others]) {
+  C.reset();
+  console.log("array on " + name + ": " + told(() => C.array(o, steps())) + " now " + C.now());
+  console.log("arrayRest on " + name + ": " + told(() => C.arrayRest(o, [1, 2])));
+  console.log("receiver on " + name + ": " + told(() => C.receiver(() => note("receiver", o))));
+}
+console.log("this is the class: " + told(() => C.viaThis()));
+console.log("this is an heir: " + told(() => D.viaThis()));
+
+//// evaluation-order-untyped.js
+// The order of evaluation around private members: receiver, value, default, element and argument (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return "threw " + (e).name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const collect = (globalThis).gc ?? (() => (globalThis).Bun.gc(true));
+
+const log = [];
+function note(what, v) { log.push(what); return v; }
+function told(f) { log.length = 0; const r = said(f); return log.join(" ") + " -> " + r; }
+function boom() { log.push("boom"); throw new RangeError("boom"); }
+class C {
+  static #f = 0;
+  static #x = 0;
+  static #hidden = 0;
+  static set #s(v) { log.push("setter " + v); C.#hidden = v; }
+  static get #s() { log.push("getter"); return C.#hidden; }
+  static get #g() { log.push("getter"); return 1; }
+  static set #w(v) { log.push("setter " + v); }
+  static #m() { return 1; }
+  static field(o) { o.#f = note("value", 5); }
+  static fieldThrows(o) { o.#f = boom(); }
+  static viaThis() { this.#f = note("value", 5); }
+  static receiver(o) { o().#f = note("value", 5); }
+  static setter(o) { o.#s = note("value", 5); }
+  static getterOnly(o) { o.#g = note("value", 5); }
+  static method(o) { o.#m = note("value", 5); }
+  static add(o) { o.#f += note("value", 5); }
+  static addSetter(o) { o.#s += note("value", 5); }
+  static addGetterOnly(o) { o.#g += note("value", 5); }
+  static addSetterOnly(o) { o.#w += note("value", 5); }
+  static addMethod(o) { o.#m += note("value", 5); }
+  static increment(o) { return o.#f++; }
+  static incrementSetterOnly(o) { return o.#w++; }
+  static incrementGetterOnly(o) { return ++o.#g; }
+  static or(o) { return o.#f ||= note("value", 5); }
+  static and(o) { return o.#f &&= note("value", 6); }
+  static nullish(o) { return o.#f ??= note("value", 7); }
+  static nullishSetterOnly(o) { return o.#w ??= note("value", 7); }
+  static orGetterOnly(o) { return o.#g ||= note("value", 7); }
+  static andGetterOnly(o) { return o.#g &&= note("value", 7); }
+  static array(o, it) { [o.#f] = it; }
+  static arrayDefault(o) { [o.#f = note("default", 3)] = []; }
+  static arrayRest(o, it) { [...o.#x] = it; }
+  static object(o) { ({ a: o.#f } = { a: 9 }); }
+  static objectRest(o) { ({ ...o.#x } = { a: 9 }); }
+  static forOf(o) { for (o.#f of [note("element", 1)]) log.push("body"); }
+  static forIn(o) { for (o.#x in { a: 1 }) log.push("body"); }
+  static call(o) { return o.#m(note("argument", 1)); }
+  static read(o) { return o.#f; }
+  static chain(o) { return o?.#f; }
+  static reset() { C.#f = 0; C.#x = 0; }
+  static now() { return C.#f + " " + String(C.#x); }
+}
+class D extends C {}
+function steps() {
+  return { [Symbol.iterator]() { log.push("open"); return { next() { log.push("next"); return { done: false, value: 4 }; }, return() { log.push("return"); return {}; } }; } };
+}
+const others = [["an heir", D], ["an object below", Object.create(C)], ["a proxy", new Proxy(C, {})], ["an instance", new C()], ["a function", function () {}], ["null", null], ["undefined", undefined], ["a number", 1], ["a string", "s"], ["a boolean", true], ["a symbol", Symbol()], ["a bigint", 1n]];
+const doors = ["field", "fieldThrows", "setter", "getterOnly", "method", "add", "addSetter", "addGetterOnly", "addSetterOnly", "addMethod", "increment", "incrementSetterOnly", "incrementGetterOnly", "or", "and", "nullish", "nullishSetterOnly", "orGetterOnly", "andGetterOnly", "arrayDefault", "object", "objectRest", "forOf", "forIn", "call", "read", "chain"];
+for (const door of doors) {
+  C.reset();
+  console.log(door + " on the class: " + told(() => (C)[door](C)) + " now " + C.now());
+  for (const [name, o] of others) console.log(door + " on " + name + ": " + told(() => (C)[door](o)) + " now " + C.now());
+}
+for (const [name, o] of [["the class", C], ...others]) {
+  C.reset();
+  console.log("array on " + name + ": " + told(() => C.array(o, steps())) + " now " + C.now());
+  console.log("arrayRest on " + name + ": " + told(() => C.arrayRest(o, [1, 2])));
+  console.log("receiver on " + name + ": " + told(() => C.receiver(() => note("receiver", o))));
+}
+console.log("this is the class: " + told(() => C.viaThis()));
+console.log("this is an heir: " + told(() => D.viaThis()));
+console.log("this is something else: " + told(() => C.viaThis.call({})));
+//// in-operator-messages.ts
+// `#name in value` where the value is not an object: a static method or accessor has a message of its own, every other private name has the message of the `in` operator, which describes the value. An `accessor` field counts as a field.
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return (e as Error).name + ": " + (e as Error).message; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+
+class C {
+  static fieldBeforeItsInitializer = #field in C;
+  static accessorFieldBeforeItsInitializer = #accessorField in C;
+  static methodBeforeTheInitializers = #method in C;
+  static #field = 1;
+  static accessor #accessorField = 2;
+  static #method(): void {}
+  static get #getter(): number { return 1; }
+  #instance = 1;
+  accessor #instanceAccessorField = 2;
+  static hasField(v: any): boolean { return #field in v; }
+  static hasAccessorField(v: any): boolean { return #accessorField in v; }
+  static hasMethod(v: any): boolean { return #method in v; }
+  static hasGetter(v: any): boolean { return #getter in v; }
+  static hasInstance(v: any): boolean { return #instance in v; }
+  static hasInstanceAccessorField(v: any): boolean { return #instanceAccessorField in v; }
+}
+type Ask = "hasField" | "hasAccessorField" | "hasMethod" | "hasGetter" | "hasInstance" | "hasInstanceAccessorField";
+const asks: Ask[] = ["hasField", "hasAccessorField", "hasMethod", "hasGetter", "hasInstance", "hasInstanceAccessorField"];
+const values: [string, unknown][] = [["a number", 1], ["a string", "s"], ["null", null], ["undefined", undefined], ["true", true], ["a symbol", Symbol("described")], ["a bigint", 1n],
+  ["the class", C], ["an instance", new C()], ["an object", {}], ["a function", () => 1]];
+for (const ask of asks) for (const [name, v] of values) row(ask + " of " + name, () => C[ask](v));
+row("a field before its initializer", () => C.fieldBeforeItsInitializer);
+row("an accessor field before its initializer", () => C.accessorFieldBeforeItsInitializer);
+row("a method before the initializers", () => C.methodBeforeTheInitializers);
+//// in-operator-messages-untyped.js
+// `#name in value` where the value is not an object: a static method or accessor has a message of its own, every other private name has the message of the `in` operator, which describes the value (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return e.name + ": " + e.message; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+
+class C {
+  static #field = 1;
+  static #blank;
+  static #method() {}
+  static get #getter() { return 1; }
+  static set #setter(v) {}
+  static get #both() { return 1; }
+  static set #both(v) {}
+  #instance = 1;
+  #instanceMethod() {}
+  get #instanceGetter() { return 1; }
+  static hasField(v) { return #field in v; }
+  static hasBlank(v) { return #blank in v; }
+  static hasMethod(v) { return #method in v; }
+  static hasGetter(v) { return #getter in v; }
+  static hasSetter(v) { return #setter in v; }
+  static hasBoth(v) { return #both in v; }
+  static hasInstance(v) { return #instance in v; }
+  static hasInstanceMethod(v) { return #instanceMethod in v; }
+  static hasInstanceGetter(v) { return #instanceGetter in v; }
+  static callMethod(v) { return v.#method(); }
+  static readGetter(v) { return v.#getter; }
+}
+const asks = ["hasField", "hasBlank", "hasMethod", "hasGetter", "hasSetter", "hasBoth", "hasInstance", "hasInstanceMethod", "hasInstanceGetter"];
+const values = [["a number", 1], ["zero", 0], ["NaN", NaN], ["a string", "s"], ["the empty string", ""], ["null", null], ["undefined", undefined], ["true", true], ["false", false], ["a symbol", Symbol("described")], ["a bigint", 1n],
+  ["the class", C], ["an instance", new C()], ["an object", {}], ["a function", () => 1], ["a proxy of the class", new Proxy(C, {})]];
+for (const ask of asks) for (const [name, v] of values) row(ask + " of " + name, () => C[ask](v));
+// An access is not a test: it has the message of the admission, for an object and for what is none.
+for (const [name, v] of values) {
+  row("callMethod of " + name, () => C.callMethod(v));
+  row("readGetter of " + name, () => C.readGetter(v));
+}
+//// instance-members-before-super-returns.js
+// A method that the base constructor calls runs before the subclass has its private methods, accessors and fields: every access throws a TypeError, `in` answers false, and after super() has returned all of them work.
+function said(f) { try { return String(f()); } catch (e) { return "threw " + e.name; } }
+class Base {
+  constructor() { this.early = this.hook(); }
+  hook() { return "base hook"; }
+}
+class Methods extends Base {
+  #m() { return "method"; }
+  get #g() { return "getter"; }
+  set #s(v) { this.stored = v; }
+  hook() { return [said(() => this.#m()), said(() => typeof this.#m), said(() => this.#g), said(() => { this.#s = 1; return "stored"; }), #m in this, #g in this].join(); }
+  constructor() { super(); this.afterSuper = this.hook(); }
+}
+class Fields extends Base {
+  #x = 1;
+  hook() { return [said(() => this.#x), said(() => { this.#x = 2; return "stored"; }), #x in this].join(); }
+}
+class Both extends Base {
+  #x = this.#m() + 1;
+  #m() { return 40; }
+  hook() { return [said(() => this.#m()), said(() => this.#x), #m in this, #x in this].join(); }
+}
+class Ordered {
+  a = this.peek();
+  #x = 5;
+  b = this.peek();
+  #m() { return "m"; }
+  peek() { return [said(() => this.#x), said(() => this.#m())].join(); }
+}
+for (const C of [Methods, Fields, Both]) {
+  const o = new C();
+  console.log(C.name + " early: " + o.early);
+  console.log(C.name + " late: " + o.hook());
+}
+console.log("after super: " + new Methods().afterSuper);
+const ordered = new Ordered();
+console.log("ordered: " + ordered.a + " | " + ordered.b);
+////! method-identity-class-in-function-no-capture.ts
+// A private method is the same function object every time it is read: the class is declared in a function and captures nothing.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check-2
+////= make-4	7
+check("n", make(1), make(2));
+////! method-identity-class-in-function-no-capture-untyped.js
+// A private method is the same function object every time it is read: the class is declared in a function and captures nothing (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return "threw " + (e).name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const collect = (globalThis).gc ?? (() => (globalThis).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check
+////= make-3	7
+check("n", make(1), make(2));
+////! method-identity-class-in-function-with-capture.ts
+// A private method is the same function object every time it is read: the class is declared in a function and captures a variable.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check-2
+////= make-4	n
+check("c", make(1), make(2));
+////! method-identity-class-in-function-with-capture-untyped.js
+// A private method is the same function object every time it is read: the class is declared in a function and captures a variable (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return "threw " + (e).name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const collect = (globalThis).gc ?? (() => (globalThis).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check
+////= make-3	n
+check("c", make(1), make(2));
+////! method-identity-in-arrow-no-capture.ts
+// A private method is the same function object every time it is read: the class is declared in an arrow function and captures nothing.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check-2
+////= make-2	7
+check("n", make(1), make(2));
+////! method-identity-in-arrow-no-capture-untyped.js
+// A private method is the same function object every time it is read: the class is declared in an arrow function and captures nothing (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return "threw " + (e).name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const collect = (globalThis).gc ?? (() => (globalThis).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check
+////= make	7
+check("n", make(1), make(2));
+////! method-identity-in-arrow-with-capture.ts
+// A private method is the same function object every time it is read: the class is declared in an arrow function and captures a variable.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check-2
+////= make-2	n
+check("c", make(1), make(2));
+////! method-identity-in-arrow-with-capture-untyped.js
+// A private method is the same function object every time it is read: the class is declared in an arrow function and captures a variable (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return "threw " + (e).name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const collect = (globalThis).gc ?? (() => (globalThis).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check
+////= make	n
+check("c", make(1), make(2));
+////! method-identity-in-generator-no-capture.ts
+// A private method is the same function object every time it is read: the class is declared in a generator and captures nothing.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check-2
+////= make-6	7
+const it = make(1);
+check("n", it.next().value, it.next().value);
+////! method-identity-in-generator-no-capture-untyped.js
+// A private method is the same function object every time it is read: the class is declared in a generator and captures nothing (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return "threw " + (e).name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const collect = (globalThis).gc ?? (() => (globalThis).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check
+////= make-5	7
+const it = make(1);
+check("n", it.next().value, it.next().value);
+////! method-identity-in-generator-with-capture.ts
+// A private method is the same function object every time it is read: the class is declared in a generator and captures a variable.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check-2
+////= make-6	n
+const it = make(1);
+check("c", it.next().value, it.next().value);
+////! method-identity-in-generator-with-capture-untyped.js
+// A private method is the same function object every time it is read: the class is declared in a generator and captures a variable (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return "threw " + (e).name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const collect = (globalThis).gc ?? (() => (globalThis).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check
+////= make-5	n
+const it = make(1);
+check("c", it.next().value, it.next().value);
+////! method-identity-top-level-class-expression-no-capture.ts
+// A private method is the same function object every time it is read: the class is a class expression at the top level and captures nothing.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check-2
+const n = 1;
+////= K-2	7
+check("n", K, null);
+////! method-identity-top-level-class-expression-no-capture-untyped.js
+// A private method is the same function object every time it is read: the class is a class expression at the top level and captures nothing (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return "threw " + (e).name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const collect = (globalThis).gc ?? (() => (globalThis).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check
+const n = 1;
+////= K	7
+check("n", K, null);
+////! method-identity-top-level-class-expression-with-capture.ts
+// A private method is the same function object every time it is read: the class is a class expression at the top level and captures a variable.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check-2
+const n = 1;
+////= K-2	n
+check("c", K, null);
+////! method-identity-top-level-class-expression-with-capture-untyped.js
+// A private method is the same function object every time it is read: the class is a class expression at the top level and captures a variable (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return "threw " + (e).name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const collect = (globalThis).gc ?? (() => (globalThis).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check
+const n = 1;
+////= K	n
+check("c", K, null);
+////! method-identity-top-level-class-with-capture.ts
+// A private method is the same function object every time it is read: the class is declared at the top level and captures a variable.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check-2
+const n = 1;
+class P {
+    static #m() { return n; }
+    static async #a() { return n; }
+    static *#g() { yield n; }
+    static async *#ag() { yield n; }
+    static m() { return P.#m; }
+    static viaThis() { return this.#m; }
+    static viaArrow() { return (() => P.#m)(); }
+    static viaFunction() { return (function () { return P.#m; })(); }
+    static get viaGetter() { return P.#m; }
+    static viaDefault(f = P.#m) { return f; }
+    static viaTry() { try { return P.#m; } finally { } }
+    static viaLoop() { let f; for (let i = 0; i < 3; i++) f = P.#m; return f; }
+    static viaCond(c?: boolean) { return c ? P.#m : P.#m; }
+    static *viaGenerator() { yield P.#m; }
+    static viaInner() { return class Q { static q() { return P.#m; } }.q(); }
+    static viaLiteral() { return { f: P.#m }.f; }
+    static viaArray() { return [P.#m][0]; }
+    static viaSpread() { return [...[P.#m]][0]; }
+    static viaTemplate() { return ((s: TemplateStringsArray, f: unknown) => f)`${P.#m}`; }
+    static viaComma() { return (P.name, P.#m); }
+    static viaChain() { return P.#m; }
+    static viaParen() { return (P).#m; }
+    static viaNullish() { return P.early ?? P.#m; }
+    static viaAssign() { let f; f = P.#m; return f; }
+    static viaPattern() { const { f } = { f: P.#m }; return f; }
+    static viaHeritage() { let f; class X extends (f = P.#m, Object) {} return f; }
+    static viaKeyOfInner() { let f; class X { [(f = P.#m, "k")]() {} } return f; }
+    static viaLiteralMethod() { return { m() { return P.#m; } }.m(); }
+    static viaLiteralGetter() { return { get g() { return P.#m; } }.g; }
+    static viaCatch() { try { throw 0; } catch { return P.#m; } }
+    static viaRest(...a: unknown[]) { return [P.#m, ...a][0]; }
+    static viaFieldOfInner() { return new (class { v = P.#m; })().v; }
+    static viaStaticBlockOfInner() { let f; class X { static { f = P.#m; } } return f; }
+    static viaDeepArrows() { return (() => () => () => P.#m)()()(); }
+    static viaSwitch(k = 1) { switch (k) { case 1: return P.#m; default: return undefined; } }
+    static viaLabel() { out: { if (P.name !== undefined) break out; return undefined; } return P.#m; }
+    field = P.#m;
+    viaInstance() { return P.#m; }
+    static early: unknown = undefined;
+    static viaNullishEarly = P.viaNullish();
+    static { P.early = P.#m; }
+    static same() { return P.#m === P.#m; }
+    static sameInlined() { return P.m() === P.m(); }
+    static a() { return P.#a; }
+    static g() { return P.#g; }
+    static ag() { return P.#ag; }
+}
+check("c", P, null);
+////! method-identity-top-level-class-with-capture-untyped.js
+// A private method is the same function object every time it is read: the class is declared at the top level and captures a variable (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return "threw " + (e).name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const collect = (globalThis).gc ?? (() => (globalThis).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check
+const n = 1;
+class P {
+    static #m() { return n; }
+    static async #a() { return n; }
+    static *#g() { yield n; }
+    static async *#ag() { yield n; }
+    static m() { return P.#m; }
+    static viaThis() { return this.#m; }
+    static viaArrow() { return (() => P.#m)(); }
+    static viaFunction() { return (function () { return P.#m; })(); }
+    static get viaGetter() { return P.#m; }
+    static viaDefault(f = P.#m) { return f; }
+    static viaTry() { try { return P.#m; } finally { } }
+    static viaLoop() { let f; for (let i = 0; i < 3; i++) f = P.#m; return f; }
+    static viaCond(c) { return c ? P.#m : P.#m; }
+    static *viaGenerator() { yield P.#m; }
+    static viaInner() { return class Q { static q() { return P.#m; } }.q(); }
+    static viaLiteral() { return { f: P.#m }.f; }
+    static viaArray() { return [P.#m][0]; }
+    static viaSpread() { return [...[P.#m]][0]; }
+    static viaTemplate() { return ((s, f) => f)`${P.#m}`; }
+    static viaComma() { return (P.name, P.#m); }
+    static viaChain() { return P?.#m; }
+    static viaParen() { return (P).#m; }
+    static viaNullish() { return P.early ?? P.#m; }
+    static viaAssign() { let f; f = P.#m; return f; }
+    static viaPattern() { const { f } = { f: P.#m }; return f; }
+    static viaHeritage() { let f; class X extends (f = P.#m, Object) {} return f; }
+    static viaKeyOfInner() { let f; class X { [(f = P.#m, "k")]() {} } return f; }
+    static viaLiteralMethod() { return { m() { return P.#m; } }.m(); }
+    static viaLiteralGetter() { return { get g() { return P.#m; } }.g; }
+    static viaCatch() { try { throw 0; } catch { return P.#m; } }
+    static viaRest(...a) { return [P.#m, ...a][0]; }
+    static viaFieldOfInner() { return new (class { v = P.#m; })().v; }
+    static viaStaticBlockOfInner() { let f; class X { static { f = P.#m; } } return f; }
+    static viaDeepArrows() { return (() => () => () => P.#m)()()(); }
+    static viaSwitch(k = 1) { switch (k) { case 1: return P.#m; default: return undefined; } }
+    static viaLabel() { out: { if (P.name !== undefined) break out; return undefined; } return P.#m; }
+    field = P.#m;
+    viaInstance() { return P.#m; }
+    static early = undefined;
+    static viaNullishEarly = P.viaNullish();
+    static { P.early = P.#m; }
+    static same() { return P.#m === P.#m; }
+    static sameInlined() { return P.m() === P.m(); }
+    static a() { return P.#a; }
+    static g() { return P.#g; }
+    static ag() { return P.#ag; }
+}
+check("c", P, null);
+////! method-identity-top-level-for-no-capture.ts
+// A private method is the same function object every time it is read: the class is declared in a `for` loop at the top level and captures nothing.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check-2
+const made: any[] = [];
+////= for-2	7
+check("n", made[0], made[1]);
+////! method-identity-top-level-for-no-capture-untyped.js
+// A private method is the same function object every time it is read: the class is declared in a `for` loop at the top level and captures nothing (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return "threw " + (e).name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const collect = (globalThis).gc ?? (() => (globalThis).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check
+const made = [];
+////= for	7
+check("n", made[0], made[1]);
+////! method-identity-top-level-for-with-capture.ts
+// A private method is the same function object every time it is read: the class is declared in a `for` loop at the top level and captures a variable.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check-2
+const made: any[] = [];
+////= for-2	n
+check("c", made[0], made[1]);
+////! method-identity-top-level-for-with-capture-untyped.js
+// A private method is the same function object every time it is read: the class is declared in a `for` loop at the top level and captures a variable (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return "threw " + (e).name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const collect = (globalThis).gc ?? (() => (globalThis).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check
+const made = [];
+////= for	n
+check("c", made[0], made[1]);
+////! method-identity-top-level-while-no-capture.ts
+// A private method is the same function object every time it is read: the class is declared in a `while` loop at the top level and captures nothing.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check-2
+const made: any[] = [];
+let n = 0;
+while (made.length < 2) { n++; class P {
+    static #m() { return 7; }
+    static async #a() { return 7; }
+    static *#g() { yield 7; }
+    static async *#ag() { yield 7; }
+    static m() { return P.#m; }
+    static viaThis() { return this.#m; }
+    static viaArrow() { return (() => P.#m)(); }
+    static viaFunction() { return (function () { return P.#m; })(); }
+    static get viaGetter() { return P.#m; }
+    static viaDefault(f = P.#m) { return f; }
+    static viaTry() { try { return P.#m; } finally { } }
+    static viaLoop() { let f; for (let i = 0; i < 3; i++) f = P.#m; return f; }
+    static viaCond(c?: boolean) { return c ? P.#m : P.#m; }
+    static *viaGenerator() { yield P.#m; }
+    static viaInner() { return class Q { static q() { return P.#m; } }.q(); }
+    static viaLiteral() { return { f: P.#m }.f; }
+    static viaArray() { return [P.#m][0]; }
+    static viaSpread() { return [...[P.#m]][0]; }
+    static viaTemplate() { return ((s: TemplateStringsArray, f: unknown) => f)`${P.#m}`; }
+    static viaComma() { return (P.name, P.#m); }
+    static viaChain() { return P.#m; }
+    static viaParen() { return (P).#m; }
+    static viaNullish() { return P.early ?? P.#m; }
+    static viaAssign() { let f; f = P.#m; return f; }
+    static viaPattern() { const { f } = { f: P.#m }; return f; }
+    static viaHeritage() { let f; class X extends (f = P.#m, Object) {} return f; }
+    static viaKeyOfInner() { let f; class X { [(f = P.#m, "k")]() {} } return f; }
+    static viaLiteralMethod() { return { m() { return P.#m; } }.m(); }
+    static viaLiteralGetter() { return { get g() { return P.#m; } }.g; }
+    static viaCatch() { try { throw 0; } catch { return P.#m; } }
+    static viaRest(...a: unknown[]) { return [P.#m, ...a][0]; }
+    static viaFieldOfInner() { return new (class { v = P.#m; })().v; }
+    static viaStaticBlockOfInner() { let f; class X { static { f = P.#m; } } return f; }
+    static viaDeepArrows() { return (() => () => () => P.#m)()()(); }
+    static viaSwitch(k = 1) { switch (k) { case 1: return P.#m; default: return undefined; } }
+    static viaLabel() { out: { if (P.name !== undefined) break out; return undefined; } return P.#m; }
+    field = P.#m;
+    viaInstance() { return P.#m; }
+    static early: unknown = undefined;
+    static viaNullishEarly = P.viaNullish();
+    static { P.early = P.#m; }
+    static same() { return P.#m === P.#m; }
+    static sameInlined() { return P.m() === P.m(); }
+    static a() { return P.#a; }
+    static g() { return P.#g; }
+    static ag() { return P.#ag; }
+} made.push(P); }
+check("n", made[0], made[1]);
+////! method-identity-top-level-while-no-capture-untyped.js
+// A private method is the same function object every time it is read: the class is declared in a `while` loop at the top level and captures nothing (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return "threw " + (e).name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const collect = (globalThis).gc ?? (() => (globalThis).Bun.gc(true));
+
+const ways = ["viaThis", "viaArrow", "viaFunction", "viaDefault", "viaTry", "viaLoop", "viaCond", "viaInner", "viaLiteral", "viaArray", "viaSpread", "viaTemplate", "viaComma", "viaChain", "viaParen", "viaNullish", "viaAssign", "viaPattern", "viaHeritage", "viaKeyOfInner", "viaLiteralMethod", "viaLiteralGetter", "viaCatch", "viaRest", "viaFieldOfInner", "viaStaticBlockOfInner", "viaDeepArrows", "viaSwitch", "viaLabel"];
+////= check
+const made = [];
+let n = 0;
+while (made.length < 2) { n++; class P {
+    static #m() { return 7; }
+    static async #a() { return 7; }
+    static *#g() { yield 7; }
+    static async *#ag() { yield 7; }
+    static m() { return P.#m; }
+    static viaThis() { return this.#m; }
+    static viaArrow() { return (() => P.#m)(); }
+    static viaFunction() { return (function () { return P.#m; })(); }
+    static get viaGetter() { return P.#m; }
+    static viaDefault(f = P.#m) { return f; }
+    static viaTry() { try { return P.#m; } finally { } }
+    static viaLoop() { let f; for (let i = 0; i < 3; i++) f = P.#m; return f; }
+    static viaCond(c) { return c ? P.#m : P.#m; }
+    static *viaGenerator() { yield P.#m; }
+    static viaInner() { return class Q { static q() { return P.#m; } }.q(); }
+    static viaLiteral() { return { f: P.#m }.f; }
+    static viaArray() { return [P.#m][0]; }
+    static viaSpread() { return [...[P.#m]][0]; }
+    static viaTemplate() { return ((s, f) => f)`${P.#m}`; }
+    static viaComma() { return (P.name, P.#m); }
+    static viaChain() { return P?.#m; }
+    static viaParen() { return (P).#m; }
+    static viaNullish() { return P.early ?? P.#m; }
+    static viaAssign() { let f; f = P.#m; return f; }
+    static viaPattern() { const { f } = { f: P.#m }; return f; }
+    static viaHeritage() { let f; class X extends (f = P.#m, Object) {} return f; }
+    static viaKeyOfInner() { let f; class X { [(f = P.#m, "k")]() {} } return f; }
+    static viaLiteralMethod() { return { m() { return P.#m; } }.m(); }
+    static viaLiteralGetter() { return { get g() { return P.#m; } }.g; }
+    static viaCatch() { try { throw 0; } catch { return P.#m; } }
+    static viaRest(...a) { return [P.#m, ...a][0]; }
+    static viaFieldOfInner() { return new (class { v = P.#m; })().v; }
+    static viaStaticBlockOfInner() { let f; class X { static { f = P.#m; } } return f; }
+    static viaDeepArrows() { return (() => () => () => P.#m)()()(); }
+    static viaSwitch(k = 1) { switch (k) { case 1: return P.#m; default: return undefined; } }
+    static viaLabel() { out: { if (P.name !== undefined) break out; return undefined; } return P.#m; }
+    field = P.#m;
+    viaInstance() { return P.#m; }
+    static early = undefined;
+    static viaNullishEarly = P.viaNullish();
+    static { P.early = P.#m; }
+    static same() { return P.#m === P.#m; }
+    static sameInlined() { return P.m() === P.m(); }
+    static a() { return P.#a; }
+    static g() { return P.#g; }
+    static ag() { return P.#ag; }
+} made.push(P); }
+check("n", made[0], made[1]);
+//// methods-as-values.ts
+// Private methods used as values: where the first read happens (a loop, a `try`, a branch) makes no difference to their identity.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+function make(n: number) {
+  return class P {
+    static #m() { return n; }
+    static #heard() { P.log.push("fired " + n); }
+    static log: string[] = [];
+    static get() { return P.#m; }
+    static firstInLoop() { const fs: unknown[] = []; for (let i = 0; i < 5; i++) fs.push(P.#m); return fs.every(f => f === fs[0]) && fs[4] === P.get(); }
+    static firstInTry() { let f, g, h; try { f = P.#m; throw 1; } catch { g = P.#m; } finally { h = P.#m; } return f === g && g === h && h === P.get(); }
+    static firstInBranch(c: boolean) { let a; if (c) a = P.#m; const b = P.#m; return (c ? a === b : a === undefined) && b === P.get(); }
+    static firstDropped() { P.#m; (P.#m as any).k = 1; return (P.#m as any).k; }
+    static firstOnlyCompared() { return P.#m === P.#m && P.#m === P.get(); }
+    static firstOnlyTested() { return typeof P.#m + " " + (P.#m === P.get()); }
+    static acrossCollection() { (P.#m as any).k = 7; collect(); collect(); return (P.#m as any).k; }
+    static hot() { const f = P.get(); let bad = 0; for (let i = 0; i < 100000; i++) if (P.get() !== f || P.#m !== f) bad++; return bad; }
+    static *suspended() { const a = P.#m; yield 1; const b = P.#m; yield a === b && b === P.get(); }
+    static async awaited() { const a = P.#m; await null; const b = P.#m; return a === b && b === P.get(); }
+    static listen(s: Set<() => void>) { s.add(P.#heard); s.delete(P.#heard); return s.size; }
+    static count() { return (P.#m as any).calls = ((P.#m as any).calls || 0) + 1; }
+    static assigned() { Object.assign(P.#m, { k: 7 }); return "k" in P.#m; }
+    static frozen() { Object.freeze(P.#m); return Object.isFrozen(P.#m); }
+    static inCallback() { return [1, 2, 3].map(() => P.#m).every(f => f === P.#m); }
+    static bound() { return P.#m.bind(null)() + " " + (P.#m.bind(null) === P.#m.bind(null)); }
+  };
+}
+row("first read in a loop", () => make(1).firstInLoop());
+row("first read in a try", () => make(1).firstInTry());
+row("first read in a branch taken", () => make(1).firstInBranch(true));
+row("first read in a branch not taken", () => make(1).firstInBranch(false));
+row("first read dropped", () => make(1).firstDropped());
+row("first read only compared", () => make(1).firstOnlyCompared());
+row("first read only tested", () => make(1).firstOnlyTested());
+row("a property across collections", () => make(1).acrossCollection());
+row("hot", () => make(1).hot());
+row("across a yield", () => { const it = make(1).suspended(); it.next(); return it.next().value; });
+make(1).awaited().then(v => console.log("across an await: " + v));
+row("a listener is taken off", () => { const C = make(1), s = new Set<() => void>(); const left = C.listen(s); for (const h of s) h(); return left + " [" + C.log.join() + "]"; });
+row("a count by class", () => { const A = make(1), B = make(2); return [A.count(), A.count(), B.count(), A.count(), B.count()].join(); });
+row("Object.assign", () => make(1).assigned());
+row("frozen", () => make(1).frozen());
+row("in a callback", () => make(1).inCallback());
+row("bound", () => make(3).bound());
+function twice(C: ReturnType<typeof make>) { return C.get() === C.get(); }
+row("the reader inlined into a caller outside", () => { const C = make(1); let ok = true; for (let i = 0; i < 1000; i++) ok = ok && twice(C); return ok; });
+row("a thousand evaluations", () => { const fs: (() => number)[] = []; for (let i = 0; i < 1000; i++) fs.push(make(i).get()); collect(); return new Set(fs).size + " " + fs[0]() + " " + fs[999](); });
+row("a thousand evaluations, each read twice", () => { let same = 0; for (let i = 0; i < 1000; i++) { const C = make(i); if (C.get() === C.get()) same++; } return same; });
+function nest(depth: number): (() => number)[] { const C = make(depth); const f = C.get(); return depth ? [f, ...nest(depth - 1), C.get()] : [f, C.get()]; }
+row("recursion", () => { const fs = nest(4); return new Set(fs).size + " " + fs.map(f => f()).join(""); });
+//// methods-as-values-untyped.js
+// Private methods used as values: where the first read happens (a loop, a `try`, a branch) makes no difference to their identity (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return "threw " + (e).name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const collect = (globalThis).gc ?? (() => (globalThis).Bun.gc(true));
+
+function make(n) {
+  return class P {
+    static #m() { return n; }
+    static #heard() { P.log.push("fired " + n); }
+    static log = [];
+    static get() { return P.#m; }
+    static firstInLoop() { const fs = []; for (let i = 0; i < 5; i++) fs.push(P.#m); return fs.every(f => f === fs[0]) && fs[4] === P.get(); }
+    static firstInTry() { let f, g, h; try { f = P.#m; throw 1; } catch { g = P.#m; } finally { h = P.#m; } return f === g && g === h && h === P.get(); }
+    static firstInBranch(c) { let a; if (c) a = P.#m; const b = P.#m; return (c ? a === b : a === undefined) && b === P.get(); }
+    static firstDropped() { P.#m; (P.#m).k = 1; return (P.#m).k; }
+    static firstOnlyCompared() { return P.#m === P.#m && P.#m === P.get(); }
+    static firstOnlyTested() { return (P.#m ? 1 : 0) + " " + typeof P.#m + " " + (P.#m === P.get()); }
+    static acrossCollection() { (P.#m).k = 7; collect(); collect(); return (P.#m).k; }
+    static hot() { const f = P.get(); let bad = 0; for (let i = 0; i < 100000; i++) if (P.get() !== f || P.#m !== f) bad++; return bad; }
+    static *suspended() { const a = P.#m; yield 1; const b = P.#m; yield a === b && b === P.get(); }
+    static async awaited() { const a = P.#m; await null; const b = P.#m; return a === b && b === P.get(); }
+    static listen(s) { s.add(P.#heard); s.delete(P.#heard); return s.size; }
+    static count() { return (P.#m).calls = ((P.#m).calls || 0) + 1; }
+    static assigned() { Object.assign(P.#m, { k: 7 }); return "k" in P.#m; }
+    static frozen() { Object.freeze(P.#m); return Object.isFrozen(P.#m); }
+    static inCallback() { return [1, 2, 3].map(() => P.#m).every(f => f === P.#m); }
+    static bound() { return P.#m.bind(null)() + " " + (P.#m.bind(null) === P.#m.bind(null)); }
+  };
+}
+row("first read in a loop", () => make(1).firstInLoop());
+row("first read in a try", () => make(1).firstInTry());
+row("first read in a branch taken", () => make(1).firstInBranch(true));
+row("first read in a branch not taken", () => make(1).firstInBranch(false));
+row("first read dropped", () => make(1).firstDropped());
+row("first read only compared", () => make(1).firstOnlyCompared());
+row("first read only tested", () => make(1).firstOnlyTested());
+row("a property across collections", () => make(1).acrossCollection());
+row("hot", () => make(1).hot());
+row("across a yield", () => { const it = make(1).suspended(); it.next(); return it.next().value; });
+make(1).awaited().then(v => console.log("across an await: " + v));
+row("a listener is taken off", () => { const C = make(1), s = new Set(); const left = C.listen(s); for (const h of s) h(); return left + " [" + C.log.join() + "]"; });
+row("a count by class", () => { const A = make(1), B = make(2); return [A.count(), A.count(), B.count(), A.count(), B.count()].join(); });
+row("Object.assign", () => make(1).assigned());
+row("frozen", () => make(1).frozen());
+row("in a callback", () => make(1).inCallback());
+row("bound", () => make(3).bound());
+function twice(C) { return C.get() === C.get(); }
+row("the reader inlined into a caller outside", () => { const C = make(1); let ok = true; for (let i = 0; i < 1000; i++) ok = ok && twice(C); return ok; });
+row("a thousand evaluations", () => { const fs = []; for (let i = 0; i < 1000; i++) fs.push(make(i).get()); collect(); return new Set(fs).size + " " + fs[0]() + " " + fs[999](); });
+row("a thousand evaluations, each read twice", () => { let same = 0; for (let i = 0; i < 1000; i++) { const C = make(i); if (C.get() === C.get()) same++; } return same; });
+function nest(depth) { const C = make(depth); const f = C.get(); return depth ? [f, ...nest(depth - 1), C.get()] : [f, C.get()]; }
+row("recursion", () => { const fs = nest(4); return new Set(fs).size + " " + fs.map(f => f()).join(""); });
+//// methods-capture-local-evaluated-once.ts
+// A class inside a function that runs once: its private methods and accessors capture the function's locals.
+function main(): void {
+  const n = Date.now()
+  let stored = 0
+  class C {
+    #m(): number { return n }
+    get #g(): number { return n }
+    set #g(v: number) { stored = v }
+    static #s(): number { return n }
+    run(): boolean[] {
+      this.#g = 5
+      return [this.#m() === n, this.#g === n, stored === 5, C.#s() === n]
+    }
+  }
+  console.log(new C().run().join())
+}
+main()
+export {}
+//// methods-outlive-collections.ts
+// Private methods and accessors stay callable across collections after the program drops its references to their classes, and each class evaluation has its own.
+const host = globalThis as any
+const collect = host.Bun ? (full: boolean) => host.Bun.gc(full) : (full: boolean) => (full ? host.fullGC() : host.edenGC())
+function resultText(f: () => unknown): string { try { return String(f()) } catch (e) { return "threw " + (e as Error).name } }
+function show(...parts: unknown[]): void { console.log(parts.join(" | ")) }
+
+const logged: unknown[] = []
+function makeClass(n: number) {
+  return class {
+    #m(): number { return n }
+    get #g(): number { return n }
+    set #g(v: number) { logged.push(v) }
+    static #s(): number { return n }
+    method(): unknown { return this.#m }
+    static call(o: any): unknown[] { return [o.#m(), o.#g, (o.#g = 1), #m in o] }
+    static own(): number { return this.#s() }
+    static storeMethod(o: any): void {
+      // @ts-ignore
+      o.#m = 1
+    }
+    static storeStaticMethod(): void {
+      // @ts-ignore
+      this.#s = 1
+    }
+  }
+}
+
+type RetainedClass = { n: number, call: (o: any) => unknown[], instance: object }
+const retainedClasses: RetainedClass[] = []
+for (let n = 0; n <= 2000; n++) {
+  const C = makeClass(n)
+  if (n % 100 !== 0) continue
+  const instance = new C()
+  delete (Object.getPrototypeOf(instance) as any).constructor
+  retainedClasses.push({ n, call: C.call, instance })
+}
+for (let i = 0; i < 3; i++) collect(true)
+for (const { n, call, instance } of retainedClasses) show(n, resultText(() => call(instance)))
+show("setter calls", logged.length)
+show("another evaluation's instance", resultText(() => retainedClasses[0].call(retainedClasses[1].instance)))
+
+const C1 = makeClass(1), C2 = makeClass(2)
+const first = new C1(), second = new C2()
+show("static method", C1.own(), C2.own())
+show("instance of another evaluation", resultText(() => C1.call(second)))
+show("plain object", resultText(() => C1.call({})))
+show("store to a method", resultText(() => C1.storeMethod(first)))
+show("store to a static method", resultText(() => C1.storeStaticMethod()))
+show("functions of two evaluations", first.method() === second.method(), first.method() === new C1().method())
+
+class Accessors {
+  get #onlyGet(): number { return 2 }
+  set #onlySet(v: number) { logged.push(v) }
+  static storeGetter(o: any): void {
+    // @ts-ignore
+    o.#onlyGet = 1
+  }
+  static readSetter(o: any): unknown { return o.#onlySet }
+}
+show("store to a getter", resultText(() => Accessors.storeGetter(new Accessors())))
+show("read of a setter", resultText(() => Accessors.readSetter(new Accessors())))
+
+class Identity { constructor(o: object) { return o } }
+class Stamped extends Identity {
+  #stamp(): number { return 1 }
+  static has(o: object): boolean { return #stamp in o }
+}
+const target = {}
+show("first add", resultText(() => new Stamped(target) === target), Stamped.has(target))
+show("second add", resultText(() => new Stamped(target)))
+export {}
+//// module-cycle/files/a.ts
+import { early, late, peek } from "./b";
+declare const console: { log(...a: unknown[]): void };
+export class A {
+  static #m() { return 1; }
+  static m() { return A.#m; }
+  static f() { return A.#f; }
+  static put(v: number) { A.#f = v; return "stored"; }
+  static has(v: unknown) { return typeof v === "function" && #f in v; }
+  static hasMethod(v: unknown) { return typeof v === "function" && #m in v; }
+  static { peek("half made", A); }
+  static #f = 2;
+  static { peek("made", A); }
+}
+export const E = class K { static #m() { return 2; } static m() { return K.#m; } };
+console.log("read early from the other module: " + early);
+late("behind");
+late("again");
+//// module-cycle/files/b.ts
+import { A, E } from "./a";
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+export const early = [said(() => A.m()), said(() => E.m()), said(() => A.f())].join();
+const kept: unknown[] = [];
+export function peek(when: string, K: typeof A) {
+  console.log(when + ": " + [said(() => K.m() === K.m()), said(() => K.hasMethod(K)), said(() => K.has(K)), said(() => K.f()), said(() => K.put(5)), said(() => K.f())].join());
+  kept.push(K.m());
+}
+export function late(when: string) {
+  kept.push(A.m());
+  console.log(when + ": " + [A.m() === A.m(), E.m() === E.m(), (A.m() as unknown) === E.m(), A.f(), A.has(A), kept.every(f => f === kept[0]), kept.length].join());
+}
+//// module-cycle/main.ts
+// Two modules that import each other, each with a class with static private methods.
+import "./files/a";
+//// module-cycle-untyped/files/a.js
+import { early, late, peek } from "./b.js";
+export class A {
+  static #m() { return 1; }
+  static m() { return A.#m; }
+  static f() { return A.#f; }
+  static put(v) { A.#f = v; return "stored"; }
+  static has(v) { return typeof v === "function" && #f in v; }
+  static hasMethod(v) { return typeof v === "function" && #m in v; }
+  static { peek("half made", A); }
+  static #f = 2;
+  static { peek("made", A); }
+}
+export const E = class K { static #m() { return 2; } static m() { return K.#m; } };
+console.log("read early from the other module: " + early);
+late("behind");
+late("again");
+//// module-cycle-untyped/files/b.js
+import { A, E } from "./a.js";
+function said(f) { try { return String(f()); } catch (e) { return "threw " + e.name; } }
+export const early = [said(() => A.m()), said(() => E.m()), said(() => A.f())].join();
+const kept = [];
+export function peek(when, K) {
+  console.log(when + ": " + [said(() => K.m() === K.m()), said(() => K.hasMethod(K)), said(() => K.has(K)), said(() => K.f()), said(() => K.put(5)), said(() => K.f())].join());
+  kept.push(K.m());
+}
+export function late(when) {
+  kept.push(A.m());
+  console.log(when + ": " + [A.m() === A.m(), E.m() === E.m(), A.m() === E.m(), A.f(), A.has(A), kept.every(f => f === kept[0]), kept.length].join());
+}
+//// module-cycle-untyped/main.js
+// Two modules that import each other, each with a class with static private methods (the same program without type annotations).
+import "./files/a.js";
+//// name-per-class-evaluation.ts
+// Each evaluation of a class creates its own private names, even where two names have one spelling.
+function said(f: () => unknown): string { try { return String(f()) } catch (e) { return "threw " + (e as Error).name } }
+function show(...parts: unknown[]): void { console.log(parts.join(" | ")) }
+
+function makeBox(tag: string) {
+  return class Box {
+    shown: string = tag
+    #value: string = tag
+    #method(): string { return "m" + this.#value }
+    get #accessor(): string { return "a" + this.#value }
+    static #count: number = 0
+    static has(o: object): string { return [#value in o, #method in o, #accessor in o].join() }
+    static hasStatic(o: object): boolean { return #count in o }
+    static read(o: any): string { return said(() => o.#value + o.#method() + o.#accessor) }
+    static method(o: any): unknown { return o.#method }
+    static increment(): number { return ++Box.#count }
+  }
+}
+type Constructor = new (...args: any[]) => object
+const Tagged = <T extends Constructor>(Base: T) => class extends Base {
+  #id: number = 1
+  static has(o: object): boolean { return #id in o }
+  bump(): number { return ++this.#id }
+}
+class Single {
+  #value: string = "s"
+  static has(o: object): boolean { return #value in o }
+}
+class Outer {
+  #x: number = 1
+  static read(o: any): string { return said(() => o.#x) }
+  static Inner = class {
+    #x: number = 2
+    static read(o: any): string { return said(() => o.#x) }
+  }
+}
+
+const A = makeBox("a"), B = makeBox("b")
+const boxes: [string, typeof A][] = [["A", A], ["B", B]]
+const values: [string, object][] = [["new A()", new A()], ["new B()", new B()], ["A", A], ["B", B], ["new Single()", new Single()]]
+for (const [boxName, X] of boxes) {
+  for (const [title, o] of values) show(boxName, title, X.has(o), X.read(o), X.hasStatic(o), Single.has(o))
+}
+show("one method per evaluation", A.method(new A()) === A.method(new A()), A.method(new A()) === B.method(new B()))
+show("one static field per evaluation", A.increment(), A.increment(), B.increment())
+
+const classes: any[] = []
+for (let i = 0; i < 3; i++) classes.push(class { #n: number = i; static get(o: any) { return said(() => o.#n) } })
+for (let j = 0; j < 3; j++) show("class " + j + " of a loop", classes[j].get(new classes[0]()), classes[j].get(new classes[1]()), classes[j].get(new classes[2]()))
+
+const Inner = Tagged(Object), Both = Tagged(Inner), Apart = Tagged(Object), both = new Both()
+show("two fields of one spelling", Inner.has(both), Both.has(both), Apart.has(both))
+show(
+  "each field counts alone",
+  Inner.prototype.bump.call(both),
+  Both.prototype.bump.call(both),
+  Inner.prototype.bump.call(both),
+  Both.prototype.bump.call(both),
+  said(() => Apart.prototype.bump.call(both)),
+)
+show("nested classes", Outer.read(new Outer()), Outer.read(new Outer.Inner()), Outer.Inner.read(new Outer()), Outer.Inner.read(new Outer.Inner()))
+export {}
+//// outer-name-in-heritage-clause.js
+// A private name in the heritage clause of a class is the enclosing class's, even if the class declares the same name.
+class Outer {
+  #name = "outer";
+  static read(object) {
+    let seen;
+    class Inner extends ((seen = object.#name), Object) {
+      #name = "inner";
+      static read(other) { return other.#name; }
+    }
+    return seen + " " + Inner.read(new Inner());
+  }
+  static has(object) {
+    let seen;
+    class Inner extends ((seen = #name in object), Object) {
+      #name = "inner";
+      static has(other) { return #name in other; }
+    }
+    return seen + " " + Inner.has(object);
+  }
+}
+console.log(Outer.read(new Outer()));
+console.log(Outer.has(new Outer()));
+//// own-keys-of-objects-with-private-fields-are-walked-in-a-validating-build.ts
+// The own keys of an instance with private fields, a private method or both are walked by a rest pattern, a spread, Object.keys | values | entries | assign, for-in and JSON.stringify: on the object where it is made, on one that a variable of the module holds, and on one out of a list. A private name is no key: as in plain Bun, and a validating build has nothing to find.
+class Field { #hidden = 1; shown = 2; other = 3; read() { return this.#hidden } }
+class Method { #method() { return 1 } shown = 2; other = 3; read() { return this.#method() } }
+class Between { shown = 2; #hidden = 1; other = 3; read() { return this.#hidden } }
+class Last { shown = 2; other = 3; #hidden = 1; read() { return this.#hidden } }
+class Only { #hidden = 1; shown = 2; read() { return this.#hidden } }
+class Late { #hidden = 1; shown = 2; late?: string; read() { return this.#hidden } }
+class TwoOrders { #hidden = 1; shown = 0; other = 0; a?: number; b?: number; constructor(first: boolean) { if (first) { this.a = 1; this.b = 2 } else { this.b = 2; this.a = 1 } } read() { return this.#hidden } }
+class Below extends Field { #more = 4; added = 5; readMore() { return this.#more } }
+type Shown = { shown: number; read(): number }
+function walks(o: Shown): string {
+  const { shown, ...rest } = o
+  const seen: string[] = []
+  for (const key in o) seen.push(key)
+  return [JSON.stringify(rest), JSON.stringify({ ...o }), Object.keys(o).join(), Object.values(o).join(), JSON.stringify(Object.entries(o)), JSON.stringify(Object.assign({}, o)), seen.join(), JSON.stringify(o), Reflect.ownKeys(o).length, shown, o.read()].join(" ")
+}
+function repeat(label: string, make: (round: number) => Shown): void {
+  let last = ""
+  for (let round = 0; round < 300; round++) last = walks(make(round))
+  console.log(label, last)
+}
+const held = { field: new Field(), method: new Method(), between: new Between(), last: new Last(), only: new Only(), late: new Late(), below: new Below() }
+const list: Shown[] = [new Field(), new Method(), new Between(), new Last(), new Only(), new Late(), new TwoOrders(true), new TwoOrders(false), new Below()]
+repeat("made here: field", () => new Field())
+repeat("made here: method", () => new Method())
+repeat("made here: between", () => new Between())
+repeat("made here: last", () => new Last())
+repeat("made here: only", () => new Only())
+repeat("made here: late", () => new Late())
+repeat("made here: two orders, the first", () => new TwoOrders(true))
+repeat("made here: two orders, the second", () => new TwoOrders(false))
+repeat("made here: two orders, in turn", round => new TwoOrders(round % 2 === 0))
+repeat("made here: below", () => new Below())
+repeat("held: field", () => held.field)
+repeat("held: method", () => held.method)
+repeat("held: between", () => held.between)
+repeat("held: last", () => held.last)
+repeat("held: only", () => held.only)
+repeat("held: late", () => held.late)
+repeat("held: below", () => held.below)
+for (let which = 0; which < list.length; which++) repeat("out of a list: " + which, () => list[which])
+const secret = new Only()
+function restOfSecret() { const { shown, ...rest } = secret; return rest }
+let last: object = {}
+for (let i = 0; i < 2000; i++) last = restOfSecret()
+console.log("a variable of the module", JSON.stringify(last), Object.keys(last).join())
+//// private-fields-declared-without-a-value-are-read-before-and-behind-their-first-store.ts
+// Private fields that a class declares without a value hold undefined from birth: they are read before anything is stored, behind a store, on objects that are not finished, and on objects that never had them.
+function say(label: string, make: () => unknown): void {
+  let text: string;
+  try {
+    text = String(make());
+  } catch (error) {
+    text = (error as Error).constructor.name;
+  }
+  console.log(label, text);
+}
+
+class Reply {
+  #status: number | undefined;
+  #text: string | undefined;
+  #headers: Map<string, string> | undefined;
+  #done: boolean | undefined;
+  kind = "reply";
+  status(): number {
+    return this.#status ?? 200;
+  }
+  setStatus(status: number): this {
+    this.#status = status;
+    return this;
+  }
+  text(): string {
+    return this.#text ?? "none";
+  }
+  setText(text: string | undefined): void {
+    this.#text = text;
+  }
+  header(name: string): string | undefined {
+    return this.#headers?.get(name);
+  }
+  setHeader(name: string, value: string): void {
+    (this.#headers ??= new Map()).set(name, value);
+  }
+  done(): boolean | undefined {
+    return this.#done;
+  }
+  finish(): void {
+    this.#done = true;
+  }
+  static statusOf(value: unknown): unknown {
+    return (value as Reply).#status;
+  }
+  static has(value: object): boolean {
+    return #status in value;
+  }
+}
+
+let sum = 0;
+for (let turn = 0; turn < 2000; turn++) {
+  const reply = new Reply();
+  sum += reply.status();
+  if (turn % 3 === 0) reply.setStatus(turn % 600);
+  if (turn % 500 === 7) reply.setStatus(2 ** 40 + turn);
+  if (turn % 500 === 9) reply.setStatus(0.5);
+  sum += reply.status();
+  if (turn % 5 === 0) reply.setText("t" + (turn & 7));
+  if (turn % 10 === 0) reply.setText(undefined);
+  sum += reply.text().length;
+  if (turn % 7 === 0) reply.setHeader("a", "b" + turn);
+  sum += reply.header("a")?.length ?? 1;
+  if (turn % 11 === 0) reply.finish();
+  sum += reply.done() ? 2 : reply.done() === undefined ? 3 : 5;
+}
+console.log(sum);
+
+say("of an instance", () => Reply.statusOf(new Reply()));
+say("of a stored one", () => Reply.statusOf(new Reply().setStatus(404)));
+say("of a literal", () => Reply.statusOf({ kind: "reply" }));
+say("of what Object.create makes", () => Reply.statusOf(Object.create(Reply.prototype)));
+say("of a proxy", () => Reply.statusOf(new Proxy(new Reply(), {})));
+say("of null", () => Reply.statusOf(null));
+say("of a number", () => Reply.statusOf(5));
+say("has: an instance", () => Reply.has(new Reply()));
+say("has: what Object.create makes", () => Reply.has(Object.create(Reply.prototype)));
+say("of a frozen one", () => Reply.statusOf(Object.freeze(new Reply())));
+say("stored into a frozen one", () => Reply.statusOf(Object.freeze(new Reply()).setStatus(7)));
+
+const seen: Leaky[] = [];
+class Leaky {
+  #first: number | undefined;
+  early = seen.push(this);
+  #second: string | undefined;
+  #third: number | undefined = Leaky.thirdOf(this, "while it is made");
+  constructor(fails: boolean) {
+    if (fails) throw new RangeError("no");
+  }
+  static firstOf(value: Leaky): unknown {
+    return value.#first;
+  }
+  static secondOf(value: Leaky): unknown {
+    return value.#second;
+  }
+  static thirdOf(value: Leaky, label: string): number | undefined {
+    say(label, () => value.#third);
+    return undefined;
+  }
+}
+class Stops {
+  #before: number | undefined;
+  stop = Stops.fail(this);
+  #behind: number | undefined;
+  static kept: Stops | undefined;
+  static fail(value: Stops): number {
+    Stops.kept = value;
+    throw new EvalError("stop");
+  }
+  static beforeOf(value: Stops): unknown {
+    return value.#before;
+  }
+  static behindOf(value: Stops): unknown {
+    return value.#behind;
+  }
+}
+for (let turn = 0; turn < 3; turn++) {
+  say("made", () => Leaky.secondOf(new Leaky(false)));
+  say("fails", () => new Leaky(true));
+  say("first of what failed", () => Leaky.firstOf(seen[seen.length - 1]!));
+  say("second of what failed", () => Leaky.secondOf(seen[seen.length - 1]!));
+  Leaky.thirdOf(seen[seen.length - 1]!, "third of what failed");
+  say("stops", () => new Stops());
+  say("before", () => Stops.beforeOf(Stops.kept!));
+  say("behind", () => Stops.behindOf(Stops.kept!));
+}
+
+class Hands {
+  constructor(value: object) {
+    return value;
+  }
+}
+class Stamp extends Hands {
+  #mark: number | undefined;
+  static markOf(value: object): unknown {
+    return (value as Stamp).#mark;
+  }
+  static mark(value: object, mark: number): void {
+    (value as Stamp).#mark = mark;
+  }
+}
+const stamped = { a: 1 };
+say("before the stamp", () => Stamp.markOf(stamped));
+new Stamp(stamped);
+say("behind the stamp", () => Stamp.markOf(stamped));
+Stamp.mark(stamped, 9);
+say("marked", () => Stamp.markOf(stamped));
+say("stamped twice", () => new Stamp(stamped));
+const reply = new Reply();
+new Stamp(reply);
+say("an instance of another class, stamped", () => [Stamp.markOf(reply), Reply.statusOf(reply), reply.status()]);
+
+class Below extends Reply {
+  #status: string | undefined;
+  own(): unknown {
+    return this.#status;
+  }
+  setOwn(status: string): void {
+    this.#status = status;
+  }
+}
+const below = new Below();
+say("below", () => [below.own(), below.status(), Reply.statusOf(below)]);
+below.setOwn("x");
+below.setStatus(3);
+say("below, stored", () => [below.own(), below.status(), Reply.statusOf(below)]);
+//// private-fields-read-through-receivers-nobody-knows.ts
+// A private field is read in a method whose receiver nobody has proven: an instance of the class, of an heir, of another evaluation of the class, an object a constructor returned, and what has no such field.
+function unknown<T>(value: T): any { return (JSON.parse("[0]") as unknown[]).map(() => value)[0]; }
+function attempt(label: string, run: () => unknown): void {
+  try { console.log(label, String(run())); } catch (error) { console.log(label, (error as Error).constructor.name); }
+}
+
+class Kinds {
+  #integer = 7; #double = 1.5; #text = "text"; #yes = true; #no = false; #nothing = null; #absent = undefined;
+  #object = { k: 1 }; #list = [1, 2]; #optional?: number; #either: number | string = 3; #big = 2 ** 40; #negativeZero = -0; #notANumber = NaN;
+  #closure = () => this.#integer + 1; #symbol = Symbol.for("s"); #bigint = 12n;
+  integer() { return this.#integer; } double() { return this.#double; } text() { return this.#text; } yes() { return this.#yes; } no() { return this.#no; }
+  nothing() { return this.#nothing; } absent() { return this.#absent; } object() { return this.#object; } list() { return this.#list; } optional() { return this.#optional; }
+  either() { return this.#either; } big() { return this.#big; } negativeZero() { return this.#negativeZero; } notANumber() { return this.#notANumber; }
+  closure() { return this.#closure; } symbol() { return this.#symbol; } bigint() { return this.#bigint; }
+  change() { this.#integer = 2 ** 31; this.#double = 2; this.#text = ""; this.#yes = false; this.#optional = 4; this.#either = "now text"; this.#object = { k: 2 }; this.#nothing = null; }
+}
+const names = ["integer", "double", "text", "yes", "no", "nothing", "absent", "object", "list", "optional", "either", "big", "negativeZero", "notANumber", "symbol", "bigint"];
+const kinds = unknown(new Kinds());
+for (let round = 0; round < 2; round++) {
+  for (const name of names) { const value = kinds[name](); console.log(name, typeof value, typeof value === "object" ? JSON.stringify(value) : String(value), Object.is(value, -0)); }
+  console.log(kinds.closure()(), kinds.object() === kinds.object());
+  kinds.change();
+}
+
+// Heirs keep the fields of the classes above them, each under its own name.
+class Base { #value = "base"; #only = 1; value() { return this.#value; } only() { return this.#only; } static read(o: any) { return o.#value; } }
+class Heir extends Base { #value = "heir"; more = 1; heirValue() { return this.#value; } }
+class SecondHeir extends Heir { #value = "second"; #extra = [3]; secondValue() { return this.#value + this.#extra.length; } }
+for (const o of [unknown(new Base()), unknown(new Heir()), unknown(new SecondHeir())]) {
+  console.log(o.value(), o.only(), Base.read(o), o.heirValue?.(), o.secondValue?.());
+  attempt("heir's on it", () => Heir.prototype.heirValue.call(o));
+  attempt("second heir's on it", () => SecondHeir.prototype.secondValue.call(o));
+}
+
+// Every evaluation of a class has names of its own.
+function make(tag: string) { return class Made { #tag = tag; tag() { return this.#tag; } static has(o: object) { return #tag in o; } }; }
+const First = make("first"), Second = make("second");
+const first = unknown(new First()), second = unknown(new Second());
+console.log(first.tag(), second.tag(), First.has(first), First.has(second), Second.has(second), Second.has(first));
+attempt("first's on second", () => First.prototype.tag.call(second));
+attempt("second's on first", () => Second.prototype.tag.call(first));
+for (let i = 0; i < 4; i++) { const Again = make("again" + i); console.log(unknown(new Again()).tag()); attempt("on first", () => Again.prototype.tag.call(first)); }
+
+// What has no such field.
+const read = Kinds.prototype.integer, readText = Kinds.prototype.text;
+for (const [label, receiver] of [["plain", {}], ["array", []], ["function", () => 1], ["number", 5], ["string", "s"], ["null", null], ["undefined", undefined], ["other class", new Base()],
+  ["proxy", new Proxy(new Kinds(), {})], ["heir by prototype", Object.create(new Kinds())], ["same keys", { integer: 7 }], ["symbol", Symbol("x")], ["map", new Map()]] as [string, unknown][]) {
+  attempt(label, () => read.call(unknown(receiver))); attempt(label, () => readText.call(unknown(receiver)));
+}
+
+// A field is there from its own initializer on.
+class Order {
+  #early = this.peek("early"); #late = "late"; seen: string[] = [];
+  peek(when: string): string { try { return when + ":" + this.#late; } catch (error) { return when + ":" + (error as Error).constructor.name; } }
+  early() { return this.#early; }
+}
+const order = unknown(new Order());
+console.log(order.early(), order.peek("afterwards"));
+
+// An object that a constructor returned takes the names of the classes below.
+class Returns { constructor(o: object) { return o; } }
+class Stamp extends Returns { #stamp: unknown; constructor(o: object, stamp: unknown) { super(o); this.#stamp = stamp; } static read(o: any) { return o.#stamp; } static has(o: any) { return #stamp in o; } }
+const targets: any[] = [{}, [], () => 1, new Map(), new Base(), new Kinds(), Object.freeze({ frozen: 1 }), new Proxy({}, {}), Object.create(null)];
+targets.forEach((target, index) => { new Stamp(target, index % 2 ? "stamp" + index : index + 0.5); });
+for (const target of targets) console.log(Stamp.has(unknown(target)), Stamp.read(unknown(target)));
+attempt("twice", () => new Stamp(targets[0], 1));
+attempt("no stamp", () => Stamp.read(unknown({})));
+for (let i = 0; i < 12; i++) { const o: Record<string, number> = {}; for (let k = 0; k <= i; k++) o["k" + k] = k; new Stamp(o, i); console.log(Stamp.read(unknown(o)), Object.keys(o).length); }
+
+// Methods, accessors and static members.
+class Members {
+  #field = 1; static #count = 0; static #bump() { return ++Members.#count; }
+  #method() { return this.#field + 1; } get #got() { return this.#field + 2; } set #got(v: number) { this.#field = v; }
+  method() { return this.#method(); } got() { return this.#got; } set(v: number) { this.#got = v; return this.#field; } sameMethod(o: any) { return this.#method === o.#method; }
+  static bump() { return Members.#bump(); } static count(c: any) { return c.#count; }
+}
+const members = unknown(new Members());
+console.log(members.method(), members.got(), members.set(5), members.method(), members.sameMethod(unknown(new Members())), Members.bump(), Members.bump(), Members.count(unknown(Members)));
+attempt("method on plain", () => Members.prototype.method.call(unknown({})));
+attempt("getter on plain", () => Members.prototype.got.call(unknown({})));
+attempt("static on heir", () => Members.count(unknown(class extends Members {})));
+
+// Many objects, read while the collector runs.
+class Cell { #next: Cell | null; #payload: { n: number }; constructor(next: Cell | null, n: number) { this.#next = next; this.#payload = { n }; } next() { return this.#next; } payload() { return this.#payload; } }
+let head: any = null;
+for (let i = 0; i < 5000; i++) head = unknown(new Cell(head, i));
+Bun.gc(true);
+let total = 0;
+for (let cell = head; cell; cell = unknown(cell.next())) total += cell.payload().n;
+console.log(total);
+//// private-member-calls.ts
+// Calls of private methods, fields holding functions, and getters returning functions: what `this` is, with spread arguments and optional chains.
+declare const console: { log(...a: unknown[]): void };
+function said(f: () => unknown): string { try { return String(f()); } catch (e) { return "threw " + (e as Error).name; } }
+function row(label: string, f: () => unknown): void { console.log(label + ": " + said(f)); }
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+
+type F = (this: unknown, ...a: unknown[]) => string;
+function who(t: unknown, C: unknown) { return t === C ? "the class" : t === undefined ? "undefined" : typeof t; }
+function make(n: number) {
+  return class C {
+    static #m(this: unknown, ...a: unknown[]) { return "m" + n + " " + who(this, C) + " " + a.length; }
+    static #f: F = function (this: unknown, ...a: unknown[]) { return "f" + n + " " + who(this, C) + " " + a.length; };
+    static #arrow = (...a: unknown[]) => "arrow" + n + " " + a.length;
+    static #reads = 0;
+    static get #g(): F { C.#reads++; return function (this: unknown, ...a: unknown[]) { return "g" + n + " " + who(this, C) + " " + a.length + " read " + C.#reads; }; }
+    static #none: F | undefined = undefined;
+    static #K = class { v = n; };
+    static rows() {
+      row("plain m", () => C.#m(1));
+      row("plain f", () => C.#f(1));
+      row("plain g", () => C.#g(1));
+      row("plain arrow", () => C.#arrow(1));
+      row("this m", () => C.viaThis());
+      row("spread m", () => C.#m(...[1, 2, 3]));
+      row("spread f", () => C.#f(...[1, 2, 3]));
+      row("spread g", () => C.#g(...[1, 2, 3]));
+      row("parenthesized m", () => (C.#m)(1));
+      row("parenthesized f", () => (C.#f)(1));
+      row("parenthesized g", () => (C.#g)(1));
+      row("comma m", () => (0, C.#m)(1));
+      row("comma f", () => (0, C.#f)(1));
+      row("tag m", () => C.#m`a${1}b`);
+      row("tag f", () => C.#f`a${1}b`);
+      row("tag g", () => C.#g`a${1}b`);
+      row("tag arrow", () => C.#arrow`a${1}b`);
+      row("tag on this", () => C.tagOnThis());
+      row("optional call m", () => C.#m?.(1));
+      row("optional call f", () => C.#f?.(1));
+      row("optional call g", () => C.#g?.(1));
+      row("optional call of nothing", () => C.#none?.(1));
+      row("call of nothing", () => (C.#none as F)(1));
+      row("call", () => C.#m.call(5, 1, 2));
+      row("apply", () => C.#m.apply(C, [1, 2]));
+      row("bind", () => C.#m.bind(C)(1));
+      row("Reflect.apply", () => Reflect.apply(C.#m, undefined, [1]));
+      row("held", () => { const f = C.#m; return f(1); });
+      row("new of the method", () => new (C.#m as any)());
+      row("new of a class in a field", () => new C.#K().v);
+      row("new of a class in a field, no list", () => (new C.#K).v);
+      row("asserted m", () => C.#m!(1));
+      row("asserted f", () => C.#f!(1));
+      row("asserted g", () => C.#g!(1));
+      row("asserted nothing", () => C.#none!(1));
+      row("as m", () => (C.#m as F)(1));
+      row("as f", () => (C.#f as F)(1));
+      row("as g", () => (C.#g as F)(1));
+      row("angle m", () => (<F>C.#m)(1));
+      row("satisfies m", () => (C.#m satisfies F)(1));
+      row("asserted twice m", () => C.#m!!(1));
+      row("asserted on this", () => C.assertedOnThis());
+      row("asserted tag", () => C.#m!`a`);
+      row("as any receiver m", () => (C as any).#m(1));
+      row("as any receiver f", () => (C as any).#f(1));
+      row("asserted receiver m", () => C!.#m(1));
+    }
+    static viaThis() { return this.#m(1); }
+    static tagOnThis() { return this.#m`a`; }
+    static assertedOnThis() { return this.#m!(1); }
+  };
+}
+make(1).rows();
+make(2).rows();
+class T {
+  static #m(this: unknown, ...a: unknown[]) { return "m " + who(this, T) + " " + a.length; }
+  static #f: F = function (this: unknown, ...a: unknown[]) { return "f " + who(this, T) + " " + a.length; };
+  static get #g(): F { return function (this: unknown, ...a: unknown[]) { return "g " + who(this, T) + " " + a.length; }; }
+  static x = T.#m`a`;
+  static y = T.#f`a`;
+  static z = T.#g`a`;
+  static {
+    row("top tag m", () => T.#m`a${1}`);
+    row("top tag f", () => T.#f`a${1}`);
+    row("top tag g", () => T.#g`a${1}`);
+    row("top tag on this", () => T.tag());
+    row("top in initializers", () => [T.x, T.y, T.z].join());
+    row("top asserted m", () => T.#m!(1));
+    row("top asserted f", () => T.#f!(1));
+    row("top asserted g", () => T.#g!(1));
+    row("top as m", () => (T.#m as F)(1));
+    row("top asserted on this", () => T.asserted());
+  }
+  static tag() { return this.#m`a`; }
+  static asserted() { return this.#m!(1); }
+}
+//// private-member-calls-untyped.js
+// Calls of private methods, fields holding functions, and getters returning functions: what `this` is, with spread arguments and optional chains (the same program without type annotations).
+function said(f) { try { return String(f()); } catch (e) { return "threw " + (e).name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+const collect = (globalThis).gc ?? (() => (globalThis).Bun.gc(true));
+
+function who(t, C) { return t === C ? "the class" : t === undefined ? "undefined" : typeof t; }
+function make(n) {
+  return class C {
+    static #m(...a) { return "m" + n + " " + who(this, C) + " " + a.length; }
+    static #f = function (...a) { return "f" + n + " " + who(this, C) + " " + a.length; };
+    static #arrow = (...a) => "arrow" + n + " " + a.length;
+    static #reads = 0;
+    static get #g() { C.#reads++; return function (...a) { return "g" + n + " " + who(this, C) + " " + a.length + " read " + C.#reads; }; }
+    static #none = undefined;
+    static #K = class { v = n; };
+    static rows() {
+      row("plain m", () => C.#m(1));
+      row("plain f", () => C.#f(1));
+      row("plain g", () => C.#g(1));
+      row("plain arrow", () => C.#arrow(1));
+      row("this m", () => C.viaThis());
+      row("spread m", () => C.#m(...[1, 2, 3]));
+      row("spread f", () => C.#f(...[1, 2, 3]));
+      row("spread g", () => C.#g(...[1, 2, 3]));
+      row("parenthesized m", () => (C.#m)(1));
+      row("parenthesized f", () => (C.#f)(1));
+      row("parenthesized g", () => (C.#g)(1));
+      row("comma m", () => (0, C.#m)(1));
+      row("comma f", () => (0, C.#f)(1));
+      row("tag m", () => C.#m`a${1}b`);
+      row("tag f", () => C.#f`a${1}b`);
+      row("tag g", () => C.#g`a${1}b`);
+      row("tag arrow", () => C.#arrow`a${1}b`);
+      row("tag on this", () => C.tagOnThis());
+      row("chain m", () => C?.#m(1));
+      row("chain f", () => C?.#f(1));
+      row("chain g", () => C?.#g(1));
+      row("optional call m", () => C.#m?.(1));
+      row("optional call f", () => C.#f?.(1));
+      row("optional call g", () => C.#g?.(1));
+      row("optional call of nothing", () => C.#none?.(1));
+      row("call of nothing", () => (C.#none)(1));
+      row("both chains m", () => C?.#m?.(1));
+      row("call", () => C.#m.call(5, 1, 2));
+      row("apply", () => C.#m.apply(C, [1, 2]));
+      row("bind", () => C.#m.bind(C)(1));
+      row("Reflect.apply", () => Reflect.apply(C.#m, undefined, [1]));
+      row("held", () => { const f = C.#m; return f(1); });
+      row("new of the method", () => new (C.#m)());
+      row("new of a class in a field", () => new C.#K().v);
+      row("new of a class in a field, no list", () => (new C.#K).v);
+      row("chain in parentheses m", () => (C?.#m)(1));
+      row("chain in parentheses f", () => (C?.#f)(1));
+      row("chain in parentheses g", () => (C?.#g)(1));
+      row("chain in parentheses of null", () => { const o = null; return (o?.#m)(1); });
+      row("chain in parentheses, optional call", () => { const o = null; return (o?.#m)?.(1); });
+      row("chain in parentheses on another", () => { const o = {}; return (o?.#m)(1); });
+    }
+    static viaThis() { return this.#m(1); }
+    static tagOnThis() { return this.#m`a`; }
+  };
+}
+make(1).rows();
+make(2).rows();
+class T {
+  static #m(...a) { return "m " + who(this, T) + " " + a.length; }
+  static #f = function (...a) { return "f " + who(this, T) + " " + a.length; };
+  static get #g() { return function (...a) { return "g " + who(this, T) + " " + a.length; }; }
+  static x = T.#m`a`;
+  static y = T.#f`a`;
+  static z = T.#g`a`;
+  static {
+    row("top tag m", () => T.#m`a${1}`);
+    row("top tag f", () => T.#f`a${1}`);
+    row("top tag g", () => T.#g`a${1}`);
+    row("top tag on this", () => T.tag());
+    row("top in initializers", () => [T.x, T.y, T.z].join());
+    row("top chain in parentheses m", () => (T?.#m)(1));
+    row("top chain in parentheses f", () => (T?.#f)(1));
+    row("top chain in parentheses g", () => (T?.#g)(1));
+  }
+  static tag() { return this.#m`a`; }
+}
+//// private-members-on-unknown-objects.js
+// Private members on objects nothing is known about, in loops long enough to fill the keyed tables.
+////= describeOutcome
+function collectOutcomes(f) {
+  const results = new Set();
+  for (let i = 0; i < 100; i++) results.add(describeOutcome(f));
+  return [...results].join(" / ");
+}
+function show(...parts) {
+  console.log(parts.join(" | "));
+}
+
+class Identity {
+  constructor(target) {
+    return target;
+  }
+}
+
+class Stamp extends Identity {
+  #field = 1;
+  #method() {
+    return "method " + this.#field;
+  }
+  get #getter() {
+    return "getter " + this.#field;
+  }
+  set #setter(value) {
+    this.#field = value;
+  }
+  get #both() {
+    return this.#field * 2;
+  }
+  set #both(value) {
+    this.#field = value / 2;
+  }
+  static #staticField = 10;
+  static #staticMethod() {
+    return "static method";
+  }
+  static get #staticAccessor() {
+    return Stamp.#staticField + 1;
+  }
+  static set #staticAccessor(value) {
+    Stamp.#staticField = value;
+  }
+
+  static readField(o) {
+    return o.#field;
+  }
+  static writeField(o, value) {
+    o.#field = value;
+    return o.#field;
+  }
+  static callMethod(o) {
+    return o.#method();
+  }
+  static writeMethod(o) {
+    o.#method = 1;
+  }
+  static readGetter(o) {
+    return o.#getter;
+  }
+  static writeGetter(o) {
+    o.#getter = 1;
+  }
+  static readSetter(o) {
+    return o.#setter;
+  }
+  static writeSetter(o, value) {
+    o.#setter = value;
+    return o.#field;
+  }
+  static readBoth(o) {
+    return o.#both;
+  }
+  static writeBoth(o, value) {
+    o.#both = value;
+    return o.#both;
+  }
+  static hasField(o) {
+    return #field in o;
+  }
+  static hasMethod(o) {
+    return #method in o;
+  }
+  static hasGetter(o) {
+    return #getter in o;
+  }
+  static readStatic(o) {
+    return o.#staticField;
+  }
+  static writeStatic(o, value) {
+    o.#staticField = value;
+    return o.#staticField;
+  }
+  static callStatic(o) {
+    return o.#staticMethod();
+  }
+  static readStaticAccessor(o) {
+    return o.#staticAccessor;
+  }
+  static writeStaticAccessor(o, value) {
+    o.#staticAccessor = value;
+    return o.#staticAccessor;
+  }
+  static hasStatic(o) {
+    return #staticField in o;
+  }
+}
+
+class Fields extends Identity {
+  #value = "field";
+  static read(o) {
+    return o.#value;
+  }
+  static has(o) {
+    return #value in o;
+  }
+}
+
+class Methods extends Identity {
+  #method() {
+    return "only a method";
+  }
+  static call(o) {
+    return o.#method();
+  }
+  static has(o) {
+    return #method in o;
+  }
+}
+
+class Plain {
+  #field = "own";
+  #method() {
+    return this.#field + " method";
+  }
+  get #accessor() {
+    return this.#field + " accessor";
+  }
+  set #accessor(value) {
+    this.#field = value;
+  }
+  static describe(o) {
+    o.#accessor = o.#field + "!";
+    return [o.#field, o.#method(), o.#accessor, #field in o, #method in o, #accessor in o].join();
+  }
+}
+
+const trapped = [];
+const proxyTarget = {};
+const traps = {};
+for (const name of ["get", "set", "has", "defineProperty", "getOwnPropertyDescriptor", "deleteProperty", "ownKeys"]) {
+  traps[name] = (...args) => {
+    trapped.push(name);
+    return Reflect[name](...args);
+  };
+}
+const proxy = new Proxy(proxyTarget, traps);
+const frozenFirst = Object.freeze({ shown: 1 });
+const frozenLater = { shown: 2 };
+const dictionary = {};
+for (let i = 0; i < 200; i++) dictionary["key" + i] = i;
+for (let i = 0; i < 190; i++) delete dictionary["key" + i];
+
+const stamped = [
+  ["plain", {}],
+  ["with properties", { a: 1, b: 2 }],
+  ["array", []],
+  ["function", function () {}],
+  ["frozen first", frozenFirst],
+  ["frozen later", frozenLater],
+  ["dictionary", dictionary],
+  ["proxy", proxy],
+];
+for (const [, target] of stamped) new Stamp(target);
+Object.freeze(frozenLater);
+
+for (const [title, o] of stamped) {
+  show(
+    title,
+    collectOutcomes(() => Stamp.readField(o)),
+    collectOutcomes(() => Stamp.callMethod(o)),
+    collectOutcomes(() => Stamp.readGetter(o)),
+    collectOutcomes(() => Stamp.readBoth(o)),
+    collectOutcomes(() => [Stamp.hasField(o), Stamp.hasMethod(o), Stamp.hasGetter(o), Stamp.hasStatic(o)]),
+  );
+  let total = 0;
+  for (let i = 0; i < 100; i++) total += Stamp.writeField(o, i);
+  show(
+    title + " writes",
+    total,
+    collectOutcomes(() => Stamp.writeSetter(o, 7)),
+    collectOutcomes(() => Stamp.writeBoth(o, 8)),
+    collectOutcomes(() => Stamp.writeMethod(o)),
+    collectOutcomes(() => Stamp.writeGetter(o)),
+    collectOutcomes(() => Stamp.readSetter(o)),
+  );
+}
+show("proxy traps that ran", trapped.length, "target has the field", Stamp.hasField(proxyTarget));
+show("frozen objects stay frozen", Object.isFrozen(frozenFirst), Object.isFrozen(frozenLater));
+
+const inherited = Object.create(stamped[0][1]);
+const absent = [
+  ["no members", {}],
+  ["inherits them", inherited],
+  ["frozen", Object.freeze({})],
+  ["proxy of a stamped object", new Proxy(stamped[0][1], {})],
+  ["prototype", Stamp.prototype],
+];
+for (const [title, o] of absent) {
+  show(
+    title,
+    collectOutcomes(() => Stamp.readField(o)),
+    collectOutcomes(() => Stamp.writeField(o, 1)),
+    collectOutcomes(() => Stamp.callMethod(o)),
+    collectOutcomes(() => Stamp.readGetter(o)),
+    collectOutcomes(() => Stamp.writeSetter(o, 1)),
+    collectOutcomes(() => [Stamp.hasField(o), Stamp.hasMethod(o), Stamp.hasGetter(o)]),
+  );
+}
+
+for (const [title, value] of [["number", 5], ["string", "text"], ["boolean", true], ["symbol", Symbol.iterator], ["bigint", 5n], ["null", null], ["undefined", undefined]]) {
+  show(
+    title,
+    collectOutcomes(() => Stamp.readField(value)),
+    collectOutcomes(() => Stamp.writeField(value, 1)),
+    collectOutcomes(() => Stamp.callMethod(value)),
+    collectOutcomes(() => Stamp.hasField(value)),
+    collectOutcomes(() => Stamp.hasMethod(value)),
+  );
+}
+
+////= show	"static members"	Stamp
+let staticTotal = 0;
+for (let i = 0; i < 100; i++) staticTotal += Stamp.writeStatic(Stamp, i) + Stamp.writeStaticAccessor(Stamp, i);
+show("static writes", staticTotal);
+class Derived extends Stamp {}
+////= show	"static members of a subclass"	Derived
+
+const twice = {};
+new Fields(twice);
+show("field added twice", describeOutcome(() => new Fields(twice)), Fields.read(twice));
+const twiceFrozen = Object.freeze({});
+new Fields(twiceFrozen);
+show("field added twice to a frozen object", describeOutcome(() => new Fields(twiceFrozen)), Fields.read(twiceFrozen));
+show(
+  "field added over and over",
+  collectOutcomes(() => new Fields(twice) === twice),
+);
+const sameShape = [];
+for (let i = 0; i < 100; i++) sameShape.push(new Fields({ shape: i }));
+show("fields added to one shape", sameShape.every(Fields.has), collectOutcomes(() => Fields.read(sameShape[99])));
+
+const methodsTwice = {};
+new Methods(methodsTwice);
+show("methods installed twice", describeOutcome(() => new Methods(methodsTwice)), Methods.call(methodsTwice));
+const methodsOnFrozen = Object.freeze({});
+new Methods(methodsOnFrozen);
+show("methods installed twice on a frozen object", describeOutcome(() => new Methods(methodsOnFrozen)), Methods.call(methodsOnFrozen));
+show(
+  "methods installed over and over",
+  collectOutcomes(() => new Methods(methodsTwice) === methodsTwice),
+);
+
+const before = {};
+const sameStructure = {};
+show("absent brand", collectOutcomes(() => Methods.has(before)), collectOutcomes(() => Fields.has(before)));
+new Methods(before);
+show("brand after install", collectOutcomes(() => Methods.has(before)), collectOutcomes(() => Fields.has(before)));
+show("brand of another object", collectOutcomes(() => Methods.has(sameStructure)));
+new Fields(before);
+show("field after install", collectOutcomes(() => Fields.has(before)), collectOutcomes(() => Fields.read(before)));
+show("field of another object", collectOutcomes(() => Fields.has(sameStructure)), collectOutcomes(() => Fields.read(sameStructure)));
+
+const reflected = {};
+new Stamp(reflected);
+show(
+  "private members are not properties",
+  Reflect.ownKeys(reflected).length,
+  JSON.stringify(reflected),
+  Object.getOwnPropertySymbols(reflected).length,
+);
+
+const instances = [];
+for (let i = 0; i < 100; i++) instances.push(new Plain());
+show("right class", new Set(instances.map(Plain.describe)).size, Plain.describe(instances[0]));
+show("wrong class", collectOutcomes(() => Plain.describe({})), collectOutcomes(() => Plain.describe(new Stamp({}))));
+const right = new Stamp({});
+show(
+  "right class through the helpers",
+  collectOutcomes(() => Stamp.readField(right)),
+  collectOutcomes(() => Stamp.callMethod(right)),
+  collectOutcomes(() => Stamp.readGetter(right)),
+  collectOutcomes(() => Stamp.writeSetter(right, 3)),
+  collectOutcomes(() => Stamp.writeBoth(right, 4)),
+  collectOutcomes(() => [Stamp.hasField(right), Stamp.hasMethod(right), Stamp.hasGetter(right)]),
+);
+//// private-members-stamped-on-foreign-objects.js
+// A constructor that returns another object hands it to the derived class as `this`: its private members and fields land on that object, whatever it is.
+function attempt(run) { try { return run(); } catch (error) { return error.constructor.name; } }
+class Hand { constructor(object) { return object; } }
+class Stamp extends Hand {
+  #secret = 1;
+  #method() { return "method " + this.#secret; }
+  get #twice() { return this.#secret * 2; }
+  set #twice(value) { this.#secret = value / 2; }
+  shown = "shown";
+  static has(object) { return #secret in object; }
+  static read(object) { return object.#secret; }
+  static write(object, value) { object.#secret = value; return object.#secret; }
+  static call(object) { return object.#method(); }
+  static twice(object) { object.#twice = 10; return object.#twice; }
+}
+const targets = {
+  literal: { a: 1 },
+  array: [1, 2],
+  callable: function named() {},
+  arrow: () => 1,
+  frozen: Object.freeze({ f: 1 }),
+  sealed: Object.seal({ s: 1 }),
+  closed: Object.preventExtensions({ c: 1 }),
+  bare: Object.create(null),
+  map: new Map(),
+  date: new Date(0),
+  error: new Error("e"),
+  proxy: new Proxy({ p: 1 }, {}),
+  instance: new (class Other { o = 1; })(),
+  regexp: /x/,
+  typed: new Uint8Array(2),
+  boxed: Object("text"),
+  promise: Promise.resolve(1),
+  klass: class Target {},
+};
+for (const [name, target] of Object.entries(targets)) {
+  const before = Stamp.has(target);
+  const made = attempt(() => new Stamp(target) === target);
+  console.log(name, before, made, Stamp.has(target), attempt(() => Stamp.read(target)), attempt(() => Stamp.write(target, 5)), attempt(() => Stamp.call(target)), attempt(() => Stamp.twice(target)), attempt(() => target.shown), Object.keys(target).join());
+}
+// Twice on one object: the second initialization throws, and what stood there stays.
+const once = {};
+new Stamp(once);
+Stamp.write(once, 42);
+console.log(attempt(() => new Stamp(once)), Stamp.read(once));
+// Two classes on one object.
+class Second extends Hand { #secret = "second"; static read(object) { return object.#secret; } static has(object) { return #secret in object; } }
+new Second(once);
+console.log(Stamp.read(once), Second.read(once), Second.has({}), Stamp.has(new Second({})));
+// A primitive that is returned is refused for a derived class; undefined means the object that super made.
+class HandsPrimitive { constructor(value) { return value; } }
+class Below extends HandsPrimitive { #p = 1; static has(object) { return #p in object; } }
+console.log(attempt(() => Below.has(new Below(5))), attempt(() => Below.has(new Below(undefined))), attempt(() => Below.has(new Below(null))), attempt(() => Below.has(new Below("s"))));
+class ReturnsFromDerived extends Object { constructor(value) { super(); return value; } }
+console.log(attempt(() => typeof new ReturnsFromDerived(5)), attempt(() => typeof new ReturnsFromDerived(undefined)), attempt(() => new ReturnsFromDerived(once) === once), attempt(() => typeof new ReturnsFromDerived(null)));
+//// private-method-calls-from-everywhere.js
+// A private method called on `this`, on another instance, from a static method, from closures and arrow fields and from field initializers, with too few, too many and spread arguments, recursively, and read as a value and called later with and without a receiver.
+function said(f) { try { return String(f()); } catch (e) { return "threw " + e.name; } }
+class C {
+  constructor(v) { this.v = v; }
+  first = this.#tag("initializer");
+  #tag(text) { return text + ":" + this.v; }
+  #add(a, b) { return this.v + a + b; }
+  #rest(...r) { return r.length; }
+  #count() { return arguments.length; }
+  #fib(n) { return n < 2 ? n : this.#fib(n - 1) + this.#fib(n - 2); }
+  #receiver() { return this === undefined ? "no receiver" : this.v; }
+  arrowField = () => this.#add(1, 2);
+  onThis() { return this.#add(1, 2); }
+  onOther(o) { return o.#add(1, 2); }
+  static onArgument(o) { return o.#add(1, 2); }
+  inArrow() { return (() => this.#add(1, 2))(); }
+  inFunction() { const self = this; return function () { return self.#add(1, 2); }; }
+  few() { return this.#add(1); }
+  many() { return this.#add(1, 2, 3, 4); }
+  spread(list) { return this.#add(...list); }
+  rest() { return this.#rest(1, 2, 3); }
+  count() { return this.#count(1, 2, 3, 4, 5); }
+  fib(n) { return this.#fib(n); }
+  bare() { const f = this.#receiver; return f(); }
+  held() { const holder = { v: "holder", f: this.#receiver }; return holder.f(); }
+  called(o) { return this.#receiver.call(o); }
+  same(o) { return this.#receiver === o.#receiver; }
+}
+const c = new C(10), d = new C(20);
+console.log([c.first, c.onThis(), c.onOther(d), C.onArgument(d), c.inArrow(), c.inFunction()(), c.arrowField(), c.few(), c.many(), c.spread([3, 4]), c.rest(), c.count(), c.fib(15)].join());
+console.log([c.bare(), c.held(), c.called({ v: "called" }), c.same(d)].join());
+console.log([said(() => C.onArgument({})), said(() => C.onArgument(null)), said(() => C.onArgument(1)), said(() => c.onOther(Object.create(d))), said(() => c.onOther(new Proxy(d, {})))].join());
+//// private-method-calls-on-an-open-class-avoid-runtime.ts
+// A call of a private method on a class that also takes untyped objects does not look the method up by name. The program counts the entries of the operations that a lookup by name goes through.
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+function entered(): number {
+  return counted ? counted("operationAOTGetById") + counted("operationAOTGetByIdAndCache") : 0;
+}
+class Pool {
+  served = 0;
+  #next(): boolean {
+    this.served++;
+    return false;
+  }
+  #drain(): void {
+    while (this.#next());
+  }
+  drain(): void {
+    this.#drain();
+  }
+}
+const Untyped: any = Pool;
+class Heir extends Untyped {}
+const taken: any[] = [new Heir(), new Pool()];
+const pool = taken[1] as Pool;
+pool.drain();
+const before = entered();
+for (let turn = 0; turn < 2000; turn++) pool.drain();
+const entries = entered() - before;
+console.log(pool.served, entries);
+//// private-method-calls-several-classes-untyped.js
+// Calls of private methods in JavaScript: on `this`, on another object of the class, on an object that lacks the method, in classes that are evaluated once and many times, with more and fewer arguments than parameters, and of a private field that holds a function.
+const thrownBy = f => { try { return "no error: " + f(); } catch (error) { return error.constructor.name; } };
+class Router {
+  #routes = [];
+  #handler = (path) => "field " + path;
+  #match(method, path) { return method + " " + path + " " + this.#routes.length; }
+  #rest(first, ...others) { return first + ":" + others.join(); }
+  #defaulted(a, b = a + 1) { return a + b; }
+  async #later(value) { return value + 1; }
+  *#each() { yield* this.#routes; }
+  static #count(router) { return router.#routes.length; }
+  add(route) { this.#routes.push(route); return this; }
+  match(method, path) { return this.#match(method, path); }
+  matchOn(other, method, path) { return other.#match(method, path); }
+  few() { return this.#match("GET"); }
+  many() { return this.#match("GET", "/", "ignored", "too"); }
+  rest() { return this.#rest(1) + " " + this.#rest(1, 2, 3); }
+  defaulted() { return this.#defaulted(1) + this.#defaulted(1, 5); }
+  later() { return this.#later(1); }
+  each() { return [...this.#each()].join(); }
+  handler(path) { return this.#handler(path); }
+  replaceHandler(f) { this.#handler = f; return this; }
+  optional(other) { return other?.#match("GET", "/o"); }
+  detached() { const f = this.#match; return f.call(this, "GET", "/d") + " " + (f === this.#match) + " " + f.name + " " + f.length; }
+  static count(router) { return Router.#count(router); }
+}
+const router = new Router().add("a").add("b"), other = new Router();
+let said = new Set();
+for (let i = 0; i < 2000; i++) said.add(router.match("GET", "/x") + " | " + router.matchOn(other, "PUT", "/y") + " | " + router.few() + " | " + router.many() + " | " + router.rest() + " | " + router.defaulted() + " | " + router.each() + " | " + router.handler("/h"));
+console.log([...said].join("\n"));
+console.log(thrownBy(() => router.matchOn({}, "GET", "/")), thrownBy(() => router.matchOn(null, "GET", "/")), thrownBy(() => router.matchOn(Object.create(router), "GET", "/")), thrownBy(() => Router.prototype.match.call({}, "GET", "/")), router.optional(undefined), router.optional(other), thrownBy(() => router.optional({})));
+console.log(router.detached(), Router.count(router), thrownBy(() => Router.count({})), router.replaceHandler(path => "replaced " + path).handler("/r"), thrownBy(() => router.replaceHandler(5).handler("/r")));
+// A class that is evaluated many times: each has a method of its own, which captures what is around it.
+const classes = [1, 2, 3].map(n => class {
+  #scaled(x) { return x * n; }
+  scale(x) { return this.#scaled(x); }
+  scaleOn(object, x) { return object.#scaled(x); }
+});
+const objects = classes.map(C => new C());
+console.log(objects.map(object => object.scale(10)).join(), objects.map((object, i) => thrownBy(() => object.scaleOn(objects[(i + 1) % 3], 10))).join(), objects[1].scaleOn(new classes[1](), 4));
+// Two classes that use the same spelling.
+class Left { #name() { return "left"; } name() { return this.#name(); } static on(object) { return object.#name(); } }
+class Right { #name() { return "right"; } name() { return this.#name(); } static on(object) { return object.#name(); } }
+console.log(new Left().name(), new Right().name(), thrownBy(() => Left.on(new Right())), thrownBy(() => Right.on(new Left())), Left.on(new Left()));
+router.later().then(value => console.log("later", value));
+//// private-method-read-before-its-arguments.ts
+// `this.#m(f())` reads the method before it evaluates the arguments: an object without the method throws before f runs, also when the class takes untyped objects.
+const log: string[] = [];
+function argument(): number {
+  log.push("argument");
+  return 1;
+}
+class Pool {
+  total = 0;
+  #add(amount: number): number {
+    this.total += amount;
+    return this.total;
+  }
+  get #counted(): number {
+    return this.total;
+  }
+  addTwice(): number {
+    this.#add(argument());
+    return this.#add(argument()) + this.#counted;
+  }
+  static addTo(other: Pool): number {
+    return other.#add(argument());
+  }
+}
+const Untyped: any = Pool;
+class Heir extends Untyped {}
+const taken: any[] = [new Heir(), new Pool()];
+console.log((taken[0] as Pool).addTwice(), (taken[1] as Pool).addTwice(), Pool.addTo(taken[0]));
+try {
+  log.length = 0;
+  Pool.addTo({ total: 0 } as any);
+} catch (error) {
+  console.log((error as Error).name, log.length);
+}
+//// private-methods-are-searched-for-once.ts
+// A private method that is read by name is searched for among the methods of its class once, not at every read. The program counts how often the run time is asked for it.
+declare const aotOperationCount: undefined | ((name: string) => number);
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+let evaluated = 0;
+function argument(): number {
+  evaluated++;
+  return 1;
+}
+class Pool {
+  total = 0;
+  #add(amount: number): number {
+    this.total += amount;
+    return this.total;
+  }
+  add(): number {
+    return this.#add(argument());
+  }
+}
+const Untyped: any = Pool;
+class Heir extends Untyped {}
+const taken: any[] = [new Heir(), new Pool()];
+const pool = taken[1] as Pool;
+for (let turn = 0; turn < 2000; turn++) pool.add();
+const searches = counted ? counted("operationAOTPrivateGet") : null;
+console.log(pool.total, evaluated, searches === null || searches < 10);

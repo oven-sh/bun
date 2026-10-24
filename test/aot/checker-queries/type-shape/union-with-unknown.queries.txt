@@ -1,4 +1,0 @@
-# The checker has reduced a union with `unknown` or `any` to that before anybody asks.
-union-with-unknown.ts:2 shape `unknown | string` = Anything(Unknown)
-union-with-unknown.ts:3 shape `any | string` = Anything(Any)
-union-with-unknown.ts:4 shape `unknown | { a: number } | undefined` = Anything(Unknown)

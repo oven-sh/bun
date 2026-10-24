@@ -1,3 +1,0 @@
-# A member of a union is written only if it is written in every constituent.
-union-receiver.ts:5 member `u.k` = member k Field string | number checked string | number
-union-receiver.ts:8 member `v.k` = member k Field unwritten checked number

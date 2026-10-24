@@ -120,9 +120,7 @@ unsafe impl Sync for Viewed<'_> {}
 
 pub(super) struct CodeGraph<'s> {
     pub(super) is_compile_build: bool,
-    /// Everything that was loaded.
     loaded: ProgramFiles<'s>,
-    /// What a build asks about: `loaded`, or the files of one of several programs that were loaded together.
     viewed: Viewed<'s>,
     pub(super) host_payloads: &'s [Option<HostPayload>],
 }
@@ -209,9 +207,6 @@ impl<'s> Files<'s> {
         unsafe { *self.code_graph.viewed.0.get() = viewed };
     }
 
-    /// Of files that were loaded for several programs: whether the files of the program that begins at `first` stand in the order
-    /// in which a load of that program alone puts them. That load walks from `first` and puts a file behind what it loads, and
-    /// it knows no other entry point. A file that an earlier program has led to stands where that walk has put it.
     pub fn is_program_in_order_of_its_own_load(&self, first: FileId) -> bool {
         let loaded = self.code_graph.loaded;
         let mut is_seen = vec![false; self.modules.len()];
@@ -247,31 +242,11 @@ impl<'s> Files<'s> {
                 .eq(in_this_load)
     }
 
-    /// Of files that were loaded for several programs, for each entry point: the files that declare something for files that do
-    /// not import them, and that are there because the program that begins at that entry point leads to them. In ascending order.
-    ///
-    /// A program is checked as it is when it is loaded by itself where no other program has such a file that it lacks: programs
-    /// with the same list can be loaded together. What is there for every program, like the libraries, is in no list.
     pub fn declaring_files_of_each_program(&self) -> Vec<Vec<FileId>> {
         let entry_points = self.code_graph.loaded.entry_points;
         let targets_of = |file: FileId| {
             let module = self.module(file);
             module.edges.iter().chain(module.code_edges).copied()
-        };
-        let reach = |roots: Vec<FileId>| {
-            let mut is_reached = vec![false; self.modules.len()];
-            let mut pending = roots;
-            for &root in &pending {
-                is_reached[root.idx()] = true;
-            }
-            while let Some(file) = pending.pop() {
-                for target in targets_of(file) {
-                    if !core::mem::replace(&mut is_reached[target.idx()], true) {
-                        pending.push(target);
-                    }
-                }
-            }
-            is_reached
         };
         let all_files = || (0..self.modules.len() as u32).map(FileId);
         let declaring: Vec<FileId> = all_files()
@@ -284,14 +259,13 @@ impl<'s> Files<'s> {
         for target in all_files().flat_map(targets_of) {
             is_referred_to[target.idx()] = true;
         }
-        // Nothing leads to them, so the configuration or the compiler has asked for them.
-        let is_there_for_all = reach(
+        let is_there_for_all = self.reached_from(
             all_files()
                 .filter(|file| !is_referred_to[file.idx()] && !entry_points.contains(file))
                 .collect(),
         );
         let of_program = |&first: &FileId| {
-            let is_reached = reach(vec![first]);
+            let is_reached = self.reached_from(vec![first]);
             let own = declaring.iter().copied();
             own.filter(|file| is_reached[file.idx()] && !is_there_for_all[file.idx()])
                 .collect()
@@ -299,7 +273,23 @@ impl<'s> Files<'s> {
         entry_points.iter().map(of_program).collect()
     }
 
-    // What a script with code declares for others are names that its own program has too, and a file that lacks one of them does not build by itself.
+    pub fn reached_from(&self, roots: Vec<FileId>) -> Vec<bool> {
+        let mut is_reached = vec![false; self.modules.len()];
+        let mut pending = roots;
+        for &root in &pending {
+            is_reached[root.idx()] = true;
+        }
+        while let Some(file) = pending.pop() {
+            let module = self.module(file);
+            for &target in module.edges.iter().chain(module.code_edges) {
+                if !core::mem::replace(&mut is_reached[target.idx()], true) {
+                    pending.push(target);
+                }
+            }
+        }
+        is_reached
+    }
+
     fn declares_for_files_that_do_not_import_it(&self, file: FileId) -> bool {
         let module = self.module(file);
         let bound = &module.bound;

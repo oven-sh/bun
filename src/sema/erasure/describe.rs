@@ -47,7 +47,6 @@ impl Position {
     }
 }
 
-/// `(a?.b).c` is not `a?.b.c`, while `(a?.b)?.c` is `a?.b?.c`.
 fn accessed(e: ExprId, chain: Chain) -> Subtree {
     match chain {
         Chain::No => Subtree::Accessed(e),
@@ -586,7 +585,6 @@ impl<'a, 's> Side<'a, 's> {
             postfix_token: _,
         } = file[prop];
         let key = file.runtime_property_key(prop);
-        // `{ a }` is `{ a: a }`, while `{ __proto__ }` has a property of that name and `{ __proto__: __proto__ }` a prototype.
         let kind = match kind {
             PropKind::Shorthand
                 if position == Position::Value && key != PropKey::Name(known::__proto__) =>

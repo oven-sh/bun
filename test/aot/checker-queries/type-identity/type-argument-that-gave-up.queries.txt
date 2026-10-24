@@ -1,5 +1,0 @@
-# A type argument without a shape is an unknown part of the identity. The type that holds it still has one.
-type-argument-that-gave-up.ts:3 written `Missing` = gave up: ErrorType
-absent: type-argument-that-gave-up.ts:3 identity `Box<Missing>` = gave up: ErrorType
-same: type-argument-that-gave-up.ts:3 identity `Box<Missing>` <=> type-argument-that-gave-up.ts:4 identity `Box<Missing>`
-different: type-argument-that-gave-up.ts:3 identity `Box<Missing>` <=> type-argument-that-gave-up.ts:5 identity `Box<number>`

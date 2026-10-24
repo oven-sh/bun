@@ -1,0 +1,3379 @@
+////: Odd
+class Odd extends Uint8Array {
+  static get [Symbol.species]() {
+    return Int16Array;
+  }
+}
+////: for
+for (const kind of ["Int8", "Uint8", "Int16", "Uint16", "Int32", "Uint32", "Float16", "Float32", "Float64"]) {
+  view["set" + kind](0, 3);
+  console.log(kind, view["get" + kind](0));
+}
+////: for-2
+for (const Type of <any[]>[BigInt64Array, BigUint64Array]) {
+  const values = new Type([3n, 1n, 2n]);
+  console.log(Type.name, values.sort().join(""), values.map((value: any) => value * 2n).join(""), values.indexOf(2n), structuredClone(values).constructor.name);
+}
+////: for-3
+for (const Type of <any[]>[Int8Array, Uint8Array, «1», «2», «3», «4», «5», «6», Float64Array]) {
+  const values = new Type([3, 1, 2]);
+  const other = new Type(values.buffer.slice(0));
+  console.log(Type.name, values.sort().join(""), values.map((value: any) => value * 2).join(""), values.filter((value: any) => value > 1).length, values.slice(1).length, values.subarray(1).length, values.indexOf(2), values.includes(3), values.reduce((a: any, b: any) => a + b, 0), values.toSorted().join(""), values.with(0, 9)[0], values.findLast((value: any) => value < 3), other.length, values.toLocaleString(), [...values.entries()].length, Type.from([1, 2]).length, Type.of(1).length, inspect(values), structuredClone(values).constructor.name, new Uint8Array(values).join(""), new Type(new Uint8Array([1, 2])).join(""));
+}
+////: for-4
+////= for-2
+////= Odd
+////: lines
+try {
+  «1»);
+} catch (error) {
+  console.log((error as Error).message);
+}
+////: lines-2
+try {
+  «1»);
+} catch (error) {
+  console.log((error as Error).name);
+}
+////: listener
+const listener = Bun.listen({
+  hostname: "127.0.0.1",
+  port: 0,
+  tls: { key, cert },
+  socket: {
+    data(socket, bytes) {
+      socket.write(`echoed ${bytes}`);
+    },
+  },
+});
+////: server
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  tls: { key, cert },
+  fetch(request, server) {
+    if (server.upgrade(request)) return;
+    return new Response(`served over ${new URL(request.url).protocol}`);
+  },
+  websocket: {
+    message(socket, message) {
+      socket.send(`echoed ${message}`);
+    },
+  },
+});
+////: socket
+const socket = await Bun.connect({
+  hostname: "127.0.0.1",
+  port: listener.port,
+  tls: { ca: cert },
+  socket: {
+    handshake(socket, authorized) {
+      socket.write(`authorized ${authorized}`);
+    },
+    data(_socket, bytes) {
+      answered.resolve(bytes.toString());
+    },
+  },
+});
+////: total
+function total(values: «1» | «2»[]) {
+  let sum = 0;
+  for (const value of values) sum += Number(value);
+  return sum;
+}
+//// abort-controller-module.json
+{ "features": ["AbortSignal"] }
+//// abort-controller-module.ts
+const { AbortController: Controller, AbortSignal: Signal } = require("abort-controller");
+const controller = new Controller();
+controller.abort();
+console.log(controller.signal.aborted, controller.signal instanceof Signal);
+//// abort-signal.ts
+const controller = new AbortController();
+let heard = "";
+controller.signal.addEventListener("abort", () => { heard = String(controller.signal.reason); });
+controller.abort(new Error("stop"));
+console.log(controller.signal.aborted, heard, AbortSignal.abort().aborted, AbortSignal.any([controller.signal]).aborted);
+const timed = AbortSignal.timeout(5);
+await new Promise(resolve => timed.addEventListener("abort", resolve));
+console.log(timed.reason.name, new Request("http://x/", { signal: controller.signal }).signal.aborted);
+try { controller.signal.throwIfAborted(); } catch (error: any) { console.log(error.message); }
+//// ansi.ts
+const red = "\x1b[31mhello world, hello again\x1b[39m";
+console.log(JSON.stringify(Bun.sliceAnsi(red, 6, 11)));
+console.log(JSON.stringify(Bun.sliceAnsi("plain text", 0, 5, "…")));
+console.log(JSON.stringify(Bun.wrapAnsi(red, 11)));
+console.log(JSON.stringify(Bun.wrapAnsi("a verylongwordthatdoesnotfit b", 8, { hard: true })));
+//// archive.ts
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const archive = new Bun.Archive({ "a.txt": "first", "folder/b.json": JSON.stringify({ b: 2 }) }, { compress: "gzip" });
+const bytes = await archive.bytes();
+console.log("gzip", bytes[0] === 0x1f && bytes[1] === 0x8b);
+const files = await new Bun.Archive(bytes).files();
+for (const [name, file] of [...files].sort(([a]: [string, unknown], [b]: [string, unknown]) => a.localeCompare(b))) console.log(name, await file.text());
+const folder = mkdtempSync(join(tmpdir(), "trim-archive-"));
+console.log("extracted", await new Bun.Archive(bytes).extract(folder), readFileSync(join(folder, "folder/b.json"), "utf8"));
+await Bun.write(join(folder, "copy.tar.gz"), archive);
+console.log("written", (await new Bun.Archive(readFileSync(join(folder, "copy.tar.gz"))).files()).size);
+rmSync(folder, { recursive: true, force: true });
+console.log("plain tar", (await new Bun.Archive({ "c.txt": "third" }).bytes()).length);
+//// atomics.ts
+const shared = new Int32Array(new SharedArrayBuffer(16));
+console.log(Atomics.add(shared, 0, 5), Atomics.load(shared, 0), Atomics.compareExchange(shared, 0, 5, 9), Atomics.exchange(shared, 1, 3), Atomics.or(shared, 1, 4), Atomics.load(shared, 1));
+console.log(Atomics.isLockFree(4), Atomics.notify(shared, 0, 1), Atomics.wait(shared, 0, 0, 1), Atomics.wait(shared, 0, 9, 1));
+const later: any = (Atomics as any).waitAsync(shared, 0, 9, 5);
+console.log(later.async, await later.value);
+//// base64-globals.ts
+console.log(btoa("hello"), atob("aGVsbG8="), btoa("\u00ff"), atob(" aGk "));
+try { btoa("\u20ac"); } catch (error: any) { console.log(error.name); }
+try { atob("!"); } catch (error: any) { console.log(error.name); }
+//// bigint64array.ts
+const values = new BigInt64Array([3n, 1n, 2n]);
+console.log(values.constructor.name, values.BYTES_PER_ELEMENT, values.sort().join(","), values.map((value: any) => value * 2n).join(","));
+console.log(BigInt64Array.from([1n, 2n, 3n]).filter((value: any) => value > 1n).length, BigInt64Array.of(4n, 5n).length, values.subarray(1).length, values.slice(1).length);
+console.log(values.indexOf(2n), values.includes(3n), values.with(0, 9n)[0], values.toSorted().join(""), values.toReversed().join(""), String(values.reduce((sum: any, value: any) => sum + value, 0n)));
+console.log(String(values.find((value: any) => value > 1n)), values.findLastIndex((value: any) => value < 3n), values.every((value: any) => value > 0n), values.some((value: any) => value > 2n), values.fill(7n, 1, 2).join(","), values.copyWithin(0, 1).join(","), values.reverse().join(","));
+values[1] = 5n;
+console.log(String(values[1]), 1 in values, 9 in values, Object.keys(values).join(""), Object.prototype.toString.call(values), [...values.entries()].length, delete (values as any)[9]);
+console.log(structuredClone(values).constructor.name, new BigInt64Array(values.buffer, 0, 1).length, new BigInt64Array(new ArrayBuffer(16, { maxByteLength: 32 })).length, new BigInt64Array(values).join(","));
+Bun.gc(true);
+//// biguint64array.ts
+const values = new BigUint64Array([3n, 1n, 2n]);
+console.log(values.constructor.name, values.BYTES_PER_ELEMENT, values.sort().join(","), values.map((value: any) => value * 2n).join(","));
+console.log(BigUint64Array.from([1n, 2n, 3n]).filter((value: any) => value > 1n).length, BigUint64Array.of(4n, 5n).length, values.subarray(1).length, values.slice(1).length);
+console.log(values.indexOf(2n), values.includes(3n), values.with(0, 9n)[0], values.toSorted().join(""), values.toReversed().join(""), String(values.reduce((sum: any, value: any) => sum + value, 0n)));
+console.log(String(values.find((value: any) => value > 1n)), values.findLastIndex((value: any) => value < 3n), values.every((value: any) => value > 0n), values.some((value: any) => value > 2n), values.fill(7n, 1, 2).join(","), values.copyWithin(0, 1).join(","), values.reverse().join(","));
+values[1] = 5n;
+console.log(String(values[1]), 1 in values, 9 in values, Object.keys(values).join(""), Object.prototype.toString.call(values), [...values.entries()].length, delete (values as any)[9]);
+console.log(structuredClone(values).constructor.name, new BigUint64Array(values.buffer, 0, 1).length, new BigUint64Array(new ArrayBuffer(16, { maxByteLength: 32 })).length, new BigUint64Array(values).join(","));
+Bun.gc(true);
+//// bodies.ts
+import { tmpdir } from "node:os";
+const blob = new Blob(["hello ", new Uint8Array([119, 111, 114, 108, 100])], { type: "text/plain" });
+console.log(blob.size, blob.type, await blob.text(), await blob.slice(6).text(), (await blob.arrayBuffer()).byteLength, new File(["x"], "x.txt").name);
+const request = new Request("http://example.com/a", { method: "POST", body: JSON.stringify({ a: 1 }), headers: { "x-a": "b" } });
+console.log(request.method, request.url, (await request.clone().json()).a, request.headers.get("x-a"));
+const response = Response.json({ ok: true }, { status: 201 });
+console.log(response.status, response.ok, await response.clone().text(), response.headers.get("content-type"), Response.redirect("http://x/", 302).status);
+const path = tmpdir() + "/bodies-" + process.pid + ".txt";
+console.log(await Bun.write(path, "written"), await Bun.file(path).text(), Bun.file(path).size, await Bun.file(path).exists(), Bun.file("a.json").type);
+await Bun.file(path).delete();
+console.log(await Bun.file(path).exists(), typeof Bun.stdin.size, Bun.stdout.constructor.name, Bun.embeddedFiles.length);
+console.log(blob, request, response);
+//// brotli.json
+{ "features": ["BrotliEncoder", "BrotliDecoder"] }
+//// brotli.ts
+import { brotliCompressSync, brotliDecompressSync, createBrotliCompress, constants } from "node:zlib";
+
+const text = "brotli ".repeat(3000);
+const packed = brotliCompressSync(text, { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } });
+console.log("brotliCompressSync", packed.length, Bun.hash.crc32(packed), brotliDecompressSync(packed).toString() === text);
+const stream = createBrotliCompress();
+const chunks: Buffer[] = [];
+stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+const ended = new Promise(resolve => stream.on("end", resolve));
+stream.end(text);
+await ended;
+console.log("createBrotliCompress", brotliDecompressSync(Buffer.concat(chunks)).toString() === text);
+const web = await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream("brotli" as any))).bytes();
+console.log("CompressionStream", web.length, (await new Response(new Blob([web]).stream().pipeThrough(new DecompressionStream("brotli" as any))).text()) === text);
+//// buffer.ts
+const buffer = Buffer.from("hello \u20ac", "utf8");
+console.log(buffer.length, buffer.toString("hex"), buffer.toString("base64"), buffer.readUInt16BE(0), buffer.indexOf("l"), buffer.lastIndexOf("l"), Buffer.concat([buffer, Buffer.alloc(2, 1)]).length, Buffer.isBuffer(buffer), buffer.subarray(1, 3).toString("latin1"), Buffer.byteLength("\u20ac"), buffer.equals(Buffer.from(buffer)), Buffer.compare(Buffer.from("a"), Buffer.from("b")));
+const numbers = Buffer.alloc(16);
+numbers.writeDoubleLE(1.5, 0); numbers.writeInt32BE(-7, 8); numbers.swap32();
+console.log(numbers.toString("hex"), JSON.stringify(Buffer.from([1, 2])), Buffer.from("aGk", "base64url").toString(), Buffer.from("00ff", "hex")[1]);
+console.log(buffer);
+//// bun-info.ts
+// a development server answers /bun:info
+const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("x") });
+const response = await fetch(`http://127.0.0.1:${server.port}/bun:info`);
+const info = (await response.json()) as Record<string, unknown>;
+console.log(response.status, response.headers.get("content-type"), Object.keys(info).sort().join(" "));
+server.stop(true);
+//// bun-jsc.json
+{ "says": { "BunJsc": "Cannot load 'bun:jsc'" } }
+//// bun-jsc.ts
+import { serialize, deserialize, describe, heapSize, isRope, numberOfDFGCompiles } from "bun:jsc";
+declare module "bun:jsc" {
+  export function describe(value: unknown): string;
+}
+const bytes = serialize({ a: [1, 2, { b: new Map([[1, "one"]]) }] }) as SharedArrayBuffer | ArrayBuffer;
+console.log(bytes instanceof SharedArrayBuffer || bytes instanceof ArrayBuffer, deserialize(bytes).a[2].b.get(1));
+console.log(describe(1), heapSize() > 0, isRope("a" + String(Date.now()) + "b".repeat(40)), typeof numberOfDFGCompiles(() => 1));
+//// bun-misc.json
+{ "features": ["BunUtilities"] }
+//// bun-misc.ts
+console.log(Bun.stripANSI("\x1b[31mred\x1b[0m"), typeof Bun.which("sh"), Bun.indexOfLine(new Uint8Array([97, 10, 98]), 0), Bun.allocUnsafe(4).length, Bun.nanoseconds() > 0, Bun.peek(Promise.resolve(5)), Bun.peek.status(Promise.resolve(1)), Bun.concatArrayBuffers([new Uint8Array([1]), new Uint8Array([2])]).byteLength);
+Bun.sleepSync(1); await Bun.sleep(1); Bun.gc(true); Bun.shrink();
+console.log("slept");
+//// child-process.json
+{ "posix": true }
+//// child-process.ts
+const child = Bun.spawnSync(["/bin/echo", "from a child"]);
+console.log(child.exitCode, child.stdout.toString());
+//// cli-options.json
+{ "build": ["--compile-exec-argv=--smol"], "runsToday": ["CliOptions"] }
+//// cli-options.ts
+// an executable built with --compile-exec-argv: Bun's own option parser runs at start
+console.log(JSON.stringify(process.execArgv), process.argv.length);
+//// compression-calls.json
+{ "features": ["CompressionFunctions"] }
+//// compression-calls.ts
+// Bun.gzipSync | gunzipSync | deflateSync | inflateSync | zstdCompress(Sync) | zstdDecompress(Sync)
+const text = "compress me ".repeat(50);
+const bytes = new TextEncoder().encode(text);
+const decode = (data: Uint8Array) => new TextDecoder().decode(data);
+console.log(decode(Bun.gunzipSync(Bun.gzipSync(bytes))) === text, decode(Bun.inflateSync(Bun.deflateSync(bytes))) === text, Bun.gzipSync(bytes).length < bytes.length);
+console.log(decode(Bun.zstdDecompressSync(Bun.zstdCompressSync(bytes))) === text, decode(await Bun.zstdDecompress(await Bun.zstdCompress(bytes))) === text);
+try { Bun.gunzipSync(new Uint8Array([1, 2, 3])); } catch (error) { console.log((error as Error).name); }
+//// console-table.ts
+console.table([{ a: 1, b: "x" }, { a: 2, b: "\u4f60\u597d" }]);
+console.table(new Map([["k", { v: 1 }]]));
+console.log(Bun.inspect.table([{ a: 1 }], { colors: false }));
+//// cookie.ts
+const cookie = new Bun.Cookie("session", "a b", { path: "/", httpOnly: true, maxAge: 60, sameSite: "lax" });
+console.log(cookie.toString(), cookie.name, cookie.isExpired());
+console.log(JSON.stringify(Bun.Cookie.parse("id=7; Secure; Path=/x")));
+const map = new Bun.CookieMap("a=1; b=two");
+map.set("c", "3");
+map.delete("a");
+console.log(map.get("b"), map.has("a"), map.size, map.toSetCookieHeaders().join(" | "));
+//// cron.ts
+// Bun.cron: the parser and a job in this process
+console.log(Bun.cron.parse("*/15 3 * * 1", new Date(Date.UTC(2026, 0, 1)))?.toISOString());
+console.log(Bun.cron.parse("0 0 29 2 *", new Date(Date.UTC(2026, 0, 1)))?.toISOString());
+try { Bun.cron.parse("61 * * * *"); } catch (error) { console.log("refused:", (error as Error).name); }
+const job = Bun.cron("* * * * *", () => {});
+console.log(job.cron, typeof job.stop, typeof job.ref);
+job.unref();
+job.stop();
+console.log("stopped");
+//// crypto-object.ts
+const bytes = crypto.getRandomValues(new Uint8Array(8));
+console.log(bytes.length, crypto.randomUUID().length, typeof crypto.subtle, crypto instanceof Crypto, (crypto as any).timingSafeEqual(new Uint8Array([1]), new Uint8Array([1])));
+//// crypto.json
+{ "features": ["Csrf", "Password", "Hashers", "CryptoHasher", "WebCrypto", "NodeCrypto"] }
+//// crypto.ts
+import crypto from "node:crypto";
+
+console.log(crypto.createHash("sha256").update("abc").digest("hex"));
+console.log(crypto.createHmac("sha1", "key").update("abc").digest("base64"));
+const secret = crypto.scryptSync("password", "salt", 32);
+const initial = Buffer.alloc(12, 7);
+const cipher = crypto.createCipheriv("aes-256-gcm", secret, initial);
+const sealed = Buffer.concat([cipher.update("a secret"), cipher.final()]);
+const decipher = crypto.createDecipheriv("aes-256-gcm", secret, initial).setAuthTag(cipher.getAuthTag());
+console.log(sealed.toString("hex"), Buffer.concat([decipher.update(sealed), decipher.final()]).toString());
+const pair = crypto.generateKeyPairSync("ed25519");
+console.log(crypto.verify(null, Buffer.from("signed"), pair.publicKey, crypto.sign(null, Buffer.from("signed"), pair.privateKey)), pair.publicKey.asymmetricKeyType);
+console.log(structuredClone(pair.publicKey).equals(pair.publicKey));
+console.log(crypto.pbkdf2Sync("password", "salt", 10, 16, "sha512").toString("hex"), crypto.randomBytes(8).length, crypto.randomUUID().length);
+
+const key = await globalThis.crypto.subtle.importKey("raw", new TextEncoder().encode("key"), { name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+console.log(Buffer.from(await globalThis.crypto.subtle.sign("HMAC", key, new TextEncoder().encode("abc"))).toString("hex"));
+console.log(Buffer.from(await globalThis.crypto.subtle.digest("SHA-384", new TextEncoder().encode("abc"))).toString("hex").slice(0, 32));
+console.log(structuredClone(key) instanceof CryptoKey, globalThis.crypto.getRandomValues(new Uint8Array(4)).length);
+
+console.log(new Bun.CryptoHasher("blake2b256").update("abc").digest("hex"));
+console.log(Bun.SHA1.hash("abc", "hex"), new Bun.MD5().update("abc").digest("hex"), Buffer.from(Bun.sha("abc") as Uint8Array).toString("hex").slice(0, 16));
+console.log(Bun.password.verifySync("a password", Bun.password.hashSync("a password", { algorithm: "bcrypt", cost: 4 })));
+console.log(await Bun.password.verify("a password", await Bun.password.hash("a password", { algorithm: "argon2id", memoryCost: 8, timeCost: 1 })));
+console.log(Bun.CSRF.verify(Bun.CSRF.generate("a secret"), { secret: "a secret" }));
+//// dataview.ts
+const view: any = new DataView(new ArrayBuffer(16), 2, 12);
+for (const kind of ["Int8", "Uint8", "Int16", "Uint16", "Int32", "Uint32", "Float16", "Float32", "Float64"]) {
+  view["set" + kind](0, 3, true);
+  console.log(kind, view["get" + kind](0, true), view["get" + kind](0));
+}
+console.log(view.byteLength, view.byteOffset, view.buffer.byteLength, Object.prototype.toString.call(view), ArrayBuffer.isView(view), structuredClone(view).byteLength, view instanceof DataView);
+try { view.getInt32(10); } catch (error) { console.log((error as Error).name); }
+console.log(new DataView(new ArrayBuffer(8, { maxByteLength: 16 })).byteLength, new Uint8Array(view.buffer).join(""));
+Bun.gc(true);
+//// deep-equals.ts
+import { isDeepStrictEqual } from "node:util";
+import assert from "node:assert";
+const left = { a: [1, { b: new Map([["k", new Set([1, 2])]]) }], when: new Date(5), bytes: new Uint8Array([1, 2]) };
+const right = { a: [1, { b: new Map([["k", new Set([2, 1])]]) }], when: new Date(5), bytes: new Uint8Array([1, 2]) };
+console.log(Bun.deepEquals(left, right), Bun.deepEquals(left, { ...right, extra: undefined }), Bun.deepEquals(left, { ...right, extra: undefined }, true));
+console.log(Bun.deepMatch({ a: [1] }, { a: [1], b: 2 }), Bun.deepMatch({ a: [2] }, { a: [1], b: 2 }));
+console.log(isDeepStrictEqual(left, right), isDeepStrictEqual([1, 2], [1, "2"]), isDeepStrictEqual(NaN, NaN));
+assert.partialDeepStrictEqual({ a: 1, b: { c: 2, d: 3 } }, { b: { c: 2 } });
+////= lines-2	assert.partialDeepStrictEqual({ a: 1 }, { a: 2 }
+//// dialogs.ts
+console.log(typeof alert, typeof confirm, typeof prompt);
+console.log(prompt("name?", "nobody"), confirm("sure?"));
+alert("done");
+//// dns-resolve-of-bun.json
+{ "features": ["Dns"] }
+//// dns-resolve-of-bun.ts
+const settled = (promise: Promise<unknown>) => promise.then(() => "settled", () => "settled");
+console.log(await settled((Bun.dns as any).resolve("localhost", "A")));
+//// dns.json
+{ "says": { "Dns": "Cannot load 'node:dns'" } }
+//// dns.ts
+import dgram from "node:dgram";
+import dns from "node:dns";
+
+const server = dgram.createSocket("udp4");
+server.on("message", (query, from) => {
+  let end = 12;
+  while (query[end] !== 0) end += query[end]! + 1;
+  const question = query.subarray(12, end + 5);
+  const header = Buffer.from([query[0]!, query[1]!, 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
+  const answer = Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 10, 1, 2, 3]);
+  server.send(Buffer.concat([header, question, answer]), from.port, from.address);
+});
+await new Promise<void>(resolve => server.bind(0, "127.0.0.1", resolve));
+
+const resolver = new dns.promises.Resolver({ tries: 1, timeout: 2000 });
+resolver.setServers([`127.0.0.1:${server.address().port}`]);
+console.log(resolver.getServers().length, JSON.stringify(await resolver.resolve4("name.example")));
+console.log(JSON.stringify(await dns.promises.lookup("127.0.0.1")));
+console.log((await Bun.dns.lookup("localhost", { family: 4 })).map(found => found.address).join(","));
+console.log(typeof Bun.dns.getCacheStats().size);
+server.close();
+//// escape-html.ts
+console.log(Bun.escapeHTML(`<a href="x">Tom & 'Jerry'</a>`), Bun.escapeHTML(12), Bun.escapeHTML("plain"), Bun.escapeHTML("é<" + "x".repeat(40) + ">"));
+//// events.ts
+const target = new EventTarget();
+const seen: string[] = [];
+target.addEventListener("ping", event => seen.push(event.type + ":" + (event as CustomEvent).detail + ":" + event.cancelable));
+target.dispatchEvent(new CustomEvent("ping", { detail: 7, cancelable: true }));
+const message = new MessageEvent("message", { data: { a: 1 }, origin: "here" });
+const error = new ErrorEvent("error", { message: "bad", lineno: 3 });
+const close = new CloseEvent("close", { code: 1000, reason: "done", wasClean: true });
+const plain = new Event("x", { bubbles: true }); plain.preventDefault(); plain.stopPropagation();
+console.log(seen.join(), message.data.a, message.origin, error.message, error.lineno, close.code, close.reason, close.wasClean, plain.bubbles, plain.defaultPrevented, plain instanceof Event, typeof plain.timeStamp);
+console.log(plain, message);
+//// fetch.json
+{ "features": ["Fetch", "HttpClient"] }
+//// fetch.ts
+import http from "node:http";
+
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === "/redirect") return Response.redirect("/echo", 302);
+    return Response.json({ method: request.method, path: url.pathname, body: await request.text(), header: request.headers.get("x-sent") });
+  },
+});
+const origin = `http://127.0.0.1:${server.port}`;
+
+const posted = await fetch(`${origin}/echo`, { method: "POST", body: "a body", headers: { "x-sent": "yes" } });
+console.log(posted.status, JSON.stringify(await posted.json()));
+const redirected = await fetch(`${origin}/redirect`);
+console.log(redirected.redirected, new URL(redirected.url).pathname);
+const streamed = await fetch(`${origin}/echo`, {
+  method: "PUT",
+  body: new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("in "));
+      controller.enqueue(new TextEncoder().encode("pieces"));
+      controller.close();
+    },
+  }),
+});
+console.log(((await streamed.json()) as { body: string }).body);
+console.log(
+  await new Promise<string>((resolve, reject) => {
+    http
+      .get(`${origin}/from-node`, response => {
+        let text = "";
+        response.setEncoding("utf8").on("data", piece => (text += piece)).on("end", () => resolve(`${response.statusCode} ${JSON.parse(text).path}`));
+      })
+      .on("error", reject);
+  }),
+);
+server.stop(true);
+//// file-sink.ts
+const writer = Bun.file("written.txt").writer();
+writer.write("one ");
+writer.write(new TextEncoder().encode("two "));
+await writer.flush();
+writer.write("three");
+console.log(await writer.end(), await Bun.file("written.txt").text());
+await Bun.file("written.txt").delete();
+//// float16array.ts
+const values = new Float16Array([3, 1, 2]);
+console.log(values.constructor.name, values.BYTES_PER_ELEMENT, values.sort().join(","), values.map((value: any) => value * 2).join(","));
+console.log(Float16Array.from([1, 2, 3]).filter((value: any) => value > 1).length, Float16Array.of(4, 5).length, values.subarray(1).length, values.slice(1).length);
+console.log(values.indexOf(2), values.includes(3), values.with(0, 9)[0], values.toSorted().join(""), values.toReversed().join(""), String(values.reduce((sum: any, value: any) => sum + value, 0)));
+console.log(String(values.find((value: any) => value > 1)), values.findLastIndex((value: any) => value < 3), values.every((value: any) => value > 0), values.some((value: any) => value > 2), values.fill(7, 1, 2).join(","), values.copyWithin(0, 1).join(","), values.reverse().join(","));
+values[1] = 5;
+console.log(String(values[1]), 1 in values, 9 in values, Object.keys(values).join(""), Object.prototype.toString.call(values), [...values.entries()].length, delete (values as any)[9]);
+console.log(structuredClone(values).constructor.name, new Float16Array(values.buffer, 0, 1).length, new Float16Array(new ArrayBuffer(16, { maxByteLength: 32 })).length, new Float16Array(values).join(","));
+const bytes = new Uint8Array(values);
+const back = new Float16Array(4);
+back.set(bytes, 1);
+console.log(bytes.join(","), back.join(","), JSON.stringify(values), Math.max(...values));
+Bun.gc(true);
+//// float32array.ts
+const values = new Float32Array([3, 1, 2]);
+console.log(values.constructor.name, values.BYTES_PER_ELEMENT, values.sort().join(","), values.map((value: any) => value * 2).join(","));
+console.log(Float32Array.from([1, 2, 3]).filter((value: any) => value > 1).length, Float32Array.of(4, 5).length, values.subarray(1).length, values.slice(1).length);
+console.log(values.indexOf(2), values.includes(3), values.with(0, 9)[0], values.toSorted().join(""), values.toReversed().join(""), String(values.reduce((sum: any, value: any) => sum + value, 0)));
+console.log(String(values.find((value: any) => value > 1)), values.findLastIndex((value: any) => value < 3), values.every((value: any) => value > 0), values.some((value: any) => value > 2), values.fill(7, 1, 2).join(","), values.copyWithin(0, 1).join(","), values.reverse().join(","));
+values[1] = 5;
+console.log(String(values[1]), 1 in values, 9 in values, Object.keys(values).join(""), Object.prototype.toString.call(values), [...values.entries()].length, delete (values as any)[9]);
+console.log(structuredClone(values).constructor.name, new Float32Array(values.buffer, 0, 1).length, new Float32Array(new ArrayBuffer(16, { maxByteLength: 32 })).length, new Float32Array(values).join(","));
+const bytes = new Uint8Array(values);
+const back = new Float32Array(4);
+back.set(bytes, 1);
+console.log(bytes.join(","), back.join(","), JSON.stringify(values), Math.max(...values));
+Bun.gc(true);
+//// float64array.ts
+const values = new Float64Array([3, 1, 2]);
+console.log(values.constructor.name, values.BYTES_PER_ELEMENT, values.sort().join(","), values.map((value: any) => value * 2).join(","));
+console.log(Float64Array.from([1, 2, 3]).filter((value: any) => value > 1).length, Float64Array.of(4, 5).length, values.subarray(1).length, values.slice(1).length);
+console.log(values.indexOf(2), values.includes(3), values.with(0, 9)[0], values.toSorted().join(""), values.toReversed().join(""), String(values.reduce((sum: any, value: any) => sum + value, 0)));
+console.log(String(values.find((value: any) => value > 1)), values.findLastIndex((value: any) => value < 3), values.every((value: any) => value > 0), values.some((value: any) => value > 2), values.fill(7, 1, 2).join(","), values.copyWithin(0, 1).join(","), values.reverse().join(","));
+values[1] = 5;
+console.log(String(values[1]), 1 in values, 9 in values, Object.keys(values).join(""), Object.prototype.toString.call(values), [...values.entries()].length, delete (values as any)[9]);
+console.log(structuredClone(values).constructor.name, new Float64Array(values.buffer, 0, 1).length, new Float64Array(new ArrayBuffer(16, { maxByteLength: 32 })).length, new Float64Array(values).join(","));
+const bytes = new Uint8Array(values);
+const back = new Float64Array(4);
+back.set(bytes, 1);
+console.log(bytes.join(","), back.join(","), JSON.stringify(values), Math.max(...values));
+Bun.gc(true);
+//// form-data.ts
+const form = new FormData();
+form.append("name", "value"); form.append("file", new Blob(["abc"], { type: "text/plain" }), "a.txt");
+const response = new Response(form);
+console.log(response.headers.get("content-type")!.startsWith("multipart/form-data; boundary="), [...form.keys()].join());
+const parsed = await response.formData();
+console.log(parsed.get("name"), (parsed.get("file") as File).name, await (parsed.get("file") as File).text());
+const encoded = await new Response("a=1&b=2", { headers: { "content-type": "application/x-www-form-urlencoded" } }).formData();
+console.log(encoded.get("b"), form);
+//// fs-stats.ts
+import { statSync, readdirSync, statfsSync, Stats, Dirent } from "node:fs";
+const stats = statSync("/");
+console.log(stats.isDirectory(), stats instanceof Stats, typeof stats.mtimeMs, typeof statSync("/", { bigint: true }).size, readdirSync("/", { withFileTypes: true })[0] instanceof Dirent, typeof statfsSync("/").bsize, typeof statfsSync("/", { bigint: true }).bsize);
+console.log((await Bun.file("/").stat()).isDirectory());
+//// fsrouter.json
+{ "features": ["FileSystemRouter"] }
+//// fsrouter.ts
+// Bun.FileSystemRouter over a folder made here
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const dir = mkdtempSync(join(tmpdir(), "fsrouter-"));
+mkdirSync(join(dir, "posts"));
+writeFileSync(join(dir, "index.tsx"), "");
+writeFileSync(join(dir, "posts", "[id].tsx"), "");
+writeFileSync(join(dir, "[...rest].tsx"), "");
+const router = new Bun.FileSystemRouter({ style: "nextjs", dir });
+console.log(Object.keys(router.routes).sort().join(" "), router.style);
+for (const path of ["/", "/posts/7?x=1", "/a/b/c"]) {
+  const match = router.match(path)!;
+  console.log(path, match.name, match.kind, JSON.stringify(match.params), JSON.stringify(match.query), match.pathname);
+}
+rmSync(dir, { recursive: true });
+//// get-or-insert.json
+{ "features": ["MapGetOrInsert"] }
+//// get-or-insert.ts
+const map: any = new Map([["a", 1]]);
+console.log(map.getOrInsert("a", 5), map.getOrInsert("b", 6), map.getOrInsertComputed("c", (key: string) => key + "!"), map.getOrInsertComputed("c", () => "never"), [...map].join(";"));
+const key = {};
+const weak: any = new WeakMap();
+console.log(weak.getOrInsert(key, 1), weak.getOrInsert(key, 2), weak.getOrInsertComputed({}, () => 3));
+//// glob.ts
+// Bun.Glob: matching, and walking a folder made here
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const glob = new Bun.Glob("**/*.{ts,tsx}");
+console.log(glob.match("a/b/c.ts"), glob.match("a.tsx"), glob.match("a.js"), new Bun.Glob("[a-c]?.txt").match("b1.txt"), new Bun.Glob("!x*").match("y"));
+const dir = mkdtempSync(join(tmpdir(), "glob-"));
+mkdirSync(join(dir, "src", "deep"), { recursive: true });
+for (const name of ["a.ts", "b.js", "src/c.tsx", "src/deep/d.ts", "src/deep/e.md"]) writeFileSync(join(dir, name), "");
+console.log([...glob.scanSync({ cwd: dir })].sort().join(" "));
+console.log((await Array.fromAsync(new Bun.Glob("src/**").scan({ cwd: dir, onlyFiles: false }))).sort().join(" "));
+rmSync(dir, { recursive: true });
+//// hash.ts
+console.log(Bun.hash("bun"), Bun.hash.crc32("bun"), Bun.hash.adler32("bun"), Bun.hash.cityHash32("bun"), Bun.hash.xxHash32("bun"), Bun.hash.murmur32v3("bun"), Bun.hash.wyhash("bun", 1n), Bun.hash.rapidhash("bun"));
+//// headers.ts
+const headers = new Headers({ "Content-Type": "text/plain", "X-One": "1" });
+headers.append("x-one", "2"); headers.append("set-cookie", "a=1"); headers.append("set-cookie", "b=2"); headers.delete("content-type");
+console.log(headers.get("X-ONE"), headers.has("content-type"), headers.getSetCookie().join("|"), [...headers.keys()].join(), JSON.stringify((headers as any).toJSON()), (headers as any).count);
+console.log(headers, new Response("x", { headers }).headers.get("x-one"));
+//// histogram.ts
+import { createHistogram, monitorEventLoopDelay } from "node:perf_hooks";
+const histogram = createHistogram();
+for (const value of [1, 2, 3, 4, 100]) histogram.record(value);
+console.log(histogram.min, histogram.max, histogram.count, histogram.percentile(50), Math.round(histogram.mean));
+const delay = monitorEventLoopDelay({ resolution: 10 });
+console.log(delay.enable(), delay.disable(), typeof delay.mean);
+//// http-parser.ts
+const { HTTPParser, methods }: any = (process as any).binding("http_parser");
+const parser = new HTTPParser();
+parser.initialize(HTTPParser.REQUEST, {});
+parser[HTTPParser.kOnHeadersComplete] = (major: number, minor: number, headers: string[], method: number, url: string) => {
+  console.log(major, minor, headers.join("|"), methods[method], url);
+};
+parser[HTTPParser.kOnBody] = (body: Uint8Array) => console.log(Buffer.from(body).toString());
+parser[HTTPParser.kOnMessageComplete] = () => console.log("complete");
+console.log(parser.execute(Buffer.from("POST /items?x=1 HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello")));
+const bad = new HTTPParser();
+bad.initialize(HTTPParser.REQUEST, {});
+console.log((bad.execute(Buffer.from("NOT HTTP\r\n\r\n")) as Error).message);
+//// http3.json
+{ "features": ["Http3", "ServeHttp2", "NodeHttp2"], "says": { "Http3": "Failed to create HTTP/3 server", "ServeHttp2": "Failed to create HTTP/2 server" } }
+//// http3.ts
+import http2 from "node:http2";
+
+const key = `-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsQw5C2LT40FXa7TR
+A8GG8SBy2jpXwp1/1C/e0LJ+4C2hRANCAAS8unCZfee7/NWNozJWd8egIu9xCFKa
+uXanGlc2FWwpK+uz7JKnKQa2pZ/wEFq7wXG50L5JJfBisYZnn8pSF3rZ
+-----END PRIVATE KEY-----
+`;
+const cert = `-----BEGIN CERTIFICATE-----
+MIIBPjCB5aADAgECAgkAswvxD+a9HdwwCgYIKoZIzj0EAwIwFDESMBAGA1UEAwwJ
+bG9jYWxob3N0MCAXDTI2MTAxNzE5MzAyOFoYDzIxMjYwOTIzMTkzMDI4WjAUMRIw
+EAYDVQQDDAlsb2NhbGhvc3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAS8unCZ
+fee7/NWNozJWd8egIu9xCFKauXanGlc2FWwpK+uz7JKnKQa2pZ/wEFq7wXG50L5J
+JfBisYZnn8pSF3rZox4wHDAaBgNVHREEEzARgglsb2NhbGhvc3SHBH8AAAEwCgYI
+KoZIzj0EAwIDSAAwRQIhAJgYLk7C/yTba2rAlGW6Xv4JCRb5DeQ2NdmN78N7kj6q
+AiAO7OnjTNLRBP1TU0RvKDr2CO+zKxDWkvVLzGAxkCy1yw==
+-----END CERTIFICATE-----
+`;
+
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  tls: { key, cert },
+  http2: true,
+  http3: true,
+  fetch(request: Request) {
+    return new Response(`answered ${new URL(request.url).pathname}`);
+  },
+} as never);
+for (const protocol of ["http3", "http2", "http1.1"]) {
+  const response = await fetch(`https://127.0.0.1:${server.port}/over-${protocol}`, { protocol, tls: { rejectUnauthorized: false } } as never);
+  console.log(response.status, await response.text());
+}
+server.stop(true);
+
+const plain = http2.createServer((request, response) => {
+  response.writeHead(200, { "content-type": "text/plain" });
+  response.end(`node:http2 answered ${request.url} over HTTP/${request.httpVersion}`);
+});
+await new Promise<void>(resolve => plain.listen(0, "127.0.0.1", resolve));
+const session = http2.connect(`http://127.0.0.1:${(plain.address() as { port: number }).port}`);
+const stream = session.request({ ":path": "/from-node" });
+let text = "";
+stream.setEncoding("utf8").on("data", piece => (text += piece));
+await new Promise<void>(resolve => stream.on("end", resolve));
+console.log(text);
+session.close();
+plain.close();
+//// icu-zone-names.json
+{ "features": ["IntlDateTimeFormat"] }
+//// icu-zone-names.ts
+const when = new Date(Date.UTC(2024, 6, 1, 12, 0, 0));
+for (const timeZoneName of ["short", "long", "shortOffset", "longOffset", "shortGeneric", "longGeneric"] as const) {
+  console.log(
+    timeZoneName,
+    "|",
+    when.toLocaleTimeString("en-US", { timeZone: "Europe/Berlin", timeZoneName }),
+    "|",
+    when.toLocaleTimeString("de", { timeZone: "America/Los_Angeles", timeZoneName }),
+    "|",
+    when.toLocaleTimeString("ja", { timeZone: "Etc/GMT+5", timeZoneName }),
+  );
+}
+console.log((1234567.891).toLocaleString("de"), (0.256).toLocaleString("en-US", { style: "percent" }), (12).toLocaleString("ar-EG"));
+for (let i = 0; i < 2000; i++) (i).toLocaleString("fr", { minimumFractionDigits: i % 3 });
+Bun.gc(true);
+console.log("collected");
+//// image.ts
+function bitmap(width: number, height: number): Uint8Array {
+  const rowSize = Math.ceil((width * 3) / 4) * 4;
+  const bytes = new Uint8Array(54 + rowSize * height);
+  const view = new DataView(bytes.buffer);
+  bytes[0] = 0x42;
+  bytes[1] = 0x4d;
+  view.setUint32(2, bytes.length, true);
+  view.setUint32(10, 54, true);
+  view.setUint32(14, 40, true);
+  view.setInt32(18, width, true);
+  view.setInt32(22, height, true);
+  view.setUint16(26, 1, true);
+  view.setUint16(28, 24, true);
+  view.setUint32(34, rowSize * height, true);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const at = 54 + y * rowSize + x * 3;
+      bytes[at] = x * 16;
+      bytes[at + 1] = y * 16;
+      bytes[at + 2] = 200;
+    }
+  }
+  return bytes;
+}
+
+const source = bitmap(16, 8);
+const describe = async (label: string, bytes: Uint8Array) => {
+  const { width, height, format } = await new Bun.Image(bytes).metadata();
+  console.log(label, format, width, height, bytes.length, Bun.hash.crc32(bytes));
+};
+
+await describe("bmp", source);
+const png = await new Bun.Image(source).png().bytes();
+await describe("png", png);
+await describe("jpeg", await new Bun.Image(png).resize(8, 4).jpeg({ quality: 80 }).bytes());
+await describe("webp", await new Bun.Image(png).rotate(90).webp({ quality: 80 }).bytes());
+await describe("palette", await new Bun.Image(png).png({ palette: true }).bytes());
+const response = new Response(new Bun.Image(png).flip().png() as any);
+console.log("body", response.headers.get("content-type"), (await response.bytes()).length);
+console.log("placeholder", (await new Bun.Image(png).placeholder()).slice(0, 22));
+//// inspector.ts
+import inspector, { Session } from "node:inspector";
+function codeOf(run: () => void): string {
+  try {
+    run();
+    return "no error";
+  } catch (error: any) {
+    return error.code;
+  }
+}
+console.log(inspector.url(), typeof inspector.open, typeof inspector.close, typeof inspector.console.log);
+const session = new Session();
+console.log(codeOf(() => session.post("Debugger.enable")));
+session.connect();
+console.log(codeOf(() => session.connect()), codeOf(() => session.post("Missing.method")));
+session.disconnect();
+console.log(codeOf(() => inspector.waitForDebugger()));
+// The import and the names are there without the feature. This is the call that enters it: without --compile-inspector it starts nothing.
+inspector.open(0);
+console.log(inspector.url());
+//// int16array.ts
+const values = new Int16Array([3, 1, 2]);
+console.log(values.constructor.name, values.BYTES_PER_ELEMENT, values.sort().join(","), values.map((value: any) => value * 2).join(","));
+console.log(Int16Array.from([1, 2, 3]).filter((value: any) => value > 1).length, Int16Array.of(4, 5).length, values.subarray(1).length, values.slice(1).length);
+console.log(values.indexOf(2), values.includes(3), values.with(0, 9)[0], values.toSorted().join(""), values.toReversed().join(""), String(values.reduce((sum: any, value: any) => sum + value, 0)));
+console.log(String(values.find((value: any) => value > 1)), values.findLastIndex((value: any) => value < 3), values.every((value: any) => value > 0), values.some((value: any) => value > 2), values.fill(7, 1, 2).join(","), values.copyWithin(0, 1).join(","), values.reverse().join(","));
+values[1] = 5;
+console.log(String(values[1]), 1 in values, 9 in values, Object.keys(values).join(""), Object.prototype.toString.call(values), [...values.entries()].length, delete (values as any)[9]);
+console.log(structuredClone(values).constructor.name, new Int16Array(values.buffer, 0, 1).length, new Int16Array(new ArrayBuffer(16, { maxByteLength: 32 })).length, new Int16Array(values).join(","));
+const bytes = new Uint8Array(values);
+const back = new Int16Array(4);
+back.set(bytes, 1);
+console.log(bytes.join(","), back.join(","), JSON.stringify(values), Math.max(...values));
+Bun.gc(true);
+//// int32array.ts
+const values = new Int32Array([3, 1, 2]);
+console.log(values.constructor.name, values.BYTES_PER_ELEMENT, values.sort().join(","), values.map((value: any) => value * 2).join(","));
+console.log(Int32Array.from([1, 2, 3]).filter((value: any) => value > 1).length, Int32Array.of(4, 5).length, values.subarray(1).length, values.slice(1).length);
+console.log(values.indexOf(2), values.includes(3), values.with(0, 9)[0], values.toSorted().join(""), values.toReversed().join(""), String(values.reduce((sum: any, value: any) => sum + value, 0)));
+console.log(String(values.find((value: any) => value > 1)), values.findLastIndex((value: any) => value < 3), values.every((value: any) => value > 0), values.some((value: any) => value > 2), values.fill(7, 1, 2).join(","), values.copyWithin(0, 1).join(","), values.reverse().join(","));
+values[1] = 5;
+console.log(String(values[1]), 1 in values, 9 in values, Object.keys(values).join(""), Object.prototype.toString.call(values), [...values.entries()].length, delete (values as any)[9]);
+console.log(structuredClone(values).constructor.name, new Int32Array(values.buffer, 0, 1).length, new Int32Array(new ArrayBuffer(16, { maxByteLength: 32 })).length, new Int32Array(values).join(","));
+const bytes = new Uint8Array(values);
+const back = new Int32Array(4);
+back.set(bytes, 1);
+console.log(bytes.join(","), back.join(","), JSON.stringify(values), Math.max(...values));
+Bun.gc(true);
+//// int8array.ts
+const values = new Int8Array([3, 1, 2]);
+console.log(values.constructor.name, values.BYTES_PER_ELEMENT, values.sort().join(","), values.map((value: any) => value * 2).join(","));
+console.log(Int8Array.from([1, 2, 3]).filter((value: any) => value > 1).length, Int8Array.of(4, 5).length, values.subarray(1).length, values.slice(1).length);
+console.log(values.indexOf(2), values.includes(3), values.with(0, 9)[0], values.toSorted().join(""), values.toReversed().join(""), String(values.reduce((sum: any, value: any) => sum + value, 0)));
+console.log(String(values.find((value: any) => value > 1)), values.findLastIndex((value: any) => value < 3), values.every((value: any) => value > 0), values.some((value: any) => value > 2), values.fill(7, 1, 2).join(","), values.copyWithin(0, 1).join(","), values.reverse().join(","));
+values[1] = 5;
+console.log(String(values[1]), 1 in values, 9 in values, Object.keys(values).join(""), Object.prototype.toString.call(values), [...values.entries()].length, delete (values as any)[9]);
+console.log(structuredClone(values).constructor.name, new Int8Array(values.buffer, 0, 1).length, new Int8Array(new ArrayBuffer(16, { maxByteLength: 32 })).length, new Int8Array(values).join(","));
+const bytes = new Uint8Array(values);
+const back = new Int8Array(4);
+back.set(bytes, 1);
+console.log(bytes.join(","), back.join(","), JSON.stringify(values), Math.max(...values));
+Bun.gc(true);
+//// intl.json
+{ "features": ["IntlOther"] }
+//// intl.ts
+declare const Intl: any;
+console.log(new Intl.DisplayNames("en", { type: "region" }).of("DE"), new Intl.DisplayNames("de", { type: "language" }).of("fr"));
+console.log(new Intl.ListFormat("en").format(["a", "b", "c"]));
+console.log(new Intl.Locale("zh").maximize().toString(), new Intl.Locale("en-US", { hourCycle: "h23" }).toString());
+console.log(new Intl.PluralRules("en").select(1), new Intl.PluralRules("en", { type: "ordinal" }).select(2), new Intl.PluralRules("ar").select(3));
+console.log(new Intl.RelativeTimeFormat("en", { numeric: "auto" }).format(-1, "day"), new Intl.RelativeTimeFormat("es").format(3, "month"));
+console.log([...new Intl.Segmenter("en", { granularity: "word" }).segment("two words")].map((part: any) => part.segment).join("|"));
+console.log([...new Intl.Segmenter("en").segment("éa")].length);
+console.log(Intl.getCanonicalLocales("EN-us")[0], Intl.supportedValuesOf("calendar").length > 10);
+console.log(new Intl.NumberFormat(new Intl.Locale("de")).format(1234.5));
+//// json-raw.json
+{ "features": ["JSONRawJSON"] }
+//// json-raw.ts
+const json = JSON as unknown as { rawJSON(text: unknown): object; isRawJSON(value: unknown): boolean };
+const raw = json.rawJSON("12345678901234567890");
+console.log(JSON.stringify({ big: raw, list: [json.rawJSON('"text"'), json.rawJSON("null"), json.rawJSON("-1.50e3"), json.rawJSON(true)] }));
+console.log(json.isRawJSON(raw), json.isRawJSON({}), Object.isFrozen(raw), Object.getPrototypeOf(raw), JSON.stringify(Object.keys(raw)));
+console.log(JSON.stringify(json.rawJSON('"日本"')));
+for (const bad of ["", " 1", "1 ", "{}", "[1]", "nope", '"open']) {
+  try {
+    json.rawJSON(bad);
+    console.log("accepted", bad);
+  } catch (error) {
+    console.log((error as Error).name, (error as Error).message);
+  }
+}
+//// json5.ts
+const value: any = Bun.JSON5.parse(`{ unquoted: 'single', hex: 0x1F, trailing: [1, 2,], /* comment */ plus: +1, inf: Infinity }`);
+console.log(value.unquoted, value.hex, value.trailing.length, value.plus, value.inf);
+console.log(Bun.JSON5.stringify({ a: 1, "b-c": [NaN, "x"] }));
+//// jsonc.ts
+// Bun.JSONC
+console.log(JSON.stringify(Bun.JSONC.parse(`{ // a comment
+  "a": 1, /* another */ "b": [true, null,], }`)));
+try { Bun.JSONC.parse("{"); } catch (error) { console.log((error as Error).name); }
+//// jsonl.ts
+console.log(JSON.stringify(Bun.JSONL.parse('{"a":1}\n[2,3]\n"four"\n')));
+const chunk = Bun.JSONL.parseChunk('{"a":1}\n{"b":');
+console.log(JSON.stringify(chunk.values), chunk.read, chunk.done, chunk.error);
+console.log(JSON.stringify(Bun.JSONL.parse(new TextEncoder().encode('{"café":true}\n'))));
+////= lines-2	Bun.JSONL.parse("nope"
+//// legacy-accessors.ts
+const object: any = {};
+object.__defineGetter__("a", () => 1);
+object.__defineSetter__("a", function (this: any, value: number) { this.b = value; });
+object.a = 5;
+console.log(object.a, object.b, typeof object.__lookupGetter__("a"), typeof object.__lookupSetter__("a"), object.__lookupGetter__("b"), Object.create(object).__lookupGetter__("a") === object.__lookupGetter__("a"));
+//// legacy-encodings.ts
+// TextDecoder for encodings that encoding_rs decodes
+const show = (label: string, bytes: number[]) => console.log(label, new TextDecoder(label).encoding, JSON.stringify(new TextDecoder(label).decode(new Uint8Array(bytes))));
+show("shift_jis", [0x82, 0xb1, 0x82, 0xf1, 0x82, 0xc9, 0x82, 0xbf, 0x82, 0xcd]);
+show("euc-kr", [0xbe, 0xc8, 0xb3, 0xe7]);
+show("gbk", [0xc4, 0xe3, 0xba, 0xc3]);
+show("big5", [0xa7, 0x41, 0xa6, 0x6e]);
+show("windows-1251", [0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2]);
+show("iso-8859-2", [0xb1, 0xe6, 0xea]);
+show("utf-16be", [0x00, 0x68, 0x00, 0x69]);
+try { new TextDecoder("euc-jp", { fatal: true }).decode(new Uint8Array([0xff, 0xff])); } catch (error) { console.log((error as Error).name); }
+show("utf-8", [0xe2, 0x82, 0xac]);
+//// libarchive.ts
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const archive = new Bun.Archive({ "a.txt": "first", "folder/b.json": JSON.stringify({ b: 2 }) }, { compress: "gzip" });
+const bytes = await archive.bytes();
+console.log("gzip", bytes[0] === 0x1f && bytes[1] === 0x8b);
+const files = await new Bun.Archive(bytes).files();
+for (const [name, file] of [...files].sort(([a]: [string, unknown], [b]: [string, unknown]) => a.localeCompare(b))) console.log(name, await file.text());
+const folder = mkdtempSync(join(tmpdir(), "trim-archive-"));
+console.log("extracted", await new Bun.Archive(bytes).extract(folder), readFileSync(join(folder, "folder/b.json"), "utf8"));
+await Bun.write(join(folder, "copy.tar.gz"), archive);
+console.log("written", (await new Bun.Archive(readFileSync(join(folder, "copy.tar.gz"))).files()).size);
+rmSync(folder, { recursive: true, force: true });
+console.log("plain tar", (await new Bun.Archive({ "c.txt": "third" }).bytes()).length);
+//// libdeflate-compressor.ts
+const text = "deflate ".repeat(3000);
+const bytes = new TextEncoder().encode(text);
+const gz = Bun.gzipSync(bytes, { library: "libdeflate", level: 12 });
+console.log("gzipSync libdeflate", gz.length, new TextDecoder().decode(Bun.gunzipSync(gz, { library: "libdeflate" })) === text);
+const raw = Bun.deflateSync(bytes, { library: "libdeflate" });
+console.log("deflateSync libdeflate", raw.length, new TextDecoder().decode(Bun.inflateSync(raw, { library: "libdeflate" })) === text);
+const echo = Bun.serve({ port: 0, fetch: async (request: Request) => new Response(`${request.headers.get("content-encoding")} ${(await request.bytes()).length}`) });
+console.log(await (await fetch(`http://localhost:${echo.port}/`, { method: "POST", body: text, compress: true } as any)).text());
+await echo.stop(true);
+//// markdown.ts
+const source = "# Title\n\nSome *emphasis*, `code`, a [link](https://example.com) &amp; a table:\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n- [x] done\n";
+console.log(Bun.markdown.html(source));
+console.log(JSON.stringify(Bun.markdown.render(source, { heading: (children: string) => `<<${children}>>`, paragraph: (children: string) => children })));
+//// message-channel.ts
+const { port1, port2 } = new MessageChannel();
+const first = await new Promise(resolve => {
+  port2.onmessage = (event: any) => resolve(event.data);
+  port1.postMessage({ hello: "port", when: new Date(0), set: new Set([1, 2]) });
+});
+console.log(first);
+port1.close();
+port2.close();
+const sender = new BroadcastChannel("news");
+const listener = new BroadcastChannel("news");
+const second = await new Promise(resolve => {
+  listener.onmessage = (event: any) => resolve(event.data);
+  sender.postMessage(["to", "everybody"]);
+});
+console.log(second, port1 instanceof MessagePort, sender.name);
+sender.close();
+listener.close();
+//// module-create-require.json
+{
+  "features": []
+}
+//// module-create-require.ts
+import { Module } from "node:module";
+const { Database } = Module.createRequire(import.meta.url)("bun:sqlite");
+const database = new Database(":memory:");
+console.log(JSON.stringify(database.query("select 41 + 1 as answer").get()));
+database.close();
+//// module-graph.ts
+const graph = new (Bun as any).ModuleGraph({ globals: { greeting: "hello" } });
+console.log(typeof graph, Object.prototype.toString.call(graph), typeof (Bun as any).ModuleGraph);
+//// napi.json
+{ "features": ["NativeAddons"] }
+//// napi.ts
+const holder: any = { exports: {} };
+try {
+  process.dlopen(holder, "/nonexistent/addon.node");
+} catch (error) {
+  if ((error as any).code === "ERR_FEATURE_REMOVED") throw error;
+  console.log((error as Error).message.includes("addon.node"));
+}
+//// near/abort-signal/features.json
+{"features": ["AbortSignal"], "keptToday": true}
+//// near/abort-signal/near.ts
+const target = new EventTarget();
+let count = 0;
+target.addEventListener("ping", () => count++, { once: true });
+target.dispatchEvent(new Event("ping")); target.dispatchEvent(new Event("ping"));
+const timer = setTimeout(() => {}, 1000); clearTimeout(timer);
+console.log(count, typeof performance.now(), new DOMException("x", "AbortError").name);
+//// near/base64-globals/features.json
+{"features": ["Base64Globals"], "keptToday": true}
+//// near/base64-globals/near.ts
+console.log(new Uint8Array([104, 105]).toBase64(), Uint8Array.fromBase64("aGk=").length, encodeURIComponent("a b"), escape("a b"), unescape("a%20b"));
+//// near/bigint64array/features.json
+{"features": ["BigInt64Array"], "keptToday": true}
+//// near/bigint64array/near.ts
+import { inspect, types } from "node:util";
+////= total	BigInt64Array	bigint
+console.log(total([1n, 2n, 3n]), (types as any).isBigInt64Array(new Uint8Array(1)), (types as any).isBigInt64Array([]), types.isTypedArray(new Uint8Array(1)), ArrayBuffer.isView(new Uint8Array(1)));
+for (const Type of <any[]>[Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float16Array, Float32Array, Float64Array]) {
+  const values = new Type([3, 1, 2]);
+  const other = new Type(values.buffer.slice(0));
+  console.log(Type.name, values.sort().join(""), values.map((value: any) => value * 2).join(""), values.filter((value: any) => value > 1).length, values.slice(1).length, values.subarray(1).length, values.indexOf(2), values.includes(3), values.reduce((a: any, b: any) => a + b, 0), values.toSorted().join(""), values.with(0, 9)[0], values.findLast((value: any) => value < 3), other.length, values.toLocaleString(), [...values.entries()].length, Type.from([1, 2]).length, Type.of(1).length, inspect(values), structuredClone(values).constructor.name, new Uint8Array(values).join(""), new Type(new Uint8Array([1, 2])).join(""));
+}
+for (const Type of <any[]>[BigUint64Array]) {
+  const values = new Type([3n, 1n, 2n]);
+  console.log(Type.name, values.sort().join(""), values.map((value: any) => value * 2n).join(""), values.indexOf(2n), structuredClone(values).constructor.name);
+}
+////= Odd
+console.log(new Odd([1, 2, 3]).slice(1).constructor.name, new Odd([1, 2, 3]).map(value => value + 1).constructor.name, new Odd([1, 2, 3]).filter(value => value > 1).constructor.name);
+const view: any = new DataView(new ArrayBuffer(16));
+////= for
+view.setBigInt64(0, 5n);
+view.setBigUint64(8, 6n);
+console.log(view.getBigInt64(0), view.getBigUint64(8));
+console.log(Buffer.from([1, 2, 3]).subarray(1).toString("hex"), Buffer.concat([Buffer.from("a"), Buffer.from("b")]).toString(), Buffer.from([3, 1, 2]).sort().join(""), (await new Blob([new Uint8Array([1, 2])]).bytes()).length, new TextEncoder().encode("abc").length, crypto.getRandomValues(new Uint8Array(4)).length);
+const reader = new ReadableStream({ type: "bytes", pull(controller: any) { controller.enqueue(new Uint8Array([1, 2, 3, 4])); controller.close(); } }).getReader({ mode: "byob" });
+console.log((await reader.read(new Int16Array(2))).value!.constructor.name);
+console.log([3, 1, 2].sort().join(""), [1, 2, 3].map(value => value * 2).join(""), Array.from({ length: 2 }).length);
+Bun.gc(true);
+//// near/biguint64array/features.json
+{"features": ["BigUint64Array"], "keptToday": true}
+//// near/biguint64array/near.ts
+import { inspect, types } from "node:util";
+////= total	BigUint64Array	bigint
+console.log(total([1n, 2n, 3n]), (types as any).isBigUint64Array(new Uint8Array(1)), (types as any).isBigUint64Array([]), types.isTypedArray(new Uint8Array(1)), ArrayBuffer.isView(new Uint8Array(1)));
+for (const Type of <any[]>[Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float16Array, Float32Array, Float64Array]) {
+  const values = new Type([3, 1, 2]);
+  const other = new Type(values.buffer.slice(0));
+  console.log(Type.name, values.sort().join(""), values.map((value: any) => value * 2).join(""), values.filter((value: any) => value > 1).length, values.slice(1).length, values.subarray(1).length, values.indexOf(2), values.includes(3), values.reduce((a: any, b: any) => a + b, 0), values.toSorted().join(""), values.with(0, 9)[0], values.findLast((value: any) => value < 3), other.length, values.toLocaleString(), [...values.entries()].length, Type.from([1, 2]).length, Type.of(1).length, inspect(values), structuredClone(values).constructor.name, new Uint8Array(values).join(""), new Type(new Uint8Array([1, 2])).join(""));
+}
+for (const Type of <any[]>[BigInt64Array]) {
+  const values = new Type([3n, 1n, 2n]);
+  console.log(Type.name, values.sort().join(""), values.map((value: any) => value * 2n).join(""), values.indexOf(2n), structuredClone(values).constructor.name);
+}
+////= Odd
+console.log(new Odd([1, 2, 3]).slice(1).constructor.name, new Odd([1, 2, 3]).map(value => value + 1).constructor.name, new Odd([1, 2, 3]).filter(value => value > 1).constructor.name);
+const view: any = new DataView(new ArrayBuffer(16));
+////= for
+view.setBigInt64(0, 5n);
+view.setBigUint64(8, 6n);
+console.log(view.getBigInt64(0), view.getBigUint64(8));
+console.log(Buffer.from([1, 2, 3]).subarray(1).toString("hex"), Buffer.concat([Buffer.from("a"), Buffer.from("b")]).toString(), Buffer.from([3, 1, 2]).sort().join(""), (await new Blob([new Uint8Array([1, 2])]).bytes()).length, new TextEncoder().encode("abc").length, crypto.getRandomValues(new Uint8Array(4)).length);
+const reader = new ReadableStream({ type: "bytes", pull(controller: any) { controller.enqueue(new Uint8Array([1, 2, 3, 4])); controller.close(); } }).getReader({ mode: "byob" });
+console.log((await reader.read(new Int16Array(2))).value!.constructor.name);
+console.log([3, 1, 2].sort().join(""), [1, 2, 3].map(value => value * 2).join(""), Array.from({ length: 2 }).length);
+Bun.gc(true);
+//// near/bodies/features.json
+{"features": ["Bodies"], "keptToday": true}
+//// near/bodies/near.ts
+console.log("no body", JSON.stringify({ a: 1 }), new Uint8Array([1, 2, 3]), new ArrayBuffer(4).byteLength, typeof structuredClone);
+console.log({ nested: { map: new Map([[1, 2]]), set: new Set([1]), date: new Date(0), error: new RangeError("r"), fn() {}, symbol: Symbol("s"), big: 1n, re: /x/g, cls: new (class Point { x = 1 })() } });
+// @ts-ignore
+try { await import("blob:nothing"); } catch (error: any) { console.log(error.name); }
+//// near/buffer/features.json
+{"features": ["Buffer"], "keptToday": true}
+//// near/buffer/near.ts
+const bytes = new TextEncoder().encode("hello \u20ac");
+console.log(bytes.length, bytes.constructor.name, new TextDecoder().decode(bytes), bytes.toHex(), bytes.toBase64(), Uint8Array.fromBase64("aGk=").length, bytes.indexOf(108), bytes.subarray(1, 3).length);
+console.log(bytes, (await new Blob([bytes]).bytes()).length, (await new Response(bytes).arrayBuffer()).byteLength, atob(btoa("hi")));
+const sink = new Bun.ArrayBufferSink(); sink.start({ asUint8Array: true }); sink.write("abc");
+console.log((sink.end() as Uint8Array).length);
+//// near/bun-misc/features.json
+{ "features": ["BunUtilities"] }
+//// near/bun-misc/near.ts
+console.log(typeof Bun.version, typeof Bun.revision, Bun.main.length > 0, Bun.isMainThread, typeof Bun.env.PATH, Bun.argv.length > 0, typeof (Bun as any).cwd, typeof (Bun as any).origin);
+await new Promise(resolve => setTimeout(resolve, 1));
+//// near/console-table/near.ts
+console.log([{ a: 1, b: "x" }], new Map([["k", { v: 1 }]]));
+console.group("g"); console.info("%s %d %o", "s", 1, { a: 1 }); console.groupEnd();
+console.count("c"); console.error(new Set([1]));
+//// near/crypto-object/features.json
+{"features": ["CryptoObject"], "keptToday": true}
+//// near/crypto-object/near.ts
+console.log(typeof Math.random(), Bun.randomUUIDv7().length, typeof Bun.nanoseconds());
+//// near/dataview/features.json
+{"features": ["DataView"], "keptToday": true}
+//// near/dataview/near.ts
+import { types } from "node:util";
+function first(view: DataView | number[]) {
+  return Array.isArray(view) ? view[0] : view.byteLength;
+}
+const buffer = Buffer.alloc(16);
+buffer.writeInt8(-3, 0); buffer.writeUInt16LE(513, 1); buffer.writeInt32BE(-7, 3); buffer.writeFloatLE(1.5, 7); buffer.writeDoubleBE(2.5, 8);
+console.log(first([4]), buffer.readInt8(0), buffer.readUInt16LE(1), buffer.readInt32BE(3), buffer.readDoubleBE(8), types.isDataView(buffer), types.isDataView({}), ArrayBuffer.isView(buffer), ArrayBuffer.isView({}));
+const bytes = new ArrayBuffer(8);
+new Float32Array(bytes)[0] = 1.5;
+console.log(new Uint8Array(bytes).join(","), new Int16Array(bytes)[1], new Float64Array(1).byteLength, bytes.slice(2).byteLength, new ArrayBuffer(8, { maxByteLength: 16 }).resizable, bytes.transfer(4).byteLength, bytes.detached, structuredClone(new Uint8Array(3)).byteLength);
+const reader = new ReadableStream({ type: "bytes", pull(controller: any) { controller.enqueue(new Uint8Array([1, 2])); controller.close(); } }).getReader({ mode: "byob" });
+console.log((await reader.read(new Uint8Array(2))).value!.length);
+Bun.gc(true);
+//// near/dialogs/near.ts
+console.log("no dialog", typeof queueMicrotask, typeof reportError, typeof navigator.hardwareConcurrency);
+//// near/engine-leftovers2/features.json
+{"features": ["JIT", "RuntimeTranspiler"], "keptToday": true}
+//// near/engine-leftovers2/near-common.cjs
+module.exports = { name: "common " + typeof require };
+//// near/engine-leftovers2/near-data.json
+{ "name": "near", "list": [1, 2, 3], "nested": { "yes": true, "nothing": null } }
+//// near/engine-leftovers2/near-other.ts
+export const answer = () => 6 * 7;
+//// near/engine-leftovers2/near.ts
+import data from "./near-data.json";
+
+const lines: string[] = [];
+const say = (name: string, value: unknown) => lines.push(`${name}: ${typeof value === "string" ? value : JSON.stringify(value)}`);
+
+say("a JSON module", data);
+
+function shapes(count: number) {
+  const made: Record<string, number>[] = [];
+  for (let at = 0; at < count; at++) {
+    const object: Record<string, number> = {};
+    for (let key = 0; key <= at % 7; key++) object["k" + key] = at + key;
+    made.push(object);
+  }
+  return made.reduce((sum, object) => sum + Object.values(object).reduce((a, b) => a + b, 0), 0);
+}
+say("objects of seven shapes", shapes(20000));
+
+const callees = [(x: number) => x + 1, (x: number) => x * 2, (x: number) => x - 3, Math.abs, Math.floor, (x: number) => -x];
+let total = 0;
+for (let round = 0; round < 60000; round++) total = (total + callees[round % callees.length]!(round)) % 1000003;
+say("a call site with six callees", total);
+
+class Base {
+  constructor(public value: number) {}
+  get doubled() {
+    return this.value * 2;
+  }
+  describe() {
+    return `${this.constructor.name} ${this.doubled}`;
+  }
+}
+class Derived extends Base {
+  override describe() {
+    return "derived " + super.describe();
+  }
+}
+say("classes", [new Base(2).describe(), new Derived(3).describe()]);
+
+function thrower(depth: number): number {
+  if (depth === 0) throw new RangeError("the bottom");
+  try {
+    return thrower(depth - 1) + 1;
+  } finally {
+    total++;
+  }
+}
+let caught = 0;
+for (let round = 0; round < 300; round++) {
+  try {
+    thrower(round % 40);
+  } catch (error) {
+    if (error instanceof RangeError) caught++;
+  }
+}
+say("thrown and caught", caught);
+
+function deep(n: number): number {
+  return n === 0 ? 0 : 1 + deep(n - 1);
+}
+try {
+  deep(1e7);
+  say("recursion", "no limit");
+} catch (error) {
+  say("recursion", (error as Error).name);
+}
+
+function* numbers(limit: number) {
+  for (let at = 0; at < limit; at++) yield at;
+}
+say("a generator", [...numbers(5)]);
+say("an async function", await (async () => (await Promise.all([1, 2, 3].map(async x => x * x))).join())());
+say("the text of a native function", Math.max.toString());
+say("bound", ((a: number, b: number) => a + b).bind(null, 2)(3));
+
+const held: object[] = [];
+for (let round = 0; round < 6; round++) {
+  for (let at = 0; at < 30000; at++) held[at % 5000] = { at, text: "x" + at, list: [at] };
+  Bun.gc(true);
+}
+say("six full collections", held.length);
+
+const other = await import("./near-other.ts");
+say("a module imported when asked for", other.answer());
+say("a CommonJS module", require("./near-common.cjs").name);
+
+console.log(lines.join("\n"));
+//// near/engine-leftovers3/features.json
+{"features": ["RuntimeTranspiler", "JIT"]}
+//// near/engine-leftovers3/near.ts
+const lines: string[] = [];
+const say = (name: string, value: unknown) => lines.push(`${name}: ${JSON.stringify(value)}`);
+
+function five(a?: number, b?: number, c?: number, d?: number, e?: number) {
+  return [a, b, c, d, e].map(value => (value === undefined ? "-" : String(value))).join("");
+}
+const loose = five as (...values: number[]) => string;
+say("fewer and more arguments than parameters", [loose(), loose(1), loose(1, 2, 3), loose(1, 2, 3, 4, 5, 6, 7), Reflect.apply(five, null, [9]), new (function Made(this: { n: number }, a?: number, b?: number) { this.n = (a ?? 1) + (b ?? 2); } as unknown as new (a?: number) => { n: number })(5).n]);
+
+class Animal {
+  legs() {
+    return 4;
+  }
+  get name() {
+    return "animal";
+  }
+}
+class Dog extends Animal {}
+class Puppy extends Dog {}
+const puppies = Array.from({ length: 50 }, () => new Puppy());
+let legs = 0;
+for (let round = 0; round < 2000; round++) for (const puppy of puppies) legs += puppy.legs() + puppy.name.length;
+say("read through two prototypes", legs);
+(Dog.prototype as unknown as { legs(): number }).legs = () => 3;
+Object.defineProperty(Animal.prototype, "name", { get: () => "beast!" });
+legs = 0;
+for (let round = 0; round < 2000; round++) for (const puppy of puppies) legs += puppy.legs() + puppy.name.length;
+say("after the prototypes changed", legs);
+Object.setPrototypeOf(Puppy.prototype, Animal.prototype);
+say("after the chain changed", puppies[0]!.legs());
+
+const lists: unknown[][] = [[1, 2, 3], [1.5, 2.5], ["a", 1, null], [], new Array(5), Array.from({ length: 3 })];
+let total = 0;
+for (let round = 0; round < 3000; round++) {
+  const list = lists[round % lists.length]!;
+  list.push(round % 3 === 0 ? round : round % 3 === 1 ? round + 0.5 : "s" + round);
+  total += list.length;
+  if (list.length > 40) list.length = 2;
+}
+say("arrays that change their kind", total);
+
+function thrower(kind: number): never {
+  if (kind === 0) throw new TypeError("zero");
+  if (kind === 1) throw "a string";
+  throw { kind };
+}
+const caught: string[] = [];
+for (let round = 0; round < 900; round++) {
+  try {
+    thrower(round % 3);
+  } catch (error) {
+    if (round < 3) caught.push(typeof error === "string" ? error : error instanceof Error ? error.message : JSON.stringify(error));
+  }
+}
+say("caught", caught);
+say("host functions as values", [[3, 1, 2].map(Math.sqrt).map(Math.round), ["b", "a"].sort().map(String), [1, 2].map(Number.isInteger as (value: number) => boolean), [" x "].map(Function.prototype.call, String.prototype.trim)]);
+
+const functions: (() => number)[] = [];
+for (let round = 0; round < 8; round++) {
+  for (let at = 0; at < 3000; at++) functions[at % 700] = () => at + round;
+  Bun.gc(true);
+  total += functions[round]!();
+  Bun.gc(false);
+}
+say("sixteen collections with live closures", total);
+console.log(lines.join("\n"));
+//// near/events/features.json
+{"features": ["Events"], "keptToday": true}
+//// near/events/near.ts
+const target = new EventTarget();
+target.addEventListener("ping", () => {}); target.removeEventListener("ping", () => {});
+try { target.dispatchEvent({ type: "ping" } as any); } catch (error: any) { console.log(error.name); }
+addEventListener("nothing", () => {}); removeEventListener("nothing", () => {});
+import { EventEmitter } from "node:events";
+const emitter = new EventEmitter(); emitter.once("x", value => console.log(value)); emitter.emit("x", 1);
+console.log(typeof performance.addEventListener, new DOMException("d").name);
+//// near/exports/features.json
+{"features": ["NativeAddons", "Ffi", "Sqlite"], "keptToday": true}
+//// near/exports/near.ts
+import v8 from "node:v8";
+import { AsyncLocalStorage } from "node:async_hooks";
+console.log(typeof v8.getHeapStatistics().total_heap_size, typeof process.versions.v8, typeof process.versions.uv, typeof process.versions.napi, typeof process.versions.modules);
+console.log(new AsyncLocalStorage().run(7, () => 7), process.hrtime().length);
+//// near/file-sink/features.json
+{"features": ["FileSink"], "keptToday": true, "posix": true}
+//// near/file-sink/near.ts
+process.emitWarning("descriptor 2 takes this at once");
+await new Promise(resolve => setTimeout(resolve, 20));
+console.error("to stderr");
+console.log("done");
+//// near/float16array/features.json
+{"features": ["Float16Array"], "keptToday": true}
+//// near/float16array/near.ts
+import { inspect, types } from "node:util";
+////= total	Float16Array	number
+console.log(total([1, 2, 3]), (types as any).isFloat16Array(new Uint8Array(1)), (types as any).isFloat16Array([]), types.isTypedArray(new Uint8Array(1)), ArrayBuffer.isView(new Uint8Array(1)));
+////= for-3	Uint8ClampedArray	Int16Array	Uint16Array	Int32Array	Uint32Array	Float32Array
+////= for-4
+console.log(new Odd([1, 2, 3]).slice(1).constructor.name, new Odd([1, 2, 3]).map(value => value + 1).constructor.name, new Odd([1, 2, 3]).filter(value => value > 1).constructor.name);
+const view: any = new DataView(new ArrayBuffer(16));
+////= for
+view.setBigInt64(0, 5n);
+view.setBigUint64(8, 6n);
+console.log(view.getBigInt64(0), view.getBigUint64(8));
+console.log(Buffer.from([1, 2, 3]).subarray(1).toString("hex"), Buffer.concat([Buffer.from("a"), Buffer.from("b")]).toString(), Buffer.from([3, 1, 2]).sort().join(""), (await new Blob([new Uint8Array([1, 2])]).bytes()).length, new TextEncoder().encode("abc").length, crypto.getRandomValues(new Uint8Array(4)).length);
+const reader = new ReadableStream({ type: "bytes", pull(controller: any) { controller.enqueue(new Uint8Array([1, 2, 3, 4])); controller.close(); } }).getReader({ mode: "byob" });
+console.log((await reader.read(new Int16Array(2))).value!.constructor.name);
+console.log([3, 1, 2].sort().join(""), [1, 2, 3].map(value => value * 2).join(""), Array.from({ length: 2 }).length);
+Bun.gc(true);
+//// near/float32array/features.json
+{"features": ["Float32Array"], "keptToday": true}
+//// near/float32array/near.ts
+import { inspect, types } from "node:util";
+////= total	Float32Array	number
+console.log(total([1, 2, 3]), (types as any).isFloat32Array(new Uint8Array(1)), (types as any).isFloat32Array([]), types.isTypedArray(new Uint8Array(1)), ArrayBuffer.isView(new Uint8Array(1)));
+////= for-3	Uint8ClampedArray	Int16Array	Uint16Array	Int32Array	Uint32Array	Float16Array
+////= for-4
+console.log(new Odd([1, 2, 3]).slice(1).constructor.name, new Odd([1, 2, 3]).map(value => value + 1).constructor.name, new Odd([1, 2, 3]).filter(value => value > 1).constructor.name);
+const view: any = new DataView(new ArrayBuffer(16));
+////= for
+view.setBigInt64(0, 5n);
+view.setBigUint64(8, 6n);
+console.log(view.getBigInt64(0), view.getBigUint64(8));
+console.log(Buffer.from([1, 2, 3]).subarray(1).toString("hex"), Buffer.concat([Buffer.from("a"), Buffer.from("b")]).toString(), Buffer.from([3, 1, 2]).sort().join(""), (await new Blob([new Uint8Array([1, 2])]).bytes()).length, new TextEncoder().encode("abc").length, crypto.getRandomValues(new Uint8Array(4)).length);
+const reader = new ReadableStream({ type: "bytes", pull(controller: any) { controller.enqueue(new Uint8Array([1, 2, 3, 4])); controller.close(); } }).getReader({ mode: "byob" });
+console.log((await reader.read(new Int16Array(2))).value!.constructor.name);
+console.log([3, 1, 2].sort().join(""), [1, 2, 3].map(value => value * 2).join(""), Array.from({ length: 2 }).length);
+Bun.gc(true);
+//// near/float64array/features.json
+{"features": ["Float64Array"], "keptToday": true}
+//// near/float64array/near.ts
+import { inspect, types } from "node:util";
+////= total	Float64Array	number
+console.log(total([1, 2, 3]), (types as any).isFloat64Array(new Uint8Array(1)), (types as any).isFloat64Array([]), types.isTypedArray(new Uint8Array(1)), ArrayBuffer.isView(new Uint8Array(1)));
+for (const Type of <any[]>[Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float16Array, Float32Array]) {
+  const values = new Type([3, 1, 2]);
+  const other = new Type(values.buffer.slice(0));
+  console.log(Type.name, values.sort().join(""), values.map((value: any) => value * 2).join(""), values.filter((value: any) => value > 1).length, values.slice(1).length, values.subarray(1).length, values.indexOf(2), values.includes(3), values.reduce((a: any, b: any) => a + b, 0), values.toSorted().join(""), values.with(0, 9)[0], values.findLast((value: any) => value < 3), other.length, values.toLocaleString(), [...values.entries()].length, Type.from([1, 2]).length, Type.of(1).length, inspect(values), structuredClone(values).constructor.name, new Uint8Array(values).join(""), new Type(new Uint8Array([1, 2])).join(""));
+}
+////= for-4
+console.log(new Odd([1, 2, 3]).slice(1).constructor.name, new Odd([1, 2, 3]).map(value => value + 1).constructor.name, new Odd([1, 2, 3]).filter(value => value > 1).constructor.name);
+const view: any = new DataView(new ArrayBuffer(16));
+////= for
+view.setBigInt64(0, 5n);
+view.setBigUint64(8, 6n);
+console.log(view.getBigInt64(0), view.getBigUint64(8));
+console.log(Buffer.from([1, 2, 3]).subarray(1).toString("hex"), Buffer.concat([Buffer.from("a"), Buffer.from("b")]).toString(), Buffer.from([3, 1, 2]).sort().join(""), (await new Blob([new Uint8Array([1, 2])]).bytes()).length, new TextEncoder().encode("abc").length, crypto.getRandomValues(new Uint8Array(4)).length);
+const reader = new ReadableStream({ type: "bytes", pull(controller: any) { controller.enqueue(new Uint8Array([1, 2, 3, 4])); controller.close(); } }).getReader({ mode: "byob" });
+console.log((await reader.read(new Int16Array(2))).value!.constructor.name);
+console.log([3, 1, 2].sort().join(""), [1, 2, 3].map(value => value * 2).join(""), Array.from({ length: 2 }).length);
+Bun.gc(true);
+//// near/form-data/features.json
+{"features": ["FormData"], "keptToday": true}
+//// near/form-data/near.ts
+const response = new Response("a=1&b=2", { headers: { "content-type": "application/x-www-form-urlencoded" } });
+console.log(await response.text(), new URLSearchParams("a=1&b=2").get("b"), await new Response(new URLSearchParams({ c: "3" })).text(), await new Blob(["x"]).text(), await new Request("http://x/", { method: "POST", body: "y" }).json().catch(() => "no json"));
+console.log(response, new Blob(["x"]));
+//// near/fs-stats/features.json
+{"features": ["FsStats"], "keptToday": true}
+//// near/fs-stats/near.ts
+const file = Bun.file("/definitely/not/here.txt");
+console.log(await file.exists(), file.size, file.name, file.type, new Blob(["abc"]).size);
+//// near/get-or-insert/features.json
+{"features": ["MapGetOrInsert"], "keptToday": true}
+//// near/get-or-insert/near.ts
+const map = new Map<unknown, unknown>([["a", 1]]);
+if (!map.has("b")) map.set("b", 6);
+console.log(map.get("a"), map.get("b"), map.get("c") ?? "none", map.size, map.delete("a"), [...map.keys()].join(), [...map.values()].join(), [...map.entries()].length);
+map.forEach((value, key) => console.log(key, value));
+const key = {};
+const weak = new WeakMap([[key, 1]]);
+console.log(weak.get(key), weak.has({}), weak.set({}, 2) === weak, weak.delete(key), Map.groupBy([1, 2, 3], value => value % 2).get(1)!.length, structuredClone(map).size);
+map.clear();
+console.log(map.size);
+Bun.gc(true);
+//// near/headers/features.json
+{"features": ["Headers"], "keptToday": true}
+//// near/headers/near.ts
+const map = new Map([["content-type", "text/plain"]]);
+console.log(map.get("content-type"), new URLSearchParams({ a: "1" }).get("a"), typeof fetch);
+//// near/histogram/near.ts
+console.log(typeof performance.now(), performance.timeOrigin > 0);
+const started = process.hrtime.bigint();
+console.log(typeof started, process.hrtime().length);
+//// near/icu-zone-names/features.json
+{"features": ["IntlDateTimeFormat"], "keptToday": true}
+//// near/icu-zone-names/near.ts
+const zones = ["America/Los_Angeles", "Europe/Berlin", "Asia/Kolkata", "Asia/Tokyo", "Australia/Lord_Howe", "America/St_Johns", "Africa/Casablanca", "UTC", "Etc/GMT+5", "Etc/GMT-14", "Antarctica/Troll", "Asia/Pyongyang", "America/Nuuk", "Nowhere/Nothing", "EST5EDT"];
+for (const zone of zones) {
+  process.env.TZ = zone;
+  for (const ms of [Date.UTC(2024, 0, 15, 12), Date.UTC(2024, 6, 15, 12), Date.UTC(1900, 0, 1)]) {
+    const date = new Date(ms);
+    console.log(zone, "|", date.toString(), "|", date.toTimeString(), "|", `${date}`.length, date.getHours(), date.getTimezoneOffset());
+  }
+}
+console.log(Date().length > 20, new Date(2024, 2, 10, 2, 30).toISOString(), Date.parse("2024-07-01T12:00:00"), JSON.stringify(new Date(0)));
+console.log((1234567.891).toString(), (255).toString(16), (0.1).toFixed(20), ["b", "a", "ä"].sort().join());
+Bun.gc(true);
+console.log("collected");
+//// near/int16array/features.json
+{"features": ["Int16Array"], "keptToday": true}
+//// near/int16array/near.ts
+import { inspect, types } from "node:util";
+////= total	Int16Array	number
+console.log(total([1, 2, 3]), (types as any).isInt16Array(new Uint8Array(1)), (types as any).isInt16Array([]), types.isTypedArray(new Uint8Array(1)), ArrayBuffer.isView(new Uint8Array(1)));
+////= for-3	Uint8ClampedArray	Uint16Array	Int32Array	Uint32Array	Float16Array	Float32Array
+////= for-2
+class Odd extends Uint8Array {
+  static get [Symbol.species]() {
+    return Int32Array;
+  }
+}
+console.log(new Odd([1, 2, 3]).slice(1).constructor.name, new Odd([1, 2, 3]).map(value => value + 1).constructor.name, new Odd([1, 2, 3]).filter(value => value > 1).constructor.name);
+const view: any = new DataView(new ArrayBuffer(16));
+////= for
+view.setBigInt64(0, 5n);
+view.setBigUint64(8, 6n);
+console.log(view.getBigInt64(0), view.getBigUint64(8));
+console.log(Buffer.from([1, 2, 3]).subarray(1).toString("hex"), Buffer.concat([Buffer.from("a"), Buffer.from("b")]).toString(), Buffer.from([3, 1, 2]).sort().join(""), (await new Blob([new Uint8Array([1, 2])]).bytes()).length, new TextEncoder().encode("abc").length, crypto.getRandomValues(new Uint8Array(4)).length);
+const reader = new ReadableStream({ type: "bytes", pull(controller: any) { controller.enqueue(new Uint8Array([1, 2, 3, 4])); controller.close(); } }).getReader({ mode: "byob" });
+console.log((await reader.read(new Int32Array(2))).value!.constructor.name);
+console.log([3, 1, 2].sort().join(""), [1, 2, 3].map(value => value * 2).join(""), Array.from({ length: 2 }).length);
+Bun.gc(true);
+//// near/int32array/features.json
+{"features": ["Int32Array"], "keptToday": true}
+//// near/int32array/near.ts
+import { inspect, types } from "node:util";
+////= total	Int32Array	number
+console.log(total([1, 2, 3]), (types as any).isInt32Array(new Uint8Array(1)), (types as any).isInt32Array([]), types.isTypedArray(new Uint8Array(1)), ArrayBuffer.isView(new Uint8Array(1)));
+////= for-3	Uint8ClampedArray	Int16Array	Uint16Array	Uint32Array	Float16Array	Float32Array
+////= for-4
+console.log(new Odd([1, 2, 3]).slice(1).constructor.name, new Odd([1, 2, 3]).map(value => value + 1).constructor.name, new Odd([1, 2, 3]).filter(value => value > 1).constructor.name);
+const view: any = new DataView(new ArrayBuffer(16));
+////= for
+view.setBigInt64(0, 5n);
+view.setBigUint64(8, 6n);
+console.log(view.getBigInt64(0), view.getBigUint64(8));
+console.log(Buffer.from([1, 2, 3]).subarray(1).toString("hex"), Buffer.concat([Buffer.from("a"), Buffer.from("b")]).toString(), Buffer.from([3, 1, 2]).sort().join(""), (await new Blob([new Uint8Array([1, 2])]).bytes()).length, new TextEncoder().encode("abc").length, crypto.getRandomValues(new Uint8Array(4)).length);
+const reader = new ReadableStream({ type: "bytes", pull(controller: any) { controller.enqueue(new Uint8Array([1, 2, 3, 4])); controller.close(); } }).getReader({ mode: "byob" });
+console.log((await reader.read(new Int16Array(2))).value!.constructor.name);
+console.log([3, 1, 2].sort().join(""), [1, 2, 3].map(value => value * 2).join(""), Array.from({ length: 2 }).length);
+Bun.gc(true);
+//// near/int8array/features.json
+{"features": ["Int8Array"], "keptToday": true}
+//// near/int8array/near.ts
+import { inspect, types } from "node:util";
+////= total	Int8Array	number
+console.log(total([1, 2, 3]), (types as any).isInt8Array(new Uint8Array(1)), (types as any).isInt8Array([]), types.isTypedArray(new Uint8Array(1)), ArrayBuffer.isView(new Uint8Array(1)));
+for (const Type of <any[]>[Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float16Array, Float32Array, Float64Array]) {
+  const values = new Type([3, 1, 2]);
+  const other = new Type(values.buffer.slice(0));
+  console.log(Type.name, values.sort().join(""), values.map((value: any) => value * 2).join(""), values.filter((value: any) => value > 1).length, values.slice(1).length, values.subarray(1).length, values.indexOf(2), values.includes(3), values.reduce((a: any, b: any) => a + b, 0), values.toSorted().join(""), values.with(0, 9)[0], values.findLast((value: any) => value < 3), other.length, values.toLocaleString(), [...values.entries()].length, Type.from([1, 2]).length, Type.of(1).length, inspect(values), structuredClone(values).constructor.name, new Uint8Array(values).join(""), new Type(new Uint8Array([1, 2])).join(""));
+}
+////= for-4
+console.log(new Odd([1, 2, 3]).slice(1).constructor.name, new Odd([1, 2, 3]).map(value => value + 1).constructor.name, new Odd([1, 2, 3]).filter(value => value > 1).constructor.name);
+const view: any = new DataView(new ArrayBuffer(16));
+////= for
+view.setBigInt64(0, 5n);
+view.setBigUint64(8, 6n);
+console.log(view.getBigInt64(0), view.getBigUint64(8));
+console.log(Buffer.from([1, 2, 3]).subarray(1).toString("hex"), Buffer.concat([Buffer.from("a"), Buffer.from("b")]).toString(), Buffer.from([3, 1, 2]).sort().join(""), (await new Blob([new Uint8Array([1, 2])]).bytes()).length, new TextEncoder().encode("abc").length, crypto.getRandomValues(new Uint8Array(4)).length);
+const reader = new ReadableStream({ type: "bytes", pull(controller: any) { controller.enqueue(new Uint8Array([1, 2, 3, 4])); controller.close(); } }).getReader({ mode: "byob" });
+console.log((await reader.read(new Int16Array(2))).value!.constructor.name);
+console.log([3, 1, 2].sort().join(""), [1, 2, 3].map(value => value * 2).join(""), Array.from({ length: 2 }).length);
+Bun.gc(true);
+//// near/ipc/near.ts
+process.emitWarning === undefined;
+console.log(typeof process.pid, typeof process.env.NODE_CHANNEL_FD, typeof process.exit, typeof process.nextTick);
+setTimeout(() => console.log("done"), 1);
+//// near/json-raw/features.json
+{"features": ["JSONRawJSON"], "keptToday": true}
+//// near/json-raw/near.ts
+const json = JSON as unknown as { isRawJSON(value: unknown): boolean };
+console.log(json.isRawJSON({}), json.isRawJSON("1"), json.isRawJSON(Object.freeze(Object.create(null, { rawJSON: { value: "1", enumerable: true } }))));
+console.log(JSON.stringify({ rawJSON: "12345678901234567890", big: 12345678901234567890, list: ["text", null, -1.5e3, true] }));
+console.log(JSON.stringify(Object.freeze(Object.create(null, { rawJSON: { value: "1", enumerable: true } }))));
+console.log(JSON.stringify(JSON.parse("12345678901234567890")), JSON.stringify(JSON.parse('"日本"')), Object.getOwnPropertyNames(JSON).sort().join());
+console.log(JSON.stringify({ toJSON: () => "by toJSON" }), JSON.stringify([undefined, () => 1, Symbol.iterator, NaN, 1n < 2n]), JSON.stringify(" \ud800"), JSON.stringify({ a: 1, b: [1, 2] }, null, "--"));
+//// near/large-warning/features.json
+{"features": ["WebStreams"]}
+//// near/large-warning/near.ts
+process.emitWarning("x".repeat(1_000_000));
+process.emitWarning("second");
+await new Promise(resolve => setTimeout(resolve, 50));
+console.log("done");
+//// near/legacy-accessors/features.json
+{"features": ["LegacyAccessors"], "keptToday": true}
+//// near/legacy-accessors/near.ts
+const object: any = {};
+Object.defineProperty(object, "a", { get: () => 1, set(this: any, value: number) { this.b = value; }, configurable: true, enumerable: true });
+object.a = 5;
+const descriptor = Object.getOwnPropertyDescriptor(object, "a")!;
+console.log(object.a, object.b, typeof descriptor.get, typeof descriptor.set, Object.getOwnPropertyDescriptor(object, "b")!.get, Object.getOwnPropertyDescriptors(object).a.enumerable);
+console.log(object.__proto__ === Object.prototype, object.hasOwnProperty("a"), object.propertyIsEnumerable("a"), Object.prototype.isPrototypeOf(object), object.toString(), object.valueOf() === object, typeof object.toLocaleString(), Object.hasOwn(object, "b"));
+object.__proto__ = null;
+console.log(Object.getPrototypeOf(object), { get x() { return 2; } }.x, class { static get y() { return 3; } }.y);
+Bun.gc(true);
+//// near/markdown-callbacks/features.json
+{"features": ["Image"], "keptToday": true}
+//// near/markdown-callbacks/near.ts
+try {
+  console.log(typeof Bun.markdown.render("![a](b)", new Blob([]) as any));
+} catch (error) {
+  console.log("threw", (error as Error).name, (error as Error).message);
+}
+//// near/module-graph/near.ts
+console.log(typeof Bun.version, typeof Bun.main, import.meta.path.length > 0, typeof require, typeof module);
+const loaded = await import("node:path");
+console.log(loaded.basename("/a/b.txt"));
+//// near/node-cluster/features.json
+{"features": ["NodeCluster"], "keptToday": true}
+//// near/node-cluster/near.ts
+import { EventEmitter } from "node:events";
+const emitter = new EventEmitter(); emitter.on("x", value => console.log(value)); emitter.emit("x", 1);
+//// near/node-small-modules/features.json
+{"features": ["NodeSmallModules"], "keptToday": true}
+//// near/node-small-modules/near.ts
+console.log(Promise.resolve() instanceof Promise, ArrayBuffer.isView(new Uint8Array(1)), Array.isArray([]), Object.prototype.toString.call(/x/));
+//// near/node-url-natives/features.json
+{ "features": ["NodeUrl"] }
+//// near/node-url-natives/near.ts
+console.log(new URL("http://espa\u00f1ol.com/").hostname, encodeURI("http://a/b c"));
+//// near/node-util-natives/features.json
+{"features": ["NodeUtil"], "keptToday": true}
+//// near/node-util-natives/near.ts
+console.log({ a: [1, 2, { b: "multi\nline" }] }, Object.assign([1, 2], { extra: true }), new Error("plain").message, Error.isError?.(new Error("e")));
+//// near/node-v8/near.ts
+console.log(typeof process.versions.v8, typeof Bun.gc);
+//// near/node-validators/features.json
+{"features": ["NodeValidators"], "keptToday": true}
+//// near/node-validators/near.ts
+try { new Array(-1); } catch (error: any) { console.log(error.name); }
+try { (1).toFixed(200); } catch (error: any) { console.log(error.name); }
+//// near/one-export-of-bun-jsc/features.json
+{"features": ["Inspector", "StructuredClone", "HttpClient", "S3Client", "Tls", "Serve", "RuntimeTranspiler"]}
+//// near/one-export-of-bun-jsc/near.ts
+import { heapStats } from "bun:jsc";
+console.log(heapStats().objectCount > 0);
+//// near/plain-server/features.json
+{"features": ["X509"], "keptToday": true}
+//// near/plain-server/near.ts
+const server = Bun.serve({
+  port: 0,
+  fetch() {
+    return new Response("plain");
+  },
+});
+console.log("" + server.protocol + " " + String(server.url).startsWith("http://"));
+server.reload({
+  fetch() {
+    return new Response("still plain");
+  },
+  tls: { serverName: "example.com", rejectUnauthorized: false },
+} as never);
+console.log("" + server.protocol + " " + String(server.url).startsWith("http://"));
+await server.stop(true);
+console.log("stopped");
+//// near/plain-websocket-server/features.json
+{"features": ["TlsSockets", "Tls"], "keptToday": true}
+//// near/plain-websocket-server/near.ts
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  fetch(request, server) {
+    if (server.upgrade(request)) return;
+    return new Response("not a WebSocket request");
+  },
+  websocket: {
+    message(socket, message) {
+      socket.send(`echoed ${message}`);
+    },
+  },
+});
+
+function maskedTextFrame(text: string) {
+  const mask = [1, 2, 3, 4];
+  const payload = Buffer.from(text).map((byte, index) => byte ^ mask[index % 4]);
+  return Buffer.concat([Buffer.from([0x81, 0x80 | payload.length, ...mask]), payload]);
+}
+
+const handshake = [
+  "GET / HTTP/1.1",
+  "Host: localhost",
+  "Upgrade: websocket",
+  "Connection: Upgrade",
+  "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==",
+  "Sec-WebSocket-Version: 13",
+  "",
+  "",
+].join("\r\n");
+
+const answer = Promise.withResolvers<string>();
+let received = Buffer.alloc(0);
+let hasSentFrame = false;
+const client = await Bun.connect({
+  hostname: "127.0.0.1",
+  port: server.port!,
+  socket: {
+    open(socket) {
+      socket.write(handshake);
+    },
+    data(socket, chunk) {
+      received = Buffer.concat([received, chunk]);
+      const endOfHeaders = received.indexOf("\r\n\r\n");
+      if (endOfHeaders < 0) return;
+      if (!hasSentFrame) {
+        hasSentFrame = true;
+        socket.write(maskedTextFrame("hello"));
+      }
+      const frame = received.subarray(endOfHeaders + 4);
+      if (frame.length >= 2 && frame.length >= 2 + frame[1]) answer.resolve(frame.subarray(2, 2 + frame[1]).toString());
+    },
+  },
+});
+const echoed = await answer.promise;
+console.log(received.toString().split("\r\n")[0], echoed);
+client.end();
+server.stop(true);
+//// near/post-message/near.ts
+console.log(typeof structuredClone, typeof queueMicrotask);
+//// near/process-about/features.json
+{"features": ["ProcessInformation"], "keptToday": true}
+//// near/process-about/near.ts
+console.log(typeof process.version, typeof Bun.version, typeof Bun.revision, process.isBun, typeof process.arch, typeof process.platform, typeof navigator.userAgent);
+//// near/process-binding/features.json
+{"features": ["ProcessBinding"], "keptToday": true}
+//// near/process-binding/near.ts
+import { constants } from "node:os";
+import { constants as fsConstants } from "node:fs";
+console.log(typeof constants.signals.SIGINT, typeof fsConstants.O_RDONLY, typeof process.pid, process.platform.length > 0, typeof (process as any)._linkedBinding);
+//// near/process-control/near.ts
+console.log(typeof process.pid, typeof process.ppid, process.cwd().length > 0, typeof process.exitCode, typeof process.env.PATH, typeof process.arch);
+process.exitCode = 0;
+//// near/process-exec-argv/near.ts
+console.log(Array.isArray(process.argv), process.argv.length >= 1, typeof process.argv0, typeof process.execPath);
+//// near/process-usage/near.ts
+console.log(process.hrtime().length, typeof process.hrtime.bigint(), typeof performance.now(), typeof Bun.nanoseconds());
+//// near/promise-combinators/features.json
+{"features": ["PromiseAll", "PromiseAllSettled", "PromiseAny", "PromiseRace"], "keptToday": true}
+//// near/promise-combinators/near.ts
+const lines: string[] = [];
+const say = (name: string, value: unknown) => lines.push(`${name}: ${JSON.stringify(value)}`);
+const later = <T>(value: T, after: number) => new Promise<T>(resolve => setTimeout(() => resolve(value), after));
+
+say("one after another", [await 1, await later(2, 1), await Promise.resolve(3), await { then: (resolve: (value: number) => void) => resolve(4) }]);
+say("then, catch, finally", await later(1, 1).then(value => value + 1).finally(() => {}).then(value => Promise.reject(new Error("no " + value))).catch(error => error.message));
+const { promise, resolve } = Promise.withResolvers<string>();
+setTimeout(() => resolve("resolved from outside"), 1);
+say("withResolvers", await promise);
+say("try", await (Promise as unknown as { try<T>(make: () => T): Promise<T> }).try(() => 5));
+async function together<T>(promises: Promise<T>[]) {
+  const values: T[] = [];
+  for (const one of promises) values.push(await one);
+  return values;
+}
+say("many, by hand", await together([later("a", 3), later("b", 1), later("c", 2)]));
+say("the first, by hand", await new Promise(resolve => [later("slow", 4), later("fast", 1)].forEach(one => one.then(resolve))));
+async function* ticking() {
+  for (let at = 0; at < 3; at++) yield await later(at, 1);
+}
+const ticks: number[] = [];
+for await (const tick of ticking()) ticks.push(tick);
+say("for await", ticks);
+say("arrays have their own", [[1, 2].every(value => value > 0), [1, 2].some(value => value > 1)]);
+class Mine<T> extends Promise<T> {}
+say("a subclass", [Mine.resolve(1) instanceof Mine, await Mine.resolve(1).then(value => value + 1)]);
+process.on("unhandledRejection", reason => say("unhandled", String(reason)));
+queueMicrotask(() => say("a microtask", true));
+await later(0, 2);
+console.log(lines.join("\n"));
+//// near/rare-array-methods/features.json
+{"features": ["RareArrayMethods"], "keptToday": true}
+//// near/rare-array-methods/near.ts
+const list = [3, 1, 2, 1];
+console.log([...list].sort().join(), [...list].reverse().join(), list.slice(1).join(), list.indexOf(1), list.includes(2), list.concat([4]).join(), list.join("-"), [...list].splice(1, 2).join(), [...list].fill(0, 1).join(), list.at(-1), list.flatMap(value => [value, value]).length);
+console.log(list.map(value => value * 2).join(), list.filter(value => value > 1).join(), list.find(value => value > 1), list.findLast(value => value > 1), list.findIndex(value => value > 5), list.reduce((a, b) => a + b), list.reduceRight((a, b) => a - b), list.some(value => value > 2), list.every(value => value > 0), [...list.entries()].length, [...list.keys()].length);
+const stack = [1];
+console.log(stack.push(2), stack.pop(), stack.unshift(0), stack.shift(), stack.length, Array.from("ab").join(), Array.of(1, 2).join(), Array.isArray(stack), String(list), list.toString(), new Uint8Array([3, 1, 2, 1]).lastIndexOf(1), new Uint8Array([1, 2]).toReversed().join(), new Uint8Array([2, 1]).toSorted().join(), new Uint8Array([1, 2]).with(0, 5).join(), new Uint8Array([1, 2, 3]).copyWithin(0, 2).join());
+Bun.gc(true);
+//// near/regexp-from-string/features.json
+{"features": ["RegExpFromString"], "keptToday": true}
+//// near/regexp-from-string/near.ts
+const lines: string[] = [];
+const say = (name: string, value: unknown) => lines.push(`${name}: ${JSON.stringify(value)}`);
+
+const text = "2026-10-18 bun 1.4.3, node 25.6.0; a,b;C";
+say("test, exec", [/\d{4}-\d\d/.test(text), /^node/.test(text), /(\w+) (\d+)\.(\d+)/.exec(text)]);
+say("replace, replaceAll", [text.replace(/\d+/g, "#"), text.replace(/\b[a-z]/g, letter => letter.toUpperCase()), text.replaceAll(/[,;]/g, "|")]);
+say("split", [text.split(/[,;] ?/), text.split(/ /, 2), text.split(/(\d)\./)]);
+say("source, flags, lastIndex", [/a\/b/gi.source, /a/dgimsuy.flags, /a/g.lastIndex, String(/x+/v)]);
+
+const tagged = /,/;
+Object.defineProperty(tagged, "tag", { value: 1 });
+say("split, a literal with a property of its own", [text.split(tagged), text.split(tagged, 2), tagged.lastIndex]);
+
+const ignoresCase = /c/;
+Object.defineProperty(ignoresCase, "flags", { value: "i" });
+say("split, a literal with flags of its own", text.split(ignoresCase));
+
+const withoutConstructor = /;/;
+Object.defineProperty(withoutConstructor, "constructor", { value: undefined });
+say("split, a literal with no constructor", text.split(withoutConstructor));
+
+const invalidFlags = /,/;
+Object.defineProperty(invalidFlags, "flags", { value: "z" });
+try {
+  say("split, a literal with invalid flags", text.split(invalidFlags));
+} catch (error) {
+  say("split, a literal with invalid flags", (error as Error).name);
+}
+
+const own = { match: (subject: string) => subject.length, matchAll: () => "all", search: () => -1, compile: () => "compiled" };
+say("methods of the program's own object", [own.match(text), own.matchAll(), own.search(), own.compile()]);
+console.log(lines.join("\n"));
+//// near/regexp/features.json
+{"features": ["RegExp"], "keptToday": true}
+//// near/regexp/near.ts
+const lines: string[] = [];
+const say = (name: string, value: unknown) => lines.push(`${name}: ${JSON.stringify(value)}`);
+
+const text = "2026-10-17 bun 1.4.3, node 25.6.0; a.b*c a.b*c";
+say("replace, a string", text.replace("a.b*c", "[$&]"));
+say("replace, a function", text.replace("bun", found => found.toUpperCase()));
+say("replaceAll, a string", text.replaceAll("a.b*c", "x$$"));
+say("replaceAll, one character", text.replaceAll(".", "_"));
+say("split, strings", [text.split(", "), text.split("", 3), text.split(" ", 2), "a,b".split(undefined as unknown as string)]);
+say("indexOf and friends", [text.indexOf("node"), text.lastIndexOf("a"), text.includes("1.4"), text.startsWith("2026"), text.endsWith("*c")]);
+
+const splitter = { [Symbol.split]: (subject: string, limit?: number) => [subject.length, limit ?? -1] };
+const replacer = { [Symbol.replace]: (subject: string, by: string) => `${by}:${subject.length}` };
+say("an object that splits", text.split(splitter as unknown as string, 4));
+say("an object that replaces", [text.replace(replacer as unknown as string, "by"), text.replaceAll(replacer as unknown as string, "all")]);
+say("the symbols", [Symbol.match, Symbol.matchAll, Symbol.replace, Symbol.search, Symbol.split].map(String));
+try {
+  say("startsWith, an object", text.startsWith({ [Symbol.match]: true } as unknown as string));
+} catch (error) {
+  say("startsWith, an object", (error as Error).name);
+}
+say("what a plain object is", [Object.prototype.toString.call({}), Object.prototype.toString.call("x")]);
+
+const held: string[] = [];
+for (let round = 0; round < 4; round++) {
+  for (let at = 0; at < 20000; at++) held[at % 1000] = ("k" + at).replace("k", "key ").split(" ").join("-");
+  Bun.gc(true);
+}
+say("after four full collections", held[7]);
+for (const piece of ["a", "b"].values()) say("an iterator", piece);
+say("trim, pad, case", ["  x ".trim(), "7".padStart(3, "0"), "Straße".toUpperCase(), "ǅ".toLowerCase()]);
+console.log(lines.join("\n"));
+//// near/serve-protocols/features.json
+{"features": ["ServeHttp2", "NodeHttp"], "keptToday": true}
+//// near/serve-protocols/near.ts
+const server = Bun.serve({
+  port: 0,
+  fetch(request) {
+    return new Response("first " + new URL(request.url).pathname);
+  },
+});
+const ask = async (path: string) => {
+  const response = await fetch(new URL(path, server.url));
+  return `${response.status} ${await response.text()}`;
+};
+console.log(await ask("/a"));
+const later: Record<string, unknown> = {
+  http2: true,
+  onNodeHTTPRequest() {
+    throw new Error("a server that was not started for node:http never calls this");
+  },
+  fetch() {
+    return new Response("second");
+  },
+};
+server.reload(later as never);
+console.log(await ask("/b"));
+try {
+  server.reload({ ...later, http3: true } as never);
+  console.log("reloaded");
+} catch (error) {
+  console.log((error as Error).message);
+}
+console.log(await ask("/c"));
+console.log(server.protocol);
+await server.stop(true);
+//// near/serve/features.json
+{"features": ["Serve"], "keptToday": true}
+//// near/serve/near.ts
+// What Bun.serve hands to a handler and takes back from it, made by hand: Request, Response, Headers, URL, streams
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
+const request = new Request("http://localhost/users/7?page=2", {
+  method: "POST",
+  headers: { "content-type": "application/json", cookie: "a=1" },
+  body: JSON.stringify({ title: "x" }),
+});
+console.log(request.method, request.url, new URL(request.url).pathname, request.headers.get("content-type"), request.headers.get("cookie"));
+console.log(estimateShallowMemoryUsageOf(request) > 0, request.signal.aborted, request.bodyUsed, request.redirect);
+const copy = request.clone();
+console.log(await request.json(), await copy.text(), request.bodyUsed);
+console.log(Bun.inspect(new Request("http://localhost/x", { headers: { a: "b" } })).split("\n").length > 1);
+const again = new Request(new Request("http://localhost/y", { method: "PUT", body: "z" }), { headers: { "x-again": "1" } });
+console.log(again.method, again.url, again.headers.get("x-again"), await again.text());
+const answer = Response.json({ ok: true }, { status: 201, headers: { "x-kind": "json" } });
+console.log(answer.status, answer.statusText, answer.ok, answer.headers.get("x-kind"), await answer.text());
+for (const status of [200, 204, 404, 418, 500]) console.log(status, JSON.stringify(new Response(null, { status }).statusText));
+const streamed = new Response(
+  new ReadableStream({
+    start(controller: any) {
+      controller.enqueue("a");
+      controller.enqueue("b");
+      controller.close();
+    },
+  }),
+);
+console.log(await streamed.text());
+const direct = new Response(
+  new ReadableStream({
+    type: "direct",
+    async pull(controller: any) {
+      controller.write("c");
+      await controller.flush();
+      controller.write("d");
+      controller.close();
+    },
+  } as any),
+);
+console.log(await direct.text());
+console.log(Response.redirect("http://localhost/z", 302).headers.get("location"), Response.error().type);
+const aborter = new AbortController();
+const aborted = new Request("http://localhost/a", { signal: aborter.signal });
+aborter.abort(new Error("gone"));
+console.log(aborted.signal.aborted, (aborted.signal.reason as Error).message);
+for (let i = 0; i < 2000; i++) new Request("http://localhost/" + i, { method: "POST", body: "b" + i });
+Bun.gc(true);
+console.log("collected");
+//// near/set-methods/features.json
+{"features": ["SetMethods"], "keptToday": true}
+//// near/set-methods/near.ts
+const set = new Set([3, 1, 2, 3]);
+set.add(4).add(1);
+console.log(set.size, set.has(2), set.delete(2), set.has(2), [...set].join(","), [...set.keys()].length, [...set.values()].length, [...set.entries()].length);
+let sum = 0;
+set.forEach(value => (sum += value));
+for (const value of set) sum += value;
+console.log(sum, new Set("hello").size, new Set([NaN, NaN, 0, -0, "0"]).size, new Set(new Map([[1, 2]]).keys()).size, Object.prototype.toString.call(set), structuredClone(set).size);
+const both = new Set([...set, ...new Set([9, 1])]);
+const common = new Set([...set].filter(value => both.has(value)));
+console.log(both.size, common.size, [...set].every(value => both.has(value)));
+set.clear();
+const map = new Map([[1, "a"]]);
+const weak = new WeakSet([set]);
+console.log(set.size, map.get(1), map.has(2), map.set(2, "b").size, map.delete(1), [...map].length, weak.has(set), weak.delete(set), Object.groupBy([1, 2, 3], value => (value % 2 ? "odd" : "even")).odd!.length);
+Bun.gc(true);
+//// near/simdutf-slots/features.json
+{"features": ["Tools"]}
+//// near/simdutf-slots/near.ts
+const lines: string[] = [];
+const hex = (bytes: Uint8Array | ArrayBuffer) => Buffer.from(bytes as Uint8Array).toString("hex");
+const say = (name: string, value: unknown) => lines.push(`${name}: ${typeof value === "string" ? value : JSON.stringify(value)}`);
+
+const ascii = "The quick brown fox jumps over the lazy dog. ".repeat(9);
+const latin1 = "Zwölf Boxkämpfer jagen Viktor quer über den großen Sylter Deich. ".repeat(7);
+const wide = "Ελληνικά, кириллица, 日本語, 한국어, עברית ".repeat(8);
+const astral = "a😀b𝒳c🏳️‍🌈d ".repeat(12);
+const lone = "ok\ud800mid\udc00end" + "x".repeat(70) + "\udfff";
+const texts = { ascii, latin1, wide, astral, lone };
+
+const sum = (text: string) => Bun.hash.crc32(text).toString(16);
+for (const [name, text] of Object.entries(texts)) {
+  const utf8 = new TextEncoder().encode(text);
+  say(`${name} to UTF-8`, [utf8.length, Buffer.byteLength(text), sum(hex(utf8))]);
+  say(`${name} and back`, new TextDecoder().decode(utf8) === text.toWellFormed());
+  say(`${name} into a small buffer`, new TextEncoder().encodeInto(text, new Uint8Array(37)));
+  for (const encoding of ["utf8", "utf16le", "ucs2", "latin1", "binary", "ascii", "base64", "base64url", "hex"] as const) {
+    const bytes = Buffer.from(text, encoding);
+    say(`${name} as ${encoding}`, [bytes.length, Buffer.byteLength(text, encoding), sum(hex(bytes)), sum(bytes.toString(encoding))]);
+  }
+  say(`${name} is well formed`, [text.isWellFormed(), sum(text.toWellFormed())]);
+  say(`${name} UTF-16 decoded`, sum(new TextDecoder("utf-16le").decode(Buffer.from(text, "utf16le"))));
+  say(`${name} through a Blob`, sum(await new Blob([text]).text()));
+  say(`${name} through a Response`, sum(await new Response(text).text()));
+}
+
+const broken = [
+  [0xc3, 0x28],
+  [0xe2, 0x82],
+  [0xf0, 0x9f, 0x98],
+  [0xed, 0xa0, 0x80],
+  [0xf8, 0x88, 0x80, 0x80, 0x80],
+  [...Buffer.from(ascii), 0xff, ...Buffer.from(wide)],
+];
+for (const bytes of broken) {
+  const view = Uint8Array.from(bytes);
+  say("broken UTF-8, replaced", sum(new TextDecoder().decode(view)));
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(view);
+    say("broken UTF-8, fatal", "accepted");
+  } catch (error) {
+    say("broken UTF-8, fatal", (error as Error).name);
+  }
+  say("broken UTF-8, Buffer", sum(Buffer.from(view).toString("utf8")));
+  say("isUtf8, isAscii", [require("node:buffer").isUtf8(view), require("node:buffer").isAscii(view)]);
+}
+
+const bytes = Uint8Array.from({ length: 1000 }, (_, at) => (at * 37 + 11) & 255);
+const base64 = Buffer.from(bytes).toString("base64");
+say("base64", [base64.length, sum(base64), sum(Buffer.from(bytes).toString("base64url")), sum(btoa(latin1.slice(0, 200)))]);
+say("base64 back", [hex(Buffer.from(base64, "base64")) === hex(bytes), sum(atob(base64)), sum(hex(Buffer.from(base64.replace(/=+$/, "") + "\n ", "base64")))]);
+say("base64 of a wide string", hex(Buffer.from(base64.slice(0, 40) + "é日", "base64")));
+for (const text of ["", "Zg", "Zg=", "Zg==", "Zm9", "Zm9v", "Z g 9 v", "Zm9v!", "@@@@", "Zm9vYg==Zm8="]) {
+  try {
+    say(`atob ${JSON.stringify(text)}`, atob(text));
+  } catch (error) {
+    say(`atob ${JSON.stringify(text)}`, (error as Error).name);
+  }
+  say(`Buffer ${JSON.stringify(text)}`, hex(Buffer.from(text, "base64")));
+}
+const typed = Uint8Array as unknown as { fromBase64?: (text: string, options?: object) => Uint8Array };
+if (typed.fromBase64) {
+  say("Uint8Array.fromBase64", hex(typed.fromBase64(base64)) === hex(bytes));
+  say("Uint8Array.fromBase64, base64url", hex(typed.fromBase64("_-8", { alphabet: "base64url" })));
+  say("toBase64", sum((bytes as unknown as { toBase64(): string }).toBase64()));
+}
+say("the width of a string", [Bun.stringWidth(ascii), Bun.stringWidth(wide), Bun.stringWidth(astral)]);
+
+console.log(lines.join("\n"));
+//// near/snapshot-matchers/features.json
+{"features": ["RuntimeTranspiler"], "keptToday": true}
+//// near/snapshot-matchers/near.ts
+const { expect } = (Bun as any).jest(import.meta.path);
+try { expect(1).toBe(1); console.log("toBe ran"); expect({ a: 1 }).toMatchSnapshot(); console.log("snapshot ran"); } catch (error) { console.log("threw", (error as Error).message.slice(0, 60)); }
+//// near/string-decoder/near.ts
+const decoder = new TextDecoder();
+console.log(decoder.decode(new Uint8Array([0xe2, 0x82]), { stream: true }) + decoder.decode(new Uint8Array([0xac])), Buffer.from([0xe2, 0x82, 0xac]).toString("utf8"));
+//// near/string-number-methods/features.json
+{"features": ["StringLocaleCase", "NumberPrecisionMethods", "StringPadding", "StringHTML", "StringNormalize", "StringWellFormed", "StringRepeat", "StringLastIndexOf", "EscapeUnescape", "URICoding"], "keptToday": true}
+//// near/string-number-methods/near.ts
+const lines: string[] = [];
+const say = (name: string, value: unknown) => lines.push(`${name}: ${JSON.stringify(value)}`);
+
+say("case", ["Straße".toUpperCase(), "ABCİ".toLowerCase(), "ǆ".toUpperCase()]);
+say("numbers as text", [(1234.5678).toString(), (255).toString(16), (0.1 + 0.2).toString(), String(1e21), `${1e-7}`, (1234.5678).toString(36), Math.round(1234.5678 * 100) / 100, (12).valueOf()]);
+say("numbers from text", [Number("1.5e3"), parseFloat("2.50x"), parseInt("ff", 16), Number.parseFloat("1e-7"), Number.isInteger(5), Number.isSafeInteger(2 ** 53)]);
+say("longer by hand", ["000".slice("5".length) + "5", "ab" + "xyz".slice(0, 2), ["ab", "ab", "ab"].join(""), Array(3).fill("x").join("")]);
+say("search", ["abcabc".indexOf("b"), "abcabc".indexOf("b", 2), "abcabc".includes("ca"), "abcabc".startsWith("abc"), "abcabc".endsWith("bc"), [..."abcabc"].reverse().indexOf("b")]);
+say("pieces", ["a,b,c".split(","), " x ".trim(), " x ".trimStart(), " x ".trimEnd(), "abc".slice(1), "abc".substring(0, 2), "abc".substr(1, 1), "abc".at(-1), "abc".charAt(1), "abc".charCodeAt(1), "😀".codePointAt(0)]);
+say("made", [String.fromCharCode(65, 0x4e16), String.fromCodePoint(0x1f600), String.raw`a\n${1}`, "a".concat("b", "c"), "aXbX".replace("X", "-"), "aXbX".replaceAll("X", "-")]);
+say("order", ["a".localeCompare("b"), ["b", "a", "C"].sort(), "a" < "b"]);
+say("surrogates by hand", ["a\ud800".charCodeAt(1) >= 0xd800, [..."a😀"].length]);
+say("tags by hand", ["<b>" + "t" + "</b>", `<a name="${"x".replaceAll('"', "&quot;")}">t</a>`]);
+say("percent signs by other roads", [new URLSearchParams({ q: "a b&世" }).toString(), new URL("http://x/a b?q=é").href, Buffer.from("a b").toString("hex")]);
+class Money {
+  constructor(public cents: number) {}
+  toText(digits: number) {
+    const whole = Math.trunc(this.cents / 100);
+    return whole + "." + String(this.cents % 100 + 100).slice(1, 1 + digits);
+  }
+}
+say("a class of one's own", new Money(123456).toText(2));
+console.log(1234.5678, 1e21, 1e-7, -0, "text", [0.1]);
+console.log(lines.join("\n"));
+//// near/string-width/features.json
+{"features": ["StringWidth"], "keptToday": true}
+//// near/string-width/near.ts
+console.log("\u4f60\u597d".length, [..."\u{1f600}"].length, Bun.stripANSI("\x1b[31mred\x1b[0m"), "abc".padEnd(5, ".") + "|");
+try { (undefined as any).x; } catch (error) { console.log(String(error).length > 0); }
+//// near/sum-precise/features.json
+{"features": ["MathSumPrecise"], "keptToday": true}
+//// near/sum-precise/near.ts
+console.log([1e20, 0.1, -1e20].reduce((sum, value) => sum + value, 0), [0.1, 0.2, 0.3].reduce((sum, value) => sum + value, 0), Math.hypot(3, 4), Math.max(1, 2), Math.min(), Math.fround(0.1), Math.trunc(-1.5), Math.sign(-2), Math.cbrt(27), Math.clz32(1), Math.imul(3, 4), Math.log2(8), Math.expm1(0), Math.atan2(1, 1).toFixed(3), Math.round(2.5), Math.abs(-1), Math.pow(2, 10), Math.sqrt(16), typeof Math.random(), (Math as any).f16round(1.337));
+//// near/temporal/features.json
+{"features": ["Temporal"], "keptToday": true}
+//// near/temporal/near.ts
+const date = new Date(Date.UTC(2026, 9, 17, 8, 30, 15, 250));
+console.log(date.toISOString(), date.toJSON(), date.getTime(), date.valueOf(), date.toUTCString(), JSON.stringify({ date }));
+console.log(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), date.getUTCDay(), date.getUTCHours(), date.getUTCMinutes(), date.getUTCSeconds(), date.getUTCMilliseconds());
+console.log(Date.parse("2026-10-17T08:30:15.250Z"), Date.parse("2026-10-17"), Date.parse("Sat, 17 Oct 2026 08:30:15 GMT"), Date.parse("October 17, 2026 08:30:15 UTC"), Date.parse("not a date"), new Date("2026-10-17T08:30:15+02:00").getTime());
+date.setUTCFullYear(2027, 0, 31);
+date.setUTCHours(23, 59, 59, 999);
+console.log(date.toISOString(), new Date(date).setUTCMonth(1), new Date(8.64e15 + 1).getTime(), typeof Date.now(), typeof date.getTimezoneOffset(), typeof date.toString(), date[Symbol.toPrimitive]("number"));
+console.log(Object.getOwnPropertyNames(Date).sort().join(), "toISOString" in date, Object.prototype.toString.call(date), structuredClone(date).getTime());
+const anyIntl: any = Intl;
+console.log(new anyIntl.DurationFormat("en").format({ hours: 1, minutes: 30 }), new anyIntl.DurationFormat("en", { style: "digital" }).format("PT1H5M"));
+console.log(new Intl.DateTimeFormat("en", { timeZone: "UTC", dateStyle: "medium", timeStyle: "short" }).format(new Date(0)), new Intl.DateTimeFormat("en", { timeZone: "+01:00" }).resolvedOptions().timeZone);
+Bun.gc(true);
+//// near/text-codec/features.json
+{ "features": ["TextDecoder", "TextEncoder"] }
+//// near/text-codec/near.ts
+console.log(Buffer.from("h\u00e9llo").length, Buffer.from([0xe2, 0x82, 0xac]).toString(), await new Blob(["\u20ac"]).text(), (await new Response("\u20ac").bytes()).length, btoa("x"), escape("\u00e9"));
+//// near/typedarray-sort/features.json
+{"features": ["TypedArraySort"], "keptToday": true}
+//// near/typedarray-sort/near.ts
+const bytes = new Uint8Array([3, 1, 2, 255, 0]);
+console.log([...bytes].sort((a, b) => a - b).join(), [3, 1, 2].sort().join(), [3, 1, 2].toSorted().join(), ["b", "a"].sort().join(), Array.prototype.sort.call(new Uint8Array([2, 1])).join(), Array.from(bytes).toSorted((a, b) => b - a).join());
+console.log(bytes.map(value => value + 1).join(), bytes.filter(value => value > 1).join(), bytes.slice(1).join(), bytes.subarray(1).join(), bytes.indexOf(2), bytes.includes(3), bytes.join("-"), bytes.reverse().join(), bytes.toReversed().join(), bytes.fill(1, 0, 1).join(), bytes.find(value => value > 2), bytes.reduce((a, b) => a + b, 0), bytes.with(0, 9).join(), String(bytes), bytes.at(-1), [...bytes.keys()].length);
+Bun.gc(true);
+//// near/uint16array/features.json
+{"features": ["Uint16Array"], "keptToday": true}
+//// near/uint16array/near.ts
+import { inspect, types } from "node:util";
+////= total	Uint16Array	number
+console.log(total([1, 2, 3]), (types as any).isUint16Array(new Uint8Array(1)), (types as any).isUint16Array([]), types.isTypedArray(new Uint8Array(1)), ArrayBuffer.isView(new Uint8Array(1)));
+////= for-3	Uint8ClampedArray	Int16Array	Int32Array	Uint32Array	Float16Array	Float32Array
+////= for-4
+console.log(new Odd([1, 2, 3]).slice(1).constructor.name, new Odd([1, 2, 3]).map(value => value + 1).constructor.name, new Odd([1, 2, 3]).filter(value => value > 1).constructor.name);
+const view: any = new DataView(new ArrayBuffer(16));
+////= for
+view.setBigInt64(0, 5n);
+view.setBigUint64(8, 6n);
+console.log(view.getBigInt64(0), view.getBigUint64(8));
+console.log(Buffer.from([1, 2, 3]).subarray(1).toString("hex"), Buffer.concat([Buffer.from("a"), Buffer.from("b")]).toString(), Buffer.from([3, 1, 2]).sort().join(""), (await new Blob([new Uint8Array([1, 2])]).bytes()).length, new TextEncoder().encode("abc").length, crypto.getRandomValues(new Uint8Array(4)).length);
+const reader = new ReadableStream({ type: "bytes", pull(controller: any) { controller.enqueue(new Uint8Array([1, 2, 3, 4])); controller.close(); } }).getReader({ mode: "byob" });
+console.log((await reader.read(new Int16Array(2))).value!.constructor.name);
+console.log([3, 1, 2].sort().join(""), [1, 2, 3].map(value => value * 2).join(""), Array.from({ length: 2 }).length);
+Bun.gc(true);
+//// near/uint32array/features.json
+{"features": ["Uint32Array"], "keptToday": true}
+//// near/uint32array/near.ts
+import { inspect, types } from "node:util";
+////= total	Uint32Array	number
+console.log(total([1, 2, 3]), (types as any).isUint32Array(new Uint8Array(1)), (types as any).isUint32Array([]), types.isTypedArray(new Uint8Array(1)), ArrayBuffer.isView(new Uint8Array(1)));
+////= for-3	Uint8ClampedArray	Int16Array	Uint16Array	Int32Array	Float16Array	Float32Array
+////= for-4
+console.log(new Odd([1, 2, 3]).slice(1).constructor.name, new Odd([1, 2, 3]).map(value => value + 1).constructor.name, new Odd([1, 2, 3]).filter(value => value > 1).constructor.name);
+const view: any = new DataView(new ArrayBuffer(16));
+////= for
+view.setBigInt64(0, 5n);
+view.setBigUint64(8, 6n);
+console.log(view.getBigInt64(0), view.getBigUint64(8));
+console.log(Buffer.from([1, 2, 3]).subarray(1).toString("hex"), Buffer.concat([Buffer.from("a"), Buffer.from("b")]).toString(), Buffer.from([3, 1, 2]).sort().join(""), (await new Blob([new Uint8Array([1, 2])]).bytes()).length, new TextEncoder().encode("abc").length, crypto.getRandomValues(new Uint8Array(4)).length);
+const reader = new ReadableStream({ type: "bytes", pull(controller: any) { controller.enqueue(new Uint8Array([1, 2, 3, 4])); controller.close(); } }).getReader({ mode: "byob" });
+console.log((await reader.read(new Int16Array(2))).value!.constructor.name);
+console.log([3, 1, 2].sort().join(""), [1, 2, 3].map(value => value * 2).join(""), Array.from({ length: 2 }).length);
+Bun.gc(true);
+//// near/uint8array-base64/features.json
+{"features": ["Uint8ArrayBase64"], "keptToday": true}
+//// near/uint8array-base64/near.ts
+const bytes = new Uint8Array([72, 101, 108, 108, 111, 255]);
+console.log(Buffer.from(bytes).toString("base64"), Buffer.from(bytes).toString("base64url"), Buffer.from(bytes).toString("hex"), Buffer.from("SGVsbG8=", "base64").join(), Buffer.from("48656c6c6f", "hex").join());
+console.log(btoa("Hello"), atob("SGVsbG8="), new TextDecoder().decode(bytes.subarray(0, 5)), new TextEncoder().encode("Hello").join(), Buffer.alloc(4).write("0102", "hex"), bytes.length, Uint8Array.from([1, 2]).join(), Uint8Array.of(3).join(), String(bytes));
+Bun.gc(true);
+//// near/uint8clampedarray/features.json
+{"features": ["Uint8ClampedArray"], "keptToday": true}
+//// near/uint8clampedarray/near.ts
+import { inspect, types } from "node:util";
+////= total	Uint8ClampedArray	number
+console.log(total([1, 2, 3]), (types as any).isUint8ClampedArray(new Uint8Array(1)), (types as any).isUint8ClampedArray([]), types.isTypedArray(new Uint8Array(1)), ArrayBuffer.isView(new Uint8Array(1)));
+////= for-3	Int16Array	Uint16Array	Int32Array	Uint32Array	Float16Array	Float32Array
+////= for-4
+console.log(new Odd([1, 2, 3]).slice(1).constructor.name, new Odd([1, 2, 3]).map(value => value + 1).constructor.name, new Odd([1, 2, 3]).filter(value => value > 1).constructor.name);
+const view: any = new DataView(new ArrayBuffer(16));
+////= for
+view.setBigInt64(0, 5n);
+view.setBigUint64(8, 6n);
+console.log(view.getBigInt64(0), view.getBigUint64(8));
+console.log(Buffer.from([1, 2, 3]).subarray(1).toString("hex"), Buffer.concat([Buffer.from("a"), Buffer.from("b")]).toString(), Buffer.from([3, 1, 2]).sort().join(""), (await new Blob([new Uint8Array([1, 2])]).bytes()).length, new TextEncoder().encode("abc").length, crypto.getRandomValues(new Uint8Array(4)).length);
+const reader = new ReadableStream({ type: "bytes", pull(controller: any) { controller.enqueue(new Uint8Array([1, 2, 3, 4])); controller.close(); } }).getReader({ mode: "byob" });
+console.log((await reader.read(new Int16Array(2))).value!.constructor.name);
+console.log([3, 1, 2].sort().join(""), [1, 2, 3].map(value => value * 2).join(""), Array.from({ length: 2 }).length);
+Bun.gc(true);
+//// near/url/features.json
+{"features": ["Url"], "keptToday": true}
+//// near/url/near.ts
+console.log(Bun.fileURLToPath("file:///C:/tmp/a%20b.txt"), import.meta.url.startsWith("file:"), encodeURIComponent("a b&c"), decodeURIComponent("a%20b"), new Request("http://example.com/a?b=1").url, new Response("x").url === "");
+//// near/weak-references/features.json
+{"features": ["WeakReferences"], "keptToday": true}
+//// near/weak-references/near.ts
+let target: object | undefined = { name: "target" };
+const map = new WeakMap([[target, "held"]]);
+const set = new WeakSet([target]);
+console.log(map.get(target), set.has(target), map.has({}), set.has({}), Object.prototype.toString.call(map), Object.prototype.toString.call(set));
+target = undefined;
+for (let i = 0; i < 1000; i++) map.set({}, "x");
+Bun.gc(true);
+await new Promise(resolve => setTimeout(resolve, 10));
+Bun.gc(true);
+{
+  using resource = { [Symbol.dispose]() { console.log("disposed"); } };
+  console.log(typeof resource);
+}
+console.log(new AbortController().signal.aborted, typeof new Map().get(1));
+//// near/web-streams/features.json
+{"features": ["WebStreams"]}
+//// near/web-streams/near.ts
+console.log("no stream", [1, 2, 3].values().map(x => x * 2).toArray().join());
+async function* generate() { yield 1; yield 2; }
+for await (const value of generate()) console.log(value);
+console.log(await Promise.all([Promise.resolve(1)]), typeof queueMicrotask, new Uint8Array([1, 2]).length);
+await new Promise(resolve => setTimeout(resolve, 1));
+console.error("to stderr");
+//// net-addresses.ts
+// net.BlockList and net.SocketAddress
+import net from "node:net";
+const list = new net.BlockList();
+list.addAddress("10.0.0.1");
+list.addRange("10.0.1.1", "10.0.1.9");
+list.addSubnet("192.168.0.0", 16);
+console.log(list.check("10.0.0.1"), list.check("10.0.1.5"), list.check("192.168.7.7"), list.check("8.8.8.8"), list.rules.length);
+const address = new net.SocketAddress({ address: "127.0.0.1", port: 8080 });
+console.log(address.address, address.port, address.family, net.SocketAddress.parse("[::1]:443")?.family);
+//// node-assert.json
+{ "fallsBack": ["NodeAssert"] }
+//// node-assert.ts
+// node:assert prints a diff: the native Myers diff
+import assert from "node:assert";
+////= lines	assert.deepStrictEqual({ a: 1, b: [1, 2, 3], c: "x" }, { a: 1, b: [1, 2, 4], c: "y" }
+////= lines	assert.strictEqual("one\ntwo\nthree\n", "one\n2\nthree\n"
+//// node-fs.ts
+// node:fs: sync, callback and promise forms, a directory handle, cp, streams
+import fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const dir = fs.mkdtempSync(join(tmpdir(), "node-fs-"));
+fs.mkdirSync(join(dir, "a", "b"), { recursive: true });
+fs.writeFileSync(join(dir, "a", "one.txt"), "one");
+fs.appendFileSync(join(dir, "a", "one.txt"), "+two");
+console.log(fs.readFileSync(join(dir, "a", "one.txt"), "utf8"), fs.statSync(join(dir, "a", "one.txt")).size, fs.existsSync(join(dir, "nothing")));
+console.log(fs.readdirSync(dir, { recursive: true }).sort().join(" "), fs.readdirSync(join(dir, "a"), { withFileTypes: true }).map((entry: any) => `${entry.name}:${entry.isDirectory()}`).sort().join(" "));
+fs.cpSync(join(dir, "a"), join(dir, "copy"), { recursive: true });
+await fs.promises.cp(join(dir, "a"), join(dir, "copy2"), { recursive: true });
+console.log(await fs.promises.readFile(join(dir, "copy", "one.txt"), "utf8"), (await fs.promises.readdir(join(dir, "copy2"))).sort().join(" "));
+const handle = fs.opendirSync(dir);
+const names: string[] = [];
+for (let entry; (entry = handle.readSync()); ) names.push(entry.name);
+handle.closeSync();
+console.log(names.sort().join(" "));
+try { fs.readFileSync(join(dir, "nothing")); } catch (error) { console.log((error as any).code, (error as any).syscall); }
+const piped = Promise.withResolvers<void>();
+fs.createReadStream(join(dir, "a", "one.txt")).pipe(fs.createWriteStream(join(dir, "piped.txt"))).on("finish", () => piped.resolve());
+await piped.promise;
+fs.readFile(join(dir, "piped.txt"), "utf8", (_error: any, text: string) => {
+  console.log(text);
+  fs.rmSync(dir, { recursive: true, force: true });
+  console.log(fs.existsSync(dir));
+});
+//// node-http.ts
+// node:http on 127.0.0.1: a server and a client in one process
+import http from "node:http";
+const server = http.createServer((request: any, response: any) => {
+  let body = "";
+  request.on("data", (chunk: any) => (body += chunk));
+  request.on("end", () => {
+    response.writeHead(request.url === "/missing" ? 404 : 200, { "content-type": "text/plain", "x-method": request.method });
+    response.write(`${request.url} `);
+    response.end(body || "empty");
+  });
+});
+const ask = (path: string, method: string, body?: string) =>
+  new Promise<string>(resolve => {
+    const request = http.request({ host: "127.0.0.1", port: (server.address() as { port: number }).port, path, method }, (response: any) => {
+      let text = "";
+      response.on("data", (chunk: any) => (text += chunk));
+      response.on("end", () => resolve(`${response.statusCode} ${response.headers["x-method"]} ${text}`));
+    });
+    request.end(body);
+  });
+server.listen(0, "127.0.0.1", async () => {
+  console.log(await ask("/a", "GET"));
+  console.log(await ask("/b?c=1", "POST", "posted"));
+  console.log(await ask("/missing", "DELETE"));
+  server.close(() => console.log("closed"));
+});
+//// node-os.ts
+// node:os
+import os from "node:os";
+console.log(os.cpus().length > 0, os.totalmem() > os.freemem(), typeof os.hostname(), os.loadavg().length, os.uptime() > 0, typeof os.release(), typeof os.version(), os.homedir().length > 0, os.userInfo().uid >= 0, "lo" in os.networkInterfaces(), os.getPriority() <= 19, os.availableParallelism() > 0);
+//// node-path.ts
+// node:path
+import path from "node:path";
+console.log(path.join("/a", "..", "b", "./c.txt"), path.resolve("/x", "y", "../z"), path.relative("/a/b/c", "/a/d"), path.basename("/a/b.tar.gz", ".gz"), path.dirname("/a/b/c"), path.extname("x.test.ts"), path.normalize("/a//b/../c/"), path.isAbsolute("a"), JSON.stringify(path.parse("/home/u/f.txt")), path.format({ dir: "/d", name: "n", ext: ".e" }), path.win32.join("C:\\a", "..", "b"), path.win32.relative("C:\\a\\b", "C:\\a\\c"), path.toNamespacedPath("/a"));
+//// node-small-modules.ts
+import types from "node:util/types";
+import constants from "node:constants";
+console.log(types.isPromise(Promise.resolve()), types.isRegExp(/x/), types.isUint8Array(new Uint8Array(1)), types.isProxy(new Proxy({}, {})), types.isBoxedPrimitive(Object(1)), typeof constants.O_RDONLY, typeof constants.SIGINT, typeof constants.E2BIG);
+//// node-sqlite.json
+{ "features": ["Sqlite"] }
+//// node-sqlite.ts
+// node:sqlite is a native module: the program names it in another way than bun:sqlite
+import { DatabaseSync } from "node:sqlite";
+const database = new DatabaseSync(":memory:");
+database.exec("create table numbers (a integer)");
+database.prepare("insert into numbers values (?)").run(41);
+console.log(JSON.stringify(database.prepare("select a + 1 as b from numbers").all()));
+database.close();
+//// node-url-natives.json
+{ "features": ["NodeUrl"] }
+//// node-url-natives.ts
+import url from "node:url";
+console.log(url.domainToASCII("espa\u00f1ol.com"), url.domainToUnicode("xn--espaol-zwa.com"), url.parse("http://a.b/c?d=e").pathname);
+//// node-util-natives.json
+{ "features": ["NodeUtil"] }
+//// node-util-natives.ts
+import util from "node:util";
+import { getEventListeners, listenerCount } from "node:events";
+console.log(util.inspect({ a: [1, 2, { b: "multi\nline" }], e: new Error("x").message }), util.getSystemErrorName(-2), util.types.isNativeError(new Error("e")), util.parseEnv("A=1\nB=two").B, (util as any).getSystemErrorMap().size > 10);
+const target = new EventTarget(); target.addEventListener("ping", () => {});
+console.log(getEventListeners(target, "ping").length, (listenerCount as any)(target, "ping"), util.inspect(Object.assign([1, 2], { extra: true })));
+//// node-v8.ts
+import v8 from "node:v8";
+console.log(typeof v8.getHeapStatistics().used_heap_size, (v8 as any).isStringOneByteRepresentation("abc"), (v8 as any).isStringOneByteRepresentation("\u20ac"), v8.deserialize(v8.serialize({ a: 1 })).a);
+//// node-validators.ts
+import { setMaxListeners, EventEmitter } from "node:events";
+import { createServer } from "node:net";
+try { setMaxListeners(-1, new EventEmitter()); } catch (error: any) { console.log(error.code); }
+try { createServer().listen(99999999); } catch (error: any) { console.log(error.code); }
+try { Buffer.alloc(4).readInt8(9); } catch (error: any) { console.log(error.code); }
+//// node-vm.json
+{ "says": { "NodeVm": "Cannot load 'node:vm'" } }
+//// node-vm.ts
+import vm from "node:vm";
+const context = vm.createContext({ seed: 20, out: [] as number[] });
+console.log(vm.runInContext("out.push(seed + 1); seed * 2 + 2", context), (context as any).out.join());
+console.log(vm.runInNewContext("typeof process + ' ' + answer", { answer: 42 }));
+const script = new vm.Script("this.count = (this.count || 0) + 1");
+console.log(script.runInContext(context), script.runInContext(context), vm.isContext(context), vm.isContext({}));
+////= lines	vm.runInNewContext("throw new TypeError('inside')"
+console.log(vm.compileFunction("return a + b", ["a", "b"])(40, 2));
+//// node-zlib.json
+{ "features": ["NodeZlib", "CompressionStreams"] }
+//// node-zlib.ts
+import { gzipSync, gunzipSync, deflateRawSync, inflateRawSync, createGzip, crc32 } from "node:zlib";
+
+const text = "deflate ".repeat(3000);
+const bytes = new TextEncoder().encode(text);
+const same = (unpacked: Uint8Array) => new TextDecoder().decode(unpacked) === text;
+
+const gz = Bun.gzipSync(bytes);
+console.log("Bun.gzipSync", gz.length, same(Bun.gunzipSync(gz)));
+const raw = Bun.deflateSync(bytes, { level: 9 });
+console.log("Bun.deflateSync", raw.length, same(Bun.inflateSync(raw)));
+const byZlib = Bun.gzipSync(bytes, { library: "zlib" });
+console.log("Bun.gzipSync zlib", byZlib.length, same(Bun.gunzipSync(byZlib, { library: "zlib" })));
+console.log("node:zlib", gzipSync(bytes).length, same(gunzipSync(gzipSync(bytes))), same(inflateRawSync(deflateRawSync(bytes))), crc32(bytes));
+const stream = createGzip();
+const chunks: Buffer[] = [];
+stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+const ended = new Promise(resolve => stream.on("end", resolve));
+stream.end(bytes);
+await ended;
+console.log("createGzip", same(Bun.gunzipSync(Buffer.concat(chunks))));
+const web = await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream("gzip"))).bytes();
+console.log("CompressionStream", web.length, (await new Response(new Blob([web]).stream().pipeThrough(new DecompressionStream("gzip"))).text()) === text);
+//// nodequic.ts
+import quic from "node:quic";
+
+const endpoint = new quic.QuicEndpoint();
+console.log(typeof quic.listen, typeof quic.connect, endpoint.destroyed, endpoint.closing);
+await endpoint.close();
+console.log(endpoint.destroyed);
+//// open-in-editor.ts
+try {
+  (Bun.openInEditor as any)();
+  console.log("no error");
+} catch (error) {
+  if ((error as any).code === "ERR_FEATURE_REMOVED") throw error;
+  console.log((error as Error).name);
+}
+//// operations-common-containers.json
+{ "features": [] }
+//// operations-common-containers.ts
+const ages = new Map<string, number>();
+ages.set("a", 1);
+const seen = new Set<string>();
+seen.add("x");
+const numbers: number[] = [];
+for (let i = 0; i < 40; i++) numbers.push(i + 0.5);
+ages.clear();
+console.log(ages.size, seen.has("x"), new Uint8Array(4).length, numbers.indexOf(3.5), [1, 2, 3].indexOf(2));
+//// operations-common-data.json
+{ "features": [] }
+//// operations-common-data.ts
+console.log(Date.now() > 0, JSON.stringify({ a: 1, b: [1, 2.5], c: "x" }), await new Response("body").text());
+//// operations-common-numbers.json
+{ "features": [] }
+//// operations-common-numbers.ts
+const unknown: any[] = [7, 2.5, 10n];
+console.log(-unknown[0], ~unknown[0], unknown[0] >>> 1, 2 ** unknown[1], unknown[0] ^ 3, unknown[2] * 3n);
+//// operations-common-objects.json
+{ "features": [] }
+//// operations-common-objects.ts
+class Holder {
+  #value = 1;
+  static has(object: object) {
+    return #value in object;
+  }
+  get value() {
+    return this.#value;
+  }
+  set value(value: number) {
+    this.#value = value;
+  }
+}
+function count() {
+  return arguments.length;
+}
+const holder = new Holder();
+holder.value = 2;
+const bare = Object.create(null);
+console.log(holder.value, Holder.has(holder), (count as any)(1, 2), Object.keys(bare).length, typeof missing, (await Promise.all([1, 2])).join());
+declare const missing: unknown;
+//// operations-common-text.json
+{ "features": [] }
+//// operations-common-text.ts
+const text: string = ["a", "b", "c"].join(",");
+let numbered = "";
+for (let i = 0; i < 3; i++) numbered += `${i}:${i + 1};`;
+console.log(/b/.test(text), text.replace("a", "x"), text.split(/,/).length, text.lastIndexOf("c"), numbered);
+//// operations-rare-casts.json
+{ "features": [] }
+//// operations-rare-casts.ts
+interface System {
+  read(path: string): string;
+  args: string[];
+}
+interface Host {
+  read(path: string): string;
+  onError: (message: string) => void;
+}
+const system: System = { read: path => "read " + path, args: ["x"] };
+function use(host: Host) {
+  host.onError(host.read("a"));
+}
+function withSystem(given: System) {
+  const host: Host = given as any;
+  host.onError = message => console.log("error", message);
+  use(host);
+}
+withSystem(system);
+console.log(Object.keys(system).join(), system.args.length);
+//// operations-rare-classes.json
+{ "features": [] }
+//// operations-rare-classes.ts
+class Counter {
+  static label = "a";
+  static count = 0;
+  static next(): number {
+    return ++Counter.count;
+  }
+}
+const literal = {
+  get doubled() {
+    return Counter.count * 2;
+  },
+};
+async function later(value: number) {
+  await null;
+  return value + 1;
+}
+const unknown: any = Counter.next;
+console.log(Counter.label, Counter.next(), unknown.call(Counter), literal.doubled, await later(1));
+//// operations-rare-containers.json
+{ "features": [] }
+//// operations-rare-containers.ts
+function listed(list: number[]): string {
+  let out = "";
+  for (const [index, element] of list.entries()) out += index + ":" + element + ",";
+  return out;
+}
+console.log(listed([4, 5, 6]));
+//// operations-rare-copies.json
+{ "features": [] }
+//// operations-rare-copies.ts
+interface Pair {
+  a: number;
+  optional?: number;
+  b: number;
+}
+interface Wider extends Pair {
+  c: number;
+}
+const later: Pair = { a: 1, b: 2 };
+later.optional = 3;
+const wider: Wider = { ...later, a: 5, c: 6 };
+const copy: Pair = { ...wider };
+class Base {
+  x = 1;
+}
+const adopted: Base = Object.setPrototypeOf({ x: 2 }, Base.prototype);
+console.log(JSON.stringify(wider), JSON.stringify(copy), adopted instanceof Base, adopted.x);
+//// operations-rare-data.json
+{ "features": [] }
+//// operations-rare-data.ts
+interface Point {
+  x: number;
+  y: number;
+  name: string;
+}
+const point: Point = JSON.parse('{"x":1,"y":2.5,"name":"p"}');
+console.log(point.x + point.y, point.name);
+const query = new URLSearchParams("a=1&b=2");
+console.log([...query.entries()].join(";"), query.get("b"));
+//// operations-rare-numbers.json
+{ "features": [] }
+//// operations-rare-numbers.ts
+let sum = 0;
+for (let i = 0; i < 5; i++) sum += Math.hypot(i, i + 1, i + 2) + Math.sin(i) + Math.cbrt(i) + Math.atan2(i, 2);
+console.log(sum.toFixed(6));
+//// operations-rare-properties.json
+{ "features": [] }
+//// operations-rare-properties.ts
+interface Named {
+  name: string;
+  size?: number;
+}
+const named: Named = { name: "n", size: 1 };
+delete named.size;
+const open: any = named;
+open.extra = 7;
+console.log("size" in named, "extra" in named, open.extra, Object.keys(named).join());
+//// operations-rare-text.json
+{ "features": [] }
+//// operations-rare-text.ts
+const words = ["pear", "apple", "fig"];
+console.log(words.sort((a, b) => a.localeCompare(b)).join(), "a-b-c".search(/b/), /x/gi.flags);
+//// package-files.json
+{ "build": ["--compile-autoload-package-json", "--compile-autoload-tsconfig"] }
+//// package-files.ts
+// an executable built with --compile-autoload-package-json and --compile-autoload-tsconfig reads both files where it runs: Bun.resolveSync goes by "exports" and by "paths"
+import { mkdtempSync, mkdirSync, realpathSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
+const dir = realpathSync(mkdtempSync(join(tmpdir(), "package-files-")));
+mkdirSync(join(dir, "node_modules", "pkg", "lib"), { recursive: true });
+mkdirSync(join(dir, "src"));
+writeFileSync(join(dir, "node_modules", "pkg", "package.json"), JSON.stringify({ name: "pkg", exports: { ".": "./lib/main.js", "./sub": "./lib/sub.js" }, sideEffects: ["*.css", "./lib/s*.js"] }));
+writeFileSync(join(dir, "node_modules", "pkg", "lib", "main.js"), "");
+writeFileSync(join(dir, "node_modules", "pkg", "lib", "sub.js"), "");
+writeFileSync(join(dir, "src", "thing.ts"), "");
+writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } } }));
+writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "root" }));
+for (const name of ["pkg", "pkg/sub", "@/thing", "pkg/missing"]) {
+  try { console.log(name, relative(dir, Bun.resolveSync(name, dir))); } catch (error) { console.log(name, (error as Error).name); }
+}
+rmSync(dir, { recursive: true });
+//// parse-args.ts
+// util.parseArgs
+import { parseArgs } from "node:util";
+const parsed = parseArgs({ args: ["-f", "--bar", "b", "--no-color", "rest", "--", "-x"], options: { f: { type: "boolean", short: "f" }, bar: { type: "string" }, color: { type: "boolean" } }, allowPositionals: true, allowNegative: true, tokens: true });
+console.log(JSON.stringify(parsed.values), JSON.stringify(parsed.positionals), parsed.tokens!.length);
+try { parseArgs({ args: ["--unknown"], options: {} }); } catch (error) { console.log((error as any).code); }
+//// performance-handed-on.json
+{ "features": ["PerformanceMarks"] }
+//// performance-handed-on.ts
+function marked(timeline: { mark(name: string): { name: string } }) {
+  return timeline.mark("handed on").name;
+}
+console.log(marked(performance));
+//// performance-mark.json
+{ "features": ["PerformanceTimeline", "StructuredClone"] }
+//// performance-mark.ts
+const mark = performance.mark("start", { detail: { from: "a mark" } });
+console.log(mark.name, mark.entryType, JSON.stringify(mark.detail), performance.getEntriesByName("start").length);
+//// performance-of-perf-hooks.json
+{ "features": ["PerformanceTimeline", "StructuredClone"] }
+//// performance-of-perf-hooks.ts
+import { performance as timeline } from "node:perf_hooks";
+const mark = timeline.mark("start", { detail: { from: "node:perf_hooks" } });
+console.log(mark.name, JSON.stringify(mark.detail), timeline.getEntriesByName("start").length);
+//// performance-timeline.ts
+declare const PerformanceObserver: any, PerformanceMark: any, PerformanceMeasure: any;
+const seen: string[] = [];
+const observer = new PerformanceObserver((list: any) => {
+  for (const entry of list.getEntries()) seen.push(entry.entryType + ":" + entry.name);
+});
+observer.observe({ entryTypes: ["mark", "measure"] });
+const mark = performance.mark("start", { detail: { from: "use" } });
+performance.mark("end");
+const measure = performance.measure("span", "start", "end");
+console.log(mark instanceof PerformanceMark, JSON.stringify(mark.detail), measure instanceof PerformanceMeasure, measure.duration >= 0);
+console.log(performance.getEntriesByType("mark").map((entry: any) => entry.name).join(), performance.getEntriesByName("span").length);
+await new Promise(resolve => setTimeout(resolve, 10));
+console.log(seen.sort().join());
+observer.disconnect();
+performance.clearMarks();
+performance.clearMeasures();
+console.log(performance.getEntries().length);
+//// plugin.ts
+Bun.plugin({
+  name: "shown",
+  setup(build: any) {
+    console.log(typeof build.onLoad, typeof build.onResolve, typeof build.module);
+    build.module("shown:module", () => ({ exports: { value: 1 }, loader: "object" }));
+  },
+});
+console.log(typeof Bun.plugin.clearAll, (await import(["shown", "module"].join(":"))).value);
+//// post-message.ts
+console.log(typeof postMessage);
+try { (postMessage as any)({ a: 1 }); console.log("posted"); } catch (error: any) { if (error.code === "ERR_FEATURE_REMOVED") throw error; console.log(error.name); }
+//// process-about.json
+{ "features": ["ProcessInformation"] }
+//// process-about.ts
+console.log(typeof process.versions.bun, typeof process.versions.node, process.release.name, typeof process.config.variables, typeof process.features.typescript, process.allowedNodeEnvironmentFlags.has("--max-old-space-size"), typeof (process as any).revision, typeof process.mainModule, typeof (process as any).finalization.register);
+console.log(process.hasUncaughtExceptionCaptureCallback(), typeof (process as any).getBuiltinModule("node:path").join);
+(process as any).ref({}); (process as any).unref({});
+try { (process as any).assert(false, "no"); } catch (error: any) { console.log(error.code); }
+//// process-binding.ts
+process.noDeprecation = true;
+const uv = (process as any).binding("uv");
+console.log(uv.errname(-2), typeof uv.UV_EOF, typeof (process as any).binding("constants").os, Object.keys((process as any).binding("natives")).length > 10, typeof (process as any).binding("buffer").kMaxLength, typeof (process as any).binding("util").isDate);
+try { (process as any).binding("nothing"); } catch (error: any) { console.log(error.message); }
+//// process-control.json
+{ "posix": true }
+//// process-control.ts
+console.log(typeof process.getuid!(), typeof process.getgid!(), typeof process.geteuid!(), typeof process.getegid!(), Array.isArray(process.getgroups!()), typeof process.umask(), process.kill(process.pid, 0), typeof process.title);
+const before = process.cwd();
+process.chdir("/");
+console.log(process.cwd(), before.length > 0);
+process.title = "renamed";
+console.log(process.title);
+try { process.setuid!(-5 as any); } catch (error: any) { console.log(error.code); }
+try { process.kill(process.pid, "SIGNOTHING" as any); } catch (error: any) { console.log(error.code); }
+//// process-exec-argv.json
+{ "runsToday": ["ProcessExecArgv"] }
+//// process-exec-argv.ts
+console.log(Array.isArray(process.execArgv), process.execArgv.length);
+//// process-execve.json
+{ "posix": true }
+//// process-execve.ts
+process.execve!("/bin/echo", ["echo", "another program took this one's place"], {});
+//// process-kill.ts
+console.log(process.kill(process.pid, 0));
+try {
+  process.kill(process.pid, "SIGNOTHING" as any);
+} catch (error: any) {
+  console.log(error.code);
+}
+//// process-module-loaders.json
+{ "features": [] }
+//// process-module-loaders.ts
+const { Database } = (process as any).getBuiltinModule("bun:sqlite");
+const database = new Database(":memory:");
+console.log(JSON.stringify(database.query("select 41 + 1 as answer").get()));
+database.close();
+//// process-report.ts
+const report: any = process.report.getReport();
+console.log(Object.keys(report).sort().join(" "));
+console.log(typeof report.header.nodejsVersion, report.header.arch === process.arch, Array.isArray(report.sharedObjects));
+//// process-usage.ts
+const memory = process.memoryUsage();
+console.log(Object.keys(memory).join(), memory.rss > 0, process.memoryUsage.rss() > 0, Object.keys(process.cpuUsage()).join(), Object.keys((process as any).threadCpuUsage()).join(), process.resourceUsage().maxRSS > 0, process.uptime() >= 0, process.availableMemory() > 0, typeof process.constrainedMemory());
+//// profiler.json
+{ "features": ["Profilers"] }
+//// profiler.ts
+import { Session } from "node:inspector";
+import { heapStats } from "bun:jsc";
+import v8 from "node:v8";
+
+function work(rounds: number): number {
+  let sum = 0;
+  for (let round = 0; round < rounds; round++) sum += Math.sqrt(round) % 7;
+  return sum;
+}
+const session = new Session();
+session.connect();
+session.post("Profiler.enable");
+session.post("Profiler.start");
+const until = Date.now() + 60;
+while (Date.now() < until) work(20000);
+session.post("Profiler.stop", (error: unknown, result: any) => {
+  console.log(error == null, result.profile.nodes.length > 1, result.profile.samples.length > 0);
+});
+session.disconnect();
+const snapshot: any = Bun.generateHeapSnapshot();
+console.log(snapshot.version, snapshot.nodes.length > 1000, snapshot.nodeClassNames.includes("Function"));
+const text: string = Bun.generateHeapSnapshot("v8");
+console.log(JSON.parse(text).snapshot.meta.node_fields[0]);
+console.log(heapStats().objectCount > 100, v8.getHeapStatistics().used_heap_size > 0);
+//// promise-combinators.json
+{"features": ["PromiseAll", "PromiseAllSettled", "PromiseAny", "PromiseRace"]}
+//// promise-combinators.ts
+const lines: string[] = [];
+const say = (name: string, value: unknown) => lines.push(`${name}: ${JSON.stringify(value)}`);
+const later = <T>(value: T, after: number) => new Promise<T>(resolve => setTimeout(() => resolve(value), after));
+const failing = (reason: string, after: number) => new Promise<never>((_, reject) => setTimeout(() => reject(new Error(reason)), after));
+
+say("all", await Promise.all([1, later(2, 2), Promise.resolve(3), { then: (resolve: (value: number) => void) => resolve(4) }]));
+say("all, empty", await Promise.all([]));
+say("all, one fails", await Promise.all([later(1, 3), failing("second", 1)]).catch(error => error.message));
+say("allSettled", await Promise.allSettled([1, failing("no", 1), later("yes", 2)]).then(all => all.map(one => (one.status === "fulfilled" ? one.value : one.reason.message))));
+say("any", await Promise.any([failing("a", 1), later("b", 3), later("c", 2)]));
+say("any, all fail", await Promise.any([failing("a", 1), failing("b", 2)]).catch(error => [error.name, error.errors.length]));
+say("race", await Promise.race([later("slow", 5), later("fast", 1)]));
+say("race, a failure first", await Promise.race([later("slow", 5), failing("fast", 1)]).catch(error => error.message));
+say("of a set", await Promise.all(new Set([later(1, 1), 2])));
+class Mine<T> extends Promise<T> {}
+say("a subclass", (Mine.all([1]) instanceof Mine) && (await Mine.race([7])));
+console.log(lines.join("\n"));
+//// rare-array-methods.ts
+const list = [3, 1, 2, 1];
+console.log(list.toSorted().join(), list.toReversed().join(), list.toSpliced(1, 2, 9).join(), list.with(0, 7).join(), list.lastIndexOf(1), [1, [2, [3, [4]]]].flat(2).length, [1, 2, 3, 4, 5].copyWithin(0, 3).join(), list.join());
+console.log(["b", "a"].toSorted().join(), [1.5, 0.5].toSorted((a, b) => a - b).join(), [, 1].toReversed().length, Array.prototype.lastIndexOf.call({ length: 2, 0: "x", 1: "x" }, "x"));
+//// regexp-properties.json
+{ "features": ["RegExpUnicodeProperties"] }
+//// regexp-properties.ts
+console.log("Ünï cödé 42 λόγος".match(/\p{L}+/gu)?.join("|"), /^\p{Script=Greek}+$/u.test("λόγος"), /\P{Lu}/u.test("A"), "a1٣".replace(/\p{Nd}/gu, "#"));
+console.log(new RegExp("\\p{Emoji_Presentation}", "u").test("🙂"), /[\p{Lu}--[A-C]]/v.test("D"), /[\p{Lu}--[A-C]]/v.test("B"));
+////= lines-2	new RegExp("\\p{Nope}", "u"
+//// regexp-property-named-group.json
+{ "features": ["RegExpUnicodeProperties"], "build": ["--disallow-code-generation-from-strings"], "runsToday": ["RegExpUnicodeProperties"] }
+//// regexp-property-named-group.ts
+console.log(/(?<word>\p{L}+)/u.exec("héllo")!.groups!.word);
+//// regexp.ts
+const lines: string[] = [];
+const say = (name: string, value: unknown) => lines.push(`${name}: ${JSON.stringify(value)}`);
+
+const text = "2026-10-17 bun 1.4.3, node 25.6.0; Zoë wrote 12 tests, 3 failed";
+say("test", [/\d{4}-\d\d-\d\d/.test(text), /^node/.test(text)]);
+say("exec", /(\w+) (\d+)\.(\d+)\.(\d+)/.exec(text));
+say("named groups", /(?<year>\d{4})-(?<month>\d\d)/.exec(text)?.groups);
+say("match, global", text.match(/\d+/g));
+say("matchAll", [...text.matchAll(/([a-z]+) (\d+)/g)].map(found => [found.index, found[1], found[2]]));
+say("replace", text.replace(/(\d+)\.(\d+)\.(\d+)/g, "$3.$2.$1"));
+say("replace by a function", text.replace(/\b[a-z]/g, letter => letter.toUpperCase()));
+say("split", text.split(/[,;] /));
+say("search", text.search(/wrote/));
+say("an atom", "a/b/c".replace(/\//g, "-"));
+say("made from text", new RegExp("z" + "o.", "iu").exec(text)?.[0]);
+say("match with a string", text.match("no.e")?.[0]);
+say("sticky, lastIndex", (() => { const sticky = /\d+/y; sticky.lastIndex = 5; return [sticky.exec(text)?.[0], sticky.lastIndex]; })());
+say("lookbehind, backreference", [text.match(/(?<=bun )\S+/)?.[0], /(\d)\1/.exec("1223")?.[0]]);
+say("source, flags", [/a\/b/gi.source, /a/dgimsuy.flags, String(/x+/v)]);
+say("escape", (RegExp as unknown as { escape?: (text: string) => string }).escape?.("a.b*c") ?? "none");
+say("many ways", /^(?:a?){18}a{18}$/.test("a".repeat(18)));
+say("a wide subject", "日本語のテキスト、テスト".split(/[、。]/));
+console.log(lines.join("\n"));
+//// road-build-bytecode.json
+{ "features": ["RuntimeTranspiler"], "runsToday": ["RuntimeTranspiler"] }
+//// road-build-bytecode.ts
+import { writeFileSync } from "node:fs";
+writeFileSync("in.js", "console.log(1 + 1)");
+const result = await Bun.build({ entrypoints: ["./in.js"], bytecode: true, target: "bun", format: "cjs", outdir: "./out" });
+console.log(result.success, result.outputs.map(output => output.kind).sort().join(","));
+//// road-cookies-under-a-name-from-data.json
+{ "features": ["Cookie"] }
+//// road-cookies-under-a-name-from-data.ts
+const name = ["coo", "kies"].join("");
+using server = Bun.serve({
+  port: 0,
+  routes: {
+    "/": request => new Response(JSON.stringify(request, [name])),
+  },
+});
+console.log(await (await fetch(server.url)).text());
+//// road-image-write-s3.json
+{ "features": ["S3Client"], "env": { "AWS_ACCESS_KEY_ID": "a", "AWS_SECRET_ACCESS_KEY": "b", "AWS_ENDPOINT": "http://127.0.0.1:9" } }
+//// road-image-write-s3.ts
+const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+try {
+  await new Bun.Image(png).write("s3://bucket/key.png");
+  console.log("written");
+} catch (error) {
+  if ((error as any).code === "ERR_FEATURE_REMOVED") throw error;
+  console.log("threw", (error as Error).name, (error as any).code);
+}
+//// road-serve-bun-info.json
+{ "features": ["BunInfo"] }
+//// road-serve-bun-info.ts
+const server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+const answer = await fetch(`http://127.0.0.1:${server.port}/bun:info`);
+console.log(answer.status, (await answer.text()).length > 0);
+server.stop(true);
+//// road-sql-sqlite-url.json
+{ "features": ["Sqlite"] }
+//// road-sql-sqlite-url.ts
+const sql = new Bun.SQL("sqlite://:memory:");
+console.log(JSON.stringify(await sql`select 1 as a`));
+await sql.close();
+//// road-sqlite-load-extension.json
+{ "features": ["Sqlite"] }
+//// road-sqlite-load-extension.ts
+import { Database } from "bun:sqlite";
+const database = new Database(":memory:");
+try {
+  database.loadExtension("./no-such-extension");
+  console.log("loaded");
+} catch (error) {
+  console.log("threw", (error as Error).name);
+}
+console.log(database.query("select 1 as one").get());
+//// road-transpiler-tsconfig.json
+{ "features": ["PackageFiles"] }
+//// road-transpiler-tsconfig.ts
+const transpiler = new Bun.Transpiler({ loader: "tsx", tsconfig: { compilerOptions: { jsx: "react", jsxFactory: "h" } } });
+console.log(transpiler.transformSync("export const a = <b />;").trim());
+//// road-websocket-proxy.json
+{ "features": ["WebSocket"] }
+//// road-websocket-proxy.ts
+const socket = new WebSocket("ws://127.0.0.1:9/", { proxy: "http://127.0.0.1:9" } as any);
+socket.onerror = () => { console.log("error event"); };
+socket.onclose = event => { console.log("closed", event.code); };
+//// road-x509-check-host.json
+{ "features": ["X509"] }
+//// road-x509-check-host.ts
+import { X509Certificate } from "node:crypto";
+const pem = `-----BEGIN CERTIFICATE-----
+MIIBtjCCAVugAwIBAgITBmyf1XSXNmY/Owua2eiedgPySjAKBggqhkjOPQQDAjA5
+MQswCQYDVQQGEwJVUzEPMA0GA1UEChMGQW1hem9uMRkwFwYDVQQDExBBbWF6b24g
+Um9vdCBDQSAzMB4XDTE1MDUyNjAwMDAwMFoXDTQwMDUyNjAwMDAwMFowOTELMAkG
+A1UEBhMCVVMxDzANBgNVBAoTBkFtYXpvbjEZMBcGA1UEAxMQQW1hem9uIFJvb3Qg
+Q0EgMzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABCmXp8ZBf8ANm+gBG1bG8lKl
+ui2yEujSLtf6ycXYqm0fc4E7O5hrOXwzpcVOho6AF2hiRVd9RFgdszflZwjrZt6j
+QjBAMA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgGGMB0GA1UdDgQWBBSr
+ttvXBp43rDCGB5Fwx5zEGbF4wDAKBggqhkjOPQQDAgNJADBGAiEA4IWSoxe3jfkr
+BqWTrBqYaGFy+uGh0PsceGCmQ5nFuMQCIQCcAu/xlJyzlvnrxir4tiz+OpAUFteM
+YyRIHN8wfdVoOw==
+-----END CERTIFICATE-----`;
+const certificate = new X509Certificate(pem);
+console.log(certificate.checkHost("example.com"), certificate.checkHost("Amazon Root CA 3"), certificate.subject.length);
+//// s3.json
+{ "features": ["S3Responses"] }
+//// s3.ts
+const answers: Record<string, string> = {
+  list: `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult><Name>box</Name><KeyCount>1</KeyCount><IsTruncated>false</IsTruncated><Contents><Key>a.txt</Key><Size>3</Size><ETag>"tag"</ETag><LastModified>2026-01-01T00:00:00.000Z</LastModified></Contents></ListBucketResult>`,
+  missing: `<?xml version="1.0" encoding="UTF-8"?><Error><Code>NoSuchKey</Code><Message>There is no such key.</Message></Error>`,
+};
+const server = Bun.serve({
+  port: 0,
+  fetch(request: Request) {
+    const isList = new URL(request.url).searchParams.has("list-type");
+    return new Response(isList ? answers.list : answers.missing, { status: isList ? 200 : 404, headers: { "content-type": "application/xml" } });
+  },
+});
+const client = new Bun.S3Client({ endpoint: `http://localhost:${server.port}`, accessKeyId: "id", secretAccessKey: "secret", bucket: "box" });
+const listed = await client.list();
+console.log(listed.name, listed.keyCount, listed.contents?.[0]?.key, listed.contents?.[0]?.size);
+console.log(await client.file("nothing.txt").text().catch((error: any) => `${error.code}: ${error.message}`));
+await server.stop(true);
+//// s3client.ts
+const objects = new Map<string, string>();
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  async fetch(request) {
+    const key = new URL(request.url).pathname;
+    const signed = (request.headers.get("authorization") ?? "").startsWith("AWS4-HMAC-SHA256 Credential=an-access-key/");
+    if (!signed) return new Response("not signed", { status: 403 });
+    if (request.method === "PUT") {
+      objects.set(key, await request.text());
+      return new Response(null, { status: 200, headers: { etag: '"1"' } });
+    }
+    const body = objects.get(key);
+    if (body === undefined) return new Response("<Error><Code>NoSuchKey</Code><Message>no such key</Message></Error>", { status: 404 });
+    return new Response(request.method === "HEAD" ? null : body, { headers: { "content-length": String(body.length), etag: '"1"' } });
+  },
+});
+
+const client = new Bun.S3Client({
+  endpoint: `http://127.0.0.1:${server.port}`,
+  bucket: "a-bucket",
+  region: "us-east-1",
+  accessKeyId: "an-access-key",
+  secretAccessKey: "a-secret",
+});
+console.log(await client.write("folder/file.txt", "kept in the bucket"));
+console.log(await client.file("folder/file.txt").text());
+console.log(await client.exists("folder/file.txt"), await client.exists("folder/nothing.txt"));
+const presigned = new URL(client.presign("folder/file.txt", { expiresIn: 60 }));
+console.log(presigned.pathname, presigned.searchParams.get("X-Amz-Algorithm"), presigned.searchParams.get("X-Amz-Signature")?.length);
+console.log(await Bun.file(`s3://a-bucket/folder/file.txt`, { endpoint: `http://127.0.0.1:${server.port}`, accessKeyId: "an-access-key", secretAccessKey: "a-secret" } as never).text());
+server.stop(true);
+//// secrets.ts
+console.log(typeof Bun.secrets.get, typeof Bun.secrets.set, typeof Bun.secrets.delete);
+try {
+  await (Bun.secrets.get as any)({});
+} catch (error) {
+  console.log((error as Error).name, (error as { code?: string }).code);
+}
+//// semver.ts
+// Bun.semver
+console.log(Bun.semver.satisfies("1.2.3", "^1.2.0"), Bun.semver.satisfies("2.0.0", "^1.2.0"), Bun.semver.order("1.0.0", "1.0.1"), ["1.10.0", "1.2.0", "1.2.0-beta.1"].sort(Bun.semver.order).join(" "));
+//// serve.ts
+// Bun.serve on 127.0.0.1: routes, parameters, a static response, a stream, a file, an error, a WebSocket, stop
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const path = join(tmpdir(), `serve-use-${process.pid}.txt`);
+await Bun.write(path, "from a file");
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  routes: {
+    "/static": new Response("static", { headers: { "x-kind": "static" } }),
+    "/users/:id": (request: any) => Response.json({ id: request.params.id, method: request.method }),
+    "/file": () => new Response(Bun.file(path)),
+  },
+  async fetch(request: Request, server: any) {
+    const url = new URL(request.url);
+    if (url.pathname === "/ws") return server.upgrade(request, { data: { name: "w" } }) ? undefined : new Response("no upgrade", { status: 400 });
+    if (url.pathname === "/stream") return new Response(new ReadableStream({ start(controller: any) { controller.enqueue("a"); controller.enqueue("b"); controller.close(); } }));
+    if (url.pathname === "/echo") return new Response((await request.text()).toUpperCase(), { status: 201 });
+    if (url.pathname === "/throw") throw new Error("boom");
+    return new Response("not found", { status: 404 });
+  },
+  error(error: Error) { return new Response("caught " + error.message, { status: 500 }); },
+  websocket: { message(socket: any, message: any) { socket.send(`${socket.data.name}:${message}`); socket.close(); } },
+});
+const base = `http://127.0.0.1:${server.port}`;
+for (const [url, init] of [["/static"], ["/users/7"], ["/file"], ["/stream"], ["/echo", { method: "POST", body: "hi" }], ["/throw"], ["/none"]] as [string, any][]) {
+  const response = await fetch(base + url, init);
+  console.log(url, response.status, await response.text(), response.headers.get("x-kind") ?? "");
+}
+const answered = Promise.withResolvers<string>();
+const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+socket.onopen = () => socket.send("ping");
+socket.onmessage = (event: any) => answered.resolve(String(event.data));
+console.log(await answered.promise, server.hostname, typeof server.pendingRequests, server.development);
+await server.stop(true);
+await Bun.file(path).delete();
+console.log("stopped");
+//// set-methods.ts
+const odd = new Set([1, 3, 5, 7]);
+const low = new Set([1, 2, 3]);
+const list = (set: Set<number>) => [...set].join(",");
+console.log(list(odd.union(low)), list(odd.intersection(low)), list(odd.difference(low)), list(odd.symmetricDifference(low)));
+console.log(new Set([1, 3]).isSubsetOf(odd), odd.isSupersetOf(new Set([1, 3])), odd.isDisjointFrom(new Set([2, 4])), low.isSubsetOf(odd));
+console.log(list(odd.union(new Map([[9, 9]]) as any)), list(low.intersection({ size: 1, has: (value: number) => value === 2, keys: () => [2][Symbol.iterator]() } as any)));
+//// shell.json
+{ "posix": true }
+//// shell.ts
+import { $ } from "bun";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const folder = mkdtempSync(join(tmpdir(), "shell-use-"));
+$.cwd(folder);
+console.log(await $`echo hello ${"two words"}`.text());
+await $`mkdir -p a/b && touch a/b/one.txt a/b/two.txt && echo content > a/b/one.txt`;
+console.log((await $`ls a/b`.text()).trim().split("\n").sort().join(","));
+console.log((await $`cat a/b/one.txt | /usr/bin/tr a-z A-Z`.text()).trim());
+console.log((await $`echo a/b/*.txt`.text()).trim().split(" ").length);
+await $`cp a/b/one.txt a/three.txt && mv a/three.txt a/four.txt`;
+console.log((await $`FOO=bar /bin/sh -c 'echo $FOO'`.text()).trim());
+const failed = await $`/bin/sh -c 'exit 3'`.nothrow().quiet();
+console.log(failed.exitCode);
+try {
+  await $`cat missing.txt`.quiet();
+} catch (error: any) {
+  console.log(error.name, error.exitCode);
+}
+console.log($.escape("a b'c"), $.braces("x{1,2}").join(" "));
+await $`rm -rf a`;
+console.log((await $`ls`.text()).length);
+await $`cd / && rm -rf ${folder}`;
+//// sockets.ts
+// Bun.listen and Bun.connect, then node:net, on 127.0.0.1
+import net from "node:net";
+const done = Promise.withResolvers<string>();
+const listener = Bun.listen({
+  hostname: "127.0.0.1",
+  port: 0,
+  socket: { data(socket: any, data: any) { socket.write("echo:" + data.toString()); socket.end(); }, open(socket: any) { socket.data = { opened: true }; } },
+});
+let got = "";
+await Bun.connect({
+  hostname: "127.0.0.1",
+  port: listener.port,
+  socket: { open(socket: any) { socket.write("hi"); }, data(_socket: any, data: any) { got += data.toString(); }, close() { done.resolve(got); } },
+});
+console.log(await done.promise, listener.hostname, typeof listener.port);
+listener.stop(true);
+const second = Promise.withResolvers<string>();
+const server = net.createServer((socket: any) => { socket.on("data", (data: any) => socket.end("node:" + data)); });
+server.listen(0, "127.0.0.1", () => {
+  const client: any = net.connect((server.address() as { port: number }).port, "127.0.0.1", () => client.write("hey"));
+  let text = "";
+  client.on("data", (data: any) => (text += data));
+  client.on("close", () => second.resolve(`${text} ${client.remoteFamily ?? "closed"}`));
+});
+console.log(await second.promise);
+server.close();
+//// source-map-class.json
+{ "features": ["SourceMaps"] }
+//// source-map-class.ts
+import { SourceMap } from "node:module";
+const map = new SourceMap({ version: 3, file: "out.js", sources: ["a.ts"], names: [], sourcesContent: ["let x = 1"], mappings: "AAAA,IAAI" } as any);
+const entry: any = map.findEntry(0, 4);
+console.log(entry.originalSource, entry.originalLine, entry.originalColumn);
+//// source-maps.json
+{ "build": ["--sourcemap"] }
+//// source-maps.ts
+// node:module's SourceMap decodes mappings (the same decoder reads the maps inside an executable built with --sourcemap)
+import { SourceMap } from "node:module";
+const map = new SourceMap({ version: 3, file: "out.js", sources: ["a.ts", "b.ts"], names: ["x"], sourcesContent: ["let x = 1", "x"], mappings: "AAAA,IAAIA;ACAJ,CAAC" } as any);
+const first: any = map.findEntry(0, 4);
+const second: any = map.findEntry(1, 1);
+console.log(first.originalSource, first.originalLine, first.originalColumn, first.name, second.originalSource, second.originalLine, second.originalColumn);
+console.log(JSON.stringify(map.payload.sources), JSON.stringify(map.findOrigin(1, 5)));
+function fail(): never { throw new Error("mapped"); }
+try { fail(); } catch (error) { console.log(String((error as Error).stack).split("\n").slice(0, 2).map(line => line.replace(/\(.*[\\/]/, "(")).join(" | ")); }
+//// spawn.json
+{ "posix": true }
+//// spawn.ts
+// Bun.spawnSync, Bun.spawn with pipes both ways, resourceUsage, kill, node:child_process
+import { execFileSync, spawn } from "node:child_process";
+const sync = Bun.spawnSync(["sh", "-c", "echo out; echo err >&2; exit 3"]);
+console.log(sync.exitCode, sync.success, JSON.stringify(sync.stdout.toString()), JSON.stringify(sync.stderr.toString()));
+const child = Bun.spawn(["tr", "a-z", "A-Z"], { stdin: "pipe", stdout: "pipe", env: { PATH: process.env.PATH! } });
+child.stdin.write("hello ");
+child.stdin.write("child");
+await child.stdin.end();
+console.log(await new Response(child.stdout).text(), await child.exited, child.killed, typeof child.pid, typeof child.resourceUsage()?.maxRSS);
+const sleeper = Bun.spawn(["sleep", "30"], { onExit(_process: any, code: number | null, signal: any) { console.log("onExit", code, signal); } });
+sleeper.kill("SIGTERM");
+console.log(await sleeper.exited, sleeper.signalCode);
+console.log(JSON.stringify(execFileSync("printf", ["%s-%s", "a", "b"]).toString()));
+const { promise, resolve } = Promise.withResolvers<number | null>();
+const node = spawn("sh", ["-c", "cat; exit 2"], { stdio: ["pipe", "pipe", "inherit"] });
+let text = "";
+node.stdout.on("data", (chunk: any) => (text += chunk));
+node.on("close", (code: number | null) => resolve(code));
+node.stdin.end("through node");
+console.log(await promise, text);
+//// sql.ts
+function message(type: string, body: Buffer): Buffer {
+  const head = Buffer.alloc(5);
+  head.write(type, 0, "latin1");
+  head.writeInt32BE(body.length + 4, 1);
+  return Buffer.concat([head, body]);
+}
+
+function int16(value: number): Buffer {
+  const bytes = Buffer.alloc(2);
+  bytes.writeInt16BE(value);
+  return bytes;
+}
+
+function int32(value: number): Buffer {
+  const bytes = Buffer.alloc(4);
+  bytes.writeInt32BE(value);
+  return bytes;
+}
+
+const readyForQuery = message("Z", Buffer.from("I"));
+const textColumn = (name: string) => Buffer.concat([Buffer.from(name + "\0"), int32(0), int16(0), int32(25), int16(-1), int32(-1), int16(0)]);
+const textValue = (value: string) => Buffer.concat([int32(Buffer.byteLength(value)), Buffer.from(value)]);
+
+const server = Bun.listen<{ started: boolean }>({
+  hostname: "127.0.0.1",
+  port: 0,
+  socket: {
+    open(socket) {
+      socket.data = { started: false };
+    },
+    data(socket, bytes) {
+      if (!socket.data.started) {
+        socket.data.started = true;
+        socket.write(Buffer.concat([message("R", int32(0)), message("S", Buffer.from("server_version\x0016.0\0")), message("K", Buffer.concat([int32(1), int32(2)])), readyForQuery]));
+        return;
+      }
+      for (let at = 0; at < bytes.length; at += 1 + bytes.readInt32BE(at + 1)) {
+        if (String.fromCharCode(bytes[at]!) !== "Q") continue;
+        const query = bytes.toString("utf8", at + 5, at + bytes.readInt32BE(at + 1));
+        socket.write(
+          Buffer.concat([
+            message("T", Buffer.concat([int16(2), textColumn("asked"), textColumn("answer")])),
+            message("D", Buffer.concat([int16(2), textValue(query), textValue("forty-two")])),
+            message("C", Buffer.from("SELECT 1\0")),
+            readyForQuery,
+          ]),
+        );
+      }
+    },
+  },
+});
+
+const sql = new Bun.SQL({ adapter: "postgres", hostname: "127.0.0.1", port: server.port, username: "someone", database: "somewhere", tls: false, max: 1 });
+console.log(JSON.stringify(await sql`select the answer`.simple()));
+await sql.close();
+server.stop(true);
+
+const closedPort = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+const port = closedPort.port;
+closedPort.stop(true);
+const mysql = new Bun.SQL({ adapter: "mysql", hostname: "127.0.0.1", port, username: "someone", database: "somewhere", tls: false, max: 1, connectionTimeout: 2 });
+console.log(await mysql`select 1`.then(() => "answered", (error: Error & { code?: string }) => `${error.name} ${error.code}`));
+await mysql.close();
+//// sqlite.ts
+import { Database } from "bun:sqlite";
+import { DatabaseSync } from "node:sqlite";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const memory = new Database(":memory:");
+memory.run("create table numbers (n integer, word text)");
+const insert = memory.prepare("insert into numbers values (?, ?)");
+memory.transaction(() => {
+  for (let n = 1; n <= 100; n++) insert.run(n, "w" + n);
+})();
+console.log("bun:sqlite", memory.query("select sum(n) as total, count(*) as rows, max(word) as last from numbers").get());
+console.log("bun:sqlite json", memory.query(`select json_extract('{"a":[1,2,3]}', '$.a[1]') as second`).get());
+memory.close();
+
+const sync = new DatabaseSync(":memory:");
+sync.exec("create table t (k text primary key, v real)");
+sync.prepare("insert into t values (?, ?)").run("pi", 3.25);
+sync.function("twice", (value: any) => value * 2);
+console.log("node:sqlite", sync.prepare("select k, twice(v) as doubled from t").all());
+sync.close();
+
+const sql = new Bun.SQL("sqlite://:memory:");
+await sql`create table people (name text)`;
+await sql`insert into people values (${"ada"}), (${"grace"})`;
+console.log("Bun.SQL", await sql`select name from people order by name desc`);
+await sql.close();
+
+const folder = mkdtempSync(join(tmpdir(), "trim-sqlite-"));
+const file = new Database(join(folder, "left-open.db"));
+file.run("pragma journal_mode = wal");
+file.run("create table kept (n integer)");
+file.run("insert into kept values (7)");
+process.on("exit", () => {
+  console.log("left open at exit", statSync(join(folder, "left-open.db")).size > 0);
+  if (process.platform !== "win32") rmSync(folder, { recursive: true, force: true });
+});
+//// string-decoder.ts
+import { StringDecoder } from "node:string_decoder";
+const decoder = new StringDecoder("utf8");
+console.log(decoder.write(Buffer.from([0xe2, 0x82])) + decoder.write(Buffer.from([0xac])) + decoder.end(), (decoder as any).encoding, new StringDecoder("hex").write(Buffer.from([1, 255])));
+//// string-number-methods.json
+{"features": ["StringLocaleCase", "NumberPrecisionMethods", "StringPadding", "StringHTML", "StringNormalize", "StringWellFormed", "StringRepeat", "StringLastIndexOf", "EscapeUnescape", "URICoding"]}
+//// string-number-methods.ts
+const lines: string[] = [];
+const say = (name: string, value: unknown) => lines.push(`${name}: ${JSON.stringify(value)}`);
+type Old = string & Record<string, (value?: string) => string>;
+
+say("locale case", ["Iİi".toLocaleLowerCase("tr"), "iı".toLocaleUpperCase("tr"), "Straße".toLocaleUpperCase(), "ABC".toLocaleLowerCase("en-US")]);
+say("number formatting", [(1234.5678).toFixed(2), (0.000001234).toExponential(3), (1234.5678).toPrecision(6), (1e21).toFixed(2), (0).toExponential(), (255).toPrecision(1)]);
+say("padding", ["5".padStart(3, "0"), "ab".padEnd(7, "xyz"), "long enough".padStart(3), "世".padEnd(3, "界")]);
+say("HTML", [("t" as Old).anchor('a"b'), ("t" as Old).big(), ("t" as Old).blink(), ("t" as Old).bold(), ("t" as Old).fixed(), ("t" as Old).fontcolor("red"), ("t" as Old).fontsize("7"), ("t" as Old).italics(), ("t" as Old).link("u"), ("t" as Old).small(), ("t" as Old).strike(), ("t" as Old).sub(), ("t" as Old).sup()]);
+say("normalize", ["é".normalize().length, "é".normalize("NFD").length, "ﬁ".normalize("NFKC"), "plain".normalize("NFKD")]);
+say("well formed", ["a\ud800".isWellFormed(), "ab".isWellFormed(), "a\ud800b".toWellFormed()]);
+say("repeat", ["ab".repeat(3), "x".repeat(0), "世".repeat(2)]);
+say("lastIndexOf", ["abcabc".lastIndexOf("b"), "abcabc".lastIndexOf("b", 3), "abc".lastIndexOf("z"), "世a世".lastIndexOf("世")]);
+say("escape", [escape("a b+é世"), unescape("a%20b%u4E16%E9")]);
+say("URI", [encodeURI("http://x/a b?q=é&r=1#h"), encodeURIComponent("a b&c=世/"), decodeURI("%E4%B8%96%20%26"), decodeURIComponent("%E4%B8%96%20%26")]);
+// The compiler folds a call whose operands are constants, and calls code of its own for some methods. Neither enters the function that a program can hold.
+const nothing = process.argv.slice(2).join("");
+const held = <T>(...functions: T[]): T => functions[nothing.length]!;
+say("the functions themselves, as values", [
+  held(String.prototype.padStart, String.prototype.padEnd).call("5" + nothing, 3, "0"),
+  held(String.prototype.padEnd, String.prototype.padStart).call("5" + nothing, 3, "0"),
+  held(String.prototype.repeat, String.prototype.trim as never).call("ab" + nothing, 2),
+  held(String.prototype.lastIndexOf, String.prototype.indexOf).call("abcabc" + nothing, "b"),
+  held(String.prototype.normalize, String.prototype.trim as never).call("\u00e9" + nothing, "NFD").length,
+  held(String.prototype.isWellFormed, String.prototype.trim as never).call("a\ud800" + nothing),
+  held(String.prototype.toWellFormed, String.prototype.trim).call("a\ud800b" + nothing),
+]);
+console.log(lines.join("\n"));
+//// string-width.ts
+console.log(Bun.stringWidth("hello"), Bun.stringWidth("\u4f60\u597d"), Bun.stringWidth("\x1b[31mred\x1b[0m"), Bun.stringWidth("\x1b[31mred\x1b[0m", { countAnsiEscapeCodes: true }), Bun.stringWidth("\u{1f600}"), Bun.stringWidth("e\u0301"));
+//// structured-clone.ts
+const cycle: any = { name: "cycle", map: new Map([["k", { deep: [1, 2, 3] }]]), set: new Set(["a"]), date: new Date(86400000), pattern: /x+/gi, big: 12345678901234567890n };
+cycle.self = cycle;
+cycle.bytes = new Uint8Array([1, 2, 3]);
+cycle.error = new RangeError("kept");
+const copy = structuredClone(cycle);
+console.log(copy !== cycle, copy.self === copy, copy.map.get("k").deep.join(), [...copy.set].join(), copy.date.toISOString(), String(copy.pattern), copy.big, copy.bytes.join(), copy.error instanceof RangeError, copy.error.message);
+const buffer = new ArrayBuffer(8);
+const moved = structuredClone(buffer, { transfer: [buffer] });
+console.log(buffer.byteLength, moved.byteLength);
+////= lines-2	structuredClone(() => 1
+//// sum-precise.json
+{ "features": ["MathSumPrecise"] }
+//// sum-precise.ts
+const math: any = Math;
+console.log(math.sumPrecise([1e20, 0.1, -1e20]), math.sumPrecise([]), math.sumPrecise([0.1, 0.2, 0.3]), math.sumPrecise(new Set([1, 2, 3])), math.sumPrecise([Infinity, 1]), math.sumPrecise([1e308, 1e308, -1e308]));
+try { math.sumPrecise(["1"]); } catch (error) { console.log((error as Error).name); }
+//// temporal.ts
+declare const Temporal: any;
+const date = Temporal.PlainDate.from("2026-10-17");
+console.log(date.add({ days: 20 }).toString(), date.dayOfWeek, date.daysInMonth, date.until("2027-01-01").toString(), date.with({ month: 2 }).toString());
+console.log(Temporal.Duration.from("P1DT2H").total("hours"), Temporal.Duration.from({ minutes: 90 }).round({ largestUnit: "hours" }).toString());
+console.log(Temporal.Instant.fromEpochMilliseconds(0).toString(), String((new Date(5) as any).toTemporalInstant().epochNanoseconds));
+console.log(Temporal.PlainTime.from("10:20").add({ minutes: 50 }).toString(), Temporal.PlainDateTime.from("2026-10-17T08:00").toPlainDate().toString());
+console.log(Temporal.ZonedDateTime.from("2026-10-17T00:00[UTC]").add({ hours: 25 }).toString(), Temporal.PlainYearMonth.from("2026-10").daysInMonth, Temporal.PlainMonthDay.from("10-17").toString());
+console.log(typeof Temporal.Now.timeZoneId(), Temporal.PlainDate.compare("2026-01-01", "2026-01-02"), Object.prototype.toString.call(date));
+//// terminal.json
+{ "posix": true }
+//// terminal.ts
+// Bun.Terminal alone, and as the terminal of a child
+let seen = "";
+const terminal = new Bun.Terminal({ cols: 40, rows: 10, data(_terminal: any, data: Uint8Array) { seen += new TextDecoder().decode(data); } });
+console.log(terminal.closed, typeof terminal.write, typeof terminal.inputFlags);
+terminal.resize(80, 24);
+const child = Bun.spawn(["sh", "-c", "stty size; echo done"], { terminal });
+console.log(await child.exited);
+while (!seen.includes("done")) await Bun.sleep(5);
+console.log(JSON.stringify(seen.replaceAll("\r", "")));
+terminal.close();
+console.log(terminal.closed);
+//// test.json
+{ "says": { "Test": "Cannot load 'bun:test'" } }
+//// test.ts
+import { expect, mock, spyOn, jest } from "bun:test";
+
+expect(1 + 1).toBe(2);
+expect({ a: [1, { b: 2 }], c: new Map([[1, 2]]) }).toEqual({ a: [1, { b: 2 }], c: new Map([[1, 2]]) });
+expect("the matchers").toMatch(/match/);
+expect(() => {
+  throw new RangeError("out");
+}).toThrow("out");
+expect({ a: 1, b: "x" }).toMatchObject({ a: expect.any(Number) });
+try {
+  expect({ a: 1, list: [1, 2, 3] }).toEqual({ a: 2, list: [1, 2, 4] });
+} catch (error) {
+  console.log(Bun.stripANSI((error as Error).message));
+}
+const double = mock((value: number) => value * 2);
+console.log(double(21), double.mock.calls.length);
+expect(double).toHaveBeenCalledWith(21);
+const target = { greet: (name: string) => `hello ${name}` };
+const spy = spyOn(target, "greet").mockReturnValue("mocked");
+console.log(target.greet("x"), spy.mock.calls[0]![0]);
+jest.setSystemTime(new Date("2020-01-02T03:04:05Z"));
+console.log(new Date().toISOString());
+jest.setSystemTime();
+console.log(new Date().getFullYear() > 2020);
+//// text-codec.json
+{ "features": ["TextDecoder", "TextEncoder"] }
+//// text-codec.ts
+const bytes = new TextEncoder().encode("h\u00e9llo \u20ac");
+const into = new Uint8Array(4);
+console.log(bytes.length, new TextDecoder().decode(bytes), JSON.stringify(new TextEncoder().encodeInto("\u20acx", into)), new TextDecoder("utf-16le").decode(new Uint8Array([104, 0])), new TextDecoder("latin1").encoding, new TextDecoder("utf-8", { fatal: true }).fatal);
+try { new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array([0xff])); } catch (error: any) { console.log(error.code ?? error.name); }
+//// tls-users.json
+{ "features": ["TlsSockets"] }
+//// tls-users.ts
+import tls from "node:tls";
+
+const key = `-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsQw5C2LT40FXa7TR
+A8GG8SBy2jpXwp1/1C/e0LJ+4C2hRANCAAS8unCZfee7/NWNozJWd8egIu9xCFKa
+uXanGlc2FWwpK+uz7JKnKQa2pZ/wEFq7wXG50L5JJfBisYZnn8pSF3rZ
+-----END PRIVATE KEY-----
+`;
+const cert = `-----BEGIN CERTIFICATE-----
+MIIBPjCB5aADAgECAgkAswvxD+a9HdwwCgYIKoZIzj0EAwIwFDESMBAGA1UEAwwJ
+bG9jYWxob3N0MCAXDTI2MTAxNzE5MzAyOFoYDzIxMjYwOTIzMTkzMDI4WjAUMRIw
+EAYDVQQDDAlsb2NhbGhvc3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAS8unCZ
+fee7/NWNozJWd8egIu9xCFKauXanGlc2FWwpK+uz7JKnKQa2pZ/wEFq7wXG50L5J
+JfBisYZnn8pSF3rZox4wHDAaBgNVHREEEzARgglsb2NhbGhvc3SHBH8AAAEwCgYI
+KoZIzj0EAwIDSAAwRQIhAJgYLk7C/yTba2rAlGW6Xv4JCRb5DeQ2NdmN78N7kj6q
+AiAO7OnjTNLRBP1TU0RvKDr2CO+zKxDWkvVLzGAxkCy1yw==
+-----END CERTIFICATE-----
+`;
+
+////= server
+const response = await fetch(`https://127.0.0.1:${server.port}/`, { tls: { ca: cert } } as never);
+console.log(response.status, await response.text());
+console.log(await fetch(`https://127.0.0.1:${server.port}/`).then(() => "trusted", (error: Error & { code?: string }) => error.code));
+
+const overWebSocket = Promise.withResolvers<string>();
+const webSocket = new WebSocket(`wss://127.0.0.1:${server.port}/`, { tls: { ca: cert } } as never);
+webSocket.onopen = () => webSocket.send("over wss");
+webSocket.onmessage = event => overWebSocket.resolve(String(event.data));
+webSocket.onerror = () => overWebSocket.resolve("failed");
+console.log(await overWebSocket.promise);
+webSocket.close();
+server.stop(true);
+
+////= listener
+const answered = Promise.withResolvers<string>();
+////= socket
+console.log(await answered.promise, socket.getTLSVersion());
+const peer = socket.getPeerX509Certificate()!;
+console.log(peer.subject, peer.subjectAltName, peer.publicKey.asymmetricKeyType);
+socket.end();
+
+const fromNode = Promise.withResolvers<string>();
+const nodeSocket = tls.connect({ host: "127.0.0.1", port: listener.port, ca: cert }, () => nodeSocket.write(`node:tls ${nodeSocket.authorized}`));
+nodeSocket.on("data", bytes => fromNode.resolve(`${bytes} ${nodeSocket.getCipher().standardName.startsWith("TLS_")}`));
+nodeSocket.on("error", error => fromNode.resolve(String(error)));
+console.log(await fromNode.promise);
+nodeSocket.destroy();
+listener.stop(true);
+console.log(tls.rootCertificates.length > 100);
+//// tls.json
+{ "features": ["X509", "Tls"] }
+//// tls.ts
+import tls from "node:tls";
+
+const key = `-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgsQw5C2LT40FXa7TR
+A8GG8SBy2jpXwp1/1C/e0LJ+4C2hRANCAAS8unCZfee7/NWNozJWd8egIu9xCFKa
+uXanGlc2FWwpK+uz7JKnKQa2pZ/wEFq7wXG50L5JJfBisYZnn8pSF3rZ
+-----END PRIVATE KEY-----
+`;
+const cert = `-----BEGIN CERTIFICATE-----
+MIIBPjCB5aADAgECAgkAswvxD+a9HdwwCgYIKoZIzj0EAwIwFDESMBAGA1UEAwwJ
+bG9jYWxob3N0MCAXDTI2MTAxNzE5MzAyOFoYDzIxMjYwOTIzMTkzMDI4WjAUMRIw
+EAYDVQQDDAlsb2NhbGhvc3QwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAS8unCZ
+fee7/NWNozJWd8egIu9xCFKauXanGlc2FWwpK+uz7JKnKQa2pZ/wEFq7wXG50L5J
+JfBisYZnn8pSF3rZox4wHDAaBgNVHREEEzARgglsb2NhbGhvc3SHBH8AAAEwCgYI
+KoZIzj0EAwIDSAAwRQIhAJgYLk7C/yTba2rAlGW6Xv4JCRb5DeQ2NdmN78N7kj6q
+AiAO7OnjTNLRBP1TU0RvKDr2CO+zKxDWkvVLzGAxkCy1yw==
+-----END CERTIFICATE-----
+`;
+
+////= server
+const response = await fetch(`https://127.0.0.1:${server.port}/`, { tls: { ca: cert } } as never);
+console.log(response.status, await response.text());
+console.log(await fetch(`https://127.0.0.1:${server.port}/`).then(() => "trusted", (error: Error & { code?: string }) => error.code));
+
+const overWebSocket = Promise.withResolvers<string>();
+const webSocket = new WebSocket(`wss://127.0.0.1:${server.port}/`, { tls: { ca: cert } } as never);
+webSocket.onopen = () => webSocket.send("over wss");
+webSocket.onmessage = event => overWebSocket.resolve(String(event.data));
+webSocket.onerror = () => overWebSocket.resolve("failed");
+console.log(await overWebSocket.promise);
+webSocket.close();
+server.stop(true);
+
+////= listener
+const answered = Promise.withResolvers<string>();
+////= socket
+console.log(await answered.promise, socket.getTLSVersion());
+const peer = socket.getPeerX509Certificate()!;
+console.log(peer.subject, peer.subjectAltName, peer.publicKey.asymmetricKeyType);
+socket.end();
+
+const fromNode = Promise.withResolvers<string>();
+const nodeSocket = tls.connect({ host: "127.0.0.1", port: listener.port, ca: cert }, () => nodeSocket.write(`node:tls ${nodeSocket.authorized}`));
+nodeSocket.on("data", bytes => fromNode.resolve(`${bytes} ${nodeSocket.getCipher().standardName.startsWith("TLS_")}`));
+nodeSocket.on("error", error => fromNode.resolve(String(error)));
+console.log(await fromNode.promise);
+nodeSocket.destroy();
+listener.stop(true);
+console.log(tls.rootCertificates.length > 100);
+//// toml.ts
+const value = Bun.TOML.parse(`
+title = "trim"
+[server]
+ports = [8000, 8001]
+started = true
+[[route]]
+path = "/a"
+[[route]]
+path = "/b"
+`);
+console.log(JSON.stringify(value));
+//// transpiler-tsconfig.json
+{ "features": ["PackageFiles"] }
+//// transpiler-tsconfig.ts
+const transpiler = new Bun.Transpiler({ loader: "tsx", tsconfig: { compilerOptions: { jsx: "react", jsxFactory: "h", jsxFragmentFactory: "Fragment" } } });
+console.log(transpiler.transformSync("export const element = <div>one</div>;").trim());
+//// typedarray-sort.ts
+const bytes = new Uint8Array([3, 1, 2, 255, 0]);
+console.log(bytes.toSorted().join(), bytes.toSorted((a, b) => b - a).join(), bytes.join(), bytes.sort().join(), bytes.sort((a, b) => b - a).join(), Buffer.from([2, 1]).sort().join());
+const many = new Uint8Array(5000).map((_, index) => (index * 7919) % 251);
+console.log(many.sort()[0], many[4999], many.toSorted((a, b) => b - a)[0]);
+//// udp.ts
+// Bun.udpSocket and node:dgram on 127.0.0.1
+import dgram from "node:dgram";
+const { promise, resolve } = Promise.withResolvers<string>();
+const receiver = await Bun.udpSocket({ hostname: "127.0.0.1", socket: { data(_socket: any, data: any, _port: number, address: string) { resolve(`${data.toString()} from ${address}`); } } });
+const sender = await Bun.udpSocket({ hostname: "127.0.0.1" });
+sender.send("ping", receiver.port, "127.0.0.1");
+console.log(await promise, receiver.hostname, receiver.address.family);
+sender.close();
+receiver.close();
+const second = Promise.withResolvers<string>();
+const socket = dgram.createSocket("udp4");
+socket.on("message", (message: any, info: any) => second.resolve(`${message} ${info.address} ${info.family}`));
+socket.bind(0, "127.0.0.1", () => {
+  const other = dgram.createSocket("udp4");
+  other.send("pong", socket.address().port, "127.0.0.1", () => other.close());
+});
+console.log(await second.promise);
+socket.close();
+//// uint16array.ts
+const values = new Uint16Array([3, 1, 2]);
+console.log(values.constructor.name, values.BYTES_PER_ELEMENT, values.sort().join(","), values.map((value: any) => value * 2).join(","));
+console.log(Uint16Array.from([1, 2, 3]).filter((value: any) => value > 1).length, Uint16Array.of(4, 5).length, values.subarray(1).length, values.slice(1).length);
+console.log(values.indexOf(2), values.includes(3), values.with(0, 9)[0], values.toSorted().join(""), values.toReversed().join(""), String(values.reduce((sum: any, value: any) => sum + value, 0)));
+console.log(String(values.find((value: any) => value > 1)), values.findLastIndex((value: any) => value < 3), values.every((value: any) => value > 0), values.some((value: any) => value > 2), values.fill(7, 1, 2).join(","), values.copyWithin(0, 1).join(","), values.reverse().join(","));
+values[1] = 5;
+console.log(String(values[1]), 1 in values, 9 in values, Object.keys(values).join(""), Object.prototype.toString.call(values), [...values.entries()].length, delete (values as any)[9]);
+console.log(structuredClone(values).constructor.name, new Uint16Array(values.buffer, 0, 1).length, new Uint16Array(new ArrayBuffer(16, { maxByteLength: 32 })).length, new Uint16Array(values).join(","));
+const bytes = new Uint8Array(values);
+const back = new Uint16Array(4);
+back.set(bytes, 1);
+console.log(bytes.join(","), back.join(","), JSON.stringify(values), Math.max(...values));
+Bun.gc(true);
+//// uint32array.ts
+const values = new Uint32Array([3, 1, 2]);
+console.log(values.constructor.name, values.BYTES_PER_ELEMENT, values.sort().join(","), values.map((value: any) => value * 2).join(","));
+console.log(Uint32Array.from([1, 2, 3]).filter((value: any) => value > 1).length, Uint32Array.of(4, 5).length, values.subarray(1).length, values.slice(1).length);
+console.log(values.indexOf(2), values.includes(3), values.with(0, 9)[0], values.toSorted().join(""), values.toReversed().join(""), String(values.reduce((sum: any, value: any) => sum + value, 0)));
+console.log(String(values.find((value: any) => value > 1)), values.findLastIndex((value: any) => value < 3), values.every((value: any) => value > 0), values.some((value: any) => value > 2), values.fill(7, 1, 2).join(","), values.copyWithin(0, 1).join(","), values.reverse().join(","));
+values[1] = 5;
+console.log(String(values[1]), 1 in values, 9 in values, Object.keys(values).join(""), Object.prototype.toString.call(values), [...values.entries()].length, delete (values as any)[9]);
+console.log(structuredClone(values).constructor.name, new Uint32Array(values.buffer, 0, 1).length, new Uint32Array(new ArrayBuffer(16, { maxByteLength: 32 })).length, new Uint32Array(values).join(","));
+const bytes = new Uint8Array(values);
+const back = new Uint32Array(4);
+back.set(bytes, 1);
+console.log(bytes.join(","), back.join(","), JSON.stringify(values), Math.max(...values));
+Bun.gc(true);
+//// uint8array-base64.ts
+const bytes: any = new Uint8Array([72, 101, 108, 108, 111, 255]);
+const type: any = Uint8Array;
+console.log(bytes.toBase64(), bytes.toBase64({ alphabet: "base64url", omitPadding: true }), bytes.toHex(), type.fromBase64("SGVsbG8=").join(), type.fromHex("48656c6c6f").join());
+const into: any = new Uint8Array(4);
+console.log(JSON.stringify(into.setFromBase64("SGVsbG8=")), into.join(), JSON.stringify(into.setFromHex("0102")), into.join(), (Buffer.from("hi") as any).toBase64());
+try { type.fromHex("zz"); } catch (error) { console.log((error as Error).name); }
+//// uint8clampedarray.ts
+const values = new Uint8ClampedArray([3, 1, 2]);
+console.log(values.constructor.name, values.BYTES_PER_ELEMENT, values.sort().join(","), values.map((value: any) => value * 2).join(","));
+console.log(Uint8ClampedArray.from([1, 2, 3]).filter((value: any) => value > 1).length, Uint8ClampedArray.of(4, 5).length, values.subarray(1).length, values.slice(1).length);
+console.log(values.indexOf(2), values.includes(3), values.with(0, 9)[0], values.toSorted().join(""), values.toReversed().join(""), String(values.reduce((sum: any, value: any) => sum + value, 0)));
+console.log(String(values.find((value: any) => value > 1)), values.findLastIndex((value: any) => value < 3), values.every((value: any) => value > 0), values.some((value: any) => value > 2), values.fill(7, 1, 2).join(","), values.copyWithin(0, 1).join(","), values.reverse().join(","));
+values[1] = 5;
+console.log(String(values[1]), 1 in values, 9 in values, Object.keys(values).join(""), Object.prototype.toString.call(values), [...values.entries()].length, delete (values as any)[9]);
+console.log(structuredClone(values).constructor.name, new Uint8ClampedArray(values.buffer, 0, 1).length, new Uint8ClampedArray(new ArrayBuffer(16, { maxByteLength: 32 })).length, new Uint8ClampedArray(values).join(","));
+const bytes = new Uint8Array(values);
+const back = new Uint8ClampedArray(4);
+back.set(bytes, 1);
+console.log(bytes.join(","), back.join(","), JSON.stringify(values), Math.max(...values));
+Bun.gc(true);
+//// unsafe.ts
+console.log(Bun.unsafe.arrayBufferToString(new Uint8Array([104, 105])), typeof Bun.unsafe.gcAggressionLevel(), typeof Bun.unsafe.mimallocDump);
+//// url.json
+{ "posix": true }
+//// url.ts
+const url = new URL("https://user:pw@example.com:8080/a/b?x=1&y=2#frag");
+url.searchParams.append("z", "3"); url.searchParams.sort(); url.hostname = "bun.sh"; url.pathname = "/c d";
+console.log(url.href, url.origin, url.host, url.port, url.username, [...url.searchParams].join("|"), URL.canParse("nope"), String(new URLSearchParams({ q: "a b" })), JSON.stringify(url));
+console.log(Bun.pathToFileURL("/tmp/a b.txt").href, Bun.fileURLToPath(new URL("file:///tmp/x.txt")), url, url.searchParams);
+//// urlpattern.ts
+declare const URLPattern: any;
+const pattern = new URLPattern({ pathname: "/users/:id/posts/:post(\\d+)" });
+console.log(pattern.test("https://example.com/users/7/posts/9"), pattern.test("https://example.com/users/7/posts/nine"));
+console.log(JSON.stringify(pattern.exec("https://example.com/users/7/posts/9")?.pathname.groups));
+const whole = new URLPattern("https://*.example.com/:rest*");
+console.log(whole.hostname, whole.pathname, whole.exec("https://a.example.com/x/y")?.hostname.groups[0]);
+////= lines-2	new URLPattern({ pathname: "/(" }
+//// uuid.ts
+// Bun.randomUUIDv5 and Bun.randomUUIDv7
+console.log(Bun.randomUUIDv5("www.example.com", "dns"), Bun.randomUUIDv5("x", "6ba7b810-9dad-11d1-80b4-00c04fd430c8", "base64"));
+const seven = Bun.randomUUIDv7("hex", 1700000000000);
+console.log(seven.slice(0, 13), seven[14], seven.length, Bun.randomUUIDv7("buffer").length);
+//// valkey.ts
+const store = new Map<string, string>();
+
+function commandsIn(text: string): string[][] {
+  const commands: string[][] = [];
+  const lines = text.split("\r\n");
+  for (let at = 0; at < lines.length - 1; ) {
+    const count = Number(lines[at++]!.slice(1));
+    const words: string[] = [];
+    for (let word = 0; word < count; word++, at += 2) words.push(lines[at + 1]!);
+    commands.push(words);
+  }
+  return commands;
+}
+
+function replyTo(words: string[]): string {
+  switch (words[0]!.toUpperCase()) {
+    case "HELLO":
+      return "%1\r\n+proto\r\n:3\r\n";
+    case "SET":
+      store.set(words[1]!, words[2]!);
+      return "+OK\r\n";
+    case "GET": {
+      const value = store.get(words[1]!);
+      return value === undefined ? "_\r\n" : `$${value.length}\r\n${value}\r\n`;
+    }
+    case "INCR": {
+      const next = Number(store.get(words[1]!) ?? 0) + 1;
+      store.set(words[1]!, String(next));
+      return `:${next}\r\n`;
+    }
+    default:
+      return "+OK\r\n";
+  }
+}
+
+const server = Bun.listen({
+  hostname: "127.0.0.1",
+  port: 0,
+  socket: {
+    data(socket, bytes) {
+      socket.write(commandsIn(bytes.toString()).map(replyTo).join(""));
+    },
+  },
+});
+
+const client = new Bun.RedisClient(`redis://127.0.0.1:${server.port}`);
+console.log(await client.set("greeting", "hello from the client"));
+console.log(await client.get("greeting"));
+console.log(await client.incr("count"), await client.incr("count"));
+console.log(await client.get("missing"));
+client.close();
+server.stop(true);
+//// weak-references.ts
+let target: object | undefined = { name: "target" };
+const reference = new WeakRef(target);
+let cleaned = 0;
+const registry = new FinalizationRegistry<string>(() => cleaned++);
+const token = {};
+registry.register(target, "held", token);
+registry.register({}, "other");
+console.log((reference.deref() as any).name, registry.unregister(token), registry.unregister({}), Object.prototype.toString.call(reference), Object.prototype.toString.call(registry));
+target = undefined;
+Bun.gc(true);
+await new Promise(resolve => setTimeout(resolve, 10));
+Bun.gc(true);
+console.log(typeof reference.deref(), typeof cleaned);
+//// web-streams.ts
+const stream = new ReadableStream({ start(controller) { controller.enqueue("a"); controller.enqueue("b"); controller.close(); } });
+const [left, right] = stream.tee();
+const upper = left.pipeThrough(new TransformStream({ transform(chunk, controller) { controller.enqueue(String(chunk).toUpperCase()); } }));
+const seen: string[] = [];
+await upper.pipeTo(new WritableStream({ write(chunk) { seen.push(chunk); } }));
+console.log(seen.join(""), await Bun.readableStreamToText(right));
+console.log(await new Response(new Blob(["blob"]).stream()).text(), (await new Response("body").body!.getReader().read()).value!.length);
+const bytes = new ReadableStream({ type: "bytes", pull(controller: any) { controller.enqueue(new Uint8Array([1, 2, 3])); controller.close(); } }).getReader({ mode: "byob" });
+console.log((await bytes.read(new Uint8Array(8))).value!.length);
+console.log(await new Response(new Blob(["\u20ac"]).stream().pipeThrough(new TextDecoderStream()).pipeThrough(new TextEncoderStream())).text());
+console.log(await new Response((async function* () { yield "gen"; yield "erated"; })() as any).text(), new CountQueuingStrategy({ highWaterMark: 2 }).highWaterMark);
+const sink = new Bun.ArrayBufferSink(); sink.start(); sink.write("abc"); console.log((sink.end() as ArrayBuffer).byteLength);
+for await (const chunk of new ReadableStream({ start(c) { c.enqueue(1); c.close(); } })) console.log(chunk);
+console.log(stream);
+//// webassembly.ts
+const bytes = new Uint8Array([
+  0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+  0x01, 0x0c, 0x02, 0x60, 0x02, 0x7f, 0x7f, 0x01, 0x7f, 0x60, 0x01, 0x7f, 0x01, 0x7f,
+  0x02, 0x0b, 0x01, 0x03, 0x65, 0x6e, 0x76, 0x03, 0x74, 0x77, 0x6f, 0x00, 0x01,
+  0x03, 0x03, 0x02, 0x00, 0x01,
+  0x05, 0x03, 0x01, 0x00, 0x01,
+  0x07, 0x17, 0x03, 0x03, 0x61, 0x64, 0x64, 0x00, 0x01, 0x04, 0x63, 0x61, 0x6c, 0x6c, 0x00, 0x02, 0x06, 0x6d, 0x65, 0x6d, 0x6f, 0x72, 0x79, 0x02, 0x00,
+  0x0a, 0x17, 0x02,
+  0x07, 0x00, 0x20, 0x00, 0x20, 0x01, 0x6a, 0x0b,
+  0x0d, 0x00, 0x41, 0x00, 0x20, 0x00, 0x10, 0x00, 0x36, 0x02, 0x00, 0x20, 0x00, 0x0b,
+]);
+console.log(WebAssembly.validate(bytes));
+const module = new WebAssembly.Module(bytes);
+console.log(WebAssembly.Module.exports(module).map((entry: { name: string; kind: string }) => `${entry.name}:${entry.kind}`).join(" "));
+const instance = new WebAssembly.Instance(module, { env: { two: (value: number) => value * 2 } });
+const { add, call, memory }: any = instance.exports;
+console.log(add(2, 40), call(21), new Uint32Array(memory.buffer)[0]);
+console.log(memory.grow(1), memory.buffer.byteLength);
+const again = await WebAssembly.instantiate(bytes, { env: { two: () => { throw new Error("from the import"); } } });
+////= lines	(again.instance.exports.call as Function)(1
+try {
+  new WebAssembly.Module(new Uint8Array([1, 2, 3]));
+} catch (error) {
+  console.log(error instanceof WebAssembly.CompileError);
+}
+//// websocket.ts
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  fetch(request, server) {
+    return server.upgrade(request) ? undefined : new Response("not a WebSocket", { status: 400 });
+  },
+  websocket: {
+    message(socket, message) {
+      socket.send(typeof message === "string" ? message.toUpperCase() : message);
+    },
+  },
+});
+
+const socket = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+socket.binaryType = "arraybuffer";
+const received: string[] = [];
+const { promise: closed, resolve: didClose } = Promise.withResolvers<number>();
+socket.onopen = () => {
+  socket.send("text");
+  socket.send(new Uint8Array([1, 2, 3]));
+};
+socket.onmessage = event => {
+  received.push(typeof event.data === "string" ? event.data : `bytes ${new Uint8Array(event.data).join(",")}`);
+  if (received.length === 2) socket.close(1000, "done");
+};
+socket.onclose = event => didClose(event.code);
+console.log(await closed, received.join(" | "));
+server.stop(true);
+//// webview.ts
+const WebView: any = Bun.WebView;
+console.log(typeof WebView, WebView.name, WebView.length);
+console.log(Object.getOwnPropertyNames(WebView.prototype).sort().join(" "));
+WebView.closeAll();
+//// worker.ts
+import { isMainThread, threadId } from "node:worker_threads";
+declare var self: Worker;
+if (isMainThread) {
+  console.log(isMainThread, threadId);
+  const worker = new Worker(import.meta.url);
+  const answer = await new Promise(resolve => {
+    worker.onmessage = (event: any) => resolve(event.data);
+    worker.onerror = (event: any) => resolve("error: " + event.message);
+    worker.postMessage({ n: 21, list: ["main"] });
+  });
+  console.log(JSON.stringify(answer));
+  worker.terminate();
+} else {
+  self.onmessage = (event: any) => postMessage({ twice: event.data.n * 2, list: [...event.data.list, "worker"] });
+}
+//// xml.ts
+const value = Bun.XML.parse(`<?xml version="1.0"?><feed kind="short"><entry id="1">one &amp; only</entry><entry id="2"><![CDATA[<two>]]></entry><empty/></feed>`);
+console.log(JSON.stringify(value));
+console.log(Bun.XML.stringify(value));
+//// yaml.ts
+const value = Bun.YAML.parse(`
+name: trim
+list: [1, 2, 3]
+anchor: &a { deep: true }
+alias: *a
+text: |
+  two
+  lines
+`);
+console.log(JSON.stringify(value));
+console.log(Bun.YAML.stringify({ a: [1, { b: "two" }], c: null }, null, 2));
+//// zstd.json
+{ "features": ["ZstdCompressor"] }
+//// zstd.ts
+import { zstdCompressSync, zstdDecompressSync, createZstdCompress } from "node:zlib";
+
+const text = "zstd ".repeat(2000);
+const bytes = new TextEncoder().encode(text);
+const decode = (packed: Uint8Array) => new TextDecoder().decode(Bun.zstdDecompressSync(packed)) === text;
+
+const sync = Bun.zstdCompressSync(bytes, { level: 19 });
+console.log("Bun.zstdCompressSync", sync.length, Bun.hash.crc32(sync), decode(sync));
+const later = await Bun.zstdCompress(bytes);
+console.log("Bun.zstdCompress", later.length, decode(later));
+const node = zstdCompressSync(bytes);
+console.log("node:zlib zstdCompressSync", node.length, zstdDecompressSync(node).toString() === text);
+const stream = createZstdCompress();
+const chunks: Buffer[] = [];
+stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+const ended = new Promise(resolve => stream.on("end", resolve));
+stream.end(bytes);
+await ended;
+console.log("node:zlib createZstdCompress", decode(Buffer.concat(chunks)));
+const web = await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream("zstd" as any))).bytes();
+console.log("CompressionStream", web.length, decode(web));

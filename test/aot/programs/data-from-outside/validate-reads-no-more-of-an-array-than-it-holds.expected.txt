@@ -1,0 +1,153 @@
+bytes of a message that holds an array of 1,000,000 holes: 13
+number[], out of that message: TypeError: [0] must be number, received undefined (and 99 more) [100 issues]
+unknown[], out of that message: RangeError: The arrays of the value have more than 65536 holes
+unknown[], a clone: RangeError: The arrays of the value have more than 65536 holes
+length 4294967295
+number[]: TypeError: [0] must be number, received undefined (and 99 more) [100 issues]
+number[] of at most ten: TypeError: value must have <=10 items (and 99 more) [100 issues]
+unknown[] of at most ten: TypeError: value must have <=10 items [1 issues]
+unknown[]: RangeError: The arrays of the value have more than 65536 holes
+any[]: RangeError: The arrays of the value have more than 65536 holes
+(number | undefined)[]: RangeError: The arrays of the value have more than 65536 holes
+(number | undefined)[], the first and the last are there: RangeError: The arrays of the value have more than 65536 holes
+number[], the first is there: TypeError: [1] must be number, received undefined (and 99 more) [100 issues]
+[number, number]: TypeError: value must be tuple, received array [1 issues]
+{ list: string[] }: TypeError: list[0] must be string, received undefined (and 99 more) [100 issues]
+{ list: unknown[] }: RangeError: The arrays of the value have more than 65536 holes
+unknown[][]: RangeError: The arrays of the value have more than 65536 holes
+Record<string, number>: TypeError: value must be object, received array [1 issues]
+Record<string, unknown> | unknown[]: RangeError: The arrays of the value have more than 65536 holes
+number[] | string[]: TypeError: value must be array | array, received array [1 issues]
+number[] | object: RangeError: The arrays of the value have more than 65536 holes
+unknown: an array of 4294967295
+object: an array of 4294967295
+number[], a Proxy says the length: TypeError: [0] must be number, received undefined (and 99 more) [100 issues]
+unknown[], a Proxy says the length: RangeError: The arrays of the value have more than 65536 holes
+unknown[], with an accessor: RangeError: The arrays of the value have more than 65536 holes
+number[], nobody looks at the error: string
+length 30000000
+number[]: TypeError: [0] must be number, received undefined (and 99 more) [100 issues]
+number[] of at most ten: TypeError: value must have <=10 items (and 99 more) [100 issues]
+unknown[] of at most ten: TypeError: value must have <=10 items [1 issues]
+unknown[]: RangeError: The arrays of the value have more than 65536 holes
+any[]: RangeError: The arrays of the value have more than 65536 holes
+(number | undefined)[]: RangeError: The arrays of the value have more than 65536 holes
+(number | undefined)[], the first and the last are there: RangeError: The arrays of the value have more than 65536 holes
+number[], the first is there: TypeError: [1] must be number, received undefined (and 99 more) [100 issues]
+[number, number]: TypeError: value must be tuple, received array [1 issues]
+{ list: string[] }: TypeError: list[0] must be string, received undefined (and 99 more) [100 issues]
+{ list: unknown[] }: RangeError: The arrays of the value have more than 65536 holes
+unknown[][]: RangeError: The arrays of the value have more than 65536 holes
+Record<string, number>: TypeError: value must be object, received array [1 issues]
+Record<string, unknown> | unknown[]: RangeError: The arrays of the value have more than 65536 holes
+number[] | string[]: TypeError: value must be array | array, received array [1 issues]
+number[] | object: RangeError: The arrays of the value have more than 65536 holes
+unknown: an array of 30000000
+object: an array of 30000000
+number[], a Proxy says the length: TypeError: [0] must be number, received undefined (and 99 more) [100 issues]
+unknown[], a Proxy says the length: RangeError: The arrays of the value have more than 65536 holes
+unknown[], with an accessor: RangeError: The arrays of the value have more than 65536 holes
+number[], nobody looks at the error: string
+length 65537
+number[]: TypeError: [0] must be number, received undefined (and 99 more) [100 issues]
+number[] of at most ten: TypeError: value must have <=10 items (and 99 more) [100 issues]
+unknown[] of at most ten: TypeError: value must have <=10 items [1 issues]
+unknown[]: an array of 65537
+any[]: an array of 65537
+(number | undefined)[]: an array of 65537
+(number | undefined)[], the first and the last are there: an array of 65537
+number[], the first is there: TypeError: [1] must be number, received undefined (and 99 more) [100 issues]
+[number, number]: TypeError: value must be tuple, received array [1 issues]
+{ list: string[] }: TypeError: list[0] must be string, received undefined (and 99 more) [100 issues]
+{ list: unknown[] }: object
+unknown[][]: an array of 2
+Record<string, number>: TypeError: value must be object, received array [1 issues]
+Record<string, unknown> | unknown[]: an array of 65537
+number[] | string[]: TypeError: value must be array | array, received array [1 issues]
+number[] | object: an array of 65537
+unknown: an array of 65537
+object: an array of 65537
+number[], a Proxy says the length: TypeError: [0] must be number, received undefined (and 99 more) [100 issues]
+unknown[], a Proxy says the length: RangeError: The arrays of the value have more than 65536 holes
+unknown[], with an accessor: an array of 65537
+number[], nobody looks at the error: string
+length 65536
+number[]: TypeError: [0] must be number, received undefined (and 99 more) [100 issues]
+number[] of at most ten: TypeError: value must have <=10 items (and 99 more) [100 issues]
+unknown[] of at most ten: TypeError: value must have <=10 items [1 issues]
+unknown[]: an array of 65536
+any[]: an array of 65536
+(number | undefined)[]: an array of 65536
+(number | undefined)[], the first and the last are there: an array of 65536
+number[], the first is there: TypeError: [1] must be number, received undefined (and 99 more) [100 issues]
+[number, number]: TypeError: value must be tuple, received array [1 issues]
+{ list: string[] }: TypeError: list[0] must be string, received undefined (and 99 more) [100 issues]
+{ list: unknown[] }: object
+unknown[][]: an array of 2
+Record<string, number>: TypeError: value must be object, received array [1 issues]
+Record<string, unknown> | unknown[]: an array of 65536
+number[] | string[]: TypeError: value must be array | array, received array [1 issues]
+number[] | object: an array of 65536
+unknown: an array of 65536
+object: an array of 65536
+number[], a Proxy says the length: TypeError: [0] must be number, received undefined (and 99 more) [100 issues]
+unknown[], a Proxy says the length: an array of 65536
+unknown[], with an accessor: an array of 65536
+number[], nobody looks at the error: string
+length 3
+number[]: TypeError: [0] must be number, received undefined (and 2 more) [3 issues]
+number[] of at most ten: TypeError: [0] must be number, received undefined (and 2 more) [3 issues]
+unknown[] of at most ten: an array of 3
+unknown[]: an array of 3
+any[]: an array of 3
+(number | undefined)[]: an array of 3
+(number | undefined)[], the first and the last are there: an array of 3
+number[], the first is there: TypeError: [1] must be number, received undefined (and 1 more) [2 issues]
+[number, number]: TypeError: value must be tuple, received array [1 issues]
+{ list: string[] }: TypeError: list[0] must be string, received undefined (and 2 more) [3 issues]
+{ list: unknown[] }: object
+unknown[][]: an array of 2
+Record<string, number>: TypeError: value must be object, received array [1 issues]
+Record<string, unknown> | unknown[]: an array of 3
+number[] | string[]: TypeError: value must be array | array, received array [1 issues]
+number[] | object: an array of 3
+unknown: an array of 3
+object: an array of 3
+number[], a Proxy says the length: TypeError: [0] must be number, received undefined (and 2 more) [3 issues]
+unknown[], a Proxy says the length: an array of 3
+unknown[], with an accessor: an array of 3
+number[], nobody looks at the error: string
+holes are counted in all the arrays of a value
+two arrays of 40,000 holes beside an accessor: RangeError: The arrays of the value have more than 65536 holes
+one of them: object
+lengths that a Proxy says
+0: an array of 0
+-1: an array of 0
+1.5: an array of 1
+2: an array of 2
+NaN: an array of 0
+Infinity: RangeError: The arrays of the value have more than 65536 holes
+undefined: an array of 0
+null: an array of 0
+[object Object]: an array of 0
+1: TypeError: Conversion from 'BigInt' to 'number' is not allowed.
+Symbol(Symbol.iterator): TypeError: Cannot convert a symbol to a number
+what is read, and how often
+all fit: [1,2,3] {"get length":1,"get 0":1,"get 1":1,"get 2":1}
+the second does not fit: TypeError: [1] must be number, received string {"get length":1,"get 0":1,"get 1":1,"get 2":1}
+too long: TypeError: value must have <=2 items {"get length":1,"get 0":1,"get 1":1,"get 2":1}
+the second arm takes it: [1,2,"three"] {"get length":1,"get 0":1,"get 1":1,"get 2":1}
+an arm that describes nothing takes it: [1,"two",3] {"get length":1,"get 0":1,"get 1":1,"get 2":1}
+a hole: [1,null,3] {"get length":1,"get 0":1,"get 1":1,"own 1":1,"get 2":1}
+a tuple: [1,"two"] {"get length":1,"get 0":1,"get 1":1}
+no tuple: TypeError: value must be tuple, received array {"get length":1}
+an iterator of its own is not asked
+number[]: string
+[1,2,3]
+an array that changes while it is read
+shorter: number[]: TypeError: [1] must be number, received undefined (and 2 more) [3 issues]
+longer: [1,2]
+long arrays that hold what they say
+300,000 numbers: an array of 300000
+300,000 numbers and an accessor: an array of 300000
+300,000 numbers in sparse storage: an array of 300000

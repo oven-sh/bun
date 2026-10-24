@@ -1,0 +1,3118 @@
+////: Early
+class Early {
+  static seen = 0;
+  static {
+    for (let i = 0; i < 3; i++) {
+      if (i > 5) Early.seen += behindClass.length;
+    }
+  }
+  static count(n) {
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      if (i !== 1) sum += behindClass.length;
+    }
+    return sum;
+  }
+}
+////: attempt
+function attempt(label, run) {
+  try {
+    console.log(label, run());
+  } catch (error) {
+    console.log(label, error.constructor.name);
+  }
+}
+////: callsKept
+function callsKept(n, go) {
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    if (go) sum += kept(i);
+  }
+  return sum;
+}
+////: eachTime
+function eachTime(n, act) {
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    if (act) sum += act(i);
+  }
+  return sum;
+}
+////: for
+for (const V of [7, 1.5, "text", { a: 9 }, () => "second", null, undefined]) {
+  log.length = 0;
+  tell("the store", () => { ns.k = note(V); });
+  tell("evaluated", () => log.map((x) => typeof x === "function" ? "function" : typeof x === "object" && x ? "object" : String(x)).join());
+  tell("outside", () => typeof ns.k);
+  tell("inside", () => ns.inside());
+  tell("hot", () => ns.hot());
+}
+////: for-2
+for (let round = 0; round < 1; round++) {
+  try {
+    say("round", round, readBehindThrow(4));
+  } catch (error) {
+    say("round", round, error.constructor.name);
+  }
+}
+////: for-3
+for (const V of [7, 1.5, "text", { a: 9 }, () => "second", null, undefined]) {
+  log.length = 0;
+  tell("the store", () => { ns.«1» = note(V); });
+  tell("evaluated", () => log.map((x) => typeof x === "function" ? "function" : typeof x === "object" && x ? "object" : String(x)).join());
+  tell("outside", () => typeof ns.k);
+  tell("inside", () => ns.inside());
+  tell("hot", () => ns.hot());
+}
+////: for-4
+for (const V of [7, 1.5, "text", { a: 9 }, () => "second", null, undefined]) {
+  log.length = 0;
+  tell("the store", () => { «1»; });
+  tell("evaluated", () => log.map((x) => typeof x === "function" ? "function" : typeof x === "object" && x ? "object" : String(x)).join());
+  tell("outside", () => typeof ns.k);
+  tell("inside", () => ns.inside());
+  tell("hot", () => ns.hot());
+}
+////: main
+function main(n) {
+  let before = 0;
+  for (let i = 0; i < n; i++) {
+    if (i > n) before += filledBySetup[0];
+  }
+  setup();
+  let after = 0;
+  for (let i = 0; i < n; i++) {
+    if (i & 1) after += filledBySetup[i & 3];
+  }
+  return before + after;
+}
+////: nested
+function nested(rows, columns) {
+  let sum = 0;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < columns; c++) {
+      if (c >= 0) sum += grid[r * columns + c];
+    }
+  }
+  return sum;
+}
+////: onlyOne
+function onlyOne(n, act) {
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    if (act) sum += act(i);
+  }
+  return sum;
+}
+////: readBehindThrow
+function readBehindThrow(n) {
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    if (behindThrow !== undefined) sum += behindThrow[i & 1];
+  }
+  return sum;
+}
+////: readInBranch
+function readInBranch(n) {
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    if (inBranch) sum += inBranch[0];
+    else sum -= 1;
+  }
+  return sum;
+}
+////: readVar
+function readVar(n) {
+  let text = "";
+  for (let i = 0; i < n; i++) {
+    if (i === n - 1) text += typeof hoisted;
+  }
+  return text;
+}
+////: schedule
+function schedule(n) {
+  later.push(() => {
+    let sum = 0;
+    for (let i = 0; i < n; i++) {
+      if (i % 3 === 0) sum += storedBehindSchedule.get(i % 2) ?? 0;
+    }
+    return sum;
+  });
+}
+////: sumOfLate
+function sumOfLate(n, from) {
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    if (i >= from) sum += late[i & 3];
+  }
+  return sum;
+}
+//// a-class-evaluated-twice-reads-its-own-later-static-field.js
+// A class evaluated twice shares nothing: the second evaluation's field is not yet defined while the first's is.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+function make(k) {
+  return class K {
+    static first = k ? attempt(() => K.second.x) : 0;
+    static second = { x: k };
+  };
+}
+const A = make(0), B = make(1);
+console.log(A.first, B.first, A.second.x, B.second.x);
+//// a-closure-over-an-earlier-activation-is-entered-from-a-later-one.js
+// An environment of an earlier activation, entered from a later one.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+let saved;
+function outer(depth) {
+  const read = () => v.a;
+  if (depth === 0) { saved = read; outer(1); }
+  var v = { a: depth };
+  if (depth === 1) console.log(attempt(saved));
+  return read();
+}
+console.log(outer(0));
+function loop() {
+  const all = [];
+  for (let i = 0; i < 2; i++) {
+    all.push(() => w.a);
+    if (i === 1) console.log(attempt(all[1]), attempt(all[0]));
+    let w = { a: i };
+  }
+}
+loop();
+//// a-conversion-enters-a-method-before-the-variable-that-names-it-is-stored.js
+// Only api.run() calls the method by name, and api is stored behind `later`: but a conversion enters it earlier.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+let api;
+class T { run() { return later.x; } toString() { return "" + this.run(); } }
+const t = new T();
+console.log(attempt(() => `${t}`));
+const later = { x: 1 };
+api = t;
+console.log(api.run());
+//// a-function-called-once-finds-the-closure-in-a-rest-parameter-a-default-or-arguments.js
+// A function that is called once finds the closure in a rest parameter, in a default value, in arguments.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+let r;
+try { r = ((...a) => a[0]())(() => later.x); } catch (e) { r = "threw " + e.constructor.name; }
+console.log(r);
+try { r = ((f, g = f) => g())(() => later.x); } catch (e) { r = "threw " + e.constructor.name; }
+console.log(r);
+try { r = (function (a) { return arguments[1](); })(0, () => later.x); } catch (e) { r = "threw " + e.constructor.name; }
+console.log(r);
+const later = { x: 1 };
+console.log(later.x);
+//// a-function-called-once-finds-the-closure-in-arguments.js
+// A function that is called once finds the closure in arguments.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+let r;
+try { r = (function () { return arguments[0](); })(() => later.x); } catch (e) { r = "threw " + e.constructor.name; }
+console.log(r);
+const later = { x: 1 };
+console.log(later.x);
+//// a-function-called-once-throws-in-front-of-its-store.js
+// The throw half way through a function called once.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+var box;
+function mayThrow() { if (JSON.parse("true")) throw new RangeError("midway"); }
+try { (function () { mayThrow(); box = { a: 1 }; })(); } catch {}
+console.log(attempt(() => box.a));
+function f() {
+  var v;
+  try { (() => { mayThrow(); v = { a: 1 }; })(); } catch {}
+  return attempt(() => v.a);
+}
+console.log(f());
+function g() {
+  var v;
+  try { mayThrow(); v = { a: 1 }; } finally { console.log(attempt(() => v.a)); }
+}
+attempt(g);
+//// a-function-of-a-module-on-a-cycle-reads-a-binding-in-a-branch-of-a-loop-that-is-not-taken-yet/a.mjs
+import { early } from "./b.mjs";
+export function sumOfTable(n, from) {
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    if (i >= from) sum += table[i & 3];
+  }
+  return sum;
+}
+export const table = new Int32Array([1, 2, 3, 4]);
+export const seen = early;
+//// a-function-of-a-module-on-a-cycle-reads-a-binding-in-a-branch-of-a-loop-that-is-not-taken-yet/b.mjs
+import { sumOfTable } from "./a.mjs";
+let tooEarly;
+try {
+  tooEarly = sumOfTable(4, 3);
+} catch (error) {
+  tooEarly = error.constructor.name;
+}
+export const early = `${sumOfTable(8, 100)} ${tooEarly}`;
+//// a-function-of-a-module-on-a-cycle-reads-a-binding-in-a-branch-of-a-loop-that-is-not-taken-yet/main.mjs
+// The two modules import each other. `b` runs first and calls a function of `a` whose loop reads a binding of `a` in a branch that is not taken yet.
+import { sumOfTable, table } from "./a.mjs";
+import { early } from "./b.mjs";
+console.log(early, sumOfTable(8, 0), table.length);
+//// a-generator-left-by-return-or-throw-skips-the-store-behind-its-yield.js
+// A generator is left by return() at a yield: the store behind the yield never runs.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+function* g(out) {
+  var v;
+  try { yield 1; v = { a: 1 }; } finally { out.push(attempt(() => v.a)); }
+}
+const out = [];
+const it = g(out); it.next(); it.return(5);
+console.log(out.join());
+function* h(out) {
+  try { yield 1; } finally { out.push(attempt(() => late.a)); }
+  let late = { a: 1 };
+  yield late;
+}
+const it2 = h(out); it2.next(); it2.return(5);
+console.log(out.join());
+const it3 = h(out); it3.next(); attempt(() => it3.throw(new Error("x")));
+console.log(out.join());
+//// a-large-var-read-only-where-a-parameter-has-another-type-than-the-written-one.ts
+// A `var` of a module that is stored once with a large object, read only where a parameter holds another type than the written one.
+class Point { x = 1; y = 2; }
+function pick(k: number): unknown { if (typeof k === "string") return second; return k; }
+function brief(v: any): string { return v === undefined ? "undefined" : typeof v === "number" ? "number" : String(v.k7 + v.k149); }
+const odd = JSON.parse('"text"') as number;
+console.log(brief(pick(odd)), brief(pick(1)));
+var second: Point = { ...{ k0: 0, k1: 1, k2: 2, k3: 3, k4: 4, k5: 5, k6: 6, k7: 7, k8: 8, k9: 9, k10: 10, k11: 11, k12: 12, k13: 13, k14: 14, k15: 15, k16: 16, k17: 17, k18: 18, k19: 19, k20: 20, k21: 21, k22: 22, k23: 23, k24: 24, k25: 25, k26: 26, k27: 27, k28: 28, k29: 29, k30: 30, k31: 31, k32: 32, k33: 33, k34: 34, k35: 35, k36: 36, k37: 37, k38: 38, k39: 39, k40: 40, k41: 41, k42: 42, k43: 43, k44: 44, k45: 45, k46: 46, k47: 47, k48: 48, k49: 49, k50: 50, k51: 51, k52: 52, k53: 53, k54: 54, k55: 55, k56: 56, k57: 57, k58: 58, k59: 59, k60: 60, k61: 61, k62: 62, k63: 63, k64: 64, k65: 65, k66: 66, k67: 67, k68: 68, k69: 69, k70: 70, k71: 71, k72: 72, k73: 73, k74: 74, k75: 75, k76: 76, k77: 77, k78: 78, k79: 79, k80: 80, k81: 81, k82: 82, k83: 83, k84: 84, k85: 85, k86: 86, k87: 87, k88: 88, k89: 89, k90: 90, k91: 91, k92: 92, k93: 93, k94: 94, k95: 95, k96: 96, k97: 97, k98: 98, k99: 99, k100: 100, k101: 101, k102: 102, k103: 103, k104: 104, k105: 105, k106: 106, k107: 107, k108: 108, k109: 109, k110: 110, k111: 111, k112: 112, k113: 113, k114: 114, k115: 115, k116: 116, k117: 117, k118: 118, k119: 119, k120: 120, k121: 121, k122: 122, k123: 123, k124: 124, k125: 125, k126: 126, k127: 127, k128: 128, k129: 129, k130: 130, k131: 131, k132: 132, k133: 133, k134: 134, k135: 135, k136: 136, k137: 137, k138: 138, k139: 139, k140: 140, k141: 141, k142: 142, k143: 143, k144: 144, k145: 145, k146: 146, k147: 147, k148: 148, k149: 149 } } as unknown as Point;
+console.log(brief(pick(odd)), brief(pick(2)));
+console.log(pick(odd) === pick(odd));
+export {};
+//// a-method-called-through-another-name-than-the-variable-that-is-stored-later.js
+// The callee comes out of a variable that is stored later; the call happens through another name of the same object.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+let api;
+const early = { run() { return later.x; } };
+function go() { return api.run(); }
+console.log(attempt(() => early.run()));
+api = early;
+console.log(attempt(go));
+const later = { x: 1 };
+console.log(attempt(go));
+//// a-store-behind-an-await-in-a-function-called-once.js
+// A store in a function that is called once, which suspends in front of it.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+var box;
+(async function () { await null; box = { a: 1 }; })();
+console.log(attempt(() => box.a));
+await null; await null;
+console.log(attempt(() => box.a));
+//// a-store-in-a-generator-or-an-async-function-called-once.js
+// A store in a generator or an async function that is called once has not run when the call returns.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+var box;
+(function* () { box = { a: 1 }; })();
+console.log(attempt(() => box.a));
+function inner() {
+  var v;
+  (function* () { v = { a: 1 }; })();
+  return attempt(() => v.a);
+}
+console.log(inner());
+function inner2() {
+  var v;
+  (async function () { await 0; v = { a: 1 }; })();
+  return attempt(() => v.a);
+}
+console.log(inner2());
+//// a-test-that-threw-proves-nothing.js
+// Behind a test for the dead zone that has passed, the binding is out of it for good. Behind one that threw and was caught it is not.
+////= attempt
+
+function readTwice() {
+  let first = "nothing";
+  try {
+    first = changing;
+  } catch (error) {
+    first = error.constructor.name;
+  }
+  return first + " then " + changing;
+}
+function storeThenRead(value) {
+  try {
+    changing = value;
+  } catch (error) {
+    console.log("the store threw", error.constructor.name);
+  }
+  return changing;
+}
+function readInFinally() {
+  try {
+    return changing;
+  } finally {
+    attempt("in finally", () => changing);
+  }
+}
+function readOnOnePath(early) {
+  if (early) console.log("one path", changing);
+  return changing;
+}
+attempt("read twice, early", readTwice);
+attempt("store then read, early", () => storeThenRead(1));
+attempt("finally, early", readInFinally);
+attempt("one path, early", () => readOnOnePath(false));
+let changing = 10;
+attempt("read twice", readTwice);
+attempt("store then read", () => storeThenRead(20));
+changing += 1;
+attempt("finally", readInFinally);
+attempt("one path", () => readOnOnePath(true));
+
+function reads(times) {
+  let sum = 0;
+  for (let i = 0; i < times; i++) {
+    sum += changing;
+    changing++;
+    sum += changing;
+  }
+  return sum;
+}
+console.log("in a loop", reads(3), changing);
+
+// The same for a binding that closures share: each call of the outer function has one of its own.
+function outer(early) {
+  const twice = () => {
+    let first = "nothing";
+    try {
+      first = shared;
+    } catch (error) {
+      first = error.constructor.name;
+    }
+    return first + " then " + shared;
+  };
+  const both = other => shared + " and " + other();
+  if (early) attempt("shared, early", twice);
+  let shared = early ? "first" : "second";
+  attempt("shared", twice);
+  shared += "!";
+  attempt("shared", twice);
+  return { both, read: () => shared };
+}
+const one = outer(true);
+const two = outer(false);
+console.log(one.both(two.read), "|", two.both(one.read));
+//// a-var-that-closures-share-starts-as-undefined.js
+// A `var` that function declarations capture lives in an environment and starts as undefined. Whoever reads it in front of its store sees that undefined; where nobody can, the compiler may forget it.
+function attempt(label, run) {
+  try {
+    console.log(label, run());
+  } catch (error) {
+    console.log(label, error.constructor.name, error.message);
+  }
+}
+
+function storedFirst(n) {
+  var box = { x: n };
+  var flag = n > 0;
+  return read;
+  function read() {
+    return flag ? box.x : -1;
+  }
+}
+attempt("stored first", () => [storedFirst(1)(), storedFirst(0)()]);
+
+function readFirst(n) {
+  var early = read();
+  var box = { x: n };
+  return [early, read()];
+  function read() {
+    return box === undefined ? "undefined" : box.x;
+  }
+}
+attempt("read first", () => readFirst(2));
+
+function handedOutFirst(take, n) {
+  take(read);
+  var box = { x: n };
+  return read();
+  function read() {
+    return typeof box;
+  }
+}
+attempt("handed out first", () => {
+  let seen;
+  const last = handedOutFirst(read => (seen = read()), 3);
+  return [seen, last];
+});
+
+function skippedByThrow(fail) {
+  try {
+    var box = make();
+  } catch {
+    return read();
+  }
+  return read();
+  function make() {
+    if (fail) throw new Error("no box");
+    return { x: 4 };
+  }
+  function read() {
+    return box === undefined ? "undefined" : box.x;
+  }
+}
+attempt("skipped by a throw", () => [skippedByThrow(true), skippedByThrow(false)]);
+
+function skippedByBranch(stores) {
+  if (stores) var box = { x: 5 };
+  return read();
+  function read() {
+    return box?.x;
+  }
+}
+attempt("skipped by a branch", () => [skippedByBranch(true), skippedByBranch(false)]);
+
+function clearedAgain(n) {
+  var box = { x: n };
+  var first = read();
+  box = undefined;
+  return [first, read()];
+  function read() {
+    return box === undefined ? "undefined" : box.x;
+  }
+}
+attempt("cleared again", () => clearedAgain(6));
+
+function storedUndefined(value) {
+  var held = value;
+  return read;
+  function read() {
+    return held === undefined ? "undefined" : typeof held;
+  }
+}
+attempt("stored undefined", () => [storedUndefined(undefined)(), storedUndefined(7)(), storedUndefined()()]);
+
+function oneForEachRound(count) {
+  const readers = [];
+  for (let i = 0; i < count; i++) {
+    readers.push(round(i));
+  }
+  return readers.map(read => read());
+  function round(i) {
+    var mine = i * 2;
+    return read;
+    function read() {
+      return mine;
+    }
+  }
+}
+attempt("one for each round", () => oneForEachRound(4));
+
+function declaredTwice(n) {
+  var box = { x: n };
+  var first = read();
+  var box;
+  var second = read();
+  var box = { x: n + 1 };
+  return [first, second, read()];
+  function read() {
+    return box.x;
+  }
+}
+attempt("declared twice", () => declaredTwice(8));
+
+function storedByTheClosure() {
+  var count;
+  bump();
+  bump();
+  return count;
+  function bump() {
+    count = (count ?? 10) + 1;
+  }
+}
+attempt("stored by the closure", storedByTheClosure);
+
+function* suspended(n) {
+  yield read();
+  var box = { x: n };
+  yield read();
+  function read() {
+    return box === undefined ? "undefined" : box.x;
+  }
+}
+attempt("suspended", () => [...suspended(9)]);
+
+function entersItself(depth) {
+  var mine = depth;
+  var below = depth > 0 ? entersItself(depth - 1) : [];
+  return [read(), ...below];
+  function read() {
+    return mine;
+  }
+}
+attempt("enters itself", () => entersItself(3));
+
+function namedByText(n) {
+  var box = { x: n };
+  return eval("read()") + eval("box.x");
+  function read() {
+    return box.x;
+  }
+}
+attempt("named by text", () => namedByText(10));
+//// a-variable-is-read-in-a-branch-of-a-loop-that-is-not-taken-until-the-variable-is-stored.js
+// Each variable is stored once. Each loop reads it only in a branch, and the branch is not taken as long as the variable is empty: a read that ran in front of the loop would run where the program never reads.
+const lines = [];
+const say = (...parts) => lines.push(parts.join(" "));
+
+// Called in front of the store and behind it.
+////= sumOfLate
+say("in front of the store", sumOfLate(8, 100));
+try {
+  say("too early", sumOfLate(8, 7));
+} catch (error) {
+  say("too early", error.constructor.name);
+}
+const late = new Int32Array([1, 2, 3, 4]);
+say("behind the store", sumOfLate(8, 0), sumOfLate(8, 100));
+
+// The loop stands in the body that stores, in front of the store.
+for (let i = 0; i < 4; i++) {
+  if (i > 10) say("never", besideItsLoop.length);
+}
+const besideItsLoop = [1, 2, 3];
+let total = 0;
+for (let i = 0; i < 6; i++) {
+  if (i & 1) total += besideItsLoop[i % 3];
+}
+say("beside its loop", total);
+
+// The store stands behind a call that throws the first time.
+let attempts = 0;
+function mayThrow() {
+  if (attempts++ === 0) throw new RangeError("first");
+  return new Float64Array([0.5, 1.5]);
+}
+let behindThrow;
+////= readBehindThrow
+////= for-2
+try {
+  behindThrow = mayThrow();
+} catch (error) {
+  say("threw", error.message, readBehindThrow(4));
+}
+
+// The store stands in a branch.
+let inBranch;
+if (lines.length > 1000) inBranch = [7];
+////= readInBranch
+say("in a branch", readInBranch(3));
+
+// A function that runs once stores, and its caller reads behind the call.
+let filledBySetup;
+function setup() {
+  filledBySetup = new Uint8Array(4).fill(9);
+}
+////= main
+say("filled by setup", main(8));
+
+// A var, read by a function that runs on both sides of the store.
+////= readVar
+say("var", readVar(3));
+var hoisted = { a: 1 };
+say("var", readVar(3));
+
+// A callback that the host calls later, made in front of the store.
+const later = [];
+////= schedule
+schedule(9);
+const storedBehindSchedule = new Map([
+  [0, 10],
+  [1, 20],
+]);
+say("scheduled", later[0]());
+
+// A class whose static block runs a loop in front of the store.
+////= Early
+const behindClass = "four";
+say("class", Early.seen, Early.count(3));
+
+// A loop inside a loop, the read in the inner one, which does not turn at first.
+////= nested
+say("nested", nested(3, 0));
+const grid = new Float32Array(6).fill(2);
+say("nested", nested(2, 3));
+
+// A function that is entered in front of the store calls a closure that is made behind it.
+////= eachTime
+say("by value", eachTime(3, null), eachTime(3, i => i));
+const behindFirstCall = new Int32Array([5, 6, 7, 8]);
+say("by value", eachTime(4, i => behindFirstCall[i & 3]));
+
+// The same with one closure alone, so that the call names it.
+////= onlyOne
+say("one closure", onlyOne(3, undefined));
+const behindOnlyOne = [1.5, 2.5];
+say("one closure", onlyOne(4, i => behindOnlyOne[i & 1]));
+
+// A closure kept in a variable that is stored later than the function that calls it is entered.
+////= callsKept
+say("kept", callsKept(3, false));
+const behindKept = new Uint16Array([9, 8]);
+const kept = i => behindKept[i & 1];
+say("kept", callsKept(4, true));
+
+console.log(lines.join("\n"));
+//// a-variable-is-read-in-a-branch-of-a-loop-that-is-not-taken-until-the-variable-is-stored-validated.js
+// Each variable is stored once. Each loop reads it only in a branch, and the branch is not taken as long as the variable is empty: a read that ran in front of the loop would run where the program never reads.
+const lines = [];
+const say = (...parts) => lines.push(parts.join(" "));
+
+// Called in front of the store and behind it.
+////= sumOfLate
+say("in front of the store", sumOfLate(8, 100));
+try {
+  say("too early", sumOfLate(8, 7));
+} catch (error) {
+  say("too early", error.constructor.name);
+}
+const late = new Int32Array([1, 2, 3, 4]);
+say("behind the store", sumOfLate(8, 0), sumOfLate(8, 100));
+
+// The loop stands in the body that stores, in front of the store.
+for (let i = 0; i < 4; i++) {
+  if (i > 10) say("never", besideItsLoop.length);
+}
+const besideItsLoop = [1, 2, 3];
+let total = 0;
+for (let i = 0; i < 6; i++) {
+  if (i & 1) total += besideItsLoop[i % 3];
+}
+say("beside its loop", total);
+
+// The store stands behind a call that throws the first time.
+let attempts = 0;
+function mayThrow() {
+  if (attempts++ === 0) throw new RangeError("first");
+  return new Float64Array([0.5, 1.5]);
+}
+let behindThrow;
+////= readBehindThrow
+////= for-2
+try {
+  behindThrow = mayThrow();
+} catch (error) {
+  say("threw", error.message, readBehindThrow(4));
+}
+
+// The store stands in a branch.
+let inBranch;
+if (lines.length > 1000) inBranch = [7];
+////= readInBranch
+say("in a branch", readInBranch(3));
+
+// A function that runs once stores, and its caller reads behind the call.
+let filledBySetup;
+function setup() {
+  filledBySetup = new Uint8Array(4).fill(9);
+}
+////= main
+say("filled by setup", main(8));
+
+// A var, read by a function that runs on both sides of the store.
+////= readVar
+say("var", readVar(3));
+var hoisted = { a: 1 };
+say("var", readVar(3));
+
+// A callback that the host calls later, made in front of the store.
+const later = [];
+////= schedule
+schedule(9);
+const storedBehindSchedule = new Map([
+  [0, 10],
+  [1, 20],
+]);
+say("scheduled", later[0]());
+
+// A class whose static block runs a loop in front of the store.
+////= Early
+const behindClass = "four";
+say("class", Early.seen, Early.count(3));
+
+// A loop inside a loop, the read in the inner one, which does not turn at first.
+////= nested
+say("nested", nested(3, 0));
+const grid = new Float32Array(6).fill(2);
+say("nested", nested(2, 3));
+
+// A function that is entered in front of the store calls a closure that is made behind it.
+////= eachTime
+say("by value", eachTime(3, null), eachTime(3, i => i));
+const behindFirstCall = new Int32Array([5, 6, 7, 8]);
+say("by value", eachTime(4, i => behindFirstCall[i & 3]));
+
+// The same with one closure alone, so that the call names it.
+////= onlyOne
+say("one closure", onlyOne(3, undefined));
+const behindOnlyOne = [1.5, 2.5];
+say("one closure", onlyOne(4, i => behindOnlyOne[i & 1]));
+
+// A closure kept in a variable that is stored later than the function that calls it is entered.
+////= callsKept
+say("kept", callsKept(3, false));
+const behindKept = new Uint16Array([9, 8]);
+const kept = i => behindKept[i & 1];
+say("kept", callsKept(4, true));
+
+console.log(lines.join("\n"));
+//// async-iterators-run-while-the-module-stands-at-its-await.js
+// For await, async iterators and a generator resumed while the module is suspended.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+const seen = [];
+const source = { [Symbol.asyncIterator]() { return { next() { seen.push(attempt(() => later.x)); return Promise.resolve({ done: true }); } }; } };
+for await (const v of source) { }
+await using_();
+async function using_() { seen.push(attempt(() => later.x)); }
+const later = { x: 1 };
+console.log(seen.join("|"), later.x);
+//// bindings-of-a-module-whose-values-come-from-outside-read-in-their-dead-zones.ts
+// Bindings of a module whose values come from outside the program, read in their dead zones.
+interface Shape { x: number; inner: { v: number } }
+function attempt(f: () => unknown): unknown { try { return f(); } catch (e) { return "threw " + (e as Error).constructor.name; } }
+function given<T>(text: string): T { return JSON.parse(text) as T; }
+const readers: Array<() => unknown> = [
+  () => shape.x, () => shape.inner.v, () => n + 1, () => s.length, () => list[0], () => list.length, () => flag ? 1 : 2,
+  () => maybe?.x, () => typeof shape, () => typeof n, () => shape, () => n, () => s, () => [shape, n], () => ({ shape }),
+  () => { changing = given<Shape>('{"x":9,"inner":{"v":9}}'); return "stored"; }, () => changing.x, () => `${s}`, () => shape === undefined,
+  () => shape == null, () => !shape, () => String(n), () => K.name, () => new K().x, () => K,
+];
+function all(): string { return readers.map(attempt).map(v => typeof v === "function" ? "function" : JSON.stringify(v)).join(" "); }
+console.log(all());
+const shape: Shape = given<Shape>('{"x":1,"inner":{"v":2}}');
+console.log(all());
+const n: number = given<number>("5");
+const s: string = given<string>('"text"');
+console.log(all());
+const list: number[] = given<number[]>("[1,2]");
+const flag: boolean = given<boolean>("true");
+const maybe: Shape | undefined = given<Shape | undefined>('{"x":3,"inner":{"v":4}}');
+console.log(all());
+let changing: Shape = given<Shape>('{"x":5,"inner":{"v":6}}');
+console.log(all());
+class K { x: number = given<number>("7"); }
+console.log(all());
+export {};
+//// bindings-with-written-types-across-modules-that-import-each-other/main.ts
+// The same while the module stands at an await, and across modules that import each other.
+import { early, later as theirs } from "./other";
+function attempt(f: () => unknown): unknown { try { return f(); } catch (e) { return "threw " + (e as Error).constructor.name; } }
+const seen: unknown[] = [];
+queueMicrotask(() => seen.push(attempt(() => count + 1), attempt(() => name.length), attempt(() => box.v.w)));
+await null;
+await null;
+export const count: number = 5;
+export const name: string = "text";
+export const box: { v: { w: number } } = { v: { w: 7 } };
+console.log(seen.join("|"), count + name.length + box.v.w, early, theirs);
+//// bindings-with-written-types-across-modules-that-import-each-other/other.ts
+import { count, name, box } from "./main";
+function attempt(f: () => unknown): unknown { try { return f(); } catch (e) { return "threw " + (e as Error).constructor.name; } }
+export const early: string = [attempt(() => count + 1), attempt(() => name.length), attempt(() => box.v.w)].join("/");
+export const later: number = 1;
+//// bindings-with-written-types-read-in-their-dead-zones.ts
+// Bindings with written types, read in their dead zones.
+function attempt(f: () => unknown): unknown { try { return f(); } catch (e) { return "threw " + (e as Error).constructor.name; } }
+interface Shape { x: number; inner: { v: number } }
+class Point { x = 1; y = 2; }
+enum Color { Red = 1, Green }
+console.log(attempt(() => n + 1), attempt(() => s.length), attempt(() => b ? 1 : 2), attempt(() => big + 1n), attempt(() => shape.inner.v), attempt(() => point.x + point.y), attempt(() => color + 1), attempt(() => list[0] + list.length), attempt(() => tuple[1].length), attempt(() => fn(1)), attempt(() => opt?.x), attempt(() => u), attempt(() => typeof n), attempt(() => { n2 = 5; return "stored"; }));
+const n: number = 5;
+const s: string = "text";
+const b: boolean = true;
+const big: bigint = 5n;
+const shape: Shape = { x: 1, inner: { v: 2 } };
+const point: Point = new Point();
+const color: Color = Color.Green;
+const list: number[] = [1, 2];
+const tuple: [number, string] = [1, "a"];
+const fn: (v: number) => number = v => v + 1;
+const opt: Shape | undefined = undefined;
+const u: undefined = undefined;
+let n2: number = 1;
+console.log(n + s.length + shape.inner.v + point.x + color + list[0] + tuple[1].length + fn(1) + n2, b, big, opt, u);
+function inner(k: number): string {
+  const read = (): number => m * 2 + d + t.length + o.inner.v;
+  const early = attempt(read);
+  if (k) return String(early);
+  const m: number = 3, d: number = 0.5, t: string = "ab", o: Shape = { x: 1, inner: { v: 4 } };
+  return early + "," + read();
+}
+console.log(inner(0), inner(1));
+function loop(): string {
+  let out = "";
+  for (let i = 0; i < 3; i++) {
+    const peek = (): number => w + i;
+    out += attempt(peek) + ";";
+    const w: number = i * 2;
+    out += peek() + ";";
+  }
+  return out;
+}
+console.log(loop());
+class Holder { static early = attempt(() => Holder.late + 1); static late: number = 5; static obj: Shape = { x: 1, inner: { v: attempt(() => Holder.after.x) as number } }; static after: Point = new Point(); }
+console.log(Holder.early, Holder.late, Holder.obj.inner.v);
+function params(a: number = attempt(() => c + 1) as number, c: number = 2): string { return a + "," + c; }
+console.log(params(), params(1));
+export {};
+//// call-apply-bind-and-reflect-enter-a-closure-in-the-dead-zone.js
+// Sloppy-like aliasing is absent in modules; Function.prototype.call | apply | bind | Reflect.apply enter a closure.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+const probe = () => later.x;
+console.log(attempt(() => probe.call(null)), attempt(() => probe.apply(null, [])), attempt(() => probe.bind(null)()), attempt(() => Reflect.apply(probe, null, [])), attempt(() => Function.prototype.call.call(probe)));
+console.log(attempt(() => new (class { constructor() { return { v: probe() }; } })().v));
+console.log(attempt(() => Reflect.construct(function () { this.v = probe(); }, []).v));
+const later = { x: 1 };
+//// captured-bindings-early-reads.js
+// A captured let, const or class whose reader outlives the scope that left it unset or reaches it around the declaration: a closure of an earlier turn or an outer activation, a handler, a member of a class, a default of a pattern, the head of a loop.
+function attempt(f) { try { return String(f()); } catch (e) { return e.name; } }
+function fail() { throw new Error("failed"); }
+
+function staleClosureCalledAfterLaterStore(turns) {
+  let out = "";
+  let previous = null;
+  for (let turn = 0; turn < turns; turn++) {
+    const read = () => inBody;
+    if (turn === 0) { previous = read; continue; }
+    let inBody = turn;
+    inBody++;
+    out += attempt(previous) + read() + ",";
+  }
+  return out;
+}
+
+function staleClosureHeldInCapturedBinding(turns) {
+  let out = "";
+  let previous = null;
+  const callPrevious = () => previous();
+  for (let turn = 0; turn < turns; turn++) {
+    const read = () => inBody;
+    if (turn === 0) { previous = read; continue; }
+    let inBody = turn * 1.5;
+    inBody++;
+    out += attempt(callPrevious) + read() + ",";
+  }
+  return out;
+}
+
+function storedInSiblingBinding(callEarly) {
+  let hook = null;
+  function run() { return hook(); }
+  hook = () => value;
+  const early = callEarly ? attempt(run) : "skipped";
+  let value = 41;
+  value++;
+  return early + " " + run();
+}
+
+function passedDown(depth, outerRead) {
+  const read = () => mine;
+  const early = outerRead ? attempt(outerRead) : "top";
+  const below = depth > 0 ? passedDown(depth - 1, read) : "";
+  let mine = depth;
+  mine++;
+  return early + "," + below + read();
+}
+
+function readInFinally(fails) {
+  let read = () => "none";
+  let out;
+  try {
+    read = () => value;
+    let value = fails ? fail() : 43;
+    value++;
+  } catch {} finally { out = attempt(read); }
+  return out;
+}
+
+function membersOfClassReadLate(callEarly) {
+  class Holder {
+    now = late;
+    static peek() { return late; }
+    get live() { return late; }
+  }
+  const early = callEarly ? attempt(() => new Holder().now) + attempt(Holder.peek) + attempt(() => Holder.prototype.live) : "skipped";
+  let late = 45;
+  late++;
+  return early + " " + new Holder().now + Holder.peek() + new Holder().live;
+}
+
+function heritageReadsInnerName() {
+  let seen;
+  try { class Self extends (seen = attempt(() => Self), Object) {} } catch (e) { seen = "thrown " + e.name; }
+  return seen;
+}
+
+function patternDefaults() {
+  const readSecond = () => second;
+  let { first = attempt(readSecond), second = 2.5 } = {};
+  second++;
+  return first + " " + readSecond();
+}
+
+function headOfForOf() {
+  let out = "";
+  for (const item of [attempt(() => item), 2]) out += item + ",";
+  return out;
+}
+
+async function microtaskReadsEarly() {
+  const read = () => value;
+  const pending = Promise.resolve().then(() => attempt(read));
+  const early = await pending;
+  let value = 47;
+  value++;
+  return early + " " + read();
+}
+
+function headBindings() {
+  let out = "";
+  for (let read = () => later, early = attempt(read), later = 49; later < 51; later++) out += early + read() + ",";
+  return out;
+}
+
+function privateStaticReadEarly() {
+  class Private {
+    static early = attempt(() => Private.#late);
+    static #late = 51;
+    static now() { return Private.#late; }
+  }
+  return Private.early + " " + Private.now();
+}
+
+class Base { constructor() { this.base = 13; } }
+class Twice extends Base {
+  constructor() {
+    const callSuper = () => super();
+    const self = () => this.base;
+    const before = attempt(self);
+    callSuper();
+    this.text = before + " " + attempt(callSuper) + " " + self();
+  }
+}
+
+function catchPattern() {
+  let out;
+  try { throw {}; } catch ({ first = attempt(() => second), second = 55 }) {
+    const keep = () => second++;
+    out = first + " " + keep() + keep();
+  }
+  return out;
+}
+
+function previousTurnIsInitialized(turns) {
+  let out = "";
+  let previous = null;
+  for (let turn = 0; turn < turns; turn++) {
+    if (previous) out += previous() + ",";
+    let inBody = turn * 2;
+    previous = () => inBody++;
+  }
+  return out;
+}
+
+function objectSlotAcrossCollection(size) {
+  const read = () => held.list.length + held.text;
+  const spare = (Bun.gc(true), new Array(size).fill(size));
+  const held = (Bun.gc(true), { list: spare, text: "t" + size });
+  Bun.gc(true);
+  return read;
+}
+
+function valueOfCalledByInitializer() {
+  const probe = { valueOf: () => (seen = attempt(() => total), 1) };
+  let seen = "none";
+  const total = probe + 1;
+  return seen + " " + total + " " + attempt(() => total);
+}
+
+function* ownerThatYieldsItsReader() {
+  const read = () => value;
+  const answer = yield read;
+  let value = 57;
+  value++;
+  yield answer + " " + read();
+}
+
+function throwsBetweenTwoDeclarations(fails) {
+  let readBoth = () => "none";
+  try {
+    const first = 1.5;
+    readBoth = () => first + second;
+    const second = fails ? fail() : 2.5;
+    return attempt(readBoth);
+  } catch {
+    return attempt(readBoth);
+  }
+}
+
+console.log(staleClosureCalledAfterLaterStore(3), "|", staleClosureHeldInCapturedBinding(3));
+console.log(storedInSiblingBinding(true), "|", storedInSiblingBinding(false), "|", passedDown(2, null));
+console.log(readInFinally(true), readInFinally(false));
+console.log(membersOfClassReadLate(true), "|", membersOfClassReadLate(false), "|", heritageReadsInnerName());
+console.log(patternDefaults(), "|", headOfForOf(), "|", headBindings());
+console.log(privateStaticReadEarly(), "|", new Twice().text, "|", catchPattern(), "|", previousTurnIsInitialized(4));
+const readers = [objectSlotAcrossCollection(3), objectSlotAcrossCollection(4)];
+Bun.gc(true);
+console.log(readers[0](), readers[1](), valueOfCalledByInitializer());
+const iterator = ownerThatYieldsItsReader();
+console.log(iterator.next(attempt(iterator.next().value)).value);
+console.log(throwsBetweenTwoDeclarations(true), throwsBetweenTwoDeclarations(false));
+microtaskReadsEarly().then(text => console.log(text));
+//// captured-bindings-in-functions.js
+// A let, const or class of a function that closures capture: reads that come after the declaration, and reads, stores and typeof that come before it and throw.
+function attempt(f) { try { return String(f()); } catch (e) { return e.name; } }
+function fail() { throw new Error("failed"); }
+const published = [];
+
+function counter(start) {
+  let count = start;
+  const step = () => { count += 1; return count; };
+  step();
+  return step;
+}
+
+function closureBeforeDeclaration() {
+  const read = () => value;
+  const early = attempt(read);
+  let value = 1;
+  value = 2;
+  return early + " " + attempt(read);
+}
+
+function closureOnlyCalledLater() {
+  const read = () => value;
+  let value = 3;
+  value += 1;
+  return read();
+}
+
+function hoistedReader(callEarly) {
+  const early = callEarly ? attempt(read) : "skipped";
+  let value = 5;
+  function read() { return value++; }
+  return early + " " + read() + " " + read();
+}
+
+function escapesBeforeDeclaration() {
+  published.push(() => value);
+  const early = attempt(published[published.length - 1]);
+  const value = { n: 6 };
+  return early + " " + published[published.length - 1]().n;
+}
+
+function storeInDeadZone() {
+  const store = () => { value = 7; };
+  const early = attempt(store);
+  let value = 8;
+  store();
+  return early + " " + value;
+}
+
+function typeofInDeadZone() {
+  const ask = () => typeof value;
+  const early = attempt(ask);
+  let value = 9;
+  value++;
+  return early + " " + ask();
+}
+
+function declarationThatThrows() {
+  let read;
+  try {
+    read = () => value;
+    let value = fail();
+    value++;
+  } catch {}
+  return attempt(read);
+}
+
+function declarationSkipped(skip) {
+  const read = () => value;
+  if (skip) return attempt(read);
+  let value = 10;
+  value++;
+  return attempt(read);
+}
+
+function classBinding() {
+  const make = () => new Box(11);
+  const early = attempt(make);
+  class Box {
+    constructor(n) { this.n = n; }
+    again() { return new Box(this.n + 1); }
+  }
+  return early + " " + make().again().n;
+}
+
+function blockInLoop(turns) {
+  const readers = [];
+  let out = "";
+  for (let turn = 0; turn < turns; turn++) {
+    const early = () => inBlock;
+    out += attempt(early) + " ";
+    let inBlock = turn * 2;
+    inBlock += 1;
+    readers.push(early);
+  }
+  return out + readers.map(read => read()).join();
+}
+
+function loopBindings(turns) {
+  const readers = [];
+  for (let i = 0; i < turns; i++) readers.push(() => i++);
+  return readers.map(read => read() + read()).join();
+}
+
+function switchScope(which) {
+  let read = () => "none";
+  switch (which) {
+    case 0:
+      let inSwitch = 12;
+      inSwitch++;
+      read = () => inSwitch;
+      break;
+    case 1:
+      read = () => inSwitch;
+      break;
+  }
+  return attempt(read);
+}
+
+class Base { constructor() { this.base = 13; } }
+class Derived extends Base {
+  constructor(early) {
+    const self = () => this.base;
+    const before = early ? attempt(self) : "skipped";
+    super();
+    this.text = before + " " + self();
+  }
+}
+
+function laterParameter(a = () => b, b = 14) {
+  b++;
+  return a();
+}
+function laterParameterReadEarly(a = attempt(() => b), b = 15) {
+  b++;
+  return a + " " + b;
+}
+
+function recursive(depth) {
+  let mine = depth;
+  const read = () => mine;
+  if (depth > 0) recursive(depth - 1);
+  mine += 100;
+  return read();
+}
+
+function* generated() {
+  const read = () => value;
+  yield attempt(read);
+  let value = 16;
+  yield read();
+  value++;
+  yield read();
+}
+
+async function awaited() {
+  const read = () => value;
+  const early = attempt(read);
+  await null;
+  let value = 17;
+  await null;
+  value++;
+  return early + " " + read();
+}
+
+function evaluated() {
+  const early = attempt(() => eval("value"));
+  let value = 18;
+  value++;
+  return early + " " + eval("value");
+}
+
+function chainOfHoistedFunctions(callEarly) {
+  const early = callEarly ? attempt(outer) : "skipped";
+  let value = 19;
+  value++;
+  function outer() { return inner(); }
+  function inner() { return value; }
+  return early + " " + outer();
+}
+
+function declarationLeftByBreak(leave) {
+  let read;
+  block: {
+    read = () => value;
+    if (leave) break block;
+    let value = 21;
+    value++;
+  }
+  return attempt(read);
+}
+
+function innerNameOfClassExpression() {
+  const early = [];
+  const Outer = class Inner {
+    static [(early.push(attempt(() => Inner)), "create")] = () => new Inner();
+    static first = Inner.create() instanceof Inner;
+  };
+  return early[0] + " " + Outer.first + " " + (Outer.create() instanceof Outer);
+}
+
+function collectionBeforeDeclaration(size) {
+  let list = (Bun.gc(true), new Array(size).fill(size));
+  let text = (Bun.gc(true), "n" + size);
+  let count = (Bun.gc(true), size * 0.5);
+  return () => { list = list.concat(size); text += "."; count += 1; return list.length + text + count; };
+}
+
+const step = counter(0);
+let sum = 0;
+for (let i = 0; i < 1000; i++) sum += step() + counter(i)();
+console.log(sum);
+console.log(closureBeforeDeclaration(), closureOnlyCalledLater());
+console.log(hoistedReader(true), "|", hoistedReader(false));
+console.log(escapesBeforeDeclaration(), "|", storeInDeadZone(), "|", typeofInDeadZone());
+console.log(declarationThatThrows(), declarationSkipped(true), declarationSkipped(false));
+console.log(classBinding(), "|", blockInLoop(3), "|", loopBindings(3));
+console.log(switchScope(0), switchScope(1), switchScope(2));
+console.log(new Derived(true).text, "|", new Derived(false).text);
+console.log(laterParameter(), laterParameterReadEarly(), recursive(3));
+console.log([...generated()].join());
+console.log(evaluated());
+console.log(chainOfHoistedFunctions(true), "|", chainOfHoistedFunctions(false));
+console.log(declarationLeftByBreak(true), declarationLeftByBreak(false), innerNameOfClassExpression());
+const collected = [collectionBeforeDeclaration(3), collectionBeforeDeclaration(4)];
+Bun.gc(true);
+console.log(collected[0](), collected[1](), collected[0]());
+awaited().then(text => console.log(text));
+//// captured-bindings-read-indirectly.js
+// A captured let, const or class that is read by a way other than a plain call of the closure: a getter, a proxy trap, a generator, a bound function, a comparator, a closure that another function creates.
+function attempt(f) { try { return String(f()); } catch (e) { return e.name; } }
+
+function readByGetter() {
+  const holder = { get now() { return value; } };
+  const early = attempt(() => holder.now);
+  let value = 23;
+  value++;
+  return early + " " + holder.now;
+}
+
+function readByProxyTrap() {
+  const proxy = new Proxy({}, { get: () => value });
+  const early = attempt(() => proxy.anything);
+  let value = 25;
+  value++;
+  return early + " " + proxy.anything;
+}
+
+function generatorResumedByInitializer() {
+  function* reader() { yield attempt(() => value); yield attempt(() => value); }
+  const iterator = reader();
+  let value = iterator.next().value === "ReferenceError" ? 27 : -1;
+  value++;
+  return value + " " + iterator.next().value;
+}
+
+function outerClassBindingInStaticField() {
+  let inner;
+  class Late {
+    static { inner = () => Late; }
+    static early = attempt(() => readOuter());
+    static innerEarly = inner() === Late;
+  }
+  function readOuter() { return Late; }
+  return Late.early + " " + Late.innerEarly + " " + (readOuter() === Late);
+}
+
+function continueOverDeclaration(turns) {
+  let out = "";
+  let previous = () => "none";
+  outer: for (let turn = 0; turn < turns; turn++) {
+    const read = () => inBody;
+    out += attempt(read) + ",";
+    if (turn % 2) { previous = read; continue outer; }
+    let inBody = turn + 30;
+    inBody++;
+    out += read() + ";";
+  }
+  return out + attempt(previous);
+}
+
+function readerCreatedByHoistedFunction(callEarly) {
+  function make() { return () => value; }
+  const early = callEarly ? attempt(make()) : "skipped";
+  let value = 33;
+  value++;
+  return early + " " + make()();
+}
+
+function readerCreatedTwoLevelsDown(callEarly) {
+  function outer() { return function middle() { return () => value; }; }
+  const early = callEarly ? attempt(outer()()) : "skipped";
+  let value = 35;
+  value++;
+  return early + " " + outer()()();
+}
+
+function storedThroughArray(callEarly) {
+  const table = [() => value];
+  const early = callEarly ? attempt(table[0]) : "skipped";
+  let value = 37;
+  value++;
+  return early + " " + table[0]();
+}
+
+function calledByInitializer() {
+  const read = () => value;
+  let value = attempt(read) + "!";
+  value += "?";
+  return value + " " + read();
+}
+
+function boundReader(callEarly) {
+  const read = function () { return value + this.more; }.bind({ more: 1 });
+  const early = callEarly ? attempt(read) : "skipped";
+  let value = 39;
+  value++;
+  return early + " " + read();
+}
+
+function reusedScope(turns) {
+  let total = 0;
+  for (let turn = 0; turn < turns; turn++) {
+    let inBody = turn * 1.5;
+    const add = () => { inBody += 0.5; return inBody; };
+    total += add() + add();
+  }
+  return total;
+}
+
+function sortedDuringInitializer() {
+  const order = [];
+  const compare = (a, b) => { order.push(attempt(() => limit)); return a - b; };
+  const limit = [3, 1, 2].sort(compare).length;
+  return order.every(entry => entry === "ReferenceError") + " " + limit + " " + attempt(() => limit);
+}
+
+console.log(readByGetter(), "|", readByProxyTrap(), "|", generatorResumedByInitializer());
+console.log(outerClassBindingInStaticField(), "|", continueOverDeclaration(4));
+console.log(readerCreatedByHoistedFunction(true), "|", readerCreatedByHoistedFunction(false));
+console.log(readerCreatedTwoLevelsDown(true), "|", readerCreatedTwoLevelsDown(false));
+console.log(storedThroughArray(true), "|", storedThroughArray(false), "|", calledByInitializer());
+console.log(boundReader(true), "|", boundReader(false), "|", reusedScope(1000), "|", sortedDuringInitializer());
+//// captured-bindings-whose-values-come-from-outside-read-in-their-dead-zones.ts
+// Bindings of functions that closures hold, whose values come from outside the program, read in their dead zones.
+interface Shape { x: number; inner: { v: number } }
+function attempt(f: () => unknown): unknown { try { return f(); } catch (e) { return "threw " + (e as Error).constructor.name; } }
+function given<T>(text: string): T { return JSON.parse(text) as T; }
+function calledOnce(): string {
+  const early = attempt(() => later.x);
+  const peek = () => later.inner.v + count;
+  const first = attempt(peek);
+  const later: Shape = given<Shape>('{"x":1,"inner":{"v":2}}');
+  const second = attempt(peek);
+  const count: number = given<number>("3");
+  return [early, first, second, peek()].join();
+}
+console.log(calledOnce());
+function calledOften(k: number): string {
+  const peek = () => later.x + k;
+  const early = attempt(peek);
+  if (k === 1) return String(early);
+  const later: Shape = given<Shape>('{"x":' + k + ',"inner":{"v":2}}');
+  return early + "," + peek();
+}
+for (let k = 0; k < 4; k++) console.log(calledOften(k));
+function handsOut(): Array<() => unknown> {
+  const out: Array<() => unknown> = [() => a.x, () => b, () => c.length, () => typeof a, () => { d = given<number>("8"); return d; }];
+  if (given<boolean>("false")) return out;
+  stash = out;
+  lines.push(out.map(attempt).join());
+  const a: Shape = given<Shape>('{"x":1,"inner":{"v":2}}');
+  lines.push(out.map(attempt).join());
+  const b: number = given<number>("2"), c: string = given<string>('"abc"');
+  lines.push(out.map(attempt).join());
+  let d: number = given<number>("4");
+  lines.push(out.map(attempt).join(), String(d));
+  return out;
+}
+let stash: Array<() => unknown> = [];
+const lines: string[] = [];
+handsOut();
+console.log(lines.join("\n"), stash.map(attempt).join());
+function inLoops(): string {
+  let out = "";
+  for (let i = 0; i < 3; i++) {
+    const peek = (): number => w.x + i;
+    out += attempt(peek) + ";";
+    const w: Shape = given<Shape>('{"x":' + i * 2 + ',"inner":{"v":0}}');
+    out += peek() + ";";
+  }
+  return out;
+}
+console.log(inLoops());
+function leftByThrow(): unknown {
+  let read: () => unknown = () => 0;
+  try {
+    read = () => value.x;
+    if (given<boolean>("true")) throw new RangeError("midway");
+    const value: Shape = given<Shape>('{"x":1,"inner":{"v":2}}');
+    return value.x;
+  } catch { return attempt(read); }
+}
+console.log(leftByThrow());
+function parameters(a: number = attempt(() => c.x + 1) as number, c: Shape = given<Shape>('{"x":2,"inner":{"v":2}}')): string { return a + "," + c.x; }
+console.log(parameters(), parameters(1));
+export {};
+//// captured-variables-that-hold-values-from-outside.ts
+interface Input {
+  text: string;
+  start: number;
+  count: number;
+  flag: boolean;
+}
+const inputs: Input[] = JSON.parse('[{"text":"alpha beta","start":0,"count":10,"flag":true},{"text":"gamma","start":1,"count":3,"flag":false}]');
+const strange: any[] = JSON.parse('[{"text":7,"start":"2","count":null,"flag":"yes"},{}]');
+const lines: string[] = [];
+function nameOf(run: () => unknown): string {
+  try {
+    return JSON.stringify(run()) ?? "undefined";
+  } catch (error) {
+    return (error as Error).name + ": " + (error as Error).message;
+  }
+}
+
+function everyReadFollowsTheDeclaration() {
+  let text: string;
+  let position: number;
+  let end: number;
+  let flag: boolean = false;
+  const limit: number = inputs[0].count;
+  function set(input: Input) {
+    text = input.text;
+    position = input.start;
+    end = input.start + input.count;
+    flag = input.flag;
+  }
+  function step(): string {
+    let out = "";
+    while (position < end && position < limit) out += text[position++];
+    return out;
+  }
+  return { set, step, state: () => [text, position, end, flag, limit] };
+}
+for (let round = 0; round < 2; round++) {
+  const reader = everyReadFollowsTheDeclaration();
+  lines.push(nameOf(reader.state), nameOf(reader.step));
+  for (const input of inputs) {
+    reader.set(input);
+    lines.push(nameOf(reader.step), nameOf(reader.state));
+  }
+  for (const input of strange) {
+    reader.set(input);
+    lines.push(nameOf(reader.step), nameOf(reader.state));
+  }
+}
+
+function aHoistedFunctionIsCalledFirst(input: Input) {
+  const early = nameOf(read);
+  let held: number = input.start;
+  function read() {
+    return held;
+  }
+  return [early, nameOf(read)];
+}
+function anArrowIsCalledFirst(input: Input) {
+  const read = () => held;
+  const write = (value: number) => {
+    held = value;
+  };
+  const early = nameOf(read);
+  const earlyWrite = nameOf(() => write(input.count));
+  let held: number = input.start;
+  write(held + 1);
+  return [early, earlyWrite, nameOf(read)];
+}
+function theClosureEscapesFirst(input: Input, sink: Array<() => unknown>) {
+  sink.push(() => held);
+  const early = nameOf(sink[sink.length - 1]);
+  let held: string = input.text;
+  return [early, nameOf(sink[sink.length - 1])];
+}
+function theDeclarationIsSkipped(input: Input, which: number) {
+  switch (which) {
+    case 0:
+      let held: number = input.count;
+      return nameOf(() => held);
+    default:
+      return nameOf(() => held);
+  }
+}
+function theDeclarationRunsInSomeRounds(list: Input[]) {
+  const out: string[] = [];
+  for (let i = 0; i < 3; i++) {
+    const read = () => held;
+    if (i === 1) out.push(nameOf(read));
+    let held: number = list[i % list.length].start + i;
+    out.push(nameOf(read));
+  }
+  return out;
+}
+function aDefaultReadsALaterParameter(input: Input) {
+  const call = (first = () => second, second: number = input.count) => first();
+  const early = (first = () => second, middle = nameOf(first), second: number = input.count) => middle + " then " + first();
+  return [nameOf(call), nameOf(early)];
+}
+function aClassReadsItselfTooEarly(input: Input) {
+  const early = nameOf(() => new Held());
+  class Held {
+    value = input.text;
+  }
+  return [early, nameOf(() => new Held().value)];
+}
+function* aGeneratorStopsInFront(input: Input) {
+  const read = () => held;
+  yield nameOf(read);
+  let held: number = input.start;
+  yield nameOf(read);
+}
+const sink: Array<() => unknown> = [];
+for (const input of [...inputs, ...strange]) {
+  lines.push(
+    aHoistedFunctionIsCalledFirst(input).join(" | "),
+    anArrowIsCalledFirst(input).join(" | "),
+    theClosureEscapesFirst(input, sink).join(" | "),
+    theDeclarationIsSkipped(input, 0),
+    theDeclarationIsSkipped(input, 1),
+    aDefaultReadsALaterParameter(input).join(" | "),
+    aClassReadsItselfTooEarly(input).join(" | "),
+    [...aGeneratorStopsInFront(input)].join(" | "),
+  );
+}
+lines.push(theDeclarationRunsInSomeRounds(inputs).join(" | "), sink.map(nameOf).join(" | "));
+
+lines.push(nameOf(readsTheModuleVariable));
+let moduleVariable: number = inputs[1].count;
+function readsTheModuleVariable() {
+  return moduleVariable;
+}
+lines.push(nameOf(readsTheModuleVariable));
+moduleVariable = strange[0].start;
+lines.push(nameOf(readsTheModuleVariable));
+console.log(lines.join("\n"));
+//// cases-of-a-switch-and-labelled-blocks-skip-a-declaration.js
+// Switch cases share a scope.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+function pick(k) {
+  switch (k) {
+    case 0: let q = { a: 1 };
+    case 1: return attempt(() => q.a);
+  }
+}
+console.log(pick(0), pick(1));
+function lab(k) {
+  out: { if (k) break out; var v = { a: 1 }; }
+  return attempt(() => v.a);
+}
+console.log(lab(0), lab(1));
+//// class-statements-evaluated-first.js
+// `bun run` evaluates a class statement at the top level of a file before the file's other statements when its evaluation runs no code of the program. Which classes those are.
+function attempt(read) {
+  try {
+    return typeof read();
+  } catch (error) {
+    return error.name;
+  }
+}
+function effect() {
+  return 1;
+}
+const later = 1;
+const readers = {
+  Empty: () => Empty,
+  Methods: () => Methods,
+  InstanceFields: () => InstanceFields,
+  PrivateMembers: () => PrivateMembers,
+  StaticWithoutValue: () => StaticWithoutValue,
+  StaticNumber: () => StaticNumber,
+  StaticNegativeNumber: () => StaticNegativeNumber,
+  StaticString: () => StaticString,
+  StaticTemplate: () => StaticTemplate,
+  StaticTemplateWithValue: () => StaticTemplateWithValue,
+  StaticTaggedTemplate: () => StaticTaggedTemplate,
+  StaticNull: () => StaticNull,
+  StaticUndefined: () => StaticUndefined,
+  StaticVoid: () => StaticVoid,
+  StaticBoolean: () => StaticBoolean,
+  StaticBigInt: () => StaticBigInt,
+  StaticArrow: () => StaticArrow,
+  StaticFunction: () => StaticFunction,
+  StaticClass: () => StaticClass,
+  StaticDerivedClass: () => StaticDerivedClass,
+  StaticObject: () => StaticObject,
+  StaticArray: () => StaticArray,
+  StaticRegExp: () => StaticRegExp,
+  StaticCall: () => StaticCall,
+  StaticName: () => StaticName,
+  StaticSum: () => StaticSum,
+  StaticImportMeta: () => StaticImportMeta,
+  StaticInParentheses: () => StaticInParentheses,
+  StaticPrivateNumber: () => StaticPrivateNumber,
+  StaticPrivateCall: () => StaticPrivateCall,
+  StaticThis: () => StaticThis,
+  StaticBlock: () => StaticBlock,
+  Derived: () => Derived,
+  DerivedFromNull: () => DerivedFromNull,
+  BracketedStringMethod: () => BracketedStringMethod,
+  BracketedNumberMethod: () => BracketedNumberMethod,
+  BracketedField: () => BracketedField,
+  BracketedStaticGetter: () => BracketedStaticGetter,
+  StringMethod: () => StringMethod,
+  NumberMethod: () => NumberMethod,
+  Generators: () => Generators,
+  Exported: () => Exported,
+  ExportedWithCall: () => ExportedWithCall,
+  DefaultExport: () => DefaultExport,
+  AfterOthers: () => AfterOthers,
+};
+for (const name in readers) console.log("early", name, attempt(readers[name]));
+console.log(new InstanceFields().b, Methods.s(), StaticArrow.f(), new AfterOthers().other() === Empty);
+
+class Empty {}
+class Methods { m() {} get g() { return 1; } set g(v) {} static s() { return later; } static get sg() { return 1; } static set sg(v) {} constructor() { effect(); } }
+class InstanceFields { a = 1; b = effect(); c = [later]; }
+class PrivateMembers { #p = effect(); #m() {} get #g() { return 1; } static #sm() {} static has(o) { return #p in o; } }
+class StaticWithoutValue { static u; }
+class StaticNumber { static n = 1; }
+class StaticNegativeNumber { static n = -1; }
+class StaticString { static s = "s"; }
+class StaticTemplate { static t = `t`; }
+class StaticTemplateWithValue { static t = `t${1}`; }
+class StaticTaggedTemplate { static t = String.raw`t`; }
+class StaticNull { static n = null; }
+class StaticUndefined { static u = undefined; }
+class StaticVoid { static u = void 0; }
+class StaticBoolean { static t = true; static f = false; }
+class StaticBigInt { static n = 1n; }
+class StaticArrow { static f = () => later; }
+class StaticFunction { static f = function () { return later; }; static g = async function* () {}; }
+class StaticClass { static c = class {}; }
+class StaticDerivedClass { static c = class extends Object {}; }
+class StaticObject { static o = {}; }
+class StaticArray { static a = []; }
+class StaticRegExp { static r = /r/; }
+class StaticCall { static n = effect(); }
+class StaticName { static n = effect; }
+class StaticSum { static n = 1 + 1; }
+class StaticImportMeta { static m = import.meta; }
+class StaticInParentheses { static n = (1); }
+class StaticPrivateNumber { static #n = 1; }
+class StaticPrivateCall { static #n = effect(); }
+class StaticThis { static n = this; }
+class StaticBlock { static {} }
+class Derived extends Empty {}
+class DerivedFromNull extends null {}
+class BracketedStringMethod { ["m"]() {} }
+class BracketedNumberMethod { [0]() {} }
+class BracketedField { ["f"] = 1; }
+class BracketedStaticGetter { static get ["g"]() { return 1; } }
+class StringMethod { "m"() {} "a b" = 1; }
+class NumberMethod { 0() {} 1.5 = 1; }
+class Generators { *g() {} async a() {} async *ag() {} static *sg() {} static async sa() {} }
+export class Exported {}
+export class ExportedWithCall { static n = effect(); }
+export default class DefaultExport {}
+class AfterOthers { other() { return Empty; } }
+
+for (const name in readers) console.log("late", name, attempt(readers[name]));
+
+{
+  console.log("in a block", attempt(() => InBlock));
+  class InBlock {}
+}
+function inFunction() {
+  const early = attempt(() => InFunction);
+  class InFunction {}
+  return early;
+}
+console.log("in a function", inFunction());
+if (later) {
+  console.log("in an if", attempt(() => InIf));
+  class InIf {}
+}
+label: {
+  console.log("under a label", attempt(() => UnderLabel));
+  class UnderLabel {}
+}
+//// class-statements-evaluated-first-commonjs/main.cjs
+// `bun run` evaluates the class statements of a CommonJS file whose evaluation runs no code of the program before the other statements of the file.
+function attempt(read) { try { return typeof read(); } catch (error) { return error.name; } }
+console.log("early", attempt(() => Plain), attempt(() => WithCall), attempt(() => Exported));
+exports.early = attempt(() => Plain);
+class Plain { static n = 1; m() { return require("node:path").sep; } }
+class WithCall { static n = Math.abs(1); }
+module.exports.Exported = class Exported {};
+class Exported {}
+console.log("late", attempt(() => Plain), attempt(() => WithCall), new Plain().m(), exports.early, this === module.exports);
+//// class-statements-evaluated-first-typed.ts
+// Which class statements of a TypeScript file `bun run` evaluates before the file's other statements: types, casts and members without code do not count.
+function attempt(read: () => unknown): string {
+  try {
+    return typeof read();
+  } catch (error) {
+    return (error as Error).name;
+  }
+}
+////= lines	effect	number	1
+function decorate(value: unknown, context: DecoratorContext): void {}
+interface Shape { area(): number }
+const key = "k";
+const readers: Record<string, () => unknown> = {
+  Typed: () => Typed,
+  Generic: () => Generic,
+  Implements: () => Implements,
+  Abstract: () => Abstract,
+  ParameterProperties: () => ParameterProperties,
+  Overloads: () => Overloads,
+  IndexSignature: () => IndexSignature,
+  DeclaredField: () => DeclaredField,
+  DeclaredBracketedField: () => DeclaredBracketedField,
+  StaticCast: () => StaticCast,
+  StaticAngleCast: () => StaticAngleCast,
+  StaticNonNull: () => StaticNonNull,
+  StaticSatisfies: () => StaticSatisfies,
+  StaticAsConst: () => StaticAsConst,
+  StaticCastOfCall: () => StaticCastOfCall,
+  StaticReadonly: () => StaticReadonly,
+  StaticEnumMember: () => StaticEnumMember,
+  StaticConstEnumMember: () => StaticConstEnumMember,
+  MergedWithNamespace: () => MergedWithNamespace,
+  MergedWithInterface: () => MergedWithInterface,
+  DecoratedClass: () => DecoratedClass,
+  DecoratedMethod: () => DecoratedMethod,
+  DecoratedField: () => DecoratedField,
+  AutoAccessor: () => AutoAccessor,
+  StaticAutoAccessor: () => StaticAutoAccessor,
+  StaticAutoAccessorWithCall: () => StaticAutoAccessorWithCall,
+};
+for (const name in readers) console.log("early", name, attempt(readers[name]));
+
+enum Color { Red = 1 }
+const enum Flag { On = 1 }
+class Typed { a: number = 1; b?: string; c!: boolean; m(x: number): number { return x; } static s: number; }
+class Generic<T> { value?: T; static make<U>(): Generic<U> { return new Generic<U>(); } }
+class Implements implements Shape { area(): number { return 1; } }
+abstract class Abstract { abstract m(): void; abstract f: number; n(): number { return 1; } }
+class ParameterProperties { constructor(public a: number, private readonly b: string = "b") {} }
+class Overloads { m(a: number): void; m(a: string): void; m(a: unknown): void {} }
+class IndexSignature { [name: string]: unknown; static [name: string]: unknown; }
+class DeclaredField { declare d: number; declare static s: number; }
+class DeclaredBracketedField { declare [key]: number; }
+class StaticCast { static n = 1 as number; }
+class StaticAngleCast { static n = <number>1; }
+class StaticNonNull { static n = 1!; }
+class StaticSatisfies { static n = 1 satisfies number; }
+class StaticAsConst { static n = "n" as const; }
+class StaticCastOfCall { static n = effect() as number; }
+class StaticReadonly { static readonly n = 1; private static p = "p"; protected static q = null; }
+class StaticEnumMember { static c = Color.Red; }
+class StaticConstEnumMember { static f = Flag.On; }
+class MergedWithNamespace {}
+namespace MergedWithNamespace { export const n = effect(); }
+class MergedWithInterface {}
+interface MergedWithInterface { extra: number }
+@decorate class DecoratedClass {}
+class DecoratedMethod { @decorate m(): void {} }
+class DecoratedField { @decorate f = 1; }
+class AutoAccessor { accessor a = effect(); }
+class StaticAutoAccessor { static accessor a = 1; }
+class StaticAutoAccessorWithCall { static accessor a = effect(); }
+
+for (const name in readers) console.log("late", name, attempt(readers[name]));
+console.log(MergedWithNamespace.n, new ParameterProperties(2).a, Generic.make<number>() instanceof Generic);
+
+namespace Inner {
+  export const early = attempt(() => InNamespace);
+  class InNamespace {}
+}
+console.log("in a namespace", Inner.early);
+//// const-in-tdz/files/a.ts
+import { early, viaNamespace } from "./b";
+export const number = 37, text = "text", flag = true, nothing = null, sum = 1 + 2;
+export function readLater(): string { return [number, text, flag, nothing, sum].join(); }
+export const seen: string = early + " | " + viaNamespace;
+//// const-in-tdz/files/b.ts
+import { number, text, flag, nothing, sum, readLater } from "./a";
+import * as a from "./a";
+function probe(f: () => unknown): string { try { return String(f()); } catch (e) { return (e as Error).constructor.name; } }
+export const early: string = [probe(() => number), probe(() => text), probe(() => flag), probe(() => nothing), probe(() => sum), probe(readLater)].join();
+export const viaNamespace: string = [probe(() => a.number), probe(() => [a][0].text)].join();
+export function late(): string { return [number, text, flag, nothing, sum].join(); }
+//// const-in-tdz/files/cjs.cjs
+function probe(f) { try { return String(f()); } catch (e) { return e.constructor.name; } }
+function hoisted() { return LIMIT * 2; }
+exports.before = probe(hoisted);
+const LIMIT = 21;
+exports.after = probe(hoisted);
+//// const-in-tdz/files/conditions.ts
+function attempt(f: () => unknown): string { try { return String(f()); } catch (e) { return (e as Error).constructor.name; } }
+function value(): boolean { return K; }
+function inIf(): string { if (K) return "then"; return "else"; }
+function inCond(): string { return K ? "yes" : "no"; }
+function inAnd(): unknown { return K && "right"; }
+function inOr(): unknown { return Z || "right"; }
+function inNot(): boolean { return !K; }
+function inEq(): boolean { return N === 1; }
+function inWhile(): string { while (K) return "looped"; return "not"; }
+function inNested(): string { return (K && N === 1) ? "both" : "not both"; }
+const all = [value, inIf, inCond, inAnd, inOr, inNot, inEq, inWhile, inNested];
+export const early: string = all.map(attempt).join();
+const K = true, N = 1, Z = 0;
+export const later: string = all.map(attempt).join();
+//// const-in-tdz/files/cycle_a.ts
+import { early } from "./cycle_b";
+export function asked(): string { return FLAG ? "on" : "off"; }
+export function askedIf(): string { if (FLAG) return "then"; return "else"; }
+export function askedValue(): boolean { return FLAG; }
+export const first: string = early;
+export const FLAG = false;
+//// const-in-tdz/files/cycle_b.ts
+import { asked, askedIf, askedValue } from "./cycle_a";
+function attempt(f: () => unknown): string { try { return String(f()); } catch (e) { return (e as Error).constructor.name; } }
+export const early: string = [asked, askedIf, askedValue].map(attempt).join();
+export function later(): string { return [asked, askedIf, askedValue].map(attempt).join(); }
+//// const-in-tdz/files/own.ts
+function probe(f: () => unknown): string { try { return String(f()); } catch (e) { return (e as Error).constructor.name; } }
+function hoisted(): number { return LIMIT * 2; }
+export const before: string = probe(hoisted);
+const LIMIT = 21;
+export const after: string = probe(hoisted);
+function inner(): string {
+  const read = () => local;
+  const first = probe(read);
+  const local = "set";
+  return first + " " + probe(read);
+}
+export const inAFunction: string = inner();
+//// const-in-tdz/main.ts
+// Modules in an import cycle read each other's constants while those are still in their temporal dead zone.
+// @ts-nocheck
+declare const console: { log(...values: unknown[]): void };
+import { seen, readLater } from "./files/a";
+import { late } from "./files/b";
+import { before, after, inAFunction } from "./files/own";
+import cjs from "./files/cjs.cjs";
+import { early, later } from "./files/conditions";
+import { first } from "./files/cycle_a";
+import { later as laterInTheCycle } from "./files/cycle_b";
+console.log(seen); console.log(late(), readLater());
+console.log(before, after, cjs.before, cjs.after, inAFunction);
+console.log(early); console.log(later);
+console.log(first, laterInTheCycle());
+//// dead-zone-lone-name.js
+// A local is read and stored in its dead zone, and its name is nowhere else in the program: only the message of the ReferenceError quotes it.
+function attempt(f) {
+  try {
+    return String(f());
+  } catch (error) {
+    return error.name + ": " + error.message;
+  }
+}
+
+function readTooEarly() {
+  const early = [quotedOnlyByReadError];
+  let quotedOnlyByReadError = 1;
+  return early.length + quotedOnlyByReadError;
+}
+console.log(attempt(readTooEarly));
+
+function storeTooEarly() {
+  quotedOnlyByStoreError = 2;
+  let quotedOnlyByStoreError = 1;
+  return quotedOnlyByStoreError;
+}
+console.log(attempt(storeTooEarly));
+//// dead-zone-store-value-order.js
+// A store in the dead zone of its target: a binding that closures share is tested before the right-hand side runs, a binding of one function after it.
+const calls = [];
+function effect(name) {
+  calls.push(name);
+  return name;
+}
+function attempt(store) {
+  try {
+    store();
+    return "stored";
+  } catch (error) {
+    return error.name;
+  }
+}
+function report(title, outcome) {
+  console.log(title, outcome, JSON.stringify(calls.splice(0)));
+}
+
+function storeModuleLevel() {
+  moduleLevel = effect("module level");
+}
+report("module level, in a function, early:", attempt(storeModuleLevel));
+try {
+  moduleLevel = effect("module level, directly");
+  report("module level, directly:", "stored");
+} catch (error) {
+  report("module level, directly:", error.name);
+}
+let moduleLevel = "initial";
+report("module level, in a function, late:", attempt(storeModuleLevel));
+console.log(moduleLevel);
+
+try {
+  unshared = effect("unshared module level");
+  report("unshared module level:", "stored");
+} catch (error) {
+  report("unshared module level:", error.name);
+}
+let unshared = "initial";
+console.log(unshared);
+
+function storeClass() {
+  Shared = effect("class");
+}
+report("class, early:", attempt(storeClass));
+class Shared {}
+report("class, late:", attempt(storeClass));
+console.log(Shared);
+
+function sharedInFunction() {
+  const store = () => {
+    shared = effect("closure");
+  };
+  report("closure, early:", attempt(store));
+  try {
+    shared = effect("declaring function");
+    report("declaring function:", "stored");
+  } catch (error) {
+    report("declaring function:", error.name);
+  }
+  let shared = "initial";
+  report("closure, late:", attempt(store));
+  return shared;
+}
+console.log(sharedInFunction());
+
+function unsharedInFunction() {
+  try {
+    local = effect("local");
+    report("local:", "stored");
+  } catch (error) {
+    report("local:", error.name);
+  }
+  let local = "initial";
+  return local;
+}
+console.log(unsharedInFunction());
+
+function namedByTarget() {
+  const read = () => named;
+  try {
+    named = function () {
+      return effect("never called");
+    };
+  } catch (error) {
+    report("function value:", error.name);
+  }
+  let named = "initial";
+  return read();
+}
+console.log(namedByTarget());
+
+function nestedStores() {
+  const read = () => [outer, inner];
+  try {
+    outer = inner = effect("nested");
+  } catch (error) {
+    report("nested, outer in its dead zone:", error.name);
+  }
+  let outer = "outer";
+  try {
+    outer = inner = effect("nested");
+  } catch (error) {
+    report("nested, inner in its dead zone:", error.name);
+  }
+  let inner = "inner";
+  return read();
+}
+console.log(JSON.stringify(nestedStores()));
+//// dead-zone-stores.ts
+// A store before a `let` is initialized throws, at module level and in a closure's environment. After initialization it succeeds.
+function attempt(run: () => unknown): unknown {
+  try {
+    return run();
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+
+function storeEarly(): number {
+  moduleLevel = 1;
+  return 1;
+}
+////= lines	readEarly	number	moduleLevel
+console.log(attempt(storeEarly), attempt(readEarly));
+try {
+  // @ts-ignore
+  moduleLevel = 2;
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+let moduleLevel: number = 3;
+console.log(moduleLevel, attempt(readEarly), attempt(storeEarly), moduleLevel);
+
+function inEnvironment(): unknown[] {
+  const store = (): number => {
+    captured = 10;
+    return captured;
+  };
+  const read = (): number => captured;
+  const before = [attempt(store), attempt(read)];
+  let captured: number = 20;
+  const after = [attempt(read), attempt(store), captured];
+  return [before, after];
+}
+console.log(JSON.stringify(inEnvironment()));
+
+function directlyInEnvironment(): unknown[] {
+  const read = (): string => captured;
+  let result: unknown;
+  try {
+    // @ts-ignore
+    captured = "early";
+  } catch (error) {
+    result = (error as Error).constructor.name;
+  }
+  let captured: string = "late";
+  return [result, read()];
+}
+console.log(JSON.stringify(directlyInEnvironment()));
+
+function constantInEnvironment(): unknown[] {
+  const read = (): number => fixed;
+  const before = attempt(read);
+  const fixed: number = 5;
+  return [before, attempt(read)];
+}
+console.log(JSON.stringify(constantInEnvironment()));
+
+function storedThroughCallee(): unknown[] {
+  const results: unknown[] = [];
+  const store = (value: number): void => {
+    counter = value;
+  };
+  for (let round = 0; round < 2; round++) results.push(attempt(() => store(round)));
+  let counter: number = 0;
+  for (let round = 0; round < 2; round++) {
+    store(round + 1);
+    results.push(counter);
+  }
+  return results;
+}
+console.log(JSON.stringify(storedThroughCallee()));
+//// default-exports-evaluated-first/anonymous-class.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "anonymous-class");
+export default class {}
+report("late", "anonymous-class");
+//// default-exports-evaluated-first/anonymous-function.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "anonymous-function");
+export default function () {}
+report("late", "anonymous-function");
+//// default-exports-evaluated-first/array.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "array");
+export default [];
+report("late", "array");
+//// default-exports-evaluated-first/arrow.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "arrow");
+export default () => 1;
+report("late", "arrow");
+//// default-exports-evaluated-first/async-function.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "async-function");
+export default async function named() {}
+report("late", "async-function");
+//// default-exports-evaluated-first/big-int.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "big-int");
+export default 5n;
+report("late", "big-int");
+//// default-exports-evaluated-first/boolean.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "boolean");
+export default true;
+report("late", "boolean");
+//// default-exports-evaluated-first/call.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "call");
+export default Math.abs(1);
+report("late", "call");
+//// default-exports-evaluated-first/class-expression-with-call.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "class-expression-with-call");
+export default (class { static n = Math.abs(1); });
+report("late", "class-expression-with-call");
+//// default-exports-evaluated-first/class-expression.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "class-expression");
+export default (class {});
+report("late", "class-expression");
+//// default-exports-evaluated-first/class-with-static-block.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "class-with-static-block");
+export default class { static {} }
+report("late", "class-with-static-block");
+//// default-exports-evaluated-first/derived-class-expression.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "derived-class-expression");
+export default (class extends Object {});
+report("late", "derived-class-expression");
+//// default-exports-evaluated-first/derived-class.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "derived-class");
+export default class extends Object {}
+report("late", "derived-class");
+//// default-exports-evaluated-first/function-expression.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "function-expression");
+export default (function () {});
+report("late", "function-expression");
+//// default-exports-evaluated-first/generator.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "generator");
+export default function* () {}
+report("late", "generator");
+//// default-exports-evaluated-first/import-meta.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "import-meta");
+export default import.meta;
+report("late", "import-meta");
+//// default-exports-evaluated-first/main.js
+// `bun run` evaluates `export default <value>` before the other statements of its file when the value is a literal, a function or a class whose evaluation runs no code of the program.
+import "./reader.js";
+//// default-exports-evaluated-first/name.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "name");
+export default local;
+report("late", "name");
+//// default-exports-evaluated-first/named-class.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "named-class");
+export default class Named {}
+report("late", "named-class");
+//// default-exports-evaluated-first/negative-number.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "negative-number");
+export default -5;
+report("late", "negative-number");
+//// default-exports-evaluated-first/null.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "null");
+export default null;
+report("late", "null");
+//// default-exports-evaluated-first/number.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "number");
+export default 5;
+report("late", "number");
+//// default-exports-evaluated-first/object.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "object");
+export default {};
+report("late", "object");
+//// default-exports-evaluated-first/reader.js
+import numberValue from "./number.js";
+import negativeNumberValue from "./negative-number.js";
+import stringValue from "./string.js";
+import templateValue from "./template.js";
+import templateWithValueValue from "./template-with-value.js";
+import booleanValue from "./boolean.js";
+import nullValue from "./null.js";
+import undefinedValue from "./undefined.js";
+import bigIntValue from "./big-int.js";
+import arrowValue from "./arrow.js";
+import functionExpressionValue from "./function-expression.js";
+import classExpressionValue from "./class-expression.js";
+import derivedClassExpressionValue from "./derived-class-expression.js";
+import classExpressionWithCallValue from "./class-expression-with-call.js";
+import nameValue from "./name.js";
+import callValue from "./call.js";
+import objectValue from "./object.js";
+import arrayValue from "./array.js";
+import regularExpressionValue from "./regular-expression.js";
+import importMetaValue from "./import-meta.js";
+import sumValue from "./sum.js";
+import anonymousClassValue from "./anonymous-class.js";
+import namedClassValue from "./named-class.js";
+import derivedClassValue from "./derived-class.js";
+import classWithStaticBlockValue from "./class-with-static-block.js";
+import anonymousFunctionValue from "./anonymous-function.js";
+import asyncFunctionValue from "./async-function.js";
+import generatorValue from "./generator.js";
+function read(name) {
+  switch (name) {
+    case "number": return numberValue;
+    case "negative-number": return negativeNumberValue;
+    case "string": return stringValue;
+    case "template": return templateValue;
+    case "template-with-value": return templateWithValueValue;
+    case "boolean": return booleanValue;
+    case "null": return nullValue;
+    case "undefined": return undefinedValue;
+    case "big-int": return bigIntValue;
+    case "arrow": return arrowValue;
+    case "function-expression": return functionExpressionValue;
+    case "class-expression": return classExpressionValue;
+    case "derived-class-expression": return derivedClassExpressionValue;
+    case "class-expression-with-call": return classExpressionWithCallValue;
+    case "name": return nameValue;
+    case "call": return callValue;
+    case "object": return objectValue;
+    case "array": return arrayValue;
+    case "regular-expression": return regularExpressionValue;
+    case "import-meta": return importMetaValue;
+    case "sum": return sumValue;
+    case "anonymous-class": return anonymousClassValue;
+    case "named-class": return namedClassValue;
+    case "derived-class": return derivedClassValue;
+    case "class-with-static-block": return classWithStaticBlockValue;
+    case "anonymous-function": return anonymousFunctionValue;
+    case "async-function": return asyncFunctionValue;
+    case "generator": return generatorValue;
+  }
+}
+export function report(time, name) {
+  try {
+    console.log(time, name, typeof read(name));
+  } catch (error) {
+    console.log(time, name, error.name);
+  }
+}
+//// default-exports-evaluated-first/regular-expression.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "regular-expression");
+export default /r/;
+report("late", "regular-expression");
+//// default-exports-evaluated-first/string.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "string");
+export default "s";
+report("late", "string");
+//// default-exports-evaluated-first/sum.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "sum");
+export default 1 + 1;
+report("late", "sum");
+//// default-exports-evaluated-first/template-with-value.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "template-with-value");
+export default `t${1}`;
+report("late", "template-with-value");
+//// default-exports-evaluated-first/template.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "template");
+export default `t`;
+report("late", "template");
+//// default-exports-evaluated-first/undefined.js
+import { report } from "./reader.js";
+const local = 1;
+report("early", "undefined");
+export default undefined;
+report("late", "undefined");
+//// default-values-see-later-parameters-in-their-dead-zones.js
+// Default values of parameters see later parameters in their dead zone; a closure in a default value.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+function d(a = () => b.x, b = { x: attempt(a) }) { return b.x; }
+console.log(d());
+function e(a = attempt(() => c.x), { c } = { c: { x: 1 } }) { return a; }
+console.log(e());
+const [m = attempt(() => n.x), n = { x: 1 }] = [];
+console.log(m);
+//// definitions-read-before-their-declarations.ts
+// A class, a function or a RegExp that a constant holds is made when it is first needed. A read that comes before the declaration still throws, and one that comes after it finds one object.
+// STATISTIC: DeadZonesKeptBesideDefinitions >= 3
+function attempt(run: () => unknown): string {
+  try {
+    return String(run());
+  } catch (error) {
+    return (error as Error).name + ": " + (error as Error).message;
+  }
+}
+
+function useClass(): number {
+  return new Late(2).twice();
+}
+
+function useSubclass(): number {
+  return new LaterStill(3).twice();
+}
+
+function useFunction(): number {
+  return late(4);
+}
+
+function usePattern(): string {
+  return pattern.test("aaa") + " " + pattern.lastIndex;
+}
+
+function kinds(): string {
+  return [attempt(() => typeof Late), attempt(() => typeof LaterStill), attempt(() => typeof late), attempt(() => typeof pattern)].join(", ");
+}
+
+function identities(): string {
+  return [attempt(() => Late === Late), attempt(() => Object.getPrototypeOf(LaterStill) === Late), attempt(() => late === late), attempt(() => pattern === pattern)].join(", ");
+}
+
+function report(when: string): void {
+  console.log(when);
+  console.log("  " + attempt(useClass) + " | " + attempt(useSubclass) + " | " + attempt(useFunction) + " | " + attempt(usePattern));
+  console.log("  " + kinds());
+  console.log("  " + identities());
+}
+
+report("before every declaration");
+
+class Late {
+  constructor(public n: number) {}
+  twice() { return this.n * 2; }
+}
+report("after the class");
+
+const late = (n: number) => n + 1;
+report("after the function");
+
+class LaterStill extends Late {
+  twice() { return this.n * 3; }
+}
+report("after the subclass");
+
+const pattern = /a+/g;
+report("after the pattern");
+report("again");
+//// finally-and-breaks-around-a-var.js
+// Finally and return overrides.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+function f() {
+  try { return attempt(() => z.a); } finally { var z = { a: 1 }; }
+}
+console.log(f());
+function g(k) {
+  for (;;) { try { if (k) break; var z = { a: 1 }; break; } finally { console.log(attempt(() => z.a)); } }
+  return attempt(() => z.a);
+}
+console.log(g(0), g(1));
+//// functions-held-by-literals.ts
+// A function that an object literal, an array literal or a variable holds can run as soon as the variable that holds it is mentioned, and no earlier: a variable that such a function reads is `undefined`, or in its dead zone, exactly where plain Bun says so.
+function call(holder: { read(): number }): number { return holder.read(); }
+function show(...lists: unknown[]): void { console.log(lists.map(list => (list as unknown[]).flat(2).map(String).join(",")).join(" | ")); }
+function attempt(run: () => unknown): unknown { try { return run(); } catch (error) { return (error as Error).constructor.name; } }
+
+function calledEarly(): unknown[] {
+  function read(): number { return state + 1; }
+  var holder = { read };
+  var before = holder.read();
+  var state: number = 1;
+  return [before, holder.read()];
+}
+function passedEarly(): unknown[] {
+  function read(): number { return state + 1; }
+  var holder = { read };
+  var before = call(holder);
+  var state: number = 2;
+  return [before, call(holder)];
+}
+function nestedLiterals(): unknown[] {
+  var outer = { inner: { read: function (): number { return state + 1; } }, list: [(): number => state + 2] };
+  var before = [outer.inner.read(), outer.list[0]()];
+  var state: number = 3;
+  return [before, outer.inner.read(), outer.list[0]()];
+}
+function throughAnotherHolder(): unknown[] {
+  var first = { read(): number { return state + 1; } };
+  var second = { first };
+  var before = second.first.read();
+  var state: number = 4;
+  return [before, second.first.read()];
+}
+function throughFunction(): unknown[] {
+  var holder = { read(): number { return state + 1; } };
+  function use(): number { return holder.read(); }
+  var before = use();
+  var state: number = 5;
+  return [before, use()];
+}
+function throughHeldFunction(): unknown[] {
+  function read(): number { return state + 1; }
+  var inner = { read };
+  var outer = { run: function (): number { return inner.read(); } };
+  var before = outer.run();
+  var state: number = 6;
+  return [before, outer.run()];
+}
+function heldByVariable(): unknown[] {
+  var read = function (): number { return state + 1; };
+  var before = read();
+  var state: number = 7;
+  return [before, read()];
+}
+function mentionedLate(): unknown[] {
+  function read(): number { return state + 1; }
+  var holder = { read, more: function (): number { return other + read(); }, list: [(): number => state + other] };
+  var state: number = 8;
+  var other: number = 9;
+  return [holder.read(), holder.more(), holder.list[0]()];
+}
+function returnedLate(): { read(): number } {
+  var holder = { read(): number { return state + 1; } };
+  var state: number = 10;
+  return holder;
+}
+function deadZone(): unknown[] {
+  const holder = { read: (): number => value + 1 };
+  const before = attempt(() => holder.read());
+  const value: number = 11;
+  return [before, holder.read()];
+}
+function spreadEarly(): unknown[] {
+  var holder = { get now(): number { return state + 1; } };
+  var copy = { ...holder };
+  var state: number = 12;
+  return [copy.now, holder.now];
+}
+function calledInInitializer(): unknown[] {
+  function read(): number { return state + 1; }
+  var holder = { before: read(), read };
+  var state: number = 13;
+  return [holder.before, holder.read()];
+}
+function storedIntoHolderEarly(): unknown[] {
+  var holder: { read?: () => number } = {};
+  holder.read = function (): number { return state + 1; };
+  var before = holder.read();
+  var state: number = 14;
+  return [before, holder.read()];
+}
+function leaveEarly(seen: unknown[]): void {
+  using holder = { [Symbol.dispose](): void { seen.push(attempt(() => value + 1)); } };
+  if (seen.length === 0) throw new Error("left early");
+  const value: number = 19;
+  seen.push(value, holder);
+}
+function disposedEarly(): unknown[] {
+  const seen: unknown[] = [];
+  seen.push(attempt(() => leaveEarly(seen)));
+  return seen;
+}
+function storedIntoLiteralLate(): unknown[] {
+  function read(): number { return state + 1; }
+  var holder: { read?: () => number; more?: () => number } = {};
+  holder.read = read;
+  holder.more = function (): number { return state + 2; };
+  var state: number = 15;
+  return [holder.read(), holder.more()];
+}
+function storedThroughSetter(): unknown[] {
+  function read(): number { return state + 1; }
+  var seen: unknown[] = [];
+  var holder = { set run(f: () => number) { seen.push(f()); } };
+  holder.run = read;
+  var state: number = 16;
+  holder.run = read;
+  return seen;
+}
+function chosen(flag: boolean, given?: () => number): unknown[] {
+  function one(): number { return state + 1; }
+  var pick = flag ? one : function (): number { return state + 2; };
+  var fallback = given ?? one;
+  var state: number = 17;
+  return [pick(), fallback()];
+}
+function chosenAndCalledEarly(flag: boolean): unknown[] {
+  function one(): number { return state + 1; }
+  var pick = flag ? one : function (): number { return state + 2; };
+  var before = pick();
+  var state: number = 18;
+  return [before, pick()];
+}
+show(disposedEarly(), storedIntoLiteralLate(), storedThroughSetter(), chosen(true), chosen(false), chosenAndCalledEarly(true), chosenAndCalledEarly(false));
+show(calledEarly(), passedEarly(), nestedLiterals(), throughAnotherHolder(), throughFunction(), throughHeldFunction(), heldByVariable());
+show(mentionedLate(), [returnedLate().read()], deadZone(), spreadEarly(), calledInInitializer(), storedIntoHolderEarly());
+//// getters-traps-conversions-and-callbacks-of-built-ins-read-a-binding-in-its-dead-zone.js
+// A getter, a proxy trap, valueOf between two statements.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+const probe = () => later.x;
+const o = { get p() { return probe(); }, valueOf() { return probe(); }, [Symbol.toPrimitive]() { return probe(); } };
+console.log(attempt(() => o.p), attempt(() => +o), attempt(() => o + ""), attempt(() => [o].join()), attempt(() => JSON.stringify({ toJSON: probe })));
+const p = new Proxy({}, { get: probe, has: probe, ownKeys: probe });
+console.log(attempt(() => p.q), attempt(() => "q" in p), attempt(() => Object.keys(p)));
+console.log(attempt(() => [3, 1].sort(probe)), attempt(() => "a".replace("a", probe)), attempt(() => Array.from({ length: 1 }, probe)));
+const later = { x: 1 };
+console.log(o.p);
+//// heritage-computed-keys-and-initializers-see-the-class-in-its-dead-zone.js
+// Class heritage, computed keys, field initializers run while the class binding is in its dead zone.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+console.log(attempt(() => { class A extends (attempt(() => A.x), Object) { static x = 1; } return "made"; }));
+console.log(attempt(() => { class A { [attempt(() => A.name)]() {} } return Object.getOwnPropertyNames(A.prototype).join(); }));
+let hook;
+console.log(attempt(() => { class A { static [(hook = () => A.z.q, "k")] = attempt(hook); static z = { q: 1 }; } return A.k; }));
+const r = attempt(() => Later.z.q);
+class Later { static z = { q: 1 }; }
+console.log(r);
+//// import-store-capturing-arrow-pattern-default/m.js
+const tag = "!"; export const k = () => "first" + tag;
+export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
+export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
+//// import-store-capturing-arrow-pattern-default/main.js
+// An imported `const` arrow function that captures a variable is the target of an array pattern with a default, which throws a TypeError when it runs.
+import * as ns from "./m.js";
+const log = []; const note = (x) => (log.push(x), x);
+const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
+tell("first", () => ns.inside());
+////= for-4	[ns.k = note("default")] = [note(V)]
+//// import-store-class-assign/m.js
+export class k { static who() { return "first"; } }
+export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
+export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
+//// import-store-class-assign/main.js
+// An imported class is assigned to with `=`, which throws a TypeError when it runs.
+import * as ns from "./m.js";
+const log = []; const note = (x) => (log.push(x), x);
+const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
+tell("first", () => ns.inside());
+////= for
+//// import-store-const-arrow-assign/m.js
+export const k = () => "first";
+export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
+export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
+//// import-store-const-arrow-assign/main.js
+// An imported `const` arrow function is assigned to with `=`, which throws a TypeError when it runs.
+import * as ns from "./m.js";
+const log = []; const note = (x) => (log.push(x), x);
+const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
+tell("first", () => ns.inside());
+////= for
+//// import-store-const-arrow-for-of/m.js
+export const k = () => "first";
+export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
+export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
+//// import-store-const-arrow-for-of/main.js
+// An imported `const` arrow function is the target of a `for..of` loop, which throws a TypeError when it runs.
+import * as ns from "./m.js";
+const log = []; const note = (x) => (log.push(x), x);
+const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
+tell("first", () => ns.inside());
+for (const V of [7, 1.5, "text", { a: 9 }, () => "second", null, undefined]) {
+  log.length = 0;
+  tell("the store", () => { for (ns.k of [note(V)]) ; });
+  tell("evaluated", () => log.map((x) => typeof x === "function" ? "function" : typeof x === "object" && x ? "object" : String(x)).join());
+  tell("outside", () => typeof ns.k);
+  tell("inside", () => ns.inside());
+  tell("hot", () => ns.hot());
+}
+//// import-store-const-arrow-increment/m.js
+export const k = () => "first";
+export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
+export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
+//// import-store-const-arrow-increment/main.js
+// An imported `const` arrow function is the operand of `++`, which throws a TypeError when it runs.
+import * as ns from "./m.js";
+const log = []; const note = (x) => (log.push(x), x);
+const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
+tell("first", () => ns.inside());
+////= for-4	ns.k++
+//// import-store-const-arrow-plus/m.js
+export const k = () => "first";
+export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
+export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
+//// import-store-const-arrow-plus/main.js
+// An imported `const` arrow function is assigned to with `+=`, which throws a TypeError when it runs.
+import * as ns from "./m.js";
+const log = []; const note = (x) => (log.push(x), x);
+const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
+tell("first", () => ns.inside());
+////= for-4	ns.k += note(V)
+//// import-store-const-number-assign/m.js
+export const k = 5;
+export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
+export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
+//// import-store-const-number-assign/main.js
+// An imported `const` number is assigned to with `=`, which throws a TypeError when it runs.
+import * as ns from "./m.js";
+const log = []; const note = (x) => (log.push(x), x);
+const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
+tell("first", () => ns.inside());
+////= for
+//// import-store-const-number-object-pattern/m.js
+export const k = 5;
+export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
+export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
+//// import-store-const-number-object-pattern/main.js
+// An imported `const` number is the target of an object pattern, which throws a TypeError when it runs.
+import * as ns from "./m.js";
+const log = []; const note = (x) => (log.push(x), x);
+const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
+tell("first", () => ns.inside());
+////= for-4	({ x: ns.k } = { x: note(V) })
+//// import-store-function-assign/m.js
+export function k() { return "first"; }
+export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
+export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
+//// import-store-function-assign/main.js
+// An imported function declaration is assigned to with `=`, which throws a TypeError when it runs.
+import * as ns from "./m.js";
+const log = []; const note = (x) => (log.push(x), x);
+const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
+tell("first", () => ns.inside());
+////= for
+//// import-store-let-arrow-and/m.js
+export let k = () => "first";
+export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
+export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
+//// import-store-let-arrow-and/main.js
+// An imported `let` arrow function is assigned to with `&&=`, which throws a TypeError when it runs.
+import * as ns from "./m.js";
+const log = []; const note = (x) => (log.push(x), x);
+const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
+tell("first", () => ns.inside());
+////= for-4	ns.k &&= note(V)
+//// large-vars-of-another-type-than-the-written-one-read-before-the-store.ts
+// `var`s of a module that are stored once with a large object of another type than the written one, read before the store and only on rare ways.
+interface Other { z: string }
+class Point { x = 1; y = 2; }
+function inCatch(): unknown { try { throw 0; } catch { return first; } }
+function inThrow(k: number): unknown { if (k) throw second; return k; }
+function caught(k: number): unknown { try { return inThrow(k); } catch (e) { return e; } }
+function rarely(k: number): unknown { if (k > 100) return [third, fourth]; return k; }
+function brief(v: any): string { return v === undefined ? "undefined" : Array.isArray(v) && v.length == 2 ? v.map(brief).join() : String(v.k7 + v.k149 + "/" + v[7]); }
+console.log(brief(inCatch()), brief(caught(1)), brief(rarely(101)));
+var first: Other = { k0: 0, k1: 1, k2: 2, k3: 3, k4: 4, k5: 5, k6: 6, k7: 7, k8: 8, k9: 9, k10: 10, k11: 11, k12: 12, k13: 13, k14: 14, k15: 15, k16: 16, k17: 17, k18: 18, k19: 19, k20: 20, k21: 21, k22: 22, k23: 23, k24: 24, k25: 25, k26: 26, k27: 27, k28: 28, k29: 29, k30: 30, k31: 31, k32: 32, k33: 33, k34: 34, k35: 35, k36: 36, k37: 37, k38: 38, k39: 39, k40: 40, k41: 41, k42: 42, k43: 43, k44: 44, k45: 45, k46: 46, k47: 47, k48: 48, k49: 49, k50: 50, k51: 51, k52: 52, k53: 53, k54: 54, k55: 55, k56: 56, k57: 57, k58: 58, k59: 59, k60: 60, k61: 61, k62: 62, k63: 63, k64: 64, k65: 65, k66: 66, k67: 67, k68: 68, k69: 69, k70: 70, k71: 71, k72: 72, k73: 73, k74: 74, k75: 75, k76: 76, k77: 77, k78: 78, k79: 79, k80: 80, k81: 81, k82: 82, k83: 83, k84: 84, k85: 85, k86: 86, k87: 87, k88: 88, k89: 89, k90: 90, k91: 91, k92: 92, k93: 93, k94: 94, k95: 95, k96: 96, k97: 97, k98: 98, k99: 99, k100: 100, k101: 101, k102: 102, k103: 103, k104: 104, k105: 105, k106: 106, k107: 107, k108: 108, k109: 109, k110: 110, k111: 111, k112: 112, k113: 113, k114: 114, k115: 115, k116: 116, k117: 117, k118: 118, k119: 119, k120: 120, k121: 121, k122: 122, k123: 123, k124: 124, k125: 125, k126: 126, k127: 127, k128: 128, k129: 129, k130: 130, k131: 131, k132: 132, k133: 133, k134: 134, k135: 135, k136: 136, k137: 137, k138: 138, k139: 139, k140: 140, k141: 141, k142: 142, k143: 143, k144: 144, k145: 145, k146: 146, k147: 147, k148: 148, k149: 149 } as unknown as Other;
+var second: Point = { ...{ k0: 0, k1: 1, k2: 2, k3: 3, k4: 4, k5: 5, k6: 6, k7: 7, k8: 8, k9: 9, k10: 10, k11: 11, k12: 12, k13: 13, k14: 14, k15: 15, k16: 16, k17: 17, k18: 18, k19: 19, k20: 20, k21: 21, k22: 22, k23: 23, k24: 24, k25: 25, k26: 26, k27: 27, k28: 28, k29: 29, k30: 30, k31: 31, k32: 32, k33: 33, k34: 34, k35: 35, k36: 36, k37: 37, k38: 38, k39: 39, k40: 40, k41: 41, k42: 42, k43: 43, k44: 44, k45: 45, k46: 46, k47: 47, k48: 48, k49: 49, k50: 50, k51: 51, k52: 52, k53: 53, k54: 54, k55: 55, k56: 56, k57: 57, k58: 58, k59: 59, k60: 60, k61: 61, k62: 62, k63: 63, k64: 64, k65: 65, k66: 66, k67: 67, k68: 68, k69: 69, k70: 70, k71: 71, k72: 72, k73: 73, k74: 74, k75: 75, k76: 76, k77: 77, k78: 78, k79: 79, k80: 80, k81: 81, k82: 82, k83: 83, k84: 84, k85: 85, k86: 86, k87: 87, k88: 88, k89: 89, k90: 90, k91: 91, k92: 92, k93: 93, k94: 94, k95: 95, k96: 96, k97: 97, k98: 98, k99: 99, k100: 100, k101: 101, k102: 102, k103: 103, k104: 104, k105: 105, k106: 106, k107: 107, k108: 108, k109: 109, k110: 110, k111: 111, k112: 112, k113: 113, k114: 114, k115: 115, k116: 116, k117: 117, k118: 118, k119: 119, k120: 120, k121: 121, k122: 122, k123: 123, k124: 124, k125: 125, k126: 126, k127: 127, k128: 128, k129: 129, k130: 130, k131: 131, k132: 132, k133: 133, k134: 134, k135: 135, k136: 136, k137: 137, k138: 138, k139: 139, k140: 140, k141: 141, k142: 142, k143: 143, k144: 144, k145: 145, k146: 146, k147: 147, k148: 148, k149: 149 } } as unknown as Point;
+var third: string = { k0: 0, k1: 1, k2: 2, k3: 3, k4: 4, k5: 5, k6: 6, k7: 7, k8: 8, k9: 9, k10: 10, k11: 11, k12: 12, k13: 13, k14: 14, k15: 15, k16: 16, k17: 17, k18: 18, k19: 19, k20: 20, k21: 21, k22: 22, k23: 23, k24: 24, k25: 25, k26: 26, k27: 27, k28: 28, k29: 29, k30: 30, k31: 31, k32: 32, k33: 33, k34: 34, k35: 35, k36: 36, k37: 37, k38: 38, k39: 39, k40: 40, k41: 41, k42: 42, k43: 43, k44: 44, k45: 45, k46: 46, k47: 47, k48: 48, k49: 49, k50: 50, k51: 51, k52: 52, k53: 53, k54: 54, k55: 55, k56: 56, k57: 57, k58: 58, k59: 59, k60: 60, k61: 61, k62: 62, k63: 63, k64: 64, k65: 65, k66: 66, k67: 67, k68: 68, k69: 69, k70: 70, k71: 71, k72: 72, k73: 73, k74: 74, k75: 75, k76: 76, k77: 77, k78: 78, k79: 79, k80: 80, k81: 81, k82: 82, k83: 83, k84: 84, k85: 85, k86: 86, k87: 87, k88: 88, k89: 89, k90: 90, k91: 91, k92: 92, k93: 93, k94: 94, k95: 95, k96: 96, k97: 97, k98: 98, k99: 99, k100: 100, k101: 101, k102: 102, k103: 103, k104: 104, k105: 105, k106: 106, k107: 107, k108: 108, k109: 109, k110: 110, k111: 111, k112: 112, k113: 113, k114: 114, k115: 115, k116: 116, k117: 117, k118: 118, k119: 119, k120: 120, k121: 121, k122: 122, k123: 123, k124: 124, k125: 125, k126: 126, k127: 127, k128: 128, k129: 129, k130: 130, k131: 131, k132: 132, k133: 133, k134: 134, k135: 135, k136: 136, k137: 137, k138: 138, k139: 139, k140: 140, k141: 141, k142: 142, k143: 143, k144: 144, k145: 145, k146: 146, k147: 147, k148: 148, k149: 149 } as unknown as string;
+var fourth: number[] = ["s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "s12", "s13", "s14", "s15", "s16", "s17", "s18", "s19", "s20", "s21", "s22", "s23", "s24", "s25", "s26", "s27", "s28", "s29", "s30", "s31", "s32", "s33", "s34", "s35", "s36", "s37", "s38", "s39", "s40", "s41", "s42", "s43", "s44", "s45", "s46", "s47", "s48", "s49", "s50", "s51", "s52", "s53", "s54", "s55", "s56", "s57", "s58", "s59", "s60", "s61", "s62", "s63", "s64", "s65", "s66", "s67", "s68", "s69", "s70", "s71", "s72", "s73", "s74", "s75", "s76", "s77", "s78", "s79", "s80", "s81", "s82", "s83", "s84", "s85", "s86", "s87", "s88", "s89", "s90", "s91", "s92", "s93", "s94", "s95", "s96", "s97", "s98", "s99", "s100", "s101", "s102", "s103", "s104", "s105", "s106", "s107", "s108", "s109", "s110", "s111", "s112", "s113", "s114", "s115", "s116", "s117", "s118", "s119", "s120", "s121", "s122", "s123", "s124", "s125", "s126", "s127", "s128", "s129", "s130", "s131", "s132", "s133", "s134", "s135", "s136", "s137", "s138", "s139", "s140", "s141", "s142", "s143", "s144", "s145", "s146", "s147", "s148", "s149", "s150", "s151", "s152", "s153", "s154", "s155", "s156", "s157", "s158", "s159", "s160", "s161", "s162", "s163", "s164", "s165", "s166", "s167", "s168", "s169", "s170", "s171", "s172", "s173", "s174", "s175", "s176", "s177", "s178", "s179", "s180", "s181", "s182", "s183", "s184", "s185", "s186", "s187", "s188", "s189", "s190", "s191", "s192", "s193", "s194", "s195", "s196", "s197", "s198", "s199"] as unknown as number[];
+console.log(brief(inCatch()), brief(caught(1)), brief(rarely(101)));
+console.log(inCatch() === inCatch(), caught(1) === caught(2), (rarely(101) as unknown[])[0] === (rarely(102) as unknown[])[0]);
+export {};
+//// microtasks-run-while-the-module-stands-at-its-await.js
+// Microtasks that run while the module stands at its await.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+const seen = [];
+queueMicrotask(() => seen.push(attempt(() => later.x)));
+Promise.resolve().then(() => seen.push(attempt(() => later.x)));
+(async () => { await null; seen.push(attempt(() => later.x)); })();
+const thenable = { then(r) { seen.push(attempt(() => later.x)); r(1); } };
+await thenable;
+await null;
+const later = { x: 1 };
+console.log(seen.join("|"), later.x);
+//// module-variable-undefined-as-zero.ts
+// A module variable that starts undefined, tested before and after stores.
+let cache: object | undefined
+let nullable: object | null | undefined
+
+function describeCache() {
+  return [cache == null, cache === undefined, !cache].join(" ")
+}
+
+function describeNullable() {
+  return [nullable == null, nullable === undefined, nullable === null, !nullable].join(" ")
+}
+
+console.log("before a store", describeCache())
+cache = {}
+console.log("after a store", describeCache())
+cache = undefined
+console.log("after a store of undefined", describeCache())
+
+console.log("nullable before a store", describeNullable())
+nullable = {}
+console.log("nullable after a store", describeNullable())
+nullable = null
+console.log("nullable after a store of null", describeNullable())
+nullable = undefined
+console.log("nullable after a store of undefined", describeNullable())
+//// module-variables-read-around-init.ts
+// Functions that read one and the same `let` or `const` of their module more than once, called before the declaration has run and after: every read of a variable that is
+// not yet initialized throws a ReferenceError, also the second one, also one in a handler that has just caught the first, also one on a road that the first read is not on.
+const lines: string[] = [];
+function attempt(what: string, act: () => unknown): void { try { lines.push(what + ": " + String(act())); } catch (error) { lines.push(what + ": " + (error instanceof ReferenceError ? "ReferenceError" : "another error: " + error)); } }
+function twice(): number { return counter + counter; }
+function thrice(n: number): number { let total = counter; for (let i = 0; i < n; i++) total += counter; return total + counter; }
+function caughtThenAgain(): string { let first = "none"; try { first = "read " + counter; } catch { first = "caught"; } return first + ", then " + counter; }
+function caughtTwice(): string { let out = ""; try { out += counter; } catch { out += "c1 "; try { out += counter; } catch { out += "c2"; } } return out; }
+function oneRoadOrTheOther(flag: boolean): number { if (flag) return counter + 1; return limit + counter; }
+function afterABranch(flag: boolean): number { let seen = 0; if (flag) seen = counter; return seen + counter; }
+function storesThenReads(v: number): number { counter = v; return counter + counter; }
+function readsBoth(): string { return label + counter + label + limit; }
+function inAClosure(): number { const read = () => counter + counter; return read() + counter; }
+function finallyReads(): string { let out = "start"; try { out += counter; } finally { lines.push("finally ran"); } return out + counter; }
+const all: [string, () => unknown][] = [["twice", twice], ["thrice", () => thrice(3)], ["caughtThenAgain", caughtThenAgain], ["caughtTwice", caughtTwice], ["one road", () => oneRoadOrTheOther(true)], ["the other", () => oneRoadOrTheOther(false)],
+  ["after a branch taken", () => afterABranch(true)], ["after a branch not taken", () => afterABranch(false)], ["readsBoth", readsBoth], ["inAClosure", inAClosure], ["finallyReads", finallyReads]];
+for (const [what, act] of all) attempt("early " + what, act);
+attempt("early store", () => storesThenReads(5));
+let counter = 10;
+for (const [what, act] of all) attempt("counter is there, " + what, act);
+const limit = 100;
+const label = "L";
+for (const [what, act] of all) attempt("late " + what, act);
+attempt("late store", () => storesThenReads(7)); attempt("late twice", twice);
+console.log(lines.join("\n"));
+//// namespace-store-computed-key/m.js
+export const k = () => "first";
+export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
+export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
+//// namespace-store-computed-key/main.js
+// A store to a property of a module namespace object by a computed key, which throws a TypeError when it runs.
+import * as ns from "./m.js";
+const log = []; const note = (x) => (log.push(x), x);
+const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
+tell("first", () => ns.inside());
+////= for-4	ns["k"] = note(V)
+//// namespace-store-default-export/m.js
+const k = () => "first"; export default k;
+export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
+export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
+//// namespace-store-default-export/main.js
+// A store to the default export of a module through its namespace object, which throws a TypeError when it runs.
+import * as ns from "./m.js";
+const log = []; const note = (x) => (log.push(x), x);
+const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
+tell("first", () => ns.inside());
+////= for-3	default
+//// namespace-store-in-deferred-function/m.js
+const tag = "!"; export const k = () => "first" + tag;
+export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
+export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
+//// namespace-store-in-deferred-function/main.js
+// A store through a module namespace object inside a function that is called later, which throws a TypeError when it runs.
+import * as ns from "./m.js";
+const log = []; const note = (x) => (log.push(x), x);
+const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
+function poke(V) { ns.k = V; }
+tell("first", () => ns.inside());
+////= for-4	poke(note(V))
+//// namespace-store-missing-export/m.js
+export const k = 5;
+export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
+export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
+//// namespace-store-missing-export/main.js
+// A store through a module namespace object to a name that the module does not export.
+import * as ns from "./m.js";
+const log = []; const note = (x) => (log.push(x), x);
+const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
+tell("first", () => ns.inside());
+////= for-3	missing
+//// namespace-store-re-export/m.js
+export const k = () => "first";
+export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
+export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
+//// namespace-store-re-export/main.js
+// A store to a binding that was imported through a re-export.
+import * as ns from "./m.js";
+const log = []; const note = (x) => (log.push(x), x);
+const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
+import * as mid from "./mid.js";
+tell("first", () => ns.inside());
+////= for-4	mid.inner.k = note(V)
+//// namespace-store-re-export/mid.js
+export * as inner from "./m.js";
+//// namespace-store-self-import/m.js
+import * as self from "./m.js";
+export const k = () => "first";
+export const inside = () => { try { return typeof k === "function" ? (k.who ? k.who() : k()) : typeof k === "object" ? "object " + k.a : "value " + (k + 1); } catch (e) { return "threw " + e.name; } };
+export function hot() { let r; for (let i = 0; i < 50; i++) r = inside(); return r; }
+export const poke = (V) => { self.k = V; };
+//// namespace-store-self-import/main.js
+// A module imports its own namespace object and stores to one of its exports through it, which throws a TypeError when it runs.
+import * as ns from "./m.js";
+const log = []; const note = (x) => (log.push(x), x);
+const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };
+tell("first", () => ns.inside());
+////= for-4	ns.poke(note(V))
+//// one-early-reader-beside-late-readers/a.mjs
+import { results, attempt } from "./results.mjs";
+import { fromB } from "./b.mjs";
+export function readValue() {
+  return value;
+}
+// Its own module calls it once, behind the declaration. The other module calls it earlier.
+export function readOnce() {
+  return value;
+}
+export function bump() {
+  counter++;
+}
+attempt("a, early", readValue);
+export const value = { name: "value of a" };
+export let counter = 10;
+results.push(["a, in the body", value.name, readOnce().name, counter, fromB]);
+bump();
+results.push(["a, in the body", counter]);
+//// one-early-reader-beside-late-readers/b.mjs
+import { attempt } from "./results.mjs";
+import { value, readValue, readOnce, counter, bump } from "./a.mjs";
+attempt("b, the binding", () => value);
+attempt("b, readValue", readValue);
+attempt("b, readOnce", readOnce);
+attempt("b, counter", () => counter);
+attempt("b, bump", bump);
+export const fromB = "from b";
+//// one-early-reader-beside-late-readers/main.mjs
+// `a` and `b` import each other. `b` runs first and calls what `a` exports before `a` has run.
+import { results } from "./results.mjs";
+import { value, readValue, readOnce, counter, bump } from "./a.mjs";
+import "./b.mjs";
+results.push(["main", value.name, readValue().name, readOnce().name, counter]);
+bump();
+results.push(["main", counter]);
+for (const line of results) console.log(line.join(" "));
+//// one-early-reader-beside-late-readers/results.mjs
+export const results = [];
+export function attempt(label, run) {
+  try {
+    results.push([label, JSON.stringify(run())]);
+  } catch (error) {
+    results.push([label, error.constructor.name]);
+  }
+}
+//// some-reads-come-behind-the-declaration.js
+// Of one binding some reads come behind its declaration on every path and others may come too early.
+////= attempt
+
+// A function reads too early once; the body reads behind the declaration.
+function readFirst() {
+  return first;
+}
+attempt("first, early", readFirst);
+const first = { name: "first" };
+console.log("first, in the body", first.name);
+attempt("first, late", readFirst);
+
+// A store in the dead zone throws and is caught. The read behind it is still too early.
+attempt("second, stored early", () => {
+  second = 5;
+  return second;
+});
+try {
+  second = 6;
+} catch (error) {
+  console.log("second, store in the body", error.constructor.name);
+}
+attempt("second, read in a function", () => second);
+try {
+  console.log("second, read in the body", second);
+} catch (error) {
+  console.log("second, read in the body", error.constructor.name);
+}
+let second = 1;
+console.log("second, behind the declaration", second);
+second = 2;
+console.log("second, behind a store", second);
+
+// The function that stores is called once, in a try block, in front of the declaration.
+function storeThird() {
+  third = 30;
+}
+try {
+  storeThird();
+} catch (error) {
+  console.log("third, stored early", error.constructor.name);
+}
+try {
+  console.log("third", third);
+} catch (error) {
+  console.log("third, read early", error.constructor.name);
+}
+let third = 3;
+console.log("third", third);
+
+// One arm declares, the other jumps past the declaration.
+function inSwitch(key) {
+  switch (key) {
+    case 0:
+      let held = "stored";
+      held += ", and changed";
+      console.log("switch, behind the declaration", held);
+    case 1:
+      held += ", twice";
+      return held;
+  }
+}
+attempt("switch 0", () => inSwitch(0));
+attempt("switch 1", () => inSwitch(1));
+
+// Each turn of a loop has a binding of its own, which starts empty again.
+function inLoop(turns) {
+  const seen = [];
+  for (let turn = 0; turn < turns; turn++) {
+    const read = () => own;
+    if (turn === 2) {
+      try {
+        seen.push(read());
+      } catch (error) {
+        seen.push(error.constructor.name);
+      }
+    }
+    const own = turn * 10;
+    seen.push(read(), own);
+  }
+  return seen.join(",");
+}
+console.log("loop", inLoop(4));
+
+// The initializer throws: the binding stays empty for whoever got hold of a reader.
+let leaked;
+function failing() {
+  throw new RangeError("no value");
+}
+function withFailingInitializer() {
+  leaked = () => never;
+  const never = failing();
+  return never;
+}
+attempt("initializer throws", withFailingInitializer);
+attempt("the reader that leaked", () => leaked());
+
+// The initializer reads its own binding.
+attempt("reads itself", () => {
+  const self = (() => self)() + 1;
+  return self;
+});
+
+// A class is named in its own heritage and in a static block.
+attempt("class in its heritage", () => {
+  class Later extends Later {}
+  return Later.name;
+});
+class Counted {
+  static made = 0;
+  static {
+    Counted.made = 1;
+  }
+  static create() {
+    Counted.made++;
+    return new Counted();
+  }
+}
+console.log("class", Counted.create() instanceof Counted, Counted.made);
+
+// typeof does not forgive the dead zone.
+attempt("typeof", () => typeof fourth);
+const fourth = 4;
+attempt("typeof", () => typeof fourth);
+
+// A default value reads a later parameter, and a closure in a default value reads a binding of the body's scope.
+function parameters(a = b, b = 1) {
+  return [a, b];
+}
+attempt("parameters", () => parameters());
+attempt("parameters", () => parameters(1));
+
+// A generator stops in front of the declaration.
+function* stepwise() {
+  const read = () => late;
+  yield read;
+  const late = "late";
+  yield read;
+  yield late;
+}
+const steps = stepwise();
+const early = steps.next().value;
+attempt("generator, early", early);
+steps.next();
+attempt("generator, late", early);
+console.log("generator", steps.next().value);
+//// static-fields-read-through-the-class-object-before-they-are-defined.js
+// Static fields read through the class object before they are defined.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+class C {
+  static a = C.probe();
+  static b = { x: 1 };
+  static probe() { return C.b === undefined ? "undefined" : C.b.x; }
+}
+console.log(C.a, C.b.x);
+class D {
+  static a = attempt(() => this.b.x);
+  static b = { x: 1 };
+}
+console.log(D.a);
+class E {
+  static a = attempt(() => Reflect.get(E, "b").x);
+  static c = attempt(() => Object.getOwnPropertyDescriptor(E, "b").value.x);
+  static d = attempt(() => Object.keys(E).join());
+  static b = { x: 1 };
+}
+console.log(E.a, E.c, E.d);
+class F { static a = attempt(() => G.b.x); }
+class G extends F { static b = { x: 1 }; }
+console.log(F.a);
+class Base { static make() { return attempt(() => this.b.x); } }
+class Sub extends Base { static a = Sub.make(); static a2 = super.make(); static b = { x: 2 }; }
+console.log(Sub.a, Sub.a2);
+//// tdz-reads.ts
+// Variables that are read before they are initialized.
+function early() { return later }
+function attempt(f: () => unknown) { try { return String(f()) } catch (e) { return (e as Error).name } }
+console.log(attempt(early))
+const later = Math.abs(-5)
+console.log(attempt(early))
+function earlyVar() { return v }
+console.log(attempt(earlyVar))
+var v = 7
+console.log(attempt(earlyVar))
+function earlyObject() { return box.n }
+console.log(attempt(earlyObject))
+let box = { n: 1 }
+console.log(attempt(earlyObject))
+function inner() {
+  const read = () => local
+  const first = attempt(read)
+  const local = String("set")
+  return first + " " + attempt(read)
+}
+console.log(inner())
+var never: number | undefined
+console.log(attempt(() => never))
+class Late { static make() { return new Late() } }
+console.log(attempt(() => typeof Late.make()))

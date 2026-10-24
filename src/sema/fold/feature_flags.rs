@@ -47,24 +47,7 @@ fn evaluated_bundle_specifiers(
         .filter(move |&specifier| !hir[specifier].type_only)
 }
 
-pub(super) fn evaluate_feature_call(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
-    inputs: &FoldInputs<'_>,
-    atoms: &Interner<'_>,
-    call: ExprId,
-    errors: &mut Vec<FoldError>,
-) -> bool {
-    match find_feature_flag(hir, bound, atoms, call) {
-        Ok(flag) => inputs.has_feature(flag),
-        Err(error) => {
-            errors.push(error);
-            false
-        }
-    }
-}
-
-fn find_feature_flag(
+pub(super) fn find_feature_flag(
     hir: &File<'_>,
     bound: &Bound<'_>,
     atoms: &Interner<'_>,
@@ -208,6 +191,3 @@ fn find_class_owner(bound: &Bound<'_>, class: ClassId) -> Option<Ancestor> {
         None => None,
     }
 }
-
-#[cfg(test)]
-mod tests;

@@ -9,7 +9,6 @@ const NEVER: u32 = u32::MAX;
 
 #[derive(Copy, Clone)]
 enum Place {
-    /// Outside every function, in this statement of the file's body.
     Statement(u32),
     Function(FnId),
 }
@@ -17,13 +16,10 @@ enum Place {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum ReadOrder {
     MayComeFirst,
-    /// The file's body reads the variable behind the initializer.
     Behind,
-    /// So does a function, unless another file calls what this one exports before the body of this one has run.
     BehindUnlessCalledByImporter,
 }
 
-/// During which statement of the file's body each function can first run. A declared function can run where its name is written, any other function where it is made.
 pub(super) struct RunOrder {
     statement_of_initializer: FxHashMap<ExprId, u32>,
     place_of_variable_read: FxHashMap<ExprId, Place>,
@@ -36,7 +32,6 @@ struct Walk<'a, 's> {
     order: RunOrder,
     is_declared: Vec<bool>,
     function_of_symbol: FxHashMap<SymbolId, Option<FnId>>,
-    /// The first function mentions or makes the second.
     reached_from: Vec<(FnId, FnId)>,
 }
 
@@ -70,7 +65,6 @@ impl Walk<'_, '_> {
             }
             BindingKind::Function => match self.find_declared_function(symbol) {
                 Some(function) => self.can_run_at(function, place),
-                // Which of several declarations the name holds is not followed.
                 None => self.order.first_run.fill(0),
             },
             _ => {}
@@ -79,7 +73,6 @@ impl Walk<'_, '_> {
 
     fn visit_declaration(&mut self, function: FnId) {
         let symbol = self.bound.declared_symbol(Decl::Fn(function));
-        // What a namespace exports is called as a member of the namespace, without its name.
         let stability = self.bound.binding_stability(symbol);
         self.is_declared[function.idx()] = stability != BindingStability::ContainerMember;
         if self.bound.is_visible_to_eval(symbol) {
@@ -164,7 +157,6 @@ impl RunOrder {
         walk.order
     }
 
-    /// `initializer` stands in front of `read` in the text.
     pub(super) fn order_of_read(&self, read: ExprId, initializer: ExprId) -> ReadOrder {
         let initialized = self.statement_of_initializer.get(&initializer);
         let place = self.place_of_variable_read.get(&read);

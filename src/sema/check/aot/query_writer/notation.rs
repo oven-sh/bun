@@ -19,7 +19,7 @@ fn wrapped(name: &str, inner: &[u8]) -> Vec<u8> {
 }
 
 pub(super) fn gave_up_text(reason: GaveUp) -> Vec<u8> {
-    [b"gave up: ", reason.name().as_bytes()].concat()
+    format!("gave up: {reason:?}").into_bytes()
 }
 
 pub(super) fn bool_text(value: bool) -> Vec<u8> {

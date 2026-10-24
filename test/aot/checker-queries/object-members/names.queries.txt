@@ -1,6 +1,0 @@
-# A member name prints as its text, a symbol as `[symbol]`, a private name as written. A name that is an array index prints like any name.
-names.ts:3 has `Names` = 0 Field string checked string
-names.ts:3 has `Names` = 01 Field string checked string
-names.ts:3 has `Names` = [symbol] Field string checked string
-names.ts:4 member `this.#x` = member #x Field number checked number
-names.ts:5 has `P` = #x Field number checked number

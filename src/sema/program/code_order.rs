@@ -1,4 +1,4 @@
-use super::code_load::{AddFile, CodeEntry, LoadKey};
+use super::code_load::{AddFile, CodeEntry, LoadKey, ModuleSlots};
 use super::*;
 
 impl CodeEntry<'_, '_> {
@@ -93,14 +93,14 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
         entry.is_some_and(|index| code_files.entries[index].loaded.lock().is_some())
     }
 
-    pub(super) fn install_remaining_files(&mut self, tables: InstallTables<'_, 's>) {
-        let InstallTables {
-            arena,
-            modules,
-            depths,
-            found,
-            seen,
-        } = tables;
+    pub(super) fn install_remaining_files(
+        &mut self,
+        arena: &'s Arena,
+        modules: &mut ModuleSlots<'s>,
+        depths: &mut [u32],
+        found: &Found<'s>,
+        seen: &mut [bool],
+    ) {
         for entry in &mut self.entries {
             let Some(file) = entry.file else {
                 continue;
@@ -228,7 +228,6 @@ impl<'r> Prefetch<'_, 'r> {
                 is_lib,
                 package: None,
             };
-            // The libraries are the first files that are put in order.
             match is_lib {
                 true => state.to_read.push_front(seed),
                 false => state.to_read.push_back(seed),

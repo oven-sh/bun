@@ -1,6 +1,7 @@
 use super::declarations::scope_boundary;
+use super::has_simple_parameter_list;
 use crate::bind::{
-    BoundBuilder, Decl, FnOwner, ModuleInstanceState, Parent, PatParent, ScopeId, SymbolId,
+    BoundBuilder, BoundIn, Decl, FnOwner, ModuleInstanceState, Parent, PatParent, ScopeId, SymbolId,
 };
 use crate::hir::*;
 
@@ -52,35 +53,14 @@ pub(super) enum FunctionPosition {
     ImplicitBlock,
 }
 
-#[derive(Copy, Clone)]
-pub(super) enum SymbolColumn {
-    Pattern(PatId),
-    Function(FnId),
-    Class(ClassId),
-    Enum(EnumId),
-    Module(ModuleId),
-    None,
-}
-
-pub(super) fn symbol_column(decl: Decl) -> SymbolColumn {
+pub(super) fn declaration_symbol<S: Storage>(bound: &BoundIn<S>, decl: Decl) -> SymbolId {
     match decl {
-        Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => SymbolColumn::Pattern(pat),
-        Decl::Fn(f) => SymbolColumn::Function(f),
-        Decl::Class(c) => SymbolColumn::Class(c),
-        Decl::Enum(e) => SymbolColumn::Enum(e),
-        Decl::Module(m) => SymbolColumn::Module(m),
-        _ => SymbolColumn::None,
-    }
-}
-
-pub(super) fn declaration_symbol(bound: &BoundBuilder, decl: Decl) -> SymbolId {
-    match symbol_column(decl) {
-        SymbolColumn::Pattern(pat) => bound.pat_symbol[pat.idx()],
-        SymbolColumn::Function(f) => bound.fn_symbol[f.idx()],
-        SymbolColumn::Class(c) => bound.class_symbol[c.idx()],
-        SymbolColumn::Enum(e) => bound.enum_symbol[e.idx()],
-        SymbolColumn::Module(m) => bound.module_symbol[m.idx()],
-        SymbolColumn::None => SymbolId::NONE,
+        Decl::Var(pat) | Decl::Param(pat) | Decl::Require(pat) => bound.pat_symbol[pat.idx()],
+        Decl::Fn(f) => bound.fn_symbol[f.idx()],
+        Decl::Class(c) => bound.class_symbol[c.idx()],
+        Decl::Enum(e) => bound.enum_symbol[e.idx()],
+        Decl::Module(m) => bound.module_symbol[m.idx()],
+        _ => SymbolId::NONE,
     }
 }
 
@@ -308,14 +288,9 @@ pub(super) fn has_parameter_expressions(
     false
 }
 
-pub(super) fn needs_unique_parameters(hir: &File<'_>, func: &Func) -> bool {
+pub(super) fn needs_unique_parameters(hir: &File<'_>, function: FnId) -> bool {
     matches!(
-        func.kind,
+        hir[function].kind,
         FnKind::Arrow | FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor
-    ) || func.params.iter().any(|param| {
-        let param = &hir[param];
-        param.default.is_some()
-            || param.flags.contains(Flags::REST)
-            || !matches!(hir[param.pat].kind, PatKind::Ident(_))
-    })
+    ) || !has_simple_parameter_list(hir, function)
 }

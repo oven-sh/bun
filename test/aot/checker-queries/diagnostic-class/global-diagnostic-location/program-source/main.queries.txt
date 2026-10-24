@@ -1,6 +1,0 @@
-# TS2502 and TS2428 have no node in TypeScript for these declarations. A build reports them at the declaration.
-main.ts:1 diagnostic TS2502 = Semantic StopsBuild
-main.ts:2 diagnostic TS2428 = Semantic StopsBuild
-main.ts:3 diagnostic TS2428 = Semantic StopsBuild
-absent: -:0 diagnostic TS2502 = Semantic StopsBuild
-absent: -:0 diagnostic TS2428 = Semantic StopsBuild

@@ -15,6 +15,7 @@ mod string_affixes;
 
 pub use children::{TreeNode, push_children};
 pub use data_literals::data_value_of;
+pub(crate) use dead_code::mark_nodes_below;
 pub(crate) use evaluate::is_exact_power;
 pub use inputs::{
     Define, DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, RuntimeValueKind,
@@ -146,7 +147,7 @@ impl<'s> Decisions<'s> {
         let Some(node) = hir.exprs.get(expr.idx()) else {
             return FoldedValue::Unknown;
         };
-        if let FoldedValue::Constant(constant) = literal_constant(hir, node.kind) {
+        if let Some(constant) = literal_constant(hir, node.kind) {
             return FoldedValue::Constant(constant);
         }
         let found = self
@@ -171,14 +172,12 @@ impl<'s> Decisions<'s> {
         }
     }
 
-    /// The pattern of `argument` begins with "." where the program wrote `__dirname`.
     pub fn is_path_from_own_directory(&self, argument: ExprId) -> bool {
         self.paths_from_own_directory
             .binary_search(&argument)
             .is_ok()
     }
 
-    /// The constant of `argument` is what `path.join` or `path.resolve` makes of `__dirname` and written texts.
     pub fn is_path_made_by_call(&self, argument: ExprId) -> bool {
         self.paths_made_by_calls.binary_search(&argument).is_ok()
     }
@@ -208,7 +207,6 @@ impl<'s> Decisions<'s> {
         self.short_circuited_links.has(expr.idx())
     }
 
-    /// `module`, `exports`, `require`, `__filename`, `__dirname` and the `this` of a CommonJS file, where each holds what the loader has put there in every run: true in a test and not nullish, and evaluating it does nothing.
     #[inline]
     pub fn is_truthy_without_effects(&self, expr: ExprId) -> bool {
         self.truthy_without_effects.has(expr.idx())
@@ -260,15 +258,14 @@ pub(crate) fn slice_in<'s, T: Copy>(list: &[T], arena: &'s Arena) -> &'s [T] {
     arena.alloc_slice_copy(list)
 }
 
-fn literal_constant(hir: &File<'_>, kind: ExprKind) -> FoldedValue {
-    let constant = match kind {
+fn literal_constant(hir: &File<'_>, kind: ExprKind) -> Option<Constant> {
+    Some(match kind {
         ExprKind::Null => Constant::Null,
         ExprKind::True => Constant::Boolean(true),
         ExprKind::False => Constant::Boolean(false),
         ExprKind::Number(index) => Constant::Number(hir.numbers[index as usize]),
         ExprKind::String(text) => Constant::String(text),
         ExprKind::BigInt(digits) => Constant::BigInt(digits),
-        _ => return FoldedValue::Unknown,
-    };
-    FoldedValue::Constant(constant)
+        _ => return None,
+    })
 }

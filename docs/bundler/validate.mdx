@@ -253,6 +253,8 @@ A type parameter rules out a generic wrapper such as `function load<T>(text: str
 
 If `T` refers to itself and the JSON is nested thousands of levels deep, the call throws a `RangeError`. You can catch it.
 
+`validate` reads an array by its `length` and its indices, each once. It doesn't call the array's iterator. A hole counts as `undefined`, so `number[]` rejects `[1, , 3]` and `(number | undefined)[]` returns `[1, undefined, 3]`. An array can claim a length of four billion and hold nothing, so holes are limited: if the arrays of one value have more than 65,536 holes that `T` accepts, the call throws a `RangeError`.
+
 ## Where it works
 
 | Command                                                                       | `JSON.parse<T>(text)`, `JSON` from `"bun"` | `JSON.parse<T>(text)`, global `JSON` | `validate<T>(value)`   |

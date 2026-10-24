@@ -1,0 +1,9 @@
+{
+  "entryPoints": [
+    "./prints-bun.mjs",
+    "./prints-the-global-object.mjs",
+    "./prints-a-module-that-a-loader-found.mjs",
+    "./stores-into-json.mjs"
+  ],
+  "skipInShell": "imports \"bun\", which the jsc shell does not provide"
+}

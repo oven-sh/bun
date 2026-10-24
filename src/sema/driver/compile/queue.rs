@@ -7,22 +7,13 @@ use std::time::Instant;
 pub(super) const ROLE_ROUNDS: u32 = 0;
 pub(super) const LOWERING_ROUNDS: u32 = 1 << 31;
 
-pub(super) struct QueuePass<'a, 's> {
-    pub loaded: &'a LoadedProgram<'s>,
-    pub host: &'a dyn Host,
-    pub request: &'a CompileRequest<'a, 's>,
-    pub to_check: Vec<FileId>,
-    pub work: FileWork<'a, 's>,
-}
-
-pub(super) fn run_queue(pass: QueuePass<'_, '_>) -> Report {
-    let QueuePass {
-        loaded,
-        host,
-        request,
-        to_check,
-        work,
-    } = pass;
+pub(super) fn run_queue<'s>(
+    loaded: &LoadedProgram<'s>,
+    host: &dyn Host,
+    request: &CompileRequest<'_, 's>,
+    to_check: Vec<FileId>,
+    work: &FileWork<'_, 's>,
+) -> Report {
     let files = loaded.files();
     debug_assert!(to_check.is_sorted_by_key(|&file| files.rank_of_file(file)));
     check_loaded_files(LoadedFiles {
@@ -41,7 +32,7 @@ pub(super) fn run_queue(pass: QueuePass<'_, '_>) -> Report {
         about_options: Vec::new(),
         always_reported: 0,
         checking: Instant::now(),
-        file_work: Some(&work),
+        file_work: Some(work),
     })
 }
 

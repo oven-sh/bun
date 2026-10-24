@@ -1,16 +1,12 @@
 use self::object_reads::ObjectReads;
+use super::code_imports::files_of;
 use super::code_load::{LoadKey, LoadedCode};
 use super::*;
 use crate::bind::{Binding, Parent};
 use crate::file_analysis::FileAnalysis;
 use crate::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier};
 use crate::module_format::ModuleFormat;
-use crate::resolve::{
-    CodeImportKind, CodeResolution, ComputedCandidate, ComputedResolution, DeclaredSideEffects,
-    SiteResolution,
-};
-
-// A barrel is a module of a package with `"sideEffects": false` that defines none of its exports: each is an export of another module under a name.
+use crate::resolve::{CodeResolution, DeclaredSideEffects, SiteResolution};
 
 pub(super) const NOT_LOADED: u32 = u32::MAX;
 
@@ -20,7 +16,6 @@ pub(super) enum Asked {
     All,
 }
 
-// `target` is `None` where no file has the name that the site gives.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) struct WaitingSite {
     pub(super) site: u32,
@@ -30,11 +25,9 @@ pub(super) struct WaitingSite {
 #[derive(Default, Debug)]
 pub(super) struct BarrelShape {
     pub(super) can_wait: Vec<WaitingSite>,
-    // The name of an export, and where in `can_wait` the site is that it comes from.
     pub(super) exports: Vec<(Atom, u32)>,
 }
 
-// What a file asks of each of its targets, in their order.
 #[derive(Default, Debug)]
 pub(super) struct ImportRequests {
     pub(super) asked: Vec<Asked>,
@@ -83,10 +76,8 @@ impl WaitingBarrel {
 
 #[derive(Debug)]
 enum FileRequests {
-    // What is asked of a file that is not parsed yet.
     Unparsed(Asked),
     Waiting(Box<WaitingBarrel>),
-    // Nothing of the file waits for a name.
     Settled,
 }
 
@@ -105,12 +96,10 @@ impl BarrelRequests {
         &mut self.files[index]
     }
 
-    /// The file is parsed once more, and all of it counts as asked for.
     pub(super) fn forget_parsed_file(&mut self, file: u32) {
         *self.file(file) = FileRequests::Unparsed(Asked::All);
     }
 
-    // `load` queues a target of a file and answers which file it is.
     pub(super) fn add_parsed_file(
         &mut self,
         file: u32,
@@ -177,7 +166,6 @@ impl BarrelRequests {
         }
     }
 
-    // The sites that nothing has asked for, by file, in the order of the files.
     pub(super) fn into_waiting(self) -> impl Iterator<Item = (u32, Vec<WaitingSite>)> {
         (0..)
             .zip(self.files)
@@ -192,39 +180,16 @@ impl BarrelRequests {
     }
 }
 
-fn count_targets(resolution: &SiteResolution<'_>) -> u32 {
-    let candidates = match *resolution {
-        SiteResolution::Constant(CodeResolution::File(_)) => return 1,
-        SiteResolution::Constant(
-            CodeResolution::HostModule(_)
-            | CodeResolution::External { .. }
-            | CodeResolution::Erased
-            | CodeResolution::NotFound(_),
-        ) => return 0,
-        SiteResolution::Computed(ComputedResolution::Candidates { candidates, .. }) => candidates,
-        SiteResolution::Computed(ComputedResolution::All { host_modules, .. }) => host_modules,
-    };
-    let is_file = |candidate: &&ComputedCandidate<'_>| match candidate {
-        ComputedCandidate::File(_) => true,
-        ComputedCandidate::HostModule(_) => false,
-    };
-    candidates.iter().filter(is_file).count() as u32
-}
-
-// How the bindings of a file that hold what it imports are used.
 #[derive(Default)]
 struct ImportUses {
     members_read: FxHashMap<SymbolId, Vec<Atom>>,
     used_otherwise: FxHashSet<SymbolId>,
     exported: FxHashSet<SymbolId>,
-    // For each import site: what is read from the object that the call evaluates to.
     reads_of_sites: Vec<Option<ObjectReads>>,
     holders: FxHashMap<SymbolId, HolderUses>,
-    // Filled if a call gives a binding its value: the bindings that code which can run mentions.
     mentioned: FxHashSet<SymbolId>,
 }
 
-// What the mentions of a binding read that holds the object of a module.
 #[derive(Default)]
 struct HolderUses {
     reads: ObjectReads,
@@ -232,7 +197,6 @@ struct HolderUses {
 }
 
 struct MemberNames {
-    // `require` of an ECMAScript module returns its export of this name, if it has one.
     module_exports: Atom,
     all: Atom,
     catch: Atom,
@@ -266,7 +230,6 @@ impl Summary<'_, '_> {
         })
     }
 
-    // As `find_imported_value_site` of src/aot/modules/imports.rs, without what only other files can say.
     fn has_value(&self, symbol: SymbolId) -> bool {
         self.analysis
             .unused_import_symbols
@@ -291,35 +254,13 @@ impl Summary<'_, '_> {
         }
     }
 
-    // `ns.a`, `ns["a"]`, `(ns as T).a`
     fn find_member_read_from(&self, holder: ExprId) -> Option<Atom> {
-        let hir = self.hir;
-        let mut node = holder;
-        loop {
-            let Parent::Expr(parent) = self.bound.parent_of_expr(node) else {
-                return None;
-            };
-            match hir[parent].kind {
-                ExprKind::As { .. }
-                | ExprKind::Satisfies { .. }
-                | ExprKind::AsConst(_)
-                | ExprKind::NonNull(_) => node = parent,
-                ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-                    return match hir.member_key(parent) {
-                        Some((object, MemberKey::Name(name)))
-                            if object == node && self.is_only_read(parent) =>
-                        {
-                            Some(name)
-                        }
-                        _ => None,
-                    };
-                }
-                _ => return None,
-            }
+        match self.with_type_syntax(holder) {
+            (object, Parent::Expr(member)) => self.find_member_read(object, member),
+            _ => None,
         }
     }
 
-    // `is_every_import_followed`: not only the bindings that hold the object of a module.
     fn for_each_mention(&self, then: &mut dyn FnMut(ExprId, SymbolId)) {
         let (hir, bound) = (self.hir, self.bound);
         for mention in (0..hir.exprs.len() as u32).map(ExprId) {
@@ -349,7 +290,6 @@ impl Summary<'_, '_> {
             return;
         }
         let mut is_first_pass = true;
-        // A pattern over a binding that holds the object may leave the rest of it in another binding.
         while is_first_pass || !holders.is_empty() {
             for &holder in &holders {
                 uses.holders.entry(holder).or_default();
@@ -407,7 +347,6 @@ impl Summary<'_, '_> {
         self.uses.used_otherwise.contains(&symbol) || self.uses.members_read.contains_key(&symbol)
     }
 
-    // The bindings of an import that have a value, each with the name that it imports. `None`: the object of the module.
     fn bindings_of(&self, import: ImportId) -> Vec<(SymbolId, Option<Atom>)> {
         let (hir, bound) = (self.hir, self.bound);
         let node = &hir[import];
@@ -429,7 +368,6 @@ impl Summary<'_, '_> {
         bindings
     }
 
-    // The names that are read from a binding which holds the object of a module. `None`: the object is used in another way.
     fn find_members_read(&self, symbol: SymbolId) -> Option<&[Atom]> {
         let uses = &self.uses;
         if uses.used_otherwise.contains(&symbol) || uses.exported.contains(&symbol) {
@@ -456,7 +394,6 @@ impl Summary<'_, '_> {
         Asked::Names(names)
     }
 
-    // `false`: the object is used in a way that is not followed.
     fn add_names_read(
         &self,
         reads: &ObjectReads,
@@ -489,7 +426,6 @@ impl Summary<'_, '_> {
         })
     }
 
-    // `read_by_call`: the name that the call itself reads.
     fn asked_by_call(&self, site: usize, read_by_call: Atom) -> Asked {
         let Some(Some(reads)) = self.uses.reads_of_sites.get(site) else {
             return Asked::All;
@@ -510,7 +446,6 @@ impl Summary<'_, '_> {
                 let values = items.filter(|item| !item.type_only);
                 Asked::Names(values.map(|item| item.local).collect())
             }
-            // `await` reads `then`.
             ImportSiteKind::ImportCall(_) => self.asked_by_call(index, known::then),
             ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_) => {
                 self.asked_by_call(index, self.names.module_exports)
@@ -575,7 +510,6 @@ impl Summary<'_, '_> {
         }
     }
 
-    // `waiting_sites`: each site as it would wait, if what it resolves to lets it.
     fn find_barrel_shape(&self, waiting_sites: &[Option<WaitingSite>]) -> Option<BarrelShape> {
         let bound = self.bound;
         let mut shape = BarrelShape::default();
@@ -604,13 +538,6 @@ impl Summary<'_, '_> {
     }
 }
 
-fn is_entry_point(context: &CodeLoadContext<'_, '_, '_>, key: LoadKey<'_>) -> bool {
-    context.entry_points.iter().any(|entry_point| {
-        entry_point.key.loader == key.loader
-            && is_same_path(entry_point.key.path, key.path, context.is_case_sensitive)
-    })
-}
-
 pub(super) fn summarize_requests<'s>(
     context: &CodeLoadContext<'_, 's, '_>,
     key: LoadKey<'_>,
@@ -620,7 +547,6 @@ pub(super) fn summarize_requests<'s>(
 ) -> ImportRequests {
     let analysis = &code.analyzed.analysis;
     let target_count = code.targets.len();
-    // Text that is evaluated in a scope of the file names what the file imports.
     if analysis.import_sites.is_empty() || !bound.runtime.eval_scopes().is_empty() {
         return ImportRequests {
             asked: vec![Asked::All; target_count],
@@ -630,7 +556,7 @@ pub(super) fn summarize_requests<'s>(
     let may_be_barrel = code.analyzed.side_effects == DeclaredSideEffects::None
         && analysis.module_format == ModuleFormat::Esm
         && key.loader == HostLoader::default()
-        && !is_entry_point(context, key);
+        && !context.is_entry_point(key);
     let mut summary = Summary {
         hir,
         bound,
@@ -664,12 +590,11 @@ pub(super) fn summarize_requests<'s>(
             site: index as u32,
             target,
         }));
-        let count = count_targets(resolution) as usize;
+        let count = files_of(*resolution).count();
         if count > 0 {
             asked.extend(std::iter::repeat_n(summary.asked_by(index), count));
         }
     }
-    // The rest is what the host adds.
     debug_assert!(asked.len() <= target_count);
     asked.resize(target_count, Asked::All);
     ImportRequests {
@@ -681,7 +606,6 @@ pub(super) fn summarize_requests<'s>(
     }
 }
 
-// The file goes on as if the sites were not written: what they export is not among its exports.
 pub(super) fn erase_waiting_sites(
     code: &mut LoadedCode<'_, '_>,
     loaded_targets: &mut Vec<u32>,
@@ -698,28 +622,7 @@ pub(super) fn erase_waiting_sites(
     let mut is_kept = loaded_targets.iter().map(|&target| target != NOT_LOADED);
     code.targets.retain(|_| is_kept.next().unwrap_or(true));
     loaded_targets.retain(|&target| target != NOT_LOADED);
-
-    code.targets_by_specifier.clear();
-    let mut target = 0;
-    for (site, resolution) in code
-        .analyzed
-        .analysis
-        .import_sites
-        .iter()
-        .zip(&code.resolutions)
-    {
-        if let (
-            SiteResolution::Constant(CodeResolution::File(_)),
-            ImportSpecifier::Constant(specifier),
-        ) = (resolution, site.specifier)
-        {
-            let kind = CodeImportKind::from_site(site.kind);
-            code.targets_by_specifier
-                .entry((specifier, kind))
-                .or_insert(target);
-        }
-        target += count_targets(resolution);
-    }
+    code.index_targets_by_specifier();
 }
 
 mod object_reads;

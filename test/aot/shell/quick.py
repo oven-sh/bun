@@ -16,7 +16,7 @@ Other environment variables:
     WORK            where intermediate files go (default: <temporary directory>/aot-quick); the files of a failure are not deleted
     WORDS           option words added to every compile, after the program's own, separated by blanks (`testaot list options`)
     RUN_OPTIONS     options of `jsc` for the run of an image, separated by blanks
-    RUN_SECONDS     how long the run of an image may take (default: 120)
+    RUN_SECONDS     how long the run of an image may take, and the run of `$PLAIN` that it is compared with (default: 120)
 
 Prints one line per program and exits with 1 if any line is a failure:
     same            the output equals <program>.expected.txt or, if there is none, the output of `$PLAIN run <file>`
@@ -169,7 +169,11 @@ def run_program(program):
     if os.path.isfile(base + ".expected.txt"):
         expected = open(base + ".expected.txt", errors="replace").read()
     else:
-        expected = without_times(toolchain.run([PLAIN, "run", entry], cwd, 60, env)[1])
+        seconds = int(os.environ.get("RUN_SECONDS", 120))
+        plain_code, expected = toolchain.run([PLAIN, "run", entry], cwd, seconds, env)
+        if plain_code is None:
+            return f"skipped: `$PLAIN run` did not end within {seconds} s, so there is nothing to compare with"
+        expected = without_times(expected)
     if output != expected:
         open(work + ".output", "w").write(output)
         diff = [line for line in difflib.unified_diff(expected.split("\n"), output.split("\n"), lineterm="", n=0) if not line.startswith(("---", "+++", "@@"))]

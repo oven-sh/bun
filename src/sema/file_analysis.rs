@@ -23,22 +23,19 @@ pub struct FileInputs<'s> {
     pub jsx: JsxMode,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Default, Debug)]
 pub struct FileAnalysis<'s> {
     pub decisions: Decisions<'s>,
     pub module_format: ModuleFormat,
-    /// `import`, `export`, `import.meta` or a top-level `await`. A CommonJS file can have `import.meta`.
     pub has_esm_syntax: bool,
     pub import_sites: &'s [ImportSite],
     pub jsx_imports: JsxImportSet,
     pub unused_import_symbols: &'s [SymbolId],
-    /// Those of `unused_import_symbols` that are evaluated somewhere.
     pub imports_used_only_in_dead_code: &'s [SymbolId],
     pub pending_macro_calls: &'s [ExprId],
     pub has_live_top_level_await: bool,
     pub errors: &'s [FoldError],
     pub strings_over_limit: &'s [ExprId],
-    /// Something was decided because no function of the file runs before a statement of its body. Another file can call what this one exports before that only on a cycle of imports.
     pub relies_on_running_before_calls: bool,
     sites_by_kind: &'s [u32],
     first_call_site: u32,
@@ -65,25 +62,6 @@ impl FileAnalysis<'_> {
             .binary_search_by_key(&Some(call), |site| site.kind.call())
             .ok()?;
         Some(first_call_site + found)
-    }
-
-    fn empty() -> Self {
-        FileAnalysis {
-            decisions: Decisions::default(),
-            module_format: ModuleFormat::Esm,
-            has_esm_syntax: false,
-            import_sites: &[],
-            jsx_imports: JsxImportSet::default(),
-            unused_import_symbols: &[],
-            imports_used_only_in_dead_code: &[],
-            pending_macro_calls: &[],
-            has_live_top_level_await: false,
-            errors: &[],
-            strings_over_limit: &[],
-            relies_on_running_before_calls: false,
-            sites_by_kind: &[],
-            first_call_site: 0,
-        }
     }
 }
 

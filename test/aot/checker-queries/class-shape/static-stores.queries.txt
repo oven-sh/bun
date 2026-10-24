@@ -1,6 +1,0 @@
-# Stores to the class add static members only when the binding is known to be the class: not if reassigned or visible to `eval`.
-static-stores.js:3 class member `S` = a Field StaticStore 5 unwritten checked number static optional
-static-stores.js:3 class member `S` = b Field StaticStore 6 unwritten checked number static optional
-static-stores.js:3 class member `S` = c Field StaticStore 9 unwritten checked number static optional
-absent: static-stores.js:12 class member `R` = x Field StaticStore 13 unwritten checked 1 static optional
-absent: static-stores.js:16 class member `E` = x Field StaticStore 17 unwritten checked 1 static optional

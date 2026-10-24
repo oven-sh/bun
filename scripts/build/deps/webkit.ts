@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-757-0ba9fb26";
+export const WEBKIT_VERSION = "autobuild-preview-pr-757-8fe92b96";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -776,6 +776,7 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
   // Written in this graph: the first by a step of this spec, the others by the steps of ../aot.ts.
   const aotGenerated = [
     ...aotRuntimeFactsStep(wk, lists.jsc),
+    ...aotVectorStep(wk, lists.jsc),
     ...aotGeneratedFiles(lists.jsc, "SCHEMA"),
     ...aotGeneratedFiles(lists.jsc, "BUILTIN_TABLE"),
   ];
@@ -1470,6 +1471,19 @@ function aotRuntimeFactsStep(wk: WebKitBuild, lists: LibraryLists): string[] {
   return outputs;
 }
 
+/** AOT_GENERATE_VECTOR of aot/AOT.cmake. */
+function aotVectorStep(wk: WebKitBuild, lists: LibraryLists): string[] {
+  const script = join(wk.JSC, "aot", "support", "generator", "vector.ts");
+  const outputs = lists.paths("JavaScriptCore_AOT_VECTOR_GENERATED_HEADERS");
+  gen(wk, {
+    outputs,
+    cmd: [wk.cfg.bun, script, "--wtf", wk.WTF, "--out", aotGeneratedDirectory(wk)],
+    inputs: [script, join(wk.WTF, "wtf", "Vector.h")],
+    desc: "AOTVector.h",
+  });
+  return outputs;
+}
+
 /** AOT_CHECK_SOURCE_LISTS and AOT_CHECK_EXPORTED_HEADERS of aot/AOT.cmake. */
 function checkAotSourceLists(wk: WebKitBuild): void {
   wk.listedDirs.push(...aotDirectories(wk.JSC));
@@ -1722,16 +1736,21 @@ interface JSCSources {
  * JavaScriptCore_SOURCES. aot/ has two lists of its own (AOT_COMPUTE_SOURCES in
  * aot/AOT.cmake), because a bundle is compiled with one set of flags.
  * `--unified-sources=off` compiles each source of aot/ by itself.
+ * `--aot=off` compiles of the two lists only what aot/AOT.cmake names for a build without AoT.
  */
 function jscSourceList(wk: WebKitBuild, lists: LibraryLists): JSCSources {
   const listsOf = (framework: string): string[] => lists.paths(`${framework}_UNIFIED_SOURCE_LIST_FILES`);
   const aotOptions = wk.cfg.unifiedSources ? ["--max-bundle-size", `${aotBundleSize}`] : ["--print-all-sources"];
-  const aot = unifiedSources(wk, listsOf("JavaScriptCoreAOT"), aotOptions);
-  const aotCompiledForSize = unifiedSources(wk, listsOf("JavaScriptCoreAOTCompiledForSize"), [
-    ...aotOptions,
-    "--bundle-filename-prefix",
-    ...lists.values("JavaScriptCoreAOTCompiledForSize_UNIFIED_SOURCE_BUNDLE_PREFIX"),
-  ]);
+  const aot = wk.cfg.aot
+    ? unifiedSources(wk, listsOf("JavaScriptCoreAOT"), aotOptions)
+    : lists.paths("JavaScriptCore_AOT_SOURCES_WITHOUT_AOT");
+  const aotCompiledForSize = wk.cfg.aot
+    ? unifiedSources(wk, listsOf("JavaScriptCoreAOTCompiledForSize"), [
+        ...aotOptions,
+        "--bundle-filename-prefix",
+        ...lists.values("JavaScriptCoreAOTCompiledForSize_UNIFIED_SOURCE_BUNDLE_PREFIX"),
+      ])
+    : [];
   const bundles = join(wk.DS, "unified-sources") + sep;
   return {
     sources: [

@@ -1,4 +1,4 @@
-validate: 774 a value, 4323 refused, 21 thrown: EvalError, 23 thrown: RangeError, 25 thrown: TypeError; values that are refused when validated again: 0
+validate: 773 a value, 4324 refused, 21 thrown: EvalError, 23 thrown: RangeError, 25 thrown: TypeError; values that are refused when validated again: 0
 a reviver that changes nothing: a value
 a reviver that drops everything: refused
 a reviver that throws at once: thrown: RangeError

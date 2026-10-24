@@ -284,7 +284,6 @@ export type D = C;
     assert_eq!(check_with_threads(1), check_with_threads(4));
 }
 
-// Whether the tree of the first entry point is there while the second one is lowered, and after the pass.
 fn is_first_entry_point_held(text: &str) -> (bool, bool) {
     let sources = [("main.ts", text), ("other.ts", "export const b = 2;\n")];
     with_program(&sources, &["./main.ts", "./other.ts"], 1, |program| {

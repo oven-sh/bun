@@ -1,0 +1,139 @@
+//// variadic-calls.js
+// Calls with a varying number of arguments: `arguments` read in a loop, sliced and forwarded with `apply`, rest and spread, parameters left out, `call` with another receiver, and Math.max.apply.
+function sum() {
+  var total = 0;
+  for (var i = 0; i < arguments.length; i++) total += arguments[i];
+  return total;
+}
+
+function toArray(list, from) {
+  return Array.prototype.slice.call(list, from || 0);
+}
+
+function partial(fn) {
+  var bound = toArray(arguments, 1);
+  return function () {
+    return fn.apply(this, bound.concat(toArray(arguments)));
+  };
+}
+
+function largest() {
+  return Math.max.apply(Math, arguments);
+}
+
+function forward() {
+  return sum.apply(null, arguments);
+}
+
+function rest(first, ...others) {
+  return first * others.length + sum(...others);
+}
+
+function optional(a, b, c) {
+  if (arguments.length === 1) return a;
+  if (c === undefined) c = 10;
+  return a + b + c;
+}
+
+var receiver = {
+  base: 3,
+  scaled: function (x, y) {
+    return this.base * x + y;
+  },
+};
+
+function run(count) {
+  var addFive = partial(sum, 2, 3);
+  var total = 0;
+  for (var i = 0; i < count; i++) {
+    var a = i & 15;
+    total += sum(a, 1, 2) + forward(a, a, a, a) + largest(a, 7, 3);
+    total += rest(a, 1, 2, 3) + optional(a) + optional(a, 1) + optional(a, 1, 2);
+    total += receiver.scaled.call({ base: 2 }, a, 1) + receiver.scaled.apply(receiver, [a, 2]);
+    if ((i & 7) === 0) total += addFive(a, 4);
+  }
+  return total;
+}
+
+console.log(run(1500000));
+//// versions-and-paths.js
+// Version numbers parsed with a regular expression, compared and sorted, and file paths normalized, split and made relative with string methods.
+const versionPattern = /^v?(\d+)\.(\d+)\.(\d+)(?:-([\w.]+))?$/;
+
+function parseVersion(text) {
+  const match = versionPattern.exec(text.trim());
+  if (!match) return null;
+  return { major: +match[1], minor: parseInt(match[2], 10), patch: Number(match[3]), tag: match[4] ? match[4].split(".") : [] };
+}
+
+function compareVersions(a, b) {
+  return a.major - b.major || a.minor - b.minor || a.patch - b.patch || b.tag.length - a.tag.length;
+}
+
+function satisfies(version, range) {
+  const wanted = parseVersion(range.slice(1));
+  if (range[0] === "^") return version.major === wanted.major && compareVersions(version, wanted) >= 0;
+  if (range[0] === "~") return version.major === wanted.major && version.minor === wanted.minor && version.patch >= wanted.patch;
+  return compareVersions(version, wanted) === 0;
+}
+
+function normalize(path) {
+  const out = [];
+  for (const part of path.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") out.pop();
+    else out.push(part);
+  }
+  return (path.startsWith("/") ? "/" : "") + out.join("/");
+}
+
+function extension(path) {
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(dot) : "";
+}
+
+function relative(from, to) {
+  const a = normalize(from).split("/");
+  const b = normalize(to).split("/");
+  let shared = 0;
+  while (shared < a.length && shared < b.length && a[shared] === b[shared]) shared++;
+  return "../".repeat(a.length - shared) + b.slice(shared).join("/");
+}
+
+function run(count) {
+  const versions = ["1.2.3", "v1.10.0", "2.0.0-beta.1", "1.2.10", " 0.9.12 ", "not a version"];
+  const ranges = ["^1.2.0", "~1.2.3", "=2.0.0"];
+  const paths = ["/usr/local/../lib/./node/index.js", "src//util/../main.test.ts", "/a/b/c/../../d/.hidden", "plain"];
+  let total = 0;
+  for (let i = 0; i < count; i++) {
+    const version = parseVersion(versions[i % 6]);
+    if (version) total += satisfies(version, ranges[i % 3]) ? 3 : 1;
+    const path = paths[i & 3];
+    total += normalize(path).length + extension(path).length + relative("/usr/lib/node", path).length;
+    if ((i & 15) === 0) {
+      const sorted = versions.map(parseVersion).filter(Boolean).sort(compareVersions);
+      total += sorted[0].patch + sorted[sorted.length - 1].major;
+    }
+  }
+  return total;
+}
+
+console.log(run(250000));
+//// words-are-counted-under-four-names-not-slower-than-under-sixty-four.js
+// counts[word] = (counts[word] ?? 0) + 1 over a list of words with four different words in it, and over one with sixty-four.
+function listOf(different) { const names = []; for (let i = 0; i < different; i++) names.push("w" + i.toString(36)); const list = []; for (let i = 0; i < 4096; i++) list.push(names[(i * 7 + (i >> 3)) % different]); return list; }
+const few = listOf(4), many = listOf(64);
+function count(words, turns) { const counts = {}; for (let t = 0; t < turns; t++) { const word = words[t & 4095]; counts[word] = (counts[word] ?? 0) + 1; } return counts; }
+function fastestOf(words) { let fastest = Infinity; for (let turn = 0; turn < 7; turn++) { const began = performance.now(); count(words, 2000000); fastest = Math.min(fastest, performance.now() - began); } return fastest; }
+const withFew = fastestOf(few), withMany = fastestOf(many);
+console.log(Object.keys(count(few, 4096)).length, Object.keys(count(many, 4096)).length, withFew < withMany * 5 / 4 ? "not slower" : "slower");
+//// words-kept-from-one-split-are-counted-not-twice-as-slowly-as-the-same-words-written-out.js
+// A text of 4,096 words, four different ones, is split once and the pieces are kept. They are counted by key again and again. The same loop runs over a list that holds the four words as written.
+const written = ["alpha", "beta", "gamma", "delta"];
+const list = []; for (let i = 0; i < 4096; i++) list.push(written[(i * 7 + (i >> 3)) & 3]);
+const pieces = list.join(" ").split(" ");
+function count(words, turns) { const counts = {}; for (let t = 0; t < turns; t++) { const word = words[t & 4095]; counts[word] = (counts[word] ?? 0) + 1; } return counts; }
+function fastestOf(words) { let fastest = Infinity; for (let turn = 0; turn < 7; turn++) { const began = performance.now(); count(words, 2000000); fastest = Math.min(fastest, performance.now() - began); } return fastest; }
+const byWritten = fastestOf(list), byPieces = fastestOf(pieces);
+console.log(JSON.stringify(count(list, 4096)) === JSON.stringify(count(pieces, 4096)), byPieces < byWritten * 2 ? "under twice" : "over twice");

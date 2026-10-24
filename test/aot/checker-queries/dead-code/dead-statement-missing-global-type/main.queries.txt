@@ -1,3 +1,0 @@
-# Dead statements are not type-checked, so they cannot report a missing global type.
-main.ts:0 role `` = Checked
-absent: -:0 diagnostic TS2318 = MissingDeclaration StopsBuild

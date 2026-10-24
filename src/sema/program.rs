@@ -21,7 +21,7 @@ pub use self::code_graph::*;
 pub use self::code_load::{CompileInputs, MainModule};
 
 use self::code_load::{
-    BuildFile, CodeFiles, CodeLoadContext, CompileLoad, InstallTables, RootTables, TypesQuestion,
+    BuildFile, CodeFiles, CodeLoadContext, CompileLoad, RootTables, TypesQuestion,
 };
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{self, Bound, Decl, ScopeId, ScopeKind, SymFlags, Symbol, SymbolId};
@@ -1472,7 +1472,7 @@ impl<'s, 'r, 'u: 's> FileLoader<'_, 's, 'r, 'u> {
                         is_lib,
                         specifies_esm,
                         Err(parse),
-                        build.map(BuildFile::of_types_file),
+                        (build, None),
                         &resolve_ahead,
                     );
                     loaded.parse = package;
@@ -5971,13 +5971,13 @@ impl<'s> Files<'s> {
                         None => {
                             let Some(&task) = root_tasks.get(next_root_task) else {
                                 if let Some(code_files) = &mut code_files {
-                                    code_files.install_remaining_files(InstallTables {
+                                    code_files.install_remaining_files(
                                         arena,
-                                        modules: &mut modules,
-                                        depths: &mut depths,
-                                        found: &mut all_found,
-                                        seen: &mut seen,
-                                    });
+                                        &mut modules,
+                                        &mut depths,
+                                        &all_found,
+                                        &mut seen,
+                                    );
                                 }
                                 break 'load;
                             };
@@ -7122,7 +7122,7 @@ impl<'s> Files<'s> {
             is_lib,
             specifies_esm,
             Ok(parse),
-            build.map(BuildFile::of_types_file),
+            (build, None),
             resolve_ahead,
         )
     }
@@ -7151,12 +7151,12 @@ impl<'s> Files<'s> {
         is_lib: bool,
         specifies_esm: bool,
         parsed: Result<Parse<'s>, &Parse<'s>>,
-        build: Option<BuildFile<'_, '_, 's, 'r>>,
+        (build, mut code): BuildFile<'_, '_, 's, 'r>,
         resolve_ahead: &dyn Fn(&[(Atom, ResolutionMode, bool)]),
     ) -> Loaded<'s, 'r> {
         let (Ok(Parse { hir, bound, .. }) | Err(Parse { hir, bound, .. })) = &parsed;
         let role = FileRole::of_tree(hir);
-        let (build, mut code) = BuildFile::into_parts(build);
+        debug_assert!(build.is_some() || code.is_none());
         // What a full-types file writes relative to itself is relative to where its text is.
         let typed_source_path = code
             .as_deref()

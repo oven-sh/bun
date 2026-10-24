@@ -200,7 +200,6 @@ pub(super) fn project_disk(files: &[(&str, &str)], threads: usize) -> host::Disk
 
 pub(super) fn disk(threads: usize, already_read: host::AlreadyRead, root: &[u8]) -> host::Disk {
     static OUTPUT: Once = Once::new();
-    // A thread of Bun's pool asserts that Bun's `main` has set up the output.
     OUTPUT.call_once(bun_core::output::stdio::init);
     host::Disk::with_already_read(threads, already_read, root)
 }
@@ -580,7 +579,6 @@ impl CodeHost for ClaimsNodeFs<'_> {
     }
 }
 
-/// Takes its time over a file that is queued a second time, so that every other thread of the load looks for work meanwhile.
 pub(super) struct SlowToQueueAgain<'a>(pub &'a host::Disk, pub Guarded<Vec<Vec<u8>>>);
 
 impl SlowToQueueAgain<'_> {

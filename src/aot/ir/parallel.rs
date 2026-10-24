@@ -17,6 +17,22 @@ pub fn for_each_mut<T: Send>(
     in_parallel(items.len(), &|index| work(&mut **items[index].lock()));
 }
 
+pub fn map_each<T: Send, R: Send>(
+    items: Vec<T>,
+    in_parallel: InParallel<'_>,
+    work: &(dyn Fn(T) -> R + Sync),
+) -> Vec<R> {
+    let items = items.into_iter().map(|item| (Some(item), None));
+    let mut slots: Vec<(Option<T>, Option<R>)> = items.collect();
+    for_each_mut(&mut slots, in_parallel, &|(item, result)| {
+        *result = item.take().map(work);
+    });
+    let results = slots.into_iter();
+    results
+        .map(|(_, result)| result.expect("every task ran"))
+        .collect()
+}
+
 /// Frees what the items own on all threads.
 pub fn drop_each<T: Send>(items: Vec<T>, in_parallel: InParallel<'_>) {
     let items = items.into_iter().map(|item| Guarded::new(Some(item)));

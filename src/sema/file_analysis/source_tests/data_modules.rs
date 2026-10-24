@@ -178,8 +178,31 @@ fn exported_binding_of(s: &Analyzed<'_>, name: Atom) -> Binding {
     s.bound.exported_binding(ExportSpecId::from(index))
 }
 
+fn export_pairs<'a>(s: &'a Analyzed<'_>) -> Vec<(&'a str, &'a str)> {
+    let (w, specs) = (&s.workspace, s.hir.export_specs.iter());
+    specs
+        .map(|spec| (w.text(spec.local), w.text(spec.exported)))
+        .collect()
+}
+
+#[track_caller]
+fn declared_names<'a>(s: &'a Analyzed<'_>) -> Vec<&'a str> {
+    let declarations = s.hir.var_decls.iter();
+    let names = declarations.map(|declaration| match s.hir[declaration.pat].kind {
+        PatKind::Ident(name) => s.workspace.text(name),
+        kind => panic!("declared pattern: {kind:?}"),
+    });
+    names.collect()
+}
+
 fn index_reads(hir: &File<'_>) -> Vec<ExprId> {
     find_exprs(hir, |kind| matches!(kind, ExprKind::Index { .. }))
+}
+
+fn exprs_resolved_at_runtime(hir: &File<'_>) -> Vec<ExprId> {
+    let exprs = (0..hir.exprs.len() as u32).map(ExprId);
+    let is_flagged = |e: &ExprId| hir.expr_flags(*e).contains(ExprFlags::RESOLVED_AT_RUNTIME);
+    exprs.filter(is_flagged).collect()
 }
 
 fn is_computed(hir: &File<'_>, e: ExprId) -> bool {
@@ -210,19 +233,25 @@ fn json_exports_keys() {
 #[test]
 fn proto_key_is_own_property() {
     with_workspace(|w| {
-        let value = Data::Object(&[("__proto__", Data::Number(1.0))]);
-        let s = value_module(w, &value, true);
-        assert_eq!(s.hir.props.len(), 1);
-        let property = s.hir.props[0];
-        assert_eq!(property.kind, PropKind::Init);
-        assert_eq!(property.key, PropKey::Name(known::__proto__));
-        assert_eq!(property.name_kind, NameKind::ComputedString);
-        assert!(!is_proto_setter(&property));
-        assert_eq!(
-            number_at(&s.hir, property.value).to_bits(),
-            1.0f64.to_bits()
-        );
-        assert_eq!(exports(&s), ["__proto__", "default"]);
+        let value = Data::Object(&[("__proto__", Data::Number(1.0)), ("a", Data::Null)]);
+        for (exports_keys, names) in [
+            (false, &["default"][..]),
+            (true, &["__proto__", "a", "default"]),
+        ] {
+            let s = value_module(w, &value, exports_keys);
+            assert_eq!(s.hir.props.len(), 2);
+            assert_eq!(s.hir.props[1].name_kind, NameKind::StringLiteral);
+            assert!(!s.hir.props.iter().any(is_proto_setter));
+            let property = s.hir.props[0];
+            assert_eq!(property.kind, PropKind::Init);
+            assert_eq!(property.key, PropKey::Name(known::__proto__));
+            assert_eq!(property.name_kind, NameKind::ComputedString);
+            assert_eq!(
+                number_at(&s.hir, property.value).to_bits(),
+                1.0f64.to_bits()
+            );
+            assert_eq!(exports(&s), names);
+        }
     });
 }
 
@@ -246,14 +275,11 @@ fn leaves() {
             assert_eq!(found.to_bits(), f64::to_bits(operand), "{number}");
         }
 
-        let s = leaf(w, Data::Number(f64::NAN));
-        assert!(number_at(&s.hir, export_default_value(&s.hir)).is_nan());
-
-        let s = leaf(w, Data::Number(f64::INFINITY));
-        assert_eq!(
-            number_at(&s.hir, export_default_value(&s.hir)),
-            f64::INFINITY
-        );
+        for number in [0.0f64, 1.5, f64::INFINITY, f64::NAN, -f64::NAN] {
+            let s = leaf(w, Data::Number(number));
+            let found = number_at(&s.hir, export_default_value(&s.hir));
+            assert_eq!(found.to_bits(), number.to_bits(), "{number}");
+        }
 
         let s = leaf(w, Data::BigInt("10"));
         let value = export_default_value(&s.hir);
@@ -300,6 +326,12 @@ fn other_values_export_default_and_marker() {
         for value in VALUES_WITHOUT_KEYS {
             let s = value_module(w, value, true);
             assert_eq!(exports(&s), ["__esModule", "default"]);
+            assert_eq!(s.hir.body.len(), 2, "{value:?}");
+            let expected = [("_0", "default"), ("_1", "__esModule")];
+            assert_eq!(export_pairs(&s), expected, "{value:?}");
+            assert_eq!(declared_names(&s), ["_0", "_1"], "{value:?}");
+            let marker = s.hir[s.hir.var_decls[1].init].kind;
+            assert!(matches!(marker, ExprKind::True), "marker: {marker:?}");
         }
         let s = value_module(w, &KEYED_OBJECT, false);
         assert_eq!(exports(&s), ["default"]);
@@ -309,10 +341,139 @@ fn other_values_export_default_and_marker() {
 #[test]
 fn empty_object_exports_default() {
     with_workspace(|w| {
-        let s = value_module(w, &Data::Object(&[]), true);
-        assert_eq!(exports(&s), ["default"]);
-        assert!(index_reads(&s.hir).is_empty());
-        assert_eq!(s.analysis.module_format, ModuleFormat::Esm);
+        for value in [Data::Object(&[]), Data::Object(&[("default", Data::Null)])] {
+            let s = value_module(w, &value, true);
+            assert_eq!(exports(&s), ["default"]);
+            assert!(index_reads(&s.hir).is_empty());
+            assert_eq!(s.hir.body.len(), 2);
+            assert_eq!(s.hir.var_decls.len(), 1);
+            assert_eq!(s.analysis.module_format, ModuleFormat::Esm);
+        }
+    });
+}
+
+#[test]
+fn local_names_skip_keys() {
+    with_workspace(|w| {
+        let value = Data::Object(&[("_0", Data::Null), ("a", Data::Null), ("_2", Data::Null)]);
+        let s = value_module(w, &value, true);
+        assert_eq!(declared_names(&s), ["_1", "_3", "_4", "_5"]);
+        let expected = [("_1", "default"), ("_3", "_0"), ("_4", "a"), ("_5", "_2")];
+        assert_eq!(export_pairs(&s), expected);
+    });
+}
+
+#[test]
+fn keys_are_read_from_the_default_export() {
+    with_workspace(|w| {
+        let value = Data::Object(&[
+            ("a", Data::Null),
+            ("default", Data::Null),
+            ("b", Data::Null),
+        ]);
+        let s = value_module(w, &value, true);
+        let hir = &s.hir;
+        assert_eq!(hir.body.len(), 3);
+        let expected = [("_0", "default"), ("_1", "a"), ("_2", "b")];
+        assert_eq!(export_pairs(&s), expected);
+        assert_eq!(declared_names(&s), ["_0", "_1", "_2"]);
+        assert!(hir.var_decls.iter().all(|it| it.kind == VarKind::Const));
+        for (declaration, key) in hir.var_decls[1..].iter().zip(["a", "b"]) {
+            let Some((read_object, read_key)) = hir.member_key(declaration.init) else {
+                panic!("initializer: {:?}", hir[declaration.init].kind);
+            };
+            assert_eq!(read_key, MemberKey::Name(w.atom(key)));
+            let read_object = hir[read_object].kind;
+            assert!(
+                matches!(read_object, ExprKind::Ident(name) if name == w.atom("_0")),
+                "object: {read_object:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn nested_properties_are_contiguous() {
+    with_workspace(|w| {
+        const INNER: Data<'static> = Data::Object(&[("c", Data::Null)]);
+        let value = Data::Object(&[("a", INNER), ("b", Data::Array(&[INNER])), ("c", INNER)]);
+        let data = DataModule::Value {
+            default: w.data(&value),
+            exports_keys: true,
+        };
+        let (s, root) = analyzed_root(w, &data);
+        let ExprKind::Object(props) = s.hir[root].kind else {
+            panic!("root: {:?}", s.hir[root].kind);
+        };
+        let props = &s.hir.props[props.range()];
+        let keys: Vec<PropKey> = props.iter().map(|prop| prop.key).collect();
+        assert_eq!(keys, ["a", "b", "c"].map(|key| PropKey::Name(w.atom(key))));
+    });
+}
+
+#[test]
+fn host_values_name_the_root() {
+    with_workspace(|w| {
+        for (value, exports_keys) in [
+            (KEYED_OBJECT, false),
+            (KEYED_OBJECT, true),
+            (Data::String("s"), false),
+            (Data::String("s"), true),
+        ] {
+            let default = w.data(&value);
+            let data = DataModule::Value {
+                default,
+                exports_keys,
+            };
+            let tree = module(w, &data);
+            let hir = &tree.file;
+            let root = match hir[hir.id_at(hir.body, 0)].kind {
+                StmtKind::ExportDefault(value) => value,
+                StmtKind::Var(declarations) => hir[declarations.at(0)].init,
+                kind => panic!("first statement: {kind:?}"),
+            };
+            let expected = [(root, HostValue::Data(default))];
+            assert_eq!(tree.host_values, expected, "{data:?}");
+            let is_object = matches!(hir[root].kind, ExprKind::Object(_));
+            assert_eq!(is_object, matches!(value, Data::Object(_)), "{data:?}");
+        }
+    });
+}
+
+#[test]
+fn native_addon_is_loaded_by_process_dlopen() {
+    with_workspace(|w| {
+        let path = w.atom("/x.node");
+        let tree = module(w, &DataModule::NativeAddon { path });
+        let hir = &tree.file;
+        assert!(tree.host_values.is_empty());
+
+        assert_eq!(hir.body.len(), 3);
+        let StmtKind::Expr(load) = hir[hir.id_at(hir.body, 1)].kind else {
+            panic!("second statement: {:?}", hir[hir.id_at(hir.body, 1)].kind);
+        };
+        let ExprKind::Call(call) = hir[load].kind else {
+            panic!("second statement: {:?}", hir[load].kind);
+        };
+        let Some((process, name)) = hir.member_key(hir[call].callee) else {
+            panic!("callee: {:?}", hir[hir[call].callee].kind);
+        };
+        assert!(matches!(hir[process].kind, ExprKind::Ident(name) if name == known::process));
+        assert_eq!(name, MemberKey::Name(w.atom("dlopen")));
+        let arguments: Vec<ExprId> = hir.ids(hir[call].args).collect();
+        let ExprKind::Ident(module) = hir[arguments[0]].kind else {
+            panic!("first argument: {:?}", hir[arguments[0]].kind);
+        };
+        assert!(matches!(hir[arguments[1]].kind, ExprKind::String(text) if text == path));
+
+        let StmtKind::ExportDefault(value) = hir[hir.id_at(hir.body, 2)].kind else {
+            panic!("third statement: {:?}", hir[hir.id_at(hir.body, 2)].kind);
+        };
+        let Some((object, name)) = hir.member_key(value) else {
+            panic!("default export: {:?}", hir[value].kind);
+        };
+        assert!(matches!(hir[object].kind, ExprKind::Ident(name) if name == module));
+        assert_eq!(name, MemberKey::Name(known::exports));
     });
 }
 
@@ -321,7 +482,7 @@ fn runtime_require() {
     with_workspace(|w| {
         for loader_type in [Some("sqlite"), None] {
             for member in [Some("db"), None] {
-                let s = analyzed_module(
+                let tree = module(
                     w,
                     &DataModule::RuntimeRequire {
                         specifier: w.atom("./x.db"),
@@ -329,7 +490,8 @@ fn runtime_require() {
                         member: member.map(|name| w.atom(name)),
                     },
                 );
-                assert_runtime_require(&s, loader_type, member);
+                assert!(tree.host_values.is_empty());
+                assert_runtime_require(&analyze(w, tree), loader_type, member);
             }
         }
     });
@@ -344,6 +506,9 @@ fn assert_runtime_require(s: &Analyzed<'_>, loader_type: Option<&str>, member: O
     let ImportSiteKind::ImportMetaRequire(call) = site.kind else {
         panic!("site: {:?}", site.kind);
     };
+    assert!(site.is_host_value);
+    assert!(matches!(s.hir[call].kind, ExprKind::Call(_)));
+    assert_eq!(exprs_resolved_at_runtime(&s.hir), [call]);
     assert_eq!(site.specifier, ImportSpecifier::Constant(w.atom("./x.db")));
     match loader_type {
         Some(name) => {
@@ -495,6 +660,7 @@ fn primitive_root_is_constant() {
 fn page_root_is_deferred() {
     with_workspace(|w| {
         let tree = module(w, &DataModule::Page);
+        assert_eq!(tree.file.body.len(), 1);
         let root = export_default_value(&tree.file);
         assert_eq!(tree.host_values, [(root, HostValue::Deferred)]);
         let s = analyze(w, tree);
@@ -521,6 +687,7 @@ fn page_root_is_deferred() {
 fn roles() {
     with_workspace(|w| {
         let value = w.data(&KEYED_OBJECT);
+        let value_with_require = w.data(&Data::Object(&[("require", Data::String("require"))]));
         let modules = [
             DataModule::Value {
                 default: value,
@@ -528,6 +695,14 @@ fn roles() {
             },
             DataModule::Value {
                 default: value,
+                exports_keys: true,
+            },
+            DataModule::Value {
+                default: value_with_require,
+                exports_keys: false,
+            },
+            DataModule::Value {
+                default: value_with_require,
                 exports_keys: true,
             },
             DataModule::RuntimeRequire {
@@ -545,7 +720,10 @@ fn roles() {
             assert!(hir.is_js, "{data:?}");
             assert_eq!(hir.kind, FileKind::Tsx, "{data:?}");
             assert!(hir.has_module_syntax, "{data:?}");
-            assert!(hir.is_strict_by_syntax, "{data:?}");
+            assert!(hir.is_strict && hir.is_strict_by_syntax, "{data:?}");
+            let flagged = exprs_resolved_at_runtime(&hir);
+            let is_require = matches!(data, DataModule::RuntimeRequire { .. });
+            assert_eq!(flagged.len(), usize::from(is_require), "{data:?}");
         }
     });
 }

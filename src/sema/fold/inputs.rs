@@ -20,9 +20,7 @@ pub enum DefineValue<'s> {
     Constant(Constant),
     GlobalPath(&'s [Atom]),
     Data(&'s DataValue<'s>),
-    /// The path holds the same function, object or symbol in every run, and reading it runs no code.
     RuntimeValue(RuntimeValueKind),
-    /// The path holds this primitive in every run, and reading it runs no code.
     RuntimeConstant(Constant),
 }
 

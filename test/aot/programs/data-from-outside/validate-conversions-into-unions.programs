@@ -1,0 +1,1808 @@
+////: messageOf
+function messageOf(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse<{ n: number }>(text));
+  } catch (error: any) {
+    return error.message;
+  }
+}
+//// validate-conversions-into-unions-whose-arms-could-both-take-the-value.ts
+// Conversions of plain objects into unions whose arms could both take them: large trees, long lists, parts that are shared, cycles, accessors that throw in the middle, and accessors that start another validation or parse of the same types in the middle of the first.
+import { validate } from "bun:bundle";
+type Mixed = { below: Mixed | null; k: "one" } | { below: Mixed | null; k: 2 } | { below: Mixed | null; k: false } | { below: Mixed | null; k: null };
+type Forked = { left: Forked | null; right: Forked | null; k: "one" } | { left: Forked | null; right: Forked | null; k: null };
+type Listed = { items: Listed[]; k: "one" } | { items: Listed[]; k: null };
+type Holder = { mixed: Mixed; forked: Forked; listed: Listed; more: (Mixed | Forked)[] };
+
+function say(run: () => unknown): string {
+  try {
+    const value: any = run();
+    let count = 0;
+    const seen = new Set<unknown>();
+    const stack = [value];
+    while (stack.length && count < 200000) {
+      const at = stack.pop();
+      if (typeof at !== "object" || at === null || seen.has(at)) continue;
+      seen.add(at);
+      count++;
+      for (const key of Object.keys(at)) stack.push(at[key]);
+    }
+    return "a value of " + count + " objects";
+  } catch (error: any) {
+    return error?.name === "TypeError" && error.issues?.length > 0 ? "refused" : "thrown: " + error?.name;
+  }
+}
+const chain = (levels: number, k: unknown, bottom: unknown = null): any => {
+  let value = bottom;
+  for (let level = 0; level < levels; level++) value = { below: value, k };
+  return value;
+};
+const fork = (levels: number, k: unknown): any => (levels === 0 ? null : { left: fork(levels - 1, k), right: fork(levels - 1, k), k });
+const shared = (levels: number, k: unknown): any => {
+  let value: any = null;
+  for (let level = 0; level < levels; level++) value = { left: value, right: value, k };
+  return value;
+};
+const listed = (width: number, levels: number, k: unknown): any => ({ items: levels ? Array.from({ length: width }, () => listed(width, levels - 1, k)) : [], k });
+
+for (const k of [null, "one", 2, false]) for (const levels of [1, 10, 100, 1000]) console.log("a chain of " + levels + ", " + k + ": " + say(() => validate<Mixed>(chain(levels, k))));
+for (const k of [null, "one"]) for (const levels of [2, 8, 14]) console.log("a full tree of " + levels + ", " + k + ": " + say(() => validate<Forked>(fork(levels, k))));
+for (const k of [null, "one"]) for (const levels of [2, 10, 16]) console.log("shared parts, " + levels + " levels, " + k + ": " + say(() => validate<Forked>(shared(levels, k))));
+for (const k of [null, "one"]) for (const [width, levels] of [[50000, 1], [200, 2], [30, 3]]) console.log("lists of " + width + ", " + levels + " levels, " + k + ": " + say(() => validate<Listed>(listed(width, levels, k))));
+{
+  const cycle: any = { below: null, k: null };
+  cycle.below = { below: { below: cycle, k: null }, k: null };
+  console.log("a cycle: " + say(() => validate<Mixed>(cycle)));
+  const twin: any = { left: null, right: null, k: null };
+  twin.left = twin;
+  twin.right = twin;
+  console.log("a cycle on both sides: " + say(() => validate<Forked>(twin)));
+}
+for (const levels of [1, 5, 50]) {
+  for (const k of [null, "one"]) {
+    console.log("an accessor that throws " + levels + " levels down, " + k + ": " + say(() => validate<Mixed>(chain(levels, k, { get below() { throw new RangeError("mine"); }, k }))));
+    console.log("a misfit " + levels + " levels down, " + k + ": " + say(() => validate<Mixed>(chain(levels, k, { below: 7, k }))));
+    console.log("an accessor that validates again " + levels + " levels down, " + k + ": " + say(() => validate<Mixed>(chain(levels, k, { get below() { validate<Mixed>(chain(30, k)); validate<Forked>(fork(6, null)); return null; }, k }))));
+    console.log("an accessor that parses " + levels + " levels down, " + k + ": " + say(() => validate<Mixed>(chain(levels, k, { get below() { return JSON.parse<Mixed>('{"\\u0062elow":{"below":null,"k":null},"k":null}'); }, k }))));
+    const root: any = chain(levels, k, { get below() { try { validate<Mixed>(root); } catch {} return null; }, k, turns: 0 });
+    let turns = 0;
+    const again: any = chain(levels, k, { get below() { if (turns++ < 3) validate<Mixed>(again); return null; }, k });
+    console.log("an accessor that validates the same root " + levels + " levels down, " + k + ": " + say(() => validate<Mixed>(again)));
+  }
+}
+console.log("together: " + say(() => validate<Holder>({ mixed: chain(40, null), forked: fork(8, null), listed: listed(20, 2, null), more: [chain(5, 2), fork(3, "one"), chain(5, null), fork(3, null)] })));
+for (let round = 0; round < 200; round++) validate<Holder>({ mixed: chain(1 + (round % 9), null), forked: fork(1 + (round % 5), null), listed: listed(round % 4, 2, null), more: [] });
+const text = JSON.stringify({ mixed: chain(40, null), forked: fork(8, null), listed: listed(20, 2, null), more: [chain(5, 2), fork(3, "one")] });
+console.log("as text: " + say(() => JSON.parse<Holder>(text)) + "; with an escaped key: " + say(() => JSON.parse<Holder>(text.replace('"mixed"', '"\\u006dixed"'))));
+//// validate-copies-a-shared-part-once-for-each-place.ts
+// validate<T> copies an object or array that the value holds at several places once for each place, whichever code takes the value: plain data, objects of the program, or the result of another validation; types that are validated by compiled code and types that the library validates. The result is a tree, and validating it again gives an equal one. What T does not describe stays the value's own object at every place.
+import { validate } from "bun:bundle";
+
+type Leaf = { n: number };
+type Pair = { left: Leaf; right: Leaf };
+type Forked = { left: Forked | null; right: Forked | null };
+type Lists = { left: Leaf[]; right: Leaf[] };
+type Named = { left: Record<string, Leaf>; right: Record<string, Leaf> };
+type Tagged = { kind: "a"; left: Tagged | null; right: Tagged | null } | { kind: "b"; left: Tagged | null; right: Tagged | null };
+type Untagged = { left: Untagged | null; right: Untagged | null; k: number } | { left: Untagged | null; right: Untagged | null; k: string };
+type Loose = { left: unknown; right: any };
+
+const kinds: [string, (value: unknown) => { left: unknown; right: unknown }, (part: any) => any, () => any][] = [
+  ["two members of one record type", value => validate<Pair>(value), part => ({ left: part, right: part }), () => ({ n: 1 })],
+  ["a type that contains itself or null", value => validate<Forked>(value), part => ({ left: part, right: part }), () => ({ left: null, right: null })],
+  ["arrays", value => validate<Lists>(value), part => ({ left: part, right: part }), () => [{ n: 1 }, { n: 2 }]],
+  ["dictionaries", value => validate<Named>(value), part => ({ left: part, right: part }), () => ({ x: { n: 1 } })],
+  ["a union told apart by a tag", value => validate<Tagged>(value), part => ({ kind: "a", left: part, right: part }), () => ({ kind: "b", left: null, right: null })],
+  ["a union that is tried arm by arm", value => validate<Untagged>(value), part => ({ left: part, right: part, k: "s" }), () => ({ left: null, right: null, k: "s" })],
+];
+
+function plainData(whole: (part: any) => any, part: () => any): any {
+  const parsed = JSON.parse(JSON.stringify(whole(null)));
+  parsed.left = parsed.right = JSON.parse(JSON.stringify(part()));
+  return parsed;
+}
+function ofTheProgram(whole: (part: any) => any, part: () => any): any {
+  return whole(part());
+}
+
+for (const [label, check, whole, part] of kinds) {
+  for (const [source, make] of [["plain data", plainData], ["objects of the program", ofTheProgram]] as const) {
+    const value = make(whole, part);
+    const first = check(value);
+    const second = check(first);
+    console.log(
+      label + ", " + source + ":",
+      value.left === value.right ? "shared in the value," : "NOT SHARED IN THE VALUE,",
+      first.left === first.right ? "SHARED IN THE RESULT," : "copied twice,",
+      first.left === value.left || first.right === value.left ? "THE VALUE'S OWN OBJECT," : "no object of the value,",
+      second.left === second.right || second.left === first.left ? "SHARED WHEN VALIDATED AGAIN," : "copied twice again,",
+      JSON.stringify(first) === JSON.stringify(value) && JSON.stringify(second) === JSON.stringify(value) ? "equal" : "NOT EQUAL",
+    );
+  }
+}
+
+const held = { n: 1 };
+const loose = validate<Loose>({ left: held, right: held, more: held }) as Loose & { more: unknown };
+console.log("what the type does not describe:", loose.left === held, loose.right === held, loose.more === held);
+//// validate-default-or-undefined/main.ts
+// validate<T>(value) where T is a union of undefined and a type with a Schema.Default: undefined goes to the first arm that accepts it, alone, as a member and as an element.
+import { validate } from "bun:bundle";
+import type { Schema } from "bun";
+
+type Level = (number & Schema.Default<1>) | undefined;
+type Reversed = undefined | (number & Schema.Default<1>);
+
+const parse = (text: string): any => JSON.parse(text);
+function withUndefined(text: string): any {
+  const value = parse(text);
+  value.level = undefined;
+  return value;
+}
+function show(what: string, run: () => unknown): void {
+  let shown: string;
+  try {
+    const value: any = run();
+    shown = typeof value === "object" && value !== null ? Object.keys(value).join() + " " + JSON.stringify(value) : String(value);
+  } catch (error) {
+    shown = error instanceof TypeError ? "TypeError" : "thrown: " + String(error);
+  }
+  console.log(what + ":", shown);
+}
+
+show("alone, undefined", () => validate<Level>(undefined));
+show("alone, a number", () => validate<Level>(parse("2")));
+show("alone, a string", () => validate<Level>(parse('"2"')));
+show("alone, null", () => validate<Level>(null));
+show("undefined written first, undefined", () => validate<Reversed>(undefined));
+show("undefined written first, a number", () => validate<Reversed>(parse("2")));
+
+show("a member, absent", () => validate<{ level: Level }>(parse("{}")));
+show("a member, undefined", () => validate<{ level: Level }>(withUndefined("{}")));
+show("a member, a number", () => validate<{ level: Level }>(parse('{"level":3}')));
+show("a member, a string", () => validate<{ level: Level }>(parse('{"level":"3"}')));
+show("a member after another, absent", () => validate<{ name: string; level: Level }>(parse('{"name":"a"}')));
+show("a member after another, undefined", () => validate<{ name: string; level: Level }>(withUndefined('{"name":"a"}')));
+
+show("an optional member, absent", () => validate<{ level?: Level }>(parse("{}")));
+show("an optional member, undefined", () => validate<{ level?: Level }>(withUndefined("{}")));
+show("an optional member, a number", () => validate<{ level?: Level }>(parse('{"level":3}')));
+
+show("an element", () => validate<Level[]>([undefined, 2]));
+show("a tuple element", () => validate<[Level, Level]>([undefined, 2]));
+show("a dictionary value", () => validate<Record<string, Level>>(withUndefined('{"other":2}')));
+//// validate-default-or-undefined/tsconfig.json
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": true
+  }
+}
+//// validate-dictionary-symbol-keys.ts
+// validate<T>(value) keeps the symbol keys of a dictionary, also when T holds a Schema.Default.
+import { validate } from "bun:bundle";
+import type { Schema } from "bun";
+type Counts = Record<string, number>;
+const mark = Symbol("mark");
+function dictionary(): any {
+  const counts: any = JSON.parse('{"a":1}');
+  counts[mark] = 2;
+  return counts;
+}
+function argument(text: string): any {
+  const value: any = JSON.parse(text);
+  value.d = dictionary();
+  value.e = dictionary();
+  return value;
+}
+
+const plain: any = validate<{ d: Record<string, number>; n: number }>(argument('{"n":1}'));
+console.log("without a default", plain.d[mark], Object.keys(plain.d).join());
+
+const defaulted: any = validate<{ d: Record<string, number>; n: number & Schema.Default<1> }>(argument("{}"));
+console.log("with a default", defaulted.d[mark], Object.keys(defaulted.d).join(), defaulted.n);
+
+const twice: any = validate<{ d: Counts; e: Counts; n: number & Schema.Default<1> }>(argument("{}"));
+console.log("a dictionary type used twice, with a default", twice.d[mark], twice.e[mark], twice.n);
+//// validate-of-an-object-written-in-place.ts
+// An object written in place as the argument of validate<T>() gives what the same object gives when it comes through a variable: the copy is only left out where nobody can tell.
+import { validate } from "bun:bundle";
+import type { Schema } from "bun";
+interface Inner { x: number }
+interface Login { name: string & Schema.MinLength<1>; tries: number & Schema.Int; inner: Inner; note?: string; size: number & Schema.Default<7> }
+const order: string[] = [];
+function seen<T>(label: string, value: T): T { order.push(label); return value; }
+function shown(run: () => unknown): string {
+  try {
+    const result = run() as Record<string, unknown>;
+    return JSON.stringify(result) + " keys " + Object.keys(result).join();
+  } catch (error) {
+    const issues = (error as Partial<Schema.Error>).issues;
+    return (error as Error).name + " " + (issues ? issues.map(issue => issue.path.join(".") + " " + issue.code).join("; ") : (error as Error).message);
+  }
+}
+function both(label: string, inPlace: () => unknown, throughVariable: () => unknown): void {
+  const [first, second] = [shown(inPlace), shown(throughVariable)];
+  console.log(label, first === second ? "alike" : "DIFFERENT: " + second, first);
+}
+const inner: Inner = { x: 1 };
+const rest: Record<string, unknown> = { tries: 2, extra: true };
+const text: unknown = "five";
+both("declared order", () => validate<Login>({ name: "a", tries: 1, inner, size: 3 }), () => { const value: unknown = { name: "a", tries: 1, inner, size: 3 }; return validate<Login>(value); });
+both("another order", () => validate<Login>({ size: 3, inner, tries: 1, name: "a" }), () => { const value: unknown = { size: 3, inner, tries: 1, name: "a" }; return validate<Login>(value); });
+both("a default", () => validate<Login>({ name: "a", tries: 1, inner }), () => { const value: unknown = { name: "a", tries: 1, inner }; return validate<Login>(value); });
+both("an optional member", () => validate<Login>({ note: "n", name: "a", tries: 1, inner }), () => { const value: unknown = { note: "n", name: "a", tries: 1, inner }; return validate<Login>(value); });
+both("an optional member that is undefined", () => validate<Login>({ name: "a", note: undefined, tries: 1, inner }), () => { const value: unknown = { name: "a", note: undefined, tries: 1, inner }; return validate<Login>(value); });
+both("an undeclared key", () => validate<Login>({ name: "a", more: 1, tries: 1, inner }), () => { const value: unknown = { name: "a", more: 1, tries: 1, inner }; return validate<Login>(value); });
+both("a spread", () => validate<Login>({ name: "a", ...rest, inner }), () => { const value: unknown = { name: "a", ...rest, inner }; return validate<Login>(value); });
+both("a misfit", () => validate<Login>({ name: "", tries: 1.5, inner }), () => { const value: unknown = { name: "", tries: 1.5, inner }; return validate<Login>(value); });
+both("a misfit below", () => validate<Login>({ name: "a", tries: 1, inner: { x: text } }), () => { const value: unknown = { name: "a", tries: 1, inner: { x: text } }; return validate<Login>(value); });
+both("a member is missing", () => validate<Login>({ name: "a", inner }), () => { const value: unknown = { name: "a", inner }; return validate<Login>(value); });
+both("a getter", () => validate<Login>({ get name() { return "g"; }, tries: 1, inner }), () => { const value: unknown = { get name() { return "g"; }, tries: 1, inner }; return validate<Login>(value); });
+const made = validate<Login>({ name: seen("name", "a"), inner: seen("inner", inner), tries: seen("tries", 1) });
+console.log(order.join(), made.inner !== inner, made.inner.x + made.tries + made.size + made.name.length);
+made.inner.x = 9;
+console.log(inner.x);
+//// validate-of-parts-that-change-between-two-visits.ts
+// A part that is held twice is changed by an accessor between the two visits of a validation that remembers what it has found: whatever validate<T> returns must still fit T when it is written and parsed again by T. Each place is read when the validation comes to it, so the second place holds the part as the accessor left it: 84 of the 720 values still fit (Kinds 48, Deep 0, Lists 36).
+import { validate } from "bun:bundle";
+type Kinds = { below: Kinds | null; also?: Kinds | null; k: number } | { below: Kinds | null; also?: Kinds | null; k: string };
+type Deep = { below: Deep | null; also?: Deep | null; x: { k: 1 } } | { below: Deep | null; also?: Deep | null; x: { k: 2 } };
+type Lists = { items: Lists[]; k: number[] } | { items: Lists[]; k: string[] };
+
+const misfits: (() => unknown)[] = [() => ({}), () => [], () => null, () => true, () => undefined, () => "text", () => 7, () => ({ k: 3 }), () => [1, "a"], () => Symbol("s")];
+let values = 0;
+let refused = 0;
+let thrown = 0;
+let unfit = 0;
+
+function judge<T>(validate: (value: unknown) => T, parse: (text: string) => T, make: () => unknown): void {
+  let result: T;
+  try {
+    result = validate(make());
+  } catch (error: any) {
+    if (error?.name === "TypeError" && error.issues?.length > 0) refused++;
+    else thrown++;
+    return;
+  }
+  values++;
+  try {
+    parse(JSON.stringify(result));
+  } catch {
+    unfit++;
+  }
+}
+
+for (const misfit of misfits) {
+  for (const levels of [0, 1, 3, 8]) {
+    for (const where of [0, 1, 2, 3, 4, 5]) {
+      const wrap = (value: any, member: string, filler: () => any): any => {
+        for (let level = 0; level < levels; level++) value = { ...filler(), [member]: value };
+        return value;
+      };
+      judge(value => validate<Kinds>(value), text => JSON.parse<Kinds>(text), () => {
+        const shared: any = { below: null, k: 1 };
+        const spoil = () => { shared.k = misfit(); return where % 2 ? "s" : 2; };
+        const inner = wrap(shared, "below", () => ({ k: 1 }));
+        const again = wrap(shared, "below", () => ({ k: "s" }));
+        if (where < 2) return { below: inner, get k() { return spoil(); }, also: again };
+        if (where < 4) return { get k() { return spoil(); }, below: inner, also: again };
+        return { below: inner, also: { below: again, get k() { return spoil(); } }, k: 1 };
+      });
+      judge(value => validate<Deep>(value), text => JSON.parse<Deep>(text), () => {
+        const shared: any = { below: null, x: { k: 1 } };
+        const spoil = () => { if (where % 2) shared.x = misfit(); else shared.x.k = misfit(); return { k: 2 }; };
+        const inner = wrap(shared, "below", () => ({ x: { k: 1 } }));
+        const again = wrap(shared, "below", () => ({ x: { k: 2 } }));
+        if (where < 2) return { below: inner, get x() { return spoil(); }, also: again };
+        if (where < 4) return { get x() { return spoil(); }, below: inner, also: again };
+        return { below: inner, also: { below: again, get x() { return spoil(); } }, x: { k: 1 } };
+      });
+      judge(value => validate<Lists>(value), text => JSON.parse<Lists>(text), () => {
+        const shared: any = { items: [], k: [1] };
+        const spoil = () => { if (where % 2) shared.k = misfit(); else shared.k[0] = misfit(); return ["s"]; };
+        let inner: any = shared;
+        for (let level = 0; level < levels; level++) inner = { items: [inner, shared], k: [level] };
+        if (where < 2) return { items: [inner, { items: [], get k() { return spoil(); } }, shared, inner], k: [1] };
+        if (where < 4) return { get k() { return spoil(); }, items: [inner, shared] };
+        return { items: [shared, inner, shared], get k() { return spoil(); } };
+      });
+    }
+  }
+}
+console.log(values + " values, " + refused + " refused, " + thrown + " thrown; values that do not fit their type: " + unfit);
+//// validate-of-yaml-aliases-nested-as-deep-as-the-parser-allows.ts
+// Bun.YAML.parse keeps what an alias names shared, and validate<T> copies a value as a tree, so N nested aliases cost 2^N copies. The YAML parser refuses more than twenty such levels: that bound is what keeps a small text from costing more than a second or two here.
+import { validate } from "bun:bundle";
+type Forked = { left: Forked | null; right: Forked | null };
+
+function nested(levels: number): string {
+  const lines = ["a0: &a0 { left: null, right: null }"];
+  for (let level = 1; level <= levels; level++) lines.push("a" + level + ": &a" + level + " { left: *a" + (level - 1) + ", right: *a" + (level - 1) + " }");
+  return lines.join("\n") + "\n";
+}
+
+for (const levels of [1, 2, 10, 16, 20, 21, 30, 1000]) {
+  try {
+    const top = (Bun.YAML.parse(nested(levels)) as any)["a" + levels];
+    const copy = validate<Forked>(top);
+    let depth = 0;
+    for (let at: Forked | null = copy; at; at = depth % 2 ? at.left : at.right) depth++;
+    console.log(levels + " levels: shared as parsed: " + (top.left === top.right) + ", shared in the copy: " + (copy.left === copy.right) + ", depth " + depth);
+  } catch (error: any) {
+    console.log(levels + " levels: " + error.name + ": " + error.message);
+  }
+}
+//// validate-optional-member-absent.ts
+// An optional member that validate<T>(value) would copy stays absent in the copy when the argument does not have it.
+import { validate } from "bun:bundle";
+type Nested = { a: number; inner?: { x: number } };
+const parse = (text: string): any => JSON.parse(text);
+
+const nested = validate<Nested>(parse('{"a":1}'));
+console.log("an object", Object.keys(nested).join(), "inner" in nested);
+
+const list = validate<{ a: number; items?: number[] }>(parse('{"a":1}'));
+console.log("an array", Object.keys(list).join(), "items" in list);
+
+const present = validate<Nested>(parse('{"inner":{"x":2},"a":1}'));
+console.log("present", Object.keys(present).join(), JSON.stringify(present));
+
+const explicit = parse('{"a":1}');
+explicit.inner = undefined;
+const kept = validate<Nested>(explicit);
+console.log("present and undefined", Object.keys(kept).join(), "inner" in kept, kept.inner);
+//// validate-random-graphs-with-shared-parts.ts
+// Fuzzes validate<T> with a fixed seed on random object graphs in which the same object or array is reachable by several paths. The result must equal the result for the same value copied out as a tree, must never merge two different objects, and must never contain an object of the argument where T describes it. The argument stays unchanged and each getter is read once per copy. Typed code then reads every field of the result. Some graphs contain a cycle (a RangeError) and some have getters that return something else on each read. With keepsSharing set, an object or array that is shared under one type must stay shared, and graphs that would be astronomically large as trees are made too.
+import { validate } from "bun:bundle";
+
+const seed: number = 1;
+const rounds: number = 300;
+const keepsSharing: boolean = false;
+
+type Leaf = { n: number };
+type Wide = { n: number; s?: string };
+type Pair = { left: Leaf; right: Leaf; wide: Wide };
+type Forked = { left: Forked | null; right: Forked | null };
+type Lists = { a: Leaf[]; b: Leaf[]; rows: Leaf[][] };
+type Four = [Leaf, Leaf, Leaf[], Wide];
+type Named = { d: Record<string, Leaf>; e: Record<string, Leaf>; one: Leaf };
+type Tagged = { kind: "a"; item: Leaf; next: Tagged | null } | { kind: "b"; items: Leaf[]; next: Tagged | null };
+type Untagged = { a: Leaf; rest: Untagged[] } | { b: Wide; rest: Untagged[] };
+type Optional = { x?: Leaf; z: Leaf | null; w?: Optional };
+type Loose = { known: Leaf; free: unknown; other: any };
+type Tree = { value: Leaf; children: Tree[] };
+type Grid = Leaf[][][];
+type Late = { p: Leaf[]; inner: Late[]; q: number } | { p: Leaf[]; inner: Late[]; q: string };
+type Mixed = { items: (Leaf | string[])[]; more: (Leaf | string[])[] };
+
+let state = seed >>> 0;
+////= random
+const below = (limit: number): number => Math.floor(random() * limit);
+const chance = (probability: number): boolean => random() < probability;
+
+type Description =
+  | { is: "number" | "string" | "null" | "unknown"; id: number }
+  | { is: "constant"; id: number; value: string }
+  | { is: "object"; id: number; fields: [string, Description, boolean][] }
+  | { is: "array" | "dictionary"; id: number; item: Description }
+  | { is: "tuple"; id: number; items: Description[] }
+  | { is: "union"; id: number; arms: Description[] };
+let descriptions = 0;
+const simple = (is: "number" | "string" | "null" | "unknown"): Description => ({ is, id: descriptions++ });
+const constant = (value: string): Description => ({ is: "constant", id: descriptions++, value });
+const object = (fields: [string, Description, boolean][]): Description => ({ is: "object", id: descriptions++, fields });
+const written = new Map<string, Description>();
+function once(parts: Description[], make: () => Description): Description {
+  const made = make();
+  if (!parts.length) return made;
+  const name = made.is + parts.map(part => part.id).join();
+  if (!written.has(name)) written.set(name, made);
+  return written.get(name)!;
+}
+const array = (item: Description): Description => once([item], () => ({ is: "array", id: descriptions++, item }));
+const dictionary = (item: Description): Description => once([item], () => ({ is: "dictionary", id: descriptions++, item }));
+const tuple = (...items: Description[]): Description => once(items, () => ({ is: "tuple", id: descriptions++, items }));
+const union = (...arms: Description[]): Description => once(arms, () => ({ is: "union", id: descriptions++, arms }));
+const takesRecords = (type: Description): boolean => type.is === "object" || type.is === "dictionary" || type.is === "unknown" || (type.is === "union" && type.arms.some(takesRecords));
+
+const number = simple("number");
+const string = simple("string");
+const nothing = simple("null");
+const unknown = simple("unknown");
+const leaf = object([["n", number, false]]);
+const wide = object([["n", number, false], ["s", string, true]]);
+const pair = object([["left", leaf, false], ["right", leaf, false], ["wide", wide, false]]);
+const forked: any = object([]);
+forked.fields.push(["left", union(forked, nothing), false], ["right", union(forked, nothing), false]);
+const lists = object([["a", array(leaf), false], ["b", array(leaf), false], ["rows", array(array(leaf)), false]]);
+const four = tuple(leaf, leaf, array(leaf), wide);
+const named = object([["d", dictionary(leaf), false], ["e", dictionary(leaf), false], ["one", leaf, false]]);
+const tagged: any = union();
+tagged.arms.push(object([["kind", constant("a"), false], ["item", leaf, false], ["next", union(tagged, nothing), false]]), object([["kind", constant("b"), false], ["items", array(leaf), false], ["next", union(tagged, nothing), false]]));
+const untagged: any = union();
+untagged.arms.push(object([["a", leaf, false], ["rest", array(untagged), false]]), object([["b", wide, false], ["rest", array(untagged), false]]));
+const optional: any = object([]);
+optional.fields.push(["x", leaf, true], ["z", union(leaf, nothing), false], ["w", optional, true]);
+const loose = object([["known", leaf, false], ["free", unknown, false], ["other", unknown, false]]);
+const tree: any = object([]);
+tree.fields.push(["value", leaf, false], ["children", array(tree), false]);
+const grid = array(array(array(leaf)));
+const late: any = union();
+late.arms.push(object([["p", array(leaf), false], ["inner", array(late), false], ["q", number, false]]), object([["p", array(leaf), false], ["inner", array(late), false], ["q", string, false]]));
+const mixed = object([["items", array(union(leaf, array(string))), false], ["more", array(union(leaf, array(string))), false]]);
+
+const modulus = 1000003;
+const mix = (sum: number, next: number): number => (sum * 31 + next) % modulus;
+const sumOfLeaf = (value: Leaf): number => mix(7, value.n);
+const sumOfWide = (value: Wide): number => mix(mix(7, value.n), value.s === undefined ? 5 : value.s.length);
+function sumOfLeaves(values: Leaf[]): number {
+  let sum = 11;
+  for (const value of values) sum = mix(sum, sumOfLeaf(value));
+  return sum;
+}
+function sumOfNames(values: Record<string, Leaf>): number {
+  let sum = 17;
+  for (const key of Object.keys(values)) sum = mix(mix(sum, key.length), sumOfLeaf(values[key]));
+  return sum;
+}
+function remembered<T extends object>(sumOf: (value: T, again: (value: T) => number) => number): (value: T) => number {
+  const sums = new Map<object, number>();
+  const again = (value: T): number => {
+    let sum = sums.get(value);
+    if (sum === undefined) sums.set(value, (sum = sumOf(value, again)));
+    return sum;
+  };
+  return again;
+}
+const sumOfPair = (value: Pair): number => mix(mix(mix(7, sumOfLeaf(value.left)), sumOfLeaf(value.right)), sumOfWide(value.wide));
+const sumOfForked = () => remembered<Forked>((value, again) => mix(mix(7, value.left === null ? 3 : again(value.left)), value.right === null ? 3 : again(value.right)));
+function sumOfLists(value: Lists): number {
+  let rows = 11;
+  for (const row of value.rows) rows = mix(rows, sumOfLeaves(row));
+  return mix(mix(mix(7, sumOfLeaves(value.a)), sumOfLeaves(value.b)), rows);
+}
+const sumOfFour = (value: Four): number => mix(mix(mix(mix(13, sumOfLeaf(value[0])), sumOfLeaf(value[1])), sumOfLeaves(value[2])), sumOfWide(value[3]));
+const sumOfNamed = (value: Named): number => mix(mix(mix(7, sumOfNames(value.d)), sumOfNames(value.e)), sumOfLeaf(value.one));
+const sumOfTagged = () => remembered<Tagged>((value, again) => mix(mix(mix(7, 1), value.kind === "a" ? sumOfLeaf(value.item) : sumOfLeaves(value.items)), value.next === null ? 3 : again(value.next)));
+const sumOfUntagged = () =>
+  remembered<Untagged>((value, again) => {
+    let rest = 11;
+    for (const item of value.rest) rest = mix(rest, again(item));
+    return mix(mix(7, "a" in value ? sumOfLeaf(value.a) : sumOfWide(value.b)), rest);
+  });
+const sumOfOptional = () => remembered<Optional>((value, again) => mix(mix(mix(7, value.x === undefined ? 5 : sumOfLeaf(value.x)), value.z === null ? 3 : sumOfLeaf(value.z)), value.w === undefined ? 5 : again(value.w)));
+const sumOfLoose = (value: Loose): number => mix(mix(mix(7, sumOfLeaf(value.known)), 19), 19);
+const sumOfTree = () =>
+  remembered<Tree>((value, again) => {
+    let children = 11;
+    for (const child of value.children) children = mix(children, again(child));
+    return mix(mix(7, sumOfLeaf(value.value)), children);
+  });
+function sumOfGrid(value: Grid): number {
+  let sum = 11;
+  for (const plane of value) {
+    let rows = 11;
+    for (const row of plane) rows = mix(rows, sumOfLeaves(row));
+    sum = mix(sum, rows);
+  }
+  return sum;
+}
+
+const sumOfLate = () =>
+  remembered<Late>((value, again) => {
+    let inner = 11;
+    for (const item of value.inner) inner = mix(inner, again(item));
+    return mix(mix(mix(7, sumOfLeaves(value.p)), inner), typeof value.q === "number" ? value.q : value.q.length);
+  });
+function sumOfEither(values: (Leaf | string[])[]): number {
+  let sum = 11;
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      let texts = 11;
+      for (const text of value) texts = mix(texts, text.length);
+      sum = mix(sum, texts);
+    } else sum = mix(sum, sumOfLeaf(value));
+  }
+  return sum;
+}
+const sumOfMixed = (value: Mixed): number => mix(mix(7, sumOfEither(value.items)), sumOfEither(value.more));
+
+const isObject = (value: any): boolean => typeof value === "object" && value !== null;
+const isRecord = (value: any): boolean => isObject(value) && !Array.isArray(value);
+
+class Walk {
+  verdicts = new Map<any, Map<number, boolean>>();
+  sums = new Map<any, Map<number, number>>();
+  matches(type: Description, value: any): boolean {
+    if (!isObject(value) || type.is === "unknown") return this.matchesNow(type, value);
+    let known = this.verdicts.get(value);
+    if (!known) this.verdicts.set(value, (known = new Map()));
+    let verdict = known.get(type.id);
+    if (verdict === undefined) known.set(type.id, (verdict = this.matchesNow(type, value)));
+    return verdict;
+  }
+  matchesNow(type: Description, value: any): boolean {
+    switch (type.is) {
+      case "number":
+        return typeof value === "number";
+      case "string":
+        return typeof value === "string";
+      case "null":
+        return value === null;
+      case "unknown":
+        return true;
+      case "constant":
+        return value === type.value;
+      case "object":
+        return isRecord(value) && type.fields.every(([name, field, isOptional]) => (name in value ? this.matches(field, value[name]) : isOptional));
+      case "array":
+        return Array.isArray(value) && value.every((item: any) => this.matches(type.item, item));
+      case "dictionary":
+        return isRecord(value) && Object.keys(value).every(key => this.matches(type.item, value[key]));
+      case "tuple":
+        return Array.isArray(value) && value.length === type.items.length && type.items.every((item, at) => this.matches(item, value[at]));
+      case "union":
+        return type.arms.some(arm => this.matches(arm, value));
+    }
+  }
+  armOf(type: Description, value: any): Description {
+    while (type.is === "union") type = type.arms.find(arm => this.matches(arm, value))!;
+    return type;
+  }
+  nodeOf(type: Description, value: any): number {
+    while (type.is === "union") {
+      if (isRecord(value) && type.arms.filter(takesRecords).length >= 2) return type.id;
+      type = type.arms.find(arm => this.matches(arm, value))!;
+    }
+    return type.id;
+  }
+  sum(given: Description, value: any): number {
+    const type = this.armOf(given, value);
+    if (!isObject(value) || type.is === "unknown") return type.is === "number" ? value : type.is === "string" ? value.length : type.is === "null" ? 3 : type.is === "constant" ? 1 : 19;
+    let known = this.sums.get(value);
+    if (!known) this.sums.set(value, (known = new Map()));
+    let sum = known.get(type.id);
+    if (sum !== undefined) return sum;
+    if (type.is === "object") {
+      sum = 7;
+      for (const [name, field] of type.fields) sum = mix(sum, value[name] === undefined ? 5 : this.sum(field, value[name]));
+    } else if (type.is === "array") {
+      sum = 11;
+      for (const item of value) sum = mix(sum, this.sum(type.item, item));
+    } else if (type.is === "tuple") {
+      sum = 13;
+      type.items.forEach((item, at) => (sum = mix(sum!, this.sum(item, value[at]))));
+    } else if (type.is === "dictionary") {
+      sum = 17;
+      for (const key of Object.keys(value)) sum = mix(mix(sum, key.length), this.sum(type.item, value[key]));
+    }
+    known.set(type.id, sum!);
+    return sum!;
+  }
+}
+
+let getterReads = 0;
+let quiet = true;
+const nestedLeaf = { n: 3 };
+const nestedPair = { left: nestedLeaf, right: nestedLeaf, wide: nestedLeaf };
+function getter(held: any, others: any[] | null, validatesInside: boolean): () => any {
+  let reads = 0;
+  return () => {
+    if (quiet) return held;
+    getterReads++;
+    if (validatesInside && (validate<Pair>(nestedPair).right.n !== 3 || JSON.parse<Leaf>('{"n":4}').n !== 4)) throw new Error("a validation inside a getter went wrong");
+    return others && reads++ ? others[reads % others.length] : held;
+  };
+}
+class Maker {
+  made = new Map<number, any[]>();
+  all: any[] = [];
+  weights = new Map<any, number>();
+  constructor(public sharing: number, public heaviest: number, public getters: number, public changing: boolean) {}
+  weigh(value: any): number {
+    return isObject(value) ? this.weights.get(value)! : 1;
+  }
+  keep(type: Description, value: any): any {
+    let weight = 1;
+    for (const key of Object.keys(value)) weight += this.weigh(value[key]);
+    this.weights.set(value, weight);
+    let list = this.made.get(type.id);
+    if (!list) this.made.set(type.id, (list = []));
+    list.push(value);
+    this.all.push(value);
+    return value;
+  }
+  reuse(type: Description): any {
+    let list = this.made.get(type.id);
+    if (type === wide && chance(0.5)) list = this.made.get(leaf.id);
+    if (type === leaf && chance(0.2)) list = this.made.get(wide.id);
+    if (!list || !list.length || !chance(this.sharing)) return undefined;
+    const value = list[below(list.length)];
+    return this.weigh(value) <= this.heaviest ? value : undefined;
+  }
+  make(type: Description, depth: number): any {
+    switch (type.is) {
+      case "number":
+        return below(2000) - 1000;
+      case "string":
+        return "abcdefgh".slice(below(8));
+      case "null":
+        return null;
+      case "constant":
+        return type.value;
+      case "unknown":
+        return this.all.length && chance(0.7) ? this.all[below(this.all.length)] : below(10);
+      case "union": {
+        const flat = type.arms.filter(arm => arm.is === "null");
+        return this.make(depth > 7 && flat.length ? flat[0] : type.arms[below(type.arms.length)], depth);
+      }
+    }
+    const again = this.reuse(type);
+    if (again !== undefined) return again;
+    const count = depth > 7 ? 0 : below(this.heaviest === Infinity ? 60 : depth > 3 ? 3 : 5);
+    if (type.is === "array") return this.keep(type, Array.from({ length: count }, () => this.make(type.item, depth + 1)));
+    if (type.is === "tuple") return this.keep(type, type.items.map(item => this.make(item, depth + 1)));
+    const value: any = {};
+    if (type.is === "dictionary") for (let at = 0; at < count; at++) value["k" + below(12)] = this.make(type.item, depth + 1);
+    else if (type.is === "object") {
+      let fields = type.fields.filter(field => !field[2] || (depth <= 7 && chance(0.6)));
+      if (chance(0.2)) fields = fields.slice().reverse();
+      for (const [name, field] of fields) {
+        const held = this.make(field, depth + 1);
+        if (chance(this.getters)) Object.defineProperty(value, name, { get: getter(held, this.changing ? ["wrong", null, 5, [], {}, this.all.length ? this.all[below(this.all.length)] : 1, held] : null, chance(0.3)), enumerable: true, configurable: true });
+        else value[name] = held;
+        if (chance(0.08)) value["u" + below(4)] = this.all.length && chance(0.7) ? this.all[below(this.all.length)] : below(10);
+      }
+    }
+    return this.keep(type, value);
+  }
+  spoil(): void {
+    const value = this.all[below(this.all.length)];
+    const keys = Object.keys(value);
+    if (!keys.length) return;
+    const key = keys[below(keys.length)];
+    if (Object.getOwnPropertyDescriptor(value, key)!.get) return;
+    switch (below(6)) {
+      case 0:
+        value[key] = "wrong";
+        break;
+      case 1:
+        value[key] = null;
+        break;
+      case 2:
+        if (isRecord(value)) delete value[key];
+        else value[key] = 5;
+        break;
+      case 3:
+        value[key] = [];
+        break;
+      case 4:
+        value[key] = {};
+        break;
+      default:
+        value[key] = true;
+    }
+  }
+}
+
+function describe(root: any): string {
+  const numbers = new Map<any, number>();
+  const visit = (value: any): string => {
+    if (!isObject(value)) return typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value);
+    const known = numbers.get(value);
+    if (known !== undefined) return "#" + known;
+    numbers.set(value, numbers.size);
+    const parts = Object.getOwnPropertyNames(value).map(key => {
+      const property = Object.getOwnPropertyDescriptor(value, key)!;
+      return key + ":" + (property.get ? "getter" : visit(property.value));
+    });
+    return (Array.isArray(value) ? "[" : "{") + parts.join(",") + (Array.isArray(value) ? "]" : "}");
+  };
+  return visit(root);
+}
+function copyAsTree(value: any): any {
+  if (!isObject(value)) return value;
+  if (Array.isArray(value)) return value.map(copyAsTree);
+  const copy: any = {};
+  for (const key of Object.keys(value)) copy[key] = copyAsTree(value[key]);
+  return copy;
+}
+function show(value: any): string {
+  if (Array.isArray(value)) return "[" + value.map(show).join(",") + "]";
+  if (!isObject(value)) return typeof value === "string" ? JSON.stringify(value) : Object.is(value, -0) ? "-0" : String(value);
+  return "{" + Object.getOwnPropertyNames(value).map(key => JSON.stringify(key) + ":" + show(value[key])).join(",") + "}" + (Object.getPrototypeOf(value) === Object.prototype ? "" : "!");
+}
+function digest(sum: number, text: string): number {
+  for (let at = 0; at < text.length; at++) sum = (Math.imul(sum, 31) + text.charCodeAt(at)) | 0;
+  return sum;
+}
+
+class Identities {
+  copies = new Map<any, Map<number, any>>();
+  sources = new Map<any, [any, number]>();
+  visited = new Map<any, Map<any, Set<number>>>();
+  kept = 0;
+  lost = 0;
+  getters = 0;
+  visits = 0;
+  fault = "";
+  constructor(public walk: Walk) {}
+  compare(given: Description, source: any, copy: any, path: string): void {
+    if (this.fault) return;
+    const type = this.walk.armOf(given, source);
+    if (!isObject(source) || type.is === "unknown") {
+      if (!Object.is(source, copy)) this.fault = "at " + path + " the result holds another value than the argument";
+      return;
+    }
+    if (!isObject(copy)) return void (this.fault = "at " + path + " the result holds no object");
+    if (copy === source) return void (this.fault = "at " + path + " the result holds the argument's own object");
+    let bySource = this.visited.get(source);
+    if (!bySource) this.visited.set(source, (bySource = new Map()));
+    let byCopy = bySource.get(copy);
+    if (!byCopy) bySource.set(copy, (byCopy = new Set()));
+    if (byCopy.has(type.id)) return void this.kept++;
+    byCopy.add(type.id);
+    if (++this.visits > 3000000) return void (this.fault = "the result has far more objects than the argument");
+    const node = this.walk.nodeOf(given, source);
+    const from = this.sources.get(copy);
+    if (!from) this.sources.set(copy, [source, node]);
+    else if (from[0] !== source) return void (this.fault = "at " + path + " one object of the result stands for two objects of the argument");
+    else if (from[1] !== node) return void (this.fault = "at " + path + " one object of the result is used under two types");
+    let known = this.copies.get(source);
+    if (!known) this.copies.set(source, (known = new Map()));
+    const earlier = known.get(node);
+    if (earlier === undefined) known.set(node, copy);
+    else if (earlier === copy) this.kept++;
+    else {
+      this.lost++;
+      if (keepsSharing) return void (this.fault = "at " + path + " an object that the argument shares under one type was copied twice");
+    }
+    for (const key of Object.keys(source)) if (Object.getOwnPropertyDescriptor(source, key)!.get) this.getters++;
+    if (type.is === "object") {
+      const declared = new Set(type.fields.map(field => field[0]));
+      for (const [name, field] of type.fields) if (name in source) this.compare(field, source[name], copy[name], path + "." + name);
+      for (const key of Object.keys(source)) if (!declared.has(key) && source[key] !== copy[key]) this.fault = "at " + path + "." + key + " an undeclared key holds another value than in the argument";
+    } else if (type.is === "array") source.forEach((item: any, at: number) => this.compare(type.item, item, copy[at], path + "." + at));
+    else if (type.is === "tuple") type.items.forEach((item, at) => this.compare(item, source[at], copy[at], path + "." + at));
+    else if (type.is === "dictionary") for (const key of Object.keys(source)) this.compare(type.item, source[key], copy[key], path + "." + key);
+  }
+}
+
+let reported = 0;
+function report(what: string, label: string, round: number, value: any, more: string): void {
+  if (reported++ < 12) console.log(what + ": " + label + ", seed " + seed + ", round " + round + ": " + more.slice(0, 500) + "\n  " + describe(value).slice(0, 700));
+}
+function outcome(run: () => unknown): { value?: any; error: string } {
+  try {
+    return { value: run(), error: "" };
+  } catch (error: any) {
+    if (error.name === "TypeError" && error.issues?.length > 0) return { error: "rejected: " + JSON.stringify(error.issues.map((issue: any) => issue.path)) };
+    return { error: error.name + ": " + error.message };
+  }
+}
+
+type Tie = ((inner: any, root: any) => any) | null;
+const types: [string, Description, (value: unknown) => unknown, (value: unknown) => unknown, () => (value: any) => number, Tie][] = [
+  ["Pair", pair, value => validate<Pair>(value), value => JSON.parse<Pair>("0", () => value), () => sumOfPair, null],
+  ["Forked", forked, value => validate<Forked>(value), value => JSON.parse<Forked>("0", () => value), sumOfForked, (inner, root) => (inner.left = root)],
+  ["Lists", lists, value => validate<Lists>(value), value => JSON.parse<Lists>("0", () => value), () => sumOfLists, null],
+  ["Four", four, value => validate<Four>(value), value => JSON.parse<Four>("0", () => value), () => sumOfFour, null],
+  ["Named", named, value => validate<Named>(value), value => JSON.parse<Named>("0", () => value), () => sumOfNamed, null],
+  ["Tagged", tagged, value => validate<Tagged>(value), value => JSON.parse<Tagged>("0", () => value), sumOfTagged, (inner, root) => (inner.next = root)],
+  ["Untagged", untagged, value => validate<Untagged>(value), value => JSON.parse<Untagged>("0", () => value), sumOfUntagged, (inner, root) => inner.rest.push(root)],
+  ["Optional", optional, value => validate<Optional>(value), value => JSON.parse<Optional>("0", () => value), sumOfOptional, (inner, root) => (inner.w = root)],
+  ["Loose", loose, value => validate<Loose>(value), value => JSON.parse<Loose>("0", () => value), () => sumOfLoose, null],
+  ["Tree", tree, value => validate<Tree>(value), value => JSON.parse<Tree>("0", () => value), sumOfTree, (inner, root) => inner.children.push(root)],
+  ["Grid", grid, value => validate<Grid>(value), value => JSON.parse<Grid>("0", () => value), () => sumOfGrid, null],
+  ["Late", late, value => validate<Late>(value), value => JSON.parse<Late>("0", () => value), sumOfLate, (inner, root) => inner.inner.push(root)],
+  ["Mixed", mixed, value => validate<Mixed>(value), value => JSON.parse<Mixed>("0", () => value), () => sumOfMixed, null],
+];
+
+for (const [label, type, direct, revive, sumOf, tie] of types) {
+  let accepted = 0;
+  let rejected = 0;
+  let different = 0;
+  let kept = 0;
+  let lost = 0;
+  let shapes = 0;
+  let graphs = 0;
+  let reads = 0;
+  let readsWhereRejected = 0;
+  let huge = 0;
+  let cycles = 0;
+  let changing = 0;
+  for (let round = 0; round < rounds; round++) {
+    const kind = below(20);
+    const isHuge = keepsSharing && kind === 0;
+    const isChanging = kind === 1;
+    const hasCycle = kind === 2 && tie !== null && round % 4 === 0;
+    const maker = new Maker(isHuge ? 0.95 : [0, 0.3, 0.6, 0.9][below(4)], isHuge ? Infinity : 300, isChanging ? 0.3 : hasCycle ? 0 : 0.03, isChanging);
+    let value = maker.make(type, 0);
+    if (isHuge) for (let more = 10 + below(40); more > 0; more--) value = maker.make(type, 0);
+    if (!isObject(value) || (!isHuge && maker.weigh(value) > 20000)) continue;
+    if (!hasCycle && chance(0.3)) for (let count = 1 + below(2); count > 0; count--) maker.spoil();
+    graphs++;
+    const fail = (what: string, more: string) => (different++, report(what, label, round, value, more));
+    const enter = chance(0.25) ? revive : direct;
+    const run = (given: any, how = enter) => {
+      quiet = false;
+      const start = Date.now();
+      const result = outcome(() => how(given));
+      quiet = true;
+      if (!hasCycle && Date.now() - start > 30000) fail("TOO SLOW", Date.now() - start + " ms");
+      return result;
+    };
+    if (hasCycle) {
+      cycles++;
+      tie!(value, value);
+      const before = describe(value);
+      const result = run(value);
+      if (!result.error.startsWith("RangeError: ")) fail("A CYCLE DID NOT END IN A RANGE ERROR", result.error);
+      if (describe(value) !== before) fail("THE ARGUMENT CHANGED", before);
+      continue;
+    }
+    if (isChanging) {
+      changing++;
+      const result = run(value, direct);
+      if (result.error) {
+        if (!result.error.startsWith("rejected: ")) fail("NOT A TYPE ERROR WITH ISSUES", result.error);
+        continue;
+      }
+      const walk = new Walk();
+      if (!walk.matches(type, result.value)) fail("THE RESULT DOES NOT MATCH ITS TYPE", describe(result.value));
+      else if (sumOf()(result.value) !== walk.sum(type, result.value)) fail("TYPED CODE READS OTHER VALUES", describe(result.value));
+      continue;
+    }
+    const walk = new Walk();
+    const before = describe(value);
+    const matches = walk.matches(type, value);
+    const readsBefore = getterReads;
+    const result = run(value);
+    const readsNow = getterReads - readsBefore;
+    if (describe(value) !== before) fail("THE ARGUMENT CHANGED", before);
+    if (matches !== (result.error === "")) {
+      fail(matches ? "REJECTED A VALUE THAT MATCHES" : "ACCEPTED A VALUE THAT DOES NOT MATCH", result.error);
+      continue;
+    }
+    if (isHuge) huge++;
+    const asTree = isHuge ? result : run(copyAsTree(value), direct);
+    if (!matches) {
+      rejected++;
+      readsWhereRejected += readsNow;
+      if (!result.error.startsWith("rejected: ")) fail("NOT A TYPE ERROR WITH ISSUES", result.error);
+      else if (result.error !== asTree.error) fail("OTHER ISSUES THAN FOR THE TREE", result.error + " | " + asTree.error);
+      shapes = digest(shapes, result.error);
+      continue;
+    }
+    accepted++;
+    reads += readsNow;
+    // JSON.parse<T> checks what a reviver returns and hands it on as it is: the program holds that object, and a copy would be another one.
+    if (enter === revive) {
+      if (result.value !== value) fail("WHAT THE REVIVER RETURNED WAS COPIED", describe(result.value));
+      continue;
+    }
+    if (!isHuge && (asTree.error || show(result.value) !== show(asTree.value))) fail("ANOTHER RESULT THAN FOR THE TREE", asTree.error || show(result.value) + " | " + show(asTree.value));
+    const identities = new Identities(walk);
+    identities.compare(type, value, result.value, "");
+    if (identities.fault) fail("IDENTITY", identities.fault + " | " + describe(result.value));
+    else if (readsNow !== identities.getters) fail("GETTERS", "read " + readsNow + " times, expected " + identities.getters);
+    kept += identities.kept;
+    lost += identities.lost;
+    const expected = walk.sum(type, value);
+    const read = sumOf()(result.value);
+    if (read !== expected) fail("TYPED CODE READS OTHER VALUES", read + " | " + expected);
+    const again = run(result.value, direct);
+    if (again.error || describe(again.value) !== describe(result.value)) fail("THE RESULT DOES NOT VALIDATE AGAIN", again.error);
+    shapes = digest(shapes, describe(result.value));
+  }
+  console.log(label + ": " + graphs + " graphs: " + accepted + " accepted, " + rejected + " rejected, " + huge + " huge, " + cycles + " with a cycle, " + changing + " with changing getters; shared parts kept " + kept + ", copied again " + lost + "; getters read " + reads + " times" + (keepsSharing ? ", " + readsWhereRejected + " times where rejected" : "") + "; digest " + (shapes >>> 0).toString(16) + ": " + different + " differ");
+}
+//// validate-reads-a-value-once-whether-it-fits-or-not.ts
+// validate<T> reads a getter once, for a value that fits and for a value that is refused, whichever code validates T: a record, a union told apart by a tag, a union whose arms are tried one after the other, and a union that contains itself, which the library validates.
+import { validate } from "bun:bundle";
+
+type Point = { x: number; y: number };
+type Tagged = { kind: "a"; a: number } | { kind: "b"; b: Point };
+type Untagged = { a: number; b: string } | { a: number; c: string };
+type Nested = { below: Nested | null; k: number } | { below: Nested | null; k: string };
+type Rows = { rows: Rows[]; k: number } | { rows: Rows[]; k: string };
+type Holder = { tree: Rows; n: number };
+
+let reads = 0;
+function counted<T>(value: T): T {
+  reads++;
+  return value;
+}
+function row(label: string, run: () => unknown): void {
+  reads = 0;
+  let said: string;
+  try {
+    said = JSON.stringify(run());
+  } catch (error: any) {
+    said = error.issues ? "refused: " + error.issues.map((issue: any) => issue.path.join(".") + " " + issue.code).join("; ") : String(error);
+  }
+  console.log(label + ": " + said + ", read " + reads);
+}
+
+row("a record that fits", () => validate<Point>({ x: 1, get y() { return counted(2); } }));
+row("a record that is refused", () => validate<Point>({ x: 1, get y() { return counted("two"); } }));
+row("a tag that fits", () => validate<Tagged>({ get kind() { return counted("a"); }, a: 1 }));
+row("a tag of no arm", () => validate<Tagged>({ get kind() { return counted("c"); }, a: 1 }));
+row("a tag whose arm refuses", () => validate<Tagged>({ get kind() { return counted("a"); }, a: "one" }));
+row("the second arm fits", () => validate<Untagged>({ get a() { return counted(1); }, c: "c" }));
+row("no arm fits", () => validate<Untagged>({ get a() { return counted(1); }, d: "d" }));
+row("a union that contains itself, fits", () => validate<Nested>({ below: null, get k() { return counted("s"); } }));
+row("a union that contains itself, refused", () => validate<Nested>({ below: null, get k() { return counted(true); } }));
+row("the same one level down, fits", () => validate<Nested>({ below: { below: null, get k() { return counted(1); } }, k: "s" }));
+row("the same one level down, refused", () => validate<Nested>({ below: { below: null, get k() { return counted(null); } }, k: "s" }));
+row("a union that holds arrays of itself, fits", () => validate<Rows>({ rows: [], get k() { return counted("s"); } }));
+row("a union that holds arrays of itself, refused", () => validate<Rows>({ rows: [], get k() { return counted(true); } }));
+row("the same one level down, fits", () => validate<Rows>({ rows: [{ rows: [], get k() { return counted(1); } }], k: "s" }));
+row("the same one level down, refused", () => validate<Rows>({ rows: [{ rows: [], get k() { return counted(null); } }], k: "s" }));
+
+function holder(n: unknown, k: unknown): unknown {
+  const parsed = JSON.parse('{"tree":null,"n":null}');
+  parsed.tree = { rows: [], get k() { return counted(k); } };
+  parsed.n = n;
+  return parsed;
+}
+row("such a union below plain data, fits", () => validate<Holder>(holder(1, "s")));
+row("such a union below plain data, a later member is refused", () => validate<Holder>(holder("no", "s")));
+row("such a union below plain data, refused itself", () => validate<Holder>(holder(1, true)));
+//// validate-union-copies-the-arm-that-accepts.ts
+// validate<T>(value) copies by the arm of a union that accepts the value, the first in the order of the declaration: what that arm describes is copied, and what only another arm describes is shared with the argument, like any undeclared key.
+import { validate } from "bun:bundle";
+type Untagged = { a: number } | { b: { c: number } };
+type Tagged = { k: "a"; p: unknown } | { k: "b"; p: { x: number } };
+type Lists = unknown[] | { x: number }[];
+type Shapes = { k: "a"; p: { x: number } } | { k: "b"; q: { x: number } };
+const parse = (text: string): any => JSON.parse(text);
+
+const untagged = parse('{"a":1,"b":{"c":2}}');
+const first: any = validate<Untagged>(untagged);
+console.log("a member of the arm that is not taken", first !== untagged, first.b !== untagged.b, JSON.stringify(first));
+
+const tagged = parse('{"k":"a","p":{"x":1}}');
+const second: any = validate<Tagged>(tagged);
+console.log("a member that the tagged arm leaves unknown", second.p !== tagged.p, JSON.stringify(second));
+
+const list = parse('[{"x":1}]');
+const third: any = validate<Lists>(list);
+console.log("an element", third !== list, third[0] !== list[0], JSON.stringify(third));
+
+const own = parse('{"k":"a","p":{"x":1}}');
+const fourth: any = validate<Shapes>(own);
+console.log("only its own members", fourth.p !== own.p, Object.keys(fourth).join());
+
+const both = parse('{"k":"a","p":{"x":1},"q":{"x":"text"}}');
+const fifth: any = validate<Shapes>(both);
+console.log("a member of the other tagged arm", fifth.p !== both.p, fifth.q !== both.q, JSON.stringify(fifth));
+
+first.b.c = 3;
+second.p.x = 4;
+third[0].x = 5;
+fifth.q.x = 6;
+console.log("after stores into the copies", JSON.stringify([untagged, tagged, list, both]));
+//// validated-beside-unvalidated-parse.ts
+// `JSON.parse<T>(text)` validates: text that is no T throws. The same text behind `as T`, an annotation or a typed body is not validated and nothing throws: whatever was parsed passes, it stays what it was, and a field of another kind is read as what it is, as in plain Bun.
+interface User { id: number; name: string }
+const misfit = '{"id":"seven","name":"Ada"}';
+const list = '[{"id":1,"name":"a"},{"id":"two","name":"b"},{"id":3,"name":"c"}]';
+function idOf(user: User) { return user.id; }
+function nameOf(user: User) { return user.name; }
+function attempt(label: string, f: () => unknown) {
+  try { console.log(label + ":", String(f())); } catch (e) { console.log(label + ":", (e as Error).constructor.name); }
+}
+
+attempt("JSON.parse<User>, text that fits", () => JSON.parse<User>('{"id":7,"name":"Ada"}').id);
+attempt("JSON.parse<User>, text that does not fit", () => JSON.parse<User>(misfit).name);
+attempt("as User, the cast", () => typeof (JSON.parse(misfit) as User));
+attempt("as User, a field that fits", () => nameOf(JSON.parse(misfit) as User));
+attempt("as User, the field that does not fit", () => idOf(JSON.parse(misfit) as User));
+attempt("an annotated variable, a field that fits", () => { const user: User = JSON.parse(misfit); return nameOf(user); });
+attempt("the same field read through any", () => JSON.parse(misfit).id);
+attempt("User[], each element by itself", () => {
+  const users: User[] = JSON.parse(list);
+  return users.map(user => { try { return idOf(user); } catch (e) { return (e as Error).constructor.name; } }).join();
+});
+attempt("as User, a number", () => JSON.parse("5") as User);
+const body: User = await new Response(misfit).json();
+attempt("a body, a field that fits", () => nameOf(body));
+attempt("a body, the field that does not fit", () => idOf(body));
+export {};
+//// validated-objects-of-many-shapes-and-orders-of-keys.ts
+// validate<T>() learns about the objects of one shape once. Every way in which the next object can differ from the last one is tried here, again and again, in turn:
+// other orders of keys, members left out, keys that hold undefined, undeclared keys, getters, other prototypes, frozen objects, dictionaries, objects with many members, shapes that die.
+import type { Schema } from "bun";
+import { validate } from "bun:bundle";
+
+type Point = { x: number; y: number; label?: string; tags?: string[] };
+type StrictPoint = Point & Schema.Strict;
+type Nested = { name: string; at: Point; corners: Point[]; next?: Nested };
+type OnlyOptional = { a?: number; b?: string; c?: boolean };
+type MayBeUndefined = { a: number | undefined; b?: number | undefined };
+type WithDefault = { port: number & Schema.Default<8080>; host: string };
+type Wide = {
+  m00?: number; m01?: number; m02?: number; m03?: number; m04?: number; m05?: number; m06?: number; m07?: number; m08?: number; m09?: number;
+  m10?: number; m11?: number; m12?: number; m13?: number; m14?: number; m15?: number; m16?: number; m17?: number; m18?: number; m19?: number;
+  m20?: number; m21?: number; m22?: number; m23?: number; m24?: number; m25?: number; m26?: number; m27?: number; m28?: number; m29?: number;
+  m30?: number; m31?: number; m32?: number; m33?: number; m34?: number; m35?: number; m36?: number; m37?: number; m38?: number; m39?: number;
+  m40?: number; m41?: number; m42?: number; m43?: number; m44?: number; m45?: number; m46?: number; m47?: number; m48?: number; m49?: number;
+  m50?: number; m51?: number; m52?: number; m53?: number; m54?: number; m55?: number; m56?: number; m57?: number; m58?: number; m59?: number;
+  m60?: number; m61?: number; m62?: number; m63?: number; m64?: number; m65?: number; m66?: number; m67?: number; m68?: number; m69?: number;
+  id: number;
+};
+
+function describe(value: unknown): string {
+  if (Array.isArray(value)) return "[" + value.map(describe).join(",") + "]";
+  if (typeof value !== "object" || value === null) return typeof value === "string" ? JSON.stringify(value) : String(value);
+  const parts: string[] = [];
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+    const marks = (descriptor.writable ? "" : "!w") + (descriptor.enumerable ? "" : "!e") + (descriptor.configurable ? "" : "!c");
+    parts.push(String(key) + marks + ":" + describe(descriptor.value));
+  }
+  return "{" + parts.join(",") + "}" + (Object.getPrototypeOf(value) === Object.prototype ? "" : "^") + (Object.isExtensible(value) ? "" : "#");
+}
+
+function tried(run: () => unknown, source: unknown): string {
+  try {
+    const result = run();
+    return describe(result) + (result === source ? " THE SOURCE ITSELF" : "") + " | in:" + Object.keys(result as object).join() + " | json:" + JSON.stringify(result);
+  } catch (error) {
+    const issues = (error as Schema.Error).issues;
+    return (error as Error).name + " " + (issues ? issues.map(issue => issue.path.join(".") + ":" + issue.code).join(" ") : (error as Error).message);
+  }
+}
+
+let getterRuns = 0;
+const withGetter = () => Object.defineProperty({ x: 1 } as Record<string, unknown>, "y", { get() { getterRuns++; return 2; }, enumerable: true, configurable: true });
+const hidden = () => Object.defineProperty({ x: 1, y: 2 } as Record<string, unknown>, "label", { value: "hidden", enumerable: false, writable: true, configurable: true });
+const readOnly = () => Object.defineProperty({ x: 1 } as Record<string, unknown>, "y", { value: 2, enumerable: true, writable: false, configurable: true });
+function dictionary(): Record<string, unknown> {
+  const object: Record<string, unknown> = {};
+  for (let i = 0; i < 200; i++) object["k" + i] = i;
+  for (let i = 0; i < 200; i++) delete object["k" + i];
+  object.x = 1;
+  object.y = 2;
+  return object;
+}
+class Pair { x = 1; y = 2; }
+
+const pointSources: [string, () => unknown][] = [
+  ["x y", () => ({ x: 1, y: 2 })],
+  ["y x", () => ({ y: 2, x: 1 })],
+  ["parsed x y", () => JSON.parse('{"x":1,"y":2}')],
+  ["parsed y x label", () => JSON.parse('{"y":2,"x":1,"label":"l"}')],
+  ["label first", () => ({ label: "l", x: 1, y: 2 })],
+  ["tags between", () => ({ x: 1, tags: ["a", "b"], y: 2 })],
+  ["all four", () => ({ x: 1, y: 2, label: "l", tags: [] })],
+  ["all four backwards", () => ({ tags: ["t"], label: "l", y: 2, x: 1 })],
+  ["label undefined", () => ({ x: 1, y: 2, label: undefined })],
+  ["label undefined first", () => ({ label: undefined, x: 1, y: 2 })],
+  ["tags undefined, label there", () => ({ x: 1, tags: undefined, y: 2, label: "l" })],
+  ["y missing", () => ({ x: 1 })],
+  ["y undefined", () => ({ x: 1, y: undefined })],
+  ["y a string", () => ({ x: 1, y: "2" })],
+  ["y not finite", () => ({ x: 1, y: Infinity })],
+  ["label a number", () => ({ x: 1, y: 2, label: 3 })],
+  ["tags hold a number", () => ({ x: 1, y: 2, tags: ["a", 1] })],
+  ["one more key", () => ({ x: 1, y: 2, z: 3 })],
+  ["one more key first", () => ({ z: 3, x: 1, y: 2 })],
+  ["one more key between", () => ({ x: 1, z: { deep: [1] }, y: 2, label: "l" })],
+  ["an index", () => ({ x: 1, y: 2, 0: "zero" })],
+  ["a symbol", () => ({ x: 1, y: 2, [Symbol.for("s")]: 1 })],
+  ["__proto__ as a key", () => JSON.parse('{"x":1,"y":2,"__proto__":{"label":"from above"}}')],
+  ["a getter", withGetter],
+  ["a hidden label", hidden],
+  ["a read-only y", readOnly],
+  ["frozen", () => Object.freeze({ x: 1, y: 2 })],
+  ["sealed", () => Object.seal({ x: 1, y: 2, label: "l" })],
+  ["not extensible", () => Object.preventExtensions({ x: 1, y: 2 })],
+  ["no prototype", () => Object.assign(Object.create(null), { x: 1, y: 2 })],
+  ["y from the prototype", () => Object.assign(Object.create({ y: 2 }), { x: 1 })],
+  ["label from the prototype", () => Object.assign(Object.create({ label: "above" }), { x: 1, y: 2 })],
+  ["an instance", () => new Pair()],
+  ["a dictionary", dictionary],
+  ["deleted and added again", () => { const o: Record<string, unknown> = { x: 1, y: 2, label: "l" }; delete o.x; o.x = 5; return o; }],
+  ["an array", () => Object.assign([], { x: 1, y: 2 })],
+  ["a function", () => Object.assign(() => {}, { x: 1, y: 2 })],
+  ["a proxy", () => new Proxy({ x: 1, y: 2 }, {})],
+  ["a Map", () => Object.assign(new Map(), { x: 1, y: 2 })],
+  ["a getter in a literal", () => ({ x: 1, get y() { getterRuns++; return 2; } })],
+  ["a setter alone in a literal", () => ({ x: 1, y: 2, set label(value: string) { getterRuns += 100; } })],
+  ["a method in a literal", () => ({ x: 1, y: 2, label() { return "l"; } })],
+  ["an instance with one more member", () => Object.assign(new Pair(), { label: "l" })],
+  ["an instance with an accessor above", () => new (class extends Pair { get label() { getterRuns++; return "above"; } })()],
+  ["a literal that grew", () => { const o: Record<string, unknown> = { x: 1 }; o.label = "l"; o.y = 2; return o; }],
+  ["a literal that lost a member", () => { const o: Record<string, unknown> = { x: 1, y: 2, label: "l", z: 3 }; delete o.z; return o; }],
+  ["a literal with a computed key", () => ({ x: 1, ["y"]: 2, ["la" + "bel"]: "l" })],
+  ["a spread of a literal", () => ({ ...{ y: 2, x: 1 }, label: "l" })],
+  ["a frozen literal with tags", () => Object.freeze({ x: 1, y: 2, tags: Object.freeze(["a"]) })],
+  ["null", () => null],
+  ["a validated point", () => validate<Point>({ y: 2, x: 1, label: "again" })],
+];
+
+for (let round = 0; round < 3; round++) {
+  for (const [name, make] of pointSources) {
+    const source = make();
+    console.log(round, "Point", name, "->", tried(() => validate<Point>(source), source));
+    const other = make();
+    console.log(round, "StrictPoint", name, "->", tried(() => validate<StrictPoint>(other), other));
+  }
+}
+console.log("getter runs", getterRuns);
+
+// The copy is the program's own: what is done to it does not reach the source, and the other way round.
+{
+  const source = { x: 1, y: 2, tags: ["a"] };
+  const copy = validate<Point>(source);
+  copy.x = 10;
+  copy.tags!.push("b");
+  copy.label = "late";
+  source.y = 20;
+  console.log(describe(source), describe(copy), Object.keys(copy).join());
+  delete (copy as Partial<Point>).y;
+  (copy as Record<string, unknown>).extra = true;
+  console.log(describe(copy), "y" in copy, JSON.stringify(copy));
+}
+
+const nestedSources: [string, () => unknown][] = [
+  ["plain", () => ({ name: "n", at: { x: 1, y: 2 }, corners: [{ x: 1, y: 2 }, { y: 4, x: 3 }, { x: 5, y: 6, label: "c" }] })],
+  ["orders mixed", () => ({ corners: [{ label: "c", y: 6, x: 5 }], at: { y: 2, x: 1 }, name: "n" })],
+  ["three deep", () => ({ name: "a", at: { x: 0, y: 0 }, corners: [], next: { next: { corners: [], at: { y: 1, x: 1 }, name: "c" }, name: "b", at: { x: 0, y: 0 }, corners: [] } })],
+  ["the last corner is wrong", () => ({ name: "n", at: { x: 1, y: 2 }, corners: [{ x: 1, y: 2 }, { x: 3, y: 4 }, { x: 5 }] })],
+  ["a corner has one more key", () => ({ name: "n", at: { x: 1, y: 2 }, corners: [{ x: 1, y: 2, z: 3 }] })],
+  ["a corner holds undefined", () => ({ name: "n", at: { x: 1, y: 2 }, corners: [{ x: 1, label: undefined, y: 2 }] })],
+  ["one object twice", () => { const p = { x: 1, y: 2 }; return { name: "n", at: p, corners: [p, p] }; }],
+];
+for (let round = 0; round < 3; round++) {
+  for (const [name, make] of nestedSources) {
+    const source = make();
+    console.log(round, "Nested", name, "->", tried(() => validate<Nested>(source), source));
+  }
+}
+{
+  const p = { x: 1, y: 2 };
+  const twice = validate<Nested>({ name: "n", at: p, corners: [p, p] });
+  console.log("copies of one object are", twice.at === twice.corners[0] ? "one" : "two", twice.corners[0] === twice.corners[1] ? "one" : "two");
+}
+
+for (let round = 0; round < 2; round++) {
+  for (const source of [{}, { a: 1 }, { b: "b" }, { c: true, a: 1 }, { c: false, b: "", a: 0 }, { a: undefined }, { b: undefined, c: true }, { a: "1" }, { d: 1 }]) {
+    console.log(round, "OnlyOptional", describe(source), "->", tried(() => validate<OnlyOptional>(source), source));
+  }
+  for (const source of [{ a: 1 }, { a: undefined }, {}, { b: 1 }, { a: undefined, b: undefined }, { b: 2, a: 1 }]) {
+    console.log(round, "MayBeUndefined", describe(source), "->", tried(() => validate<MayBeUndefined>(source), source));
+  }
+  for (const source of [{ host: "h" }, { host: "h", port: 1 }, { port: 2, host: "h" }, { port: undefined, host: "h" }, { port: 3 }]) {
+    console.log(round, "WithDefault", describe(source), "->", tried(() => validate<WithDefault>(source), source));
+  }
+}
+
+// Members that do not fit into the object itself lie outside it.
+for (let round = 0; round < 2; round++) {
+  for (const count of [0, 1, 5, 6, 7, 8, 20, 63, 64, 70]) {
+    const forwards: Record<string, number> = { id: count };
+    for (let i = 0; i < count; i++) forwards["m" + String(i).padStart(2, "0")] = i;
+    const backwards: Record<string, number> = {};
+    for (let i = count - 1; i >= 0; i--) backwards["m" + String(i).padStart(2, "0")] = i;
+    backwards.id = count;
+    for (const source of [forwards, backwards, JSON.parse(JSON.stringify(forwards))]) {
+      const result = validate<Wide>(source);
+      let sum = result.id;
+      for (const key of Object.keys(result)) sum += (result as Record<string, number>)[key];
+      console.log(round, "Wide", count, Object.keys(result).length, Object.keys(result).join() === Object.keys(source).join(), sum, result.m00, result.m05, result.m06, result.m69);
+    }
+  }
+}
+
+// More shapes than anything remembers, shapes that die between collections, and the first shapes again afterwards.
+{
+  let taken = 0;
+  let refusedCount = 0;
+  for (let i = 0; i < 12000; i++) {
+    const source: Record<string, unknown> = {};
+    if (i & 1) source.y = i;
+    source.x = i;
+    if (!(i & 1)) source.y = i;
+    source["extra" + i] = i;
+    try {
+      const copy = validate<Point>(source) as Record<string, unknown>;
+      if (copy.x === i && copy.y === i && copy["extra" + i] === i && Object.keys(copy).join() === Object.keys(source).join()) taken++;
+    } catch {
+      refusedCount++;
+    }
+    try {
+      validate<StrictPoint>(source);
+      taken += 1000000;
+    } catch {
+      refusedCount++;
+    }
+    if (i % 3000 === 2999) Bun.gc(true);
+  }
+  console.log("many shapes", taken, refusedCount);
+  for (const [name, make] of pointSources.slice(0, 8)) {
+    const source = make();
+    console.log("afterwards", name, "->", tried(() => validate<Point>(source), source));
+  }
+}
+//// validation-fails-first-in-a-worker/main.ts
+// A validation fails on the main thread, then for the first time in a Worker, then on the main thread again: every thread gets the same kind of error. The build lists start.ts first, so the main thread runs that and starts this file as a Worker.
+import { JSON } from "bun";
+import { parentPort } from "node:worker_threads";
+////= messageOf
+parentPort!.postMessage("worker: " + messageOf('{"n":true}') + ", " + messageOf('{"n":[]}'));
+//// validation-fails-first-in-a-worker/start.ts
+import { JSON } from "bun";
+import { Worker } from "node:worker_threads";
+////= messageOf
+console.log("main thread:", messageOf('{"n":"1"}'));
+const worker = new Worker("./main.ts");
+worker.on("message", (line: string) => console.log(line, "| main thread again:", messageOf('{"n":null}')));
+//// validation-in-a-file-that-is-not-type-checked.ts
+// @ts-nocheck
+// A file that begins with @ts-nocheck is compiled without its types. JSON.parse<T> and validate<T> in it validate all the same.
+import { validate } from "bun:bundle";
+
+type Point = { x: number; y: number };
+type Shape = { kind: "circle"; radius: number } | { kind: "box"; corners: [Point, Point]; label?: string };
+const wrong: number = "not a number";
+
+function attempt(label, run) {
+  try {
+    console.log(label + ": value " + JSON.stringify(run()));
+  } catch (error) {
+    console.log(label + ": " + error.name + (error.issues ? " at " + error.issues.map(issue => JSON.stringify(issue.path)).join() : ""));
+  }
+}
+const load = (text: string): Point => JSON.parse<Point>(text);
+for (const text of ['{"x":1,"y":2}', '{"y":2,"x":1,"z":3}', '{"x":"s","y":2}', '{"x":1}', "[1,2]", "null", '{"x":{"x":1},"y":[2]}', '{"x":1,"y":']) {
+  attempt("JSON.parse<Point> of " + text, () => JSON.parse<Point>(text));
+  attempt("through a function, " + text, () => load(text).x + load(text).y);
+  attempt("with a reviver, " + text, () => JSON.parse<Point>(text, (key, value) => (typeof value === "number" ? value + 1 : value)));
+  attempt("Point[] of " + text, () => JSON.parse<Point[]>("[" + text + "," + text + "]"));
+}
+for (const value of [{ x: 1, y: 2 }, { x: "s", y: 2 }, { x: 1 }, [1, 2], null, undefined, 5, { x: 1, y: 2, more: [1] }]) attempt("validate<Point> of " + JSON.stringify(value), () => validate<Point>(value));
+for (const text of ['{"kind":"circle","radius":1}', '{"kind":"circle","radius":"1"}', '{"kind":"box","corners":[{"x":0,"y":0},{"x":1,"y":1}]}', '{"kind":"box","corners":[{"x":0,"y":0}]}', '{"kind":"box","corners":[{"x":0,"y":0},{"x":1,"y":null}],"label":"l"}', '{"kind":"line"}']) {
+  attempt("JSON.parse<Shape> of " + text, () => JSON.parse<Shape>(text));
+  attempt("validate<Shape> of " + text, () => validate<Shape>(JSON.parse(text)));
+}
+console.log(typeof wrong);
+//// validation-in-functions-called-with-mismatched-arguments.ts
+// A function with annotated parameters is called, through untyped code, with arguments that do not match them. Whatever is passed gets in, a number for an object too, and JSON.parse<T> and validate<T> in the body, and in the functions nested in it, validate all the same: the only TypeErrors are theirs, with issues.
+import { validate } from "bun:bundle";
+
+type Point = { x: number; y: number };
+type Options = { strict: boolean; name: string };
+const hide = (value: unknown): any => value;
+const bad = '{"x":"s","y":1}';
+const good = '{"x":1,"y":2}';
+const fitting: Options = { strict: true, name: "n" };
+const others: [string, any][] = [["fitting options", fitting], ["options of other types", { strict: "yes", name: 5 }], ["empty options", {}], ["a number for options", 5], ["null for options", null], ["nothing for options", undefined], ["an array for options", [1]]];
+
+function attempt(label: string, run: () => unknown): void {
+  try {
+    console.log(label + ": value " + JSON.stringify(run()));
+  } catch (error: any) {
+    console.log(label + ": " + error.name + (error.issues ? " with " + error.issues.length + " issues" : ""));
+  }
+}
+
+function declared(text: string, options: Options): unknown {
+  const point = JSON.parse<Point>(text);
+  return [point, point.x + point.y, typeof options];
+}
+const arrow = (text: string, options: Options): unknown => {
+  const point = JSON.parse<Point>(text);
+  return [point, point.x + point.y, typeof options];
+};
+function validating(text: string, options: Options): unknown {
+  const point = validate<Point>(JSON.parse(text));
+  return [point, point.x + point.y, typeof options];
+}
+function nesting(options: Options): (text: string) => unknown {
+  return text => {
+    const point = JSON.parse<Point>(text);
+    return [point, point.x + point.y, typeof options];
+  };
+}
+function nestingDeclared(options: Options): (text: string) => unknown {
+  function inner(text: string): unknown {
+    return JSON.parse<Point>(text);
+  }
+  return inner;
+}
+class Handler {
+  constructor(public options: Options) {}
+  handle(text: string, options: Options): unknown {
+    const point = JSON.parse<Point>(text);
+    return [point, point.x + point.y, typeof options, typeof this.options];
+  }
+  static handle(text: string, options: Options): unknown {
+    return JSON.parse<Point>(text);
+  }
+}
+const literal = {
+  handle(text: string, options: Options): unknown {
+    return JSON.parse<Point>(text);
+  },
+};
+function destructuring(text: string, { strict, name }: Options): unknown {
+  return [JSON.parse<Point>(text), typeof strict, typeof name];
+}
+function withDefault(text: string, options: Options = fitting): unknown {
+  return [JSON.parse<Point>(text), typeof options];
+}
+let current = good;
+function defaulted(options: Options, point = JSON.parse<Point>(current)): unknown {
+  return [point, typeof options];
+}
+class Built {
+  point: Point;
+  constructor(text: string, options: Options) {
+    this.point = JSON.parse<Point>(text);
+  }
+}
+class WithField {
+  point = JSON.parse<Point>(current);
+  constructor(public options: Options) {}
+}
+class WithSetter {
+  held: unknown = null;
+  set options(value: Options) {
+    this.held = JSON.parse<Point>(current);
+  }
+}
+function returningTyped(text: string, options: Options): Point {
+  return JSON.parse<Point>(text);
+}
+function withReviver(text: string, options: Options): unknown {
+  return JSON.parse<Point>(text, (key, value) => value);
+}
+function inATry(text: string, options: Options): unknown {
+  try {
+    return JSON.parse<Point>(text);
+  } catch (error: any) {
+    return "caught " + error.name + (error.issues ? " with issues" : "");
+  }
+}
+function inALoop(text: string, options: Options): unknown {
+  const points: Point[] = [];
+  for (let round = 0; round < 3; round++) points.push(JSON.parse<Point>(text));
+  return points.length;
+}
+async function asynchronous(text: string, options: Options): Promise<unknown> {
+  await null;
+  return JSON.parse<Point>(text);
+}
+function* generating(text: string, options: Options): Generator<unknown> {
+  yield JSON.parse<Point>(text);
+}
+
+for (const [label, options] of others) {
+  for (const text of [good, bad]) {
+    const what = (text === good ? "a text that matches, " : "a text that does not match, ") + label;
+    const isChecked = typeof options === "number";
+    const isAnotherObject = typeof options === "object" && options !== null && options !== fitting;
+    attempt("a declared function, " + what, () => hide(declared)(text, options));
+    if (!isChecked) attempt("a declared function called by name, " + what, () => declared(text, hide(options)));
+    attempt("an arrow function, " + what, () => hide(arrow)(text, options));
+    attempt("validate, " + what, () => hide(validating)(text, options));
+    attempt("a nested arrow function, " + what, () => hide(nesting)(options)(text));
+    attempt("a nested declared function, " + what, () => hide(nestingDeclared)(options)(text));
+    attempt("a method, " + what, () => hide(new Handler(fitting)).handle(text, options));
+    if (!isChecked) attempt("a method of an instance made with them, " + what, () => new (hide(Handler))(options).handle(text, options));
+    attempt("a static method, " + what, () => hide(Handler).handle(text, options));
+    attempt("a method of a literal, " + what, () => hide(literal).handle(text, options));
+    if (!isAnotherObject) attempt("a destructured parameter, " + what, () => hide(destructuring)(text, options));
+    attempt("a parameter with a default, " + what, () => hide(withDefault)(text, options));
+    attempt("call, " + what, () => declared.call(null, text, hide(options)));
+    attempt("apply, " + what, () => declared.apply(null, hide([text, options])));
+    attempt("bind, " + what, () => hide(declared.bind(null, text))(options));
+    attempt("Reflect.apply, " + what, () => Reflect.apply(declared, null, [text, options]));
+    if (!isChecked) attempt("a callback of map, " + what, () => [text].map(hide((given: string) => declared(given, hide(options)))));
+    attempt("the function itself as a callback of map, " + what, () => [text].map(hide(declared)));
+    current = text;
+    attempt("a default value of a parameter, " + what, () => hide(defaulted)(options));
+    attempt("a constructor, " + what, () => new (hide(Built))(text, options).point);
+    if (!isChecked) attempt("a field initializer, " + what, () => new (hide(WithField))(options).point);
+    attempt("a setter, " + what, () => {
+      const target = hide(new WithSetter());
+      target.options = options;
+      return target.held;
+    });
+    attempt("a function that returns the type, " + what, () => hide(returningTyped)(text, options));
+    attempt("with a reviver, " + what, () => hide(withReviver)(text, options));
+    attempt("in a try, " + what, () => hide(inATry)(text, options));
+    attempt("in a loop, " + what, () => hide(inALoop)(text, options));
+    attempt("a generator, " + what, () => [...hide(generating)(text, options)]);
+  }
+}
+for (const [label, options] of others) {
+  for (const text of [good, bad]) {
+    try {
+      console.log("an async function, " + label + ": value " + JSON.stringify(await hide(asynchronous)(text, options)));
+    } catch (error: any) {
+      console.log("an async function, " + label + ": " + error.name + (error.issues ? " with " + error.issues.length + " issues" : ""));
+    }
+  }
+}
+//// validation-keeps-a-key-named-proto-as-an-own-property.ts
+// An undeclared key named "__proto__" in the data stays an own property of what JSON.parse<T>() and validate<T>() return. It never becomes the prototype, so it cannot supply a value for an optional property that the data left out.
+import { JSON } from "bun";
+import { validate } from "bun:bundle";
+interface User { name: string; isAdmin?: boolean }
+interface Bag { [key: string]: number | { isAdmin: boolean } }
+interface Holder { user: User; users: User[] }
+type Either = { kind: "a"; name: string; isAdmin?: boolean } | { kind: "b"; size: number };
+const plain: any = globalThis.JSON;
+function show(label: string, made: any): void {
+  console.log(label, JSON.stringify(made), "isAdmin:", made.isAdmin, "own keys:", Object.getOwnPropertyNames(made).join(), "prototype is Object.prototype:", Object.getPrototypeOf(made) === Object.prototype);
+}
+const text = '{"name":"x","__proto__":{"isAdmin":true}}';
+show("JSON.parse<User>", JSON.parse<User>(text));
+show("validate<User>", validate<User>(plain.parse(text)));
+show("with a reviver", JSON.parse<User>(text, (key, value) => value));
+show("JSON.parse<Bag>", JSON.parse<Bag>('{"a":1,"__proto__":{"isAdmin":true}}'));
+show("validate<Bag>", validate<Bag>(plain.parse('{"a":1,"__proto__":{"isAdmin":true}}')));
+show("JSON.parse<Holder>.user", JSON.parse<Holder>('{"user":' + text + ',"users":[' + text + "]}").user);
+show("validate<Holder>.users[0]", validate<Holder>(plain.parse('{"user":' + text + ',"users":[' + text + "]}")).users[0]);
+show("JSON.parse<Either>", JSON.parse<Either>('{"kind":"a","name":"x","__proto__":{"isAdmin":true}}'));
+show("validate<Either>", validate<Either>(plain.parse('{"kind":"a","name":"x","__proto__":{"isAdmin":true}}')));
+show("JSON.parse<any>", JSON.parse<any>(text));
+show("validate<unknown>", validate<unknown>(plain.parse(text)));
+console.log("Object.prototype is clean:", ({} as any).isAdmin === undefined);
+//// validation-leaves-the-last-match-of-the-program-in-RegExp.ts
+// RegExp.$1, RegExp.lastMatch and their like tell of the last match of the program. Validating a value, refusing one and reading the error change none of them.
+import type { Schema } from "bun";
+import { validate } from "bun:bundle";
+
+interface Named {
+  first: string & Schema.Pattern<"^(a+)(b*)$">;
+  count: number;
+  second: string & Schema.Pattern<"^(c+)(d*)$">;
+  mail: string & Schema.Format<"email">;
+  day: string & Schema.Format<"date">;
+  home: string & Schema.Format<"url">;
+  tag: `id-${bigint}`;
+  size: `${number}px`;
+  code: number & Schema.Pattern<"^(1)(2)$">;
+  either:
+    | (string & Schema.Pattern<"^(e+)$">)
+    | (string & Schema.Pattern<"^(f+)$">)
+    | { deep: string & Schema.Format<"uuid"> };
+}
+
+function lastMatch(): string {
+  return [
+    RegExp.lastMatch,
+    RegExp.$1,
+    RegExp.$2,
+    RegExp.input,
+    RegExp.leftContext,
+    RegExp.rightContext,
+    RegExp.lastParen,
+  ].join("|");
+}
+
+function createValid(): any {
+  return {
+    first: "aab",
+    count: 1,
+    second: "ccd",
+    mail: "ada@example.com",
+    day: "2026-02-28",
+    home: "https://example.com/",
+    tag: "id-12",
+    size: "4px",
+    code: 12,
+    either: "ff",
+  };
+}
+
+// What the parser makes is an ordinary object. What a literal of the program makes need not be.
+function parsed(value: unknown): any {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function wide(value: any): any {
+  for (let i = 0; i < 40; i++) value["extra" + i] = i;
+  return value;
+}
+
+function matchesWhileRead(value: any): any {
+  Object.defineProperty(value, "second", {
+    enumerable: true,
+    get() {
+      /(g+)(h*)/.exec("-ggh-");
+      return "ccd";
+    },
+  });
+  return value;
+}
+
+const changes: [string, (value: any) => any][] = [
+  ["valid", value => value],
+  ["count", value => ({ ...value, count: "no" })],
+  ["first", value => ({ ...value, first: "zz" })],
+  ["mail", value => ({ ...value, mail: "nobody" })],
+  ["tag", value => ({ ...value, tag: "id-x" })],
+  ["code", value => ({ ...value, code: 13 })],
+  ["either", value => ({ ...value, either: "gg" })],
+  ["deep", value => ({ ...value, either: { deep: "00000000-0000-0000-0000-000000000000" } })],
+  ["deep refused", value => ({ ...value, either: { deep: "0" } })],
+  ["last", value => ({ ...value, either: 5 })],
+];
+
+const sources: [string, (value: any) => unknown][] = [
+  ["a literal", value => validate<Named>(value)],
+  ["a parsed object", value => validate<Named>(parsed(value))],
+  ["a wide object", value => validate<Named>(wide(parsed(value)))],
+  ["a text", value => JSON.parse<Named>(JSON.stringify(value))],
+  ["a text that ends early", value => JSON.parse<Named>(JSON.stringify(value).slice(0, -1))],
+  ["a text and a reviver", value => JSON.parse<Named>(JSON.stringify(value), (_, member) => member)],
+];
+
+const readers: [string, (error: any) => unknown][] = [
+  ["message", error => error.message],
+  ["issues", error => error.issues],
+  ["String", error => String(error)],
+  ["stack", error => error.stack],
+  ["descriptor", error => Object.getOwnPropertyDescriptor(error, "issues")],
+  ["spread", error => ({ ...error })],
+  ["stringify", error => JSON.stringify(error)],
+  ["inspect", error => Bun.inspect(error)],
+  ["clone", error => structuredClone(error)],
+];
+
+let lines = 0;
+let wrong = 0;
+function expect(what: string, expected: string): void {
+  lines++;
+  if (lastMatch() === expected) return;
+  wrong++;
+  console.log(what, "expected", expected, "found", lastMatch());
+}
+
+const mine = "xxy|xx|y|-xxy-|-|-|y";
+const between = "xyy|x|yy|+xyy+|+|+|yy";
+
+for (const [source, run] of sources) {
+  for (const [change, apply] of changes) {
+    for (const [reader, read] of readers) {
+      /(x+)(y*)/.exec("-xxy-");
+      let caught: any;
+      try {
+        run(apply(createValid()));
+      } catch (error) {
+        caught = error;
+      }
+      expect(`${source}, ${change}: behind the call`, mine);
+      if (caught === undefined) break;
+      /(x+)(y*)/.exec("+xyy+");
+      read(caught);
+      expect(`${source}, ${change}: behind ${reader}`, between);
+    }
+
+    /(x+)(y*)/.exec("-xxy-");
+    try {
+      run(apply(createValid()));
+    } catch {}
+    expect(`${source}, ${change}: nobody looks at the error`, mine);
+  }
+}
+
+for (const [change, apply] of changes) {
+  /(x+)(y*)/.exec("-xxy-");
+  let outcome = "valid";
+  try {
+    validate<Named>(matchesWhileRead(apply(createValid())));
+  } catch (error: any) {
+    outcome = error.message;
+  }
+  console.log("a getter that matches,", change + ":", lastMatch(), "|", outcome);
+}
+
+/(x+)(y*)/.exec("-xxy-");
+RegExp.input = "stored by the program";
+validate<Named>(parsed(createValid()));
+console.log(RegExp.input, RegExp.$1);
+
+console.log(lines, "looks,", wrong, "wrong");
+//// validation-of-names-and-texts-with-half-a-surrogate-pair.ts
+// A declared key, a constant text, a part of a template and a pattern that hold half a surrogate pair: compiled and interpreted validators know them alike.
+import { validate } from "bun:bundle";
+import type { Schema } from "bun";
+
+type Key = { "\udfaa": number; "a\ud800": string };
+type Text = { k: "\ud800" | "a\udc00b" | "😀" };
+type Template = { k: `\ud83d${number}` };
+type Pattern = { k: string & Schema.Pattern<"^\udc00+$"> };
+
+function outcome(run: () => unknown): string {
+  try {
+    return JSON.stringify(run());
+  } catch (error: any) {
+    return error.name + ": " + JSON.stringify(error.message) + " " + JSON.stringify(error.issues ?? null);
+  }
+}
+
+for (const text of ['{"\\uDFAA":0,"a\\ud800":"x"}', '{"\\uDFAB":0,"a\\ud800":"x"}', '{"\\uFFFD":0,"a\\uFFFD":"x"}', '{"\\uDFAA":"0","a\\ud800":1}']) {
+  console.log(outcome(() => JSON.parse<Key>(text)), outcome(() => validate<Key>(JSON.parse(text))));
+}
+for (const text of ['{"k":"\\ud800"}', '{"k":"a\\udc00b"}', '{"k":"\\ud83d\\ude00"}', '{"k":"\\ufffd"}', '{"k":"\\ud801"}', '{"k":"\\ud83d"}']) {
+  console.log(outcome(() => JSON.parse<Text>(text)), outcome(() => validate<Text>(JSON.parse(text))));
+}
+for (const text of ['{"k":"\\ud83d5"}', '{"k":"\\ufffd5"}', '{"k":"\\ud83dx"}']) {
+  console.log(outcome(() => JSON.parse<Template>(text)), outcome(() => validate<Template>(JSON.parse(text))));
+}
+for (const text of ['{"k":"\\udc00\\udc00"}', '{"k":"\\ufffd"}', '{"k":""}']) {
+  console.log(outcome(() => JSON.parse<Pattern>(text)), outcome(() => validate<Pattern>(JSON.parse(text))));
+}
+//// validation-of-recursive-unions-remembers-within-one-call.ts
+// A union that contains itself and whose arms no constant tells apart: one validation remembers what it found out about an object; the next one knows nothing of it.
+import { validate } from "bun:bundle";
+import type { Schema } from "bun";
+
+type Tree = { below: Tree | null; k: number } | { below: Tree | null; k: string };
+type Filled = { below: Filled | null; k: number; size: number & Schema.Default<7> } | { below: Filled | null; k: string; size: number & Schema.Default<9> };
+type Lists = [Lists | null, 1] | [Lists | null, 2] | (Lists | "end")[];
+type Partly = { kind: "a"; below: Partly | null } | { kind: "b"; below: Partly | null } | { below: Partly | null; other: number };
+type Pair = { left: Tree; right: Tree; both: Tree[] };
+
+function nest(levels: number, bottom: unknown, k: unknown): any {
+  let made: any = bottom;
+  for (let i = 0; i < levels; i++) made = { below: made, k };
+  return made;
+}
+
+function outcome(run: () => unknown): string {
+  try {
+    return JSON.stringify(run());
+  } catch (error: any) {
+    return error.name;
+  }
+}
+
+const mended = nest(6, null, "s");
+console.log(outcome(() => validate<Tree>(mended)));
+mended.below.below.below.k = true;
+console.log(outcome(() => validate<Tree>(mended)));
+mended.below.below.below.k = 3;
+console.log(outcome(() => validate<Tree>(mended)));
+mended.below.below.below.below.below.below = [];
+console.log(outcome(() => validate<Tree>(mended)));
+mended.below.below.below.below.below.below = null;
+console.log(outcome(() => validate<Tree>(mended)));
+
+const given = nest(5, null, "s");
+let copy: any = validate<Tree>(given);
+let original: any = given;
+let distinct = 0;
+while (copy !== null) {
+  if (copy !== original) distinct++;
+  copy = copy.below;
+  original = original.below;
+}
+console.log(distinct, original);
+
+const inner = nest(4, null, "s");
+let within = "";
+const asking = nest(3, { get below() { within = outcome(() => validate<Tree>(inner)); return inner; }, k: "s" }, "s");
+console.log(outcome(() => validate<Tree>(asking)));
+console.log(within);
+
+inner.below.k = null;
+console.log(outcome(() => validate<Tree>(asking)));
+console.log(within);
+inner.below.k = 1;
+
+const throwing = nest(3, { get below(): never { throw new RangeError("not today"); }, k: "s" }, "s");
+console.log(outcome(() => validate<Tree>(throwing)));
+console.log(outcome(() => validate<Tree>(asking)));
+
+const shared = nest(3, null, "s");
+console.log(outcome(() => validate<Pair>({ left: shared, right: shared, both: [shared, shared.below, shared] })));
+shared.below.below.k = false;
+console.log(outcome(() => validate<Pair>({ left: shared, right: shared, both: [shared, shared.below, shared] })));
+
+console.log(outcome(() => validate<Filled>(nest(4, null, "s"))));
+console.log(outcome(() => validate<Filled>(nest(4, null, 1))));
+console.log(outcome(() => JSON.parse<Filled>(JSON.stringify(nest(4, null, "s")))));
+console.log(outcome(() => JSON.parse<Filled>(JSON.stringify(nest(4, { below: null, k: 1, size: 2 }, "s")))));
+console.log(outcome(() => JSON.parse<Filled>(JSON.stringify(nest(4, { below: null, k: 1, size: "2" }, "s")))));
+
+console.log(outcome(() => JSON.parse<Tree>(JSON.stringify(nest(4, null, "s")), (key, value) => (key === "k" ? 5 : value))));
+console.log(outcome(() => JSON.parse<Tree>(JSON.stringify(nest(4, null, "s")), (key, value) => (key === "k" ? null : value))));
+
+for (const text of ['[[[null,2],2],2]', '[[[null,2],1],"end"]', '[[[null,3],1],2]', '[[["end",[null,1]],2],[null,2],"end"]', '[[[null,2],2],{}]']) {
+  console.log(outcome(() => JSON.parse<Lists>(text)), outcome(() => validate<Lists>(JSON.parse(text))));
+}
+
+for (const text of [
+  '{"kind":"a","below":{"kind":"b","below":{"below":null,"other":1}}}',
+  '{"kind":"c","below":{"kind":"b","below":null},"other":1}',
+  '{"kind":"a","below":{"kind":"c","below":null}}',
+  '{"kind":"a","below":{"kind":"b","below":{"below":{"below":{"below":7,"other":1},"other":1},"other":1}},"other":2}',
+]) {
+  console.log(outcome(() => JSON.parse<Partly>(text)), outcome(() => validate<Partly>(JSON.parse(text))));
+}
+//// validators-record-where-they-fail.ts
+// A value that a compiled validator refuses is walked by the routine that all types share. The issues are the same wherever in the value the validator stopped.
+import type { Schema } from "bun";
+interface Item { sku: string & Schema.MinLength<2>; quantity: number & Schema.Int & Schema.Min<1> & Schema.Max<9>; note?: string }
+interface Customer { id: number & Schema.Int; name: string; address: { street: string; zip: string & Schema.MinLength<5> } }
+interface Order { customer: Customer; items: Item[] & Schema.MinItems<1> & Schema.MaxItems<4>; rows: Item[][]; coupon?: string; total: number }
+type Sealed = { inner: { a: number; b: string } & Schema.Strict; last: boolean } & Schema.Strict;
+type Mixed = { pair: [Item, number]; byName: Record<string, Item>; either: Item | null; many: (Item | string)[]; tail: Item };
+function attempt(parse: () => unknown): string {
+  try {
+    parse();
+    return "accepted";
+  } catch (error) {
+    return (error as Bun.Schema.Error).issues.map(issue => issue.path.join(".") + " " + issue.code + " " + issue.expected).join("; ");
+  }
+}
+const one = '{"sku":"ab","quantity":2}';
+const item = (): any => JSON.parse(one);
+const order = (): any => JSON.parse(`{"customer":{"id":1,"name":"n","address":{"street":"s","zip":"12345"}},"items":[${one},${one},${one}],"rows":[[${one}],[${one},${one}]],"total":3}`);
+const changes: ((value: any) => void)[] = [
+  () => {},
+  value => { value.customer = 1; },
+  value => { value.customer.id = 1.5; },
+  value => { value.customer.address.zip = "1"; },
+  value => { value.customer.address = null; value.total = "3"; },
+  value => { value.customer.name = 1; value.customer.address.street = 2; value.items[1].quantity = 0.5; value.coupon = 4; },
+  value => { value.items[0].quantity = 0.5; },
+  value => { value.items[0].quantity = 99.5; value.items[2].sku = "a"; value.items[2].quantity = "2"; },
+  value => { value.items[2] = null; },
+  value => { value.items = []; },
+  value => { value.items = [item(), item(), item(), item(), 5]; },
+  value => { value.items = "none"; value.rows = [[]]; },
+  value => { value.rows[1][1].sku = ""; value.rows[0][0].note = 1; },
+  value => { value.rows[0] = 7; value.rows[1][0].quantity = 10; value.total = null; },
+  value => { delete value.total; },
+];
+for (const change of changes) {
+  const value = order();
+  change(value);
+  console.log(attempt(() => JSON.parse<Order>(JSON.stringify(value))));
+}
+for (const text of ['{"inner":{"a":1,"b":"b"},"last":true}', '{"inner":{"a":1,"b":"b","c":1},"last":1}', '{"inner":{"a":"1","b":"b","c":1},"last":true,"more":1}', '{"inner":[],"last":true,"more":1}', "[]"]) console.log(attempt(() => JSON.parse<Sealed>(text)));
+const mixed = (): any => JSON.parse(`{"pair":[${one},1],"byName":{"x":${one}},"either":${one},"many":[${one},"s"],"tail":${one}}`);
+for (const change of [() => {}, (value: any) => { value.pair[0].sku = 1; }, (value: any) => { value.byName.x.quantity = 0; value.tail.sku = "a"; }, (value: any) => { value.either.sku = 1; }, (value: any) => { value.either = null; value.many[0].quantity = 0; }, (value: any) => { value.tail = undefined; }]) {
+  const value = mixed();
+  change(value);
+  console.log(attempt(() => JSON.parse<Mixed>(JSON.stringify(value))));
+}
+const nested = order();
+nested.customer.id = "1";
+console.log(attempt(() => JSON.parse<Order>(JSON.stringify(nested), (key, value) => (key === "total" ? attempt(() => JSON.parse<Customer>('{"id":"x","name":1}')).length : value))));
+const throwing = order();
+throwing.items[0].sku = 1;
+try { JSON.parse<Order>(JSON.stringify(throwing), key => { if (key === "total") throw new RangeError("from a reviver"); }); } catch (error) { console.log(String(error)); }
+const after = order();
+after.total = "3";
+console.log(attempt(() => JSON.parse<Order>(JSON.stringify(after))), "|", attempt(() => JSON.parse<Order>(JSON.stringify(order()))));
+//// what-lies-inside-plain-data-that-built-ins-answer.js
+// Some built-ins answer plain data: objects and arrays of their own making with strings and numbers in them. Each line asks in place what one of the values is,
+// so that a compiler that believes it knows the answer prints its belief.
+for (const value of Object.values(new Headers({ first: "1" }).toJSON())) console.log("Headers.toJSON, a value is a string:", typeof value === "string");
+{ const held = new Headers({ first: "1" }).toJSON(); console.log("Headers.toJSON, a member is a string:", typeof held.first === "string"); }
+for (const key in new Headers({ first: "1" }).toJSON()) console.log("Headers.toJSON, a key:", key);
+for (const part of new Intl.NumberFormat("en").formatToParts(1.5)) console.log("NumberFormat.formatToParts, members are strings:", typeof part.type === "string", typeof part.value === "string");
+for (const part of new Intl.NumberFormat("en").formatToParts(1.5)) for (const value of Object.values(part)) console.log("NumberFormat.formatToParts, a value is a string:", typeof value === "string");
+for (const part of new Intl.DateTimeFormat("en", { year: "numeric", timeZone: "UTC" }).formatToParts(0)) for (const value of Object.values(part)) console.log("DateTimeFormat.formatToParts, a value is a string:", typeof value === "string");
+for (const part of new Intl.ListFormat("en").formatToParts(["a", "b"])) for (const value of Object.values(part)) console.log("ListFormat.formatToParts, a value is a string:", typeof value === "string");
+for (const value of Object.values(new Intl.NumberFormat("en").resolvedOptions()).slice(0, 4)) console.log("NumberFormat.resolvedOptions, a value is an object:", typeof value === "object");
+for (const value of Object.values(new Intl.DateTimeFormat("en").resolvedOptions()).slice(0, 3)) console.log("DateTimeFormat.resolvedOptions, a value is a string:", typeof value === "string");
+for (const value of Object.values(JSON.parse('{"a":"x"}'))) console.log("JSON.parse, a value is a string:", typeof value === "string");
+for (const value of Object.values(new URLSearchParams("a=x").toJSON())) console.log("URLSearchParams.toJSON, a value is a string:", typeof value === "string");
+for (const value of Object.values(await new Response('{"a":"x"}').json())) console.log("Response.json, a value is a string:", typeof value === "string");
+for (const value of Object.values(structuredClone({ a: "x" }))) console.log("structuredClone, a value is a string:", typeof value === "string");
+for (const value of Object.values(process.memoryUsage()).slice(0, 1)) console.log("process.memoryUsage, a value is a number:", typeof value === "number");
+for (const value of Object.values(process.versions).slice(0, 1)) console.log("process.versions, a value is a string:", typeof value === "string");
+for (const value of Object.values(Bun.TOML.parse('a = "x"'))) console.log("Bun.TOML.parse, a value is a string:", typeof value === "string");
+for (const [, value] of Object.entries(new Headers({ first: "1" }).toJSON())) console.log("Headers.toJSON, an entry's value is a string:", typeof value === "string");
+console.log("Headers.toJSON, stringified:", JSON.stringify(new Headers({ first: "1" }).toJSON()));

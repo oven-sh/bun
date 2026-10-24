@@ -65,7 +65,6 @@ impl<S: Storage> FileIn<S> {
         flags.contains(Flags::EXPORT)
     }
 
-    /// `import {} from "m"` loads the module.
     pub fn is_type_only_import(&self, import: ImportId) -> bool {
         let import = &self[import];
         import.type_only

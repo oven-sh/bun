@@ -1,1 +1,0 @@
-{ "compilerOptions": { "target": "es2015", "module": "preserve", "moduleResolution": "bundler", "lib": ["esnext"], "types": [], "strict": true, "noEmit": true } }

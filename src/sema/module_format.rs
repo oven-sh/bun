@@ -13,8 +13,9 @@ pub use this_of_file::{ThisPositions, evaluates_own_this};
 
 use crate::fold::FoldError;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleFormat {
+    #[default]
     Esm,
     CommonJs,
 }

@@ -35,13 +35,6 @@ fn javascript_module_file() -> FileBuilder {
     }
 }
 
-fn object_properties<'v>(value: &DataValue<'v>) -> Option<&'v [(Atom, DataValue<'v>)]> {
-    match *value {
-        DataValue::Object(properties) => Some(properties),
-        _ => None,
-    }
-}
-
 fn property(key: Atom, name_kind: NameKind, value: ExprId) -> Prop {
     Prop {
         kind: PropKind::Init,
@@ -116,9 +109,9 @@ impl<'s> Builder<'_, 's> {
             DataModule::Value {
                 default,
                 exports_keys: true,
-            } => match object_properties(default) {
-                Some(properties) => self.object_exports(default, properties),
-                None => self.default_export_with_marker(default),
+            } => match *default {
+                DataValue::Object(properties) => self.object_exports(default, properties),
+                _ => self.default_export_with_marker(default),
             },
             DataModule::RuntimeRequire {
                 specifier,
@@ -287,21 +280,13 @@ impl<'s> Builder<'_, 's> {
         let import_meta = self.expr(ExprKind::ImportMeta);
         let callee = self.member(import_meta, known::require);
         let specifier = self.expr(ExprKind::String(specifier));
-        let args = match loader_type {
+        let call = match loader_type {
             Some(loader_type) => {
                 let options = self.loader_type_options(loader_type);
-                self.file.list(&[specifier, options])
+                self.call(callee, &[specifier, options])
             }
-            None => self.file.list(&[specifier]),
+            None => self.call(callee, &[specifier]),
         };
-        let call = self.file.add_call(Call {
-            callee,
-            args,
-            type_args: ListAt::EMPTY,
-            close_pos: 0,
-            chain: Chain::No,
-            is_pure: false,
-        });
         let call = self.expr(ExprKind::Call(call));
         self.file.add_flags(call, ExprFlags::RESOLVED_AT_RUNTIME);
         match member {
@@ -310,7 +295,6 @@ impl<'s> Builder<'_, 's> {
         }
     }
 
-    /// `const _0 = { exports: {} }; process.dlopen(_0, path); export default _0.exports;`
     fn native_addon(&mut self, path: Atom) -> Vec<StmtId> {
         let module_name = self.local_names(&[], 1)[0];
         let no_props = self.file.add_props(&[]);
@@ -326,15 +310,7 @@ impl<'s> Builder<'_, 's> {
         let callee = self.member(process, dlopen);
         let module = self.expr(ExprKind::Ident(module_name));
         let path = self.expr(ExprKind::String(path));
-        let args = self.file.list(&[module, path]);
-        let call = self.file.add_call(Call {
-            callee,
-            args,
-            type_args: ListAt::EMPTY,
-            close_pos: 0,
-            chain: Chain::No,
-            is_pure: false,
-        });
+        let call = self.call(callee, &[module, path]);
         let call = self.expr(ExprKind::Call(call));
         let load = self.file.stmt(StmtKind::Expr(call), 0);
 
@@ -343,7 +319,6 @@ impl<'s> Builder<'_, 's> {
         vec![declaration, load, self.export_default(value)]
     }
 
-    /// `new (import.meta.require("bun:sqlite").Database)(path)`.
     fn database(&mut self, path: Atom, is_embedded: bool) -> ExprId {
         let path = self.expr(ExprKind::String(path));
         let source = match is_embedded {

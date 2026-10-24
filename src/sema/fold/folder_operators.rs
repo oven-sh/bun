@@ -1,7 +1,7 @@
 use super::evaluate::Value;
 use super::folder::{Effects, Folded, Folder};
 use super::inputs::RuntimeValueKind;
-use super::{Constant, Decision, FoldedValue, literal_constant};
+use super::{Constant, Decision, literal_constant};
 use crate::atom::{Atom, known};
 use crate::bind::CommonJsVariable;
 use crate::hir::{BinOp, Branches, ExprId, ExprKind, IdList, UnOp};
@@ -19,15 +19,6 @@ impl<'s> Folder<'_, 's> {
         let hir = self.hir;
         let kind = hir[e].kind;
         match kind {
-            ExprKind::Null
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Number(_)
-            | ExprKind::String(_)
-            | ExprKind::BigInt(_) => match literal_constant(hir, kind) {
-                FoldedValue::Constant(constant) => Folded::constant(constant),
-                FoldedValue::ConstantOutsideDeadZone(_) | FoldedValue::Unknown => Folded::UNKNOWN,
-            },
             ExprKind::Unary { op, operand } => self.fold_unary(op, operand),
             ExprKind::Binary { op, left, right } => self.fold_binary(e, op, left, right),
             ExprKind::Cond { test, branches } => {
@@ -64,7 +55,7 @@ impl<'s> Folder<'_, 's> {
                 self.conditions.insert(e, true);
                 Folded::UNKNOWN
             }
-            _ => Folded::UNKNOWN,
+            _ => literal_constant(hir, kind).map_or(Folded::UNKNOWN, Folded::constant),
         }
     }
 

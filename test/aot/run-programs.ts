@@ -616,7 +616,9 @@ const isInTenthOfSlowBuild = (path: string) =>
 export const inTenthOfAll = (label: string, path: string) => (isToldWhatToTake ? isQuick(path) : inShare(`${label} tenth ${inPrograms(path)}`, 10, true));
 export const inThirdOfAll = (label: string, path: string) => (isToldWhatToTake ? (hash(path) >> 32n) % 3n === 0n : inShare(`${label} third ${inPrograms(path)}`, 3, true));
 export const besideOf = (path: string) => path.replace(/[\\/]main\.[a-z]+$/, "").replace(/\.[a-z]+$/, "");
-const runsWithASAN = (path: string) => isASAN && takesWhatIsFixed && existsSync(besideOf(path) + ".json") && !!JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")).runWithASAN;
+/** Where what is stored beside a program lies in ./programs, for a program that is kept there and for one that is yet to be written. */
+export const keptBeside = (path: string) => join(root, inPrograms(besideOf(path)));
+const runsWithASAN = (path: string) => isASAN && takesWhatIsFixed && existsSync(keptBeside(path) + ".json") && !!JSON.parse(readFileSync(keptBeside(path) + ".json", "utf8")).runWithASAN;
 
 function define(title: string, chosen: string[], settings: Omit<Setup, "folder" | "carrier">) {
   const folder = String(tempDir("aot-programs", {}));
@@ -662,7 +664,7 @@ export function programs(topic: string, part = 1, parts = 1) {
 }
 
 /** What compares times says so where it leaves the sanitizer out: "skipWithASAN": "a clock". */
-const isJudgedByClock = (path: string) => existsSync(besideOf(path) + ".json") && /\bclock\b|\bcompares two times\b/.test(JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")).skipWithASAN ?? "");
+const isJudgedByClock = (path: string) => existsSync(keptBeside(path) + ".json") && /\bclock\b|\bcompares two times\b/.test(JSON.parse(readFileSync(keptBeside(path) + ".json", "utf8")).skipWithASAN ?? "");
 
 /**
  * The programs that every run takes, whatever its share and whatever the build of Bun: all of ./programs/counterexamples, and those that ./programs-in-every-run.txt lists, one a line,

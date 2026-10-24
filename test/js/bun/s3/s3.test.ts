@@ -181,12 +181,9 @@ for (let credentials of allCredentials) {
     // less than 5 MiB
     const bigishPayload = makePayLoadFrom("Bun is the best runtime ever", 1 * 1024 * 1024);
 
-    // A case that moves 1 MiB or more in one request runs against the local
-    // server only. R2 is a live service. At times it holds such a request for a
-    // minute or longer, or answers it with 502, 504 or InternalError. An attempt
-    // of this file had 56 such requests, and each of the 4 CI attempts failed on
-    // one of them. "should be able to upload in two parts" is the one case of
-    // this size in this file that still goes to R2. It has 2 such requests.
+    // For a case that moves 1 MiB or more in one request. It runs against the
+    // local server only: R2 is a live service, and at times it holds such a
+    // request for a minute or longer, or answers it with 502, 504 or InternalError.
     const itLarge = it.skipIf(credentials.service !== "s3-server");
 
     describe.skipIf(!s3Options.accessKeyId)("s3", () => {
@@ -1452,6 +1449,7 @@ for (let credentials of allCredentials) {
 
         it("should be able to upload in two parts", async () => {
           // The smallest multipart upload: each part but the last has at least 5 MiB.
+          // It is not an `itLarge` case, so that R2 still gets one multipart upload.
           const partSize = 5 * 1024 * 1024;
           const parts = [randomBytes(partSize), randomBytes(4)];
           const md5 = (data: Uint8Array) => createHash("md5").update(data).digest();

@@ -49,8 +49,21 @@ pub struct WorkspaceGraph {
 enum Base {
     All,
     Name(Prepared<Box<[u8]>>),
-    Path(Prepared<Box<[u8]>>),
-    Subtree(Prepared<Box<[u8]>>),
+    Path(Prepared<PathGlob>),
+    Subtree(Prepared<PathGlob>),
+}
+
+/// A path selector joined onto the directory that the command runs in. As a pattern it is `joined[base_len..]`.
+struct PathGlob {
+    joined: Box<[u8]>,
+    /// `joined[..base_len]` is as much of that directory as the selector stays under (less after `..`). It is a name, not a glob.
+    base_len: usize,
+}
+
+impl AsRef<[u8]> for PathGlob {
+    fn as_ref(&self) -> &[u8] {
+        &self.joined[self.base_len..]
+    }
 }
 
 struct Selector {
@@ -107,7 +120,13 @@ impl NegatedWorkspaces {
 }
 
 /// Accepted shapes: `!`* then `...`/`...^` prefix and/or `...`/`^...` suffix around `*`, `{dir}`, `./path` or a name glob.
-fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
+/// `cwd_posix` is `original_cwd` as the join below writes it. The first path selector fills it in.
+fn parse(
+    raw: &[u8],
+    original_cwd: &[u8],
+    cwd_posix: &mut Option<Box<[u8]>>,
+    path_buf: &mut [u8],
+) -> Selector {
     let (mut remain, negated) = strip_negations(raw);
     let mut dependencies = false;
     let mut dependents = false;
@@ -138,14 +157,20 @@ fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
         Global::crash();
     }
 
-    let resolve = |part: &[u8], path_buf: &mut [u8]| -> Prepared<Box<[u8]>> {
-        let Some(joined) =
-            join_abs_string_buf_checked::<platform::Posix>(original_cwd, path_buf, &[part])
-        else {
-            Output::err_generic("--filter \"{}\" path is too long", (BStr::new(raw),));
-            Global::crash();
+    let mut resolve = |part: &[u8], path_buf: &mut [u8]| -> Prepared<PathGlob> {
+        let mut join = |part: &[u8]| -> Box<[u8]> {
+            let Some(joined) =
+                join_abs_string_buf_checked::<platform::Posix>(original_cwd, path_buf, &[part])
+            else {
+                Output::err_generic("--filter \"{}\" path is too long", (BStr::new(raw),));
+                Global::crash();
+            };
+            strings::without_trailing_slash(joined).into()
         };
-        Prepared::new(strings::without_trailing_slash(joined).into())
+        let joined = join(part);
+        let cwd_posix = cwd_posix.get_or_insert_with(|| join(b"."));
+        let base_len = bun_glob::literal_base_len(cwd_posix, &joined);
+        Prepared::new(PathGlob { joined, base_len })
     };
 
     let base = if remain == b"*" || remain == b"**" {
@@ -178,15 +203,24 @@ fn base_matches(base: &Base, c: &Candidate<'_>, explicit_root_only: bool) -> boo
             }
         }
         Base::Name(glob) => glob.r#match(c.name).matches(),
-        Base::Path(glob) => glob.r#match(c.abs_posix_dir).matches(),
-        Base::Subtree(glob) => {
-            let mut dir = c.abs_posix_dir;
+        // A selector that spells a workspace directory selects it, whatever else it matches as a glob.
+        Base::Path(path) => {
+            let PathGlob { joined, base_len } = path.source();
+            c.abs_posix_dir == &**joined || path.match_under(&joined[..*base_len], c.abs_posix_dir)
+        }
+        Base::Subtree(path) => {
+            let PathGlob { joined, base_len } = path.source();
+            let (base, tail) = joined.split_at(*base_len);
+            let Some(mut below) = bun_glob::strip_base(base, c.abs_posix_dir) else {
+                return false;
+            };
             loop {
-                if glob.r#match(dir).matches() {
+                if below == tail || path.r#match(below).matches() {
                     return true;
                 }
-                match strings::last_index_of_char(dir, b'/') {
-                    Some(i) if i > 0 => dir = &dir[..i],
+                match strings::last_index_of_char(below, b'/') {
+                    // Up to `base` itself, but never up to the filesystem root.
+                    Some(i) if base.len() + i > 0 => below = &below[..i],
                     _ => return false,
                 }
             }
@@ -271,9 +305,10 @@ pub fn select(
     let mut any_positive = false;
     let mut unmatched_patterns: Vec<usize> = Vec::new();
     let mut path_buf = path_buffer_pool::get();
+    let mut cwd_posix = None;
 
     for (index, raw) in patterns.iter().enumerate() {
-        let sel = parse(raw, original_cwd, &mut path_buf.0);
+        let sel = parse(raw, original_cwd, &mut cwd_posix, &mut path_buf.0);
         let mut set = bitset(n);
         for (i, c) in candidates.iter().enumerate() {
             if base_matches(&sel.base, c, explicit_root_only) {

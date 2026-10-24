@@ -209,14 +209,6 @@ impl PackageJSON {
                 .filter_map(move |row| Some((row.value.as_str()?, group.behavior)))
         })
     }
-
-    /// Normalize path separators to forward slashes for glob matching
-    /// This is needed because glob patterns use forward slashes but Windows uses backslashes
-    fn normalize_path_for_glob(path: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError> {
-        let mut normalized = path.to_vec();
-        bun_paths::slashes_to_posix_in_place(&mut normalized[..]);
-        Ok(normalized)
-    }
 }
 
 #[derive(Default)]
@@ -237,53 +229,66 @@ pub enum SideEffects {
 
 type SideEffectsMap = bun_collections::HashMap<StringHashMapUnownedKey, ()>;
 
-type GlobList = Vec<glob::Prepared<Box<[u8]>>>;
+type GlobList = Vec<SideEffectsGlob>;
+
+/// A glob entry of "sideEffects", joined onto the package directory.
+pub struct SideEffectsGlob {
+    /// The joined entry after its first `base_len` bytes, with `/` separators. Only this is glob syntax.
+    tail: glob::Prepared<Box<[u8]>>,
+    /// The first `base_len` bytes of the package.json's path: its directory, or less when `..` in the entry climbed out.
+    base_len: u32,
+}
+
+impl SideEffectsGlob {
+    fn init(package_dir: &[u8], joined: &[u8]) -> Self {
+        let base_len = glob::literal_base_len(package_dir, joined);
+        let mut tail: Box<[u8]> = joined[base_len..].into();
+        bun_paths::slashes_to_posix_in_place(&mut tail[..]);
+        Self {
+            tail: glob::Prepared::new(tail),
+            base_len: base_len as u32,
+        }
+    }
+}
 
 pub struct MixedPatterns {
     pub(crate) exact: SideEffectsMap,
     pub(crate) globs: GlobList,
 }
 
-impl SideEffects {
+impl PackageJSON {
     pub(crate) fn has_side_effects(&self, path: &[u8]) -> bool {
-        match self {
+        match &self.side_effects {
             SideEffects::Unspecified => true,
             SideEffects::False => false,
             SideEffects::Map(map) => map.contains_key(&StringHashMapUnownedKey::init(path)),
-            SideEffects::Glob(glob_list) => {
-                // Normalize path for cross-platform glob matching
-                let Ok(normalized_path) = PackageJSON::normalize_path_for_glob(path) else {
-                    return true;
-                };
-
-                for pattern in glob_list.iter() {
-                    if pattern.r#match(&normalized_path).matches() {
-                        return true;
-                    }
-                }
-                false
-            }
+            SideEffects::Glob(globs) => self.any_side_effects_glob_matches(globs, path),
             SideEffects::Mixed(mixed) => {
-                // First check exact matches
-                if mixed
+                mixed
                     .exact
                     .contains_key(&StringHashMapUnownedKey::init(path))
-                {
-                    return true;
-                }
-                // Then check glob patterns with normalized path
-                let Ok(normalized_path) = PackageJSON::normalize_path_for_glob(path) else {
-                    return true;
-                };
-
-                for pattern in mixed.globs.iter() {
-                    if pattern.r#match(&normalized_path).matches() {
-                        return true;
-                    }
-                }
-                false
+                    || self.any_side_effects_glob_matches(&mixed.globs, path)
             }
         }
+    }
+
+    fn any_side_effects_glob_matches(&self, globs: &[SideEffectsGlob], path: &[u8]) -> bool {
+        let package_json_path = self.source.path.text;
+        let mut base_len = None;
+        let mut below_base = None;
+        for entry in globs {
+            // Every entry without `..` has the same directory part: strip it once.
+            if base_len != Some(entry.base_len) {
+                base_len = Some(entry.base_len);
+                below_base = glob::strip_base(&package_json_path[..entry.base_len as usize], path);
+            }
+            if let Some(below_base) = below_base
+                && entry.tail.r#match(below_base).matches()
+            {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -756,11 +761,9 @@ impl PackageJSON {
                                 || strings::contains_char(name, b'{')
                                 || glob::has_extglob_prefix(name)
                             {
-                                // Normalize pattern to use forward slashes for cross-platform compatibility
-                                let normalized_pattern = Self::normalize_path_for_glob(pattern)
-                                    .unwrap_or_else(|_| pattern.to_vec());
-                                glob_list.push(glob::Prepared::new(
-                                    normalized_pattern.into_boxed_slice(),
+                                glob_list.push(SideEffectsGlob::init(
+                                    json_source.path.name().dir,
+                                    pattern,
                                 ));
                             } else {
                                 let _ = map.insert(StringHashMapUnownedKey::init(pattern), ());
@@ -786,11 +789,8 @@ impl PackageJSON {
                                 [json_source.path.name().dir_with_trailing_slash(), name];
 
                             let pattern = r_fs.join(&mut spill, &joined);
-                            // Normalize pattern to use forward slashes for cross-platform compatibility
-                            let normalized_pattern = Self::normalize_path_for_glob(pattern)
-                                .unwrap_or_else(|_| pattern.to_vec());
                             glob_list
-                                .push(glob::Prepared::new(normalized_pattern.into_boxed_slice()));
+                                .push(SideEffectsGlob::init(json_source.path.name().dir, pattern));
                         }
                     }
                     package_json.side_effects = SideEffects::Glob(glob_list);

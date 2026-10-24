@@ -8,13 +8,13 @@ import { closeSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const OLD = "OLD-CONTENT-0123456789ABCDEF";
-const writeStdout = `process.stdout.write("NEW")`;
+// The children use fs on the fd numbers: process.stdout and process.stdin load slowly in a debug build.
+const writeStdout = `require("fs").writeSync(1, "NEW")`;
+const echoStdin = `const fs = require("fs"); fs.writeSync(1, fs.readFileSync(0))`;
 
 // Writes "NEW" to `fd`. On the other stream it reports how large the file at `fd` was when the child started.
-const sizeThenWrite = (fd: 1 | 2) => {
-  const [slot, other] = fd === 1 ? ["stdout", "stderr"] : ["stderr", "stdout"];
-  return `process.${other}.write(String(require("fs").fstatSync(${fd}).size)); process.${slot}.write("NEW")`;
-};
+const sizeThenWrite = (fd: 1 | 2) =>
+  `const fs = require("fs"); fs.writeSync(${fd === 1 ? 2 : 1}, String(fs.fstatSync(${fd}).size)); fs.writeSync(${fd}, "NEW")`;
 
 describe("Bun.file(path) as stdout or stderr replaces the file", () => {
   const forms = [
@@ -52,7 +52,7 @@ describe("Bun.file(path) as stdout or stderr replaces the file", () => {
       using dir = tempDir("spawn-stdio-file", { "both.txt": OLD });
       const both = join(String(dir), "both.txt");
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+        cmd: [bunExe(), "-e", echoStdin],
         env: bunEnv,
         stdin: Bun.file(both),
         stdout: Bun.file(both),
@@ -133,7 +133,7 @@ describe.concurrent("slots that keep the content of the file", () => {
     using dir = tempDir("spawn-stdio-file", { "in.txt": OLD });
     const input = join(String(dir), "in.txt");
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+      cmd: [bunExe(), "-e", echoStdin],
       env: bunEnv,
       stdin: Bun.file(input),
       stdout: "pipe",
@@ -204,7 +204,7 @@ describe.concurrent("slots that keep the content of the file", () => {
     const fd = openSync(out, "w");
     try {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", `process.stdout.write("out\\n"); process.stderr.write("err\\n")`],
+        cmd: [bunExe(), "-e", `const fs = require("fs"); fs.writeSync(1, "out\\n"); fs.writeSync(2, "err\\n")`],
         env: bunEnv,
         stdout: fd,
         stderr: fd,

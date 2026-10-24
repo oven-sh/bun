@@ -270,10 +270,11 @@ describe.each([
   { target: "a Response that wraps Bun.file(path)", file: (path: string) => new Response(Bun.file(path)) },
 ])("external command redirected to $target", ({ file }) => {
   const OLD = "OLD-OLD-OLD-OLD\n";
-  const writeStdout = `process.stdout.write("new\\n")`;
-  const writeStderr = `process.stderr.write("new\\n")`;
-  const writeBoth = `process.stdout.write("out\\n"); process.stderr.write("err\\n")`;
-  const echoStdin = "process.stdin.pipe(process.stdout)";
+  // The children use fs on the fd numbers: process.stdout and process.stdin load slowly in a debug build.
+  const writeStdout = `require("fs").writeSync(1, "new\\n")`;
+  const writeStderr = `require("fs").writeSync(2, "new\\n")`;
+  const writeBoth = `const fs = require("fs"); fs.writeSync(1, "out\\n"); fs.writeSync(2, "err\\n")`;
+  const echoStdin = `const fs = require("fs"); fs.writeSync(1, fs.readFileSync(0))`;
 
   test.concurrent("> replaces the file", async () => {
     using dir = tempDir("shell-file-redirect", { "out.txt": OLD });

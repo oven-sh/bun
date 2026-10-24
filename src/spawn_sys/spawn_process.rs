@@ -448,15 +448,13 @@ impl PosixStdio {
     }
 }
 
-/// `bun_sys::O` flags that open a `Path` stdio at child fd `slot`, on every
-/// platform. stdout and stderr replace the file, like `>`. An extra slot opens
-/// like `n<>file`: the child can read it or write it, so it is not truncated.
+/// `bun_sys::O` flags that open a `Path` stdio at child fd `slot`, on every platform.
 pub const fn path_slot_open_flags(slot: usize) -> i32 {
     use bun_sys::O;
     match slot {
         0 => O::RDONLY | O::CREAT,
-        1 | 2 => O::WRONLY | O::CREAT | O::TRUNC,
-        _ => O::RDWR | O::CREAT,
+        1 | 2 => O::WRONLY | O::CREAT | O::TRUNC, // like `>`
+        _ => O::RDWR | O::CREAT, // like `n<>file`: the child can read it or write it
     }
 }
 

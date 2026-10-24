@@ -781,8 +781,7 @@ impl Cmd {
                     let req = unsafe { &*req };
                     req.get_body_value().to_blob_if_possible();
                     let body = req.get_body_value().use_as_any_blob();
-                    // A file with a path opens like `> path`, so the operator decides the
-                    // flags. `Stdio::Path` would open it with the flags of `Bun.spawn`.
+                    // As `Stdio::Path` it would get the flags of `Bun.spawn`, not of the operator.
                     if let Some(path) = file_path(&body) {
                         let mut path_buf = path.to_vec();
                         path_buf.push(0);
@@ -843,8 +842,7 @@ impl Cmd {
         Ok(None)
     }
 
-    /// Opens `path` with the flags of the redirect operator and gives the fd to
-    /// the redirected slots. Returns the queued error write when the open fails.
+    /// Opens `path` with the flags of the redirect operator. `Some` is the queued error write.
     fn open_redirect_path(
         interp: &Interpreter,
         this: NodeId,

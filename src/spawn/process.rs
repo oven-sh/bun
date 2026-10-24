@@ -2413,9 +2413,7 @@ mod spawn_process_body {
         };
         let flags = uv::O::from_bun_o(bun_spawn_sys::path_slot_open_flags(slot));
         let rc = open(flags);
-        // CREATE_ALWAYS refuses an existing hidden or system file
-        // (https://github.com/oven-sh/bun/issues/6820). Open that file in place and
-        // empty it. Every other EPERM stays the error of the first open.
+        // CREATE_ALWAYS refuses a hidden file (https://github.com/oven-sh/bun/issues/6820).
         if flags & uv::O::TRUNC != 0 && rc.errno() == Some(bun_sys::E::EPERM) {
             let in_place = open(flags & !(uv::O::CREAT | uv::O::TRUNC));
             if !in_place.is_err() {

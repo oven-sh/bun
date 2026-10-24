@@ -1109,11 +1109,9 @@ fn lower_update(
 
             // Unlike upstream: the store prints as the update expression, see `MemberUpdate`. So it
             // is the value of a postfix update too.
-            let is_as_written = builder
-                .environment()
-                .config
-                .member_updates_print_as_written;
-            let update = is_as_written.then_some(MemberUpdate::UpdateExpression { operation, prefix });
+            let is_as_written = builder.environment().config.member_updates_print_as_written;
+            let update =
+                is_as_written.then_some(MemberUpdate::UpdateExpression { operation, prefix });
             let new_value_place = match lowered_property {
                 MemberProperty::Literal(prop_literal) => lower_value_to_temporary(
                     builder,

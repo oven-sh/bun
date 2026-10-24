@@ -706,7 +706,7 @@ impl Builtin {
                         return Some(Yield::Failed(cmd));
                     }
                     if redirect.stdin()
-                        && crate::shell::util::throw_if_body_not_in_memory(global, body).is_err()
+                        && crate::shell::util::throw_if_body_unavailable(global, body).is_err()
                     {
                         return Some(Yield::Failed(cmd));
                     }

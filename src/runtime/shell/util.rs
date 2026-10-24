@@ -11,10 +11,12 @@ pub(crate) enum OutKind {
 pub(crate) use crate::api::bun_spawn::stdio::Stdio;
 
 /// A `< ${response}` redirect takes the whole body when the command starts, so
-/// the bytes have to be in memory by then. For a body that is not,
-/// `use_as_any_blob()` and `use_()` hand back an empty `Blob`, and the command
-/// reads zero bytes and exits 0. Throws for such a body and leaves it unread.
-pub(crate) fn throw_if_body_not_in_memory(
+/// the body has to be bytes in memory or a file by then. For a stream, a used
+/// or a failed body, `use_as_any_blob()` and `use_()` hand back an empty
+/// `Blob`, and an S3-backed `Blob` has no bytes to read: the command reads
+/// zero bytes and exits 0, or never sees the end of its stdin. Throws for such
+/// a body and leaves it unread.
+pub(crate) fn throw_if_body_unavailable(
     global: &crate::jsc::JSGlobalObject,
     body: &mut crate::webcore::body::Value,
 ) -> crate::jsc::JsResult<()> {
@@ -55,6 +57,9 @@ pub(crate) fn throw_if_body_not_in_memory(
         }
         Value::Used => Err(already_used()),
         Value::Error(err) => Err(global.throw_value(err.to_js(global))),
+        Value::Blob(blob) if blob.is_s3() => Err(global.throw(format_args!(
+            "A Response with an S3-backed body is not supported as a shell redirect yet. To redirect from it, pass its bytes: `< ${{await response.bytes()}}`"
+        ))),
         Value::Blob(_)
         | Value::WTFStringImpl(_)
         | Value::InternalBlob(_)

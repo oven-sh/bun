@@ -781,7 +781,7 @@ impl Cmd {
                     let req = unsafe { &*req };
                     req.get_body_value().to_blob_if_possible();
                     if flags.stdin() {
-                        crate::shell::util::throw_if_body_not_in_memory(
+                        crate::shell::util::throw_if_body_unavailable(
                             global,
                             req.get_body_value(),
                         )?;

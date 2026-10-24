@@ -179,7 +179,7 @@ You can redirect from these JavaScript objects:
 - `Blob` (reads from the blob)
 - `Response` (reads from the body)
 
-Bun reads the whole `Response` body when the command starts, so the body must be in memory by then. A `Response` whose body is a `ReadableStream` throws an error. So does a `fetch()` response that is still downloading ([#42785](https://github.com/oven-sh/bun/issues/42785) tracks support for both). Buffer the body into a `Blob` first:
+Bun takes the whole `Response` body when the command starts, so the whole body must be available by then. A `Response` whose body is a `ReadableStream` throws an error. So does a `fetch()` response that is still downloading ([#42785](https://github.com/oven-sh/bun/issues/42785) tracks support for both). Buffer the body into a `Blob` first:
 
 ```js
 import { $ } from "bun";

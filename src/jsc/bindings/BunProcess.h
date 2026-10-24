@@ -36,6 +36,9 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<Unknown> m_execArgv;
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
+    // What `console._stdout` and `console._stderr` of the global console return, indexed by ConsoleStream. The
+    // native console does not write to them.
+    WriteBarrier<Unknown> m_consoleStream[2];
 
     void installDefaultWarningListener(JSC::VM&);
 
@@ -83,6 +86,14 @@ public:
     void emitOnNextTick(Zig::GlobalObject* globalObject, ASCIILiteral eventName, JSValue event);
 
     JSObject* ensureOnWarning(Zig::GlobalObject*);
+
+    enum class ConsoleStream : uint8_t {
+        Stdout,
+        Stderr,
+    };
+    // The first read takes process.stdout / process.stderr and keeps it. Can throw.
+    JSValue consoleStream(JSC::JSGlobalObject*, ConsoleStream);
+    void setConsoleStream(JSC::VM& vm, ConsoleStream stream, JSValue value) { m_consoleStream[static_cast<unsigned>(stream)].set(vm, this, value); }
 
     static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
     static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
@@ -148,5 +159,8 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionReportUncaughtException);
 
 // process.cwd() as a JSString, cached on the process object until it changes.
 JSC::JSValue getCachedCwd(JSC::JSGlobalObject*);
+
+// Defines `_stdout` and `_stderr` on the global console of `globalObject`.
+void bindConsoleStreamsLazy(JSC::VM&, Zig::GlobalObject*, JSC::JSObject* console);
 
 } // namespace Bun

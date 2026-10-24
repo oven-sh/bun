@@ -91,11 +91,7 @@ pub(crate) mod js_bundler {
             drop(blob_or_string);
 
             if let Err(conflict) = this.put(prop.to_owned_slice(), bytes) {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "files: the keys \"{}\" and \"{}\" name the same file and have different contents",
-                    bstr::BStr::new(&conflict.other),
-                    bstr::BStr::new(&conflict.key),
-                )));
+                return Err(global_this.throw_invalid_arguments(format_args!("{conflict}")));
             }
         }
 

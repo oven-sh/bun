@@ -103,8 +103,8 @@ pub struct BundleV2<'a> {
     /// construction. All ~15 DevServer call sites go through this.
     pub dev_server: Option<dispatch::DevServerHandle>,
     /// In-memory files that can be used as entrypoints or imported.
-    /// This is a pointer to the FileMap in the completion config.
-    pub file_map: Option<&'a FileMap>,
+    /// This is a pointer to the FileMap in the completion config. `set_file_map` sets it.
+    pub(crate) file_map: Option<&'a FileMap>,
     pub(crate) source_code_length: usize,
 
     /// There is a race condition where an onResolve plugin may schedule a task
@@ -920,6 +920,9 @@ pub mod bv2_impl {
                 map: bun_collections::StringHashMap<File>,
                 /// A key that is not absolute, as written, to the key of its file in `map`.
                 spelled: bun_collections::StringHashMap<Box<[u8]>>,
+                /// The path that the disk resolver gives the file of a key, when a symlink makes it
+                /// another path than the key. `bind` fills it.
+                linked: bun_collections::StringHashMap<Linked>,
                 /// The working directory of the `Bun.build()` call.
                 cwd: &'static [u8],
             }
@@ -931,26 +934,53 @@ pub mod bv2_impl {
                 absolute: bool,
                 /// The display path of a file that a relative path names: its path from the cwd.
                 pretty: Option<Box<[u8]>>,
-                /// Whether a file is on disk at the path: 0 not asked yet, 1 no, 2 yes.
-                on_disk: core::sync::atomic::AtomicU8,
+                on_disk: OnDisk,
             }
 
-            impl File {
-                fn is_on_disk(&self, path: &[u8]) -> bool {
+            /// A file that a key names through a symlink.
+            struct Linked {
+                /// The path of that key in `map`.
+                key: Box<[u8]>,
+                on_disk: OnDisk,
+            }
+
+            /// Whether a file is on disk at one path: 0 not asked yet, 1 no, 2 yes.
+            #[derive(Default)]
+            struct OnDisk(core::sync::atomic::AtomicU8);
+
+            impl OnDisk {
+                fn is(&self, path: &[u8]) -> bool {
                     use core::sync::atomic::Ordering::Relaxed;
-                    match self.on_disk.load(Relaxed) {
+                    match self.0.load(Relaxed) {
                         0 => {
                             let on_disk = bun_sys::exists(path);
-                            self.on_disk.store(if on_disk { 2 } else { 1 }, Relaxed);
+                            self.0.store(if on_disk { 2 } else { 1 }, Relaxed);
                             on_disk
                         }
                         asked => asked == 2,
                     }
                 }
+            }
+
+            /// A file that a lookup found.
+            #[derive(Clone, Copy)]
+            struct Found<'a> {
+                /// The path of the key. The module of the in-memory route has this path.
+                path: &'a [u8],
+                file: &'a File,
+                /// The path that the lookup asked for: `path`, or the real path of the file.
+                asked: &'a [u8],
+                on_disk: &'a OnDisk,
+            }
+
+            impl Found<'_> {
+                fn is_on_disk(&self) -> bool {
+                    self.on_disk.is(self.asked)
+                }
 
                 /// The disk resolver resolves the module. The parse task reads the key.
-                fn overrides_disk(&self, path: &[u8]) -> bool {
-                    self.pretty.is_some() && !self.absolute && self.is_on_disk(path)
+                fn overrides_disk(&self) -> bool {
+                    self.file.pretty.is_some() && !self.file.absolute && self.is_on_disk()
                 }
             }
 
@@ -958,6 +988,17 @@ pub mod bv2_impl {
             pub struct KeyConflict {
                 pub key: Vec<u8>,
                 pub other: Box<[u8]>,
+            }
+
+            impl core::fmt::Display for KeyConflict {
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    write!(
+                        f,
+                        "files: the keys \"{}\" and \"{}\" name the same file and have different contents",
+                        bstr::BStr::new(&self.other),
+                        bstr::BStr::new(&self.key),
+                    )
+                }
             }
 
             impl FileMap {
@@ -1015,12 +1056,7 @@ pub mod bv2_impl {
                     if !entry.found_existing {
                         file.contents = contents;
                     } else if *file.contents != *contents {
-                        let earlier = if file.absolute {
-                            None
-                        } else {
-                            self.spelled.iter().find(|(_, of)| ***of == *path)
-                        };
-                        let other = Box::from(earlier.map_or(path, |(text, _)| &**text));
+                        let other = Box::from(self.written(path));
                         return Err(KeyConflict { key, other });
                     }
                     file.absolute |= is_absolute;
@@ -1032,6 +1068,90 @@ pub mod bv2_impl {
                         self.spelled.put_assume_capacity(&key, of);
                     }
                     Ok(())
+                }
+
+                /// A key, as the user wrote it, whose file is stored under `path`.
+                fn written(&self, path: &[u8]) -> &[u8] {
+                    let (path, file) = self.map.get_key_value(path).expect("`path` is a key");
+                    if file.absolute {
+                        return path;
+                    }
+                    let relative = self.spelled.iter().find(|(_, of)| ***of == **path);
+                    relative.map_or(path, |(text, _)| &**text)
+                }
+
+                /// File each path key also under the path that the disk resolver gives its file,
+                /// when a symlink on the way to its directory makes that another path. A lookup
+                /// with the path of a module then finds the key. The bundle thread calls this
+                /// once, before any lookup. The error has the real path that two keys share.
+                pub(crate) fn bind(
+                    &mut self,
+                    resolver: &mut bun_resolver::Resolver<'_>,
+                ) -> Result<(), (KeyConflict, Box<[u8]>)> {
+                    let mut dirs = bun_resolver::RealDirs::default();
+                    // The real path of a file, then the path of its key.
+                    let mut linked: Vec<(Box<[u8]>, &[u8])> = Vec::new();
+                    for (path, file) in self.map.iter() {
+                        // A name is not a path.
+                        if (file.absolute || file.pretty.is_some())
+                            && let Some(real) = resolver.real_path_below_links(&mut dirs, path)
+                            && Self::is_normalized(path)
+                        {
+                            linked.push((Self::spelled_like_a_key(real), path));
+                        }
+                    }
+                    // The map has no order. Two keys for one file are the same two in every build.
+                    linked.sort_unstable();
+                    for (real, path) in linked {
+                        let other = match self.map.get_key_value(&*real) {
+                            Some((other, _)) => Some(&**other),
+                            None => self.linked.get(&*real).map(|linked| &*linked.key),
+                        };
+                        let Some(other) = other else {
+                            let linked = Linked {
+                                key: Box::from(path),
+                                on_disk: OnDisk::default(),
+                            };
+                            bun_core::handle_oom(self.linked.put(&real, linked));
+                            continue;
+                        };
+                        // The other key has the real path already.
+                        if self.map[path].contents != self.map[other].contents {
+                            let conflict = KeyConflict {
+                                key: self.written(path).to_vec(),
+                                other: Box::from(self.written(other)),
+                            };
+                            return Err((conflict, real));
+                        }
+                    }
+                    Ok(())
+                }
+
+                /// False for an absolute key with an empty, `.` or `..` segment. `put` stores such a
+                /// key as written, and no module has a path like that.
+                fn is_normalized(path: &[u8]) -> bool {
+                    use bun_core::strings::contains;
+                    // Windows: a UNC path starts with two separators.
+                    !path.get(1..).is_some_and(|path| contains(path, b"//"))
+                        && !contains(path, b"/./")
+                        && !contains(path, b"/../")
+                        && !path.ends_with(b"/")
+                        && !path.ends_with(b"/.")
+                        && !path.ends_with(b"/..")
+                }
+
+                /// A path from the resolver, with the separators and the drive letter that `put`
+                /// gives a key.
+                fn spelled_like_a_key(path: Vec<u8>) -> Box<[u8]> {
+                    #[cfg(windows)]
+                    let path = {
+                        let mut path = path;
+                        bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
+                            &mut path,
+                        );
+                        path
+                    };
+                    path.into_boxed_slice()
                 }
 
                 /// A path: `./a`, `../a`, or a file extension and no scheme. Any other key is a name.
@@ -1062,19 +1182,40 @@ pub mod bv2_impl {
                     Some(spelled)
                 }
 
-                /// The file stored under `path`, with the path the map owns.
-                fn file(&self, path: &[u8]) -> Option<(&[u8], &File)> {
+                /// The file stored under `path`, or the file that has `path` as its real path.
+                fn file(&self, path: &[u8]) -> Option<Found<'_>> {
                     #[cfg(windows)]
                     let mut buf = bun_paths::path_buffer_pool::get();
                     #[cfg(windows)]
                     let path = Self::spell(path, &mut **buf)?;
-                    self.map
-                        .get_key_value(path)
-                        .map(|(path, file)| (path.as_ref(), file))
+                    self.found(path)
+                }
+
+                /// `path` is spelled as `put` spells a key.
+                fn found(&self, path: &[u8]) -> Option<Found<'_>> {
+                    if let Some((path, file)) = self.map.get_key_value(path) {
+                        return Some(Found {
+                            path,
+                            file,
+                            asked: path,
+                            on_disk: &file.on_disk,
+                        });
+                    }
+                    if self.linked.is_empty() {
+                        return None;
+                    }
+                    let (asked, linked) = self.linked.get_key_value(path)?;
+                    let (path, file) = self.map.get_key_value(&*linked.key)?;
+                    Some(Found {
+                        path,
+                        file,
+                        asked,
+                        on_disk: &linked.on_disk,
+                    })
                 }
 
                 /// The file of the key written as `text`, for a key that is not absolute.
-                fn file_spelled(&self, text: &[u8]) -> Option<(&[u8], &File)> {
+                fn file_spelled(&self, text: &[u8]) -> Option<Found<'_>> {
                     if self.spelled.is_empty() {
                         return None;
                     }
@@ -1083,13 +1224,11 @@ pub mod bv2_impl {
                     #[cfg(windows)]
                     let text = Self::spell(text, &mut **buf)?;
                     let path = self.spelled.get(text)?;
-                    self.map
-                        .get_key_value(&**path)
-                        .map(|(path, file)| (path.as_ref(), file))
+                    self.found(path)
                 }
 
                 /// The file at `specifier` joined onto `dir`, if that path fits a path buffer.
-                fn file_in_dir(&self, dir: &[u8], specifier: &[u8]) -> Option<(&[u8], &File)> {
+                fn file_in_dir(&self, dir: &[u8], specifier: &[u8]) -> Option<Found<'_>> {
                     let mut buf = bun_paths::path_buffer_pool::get();
                     // `Loose` keeps a Windows drive letter.
                     let joined_len = bun_paths::resolve_path::join_abs_string_buf_checked::<
@@ -1100,9 +1239,7 @@ pub mod bv2_impl {
                     bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
                         &mut buf[..joined_len],
                     );
-                    self.map
-                        .get_key_value(&buf[..joined_len])
-                        .map(|(path, file)| (path.as_ref(), file))
+                    self.found(&buf[..joined_len])
                 }
 
                 /// `path` is the path of a module, or the text of a key that a plugin resolved to.
@@ -1112,13 +1249,13 @@ pub mod bv2_impl {
                     } else {
                         self.file_spelled(path)
                     };
-                    found.map(|(_, file)| &*file.contents)
+                    found.map(|found| &*found.file.contents)
                 }
 
                 /// The file of the key that is written exactly as `entry_point`.
-                fn file_written_as(&self, entry_point: &[u8]) -> Option<(&[u8], &File)> {
+                fn file_written_as(&self, entry_point: &[u8]) -> Option<Found<'_>> {
                     if bun_paths::is_absolute_loose(entry_point) {
-                        self.file(entry_point).filter(|(_, file)| file.absolute)
+                        self.file(entry_point).filter(|found| found.file.absolute)
                     } else {
                         self.file_spelled(entry_point)
                     }
@@ -1134,20 +1271,20 @@ pub mod bv2_impl {
                     self.entry_point(entry_point).is_some()
                 }
 
-                fn entry_point(&self, entry_point: &[u8]) -> Option<(&[u8], &File)> {
+                fn entry_point(&self, entry_point: &[u8]) -> Option<Found<'_>> {
                     if entry_point.is_empty() {
                         return None;
                     }
-                    if let Some((path, file)) = self.file_written_as(entry_point) {
-                        return (!file.overrides_disk(path)).then_some((path, file));
+                    if let Some(found) = self.file_written_as(entry_point) {
+                        return (!found.overrides_disk()).then_some(found);
                     }
-                    let (path, file) = if bun_paths::is_absolute_loose(entry_point) {
+                    let found = if bun_paths::is_absolute_loose(entry_point) {
                         self.file(entry_point)?
                     } else {
                         self.file_in_dir(self.cwd, entry_point)?
                     };
                     // Not written like the key: a file on disk keeps the disk resolver's route.
-                    (!file.is_on_disk(path)).then_some((path, file))
+                    (!found.is_on_disk()).then_some(found)
                 }
 
                 /// The in-memory file that an entry point names by text, or by path from the cwd.
@@ -1156,8 +1293,7 @@ pub mod bv2_impl {
                     arena: &bun_alloc::Arena,
                     entry_point: &[u8],
                 ) -> Option<bun_resolver::Result> {
-                    let (path, file) = self.entry_point(entry_point)?;
-                    Some(Self::result(arena, path, file))
+                    Some(Self::result(arena, self.entry_point(entry_point)?))
                 }
 
                 /// `./a` and `../a` name the file beside `source_file` first, others the key text.
@@ -1170,12 +1306,12 @@ pub mod bv2_impl {
                     if specifier.is_empty() {
                         return None;
                     }
-                    let (path, file) = if bun_paths::is_absolute_loose(specifier) {
-                        let (path, file) = self.file(specifier)?;
-                        if file.overrides_disk(path) {
+                    let found = if bun_paths::is_absolute_loose(specifier) {
+                        let found = self.file(specifier)?;
+                        if found.overrides_disk() {
                             return None;
                         }
-                        (path, file)
+                        found
                     } else if bun_paths::is_package_path_not_absolute(specifier) {
                         match self.file_spelled(specifier) {
                             Some(found) => found,
@@ -1183,20 +1319,16 @@ pub mod bv2_impl {
                         }
                     } else {
                         match self.file_beside(source_file, specifier) {
-                            Some((path, file)) if file.overrides_disk(path) => return None,
+                            Some(found) if found.overrides_disk() => return None,
                             Some(found) => found,
                             None => self.file_spelled(specifier)?,
                         }
                     };
-                    Some(Self::result(arena, path, file))
+                    Some(Self::result(arena, found))
                 }
 
                 /// The file at `specifier` joined onto the directory of `source_file`.
-                fn file_beside(
-                    &self,
-                    source_file: &[u8],
-                    specifier: &[u8],
-                ) -> Option<(&[u8], &File)> {
+                fn file_beside(&self, source_file: &[u8], specifier: &[u8]) -> Option<Found<'_>> {
                     // `source_file` may itself be relative (e.g. on Windows).
                     let mut abs_source_buf = bun_paths::path_buffer_pool::get();
                     let abs_source_file: &[u8] = if bun_paths::is_absolute_loose(source_file) {
@@ -1241,11 +1373,7 @@ pub mod bv2_impl {
                 }
 
                 /// Copies into the arena of the build. `pretty` is set for a relative path only.
-                fn result(
-                    arena: &bun_alloc::Arena,
-                    path: &[u8],
-                    file: &File,
-                ) -> bun_resolver::Result {
+                fn result(arena: &bun_alloc::Arena, found: Found<'_>) -> bun_resolver::Result {
                     // SAFETY: ARENA — `arena` is the build-pass bump arena
                     // (never freed before the `Result` is consumed); detaching the
                     // borrow lifetime matches the established `Path<'static>`
@@ -1255,8 +1383,9 @@ pub mod bv2_impl {
                         // SAFETY: see ARENA note above — bytes live in the build-pass arena.
                         unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(bytes)) }
                     };
-                    let mut primary = crate::bun_fs::Path::init_with_namespace(dupe(path), b"file");
-                    if let Some(pretty) = &file.pretty {
+                    let mut primary =
+                        crate::bun_fs::Path::init_with_namespace(dupe(found.path), b"file");
+                    if let Some(pretty) = &found.file.pretty {
                         primary.pretty = dupe(pretty);
                     }
                     bun_resolver::Result {
@@ -5943,6 +6072,27 @@ pub mod bv2_impl {
             for free in self.free_list.drain(..) {
                 drop(free);
             }
+        }
+
+        /// Give the build its `files`. A lookup needs what `FileMap::bind` stores, so this is the
+        /// one way to set them.
+        pub fn set_file_map(&mut self, files: &'a mut crate::bundle_v2::FileMap) {
+            if let Err((conflict, real_path)) = files.bind(&mut self.transpiler.resolver) {
+                let note = format!(
+                    "The real path of the file is \"{}\"",
+                    bstr::BStr::new(&real_path)
+                );
+                self.transpiler.log_mut().add_range_error_with_notes(
+                    None,
+                    Default::default(),
+                    conflict.to_string().into_bytes(),
+                    Box::new([bun_ast::Data {
+                        text: note.into_bytes().into(),
+                        ..Default::default()
+                    }]),
+                );
+            }
+            self.file_map = Some(files);
         }
 
         pub fn run_from_js_in_new_thread(

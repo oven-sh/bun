@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
-import { join } from "node:path";
+import { mkdirSync, statSync, symlinkSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -708,7 +709,9 @@ describe("bundler files option", () => {
       string,
       { logs: string[]; outputs: string[]; found: string[]; inputs?: string[] } | { threw: string }
     >;
-    const cases: { name: string; files: Record<string, string>; markers: string[]; builds: string }[] = [];
+    // A file is its text, or a symlink to `link`, a path from the directory of the symlink.
+    type Files = Record<string, string | { link: string }>;
+    const cases: { name: string; files: Files; markers: string[]; builds: string }[] = [];
     const reports = new Map<string, Report>();
     let child = { stderr: "the child process did not run", exitCode: null as number | null };
     let root: ReturnType<typeof tempDir> | undefined;
@@ -716,13 +719,16 @@ describe("bundler files option", () => {
 
     // `builds` is the source of an object: name -> Bun.build options. It can
     // call abs(), which is path.resolve(). `chdir` is the directory to call
-    // Bun.build() from. The report has, for each build, the logs, the output
-    // paths from the cwd, each string literal of the outputs that is one of
-    // `markers`, and the inputs of the metafile if there is one. A marker that
-    // starts with "raw:" is any text, not a string literal.
+    // Bun.build() from. `before` is a function to call before the build, for
+    // example linkDirectory(target, path). The report has, for each build, the
+    // logs with their notes, the output paths from the cwd, each string literal
+    // of the outputs that is one of `markers`, and the inputs of the metafile if
+    // there is one: an absolute input is "<case>/" and its path from the
+    // directory of the case. A marker that starts with "raw:" is any text, not a
+    // string literal.
     function buildsIn(
       name: string,
-      files: Record<string, string>,
+      files: Files,
       markers: string[],
       builds: string,
       check: (report: Report, directory: string) => void | Promise<void>,
@@ -740,27 +746,43 @@ describe("bundler files option", () => {
     beforeAll(async () => {
       const tree: Record<string, string> = {
         "scripts/build.mjs": `
+          import { mkdirSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
           import { isAbsolute, join, relative, resolve as abs } from "node:path";
           const root = process.cwd();
+          // Replace the symlink at "path" with one to the directory "target".
+          // Windows: a junction needs no privilege, and its target is absolute.
+          function linkDirectory(target, path) {
+            try {
+              unlinkSync(path);
+            } catch {
+              rmdirSync(path);
+            }
+            symlinkSync(process.platform === "win32" ? abs(target) : target, path, "junction");
+          }
           const cases = [${cases.map((it, index) => `[${JSON.stringify(it.name)}, "${index}", ${JSON.stringify(it.markers)}, () => (${it.builds})],`).join("\n")}];
           for (const [name, directory, markers, builds] of cases) {
             process.chdir(join(root, directory));
             const report = {};
-            for (const [build, { chdir, ...options }] of Object.entries(builds())) {
+            for (const [build, { chdir, before, ...options }] of Object.entries(builds())) {
+              before?.();
               if (chdir) process.chdir(chdir);
               try {
                 const result = await Bun.build({ ...options, throw: false });
                 const texts = await Promise.all(result.outputs.map(output => (options.compile ? "" : output.text())));
                 const text = texts.join("\\n");
                 report[build] = {
-                  logs: result.logs.map(String),
+                  logs: result.logs.map(log => [log, ...(log.notes ?? []).map(note => "note: " + note.message)].join("\\n")),
                   outputs: result.outputs
                     .map(({ path }) => (isAbsolute(path) ? relative(process.cwd(), path) : path).replaceAll("\\\\", "/"))
                     .sort(),
                   found: markers.flatMap(marker =>
                     Array(text.split(marker.startsWith("raw:") ? marker.slice(4) : JSON.stringify(marker)).length - 1).fill(marker),
                   ),
-                  ...(result.metafile && { inputs: Object.keys(result.metafile.inputs).sort() }),
+                  ...(result.metafile && {
+                    inputs: Object.keys(result.metafile.inputs)
+                      .map(input => (isAbsolute(input) ? "<case>/" + relative(join(root, directory), input) : input).replaceAll("\\\\", "/"))
+                      .sort(),
+                  }),
                 };
               } catch (error) {
                 report[build] = { threw: error.message };
@@ -771,11 +793,31 @@ describe("bundler files option", () => {
           }
         `,
       };
+      const links: [path: string, target: string][] = [];
       cases.forEach((it, index) => {
         tree[`${index}/case.txt`] = it.name;
-        for (const [file, text] of Object.entries(it.files)) tree[`${index}/${file}`] = text;
+        for (const [file, text] of Object.entries(it.files)) {
+          if (typeof text === "string") tree[`${index}/${file}`] = text;
+          else links.push([`${index}/${file}`, text.link]);
+        }
       });
       root = tempDir("bundler-files-relative-keys", tree);
+      for (const [path, target] of links) {
+        const from = join(String(root), path);
+        const to = join(dirname(from), target);
+        mkdirSync(dirname(from), { recursive: true });
+        // A symlink can lead nowhere, or to itself.
+        const toDirectory = (() => {
+          try {
+            return statSync(to).isDirectory();
+          } catch {
+            return false;
+          }
+        })();
+        // Windows: a junction needs no privilege, and its target is absolute.
+        if (toDirectory) symlinkSync(isWindows ? to : target, from, "junction");
+        else symlinkSync(target, from, "file");
+      }
       await using proc = Bun.spawn({
         cmd: [bunExe(), join("scripts", "build.mjs")],
         cwd: String(root),
@@ -1445,6 +1487,522 @@ describe("bundler files option", () => {
       isDebug || isASAN,
     );
 
+    // A symlinked directory gives a file two paths. The disk resolver gives a
+    // module its real path. A key names the file by either path.
+    {
+      const fromMemory = `'export const config = "config from memory";'`;
+      const linkedSrc: Files = {
+        "real-src/index.ts": `import { config } from "./config.ts"; console.log(config);`,
+        "real-src/config.ts": `export const config = "config from disk";`,
+        "src": { link: "real-src" },
+      };
+      const markers = ["config from disk", "config from memory"];
+      const inMemory = { logs: [], outputs: ["./index.js"], found: ["config from memory"] };
+      // The module has the path that the disk resolver gives the file.
+      const onDiskRoute = { ...inMemory, inputs: ["real-src/config.ts", "real-src/index.ts"] };
+      // The module has the path of the key.
+      const inMemoryRoute = { ...inMemory, inputs: ["<case>/src/config.ts", "real-src/index.ts"] };
+
+      buildsIn(
+        "a key through a symlinked directory overrides the file",
+        linkedSrc,
+        markers,
+        `(() => {
+          const build = key => ({ entrypoints: ["./src/index.ts"], files: { [key]: ${fromMemory} }, metafile: true });
+          return {
+            "relative key": build("./src/config.ts"),
+            // From here on the resolver has read the directory of the key.
+            "relative key without ./": build("src/config.ts"),
+            "absolute key": build(abs("src/config.ts")),
+            "key by the real path": build("./real-src/config.ts"),
+          };
+        })()`,
+        report => {
+          expect(report).toEqual({
+            "relative key": onDiskRoute,
+            "relative key without ./": onDiskRoute,
+            "absolute key": inMemoryRoute,
+            "key by the real path": onDiskRoute,
+          });
+        },
+      );
+
+      // No import goes through the symlink, so the resolver never reads it.
+      buildsIn(
+        "a key through a symlinked directory overrides a file that is imported by its real path",
+        linkedSrc,
+        markers,
+        `(() => {
+          const build = key => ({ entrypoints: ["./real-src/index.ts"], files: { [key]: ${fromMemory} }, metafile: true });
+          return { "relative key": build("./src/config.ts"), "absolute key": build(abs("src/config.ts")) };
+        })()`,
+        report => {
+          expect(report).toEqual({ "relative key": onDiskRoute, "absolute key": inMemoryRoute });
+        },
+      );
+
+      buildsIn(
+        "a key through a symlinked directory overrides an entry point",
+        linkedSrc,
+        ["config from disk", "entry from memory"],
+        `(() => {
+          const build = (entry, key) => ({
+            entrypoints: [entry],
+            files: { [key]: 'console.log("entry from memory");' },
+            metafile: true,
+          });
+          return {
+            "relative key, entry point written like the key": build("./src/index.ts", "./src/index.ts"),
+            "relative key, entry point written another way": build("src/index.ts", "./src/index.ts"),
+            "relative key, entry point by its real path": build("./real-src/index.ts", "./src/index.ts"),
+            "absolute key, entry point by its real path": build(abs("real-src/index.ts"), abs("src/index.ts")),
+          };
+        })()`,
+        report => {
+          const found = ["entry from memory"];
+          const inputs = ["real-src/index.ts"];
+          expect(report).toEqual({
+            // Every entrypoint is written like a key, so the root is the cwd.
+            "relative key, entry point written like the key": {
+              logs: [],
+              outputs: ["real-src/index.js"],
+              found,
+              inputs,
+            },
+            "relative key, entry point written another way": { logs: [], outputs: ["./index.js"], found, inputs },
+            "relative key, entry point by its real path": { logs: [], outputs: ["./index.js"], found, inputs },
+            // The module has the path of the key.
+            "absolute key, entry point by its real path": {
+              logs: [],
+              outputs: ["./index.js"],
+              found,
+              inputs: ["src/index.ts"],
+            },
+          });
+        },
+      );
+
+      // A key for a file on disk takes the route of its kind, whichever path it is written with.
+      buildsIn(
+        "a key through a symlinked directory keeps the tsconfig.json of a relative key",
+        {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } }),
+          "real-src/index.ts": `import "./view.tsx";`,
+          "real-src/view.tsx": `console.log(<div>view from disk</div>);`,
+          "src": { link: "real-src" },
+        },
+        ["view from disk", "view from memory", "preact/jsx-dev-runtime", "react/jsx-dev-runtime"],
+        `(() => {
+          const build = key => ({
+            entrypoints: ["./real-src/index.ts"],
+            files: { [key]: 'console.log(<div>{"view from memory"}</div>);' },
+            external: ["preact", "react"],
+          });
+          return {
+            "relative key through the symlink": build("./src/view.tsx"),
+            "relative key by the real path": build("./real-src/view.tsx"),
+            "absolute key through the symlink": build(abs("src/view.tsx")),
+            "absolute key by the real path": build(abs("real-src/view.tsx")),
+          };
+        })()`,
+        report => {
+          const onDisk = { logs: [], outputs: ["./index.js"], found: ["view from memory", "preact/jsx-dev-runtime"] };
+          const memory = { logs: [], outputs: ["./index.js"], found: ["view from memory", "react/jsx-dev-runtime"] };
+          expect(report).toEqual({
+            "relative key through the symlink": onDisk,
+            "relative key by the real path": onDisk,
+            "absolute key through the symlink": memory,
+            "absolute key by the real path": memory,
+          });
+        },
+      );
+
+      buildsIn(
+        "a key below a symlinked directory adds a file that is only in memory",
+        {
+          "real-src/index.ts": `
+            import { generated } from "./generated.ts";
+            import { deep } from "./not-on-disk/deep.ts";
+            console.log(generated, deep);
+          `,
+          "src": { link: "real-src" },
+        },
+        ["generated in memory", "deep in memory"],
+        `(() => {
+          const build = key => ({
+            entrypoints: ["./src/index.ts"],
+            files: {
+              [key("src/generated.ts")]: 'export const generated = "generated in memory";',
+              [key("src/not-on-disk/deep.ts")]: 'export { deep } from "./deeper.ts";',
+              [key("src/not-on-disk/deeper.ts")]: 'export const deep = "deep in memory";',
+            },
+            metafile: true,
+          });
+          return { "relative keys": build(key => "./" + key), "absolute keys": build(abs) };
+        })()`,
+        report => {
+          const both = { logs: [], outputs: ["./index.js"], found: ["generated in memory", "deep in memory"] };
+          // An in-memory module has the path of its key.
+          const inputs = ["src/generated.ts", "src/not-on-disk/deep.ts", "src/not-on-disk/deeper.ts"];
+          expect(report).toEqual({
+            "relative keys": { ...both, inputs: ["real-src/index.ts", ...inputs] },
+            "absolute keys": { ...both, inputs: [...inputs.map(input => "<case>/" + input), "real-src/index.ts"] },
+          });
+        },
+      );
+
+      // One importer is beside the key, and one is beside the real path of the key.
+      buildsIn(
+        "a key below a symlinked directory is one module, whichever path an import names it by",
+        {
+          "index.ts": `import "./src/beside-the-key.ts"; import "./src/beside-the-real-path.ts";`,
+          "real-src/beside-the-real-path.ts": `import "./state.ts";`,
+          "src": { link: "real-src" },
+        },
+        ["state in memory"],
+        `{
+          build: {
+            entrypoints: ["./index.ts"],
+            files: {
+              "./src/beside-the-key.ts": 'import "./state.ts";',
+              "./src/state.ts": 'console.log("state in memory");',
+            },
+            metafile: true,
+          },
+        }`,
+        report => {
+          expect(report).toEqual({
+            build: {
+              logs: [],
+              outputs: ["./index.js"],
+              found: ["state in memory"],
+              inputs: ["index.ts", "real-src/beside-the-real-path.ts", "src/beside-the-key.ts", "src/state.ts"],
+            },
+          });
+        },
+      );
+
+      buildsIn(
+        "a key in a linked package overrides the file",
+        {
+          "packages/util-lib/package.json": JSON.stringify({ name: "util-lib", main: "index.js" }),
+          "packages/util-lib/index.js": `export const util = "util from disk";`,
+          "app/index.ts": `import { util } from "util-lib"; console.log(util);`,
+          "app/node_modules/util-lib": { link: "../../packages/util-lib" },
+          // What the isolated linker of bun install makes.
+          "isolated/node_modules/.bun/util-lib@1.0.0/node_modules/util-lib/package.json": JSON.stringify({
+            name: "util-lib",
+            main: "index.js",
+          }),
+          "isolated/node_modules/.bun/util-lib@1.0.0/node_modules/util-lib/index.js": `export const util = "util from disk";`,
+          "isolated/index.ts": `import { util } from "util-lib"; console.log(util);`,
+          "isolated/node_modules/util-lib": { link: ".bun/util-lib@1.0.0/node_modules/util-lib" },
+        },
+        ["util from disk", "util from memory"],
+        `(() => {
+          const build = (chdir, key) => ({
+            chdir,
+            entrypoints: ["./index.ts"],
+            files: { [key]: 'export const util = "util from memory";' },
+            metafile: true,
+          });
+          return {
+            "relative key": build("app", "node_modules/util-lib/index.js"),
+            "absolute key": build("app", abs("app/node_modules/util-lib/index.js")),
+            "isolated linker": build("isolated", "node_modules/util-lib/index.js"),
+          };
+        })()`,
+        report => {
+          const inMemory = { logs: [], outputs: ["./index.js"], found: ["util from memory"] };
+          // The disk resolver finds the package, so the module has the real path.
+          const linked = { ...inMemory, inputs: ["../packages/util-lib/index.js", "index.ts"] };
+          expect(report).toEqual({
+            "relative key": linked,
+            "absolute key": linked,
+            "isolated linker": {
+              ...inMemory,
+              inputs: ["index.ts", "node_modules/.bun/util-lib@1.0.0/node_modules/util-lib/index.js"],
+            },
+          });
+        },
+      );
+
+      // On macOS /tmp and /var are such symlinks.
+      buildsIn(
+        "an absolute key through a symlink above the working directory overrides the file",
+        {
+          "real-root/project/src/index.ts": `import { config } from "./config.ts"; console.log(config);`,
+          "real-root/project/src/config.ts": `export const config = "config from disk";`,
+          "root": { link: "real-root" },
+        },
+        markers,
+        `{
+          build: {
+            chdir: "root/project",
+            entrypoints: [abs("root/project/src/index.ts")],
+            files: { [abs("root/project/src/config.ts")]: ${fromMemory} },
+          },
+        }`,
+        report => {
+          expect(report).toEqual({ build: inMemory });
+        },
+      );
+
+      // The real path of the symlink is "/", and a path below it starts with one "/".
+      buildsIn(
+        "a key through a symlink to the root of the filesystem overrides the file",
+        { ...linkedSrc, "to-root": { link: "/" } },
+        markers,
+        `{
+          build: {
+            entrypoints: ["./real-src/index.ts"],
+            files: { ["./to-root" + abs("real-src/config.ts")]: ${fromMemory} },
+          },
+        }`,
+        report => {
+          expect(report).toEqual({ build: inMemory });
+        },
+        isWindows,
+      );
+
+      buildsIn(
+        "two keys that name one file through a symlink are one file, or a build error",
+        { ...linkedSrc, "also-src": { link: "real-src" } },
+        [...markers, "other config from memory"],
+        `(() => {
+          const build = files => ({ entrypoints: ["./src/index.ts"], files });
+          const other = 'export const config = "other config from memory";';
+          return {
+            "the same contents": build({ "./src/config.ts": ${fromMemory}, [abs("real-src/config.ts")]: ${fromMemory} }),
+            "the path through the symlink and the real path": build({ "./src/config.ts": ${fromMemory}, "./real-src/config.ts": other }),
+            "two paths through symlinks": build({ "./src/config.ts": ${fromMemory}, [abs("also-src/config.ts")]: other }),
+          };
+        })()`,
+        (report, directory) => {
+          const inCase = (path: string) => join(directory, path).replaceAll("\\", "/");
+          const failed = (other: string, key: string) => ({
+            logs: [
+              `BuildMessage: files: the keys "${other}" and "${key}" name the same file and have different contents\n` +
+                `note: The real path of the file is "${inCase("real-src/config.ts")}"`,
+            ],
+            outputs: [],
+            found: [],
+          });
+          expect(report).toEqual({
+            "the same contents": inMemory,
+            "the path through the symlink and the real path": failed("./real-src/config.ts", "./src/config.ts"),
+            "two paths through symlinks": failed(inCase("also-src/config.ts"), "./src/config.ts"),
+          });
+        },
+      );
+
+      // A path that a plugin returns is the path of the module, as the plugin wrote it.
+      buildsIn(
+        "an onResolve plugin does not stop a key through a symlinked directory",
+        linkedSrc,
+        markers,
+        `(() => {
+          const build = onResolve => ({
+            entrypoints: ["./src/index.ts"],
+            files: { "./src/config.ts": ${fromMemory} },
+            plugins: [{ name: "resolves", setup: build => void build.onResolve({ filter: /config/ }, onResolve) }],
+          });
+          return {
+            "the plugin declines": build(() => undefined),
+            "the plugin returns the real path": build(() => ({ path: abs("real-src/config.ts") })),
+            "the plugin returns the path of the key": build(() => ({ path: abs("src/config.ts") })),
+          };
+        })()`,
+        report => {
+          expect(report).toEqual({
+            "the plugin declines": inMemory,
+            "the plugin returns the real path": inMemory,
+            "the plugin returns the path of the key": inMemory,
+          });
+        },
+      );
+
+      // The resolver keeps what it read about a directory for the life of the
+      // process. The key follows the resolver, so the two agree in each build.
+      {
+        const importer = `import { config } from "./config.ts"; console.log(config);`;
+        const build = `before => ({ before, entrypoints: ["./src/index.ts"], files: { "./src/config.ts": ${fromMemory} } })`;
+        // The root is the directory that the symlink leads to now, so the output path changes.
+        const stale = { ...inMemory, outputs: [expect.any(String)] };
+        buildsIn(
+          "a key through a symlink that changes between two builds overrides the file in each build",
+          {
+            "first/index.ts": importer,
+            "first/config.ts": `export const config = "config from disk";`,
+            "second/index.ts": importer,
+            "second/config.ts": `export const config = "config from disk";`,
+            "src": { link: "first" },
+          },
+          markers,
+          `(() => {
+            const build = ${build};
+            return { "before the change": build(undefined), "after the change": build(() => linkDirectory("second", "src")) };
+          })()`,
+          report => {
+            expect(report).toEqual({ "before the change": inMemory, "after the change": stale });
+          },
+        );
+
+        // The resolver still reads the first directory. No config.ts is on disk there.
+        buildsIn(
+          "a key through a symlink that changes is a file on disk only where the resolver reads it",
+          {
+            "first/index.ts": importer,
+            "second/index.ts": importer,
+            "second/config.ts": `export const config = "config from disk";`,
+            "src": { link: "first" },
+          },
+          markers,
+          `(() => {
+            const build = ${build};
+            return { "before the change": build(undefined), "after the change": build(() => linkDirectory("second", "src")) };
+          })()`,
+          report => {
+            expect(report).toEqual({ "before the change": inMemory, "after the change": stale });
+          },
+        );
+
+        // The resolver read the directory "src" before it was a symlink, so it has no real path for it.
+        buildsIn(
+          "a key through a symlink that the resolver read as a directory overrides the file",
+          {
+            "real-src/index.ts": importer,
+            "real-src/config.ts": `export const config = "config from disk";`,
+            "src/index.ts": importer,
+            "src/config.ts": `export const config = "config from disk";`,
+          },
+          markers,
+          `{
+            "a directory": {
+              entrypoints: ["./src/index.ts"],
+              files: { "./src/config.ts": ${fromMemory} },
+            },
+            "a symlink": {
+              before() {
+                unlinkSync("src/index.ts");
+                unlinkSync("src/config.ts");
+                linkDirectory("real-src", "src");
+              },
+              entrypoints: ["./real-src/index.ts"],
+              files: { "./src/config.ts": ${fromMemory} },
+            },
+          }`,
+          report => {
+            expect(report).toEqual({ "a directory": inMemory, "a symlink": inMemory });
+          },
+        );
+      }
+
+      // The build asks where the directory of a key is. That question reads no
+      // tsconfig.json and leaves nothing behind for the next build.
+      buildsIn(
+        "a key that no module reads does not change the build",
+        {
+          "index.ts": `import "./later/on-disk.ts"; console.log("entry from disk");`,
+          "index-before.ts": `console.log("entry from disk");`,
+          "broken/tsconfig.json": `{ this is not JSON`,
+          "broken/unused.ts": ``,
+          "linked": { link: "broken" },
+          // A symlink to itself, and one that leads nowhere.
+          ...(!isWindows && { "loop": { link: "loop" }, "nowhere": { link: "not-on-disk" } }),
+        },
+        ["entry from disk", "later from disk"],
+        `(() => {
+          const files = {
+            "./linked/unused.ts": "",
+            "./broken/unused.ts": "",
+            "./later/unused.ts": "",
+            "./loop/unused.ts": "",
+            "./nowhere/unused.ts": "",
+            [abs("missing/deep/unused.ts")]: "",
+            // Longer than a path buffer, 400 directories deep, and with a NUL.
+            [abs("long") + "/" + Buffer.alloc(131072, "a").toString() + ".ts"]: "",
+            [abs("deep") + Buffer.alloc(800, "/d").toString() + "/unused.ts"]: "",
+            [abs("linked") + "/nul\\0.ts"]: "",
+            [abs("linked") + "\\0/unused.ts"]: "",
+          };
+          return {
+            "a directory with a tsconfig.json that does not parse": { entrypoints: ["./index-before.ts"], files },
+            "a directory that is made after a build with a key in it": {
+              before() {
+                mkdirSync("later");
+                writeFileSync("later/on-disk.ts", 'console.log("later from disk");');
+              },
+              entrypoints: ["./index.ts"],
+              files,
+            },
+          };
+        })()`,
+        report => {
+          expect(report).toEqual({
+            "a directory with a tsconfig.json that does not parse": {
+              logs: [],
+              outputs: ["./index-before.js"],
+              found: ["entry from disk"],
+            },
+            "a directory that is made after a build with a key in it": {
+              logs: [],
+              outputs: ["./index.js"],
+              found: ["entry from disk", "later from disk"],
+            },
+          });
+        },
+      );
+
+      // An in-memory module has the path of its key. Its imports start there,
+      // not at the real path of that directory.
+      buildsIn(
+        "a module of a key below a symlinked directory imports from the directory of the key",
+        {
+          "beside.ts": `export const beside = "beside the symlink";`,
+          "deep/beside.ts": `export const beside = "beside the real directory";`,
+          "deep/real-src/keep": ``,
+          "src": { link: "deep/real-src" },
+        },
+        ["beside the symlink", "beside the real directory", "lib in memory"],
+        `{
+          build: {
+            entrypoints: [abs("src/index.ts")],
+            files: {
+              [abs("src/index.ts")]: 'import { beside } from "../beside.ts"; import { lib } from "./lib.ts"; console.log(beside, lib);',
+              [abs("src/lib.ts")]: 'export const lib = "lib in memory";',
+            },
+          },
+        }`,
+        report => {
+          expect(report).toEqual({
+            build: { logs: [], outputs: ["deep/real-src/index.js"], found: ["beside the symlink", "lib in memory"] },
+          });
+        },
+      );
+
+      // Bun does not read an absolute key that is not normalized, with or without a symlink.
+      buildsIn(
+        "an absolute key that is not normalized has no effect",
+        linkedSrc,
+        markers,
+        `{
+          build: {
+            entrypoints: ["./src/index.ts"],
+            files: {
+              [abs("src") + "/./config.ts"]: ${fromMemory},
+              [abs("src") + "//config.ts"]: ${fromMemory},
+              [abs(".") + "/./src/config.ts"]: ${fromMemory},
+              [abs(".") + "/not-on-disk/../src/config.ts"]: ${fromMemory},
+            },
+          },
+        }`,
+        report => {
+          expect(report).toEqual({ build: { logs: [], outputs: ["./index.js"], found: ["config from disk"] } });
+        },
+      );
+    }
+
     buildsIn(
       "a key matches a path whatever the case of the drive letter",
       {},
@@ -1470,5 +2028,45 @@ describe("bundler files option", () => {
       },
       !isWindows,
     );
+  });
+
+  // With this flag the runtime does not follow symlinks, and it shares its
+  // directory cache with the bundler. The bundler follows them.
+  test("a key through a symlinked directory overrides the file under --preserve-symlinks", async () => {
+    using dir = tempDir("bundler-files-preserve-symlinks", {
+      "real-src/index.ts": `import { config } from "./config.ts"; console.log(config);`,
+      "real-src/config.ts": `export const config = "config from disk";`,
+      "build.mjs": `
+        await import("./src/config.ts");
+        const report = {};
+        for (const entry of ["./src/index.ts", "./real-src/index.ts"]) {
+          const result = await Bun.build({
+            entrypoints: [entry],
+            files: { "./src/config.ts": 'export const config = "config from memory";' },
+            throw: false,
+          });
+          const text = result.success ? await result.outputs[0].text() : "";
+          report[entry] = { logs: result.logs.map(String), found: text.match(/config from \\w+/g) };
+        }
+        console.log(JSON.stringify(report));
+      `,
+    });
+    // Windows: a junction needs no privilege, and its target is absolute.
+    symlinkSync(isWindows ? join(String(dir), "real-src") : "real-src", join(String(dir), "src"), "junction");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preserve-symlinks", "build.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const inMemory = { logs: [], found: ["config from memory"] };
+    expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: { "./src/index.ts": inMemory, "./real-src/index.ts": inMemory },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

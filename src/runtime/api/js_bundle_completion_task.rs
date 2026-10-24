@@ -1332,10 +1332,13 @@ impl CompletionStruct for JSBundleCompletionTask {
         bv2.plugins = self.plugins();
         bv2.plugin_context = self.context;
         bv2.completion = Some(self.as_js_bundle_completion_task());
-        // SAFETY: `file_map` returns a `NonNull` into `self.config.files`,
-        // which outlives `bv2` (both live until `generate_in_new_thread`
-        // returns). `BundleV2.file_map: Option<&'a FileMap>` — erase to `'a`.
-        bv2.file_map = self.file_map().map(|p| unsafe { &*p.as_ptr() });
+        if let Some(files) = self.file_map() {
+            // SAFETY: `file_map` returns a `NonNull` into `self.config.files`,
+            // which outlives `bv2` (both live until `generate_in_new_thread`
+            // returns), and nothing else reads or writes the map while `bv2`
+            // lives. `BundleV2::set_file_map` takes `&'a mut FileMap` — erase to `'a`.
+            bv2.set_file_map(unsafe { &mut *files.as_ptr() });
+        }
 
         self.set_transpiler(&raw mut *bv2);
 

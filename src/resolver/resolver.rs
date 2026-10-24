@@ -4198,18 +4198,148 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_maybe_log(false, path).ok().flatten()
     }
 
-    // NOTE: `follow_symlinks` is `true` at every call
-    // site, so it's dropped here; `enable_logging` is a plain runtime parameter
-    // (it gates one cold error-formatting branch) so this large dir-walk function
-    // monomorphizes to a single copy instead of two faulted in at startup.
-    fn dir_info_cached_maybe_log(
-        &mut self,
-        enable_logging: bool,
-        raw_input_path: &[u8],
-    ) -> crate::CrateResult<Option<DirInfoRef>> {
-        // `self.mutex` is `&'static Mutex` (Copy) — bind it first so the guard
-        // doesn't keep `self` borrowed across the body.
+    /// The path that the resolver gives a file at `path`, when a symlink on the way to its
+    /// directory makes that another path than `path`. `path` is absolute and normalized. The
+    /// file itself is not read.
+    ///
+    /// A cached `DirInfo` that has a real path answers for a directory. For any other
+    /// directory this applies the rule of `dir_info_uncached` to the disk: a symlink has its
+    /// own real path, and any other directory is below the real path of the directory above
+    /// it. Nothing is added to the directory cache. `dirs` keeps the answers for the caller.
+    pub fn real_path_below_links(&mut self, dirs: &mut RealDirs, path: &[u8]) -> Option<Vec<u8>> {
+        let dir = ::bun_paths::resolve_path::dirname::<::bun_paths::platform::Loose>(path);
+        let hash = dirs.0.hash_key(dir);
+        if dirs.0.get_hashed(hash, dir).is_none() {
+            self.ask_real_dir(dirs, dir);
+        }
+        let real_dir = dirs.0.get_hashed(hash, dir)?.real.as_deref()?;
+        Some(Self::below_real_dir(real_dir, &path[dir.len()..]))
+    }
+
+    /// `name`, with its separator, below the directory with the real path `real_dir`.
+    fn below_real_dir(real_dir: &[u8], name: &[u8]) -> Vec<u8> {
+        // A real path that is a root ends in a separator.
+        let real_dir = real_dir
+            .strip_suffix(b"/")
+            .or_else(|| real_dir.strip_suffix(b"\\"))
+            .unwrap_or(real_dir);
+        [real_dir, name].concat()
+    }
+
+    /// Store the answer for `dir`, and for each directory above it that `dirs` does not have.
+    fn ask_real_dir(&mut self, dirs: &mut RealDirs, dir: &[u8]) {
+        use ::bun_paths::resolve_path::dirname;
+        // No directory on disk has such a path.
+        if dir.len() >= MAX_PATH_BYTES || strings::index_of_char(dir, 0).is_some() {
+            return;
+        }
+        #[cfg(windows)]
+        let root_len =
+            strings::without_trailing_slash_windows_path(ResolvePath::windows_filesystem_root(dir))
+                .len();
+        #[cfg(not(windows))]
+        let root_len = 1;
+
+        // Up, to a directory that has an answer of its own.
+        let mut known = dir;
+        while !dirs.0.contains_key(known) {
+            let found = if known.len() <= root_len {
+                RealDir {
+                    real: None,
+                    on_disk: true,
+                }
+            } else if let Some(real) = self.cached_real_path_of_dir(known) {
+                RealDir {
+                    real: Some(Box::from(real)),
+                    on_disk: true,
+                }
+            } else {
+                known = dirname::<::bun_paths::platform::Loose>(known);
+                continue;
+            };
+            ::bun_core::handle_oom(dirs.0.put(known, found));
+        }
+        // Down again, one directory at a time.
+        while known.len() < dir.len() {
+            let names = &dir[known.len() + 1..];
+            let name_len = strings::index_of_any(names, b"/\\").unwrap_or(names.len());
+            let next = &dir[..known.len() + 1 + name_len];
+            let found = Self::real_dir_below(&dirs.0[known], next, &next[known.len()..]);
+            ::bun_core::handle_oom(dirs.0.put(next, found));
+            known = next;
+        }
+    }
+
+    /// The real path that a cached `DirInfo` has for `dir`. The resolver leaves it empty when
+    /// no symlink is on the way to `dir`, and also when it did not look, so empty is no answer.
+    fn cached_real_path_of_dir(&mut self, dir: &[u8]) -> Option<&'static [u8]> {
         let _unlock = self.mutex.lock_guard();
+        let input_path = self.dir_cache_path(dir)?;
+        let path_without_trailing_slash = strings::without_trailing_slash_windows_path(input_path);
+        Self::assert_valid_cache_key(path_without_trailing_slash);
+        let info = self.dir_cache_mut().get(path_without_trailing_slash)?;
+        (!info.abs_real_path.is_empty()).then_some(info.abs_real_path)
+    }
+
+    /// `path` is `name`, with its separator, in the directory `above`.
+    fn real_dir_below(above: &RealDir, path: &[u8], name: &[u8]) -> RealDir {
+        // No directory is on disk below one that is not.
+        let is_link = if above.on_disk {
+            Self::is_link(path)
+        } else {
+            None
+        };
+        if is_link == Some(true) {
+            // What the symlink leads to: the kernel follows every symlink on the way.
+            if let Ok(fd) = ::bun_sys::open_dir_absolute(path) {
+                let mut real = bun_paths::path_buffer_pool::get();
+                let real = ::bun_sys::get_fd_path(fd, &mut real)
+                    .ok()
+                    .map(|real| Box::from(&*real));
+                fd.close();
+                return RealDir {
+                    real,
+                    on_disk: true,
+                };
+            }
+        }
+        let real = (above.real.as_deref())
+            .map(|real_above| Self::below_real_dir(real_above, name).into_boxed_slice());
+        RealDir {
+            real,
+            on_disk: is_link == Some(false),
+        }
+    }
+
+    /// Whether the directory `path` is a symlink. `None` when `path` is not a directory on disk.
+    fn is_link(path: &[u8]) -> Option<bool> {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let path = ::bun_paths::resolve_path::z(path, &mut buf);
+        #[cfg(not(windows))]
+        {
+            let stat = ::bun_sys::lstat(path).ok()?;
+            match ::bun_sys::kind_from_mode(stat.st_mode as ::bun_sys::Mode) {
+                ::bun_sys::FileKind::SymLink => Some(true),
+                ::bun_sys::FileKind::Directory => Some(false),
+                _ => None,
+            }
+        }
+        #[cfg(windows)]
+        {
+            // `RealFS::kind` asks the same question: a junction and a mount point are links too.
+            let attributes = ::bun_sys::get_file_attributes(path)?;
+            if attributes.is_reparse_point {
+                Some(true)
+            } else {
+                attributes.is_directory.then_some(false)
+            }
+        }
+    }
+
+    /// `raw_input_path` as the directory cache spells it, before the trailing separator is
+    /// removed. `None` for a path that no directory has.
+    #[inline(always)]
+    fn dir_cache_path<'p>(&self, raw_input_path: &'p [u8]) -> Option<&'p [u8]> {
         let mut input_path = raw_input_path;
 
         if is_dot_slash(input_path) || input_path == b"." {
@@ -4218,9 +4348,9 @@ impl<'a> Resolver<'a> {
 
         // A path longer than MAX_PATH_BYTES cannot name a real directory.
         // Bailing here also prevents overflowing `dir_info_uncached_path`
-        // below when called with user-controlled absolute import paths.
+        // in `dir_info_cached_miss` when called with user-controlled absolute import paths.
         if input_path.len() >= MAX_PATH_BYTES {
-            return Ok(None);
+            return None;
         }
 
         // `PathName::init` leaves `.dir` empty when the separator is the
@@ -4230,7 +4360,7 @@ impl<'a> Resolver<'a> {
         // so return it here instead of walking the cache with an empty key.
         // https://github.com/oven-sh/bun/issues/30429
         if input_path.is_empty() {
-            return Ok(None);
+            return None;
         }
 
         #[cfg(windows)]
@@ -4255,12 +4385,12 @@ impl<'a> Resolver<'a> {
                     .ok_or(())
                     .ok();
                 if first_slash.is_none() {
-                    return Ok(None);
+                    return None;
                 }
                 let first_slash = first_slash.unwrap();
                 if strings::index_of_char(&input_path[2 + first_slash as usize..], b'\\').is_none()
                 {
-                    return Ok(None);
+                    return None;
                 }
             }
         }
@@ -4269,8 +4399,27 @@ impl<'a> Resolver<'a> {
         // `Ok(None)` into its fallback, so bail instead of panicking on a
         // path shape the caller produced.
         if !bun_paths::is_absolute(input_path) {
-            return Ok(None);
+            return None;
         }
+
+        Some(input_path)
+    }
+
+    // NOTE: `follow_symlinks` is `true` at every call
+    // site, so it's dropped here; `enable_logging` is a plain runtime parameter
+    // (it gates one cold error-formatting branch) so this large dir-walk function
+    // monomorphizes to a single copy instead of two faulted in at startup.
+    fn dir_info_cached_maybe_log(
+        &mut self,
+        enable_logging: bool,
+        raw_input_path: &[u8],
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
+        // `self.mutex` is `&'static Mutex` (Copy) — bind it first so the guard
+        // doesn't keep `self` borrowed across the body.
+        let _unlock = self.mutex.lock_guard();
+        let Some(input_path) = self.dir_cache_path(raw_input_path) else {
+            return Ok(None);
+        };
 
         let path_without_trailing_slash = strings::without_trailing_slash_windows_path(input_path);
         Self::assert_valid_cache_key(path_without_trailing_slash);
@@ -6937,6 +7086,17 @@ fn rewritten_file_extensions(
         _ => &[],
     }
 }
+
+/// What `Resolver::real_path_below_links` learned about one directory.
+struct RealDir {
+    /// The real path, when a symlink makes it another path.
+    real: Option<Box<[u8]>>,
+    on_disk: bool,
+}
+
+/// What `Resolver::real_path_below_links` learned for one caller.
+#[derive(Default)]
+pub struct RealDirs(bun_collections::StringHashMap<RealDir>);
 
 pub struct Dirname;
 

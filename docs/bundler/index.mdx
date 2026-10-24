@@ -263,7 +263,7 @@ When every entrypoint is spelled like a key of `files`, Bun uses the current wor
 
 #### Override files on disk
 
-In-memory files take priority over files on disk, so you can override specific files while keeping the rest of your codebase unchanged. A relative path for a file on disk replaces the contents of that file only. Bun still resolves the file on disk, so its `tsconfig.json` and `package.json` apply. The key must be the real path of the file: a path through a symlinked directory has no effect.
+In-memory files take priority over files on disk, so you can override specific files while keeping the rest of your codebase unchanged. A relative path for a file on disk replaces the contents of that file only. Bun still resolves the file on disk, so its `tsconfig.json` and `package.json` apply.
 
 ```ts title="build.ts" icon="/icons/typescript.svg"
 // Assume ./src/config.ts exists on disk with development settings
@@ -279,6 +279,8 @@ await Bun.build({
   outdir: "./dist",
 });
 ```
+
+A key can name the file through a symlinked directory, such as a package that is linked into `node_modules`. Bun replaces the file for each import that Bun resolves to it. If two keys name the same file and have different contents, the build fails.
 
 #### Mix disk and virtual files
 

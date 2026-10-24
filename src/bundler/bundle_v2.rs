@@ -27,7 +27,7 @@ pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, Impor
 use self::bake_types as bake;
 pub use bv2_impl::{
     BuildResult, BundleV2Result, CompletionStruct, DependenciesScanner, DependenciesScannerResult,
-    OnDependenciesAnalyze, singleton,
+    OnDependenciesAnalyze, ScannedEntryPoint, singleton,
 };
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
@@ -3565,64 +3565,101 @@ pub mod bv2_impl {
             &mut self,
             data: &[P],
         ) -> Result<(), Error> {
+            self.reserve_entry_points_normal(data.len())?;
+            for entry_point in data {
+                self.enqueue_entry_point_normal::<false>(entry_point.as_ref())?;
+            }
+            Ok(())
+        }
+
+        fn enqueue_entry_points_for_scan(
+            &mut self,
+            entry_points: &[&[u8]],
+            scanned: &mut [ScannedEntryPoint],
+        ) -> Result<(), Error> {
+            self.reserve_entry_points_normal(entry_points.len())?;
+            for (entry_point, scanned) in entry_points.iter().zip(scanned) {
+                *scanned = self.enqueue_entry_point_normal::<true>(entry_point)?;
+            }
+            Ok(())
+        }
+
+        fn reserve_entry_points_normal(&mut self, num_entry_points: usize) -> Result<(), Error> {
             self.enqueue_entry_points_common()?;
             // (variant != .dev_server)
             self.reserve_source_indexes_for_bake()?;
 
             // Setup entry points
-            let num_entry_points = data.len();
             self.graph.entry_points.reserve(num_entry_points);
             self.graph
                 .input_files
                 .ensure_unused_capacity(num_entry_points)?;
+            Ok(())
+        }
 
-            for entry_point in data {
-                let entry_point: &[u8] = entry_point.as_ref();
-                if self.enqueue_entry_point_on_resolve_plugin_if_needed(
-                    entry_point,
-                    self.transpiler.options.target,
-                    None,
-                ) {
-                    continue;
+        /// Always inline: the entry loop of `bun build` must not pay a call for each entry point.
+        #[inline(always)]
+        fn enqueue_entry_point_normal<const SCAN: bool>(
+            &mut self,
+            entry_point: &[u8],
+        ) -> Result<ScannedEntryPoint, Error> {
+            if self.enqueue_entry_point_on_resolve_plugin_if_needed(
+                entry_point,
+                self.transpiler.options.target,
+                None,
+            ) {
+                return Ok(ScannedEntryPoint::default());
+            }
+
+            // Check FileMap first for in-memory entry points
+            if let Some(file_map) = self.file_map {
+                if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point) {
+                    let source_index = self.enqueue_entry_item(
+                        &mut { file_map_result },
+                        true,
+                        self.transpiler.options.target,
+                        None,
+                    )?;
+                    return Ok(ScannedEntryPoint {
+                        source_index,
+                        is_duplicate: false,
+                    });
                 }
+            }
 
-                // Check FileMap first for in-memory entry points
-                if let Some(file_map) = self.file_map {
-                    if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point)
-                    {
-                        let _ = self.enqueue_entry_item(
-                            &mut { file_map_result },
-                            true,
-                            self.transpiler.options.target,
-                            None,
-                        )?;
-                        continue;
-                    }
-                }
+            // no plugins were matched
+            let Ok(mut resolved) = self.transpiler.resolve_entry_point(entry_point) else {
+                return Ok(ScannedEntryPoint::default());
+            };
 
-                // no plugins were matched
-                let mut resolved = match self.transpiler.resolve_entry_point(entry_point) {
-                    Ok(r) => r,
-                    Err(_) => continue,
-                };
-
-                let target = 'brk: {
-                    let main_target = self.transpiler.options.target;
-                    if main_target.is_server_side() {
-                        if let Some(path) = resolved.path_const() {
-                            if let Some(loader) = path.loader(&self.transpiler.options.loaders) {
-                                if loader == Loader::Html {
-                                    self.ensure_client_transpiler();
-                                    break 'brk Target::Browser;
-                                }
+            let target = 'brk: {
+                let main_target = self.transpiler.options.target;
+                if main_target.is_server_side() {
+                    if let Some(path) = resolved.path_const() {
+                        if let Some(loader) = path.loader(&self.transpiler.options.loaders) {
+                            if loader == Loader::Html {
+                                self.ensure_client_transpiler();
+                                break 'brk Target::Browser;
                             }
                         }
                     }
-                    break 'brk main_target;
-                };
-                let _ = self.enqueue_entry_item(&mut resolved, true, target, None)?;
+                }
+                break 'brk main_target;
+            };
+            let source_index = self.enqueue_entry_item(&mut resolved, true, target, None)?;
+            if SCAN && source_index.is_none() {
+                // `enqueue_entry_item` found the file in the graph and left `resolved` as it was.
+                if let Some(path) = resolved.path_const() {
+                    return Ok(ScannedEntryPoint {
+                        source_index: self.path_to_source_index_map(target).get_path(path),
+                        is_duplicate: true,
+                    });
+                }
             }
-            Ok(())
+            Ok(ScannedEntryPoint {
+                source_index,
+                is_duplicate: false,
+            })
         }
 
         pub(crate) fn enqueue_entry_points_dev_server(
@@ -4323,6 +4360,15 @@ pub mod bv2_impl {
         }
     }
 
+    /// What `BundleV2::scan_module_graph_from_cli` reports for one entry point.
+    #[derive(Clone, Copy, Default)]
+    pub struct ScannedEntryPoint {
+        /// Index into `graph.input_files`. `None` when the entry point did not resolve.
+        pub source_index: Option<IndexInt>,
+        /// An earlier entry point is the same file, and has the same `source_index`.
+        pub is_duplicate: bool,
+    }
+
     pub struct DependenciesScanner {
         pub(crate) ctx: *mut (),
         pub entry_points: Box<[Box<[u8]>]>,
@@ -4588,12 +4634,15 @@ pub mod bv2_impl {
         /// not a bounded arena leak. The
         /// worker pool is owned (created with `thread_pool: None`), so tearing
         /// it down does not touch the runtime VM's parse threads.
+        /// `scanned[i]` is set to where `entry_points[i]` is in the graph.
         pub fn scan_module_graph_from_cli(
             transpiler: &'a mut Transpiler<'a>,
             alloc: &'a bun_alloc::Arena,
             event_loop: EventLoop,
             entry_points: &[&[u8]],
+            scanned: &mut [ScannedEntryPoint],
         ) -> Result<Box<BundleV2<'a>>, Error> {
+            debug_assert_eq!(entry_points.len(), scanned.len());
             let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
             this.unique_key = generate_unique_key();
 
@@ -4605,7 +4654,7 @@ pub mod bv2_impl {
             // allocation. If a later allocation fails we must still drain the
             // pool so workers aren't left holding pointers into the caller's
             // stack-allocated Transpiler.
-            if let Err(err) = this.enqueue_entry_points_normal(entry_points) {
+            if let Err(err) = this.enqueue_entry_points_for_scan(entry_points, scanned) {
                 this.wait_for_parse();
                 return Err(err);
             }

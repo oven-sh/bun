@@ -444,9 +444,7 @@ impl S3Credentials {
 
         let amz_day = &amz_date[0..8];
         let request_payer = headers.request_payer;
-        // A presigned URL carries every other option in its query. S3 reads
-        // `x-amz-tagging` only from a header, so a presigned PUT signs it as
-        // one and the client must send it. A presigned read ignores it.
+        // S3 ignores `x-amz-tagging` in a query, so a presigned PUT signs it as a header.
         let header_key = if sign_query {
             SignedHeadersKey {
                 tagging: tagging.is_some() && method == Method::PUT,
@@ -481,8 +479,7 @@ impl S3Credentials {
 
         let aws_content_hash: &[u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
         let mut tmp_buffer = [0u8; 4096];
-        // The canonical request goes to the stack buffer unless its values
-        // cannot fit (ten URL-encoded `x-amz-tagging` pairs can exceed 20 KB).
+        // Holds a canonical request that `tmp_buffer` cannot (ten encoded tags exceed 20 KB).
         let mut canonical_heap: Vec<u8> = Vec::new();
 
         let authorization: Box<[u8]> = 'brk: {
@@ -961,8 +958,7 @@ impl S3Credentials {
     }
 }
 
-/// The buffer for a canonical request of at most `len` bytes: the stack
-/// buffer when it fits, else `heap` grown to `len`.
+/// `stack` when `len` fits in it, else `heap` grown to `len`.
 fn canonical_buffer<'b>(stack: &'b mut [u8], heap: &'b mut Vec<u8>, len: usize) -> &'b mut [u8] {
     if len <= stack.len() {
         stack
@@ -1132,11 +1128,7 @@ pub struct SignQueryOptions {
     pub expires: usize,
 }
 
-/// The per-object headers of a request that creates an object (PutObject,
-/// CreateMultipartUpload) or presigns one. Every entry point builds one of
-/// these from its parsed options and hands it down unchanged, so a header
-/// that one entry point forgets cannot be dropped on the way to the signer.
-/// `request_payer` is the one field that also applies to a read or delete.
+/// The object headers of a PutObject, CreateMultipartUpload or presign, carried as one value.
 #[derive(Clone, Copy, Default)]
 pub struct PutHeaders<'a> {
     pub content_type: Option<&'a [u8]>,
@@ -1150,8 +1142,7 @@ pub struct PutHeaders<'a> {
 }
 
 impl<'a> PutHeaders<'a> {
-    /// Headers for a request to which only `request_payer` applies
-    /// (GET, HEAD, DELETE, UploadPart, CompleteMultipartUpload).
+    /// For a read, delete, part or completion: only `request_payer` applies.
     pub const fn request_payer_only(request_payer: bool) -> Self {
         Self {
             content_type: None,
@@ -1165,8 +1156,7 @@ impl<'a> PutHeaders<'a> {
     }
 }
 
-/// `PutHeaders` with owned bytes, for a task that outlives the options object
-/// it was parsed from (a multipart upload).
+/// `PutHeaders` with owned bytes, for a multipart upload that outlives its options.
 #[derive(Default)]
 pub struct PutHeadersOwned {
     pub content_type: Option<Box<[u8]>>,
@@ -1392,8 +1382,7 @@ pub struct S3CredentialsWithOptions {
 }
 
 impl S3CredentialsWithOptions {
-    /// The object headers of a write. `content_type` is the blob's type, which
-    /// takes precedence over the parsed `type` option.
+    /// The headers of a write. The blob's `content_type` wins over the `type` option.
     pub fn put_headers<'a>(&'a self, content_type: Option<&'a [u8]>) -> PutHeaders<'a> {
         PutHeaders {
             content_type: content_type.or(self.content_type.as_deref()),
@@ -1411,17 +1400,14 @@ impl S3CredentialsWithOptions {
 // SignedHeaders
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Which headers a signature covers. `host` is always covered. The fields are
-/// in the alphabetical order that AWS Signature V4 requires of the signed
-/// header list and of the canonical headers.
+/// Which headers a signature covers, in the alphabetical order SigV4 requires. `host` always is.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct SignedHeadersKey {
     pub content_disposition: bool,
     pub content_encoding: bool,
     pub content_md5: bool,
     pub acl: bool,
-    /// `x-amz-content-sha256` and `x-amz-date`. Set for an `Authorization`
-    /// header, clear for a presigned URL, where both travel in the query.
+    /// `x-amz-content-sha256` and `x-amz-date`: headers for `Authorization`, query for a presign.
     pub content_sha256_date: bool,
     pub request_payer: bool,
     pub session_token: bool,
@@ -1488,8 +1474,7 @@ impl SignedHeaders {
 // CanonicalRequest
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The header values a canonical request can cover. `key` says which of them
-/// it does cover. A value is read only when its key bit is set.
+/// The header values of a canonical request. One is read only when its `SignedHeadersKey` bit is set.
 #[derive(Clone, Copy, Default)]
 struct CanonicalHeaderValues<'a> {
     content_disposition: Option<&'a [u8]>,
@@ -1522,12 +1507,10 @@ impl CanonicalHeaderValues<'_> {
 struct CanonicalRequest;
 
 impl CanonicalRequest {
-    /// The bytes of every header name, separator and newline a canonical
-    /// request can hold, in addition to its values.
+    /// Room for every header name, separator and newline, in addition to the values.
     const FIXED_LEN: usize = 512;
 
-    /// An upper bound of the canonical request length, so the caller can pick
-    /// a buffer that holds it.
+    /// An upper bound of the canonical request length.
     fn len_hint(
         method: &[u8],
         path: &[u8],

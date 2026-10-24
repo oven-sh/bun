@@ -131,8 +131,7 @@ pub struct MultiPartUpload {
     pub(crate) ended: Cell<bool>,
 
     pub(crate) options: Cell<MultiPartUploadOptions>,
-    /// Sent with the single PUT or with CreateMultipartUpload. The parts,
-    /// the completion and the abort send `request_payer` only.
+    /// Sent with the single PUT or CreateMultipartUpload. Later requests send `request_payer` only.
     pub(crate) headers: PutHeadersOwned,
     pub(crate) credentials: RefPtr<S3Credentials>,
     pub poll_ref: JsCell<KeepAlive>,

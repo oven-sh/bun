@@ -131,8 +131,7 @@ pub(crate) fn s3_credentials_from_env(
     )
 }
 
-/// The object headers of a `fetch("s3://...")` write: the `s3` option fields,
-/// with the request's own `Content-*` headers taking precedence.
+/// The `s3` option headers of a `fetch("s3://")` write. A request `Content-*` header wins.
 fn s3_put_headers<'a>(
     credentials_with_options: &'a s3::S3CredentialsWithOptions,
     headers: Option<&'a Headers>,

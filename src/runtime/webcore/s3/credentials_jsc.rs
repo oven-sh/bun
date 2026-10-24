@@ -268,9 +268,7 @@ pub(crate) fn get_credentials_with_options(
                 new_credentials.request_payer = request_payer;
             }
 
-            if let Some(tagging) = get_tagging(opts, global_object)? {
-                new_credentials.tagging = tagging;
-            }
+            get_tagging(opts, global_object, &mut new_credentials.tagging)?;
         }
     }
     Ok(new_credentials)
@@ -280,30 +278,31 @@ fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
 }
 
-/// `opts.tagging` as the `x-amz-tagging` value: `k=v&k2=v2`, each key and
-/// value URL-encoded. Accepts a record, which is encoded here, or a string
-/// that the caller encoded. `Ok(None)` means the option is absent, so the
-/// default stays. `Ok(Some(None))` means no tags: an empty record.
-fn get_tagging(opts: JSValue, global: &JSGlobalObject) -> JsResult<Option<Option<Box<[u8]>>>> {
+/// Sets `tagging` from `opts.tagging`: a record, URL-encoded here as `k=v&k2=v2`,
+/// or that string. An absent option keeps the default. An empty record clears it.
+fn get_tagging(
+    opts: JSValue,
+    global: &JSGlobalObject,
+    tagging: &mut Option<Box<[u8]>>,
+) -> JsResult<()> {
     let Some(value) = opts.get_truthy(global, "tagging")? else {
-        return Ok(None);
+        return Ok(());
     };
     if value.is_empty_or_undefined_or_null() {
-        return Ok(None);
+        return Ok(());
     }
     if value.is_string() {
         let utf8 = value.to_utf8(global)?;
         let bytes = utf8.slice();
-        // The signer writes the value into the canonical request as it is,
-        // and S3 collapses whitespace before it verifies the signature, so a
-        // value that is not a plain query string cannot sign.
+        // S3 collapses whitespace before it verifies, so such a value can never sign.
         if !bytes.iter().all(|b| b.is_ascii_graphic()) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "tagging must be a URL-encoded query string (\"key=value&key2=value2\") \
                  without whitespace or control characters"
             )));
         }
-        return Ok(Some(Some(Box::<[u8]>::from(bytes))));
+        *tagging = Some(Box::<[u8]>::from(bytes));
+        return Ok(());
     }
     let Some(object) = value.get_object() else {
         return Err(global.throw_invalid_argument_type_value(
@@ -335,9 +334,8 @@ fn get_tagging(opts: JSValue, global: &JSGlobalObject) -> JsResult<Option<Option
         encoded.push(b'=');
         push_uri_encoded(&mut encoded, tag_value.slice());
     }
-    Ok(Some(
-        (!encoded.is_empty()).then(|| encoded.into_boxed_slice()),
-    ))
+    *tagging = (!encoded.is_empty()).then(|| encoded.into_boxed_slice());
+    Ok(())
 }
 
 fn push_uri_encoded(out: &mut Vec<u8>, input: &[u8]) {

@@ -6862,6 +6862,26 @@ exports.format = async text => "by Prettier";
     expect(result.exitCode).toBe(2);
   });
 
+  test("Flow: a spread in an object type can be a union that starts with `|`", async () => {
+    const code = `// @flow
+type A = {|
+  a: 1,
+  ...
+    | {|
+        b: 2,
+      |}
+    | {||},
+|};
+type B = {
+  ...C | D,
+};
+`;
+    const files = { "a.js": code.replace("...C | D", "...| C | D") };
+    const result = await format(files, ["a.js"], { reads: ["a.js"] });
+    expect(result.files).toEqual({ "a.js": code });
+    expect(result.exitCode).toBe(0);
+  });
+
   test("Flow: a declared function has no body", async () => {
     const code = `// @flow
 declare function f(x: number): string;

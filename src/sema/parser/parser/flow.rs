@@ -1009,11 +1009,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn flow_object_type_member_rest(&mut self, body: Body, start: Start, member: &mut Member) {
         if self.eat(T::DotDotDot) {
             member.flags |= Flags::REST;
-            // A bare `...` means there can be more properties.
-            if !matches!(
-                self.token(),
-                T::Comma | T::Semicolon | T::CloseBrace | T::Bar
-            ) {
+            // A bare `...` means there can be more properties. A `|` after it is the start of `|}`, or of a union.
+            let is_bare = match self.token() {
+                T::Comma | T::Semicolon | T::CloseBrace => true,
+                T::Bar => self.peek() == T::CloseBrace,
+                _ => false,
+            };
+            if !is_bare {
                 member.ty = self.flow_type();
             }
             return;

@@ -1842,20 +1842,9 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 auto urlSearchParams1 = dynamicDowncast<JSURLSearchParams>(c1);
                 auto urlSearchParams2 = dynamicDowncast<JSURLSearchParams>(c2);
                 if (urlSearchParams1 && urlSearchParams2) {
-                    auto& wrapped1 = urlSearchParams1->wrapped();
-                    const auto& wrapped2 = urlSearchParams2->wrapped();
-                    if (wrapped1.size() != wrapped2.size()) {
+                    // Names may repeat and order is observable, so compare positionally like jest does.
+                    if (urlSearchParams1->wrapped().pairs() != urlSearchParams2->wrapped().pairs()) {
                         return false;
-                    }
-
-                    auto iter1 = wrapped1.createIterator();
-                    while (const auto& maybePair = iter1.next()) {
-                        const auto& key = maybePair->key;
-                        const auto& value = maybePair->value;
-                        const auto& maybeValue = wrapped2.get(key);
-                        if (!maybeValue || maybeValue != value) {
-                            return false;
-                        }
                     }
 
                     goto compareAsNormalValue;

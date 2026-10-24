@@ -495,15 +495,17 @@ export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
 /**
  * Runs `cmd` (a script that prints `{"deltaMiB": number}` as its last stdout
  * line) under bun with ASAN quarantine disabled, and asserts the delta is below
- * `release` MiB (or `debug` MiB under ASAN/debug builds).
+ * `release` MiB (or `debug` MiB under ASAN/debug builds). `env` is the
+ * environment of that process.
  */
 export async function expectRssDeltaBelow(
   cmd: string[] /* args after bunExe(), e.g. ["--smol", "-e", code] or [fixturePath] */,
   bounds: { release: number; debug: number },
+  env: NodeJS.Dict<string> = bunEnv,
 ): Promise<void> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...cmd],
-    env: withoutAsanQuarantine(bunEnv),
+    env: withoutAsanQuarantine(env),
     stdout: "pipe",
     stderr: "pipe",
   });

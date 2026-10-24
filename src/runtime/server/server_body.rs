@@ -13,7 +13,9 @@ use crate::generated_bindgen::server::{
     ServeOptions, ServerFetchInit, ServerFetchInput, ServerProtocol, TimeoutTarget, UpgradeHeaders,
     UpgradeOptionsArgument, WebSocketMessage,
 };
-use crate::generated_bindgen::server_body::{BunServe__onRejectPlugins, BunServe__onResolvePlugins};
+use crate::generated_bindgen::server_body::{
+    BunServe__onRejectPlugins, BunServe__onResolvePlugins,
+};
 use crate::node::types::PathLikeExt as _;
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;

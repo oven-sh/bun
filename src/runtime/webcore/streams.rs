@@ -8,8 +8,8 @@ use crate::webcore::jsc::{
     JSPromise, JSPromiseStrong, JSType, JSValue, JsResult, SysErrorJsc, VirtualMachine,
 };
 use bun_collections::{ByteVecExt, VecExt};
-use bun_jsc::bindgen::{AnyValue, JsLocal};
 use bun_core::{FeatureFlags, strings};
+use bun_jsc::bindgen::{AnyValue, JsLocal};
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 

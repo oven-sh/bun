@@ -4,8 +4,8 @@ use core::sync::atomic::Ordering;
 use bun_core::String as BunString;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
-    JSArray, JSGlobalObject, JSObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell,
-    JsClass as _, JsResult, MarkedArgumentBuffer,
+    JSArray, JSGlobalObject, JSObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
+    JsCell, JsClass as _, JsResult, MarkedArgumentBuffer,
 };
 
 use super::env_map::EnvMap;

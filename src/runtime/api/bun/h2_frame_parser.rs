@@ -25,7 +25,9 @@ use bun_jsc::StringJsc as _;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::bindgen::{BufferSource, Callable, JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult, StrongOptional};
+use bun_jsc::{
+    GlobalRef, JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult, StrongOptional,
+};
 use bun_ptr::RefPtr;
 
 use crate::generated_bindgen::h2_frame_parser::{

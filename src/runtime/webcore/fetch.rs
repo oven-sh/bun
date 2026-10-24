@@ -46,7 +46,9 @@ use crate::webcore::body::{Action as BodyValueLockedAction, InternalBlob, Value 
 use crate::webcore::headers_ref::any_blob_content_type_opt;
 use crate::webcore::response::HeadersRef;
 use crate::webcore::s3::client as s3;
-use crate::webcore::{Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response};
+use crate::webcore::{
+    Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response,
+};
 use crate::webcore::{blob, readable_stream, response};
 use bun_http_jsc as _;
 use bun_http_jsc::headers_jsc::from_fetch_headers;

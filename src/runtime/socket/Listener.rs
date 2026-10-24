@@ -13,7 +13,9 @@ use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult, StringJsc as _};
+use bun_jsc::{
+    self as jsc, JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult, StringJsc as _,
+};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -21,7 +23,9 @@ use bun_uws_sys as uws_sys;
 use crate::api::bun_secure_context::SecureContext;
 use crate::generated_bindgen::listener::js_Listener as js;
 use crate::generated_bindgen::socket_config::{SocketOptionsObject, SocketReloadOptions};
-use crate::socket::{Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket};
+use crate::socket::{
+    Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
+};
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 
 #[cfg(windows)]

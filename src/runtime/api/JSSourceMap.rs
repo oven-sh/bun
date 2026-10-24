@@ -302,10 +302,7 @@ fn get_line_column(
             SourcePosition::Number(number) => Ok(number),
         }
     }
-    Ok([
-        to_i32(global, line_number)?,
-        to_i32(global, column_number)?,
-    ])
+    Ok([to_i32(global, line_number)?, to_i32(global, column_number)?])
 }
 
 // Hand-written in `src/jsc/modules/NodeModuleModule.cpp`.

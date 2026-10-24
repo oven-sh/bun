@@ -22,13 +22,7 @@ pub(crate) fn stringify<'a>(
 ) -> JsResult<Option<JSValue>> {
     let global = cx.global();
     MarkedArgumentBuffer::new(|roots| {
-        stringify_impl(
-            global,
-            Stringifier::value_of(value),
-            replacer,
-            space,
-            roots,
-        )
+        stringify_impl(global, Stringifier::value_of(value), replacer, space, roots)
     })
 }
 

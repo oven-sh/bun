@@ -226,6 +226,21 @@ pub fn find_own_require(
     None
 }
 
+// What `e` stands for: a binding that nothing stores to stands for what it starts as, which may be another such binding.
+pub(super) fn follow_settled_bindings(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> ExprId {
+    let mut e = hir.skip_type_assertions(e);
+    for _ in 0..LONGEST_CHAIN_OF_BINDINGS {
+        let Some(symbol) = settled_symbol(hir, bound, e) else {
+            break;
+        };
+        match bound.binding_initializer(hir, symbol) {
+            BindingInitializer::Expression(source) => e = hir.skip_type_assertions(source),
+            _ => break,
+        }
+    }
+    e
+}
+
 // `import.meta.require` held by a binding that nothing stores to, which may start as another such binding: `var __require = import.meta.require;` stands at the top of what `bun build --target=bun` writes.
 pub fn holds_import_meta_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
     let mut e = hir.skip_type_assertions(e);

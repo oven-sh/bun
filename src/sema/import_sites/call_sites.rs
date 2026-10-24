@@ -1,4 +1,4 @@
-use super::made_requires::{find_own_require, holds_import_meta_require};
+use super::made_requires::{find_own_require, follow_settled_bindings, holds_import_meta_require};
 use super::{ImportSite, ImportSiteKind, ImportSpecifier, ScanInputs};
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{Binding, Bound, CommonJsVariable, Parent, ScopeKind};
@@ -193,12 +193,13 @@ fn is_free_name(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, names: &[Atom]) ->
 
 // `process`, `globalThis.process` and `global.process`.
 fn is_global_process(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
+    let e = follow_settled_bindings(hir, bound, e);
     if is_free_name(hir, bound, e, &[known::process]) {
         return true;
     }
     matches!(hir.member_key(e), Some((object, MemberKey::Name(name)))
         if name == known::process
-            && is_free_name(hir, bound, hir.skip_type_assertions(object), &[known::globalThis, known::global]))
+            && is_free_name(hir, bound, follow_settled_bindings(hir, bound, object), &[known::globalThis, known::global]))
 }
 
 pub(crate) fn is_in_with_scope(bound: &Bound<'_>, ident: ExprId) -> bool {

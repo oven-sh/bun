@@ -11,6 +11,12 @@ import { promisify } from "node:util";
 import { deflate, gunzip, gzip, inflate } from "node:zlib";
 import { Database } from "bun:sqlite";
 
+if (process.env.IS_THE_CHILD) {
+  console.log("a child");
+  process.exit(0);
+}
+const itself = /[$~]bun/i.test(process.argv[1]!) ? [process.execPath] : [process.execPath, process.argv[1]!];
+
 type Row = { id: number; name: string };
 async function work(seed: number): Promise<string> {
   const out: string[] = [];
@@ -37,9 +43,9 @@ async function work(seed: number): Promise<string> {
   out.push(createHash("sha256").update(text).digest("hex").slice(0, 12), ((await promisify(scrypt)("secret", "salt" + seed, 16)) as Buffer).toString("hex").slice(0, 12), String(randomUUID().length));
   out.push(Buffer.from(await crypto.subtle.digest("SHA-1", new TextEncoder().encode(text))).toString("hex").slice(0, 12), Bun.hash.crc32(text).toString(16));
 
-  const child = Bun.spawn([process.execPath, "--version"], { stdout: "pipe", stderr: "ignore", env: { ...process.env, BUN_BE_BUN: "1" } });
+  const child = Bun.spawn(itself, { stdout: "pipe", stderr: "ignore", env: { ...process.env, IS_THE_CHILD: "1" } });
   out.push("child " + (await child.exited) + " " + ((await new Response(child.stdout).text()).length > 0));
-  out.push("sync child " + Bun.spawnSync([process.execPath, "--version"], { env: { ...process.env, BUN_BE_BUN: "1" } }).exitCode);
+  out.push("sync child " + Bun.spawnSync(itself, { env: { ...process.env, IS_THE_CHILD: "1" } }).exitCode);
 
   const database = new Database(":memory:");
   database.run("create table rows (id integer primary key, name text)");

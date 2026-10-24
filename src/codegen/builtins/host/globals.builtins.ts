@@ -1,6 +1,5 @@
 import * as b from "bun-builtins-table";
 import {
-  argumentsCell,
   environmentCell,
   framesOfModuleGraphsCell,
   moduleGraphsCell,
@@ -1214,17 +1213,8 @@ export default b.declarations(
     {
       fetch,
       main: mainModulePath,
-      // What process.argv holds at the first read: the same list, unless the program has stored something else there.
-      argv: b.property(b.any, {
-        createdOnFirstRead: {
-          capability: "heap",
-          throws: true,
-          uses: {
-            this: [b.createdIn(newArrayOf(b.string), b.nativeCell(argumentsCell)), b.returnedFrom(argumentsCell)],
-          },
-          reads: externalState,
-        },
-      }),
+      // What process.argv answers at the first read: the program may have stored anything there, or defined a getter.
+      argv: b.property(b.any, { createdOnFirstRead: { capability: "js", throws: true, reads: externalState } }),
       // Nothing is known of the class. From the first graph on, the natives that look for the graph of a frame find graphs and frames.
       ModuleGraph: b.property(b.any, {
         createdOnFirstRead: {

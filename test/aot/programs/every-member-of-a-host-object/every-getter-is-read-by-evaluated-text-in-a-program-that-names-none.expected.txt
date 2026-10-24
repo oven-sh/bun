@@ -42,10 +42,8 @@ blob.name: undefined
 blob.size: 3
 blob.type: ""
 process._eval: undefined
-process.argv: object Array
 process.connected: false
 process.debugPort: number
-process.execArgv: object Array
 process.exitCode: undefined
 process.ppid: number
 process.title: string

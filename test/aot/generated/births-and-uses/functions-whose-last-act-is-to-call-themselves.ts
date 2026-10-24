@@ -73,6 +73,8 @@ function stretch(formName: string, tailName: string, roundName: string, makeName
   if (form.hasNoArguments && make.needsArguments) return undefined;
   // Where the call is not the last act, how deep it may go is the stack's business.
   if (roundName === "goesVeryDeep" && ["underAHandler", "underACleanup", "inAHandler", "throughAVariable"].includes(tailName)) return undefined;
+  // TODO: that deep, what plain Bun reads out of `arguments` goes by the tier that runs the function, so there is nothing to hold the executable against.
+  if (roundName === "goesVeryDeep" && makeName === "aLookAtItsArguments") return undefined;
   const made = form.make(round, self => `${make.text(round.show)} ${round.step ?? ""} ${tails[tailName](round, self(round.next))}`);
   return {
     name: `${formName}-${tailName}-${roundName}-${makeName}`,

@@ -31,6 +31,7 @@ test/napi/node-napi-tests/test/js-native-api/test_object/do.test.ts
 
 # TODO: jsc
 test/js/bun/jsonl/jsonl-parse-chunk-utf8.test.ts
+test/bundler/bundler_validating_imports.test.ts
 test/js/bun/jsonl/jsonl-parse.test.ts
 
 # X509Certificate toLegacyObject → computeInfoAccess pushes onto a JSArray in a

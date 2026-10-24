@@ -696,7 +696,8 @@ pub(super) fn synthetic_export_variable(
     };
     let mut declared = DeclaredType::untyped();
     // The object may lack the name when the copies are taken: the copy stays empty, and the check of the importer tests for that.
-    if writer == ExportWriter::Capture {
+    // An importer that the CommonJS file itself requires runs before the face has taken anything.
+    if matches!(writer, ExportWriter::Capture | ExportWriter::Face) {
         declared.ty = TypeTable::ANYTHING_OR_ABSENT;
     }
     Variable {

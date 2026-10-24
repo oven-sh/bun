@@ -339,23 +339,16 @@ const ignoresValue = {
   uses: { value: b.inspected },
 } satisfies b.SetterOptions;
 
-// Native code makes the list of strings at the first read and keeps it. A store replaces what is kept, whatever it is.
+// Native code makes the list of strings at the first read. From then on it is a property like any other.
 const listOfStringsKeptIn = (cell: string) =>
-  ({
-    getter: b.any,
-    capability: "heap",
-    throws: true,
-    uses: { this: [b.createdIn(newArrayOf(b.string), b.nativeCell(cell)), b.returnedFrom(cell)] },
-    reads: externalState,
-    implementation: b.generic,
-    setter: {
-      value: b.any,
+  b.property(b.any, {
+    createdOnFirstRead: {
       capability: "heap",
-      uses: { value: [b.storedIn(b.nativeCell(cell))] },
-      writes: externalState,
-      implementation: b.generic,
+      throws: true,
+      uses: { this: [b.createdIn(newArrayOf(b.string), b.nativeCell(cell)), b.returnedFrom(cell)] },
+      reads: externalState,
     },
-  }) satisfies b.GetterField;
+  });
 
 const createdOnFirstRead = (holds: b.TableType) => b.property(holds, { createdOnFirstRead: { capability: "heap" } });
 // One of the objects that runtime-dependencies.builtins.ts describes.
@@ -423,7 +416,9 @@ const computedOnce = [
 const lookedUpByNativeCode = [
   "_fatalException",
   "_kill",
+  "argv",
   "emit",
+  "execArgv",
   "nextTick",
   "noDeprecation",
   "reallyExit",

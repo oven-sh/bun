@@ -7,5 +7,8 @@ export const knownToday: Readonly<Record<string, string>> = {
     "1,388 | 2,089: the typed body keeps generic code of its own behind the test whether a field that is declared a string holds a string, with the generic version of the whole function beside it",
   "an-untyped-module-gets-types":
     "1,962 | 2,209: the tests at the entrance of the functions and their generic versions stand beside bodies that are no smaller for their types",
-  "a-result-gets-a-type": "1,634 | 2,005: the generic versions of both functions grow, and a typed body stands beside the worker",
+  "a-result-gets-a-type":
+    "1,634 | 2,005: the generic versions of both functions grow, and a typed body stands beside the worker",
+  "a-loop-over-typed-elements":
+    "668 | 750: tests at the entrance (17 bytes) and a generic version (209) stand beside the typed body",
 };

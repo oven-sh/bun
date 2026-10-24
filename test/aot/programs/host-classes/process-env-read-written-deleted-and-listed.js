@@ -1,4 +1,8 @@
 // process.env from every side: read by name and by key, set and not set, written with what is no text, deleted, listed, copied, defined, frozen, and what a child process gets.
+if (process.env.AOT_TEST_IS_THE_CHILD) {
+  console.log(process.env.AOT_TEST_SET, process.env.AOT_TEST_KEY_1, process.env.AOT_TEST_NEVER_SET);
+  process.exit(0);
+}
 const out = [];
 const show = value => (typeof value === "string" ? JSON.stringify(value) : String(value));
 function byName() { return process.env.AOT_TEST_SET; }
@@ -43,7 +47,7 @@ out.push(show(process.env.TZ), new Date(0).getHours(), delete process.env.TZ, sh
 if (zone !== undefined) process.env.TZ = zone;
 out.push(attempt(() => Object.freeze(process.env)), attempt(() => Object.isFrozen(process.env)), attempt(() => Object.preventExtensions(process.env) === process.env));
 out.push(attempt(() => (process.env.AOT_TEST_BEHIND = "stored")), show(byKey("AOT_TEST_BEHIND")));
-const child = Bun.spawnSync({ cmd: [process.execPath, "-e", "console.log(process.env.AOT_TEST_SET, process.env.AOT_TEST_KEY_1, process.env.AOT_TEST_NEVER_SET)"], env: { ...process.env, BUN_BE_BUN: "1" } });
+const child = Bun.spawnSync({ cmd: /[$~]bun/i.test(process.argv[1]) ? [process.execPath] : [process.execPath, process.argv[1]], env: { ...process.env, AOT_TEST_IS_THE_CHILD: "1" } });
 out.push(child.stdout.toString().trim());
 const replaced = process.env;
 process.env = { AOT_TEST_SET: "of a plain object" };

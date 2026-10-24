@@ -254,6 +254,7 @@ commonjs/a-child-is-listed-once-the-require-has-returned
 commonjs/a-class-required-by-a-file-that-asks-whether-it-has-a-parent-is-not-five-times-as-slow-a-turn-as-one-of-its-own-file
 commonjs/a-constructor-function-that-only-unseen-code-constructs
 commonjs/a-function-stored-as-push-on-the-list-of-children-is-called-for-each-file-required
+commonjs/an-es-module-that-its-own-commonjs-import-requires-reads-that-import-early
 commonjs/an-object-stored-as-the-children-changes-what-each-later-child-exports
 commonjs/every-key-that-require-cache-lists-can-be-read
 commonjs/exported-symbols-as-keys

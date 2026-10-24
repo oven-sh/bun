@@ -113,6 +113,11 @@ const asksToday: Record<string, string[]> = {
   "private fields of a class below another": ["operationAOTGetSuperBase"],
 };
 
+// Where the usual code knows that it stores into an array, it asks for the same thing under these names.
+const asksOfUsualCode: Record<string, string[]> = {
+  operationAOTPutByVal: ["operationAOTArrayPutAtNumber", "operationAOTArrayPutAtIndex"],
+};
+
 function program(idiom: string) {
   return `${idiom}
     const rounds = Number(process.argv[2]);
@@ -164,7 +169,9 @@ describe.concurrent("compact code asks the run time for no more than the usual c
         using dir = tempDir("aot-compact-code", { "main.mjs": program(idiom) });
         const usual = await growthOfOperations(String(dir), "usual", []);
         const compact = await growthOfOperations(String(dir), "compact", ["--aot-heat=EverythingIsCold"]);
-        expect(compact.filter(operation => !usual.includes(operation)).sort()).toEqual([]);
+        const isAskedByUsualCode = (operation: string) =>
+          [operation, ...(asksOfUsualCode[operation] ?? [])].some(name => usual.includes(name));
+        expect(compact.filter(operation => !isAskedByUsualCode(operation)).sort()).toEqual([]);
       },
       240_000,
     );

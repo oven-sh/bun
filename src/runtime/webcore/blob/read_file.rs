@@ -283,6 +283,9 @@ pub(crate) struct ReadFile {
     pub offset: SizeType,
     #[cfg(not(windows))]
     pub(crate) max_length: SizeType,
+    /// The view has `BodyFacts::FILE_SIZE_ASKED`: a regular file is read up to the size that this read's `fstat` finds, so no `read()` looks for EOF.
+    #[cfg(not(windows))]
+    pub(crate) size_asked: bool,
     #[cfg(not(windows))]
     pub(crate) total_size: SizeType,
     pub(crate) opened_fd: Fd,
@@ -370,6 +373,7 @@ impl ReadFile {
         store: RefPtr<Store>,
         off: SizeType,
         max_len: SizeType,
+        size_asked: bool,
     ) -> Result<ReadFile, Error> {
         let file_store = store.data.as_file().clone();
         let read_file = ReadFile {
@@ -377,6 +381,7 @@ impl ReadFile {
             store: Some(store),
             offset: off,
             max_length: max_len,
+            size_asked,
             total_size: MAX_SIZE,
             opened_fd: Fd::INVALID,
             read_off: 0,
@@ -738,6 +743,9 @@ impl ReadFile {
             SizeType::try_from((stat.st_size as i64).max(0).min(MAX_SIZE as i64)).unwrap();
 
         if stat.st_size > 0 && !self.could_block {
+            if self.size_asked {
+                self.max_length = self.max_length.min(self.total_size);
+            }
             self.size = self.total_size.min(self.max_length);
             // read up to 4k at a time if
             // they didn't explicitly set a size and we're reading from something that's not a regular file
@@ -945,6 +953,8 @@ pub(crate) struct ReadFileUV<'a> {
     pub(crate) store: RefPtr<Store>,
     pub offset: SizeType,
     pub(crate) max_length: SizeType,
+    /// As `ReadFile::size_asked`.
+    pub(crate) size_asked: bool,
     pub(crate) total_size: SizeType,
     pub(crate) opened_fd: Fd,
     pub(crate) read_len: SizeType,
@@ -1045,6 +1055,7 @@ impl<'a> ReadFileUV<'a> {
         store: RefPtr<Store>,
         off: SizeType,
         max_len: SizeType,
+        size_asked: bool,
         handler: *mut C,
     ) {
         Self::start_with_ctx(
@@ -1053,6 +1064,7 @@ impl<'a> ReadFileUV<'a> {
             store,
             off,
             max_len,
+            size_asked,
             ReadFileCompletionFns::of(handler),
         )
     }
@@ -1065,6 +1077,7 @@ impl<'a> ReadFileUV<'a> {
         store: RefPtr<Store>,
         off: SizeType,
         max_len: SizeType,
+        size_asked: bool,
         completion: ReadFileCompletionFns,
     ) {
         log!("ReadFileUV.start");
@@ -1083,6 +1096,7 @@ impl<'a> ReadFileUV<'a> {
             store, // store.ref() — Arc clone owned here
             offset: off,
             max_length: max_len,
+            size_asked,
             total_size: MAX_SIZE,
             opened_fd: Fd::INVALID,
             read_len: 0,
@@ -1256,6 +1270,9 @@ impl<'a> ReadFileUV<'a> {
         log!("is_regular_file: {}", this.is_regular_file);
 
         if stat.size() > 0 && this.is_regular_file {
+            if this.size_asked {
+                this.max_length = this.max_length.min(this.total_size);
+            }
             this.size = this.total_size.min(this.max_length);
         } else if stat.size() == 0 && !this.is_regular_file {
             // read up to 4k at a time if they didn't explicitly set a size and

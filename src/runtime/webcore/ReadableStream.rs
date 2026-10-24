@@ -203,6 +203,7 @@ impl ReadableStream {
     /// Lift the whole payload out of an unread stream. On success the stream is spent (closed, disturbed, locked).
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
         let source = self.unstarted_source();
+        let mut size_asked = BodyFacts::empty();
         let mut blob = match source {
             Source::Blob(blobby) => {
                 // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
@@ -224,6 +225,9 @@ impl ReadableStream {
                 if let Some(size) = blobby.max_size {
                     blob.size.set(size as webcore::blob::SizeType);
                 }
+                if blobby.size_asked {
+                    size_asked = BodyFacts::FILE_SIZE_ASKED;
+                }
                 // it should be lazy, file shouldn't have opened yet.
                 debug_assert!(!blobby.started.get());
                 webcore::blob::Any::Blob(blob)
@@ -241,7 +245,7 @@ impl ReadableStream {
             }
             Source::JavaScript | Source::Invalid => return None,
         };
-        blob.set_facts(self.body_facts());
+        blob.set_facts(self.body_facts() | size_asked);
 
         self.done();
         ReadableStream__closeConsumedAsBody(self.value, global_this);
@@ -309,7 +313,8 @@ impl ReadableStream {
 
     /// For a stream that Bun just made out of a body or a Blob.
     pub(crate) fn set_body_facts(stream: JSValue, facts: BodyFacts) {
-        ReadableStream__setBodyFacts(stream, (facts | BodyFacts::NATIVE_STREAM).bits());
+        let facts = (facts - BodyFacts::FILE_SIZE_ASKED) | BodyFacts::NATIVE_STREAM;
+        ReadableStream__setBodyFacts(stream, facts.bits());
     }
 
     /// A Body consumer owns this stream now; it stays disturbed and locked (the spec reader is never released).
@@ -557,6 +562,7 @@ impl ReadableStream {
                         } else {
                             None
                         },
+                        size_asked: blob.file_size_asked(),
                         lazy: bun_jsc::JsCell::new(webcore::file_reader::Lazy::Blob(store.clone())),
                         ..Default::default()
                     },

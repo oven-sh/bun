@@ -112,6 +112,8 @@ bitflags::bitflags! {
         const DECODED = 1 << 1;
         /// They reach a reader through a stream that Bun made, not one the program made.
         const NATIVE_STREAM = 1 << 2;
+        /// Not about a body: the program asked an unsliced `Bun.file()` view for its size. The view stores no `stat` size, so `slice()`, a structured clone and a reader look at this bit instead. A slice and a stream never carry it.
+        const FILE_SIZE_ASKED = 1 << 3;
     }
 }
 
@@ -253,6 +255,26 @@ impl Blob {
     #[inline]
     pub fn store(&self) -> Option<&RefPtr<Store>> {
         self.store.get().as_ref()
+    }
+
+    /// Whether this view has `BodyFacts::FILE_SIZE_ASKED`.
+    #[inline]
+    pub fn file_size_asked(&self) -> bool {
+        let asked = self.body_facts.get().contains(BodyFacts::FILE_SIZE_ASKED);
+        debug_assert!(!asked || self.size.get() == MAX_SIZE);
+        asked
+    }
+
+    #[inline]
+    pub fn set_file_size_asked(&self) {
+        self.body_facts
+            .set(self.body_facts.get() | BodyFacts::FILE_SIZE_ASKED);
+    }
+
+    #[inline]
+    pub fn clear_file_size_asked(&self) {
+        self.body_facts
+            .set(self.body_facts.get() - BodyFacts::FILE_SIZE_ASKED);
     }
 
     /// Move the store ref out without releasing it —

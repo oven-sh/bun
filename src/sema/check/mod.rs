@@ -102,7 +102,7 @@ use crate::table::{At, Bases, Buffered, ById, ByIdIndirect, ByKey, ByNode, ByNod
 use crate::table::{FileLocal, FourFlags, Frozen, OfExpressions};
 use crate::types::Prop;
 use crate::types::*;
-use crate::util::{FxHashMap, List, OrderedSet, SharedSort};
+use crate::util::{FxHashMap, List, OrderedSet};
 use bun_threading::Guarded;
 use errors_aliases::SpecifierSite;
 use errors_names_and_exports::{root_declaration, root_pattern};
@@ -800,9 +800,6 @@ impl<'s> Program<'s> {
             auto_array_type: self.auto_array_type,
             stack: Vec::new(),
             in_progress: [0; 1024],
-            reached_limit_at: std::cell::Cell::new(0),
-            ways_to_limits: Vec::new(),
-            ways_to_limits_copied_at: 0,
             frames: Vec::new(),
             last_enter: EnterOutcome::Entered,
             resolution_start: 0,
@@ -1081,12 +1078,6 @@ impl<'s> Program<'s> {
 }
 
 bun_core::declare_scope!(SemaCycles, hidden);
-
-/// Returns the index in `Checker::in_progress` for a query with this `fx_hash`.
-#[inline]
-fn class_of(hash: u64) -> u16 {
-    (hash >> 54) as u16
-}
 
 /// The value of `Checker::work_trap` that `Checker::work` never reaches.
 const WORK_TRAP_DISARMED: u64 = u64::MAX;
@@ -1419,15 +1410,8 @@ pub struct Checker<'p, 's> {
     stack: Vec<Query>,
     /// One per entry of `stack`.
     frames: Vec<QueryFrame>,
-    /// How many entries of `stack` and of `ways_to_limits` fall into each class. A query whose class is empty isn't in
-    /// progress and doesn't lead to a known limit.
+    /// How many entries of `stack` fall into each class. A query whose class is empty isn't in progress.
     in_progress: [u16; 1024],
-    /// `work` at the last `reach_limit`.
-    reached_limit_at: std::cell::Cell<u64>,
-    /// A copy of every `WaysToLimit::ways`.
-    ways_to_limits: Vec<u64>,
-    /// `Commits::changes_of_ways_to_limits` when `ways_to_limits` was copied.
-    ways_to_limits_copied_at: u32,
     /// The result of the last `enter`. `leave` and `excessively_deep` reset it to `Entered`.
     last_enter: EnterOutcome,
     /// The patterns whose implied type is being computed as the contextual type of their
@@ -2343,21 +2327,16 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return false;
         }
-        let hash = crate::util::fx_hash(&q());
-        let class = class_of(hash);
+        let class = (crate::util::fx_hash(&q()) >> 54) as u16;
         let from = self.resolution_start;
-        if self.in_progress[class as usize] != 0 {
-            if !self.ways_to_limits.is_empty() && self.stops_on_way_to_limit(q(), hash) {
-                return false;
-            }
-            // `checkExpression` and `checkPropertyAssignment` have no re-entrancy guard, so an uncached
-            // check runs again while it's in progress.
-            if !(matches!(q(), Query::Expr(..) | Query::LiteralProp(..)) && self.is_rechecking())
-                && let Some(i) = self.position_in_progress(q(), from)
-                && self.on_reentry(q(), i + from)
-            {
-                return false;
-            }
+        // `checkExpression` and `checkPropertyAssignment` have no re-entrancy guard, so an uncached
+        // check runs again while it's in progress.
+        if !(matches!(q(), Query::Expr(..) | Query::LiteralProp(..)) && self.is_rechecking())
+            && self.in_progress[class as usize] != 0
+            && let Some(i) = self.position_in_progress(q(), from)
+            && self.on_reentry(q(), i + from)
+        {
+            return false;
         }
         if is_most_of_stack_in_use && self.starts_over_from_lower(q()) {
             return false;
@@ -2397,50 +2376,6 @@ impl<'p, 's> Checker<'p, 's> {
             frame.incomplete_flow = outer.incomplete_flow;
         }
         true
-    }
-
-    /// `q` is about to begin, and `hash` is its hash. Returns true if another task got to a limit through `q` and this
-    /// task isn't trusted there. Then it's discarded now, not after the work that leads to the limit, and every query
-    /// is rejected until `stack` is empty.
-    #[cold]
-    #[inline(never)]
-    fn stops_on_way_to_limit(&mut self, q: Query, hash: u64) -> bool {
-        if !self.ways_to_limits.contains(&hash) {
-            return false;
-        }
-        let Some(beyond) = self.p.commits.queries_beyond_way_to_limit(hash) else {
-            return false;
-        };
-        self.stack.push(q);
-        self.reach_limit(&beyond);
-        self.stack.pop();
-        if !self.task.was_discarded() {
-            return false;
-        }
-        self.last_enter = EnterOutcome::Rejected;
-        self.unwind_to = 0;
-        self.unwind_work = self.work + 1;
-        self.work_trap = self.work + 1;
-        self.restart_with = None;
-        self.bailed_out();
-        true
-    }
-
-    /// Copies every `WaysToLimit::ways` if they have changed.
-    #[inline]
-    pub(super) fn learn_ways_to_limits(&mut self) {
-        let changes = self.p.commits.changes_of_ways_to_limits();
-        if changes != self.ways_to_limits_copied_at {
-            cold_path();
-            self.ways_to_limits_copied_at = changes;
-            for hash in self.ways_to_limits.drain(..) {
-                self.in_progress[class_of(hash) as usize] -= 1;
-            }
-            (self.p.commits).copy_ways_to_limits(&mut self.ways_to_limits);
-            for &hash in &self.ways_to_limits {
-                self.in_progress[class_of(hash) as usize] += 1;
-            }
-        }
     }
 
     /// Returns the position of the innermost `q` in `stack[from..]`.
@@ -3172,7 +3107,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// False if `q` isn't on `stack`. Reads the per-class counter that `enter` tests before it scans the stack.
     #[inline]
     fn may_be_in_flight(&self, q: Query) -> bool {
-        self.in_progress[class_of(crate::util::fx_hash(&q)) as usize] != 0
+        self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize] != 0
     }
 
     /// `resolvedX == nil && findResolutionCycleStartIndex(target, property) >= 0`, from this checker's own state.
@@ -3406,8 +3341,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn is_limit_in_tsgo(&mut self) -> bool {
+        self.note_gave_up();
         // Only the call right after a rejected `enter` sees the rejection.
-        let is_limit = match std::mem::replace(&mut self.last_enter, EnterOutcome::Entered) {
+        match std::mem::replace(&mut self.last_enter, EnterOutcome::Entered) {
             EnterOutcome::Rejected => false,
             // `getConditionalType` loops where `conditional_type` recurses, so a tail call costs one
             // level of `instantiate` here and none in tsgo. `instantiate` allows at least 60 levels.
@@ -3415,18 +3351,13 @@ impl<'p, 's> Checker<'p, 's> {
                 self.instantiation_depth <= 60
                     || !self.stack.iter().any(|q| matches!(q, Query::Cond(..)))
             }
-        };
-        match is_limit {
-            true => self.note_reached_limit(),
-            false => self.note_gave_up(),
         }
-        is_limit
     }
 
     /// `instantiateTypeWithAlias`: `instantiationDepth == 100`. `instantiation_depth` counts what tsgo counts under a
     /// conditional type too, because `resolve_conditional` follows a tail call in a loop, as `getConditionalType` does.
     pub(super) fn instantiation_too_deep(&mut self) -> TypeId {
-        self.note_reached_limit();
+        self.note_gave_up();
         self.instantiation_limit_hits += 1;
         // Nothing the task does from now on is kept. With every instantiation at the limit, it gets to the end of the
         // statement without 5,000,000 more of them.
@@ -3577,7 +3508,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Returns false if there's no node to report at. Nothing in progress is stored then.
     fn report_at_current_node(&mut self, code: u32, args: sink::Args) -> bool {
-        self.note_reached_limit();
+        self.note_gave_up();
         // Under `eager`, tsgo evaluates this later or never, with another `currentNode`.
         let is_reported = self.eager.is_empty();
         // Outside of an expression, `c.currentNode` is the statement or declaration that `checkSourceElement`
@@ -4123,71 +4054,16 @@ impl<'p, 's> Checker<'p, 's> {
         self.task.hold_back();
     }
 
-    /// Call when the checker gives up: at a comparison limit (2859), after 5,000,000 instantiations (2589), for
-    /// lack of native stack, or at a depth at which a query is rejected. The result then isn't a function of
-    /// the question alone. How far from the limit a computation begins, and how much of it is left to do,
-    /// depends on what was computed before, which for a task that sees commits includes what it found there.
-    /// Such a task is discarded.
+    /// Call when the checker gives up: at an instantiation limit (2589), a union size limit (2590) or a
+    /// comparison limit (2859), for lack of native stack, or at a depth at which a query is rejected. The
+    /// result then isn't a function of the question alone. How far from the limit a computation begins, and
+    /// how much of it is left to do, depends on what was computed before, which for a task that sees commits
+    /// includes what it found there. Such a task is discarded.
     #[cold]
     #[inline(never)]
     pub(super) fn note_gave_up(&self) {
         self.note_state_was_read();
         self.task.discard();
-    }
-
-    /// Call at an instantiation limit (2589) or a union size limit (2590). That depends on what was computed
-    /// before too. But tsgo stores the error type, and whatever uses the type later finds it. So the limit
-    /// counts as a cycle through everything in progress: the first file in program order that leads there
-    /// decides.
-    ///
-    /// That's not so for the limit of 5,000,000 instantiations per statement. `instantiation_count` can be
-    /// ahead of tsgo's, so a statement that's under the limit there can get to it here. The last round's task
-    /// finds what the discarded task has published immediately. It counts less and gets through.
-    #[cold]
-    #[inline(never)]
-    fn note_reached_limit(&self) {
-        match self.instantiation_count >= 5_000_000 {
-            true => self.note_gave_up(),
-            false => self.reach_limit(&[]),
-        }
-    }
-
-    /// See `note_reached_limit`. `beyond`: hashes of the queries that were in progress where another task got to a
-    /// limit, if this one has only got to a query that leads there.
-    fn reach_limit(&self, beyond: &[u64]) {
-        self.note_state_was_read();
-        if self.task.was_discarded() {
-            return;
-        }
-        // Past a limit, the checker gets there again and again. The task has the queries that were in progress last
-        // time.
-        let last_time = self.reached_limit_at.replace(self.work);
-        let new = self
-            .frames
-            .partition_point(|frame| frame.serial <= last_time);
-        if new != 0 && new == self.stack.len() {
-            return;
-        }
-        let hashes_from = |from: usize| {
-            let hashes = self.stack[from..].iter().map(crate::util::fx_hash);
-            hashes.chain(beyond.iter().copied())
-        };
-        (self.task).close_cycle(|| self.is_reachable_only_by_importers(0), hashes_from(new));
-        if !self.task.was_discarded() {
-            return;
-        }
-        // Other files get here through the queries about other files. One that began at depth 0 ends at the limit
-        // wherever it's made.
-        let is_way = |(q, frame): &(&Query, &QueryFrame)| {
-            frame.entry_depth == 0 && q.syntax().is_some_and(|file| Some(file) != self.task.file)
-        };
-        let ways = self.stack.iter().zip(&self.frames).filter(is_way);
-        let ways: Vec<u64> = ways.map(|(q, _)| crate::util::fx_hash(q)).collect();
-        if !ways.is_empty() {
-            let mut in_progress: Vec<u64> = hashes_from(0).collect();
-            in_progress.shared_sort_unstable();
-            (self.p.commits).publish_ways_to_limit(ways, in_progress);
-        }
     }
 
     /// Increments `cycles`.

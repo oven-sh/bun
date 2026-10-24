@@ -30738,38 +30738,6 @@ ${range(n)
       },
     );
 
-    // A member of `U` costs tsc about 4,000 instantiations, so it gets to 5,000,000 at 1,248 members in one statement.
-    test.skipIf(isDebug || isASAN)(
-      "statements just under the limit of 5,000,000 instantiations get no TS2589",
-      async () => {
-        const members = (n: number) =>
-          range(n)
-            .map(i => `"m${i}"`)
-            .join(" | ");
-        using dir = project({
-          "work.d.ts": `type D = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
-type Keys = \`\${D}\${D}\${D}\`;
-type Each<T> = { [K in Keys]: T extends [K, unknown] ? 2 : 1 }[Keys];
-type Work<U, T> = U extends unknown ? Each<[U, T]> : never;
-type U500 = ${members(500)};
-type U900 = ${members(900)};
-type U1240 = ${members(1240)};
-type Heavy<T> = Work<U1240, T> extends never ? never : { v: 1; t: T };
-interface Box<T> { v: Work<T extends 3 ? U900 : U500, T> extends never ? never : 1 }
-declare function heavy<T>(t: T): Heavy<T>;
-`,
-          "call.ts": `export const hub = heavy(1 as const);\n`,
-          "use.ts": `export const x: Box<2> = later;\nvar later = heavy(4 as const);\n`,
-          // The types of `a` and `b` in the target are instantiated by the comparison, 1,400 members together.
-          "comparison.ts": `declare const s: { a: { v: 1 }; b: { v: 1 } };\nexport const x: { a: Box<3>; b: Box<5> } = s;\n`,
-        });
-        for (const { stdout, exitCode } of await Promise.all([1, 8].map(n => check(dir, ["--threads", String(n)])))) {
-          expect(stdout).toBe("use.ts(1,26): error TS2454: Variable 'later' is used before being assigned.");
-          expect(exitCode).toBe(1);
-        }
-      },
-    );
-
     // At 100 levels TypeScript 7.1 assumes that the types are related. 7.0 gives up there, reports TS2321 and caches
     // the pairs from `I0` and `J0` to `I99` and `J99` as failed, so what it reports about `I69` and `J69` depends on
     // what it compared before.

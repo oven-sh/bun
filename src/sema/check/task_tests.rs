@@ -1202,37 +1202,6 @@ fn task_that_hit_a_limit_is_not_rechecked_early() {
 }
 
 #[test]
-fn way_to_limit_is_known_until_commit_resolves_query_beyond_it() {
-    let session = Session::new();
-    let commits = Commits::new_in(session.arena());
-    let ways = || {
-        let mut ways = Vec::new();
-        commits.copy_ways_to_limits(&mut ways);
-        ways
-    };
-    commits.publish_ways_to_limit(vec![7], vec![3, 7, 9]);
-    let changes = commits.changes_of_ways_to_limits();
-    // Nothing new.
-    commits.publish_ways_to_limit(vec![7], vec![2, 7]);
-    assert_eq!(commits.changes_of_ways_to_limits(), changes);
-    // A task that stopped at 7 got there through 8.
-    commits.publish_ways_to_limit(vec![8, 7], vec![3, 7, 8, 9]);
-    commits.publish_ways_to_limit(vec![5], vec![4, 5]);
-    assert_ne!(commits.changes_of_ways_to_limits(), changes);
-    assert_eq!(ways(), [7, 8, 5]);
-    assert_eq!(commits.queries_beyond_way_to_limit(7), Some(vec![3, 7, 9]));
-    assert_eq!(
-        commits.queries_beyond_way_to_limit(8),
-        Some(vec![3, 7, 8, 9])
-    );
-    commits.resolve_ways_to_limits(&[1, 6]);
-    assert_eq!(ways(), [7, 8, 5]);
-    commits.resolve_ways_to_limits(&[1, 9]);
-    assert_eq!(ways(), [5]);
-    assert_eq!(commits.queries_beyond_way_to_limit(8), None);
-}
-
-#[test]
 #[cfg_attr(miri, ignore)]
 fn commit_lists_log_ranges_from_each_cycle_to_next_idle_moment() {
     let session = Session::new();

@@ -1050,6 +1050,14 @@ show(Object.keys(new D()));`,
       ],
     },
   ),
+  ...defineAndAssign(
+    "super() is in a parameter",
+    `class Base { set x(v: number) { log("set x " + v); } }
+class A extends Base { x = 1; constructor(public p = 2, q: any = super()) { log("body " + this.p); } }
+show(Object.keys(new A()));
+class B extends Base { x = 1; constructor(public p = 2, q: any = (() => super())()) { log("body " + this.p); } }
+show(Object.keys(new B()));`,
+  ),
   ...expecting(
     defineAndAssign(
       "a constructor that never calls super()",

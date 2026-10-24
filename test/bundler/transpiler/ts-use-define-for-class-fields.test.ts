@@ -30,6 +30,7 @@ describe("tsconfig compilerOptions.useDefineForClassFields", () => {
         export class Unused { static a = 1; static b = [() => Unused]; c = 2; }
         class Base { static set s(value: number) { console.log("set s", value); } }
         export class CallsSetter extends Base { static s = 1; }
+        export class CallsOwnSetter { static set t(value: number) { console.log("set t", value); } static { this.t = 2; } }
       `,
     });
     await using proc = Bun.spawn({
@@ -41,7 +42,7 @@ describe("tsconfig compilerOptions.useDefineForClassFields", () => {
     });
     expect({ stderr: await proc.stderr.text(), exitCode: await proc.exited }).toEqual({ stderr: "", exitCode: 0 });
     expect(await Bun.file(join(String(dir), "out.js")).text()).not.toContain("Unused");
-    expect(await run(String(dir), "out.js")).toEqual({ stdout: "set s 1\nused\n", stderr: "", exitCode: 0 });
+    expect(await run(String(dir), "out.js")).toEqual({ stdout: "set s 1\nset t 2\nused\n", stderr: "", exitCode: 0 });
   });
 
   test.concurrent("false: field initializers see parameter properties (#10961)", async () => {

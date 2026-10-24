@@ -1099,7 +1099,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.push_scope_for_visit_pass(ScopeKind::ClassBody, class.body_loc)
                 .expect("unreachable");
 
-            let super_shim = if Self::IS_TYPESCRIPT_ENABLED {
+            let mut super_shim = if Self::IS_TYPESCRIPT_ENABLED {
                 self.super_shim_of(class)
             } else {
                 Ref::NONE
@@ -1216,6 +1216,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         self.visit_expr(property.value.as_mut().unwrap());
                     }
+                }
+                if is_constructor(property) {
+                    super_shim = self.super_shim;
                 }
                 self.super_shim = outer_super_shim;
 

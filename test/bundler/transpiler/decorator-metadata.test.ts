@@ -573,7 +573,7 @@ test.concurrent(
       const d: any = () => {};
       type T0 = string;
       ${aliases}
-      class A { @d x: T20000; @d y: T0${"[]".repeat(20_000)}; }
+      class A { @d x: T20000; @d y: T0${Buffer.alloc(40_000, "[]").toString()}; }
     `,
     });
     await using build = spawn({

@@ -160,6 +160,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.generate_temp_var(b"__super")
     }
 
+    /// For a `super()` call. `var __super` is in the body of the constructor, which the parameters don't see.
+    pub(crate) fn is_in_constructor_parameters(&self) -> bool {
+        let mut scope = self.current_scope_ref();
+        let mut came_from = scope.kind;
+        while scope
+            .parent
+            .is_some_and(|parent| parent.kind != js_ast::scope::Kind::ClassBody)
+        {
+            came_from = scope.kind;
+            scope = scope.parent.unwrap();
+        }
+        came_from != js_ast::scope::Kind::FunctionBody
+    }
+
     /// `var __super = (...args) => { super(...args); effects; return this; };`
     fn declare_super_shim(&mut self, shim: Ref, effects: &[Expr], loc: bun_ast::Loc) -> Stmt {
         let args = self.generate_temp_var(b"args");

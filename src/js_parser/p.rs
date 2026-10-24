@@ -6093,14 +6093,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        let can_have_static_accessor = class.extends.is_some()
+            || class.properties.iter().any(|property| {
+                use js_ast::g::PropertyKind::{AutoAccessor, Get, Set};
+                property.flags.contains(Flags::Property::IsStatic)
+                    && matches!(property.kind, Get | Set | AutoAccessor)
+            });
+
         // arena-owned `StoreSlice<Property>` valid for parser 'a; no aliasing &mut outstanding
         for property in class.properties.iter() {
             if property.kind == js_ast::g::PropertyKind::ClassStaticBlock {
                 let csb = property.class_static_block_ref().unwrap();
                 for stmt in csb.stmts.slice() {
-                    // `static x = 1` with `useDefineForClassFields: false`. A base class can have a setter for it.
+                    // `static x = 1` with `useDefineForClassFields: false`
                     let value =
-                        (stmt.assigned_to_member_of_this()).filter(|_| class.extends.is_none());
+                        (stmt.assigned_to_member_of_this()).filter(|_| !can_have_static_accessor);
                     let can_be_removed = match value {
                         Some(value) => self.expr_can_be_removed_if_unused_without_dce_check(&value),
                         None => self.stmts_can_be_removed_if_unused_without_dce_check(

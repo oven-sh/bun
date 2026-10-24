@@ -190,7 +190,9 @@ test.skipIf(isWindows)("an installed package is not fetched below a project dire
       stderr: "pipe",
       ...unprivileged,
     });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`Cannot read directory "${app}"`);
+    expect(stderr).toContain(`while resolving "no-deps"`);
     expect({ stdout, requests: registry.requests, exitCode }).toEqual({ stdout: "", requests: [], exitCode: 1 });
   } finally {
     chmodSync(app, 0o755);

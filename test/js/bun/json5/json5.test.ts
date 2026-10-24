@@ -960,6 +960,23 @@ describe("stringify", () => {
       expect(JSON5.stringify(new Proxy([1, { a: 2 }], {}), replacer)).toEqual("[1,{a:2}]");
       expect(JSON5.stringify({ a: new Proxy([], {}) }, replacer, 2)).toEqual("{\n  a: [],\n}");
     });
+
+    test("a Proxy of an array is read through the traps that JSON.stringify uses", () => {
+      const log: string[] = [];
+      const value = new Proxy([1, 2], {
+        get: (target, key, receiver) => (log.push(`get ${String(key)}`), Reflect.get(target, key, receiver)),
+        has: (target, key) => (log.push(`has ${String(key)}`), Reflect.has(target, key)),
+      });
+      expect(JSON5.stringify(value, replacer)).toEqual("[1,2]");
+      const json5Log = log.splice(0).filter(entry => entry !== "get toJSON5");
+      JSON.stringify(value, replacer as any);
+      expect(json5Log).toEqual(log);
+    });
+
+    test("a Proxy of an array with a length that no array can have is out of memory", () => {
+      const value = new Proxy([], { get: (_target, key) => (key === "length" ? 2 ** 32 : undefined) });
+      expect(() => JSON5.stringify(value, replacer)).toThrow(new RangeError("Out of memory"));
+    });
   });
 
   describe("toJSON", () => {
@@ -1305,6 +1322,15 @@ describe("reviver", () => {
     }) as any;
     expect(log).toEqual(["ownKeys", "defineProperty keep", "deleteProperty drop"]);
     expect({ ...result.b }).toEqual({ keep: 1 });
+  });
+
+  test("a Proxy of an array with a length that no array can have is out of memory", () => {
+    expect(() =>
+      JSON5.parse("{a: 1, b: null}", function (this: any, key, value) {
+        if (key === "a") this.b = new Proxy([], { get: (_target, key) => (key === "length" ? 2 ** 32 : undefined) });
+        return value;
+      }),
+    ).toThrow(new RangeError("Out of memory"));
   });
 
   test("what it throws propagates", () => {

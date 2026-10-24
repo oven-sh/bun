@@ -19,6 +19,21 @@ using namespace JSC;
 
 static JSValue internalizeJSONProperty(JSGlobalObject*, JSObject* holder, const Identifier& name, JSValue reviver, const CallData&);
 
+// LengthOfArrayLike. As in `JSON`, a length that no array can have is out of memory.
+static uint32_t jsonArrayLength(JSGlobalObject* globalObject, JSObject* array)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    uint64_t length = toLength(globalObject, array);
+    RETURN_IF_EXCEPTION(scope, 0);
+    if (length > std::numeric_limits<uint32_t>::max()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return 0;
+    }
+    return static_cast<uint32_t>(length);
+}
+
 static void internalizeJSONChild(JSGlobalObject* globalObject, JSObject* object, const Identifier& key, JSValue reviver, const CallData& callData)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -52,9 +67,9 @@ static JSValue internalizeJSONProperty(JSGlobalObject* globalObject, JSObject* h
         bool valueIsArray = JSC::isArray(globalObject, object);
         RETURN_IF_EXCEPTION(scope, {});
         if (valueIsArray) {
-            uint64_t length = toLength(globalObject, object);
+            uint32_t length = jsonArrayLength(globalObject, object);
             RETURN_IF_EXCEPTION(scope, {});
-            for (uint64_t i = 0; i < length; i++) {
+            for (uint32_t i = 0; i < length; i++) {
                 internalizeJSONChild(globalObject, object, Identifier::from(vm, i), reviver, callData);
                 RETURN_IF_EXCEPTION(scope, {});
             }
@@ -170,6 +185,11 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__getBu
 extern "C" [[ZIG_EXPORT(check_slow)]] bool JSC__JSValue__isArrayOrProxyOfArray(JSC::EncodedJSValue encodedValue, JSC::JSGlobalObject* globalObject)
 {
     return JSC::isArray(globalObject, JSValue::decode(encodedValue));
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] uint32_t JSC__JSValue__jsonArrayLength(JSC::EncodedJSValue encodedArray, JSC::JSGlobalObject* globalObject)
+{
+    return jsonArrayLength(globalObject, asObject(JSValue::decode(encodedArray)));
 }
 
 } // namespace Bun

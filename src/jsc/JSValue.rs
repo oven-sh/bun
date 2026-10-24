@@ -1541,6 +1541,13 @@ impl JSValue {
         crate::cpp::JSC__JSValue__jsonPropertyList(self, global)
     }
 
+    /// The `length` of an array or a Proxy of one as `JSON.stringify` reads it: no `has` trap, and
+    /// out of memory for one above `u32::MAX`.
+    pub fn json_array_length(self, global: &JSGlobalObject) -> JsResult<u32> {
+        debug_assert!(self.is_object());
+        crate::cpp::JSC__JSValue__jsonArrayLength(self, global)
+    }
+
     /// `JSValue.jsonStringify`.
     pub fn json_stringify(
         self,

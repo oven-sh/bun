@@ -3,7 +3,9 @@ use bun_core::StackCheck;
 use bun_core::String as BunString;
 use bun_js_parser::lexer;
 use bun_jsc::bindgen::{JsBytes, JsLocal, JsScope};
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, wtf};
+use bun_jsc::{
+    self as jsc, JSArrayIterator, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, wtf,
+};
 use bun_parsers::json5;
 
 pub(crate) fn stringify<'a>(
@@ -335,7 +337,11 @@ impl<'a> Stringifier<'a> {
     }
 
     fn stringify_array(&mut self, global: &JSGlobalObject, array: JSValue) -> StringifyResult<()> {
-        let mut iter = array.array_iterator(global)?;
+        let mut iter = if is_proxy(array) {
+            JSArrayIterator::with_len(array, global, array.json_array_length(global)?)
+        } else {
+            array.array_iterator(global)?
+        };
 
         self.builder.append_lchar(b'[');
         self.indent += 1;

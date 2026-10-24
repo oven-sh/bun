@@ -1107,6 +1107,140 @@ describe("sync pull() throw after status is written does not re-render error()",
   });
 });
 
+// A direct stream's pull() can end the response before it returns. The request is then
+// finished inside the dispatch that called pull(), and the nextTick callbacks and promise
+// jobs that pull() queued belong to that dispatch: they run before it returns.
+describe("jobs of a pull() that ended the response", () => {
+  const streams = {
+    "async pull() that closes, then awaits": `
+      async pull(controller) {
+        controller.write("done");
+        controller.close();
+        await null;
+        console.log("job of pull()");
+      }`,
+    "async pull() that awaits end()": `
+      async pull(controller) {
+        controller.write("done");
+        await controller.end();
+        console.log("job of pull()");
+      }`,
+    "pull() that closes and queues a microtask": `
+      pull(controller) {
+        controller.write("done");
+        controller.close();
+        queueMicrotask(() => console.log("job of pull()"));
+      }`,
+  };
+  const handlers = {
+    "fetch()": `{ port: 0, fetch: respond }`,
+    "async fetch()": `{ port: 0, fetch: async (request, server) => respond(request, server) }`,
+    "a route": `{ port: 0, routes: { "/": respond } }`,
+  };
+  const cells = Object.keys(handlers).flatMap(handler => Object.keys(streams).map(stream => [handler, stream]));
+
+  // The handler lets go of the process, so the process exits when the dispatch of the
+  // request returns: no later callback of the loop is left to run the jobs.
+  test.concurrent.each(cells)("run before an unref'd server lets the process exit: %s, %s", async (handler, stream) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const respond = (request, server) => {
+          server.unref();
+          return new Response(new ReadableStream({ type: "direct", ${streams[stream]} }));
+        };
+        console.log(Bun.serve(${handlers[handler]}).port);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reader = proc.stdout.getReader();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    const read = async () => {
+      const { value, done } = await reader.read();
+      if (!done) stdout += decoder.decode(value, { stream: true });
+      return !done;
+    };
+    while (!stdout.includes("\n") && (await read()));
+    const port = Number(stdout.slice(0, stdout.indexOf("\n")));
+    const body = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+    while (await read());
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ body, stdout, stderr }).toEqual({ body: "done", stdout: `${port}\njob of pull()\n`, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // Two requests in one write are dispatched from one read of the socket, one after the
+  // other, with no callback of the loop between them.
+  test.concurrent("run before the next pipelined request, which does not get the store that pull() entered", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { AsyncLocalStorage } = require("node:async_hooks");
+        const { connect } = require("node:net");
+        const store = new AsyncLocalStorage();
+        const order = [];
+        let requests = 0;
+        const server = Bun.serve({
+          port: 0,
+          fetch() {
+            if (requests++ > 0) {
+              order.push("handler of request 2 sees " + store.getStore());
+              return new Response("second");
+            }
+            return new Response(
+              new ReadableStream({
+                type: "direct",
+                pull(controller) {
+                  order.push("pull() of request 1");
+                  process.nextTick(() => order.push("nextTick of request 1"));
+                  queueMicrotask(() => order.push("microtask of request 1"));
+                  store.enterWith("request 1");
+                  controller.write("first");
+                  controller.close();
+                },
+              }),
+            );
+          },
+        });
+        const socket = connect(server.port, "127.0.0.1", () => {
+          socket.write("GET /1 HTTP/1.1\\r\\nHost: x\\r\\n\\r\\nGET /2 HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+        });
+        let tail = "";
+        socket.on("data", chunk => {
+          tail = (tail + chunk.toString("latin1")).slice(-6);
+          if (tail !== "second") return;
+          console.log(JSON.stringify(order));
+          socket.destroy();
+          server.stop(true);
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ order: stdout && JSON.parse(stdout), stderr }).toEqual({
+      order: [
+        "pull() of request 1",
+        "nextTick of request 1",
+        "microtask of request 1",
+        "handler of request 2 sees undefined",
+      ],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/32137
 // react-dom/server.bun's renderToReadableStream returns a direct ReadableStream
 // whose pull() writes the shell, captures the controller, and returns

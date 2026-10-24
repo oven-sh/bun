@@ -2238,7 +2238,14 @@ where
             stream.done();
             this.response_body_readable_stream_ref
                 .with_mut(|s| s.deinit());
+            // Read before `end_stream`, which can free a context that no dispatcher holds.
+            let dispatched_synchronously = !this.is_async();
             this.end_stream(this.should_close_connection());
+            // `pull()` ran to the end of the response. Its jobs get the checkpoint that a
+            // `pull()` that returns a promise gets below.
+            if dispatched_synchronously {
+                let _ = this.drain_microtasks();
+            }
             return;
         }
 
@@ -2699,6 +2706,8 @@ where
     //
     // - If you return a Promise, we drain the microtask queue once
     // - If you return a streaming Response, we drain the microtask queue (possibly the 2nd time this task!)
+    // - If the stream's `pull()` returned a Promise or ended the response, we drain the
+    //   microtask queue once more, for the jobs of `pull()`
     //
     // Like a task, the handler and these drains run with the event loop entered
     // (the dispatchers hold `enter_event_loop_scope_without_checkpoint`), so a

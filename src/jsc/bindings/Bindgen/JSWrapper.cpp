@@ -121,12 +121,6 @@ extern "C" void Bun__Bindgen__notifyInitialized(JSC::JSGlobalObject* globalObjec
     vm.heap.reportExtraMemoryAllocated(cell, extraMemorySize);
 }
 
-extern "C" void Bun__Bindgen__reportExtraMemory(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedOwner, size_t size)
-{
-    auto owner = JSC::JSValue::decode(encodedOwner);
-    JSC::getVM(globalObject).heap.reportExtraMemoryAllocated(owner.isCell() ? owner.asCell() : nullptr, size);
-}
-
 extern "C" void Bun__Bindgen__setInternalField(JSC::JSGlobalObject* globalObject, JSC::JSCell* cell, uint32_t offset, JSC::EncodedJSValue value)
 {
     auto* field = reinterpret_cast<JSC::WriteBarrier<JSC::Unknown>*>(reinterpret_cast<uint8_t*>(cell) + offset);

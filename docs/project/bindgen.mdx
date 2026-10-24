@@ -602,7 +602,6 @@ is collected, make the class [`refCounted`](#refcounted).
 | `enumerable`     | `false` makes the native properties non-enumerable                                             |
 | `memoryCost`     | [`fn memory_cost(&self) -> usize`](#memory), for a heap snapshot                               |
 | `estimatedSize`  | [`fn estimated_size(&self) -> usize`](#memory), for the GC                                     |
-| `allocatedSize`  | [`fn allocated_size(&self) -> usize`](#memory), for the GC, of an object that shares memory    |
 | `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. |
 | `call`           | `Name(..)` without `new`, which otherwise throws. It is `fn call(..)`, with no receiver.       |
 | `internalFields` | JS values the object holds                                                                     |
@@ -760,27 +759,20 @@ back to its JS object the struct stores a `JsRef`, and calls `finalize()` on it 
 
 ### Memory
 
-The GC counts the object. These keys report the extra memory the struct owns. With `estimatedSize`, the struct of a
+The GC counts the object. Two keys report the extra memory the struct owns. With `estimatedSize`, the struct of a
 `refCounted` class is counted too.
 
 | Key             | Rust                                | Who calls it                                                   |
 | --------------- | ----------------------------------- | -------------------------------------------------------------- |
 | `estimatedSize` | `fn estimated_size(&self) -> usize` | the GC: when the object is created, and each time it is marked |
-| `allocatedSize` | `fn allocated_size(&self) -> usize` | the GC, when the object is created, instead of the above       |
 | `memoryCost`    | `fn memory_cost(&self) -> usize`    | heap snapshots; without it they use `estimated_size`           |
 
 A marking thread calls `estimated_size` while JavaScript runs. It reads only fields that do not
 change once the object is created, or atomics: if the size changes, keep it in an atomic field, like
 `Blob::m_memoryCost` in WebKit. `memory_cost` runs on the JS thread and can read anything.
 
-The GC is told two things: what was allocated, from which it decides when to collect, and what each live object holds.
-An object that owns what it holds allocated it, so `estimated_size` answers both when it is created. Where that is not
-so, say what was allocated:
-
-- When the size grows, the member that grew it calls `heap.report_extra_memory(this, grown)`. Objects that grow without
-  saying so pile up once they are dropped.
-- An object that shares what it holds with another, like a structured clone, allocated nothing. With `allocatedSize`
-  it says so. Otherwise each one counts as an allocation, and the GC runs far too often.
+When the size grows, the member that grew it calls `heap.report_extra_memory(this, grown)`, like
+`JSWebAssemblyMemory::growSuccessCallback` in WebKit. Objects that grow without saying so pile up once they are dropped.
 
 ### `forBind`
 

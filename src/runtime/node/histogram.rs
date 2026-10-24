@@ -4,7 +4,7 @@
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::BTreeMap;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use bun_core::{Timespec, TimespecMockMode};
@@ -14,34 +14,18 @@ use bun_threading::Guarded;
 
 use crate::timer::event_loop_delay_monitor;
 
+/// The GC is told what JavaScriptCore tells it of a `SharedArrayBuffer`, which also grows and which a structured clone
+/// also shares with other threads. Every object, a clone too, counts the whole size (`JSArrayBuffer::finishCreation`):
+/// bindgen does that, from `estimated_size`. Growth counts in the thread that grew it (`ArrayBuffer::grow`).
 pub(crate) struct Histogram {
     kind: Kind,
     counts: RefCell<Counts>,
-    memory: Arc<Memory>,
-    /// The bytes of the counts that the GC of its heap had not been told of when this object was made.
-    arrived: usize,
+    size: Arc<Size>,
 }
 
-/// The bytes of counts that are shared which the GC of one thread has been told of. Another thread can allocate more,
-/// and this thread's objects keep those alive too. All the objects in its heap that have the counts share this.
-struct Told {
-    memory: Arc<Memory>,
-    bytes: Cell<usize>,
-}
-
-thread_local! {
-    /// By the address of the `Memory`. A thread has one heap, and an entry lasts as long as an object in it.
-    static TOLD: RefCell<BTreeMap<usize, Weak<Told>>> = const { RefCell::new(BTreeMap::new()) };
-}
-
-/// What the garbage collector is told, from its own threads. The numbers are only a hint to it, and nothing is read in
-/// the light of them, so every access is relaxed.
-struct Memory {
-    /// The bytes of the counts.
-    size: AtomicUsize,
-    /// How many objects share the counts.
-    owners: AtomicUsize,
-}
+/// The bytes of the counts. An atomic because a marking thread reads it. It is only a hint to the GC, and nothing is
+/// read in the light of it, so every access is relaxed.
+struct Size(AtomicUsize);
 
 enum Kind {
     /// A `Histogram` that is neither of the others: the structured clone of an `ELDHistogram`.
@@ -57,13 +41,7 @@ enum Counts {
     /// Only this object has them, so `record()` takes no lock.
     Own(State),
     /// A structured clone, which can be on another thread, or a timer has them too.
-    Shared(Shared),
-}
-
-#[derive(Clone)]
-struct Shared {
-    state: Arc<Guarded<State>>,
-    told: Rc<Told>,
+    Shared(Arc<Guarded<State>>),
 }
 
 struct State {
@@ -75,7 +53,8 @@ struct State {
 
 /// An `ELDHistogram`, as the timer that samples the event loop sees it.
 pub(crate) struct Interval {
-    counts: Shared,
+    state: Arc<Guarded<State>>,
+    size: Arc<Size>,
     /// Never 0.
     pub(crate) resolution_ms: u32,
 }
@@ -102,101 +81,30 @@ impl State {
 }
 
 impl Interval {
-    /// Returns the time of the sample, and the bytes to tell the GC of.
+    /// Returns the time of the sample, and the bytes that the counts have grown by.
     pub(crate) fn sample(&self) -> (Timespec, usize) {
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
-        (
-            now,
-            self.counts.with(|state| state.record_delta(now.ns())).1,
-        )
+        let mut state = self.state.lock();
+        state.record_delta(now.ns());
+        (now, self.size.update(&state))
     }
 }
 
-impl Memory {
+impl Size {
     /// Returns the bytes that `state`, which the caller has exclusive access to, has grown by.
     fn update(&self, state: &State) -> usize {
         let size = state.histogram.memory_size();
-        let before = self.size.load(Ordering::Relaxed);
+        let before = self.0.load(Ordering::Relaxed);
         if size != before {
-            self.size.store(size, Ordering::Relaxed);
+            self.0.store(size, Ordering::Relaxed);
         }
         size.saturating_sub(before)
     }
 }
 
-impl Told {
-    /// The one of this thread for `memory`. If it has none, its GC has been told of `bytes`.
-    fn of(memory: &Arc<Memory>, bytes: usize) -> Rc<Told> {
-        TOLD.with_borrow_mut(|all| {
-            let key = Arc::as_ptr(memory).addr();
-            if let Some(told) = all.get(&key).and_then(Weak::upgrade) {
-                return told;
-            }
-            let told = Rc::new(Told {
-                memory: Arc::clone(memory),
-                bytes: Cell::new(bytes),
-            });
-            all.insert(key, Rc::downgrade(&told));
-            told
-        })
-    }
-
-    /// Returns the bytes to tell the GC of: what other threads have allocated.
-    fn update(&self) -> usize {
-        let size = self.memory.size.load(Ordering::Relaxed);
-        size.saturating_sub(self.bytes.replace(size))
-    }
-}
-
-impl Shared {
-    /// Returns what `f` does, and the bytes to tell the GC of.
-    fn with<T>(&self, f: impl FnOnce(&mut State) -> T) -> (T, usize) {
-        let Told { memory, bytes } = &*self.told;
-        let mut state = self.state.lock();
-        let before = memory.size.load(Ordering::Relaxed);
-        let result = f(&mut state);
-        let allocated = memory.update(&state);
-        let after = memory.size.load(Ordering::Relaxed);
-        // What other threads have allocated, if `f` has not freed it.
-        let unknown = before.min(after).saturating_sub(bytes.replace(after));
-        (result, unknown + allocated)
-    }
-}
-
-impl Drop for Told {
-    fn drop(&mut self) {
-        // An error: the thread is ending, and `TOLD` is gone.
-        let _ = TOLD.try_with(|all| all.borrow_mut().remove(&Arc::as_ptr(&self.memory).addr()));
-    }
-}
-
 impl Histogram {
-    fn new(kind: Kind, counts: Counts, memory: Arc<Memory>) -> Self {
-        memory.owners.fetch_add(1, Ordering::Relaxed);
-        Self {
-            kind,
-            counts: RefCell::new(counts),
-            memory,
-            arrived: 0,
-        }
-    }
-
-    /// A structured clone.
-    fn new_clone(kind: Kind, state: Arc<Guarded<State>>, memory: Arc<Memory>) -> Self {
-        let told = Told::of(&memory, 0);
-        let arrived = told.update();
-        let mut clone = Self::new(kind, Counts::Shared(Shared { state, told }), memory);
-        clone.arrived = arrived;
-        clone
-    }
-
-    /// A clone allocates nothing, but it can bring counts from another thread, or counts that have grown there.
-    pub(crate) fn allocated_size(&self) -> usize {
-        self.arrived
-    }
-
     pub(crate) fn estimated_size(&self) -> usize {
-        self.memory.size.load(Ordering::Relaxed) / self.memory.owners.load(Ordering::Relaxed).max(1)
+        self.size.0.load(Ordering::Relaxed)
     }
 
     /// `f` does not reach another histogram.
@@ -207,32 +115,26 @@ impl Histogram {
         receiver: JsLocal<'a>,
         f: impl FnOnce(&mut State) -> T,
     ) -> T {
+        let with = |state: &mut State| (f(state), self.size.update(state));
         let (result, grown) = match &mut *self.counts.borrow_mut() {
-            Counts::Own(state) => (f(state), self.memory.update(state)),
-            Counts::Shared(shared) => shared.with(f),
+            Counts::Own(state) => with(state),
+            Counts::Shared(state) => with(&mut state.lock()),
         };
-        Self::tell(heap, receiver, grown);
-        result
-    }
-
-    fn read<'a, T>(
-        &self,
-        heap: &JsHeap<'a>,
-        receiver: JsLocal<'a>,
-        read: impl FnOnce(&bun_histogram::Histogram) -> T,
-    ) -> T {
-        let (result, grown) = match &*self.counts.borrow() {
-            Counts::Own(state) => return read(&state.histogram),
-            Counts::Shared(shared) => (read(&shared.state.lock().histogram), shared.told.update()),
-        };
-        Self::tell(heap, receiver, grown);
+        Self::report_growth(heap, receiver, grown);
         result
     }
 
     /// This can collect, so the caller has not borrowed the counts.
-    fn tell<'a>(heap: &JsHeap<'a>, receiver: JsLocal<'a>, bytes: usize) {
-        if bytes > 0 {
-            heap.report_extra_memory(receiver, bytes);
+    fn report_growth<'a>(heap: &JsHeap<'a>, receiver: JsLocal<'a>, grown: usize) {
+        if grown > 0 {
+            heap.report_extra_memory(receiver, grown);
+        }
+    }
+
+    fn read<T>(&self, read: impl FnOnce(&bun_histogram::Histogram) -> T) -> T {
+        match &*self.counts.borrow() {
+            Counts::Own(state) => read(&state.histogram),
+            Counts::Shared(state) => read(&state.lock().histogram),
         }
     }
 
@@ -243,32 +145,20 @@ impl Histogram {
                 histogram: state.histogram.take(),
                 previous_ns: state.previous_ns,
             })),
-            Counts::Shared(shared) => return Arc::clone(&shared.state),
+            Counts::Shared(state) => return Arc::clone(state),
         };
-        // This thread allocated all of them.
-        let told = Told::of(&self.memory, self.memory.size.load(Ordering::Relaxed));
-        let state = Arc::clone(&shared);
-        *counts = Counts::Shared(Shared { state, told });
+        *counts = Counts::Shared(Arc::clone(&shared));
         shared
     }
 }
 
-impl Drop for Histogram {
-    fn drop(&mut self) {
-        self.memory.owners.fetch_sub(1, Ordering::Relaxed);
-    }
-}
-
-fn new_state(histogram: bun_histogram::Histogram) -> (State, Arc<Memory>) {
-    let memory = Arc::new(Memory {
-        size: AtomicUsize::new(histogram.memory_size()),
-        owners: AtomicUsize::new(0),
-    });
+fn new_state(histogram: bun_histogram::Histogram) -> (State, Arc<Size>) {
+    let size = Arc::new(Size(AtomicUsize::new(histogram.memory_size())));
     let state = State {
         histogram,
         previous_ns: 0,
     };
-    (state, memory)
+    (state, size)
 }
 
 pub(crate) fn create_recordable<'a>(
@@ -277,27 +167,31 @@ pub(crate) fn create_recordable<'a>(
     highest: u64,
     figures: u32,
 ) -> Option<JsWrapper<'a, Histogram>> {
-    let (state, memory) = new_state(bun_histogram::Histogram::new(lowest, highest, figures)?);
-    Some(Histogram::new(Kind::Recordable, Counts::Own(state), memory).into_js(heap))
+    let (state, size) = new_state(bun_histogram::Histogram::new(lowest, highest, figures)?);
+    let histogram = Histogram {
+        kind: Kind::Recordable,
+        counts: RefCell::new(Counts::Own(state)),
+        size,
+    };
+    Some(histogram.into_js(heap))
 }
 
 pub(crate) fn create_interval<'a>(heap: &JsHeap<'a>, resolution: f64) -> JsWrapper<'a, Histogram> {
     // https://github.com/nodejs/node/blob/v26.3.0/src/node_perf.cc#L298
     let histogram = bun_histogram::Histogram::new(1000, i64::MAX as u64, 3);
-    let (state, memory) = new_state(histogram.expect("a valid range"));
-    let counts = Shared {
-        state: Arc::new(Guarded::new(state)),
-        told: Told::of(&memory, memory.size.load(Ordering::Relaxed)),
-    };
+    let (state, size) = new_state(histogram.expect("a valid range"));
+    let state = Arc::new(Guarded::new(state));
     let kind = Kind::Interval {
         interval: Rc::new(Interval {
-            counts: counts.clone(),
+            state: Arc::clone(&state),
+            size: Arc::clone(&size),
             // `as` saturates.
             resolution_ms: (resolution as u32).max(1),
         }),
         enabled: Cell::new(false),
     };
-    Histogram::new(kind, Counts::Shared(counts), memory).into_js(heap)
+    let counts = RefCell::new(Counts::Shared(state));
+    Histogram { kind, counts, size }.into_js(heap)
 }
 
 pub(crate) fn is_histogram(value: JsLocal<'_>) -> bool {
@@ -341,27 +235,27 @@ fn recordable<'a>(heap: &JsHeap<'a>, receiver: JsLocal<'a>) -> bindgen::Result<'
 }
 
 pub(crate) fn count<'a>(heap: &JsHeap<'a>, receiver: JsLocal<'a>) -> bindgen::Result<'a, u64> {
-    Ok(histogram(heap, receiver)?.read(heap, receiver, |histogram| histogram.count()))
+    Ok(histogram(heap, receiver)?.read(|histogram| histogram.count()))
 }
 
 pub(crate) fn min<'a>(heap: &JsHeap<'a>, receiver: JsLocal<'a>) -> bindgen::Result<'a, u64> {
-    Ok(histogram(heap, receiver)?.read(heap, receiver, |histogram| histogram.min()))
+    Ok(histogram(heap, receiver)?.read(|histogram| histogram.min()))
 }
 
 pub(crate) fn max<'a>(heap: &JsHeap<'a>, receiver: JsLocal<'a>) -> bindgen::Result<'a, u64> {
-    Ok(histogram(heap, receiver)?.read(heap, receiver, |histogram| histogram.max()))
+    Ok(histogram(heap, receiver)?.read(|histogram| histogram.max()))
 }
 
 pub(crate) fn mean<'a>(heap: &JsHeap<'a>, receiver: JsLocal<'a>) -> bindgen::Result<'a, f64> {
-    Ok(histogram(heap, receiver)?.read(heap, receiver, |histogram| histogram.mean()))
+    Ok(histogram(heap, receiver)?.read(|histogram| histogram.mean()))
 }
 
 pub(crate) fn exceeds<'a>(heap: &JsHeap<'a>, receiver: JsLocal<'a>) -> bindgen::Result<'a, u64> {
-    Ok(histogram(heap, receiver)?.read(heap, receiver, |histogram| histogram.exceeds()))
+    Ok(histogram(heap, receiver)?.read(|histogram| histogram.exceeds()))
 }
 
 pub(crate) fn stddev<'a>(heap: &JsHeap<'a>, receiver: JsLocal<'a>) -> bindgen::Result<'a, f64> {
-    Ok(histogram(heap, receiver)?.read(heap, receiver, |histogram| histogram.stddev()))
+    Ok(histogram(heap, receiver)?.read(|histogram| histogram.stddev()))
 }
 
 fn percentiles_map<'a>(
@@ -369,8 +263,7 @@ fn percentiles_map<'a>(
     receiver: JsLocal<'a>,
     value_to_js: impl Fn(&JSGlobalObject, u64) -> JsResult<JSValue>,
 ) -> bindgen::Result<'a, JSValue> {
-    let percentiles = histogram(&cx.heap, receiver)?
-        .read(&cx.heap, receiver, |histogram| histogram.percentiles());
+    let percentiles = histogram(&cx.heap, receiver)?.read(|histogram| histogram.percentiles());
     let global = cx.global();
     let value = JSMap::create(global);
     if let Some(map) = JSMap::from_js(value) {
@@ -417,7 +310,7 @@ pub(crate) fn percentile<'a>(
     if !(percentile > 0.0 && percentile <= 100.0) {
         return Ok(None);
     }
-    Ok(Some(this.read(heap, receiver, |histogram| {
+    Ok(Some(this.read(|histogram| {
         histogram.value_at_percentile(percentile)
     })))
 }
@@ -493,32 +386,35 @@ pub(crate) fn add<'a>(
     if !is_recordable(other) {
         return Ok(false);
     }
-    let from = recordable(heap, other)?;
-    if core::ptr::eq(this, from) {
+    let other = recordable(heap, other)?;
+    if core::ptr::eq(this, other) {
         this.with(heap, receiver, State::add_to_itself);
         return Ok(true);
     }
-    match (&mut *this.counts.borrow_mut(), &*from.counts.borrow()) {
-        (Counts::Own(this), Counts::Own(other)) => this.add(other),
-        (Counts::Own(this), Counts::Shared(other)) => this.add(&other.state.lock()),
-        (Counts::Shared(this), Counts::Own(other)) => this.state.lock().add(other),
-        (Counts::Shared(this), Counts::Shared(other)) if Arc::ptr_eq(&this.state, &other.state) => {
-            this.state.lock().add_to_itself();
+    let add = |into: &mut State, other: &State| {
+        into.add(other);
+        this.size.update(into)
+    };
+    let grown = match (&mut *this.counts.borrow_mut(), &*other.counts.borrow()) {
+        (Counts::Own(this), Counts::Own(other)) => add(this, other),
+        (Counts::Own(this), Counts::Shared(other)) => add(this, &other.lock()),
+        (Counts::Shared(this), Counts::Own(other)) => add(&mut this.lock(), other),
+        (Counts::Shared(state), Counts::Shared(other)) if Arc::ptr_eq(state, other) => {
+            let mut state = state.lock();
+            state.add_to_itself();
+            this.size.update(&state)
         }
         // In the order of their addresses: another thread may be adding the two the other way around.
-        (Counts::Shared(this), Counts::Shared(other))
-            if Arc::as_ptr(&this.state) < Arc::as_ptr(&other.state) =>
-        {
-            let mut this = this.state.lock();
-            this.add(&other.state.lock());
+        (Counts::Shared(this), Counts::Shared(other)) if Arc::as_ptr(this) < Arc::as_ptr(other) => {
+            let mut this = this.lock();
+            add(&mut this, &other.lock())
         }
         (Counts::Shared(this), Counts::Shared(other)) => {
-            let other = other.state.lock();
-            this.state.lock().add(&other);
+            let other = other.lock();
+            add(&mut this.lock(), &other)
         }
-    }
-    this.with(heap, receiver, |_| {});
-    from.read(heap, other, |_| {});
+    };
+    Histogram::report_growth(heap, receiver, grown);
     Ok(true)
 }
 
@@ -559,7 +455,7 @@ static IN_FLIGHT: Guarded<BTreeMap<u64, InFlight>> = Guarded::new(BTreeMap::new(
 
 struct InFlight {
     state: Arc<Guarded<State>>,
-    memory: Arc<Memory>,
+    size: Arc<Size>,
     recordable: bool,
 }
 
@@ -571,7 +467,7 @@ pub(crate) extern "C" fn Histogram__retainForStructuredClone(histogram: JSValue)
     };
     let in_flight = InFlight {
         state: histogram.share(),
-        memory: Arc::clone(&histogram.memory),
+        size: Arc::clone(&histogram.size),
         recordable: matches!(histogram.kind, Kind::Recordable),
     };
     // Not one that bytes from elsewhere (IPC, `v8.deserialize()`) can guess.
@@ -598,7 +494,11 @@ pub(crate) extern "C" fn Histogram__fromStructuredClone(
         } else {
             Kind::Plain
         };
-        Histogram::new_clone(kind, Arc::clone(&found.state), Arc::clone(&found.memory))
+        Histogram {
+            kind,
+            counts: RefCell::new(Counts::Shared(Arc::clone(&found.state))),
+            size: Arc::clone(&found.size),
+        }
     };
     histogram.into_js_wrapper(global).to_js()
 }

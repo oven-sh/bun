@@ -10,7 +10,6 @@ export default b.module({ rustPath: "crate::node::histogram" });
 export const Histogram = b.class({
   rustPath: "crate::node::histogram::Histogram",
   estimatedSize: true,
-  allocatedSize: true,
 });
 
 /** A `RecordableHistogram`, or `null` if no histogram has this range and precision. */

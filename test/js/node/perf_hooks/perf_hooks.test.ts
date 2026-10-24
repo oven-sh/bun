@@ -1,9 +1,9 @@
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
 import net from "net";
-import perf, { PerformanceObserver, type PerformanceNodeEntry, type RecordableHistogram } from "perf_hooks";
-import { MessageChannel, receiveMessageOnPort, Worker, type MessagePort } from "worker_threads";
+import perf, { PerformanceObserver, type PerformanceNodeEntry } from "perf_hooks";
+import { MessageChannel, receiveMessageOnPort, Worker } from "worker_threads";
 
 test("stubs", () => {
   expect(perf.performance.nodeTiming).toBeObject();
@@ -39,12 +39,14 @@ test("the garbage collector knows the size of a histogram", () => {
     histogram.add(histogram);
     expect(size()).toBeWithin(table + 2 * chunk, table + 2 * chunk + 1024);
 
-    // A structured clone shares the buckets.
+    // A structured clone shares the buckets, and each of the two counts all of them, as with a SharedArrayBuffer.
     const clone = structuredClone(histogram);
-    expect(size() + estimateShallowMemoryUsageOf(clone)).toBeWithin(table + 2 * chunk, table + 2 * chunk + 1024);
+    expect(estimateShallowMemoryUsageOf(clone)).toBe(size());
+    expect(size()).toBeWithin(table + 2 * chunk, table + 2 * chunk + 1024);
 
     histogram.reset();
-    expect(size() + estimateShallowMemoryUsageOf(clone)).toBeLessThan(1024);
+    expect(estimateShallowMemoryUsageOf(clone)).toBe(size());
+    expect(size()).toBeLessThan(1024);
   }
 
   const histogram = perf.createHistogram();
@@ -67,201 +69,73 @@ test("histograms that grew are collected without an explicit GC", () => {
   expect(created).toBeLessThan(2000);
 });
 
-test("a structured clone in the same thread does not count as an allocation", () => {
-  // 37 MB: a value in each chunk, with 5 figures.
-  const histogram = perf.createHistogram({ figures: 5 });
-  for (let value = 1; value < 2 ** 18; value += 512) histogram.record(value);
-  for (let shift = 2; 2 ** 17 * shift < Number.MAX_SAFE_INTEGER; shift *= 2) {
-    for (let value = 2 ** 17; value < 2 ** 18; value += 512) histogram.record(value * shift);
-  }
-  expect(estimateShallowMemoryUsageOf(histogram)).toBeGreaterThan(37 * 1024 * 1024);
-
-  // They share its buckets. If each counted as a part of the 37 MB, the GC would run every few clones.
-  // Collecting first leaves no other reason for the GC to run: recording has just allocated the 37 MB.
-  const kept = withoutAggressiveGC(() => {
-    Bun.gc(true);
-    const before = heapStats().objectTypeCounts.Histogram;
-    for (let i = 0; i < 300; i++) structuredClone(histogram);
-    return heapStats().objectTypeCounts.Histogram - before;
+// A clone did not allocate the buckets, but it keeps them alive once the original is dropped.
+test("structured clones are collected without an explicit GC", () => {
+  const histogram = perf.createHistogram();
+  for (const value of valuesInEveryChunk) histogram.record(value);
+  let created = 0;
+  withoutAggressiveGC(() => {
+    do {
+      for (let i = 0; i < 100; i++) structuredClone(histogram);
+      created += 100;
+    } while (created < 2000 && heapStats().objectTypeCounts.Histogram > created / 2);
   });
-  expect(kept).toBeGreaterThan(150);
+  expect(created).toBeLessThan(2000);
 });
 
-describe("histograms that two threads share", () => {
+test.each([
+  ["full", `histograms = Array.from({ length: 100 }, () => createHistogram()); histograms.forEach(fill);`],
+  [
+    "empty, and again once it has filled them,",
+    `if (step % 2 === 1) histograms = Array.from({ length: 100 }, () => createHistogram());
+    else histograms.forEach(fill);`,
+  ],
+])("histograms that another thread sends %s are collected without an explicit GC", async (_, inWorker) => {
+  const { port1, port2 } = new MessageChannel();
   const turn = new Int32Array(new SharedArrayBuffer(4));
-  const control = new MessageChannel();
-  let turns = 0;
-  let worker: Worker;
-  let failed: Promise<unknown>;
-  beforeAll(() => {
-    worker = new Worker(
-      `const { receiveMessageOnPort, workerData: { control, turn, values } } = require("node:worker_threads");
-      const { createHistogram } = require("node:perf_hooks");
-      let scenario, step, histograms;
-      for (let turns = 1; ; turns++) {
-        Atomics.wait(turn, 0, turns * 2 - 2);
-        if (Atomics.load(turn, 0) < 0) break;
-        try {
-          const next = receiveMessageOnPort(control)?.message;
-          if (next) {
-            scenario = { port: next.port, run: new Function("step", "port", "histograms", "lib", next.inWorker) };
-            step = 0;
-            histograms = [];
-          }
-          scenario.run(++step, scenario.port, histograms, {
-            createHistogram,
-            receive: () => receiveMessageOnPort(scenario.port).message,
-            fill(histogram) {
-              for (const value of values) histogram.record(value);
-            },
-          });
-        } catch (error) {
-          Atomics.store(turn, 0, -1);
-          Atomics.notify(turn, 0);
-          throw error;
-        }
-        Atomics.store(turn, 0, turns * 2);
+  const worker = new Worker(
+    `const { workerData: { port, turn, values } } = require("node:worker_threads");
+    const { createHistogram } = require("node:perf_hooks");
+    const fill = histogram => values.forEach(value => histogram.record(value));
+    let histograms;
+    for (let step = 1; ; step++) {
+      Atomics.wait(turn, 0, step * 2 - 2);
+      if (Atomics.load(turn, 0) < 0) break;
+      try {
+        ${inWorker}
+        for (const histogram of histograms) port.postMessage(histogram);
+      } catch (error) {
+        Atomics.store(turn, 0, -1);
         Atomics.notify(turn, 0);
-      }`,
-      {
-        eval: true,
-        workerData: { control: control.port2, turn, values: valuesInEveryChunk },
-        transferList: [control.port2],
-      },
-    );
-    failed = new Promise(resolve => worker.once("error", resolve));
-  });
-  afterAll(async () => {
+        throw error;
+      }
+      Atomics.store(turn, 0, step * 2);
+      Atomics.notify(turn, 0);
+    }`,
+    { eval: true, workerData: { port: port2, turn, values: valuesInEveryChunk }, transferList: [port2] },
+  );
+  const failed = new Promise(resolve => worker.once("error", resolve));
+  try {
+    let received = 0;
+    withoutAggressiveGC(() => {
+      do {
+        Atomics.add(turn, 0, 1);
+        Atomics.notify(turn, 0);
+        // Not a turn of the event loop, in which an idle GC could run. So nothing would time the test out.
+        expect(Atomics.wait(turn, 0, (received / 100) * 2 + 1, 30_000)).not.toBe("timed-out");
+        if (Atomics.load(turn, 0) < 0) return;
+        for (let i = 0; i < 100; i++) expect(receiveMessageOnPort(port1)).toBeDefined();
+        received += 100;
+      } while (received < 2000 && heapStats().objectTypeCounts.Histogram > received / 2);
+    });
+    if (Atomics.load(turn, 0) < 0) throw await failed;
+    expect(received).toBeLessThan(2000);
+  } finally {
     Atomics.store(turn, 0, -1);
     Atomics.notify(turn, 0);
     await worker.terminate();
-    control.port1.close();
-  });
-
-  // A round is `before` here, then `inWorker` there, then `after` here, and drops 100 histograms in this thread.
-  // `inWorker` has `step`, `port`, `lib`, and `histograms`: an array that it keeps from one step to the next.
-  // Returns how many rounds it took for the GC of this thread to run without being asked to, up to `rounds`.
-  async function roundsUntilCollected(
-    rounds: number,
-    inWorker: string,
-    before: (port: MessagePort, step: number) => void,
-    after: (port: MessagePort, step: number) => void,
-  ) {
-    const { port1, port2 } = new MessageChannel();
-    control.port1.postMessage({ inWorker, port: port2 }, [port2]);
-    try {
-      const taken = withoutAggressiveGC(() => {
-        Bun.gc(true);
-        const kept = heapStats().objectTypeCounts.Histogram ?? 0;
-        let step = 0;
-        do {
-          before(port1, ++step);
-          Atomics.add(turn, 0, 1);
-          Atomics.notify(turn, 0);
-          // Not a turn of the event loop, in which an idle GC could run. So nothing would time the test out.
-          expect(Atomics.wait(turn, 0, ++turns * 2 - 1, 30_000)).not.toBe("timed-out");
-          if (Atomics.load(turn, 0) < 0) return;
-          after(port1, step);
-        } while (step < rounds && heapStats().objectTypeCounts.Histogram - kept > step * 50);
-        return step;
-      });
-      if (taken === undefined) throw await failed;
-      return taken;
-    } finally {
-      port1.close();
-    }
+    port1.close();
   }
-  // It depends on the size of the heap, but 36 MB in every round or every other round is far more than enough.
-  const rounds = 20;
-  const receive100 = (port: MessagePort) => {
-    // Without a look inside, which would tell the GC too.
-    for (let i = 0; i < 100; i++) expect(receiveMessageOnPort(port)).toBeDefined();
-  };
-
-  // This thread did not allocate them, but its objects are what keeps them alive once the worker has dropped its own.
-  test("are collected if another thread made them", async () => {
-    const inWorker = `for (let i = 0; i < 100; i++) {
-      const histogram = lib.createHistogram();
-      lib.fill(histogram);
-      port.postMessage(histogram);
-    }`;
-    expect(await roundsUntilCollected(rounds, inWorker, () => {}, receive100)).toBeLessThan(rounds);
-  });
-
-  test("are collected if another thread sent them when they were empty, and again when it had filled them", async () => {
-    const inWorker = `if (step % 2 === 1) {
-      for (let i = 0; i < 100; i++) histograms[i] = lib.createHistogram();
-    } else {
-      histograms.forEach(lib.fill);
-    }
-    for (const histogram of histograms) port.postMessage(histogram);`;
-    expect(await roundsUntilCollected(rounds, inWorker, () => {}, receive100)).toBeLessThan(rounds);
-  });
-
-  const another = perf.createHistogram({ highest: 2 });
-  test.each([
-    ["recorded in them", (histogram: RecordableHistogram) => histogram.record(1)],
-    ["read them", (histogram: RecordableHistogram) => expect(histogram.count).toBe(valuesInEveryChunk.length)],
-    ["added them to another", (histogram: RecordableHistogram) => another.add(histogram)],
-  ])("are collected if another thread filled them, and this one then %s, which allocates nothing", async (_, use) => {
-    const histograms: RecordableHistogram[] = [];
-    const taken = await roundsUntilCollected(
-      rounds,
-      `for (let i = 0; i < 100; i++) lib.fill(lib.receive());`,
-      port => {
-        for (let i = 0; i < 100; i++) {
-          const histogram = perf.createHistogram();
-          histograms.push(histogram);
-          port.postMessage(histogram);
-        }
-      },
-      () => {
-        while (histograms.length > 0) use(histograms.pop()!);
-      },
-    );
-    expect(taken).toBeLessThan(rounds);
-  });
-
-  describe("that stay", () => {
-    const full = perf.createHistogram();
-    for (const value of valuesInEveryChunk) full.record(value);
-    const receiveOnce = `while (histograms.length < 100) histograms.push(lib.receive());`;
-    const sendOnce = (shared: RecordableHistogram[]) => (port: MessagePort, step: number) => {
-      if (step === 1) for (const histogram of shared) port.postMessage(histogram);
-    };
-    const drop100 = () => {
-      for (let i = 0; i < 100; i++) perf.createHistogram();
-    };
-
-    test("count as an allocation when this thread fills them again after another has reset them", async () => {
-      const shared = Array.from({ length: 100 }, () => perf.createHistogram());
-      for (const histogram of shared) histogram.add(full);
-      const taken = await roundsUntilCollected(
-        rounds,
-        `${receiveOnce} for (const histogram of histograms) histogram.reset();`,
-        sendOnce(shared),
-        () => {
-          drop100();
-          for (const histogram of shared) histogram.add(full);
-        },
-      );
-      expect(taken).toBeLessThan(rounds);
-    });
-
-    test("do not count as an allocation when this thread resets what another has filled", async () => {
-      const shared = Array.from({ length: 100 }, () => perf.createHistogram());
-      const taken = await roundsUntilCollected(
-        8,
-        `${receiveOnce} histograms.forEach(lib.fill);`,
-        sendOnce(shared),
-        () => {
-          drop100();
-          for (const histogram of shared) histogram.reset();
-        },
-      );
-      expect(taken).toBe(8);
-    });
-  });
 });
 
 test("the prototypes of a histogram can be printed", () => {

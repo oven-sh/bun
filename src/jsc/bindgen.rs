@@ -71,8 +71,9 @@ impl<'a> JsHeap<'a> {
     /// only when it next marks `owner`, which it has no reason to do soon. This can collect.
     #[inline]
     pub fn report_extra_memory<T>(&self, owner: JsLocal<'a, T>, size: usize) {
-        // SAFETY: the global object is live.
-        unsafe { extern_types::Bun__Bindgen__reportExtraMemory(self.global_ptr(), owner.0, size) }
+        self.global_object()
+            .vm()
+            .report_extra_memory_allocated(owner.0, size);
     }
 
     /// An array of what `convert`, a function of [`to_js`], makes of each item.
@@ -694,7 +695,7 @@ pub unsafe trait JsPayload: Sized + 'static {
     /// The caller writes the payload before anything else runs. A null `structure` is the class's own.
     #[doc(hidden)]
     unsafe fn create_cell(global: *mut JSGlobalObject, structure: *mut c_void) -> NonNull<c_void>;
-    /// With `estimatedSize`, the extra memory to report to the GC as allocated for a new object.
+    /// With `estimatedSize`, the extra memory to report to the GC for a new object.
     #[doc(hidden)]
     #[inline(always)]
     fn extra_memory_size(&self) -> Option<usize> {

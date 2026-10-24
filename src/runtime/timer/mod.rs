@@ -416,8 +416,11 @@ impl EventLoopDelayMonitor {
             true
         });
         self.schedule();
-        // This can collect, so it comes last.
-        vm.jsc_vm().report_extra_memory(allocated);
+        if allocated > 0 {
+            // This can collect, so it comes last.
+            vm.jsc_vm()
+                .report_extra_memory_allocated(bun_jsc::JSValue::UNDEFINED, allocated);
+        }
     }
 
     /// Arms the timer for the interval that is due first.

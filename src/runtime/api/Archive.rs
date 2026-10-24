@@ -1002,6 +1002,12 @@ impl FilesContext {
         let mut entries: FileEntryList = Vec::new();
         // errdefer freeEntries(&entries) — handled by Drop on `entries`
 
+        let mut name_buf = self
+            .glob_patterns
+            .as_ref()
+            .map(|_| bun_paths::path_buffer_pool::get());
+        let mut long_name = Vec::new();
+
         let mut entry: *mut lib::Entry = core::ptr::null_mut();
         loop {
             match archive.read_next_header(&mut entry) {
@@ -1019,14 +1025,18 @@ impl FilesContext {
             // `archive_entry_pathname_utf8` returns NULL for every non-ASCII
             // name in the "C" locale, which would key the Map by "".
             #[cfg(not(windows))]
-            let pathname = entry_ref.pathname().as_bytes();
+            let pathname_z = entry_ref.pathname();
             #[cfg(windows)]
-            let pathname_owned = entry_pathname_utf8(entry_ref)?;
+            let mut pathname_owned = entry_pathname_utf8(entry_ref)?;
             #[cfg(windows)]
-            let pathname: &[u8] = &pathname_owned;
+            pathname_owned.push(0);
+            #[cfg(windows)]
+            let pathname_z = bun_core::ZStr::from_slice_with_nul(&pathname_owned);
+            let pathname = pathname_z.as_bytes();
             // Apply glob pattern filtering (supports both positive and negative patterns)
-            if let Some(patterns) = &self.glob_patterns {
-                if !match_glob_patterns(patterns, pathname) {
+            if let (Some(patterns), Some(name_buf)) = (&self.glob_patterns, &mut name_buf) {
+                let name = GlobName::listed(pathname_z, &mut name_buf[..], &mut long_name);
+                if !match_glob_patterns(patterns, &name) {
                     continue;
                 }
             }
@@ -1204,11 +1214,37 @@ pub(crate) struct GlobPattern {
 
 impl GlobPattern {
     fn new(pattern: &[u8]) -> GlobPattern {
+        // Entry names are normalized before the match (`GlobName`), so the pattern is too.
+        let pattern = glob::pattern::of_normalized_paths(pattern);
         let positive = pattern.strip_prefix(b"!");
         GlobPattern {
             is_negative: positive.is_some(),
-            glob: glob::Prepared::new(positive.unwrap_or(pattern).into()),
+            glob: glob::Prepared::new(positive.unwrap_or(&pattern).into()),
         }
+    }
+}
+
+/// The only name of an entry that a glob pattern sees.
+pub(crate) struct GlobName<'a>(&'a bun_core::ZStr);
+
+impl<'a> GlobName<'a> {
+    /// The path that `extract()` writes, with no "./", "//", "\\" or "..". It is always in `buf`.
+    fn written(stored: &[u8], buf: &'a mut [u8]) -> Self {
+        Self(bun_paths::resolve_path::normalize_buf_z::<
+            bun_paths::platform::Posix,
+        >(stored, buf))
+    }
+
+    /// As `written`, but `stored` itself when it needs no change or when `is_safe_path` refuses it: a key of `files()` has no ".." that its pattern did not match.
+    fn listed(stored: &'a bun_core::ZStr, buf: &'a mut [u8], spill: &'a mut Vec<u8>) -> Self {
+        use bun_paths::resolve_path;
+        let name = stored.as_bytes();
+        if resolve_path::is_normalized_posix(name) || !is_safe_path(name) {
+            return Self(stored);
+        }
+        Self(resolve_path::normalize_buf_z_spill::<
+            bun_paths::platform::Posix,
+        >(buf, spill, name))
     }
 }
 
@@ -1216,7 +1252,8 @@ impl GlobPattern {
 /// Positive patterns: at least one must match for the path to be included.
 /// Negative patterns (starting with "!"): if any matches, the path is excluded.
 /// Returns true if the path should be included, false if excluded.
-pub(crate) fn match_glob_patterns(patterns: &[GlobPattern], pathname: &[u8]) -> bool {
+pub(crate) fn match_glob_patterns(patterns: &[GlobPattern], name: &GlobName<'_>) -> bool {
+    let pathname = name.0.as_bytes();
     let mut has_positive_patterns = false;
     let mut matches_positive = false;
 
@@ -1306,9 +1343,8 @@ fn extract_to_disk_filtered(
         if raw_pathname.len() >= normalized_buf.len() {
             continue;
         }
-        let pathname_z: &bun_core::ZStr = bun_paths::resolve_path::normalize_buf_z::<
-            bun_paths::platform::Posix,
-        >(raw_pathname, &mut normalized_buf[..]);
+        let name = GlobName::written(raw_pathname, &mut normalized_buf[..]);
+        let pathname_z = name.0;
         let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)
@@ -1320,7 +1356,7 @@ fn extract_to_disk_filtered(
         // Positive patterns: at least one must match
         // Negative patterns: if any matches, the file is excluded
         if let Some(patterns) = glob_patterns {
-            if !match_glob_patterns(patterns, pathname) {
+            if !match_glob_patterns(patterns, &name) {
                 continue;
             }
         }

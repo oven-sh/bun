@@ -1,7 +1,131 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
-import { expect } from "bun:test";
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { afterAll, expect } from "bun:test";
+import { tempDir } from "harness";
+import { existsSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "../bake-harness";
+
+const pendingBatchControls = tempDir("bake-pending-watch-events", {});
+afterAll(() => pendingBatchControls[Symbol.dispose]());
+
+for (const atomicWatchFile of [false, true]) {
+  const traceName = atomicWatchFile ? "atomic-events.jsonl" : "events.jsonl";
+  devTest(
+    `retains separate watcher batches while the server thread is busy${atomicWatchFile ? " with an atomic plugin dependency" : ""}`,
+    {
+      framework: minimalFramework,
+      env: { BUN_WATCHER_TRACE: path.join(pendingBatchControls, traceName) },
+      pluginFile: atomicWatchFile
+        ? `
+    import { join } from 'node:path';
+    export default [{
+      name: 'atomic-pending-dependency',
+      setup(build) {
+        const dependency = join(import.meta.dirname, 'b.txt');
+        build.onLoad({ filter: /b\\.ts$/ }, async () => ({
+          contents: 'export const b = ' + JSON.stringify(await Bun.file(dependency).text()),
+          loader: 'js',
+          watchFiles: [dependency],
+        }));
+      },
+    }];
+  `
+        : undefined,
+      files: {
+        "routes/index.ts": `
+      import { existsSync, writeFileSync } from 'node:fs';
+      import { a } from '../a.ts';
+      import { b } from '../b.ts';
+      import { c } from '../c.ts';
+      export default function(req) {
+        if (new URL(req.url).searchParams.has('block')) {
+          const trace = process.env.BUN_WATCHER_TRACE;
+          writeFileSync(trace + '.blocked', 'blocked');
+          const deadline = Date.now() + 15000;
+          while (!existsSync(trace + '.release')) {
+            if (Date.now() > deadline) {
+              throw new Error('External release deadline exceeded');
+            }
+          }
+        }
+        return new Response([a, b, c].join('|'));
+      }
+    `,
+        "a.ts": `export const a = 'A0';`,
+        "b.ts": `export const b = 'B0';`,
+        ...(atomicWatchFile ? { "b.txt": "B0" } : {}),
+        "c.ts": `export const c = 'C0';`,
+      },
+      async test(dev) {
+        const trace = path.join(pendingBatchControls, traceName);
+        writeFileSync(trace, "");
+        for (const suffix of [".blocked", ".release"]) {
+          if (existsSync(trace + suffix)) {
+            unlinkSync(trace + suffix);
+          }
+        }
+        let blockedRequest: Promise<string> | undefined;
+        async function waitForControl(condition: () => boolean) {
+          const deadline = Date.now() + 2000 * WAIT_MULTIPLIER;
+          while (!condition()) {
+            if (dev.devProcess.exitCode !== null) {
+              throw new Error("Dev server exited while awaiting watcher event");
+            }
+            if (Date.now() >= deadline) {
+              throw new Error("Watcher control event deadline exceeded");
+            }
+            await new Promise(setImmediate);
+          }
+        }
+        function waitForWrite(filename: string, offset = 0) {
+          return waitForControl(() => {
+            const text = readFileSync(trace, "utf8").slice(offset);
+            return text
+              .slice(0, text.lastIndexOf("\n") + 1)
+              .split("\n")
+              .filter(Boolean)
+              .some(line => Object.keys(JSON.parse(line).files).some(file => path.normalize(file) === filename));
+          });
+        }
+        async function expectCurrentValues(expected: string) {
+          const deadline = Date.now() + 1000 * WAIT_MULTIPLIER;
+          let body: string;
+          do {
+            body = await dev.fetch("/").text();
+          } while (body !== expected && Date.now() < deadline);
+          expect(body).toBe(expected);
+        }
+        await dev.fetch("/").expect.toBe("A0|B0|C0");
+        try {
+          blockedRequest = dev.fetch("/?block=1").text();
+          // The finally block awaits request failures after releasing the server.
+          void blockedRequest.catch(() => {});
+          await waitForControl(() => existsSync(trace + ".blocked"));
+          for (const name of ["a", "b", "c"]) {
+            const filename = dev.join(name === "b" && atomicWatchFile ? "b.txt" : name + ".ts");
+            if (name === "b" && atomicWatchFile) {
+              writeFileSync(filename + ".next", "B1");
+              renameSync(filename + ".next", filename);
+            } else {
+              writeFileSync(filename, `export const ${name} = '${name.toUpperCase()}1';`);
+            }
+            await waitForWrite(filename);
+          }
+        } finally {
+          writeFileSync(trace + ".release", "release");
+          await blockedRequest;
+        }
+        await expectCurrentValues("A1|B1|C1");
+        if (atomicWatchFile) {
+          const offset = readFileSync(trace, "utf8").length;
+          writeFileSync(dev.join("b.txt"), "B2");
+          await waitForWrite(dev.join("b.txt"), offset);
+          await expectCurrentValues("A1|B2|C1");
+        }
+      },
+    },
+  );
+}
 
 devTest("import.meta.hot.accept basic", {
   files: {

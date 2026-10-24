@@ -8,11 +8,14 @@ interface BundlerPlugin {
   onLoad: Map<string, [RegExp, OnLoadCallback][]>;
   onResolve: Map<string, [RegExp, OnResolveCallback][]>;
   $onEndCallbacks: Array<(build: Bun.BuildOutput) => void | Promise<void>> | undefined;
+  $onStartCallbacks: Array<() => void | Promise<void>> | undefined;
   /** Binding to `JSBundlerPlugin__onLoadAsync` */
   onLoadAsync(
     internalID,
     sourceCode: string | Uint8Array | ArrayBuffer | DataView | null,
     loaderKey: number | null,
+    watchFiles?: string[],
+    watchDirs?: string[],
   ): void;
   /** Binding to `JSBundlerPlugin__onResolveAsync` */
   onResolveAsync(internalID, a, b, c): void;
@@ -62,6 +65,9 @@ export function loadAndResolvePluginsForServe(
   plugins: Array<string | BunPlugin>,
   bunfig_folder: string,
   runSetupFn: typeof runSetupFunction,
+  isDevServer: boolean,
+  reactFastRefresh: boolean,
+  jsxDevelopment: boolean,
 ) {
   // Same config as created in HTMLBundle.init
   let config: SetupConfig = {
@@ -69,6 +75,8 @@ export function loadAndResolvePluginsForServe(
     experimentalHtml: true,
     target: "browser",
     root: bunfig_folder,
+    reactFastRefresh,
+    jsx: { development: jsxDevelopment },
   };
 
   class InvalidBundlerPluginError extends TypeError {
@@ -111,6 +119,7 @@ export function loadAndResolvePluginsForServe(
         onstart_promises_array,
         i === plugins.length - 1,
         false,
+        isDevServer,
       ]);
     }
     if (onstart_promises_array !== undefined) {
@@ -119,6 +128,30 @@ export function loadAndResolvePluginsForServe(
   })(plugins, bunfig_folder, runSetupFn, bundlerPlugin);
 
   return promiseResult;
+}
+
+export function runOnStartCallbacks(this: BundlerPlugin): Promise<void> | void {
+  const callbacks = this.$onStartCallbacks;
+  if (!callbacks) {
+    return;
+  }
+  const promises: Promise<void>[] = [];
+  for (const callback of callbacks) {
+    try {
+      $arrayPush(promises, Promise.$resolve(callback()));
+    } catch (error) {
+      $arrayPush(promises, Promise.$reject(error));
+    }
+  }
+  if (promises.length > 0) {
+    return Promise.allSettled(promises).then(results => {
+      for (const result of results) {
+        if (result.status === "rejected") {
+          throw result.reason;
+        }
+      }
+    });
+  }
 }
 
 export function runOnEndCallbacks(
@@ -166,7 +199,8 @@ export function runOnEndCallbacks(
  * The `setup` function may define `onLoad`, `onResolve`, `onBeforeParse`, `onStart` callbacks.
  * Those callbacks will be added to the `BundlerPlugin` via cpp functions like `.addFilter()` (see JSBundlerPlugin.cpp)
  *
- * Any `onStart()` callbacks are invoked here and their promises appended to the `promises` array parameter.
+ * Dev server `onStart()` callbacks are retained for the native bundle preparation barrier.
+ * Other `onStart()` callbacks are invoked here and their promises appended to the `promises` array parameter.
  * The `promises` parameter remains undefined if no `onStart()` callbacks are defined.
  */
 export function runSetupFunction(
@@ -176,6 +210,7 @@ export function runSetupFunction(
   promises: Array<Promise<any>> | undefined,
   is_last: boolean,
   isBake: boolean,
+  isDevServer: boolean = false,
 ): Promise<Promise<any>[] | undefined> | Promise<any>[] | undefined {
   this.promises = promises;
   var onLoadPlugins = new Map<string, [filter: RegExp, callback: OnLoadCallback][]>();
@@ -267,11 +302,17 @@ export function runSetupFunction(
 
   const self = this;
   function onStart(this: PluginBuilderExt, callback): PluginBuilderExt {
-    if (isBake) {
+    if (isBake && !isDevServer) {
       throw new TypeError("onStart() is not supported in Bake yet");
     }
     if (!$isCallable(callback)) {
       throw new TypeError("callback must be a function");
+    }
+
+    if (isDevServer) {
+      self.$onStartCallbacks ??= [];
+      $arrayPush(self.$onStartCallbacks, callback);
+      return this;
     }
 
     const ret = callback();
@@ -597,7 +638,24 @@ export function runOnLoadPlugins(
           throw new TypeError(`Loader ${loader} is not supported.`);
         }
 
-        this.onLoadAsync(internalID, contents as any, chosenLoader);
+        const { watchFiles, watchDirs } = result;
+        for (const [name, paths] of [
+          ["watchFiles", watchFiles],
+          ["watchDirs", watchDirs],
+        ]) {
+          if (paths === undefined) {
+            continue;
+          }
+          if (!$isJSArray(paths)) {
+            throw new TypeError(`onLoad plugins '${name}' field must be an array`);
+          }
+          for (const watchPath of paths) {
+            if (typeof watchPath !== "string" || !require("node:path").isAbsolute(watchPath)) {
+              throw new TypeError(`onLoad plugins '${name}' entries must be absolute paths`);
+            }
+          }
+        }
+        this.onLoadAsync(internalID, contents as any, chosenLoader, watchFiles, watchDirs);
         return null;
       }
     }

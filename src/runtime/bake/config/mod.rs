@@ -34,7 +34,11 @@ impl Drop for UserOptions {
 
 impl UserOptions {
     /// Currently, this function must run at the top of the event loop.
-    pub(crate) fn from_js(config: JSValue, global: &JSGlobalObject) -> JsResult<UserOptions> {
+    pub(crate) fn from_js(
+        config: JSValue,
+        global: &JSGlobalObject,
+        is_dev_server: bool,
+    ) -> JsResult<UserOptions> {
         let arena = Arena::new();
         let mut bundler_options = SplitBundlerOptions::default();
 
@@ -80,7 +84,12 @@ impl UserOptions {
             }
         }
 
-        match Self::parse_framework_root_and_plugins(config, global, &mut bundler_options) {
+        match Self::parse_framework_root_and_plugins(
+            config,
+            global,
+            &mut bundler_options,
+            is_dev_server,
+        ) {
             Ok((framework, root)) => Ok(UserOptions {
                 root,
                 framework,
@@ -99,6 +108,7 @@ impl UserOptions {
         config: JSValue,
         global: &JSGlobalObject,
         bundler_options: &mut SplitBundlerOptions,
+        is_dev_server: bool,
     ) -> JsResult<(Framework, ZBox)> {
         let framework = Framework::from_js(
             match config.get(global, "framework")? {
@@ -112,6 +122,7 @@ impl UserOptions {
             },
             global,
             bundler_options,
+            is_dev_server,
         )?;
 
         let root = if let Some(slice) = config.get_optional_slice(global, "root")? {
@@ -134,7 +145,7 @@ impl UserOptions {
         };
 
         if let Some(plugin_array) = config.get(global, "plugins")? {
-            bundler_options.parse_plugin_array(plugin_array, global)?;
+            bundler_options.parse_plugin_array(plugin_array, global, is_dev_server)?;
         }
 
         Ok((framework, root))

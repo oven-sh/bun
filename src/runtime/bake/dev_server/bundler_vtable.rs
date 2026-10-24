@@ -41,6 +41,9 @@ bun_bundler::link_impl_DevServerHandle! {
                 .track_resolution_failure(import_source, specifier, renderer, loader)
                 .map_err(Into::into)
         },
+        replace_plugin_watch_dependencies(module, graph, is_virtual, files, dirs) => {
+            (*this).replace_plugin_watch_dependencies(module, graph, is_virtual, files, dirs).map_err(Into::into)
+        },
         is_file_cached(abs_path, side) => {
             (*this).is_file_cached(abs_path, side).map(|e| {
                 use bun_bundler::bake_types::CacheKind;
@@ -59,7 +62,10 @@ bun_bundler::link_impl_DevServerHandle! {
             (*this)
                 .current_bundle
                 .as_mut()
-                .map(|c| (&raw mut c.start_data).cast::<()>())
+                .and_then(|c| match &mut c.state {
+                    BundleState::Running { start_data, .. } => Some((start_data as *mut bundler::bundle_v2::DevServerInput).cast::<()>()),
+                    BundleState::Preparing { .. } => None,
+                })
                 .unwrap_or(core::ptr::null_mut())
         },
         register_barrel_with_deferrals(path) => {

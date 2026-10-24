@@ -366,7 +366,7 @@ export const TestMemberFunctions = b.class({
     setNoteInCpp: { args: { value: b.any } },
     noteInCpp: { returns: b.any },
     failInCpp: { throws: true },
-    promiseInCpp: { capability: "js", returns: b.any },
+    promiseInCpp: { capability: "heap", returns: b.any },
   },
 });
 

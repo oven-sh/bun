@@ -723,9 +723,9 @@ impl RewriterPipe {
 
     /// The JS-pump controller detached and can never dispatch into the pipe
     /// again: release its ref. Deferred if last: the controller keeps using
-    /// the allocation in the same frame (`finalize`, `close_sink` or
-    /// `end_sink` on the pointer that `take_sink` returned).
-    pub(crate) fn release_pump_ref(&self) {
+    /// the allocation in the same frame (`controller_finalize`, `close_sink`
+    /// or `end_sink` on the pointer that `take_sink` returned).
+    fn release_pump_ref(&self) {
         if !self.pump_controller_attached.replace(false) {
             return;
         }
@@ -1882,8 +1882,9 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     fn memory_cost(&self) -> usize {
         self.pending_input.get().capacity() + self.output_buffer.get().capacity()
     }
-    // Unlike other sinks, the controller does not own the pipe: `take_sink`
-    // releases its ref, and the free happens wherever the last ref drops.
+    // Unlike other sinks, the controller does not own the pipe: its ref is
+    // released by `controller_detached` below, and the free happens wherever
+    // the last ref drops.
     unsafe fn finalize(_this: *mut Self) {}
     fn write_bytes(&mut self, data: &StreamResult) -> Writable {
         RewriterPipe::write(self, data)
@@ -1963,6 +1964,10 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
 impl crate::webcore::sink::ControlledSink for RewriterPipe {
     fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink {
         AnyControlledSink::RewriterPipe(this)
+    }
+
+    fn controller_detached(&mut self) {
+        RewriterPipe::release_pump_ref(self);
     }
 
     unsafe fn close_with_error(

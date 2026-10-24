@@ -428,8 +428,12 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", proto: { _x: { calledFromCpp: true } } })).toThrow(
     "_x: a C++ member function is named in camelCase",
   );
-  expect(() => b.cell("JSPromise", "JavaScriptCore/JSPromise.h")).toThrow(
-    "JSPromise is not a C++ class with its namespace",
+  expect(() => b.class({ rustPath: "T", calledFromRust: { x: { args: { default: b.any } } } })).toThrow(
+    "x: default is a C++ keyword",
+  );
+  expect(() => b.cell("JSPromise", "JavaScriptCore/JSPromise.h")).toThrow("b.cell: JSPromise needs its namespace");
+  expect(() => b.class({ rustPath: "T", internalFields: { x: b.string as any } })).toThrow(
+    "x: an internal field is b.any or b.cell",
   );
   expect(() =>
     b.class({
@@ -437,7 +441,7 @@ itAlways("mistakes in a schema are errors when it loads", () => {
       internalFields: { x: b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h") },
       proto: { x: { internalField: "x" } },
     }),
-  ).toThrow("x: x holds only a JSC::JSPromise, so no property reads or writes it");
+  ).toThrow("x: x is a b.cell field, which only C++ reads and writes");
   for (const refCounted of [false, true]) {
     expect(() =>
       b.class({
@@ -700,7 +704,7 @@ describe("strings", () => {
     }
   });
 
-  it("b.string.view accepts what the type before it accepts", () => {
+  it("b.string.view takes a String object only after .allowStringObject", () => {
     expect(bindgen.stringOrObjectViewEcho(new String("你好"))).toBe("你好");
     expect(bindgen.stringOrObjectViewEcho(Object.assign(new String("ab"), { toString: () => "abc" }))).toBe("abc");
     expect(bindgen.stringOrObjectViewEcho()).toBeUndefined();
@@ -2598,7 +2602,7 @@ describe("classes", () => {
       expect(() => object.run("21", false)).toThrow("n must be a number");
     });
 
-    it("the GC visits an internal field that holds a C++ class", () => {
+    it("the GC visits a b.cell internal field", () => {
       const object = new bindgen.TestMemberFunctions();
       expect(object.promise()).toBeInstanceOf(Promise);
       object.promise().tag = 1;

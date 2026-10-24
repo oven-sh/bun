@@ -213,7 +213,7 @@ static void invokeNativeHandleCancel(JSC::VM& vm, JSGlobalObject* globalObject, 
     invokeMethod(vm, globalObject, handle, builtinNames(vm).cancelPublicName(), cancelArgs);
 }
 
-// `source` is notified when the sink closes: a JSDirectStreamSource, or a JSReadStreamIntoSinkOperation, which is also notified when it is ready.
+// `source` is notified when the sink closes: a JSDirectStreamSource, or a JSReadStreamIntoSinkOperation, which is also notified when the sink is ready.
 static void setSinkControllerSource(JSC::VM& vm, JSGlobalObject* globalObject, JSReadableSinkController* sinkController, JSReadableStream* stream, JSCell* source)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1276,7 +1276,7 @@ JSValue JSReadableSinkController::takePipeDone()
     return done ? JSValue(done) : JSValue();
 }
 
-// The pipe's failure value shares m_failReason: close(error) stores the same value there, and every other writer runs after pull() settled.
+// The first reason wins. A PipeCell keeps its error here too: close(error) stores the same value, and every other writer runs after pull() settled.
 void JSReadableSinkController::setFailReason(JSValue reason)
 {
     if (!m_failReason)

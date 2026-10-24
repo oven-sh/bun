@@ -2502,20 +2502,20 @@ export interface CalledFromRustField {
   args?: Record<string, Type>;
   /** `b.any`, or nothing. */
   returns?: Type;
-  /** It runs JavaScript. With this or `throws`, `globalObject` is the first parameter, and `global` follows `this_value` in Rust. */
-  capability?: "js";
+  /** `"heap"`: it allocates JS values. `"js"`: it runs JavaScript. With either or `throws`, `globalObject` is the first parameter, and `global` follows `this_value` in Rust. */
+  capability?: Capability;
   /** The Rust function returns a `JsResult`. */
   throws?: boolean;
 }
 
-/** A C++ class of cells and the header that declares it. */
+/** A `JSCell` subclass and the header that declares it. */
 export class CellClass {
   readonly cpp: string;
   readonly header: string;
   constructor(cpp: string, header: string) {
     this.cpp = cpp;
     this.header = header;
-    assert(/^([A-Za-z_]\w*::)+[A-Z]\w*$/.test(cpp), `${cpp} is not a C++ class with its namespace`);
+    assert(/^([A-Za-z_]\w*::)+[A-Z]\w*$/.test(cpp), `b.cell: ${cpp} needs its namespace`);
   }
 }
 
@@ -2605,7 +2605,7 @@ export interface ClassOptions {
   call?: Omit<SignatureOptions, "rustPath">;
   /**
    * JS values the object holds, empty at first. The GC visits them; `js_Name` gets `x_get_cached` / `x_set_cached` / `x_take_cached` for each.
-   * A record gives each field a type. `b.any` is a field of a list. `b.cell("JSC::JSPromise", ..)` makes `m_x` a `WriteBarrier<JSC::JSPromise>` for hand-written C++, and `js_Name` gets nothing for it.
+   * In a record each field names its type: `b.any` is what a list declares, and `b.cell("JSC::JSPromise", ..)` makes `m_x` a `WriteBarrier<JSC::JSPromise>` that only hand-written C++ uses.
    */
   internalFields?: readonly string[] | Readonly<Record<string, AnyType | CellClass>>;
   /** Properties of the prototype. */
@@ -2637,9 +2637,14 @@ function memberRustName(name: string): string {
   return rustIdent(name);
 }
 
-function refuseCppMemberFunctionName(name: string) {
+/** The declaration in the generated header has these names. */
+function refuseCppMemberFunctionNames(name: string, args: readonly { name: string }[]) {
   assert(/^[a-z][A-Za-z0-9]*$/.test(name), `${name}: a C++ member function is named in camelCase`);
   assert(!cppKeywords.has(name), `${name} is a C++ keyword`);
+  for (const arg of args) {
+    assert(/^[a-z][A-Za-z0-9]*$/.test(arg.name), `${name}: ${arg.name}: a C++ parameter is named in camelCase`);
+    assert(!cppKeywords.has(arg.name), `${name}: ${arg.name} is a C++ keyword`);
+  }
 }
 /** Passed between C++ and Rust without conversion. */
 const isPassedAsIs = (type: Type) => type instanceof AnyType || type instanceof PrimitiveType;
@@ -2662,7 +2667,7 @@ export class Method extends Signature {
     this.isProperty = isProperty;
     this.calledFromCpp = !!options.calledFromCpp;
     if (this.calledFromCpp) {
-      refuseCppMemberFunctionName(name);
+      refuseCppMemberFunctionNames(name, this.args);
       assert(
         !this.args.some(arg => arg.type instanceof VariadicType),
         `${name}: a calledFromCpp function has no .variadic`,
@@ -2705,14 +2710,14 @@ export class CalledFromRustFunction {
   readonly throws: boolean;
   readonly takesGlobalObject: boolean;
   constructor(name: string, options: CalledFromRustField) {
-    refuseCppMemberFunctionName(name);
     this.name = name;
     this.args = Object.entries(options.args ?? {}).map(([name, type]) => ({ name, type }));
+    refuseCppMemberFunctionNames(name, this.args);
     for (const arg of this.args) assert(isPassedAsIs(arg.type), `${name}: ${arg.name} is b.any, b.bool or a number`);
     assert(options.returns === undefined || options.returns instanceof AnyType, `${name}: returns b.any or nothing`);
     this.returnsValue = options.returns !== undefined;
     this.throws = options.throws ?? false;
-    this.takesGlobalObject = this.throws || options.capability === "js";
+    this.takesGlobalObject = this.throws || (options.capability ?? "none") !== "none";
   }
 }
 
@@ -2866,7 +2871,7 @@ export class ClassType extends NamedType {
   readonly staticMembers: readonly ClassMember[];
   /** The schema's, then those of `cache: true` getters. */
   readonly internalFields: readonly string[];
-  /** The C++ class of each internal field that holds only cells of one. */
+  /** The `b.cell` internal fields. */
   readonly internalFieldClasses: ReadonlyMap<string, CellClass>;
   readonly configurable: boolean;
   readonly enumerable: boolean;
@@ -2980,19 +2985,18 @@ export class ClassType extends NamedType {
     this.staticGetters = this.staticMembers.filter(member => member instanceof Getter);
     const { getters } = this;
     assert(this.construct || this.staticMembers.length === 0, "static members need a constructor object");
-    const declaredFields: readonly (readonly [string, AnyType | CellClass | undefined])[] = Array.isArray(
-      options.internalFields,
-    )
-      ? options.internalFields.map(field => [field, undefined])
-      : Object.entries(options.internalFields ?? {});
+    const declaredFields = options.internalFields ?? [];
     this.internalFields = [
-      ...declaredFields.map(([field]) => field),
+      ...(Array.isArray(declaredFields) ? declaredFields : Object.keys(declaredFields)),
       ...getters.filter(getter => getter.declaresInternalField).map(getter => getter.name),
     ];
-    this.internalFieldClasses = new Map(declaredFields.filter(field => field[1] instanceof CellClass)) as ReadonlyMap<
-      string,
-      CellClass
-    >;
+    const internalFieldClasses = new Map<string, CellClass>();
+    if (!Array.isArray(declaredFields))
+      for (const [field, type] of Object.entries(declaredFields)) {
+        assert(type instanceof AnyType || type instanceof CellClass, `${field}: an internal field is b.any or b.cell`);
+        if (type instanceof CellClass) internalFieldClasses.set(field, type);
+      }
+    this.internalFieldClasses = internalFieldClasses;
     for (const { name, internalField } of [...getters, ...this.internalFieldAccessors]) {
       assert(
         internalField === undefined || this.internalFields.includes(internalField),
@@ -3000,7 +3004,7 @@ export class ClassType extends NamedType {
       );
       assert(
         internalField === undefined || !this.internalFieldClasses.has(internalField),
-        `${name}: ${internalField} holds only a ${this.internalFieldClasses.get(internalField!)?.cpp}, so no property reads or writes it`,
+        `${name}: ${internalField} is a b.cell field, which only C++ reads and writes`,
       );
     }
     for (const field of this.internalFields)

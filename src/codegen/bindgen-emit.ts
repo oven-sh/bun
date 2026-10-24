@@ -635,14 +635,14 @@ const isPassedByPointer = (type: Type) => type.layout().size > 16;
 
 /**
  * Converts the arguments, then returns what `symbol(globalObject, ...leading, ...converted)` returns, or ends with the lines `finish` makes from that call.
- * `fromParameters`: the arguments are the function's `JSValue` parameters, not the call frame's, and a failed conversion returns `failureResult`.
+ * `fromParameters`: the arguments are the function's `JSValue` parameters `parameter0`.., not the call frame's, and a failed conversion returns `failure`.
  */
 function cppCallBody(
   signature: Signature,
   symbol: string,
   leading: readonly string[] = [],
   finish = (call: string) => [`RELEASE_AND_RETURN(scope, ${call});`],
-  fromParameters?: { failureResult: string },
+  fromParameters?: { failure: string },
 ): string {
   const lines: string[] = [];
   // Converting a later argument can run JavaScript that detaches or resizes a buffer.
@@ -655,14 +655,14 @@ function cppCallBody(
     const { holder, value } = cppHeldValue(type, `argument${i}`);
     lines.push(
       fromParameters
-        ? `${holder} argument${i} = ${name};`
+        ? `${holder} argument${i} = parameter${i};`
         : isIfPassed(type)
           ? `${holder} argument${i} = callFrame->argumentCount() > ${i} ? callFrame->uncheckedArgument(${i}) : JSC::JSValue();`
           : `${holder} argument${i} = callFrame->argument(${i});`,
     );
     const ctx = cppContext(lines, i, name, expected, value);
     readLast.push(...type.cppReadLast(`converted${i}`, value));
-    lines.push(...cppDeclareConverted(type, `converted${i}`, value, ctx, name, fromParameters?.failureResult ?? "{}"));
+    lines.push(...cppDeclareConverted(type, `converted${i}`, value, ctx, name, fromParameters?.failure ?? "{}"));
   });
   lines.push(...readLast);
   const args = signature.args.map(({ type }, i) => {
@@ -740,7 +740,7 @@ function cppExtraMemorySize(type: ClassType, caller: "heapSnapshot" | "gc"): str
   ].join(" + ");
 }
 
-/** Of an argument or a result that is passed between C++ and Rust without conversion. */
+/** The C++ type of an argument or a result that is passed between C++ and Rust without conversion. */
 const cppMemberFunctionType = (type: Type) =>
   type instanceof UnitType
     ? "void"
@@ -774,11 +774,11 @@ const cppSignatureCalledFromRust = (member: CalledFromRustFunction): CppMemberFu
   takesGlobalObject: member.takesGlobalObject,
   parameters: member.args.map(({ name, type }) => ({ name, type: cppMemberFunctionType(type) })),
 });
-/** With `definedIn`, the first line of the definition. */
+/** With `definedIn`, the first line of the definition, whose parameters are `parameter0`.. so that none is a name of the body. */
 const cppMemberFunction = (signature: CppMemberFunctionSignature, definedIn?: ClassType) =>
   `${signature.returns} ${definedIn ? `${definedIn.cpp}::` : ""}${signature.name}(${[
     ...(signature.takesGlobalObject ? [`JSC::JSGlobalObject*${definedIn ? " globalObject" : ""}`] : []),
-    ...signature.parameters.map(parameter => `${parameter.type} ${parameter.name}`),
+    ...signature.parameters.map((parameter, i) => `${parameter.type} ${definedIn ? `parameter${i}` : parameter.name}`),
   ].join(", ")})`;
 
 function cppMemberFunctionDeclarations(type: ClassType): string {
@@ -786,7 +786,7 @@ function cppMemberFunctionDeclarations(type: ClassType): string {
   const calledFromRust = type.calledFromRust.map(cppSignatureCalledFromRust);
   return [
     ...(calledFromCpp.length > 0
-      ? ["// Defined in Rust. Returns an empty JSValue on exception.", ...calledFromCpp, ""]
+      ? ["// Defined in Rust. On exception, a JSValue result is empty.", ...calledFromCpp, ""]
       : []),
     ...(calledFromRust.length > 0 ? ["// Defined in hand-written C++, called from Rust.", ...calledFromRust, ""] : []),
   ]
@@ -981,14 +981,14 @@ function cppCalledFromCpp(type: ClassType, method: Method): string {
 ${cppMemberFunction(signature, type)}
 {
 ${cppPrologue}
-    JSC::EnsureStillAliveScope ensureThisStillAlive(this);
+    JSC::EnsureStillAliveScope ensureThisStillAlive { this };
 ${cppCallBody(
   method,
   symbol,
   ["this"],
   call =>
     returnsNothing ? ["scope.release();", `${call};`] : [`RELEASE_AND_RETURN(scope, JSC::JSValue::decode(${call}));`],
-  { failureResult: returnsNothing ? "void()" : "{}" },
+  { failure: returnsNothing ? "void()" : "{}" },
 )}
 }
 `;
@@ -996,13 +996,13 @@ ${cppCallBody(
   const call = `${symbol}(${[
     signature.takesGlobalObject ? "globalObject" : "globalObject()",
     "this",
-    ...method.args.map(arg => toExtern(arg.name)),
+    ...method.args.map((arg, i) => toExtern(`parameter${i}`)),
   ].join(", ")})`;
   return `
 ${cppExtern(symbol, method, ["JSC::JSCell*"], isPrimitive ? signature.returns : undefined)}
 ${cppMemberFunction(signature, type)}
 {
-    JSC::EnsureStillAliveScope ensureThisStillAlive(this);
+    JSC::EnsureStillAliveScope ensureThisStillAlive { this };
     ${returnsNothing ? call : `return ${isPrimitive ? call : `JSC::JSValue::decode(${call})`}`};
 }
 `;
@@ -1011,14 +1011,16 @@ ${cppMemberFunction(signature, type)}
 function cppCalledFromRust(type: ClassType, member: CalledFromRustFunction): string {
   const call = `thisObject->${member.name}(${[
     ...(member.takesGlobalObject ? ["globalObject"] : []),
-    ...member.args.map(({ name, type }) => (type instanceof AnyType ? `JSC::JSValue::decode(${name})` : name)),
+    ...member.args.map(({ type }, i) =>
+      type instanceof AnyType ? `JSC::JSValue::decode(parameter${i})` : `parameter${i}`,
+    ),
   ].join(", ")})`;
   const result = member.returnsValue ? `JSC::JSValue::encode(${call})` : call;
   return `
 extern "C" ${member.returnsValue ? "JSC::EncodedJSValue" : member.throws ? "bool" : "void"} ${memberFunctionSymbolName(type, member.name)}(${[
     ...(member.takesGlobalObject ? ["JSC::JSGlobalObject* globalObject"] : []),
     "JSC::EncodedJSValue thisValue",
-    ...member.args.map(({ name, type }) => `${externType(type)} ${name}`),
+    ...member.args.map(({ type }, i) => `${externType(type)} parameter${i}`),
   ].join(", ")})
 {
     auto* thisObject = uncheckedDowncast<${type.cpp}>(JSC::JSValue::decode(thisValue));

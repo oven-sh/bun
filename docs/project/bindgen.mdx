@@ -709,8 +709,9 @@ is not an argument type, has no `estimatedSize`, and does not implement `JsClass
 
 Every field starts empty. A heap snapshot shows what it holds as a property of its name.
 
-In C++ the field is `m_callback`, a `JSC::WriteBarrier<JSC::Unknown>`. A record gives each field a type: `b.any` is
-the same field, and `b.cell(class, header)` is a field for hand-written C++ that holds only cells of that class.
+In C++ the field is `m_callback`, a `JSC::WriteBarrier<JSC::Unknown>`. In a record each field names its type: `b.any`
+is what a list declares, and `b.cell(class, header)` is a `JSC::WriteBarrier` of that `JSCell` subclass, which only
+hand-written C++ uses.
 
 ```ts
 internalFields: { failReason: b.any, pipeDone: b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h") },
@@ -756,7 +757,7 @@ export const ReadableSinkController = b.class({
 The generated class declares them:
 
 ```cpp
-// Defined in Rust. Returns an empty JSValue on exception.
+// Defined in Rust. On exception, a JSValue result is empty.
 JSC::JSValue end(JSC::JSGlobalObject*);
 JSC::JSValue write(JSC::JSGlobalObject*, JSC::JSValue data);
 bool isDetached();
@@ -780,7 +781,7 @@ A function that throws returns `b.any` or nothing.
 `b.byteSpan` is bytes that are not in a JS object: a `std::span<const uint8_t>` that Rust gets as `&'a [u8]`.
 
 `calledFromRust` declares member functions that hand-written C++ defines. An argument is `b.any`, `b.bool` or a number, and
-the result is `b.any` or nothing. `capability: "js"` is for one that runs JavaScript and does not throw. Rust calls them
+the result is `b.any` or nothing. Rust calls them
 in the module `js_ReadableSinkController`, with the object first, and with `throws: true` gets a `JsResult`.
 
 ```rust

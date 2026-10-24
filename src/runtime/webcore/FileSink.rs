@@ -1068,7 +1068,7 @@ impl FileSink {
     ///
     /// # Safety
     /// `this` is the cell's live sink; it must not be used after the call, which may free it.
-    pub(crate) unsafe fn controller_finalize(this: *mut FileSink) {
+    unsafe fn controller_finalize(this: *mut FileSink) {
         // SAFETY: caller contract; `_guard` keeps `this` live across the releases.
         unsafe {
             let _guard = RefPtr::init_ref(this);
@@ -1298,7 +1298,7 @@ impl FileSink {
         JSSink::create_object(global_this, self, None)
     }
 
-    /// As [`to_js`](Self::to_js), for the stdin of `subprocess`, which is told when the object closes or is collected.
+    /// As [`to_js`](Self::to_js), for the stdin of `subprocess`, which is notified when the object closes or is collected.
     pub(crate) fn to_js_for_subprocess(
         &mut self,
         global_this: &JSGlobalObject,
@@ -1459,6 +1459,10 @@ impl crate::webcore::sink::JsSinkType for FileSink {
 impl crate::webcore::sink::ControlledSink for FileSink {
     fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink {
         AnyControlledSink::FileSink(this)
+    }
+    unsafe fn controller_finalize(this: *mut Self) {
+        // SAFETY: same contract, forwarded.
+        unsafe { Self::controller_finalize(this) }
     }
     /// The JS pump's source failed, or `controller.close(error)`: a piped stream rejects with `reason`.
     unsafe fn close_with_error(

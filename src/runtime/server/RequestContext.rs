@@ -2207,7 +2207,7 @@ where
         let assignment_result: JSValue = ReadableSinkController::assign_to_stream(
             global_this,
             stream.value,
-            response_stream_ptr,
+            NonNull::from(&mut *response_stream),
         );
 
         assignment_result.ensure_still_alive();

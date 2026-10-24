@@ -24,10 +24,9 @@ struct Pass<'a> {
     /// Versions that no dependency may move onto. See `dedupe_lockfile`.
     closed: &'a DynamicBitSet,
     /// For `collapse_appended`: the dependencies of the root and workspaces don't move, and a
-    /// dependency on a loaded package (ids below this) moves only up, onto a version appended in
-    /// this session.
+    /// dependency on a loaded package (ids below this) moves only up, onto an appended package.
     frozen_below: Option<PackageID>,
-    /// Whether a dependency on a loaded package may move that way. `false` under `--depth 0`.
+    /// Whether a dependency on a loaded package may move at all. `false` under `--depth 0`.
     lift_loaded: bool,
     /// For each group, every dependency with the package that owns it.
     edges: Vec<Vec<(DependencyID, PackageID)>>,
@@ -234,9 +233,7 @@ impl<'a> Pass<'a> {
             self.required.unmanaged.set_all(false);
             let mut can_move = false;
 
-            // Candidates are sorted highest first. An edge at or after `lift_min` has a version
-            // appended in this session to move up onto.
-            let lift_min = match self.frozen_below {
+            let first_appended = match self.frozen_below {
                 Some(below) if self.lift_loaded => self
                     .candidates
                     .iter()
@@ -257,8 +254,13 @@ impl<'a> Pass<'a> {
                 let row = e * n;
 
                 let direct = self.frozen_below.is_some() && is_direct(owner);
-                let loaded = !direct && self.frozen_below.is_some_and(|below| target < below);
-                let frozen = direct || (loaded && lift_min >= cur_c);
+                // Classified by the resolution bun.lock loaded, so a move in an earlier pass does
+                // not turn the edge into one that may move down.
+                let loaded = !direct
+                    && self
+                        .frozen_below
+                        .is_some_and(|below| lockfile.buffers.resolutions[dep_id as usize] < below);
+                let frozen = direct || (loaded && first_appended >= cur_c);
                 let range = if pinned.is_set(target as usize) || frozen || dep.behavior.is_bundled()
                 {
                     None
@@ -288,8 +290,6 @@ impl<'a> Pass<'a> {
                             }
                             None => 0..n,
                         };
-                        // A dependency on a loaded package leaves it only for a higher version
-                        // appended in this session.
                         let may_move_to = |c: usize| {
                             let id = self.candidates[c];
                             c == cur_c

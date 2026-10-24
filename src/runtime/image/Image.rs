@@ -930,7 +930,13 @@ impl Image {
                 }
             }
         }
-        self.schedule(&cx, this_value, Kind::Metadata, Deliver::Uint8Array)
+        self.schedule(
+            &cx,
+            this_value,
+            &self.pipeline.get(),
+            Kind::Metadata,
+            Deliver::Uint8Array,
+        )
     }
 
     pub(crate) fn bytes<'a>(
@@ -941,7 +947,8 @@ impl Image {
         self.schedule(
             &cx.js_thread(),
             this_value.to_js(),
-            Kind::Encode(self.pipeline.get().output),
+            &self.pipeline.get(),
+            Kind::Encode,
             Deliver::Uint8Array,
         )
     }
@@ -954,7 +961,8 @@ impl Image {
         self.schedule(
             &cx.js_thread(),
             this_value.to_js(),
-            Kind::Encode(self.pipeline.get().output),
+            &self.pipeline.get(),
+            Kind::Encode,
             Deliver::Buffer,
         )
     }
@@ -967,7 +975,8 @@ impl Image {
         self.schedule(
             &cx.js_thread(),
             this_value.to_js(),
-            Kind::Encode(self.pipeline.get().output),
+            &self.pipeline.get(),
+            Kind::Encode,
             Deliver::Blob,
         )
     }
@@ -980,7 +989,8 @@ impl Image {
         self.schedule(
             &cx.js_thread(),
             this_value.to_js(),
-            Kind::Encode(self.pipeline.get().output),
+            &self.pipeline.get(),
+            Kind::Encode,
             Deliver::Base64,
         )
     }
@@ -995,7 +1005,8 @@ impl Image {
         self.schedule(
             &cx.js_thread(),
             this_value.to_js(),
-            Kind::Encode(self.pipeline.get().output),
+            &self.pipeline.get(),
+            Kind::Encode,
             Deliver::DataUrl,
         )
     }
@@ -1025,7 +1036,13 @@ impl Image {
                 )));
             }
         }
-        self.schedule(&cx, this_value.to_js(), Kind::Placeholder, Deliver::DataUrl)
+        self.schedule(
+            &cx,
+            this_value.to_js(),
+            &self.pipeline.get(),
+            Kind::Placeholder,
+            Deliver::DataUrl,
+        )
     }
 
     /// Terminal: encode and write to `path` on the work pool (no round-trip of
@@ -1049,11 +1066,11 @@ impl Image {
             )));
         }
 
-        let mut output = self.pipeline.get().output;
+        let mut inferred: Option<codecs::Format> = None;
         // Extension inference only when dest is a plain string. BunFile/S3 dests
         // carry no extension contract, so the explicit `.png()` etc. (or source
         // format) decides.
-        if output.is_none() && dest.is_string() {
+        if self.pipeline.get().output.is_none() && dest.is_string() {
             let str = dest.to_bun_string(global)?;
             let utf8 = str.to_utf8();
             if let Some(f) = codecs::Format::from_extension(utf8.slice()) {
@@ -1064,35 +1081,43 @@ impl Image {
                     | codecs::Format::Png
                     | codecs::Format::Webp
                     | codecs::Format::Heic
-                    | codecs::Format::Avif => {
-                        output = Some(codecs::EncodeOptions {
-                            format: f,
-                            ..Default::default()
-                        });
-                    }
+                    | codecs::Format::Avif => inferred = Some(f),
                     _ => {}
                 }
+            }
+        }
+        // Copied after `to_bun_string`: a String object's `toString` can call a setter.
+        let mut pipeline = self.pipeline.get();
+        if pipeline.output.is_none() {
+            if let Some(format) = inferred {
+                pipeline.output = Some(codecs::EncodeOptions {
+                    format,
+                    ..Default::default()
+                });
             }
         }
         self.schedule(
             &cx,
             this_value.to_js(),
-            Kind::Encode(output),
+            &pipeline,
+            Kind::Encode,
             Deliver::WriteDest(Strong::create(dest, global)),
         )
     }
 }
 
 impl Image {
+    /// Re-entered by `BlobReadChain`, possibly after setters ran: never read `self.pipeline`.
     fn schedule(
         &self,
         cx: &bun_jsc::JsThread<'_>,
         this_value: JSValue,
+        pipeline: &Pipeline,
         kind: Kind,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
         if matches!(self.source.get(), Source::Blob(_)) {
-            return BlobReadChain::start(self, cx, this_value, kind, deliver);
+            return BlobReadChain::start(self, cx, this_value, pipeline, kind, deliver);
         }
         let (input, pin) = match self.pin_for_task(this_value, cx.global()) {
             Ok(i) => i,
@@ -1110,7 +1135,7 @@ impl Image {
             }
         };
         let work = PipelineTask {
-            pipeline: self.pipeline.get(),
+            pipeline: *pipeline,
             input,
             kind,
             max_pixels: self.max_pixels,
@@ -1186,7 +1211,7 @@ impl Image {
         let mut task = PipelineTask {
             pipeline: self.pipeline.get(),
             input,
-            kind: Kind::Encode(self.pipeline.get().output),
+            kind: Kind::Encode,
             max_pixels: self.max_pixels,
             auto_orient: self.auto_orient,
             result: TaskResult::Err(codecs::Error::DecodeFailed),
@@ -1227,6 +1252,8 @@ struct BlobReadChain<'a> {
     global: &'a JSGlobalObject,
     /// The context of the script that asked: the task the read is followed by is that script's.
     context: jsc::ContextId,
+    /// The terminal's copy: setters that run during the read are for later terminals.
+    pipeline: Pipeline,
     kind: Kind,
     deliver: Deliver,
     outer: jsc::JSPromiseStrong,
@@ -1237,6 +1264,7 @@ impl<'a> BlobReadChain<'a> {
         image: &Image,
         cx: &bun_jsc::JsThread<'a>,
         this_value: JSValue,
+        pipeline: &Pipeline,
         kind: Kind,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
@@ -1269,6 +1297,7 @@ impl<'a> BlobReadChain<'a> {
             image: std::ptr::from_ref::<Image>(image),
             global: cx.global(),
             context: cx.context().id(),
+            pipeline: *pipeline,
             kind,
             deliver,
             outer: jsc::JSPromiseStrong::init(cx.global()),
@@ -1334,6 +1363,7 @@ impl<'a> BlobReadChain<'a> {
                 let inner = image.schedule(
                     &global.js_thread(global.bun_vm().context_of(self.context)),
                     this_value,
+                    &self.pipeline,
                     kind,
                     deliver,
                 );
@@ -1491,9 +1521,10 @@ pub(crate) enum Deliver {
 // `Deliver::deinit` is just `Strong::Drop` on the `WriteDest` arm — handled
 // automatically.
 
+/// What a terminal asks for. Its settings are the `Pipeline` copy beside it.
+#[derive(Clone, Copy)]
 pub(crate) enum Kind {
-    /// `None` ⇒ re-encode in the source format (resolved after decode).
-    Encode(Option<codecs::EncodeOptions>),
+    Encode,
     Metadata,
     /// `.placeholder()` — decode → box-resize ≤100 → ThumbHash → render
     /// → PNG → `data:` URL. The whole chain runs on the worker; the
@@ -1668,22 +1699,24 @@ impl PipelineTask {
             }
         }
 
-        if matches!(self.kind, Kind::Metadata) {
+        match self.kind {
             // Reached only for HEIC/AVIF (probe fell through).
-            self.result = TaskResult::Meta {
-                w: decoded.width,
-                h: decoded.height,
-                format: src_format,
-            };
-            return;
-        }
-
-        if matches!(self.kind, Kind::Placeholder) {
-            self.result = match make_placeholder(&decoded.rgba, decoded.width, decoded.height) {
-                Ok(r) => r,
-                Err(e) => TaskResult::Err(e),
-            };
-            return;
+            Kind::Metadata => {
+                self.result = TaskResult::Meta {
+                    w: decoded.width,
+                    h: decoded.height,
+                    format: src_format,
+                };
+                return;
+            }
+            Kind::Placeholder => {
+                self.result = match make_placeholder(&decoded.rgba, decoded.width, decoded.height) {
+                    Ok(r) => r,
+                    Err(e) => TaskResult::Err(e),
+                };
+                return;
+            }
+            Kind::Encode => {}
         }
 
         if let Err(e) = self.apply_pipeline(&mut decoded) {
@@ -1696,10 +1729,8 @@ impl PipelineTask {
         // "HEIC/AVIF require macOS or Windows" message, which is wrong twice
         // over. Emit PNG instead — it's the lossless, everywhere-supported
         // default Sharp uses for the same case.
-        let Kind::Encode(enc_opt) = &self.kind else {
-            unreachable!()
-        };
-        let mut enc: codecs::EncodeOptions = enc_opt.unwrap_or(codecs::EncodeOptions {
+        let output = self.pipeline.output;
+        let mut enc = output.unwrap_or_else(|| codecs::EncodeOptions {
             format: match src_format {
                 codecs::Format::Bmp | codecs::Format::Tiff | codecs::Format::Gif => {
                     codecs::Format::Png

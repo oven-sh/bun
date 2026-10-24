@@ -22,6 +22,7 @@ use crate::load::source_provider::{
     WithoutServices,
 };
 use crate::options::{LoadOptions, PathOptions, RemovableOptions};
+use crate::statistics::LimitValues;
 
 const MAIN: &[u8] = b"/project/main.ts";
 const TEMPLATE: &[u8] = b"/project/hello.tmpl";
@@ -266,6 +267,7 @@ fn with_host_in<R>(
     let runtime_modules = RuntimeModules::new(Archive::embedded(), false);
     let messages = LoadMessages::default();
     let typed_packages = TypedPackages::new(&disk, &from_native(root));
+    let limits = LimitValues::for_host();
     let host = LoadHost::new(LoadHostInput {
         disk: &disk,
         provider: &provider,
@@ -276,6 +278,7 @@ fn with_host_in<R>(
         typed_packages: &typed_packages,
         defined: &|_: &[u8]| None,
         platform: host_platform(),
+        limits: &limits,
     });
     then(&Fixture {
         host: &host,

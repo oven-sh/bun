@@ -17,7 +17,7 @@ use crate::builtins::{
 };
 use crate::ir::for_each_mut;
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Bound, Decl, SymFlags, SymbolId};
+use bun_sema::bind::{BindingKind, Bound, Decl, SymFlags, SymbolId};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::hir::{self, ExprId, ImportId};
 use bun_sema::import_sites::{ImportSiteKind, JsxImport};
@@ -310,6 +310,10 @@ impl<'a, 's> FileBinder<'a, 's> {
     fn bind_symbol(&mut self, declaration: Decl, import: ImportId, item: ImportedItem) {
         let symbol = self.bound.declared_symbol(declaration);
         if symbol.is_none() {
+            return;
+        }
+        // An import of a type shares its name with a class, a function or a variable of the file: the name holds what that one declares.
+        if self.bound.binding_kind(symbol) > BindingKind::Import {
             return;
         }
         let (files, file, scan) = (self.context.files, self.file, self.scan);

@@ -659,6 +659,7 @@ objects-that-are-not-what-their-layout-says/what-object-create-made-or-an-instan
 objects-that-are-not-what-their-layout-says/what-object-create-made-or-an-instance-of-another-class-has-a-number-field-stored
 objects-that-are-not-what-their-layout-says/what-object-create-made-or-an-instance-of-another-class-has-a-string-field-read
 objects/a-field-kept-in-several-forms-is-asked-for-in-objects-that-nobody-followed
+objects/a-member-named-tojson-that-only-some-objects-get
 objects/a-required-field-that-one-of-two-literals-leaves-out-is-filled-on-demand-and-returned
 objects/a-required-field-that-one-of-two-literals-leaves-out-is-returned
 objects/a-required-field-that-one-of-two-literals-leaves-out-is-returned-through-two-functions
@@ -866,6 +867,7 @@ structural-types/the-object-of-an-enum-and-of-a-namespace-is-an-ordinary-object
 structural-types/the-tags-of-a-union-stand-in-constant-literals-and-change-later
 structural-types/typed-arrays-are-read-past-their-end-into-an-int32
 tree-shaking/a-call-that-nothing-makes-names-a-file-of-a-pure-package
+tree-shaking/a-comment-imports-a-type-under-the-name-of-what-the-file-declares
 tree-shaking/a-module-is-loaded-through-an-alias-of-require
 tree-shaking/a-package-that-is-left-out-names-what-the-build-does-not-compile
 tree-shaking/a-pure-package-exports-the-object-of-a-file-under-a-name

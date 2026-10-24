@@ -188,6 +188,9 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
     }
 
     pub(crate) fn enter_nesting(&mut self, position: u32) -> bool {
+        if self.file.has_chain_past_nesting_limit {
+            return false;
+        }
         let maximum = self.file.inputs.limits.get(LimitId::MaxNestingDepth);
         if u64::from(self.nesting_depth) < maximum && !self.file.queries.is_stack_low() {
             self.nesting_depth += 1;

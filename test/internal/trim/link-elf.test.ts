@@ -488,6 +488,37 @@ describeLink("each stub", () => {
     );
   }
 
+  for (const [name, isBitcode] of [
+    ["native code", false],
+    ["bitcode", true],
+  ] as const) {
+    test.skipIf(rustc === null || (isBitcode && !canLinkRustBitcode))(
+      `a body of removable_body! that does nothing, returns a constant or has a result that nobody reads is still called: ${name}`,
+      async () => {
+        const bodiesWithoutEffect = `${rustSource}
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_bodies_without_effect(x: i32) -> i32 {
+    let y = feature_code(x);
+    removable_body!(Atomics, Abort, {});
+    let constant: i32 = removable_body!(Atomics, Abort, { 5 });
+    let _ = removable_body!(Atomics, Abort, { y.wrapping_add(1) });
+    feature_code(y).wrapping_add(constant)
+}
+`;
+        const main = rustMain.replace("int main(", "int rust_bodies_without_effect(int);\nint main(");
+        const calling = main.replace(
+          /(int main\([^)]*\) \{\n)/,
+          "$1  if (argc == 9) return rust_bodies_without_effect(1) & 63;\n",
+        );
+        expect(calling).toContain("argc == 9");
+        using dir = tempDir("trim-elf-stubs", { ...rustFiles(bodiesWithoutEffect), "main.c": calling });
+        const linkResult = await wrappedRust(String(dir), isBitcode);
+        expect(linkResult.stderr).toBe("");
+        expect(linkResult.exitCode).toBe(0);
+      },
+    );
+  }
+
   test("trimExecutable rejects an already trimmed executable, an unknown feature name and a missing file", async () => {
     using dir = tempDir("trim-elf-stubs", sources);
     const folder = String(dir);

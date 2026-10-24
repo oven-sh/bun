@@ -1075,6 +1075,14 @@
     "typed": 555,
     "untyped": 580
   },
+  "everyday-requests-behind-middlewares/a-constructor-found-in-a-context-keeps-state-under-symbols": {
+    "typed": 172.4,
+    "untyped": 193.5
+  },
+  "everyday-requests-behind-middlewares/a-constructor-made-by-a-factory-below-another-keeps-state-under-symbols": {
+    "typed": 1528.8,
+    "untyped": 1629.5
+  },
   "everyday-small-objects-run-by-a-loop/a-member-under-a-key-joined-from-constants": {
     "typed": 31.2,
     "untyped": 31.1

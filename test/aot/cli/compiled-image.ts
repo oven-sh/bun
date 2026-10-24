@@ -35,14 +35,20 @@ function isImageHeader(executable: Buffer, at: number): boolean {
   );
 }
 
-/** The offset in the file at which the executable's compiled image starts. Throws unless there is exactly one. */
-export function findImage(executable: Buffer): number {
+/** The offsets in the file at which the executable's compiled images start, in order. */
+export function findImages(executable: Buffer): number[] {
   const magic = Buffer.from("BUNAOT01", "latin1");
   const found: number[] = [];
   // Bun's own code holds the same eight bytes as an immediate, so the magic alone does not identify a header.
   for (let at = executable.indexOf(magic); at >= 0; at = executable.indexOf(magic, at + 1)) {
     if (isImageHeader(executable, at)) found.push(at);
   }
+  return found;
+}
+
+/** The offset in the file at which the executable's compiled image starts. Throws unless there is exactly one. */
+export function findImage(executable: Buffer): number {
+  const found = findImages(executable);
   if (found.length !== 1) throw new Error(`expected one compiled image in the executable, found ${found.length}`);
   return found[0];
 }

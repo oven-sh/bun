@@ -1005,16 +1005,34 @@ mod _async_tasks {
                         args.path
                             .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf })
                     };
-                    if let Some(file) = embedded_file_of_compiled_program(path.as_bytes()) {
+                    let writes = (args.flags.as_int()
+                        & (sys::O::WRONLY
+                            | sys::O::RDWR
+                            | sys::O::CREAT
+                            | sys::O::TRUNC
+                            | sys::O::APPEND))
+                        != 0;
+                    let refusal = if writes {
+                        creation_in_executable(args.path.slice(), sys::Tag::open, E::EROFS)
+                    } else {
+                        None
+                    };
+                    let answer: Option<Maybe<ret::Open>> = match refusal {
+                        Some(error) => Some(Err(error)),
+                        None => embedded_file_of_compiled_program(path.as_bytes()).map(|file| {
+                            open_embedded_file(
+                                file.utf8_contents(),
+                                args.flags.as_int(),
+                                args.path.slice(),
+                            )
+                        }),
+                    };
+                    if let Some(answer) = answer {
                         // SAFETY: identity write — `R == ret::Open` for this `F`.
                         unsafe {
                             core::ptr::write(
                                 &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Open>,
-                                open_embedded_file(
-                                    file.utf8_contents(),
-                                    args.flags.as_int(),
-                                    args.path.slice(),
-                                ),
+                                answer,
                             )
                         };
                         let task_ptr: *mut Self = task;

@@ -203,6 +203,7 @@ impl<'a> Build<'a> {
     ) -> Result<R, Stage> {
         let options = self.options;
         let code = application_code_options(options, &self.limits);
+        let limits = self.limits.clone();
         let defined =
             |path: &[u8]| find_defined_string(shared.application_defines, &shared.atoms, path);
         let host = LoadHost::new(LoadHostInput {
@@ -215,6 +216,7 @@ impl<'a> Build<'a> {
             typed_packages: shared.typed_packages,
             defined: &defined,
             platform: self.platform,
+            limits: &limits,
         });
         let host = match asset_reads {
             AssetReads::FinishedByLoad => host,

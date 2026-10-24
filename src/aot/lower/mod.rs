@@ -90,6 +90,7 @@ fn lower_with_queries<'a, 'c, 'p, 's>(
     file: FileId,
 ) -> Option<LoweredFile> {
     let mut lowering = FileLowering::new(inputs, queries, file);
+    lowering.refuse_chains_past_nesting_limit();
     let roots = module::declare_module_roots(&mut lowering);
     while let Some(function) = lowering.take_next_function() {
         lowering.queries.note_idle();

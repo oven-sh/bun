@@ -20,6 +20,7 @@ use crate::load::loader_aliases::{
 };
 use crate::load::runtime_modules::{RuntimeModules, RuntimeResolution};
 use crate::load::sources::parsed_source;
+use crate::statistics::{LimitId, LimitValues};
 
 // `module` is what `name` stands for, and `name` is one of the values of `argument`, the first argument of a load.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -49,6 +50,7 @@ struct Scan<'a, 's> {
     request: &'a FinishedFile<'a, 's>,
     builtins: &'a ResolvedBuiltins,
     runtime_modules: &'a RuntimeModules,
+    limits: &'a LimitValues,
     named: Vec<NamedModule>,
     passed_to_imports: Vec<(SymbolId, NamedModule)>,
     passed_for_parameters: Vec<RuntimeModule>,
@@ -92,9 +94,6 @@ fn holder_of(holders: &mut Vec<Holder>, symbol: SymbolId, held: Held) -> u32 {
     found as u32
 }
 
-const MAX_VARIABLES_IN_A_ROW: usize = 4;
-const MAX_PARAMETERS_IN_A_ROW: usize = 4;
-
 fn sort_modules(modules: &mut Vec<RuntimeModule>) {
     modules.shared_sort_unstable_by_key(|module| module.registry_id());
     modules.dedup();
@@ -105,11 +104,13 @@ pub(crate) fn find_library_modules_named_in_choices(
     request: &FinishedFile<'_, '_>,
     builtins: &ResolvedBuiltins,
     runtime_modules: &RuntimeModules,
+    limits: &LimitValues,
 ) -> NamedLoads {
     let mut scan = Scan {
         request,
         builtins,
         runtime_modules,
+        limits,
         named: Vec::new(),
         passed_to_imports: Vec::new(),
         passed_for_parameters: Vec::new(),
@@ -511,7 +512,7 @@ impl Scan<'_, '_> {
             ..
         } = self.request;
         let mut first_new = 0;
-        for _ in 0..MAX_VARIABLES_IN_A_ROW {
+        for _ in 0..self.limits.get(LimitId::MaxVariablesFollowedToLoader) {
             let end = holders.len();
             if first_new == end {
                 break;
@@ -760,7 +761,7 @@ impl Scan<'_, '_> {
         let (hir, decisions) = (self.request.hir, &self.request.analysis.decisions);
         let mut has_unknown_name = false;
         let mut parameters_left = if follows_parameters {
-            MAX_PARAMETERS_IN_A_ROW
+            self.limits.get(LimitId::MaxParametersFollowedToLoader)
         } else {
             0
         };

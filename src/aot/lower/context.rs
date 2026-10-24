@@ -26,6 +26,7 @@ use super::types::TypeState;
 use crate::builtins::id::RuntimeModule;
 use crate::builtins::{BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect};
 use crate::compile::removable::Removable;
+use crate::diagnostic_codes::Code;
 use crate::diagnostics::{DiagnosticBuffer, Span};
 use crate::ir::generated::FunctionRole;
 use crate::ir::types::release_spare_capacity;
@@ -144,6 +145,7 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     shown_names: ShownNames,
     counters: Counters,
     scratch: BuilderScratch,
+    pub(crate) has_chain_past_nesting_limit: bool,
 }
 
 impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
@@ -204,7 +206,21 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             shown_names: ShownNames::new(inputs.options, file_inputs.source, hir, bound),
             counters: Counters::default(),
             scratch: BuilderScratch::default(),
+            has_chain_past_nesting_limit: false,
         }
+    }
+
+    pub(super) fn refuse_chains_past_nesting_limit(&mut self) {
+        let maximum = self.inputs.limits.get(LimitId::MaxNestingDepth);
+        let Some(position) = self.queries.find_chain_longer_than(maximum) else {
+            return;
+        };
+        self.has_chain_past_nesting_limit = true;
+        self.gave_up(LimitId::MaxNestingDepth, position);
+        let span = self.span_at(position);
+        let depth = maximum.to_string();
+        self.diagnostics
+            .report(Code::NestedTooDeeply, span, &[depth.as_bytes()]);
     }
 
     pub(super) fn finish(mut self, module: ModuleFragment) -> LoweredFile {

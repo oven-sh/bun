@@ -53,6 +53,7 @@ use crate::load::sources::{ParsedSource, PluginModuleName, SourceKind, parsed_so
 use crate::load::test_runner_names;
 use crate::load::typed_packages::{TypedPackagePlace, TypedPackages};
 use crate::options::Options;
+use crate::statistics::LimitValues;
 
 const BUNDLE_MODULE: &[u8] = b"bun:bundle";
 
@@ -89,6 +90,7 @@ pub(crate) struct LoadHostInput<'a> {
     // The string that the build defines a dotted path as.
     pub defined: &'a (dyn Fn(&[u8]) -> Option<Vec<u8>> + Sync),
     pub platform: Platforms,
+    pub limits: &'a LimitValues,
 }
 
 pub(crate) struct LoadHost<'a> {
@@ -827,8 +829,12 @@ impl CodeHost for LoadHost<'_> {
             source,
         );
         let runtime_modules = self.input.runtime_modules;
-        let named =
-            find_library_modules_named_in_choices(request, &source.builtins, runtime_modules);
+        let named = find_library_modules_named_in_choices(
+            request,
+            &source.builtins,
+            runtime_modules,
+            self.input.limits,
+        );
         let modules = named
             .modules
             .iter()

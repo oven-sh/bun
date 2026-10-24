@@ -55,8 +55,8 @@ async function runTool(cmd: string[]) {
 
 const run = (...args: string[]) => runTool([testaot!, ...args]);
 
-// TODO: on Windows the shell of the pinned engine maps an image read-only and then cannot bring it to its address: "CannotMapCode".
-// No test that runs a program in the shell, or in a child of testaot, can pass there until an engine that maps it copy-on-write is pinned.
+// TODO: on Windows the tests that run a program in the shell, or in a child of testaot, ended with "CannotMapCode" while an image had to be
+// brought to its address. There it no longer has one. "jsc takes an image that testaot wrote" runs on Windows; the others follow once it passes.
 const shellTakesNoImage = isWindows;
 // TODO: these two fail on Windows alone, and why is not known. They are the two that retype a value behind the parser (`f0:v3`).
 const unexplainedOnWindows = [
@@ -191,16 +191,13 @@ test.skipIf(!!whySkipped)("testaot fails a test file that does not exist", async
   expect(exitCode).toBe(1);
 });
 
-test.skipIf(!!whyEngineTestsSkipped || !!whyShellSkipped).todoIf(shellTakesNoImage)(
-  "jsc takes an image that testaot wrote",
-  async () => {
-    using folder = tempDir("aot-engine-tests", {});
-    const image = join(String(folder), "program.image");
-    const withEntryPoint = join(engineTests!, "pipeline", "a-literal-string-past-the-limit-is-tested-for.ir");
-    expect(await run("compile", withEntryPoint, `--output=${image}`)).toMatchObject({ stderr: "", exitCode: 0 });
-    expect(await runTool([jsc!, `--aotImagePath=${image}`, "-e", "0"])).toEqual({ lines: [], stderr: "", exitCode: 0 });
-  },
-);
+test.skipIf(!!whyEngineTestsSkipped || !!whyShellSkipped)("jsc takes an image that testaot wrote", async () => {
+  using folder = tempDir("aot-engine-tests", {});
+  const image = join(String(folder), "program.image");
+  const withEntryPoint = join(engineTests!, "pipeline", "a-literal-string-past-the-limit-is-tested-for.ir");
+  expect(await run("compile", withEntryPoint, `--output=${image}`)).toMatchObject({ stderr: "", exitCode: 0 });
+  expect(await runTool([jsc!, `--aotImagePath=${image}`, "-e", "0"])).toEqual({ lines: [], stderr: "", exitCode: 0 });
+});
 
 test.skipIf(!!whyShellSkipped)("jsc rejects a file that is not an image", async () => {
   using folder = tempDir("aot-engine-tests", { "nothing.image": "" });

@@ -4,7 +4,7 @@ import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harne
 import { join } from "path";
 import { built, spawned, withoutDebugInformation } from "../run-programs";
 import { beforeAll, test } from "../supported";
-import { findImage, imageHeader } from "./compiled-image";
+import { findImages, imageHeader } from "./compiled-image";
 import { runCopy, type SpawnResult } from "./edited-executable";
 
 type ExecutableRecord = ReturnType<typeof readRecord>;
@@ -176,11 +176,15 @@ test(
     expect(orderAt + 12).toBeLessThanOrEqual(base + byteCount);
 
     const imageAt = base + image.offset;
-    expect(imageAt).toBe(findImage(original));
     expect((8 + image.offset) % 4096).toBe(0);
     // The main program starts Workers, so each entry point begins a program of its own. Their images lie one behind the other.
+    const starts: number[] = [];
     let end = imageAt;
-    for (const _ of entries) end += Number(original.readBigUInt64LE(end + imageHeader.size));
+    for (const _ of entries) {
+      starts.push(end);
+      end += Number(original.readBigUInt64LE(end + imageHeader.size));
+    }
+    expect(findImages(original)).toEqual(starts);
     expect(image.length).toBe(end - imageAt);
 
     expect(readRecord(bundled).flags & hasCompiledProgram).toBe(0);

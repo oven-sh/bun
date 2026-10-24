@@ -38,6 +38,8 @@ const programs: { path: string; builds: number; flags?: string[] }[] = [
   // The same race, 9 builds of 300. And it pulls in enough of Bun's library that code is generated on every thread for a while: the body of a function was
   // released when its code was emitted, while the thread that compiled a caller asked whether the function has a body: 3 builds of 200 reported a call of a function without code.
   { path: "programs/native-callbacks/callbacks-net-sockets-and-their-events.ts", builds: 40, flags: ["--target=bun"] },
+  // Whether a member that some objects lack is found above them is asked of a table that another step of the flow analysis fills.
+  { path: "programs/objects/a-member-named-tojson-that-only-some-objects-get.js", builds: 12 },
 ];
 
 const root = String(tempDir("aot-repeated-builds", {}));

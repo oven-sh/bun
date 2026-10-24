@@ -36,7 +36,7 @@ use crate::load::source_provider::{
 };
 use crate::load::typed_packages::TypedPackages;
 use crate::options::{LoadOptions, Options, PathOptions};
-use crate::statistics::{LimitId, Loss, Stage};
+use crate::statistics::{LimitId, LimitValues, Loss, Stage};
 
 const VIRTUAL_PAGE: &[u8] = b"page.html";
 
@@ -207,6 +207,7 @@ fn with_freeze_input<R>(
     let runtime_modules = RuntimeModules::new(archive, false);
     let messages = LoadMessages::default();
     let typed_packages = TypedPackages::new(&disk, b"/project");
+    let limits = LimitValues::for_host();
     let application_host = LoadHost::new(LoadHostInput {
         disk: &disk,
         provider: &WithoutServices,
@@ -217,6 +218,7 @@ fn with_freeze_input<R>(
         typed_packages: &typed_packages,
         defined: &|_: &[u8]| None,
         platform: host_platform(),
+        limits: &limits,
     });
     let host: &dyn CodeHost = match setup.host {
         TestHost::Application => &application_host,

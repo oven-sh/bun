@@ -187,7 +187,7 @@ const plainConstantsOfTheFrontEnd: Record<string, number> = {
   "aot/compile/lower_stage.rs": 1,
   "aot/load/module_paths.rs": 1,
   "aot/load/loader_aliases.rs": 1,
-  "aot/load/named_loads.rs": 3,
+  "aot/load/named_loads.rs": 1,
   "aot/known_helpers/resolve.rs": 1,
   "aot/known_helpers/table.rs": 1,
   "aot/known_helpers/find.rs": 1,

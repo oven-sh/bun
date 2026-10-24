@@ -57,6 +57,7 @@ pub struct Queries<'c, 'p, 's> {
     has_met_inferred_member: bool,
     flow_analysis_was_disabled: Vec<FileId>,
     had_run_out_of_stack: bool,
+    pub(super) infers_nothing_from_use: bool,
 }
 
 #[derive(Default)]
@@ -146,6 +147,7 @@ impl<'p, 's> Checker<'p, 's> {
             has_met_inferred_member: false,
             flow_analysis_was_disabled,
             had_run_out_of_stack,
+            infers_nothing_from_use: false,
         };
         let answer = then(&mut queries);
         let memo_of_checker = std::mem::take(&mut queries.kept);
@@ -189,6 +191,31 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     pub fn note_idle(&mut self) {
         debug_assert!(self.depth == 0);
         self.c.idle_between_statements();
+    }
+
+    pub fn find_chain_longer_than(&mut self, maximum: u64) -> Option<u32> {
+        let hir = self.hir();
+        if hir.exprs.len() as u64 <= maximum {
+            return None;
+        }
+        let mut links = vec![0u32; hir.exprs.len()];
+        for (index, expression) in hir.exprs.iter().enumerate() {
+            let (base, link) = match expression.kind {
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => (obj, 1),
+                ExprKind::Call(call) => (hir[call].callee, 1),
+                ExprKind::NonNull(base) => (base, 0),
+                _ => continue,
+            };
+            let Some(&links_of_base) = links[..index].get(base.idx()) else {
+                continue;
+            };
+            links[index] = links_of_base + link;
+            if u64::from(links[index]) > maximum {
+                self.infers_nothing_from_use = true;
+                return Some(expression.pos);
+            }
+        }
+        None
     }
 
     fn take_cut_state(&mut self) -> CutState {

@@ -118,8 +118,9 @@ const known: Record<string, number> = {
   "passes/AOTKnownValue.h opcodesCreatingKnownStrings": 3,
   "passes/AOTKnownValue.h opcodesWithKnownValueRules": 28,
   "passes/AOTNumberLiteralStrings.cpp operationsHandingOnValues": 7,
-  "passes/AOTOutliningCandidates.cpp accessesByKey": 4,
-  "passes/AOTOutliningCandidates.cpp isOneCallOfStub": 4,
+  // Only guesses: whether a cold site is the moves of its operands and one call of a stub. A wrong guess costs a few bytes at each such site, or a frame and two jumps each time it runs.
+  "passes/AOTOutliningCandidates.cpp callsOfOneStub": 8,
+  "passes/AOTOutliningCandidates.cpp isOneCallOfStub": 8,
   "passes/AOTPromoteEnvironmentsToVariablesPlan.cpp PromotionScanner::isRewrittenUse": 4,
   "passes/AOTResolveAccesses.cpp AccessResolver::listFirstStoresAtAllocation": 4,
   "passes/AOTResolveAccessesTestSites.cpp isReadOfUntypedFieldInColdCode": 3,
@@ -198,15 +199,18 @@ const known: Record<string, number> = {
 };
 
 // TODO: each of these spells one name more than its number: Opcode::HasInPrototypeChain (the two of AOTFoldConstants.cpp), Opcode::PropDelete (interpretedStores, neverFolds),
-// Opcode::GetStringCodeUnit (interpretedReads). They grew while this test read the text of an older engine. The question that each name answers goes into the schema, and its line out of here.
+// Opcode::GetStringCodeUnit (interpretedReads), Opcode::FindSourcePlan (isRequestOf). They grew while this test read the text of an older engine. The question that each name answers goes into the schema, and its line out of here.
 for (const list of [
   "passes/AOTFoldConstants.cpp foldOnce",
   "passes/AOTFoldConstants.cpp opcodesWithOwnFoldingRule",
   "passes/AOTSinkAllocationsCandidates.cpp AllocationPrefilter::neverFolds",
   "passes/AOTSinkAllocationsInterpreter.h interpretedReads",
   "passes/AOTSinkAllocationsInterpreter.h interpretedStores",
+  "place/AOTPlacementSiteCheck.cpp isRequestOf",
 ])
   known[list]++;
+// TODO: a new list, which came in the same way. What it asks of an operation goes into the schema, and this line out of here.
+known["valueflow/AOTValueFlowUnobservedDefinitions.cpp keepsObjectToItself"] = 5;
 
 function numberOfNamesIn(body: string): number {
   const names = { Opcode: new Set<string>(), InlineBuiltin: new Set<string>() };

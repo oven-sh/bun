@@ -169,3 +169,57 @@ function make(value: number): any {
 function turn(i: number): number {
   return make(i)[held] & 1;
 }
+//// a-record-checked-field-by-field-by-closures-that-answer-with-small-objects
+const family = `~library/Step`;
+const held = `${family}/held`;
+const mark = `${family}/done`;
+const shared: any = { [mark]: mark, tag: "Done" };
+const done = (value: any): any => {
+  const self = Object.create(shared);
+  self[held] = value;
+  return self;
+};
+const isDone = (answer: any): boolean => mark in answer;
+type Check = (input: any, options: any) => any;
+const text: Check = input => done(typeof input === "string" ? input : undefined);
+const count: Check = input => done(typeof input === "number" ? input : undefined);
+const record = (fields: Record<string, Check>): Check => {
+  const names = Object.keys(fields);
+  return (input, options) => {
+    const out: any = {};
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i];
+      const answer = fields[name](input[name], options);
+      if (isDone(answer)) out[name] = answer[held];
+    }
+    return done(out);
+  };
+};
+const check = record({ id: text, size: count, inner: record({ name: text, at: count }) });
+const input = { id: "a", size: 1, inner: { name: "b", at: 2 } };
+function turn(i: number): number {
+  input.size = i;
+  return check(input, undefined)[held].size & 1;
+}
+//// a-generator-driven-to-its-end-by-a-loop-that-unwraps-small-objects
+const family = `~library/Step`;
+const held = `${family}/held`;
+const shared: any = { tag: "Done" };
+const done = (value: any): any => {
+  const self = Object.create(shared);
+  self[held] = value;
+  return self;
+};
+function* body(a: any, b: any): Generator<any, number, number> {
+  const x = yield a;
+  const y = yield b;
+  return x + y;
+}
+function drive(iterator: Generator<any, number, number>): number {
+  let state = iterator.next();
+  while (!state.done) state = iterator.next(state.value[held]);
+  return state.value;
+}
+function turn(i: number): number {
+  return drive(body(done(i), done(1))) & 1;
+}

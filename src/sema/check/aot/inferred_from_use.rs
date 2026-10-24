@@ -975,6 +975,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     // Returns `any` if the uses say nothing.
     fn inferred_type(&mut self, subject: Subject) -> TypeId {
+        if self.infers_nothing_from_use {
+            return TypeId::ANY;
+        }
         match self.memo.inferred_types.get(&subject) {
             Some(&TypeState::Known(known)) => return known,
             Some(&TypeState::InProgress(depth)) => {

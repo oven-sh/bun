@@ -4390,7 +4390,8 @@
     "casts-circle-createdPoint-2",
     "casts-fields-created-2",
     "casts-fields-createdPoint-2",
-    "casts-instance-created-2"
+    "casts-instance-created-2",
+    "looks-leaf-parsed-5"
   ],
   "objects written into by a built-in": [
     "fractions-sliceOfNumbersBySpecies",

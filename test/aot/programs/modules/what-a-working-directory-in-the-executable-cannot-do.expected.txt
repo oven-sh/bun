@@ -23,8 +23,8 @@ utimesSync: threw EROFS utime
 accessSync to write: threw EACCES access
 the file is as it was: a note
 a child without cwd starts where the program was started: true
-a child with a cwd of the system starts there: /
-a child with a cwd in the executable: threw ENOENT posix_spawn
+a child with a cwd of the system starts there: true
+a child with a cwd in the executable: threw ENOENT spawn
 chdir above the root: threw ENOENT chdir
 cwd is as it was: true
 promises.writeFile: rejected EROFS open

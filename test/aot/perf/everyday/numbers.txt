@@ -351,3 +351,51 @@ add(0.5, 1);
 function turn(i: number): number {
   return add(i, 3) & 1023;
 }
+//// words-in-an-array-made-with-new-array
+const state: { words: number[] } = { words: [] };
+function refill(seed: number): void {
+  const words: number[] = (state.words = new Array());
+  for (let k = 0; k < 16; k++) words[k] = (seed + k * 40503) | 0;
+}
+function mix(): number {
+  const w = state.words;
+  let sum = 0;
+  for (let k = 0; k < 16; k++) sum = (sum + (w[k]! >>> 3) + w[(k + 9) & 15]!) | 0;
+  return sum;
+}
+function turn(i: number): number {
+  refill(i);
+  return mix();
+}
+//// digits-in-arrays-made-with-new-array
+class Digits {
+  array: number[] = new Array();
+  used = 0;
+  addTo(other: Digits, result: Digits): number {
+    const a = this.array;
+    const b = other.array;
+    const r = result.array;
+    let carry = 0;
+    for (let k = 0; k < this.used; k++) {
+      carry += a[k]! + b[k]!;
+      r[k] = carry & 0xfffffff;
+      carry >>= 28;
+    }
+    result.used = this.used;
+    return carry;
+  }
+}
+function digitsOf(seed: number): Digits {
+  const digits = new Digits();
+  for (let k = 0; k < 32; k++) digits.array[k] = (k * seed) & 0xfffffff;
+  digits.used = 32;
+  return digits;
+}
+const x = digitsOf(2654435761);
+const y = digitsOf(40503);
+function turn(i: number): number {
+  const sum = new Digits();
+  const twice = new Digits();
+  x.addTo(y, sum);
+  return sum.addTo(sum, twice) + twice.array[i & 31]!;
+}

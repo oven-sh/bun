@@ -15,9 +15,13 @@ const show = (what, action) => {
   try {
     console.log(what + ":", action());
   } catch (error) {
-    console.log(what + ": threw", error.code, error.syscall);
+    console.log(what + ": threw", error.code, error.syscall.replace(/^(posix|uv)_spawn$/, "spawn"));
   }
 };
+// Where a Windows machine has a `pwd`, it spells a path in a way of its own.
+const printWorkingDirectory = process.platform === "win32" ? ["cmd", "/c", "cd"] : ["pwd"];
+const workingDirectoryOfChild = options => Bun.spawnSync(printWorkingDirectory, options).stdout.toString().trim();
+const rootOfSystem = path.parse(started).root;
 process.chdir(root);
 show("writeFileSync of a new file", () => fs.writeFileSync("data/new.txt", "x"));
 show("writeFileSync over a file", () => fs.writeFileSync("data/note.txt", "x"));
@@ -43,9 +47,9 @@ show("chmodSync", () => fs.chmodSync("data/note.txt", 0o600));
 show("utimesSync", () => fs.utimesSync("data/note.txt", 1, 1));
 show("accessSync to write", () => fs.accessSync("data/note.txt", fs.constants.W_OK));
 show("the file is as it was", () => fs.readFileSync("data/note.txt", "utf8").trim());
-show("a child without cwd starts where the program was started", () => Bun.spawnSync(["pwd"]).stdout.toString().trim() === fs.realpathSync(started));
-show("a child with a cwd of the system starts there", () => Bun.spawnSync(["pwd"], { cwd: "/" }).stdout.toString().trim());
-show("a child with a cwd in the executable", () => Bun.spawnSync(["pwd"], { cwd: root }).exitCode);
+show("a child without cwd starts where the program was started", () => fs.realpathSync(workingDirectoryOfChild()) === fs.realpathSync(started));
+show("a child with a cwd of the system starts there", () => workingDirectoryOfChild({ cwd: rootOfSystem }) === rootOfSystem);
+show("a child with a cwd in the executable", () => workingDirectoryOfChild({ cwd: root }));
 show("chdir above the root", () => process.chdir(".."));
 show("cwd is as it was", () => process.cwd() === root);
 (async () => {

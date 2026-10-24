@@ -209,6 +209,13 @@ pub fn run_body_of_either<const FIRST: u16, const SECOND: u16, R, B: FnOnce() ->
 #[doc(hidden)]
 #[inline(never)]
 pub fn removable_body_entry_point<R, B: FnOnce() -> R>(body: B) -> R {
+    // The optimizer removes a call of a function that has no effect, also of one that it may not inline, and the link
+    // expects a call behind every guard.
+    // SAFETY: it emits no instruction.
+    #[cfg(not(miri))]
+    unsafe {
+        ::core::arch::asm!("", options(nomem, nostack, preserves_flags))
+    };
     body()
 }
 

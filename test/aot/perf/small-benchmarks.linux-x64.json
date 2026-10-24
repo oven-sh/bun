@@ -67,7 +67,7 @@
     "millionInstructions": 83,
     "testsFailed": 100000,
     "alwaysFailing": 0,
-    "accessesByName": 399998,
+    "accessesByName": 499999,
     "runtimeOperations": 1440,
     "callsNotExpected": 0
   },

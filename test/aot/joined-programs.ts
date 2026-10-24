@@ -218,17 +218,18 @@ export function joined(label: string, flags: string[], part = 1, parts = 1) {
 
 type Way = { name: string; flags: string[]; env?: Record<string, string> };
 
-async function compareWays(folder: string, carrier: string[], group: number | string, listed: string[], waysOf: (group: string) => Way[], mustBeMet = false) {
+/** `waysOf` is asked twice: whether there is any way at all, and, with what `--explain=statistics` says of the usual build, which. */
+async function compareWays(folder: string, carrier: string[], group: number | string, listed: string[], waysOf: (group: string, statistics?: string) => Way[], mustBeMet = false) {
   const cwd = join(folder, String(group));
   const paths = joinable(listed);
   if (paths.length > 2 * namesInGroup) {
     for (let from = 0; from < paths.length; from += namesInGroup) await compareWays(folder, carrier, `${group}.${from / namesInGroup}`, paths.slice(from, from + namesInGroup), waysOf, mustBeMet);
     return;
   }
-  const ways = waysOf(String(group));
-  if (ways.length === 0) return;
+  if (waysOf(String(group)).length === 0) return;
   const made = await slot(() => written(cwd, carrier, group, paths, "usual", ["--explain=statistics"]));
   if (!made) return;
+  const ways = waysOf(String(group), made.first.stderr + made.first.stdout);
   const [plain, usual] = await Promise.all([slot(() => run([bunExe(), "run", "--no-install", "group.ts"], cwd)), slot(() => run(made.first.executable, cwd))]);
   rmSync(made.first.executable, { force: true });
 
@@ -315,6 +316,8 @@ export function joinedWithLimitsLowered(part = 1, parts = 1, oneIn = isASAN ? 96
 /**
  * On ARM64 a call reaches 128 MB. In a larger program a call between functions that lie further apart goes through a jump behind the caller, and the code that all functions share
  * is there several times, each copy within reach of its callers. No test program is that large, so the reach is lowered. The same groups in every run, one a part.
+ * A copy serves the functions that lie within the reach less its own size, on either side. So the reach goes by the size of the shared code, which differs from group to group and
+ * is four times as large where Bun was built with assertions: at one and a quarter times that size the copies take about twice the room of the functions.
  */
 export function joinedBeyondTheReachOfCalls(part = 1, parts = 1) {
   const folder = String(tempDir("aot-joined-programs", {}));
@@ -322,8 +325,11 @@ export function joinedBeyondTheReachOfCalls(part = 1, parts = 1) {
   describe("compile/aot/joined/beyond-the-reach-of-calls", () => {
     if (unsupported) return void test.skip(unsupported, () => {});
     const groups = groupsOf(programsOfOneFile());
-    const ways = ["FunctionCallReach:0", "DirectCallReach:524288"].map(name => ({ name, flags: [`--aot-limit=${name}`] }));
+    const waysOf = (_: string, statistics = "") => {
+      const sharedCodeSize = Number(/^SharedCodeBytesEmitted (\d+)$/m.exec(statistics)?.[1] ?? 0);
+      return ["FunctionCallReach:0", `DirectCallReach:${Math.ceil(1.25 * sharedCodeSize)}`].map(name => ({ name, flags: [`--aot-limit=${name}`] }));
+    };
     const group = Math.floor((groups.length * part) / (parts + 1));
-    test(`group ${group}`, () => compareWays(folder, withoutDebugInformation(), group, groups[group], () => ways, true), 900_000);
+    test(`group ${group}`, () => compareWays(folder, withoutDebugInformation(), group, groups[group], waysOf, true), 900_000);
   });
 }

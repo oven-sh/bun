@@ -9,10 +9,11 @@ use crate::shell::interpreter::{
     EventLoopHandle, Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, StateKind, log,
 };
 use crate::shell::io::{IO, OutKind};
+use crate::shell::states::assigns::AssignCtx;
 use crate::shell::states::base::Base;
 use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
-use crate::shell::{ExitCode, ShellErr};
+use crate::shell::{EnvStr, ExitCode, ShellErr};
 
 pub(crate) struct Expansion {
     pub(crate) base: Base,
@@ -49,6 +50,7 @@ pub(crate) struct Expansion {
     /// [`ExpansionOut`] (both → `buf=[], bounds=[]`) and Cmd would push an
     /// empty arg for unset vars — diverging from POSIX field-splitting.
     pub(crate) has_quoted_empty: bool,
+    earlier_fields: EarlierFields,
     /// Exit code of a sole-command-substitution arg — propagated to `Cmd`
     /// so `$(false)` as argv0 fails.
     pub(crate) out_exit_code: ExitCode,
@@ -59,13 +61,48 @@ pub enum ExpansionState {
     #[default]
     Idle,
     Walking,
-    CmdSubst,
+    /// With the words that are open, when the `$(...)` is in the word of a `${NAME<op>word}`.
+    CmdSubst(Option<Box<WordFrames>>),
     Glob,
     BraceExpand,
     Done,
     /// The parent inspects this on
     /// `child_done(_, 1)` to print the message.
     Err(Box<ShellErr>),
+}
+
+const _: () = assert!(size_of::<Expansion>() == 168);
+
+/// What became of the fields of the word that ended before the one in `current_out`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EarlierFields {
+    /// No field ended: a leading `~` is for the field in `current_out`.
+    None,
+    /// Each had no bytes and no `""`, so that `out` has no field.
+    Empty,
+    /// A field is in `out`. `has_quoted_empty` is then of the field in `current_out`.
+    InOut,
+}
+
+/// The word of a `${NAME<op>word}` while it expands.
+struct WordFrame {
+    param: &'static ast::ParamExp,
+    /// The next atom of the word.
+    idx: u32,
+    /// Where the word starts in `current_out`.
+    start: u32,
+    /// Where the word starts in `meta_offsets`.
+    meta_start: u32,
+    /// Whitespace and a `$(...)` in the word end no argument.
+    one_string: bool,
+    /// `has_quoted_empty` before the word.
+    had_quoted_empty: bool,
+}
+
+/// The words that are open: a word in the word of another form puts that one in `outer`.
+pub struct WordFrames {
+    top: WordFrame,
+    outer: Vec<WordFrame>,
 }
 
 #[derive(Default)]
@@ -109,6 +146,7 @@ impl Expansion {
             cmd_subst_quoted: false,
             assign_ctx,
             has_quoted_empty: false,
+            earlier_fields: EarlierFields::None,
             out_exit_code: 0,
         }))
     }
@@ -138,7 +176,7 @@ impl Expansion {
                     me.state = ExpansionState::Walking;
                     continue;
                 }
-                ExpansionState::CmdSubst | ExpansionState::Glob => {
+                ExpansionState::CmdSubst(_) | ExpansionState::Glob => {
                     // Re-entered while a child is in flight.
                     return Yield::suspended();
                 }
@@ -169,14 +207,13 @@ impl Expansion {
                 me.word_idx = 1;
             }
 
-            let shell_ptr: *mut ShellExecEnv = me.base.shell;
             while me.word_idx < atoms_len {
                 let simple: &ast::SimpleAtom = match atom {
                     ast::Atom::Simple(s) => s,
                     ast::Atom::Compound(c) => &c.atoms[me.word_idx as usize],
                 };
                 let shell = me.base.shell();
-                let is_cmd_subst = Self::expand_simple_no_io(
+                let is_deferred = Self::expand_simple_no_io(
                     shell,
                     simple,
                     &mut me.current_out,
@@ -187,70 +224,21 @@ impl Expansion {
                     command_ctx,
                     vm_args_utf8,
                 );
-                if !is_cmd_subst {
+                if !is_deferred {
                     me.word_idx += 1;
                     continue;
                 }
-                // ── Command substitution: spawn a Script with stdout piped
-                //    into a fresh owned buffer.
-                let ast::SimpleAtom::CmdSubst(sub) = simple else {
-                    unreachable!()
-                };
-                let quoted = sub.quoted;
-                let script_ast: *const ast::Script = &raw const sub.script;
-                me.state = ExpansionState::CmdSubst;
-                me.cmd_subst_quoted = quoted;
-
-                let io = IO {
-                    stdin: interp.root_io().stdin.clone(),
-                    stdout: OutKind::Pipe,
-                    stderr: interp.root_io().stderr.clone(),
-                };
-                // SAFETY: `shell_ptr` is a live env owned by the parent state
-                // node and outlives this expansion.
-                let duped = match unsafe { &mut *shell_ptr }
-                    .dupe_for_subshell(&io, ShellExecEnvKind::CmdSubst)
-                {
-                    Ok(d) => d,
-                    Err(e) => {
-                        drop(io);
-                        interp.throw(ShellErr::new_sys(&e));
-                        return Yield::Failed(this);
+                return match simple {
+                    ast::SimpleAtom::CmdSubst(sub) => {
+                        Self::start_cmd_subst(interp, this, sub, None)
                     }
+                    _ => Self::expand_param_atom(interp, this),
                 };
-                let script = Script::init(interp, duped, script_ast, this, io);
-                interp.as_expansion_mut(this).child_script = Some(script);
-                return Script::start(interp, script);
             }
 
             // All sub-atoms expanded — post-process leading tilde then finish.
-            if leading_tilde {
-                let home = me.base.shell().get_homedir();
-                let len_before = me.current_out.len();
-                match me.current_out.first() {
-                    Some(b'/') | Some(b'\\') => {
-                        me.current_out.splice(0..0, home.slice().iter().copied());
-                    }
-                    Some(_) => me.current_out.insert(0, b'~'),
-                    // `~""` expands to $HOME,
-                    // but `~$unset` expands to nothing (word is dropped).
-                    None if me.has_quoted_empty => {
-                        me.current_out.extend_from_slice(home.slice());
-                    }
-                    None => {}
-                }
-                // The first two arms prepend; shift the recorded brace
-                // metacharacter offsets so they keep pointing at the same
-                // bytes. The `extend_from_slice` arm only runs when
-                // `current_out` (and therefore `meta_offsets`) is
-                // empty, so the shift is a no-op there.
-                let prepended = (me.current_out.len() - len_before) as u32;
-                if prepended != 0 {
-                    for off in &mut me.meta_offsets {
-                        *off += prepended;
-                    }
-                }
-                home.deref();
+            if leading_tilde && me.earlier_fields == EarlierFields::None {
+                Self::apply_leading_tilde(me);
             }
             // Brace expansion
             // first, then glob, else flush as a single word.
@@ -273,11 +261,77 @@ impl Expansion {
         interp.child_done(parent, this, exit)
     }
 
+    /// Starts the `Script` of a `$(...)`, with its stdout piped into a buffer that `child_done` reads.
+    #[inline(always)] // `next` runs this for each `$(...)`, and `walk_words` is a second caller.
+    fn start_cmd_subst(
+        interp: &Interpreter,
+        this: NodeId,
+        sub: &ast::CmdSubst,
+        words: Option<Box<WordFrames>>,
+    ) -> Yield {
+        let me = interp.as_expansion_mut(this);
+        let script_ast: *const ast::Script = &raw const sub.script;
+        me.state = ExpansionState::CmdSubst(words);
+        me.cmd_subst_quoted = sub.quoted;
+        let shell_ptr: *mut ShellExecEnv = me.base.shell;
+
+        let io = IO {
+            stdin: interp.root_io().stdin.clone(),
+            stdout: OutKind::Pipe,
+            stderr: interp.root_io().stderr.clone(),
+        };
+        // SAFETY: `shell_ptr` is a live env owned by the parent state
+        // node and outlives this expansion.
+        let duped =
+            match unsafe { &mut *shell_ptr }.dupe_for_subshell(&io, ShellExecEnvKind::CmdSubst) {
+                Ok(d) => d,
+                Err(e) => {
+                    drop(io);
+                    interp.throw(ShellErr::new_sys(&e));
+                    return Yield::Failed(this);
+                }
+            };
+        let script = Script::init(interp, duped, script_ast, this, io);
+        interp.as_expansion_mut(this).child_script = Some(script);
+        Script::start(interp, script)
+    }
+
+    /// Puts the leading `~`, which the walk left out, in front of the first field.
+    #[inline(always)] // `next` runs this for each word with a leading `~`, and `end_field` is a second caller.
+    fn apply_leading_tilde(me: &mut Expansion) {
+        let home = me.base.shell().get_homedir();
+        let len_before = me.current_out.len();
+        match me.current_out.first() {
+            Some(b'/') | Some(b'\\') => {
+                me.current_out.splice(0..0, home.slice().iter().copied());
+            }
+            Some(_) => me.current_out.insert(0, b'~'),
+            // `~""` expands to $HOME, but `~$unset` expands to nothing (word is dropped).
+            None if me.has_quoted_empty => {
+                me.current_out.extend_from_slice(home.slice());
+            }
+            None => {}
+        }
+        // The first two arms prepend: shift the recorded metacharacter offsets to the same bytes.
+        let prepended = (me.current_out.len() - len_before) as u32;
+        if prepended != 0 {
+            for off in &mut me.meta_offsets {
+                *off += prepended;
+            }
+        }
+        home.deref();
+    }
+
     /// Re-tokenize `current_out` (the
     /// fully-expanded word with `{`/`,`/`}` markers preserved by
     /// `expand_simple_no_io`) and push each variant as a separate argv word.
     fn do_brace_expand(me: &mut Expansion) {
         use bun_shell_parser::braces;
+        if me.current_out.is_empty() {
+            Self::push_current_out(me);
+            me.state = ExpansionState::Done;
+            return;
+        }
         // Only the `{`/`,`/`}` bytes recorded in `meta_offsets` (written
         // by literal BraceBegin/Comma/BraceEnd atoms) are brace-expansion
         // metacharacters. Bytes from Text/Var/cmd-subst expansion — notably JS
@@ -345,15 +399,12 @@ impl Expansion {
         // Push each variant as its own word; word boundaries are recorded
         // via `bounds`.
         for s in expanded {
-            if !me.out.buf.is_empty() {
-                me.out.bounds.push(me.out.buf.len() as u32);
-            }
-            me.out.buf.extend_from_slice(&s);
+            Self::push_variant(me, &s);
         }
 
         let node = me.node;
         let atom = node.get();
-        if atom.has_glob_expansion() {
+        if atom.has_glob_expansion() && Self::has_glob_syntax(me) {
             // brace + glob composes. Keep
             // `current_out` (the original pattern, e.g. `src/*.{ts,tsx}`) so
             // the glob walker brace-expands and globs it; its matches are
@@ -433,6 +484,13 @@ impl Expansion {
         pattern
     }
 
+    /// Whether the field in `current_out` has a `*` of the script. The hint of the atom is for the whole word.
+    fn has_glob_syntax(me: &Expansion) -> bool {
+        me.meta_offsets
+            .iter()
+            .any(|&offset| me.current_out.get(offset as usize) == Some(&b'*'))
+    }
+
     /// Kick off an off-thread
     /// glob walk for the assembled pattern in `current_out`.
     fn transition_to_glob_state(interp: &Interpreter, this: NodeId) -> Yield {
@@ -441,6 +499,11 @@ impl Expansion {
         let cwd: Vec<u8>;
         {
             let me = interp.as_expansion_mut(this);
+            if !Self::has_glob_syntax(me) {
+                Self::push_current_out(me);
+                me.state = ExpansionState::Done;
+                return Yield::Next(this);
+            }
             me.state = ExpansionState::Glob;
             pattern = Self::neutralize_glob_metachars(&me.current_out, &me.meta_offsets);
             cwd = me.base.shell().cwd().to_vec();
@@ -467,7 +530,8 @@ impl Expansion {
 
     /// Appends the no-IO expansion of
     /// one [`ast::SimpleAtom`] to `out`. Returns `true` for `CmdSubst` so the
-    /// caller spawns a `Script` for it.
+    /// caller spawns a `Script` for it, and for a `Param`, which goes to `expand_param_atom`.
+    #[inline(always)]
     fn expand_simple_no_io(
         shell: &ShellExecEnv,
         atom: &ast::SimpleAtom,
@@ -479,7 +543,6 @@ impl Expansion {
         command_ctx: *mut bun_options_types::context::ContextData,
         vm_args_utf8: &mut Vec<bun_core::Utf8Bytes<'static>>,
     ) -> bool {
-        use crate::shell::env_str::EnvStr;
         match atom {
             ast::SimpleAtom::Text(txt) => out.extend_from_slice(txt),
             ast::SimpleAtom::QuotedEmpty => {
@@ -504,6 +567,7 @@ impl Expansion {
                 // SAFETY: `command_ctx` is the live VM ctx; `vm_args_utf8` borrows it.
                 Interpreter::append_var_argv(out, *int, event_loop, command_ctx, vm_args_utf8);
             }
+            ast::SimpleAtom::Param(_) | ast::SimpleAtom::ParamSpace(_) => return true,
             ast::SimpleAtom::Asterisk => {
                 meta_offsets.push(out.len() as u32);
                 out.push(b'*');
@@ -541,16 +605,252 @@ impl Expansion {
         false
     }
 
+    /// Expands the `Param` at `word_idx`.
+    #[cold]
+    fn expand_param_atom(interp: &Interpreter, this: NodeId) -> Yield {
+        let me = interp.as_expansion_mut(this);
+        let node = me.node;
+        let param = match node.get() {
+            ast::Atom::Simple(ast::SimpleAtom::Param(param)) => *param,
+            ast::Atom::Compound(compound) => match compound.atoms[me.word_idx as usize] {
+                ast::SimpleAtom::Param(param) => param,
+                _ => unreachable!("expand_simple_no_io leaves a Param"),
+            },
+            ast::Atom::Simple(_) => unreachable!("expand_simple_no_io leaves a Param"),
+        };
+        // An assignment value and a `[[ ]]` operand are one string.
+        let one_string = me.assign_ctx || matches!(interp.node(me.base.parent), Node::CondExpr(_));
+        match Self::open_word(interp, me, param, one_string) {
+            Some(top) => Self::walk_words(
+                interp,
+                this,
+                WordFrames {
+                    top,
+                    outer: Vec::new(),
+                },
+            ),
+            None => {
+                me.word_idx += 1;
+                Yield::Next(this)
+            }
+        }
+    }
+
+    /// Appends the value of the parameter when that is the result. Else the word is the result: gives its frame.
+    fn open_word(
+        interp: &Interpreter,
+        me: &mut Expansion,
+        param: &'static ast::ParamExp,
+        one_string: bool,
+    ) -> Option<WordFrame> {
+        let len = me.current_out.len();
+        let is_set = match param.target {
+            ast::ParamTarget::Name(name) => {
+                let shell = me.base.shell();
+                let value = shell
+                    .shell_env
+                    .get(EnvStr::init_slice(name))
+                    .or_else(|| shell.export_env.get(EnvStr::init_slice(name)));
+                match value {
+                    Some(value) => {
+                        me.current_out.extend_from_slice(value.slice());
+                        value.deref();
+                        true
+                    }
+                    None => false,
+                }
+            }
+            ast::ParamTarget::Positional(int) => Interpreter::append_var_argv(
+                &mut me.current_out,
+                int,
+                interp.event_loop,
+                interp.command_ctx,
+                // SAFETY: single-JS-thread; `vm_args_utf8` and `nodes` are
+                // disjoint `JsCell` fields (no aliasing between the two borrows).
+                unsafe { &mut *interp.vm_args_utf8.as_ptr() },
+            ),
+        };
+        let is_absent = param.op.is_absent(is_set, me.current_out.len() == len);
+        let is_alternate = param.op.action == ast::ParamAction::Alternate;
+        if is_absent == is_alternate {
+            // `+` gives nothing for an absent parameter. The other operators give the value of a present one.
+            if is_alternate {
+                me.current_out.truncate(len);
+            }
+            return None;
+        }
+        me.current_out.truncate(len);
+        Some(WordFrame {
+            param,
+            idx: 0,
+            start: len as u32,
+            meta_start: me.meta_offsets.len() as u32,
+            one_string: one_string
+                || matches!(
+                    param.op.action,
+                    ast::ParamAction::Assign | ast::ParamAction::Error
+                ),
+            had_quoted_empty: me.has_quoted_empty,
+        })
+    }
+
+    /// Expands the open words, up to the end of the outermost one or to a `$(...)`, which `child_done` resumes from.
+    #[cold]
+    fn walk_words(interp: &Interpreter, this: NodeId, mut words: WordFrames) -> Yield {
+        loop {
+            let me = interp.as_expansion_mut(this);
+            let Some(atom) = words.top.param.word.get(words.top.idx as usize) else {
+                if !Self::close_word(me, &words.top) {
+                    return Yield::Next(this);
+                }
+                let Some(outer) = words.outer.pop() else {
+                    me.word_idx += 1;
+                    return Yield::Next(this);
+                };
+                words.top = outer;
+                words.top.idx += 1;
+                continue;
+            };
+            match atom {
+                ast::SimpleAtom::Param(param) => {
+                    if let Some(inner) = Self::open_word(interp, me, param, words.top.one_string) {
+                        words.outer.push(core::mem::replace(&mut words.top, inner));
+                        continue;
+                    }
+                }
+                ast::SimpleAtom::ParamSpace(space) => {
+                    if words.top.one_string {
+                        me.current_out.extend_from_slice(space);
+                    } else {
+                        Self::end_field(me);
+                    }
+                }
+                ast::SimpleAtom::CmdSubst(sub) => {
+                    return Self::start_cmd_subst(interp, this, sub, Some(Box::new(words)));
+                }
+                _ => {
+                    let shell = me.base.shell();
+                    let _ = Self::expand_simple_no_io(
+                        shell,
+                        atom,
+                        &mut me.current_out,
+                        &mut me.meta_offsets,
+                        &mut me.has_quoted_empty,
+                        true,
+                        interp.event_loop,
+                        interp.command_ctx,
+                        // SAFETY: single-JS-thread; `vm_args_utf8` and `nodes` are
+                        // disjoint `JsCell` fields (no aliasing between the two borrows).
+                        unsafe { &mut *interp.vm_args_utf8.as_ptr() },
+                    );
+                }
+            }
+            words.top.idx += 1;
+        }
+    }
+
+    /// Ends a word. The word of a `=` is assigned and the word of a `?` is the error. `false`: `state` is an error.
+    fn close_word(me: &mut Expansion, frame: &WordFrame) -> bool {
+        if !matches!(
+            frame.param.op.action,
+            ast::ParamAction::Assign | ast::ParamAction::Error
+        ) {
+            return true;
+        }
+        // The word is a value here: a `*` or a `""` in it is not syntax of the argument.
+        let word = me.current_out.split_off(frame.start as usize);
+        me.meta_offsets.truncate(frame.meta_start as usize);
+        me.has_quoted_empty = frame.had_quoted_empty;
+
+        use std::io::Write as _;
+        let mut message: Vec<u8> = Vec::new();
+        match (frame.param.op.action, frame.param.target) {
+            (ast::ParamAction::Assign, ast::ParamTarget::Name(name)) => {
+                me.current_out.extend_from_slice(&word);
+                let value = EnvStr::init_ref_counted(word.into_boxed_slice());
+                me.base
+                    .shell_mut()
+                    .assign_var(EnvStr::init_slice(name), value, AssignCtx::Shell);
+                value.deref();
+                return true;
+            }
+            (ast::ParamAction::Assign, ast::ParamTarget::Positional(int)) => {
+                // A write to a `Vec` cannot fail.
+                let _ = write!(message, "${int}: cannot assign in this way");
+            }
+            (_, target) => {
+                match target {
+                    ast::ParamTarget::Name(name) => message.extend_from_slice(name),
+                    ast::ParamTarget::Positional(int) => {
+                        let _ = write!(message, "{int}");
+                    }
+                }
+                message.extend_from_slice(b": ");
+                if !word.is_empty() {
+                    message.extend_from_slice(&word);
+                } else if frame.param.op.colon {
+                    message.extend_from_slice(b"parameter null or not set");
+                } else {
+                    message.extend_from_slice(b"parameter not set");
+                }
+            }
+        }
+        me.state = ExpansionState::Err(Box::new(ShellErr::Custom(message.into_boxed_slice())));
+        false
+    }
+
+    /// Ends the field in `current_out` before the end of the walk. With no bytes and no `""`, it is no argument.
+    fn end_field(me: &mut Expansion) {
+        if me.earlier_fields == EarlierFields::None {
+            me.earlier_fields = EarlierFields::Empty;
+            let node = me.node;
+            if matches!(node.get(), ast::Atom::Compound(c)
+                if c.atoms.first().is_some_and(|a| matches!(a, ast::SimpleAtom::Tilde)))
+            {
+                Self::apply_leading_tilde(me);
+            }
+        }
+        if me.current_out.is_empty() && !me.has_quoted_empty {
+            return;
+        }
+        Self::push_current_out(me);
+        me.has_quoted_empty = false;
+        me.earlier_fields = EarlierFields::InOut;
+    }
+
     /// Flush `current_out` into `out`
     /// as the next argv word. The word boundary is recorded as the *previous*
     /// end-offset so the consumer's `[prev..bound]` slicing reconstructs each
     /// word and the trailing `[prev..]` slice yields the final one.
     fn push_current_out(me: &mut Expansion) {
-        if !me.out.buf.is_empty() {
-            me.out.bounds.push(me.out.buf.len() as u32);
+        if me.earlier_fields == EarlierFields::InOut && !Self::bound_next_field(me) {
+            return;
         }
         me.out.buf.append(&mut me.current_out);
         me.meta_offsets.clear();
+    }
+
+    /// Records where the field in `current_out` starts in `out`. `false`: with no bytes and no `""`, it is no argument.
+    #[cold]
+    fn bound_next_field(me: &mut Expansion) -> bool {
+        if me.current_out.is_empty() && !me.has_quoted_empty {
+            // `take_out` reports the `""` of a field that is alone in `out` and has no bytes.
+            me.has_quoted_empty = me.out.buf.is_empty() && me.out.bounds.is_empty();
+            return false;
+        }
+        me.out.bounds.push(me.out.buf.len() as u32);
+        true
+    }
+
+    /// Adds a result of brace expansion or of a glob to `out`.
+    fn push_variant(me: &mut Expansion, variant: &[u8]) {
+        if me.earlier_fields == EarlierFields::InOut {
+            me.out.bounds.push(me.out.buf.len() as u32);
+        }
+        me.out.buf.extend_from_slice(variant);
+        if !me.out.buf.is_empty() {
+            me.earlier_fields = EarlierFields::InOut;
+        }
     }
 
     /// Newlines→spaces, trim, then split on whitespace runs into separate
@@ -595,7 +895,7 @@ impl Expansion {
             if c == b' ' {
                 prev_ws = true;
                 me.current_out.extend_from_slice(&s[a..i]);
-                Self::push_current_out(me);
+                Self::end_field(me);
             }
         }
         me.current_out.extend_from_slice(&s[a..]);
@@ -646,9 +946,11 @@ impl Expansion {
 
         let no_split = {
             let me = interp.as_expansion(this);
-            me.cmd_subst_quoted || me.assign_ctx
+            me.cmd_subst_quoted
+                || me.assign_ctx
+                || matches!(&me.state, ExpansionState::CmdSubst(Some(words)) if words.top.one_string)
         };
-        {
+        let words = {
             let me = interp.as_expansion_mut(this);
             if exit_code != 0 && sole_cmd_subst {
                 me.out_exit_code = exit_code;
@@ -666,12 +968,23 @@ impl Expansion {
             } else {
                 Self::post_subshell_expansion(me, stdout);
             }
-            me.word_idx += 1;
-            me.state = ExpansionState::Walking;
             me.child_script = None;
-        }
+            match core::mem::replace(&mut me.state, ExpansionState::Walking) {
+                ExpansionState::CmdSubst(Some(words)) => Some(words),
+                _ => {
+                    me.word_idx += 1;
+                    None
+                }
+            }
+        };
         interp.deinit_node(child);
-        Yield::Next(this)
+        match words {
+            Some(mut words) => {
+                words.top.idx += 1;
+                Self::walk_words(interp, this, *words)
+            }
+            None => Yield::Next(this),
+        }
     }
 
     /// Main-thread re-entry for the
@@ -730,10 +1043,7 @@ impl Expansion {
             // Push each match as its own argv word. The
             // walker arena owns the strings, so they were `to_vec`'d already.
             for entry in result {
-                if !me.out.buf.is_empty() {
-                    me.out.bounds.push(me.out.buf.len() as u32);
-                }
-                me.out.buf.extend_from_slice(&entry);
+                Self::push_variant(me, &entry);
             }
             me.state = ExpansionState::Done;
         }

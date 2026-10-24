@@ -119,6 +119,8 @@ pub(crate) enum Node {
     Subshell(Subshell),
 }
 
+const _: () = assert!(size_of::<Node>() == 176);
+
 impl Node {
     pub(crate) fn kind(&self) -> StateKind {
         match self {
@@ -170,6 +172,22 @@ impl Node {
             Node::CondExpr(s) => Some(&mut s.base),
             Node::Async(s) => Some(&mut s.base),
             Node::Subshell(s) => Some(&mut s.base),
+        }
+    }
+
+    /// The streams of a state. `Assigns` and `Expansion` have none of their own.
+    pub(crate) fn io(&self) -> Option<&IO> {
+        match self {
+            Node::Free | Node::Assigns(_) | Node::Expansion(_) => None,
+            Node::Script(s) => Some(&s.io),
+            Node::Stmt(s) => Some(&s.io),
+            Node::Binary(s) => Some(&s.io),
+            Node::Pipeline(s) => Some(&s.io),
+            Node::Cmd(s) => Some(&s.io),
+            Node::If(s) => Some(&s.io),
+            Node::CondExpr(s) => Some(&s.io),
+            Node::Async(s) => Some(&s.io),
+            Node::Subshell(s) => Some(&s.io),
         }
     }
 }
@@ -419,22 +437,14 @@ impl Interpreter {
         out_parser: &mut Option<bun_shell_parser::Parser<'a>>,
         out_lex_result: &mut Option<bun_shell_parser::LexResult<'a>>,
     ) -> crate::Result<bun_shell_parser::ast::Script<'a>> {
-        use crate::shell::shell_body::{LexerAscii, LexerUnicode, ParseError, Parser};
-        let lex_result = if bun_core::is_all_ascii(src) {
-            let mut lexer = LexerAscii::new(arena, src, jsstrings_to_escape, jsobjs_len);
-            lexer.lex().map_err(crate::Error::from)?;
-            lexer.get_result()
-        } else {
-            let mut lexer = LexerUnicode::new(arena, src, jsstrings_to_escape, jsobjs_len);
-            lexer.lex().map_err(crate::Error::from)?;
-            lexer.get_result()
-        };
-        if !lex_result.errors.is_empty() {
-            *out_lex_result = Some(lex_result);
-            return Err(ParseError::Lex.into());
-        }
-        *out_parser = Some(Parser::new(arena, lex_result));
-        Ok(out_parser.as_mut().unwrap().parse()?)
+        bun_shell_parser::parse_script(
+            arena,
+            src,
+            jsstrings_to_escape,
+            jsobjs_len,
+            out_parser,
+            out_lex_result,
+        )
     }
 
     /// Builds the root `ShellExecEnv` (export env from the event loop's
@@ -1479,19 +1489,20 @@ impl Interpreter {
     }
 
     /// Appends the value of `$N` to
-    /// `out`. Takes the relevant interpreter fields by-part so callers can
+    /// `out`, and returns whether `$N` is set. Takes the relevant interpreter fields by-part so callers can
     /// split-borrow alongside the node arena.
     ///
     /// # Safety
     /// `command_ctx` must be null or point to a live `ContextData` that
     /// outlives this call.
+    #[inline(always)] // `Expansion` runs this for each `$N`, and `${N<op>word}` is a second caller.
     pub(crate) fn append_var_argv(
         out: &mut Vec<u8>,
         original_int: u8,
         event_loop: EventLoopHandle,
         command_ctx: *mut bun_options_types::context::ContextData,
         vm_args_utf8: &mut Vec<bun_core::Utf8Bytes<'static>>,
-    ) {
+    ) -> bool {
         let mut int = original_int;
         match event_loop {
             EventLoopHandle::Js { .. } => {
@@ -1499,7 +1510,7 @@ impl Interpreter {
                     if let Ok(p) = bun_core::self_exe_path() {
                         out.extend_from_slice(p.as_bytes());
                     }
-                    return;
+                    return true;
                 }
                 int -= 1;
 
@@ -1507,7 +1518,7 @@ impl Interpreter {
                     .bun_vm()
                     .cast::<bun_jsc::virtual_machine::VirtualMachine>();
                 if vm_ptr.is_null() {
-                    return;
+                    return false;
                 }
                 // SAFETY: `bun_vm()` on a JS event loop returns the live
                 // `*VirtualMachine` owning that loop.
@@ -1515,7 +1526,7 @@ impl Interpreter {
                 if let Some(main) = vm.main() {
                     if int == 0 {
                         out.extend_from_slice(main);
-                        return;
+                        return true;
                     }
                     int -= 1;
                 }
@@ -1526,7 +1537,7 @@ impl Interpreter {
                     let worker = unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
                     let argv = worker.argv();
                     if int as usize >= argv.len() {
-                        return;
+                        return false;
                     }
                     if vm_args_utf8.len() != argv.len() {
                         vm_args_utf8.reserve(argv.len());
@@ -1536,30 +1547,33 @@ impl Interpreter {
                         }
                     }
                     out.extend_from_slice(vm_args_utf8[int as usize].slice());
-                    return;
+                    return true;
                 }
 
                 if (int as usize) < vm.argv.len() {
                     out.extend_from_slice(&vm.argv[int as usize]);
+                    return true;
                 }
+                false
             }
             EventLoopHandle::Mini(_) => {
                 if command_ctx.is_null() {
-                    return;
+                    return false;
                 }
                 // SAFETY: `command_ctx` is the process-global `ContextData`
                 // (see `init`); it outlives the interpreter.
                 let ctx = unsafe { &*command_ctx };
                 if int as usize > ctx.passthrough.len() {
-                    return;
+                    return false;
                 }
                 if int == 0 {
                     if let Some(last) = ctx.positionals.last() {
                         out.extend_from_slice(last);
                     }
-                    return;
+                    return true;
                 }
                 out.extend_from_slice(&ctx.passthrough[int as usize - 1]);
+                true
             }
         }
     }

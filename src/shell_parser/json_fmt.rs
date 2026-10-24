@@ -17,7 +17,8 @@ use core::fmt::{self, Write};
 use super::parse::SmolList;
 use super::parse::ast::{
     Assign, Atom, Binary, BinaryOp, Cmd, CmdSubst, CompoundAtom, CondExpr, Expr, If, JSBuf,
-    Pipeline, PipelineItem, Redirect, RedirectFlags, Script, SimpleAtom, Stmt, Subshell,
+    ParamExp, ParamTarget, Pipeline, PipelineItem, Redirect, RedirectFlags, Script, SimpleAtom,
+    Stmt, Subshell,
 };
 
 // ───────────────────────────── primitives ─────────────────────────────
@@ -264,6 +265,14 @@ fn write_simple_atom(w: &mut impl Write, s: &SimpleAtom<'_>) -> fmt::Result {
         SimpleAtom::VarArgv(n) => {
             write!(w, "{{\"VarArgv\":{}", n)?;
         }
+        SimpleAtom::Param(p) => {
+            w.write_str("{\"param\":")?;
+            write_param(w, p)?;
+        }
+        SimpleAtom::ParamSpace(t) => {
+            w.write_str("{\"param_space\":")?;
+            encode_json_string(w, t)?;
+        }
         SimpleAtom::Text(t) => {
             w.write_str("{\"Text\":")?;
             encode_json_string(w, t)?;
@@ -280,6 +289,19 @@ fn write_simple_atom(w: &mut impl Write, s: &SimpleAtom<'_>) -> fmt::Result {
             write_cmd_subst(w, c)?;
         }
     }
+    w.write_char('}')
+}
+
+fn write_param(w: &mut impl Write, p: &ParamExp<'_>) -> fmt::Result {
+    match p.target {
+        ParamTarget::Name(name) => {
+            w.write_str("{\"name\":")?;
+            encode_json_string(w, name)?;
+        }
+        ParamTarget::Positional(n) => write!(w, "{{\"argv\":{}", n)?,
+    }
+    write!(w, ",\"op\":\"{}\",\"word\":", p.op.as_str())?;
+    write_array(w, p.word, write_simple_atom)?;
     w.write_char('}')
 }
 

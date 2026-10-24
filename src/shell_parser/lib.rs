@@ -18,6 +18,6 @@ pub mod parse;
 pub mod json_fmt;
 
 pub use parse::{
-    LexResult, LexerError, ParseError, Parser, ast, escape_8bit, escape_bun_str,
-    needs_escape_bunstr, needs_escape_utf8_ascii_latin1,
+    LexResult, LexerError, ParseError, Parser, ast, ends_in_param_head, escape_8bit,
+    escape_bun_str, lex_script, needs_escape_bunstr, needs_escape_utf8_ascii_latin1, parse_script,
 };

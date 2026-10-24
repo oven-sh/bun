@@ -1,8 +1,12 @@
 //! Writes "restricted pax": ustar, plus a pax header where that falls short. Regular files only.
 
 use crate::error::Result;
-use crate::header::Block;
+use crate::header::{
+    BLOCK_SIZE, Block, CHECKSUM, DEVMAJOR, DEVMINOR, GID, MAGIC, MODE, MTIME, NAME, PREFIX, SIZE,
+    TYPEFLAG, UID, USTAR_MAGIC,
+};
 use bun_core::{slice_to_nul, strings};
+use core::ops::Range;
 
 /// The size of each write matters: behind a compressor it decides what the compressed bytes are.
 pub trait Output {
@@ -56,6 +60,8 @@ const RECORD_SIZE: u64 = 10240;
 /// The last time that fits in eleven octal digits, which still gets a pax record.
 const USTAR_MTIME_MAX: i64 = (1 << 33) - 1;
 const USTAR_SIZE_END: u64 = 1 << 33;
+/// A NUL and a space follow them.
+const CHECKSUM_DIGITS: Range<usize> = CHECKSUM.start..CHECKSUM.start + 6;
 static ZEROS: [u8; 1024] = [0; 1024];
 
 pub struct Writer<O: Output> {
@@ -188,7 +194,7 @@ impl<O: Output> Writer<O> {
     /// `pad_to_record` fills the last 10 KiB record up, the way tar writes to a tape.
     pub fn finish(mut self, pad_to_record: bool) -> Result<O> {
         self.finish_entry()?;
-        self.put_zeros(1024)?;
+        self.put_zeros(2 * BLOCK_SIZE as u64)?;
         if pad_to_record {
             let over = self.written % RECORD_SIZE;
             if over != 0 {
@@ -200,7 +206,7 @@ impl<O: Output> Writer<O> {
 }
 
 fn padding_for(size: u64) -> u64 {
-    0x1ff & size.wrapping_neg()
+    size.wrapping_neg() % BLOCK_SIZE as u64
 }
 
 /// `<length> <key>=<value>\n`, where the length counts its own digits too.
@@ -235,15 +241,15 @@ fn find_slash(path: &[u8], from: usize) -> Option<usize> {
 
 /// The first `/` that leaves a name of at most 100 bytes behind a prefix that is not empty.
 fn split_point(path: &[u8]) -> Option<usize> {
-    let mut at = find_slash(path, path.len().saturating_sub(101))?;
+    let mut at = find_slash(path, path.len().saturating_sub(NAME.len() + 1))?;
     if at == 0 {
         at = find_slash(path, 1)?;
     }
-    (at.saturating_add(1) < path.len() && at <= 155).then_some(at)
+    (at.saturating_add(1) < path.len() && at <= PREFIX.len()).then_some(at)
 }
 
 fn fits_in_ustar(path: &[u8]) -> bool {
-    path.len() <= 100 || split_point(path).is_some()
+    path.len() <= NAME.len() || split_point(path).is_some()
 }
 
 fn byte_at(path: &[u8], index: usize) -> u8 {
@@ -396,42 +402,51 @@ fn format_number(value: i64, field: &mut [u8], digits: usize, strict: bool) {
 }
 
 fn format_header(fields: &Fields<'_>) -> Block {
-    let mut h: Block = [0; 512];
-    for at in [100, 108, 116, 329, 337] {
-        copy_into(&mut h, at, b"000000 ");
+    let mut h: Block = [0; BLOCK_SIZE];
+    for field in [MODE, UID, GID, DEVMAJOR, DEVMINOR] {
+        copy_into(&mut h, field.start, b"000000 ");
     }
-    copy_into(&mut h, 124, b"00000000000 ");
-    copy_into(&mut h, 136, b"00000000000 ");
-    copy_into(&mut h, 148, b"        ");
-    copy_into(&mut h, 257, b"ustar\x0000");
+    copy_into(&mut h, SIZE.start, b"00000000000 ");
+    copy_into(&mut h, MTIME.start, b"00000000000 ");
+    h[CHECKSUM].fill(b' ');
+    h[MAGIC].copy_from_slice(USTAR_MAGIC);
 
-    if fields.name.len() <= 100 {
-        copy_into(&mut h, 0, fields.name);
+    if fields.name.len() <= NAME.len() {
+        copy_into(&mut h, NAME.start, fields.name);
     } else if let Some(at) = split_point(fields.name) {
-        copy_into(&mut h, 345, fields.name.get(..at).unwrap_or_default());
         copy_into(
             &mut h,
-            0,
+            PREFIX.start,
+            fields.name.get(..at).unwrap_or_default(),
+        );
+        copy_into(
+            &mut h,
+            NAME.start,
             fields.name.get(at.saturating_add(1)..).unwrap_or_default(),
         );
     }
     format_number(
         i64::from(fields.perm & 0o7777),
-        &mut h[100..108],
+        &mut h[MODE],
         6,
         fields.strict,
     );
     format_number(
         i64::try_from(fields.size).unwrap_or(i64::MAX),
-        &mut h[124..136],
+        &mut h[SIZE],
         11,
         fields.strict,
     );
-    format_number(fields.mtime, &mut h[136..147], 11, fields.strict);
-    h[156] = fields.typeflag;
+    format_number(
+        fields.mtime,
+        &mut h[MTIME.start..MTIME.end - 1],
+        11,
+        fields.strict,
+    );
+    h[TYPEFLAG] = fields.typeflag;
 
     let checksum: u32 = h.iter().map(|&b| u32::from(b)).sum();
-    h[154] = 0;
-    format_octal(i64::from(checksum), &mut h[148..154]);
+    h[CHECKSUM_DIGITS.end] = 0;
+    format_octal(i64::from(checksum), &mut h[CHECKSUM_DIGITS]);
     h
 }

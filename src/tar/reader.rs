@@ -1,5 +1,5 @@
 use crate::error::{Error, Result};
-use crate::header::{self, Block, gnu};
+use crate::header::{self, BLOCK_SIZE, Block, gnu};
 use crate::num::{parse_decimal, parse_field, parse_pax_time};
 use crate::writer::Output as _;
 use bun_core::{FileKind, S, kind_from_mode, slice_to_nul, strings};
@@ -167,7 +167,7 @@ const PAX_LINE_LIMIT: i64 = 99_999_999;
 const KEY_CAPACITY: usize = 32;
 
 fn padding_for(size: i64) -> i64 {
-    0x1ff & size.wrapping_neg()
+    size.wrapping_neg() & (BLOCK_SIZE as i64 - 1)
 }
 
 fn assign(dest: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
@@ -360,9 +360,9 @@ impl Reader {
         Self {
             options,
             state: State::NextEntry,
-            block: [0; 512],
+            block: [0; BLOCK_SIZE],
             block_len: 0,
-            main_header: [0; 512],
+            main_header: [0; BLOCK_SIZE],
             collected: Vec::new(),
             status: Status::Ok,
             eof_is_fatal: false,
@@ -428,7 +428,9 @@ impl Reader {
     /// Refuses input that does not start like tar, given its first block if there is that much.
     pub(crate) fn detect(&mut self, start: &[u8]) -> Result<usize> {
         let mut used = 0usize;
-        if self.fill_block(start, &mut used).is_none() || header::bid(&self.block) == 0 {
+        if self.fill_block(start, &mut used).is_none()
+            || !(header::is_null(&self.block) || header::is_plausible(&self.block))
+        {
             self.state = State::Failed(Error::UnrecognizedFormat);
             return Err(Error::UnrecognizedFormat);
         }
@@ -1341,8 +1343,8 @@ impl Reader {
     }
 
     fn add_old_sparse_entries(&mut self, entries: &[u8]) -> Result<()> {
-        for entry in entries.as_chunks::<24>().0 {
-            let (offset, num_bytes) = entry.split_at(12);
+        for entry in entries.as_chunks::<{ gnu::SPARSE_ENTRY_SIZE }>().0 {
+            let (offset, num_bytes) = entry.split_at(gnu::SPARSE_NUMBER_SIZE);
             if offset.first() == Some(&0) {
                 break;
             }
@@ -1377,7 +1379,7 @@ impl Reader {
                     }
                 }
             }
-        } else if magic.starts_with(b"ustar") && (!npm || magic == b"ustar\x0000") {
+        } else if magic.starts_with(b"ustar") && (!npm || magic == header::USTAR_MAGIC) {
             if self.format != Format::Pax {
                 self.format = Format::Ustar;
             }
@@ -1459,7 +1461,7 @@ impl Reader {
                     let ignore_size = match self.format {
                         Format::Pax => false,
                         Format::Old | Format::Gnu => true,
-                        Format::Ustar => header::bid(h) > 50,
+                        Format::Ustar => header::has_magic(h) && header::is_plausible(h),
                     };
                     if ignore_size {
                         self.entry.size = 0;

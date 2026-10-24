@@ -174,6 +174,7 @@ impl<'a, 'p> FactsOfName<'a, 'p> {
         let member_facts = self.all.facts.get_mut(number as usize)?;
         let fact = member_facts.get_mut(position as usize)?;
         if fact.generation != self.all.generation {
+            cold_path();
             fact.generation = self.all.generation;
             (fact.instantiation_effects, fact.type_effects) = (Effects::Unknown, Effects::Unknown);
         }
@@ -300,6 +301,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.instantiation_count = count;
         self.reliability |= reliability;
         if deepest > self.deepest_stack.get() {
+            cold_path();
             self.deepest_stack.set(deepest);
         }
         true
@@ -361,6 +363,7 @@ impl<'p, 's> Checker<'p, 's> {
         mapper: MapperId,
     ) -> PropInstantiation {
         let Some(facts) = facts.filter(|it| !it.all.is_abandoned) else {
+            cold_path();
             return self.instantiation_of_prop(prop, mapper);
         };
         if let Some(&mut fact) = facts.fact(nth)
@@ -393,6 +396,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeOfProp { ty, is_literal }
         };
         let Some(facts) = facts.filter(|it| !it.all.is_abandoned) else {
+            cold_path();
             return compute(self);
         };
         if let Some(&mut fact) = facts.fact(nth)

@@ -104,6 +104,7 @@ use crate::table::Publish;
 use crate::util::{FxHashMap, SharedSort};
 use bun_threading::{Condvar, Guarded};
 use std::cell::{Cell, RefCell};
+use std::hint::cold_path;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// A field of `Program`.
@@ -702,6 +703,7 @@ impl<'s> Checker<'_, 's> {
         self.discard_if_missed_cycle_member();
         // A commit here would store the members of a cycle that are in other files, and withhold those in this one.
         if self.is_commit_due() && !self.task.was_discarded() && !self.task.has_resolved_a_cycle() {
+            cold_path();
             let is_between_files = false;
             self.commit(is_between_files);
         } else if let Some(view) = self.task.view() {
@@ -726,6 +728,7 @@ impl<'s> Checker<'_, 's> {
         if newest <= last_idle_commit.min(compared) {
             return;
         }
+        cold_path();
         // Copied because `identities_of` borrows the task's buffer again.
         let (record_keys, node_keys) = self.task.logged_since_idle();
         let (record_keys, node_keys) = (record_keys.to_vec(), node_keys.to_vec());

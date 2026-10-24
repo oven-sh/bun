@@ -480,6 +480,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Binary { left, .. }
                 if left.is_some() && matches!(hir[left].kind, ExprKind::Binary { .. }) =>
             {
+                cold_path();
                 self.resolve_chain_innermost_first(file, e);
             }
             ExprKind::Call(call) if has_call_in_receiver(hir, call) => {
@@ -995,6 +996,7 @@ impl<'p, 's> Checker<'p, 's> {
         match chain {
             Chain::No => (ty, false),
             Chain::Start => {
+                cold_path();
                 let non_null = self.non_nullable(ty);
                 let may_short_circuit = non_null != ty && !self.is_any(ty);
                 // An earlier link may have short-circuited too. That shows up as `undefined` in its
@@ -1003,8 +1005,14 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // The type of the previous link when the chain reaches it, including `undefined` if the
             // link itself can be `undefined`.
-            Chain::Continue if self.is_in_optional_chain(file, obj) => self.type_of_link(file, obj),
-            Chain::Continue => (ty, false),
+            Chain::Continue if self.is_in_optional_chain(file, obj) => {
+                cold_path();
+                self.type_of_link(file, obj)
+            }
+            Chain::Continue => {
+                cold_path();
+                (ty, false)
+            }
         }
     }
 
@@ -1043,6 +1051,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `x.a` on `any` is `any`, regardless of narrowing. (Not so `x["a"]`.)
         let is_any = self.is_any(receiver) || receiver == TypeId::SILENT_NEVER;
         let left = if is_any {
+            cold_path();
             may_short_circuit = false;
             receiver
         } else {
@@ -1112,11 +1121,13 @@ impl<'p, 's> Checker<'p, 's> {
         let (left, receiver) = (access.left, access.widened);
         let is_private = self.atoms().is_private_name(name);
         let lexical = if is_private {
+            cold_path();
             self.lookup_symbol_for_private_identifier_declaration(file, e, name)
         } else {
             None
         };
         if target.written && lexical.is_some_and(|(_, m)| hir[m].kind == MemberKind::Method) {
+            cold_path();
             let name_text = self.declaration_name_at(file, name_pos);
             let right = self.span_of_token(file, name_pos);
             self.grammar_error_at(right, 2803, &[Arg::Bytes(&name_text)]);
@@ -1142,6 +1153,7 @@ impl<'p, 's> Checker<'p, 's> {
             && !is_private
             && let Some(initial) = self.auto_this_property(file, e, receiver, name)
         {
+            cold_path();
             return (
                 self.flow_type_of_auto_access(file, e, initial, target),
                 may_short_circuit,
@@ -1150,6 +1162,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_super = matches!(hir[obj].kind, ExprKind::Super);
         // `getPrivateIdentifierPropertyOfType` is given `leftType`.
         let holder = if is_private {
+            cold_path();
             receiver
         } else {
             self.apparent_type_or_type_variable(receiver, access.apparent)
@@ -1159,6 +1172,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             None
         } else if target.written {
+            cold_path();
             // You can't assign through an index signature of a type parameter's constraint.
             let to_write = self.property_type(left, holder, name, Access::Written);
             let is_read = to_write.is_some_and(|found| match found.how {
@@ -1178,13 +1192,15 @@ impl<'p, 's> Checker<'p, 's> {
         let found = match found {
             // `getPropertyOfTypeEx` with `includeTypeOnlyMembers`: used for a qualified name in
             // `typeof a.b`.
-            None if bound.is_in_type_query(e) => self
-                .type_only_member_of_module(receiver, name)
-                .map(|ty| FoundProperty {
-                    ty,
-                    how: Found::Property,
-                    prop: None,
-                }),
+            None if bound.is_in_type_query(e) => {
+                cold_path();
+                self.type_only_member_of_module(receiver, name)
+                    .map(|ty| FoundProperty {
+                        ty,
+                        how: Found::Property,
+                        prop: None,
+                    })
+            }
             found => found,
         };
         // `getPropertyOfType(apparentType, ..)` reduces the apparent type, but nothing reduces `leftType`. Reducing
@@ -1199,6 +1215,7 @@ impl<'p, 's> Checker<'p, 's> {
             prop: found,
         }) = found
         else {
+            cold_path();
             // The lookup hit a cycle whose head is this expression or a caller, so not all members
             // are known. A cycle that began and ended inside the lookup, like two interfaces that
             // extend each other, is final. So is any cycle for a resolved enum object: its members
@@ -1292,7 +1309,10 @@ impl<'p, 's> Checker<'p, 's> {
             return (TypeId::ERROR, may_short_circuit);
         };
         let prop = match how {
-            Found::ByIndex => None,
+            Found::ByIndex => {
+                cold_path();
+                None
+            }
             // The same lookup.
             _ if found.is_some() && holder == apparent && self.is_object_type(apparent) => found,
             _ => match self.prop_ref(apparent, name) {
@@ -1304,6 +1324,7 @@ impl<'p, 's> Checker<'p, 's> {
             },
         };
         if how == Found::ByIndex {
+            cold_path();
             // `indexInfo.isReadonly && (IsAssignmentTarget(node) || isDeleteTarget(node))`
             let is_deleted = matches!(bound.parent_of_expr(e), Parent::Expr(p)
                 if matches!(hir[p].kind, ExprKind::Unary { op: UnOp::Delete, .. }));
@@ -1327,6 +1348,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && !target.definite
                 && prop.is_some_and(|prop| prop.flags.contains(PropFlags::WRITE_ONLY))
             {
+                cold_path();
                 let start = self.start_inside_parentheses(file, e);
                 let node = (file, start, self.end_inside_parentheses(file, e));
                 self.error_at(node, 2806, &[]);
@@ -1353,6 +1375,7 @@ impl<'p, 's> Checker<'p, 's> {
             && let Some(prop) = prop
             && self.is_assignment_to_readonly_entity(file, e, obj, prop)
         {
+            cold_path();
             let right = self.span_of_right(file, name, name_pos);
             let text = self.source_text(file, right.1, right.2);
             self.error_at(right, 2540, &[Arg::Bytes(&text)]);
@@ -1912,6 +1935,7 @@ impl<'p, 's> Checker<'p, 's> {
             ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_) => {
                 let (ty, may_short_circuit) = self.type_of_link(file, e);
                 if may_short_circuit {
+                    cold_path();
                     self.optional(ty)
                 } else {
                     ty
@@ -2327,6 +2351,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_of_identifier(&mut self, file: FileId, e: ExprId, name: Atom) -> TypeId {
         // `Err` means `Resolve` returned nil, so `getResolvedSymbol` is `unknownSymbol`.
         let Ok(found) = self.resolve_identifier(file, e, name, false) else {
+            cold_path();
             self.note_unresolved_identifier(file, e, name);
             return TypeId::ERROR;
         };
@@ -2366,6 +2391,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.contextual_binding_patterns.is_empty()
             && self.is_reference_within_contextual_pattern(file, e, sym)
         {
+            cold_path();
             return TypeId::NON_INFERRABLE_ANY;
         }
         let cycles_before = self.cycles;
@@ -2381,6 +2407,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.is_in_own_initializer(file, e, sym)
             && !self.is_type_of_variable_in_progress(sym)
         {
+            cold_path();
             cached
         } else {
             declared

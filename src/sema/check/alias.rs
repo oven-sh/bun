@@ -431,6 +431,7 @@ impl<'p, 's> Checker<'p, 's> {
         if alias.is_none() && own_alias.is_none() || self.types().deferred(result).is_some() {
             return result;
         }
+        cold_path();
         // `createDeferredTypeReference`, `instantiateAnonymousType`
         let is_instantiation = match (self.data(ty), self.data(result)) {
             (

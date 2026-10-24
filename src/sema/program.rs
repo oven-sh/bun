@@ -8884,6 +8884,7 @@ impl<'s> Files<'s> {
         if specified_mode == ResolutionMode::None {
             self.module(file).default_mode
         } else {
+            cold_path();
             specified_mode
         }
     }
@@ -8965,7 +8966,10 @@ impl<'s> Files<'s> {
             return None;
         }
         let resolved = match self.try_find_ambient_module(spec) {
-            Some(ambient) => Some(ambient),
+            Some(ambient) => {
+                cold_path();
+                Some(ambient)
+            }
             None => (self.module(file).imports.get(&(spec, mode)))
                 .filter(|&&target| self.module(target).is_module())
                 .map(|&target| self.file_symbol(target)),
@@ -8975,6 +8979,7 @@ impl<'s> Files<'s> {
         if resolved.is_some() && attributes.is_empty() {
             return resolved;
         }
+        cold_path();
         self.pattern_ambient_module(spec, attributes).or(resolved)
     }
 
@@ -8982,6 +8987,7 @@ impl<'s> Files<'s> {
     pub fn module_of_import(&self, file: FileId, import: &Import) -> Option<Sym> {
         // `resolveExternalModuleNameWorker`
         if import.phase == ImportPhase::Source {
+            cold_path();
             return None;
         }
         let mode = self.mode_of_import(file, import.mode);

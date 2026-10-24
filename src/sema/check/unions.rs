@@ -1118,6 +1118,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // At this rate the total would exceed a million comparisons. That's too complex to represent, so the
                 // result is the error type.
                 if count == 100_000 && (count / (len - i)) * len > 1_000_000 {
+                    cold_path();
                     self.error_at_current_node(2590);
                     return TypeId::ERROR;
                 }
@@ -1415,11 +1416,13 @@ impl<'p, 's> Checker<'p, 's> {
         for &ty in types {
             let ty = self.regular(ty);
             if let TypeData::Intersection(inner) = self.data(ty) {
+                cold_path();
                 found = self.add_types_to_intersection(set, found, inner);
                 continue;
             }
             // Only the first of the types that count as `{}` is added.
             if self.is_empty_anonymous_object_type(ty) {
+                cold_path();
                 if found.includes & tf::INCLUDES_EMPTY_OBJECT == 0 {
                     found.includes |= tf::INCLUDES_EMPTY_OBJECT;
                     set.insert(ty);
@@ -1429,6 +1432,7 @@ impl<'p, 's> Checker<'p, 's> {
             let flags = self.flags(ty);
             let one = MembersByFlags::of(ty, flags);
             if flags & (tf::ANY | tf::UNKNOWN) != 0 {
+                cold_path();
                 if ty == TypeId::UNRESOLVED {
                     found.includes |= tf::INCLUDES_UNRESOLVED;
                 }
@@ -1441,6 +1445,7 @@ impl<'p, 's> Checker<'p, 's> {
             } else if self.p.files.options.strict_null_checks || flags & tf::NULLABLE == 0 {
                 let member = one.unit.unwrap_or(ty);
                 if member != ty {
+                    cold_path();
                     found.includes |= tf::INCLUDES_MISSING_TYPE;
                 }
                 set.insert(member);
@@ -1818,6 +1823,7 @@ impl<'p, 's> Checker<'p, 's> {
             if combined.is_some_and(|it| Self::has_disjoint_domains(it.includes, strict)) {
                 continue;
             }
+            cold_path();
             let one = self.intersection_ex(&constituents, no_constraint_reduction, None);
             if !one.is_never() {
                 intersections.push(one);
@@ -2014,7 +2020,10 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_name(&self, ty: TypeId, alias: Option<Sym>) -> Option<&'p [u8]> {
         let files = self.files();
         let name = match (alias, self.data(self.non_distributed(ty))) {
-            (Some(alias), _) => files.symbol(alias).name,
+            (Some(alias), _) => {
+                cold_path();
+                files.symbol(alias).name
+            }
             // The `this` type has its class's symbol.
             (None, &TypeData::Ref { target: sym, .. } | &TypeData::ThisParam(sym)) => {
                 files.symbol(sym).name
@@ -2027,6 +2036,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // `InternalSymbolNameClass`, for a class expression without a name.
         Some(if name.is_none() {
+            cold_path();
             &b"\xFEclass"[..]
         } else if name == known::missing {
             &b"\xFEmissing"[..]
@@ -2315,11 +2325,15 @@ impl<'p, 's> Checker<'p, 's> {
                         // nil comes last.
                         .then_with(|| has_symbol(b).cmp(&has_symbol(a))),
                 })
-                .then_with(|| originating_import(a).cmp(&originating_import(b)))
+                .then_with(|| {
+                    cold_path();
+                    originating_import(a).cmp(&originating_import(b))
+                })
                 .then_with(|| is_not_reference(a).cmp(&is_not_reference(b)));
             if by_symbol.is_ne() {
                 return by_symbol;
             }
+            cold_path();
         }
         // References that aren't deferred are ordered by their type arguments. Deferred ones with the same target are
         // ordered by the reference's source position, and instantiations of the same reference by their mappers, never
@@ -2614,7 +2628,10 @@ impl<'p, 's> Checker<'p, 's> {
             _ => (1, 0),
         };
         by_structure
-            .then_with(|| check_of_literal(a).cmp(&check_of_literal(b)))
+            .then_with(|| {
+                cold_path();
+                check_of_literal(a).cmp(&check_of_literal(b))
+            })
             .then_with(|| creation_step(a).cmp(&creation_step(b)))
     }
 
@@ -2648,8 +2665,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `CompareTypes` for `s` and `t`, which decide the order of two types. See `members_that_order_intersections`.
     fn compare_types_ordered_by(&self, s: TypeId, t: TypeId) -> std::cmp::Ordering {
-        self.compare_types_without_ids(s, t)
-            .then_with(|| self.content_order(s, t))
+        self.compare_types_without_ids(s, t).then_with(|| {
+            cold_path();
+            self.content_order(s, t)
+        })
     }
 
     /// See `Types::content_order`.

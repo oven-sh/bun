@@ -206,6 +206,7 @@ impl<'p, 's> Checker<'p, 's> {
                 (object, index, is_resolved)
             }
             TypeData::Substitution { base, constraint } => {
+                cold_path();
                 self.generic_object_flags_of_all(&[base, constraint])
             }
             _ => {
@@ -271,6 +272,7 @@ impl<'p, 's> Checker<'p, 's> {
         if mapped.name_ty.is_none() {
             return false;
         }
+        cold_path();
         let declared = self.declared_name_type_of_mapped(file, node);
         let param = self.type_param(file, mapped.param);
         let with_keys = self.mapper_with_pair(mapper, param, constraint);
@@ -639,8 +641,14 @@ impl<'p, 's> Checker<'p, 's> {
         // A symbol-keyed name also encodes which symbol it is, so it isn't read from the syntax.
         let is_by_syntax = match key {
             PropKey::Name(_) => true,
-            PropKey::Computed(_) => !text.starts_with(crate::atom::SYMBOL_NAME_PREFIX),
-            _ => false,
+            PropKey::Computed(_) => {
+                cold_path();
+                !text.starts_with(crate::atom::SYMBOL_NAME_PREFIX)
+            }
+            _ => {
+                cold_path();
+                false
+            }
         };
         // A late-bound symbol has a `nameType`, which spells its name. The name of `[+2]` is `+2`.
         let is_late_bound =
@@ -1107,7 +1115,10 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<TypeId> {
         let include_undefined = access_flags.contains(AccessFlags::INCLUDE_UNDEFINED);
         let access_expression = match access_node {
-            AccessNode::ElementAccess(file, e) => Some((file, e)),
+            AccessNode::ElementAccess(file, e) => {
+                cold_path();
+                Some((file, e))
+            }
             _ => None,
         };
         let name = self.property_name_of_type(index);
@@ -1121,6 +1132,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let prop_type = self.type_of_prop(prop, mapper);
                     return Some(match access_node {
                         AccessNode::ElementAccess(file, e) => {
+                            cold_path();
                             self.flow_type_of_reference(file, e, prop_type)
                         }
                         AccessNode::IndexedAccessType(..)
@@ -1690,13 +1702,16 @@ impl<'p, 's> Checker<'p, 's> {
             // `[A] extends [B]` is deferred on its elements like `A extends B` would be.
             let check_tuples = match &root {
                 Some(root) => root.check_tuples,
-                None => match (
-                    self.simple_tuple_len(file, check),
-                    self.simple_tuple_len(file, extends),
-                ) {
-                    (Some(a), Some(b)) => a == b,
-                    _ => false,
-                },
+                None => {
+                    cold_path();
+                    match (
+                        self.simple_tuple_len(file, check),
+                        self.simple_tuple_len(file, extends),
+                    ) {
+                        (Some(a), Some(b)) => a == b,
+                        _ => false,
+                    }
+                }
             };
             let check_is_generic =
                 self.is_generic(check_ty) || check_tuples && self.has_generic_element(check_ty);
@@ -3157,6 +3172,7 @@ impl<'p, 's> Checker<'p, 's> {
                 |c: &Self| created.unwrap_or_else(|| c.mapper_with_pair(mapper, param, key));
             let names = match name_declared {
                 Some(declared) => {
+                    cold_path();
                     let with_key = with_key(self);
                     self.instantiate(declared, with_key)
                 }
@@ -3168,9 +3184,11 @@ impl<'p, 's> Checker<'p, 's> {
                 (Some(Modifiers::Object(modifiers_type, m)), Some(name)) => self
                     .property_in_type(*modifiers_type, m, name)
                     .map(|(prop, _)| prop),
-                (Some(Modifiers::Union(union)), Some(name)) => self
-                    .get_property_of_type(*union, name)
-                    .map(|(prop, _)| prop),
+                (Some(Modifiers::Union(union)), Some(name)) => {
+                    cold_path();
+                    self.get_property_of_type(*union, name)
+                        .map(|(prop, _)| prop)
+                }
                 _ => None,
             };
             // `addMemberForKeyTypeWorker`
@@ -3178,6 +3196,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let name = if name_ty == key {
                     key_name
                 } else {
+                    cold_path();
                     self.property_name_of_type(name_ty)
                 };
                 let existing_index = match name {
@@ -3252,7 +3271,10 @@ impl<'p, 's> Checker<'p, 's> {
                                 && key != TypeId::UNRESOLVED;
                             let (own_mapper, name_type) = match is_separate_key {
                                 true => (mapper, key),
-                                false => (with_key(self), TypeId::UNRESOLVED),
+                                false => {
+                                    cold_path();
+                                    (with_key(self), TypeId::UNRESOLVED)
+                                }
                             };
                             // The type, which is the template under `with_key`, is resolved on
                             // demand (`type_of_mapped_prop`).

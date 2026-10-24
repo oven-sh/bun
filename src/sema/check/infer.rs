@@ -321,6 +321,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // The wildcard is inferred for every type parameter in `target`.
         if source == TypeId::WILDCARD {
+            cold_path();
             let saved = n.propagated.replace(source);
             self.infer_types(n, target, target);
             n.propagated = saved;
@@ -504,6 +505,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             (&TypeData::Substitution { base, constraint }, _) => {
+                cold_path();
                 self.infer_types(n, base, target);
                 let both = self.substitution_intersection(base, constraint);
                 self.infer_with_priority(n, both, target, PRIORITY_SUBSTITUTE_SOURCE);
@@ -518,11 +520,13 @@ impl<'p, 's> Checker<'p, 's> {
                 self.infer_to_multiple_types(n, source, parts, Multiple::Intersection)
             }
             (TypeData::Union(_), _) => {
+                cold_path();
                 for &s in self.parts(source) {
                     self.infer_types(n, s, target);
                 }
             }
             (_, TypeData::Template { texts, types }) => {
+                cold_path();
                 self.infer_to_template_literal_type(n, source, texts, types)
             }
             _ => {
@@ -720,6 +724,7 @@ impl<'p, 's> Checker<'p, 's> {
         let slot = n.visited.len();
         n.visited.push((key, PRIORITY_CIRCULARITY));
         if n.visited.len() == VISITED_INDEX_FROM {
+            cold_path();
             let visited = n.visited.iter().enumerate();
             (n.visited_index).extend(visited.map(|(i, v)| (v.0, i as u32)));
         } else if n.visited.len() > VISITED_INDEX_FROM {
@@ -734,11 +739,13 @@ impl<'p, 's> Checker<'p, 's> {
             n.expanding |= 1;
         }
         if self.is_deeply_nested_type(target, [&n.source_stack, &n.target_stack], false, 2) {
+            cold_path();
             n.expanding |= 2;
         }
         if n.expanding != 3 {
             action(self, n, source, target);
         } else {
+            cold_path();
             n.inference_priority = PRIORITY_CIRCULARITY;
         }
         n.target_stack.pop();
@@ -1388,6 +1395,7 @@ impl<'p, 's> Checker<'p, 's> {
             && sf == tf
             && sr == tr
         {
+            cold_path();
             return self.infer_from_reference_type_arguments(n, source, target);
         }
         if self.is_generic_mapped_type(source) && self.is_generic_mapped_type(target) {
@@ -1684,6 +1692,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let (TypeData::Tuple { flags: s, .. }, TypeData::Tuple { flags: t, .. }) =
             (self.data(source), self.data(target))
         {
+            cold_path();
             let variable = ElemFlags::REST | ElemFlags::VARIADIC;
             let min_length = |f: &[ElemFlags]| Self::min_length(f);
             let fixed_length = |f: &[ElemFlags]| Self::fixed_length(f);
@@ -1737,7 +1746,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let source_prop = match source_members {
             Some(members) => self.property_in_type(source, members, tp.name),
-            None => self.get_property_of_type(source, tp.name),
+            None => {
+                cold_path();
+                self.get_property_of_type(source, tp.name)
+            }
         };
         let Some((sp, source_mapper)) = source_prop else {
             return true;
@@ -2036,6 +2048,7 @@ impl<'p, 's> Checker<'p, 's> {
         if tm.index_infos().is_empty() {
             return;
         }
+        cold_path();
         let is_mapped = |c: &Self, t: TypeId| {
             matches!(
                 c.data(t),
@@ -3160,6 +3173,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.types().could_contain_type_variables(ty) {
             return known;
         }
+        cold_path();
         // The worker reads the type, its mapper, its alias, and symbols' flags and declarations.
         let could_contain = self.could_contain_type_variables_worker(ty);
         (self.types()).set_could_contain_type_variables(ty, could_contain);

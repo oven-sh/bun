@@ -313,6 +313,7 @@ impl Relater {
             return self.maybe_keys.contains(&key);
         }
 
+        cold_path();
         self.maybe_keys_set.contains(&key)
     }
 
@@ -320,8 +321,10 @@ impl Relater {
     fn push_maybe_key(&mut self, key: Key) {
         self.maybe_keys.push(key);
         if !self.maybe_keys_set.is_empty() {
+            cold_path();
             self.maybe_keys_set.insert(key);
         } else if self.maybe_keys.len() > shortcuts::MAYBE_KEYS_LINEAR_LIMIT {
+            cold_path();
             self.maybe_keys_set.extend(self.maybe_keys.iter().copied());
         }
     }
@@ -330,6 +333,7 @@ impl Relater {
     fn pop_maybe_key(&mut self) -> Option<Key> {
         let key = self.maybe_keys.pop()?;
         if !self.maybe_keys_set.is_empty() {
+            cold_path();
             self.maybe_keys_set.remove(&key);
         }
         Some(key)
@@ -666,6 +670,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     fn regular_as(&self, ty: TypeId, data: &'p TypeData<'p>) -> (TypeId, &'p TypeData<'p>) {
         if is_fresh_literal_kind(data) {
+            cold_path();
             let ty = self.with_freshness(ty, false);
             return (ty, self.data(ty));
         }
@@ -810,6 +815,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Until the instantiation is done there are none.
     pub(super) fn is_empty_anonymous_object_type(&mut self, ty: TypeId) -> bool {
         if matches!(ty, TypeId::EMPTY_OBJECT | TypeId::EMPTY_TYPE_LITERAL) {
+            cold_path();
             return true;
         }
         // `newAnonymousType` takes the members as an argument. `checkObjectLiteral`, `getSpreadType`,
@@ -824,7 +830,10 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Anon {
                 origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..),
                 mapper,
-            } => Some(*mapper),
+            } => {
+                cold_path();
+                Some(*mapper)
+            }
             // `ObjectFlagsMapped`, without `ObjectFlagsAnonymous`.
             TypeData::Anon {
                 origin: Origin::Mapped(..),
@@ -1076,6 +1085,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.inherited_names != [0; 4] && self.inherited_names[n / 64 % 4] & 1 << (n % 64) == 0 {
             return None;
         }
+        cold_path();
         for i in 0..from.count {
             if i == from.requested {
                 let global = self.plain_global_ref(from.globals[i]);
@@ -1150,10 +1160,12 @@ impl<'p, 's> Checker<'p, 's> {
                 // The cache is shared between threads, so another thread measuring the same symbol may have stored this
                 // comparison already. Without its flags the variances would lack `UNMEASURABLE` or `UNRELIABLE`.
                 if is_marker_comparison {
+                    cold_path();
                     self.reliability |= entry & (REPORTS_UNMEASURABLE | REPORTS_UNRELIABLE);
                 }
                 // The comparison of these two types was aborted when it ran.
                 if entry & COMPLEXITY_OVERFLOW != 0 {
+                    cold_path();
                     self.relation_too_complex = true;
                 }
                 return entry & SUCCEEDED != 0;
@@ -1183,6 +1195,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.frames.first().map_or(0, |frame| frame.serial),
         );
         if cuts != 0 && !is_trial {
+            cold_path();
             let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
             if let Some(&(under, is_related)) = self.relations_cut_short.get(&key)
                 && under == outermost
@@ -1220,11 +1233,13 @@ impl<'p, 's> Checker<'p, 's> {
         r.overflow = false;
         r.hit_cached_overflow = false;
         if is_trial {
+            cold_path();
             r.failed.clear();
         }
         self.free_relaters.push(r);
         self.end_comparison(is_outermost);
         if is_too_complex {
+            cold_path();
             self.set_relation_overflow(source, target, relation);
             self.relation_too_complex = true;
             if !is_trial {
@@ -1232,6 +1247,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.error_about_comparison_at_current_node(&types);
             }
         } else if hit_cached_overflow && !overflow && !result.holds() {
+            cold_path();
             // `reportRelationError`: the overflow replaces the relation error only if it was
             // recorded for `source` and `target`.
             let (key, _) = self.relation_key(source, target, relation, STATE_NONE, false);
@@ -1287,9 +1303,11 @@ impl<'p, 's> Checker<'p, 's> {
             || source == TypeId::UNRESOLVED
             || source == TypeId::WILDCARD
         {
+            cold_path();
             return true;
         }
         if t & tf::UNKNOWN != 0 && !(relation == Relation::StrictSubtype && s & tf::ANY != 0) {
+            cold_path();
             return true;
         }
         if t & tf::NEVER != 0 {
@@ -1333,6 +1351,7 @@ impl<'p, 's> Checker<'p, 's> {
         if s & tf::UNDEFINED != 0 && (is_lax || t & (tf::UNDEFINED | tf::VOID) != 0)
             || s & tf::NULL != 0 && (is_lax || t & tf::NULL != 0)
         {
+            cold_path();
             return true;
         }
         if s & tf::OBJECT != 0
@@ -1925,6 +1944,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(cached_value) = self.cached_part(t, links::Kind::Conditional, which) {
             return cached_value;
         }
+        cold_path();
         self.derive_and_cache_cond_piece(t, which)
     }
 
@@ -2176,6 +2196,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(cached_value) = self.cached_part(t, links::Kind::Mapped, part as usize) {
             return cached_value;
         }
+        cold_path();
         let Some((_, _, mapper)) = self.mapped_origin(t) else {
             return TypeId::UNRESOLVED;
         };
@@ -2235,6 +2256,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(cached_value) = self.cached_part(t, links::Kind::Mapped, part as usize) {
             return cached_value;
         }
+        cold_path();
         let Some((file, node, mapper)) = self.mapped_origin(t) else {
             return t;
         };
@@ -2991,9 +3013,11 @@ impl<'p, 's> Checker<'p, 's> {
             state
         };
         if source == target {
+            cold_path();
             return Ternary::TRUE;
         }
         if relation == Relation::Identity {
+            cold_path();
             if self.flags(source) != self.flags(target) {
                 return Ternary::FALSE;
             }
@@ -3006,6 +3030,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // Fast path: a type parameter compared with exactly its constraint, which is very common.
         if is_type_param_kind(sd) && self.constraint_of_type_param(source) == Some(target) {
+            cold_path();
             return Ternary::TRUE;
         }
         // A source that is never null or undefined, compared with `X | null | undefined`, is
@@ -3064,6 +3089,7 @@ impl<'p, 's> Checker<'p, 's> {
                     && self.is_reference_to_global(source, known::Object, 0))
                 && self.is_weak_type(target)
                 && {
+                    cold_path();
                     let apparent = self.reduced_apparent_type_as_object(source);
                     self.members(apparent)
                         .is_some_and(|m| !m.shape().props.is_empty() || m.has_signatures())
@@ -3373,7 +3399,10 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Intersection(parts) => parts
                 .iter()
                 .all(|&p| self.is_excess_property_check_target(p)),
-            TypeData::Substitution { base, .. } => self.is_excess_property_check_target(*base),
+            TypeData::Substitution { base, .. } => {
+                cold_path();
+                self.is_excess_property_check_target(*base)
+            }
             // `ObjectFlagsObjectLiteralPatternWithComputedProperties`: its other properties are
             // unknown.
             TypeData::Synth(shape) => shape.literal != Literalness::PatternWithComputedNames,
@@ -3385,15 +3414,20 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn is_known_property(&mut self, t: TypeId, name: Atom) -> bool {
         match self.data(t) {
             TypeData::Union(parts) | TypeData::Intersection(parts) => {
+                cold_path();
                 self.is_excess_property_check_target(t)
                     && parts.iter().any(|&p| self.is_known_property(p, name))
             }
-            TypeData::Substitution { base, .. } => self.is_known_property(*base, name),
+            TypeData::Substitution { base, .. } => {
+                cold_path();
+                self.is_known_property(*base, name)
+            }
             data => {
                 if !is_object_kind(data) {
                     return false;
                 }
                 let Some(members) = self.members(t) else {
+                    cold_path();
                     return true;
                 };
                 if members.resolved.prop(name).is_some()
@@ -3417,9 +3451,18 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn is_weak_type(&mut self, t: TypeId) -> bool {
         match self.data(t) {
             data if is_object_kind(data) => self.members(t).is_some_and(|m| m.resolved.is_weak()),
-            TypeData::Substitution { base, .. } => self.is_weak_type(*base),
-            TypeData::Intersection(parts) => parts.iter().all(|&p| self.is_weak_type(p)),
-            _ => false,
+            TypeData::Substitution { base, .. } => {
+                cold_path();
+                self.is_weak_type(*base)
+            }
+            TypeData::Intersection(parts) => {
+                cold_path();
+                parts.iter().all(|&p| self.is_weak_type(p))
+            }
+            _ => {
+                cold_path();
+                false
+            }
         }
     }
 
@@ -4060,6 +4103,7 @@ impl<'p, 's> Checker<'p, 's> {
         recursion: u8,
     ) -> Ternary {
         if r.overflow {
+            cold_path();
             return Ternary::FALSE;
         }
         let RecursiveRelationKey {
@@ -4080,12 +4124,14 @@ impl<'p, 's> Checker<'p, 's> {
                 self.report_error(r, 2859, &[Arg::Type(source), Arg::Type(target)]);
             }
             if entry & COMPLEXITY_OVERFLOW != 0 {
+                cold_path();
                 // The comparison was aborted when it ran.
                 r.hit_cached_overflow = true;
             }
             return Ternary::of(entry & SUCCEEDED != 0);
         }
         if !REPORT && r.stores_failures_locally && r.failed.contains(&key) {
+            cold_path();
             return Ternary::FALSE;
         }
         if r.relation_count <= 0 {
@@ -4098,6 +4144,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `broadestEquivalentId`: the key the comparison would have if no type parameter had a constraint.
         if constrained {
+            cold_path();
             let (broadest, _) = self.relation_key(source, target, r.relation, state, true);
             if broadest != key && r.has_maybe_key(broadest) {
                 return Ternary::MAYBE;
@@ -4157,6 +4204,7 @@ impl<'p, 's> Checker<'p, 's> {
         let save_reliability = std::mem::replace(&mut self.reliability, 0);
         let after_failed_variances = self.comparisons_after_failed_variances;
         let result = if r.expanding == REC_BOTH {
+            cold_path();
             self.comparisons_of_deeply_nested_types += 1;
             self.task.hold_back();
             Ternary::MAYBE
@@ -4173,6 +4221,7 @@ impl<'p, 's> Checker<'p, 's> {
         // Past the limit, the entry waits for the commit. An entry about the visited file is never shared in the
         // first place, as long as it isn't held back. If it were, the commit would publish it.
         if r.relation_count < r.waits_for_commit_below && !key.is_of_visited_file(&self.task.own) {
+            cold_path();
             self.task.hold_back();
         }
         let stored = self.end_scope(scope).ok();
@@ -4211,6 +4260,7 @@ impl<'p, 's> Checker<'p, 's> {
             // off. That doesn't hold if the native stack ran low, which isn't an overflow in typescript-go.
             let is_cut_short = r.overflow && r.relation_count > 0;
             if r.stores_failures_locally {
+                cold_path();
                 if !is_cut_short {
                     r.failed.insert(key);
                 }
@@ -4279,6 +4329,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn insert_relation(&mut self, key: Key, entry: u8, stored: Stored) {
         self.relation_sizes[usize::from(key.2 & 0xf)] += 1;
         if self.stores_relations_per_task {
+            cold_path();
             self.relations_of_this_task.entry(key).or_insert(entry);
             return;
         }
@@ -4363,6 +4414,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (t, data) = self.recursion_identity_target(t);
         if let TypeData::Intersection(parts) = data {
+            cold_path();
             return parts
                 .iter()
                 .any(|&p| self.is_deeply_nested_among(p, stacks, is_source, known, max_depth));
@@ -4458,6 +4510,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> bool {
         let (stack, max_depth) = (stacks[usize::from(!is_source)], 3);
         if stack.len() < max_depth {
+            cold_path();
             return false;
         }
         for &(on_stack, _) in &stack[identities.len()..] {
@@ -4562,6 +4615,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn leftmost_object_type(&self, mut t: TypeId) -> (TypeId, &'p TypeData<'p>) {
         let mut data = self.data(t);
         while let TypeData::IndexedAccess { obj, .. } = data {
+            cold_path();
             t = *obj;
             data = self.data(t);
         }
@@ -4597,6 +4651,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.p.mapped_targets.get(&self.task, &of) {
             return known;
         }
+        cold_path();
         let scope = self.begin_scope();
         let mut t = of;
         let has_symbol = |c: &Self, ty: TypeId| match c.data(ty) {
@@ -4755,6 +4810,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut result =
             self.structured_type_related_to_worker::<REPORT>(r, source, sd, target, td, state);
         if r.relation == Relation::Identity {
+            cold_path();
             return result;
         }
         let source_is_intersection = matches!(sd, TypeData::Intersection(_));
@@ -5096,6 +5152,7 @@ impl<'p, 's> Checker<'p, 's> {
             shared.save_error_state = r.get_error_state();
         }
         if relation == Relation::Identity {
+            cold_path();
             if let Some(result) = self.structured_type_identical_to(r, source, sd, target, td) {
                 return result;
             }
@@ -5165,6 +5222,7 @@ impl<'p, 's> Checker<'p, 's> {
             && flags[0].contains(ElemFlags::VARIADIC)
             && !*readonly
         {
+            cold_path();
             let element = self.type_arguments(source)[0];
             let result = self.is_related_to(r, element, target, REC_SOURCE);
             if result.holds() {
@@ -5728,6 +5786,7 @@ impl<'p, 's> Checker<'p, 's> {
                 sd = self.data(source);
             }
         } else if self.is_generic_mapped_type(source) {
+            cold_path();
             return Ternary::FALSE;
         }
         match (sd, td) {
@@ -5973,6 +6032,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn reduced_apparent_type_as_object(&mut self, ty: TypeId) -> TypeId {
         let ty = self.reduced_apparent_type(ty);
         if self.is_union(ty) {
+            cold_path();
             self.union_as_object(ty)
         } else {
             ty
@@ -6265,6 +6325,7 @@ impl<'p, 's> Checker<'p, 's> {
         both: &mut Option<(Members<'p>, Members<'p>)>,
     ) -> Ternary {
         if r.relation == Relation::Identity {
+            cold_path();
             return self.properties_identical_to(r, source, target);
         }
         let mut result = Ternary::TRUE;
@@ -6275,6 +6336,7 @@ impl<'p, 's> Checker<'p, 's> {
             ..
         } = td
         {
+            cold_path();
             let target_elems = self.type_arguments(target);
             let variable = ElemFlags::REST | ElemFlags::VARIADIC;
             let target_has_rest_element = target_flags.iter().any(|f| f.contains(ElemFlags::REST));
@@ -6443,7 +6505,10 @@ impl<'p, 's> Checker<'p, 's> {
         // `getPropertiesOfType(target)`: `{ [K in keyof NoInfer<T[]>]: X }` isn't generic, and its apparent type is an
         // array.
         let has_target_properties = match self.is_mapped_type(target) {
-            true => self.reduced_apparent_type_as_object(target),
+            true => {
+                cold_path();
+                self.reduced_apparent_type_as_object(target)
+            }
             false => target,
         };
         let (Some(sm), Some(tm)) = (
@@ -6461,6 +6526,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `getPropertyOfType(source, name)`
         if !self.never_in_progress.is_empty() && !tm.shape().props.is_empty() {
+            cold_path();
             self.reduce_apparent_type_of_intersection_in_progress(source);
         }
         // `anyFunctionType` has no `ObjectFlagsObjectLiteral`.
@@ -6534,6 +6600,7 @@ impl<'p, 's> Checker<'p, 's> {
                 || optionals_only && !tp.flags.contains(PropFlags::OPTIONAL)
                 || target_is_class && tp.name == known::prototype
             {
+                cold_path();
                 continue;
             }
             let Some((sp, source_mapper)) =
@@ -6669,6 +6736,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return Ternary::FALSE;
             }
         } else if sf.contains(PropFlags::PROTECTED) {
+            cold_path();
             if REPORT {
                 let args = [Arg::Prop(target_prop), Arg::Type(source), Arg::Type(target)];
                 self.report_error(r, 2444, &args);
@@ -6686,6 +6754,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut expected = self.type_of_prop_as_read(target_prop, target_mapper);
         // `targetIsOptional`: `CheckFlagsPartial`
         if tf.intersects(PropFlags::READ_PARTIAL | PropFlags::WRITE_PARTIAL) {
+            cold_path();
             expected = self.optional(expected);
         }
         let related = if self.has_any_flag(expected)
@@ -6884,6 +6953,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return Ternary::TRUE;
             }
             if matches!(td, TypeData::Synth(shape) if Self::is_any_function_shape(shape)) {
+                cold_path();
                 return Ternary::FALSE;
             }
         }
@@ -6905,6 +6975,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         };
         if r.relation == Relation::Identity && pick(&sm).len() != pick(&tm).len() {
+            cold_path();
             return Ternary::FALSE;
         }
         if pick(&tm).is_empty() {
@@ -7328,6 +7399,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `elementInfos` of the tuple type of the rest parameter, if it has one.
     fn rest_tuple(&self, params: &[SigParam]) -> Option<&'p [ElemFlags]> {
         let last = params.last().filter(|p| p.rest)?;
+        cold_path();
         match self.data(last.ty) {
             TypeData::Tuple { flags, .. } => Some(flags),
             _ => None,
@@ -7413,6 +7485,7 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline(always)]
     pub(super) fn effective_rest_type(&mut self, params: &[SigParam]) -> Option<TypeId> {
         let last = params.last().filter(|p| p.rest)?;
+        cold_path();
         self.effective_type_of_rest_parameter(last)
     }
 

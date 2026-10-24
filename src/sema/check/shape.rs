@@ -402,6 +402,7 @@ impl SharedNames {
                     last_holders.push(at);
                     found.push(name_index);
                 } else if last_holders[name_index as usize] == at {
+                    cold_path();
                     found.push(DUPLICATE_IN_MEMBER);
                 } else {
                     ends[name_index as usize] += 1;
@@ -634,8 +635,10 @@ impl<'s> Builder<'s> {
             return;
         }
         if count * 2 > self.names.slots.len() {
+            cold_path();
             self.reserve_names(count * 2);
         } else if count == FEW + 1 {
+            cold_path();
             self.names.add_all(&self.shape.props);
         } else {
             self.names.add(&self.shape.props, count - 1);
@@ -743,8 +746,14 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn type_arguments(&mut self, ty: TypeId) -> &'p [TypeId] {
         match self.resolved_type_arguments(ty) {
             Some(resolved) => resolved,
-            None if self.types().deferred(ty).is_some() => self.resolve_type_arguments(ty),
-            None => &[],
+            None if self.types().deferred(ty).is_some() => {
+                cold_path();
+                self.resolve_type_arguments(ty)
+            }
+            None => {
+                cold_path();
+                &[]
+            }
         }
     }
 
@@ -942,7 +951,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getActualTypeVariable`
     pub(super) fn actual_type_variable(&mut self, ty: TypeId) -> TypeId {
         match *self.data(ty) {
-            TypeData::Substitution { base, .. } => self.actual_type_variable(base),
+            TypeData::Substitution { base, .. } => {
+                cold_path();
+                self.actual_type_variable(base)
+            }
             TypeData::IndexedAccess { obj, index, .. } => {
                 let actual = (
                     self.actual_type_variable(obj),
@@ -950,7 +962,10 @@ impl<'p, 's> Checker<'p, 's> {
                 );
                 match actual == (obj, index) {
                     true => ty,
-                    false => self.indexed_access(actual.0, actual.1),
+                    false => {
+                        cold_path();
+                        self.indexed_access(actual.0, actual.1)
+                    }
                 }
             }
             TypeData::Marker(Marker::Distributed(of)) => of,
@@ -1915,6 +1930,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// late-bound one (`isLateBindableName`).
     pub fn declared_member_name(&mut self, file: FileId, key: PropKey) -> Option<Atom> {
         if let PropKey::Computed(e) = key {
+            cold_path();
             if !self.can_name_a_member(file, e) {
                 return None;
             }
@@ -2548,9 +2564,12 @@ impl<'p, 's> Checker<'p, 's> {
                         *is_private |= matches!(c.hir(file)[m].key, PropKey::Private(_));
                     }
                 }
-                PropSource::Intersected(_, parts) => parts
-                    .iter()
-                    .for_each(|part| scan_declarations(c, &part.source, in_class, is_private)),
+                PropSource::Intersected(_, parts) => {
+                    cold_path();
+                    parts
+                        .iter()
+                        .for_each(|part| scan_declarations(c, &part.source, in_class, is_private))
+                }
                 _ => {}
             }
         }
@@ -2559,6 +2578,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !in_class {
             return true;
         }
+        cold_path();
         if is_private || prop.flags.contains(PropFlags::ACCESSOR) {
             return false;
         }
@@ -2637,7 +2657,10 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // A tuple has no slot for the argument. The recreated reference has no alias.
             TypeData::Tuple { .. } => self.without_alias_of_reference(ty),
-            _ if need_apparent_type => self.apparent_type(ty),
+            _ if need_apparent_type => {
+                cold_path();
+                self.apparent_type(ty)
+            }
             _ => ty,
         }
     }
@@ -2772,6 +2795,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// base constraint or `ty` itself. A tuple has no slot for it. No other apparent type gets a `this` argument.
     fn members_of_apparent_type(&mut self, ty: TypeId, apparent: TypeId) -> Option<Members<'p>> {
         if ty != apparent && self.is_tuple(apparent) {
+            cold_path();
             let is_passed = if self.is_deferred(ty) {
                 let constraint = self.base_constraint(ty);
                 self.is_tuple(constraint) || self.is_intersection(constraint)
@@ -3450,6 +3474,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.p.base_types.get_ref(&self.task, &sym) {
             return List::Permanent(known);
         }
+        cold_path();
         if !self.enter(Query::Bases(sym)) {
             return self.base_types_in_progress(sym);
         }
@@ -4828,6 +4853,7 @@ impl<'p, 's> Checker<'p, 's> {
             let members = self.members(ty)?;
             return Some(self.structured(members));
         };
+        cold_path();
         // They're cached as the members of a separate object type, because the shape under the key
         // `ty` has the properties, which are far more numerous.
         if let Some(known) = self.p.intersection_objects.get(&self.task, &ty) {
@@ -4909,7 +4935,10 @@ impl<'p, 's> Checker<'p, 's> {
     #[inline]
     pub fn structured(&mut self, members: Members<'p>) -> Members<'p> {
         match members.shape().properties_of() {
-            Some(intersection) => self.structured_members(intersection).unwrap_or(members),
+            Some(intersection) => {
+                cold_path();
+                self.structured_members(intersection).unwrap_or(members)
+            }
             None => members,
         }
     }
@@ -5232,6 +5261,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.is_numeric_name(prop.name) {
             return PropFlags::empty();
         }
+        cold_path();
         // A `nameType` is stored for a late-bound name (`lateBindMember`), and in an object literal
         // for any computed name (`checkObjectLiteral`).
         let is_explicit = match &prop.source {
@@ -7156,6 +7186,7 @@ impl<'p, 's> Checker<'p, 's> {
             _ => false,
         };
         if is_own_base_constraint || !may_have_constraint {
+            cold_path();
             let is_object_type = !may_have_constraint && super::relate::is_object_kind(data);
             let depth = self.constraint_stack.len();
             if is_object_type {
@@ -7517,6 +7548,7 @@ impl<'p, 's> Checker<'p, 's> {
             | PropSource::ReverseMapped(..) => None,
             PropSource::Copy(_, of, true) => of.iter().find_map(Self::value_declaration),
             PropSource::Intersected(_, parts) => {
+                cold_path();
                 Self::value_declaration(Self::prop_with_shared_value_declaration(parts.iter())?)
             }
             source => Some(source),
@@ -7624,6 +7656,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(known) = self.p.never_intersections.get(&self.task, &ty) {
             return known;
         }
+        cold_path();
         // `ObjectFlagsIsNeverIntersectionComputed` is set before the properties are examined, so a recursive query gets `false`.
         let in_progress = &self.never_in_progress;
         if let Some(at) = in_progress.iter().position(|&it| it == ty) {
@@ -8111,6 +8144,7 @@ impl<'p, 's> Checker<'p, 's> {
             let instantiation =
                 self.instantiation_of_prop_with_facts(facts.as_mut(), nth, other, later.mapper);
             if single_instantiation.is_none() && member.mapper != MapperId::IDENTITY {
+                cold_path();
                 let mapper = member.mapper;
                 let it = self.instantiation_of_prop_with_facts(facts.as_mut(), 0, prop, mapper);
                 single_instantiation = Some(it);
@@ -8263,6 +8297,7 @@ impl<'p, 's> Checker<'p, 's> {
             && access == Access::Read
             && self.p.files.options.no_unchecked_indexed_access
         {
+            cold_path();
             found.ty = self.with_missing(found.ty);
         }
         Some(found)
@@ -8286,6 +8321,7 @@ impl<'p, 's> Checker<'p, 's> {
         let skips = self.is_const_enum_object(apparent_type);
         if let Some((prop, mapper)) = self.get_property_of_type_ex(apparent_type, name, skips) {
             let ty = if access == Access::Written {
+                cold_path();
                 self.write_type_of_prop(prop, mapper)
             } else {
                 self.type_of_prop(prop, mapper)
@@ -8384,6 +8420,7 @@ impl<'p, 's> Checker<'p, 's> {
                 holder
             && let Some(found) = self.property_of_only_tuple_constituent(ty, apparent, name)
         {
+            cold_path();
             return Some(found);
         }
         self.property_of_holder(holder, name, skip_object_function_property_augment)
@@ -8518,6 +8555,7 @@ impl<'p, 's> Checker<'p, 's> {
                     return None;
                 }
                 if skip_object_function_property_augment {
+                    cold_path();
                     return Some((members.resolved.prop(name)?, members.mapper));
                 }
                 self.property_in_type(apparent, &members, name)
@@ -8558,6 +8596,7 @@ impl<'p, 's> Checker<'p, 's> {
         if members.index_infos().is_empty() {
             return None;
         }
+        cold_path();
         let key_type = if self.atoms().is_symbol_name(name) {
             TypeId::SYMBOL
         } else {

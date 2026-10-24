@@ -1223,6 +1223,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return table_flags;
         }
+        cold_path();
         let mut flags = files.flags(symbol);
         let mut seen_symbols: SmallVec<[Sym; 4]> = SmallVec::new();
         while files.flags(symbol).contains(SymFlags::ALIAS)

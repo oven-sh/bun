@@ -2379,6 +2379,7 @@ impl<'p, 's> Checker<'p, 's> {
             && let [.., outer, frame] = &mut self.frames[..]
             && outer.tainted
         {
+            cold_path();
             frame.tainted = true;
             // Diagnostics reported under a loop in progress are kept (`taint_from`).
             frame.drops_reported = outer.drops_reported;
@@ -4510,6 +4511,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.has_no_fresh_literal(ty) {
             return ty;
         }
+        cold_path();
         match self.data(ty) {
             TypeData::Union(members) if members.iter().any(|&m| self.is_fresh_literal(m)) => {
                 self.map_type(ty, |c, m| c.with_freshness(m, false))

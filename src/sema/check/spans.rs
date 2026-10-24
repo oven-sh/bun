@@ -15,6 +15,7 @@ use crate::program::FileId;
 use bun_core::lexer;
 use bun_core::strings::wtf8_byte_sequence_length;
 use std::borrow::Cow;
+use std::hint::cold_path;
 
 // ───────────────────────────── the text ─────────────────────────────
 
@@ -23,7 +24,10 @@ use std::borrow::Cow;
 fn white_space_len(text: &[u8], at: usize) -> usize {
     match lexer::char_and_size(text, at) {
         (0x2028 | 0x2029, size) => size,
-        (c @ 0x80.., size) if lexer::is_white_space_single_line(c) => size,
+        (c @ 0x80.., size) if lexer::is_white_space_single_line(c) => {
+            cold_path();
+            size
+        }
         _ => 0,
     }
 }
@@ -274,6 +278,7 @@ pub fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
         if text[..at].ends_with(b"*/")
             && let Some(open) = bun_core::strings::last_index_of(&text[..at - 2], b"/*")
         {
+            cold_path();
             at = open;
         }
         if at == before {

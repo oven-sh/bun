@@ -992,6 +992,7 @@ impl Checker<'_, '_> {
             // `getTypeAtPosition(signature, i)`: a cycle through a parameter's type is found here, but not for a
             // parameter after the first argument that fails.
             if is_open {
+                cold_path();
                 params = self.sig_params_up_to(sig, i + 1);
             }
             let Some(expected) = self.param_type_asked_at(sig, &params, i) else {

@@ -22,6 +22,7 @@ use crate::util::memory::{Cells, FixedCells, Zeroed};
 use crate::util::{AppendVec, Windowed, WindowedMap, spread_hash, spread_in_window};
 use std::alloc::{Allocator, Global};
 use std::hash::Hash;
+use std::hint::cold_path;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -962,7 +963,10 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
             return buffer.in_row(slot, file, index).unwrap_or(0);
         }
         match self.seen(task, file, index) {
-            (0, at) => buffer.node_anywhere(slot, file, index, at),
+            (0, at) => {
+                cold_path();
+                buffer.node_anywhere(slot, file, index, at)
+            }
             (raw, _) => raw,
         }
     }
@@ -1197,6 +1201,7 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, W: Location, A: Alloc
                 }
                 return self.put_value_immediately(task, key, value);
             }
+            cold_path();
             task.hold_back();
         }
         self.insert_in_task(task, key, value)
@@ -1427,6 +1432,7 @@ where
         // If the task already has a deferred entry under the key, it keeps using that one.
         let own = || task.buffer().typed(&self.slot)?.get(spread, key).copied();
         if !task.may_write_immediately(self.slot.number(), stored) || own().is_some() {
+            cold_path();
             task.hold_back();
             return Err(true);
         }

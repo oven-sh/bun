@@ -4801,7 +4801,10 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Substitution {
                 base,
                 constraint: TypeId::UNKNOWN,
-            } => base,
+            } => {
+                cold_path();
+                base
+            }
             _ => declared,
         };
         if check_mode.contains(CheckMode::INFERENTIAL)
@@ -4813,6 +4816,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return declared;
         }
+        cold_path();
         if let Some(frame) = self.frames.last_mut() {
             frame.may_substitute_constraints = true;
         }
@@ -4849,6 +4853,7 @@ impl<'p, 's> Checker<'p, 's> {
         let ty = self.flow_type_of(file, e, declared, Start::Unsettled, crossing);
         let hir = self.hir(file);
         if self.is_automatic_type(declared) && !self.is_evolving_array_operation_target(file, e) {
+            cold_path();
             // These types only occur under `noImplicitAny`. `checkWithStatement` doesn't check the
             // body.
             if self.is_automatic_type(ty) && !hir.is_in_with(hir[e].pos) {
@@ -4865,6 +4870,7 @@ impl<'p, 's> Checker<'p, 's> {
             && !self.contains_undefined(declared)
             && !self.assumes_initialized(file, e, declared)
         {
+            cold_path();
             self.error_at(self.span_of_token(file, hir[e].pos), 2454, &[Arg::Sym(sym)]);
             // "Return the declared type to reduce follow-on errors"
             return declared;
@@ -4898,6 +4904,7 @@ impl<'p, 's> Checker<'p, 's> {
         target: TargetKind,
     ) -> TypeId {
         if target.definite {
+            cold_path();
             let is_optional = prop.is_some_and(|prop| prop.flags.contains(PropFlags::OPTIONAL));
             return self.remove_missing_type(prop_type, is_optional);
         }

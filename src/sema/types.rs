@@ -2175,6 +2175,7 @@ impl Bits {
     #[inline]
     fn set(&mut self, index: usize) {
         if index / 64 >= self.0.len() {
+            cold_path();
             self.0.resize(index / 64 + 1, 0);
         }
         self.0[index / 64] |= 1 << (index % 64);
@@ -2849,8 +2850,14 @@ impl TypeId {
     #[inline]
     pub fn plain(self) -> TypeId {
         match self {
-            TypeId::MISSING | TypeId::UNDEFINED_WIDENING => TypeId::UNDEFINED,
-            TypeId::NULL_WIDENING => TypeId::NULL,
+            TypeId::MISSING | TypeId::UNDEFINED_WIDENING => {
+                cold_path();
+                TypeId::UNDEFINED
+            }
+            TypeId::NULL_WIDENING => {
+                cold_path();
+                TypeId::NULL
+            }
             ty => ty,
         }
     }
@@ -3984,6 +3991,7 @@ impl<'p, 's> Types<'p, 's> {
         if let Some((value, known)) = literal
             && !id.is_local()
         {
+            cold_path();
             known.insert(value, id);
         }
         id
@@ -4017,6 +4025,7 @@ impl<'p, 's> Types<'p, 's> {
                 TypeData::StringLit { .. } | TypeData::BigIntLit { .. }
             )
         {
+            cold_path();
             return self.intern(data.clone_in(self.own.arena));
         }
         let spread = spread_in_window(&key);
@@ -4155,7 +4164,10 @@ impl<'p, 's> Types<'p, 's> {
         loop {
             match self.sig(sig) {
                 SigData::WithReturn { sig: inner, .. } => sig = *inner,
-                SigData::Synth { of, .. } if !of.is_empty() => sig = of[0],
+                SigData::Synth { of, .. } if !of.is_empty() => {
+                    cold_path();
+                    sig = of[0];
+                }
                 _ => return sig,
             }
         }
@@ -4166,6 +4178,7 @@ impl<'p, 's> Types<'p, 's> {
         if let SigData::WithReturn { sig, .. } = &mut data
             && let SigData::WithReturn { sig: inner, .. } = self.sig(*sig)
         {
+            cold_path();
             *sig = *inner;
         }
         SigId(intern_record(

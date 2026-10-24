@@ -2922,6 +2922,7 @@ impl FileBuilder {
         let before_end = end.checked_sub(name_pos);
         let near = before_end.and_then(|it| u16::try_from(it).ok());
         let name_before_end = near.filter(|&it| it != FAR).unwrap_or_else(|| {
+            cold_path();
             let next = ExprId(self.exprs.len() as u32);
             self.far_names.push((next, name_pos));
             FAR
@@ -3257,7 +3258,10 @@ pub fn start_of(hir: &File, e: ExprId) -> u32 {
 pub fn start_inside_parentheses(hir: &File, e: ExprId) -> u32 {
     match hir[e].kind {
         // A class's decorators are part of it.
-        ExprKind::Class(c) => hir[c].start,
+        ExprKind::Class(c) => {
+            cold_path();
+            hir[c].start
+        }
         _ => hir[e].pos,
     }
 }

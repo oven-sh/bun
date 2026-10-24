@@ -438,6 +438,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> PropInstantiation {
         match &prop.source {
             PropSource::Type(ty) | PropSource::Copy(ty, ..) => {
+                cold_path();
                 PropInstantiation::Type(self.instantiate(*ty, mapper))
             }
             // FOR SPEED: a mapped type's property keeps its mapper if that maps only to types
@@ -504,6 +505,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(cached_type) = self.cached_with_fixed_mapper(fixed, t) {
             return cached_type;
         }
+        cold_path();
         let forgotten = self.links.restrictive_resets();
         let ((instantiated, _), stored) = self.derive_settled(
             |c| c.derive_instantiation_of_type_parameters(t, map),
@@ -827,6 +829,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut absent = None;
         let skips_table = self.skips_instantiations_table(ty, is_cached_by_tsgo);
         if let Some(innermost) = self.index_infos_in_instantiation.last() {
+            cold_path();
             if let Some(&(known, is_marked)) = innermost.instantiations.get(&(ty, mapper)) {
                 // A cache hit records the same marks as recomputing it would.
                 if is_marked {
@@ -849,6 +852,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.instantiations_up_to_a_limit.get(&(ty, mapper))
             && (under == 0 || under == serial)
         {
+            cold_path();
             // A cache hit records the same marks as recomputing it would.
             self.instantiation_limit_hits += 1;
             if is_tainted {
@@ -879,6 +883,7 @@ impl<'p, 's> Checker<'p, 's> {
         let result = self.instantiate_uncached(ty, mapper);
         let result = self.with_new_alias(ty, mapper, result, None);
         if is_listed {
+            cold_path();
             self.instantiations_in_progress.pop();
         }
         if serial == 0 {
@@ -895,6 +900,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.non_cacheable_mark() == (scope.counters.0 + marks, scope.counters.1)
             && let Some(innermost) = self.index_infos_in_instantiation.last_mut()
         {
+            cold_path();
             let cache_entry = (result, marks != 0);
             innermost.instantiations.insert((ty, mapper), cache_entry);
         }

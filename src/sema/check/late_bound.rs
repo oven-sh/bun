@@ -154,10 +154,12 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> (SymFlags, Option<(FileId, Decl)>, List<'p, (FileId, Decl)>) {
         let files = self.files();
         let Some(&(file, first)) = files.decls_of(sym).first() else {
+            cold_path();
             return (files.flags(sym), None, List::default());
         };
         match self.late_bound_symbol(file, first) {
             Some((late, symbol)) => {
+                cold_path();
                 let symbol = &late.symbols[symbol];
                 let declarations = List::Own(symbol.declarations.clone());
                 (symbol.flags, symbol.value_declaration, declarations)

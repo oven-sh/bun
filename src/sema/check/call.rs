@@ -223,6 +223,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub fn resolved_signature(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
         if !self.iife_resolving.is_empty() && self.iife_resolving.contains(&(file, call)) {
+            cold_path();
             return self.any_signature_while_arguments_are_checked();
         }
         if self.calls_to_resolve_afresh.is_some()
@@ -2221,6 +2222,7 @@ impl<'p, 's> Checker<'p, 's> {
             let SigData::DefaultConstruct { base: Some(of), .. } = *self.types().sig(sig) else {
                 break;
             };
+            cold_path();
             sig = self.types().sig_origin(of);
         }
         sig

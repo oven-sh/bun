@@ -1718,11 +1718,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getConstraintOfTypeParameter`. Returns `None` for a circular constraint.
     pub fn constraint_of_type_param(&mut self, param: TypeId) -> Option<TypeId> {
         if !self.unresolved_renamed_params.is_empty() {
+            cold_path();
             self.unresolved_renamed_params.remove(&param);
         }
         if let Some(cached) = self.p.type_param_constraints.get(&self.task, &param) {
             return cached;
         }
+        cold_path();
         let TypeData::TypeParam(file, tp, enclosing_mapper) = *self.data(param) else {
             if matches!(self.data(param), TypeData::Marker(Marker::Distributed(_)))
                 && !self.has_non_circular_base_constraint(param)
@@ -4497,7 +4499,10 @@ impl<'p, 's> Checker<'p, 's> {
             | SigData::Construct {
                 file, func, mapper, ..
             } => Some((file, func, mapper)),
-            SigData::WithReturn { sig: inner, .. } => self.sig_decl(inner),
+            SigData::WithReturn { sig: inner, .. } => {
+                cold_path();
+                self.sig_decl(inner)
+            }
             _ => None,
         }
     }
@@ -4590,6 +4595,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<TypeId> {
         match params.get(index) {
             Some(param) if param.ty == TypeId::UNRESOLVED && !param.rest => {
+                cold_path();
                 self.get_type_of_parameter(param);
                 Some(self.type_of_parameter_asked_for(sig, index))
             }
@@ -5144,7 +5150,10 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn sig_return(&mut self, sig: SigId) -> TypeId {
         match self.cached_return_type(sig) {
             Some(cached) => cached,
-            None => self.derive_and_cache_return_type(sig),
+            None => {
+                cold_path();
+                self.derive_and_cache_return_type(sig)
+            }
         }
     }
 
@@ -5332,7 +5341,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// (`assignContextualParameterTypes`: `createSymbolWithType(context.thisParameter, nil)`).
     pub(super) fn sig_this_parameter(&mut self, sig: SigId) -> Option<(TypeId, SigId)> {
         let (file, func, mapper) = match *self.types().sig(sig) {
-            SigData::WithReturn { sig: inner, .. } => return self.sig_this_parameter(inner),
+            SigData::WithReturn { sig: inner, .. } => {
+                cold_path();
+                return self.sig_this_parameter(inner);
+            }
             SigData::Synth { this, .. } => return Some((this?, sig)),
             SigData::Decl { file, func, mapper } => (file, func, mapper),
             _ => return None,
@@ -5354,8 +5366,14 @@ impl<'p, 's> Checker<'p, 's> {
         // `getSignatureFromDeclaration`: "If only one accessor includes a this-type annotation, the
         // other behaves as if it had the same type annotation"
         let other_kind = match self.hir(file)[func].kind {
-            FnKind::Getter => Some(FnKind::Setter),
-            FnKind::Setter => Some(FnKind::Getter),
+            FnKind::Getter => {
+                cold_path();
+                Some(FnKind::Setter)
+            }
+            FnKind::Setter => {
+                cold_path();
+                Some(FnKind::Getter)
+            }
             _ => None,
         };
         if let Some(other_kind) = other_kind
@@ -5506,6 +5524,7 @@ impl<'p, 's> Checker<'p, 's> {
         if parameter.name.is_none()
             && let Some((file, p)) = parameter.declaration
         {
+            cold_path();
             self.resolve_parameter_symbol_on_request(file, p);
         }
         parameter.ty

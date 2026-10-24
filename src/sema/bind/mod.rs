@@ -403,8 +403,14 @@ impl GrowingDecls {
     fn push(&mut self, decl: Decl) {
         match self {
             GrowingDecls::None => *self = GrowingDecls::One(decl),
-            GrowingDecls::One(first) => *self = GrowingDecls::Many(vec![*first, decl]),
-            GrowingDecls::Many(all) => all.push(decl),
+            GrowingDecls::One(first) => {
+                cold_path();
+                *self = GrowingDecls::Many(vec![*first, decl]);
+            }
+            GrowingDecls::Many(all) => {
+                cold_path();
+                all.push(decl);
+            }
         }
     }
 }
@@ -597,9 +603,13 @@ impl<'s> Symbols<'s> {
     /// Appends `symbol`. Two or more declarations are copied into `arena`.
     pub fn push(&mut self, symbol: Symbol<'_>, arena: &'s Arena) {
         let decls = match *symbol.decls {
-            [] => StoredDecls::None,
+            [] => {
+                cold_path();
+                StoredDecls::None
+            }
             [decl] => StoredDecls::One(decl),
             ref all => {
+                cold_path();
                 self.many.push(arena.alloc_slice_copy(all));
                 StoredDecls::Many(self.many.len() as u32 - 1)
             }
@@ -2005,6 +2015,7 @@ impl<S: Storage> BoundIn<S> {
         if !hir.is_js {
             return None;
         }
+        cold_path();
         let (pattern, property_name) = match self.pat_parent[pat.idx()] {
             PatParent::Var(d) => return Some((module_required_by(hir, d)?, None)),
             PatParent::Prop(pattern, p) => (pattern, Some(&hir[p])),
@@ -2080,7 +2091,10 @@ impl<S: Storage> BoundIn<S> {
             return false;
         }
         let f = match from {
-            ScopeKind::TypeParamList(f) | ScopeKind::Param(f) | ScopeKind::ReturnType(f) => f,
+            ScopeKind::TypeParamList(f) | ScopeKind::Param(f) | ScopeKind::ReturnType(f) => {
+                cold_path();
+                f
+            }
             // The `infer` type parameters of a conditional type are visible only from its true
             // branch.
             ScopeKind::Extends => return false,

@@ -161,7 +161,10 @@ impl<K: Copy + Eq + std::hash::Hash> OrderedSet<K> {
     pub(crate) fn index_of(&self, key: K) -> Option<usize> {
         match self.indexes.is_empty() {
             true => self.keys.iter().position(|&known| known == key),
-            false => self.indexes.get(&key).map(|&index| index as usize),
+            false => {
+                cold_path();
+                self.indexes.get(&key).map(|&index| index as usize)
+            }
         }
     }
 
@@ -179,8 +182,10 @@ impl<K: Copy + Eq + std::hash::Hash> OrderedSet<K> {
         let index = self.keys.len();
         self.keys.push(key);
         if index == Self::FEW {
+            cold_path();
             self.indexes.extend(self.keys.iter().copied().zip(0..));
         } else if index > Self::FEW {
+            cold_path();
             self.indexes.insert(key, index as u32);
         }
         (index, true)
@@ -731,7 +736,10 @@ impl<A: Allocator + Clone> WindowedSlots<A> {
             Some(free) if !is_too_full(before as usize + 1, slots.len()) => {
                 slots[free].store(slot_value(spread, index), Ordering::Release);
             }
-            _ => self.slot_table.add(window, before as usize, spread, index),
+            _ => {
+                cold_path();
+                self.slot_table.add(window, before as usize, spread, index);
+            }
         }
         // Only the lock holder writes it.
         len.store(before + 1, Ordering::Relaxed);

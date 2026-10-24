@@ -1735,7 +1735,10 @@ impl<'s> Checker<'_, 's> {
             }
             // `checkExpressionEx`
             let ty = match hir[e].kind {
-                ExprKind::Spread(_) => self.type_of_spread_expression(file, e, ty),
+                ExprKind::Spread(_) => {
+                    cold_path();
+                    self.type_of_spread_expression(file, e, ty)
+                }
                 _ => ty,
             };
             if self.is_const_enum_object(ty) {

@@ -1332,6 +1332,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `getApparentType`
             let constraint = if c.is_deferred(t) {
+                cold_path();
                 let constraint = c.base_constraint(t);
                 c.with_outer_type_arguments(t, constraint, outer_mapper)
             } else {

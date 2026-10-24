@@ -1,6 +1,19 @@
 import type { Server } from "bun";
+import { dlopen } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  getFDCount,
+  isASAN,
+  isLinux,
+  isWindows,
+  libcPathForDlopen,
+  rmScope,
+  rss,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, constants, openSync, readdirSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -2065,5 +2078,147 @@ console.log(JSON.stringify({ status, later, pendingRequests: server.pendingReque
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ status: 500, later: "ok", pendingRequests: 0 });
     expect(exitCode).toBe(0);
+  },
+);
+
+// The reader of a file response fails to start when the event loop refuses to
+// watch its fd. Bun then closes the connection. That response must not read the
+// fd afterwards, and it must not stay allocated.
+
+// epoll refuses a second registration of one fd (EEXIST). kqueue moves the watch
+// to the second reader instead of refusing it, so this case is Linux only.
+describe.skipIf(!isLinux)("a Response(Bun.file(fd)) over a pipe fd that another response reads", () => {
+  const twoResponsesOverOneFd = /* ts */ `
+import { closeSync, constants, openSync, writeSync } from "node:fs";
+
+const [fifoPath, sizeArg] = process.argv.slice(2);
+const size = Number(sizeArg);
+const fd = openSync(fifoPath, constants.O_RDWR | constants.O_NONBLOCK);
+
+let responses = 0;
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  idleTimeout: 0,
+  fetch() {
+    // The second response starts with \`size\` bytes in the pipe, while the
+    // first response waits for the fd to become readable.
+    if (++responses === 2) writeSync(fd, Buffer.alloc(size, "x"));
+    return new Response(Bun.file(fd));
+  },
+});
+
+async function client() {
+  const state = { x: 0, tail: "", closed: false, socket: null as any, wake: () => {} };
+  state.socket = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: {
+      open: socket => void socket.write("GET / HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n"),
+      data(_, chunk) {
+        for (const byte of chunk) if (byte === 120) state.x++;
+        state.tail = (state.tail + chunk.toString("latin1")).slice(-64);
+        state.wake();
+      },
+      close() {
+        state.closed = true;
+        state.wake();
+      },
+    },
+  });
+  return state;
+}
+const until = async (state: { wake: () => void }, cond: () => boolean) => {
+  while (!cond()) await new Promise<void>(resolve => (state.wake = resolve));
+};
+
+const first = await client();
+writeSync(fd, "<first>");
+await until(first, () => first.tail.includes("<first>") || first.closed);
+
+const second = await client();
+await until(second, () => second.closed);
+
+// The first response sends what is left in the pipe, in order.
+writeSync(fd, "<last>");
+await until(first, () => first.tail.includes("<last>") || first.closed);
+console.log(JSON.stringify({ firstResponseGot: first.x, secondResponseGot: second.x, firstClosed: first.closed }));
+
+first.socket.terminate();
+await until(first, () => first.closed);
+await server.stop(true);
+closeSync(fd);
+`;
+
+  // The refused response used to read the fd after Bun closed its connection. It dropped
+  // those bytes, and it stayed allocated when one read did not reach the end of the pipe.
+  test.concurrent.each([1000, 200_000])(
+    "it is refused and leaves the %d bytes in the pipe to the other response",
+    async size => {
+      using dir = tempDir("serve-file-two-responses-one-fd", { "fixture.ts": twoResponsesOverOneFd });
+      const fifoPath = join(String(dir), "shared.fifo");
+      mkfifo(fifoPath);
+      // A pipe holds 64 KiB by default. Its size belongs to the pipe, which lives while this fd is open.
+      const holder = openSync(fifoPath, constants.O_RDWR | constants.O_NONBLOCK);
+      try {
+        if (size > 60_000) {
+          // Set from this process: libc loaded through bun:ffi in the leak-checked fixture makes LeakSanitizer
+          // symbolize the loader's own allocations when the fixture exits.
+          const F_SETPIPE_SZ = 1031;
+          const libc = dlopen(libcPathForDlopen(), { fcntl: { args: ["i32", "i32", "i32"], returns: "i32" } });
+          try {
+            expect(libc.symbols.fcntl(holder, F_SETPIPE_SZ, 1 << 18)).toBeGreaterThanOrEqual(size);
+          } finally {
+            libc.close();
+          }
+        }
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "fixture.ts", fifoPath, String(size)],
+          env: isASAN
+            ? {
+                ...bunEnv,
+                BUN_DESTRUCT_VM_ON_EXIT: "1",
+                ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+                LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+              }
+            : bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+          stdout: JSON.stringify({ firstResponseGot: size, secondResponseGot: 0, firstClosed: false }),
+          stderr: "",
+          exitCode: 0,
+        });
+      } finally {
+        closeSync(holder);
+      }
+    },
+    // LeakSanitizer symbolizes a report through llvm-symbolizer, which is slow against the debug binary.
+    isASAN ? 30_000 : undefined,
+  );
+});
+
+// epoll refuses to watch a device that has no poll support (EPERM). Where the
+// event loop does watch the device, the client leaves after the first bytes.
+test.skipIf(isWindows).each(["fetch handler", "static route"])(
+  "Response(Bun.file(device)) does not leak its fd when the device cannot be polled (%s)",
+  async kind => {
+    const file = Bun.file("/dev/zero");
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      routes: kind === "static route" ? { "/": new Response(file) } : undefined,
+      fetch: () => new Response(file),
+    });
+
+    const baseline = getFDCount();
+    for (let i = 0; i < 16; i++) await abortAfterResponseHead(server.port);
+
+    const deadline = Date.now() + 3000;
+    while (getFDCount() > baseline + 4 && Date.now() < deadline) await Bun.sleep(10);
+    expect(getFDCount()).toBeLessThanOrEqual(baseline + 4);
   },
 );

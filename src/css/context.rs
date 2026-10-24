@@ -88,6 +88,15 @@ impl<'a> PropertyHandlerContext<'a> {
 
         self.targets.should_compile_logical(feature)
     }
+
+    /// Whether `held` is the fallback for `later`: every target supports `held`, one lacks `later`.
+    pub(crate) fn is_fallback<H, L>(&self, held: &H, later: &L) -> bool
+    where
+        H: crate::generics::IsCompatible,
+        L: crate::generics::IsCompatible,
+    {
+        !self.targets.supports(later) && self.targets.supports(held)
+    }
 }
 
 // ─── heavy rule-building helpers ──────────────────────────────────────────

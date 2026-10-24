@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -4611,6 +4611,129 @@ describe("css tests", () => {
     );
   });
 
+  // A handler holds the declarations of its properties until the block ends, so a later
+  // declaration of a property replaces an earlier one. When a target lacks the later value and
+  // every target has the earlier one, the earlier one is the fallback and stays in front of it.
+  describe("fallback before a gap or a flex-basis that a target lacks", () => {
+    // Chrome 87, Firefox 78 and Safari 14 have no dvh, cqw or round(). Chrome 125 has all three.
+    const older = { chrome: 87 << 16, firefox: 78 << 16, safari: 14 << 16 };
+    const newer = { chrome: 125 << 16 };
+
+    // [the earlier declaration, the later one]. Both print as they are written.
+    for (const [earlier, later] of [
+      ["gap: 15px", "gap: round(1em, 5px)"],
+      ["gap: 100vh 1px", "gap: 100dvh 1px"],
+      ["gap: 1px 15px", "gap: 1px round(1em, 5px)"],
+      ["gap: normal", "gap: 100dvh"],
+      ["row-gap: 100vh", "row-gap: 100dvh"],
+      ["column-gap: 15px", "column-gap: 1cqw"],
+      ["flex-basis: 100vh", "flex-basis: 100dvh"],
+      ["flex-basis: auto", "flex-basis: round(1em, 5px)"],
+      ["flex: 100vh", "flex: 100dvh"],
+      ["flex: 2 15px", "flex: 2 1cqw"],
+    ]) {
+      prefix_test(`.foo { ${earlier}; ${later} }`, `.foo { ${earlier}; ${later}; }`, older);
+      // Every target has the later value: it replaces the earlier one.
+      prefix_test(`.foo { ${earlier}; ${later} }`, `.foo { ${later}; }`, newer);
+      prefix_test(`.foo { ${later}; ${earlier} }`, `.foo { ${earlier}; }`, older);
+      // The same declaration twice is one declaration.
+      prefix_test(`.foo { ${later}; ${later} }`, `.foo { ${later}; }`, older);
+      prefix_test(
+        `.foo { ${earlier} !important; ${later} !important }`,
+        `.foo { ${earlier} !important; ${later} !important; }`,
+        older,
+      );
+      // Two rules with one selector are merged into one.
+      prefix_test(`.foo { ${earlier} } .foo { ${later} }`, `.foo { ${earlier}; ${later}; }`, older);
+    }
+
+    for (const [source, expected] of [
+      ["flex: 1 1 100vh; flex: 1 1 100dvh", "flex: 100vh; flex: 100dvh"],
+      // A target that lacks a shorthand drops all of it. So what the shorthand replaces is
+      // written whole in front of it: a longhand of it, or the shorthand over a longhand.
+      ["flex: 1 1 100vh; flex-basis: 100dvh", "flex: 100vh; flex-basis: 100dvh"],
+      ["flex-basis: 100vh; flex: 1 1 100dvh", "flex-basis: 100vh; flex: 100dvh"],
+      ["flex-grow: 2; flex: 2 1 100dvh", "flex-grow: 2; flex: 2 100dvh"],
+      ["flex-shrink: 2; flex: 1 2 100dvh", "flex-shrink: 2; flex: 1 2 100dvh"],
+      [
+        "flex-grow: 1; flex-basis: 100vh; flex-basis: 100dvh; flex-shrink: 2",
+        "flex-grow: 1; flex-basis: 100vh; flex-shrink: 2; flex-basis: 100dvh",
+      ],
+      ["gap: 100vh 2px; row-gap: 100dvh", "gap: 100vh 2px; row-gap: 100dvh"],
+      ["row-gap: 100vh; gap: 100dvh", "row-gap: 100vh; gap: 100dvh"],
+      ["column-gap: 2px; gap: 100dvh 2px", "column-gap: 2px; gap: 100dvh 2px"],
+      // A held value that a target lacks is no fallback: the later value replaces it, as before.
+      // So what is written early is a declaration that every target reads.
+      ["row-gap: 100dvh; gap: 100dvh", "gap: 100dvh"],
+      ["gap: 15px; gap: 1dvh; gap: 1cqw", "gap: 15px; gap: 1cqw"],
+      ["flex: 1 1 100dvh; flex: 2 1 100dvh", "flex: 2 100dvh"],
+      // Written early, that value would go into one `gap` or `flex` with the values around it,
+      // and the target would drop them too.
+      ["column-gap: 8px; row-gap: 1dvh; row-gap: 2cqw; row-gap: 16px", "gap: 16px 8px"],
+      ["row-gap: 8px; column-gap: 1dvh; column-gap: 2cqw; column-gap: 16px", "gap: 8px 16px"],
+      ["column-gap: 1dvh; row-gap: 16px; row-gap: 2dvh", "gap: 2dvh 1dvh"],
+      ["row-gap: 1dvh; column-gap: 16px; column-gap: 2dvh", "gap: 1dvh 2dvh"],
+      ["flex-grow: 1; flex-shrink: 0; flex-basis: 100dvh; flex-basis: 10cqw; flex-basis: 10px", "flex: 1 0 10px"],
+      // Not covered: a longhand that comes after the value a target lacks still goes into one
+      // `gap` or `flex` with it, as before.
+      ["row-gap: 16px; column-gap: 1dvh", "gap: 16px 1dvh"],
+      ["row-gap: 2vh; row-gap: 2dvh; column-gap: 8px", "row-gap: 2vh; gap: 2dvh 8px"],
+      ["row-gap: 16px; row-gap: 2dvh; column-gap: 8px; column-gap: 1dvh", "row-gap: 16px; gap: 2dvh 1dvh"],
+      ["flex-basis: 100vh; flex-basis: 100dvh; flex-grow: 1; flex-shrink: 0", "flex-basis: 100vh; flex: 1 0 100dvh"],
+      // A declaration that replaces nothing is not a reason to write the other properties early.
+      ["align-content: center; gap: 100dvh; justify-content: center", "place-content: center; gap: 100dvh"],
+      ["flex-direction: column; flex: 1 1 100dvh; flex-wrap: wrap", "flex-flow: column wrap; flex: 100dvh"],
+      ["flex-direction: column; flex-basis: 100dvh; flex-wrap: wrap", "flex-flow: column wrap; flex-basis: 100dvh"],
+      // calc() is not a reason to keep the declaration before: every target has it.
+      ["gap: 100vh; gap: calc(1px + 1em)", "gap: calc(1px + 1em)"],
+      ["flex-basis: 100vh; flex-basis: calc(1px + 1em)", "flex-basis: calc(1px + 1em)"],
+      // A later value that every target has replaces what is still held.
+      ["gap: 100vh; gap: 100dvh; gap: 3px", "gap: 100vh; gap: 3px"],
+      ["flex-basis: 100vh; flex-basis: 100dvh; flex-basis: 3px", "flex-basis: 100vh; flex-basis: 3px"],
+      // A prefixed and an unprefixed declaration with one value stay one value.
+      [
+        "-webkit-flex-basis: 100vh; flex-basis: 100vh; -webkit-flex-basis: 100dvh; flex-basis: 100dvh",
+        "flex-basis: 100vh; flex-basis: 100dvh",
+      ],
+      // The legacy properties that the standard one replaces are not written in front of it.
+      [
+        `-ms-flex-preferred-size: 100vh; -webkit-flex-basis: 100vh; flex-basis: 100vh;
+         -ms-flex-preferred-size: 100dvh; -webkit-flex-basis: 100dvh; flex-basis: 100dvh`,
+        "flex-basis: 100vh; flex-basis: 100dvh",
+      ],
+      [
+        "-webkit-box-flex: 1; -ms-flex: 1 1 100vh; flex: 1 1 100vh; -ms-flex: 1 1 100dvh; flex: 1 1 100dvh",
+        "flex: 100vh; flex: 100dvh",
+      ],
+      ["flex: 1 1 100vh; -webkit-box-flex: 1; flex: 1 1 100dvh", "flex: 100vh; flex: 100dvh"],
+    ]) {
+      prefix_test(`.foo { ${source} }`, `.foo { ${expected}; }`, older);
+    }
+
+    // IE 10 takes the legacy properties, and each line gets its own.
+    prefix_test(
+      ".foo { flex-basis: 100vh; flex-basis: 100dvh }",
+      ".foo { -ms-flex-preferred-size: 100vh; flex-basis: 100vh; -ms-flex-preferred-size: 100dvh; flex-basis: 100dvh; }",
+      { ie: 10 << 16 },
+    );
+    // Left as it was: a later -ms-flex-preferred-size replaces an earlier one. Only IE 10 reads
+    // it, and next to a held flex-basis the early write would print its line twice.
+    prefix_test(
+      ".foo { -ms-flex-preferred-size: 100vh; -ms-flex-preferred-size: 100dvh }",
+      ".foo { -ms-flex-preferred-size: 100dvh; }",
+      { ie: 10 << 16 },
+    );
+    prefix_test(
+      ".foo { flex-basis: 100vh; -ms-flex-preferred-size: 100vh; -ms-flex-preferred-size: 100dvh }",
+      ".foo { -ms-flex-preferred-size: 100dvh; -ms-flex-preferred-size: 100vh; flex-basis: 100vh; }",
+      { ie: 10 << 16 },
+    );
+
+    // No browser targets: nothing is known to lack the later value.
+    minify_test(".foo { gap: 15px; gap: round(1em, 5px) }", ".foo{gap:round(1em,5px)}");
+    minify_test(".foo { flex: 1 1 100vh; flex: 1 1 100dvh }", ".foo{flex:100dvh}");
+  });
+
   describe("linear-gradient", () => {
     minify_test(".foo { background: linear-gradient(yellow, blue) }", ".foo{background:linear-gradient(#ff0,#00f)}");
     minify_test(
@@ -8321,6 +8444,44 @@ console.log(line.length - line.trimStart().length);`,
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("300");
     expect(exitCode).toBe(0);
+  });
+
+  // What `bun build` prints with its own targets, and with `--target bun`, which has none.
+  // No default target has round().
+  test("bun build keeps the fallback in front of a value its default targets lack", async () => {
+    using dir = tempDir("css-fallback-declaration", {
+      "index.css": `
+        .gap { gap: 15px; gap: round(1em, 5px) }
+        .flex { flex: 1 1 15px; flex: 1 1 round(1em, 5px) }
+        .width { width: 15px; width: round(1em, 5px) }
+      `,
+    });
+    const build = async (...flags: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./index.css", "--minify", ...flags],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim().split("}").filter(Boolean), stderr, exitCode };
+    };
+
+    expect(await build()).toEqual({
+      stdout: [
+        ".gap{gap:15px;gap:round(1em,5px)",
+        ".flex{flex:15px;flex:round(1em,5px)",
+        ".width{width:15px;width:round(1em,5px)",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await build("--target", "bun")).toEqual({
+      stdout: [".gap{gap:round(1em,5px)", ".flex{flex:round(1em,5px)", ".width{width:round(1em,5px)"],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("a rule nested in :host(&) or ::slotted(&)", async () => {

@@ -596,7 +596,7 @@ impl LegacyJustify {
 
 /// A [gap](https://www.w3.org/TR/css-align-3/#column-row-gap) value, as used in the
 /// `column-gap` and `row-gap` properties.
-#[derive(Clone, PartialEq, css::Parse, css::ToCss)]
+#[derive(Clone, PartialEq, css::Parse, css::ToCss, css::generics::IsCompatible)]
 pub enum GapValue {
     /// Equal to `1em` for multi-column containers, and zero otherwise.
     Normal,
@@ -605,7 +605,7 @@ pub enum GapValue {
 }
 
 /// A value for the [gap](https://www.w3.org/TR/css-align-3/#gap-shorthand) shorthand property.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, css::generics::IsCompatible)]
 pub struct Gap {
     /// The row gap.
     pub(crate) row: GapValue,
@@ -1282,14 +1282,25 @@ impl AlignHandler {
                 self.justify_items = Some(val.justify.clone());
             }
             Property::RowGap(val) => {
+                if self.row_gap.is_some() && context.is_fallback(&self.gaps(), val) {
+                    self.flush(dest, context);
+                }
                 self.row_gap = Some(val.clone());
                 self.has_any = true;
             }
             Property::ColumnGap(val) => {
+                if self.column_gap.is_some() && context.is_fallback(&self.gaps(), val) {
+                    self.flush(dest, context);
+                }
                 self.column_gap = Some(val.clone());
                 self.has_any = true;
             }
             Property::Gap(val) => {
+                if (self.row_gap.is_some() || self.column_gap.is_some())
+                    && context.is_fallback(&self.gaps(), val)
+                {
+                    self.flush(dest, context);
+                }
                 self.row_gap = Some(val.row.clone());
                 self.column_gap = Some(val.column.clone());
                 self.has_any = true;
@@ -1309,6 +1320,11 @@ impl AlignHandler {
         }
 
         true
+    }
+
+    /// The held gaps. `flush` writes them as one declaration.
+    fn gaps(&self) -> [&Option<GapValue>; 2] {
+        [&self.row_gap, &self.column_gap]
     }
 
     pub(crate) fn finalize(

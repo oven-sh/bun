@@ -608,6 +608,10 @@ impl FlexHandler {
                 if context.targets.browsers.is_some() {
                     self.preferred_size = None;
                 }
+                let held = self.basis.as_ref().map(|(basis, _)| basis);
+                if held.is_some() && context.is_fallback(&held, &val.0) {
+                    self.flush(dest, context);
+                }
                 property_helper!(basis, &val.0, &val.1);
             }
             Property::FlexPreferredSize(val) => property_helper!(preferred_size, &val.0, &val.1),
@@ -617,6 +621,12 @@ impl FlexHandler {
                     self.flex_positive = None;
                     self.flex_negative = None;
                     self.preferred_size = None;
+                }
+                let held = self.basis.as_ref().map(|(basis, _)| basis);
+                if (self.grow.is_some() || self.shrink.is_some() || held.is_some())
+                    && context.is_fallback(&held, &val.0.basis)
+                {
+                    self.flush(dest, context);
                 }
                 maybe_flush!(grow, &val.0.grow, &val.1);
                 maybe_flush!(shrink, &val.0.shrink, &val.1);

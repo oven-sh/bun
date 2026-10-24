@@ -593,9 +593,8 @@ describe("bundler", () => {
   // first statement of its __commonJS or __esm wrapper in cjs and iife output.
   // The directive of a chunk's own entry point is at the top of that chunk.
   //
-  // node runs the node-target bundles. bun decides the mode of such a bundle as a
-  // whole when it loads it: as an ES module each file is strict, and as CommonJS
-  // each file is sloppy, because its parser drops a directive in a function body.
+  // node runs the node-target bundles. bun loads a bundle with no CommonJS marker
+  // as an ES module, where each file is strict without its directive.
   // ============================================================================
 
   const strictPackage = {
@@ -914,6 +913,14 @@ describe("bundler", () => {
       run: { runtime: "node", stdout: modeTable },
     });
   }
+  // bun loads a `.cjs` file as CommonJS and gives the same table as node.
+  itBundled("cjs/UseStrictModeTable_run_by_bun", {
+    files: modeTableFiles,
+    target: "node",
+    format: "cjs",
+    outfile: "/out.cjs",
+    run: { stdout: modeTable },
+  });
 
   // Test 28: export * from an external package whose module.exports is null.
   // CJS output emits __reExport(exports, require("ext"), module.exports) with

@@ -78,7 +78,7 @@ bun_core::declare_scope!(cache, visible);
 /// binding that holds what the decorators return.
 /// Version 43: A `bun:` specifier that names no builtin is printed as it is written.
 /// Version 44: Every directive is printed: a `"use strict"` in a function body too, and the
-/// prologue of the file first. `remove_cjs_module_wrapper` participates in the features hash.
+/// prologue of the file first.
 const EXPECTED_VERSION: u32 = 44;
 
 /// Source files smaller than this are not written to / read from the on-disk

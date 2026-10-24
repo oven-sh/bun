@@ -193,6 +193,59 @@ Ran 1 test across 1 file."
   expect(result.exitCode).toBe(0);
 });
 
+test("a directive in a function body is a line of that function", () => {
+  using dir = tempDir("cov", {
+    "lib.cjs": `"use strict";
+function called() {
+  "use strict";
+  return 1;
+}
+function notCalled() {
+  "use strict";
+  return 2;
+}
+module.exports = { called, notCalled };
+`,
+    "lib.test.js": `
+import { test, expect } from "bun:test";
+const { called } = require("./lib.cjs");
+test("calls one function", () => {
+  expect(called()).toBe(1);
+});
+`,
+  });
+
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+
+  let stderr = result.stderr.toString("utf-8");
+  // Normalize output for cross-platform consistency
+  stderr = normalizeBunSnapshot(stderr, dir);
+
+  expect(stderr).toMatchInlineSnapshot(`
+    "lib.test.js:
+    (pass) calls one function
+    -------------|---------|---------|-------------------
+    File         | % Funcs | % Lines | Uncovered Line #s
+    -------------|---------|---------|-------------------
+    All files    |   75.00 |   81.25 |
+     lib.cjs     |   50.00 |   62.50 | 6-8
+     lib.test.js |  100.00 |  100.00 | 
+    -------------|---------|---------|-------------------
+
+     1 pass
+     0 fail
+     1 expect() calls
+    Ran 1 test across 1 file."
+  `);
+  expect(result.exitCode).toBe(0);
+});
+
 test("coveragePathIgnorePatterns - partial coverage without nan", () => {
   using dir = tempDir("cov", {
     "bunfig.toml": `

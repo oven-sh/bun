@@ -1518,9 +1518,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             &text[1..end.min(text.len())]
         } else if !is_use_strict && string.eql_comptime(b"use strict") {
             // `"use\x20strict"` has the value of a Use Strict Directive but is not one, and
-            // the printer writes the value. At the top level of the REPL it stays a string
-            // expression, which is the result of the line.
-            return if p.options.repl_mode && p.current_scope == p.module_scope {
+            // the printer writes the value. As the last statement of a REPL line it stays a
+            // string expression, which is the result of the line.
+            return if p.options.repl_mode
+                && p.current_scope == p.module_scope
+                && p.lexer.token == T::TEndOfFile
+            {
                 None
             } else {
                 dropped

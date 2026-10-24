@@ -150,6 +150,62 @@ describe.concurrent("run-cjs", () => {
       expect(result).toEqual({ stdout: "true false\n", stderr: "", exitCode: 0 });
     });
 
+    // https://github.com/oven-sh/bun/issues/14251
+    test("a sloppy function cannot read a caller that its directive makes strict", async () => {
+      const result = await run(
+        {
+          "entry.cjs": `
+            function strictCaller() { "use strict"; return "caller: " + sloppy() }
+            function sloppyCaller() { return "caller: " + sloppy() }
+            function sloppy() { return sloppy.caller === null ? "null" : sloppy.caller.name }
+            console.log(strictCaller(), sloppyCaller());
+          `,
+        },
+        "entry.cjs",
+      );
+      expect(result).toEqual({ stdout: "caller: null caller: sloppyCaller\n", stderr: "", exitCode: 0 });
+    });
+
+    // https://github.com/oven-sh/bun/issues/4424
+    // https://github.com/oven-sh/bun/issues/29533
+    // Bluebird tests for ES5 with this expression. When it is false, promisifyAll
+    // walks a prototype with for-in and calls accessors that throw.
+    test("the strict mode probe of Bluebird is true", async () => {
+      const result = await run(
+        {
+          "entry.cjs": `
+            var isES5 = (function(){
+                "use strict";
+                return this === undefined;
+            })();
+            console.log(isES5);
+          `,
+        },
+        "entry.cjs",
+      );
+      expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+    });
+
+    // JavaScriptCore makes proper tail calls in strict code. A function that its
+    // directive makes strict gets them too, as strict code does in an ES module.
+    test("a function-level 'use strict' function makes tail calls", async () => {
+      const result = await run(
+        {
+          "entry.cjs": `
+            function frames() { return new Error().stack.split("\\n").filter(line => /at (strict|sloppy)[AB] /.test(line)).length }
+            function strictA() { "use strict"; return strictB() }
+            function strictB() { "use strict"; return frames() }
+            function sloppyA() { return sloppyB() }
+            function sloppyB() { return frames() }
+            console.log(strictA(), sloppyA());
+          `,
+        },
+        "entry.cjs",
+      );
+      expect(result).toEqual({ stdout: "0 2\n", stderr: "", exitCode: 0 });
+    });
+
+    // https://github.com/oven-sh/bun/issues/18333
     test("'use strict' in a function with a non-simple parameter list is a SyntaxError", async () => {
       const result = await run({ "entry.cjs": `function f(a = 1) { "use strict"; return a }` }, "entry.cjs");
       expect(result.stderr).toContain(

@@ -838,6 +838,52 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a directive after a banner comment stays where it is written", async () => {
+    const filler = Array.from({ length: 40 }, (_, i) => `n.p${i}=t+${i};`).join("");
+    const long = (mul: number) => `module.exports=function(n,t){${filler}return n*${mul}};\n`;
+    const spaced = (mul: number) => `module.exports = function(n,t){ ${filler} return n*${mul} };\n`;
+    const banner = "/*! lib 1.0 | MIT */\n";
+    // One edit after the banner and the directive is one changed line of the un-minified print.
+    const edited = await pretty({
+      "a/x.min.js": banner + `"use strict";` + long(2),
+      "b/x.min.js": banner + `"use strict";` + long(3),
+    });
+    expect(edited.text).toMatch(/\nx\.min\.js ─+ unminified \+1 -1\n/);
+    // The same file with other spacing is a formatting change only.
+    const reformatted = await pretty({
+      "a/x.min.js": banner + `"use strict";` + long(2),
+      "b/x.min.js": banner + `"use strict";` + spaced(2),
+    });
+    expect(reformatted.text).toMatch(/\nx\.min\.js ─+ formatting only\n/);
+    // A string statement that is not a directive is shown as it is written.
+    const added = await pretty({
+      "a/README.md": "x\n",
+      "b/README.md": "x\n",
+      "b/new.min.js": `{"a";run()}try{'x'}catch{}class C{static{"s"}}if(x)"y";` + long(2),
+    });
+    expect(
+      changedLines(added.text)
+        .map(l => l.replace(/^ +[\d:]+ │/, ""))
+        .slice(0, 15),
+    ).toEqual([
+      "+ {",
+      '+   "a";',
+      "+   run();",
+      "+ }",
+      "+ try {",
+      '+   "x";',
+      "+ } catch {}",
+      "+ ",
+      "+ class C {",
+      "+   static {",
+      '+     "s";',
+      "+   }",
+      "+ }",
+      "+ if (x)",
+      '+   "y";',
+    ]);
+  });
+
   test("two minified builds with different mangled names diff down to the real change", async () => {
     // Same program, names handed out differently by the "minifier", plus one genuine edit (* 2 → * 3) and one
     // inserted helper in b. Long enough on one line to count as minified.

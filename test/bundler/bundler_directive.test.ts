@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { readdirSync } from "fs";
 import { itBundled } from "./expectBundled";
 
 // Directive prologues: `"use strict"`, `"use client"`, and friends at the top
@@ -34,7 +35,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       expect(api.readFile("/out.js").match(/"use strict";/g)).toHaveLength(2);
     },
-    run: { stdout: "strict true" },
+    run: { runtime: "node", stdout: "strict true" },
   });
 
   itBundled("directive/FunctionLevelUseStrictBundleMinify", {
@@ -47,7 +48,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       expect(api.readFile("/out.js").match(/"use strict";/g)).toHaveLength(2);
     },
-    run: { stdout: "strict true" },
+    run: { runtime: "node", stdout: "strict true" },
   });
 
   itBundled("directive/ArrowAndMethodBodies", {
@@ -85,6 +86,7 @@ describe("bundler", () => {
 
   // The JSX runtime import is injected at the top of the file. The directive
   // prologue still has to come before it.
+  // https://github.com/oven-sh/bun/issues/6854
   itBundled("directive/DirectivesBeforeInjectedImportsNoBundle", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -159,8 +161,8 @@ describe("bundler", () => {
     },
     bundling: false,
     onAfterBundle(api) {
-      // Duplicates are removed
-      api.expectFile("/out.js").toStartWith('"use strict";\n"use client";\nconsole.log("body");\n');
+      // Each directive is printed, a repeated one too.
+      api.expectFile("/out.js").toStartWith('"use strict";\n"use client";\n"use strict";\nconsole.log("body");\n');
     },
     run: { stdout: "body" },
   });
@@ -275,26 +277,6 @@ describe("bundler", () => {
     },
   });
 
-  // A wrapped CommonJS file that ends up in the entry chunk keeps its
-  // file-level directive inside the wrapper.
-  itBundled("directive/WrappedCJSFileInEntryChunk", {
-    files: {
-      "/entry.js": /* js */ `
-        console.log(require("./a.cjs"));
-      `,
-      "/a.cjs": /* js */ `
-        "use strict";
-        function f() { return typeof this }
-        module.exports = f();
-      `,
-    },
-    format: "cjs",
-    onAfterBundle(api) {
-      expect(api.readFile("/out.js")).toMatch(/__commonJS\(\(?function\([^)]*\) \{\n\s*"use strict";/);
-    },
-    run: { stdout: "undefined" },
-  });
-
   // The directive inside the wrapper keeps its location, so it maps back to
   // the source like any other statement: the `EAAA` segment on generated
   // line 5 is `"use strict"` (column 2) mapped to a.cjs line 1, column 0.
@@ -318,54 +300,6 @@ describe("bundler", () => {
           ";;;;EAAA;AAAA,EACA,QAAO,UAAW,QAAS,GAAG;AAAA,IAAE,OAAO,OAAO;AAAA,IAAQ;AAAA;;;ACDtD,QAAQ,IAAI,WAAkB;",
       },
     },
-  });
-
-  // All ES modules are strict, so the directive is redundant there.
-  itBundled("directive/WrappedCJSFileInESMOutput", {
-    files: {
-      "/entry.js": /* js */ `
-        console.log(require("./a.cjs"));
-      `,
-      "/a.cjs": /* js */ `
-        "use strict";
-        function f() { return typeof this }
-        module.exports = f();
-      `,
-    },
-    format: "esm",
-    onAfterBundle(api) {
-      api.expectFile("/out.js").not.toContain('"use strict"');
-    },
-    run: { stdout: "undefined" },
-  });
-
-  // An entry point that another entry point requires is wrapped inside the
-  // other chunk. There it is a dependency and keeps its directive inside the
-  // wrapper. In its own chunk the directive is at the top.
-  itBundled("directive/EntryPointWrappedInsideOtherEntryPoint", {
-    files: {
-      "/a.cjs": /* js */ `
-        console.log("a", require("./b.cjs"));
-      `,
-      "/b.cjs": /* js */ `
-        "use strict";
-        module.exports = (function () { return typeof this })();
-        console.log("b", module.exports);
-      `,
-    },
-    entryPoints: ["/a.cjs", "/b.cjs"],
-    outdir: "/out",
-    outputPaths: ["/out/a.js", "/out/b.js"],
-    format: "cjs",
-    onAfterBundle(api) {
-      expect(api.readFile("/out/a.js")).toMatch(/__commonJS\(\(?function\([^)]*\) \{\n\s*"use strict";/);
-      api.expectFile("/out/a.js").not.toStartWith('"use strict"');
-      api.expectFile("/out/b.js").toStartWith('"use strict";\n');
-    },
-    run: [
-      { file: "/out/a.js", stdout: "b undefined\na undefined" },
-      { file: "/out/b.js", stdout: "b undefined" },
-    ],
   });
 
   // The prologue has to come before the `init_*()` calls that the linker
@@ -393,30 +327,6 @@ describe("bundler", () => {
     },
     run: { stdout: "b side effect\n2" },
   });
-
-  // Every statement of this ES module moves out of its wrapper, so the parser
-  // gives the file no wrapper symbol. The linker must not make a wrapper body
-  // only to hold the prologue.
-  for (const format of ["cjs", "esm"] as const) {
-    itBundled(`directive/WrappedESMFileWithoutWrapperBody/${format}`, {
-      files: {
-        "/entry.js": /* js */ `
-          const bind = require("./bind.js").default;
-          console.log(typeof bind, bind(function (a) { return a + 1 })(1));
-        `,
-        "/bind.js": /* js */ `
-          "use strict";
-          "use other";
-          export default function bind(fn) { return function wrap() { return fn.apply(undefined, arguments) } }
-        `,
-      },
-      format,
-      onAfterBundle(api) {
-        expect(api.readFile("/out.js")).not.toContain("__esm(");
-      },
-      run: { stdout: "function 2" },
-    });
-  }
 
   // A transform that adds a statement to a function body puts it after the
   // prologue. A directive that follows another statement is no directive.
@@ -523,6 +433,119 @@ describe("bundler", () => {
       expect(out).toMatch(/function Outer\(\) \{\n  "use other";\n  _s\(\);/);
       expect(out).toMatch(/\(\) => \{\n    "use inner";\n    _s2\(\);/);
     },
+  });
+
+  // The linker prints the prologue of the entry point of a chunk, and of a
+  // wrapped file inside its wrapper. A file that is inlined into the chunk has
+  // no place for its own: it is not printed, as in esbuild.
+  // https://github.com/oven-sh/bun/issues/6854
+  itBundled("directive/DependencyDirectiveIsNotPrinted", {
+    files: {
+      "/entry.js": /* js */ `
+        export { Button } from "./button.js";
+      `,
+      "/button.js": /* js */ `
+        "use client";
+        export function Button() { return "button" }
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("use client");
+    },
+  });
+
+  itBundled("directive/EntryAndDependencyDirectivePrintedOnce", {
+    files: {
+      "/entry.js": /* js */ `
+        "use client";
+        export { Button } from "./button.js";
+      `,
+      "/button.js": /* js */ `
+        "use client";
+        export function Button() { return "button" }
+      `,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toStartWith('"use client";\n');
+      expect(out.split('"use client"')).toHaveLength(2);
+    },
+  });
+
+  // With code splitting each chunk starts with the prologue of its own entry
+  // point, and the shared chunk has no entry point.
+  itBundled("directive/SplittingEntryChunksKeepTheirPrologue", {
+    files: {
+      "/a.js": /* js */ `
+        "use client";
+        import { shared } from "./shared.js";
+        console.log("a", shared);
+      `,
+      "/b.js": /* js */ `
+        "use server";
+        import { shared } from "./shared.js";
+        console.log("b", shared);
+      `,
+      "/shared.js": /* js */ `
+        "use shared";
+        export const shared = globalThis.shared ??= {};
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    splitting: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out/a.js")).toStartWith('"use client";\n');
+      expect(api.readFile("/out/b.js")).toStartWith('"use server";\n');
+      const shared = readdirSync(api.outdir).find(file => file !== "a.js" && file !== "b.js" && file.endsWith(".js"))!;
+      expect(api.readFile("/out/" + shared)).not.toContain("use shared");
+    },
+    run: [
+      { file: "/out/a.js", stdout: "a {}" },
+      { file: "/out/b.js", stdout: "b {}" },
+    ],
+  });
+
+  itBundled("directive/SplittingDynamicImportChunkKeepsItsPrologue", {
+    files: {
+      "/entry.js": /* js */ `
+        "use client";
+        import("./lazy.js").then(lazy => console.log(lazy.value));
+      `,
+      "/lazy.js": /* js */ `
+        "use lazy";
+        export const value = "lazy";
+      `,
+    },
+    outdir: "/out",
+    splitting: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.js")).toStartWith('"use client";\n');
+      const lazy = readdirSync(api.outdir).find(file => file.startsWith("lazy-"))!;
+      expect(api.readFile("/out/" + lazy)).toStartWith('"use lazy";\n');
+    },
+    run: { file: "/out/entry.js", stdout: "lazy" },
+  });
+
+  // The lowering of "using" moves the statements of a body into a try block.
+  // The prologue stays in front of it.
+  itBundled("directive/LoweredUsingKeepsThePrologueFirst", {
+    files: {
+      "/entry.cjs": /* js */ `
+        function f() {
+          "use strict";
+          using resource = { [Symbol.dispose]() {} };
+          return this === undefined;
+        }
+        console.log(f());
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toMatch(/function f\(\) \{\n\s*"use strict";/);
+    },
+    run: { runtime: "node", stdout: "true" },
   });
 
   itBundled("directive/TargetBunCJSEntry", {

@@ -4081,10 +4081,11 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(expr.loc);
 
                     // If this was originally a template literal, print it as one as long as we're not minifying.
-                    // One that starts a statement stays a template literal: as a string it could be a directive.
+                    // One that is a whole statement stays a template literal: as a string it could be a directive.
                     if e.prefer_template
                         && (!self.options.minify_syntax
-                            || self.stmt_start == self.writer.written())
+                            || (level == Level::Lowest
+                                && flags.contains(ExprFlag::ExprResultIsUnused)))
                     {
                         self.print(b"`");
                         self.print_string_characters_e_string(&e, b'`');

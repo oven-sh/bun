@@ -371,9 +371,8 @@ test("uncaught error from a CommonJS-sniffed stdin entry reports and exits 1", a
 });
 
 // The eval entry point (-e, -p, stdin) is transpiled as CommonJS without the
-// module wrapper and then evaluated as a classic script. The transpiler consumes
-// a module-level "use strict" while parsing, so it has to emit the directive
-// again, or the script runs in sloppy mode. Node honors the directive.
+// module wrapper and then evaluated as a classic script. The directive prologue
+// of the script is the first thing in the printed text, as it is in node.
 describe.concurrent('"use strict" in the eval entry point', () => {
   async function runBun(args: string[], cwd?: string) {
     await using proc = Bun.spawn({
@@ -438,8 +437,7 @@ describe.concurrent('"use strict" in the eval entry point', () => {
   });
 
   test("bun -p is strict when another directive comes first", async () => {
-    // -p keeps the other directive as a statement (it disables dead code
-    // elimination), so "use strict" has to be emitted in front of it.
+    // Both directives are printed in source order, ahead of every statement.
     const { stdout, stderr, exitCode } = await runBun([
       "-p",
       `"use client"; "use strict"; (function () { return this === undefined; })()`,
@@ -456,10 +454,17 @@ describe.concurrent('"use strict" in the eval entry point', () => {
     expect(exitCode).toBe(0);
   });
 
+  test("bun -p prints the last directive, a repeated one too", async () => {
+    // A directive is an expression statement. No directive is removed, so the
+    // result of the script is the value of the last one.
+    const { stdout, stderr, exitCode } = await runBun(["-p", `"a"; "b"; "a"`]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("a\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("a required CommonJS file is strict when another directive comes first", async () => {
-    // Same directive handling, but through the CommonJS module wrapper. The
-    // -p entry point disables dead code elimination for every module in the
-    // process, so "use client" survives as the first statement of the file.
+    // The same prologue, inside the CommonJS module wrapper of a required file.
     using dir = tempDir("eval-use-strict", {
       "strict-after-directive.cjs": `"use client";\n"use strict";\nmodule.exports = (function () { return this === undefined; })();\n`,
     });

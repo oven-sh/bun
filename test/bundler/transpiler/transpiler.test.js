@@ -5343,7 +5343,7 @@ console.log("boop");
     );
   });
   it("preserves the directive prologue ahead of everything else", () => {
-    // Duplicates are dropped. "use asm" is removed on purpose.
+    // Each directive is printed, a repeated one too. "use asm" is removed on purpose.
     expect(
       new Bun.Transpiler().transformSync(`"use strict";
   'use client';
@@ -5354,6 +5354,7 @@ console.log("boop");
     ).toBe(
       `"use strict";
 "use client";
+"use strict";
 console.log("boop");
 `,
     );
@@ -5456,6 +5457,34 @@ class A {
         result: "object object object object object object undefined",
       });
     }
+  });
+
+  it("keeps a template literal under minify only where it is a whole statement", () => {
+    const transpiler = new Bun.Transpiler({
+      deadCodeElimination: false,
+      minifyWhitespace: true,
+      minify: { syntax: true, whitespace: true },
+    });
+    expect(transpiler.transformSync('`abc def`.split(" ").forEach(f);`a`+g();`a`[h()];`x` in obj;')).toBe(
+      '"abc def".split(" ").forEach(f);"a"+g();"a"[h()];"x"in obj;',
+    );
+    expect(transpiler.transformSync("function f(){`use strict`;return this}")).toBe(
+      "function f(){`use strict`;return this}",
+    );
+  });
+
+  it("does not change a string node that another expression shares", () => {
+    // With `inline`, each use of a replaced export shares the node of its value.
+    // A kept `foo;` statement prints as a template literal. The other uses do not.
+    const transpiler = new Bun.Transpiler({
+      exports: { replace: { foo: "bar" } },
+      inline: true,
+      deadCodeElimination: false,
+    });
+    const source = `export const foo = 1; console.log(foo);`;
+    const first = transpiler.transformSync(source);
+    transpiler.transformSync(`export const foo = 1; foo; console.log(foo);`);
+    expect(transpiler.transformSync(source)).toBe(first);
   });
 
   it("can parse 'a<b>' as typescript", () => {

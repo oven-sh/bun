@@ -54,7 +54,8 @@ pub struct Ast<'a> {
     // same lifetime-erased contract as `StoreRef`.
     pub hashbang: StoreStr,
     /// The module's directive prologue: its `S::Directive` statements in source order, taken
-    /// off `parts`. Every emitter prints them ahead of the statements it generates.
+    /// off `parts`. What prints them prints them ahead of the statements it generates. The
+    /// linker prints them for the entry point of a chunk and for a wrapped file, no others.
     pub directives: StoreSlice<Stmt>,
     /// `export default X` where `X` is an import binding in this file. When
     /// `X` resolves to a module namespace the linker binds importers of

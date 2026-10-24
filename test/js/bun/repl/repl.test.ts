@@ -818,6 +818,31 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    test('an escaped "use strict" is a directive without a meaning', async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        // It does not end the prologue: the "use strict" after it applies.
+        `"use\\x20strict"; "use strict"; (function () { return typeof this; })()`,
+        // Alone, it does not make the line strict.
+        `"use\\x20strict"; (function () { return typeof this; })()`,
+        // As the last statement, its value is the result of the line.
+        `"use\\x20strict"`,
+        ".exit",
+      ]);
+      expect(outputs).toEqual(['"undefined"', '"object"', '"use strict"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test("a directive with both kinds of quotes does not end the prologue", async () => {
+      const { outputs, stderr, exitCode } = await runRepl([
+        `"it's \\"quoted\\""; "use strict"; (function () { return typeof this; })()`,
+        ".exit",
+      ]);
+      expect(outputs).toEqual(['"undefined"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("async evaluation", () => {

@@ -22,9 +22,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// - Wraps the last expression in { value: expr } for result capture
     /// - Wraps code with await in async IIFE with variable hoisting
     ///
-    /// `directives` is the prologue of the line. Node's repl evaluates a directive as a string
-    /// expression, so the transform puts each one back in front as one. Returns `false` when it
-    /// left `parts` as they were and did not place the prologue.
+    /// `directives` is the prologue of the line. The transform puts it back in front of the
+    /// statements. Returns `false` when it left `parts` as they were and did not place it.
     pub(crate) fn apply_repl_transforms<'bump>(
         &mut self,
         parts: &mut BumpVec<'bump, js_ast::Part>,
@@ -450,24 +449,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         ));
                     }
                 }
-                StmtData::SDirective(directive) => {
-                    // In REPL mode, treat directives (string literals) as expressions.
-                    let value_str: &'static [u8] = directive.value.slice();
-                    let str_expr = self.new_expr(
-                        E::String {
-                            data: value_str.into(),
-                            ..Default::default()
-                        },
-                        stmt.loc,
-                    );
-                    inner_stmts.push(self.s(
-                        S::SExpr {
-                            value: str_expr,
-                            ..Default::default()
-                        },
-                        stmt.loc,
-                    ));
-                }
                 _ => {
                     inner_stmts.push(*stmt);
                 }
@@ -515,9 +496,9 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         ));
         let final_slice: &mut [Stmt] = final_stmts.into_bump_slice_mut();
 
-        // Update parts. Input consisting solely of a consumed "use strict"
-        // prologue arrives with no parts at all — create one so the
-        // reinjected directive's IIFE isn't dropped.
+        // Update parts. A line that is only a directive prologue arrives with
+        // no parts at all, because `_parse` took the prologue off its
+        // statements. Create one so that the IIFE is kept.
         if parts.is_empty() {
             parts.push(js_ast::Part {
                 stmts: bun_ast::StoreSlice::new_mut(final_slice),
@@ -662,6 +643,25 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     StmtData::SExpr(expr_data) => {
                         // Wrap in return { value: expr }
                         let wrapped = self.repl_wrap_expr_in_value_object(expr_data.value, bump);
+                        inner_stmts[last_idx] = self.s(
+                            S::Return {
+                                value: Some(wrapped),
+                            },
+                            last_stmt.loc,
+                        );
+                        break;
+                    }
+                    // A directive is a string expression, and node's repl prints its value.
+                    StmtData::SDirective(directive) => {
+                        let value_str: &'static [u8] = directive.value.slice();
+                        let str_expr = self.new_expr(
+                            E::String {
+                                data: value_str.into(),
+                                ..Default::default()
+                            },
+                            last_stmt.loc,
+                        );
+                        let wrapped = self.repl_wrap_expr_in_value_object(str_expr, bump);
                         inner_stmts[last_idx] = self.s(
                             S::Return {
                                 value: Some(wrapped),

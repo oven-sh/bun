@@ -5070,7 +5070,6 @@ describe.concurrent("which tool's config files are used", () => {
       "deny-warnings": [["--deny-warnings"], limited],
       silent: [["--silent"], { stdout: "", stderr: "", exitCode: 0 }],
       "disable-nested-config": [["--disable-nested-config"], plain],
-      lsp: [["--lsp"], error("bun lint does not support --lsp")],
     };
     const group = help.stdout.slice(help.stdout.indexOf("Compatibility with oxlint"));
     const flags = [...group.matchAll(/^ +(?:-\w, )?--([a-z0-9-]+)/gm)].map(it => it[1]);

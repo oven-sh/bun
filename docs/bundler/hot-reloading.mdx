@@ -223,4 +223,9 @@ When a file is replaced, Bun automatically removes all of its event listeners.
 | `bun:ws:disconnect`    | when the HMR WebSocket connection is lost. This can indicate the development server is offline. |
 | `bun:ws:connect`       | when the HMR WebSocket connects or re-connects.                                                 |
 
-<Note>For compatibility with Vite, these events are also available with the `vite:*` prefix instead of `bun:*`.</Note>
+Bun does not emit `bun:beforePrune` or `bun:error` yet.
+
+<Note>
+  For compatibility with Vite, these events are also available with the `vite:*` prefix instead of `bun:*`. Unlike Vite,
+  Bun does not pass a payload object to the callback.
+</Note>

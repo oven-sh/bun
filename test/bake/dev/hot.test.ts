@@ -1,7 +1,7 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -482,9 +482,12 @@ devTest("import.meta.hot on/off events", {
     }),
     "index.ts": `
       console.log("Initial setup");
-      // Add event listener
-      import.meta.hot.on("vite:beforeUpdate", () => {
-        console.log("Before update event");
+      // A "vite:" name is an alias of the "bun:" name: both listeners are in one list, and they get no payload.
+      import.meta.hot.on("vite:beforeUpdate", payload => {
+        console.log("vite:beforeUpdate (initial), has payload: " + (payload != null));
+      });
+      import.meta.hot.on("bun:beforeUpdate", () => {
+        console.log("bun:beforeUpdate (initial)");
       });
       import.meta.hot.accept();
     `,
@@ -496,20 +499,46 @@ devTest("import.meta.hot on/off events", {
       "index.ts",
       `
         console.log("Updated setup");
-        // Events implementation is partial according to docs
-        import.meta.hot.on("vite:beforeUpdate", () => {
-          console.log("Before update event 2");
+        import.meta.hot.on("vite:afterUpdate", () => {
+          console.log("vite:afterUpdate (updated)");
         });
-        const handler = () => {
-          console.log("Another handler");
-        };
-        import.meta.hot.on("vite:beforeUpdate", handler);
-        // Remove the handler
-        import.meta.hot.off("vite:beforeUpdate", handler);
+        import.meta.hot.on("bun:afterUpdate", () => {
+          console.log("bun:afterUpdate (updated)");
+        });
+        import.meta.hot.on("vite:beforeUpdate", () => {
+          console.log("vite:beforeUpdate (updated)");
+        });
+
+        // off() takes either name, whichever name on() got.
+        const removed = names => () => console.log("removed listener ran: " + names);
+        const viteVite = removed("on vite, off vite");
+        import.meta.hot.on("vite:beforeUpdate", viteVite);
+        import.meta.hot.off("vite:beforeUpdate", viteVite);
+        const bunVite = removed("on bun, off vite");
+        import.meta.hot.on("bun:beforeUpdate", bunVite);
+        import.meta.hot.off("vite:beforeUpdate", bunVite);
+        const viteBun = removed("on vite, off bun");
+        import.meta.hot.on("vite:beforeUpdate", viteBun);
+        import.meta.hot.off("bun:beforeUpdate", viteBun);
+
+        // A listener under both names is in the list twice, so it runs twice.
+        const twice = () => console.log("listener under both names (updated)");
+        import.meta.hot.on("bun:beforeUpdate", twice);
+        import.meta.hot.on("vite:beforeUpdate", twice);
+        // off() ignores a name that is not a string.
+        import.meta.hot.off(undefined, twice);
         import.meta.hot.accept();
       `,
     );
-    await c.expectMessage("Updated setup");
+    // The initial module's listeners run before the update replaces it.
+    // The afterUpdate listeners of the new module run when the update is done.
+    await c.expectMessage(
+      "vite:beforeUpdate (initial), has payload: false",
+      "bun:beforeUpdate (initial)",
+      "Updated setup",
+      "vite:afterUpdate (updated)",
+      "bun:afterUpdate (updated)",
+    );
     await dev.write(
       "index.ts",
       `
@@ -517,7 +546,39 @@ devTest("import.meta.hot on/off events", {
         import.meta.hot.accept();
       `,
     );
-    await c.expectMessage("Third update");
+    // index.ts accepts itself in each copy, so an update removes the listeners of the copy that it
+    // replaces: those of the initial copy, and the afterUpdate listeners of the second copy.
+    // A listener that off() removed does not run.
+    await c.expectMessage(
+      "vite:beforeUpdate (updated)",
+      "listener under both names (updated)",
+      "listener under both names (updated)",
+      "Third update",
+    );
+  },
+});
+devTest("import.meta.hot on/off events in a server module", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      // The server runtime has its own copy of on() and off().
+      // Each save evaluates this module again, so the calls are kept on globalThis.
+      const calls = (globalThis.hotEventCalls ??= []);
+      import.meta.hot.on("vite:beforeUpdate", () => calls.push("vite:beforeUpdate"));
+      import.meta.hot.on("bun:beforeUpdate", () => calls.push("bun:beforeUpdate"));
+      const removed = () => calls.push("removed listener ran");
+      import.meta.hot.on("bun:beforeUpdate", removed);
+      import.meta.hot.off("vite:beforeUpdate", removed);
+      export default function () {
+        return Response.json({ save: 0, calls });
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({ save: 0, calls: [] });
+    // One save only. A route module does not accept itself, so an update leaves its listeners in place.
+    await dev.patch("routes/index.ts", { find: "save: 0", replace: "save: 1" });
+    await dev.fetch("/").equals({ save: 1, calls: ["vite:beforeUpdate", "bun:beforeUpdate"] });
   },
 });
 devTest("hmr forwards every merged inotify sub-path from a directory batch", {

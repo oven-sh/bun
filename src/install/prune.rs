@@ -1996,8 +1996,7 @@ pub(crate) fn remove_unreferenced_store_entries(manager: &mut PackageManager, in
     }
 }
 
-/// Opens the `node_modules` of the root and of each workspace. `None` if a workspace is outside
-/// the project or its `node_modules` is a symlink.
+/// `None` if a workspace is outside the project or its `node_modules` is a symlink.
 fn open_importer_folders(manager: &PackageManager) -> Option<Vec<Dir>> {
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
@@ -2867,8 +2866,7 @@ fn execute(plan: &Plan, quiet: bool) -> usize {
     failed
 }
 
-/// A delete can stop midway, and the next install only checks that the package's marker file
-/// exists. So the entry is renamed to a `StagingPath` first, which `read_entries` skips.
+/// Renamed aside first: a delete that stops midway must not leave the marker the next install checks.
 fn remove_store_entry(dir: &Dir, name: &[u8], staging: Staging) -> sys::Maybe<()> {
     let staged = StagingPath(name, staging).to_string();
     let (from, to) = (zname(name), zname(staged.as_bytes()));

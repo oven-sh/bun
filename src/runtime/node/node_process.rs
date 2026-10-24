@@ -68,7 +68,11 @@ pub(crate) fn get_exec_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
 #[unsafe(export_name = "Bun__Process__exit")]
 pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
     let vm = global_object.bun_vm().as_mut();
-    vm.exit_handler.exit_code = code;
+    vm.exit_handler.exit_code = if code == 0 && vm.exit_handler.exits_nonzero {
+        1
+    } else {
+        code
+    };
     if let Some(worker) = vm.worker_ref() {
         // @190n: we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner

@@ -1436,6 +1436,7 @@ impl CommandLineReporter {
         self.write_timings_if_needed();
 
         vm.exit_handler.exit_code = 1;
+        vm.exit_handler.exits_nonzero = true;
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);
         vm.exit_handler.requested = true;
         let vm_ptr: *mut VirtualMachine = vm;
@@ -1443,6 +1444,10 @@ impl CommandLineReporter {
         // `run_with_api_lock` takes `&self` only, so the closure holds the
         // unique mutable access on this single-threaded path.
         vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
+        // An 'exit' listener can store exit code 0 with `process.exitCode`.
+        if vm.exit_handler.exit_code == 0 {
+            vm.exit_handler.exit_code = 1;
+        }
         // Exit listeners need the runner, so release the `bun:test` GC roots and clear `RUNNER`
         // after they run. Finalizers in the teardown GC must not see a half-torn-down `TestRunner`.
         self.jest.bun_test_root.deinit_for_exit();

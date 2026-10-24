@@ -97,6 +97,73 @@ describe("bundler", () => {
     },
   });
 
+  // `args.loader` is the loader that the import asks for, and the loader of a result that has none.
+  // An import that an onResolve plugin declined reaches onLoad through the resolver.
+  itBundled("plugin/LoadImportTypeLoader", {
+    files: {
+      "/index.ts": /* ts */ `
+        import data from "./data.json";
+        import dataText from "./data.json" with { type: "text" };
+        import magic from "./note.magic";
+        import magicText from "./note.magic" with { type: "text" };
+        console.log(JSON.stringify([data, dataText, magic, magicText]));
+      `,
+      "/data.json": `{}`,
+      "/note.magic": `a note`,
+    },
+    plugins(builder) {
+      builder.onLoad({ filter: /\.json$/ }, args => ({ contents: JSON.stringify({ loader: args.loader }) }));
+      builder.onResolve({ filter: /\.magic$/ }, () => undefined);
+      builder.onLoad({ filter: /\.magic$/ }, args => ({ contents: `export default "loader ${args.loader}";` }));
+    },
+    run: {
+      stdout: JSON.stringify([{ loader: "json" }, `{"loader":"text"}`, "loader js", `export default "loader text";`]),
+    },
+  });
+
+  // An html file asks for the file of a manifest, and a script asks for its json module.
+  itBundled("plugin/LoadHtmlAssetLoader", () => {
+    const loaders: string[] = [];
+    return {
+      outdir: "out/",
+      files: {
+        "/index.html": /* html */ `
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <link rel="manifest" href="./manifest.json" />
+            </head>
+            <body>
+              <script src="./app.js"></script>
+            </body>
+          </html>
+        `,
+        "/manifest.json": `{}`,
+        "/app.js": /* js */ `
+          import manifest from "./manifest.json";
+          console.log(manifest.loader);
+        `,
+      },
+      entryPoints: ["/index.html"],
+      plugins(builder) {
+        builder.onLoad({ filter: /\.json$/ }, args => {
+          loaders.push(args.loader);
+          return { contents: JSON.stringify({ loader: args.loader }) };
+        });
+      },
+      onAfterBundle(api) {
+        expect(loaders.sort()).toEqual(["file", "json"]);
+        const html = api.readFile("out/index.html");
+        const manifest = html.match(/href="(?:\.\/|\/)?(manifest-[a-zA-Z0-9]+\.json)"/)?.[1];
+        const script = html.match(/src="(?:\.\/|\/)?([^"]+\.js)"/)?.[1];
+        expect({
+          manifest: manifest && api.readFile("out/" + manifest),
+          scriptHasJsonModule: script && api.readFile("out/" + script).includes(`loader: "json"`),
+        }).toEqual({ manifest: `{"loader":"file"}`, scriptHasJsonModule: true });
+      },
+    };
+  });
+
   // Load Plugin Errors
   itBundled("plugin/LoadThrow", {
     files: loadFixture,

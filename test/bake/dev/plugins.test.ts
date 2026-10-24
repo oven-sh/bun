@@ -1,5 +1,5 @@
 // Plugin tests concern plugins in development mode.
-import { devTest, minimalFramework } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
 devTest("onResolve", {
@@ -108,6 +108,47 @@ devTest("onResolve + onLoad virtual file", {
       },
       "file-on-disk",
     ]);
+  },
+});
+// A file is one module for each loader it is imported with. onLoad runs for each module, and
+// `args.loader` is the loader that the import asks for.
+devTest("onLoad sees the loader of each module of a file", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./css-plugin.ts"]
+    `,
+    "css-plugin.ts": `
+      export default {
+        name: "css-plugin",
+        setup(build) {
+          build.onLoad({ filter: /\\.css$/ }, args =>
+            args.loader === "text"
+              ? { contents: "text from the plugin" }
+              : { contents: ".plugin-" + args.loader + " { color: blue; }", loader: "css" },
+          );
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ styles: ["x.css"], scripts: ["app.ts"] }),
+    "x.css": `.box { color: red; }`,
+    "app.ts": `
+      import text from "./x.css" with { type: "text" };
+      let value;
+      try {
+        value = text;
+      } catch (e) {
+        value = "throws " + e.name;
+      }
+      console.log(value);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    // The result for the text module has no loader, so it is text.
+    await c.expectMessage("text from the plugin");
+    await c.style(".plugin-css").color.expect.toBe("#00f");
+    await c.style(".box").notFound();
   },
 });
 // devTest("onLoad with watchFile", {

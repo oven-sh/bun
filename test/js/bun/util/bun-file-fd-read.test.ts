@@ -94,21 +94,29 @@ describe("a stream of stdin when stdin is a regular file inherited at an offset"
   const print = "process.stdout.write(JSON.stringify(s))";
   const readsTheRest = { stdout: JSON.stringify(rest), stderr: "", exitCode: 0, left: "" };
 
-  test("Bun.stdin.stream() and the console iterator", async () => {
+  test("Bun.stdin.stream()", async () => {
     expect(
       await runEach({
         "Bun.stdin.stream()": `let s = ""; for await (const c of Bun.stdin.stream()) s += Buffer.from(c); ${print};`,
         "new Response(Bun.stdin.stream()).text()": `const s = await new Response(Bun.stdin.stream()).text(); ${print};`,
         "Bun.file(0).stream()": `const s = await new Response(Bun.file(0).stream()).text(); ${print};`,
-        "Bun.stdin.size, then Bun.stdin.stream()": `Bun.stdin.size; let s = ""; for await (const c of Bun.stdin.stream()) s += Buffer.from(c); ${print};`,
-        "for await (const line of console)": `const lines = []; for await (const line of console) lines.push(line); const s = lines.join("\\n"); ${print};`,
       }),
     ).toEqual({
       "Bun.stdin.stream()": readsTheRest,
       "new Response(Bun.stdin.stream()).text()": readsTheRest,
       "Bun.file(0).stream()": readsTheRest,
-      "Bun.stdin.size, then Bun.stdin.stream()": readsTheRest,
+    });
+  });
+
+  test("the console iterator, and a stream after Bun.stdin.size was read", async () => {
+    expect(
+      await runEach({
+        "for await (const line of console)": `const lines = []; for await (const line of console) lines.push(line); const s = lines.join("\\n"); ${print};`,
+        "Bun.stdin.size, then Bun.stdin.stream()": `Bun.stdin.size; let s = ""; for await (const c of Bun.stdin.stream()) s += Buffer.from(c); ${print};`,
+      }),
+    ).toEqual({
       "for await (const line of console)": readsTheRest,
+      "Bun.stdin.size, then Bun.stdin.stream()": readsTheRest,
     });
   });
 

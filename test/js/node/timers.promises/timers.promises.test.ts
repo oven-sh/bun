@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { setImmediate, setInterval, setTimeout } from "node:timers/promises";
 
 describe("setTimeout", () => {
@@ -160,5 +161,55 @@ describe("setInterval", () => {
       // On a build that ignores the abort the interval is still armed; clear it.
       await iterator.return!();
     }
+  });
+
+  // The iterator protocol itself is in timers-promises-interval-iterator.test.ts, which also runs under node.
+
+  // As in node, the first next() starts the interval. Nothing reads this iterator, so nothing keeps the child alive.
+  it.concurrent("an iterator that is never read does not keep the process alive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `require("node:timers/promises").setInterval(100_000_000); console.log("created");`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "created\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // mock.timers of node:test replaces globalThis.clearInterval. This iterator started before that, so its
+  // interval is a real one, and the child exits only if the real clearInterval stops it.
+  it.concurrent("an iterator that is closed while node:test mock timers are enabled stops its interval", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { mock } = require("node:test");
+         const { setInterval } = require("node:timers/promises");
+         (async () => {
+           const iterator = setInterval(1, "tick");
+           await iterator.next();
+           mock.timers.enable({ apis: ["setInterval"] });
+           await iterator.return();
+           mock.timers.reset();
+           console.log("closed");
+         })();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "closed\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });

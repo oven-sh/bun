@@ -66,7 +66,7 @@ test.concurrent.each(["setImmediate", "setInterval"])(
            .then(value => ({ value: typeof value === "string" ? value : typeof value }), error => ({ error: error.code }))
            .then(result => {
              console.log(JSON.stringify({ first: firstName, sleep: name(sleep), ...result }));
-             // The promise form of setInterval starts an interval, which keeps the process alive.
+             // Whatever sleep() turned out to be, the child ends here.
              process.exit(0);
            });`,
       ],

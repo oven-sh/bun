@@ -8,6 +8,22 @@ import { spawnServer } from "s3-server";
 const s3 = (...args: Parameters<typeof defaultS3.file>) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
+// The `it` for the cases of a service. R2 is a live service. At times it
+// answers a request with ServiceUnavailable or InternalError after about 4 s,
+// for some minutes. Each CI attempt of this file then failed on other cases.
+// A case that fails against R2 runs once more. Against the local server it has
+// no second run, so a defect in Bun still fails there. A case with a limit of
+// its own has no second run either: two runs of it do not fit in the time that
+// the CI runner gives this file.
+function itFor(service: string, base = it): typeof it {
+  if (service !== "R2") return base;
+  const call: (...args: any[]) => void = base;
+  const wrapped = (title: string, ...rest: any[]) =>
+    rest.length === 1 ? call(title, { retry: 1 }, rest[0]) : call(title, ...rest);
+  wrapped.skipIf = (condition: boolean) => itFor(service, base.skipIf(condition));
+  return wrapped as typeof it;
+}
+
 type S3Credentials = S3Options & {
   service: string;
 };
@@ -52,6 +68,7 @@ describe.concurrent.skipIf(!r2Credentials.endpoint && !isCI)("Virtual Hosted-Sty
     endpoint: r2Url.toString(),
     virtualHostedStyle: true,
   };
+  const it = itFor("R2");
 
   it("basic operations", async () => {
     const client = new Bun.S3Client(credentials);
@@ -169,6 +186,7 @@ for (let credentials of allCredentials) {
     };
 
     const S3Bucket = credentials.bucket;
+    const it = itFor(credentials.service);
 
     function makePayLoadFrom(text: string, size: number): string {
       return Buffer.alloc(size, text).toString();

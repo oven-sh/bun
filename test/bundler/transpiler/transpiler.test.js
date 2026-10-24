@@ -262,7 +262,6 @@ describe("Bun.Transpiler", () => {
       // the name of whatever it is assigned to.
       ts.expectPrintedMin_("x = ({ f: () => {} }).f", "x = { f: () => {} }.f");
       ts.expectPrintedMin_("x = ({ f: async () => {} }).f", "x = { f: async () => {} }.f");
-      ts.expectPrintedMin_("x = ({ f: function() {} }).f", "x = { f: function() {} }.f");
       ts.expectPrintedMin_("x = ({ f: class {} }).f", "x = { f: class {\n} }.f");
       ts.expectPrintedMin_('x = ({ f: () => {} })["f"]', "x = { f: () => {} }.f");
       ts.expectPrintedMin_('x = ({ "a-b": () => {} })["a-b"]', 'x = { "a-b": () => {} }["a-b"]');
@@ -303,6 +302,57 @@ describe("Bun.Transpiler", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(JSON.parse(stdout)).toEqual(["aa", "bb", "c-c", "dd", "own", "h"]);
+      expect(exitCode).toBe(0);
+    });
+    it("keeps `this` where the read is or becomes a callee", async () => {
+      // A tag passes `this` like a call does, so the fold skips both.
+      ts.expectPrintedMin_("x = ({ f: function g() {} }).f`a`", "x = { f: function g() {} }.f`a`");
+      ts.expectPrintedMin_("x = ({ f: function() {} }).f`a`", "x = { f: function() {} }.f`a`");
+      // Elsewhere a function is read as a value: a later fold can make that read a callee.
+      ts.expectPrintedMin_("x = ({ f: function() {} }).f", "x = (0, { f: function() {} }.f)");
+      ts.expectPrintedMin_("x = (0, ({ f: function() {} }).f)`a`", "x = (0, { f: function() {} }.f)`a`");
+
+      const X = `({ f: function () { "use strict"; return this; } }).f`;
+      const src = `
+        const show = v => (v === undefined ? "undefined" : "object");
+        function viaConst() { const t = ${X}; return t\`a\`; }
+        function viaLet() { let t = ${X}; return t\`a\`; }
+        console.log(JSON.stringify({
+          tag: show(${X}\`a\`),
+          namedTag: show(({ f: function g() { "use strict"; return this; } }).f\`a\`),
+          call: show(${X}()),
+          viaConst: show(viaConst()),
+          viaLet: show(viaLet()),
+          commaTag: show((0, ${X})\`a\`),
+          andTag: show((true && ${X})\`a\`),
+          orTag: show((false || ${X})\`a\`),
+          nullishTag: show((null ?? ${X})\`a\`),
+          ternaryTag: show((true ? ${X} : 0)\`a\`),
+          pureTestCall: show(([] ? ${X} : 0)()),
+          nullishAssignCall: show((({}).p ??= ${X})()),
+        }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        tag: "object",
+        namedTag: "object",
+        call: "object",
+        viaConst: "undefined",
+        viaLet: "undefined",
+        commaTag: "undefined",
+        andTag: "undefined",
+        orTag: "undefined",
+        nullishTag: "undefined",
+        ternaryTag: "undefined",
+        pureTestCall: "undefined",
+        nullishAssignCall: "undefined",
+      });
       expect(exitCode).toBe(0);
     });
     it("bails out on optional-chain index into enum", () => {

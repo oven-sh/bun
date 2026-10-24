@@ -574,6 +574,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 && !identifier_opts.is_delete_target()
                                 && identifier_opts.assign_target() == js_ast::AssignTarget::None
                                 && !identifier_opts.is_call_target()
+                                && !identifier_opts.is_template_tag()
                             {
                                 let prop: &G::Property = &obj.properties.slice()[0];
                                 if let (Some(value), Some(key)) = (prop.value, prop.key) {
@@ -592,18 +593,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             return Some(value);
                                         }
                                         // The object stays, but reading it runs no code.
-                                        if p.expr_can_be_removed_if_unused(&value) {
-                                            return Some(p.new_expr(
-                                                E::Dot {
-                                                    target,
-                                                    name: name_static,
-                                                    name_loc,
-                                                    can_be_removed_if_unused: true,
-                                                    ..Default::default()
-                                                },
-                                                loc,
-                                            ));
+                                        let can_be_removed_if_unused =
+                                            p.expr_can_be_removed_if_unused(&value);
+                                        let read = p.new_expr(
+                                            E::Dot {
+                                                target,
+                                                name: name_static,
+                                                name_loc,
+                                                can_be_removed_if_unused,
+                                                ..Default::default()
+                                            },
+                                            loc,
+                                        );
+                                        // A function takes "this" from its call. Keep the read a
+                                        // value, as the inlined function was.
+                                        if matches!(value.data, js_ast::ExprData::EFunction(_)) {
+                                            return Some(
+                                                p.new_expr(E::Number::new(0.0), loc)
+                                                    .join_with_comma(read),
+                                            );
                                         }
+                                        return Some(read);
                                     }
                                 }
                             }

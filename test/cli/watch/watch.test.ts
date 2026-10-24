@@ -11,6 +11,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  truncateSync,
 } from "node:fs";
 import { basename, join } from "node:path";
 
@@ -668,6 +669,35 @@ test("ready", () => console.log("ready", x, y));
     },
   );
 }
+
+// A save that empties a file is a truncation to 0, and nothing is written after it.
+it("bun test --watch runs again after a save that empties an import", async () => {
+  using dir = tempDir("test-watch-save-empties-file", {
+    "main.test.ts": `import "./first.ts";
+import "./imported.ts";
+import { test } from "bun:test";
+test("runs", () => console.log("ran"));
+`,
+    "first.ts": `console.log("first");`,
+    "imported.ts": `console.log("imported");`,
+  });
+  const cwd = String(dir);
+  watchee = spawn({
+    cwd,
+    cmd: [bunExe(), "test", "--watch", "main.test.ts"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const waiter = stdoutWaiter(watchee);
+  await waiter.waitFor("first\nimported\nran\n");
+
+  truncateSync(join(cwd, "imported.ts"), 0);
+  // The run that loaded the empty file.
+  await waiter.waitFor("first\nran\n");
+  waiter.release();
+});
 
 // A --watch reload is an execve of the same binary. Linux marks every fd
 // close-on-exec with close_range() first, macOS has no such sweep, so an fd

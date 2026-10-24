@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isFreeBSD, isMacOS, isWindows, tempDir } from "harness";
-import { chmodSync, existsSync, readFileSync, truncateSync, utimesSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, truncateSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 test("BUN_WATCHER_TRACE creates trace file with watch events", async () => {
@@ -321,4 +321,72 @@ test("a truncation is a write event, and a change of metadata alone is not", asy
 
   expect(stdout).toBe("run\ntail\nend\nrun\nend\n");
   expect(events()).toContain("write");
+});
+
+// A truncation to 0 is also the start of a save in place. On kqueue the watcher holds it until the
+// write comes, or for 10 ms, and then reports one event.
+test("a truncation to 0 is one write event, and a change of the metadata of the empty file is not", async () => {
+  using dir = tempDir("watcher-trace-emptied", {
+    "app/main.js": `import "./imported.js";\nconsole.log("end");\n`,
+    "app/imported.js": `console.log("run");`,
+  });
+  const cwd = join(String(dir), "app");
+  const imported = join(cwd, "imported.js");
+  // Outside the folder that is watched.
+  const traceFile = join(String(dir), "trace.log");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: { ...bunEnv, BUN_WATCHER_TRACE: traceFile },
+    cwd,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const reader = proc.stdout.getReader();
+  let stdout = "";
+  /** Resolves to true when the process has printed `wanted`, or to its output when it ends first. */
+  const printed = async (wanted: string) => {
+    while (!stdout.includes(wanted)) {
+      const { value, done } = await reader.read();
+      if (done) return stdout;
+      stdout += Buffer.from(value).toString();
+    }
+    return true;
+  };
+  /** The events of each record that the trace has for `imported.js` itself. */
+  const records = (): string[][] =>
+    readFileSync(traceFile, "utf8")
+      .split("\n")
+      .filter(line => line.trim())
+      .flatMap(line => Object.entries<{ events: string[] }>(JSON.parse(line).files))
+      .filter(([path]) => path.endsWith("imported.js"))
+      .map(([, file]) => file.events);
+  const exited = () => proc.exitCode !== null || proc.signalCode !== null;
+  expect(await printed("run\nend\n")).toBe(true);
+
+  // A second `end` directly after the first: that run loaded the empty file.
+  truncateSync(imported, 0);
+  expect(await printed("run\nend\nend\n")).toBe(true);
+  if (isMacOS || isFreeBSD) {
+    // No record has `metadata` alone: nothing was reported before the wait ended.
+    expect(records()).toEqual([["metadata", "write"]]);
+  } else {
+    expect(records().flat()).toContain("write");
+  }
+
+  // ReadDirectoryChangesW does not tell these from a write.
+  if (!isWindows) {
+    chmodSync(imported, 0o600);
+    utimesSync(imported, new Date(2020, 0, 1), new Date(2020, 0, 1));
+    // kqueue reports them at once: the size of the file did not change.
+    if (isMacOS || isFreeBSD) {
+      while (records().length < 2 && !exited()) await Bun.sleep(1);
+      expect(new Set(records().slice(1).flat())).toEqual(new Set(["metadata"]));
+    }
+  }
+
+  writeFileSync(imported, `console.log("two");`);
+  expect(await printed("two\nend\n")).toBe(true);
+  // A run for the change of metadata prints a third `end` before `two`.
+  expect(stdout).not.toContain("end\nend\nend\n");
 });

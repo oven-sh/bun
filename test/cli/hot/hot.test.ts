@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { dlopen } from "bun:ffi";
-import { beforeEach, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
 import {
   closeSync,
   copyFileSync,
@@ -1157,57 +1157,100 @@ it.each(["--hot", "--watch"])("%s loads a file again after a save that empties i
   expect(await stdout("two\nend\n")).toBe(true);
 
   // `open(O_TRUNC)`, and no `write()` after it.
-  writeFileSync(imported, "");
+  closeSync(openSync(imported, "w"));
   expect(await stdout("two\nend\nend\n")).toBe(true);
+
+  writeFileSync(imported, `console.log("three");`);
+  expect(await stdout("three\nend\n")).toBe(true);
+
+  // Bun's `writeFileSync` does not open with `O_TRUNC`. For an empty text it is `ftruncate(fd, 0)`.
+  writeFileSync(imported, "");
+  expect(await stdout("three\nend\nend\n")).toBe(true);
 });
 
-// A save in place is `open(O_TRUNC)`, then `write()`. kqueue reports the truncation first and alone,
-// and the watcher waits 10 ms for the write. inotify and ReadDirectoryChangesW report the truncation
-// as a write of its own.
-it.skipIf(!isMacOS && !isFreeBSD)("--hot does not load the empty file in the middle of a save in place", async () => {
-  const text = (version: number) => `console.log("v${String(version).padStart(4, "0")}");`;
-  using dir = tempDir("hot-save-in-place", {
-    "main.js": `import "./imported.js";\nconsole.log("end");\n`,
-    "imported.js": text(0),
+// `bun build --watch` prints one summary for each build. The summary ends with the line of the output file.
+it("bun build --watch builds again after a save that empties an import", async () => {
+  using dir = tempDir("build-watch-save-empties-file", {
+    "entry.js": `import "./imported.js";\nconsole.log("entry");\n`,
+    "imported.js": `console.log("imported");`,
   });
-  const imported = join(String(dir), "imported.js");
-  await using runner = spawn({
-    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+  const outfile = join(String(dir), "out", "bundle.js");
+  await using bundler = spawn({
+    cmd: [bunExe(), "build", "--watch", "--no-clear-screen", "entry.js", "--outfile", outfile],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
     stderr: "inherit",
     stdin: "ignore",
   });
-  const reader = runner.stdout.getReader();
+  const reader = bundler.stdout.getReader();
   let printed = "";
-  const prints = async (wanted: string) => {
-    while (!printed.includes(wanted)) {
+  /** Resolves to true when `count` summaries are printed, or to the output when the process ends first. */
+  const builds = async (count: number) => {
+    while (printed.split("(entry point)").length - 1 < count) {
       const { value, done } = await reader.read();
       if (done) return printed;
       printed += Buffer.from(value).toString();
     }
     return true;
   };
-  expect(await prints("v0000\nend\n")).toBe(true);
+  expect(await builds(1)).toBe(true);
+  expect(readFileSync(outfile, "utf8")).toContain(`console.log("imported")`);
 
-  for (let version = 1, checked = 0; checked < 3; version++) {
-    // From the `end` of the run before this save.
-    const from = printed.length - "end\n".length;
-    const start = performance.now();
-    const fd = openSync(imported, "w");
-    // Longer than the time that the watcher gives events to coalesce.
-    while (performance.now() - start < 2);
-    writeSync(fd, text(version));
-    const took = performance.now() - start;
-    closeSync(fd);
-    expect(await prints(`v${String(version).padStart(4, "0")}\nend\n`)).toBe(true);
-    // The watcher had stopped its wait when the write came. Such a save is not the subject.
-    if (took >= 8) continue;
-    // A run that loaded the empty file prints `end` directly after the `end` of the run before it.
-    expect(printed.slice(from)).not.toContain("end\nend\n");
-    checked++;
-  }
+  truncateSync(join(String(dir), "imported.js"), 0);
+  expect(await builds(2)).toBe(true);
+  expect(readFileSync(outfile, "utf8")).not.toContain(`console.log("imported")`);
+});
+
+// A save in place is `open(O_TRUNC)`, then `write()`. kqueue reports the truncation first and alone,
+// and the watcher waits 10 ms for the write. inotify and ReadDirectoryChangesW report the truncation
+// as a write of its own.
+describe.skipIf(!isMacOS && !isFreeBSD)("a save in place", () => {
+  it.each(["--hot", "--watch"])("%s does not load the empty file in the middle of it", async flag => {
+    const text = (version: number) => `console.log("v${String(version).padStart(4, "0")}");`;
+    using dir = tempDir("hot-save-in-place", {
+      "main.js": `import "./imported.js";\nconsole.log("end");\n`,
+      "imported.js": text(0),
+    });
+    const imported = join(String(dir), "imported.js");
+    await using runner = spawn({
+      cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const reader = runner.stdout.getReader();
+    let printed = "";
+    const prints = async (wanted: string) => {
+      while (!printed.includes(wanted)) {
+        const { value, done } = await reader.read();
+        if (done) return printed;
+        printed += Buffer.from(value).toString();
+      }
+      return true;
+    };
+    expect(await prints("v0000\nend\n")).toBe(true);
+
+    for (let version = 1, checked = 0; checked < 3; version++) {
+      // From the `end` of the run before this save.
+      const from = printed.length - "end\n".length;
+      const start = performance.now();
+      const fd = openSync(imported, "w");
+      // Longer than the time that the watcher gives events to coalesce.
+      while (performance.now() - start < 2);
+      writeSync(fd, text(version));
+      const took = performance.now() - start;
+      closeSync(fd);
+      expect(await prints(`v${String(version).padStart(4, "0")}\nend\n`)).toBe(true);
+      // The watcher had stopped its wait when the write came. Such a save is not the subject.
+      if (took >= 8) continue;
+      // A run that loaded the empty file prints `end` directly after the `end` of the run before it.
+      expect(printed.slice(from)).not.toContain("end\nend\n");
+      checked++;
+    }
+  });
 });
 
 // The Windows watcher never reads the cached listing.

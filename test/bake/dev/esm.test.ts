@@ -274,6 +274,76 @@ devTest("ESM <-> CJS (async)", {
     await c.expectMessage("PASS");
   },
 });
+devTest("import() with an options object returns its promise", {
+  // A module that the dev server did not bundle (a built-in, a computed specifier) goes to the runtime's import().
+  framework: minimalFramework,
+  files: {
+    "dep.ts": `
+      export const value = "bundled";
+    `,
+    "data.json": `{"a":1}`,
+    "routes/index.ts": `
+      import * as path from "node:path";
+      export default async function () {
+        const builtin = import("node:path", { with: {} });
+        // Computed, so the bundler cannot resolve it. type: "text" only applies if the options reach the runtime's import().
+        const computed = import(path.join(process.cwd(), "data.json"), { with: { type: "text" } });
+        const bundled = import("../dep", { with: {} });
+        let missing;
+        try {
+          await import(path.join(process.cwd(), "missing.json"), { with: { type: "text" } });
+          missing = "resolved";
+        } catch {
+          missing = "rejected";
+        }
+        return Response.json({
+          builtin: [builtin instanceof Promise, (await builtin) === path],
+          computed: [computed instanceof Promise, (await computed)?.default],
+          bundled: [bundled instanceof Promise, (await bundled)?.value],
+          missing,
+        });
+      }
+    `,
+  },
+  async test(dev) {
+    const expected = {
+      builtin: [true, true],
+      computed: [true, '{"a":1}'],
+      bundled: [true, "bundled"],
+      missing: "rejected",
+    };
+    expect(await dev.fetch("/").json()).toEqual(expected);
+    // The route handled the rejection for the missing file, so the dev server still answers.
+    expect(await dev.fetch("/").json()).toEqual(expected);
+  },
+});
+devTest("import() with an options object returns its promise (client runtime)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      // Computed, so the bundler leaves it to the browser. A literal data: URL is bundled like any other module.
+      const specifier = "data:text/javascript," + encodeURIComponent("export default 1;");
+      const computed = import(specifier, { with: {} });
+      const bundled = import("./dep", { with: {} });
+      console.log({
+        computed: [typeof computed?.then, (await computed)?.default],
+        bundled: [typeof bundled?.then, (await bundled)?.x],
+      });
+    `,
+    "dep.ts": `
+      export const x = 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage({
+      computed: ["function", 1],
+      bundled: ["function", 1],
+    });
+  },
+});
 devTest("importer tracking survives flipping a module from ESM to CJS", {
   // https://github.com/oven-sh/bun/issues/31942
   files: {

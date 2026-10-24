@@ -374,6 +374,7 @@ impl Default for Help {
 pub struct ParseOptions<'a> {
     pub diagnostic: Option<&'a mut Diagnostic>,
     pub stop_after_positional_at: usize,
+    pub preserve_passthrough_separator: bool,
     /// Whole-token rewrites applied only where a token is being classified as a
     /// flag, never to an option's value or a `--` target. Node keeps its own
     /// aliases on exactly that branch (node_options-inl.h).
@@ -515,6 +516,7 @@ pub fn parse<Id: 'static>(
         ParseOptions {
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
+            preserve_passthrough_separator: opt.preserve_passthrough_separator,
             short_aliases: opt.short_aliases,
             unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
             unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,
@@ -538,6 +540,7 @@ pub fn parse_with_table<Id: 'static>(
         ParseOptions {
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
+            preserve_passthrough_separator: opt.preserve_passthrough_separator,
             short_aliases: opt.short_aliases,
             unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
             unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,

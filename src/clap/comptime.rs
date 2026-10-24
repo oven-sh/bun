@@ -560,7 +560,7 @@ impl<Id> ComptimeClap<Id> {
                     } else {
                         b""
                     };
-                    if !first.is_empty() && first == b"--" {
+                    if !opt.preserve_passthrough_separator && first == b"--" {
                         remaining_ = &remaining_[1..];
                     }
 

@@ -1328,6 +1328,7 @@ pub(crate) mod command {
                 bin_dirs_only: tag == Tag::AutoCommand,
                 log_errors: tag != Tag::AutoCommand || !ctx.runtime_options.if_present,
                 allow_fast_run_for_extensions: tag == Tag::AutoCommand,
+                strip_command_separator: tag == Tag::AutoCommand,
             };
             if run_command::RunCommand::exec_with_cfg(ctx, cfg)? {
                 return Ok(());

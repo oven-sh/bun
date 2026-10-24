@@ -78,6 +78,7 @@ pub(crate) struct ExecCfg {
     pub(crate) bin_dirs_only: bool,
     pub(crate) log_errors: bool,
     pub(crate) allow_fast_run_for_extensions: bool,
+    pub(crate) strip_command_separator: bool,
 }
 
 /// Per-caller knobs for [`RunCommand::configure_env_for_run`] and
@@ -2510,6 +2511,14 @@ impl RunCommand {
             if let Some(package_json) = root_dir.enclosing_package_json {
                 if let Some(scripts) = package_json.scripts.as_deref() {
                     if let Some(&script_content) = scripts.get(target_name) {
+                        if cfg.strip_command_separator
+                            && ctx
+                                .passthrough
+                                .first()
+                                .is_some_and(|arg| arg.as_ref() == b"--")
+                        {
+                            ctx.passthrough.remove(0);
+                        }
                         bun_core::scoped_log!(
                             RUN_LOG,
                             "Found matching script `{}`",
@@ -2698,6 +2707,16 @@ impl RunCommand {
                     ));
                 }
             }
+        }
+
+        // A separator is data for a file entrypoint, but syntax for a package command.
+        if cfg.strip_command_separator
+            && ctx
+                .passthrough
+                .first()
+                .is_some_and(|arg| arg.as_ref() == b"--")
+        {
+            ctx.passthrough.remove(0);
         }
 
         // ── Windows .bunx fast-path ──────────────────────────────────────────

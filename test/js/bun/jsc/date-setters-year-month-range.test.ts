@@ -131,6 +131,10 @@ describe("date setters range-check year + floor(month / 12), not each argument",
     expect(new Date(-6004799503158661, 2 ** 56, 1).getTime()).toBe(localTime(2000, 4, 1));
     expect(new Date(0).setUTCFullYear(-750599937893082, 2 ** 53, 1)).toBe(967766400000); // 2000-09-01
     expect(Date.UTC(-750599937893082, 2 ** 53, 1)).toBe(967766400000);
+    // floor(month / 12) is of the real quotient. From 12 * 2^52 the double quotient of these is one more: 2001-09-01.
+    expect(new Date(0).setUTCFullYear(2000 - 2 ** 52, 12 * 2 ** 52 + 8, 1)).toBe(967766400000);
+    expect(Date.UTC(2000 - 2 ** 52, 12 * 2 ** 52 + 8, 1)).toBe(967766400000);
+    expect(Date.UTC(2002 + 2 ** 52, -12 * 2 ** 52 - 16, 1)).toBe(967766400000);
     // 12 * 2^53 is the last month count whose floor(month / 12) is an exact Number. Beyond it the answer is NaN.
     expect(new Date(0).setUTCFullYear(2000 - 2 ** 53, 12 * 2 ** 53, 1)).toBe(946684800000); // 2000-01-01
     expect(Date.UTC(2000 - 2 ** 53, 12 * 2 ** 53, 1)).toBe(946684800000);

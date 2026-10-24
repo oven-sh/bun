@@ -104,12 +104,6 @@ impl std::hash::Hash for Name<'_> {
         self.atom.0.hash(state);
     }
 }
-impl PartialEq<str> for Name<'_> {
-    #[inline]
-    fn eq(&self, other: &str) -> bool {
-        self.has(other.as_bytes())
-    }
-}
 impl PartialEq<&str> for Name<'_> {
     #[inline]
     fn eq(&self, other: &&str) -> bool {

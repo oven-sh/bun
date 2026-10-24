@@ -27,12 +27,6 @@ impl crate::types::Indexed for Signature<'_> {
         self.id.0
     }
 }
-impl std::hash::Hash for Signature<'_> {
-    #[inline]
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
-    }
-}
 impl std::fmt::Debug for Signature<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Signature({})", bstr::BStr::new(&self.to_text()))

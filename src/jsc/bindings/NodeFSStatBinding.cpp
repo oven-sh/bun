@@ -934,11 +934,6 @@ JSC_DEFINE_HOST_FUNCTION(callBigIntStats, (JSC::JSGlobalObject * lexicalGlobalOb
     return JSValue::encode(callJSStatsFunction<true>(lexicalGlobalObject, callFrame));
 }
 
-extern "C" JSC::EncodedJSValue Bun__JSBigIntStatsObjectConstructor(Zig::GlobalObject* globalobject)
-{
-    return JSValue::encode(globalobject->m_JSStatsBigIntClassStructure.constructor(globalobject));
-}
-
 extern "C" JSC::EncodedJSValue Bun__JSStatsObjectConstructor(Zig::GlobalObject* globalobject)
 {
     return JSValue::encode(globalobject->m_JSStatsClassStructure.constructor(globalobject));

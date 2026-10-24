@@ -55,12 +55,6 @@ impl<'a> Emit<'a> for bool {
         sink.bool(self);
     }
 }
-impl<'a> Emit<'a> for f64 {
-    #[inline]
-    fn emit(self, sink: &mut impl Sink<'a>) {
-        sink.number(self);
-    }
-}
 impl<'a> Emit<'a> for &'a [u8] {
     #[inline]
     fn emit(self, sink: &mut impl Sink<'a>) {
@@ -126,12 +120,6 @@ impl From<bool> for Value<'_> {
     #[inline]
     fn from(value: bool) -> Self {
         Value::Bool(value)
-    }
-}
-impl From<f64> for Value<'_> {
-    #[inline]
-    fn from(value: f64) -> Self {
-        Value::Number(value)
     }
 }
 impl<'a> From<&'a [u8]> for Value<'a> {

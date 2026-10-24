@@ -342,22 +342,6 @@ impl<K: Copy + fmt::Debug, V: fmt::Debug, A: MapAllocator> fmt::Debug for IdMap<
     }
 }
 
-impl<K: Copy + Into<u32>, V, A: MapAllocator> Extend<(K, V)> for IdMap<K, V, A> {
-    fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, iter: I) {
-        for (k, v) in iter {
-            self.insert(k, v);
-        }
-    }
-}
-
-impl<K: Copy + Into<u32>, V, A: MapAllocator> FromIterator<(K, V)> for IdMap<K, V, A> {
-    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
-        let mut map = Self::new();
-        map.extend(iter);
-        map
-    }
-}
-
 impl<K, V, A: MapAllocator> IntoIterator for IdMap<K, V, A> {
     type Item = (K, V);
     type IntoIter = core::iter::Zip<std::vec::IntoIter<K, A>, std::vec::IntoIter<V, A>>;
@@ -487,16 +471,6 @@ impl<K> Default for IdBitSet<K> {
     #[inline]
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl<K> Clone for IdBitSet<K> {
-    fn clone(&self) -> Self {
-        Self {
-            words: self.words.clone(),
-            len: self.len,
-            key: PhantomData,
-        }
     }
 }
 

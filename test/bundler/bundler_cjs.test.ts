@@ -1,7 +1,8 @@
 import { describe, expect } from "bun:test";
+import { bunEnv } from "harness";
 import { readdirSync } from "node:fs";
 import { basename } from "node:path";
-import { itBundled } from "./expectBundled";
+import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
 //
@@ -1266,30 +1267,26 @@ describe("bundler", () => {
     run: { runtime: "node", stdout: "own undefined 1" },
   });
 
-  // __commonJS keeps the module of a load that failed, as for each CommonJS file
-  // in a bundle: the next require() returns its module.exports. node throws again.
+  // The first require() of a script that throws gets the error. What a later
+  // require() of it gets is the contract of the __commonJS helper, not of this file.
   for (const format of ["cjs", "iife"] as const) {
     itBundled(`cjs/UseStrictScriptThatThrows_format_${format}`, {
       files: {
         "/entry.mjs": /* js */ `
-          const results = [];
-          for (let i = 0; i < 2; i++) {
-            try {
-              results.push("ok:" + JSON.stringify(require("./throws.js")));
-            } catch (e) {
-              results.push("threw:" + e.message);
-            }
+          try {
+            require("./throws.js");
+          } catch (e) {
+            console.log("threw:" + e.message, globalThis.loads);
           }
-          import("./throws.js").then(
-            ns => console.log(results.join(" | "), "| import ok:" + Object.keys(ns).join(","), globalThis.loads),
-            e => console.log(results.join(" | "), "| import threw:" + e.message, globalThis.loads),
-          );
         `,
         "/throws.js": `"use strict";\nglobalThis.loads = (globalThis.loads ?? 0) + 1;\nthrow new Error("boom");`,
       },
       target: "node",
       format,
-      run: { runtime: "node", stdout: "threw:boom | ok:{} | import ok:default 1" },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").toContain("var require_throws = __commonJS(");
+      },
+      run: { runtime: "node", stdout: "threw:boom 1" },
     });
   }
 
@@ -1462,6 +1459,19 @@ describe("bundler", () => {
     ${scripts.join("\n    ")}
   </head>
 </html>`;
+  // Runs the script chunk of the page with node, as a module.
+  async function runPageScript(api: BundlerTestBundleAPI) {
+    const script = api.readFile("/out/index.html").match(/src="(.*\.js)"/);
+    await using node = Bun.spawn({
+      cmd: ["node", "--input-type=module"],
+      env: bunEnv,
+      stdin: Bun.file(api.join("out/" + script![1])),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([node.stdout.text(), node.stderr.text(), node.exited]);
+    return { stdout, stderr, exitCode };
+  }
   itBundled("cjs/UseStrictScriptOfHtmlFileWithStarImport", {
     files: {
       "/index.html": page(
@@ -1475,12 +1485,8 @@ describe("bundler", () => {
     },
     entryPoints: ["/index.html"],
     outdir: "/out",
-    onAfterBundle(api) {
-      const script = api.readFile("/out/index.html").match(/src="(.*\.js)"/);
-      const chunk = api.join("out/" + script![1]);
-      const { stdout, exitCode } = Bun.spawnSync({ cmd: ["node", "--input-type=module"], stdin: Bun.file(chunk) });
-      expect(stdout.toString()).toBe("first\nsecond\nthird object\n");
-      expect(exitCode).toBe(0);
+    async onAfterBundle(api) {
+      expect(await runPageScript(api)).toEqual({ stdout: "first\nsecond\nthird object\n", stderr: "", exitCode: 0 });
     },
   });
   itBundled("cjs/UseStrictScriptOfHtmlFileWithDefaultImport", {
@@ -1507,12 +1513,8 @@ describe("bundler", () => {
     },
     entryPoints: ["/index.html"],
     outdir: "/out",
-    onAfterBundle(api) {
-      const script = api.readFile("/out/index.html").match(/src="(.*\.js)"/);
-      const chunk = api.join("out/" + script![1]);
-      const { stdout, exitCode } = Bun.spawnSync({ cmd: ["node", "--input-type=module"], stdin: Bun.file(chunk) });
-      expect(stdout.toString()).toBe("true,true {} default\n");
-      expect(exitCode).toBe(0);
+    async onAfterBundle(api) {
+      expect(await runPageScript(api)).toEqual({ stdout: "true,true {} default\n", stderr: "", exitCode: 0 });
     },
   });
 

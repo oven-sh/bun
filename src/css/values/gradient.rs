@@ -905,7 +905,7 @@ impl LineDirection {
         match self {
             LineDirection::Angle(angle) => angle.to_css(dest),
             LineDirection::Horizontal(k) => {
-                if dest.minify {
+                if dest.minify && !is_prefixed {
                     dest.write_str(match k {
                         HorizontalPositionKeyword::Left => &b"270deg"[..],
                         HorizontalPositionKeyword::Right => &b"90deg"[..],
@@ -918,7 +918,7 @@ impl LineDirection {
                 }
             }
             LineDirection::Vertical(k) => {
-                if dest.minify {
+                if dest.minify && !is_prefixed {
                     dest.write_str(match k {
                         VerticalPositionKeyword::Top => &b"0deg"[..],
                         VerticalPositionKeyword::Bottom => &b"180deg"[..],

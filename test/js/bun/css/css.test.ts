@@ -4785,6 +4785,23 @@ describe("css tests", () => {
       ".foo { background: -webkit-linear-gradient(top right, red, white, blue) }",
       ".foo{background:-webkit-linear-gradient(top right,red,#fff,#00f)}",
     );
+    // A prefixed gradient names the side it starts from, and its `0deg` points right.
+    minify_test(
+      ".foo { background: -webkit-linear-gradient(top, red, blue, red) }",
+      ".foo{background:-webkit-linear-gradient(top,red,#00f,red)}",
+    );
+    minify_test(
+      ".foo { background: -webkit-linear-gradient(top, red 0%, blue 100%) }",
+      ".foo{background:-webkit-linear-gradient(top,red 0%,#00f 100%)}",
+    );
+    minify_test(
+      ".foo { background: -webkit-linear-gradient(left, red, blue) }",
+      ".foo{background:-webkit-linear-gradient(left,red,#00f)}",
+    );
+    minify_test(
+      ".foo { background: -webkit-linear-gradient(0deg, red 0%, blue 100%) }",
+      ".foo{background:-webkit-linear-gradient(0deg,red 0%,#00f 100%)}",
+    );
     minify_test(
       ".foo { background: -moz-linear-gradient(yellow, blue) }",
       ".foo{background:-moz-linear-gradient(#ff0,#00f)}",

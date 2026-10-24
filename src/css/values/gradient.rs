@@ -5,7 +5,7 @@ use crate::values::angle::{Angle, AnglePercentage};
 use crate::values::color::{ColorFallbackKind, CssColor};
 use crate::values::length::{Length, LengthPercentage};
 use crate::values::number::{CSSNumber, CSSNumberFns};
-use crate::values::percentage::{DimensionPercentage, NumberOrPercentage, Percentage};
+use crate::values::percentage::{NumberOrPercentage, Percentage};
 use crate::values::position::{
     HorizontalPositionKeyword, Position, PositionComponent, VerticalPositionKeyword,
 };
@@ -28,9 +28,6 @@ use bun_alloc::Arena;
 pub trait GradientPosition: Sized + Clone + PartialEq {
     fn parse(input: &mut Parser) -> Result<Self>;
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
-    /// `true` iff this is `DimensionPercentage::Percentage(p)` with `p.v == v`.
-    /// Used by `serialize_items` to skip the useless `50%` interpolation hint.
-    fn is_percentage_with_value(&self, v: f32) -> bool;
 }
 
 // Only two `D` instantiations exist (`LengthValue` / `Angle`); both already
@@ -40,14 +37,12 @@ macro_rules! impl_gradient_position {
     ($ty:ty) => {
         impl GradientPosition for $ty {
             #[inline]
-            fn parse(input: &mut Parser) -> Result<Self> { <$ty>::parse(input) }
+            fn parse(input: &mut Parser) -> Result<Self> {
+                <$ty>::parse(input)
+            }
             #[inline]
             fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
                 <$ty>::to_css(self, dest)
-            }
-            #[inline]
-            fn is_percentage_with_value(&self, v: f32) -> bool {
-                matches!(self, DimensionPercentage::Percentage(p) if p.v == v)
             }
         }
     };
@@ -344,64 +339,12 @@ impl LinearGradient {
             // todo_stuff.depth
             serialize_items::<LengthPercentage>(&self.items, dest)?;
         }
-        // If we have `to top` or `0deg`, and all of the positions and hints are percentages,
+        // If we have `to top` or `0deg`, and the stops can be mirrored,
         // we can flip the gradient the other direction and omit the direction.
         else if angle == 0.0
             && dest.minify
-            && 'brk: {
-                for item in self.items.iter() {
-                    match item {
-                        GradientItem::Hint(h) if !matches!(h, LengthPercentage::Percentage(_)) => {
-                            break 'brk false;
-                        }
-                        GradientItem::ColorStop(cs)
-                            if cs
-                                .position
-                                .as_ref()
-                                .is_some_and(|p| !matches!(p, LengthPercentage::Percentage(_))) =>
-                        {
-                            break 'brk false;
-                        }
-                        _ => {}
-                    }
-                }
-                true
-            }
+            && let Some(flipped_items) = mirrored_items(&self.items)
         {
-            let mut flipped_items: Vec<GradientItem<LengthPercentage>> =
-                Vec::with_capacity(self.items.len());
-
-            let mut i: usize = self.items.len();
-            while i > 0 {
-                i -= 1;
-                let item = &self.items[i];
-                match item {
-                    GradientItem::Hint(h) => match h {
-                        LengthPercentage::Percentage(p) => flipped_items.push(GradientItem::Hint(
-                            LengthPercentage::Percentage(Percentage { v: 1.0 - p.v }),
-                        )),
-                        _ => unreachable!(),
-                    },
-                    GradientItem::ColorStop(cs) => {
-                        flipped_items.push(GradientItem::ColorStop(ColorStop {
-                            color: cs.color.clone(),
-                            position: if let Some(p) = &cs.position {
-                                match p {
-                                    LengthPercentage::Percentage(perc) => {
-                                        Some(LengthPercentage::Percentage(Percentage {
-                                            v: 1.0 - perc.v,
-                                        }))
-                                    }
-                                    _ => unreachable!(),
-                                }
-                            } else {
-                                None
-                            },
-                        }))
-                    }
-                }
-            }
-
             if serialize_items::<LengthPercentage>(&flipped_items, dest).is_err() {
                 return Err(dest.add_fmt_error());
             }
@@ -1478,6 +1421,52 @@ pub(crate) fn parse_items<D: GradientPosition>(
     Ok(items)
 }
 
+/// `items` for the opposite direction, or `None` when the reversed list paints another gradient.
+fn mirrored_items(
+    items: &[GradientItem<LengthPercentage>],
+) -> Option<Vec<GradientItem<LengthPercentage>>> {
+    let mut largest = f32::NEG_INFINITY;
+    for (i, item) in items.iter().enumerate() {
+        let written = match item {
+            // A hint is not symmetric: at `1 - p` it gives another transition.
+            GradientItem::Hint(_) => return None,
+            GradientItem::ColorStop(stop) => match &stop.position {
+                // A NaN from `calc()` prints as 0%, and so would its mirror.
+                Some(LengthPercentage::Percentage(p)) if !p.v.is_nan() => p.v,
+                Some(_) => return None,
+                // Color stop fix-up puts an unpositioned first stop at 0% and last stop at 100%.
+                None if i == 0 => 0.0,
+                None if i + 1 == items.len() => 1.0,
+                None => continue,
+            },
+        };
+        // Fix-up raises a position to the largest one before it (parcel-bundler/lightningcss#1220).
+        if written < largest {
+            return None;
+        }
+        largest = written;
+    }
+    // The loop above refused every list that this one cannot mirror.
+    let mut mirrored = Vec::with_capacity(items.len());
+    for item in items.iter().rev() {
+        let GradientItem::ColorStop(stop) = item else {
+            return None;
+        };
+        let position = match &stop.position {
+            Some(LengthPercentage::Percentage(p)) => {
+                Some(LengthPercentage::Percentage(Percentage { v: 1.0 - p.v }))
+            }
+            Some(_) => return None,
+            None => None,
+        };
+        mirrored.push(GradientItem::ColorStop(ColorStop {
+            color: stop.color.clone(),
+            position,
+        }));
+    }
+    Some(mirrored)
+}
+
 fn serialize_items<D: GradientPosition>(
     items: &[GradientItem<D>],
     dest: &mut Printer,
@@ -1485,13 +1474,6 @@ fn serialize_items<D: GradientPosition>(
     let mut first = true;
     let mut last: Option<&GradientItem<D>> = None;
     for item in items.iter() {
-        // Skip useless hints
-        if let GradientItem::Hint(h) = item {
-            if h.is_percentage_with_value(0.5) {
-                continue;
-            }
-        }
-
         // Use double position stop if the last stop is the same color and all targets support it.
         if let Some(prev) = last {
             if !dest.targets.should_compile(

@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -4679,9 +4679,131 @@ describe("css tests", () => {
       ".foo { background: linear-gradient(yellow, 20%, blue); }",
       ".foo{background:linear-gradient(#ff0,20%,#00f)}",
     );
+    // lightningcss drops this hint. It is redundant here, but only the stops beside a hint can show that.
     minify_test(
       ".foo { background: linear-gradient(yellow, 50%, blue); }",
-      ".foo{background:linear-gradient(#ff0,#00f)}",
+      ".foo{background:linear-gradient(#ff0,50%,#00f)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(red 20%, 50%, blue 60%); }",
+      ".foo{background:linear-gradient(red 20%,50%,#00f 60%)}",
+    );
+    cssTest(
+      `
+      .foo {
+        background: linear-gradient(red 20%, 50%, blue 60%);
+      }
+    `,
+      indoc`
+      .foo {
+        background: linear-gradient(red 20%, 50%, #00f 60%);
+      }
+`,
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to right, red 20%, 50%, blue 60%); }",
+      ".foo{background:linear-gradient(90deg,red 20%,50%,#00f 60%)}",
+    );
+    minify_test(
+      ".foo { background: repeating-linear-gradient(red 20%, 50%, blue 60%); }",
+      ".foo{background:repeating-linear-gradient(red 20%,50%,#00f 60%)}",
+    );
+    minify_test(
+      ".foo { background: radial-gradient(red 20%, 50%, blue 60%); }",
+      ".foo{background:radial-gradient(red 20%,50%,#00f 60%)}",
+    );
+    minify_test(
+      ".foo { background: conic-gradient(red 20%, 50%, blue 60%); }",
+      ".foo{background:conic-gradient(red 20%,50%,#00f 60%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(red 10px, 50%, blue 200px); }",
+      ".foo{background:linear-gradient(red 10px,50%,#00f 200px)}",
+    );
+    // The hint raises `red 40%` to 50%, so the two red stops are not one double-position stop.
+    minify_test(
+      ".foo { background: linear-gradient(red 20%, 50%, red 40%, blue); }",
+      ".foo{background:linear-gradient(red 20%,50%,red 40%,#00f)}",
+    );
+    // A trailing hint is not valid. It is printed, so the value stays invalid.
+    minify_test(
+      ".foo { background: linear-gradient(red, blue, 50%); }",
+      ".foo{background:linear-gradient(red,#00f,50%)}",
+    );
+    // Chrome 30 has no hints. It drops the second declaration and uses the first one.
+    prefix_test(
+      ".foo { background-image: linear-gradient(red, blue); background-image: linear-gradient(red 20%, 50%, blue 60%) }",
+      indoc`
+      .foo {
+        background-image: linear-gradient(red, #00f);
+        background-image: linear-gradient(red 20%, 50%, #00f 60%);
+      }
+`,
+      { chrome: 30 << 16 },
+    );
+    test.each([
+      [false, "a {\n  background: linear-gradient(red 20%, 50%, #00f 60%);\n}\n"],
+      [true, "a{background:linear-gradient(red 20%,50%,#00f 60%)}\n"],
+    ])("Bun.build keeps a gradient color hint (minify: %p)", async (minify, expected) => {
+      using dir = tempDir("css-gradient-hint", {
+        "a.css": "a{background:linear-gradient(red 20%,50%,blue 60%)}",
+      });
+      const result = await Bun.build({ entrypoints: [join(String(dir), "a.css")], minify, throw: true });
+      const output = await result.outputs[0].text();
+      // Without `minify` the output starts with a `/* path */` line.
+      expect(output.replace(/^\/\*.*\*\/\n/, "")).toBe(expected);
+    });
+
+    // `to top` is printed as the default direction only when the reversed stops paint the same gradient.
+    minify_test(
+      ".foo { background: linear-gradient(to top, red, lime 30%, yellow, blue); }",
+      ".foo{background:linear-gradient(#00f,#ff0,#0f0 70%,red)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to top, red 50%, blue 50%); }",
+      ".foo{background:linear-gradient(#00f 50%,red 50%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to top, red -20%, blue 120%); }",
+      ".foo{background:linear-gradient(#00f -20%,red 120%)}",
+    );
+    // A hint is not symmetric: at `1 - p` it gives another transition.
+    minify_test(
+      ".foo { background: linear-gradient(to top, red, 25%, blue); }",
+      ".foo{background:linear-gradient(0deg,red,25%,#00f)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to top, yellow, 50%, blue); }",
+      ".foo{background:linear-gradient(0deg,#ff0,50%,#00f)}",
+    );
+    // From vidstack, player/styles/default/layouts/video.css.
+    minify_test(
+      ".foo { background-image: linear-gradient(to top, rgb(0 0 0 / 0.6), 10%, transparent, 95%, rgb(0 0 0 / 0.3)); }",
+      ".foo{background-image:linear-gradient(0deg,#0009,10%,#0000,95%,#0000004d)}",
+    );
+    // Color stop fix-up raises a position to the largest one before it. Reversed, it raises the other stop.
+    // https://github.com/parcel-bundler/lightningcss/issues/1220
+    minify_test(
+      ".foo { background: linear-gradient(0deg, #1f1f29 100%, #242430 0%); }",
+      ".foo{background:linear-gradient(0deg,#1f1f29 100%,#242430 0%)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to top, red 60%, blue 40%); }",
+      ".foo{background:linear-gradient(0deg,red 60%,#00f 40%)}",
+    );
+    // An unpositioned first stop is at 0% and an unpositioned last stop is at 100%.
+    minify_test(
+      ".foo { background: linear-gradient(to top, red, lime -20%, blue); }",
+      ".foo{background:linear-gradient(0deg,red,#0f0 -20%,#00f)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(to top, red, lime 120%, blue); }",
+      ".foo{background:linear-gradient(0deg,red,#0f0 120%,#00f)}",
+    );
+    // `calc(NaN * 1%)` is 0%. Its mirror is 100%, and `1 - NaN` is not.
+    minify_test(
+      ".foo { background: linear-gradient(to top, red, lime calc(NaN * 1%), blue); }",
+      ".foo{background:linear-gradient(0deg,red,#0f0 0%,#00f)}",
     );
     minify_test(
       ".foo { background: linear-gradient(yellow, 20px, blue); }",

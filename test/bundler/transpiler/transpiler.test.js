@@ -304,44 +304,27 @@ describe("Bun.Transpiler", () => {
       expect(JSON.parse(stdout)).toEqual(["aa", "bb", "c-c", "dd", "own", "h"]);
       expect(exitCode).toBe(0);
     });
-    it("keeps `this` where the read is or becomes a callee", async () => {
-      // A tag passes `this` like a call does, so the fold skips both.
-      ts.expectPrintedMin_("x = ({ f: function g() {} }).f`a`", "x = { f: function g() {} }.f`a`");
-      ts.expectPrintedMin_("x = ({ f: function() {} }).f`a`", "x = { f: function() {} }.f`a`");
-      // Elsewhere a function is read as a value: a later fold can make that read a callee.
+    it("keeps the read a value where a later rewrite makes it a callee", async () => {
+      // A function takes `this` from its call. The function that the fold used to
+      // leave was a value, so the read that stays is a value too.
       ts.expectPrintedMin_("x = ({ f: function() {} }).f", "x = (0, { f: function() {} }.f)");
       ts.expectPrintedMin_("x = (0, ({ f: function() {} }).f)`a`", "x = (0, { f: function() {} }.f)`a`");
 
       const X = `({ f: function () { "use strict"; return this; } }).f`;
-      const src = `
-        const show = v => (v === undefined ? "undefined" : "object");
-        function viaConst() { const t = ${X}; return t\`a\`; }
-        function viaLet() { let t = ${X}; return t\`a\`; }
-        console.log(JSON.stringify({
-          tag: show(${X}\`a\`),
-          namedTag: show(({ f: function g() { "use strict"; return this; } }).f\`a\`),
-          call: show(${X}()),
-          viaConst: show(viaConst()),
-          viaLet: show(viaLet()),
-          commaTag: show((0, ${X})\`a\`),
-          andTag: show((true && ${X})\`a\`),
-          orTag: show((false || ${X})\`a\`),
-          nullishTag: show((null ?? ${X})\`a\`),
-          ternaryTag: show((true ? ${X} : 0)\`a\`),
-          pureTestCall: show(([] ? ${X} : 0)()),
-          nullishAssignCall: show((({}).p ??= ${X})()),
-        }));
-      `;
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", src],
-        env: bunEnv,
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({
-        tag: "object",
-        namedTag: "object",
+      const rows = {
+        call: `${X}()`,
+        viaConst: `(() => { const t = ${X}; return t\`a\`; })()`,
+        viaLet: `(() => { let t = ${X}; return t\`a\`; })()`,
+        commaTag: `(0, ${X})\`a\``,
+        andTag: `(true && ${X})\`a\``,
+        orTag: `(false || ${X})\`a\``,
+        nullishTag: `(null ?? ${X})\`a\``,
+        ternaryTag: `(true ? ${X} : 0)\`a\``,
+        falseTestTag: `(false ? 0 : ${X})\`a\``,
+        pureTestTag: `([] ? ${X} : 0)\`a\``,
+        nullishAssignTag: `(({}).p ??= ${X})\`a\``,
+      };
+      const expected = {
         call: "object",
         viaConst: "undefined",
         viaLet: "undefined",
@@ -350,10 +333,43 @@ describe("Bun.Transpiler", () => {
         orTag: "undefined",
         nullishTag: "undefined",
         ternaryTag: "undefined",
+        falseTestTag: "undefined",
+        pureTestTag: "undefined",
+        nullishAssignTag: "undefined",
+      };
+      const source = rows => `
+        const show = v => (v === undefined ? "undefined" : v === globalThis ? "globalThis" : typeof v);
+        console.log(JSON.stringify({ ${Object.entries(rows)
+          .map(([name, expr]) => `${name}: show(${expr})`)
+          .join(", ")} }));
+      `;
+      const run = async (args, cwd) => {
+        await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd, stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+
+      // bun runs the source: every rewrite is in one pass.
+      const calls = { pureTestCall: `([] ? ${X} : 0)()`, nullishAssignCall: `(({}).p ??= ${X})()` };
+      const direct = await run(["-e", source({ ...rows, ...calls })]);
+      expect(direct.stderr).toBe("");
+      expect(JSON.parse(direct.stdout)).toEqual({
+        ...expected,
         pureTestCall: "undefined",
         nullishAssignCall: "undefined",
       });
-      expect(exitCode).toBe(0);
+      expect(direct.exitCode).toBe(0);
+
+      // `bun build` without --minify, then bun runs the bundle. The build folds
+      // `(true && x)` to `x` in front of the template, and the object fold runs
+      // when bun loads the bundle.
+      using dir = tempDir("object-fold-this", { "t.js": source(rows) });
+      const build = await run(["build", "t.js", "--outfile=o.js"], String(dir));
+      expect({ exitCode: build.exitCode, stderr: build.stderr }).toMatchObject({ exitCode: 0 });
+      const bundled = await run(["o.js"], String(dir));
+      expect(bundled.stderr).toBe("");
+      expect(JSON.parse(bundled.stdout)).toEqual(expected);
+      expect(bundled.exitCode).toBe(0);
     });
     it("bails out on optional-chain index into enum", () => {
       const pre = "enum Foo { A }\nenum Bar { 'a-b' = 1 }\n";

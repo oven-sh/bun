@@ -1707,6 +1707,8 @@ devTest("a server file that the server runtime does not parse is a build error",
         errors: ["routes/index.ts:1:24: error: Invalid regular expression: nothing to repeat"],
       });
     }
+    // The failure names who rejected the code: Bun can also print code for a valid file that JavaScriptCore rejects.
+    await dev.output.waitForLine(/JavaScriptCore rejected the code that Bun generated for this file/);
     expect((await dev.fetch("/")).status).toBe(500);
     // The framework's server entry point is in the chunk of the rejected file. It is loaded.
     await dev.fetch("/other").equals("other");
@@ -1787,30 +1789,138 @@ devTest("a hot update with a file that the server runtime does not parse loads i
     await dev.fetch("/other").equals("other v2");
   },
 });
-devTest("every file of a chunk that the server runtime does not parse is reported", {
-  framework: minimalFramework,
-  files: {
-    "rejected/regex-in-function.ts": `
+// Files that Bun's parser accepts and JavaScriptCore's parser rejects: the contents of each file, then its error.
+// JavaScriptCore reports the token where it stopped. That token is after the rejected code, except for the statements
+// that it rejects at their first token: `with`, `using` and `await using`.
+const rejectedByServerRuntime: Record<string, [contents: string | Buffer, error: string]> = {
+  "regex-in-function.ts": [
+    `
       export function match(text) {
         return /(/.test(text);
       }
     `,
-    "rejected/regex-last-in-array.ts": `
+    "2:10: error: Invalid regular expression: missing )",
+  ],
+  "regex-last-in-array.ts": [
+    `
       export const patterns = [
         /ok/,
         /[b-a]/
       ];
     `,
-    "rejected/regex-group-name.ts": `export const pattern = /(?<name>.)(?<name>.)/;`,
-    "rejected/new-target.ts": `export const target = new.target;`,
-    "rejected/new-target-in-arrow.ts": `export const target = () => new.target;`,
+    "3:3: error: Invalid regular expression: range out of order in character class",
+  ],
+  // The token after this pattern is the `)` of the call.
+  "regex-last-argument.ts": [
+    `
+      export const date = "2026-10".match(
+        /(?<part>\\d{4})-(?<part>\\d{2})/,
+      );
+    `,
+    "2:3: error: Invalid regular expression: duplicate group specifier name",
+  ],
+  "regex-group-name.ts": [
+    `export const pattern = /(?<name>.)(?<name>.)/;`,
+    "1:24: error: Invalid regular expression: duplicate group specifier name",
+  ],
+  "regex-first-token.ts": [`/a**/.test("");`, "1:1: error: Invalid regular expression: nothing to repeat"],
+  // The token after these patterns is the `)` of a parameter list.
+  "regex-in-parameter.ts": [
+    `export const match = (text, pattern = /a**/) => pattern.test(text);`,
+    "1:39: error: Invalid regular expression: nothing to repeat",
+  ],
+  "regex-in-parameter-without-exports.ts": [
+    `globalThis.match = (text, pattern = /a**/) => pattern.test(text);`,
+    "1:37: error: Invalid regular expression: nothing to repeat",
+  ],
+  "regex-in-parameter.cjs": [
+    `exports.match = (text, pattern = /a**/) => pattern.test(text);`,
+    "1:34: error: Invalid regular expression: nothing to repeat",
+  ],
+  "regex-in-commonjs.cjs": [
+    `
+      exports.ok = 1;
+      exports.pattern = /a**/;
+    `,
+    "2:19: error: Invalid regular expression: nothing to repeat",
+  ],
+  "regex-after-await.ts": [
+    `
+      await Promise.resolve();
+      export const pattern = /a**/;
+    `,
+    "2:24: error: Invalid regular expression: nothing to repeat",
+  ],
+  // The column counts UTF-16 code units.
+  "regex-after-non-ascii.ts": [
+    `export const s = "日本語😀éé"; export const pattern = /a**/;`,
+    "1:52: error: Invalid regular expression: nothing to repeat",
+  ],
+  "regex-after-crlf.ts": [
+    Buffer.from("export const a = 1;\r\nexport const pattern = /a**/;\r\n"),
+    "2:24: error: Invalid regular expression: nothing to repeat",
+  ],
+  "new-target.ts": [
+    `export const target = new.target;`,
+    "1:23: error: new.target is not valid inside arrow functions in global code.",
+  ],
+  "new-target-in-arrow.ts": [
+    `export const target = () => new.target;`,
+    "1:29: error: new.target is not valid inside arrow functions in global code.",
+  ],
+  "with-in-class.cjs": [
+    `
+      class Scope {
+        names(object) {
+          const names = [];
+          with (object) {
+            names.push(typeof name);
+          }
+          return names;
+        }
+      }
+      module.exports = Scope;
+    `,
+    "4:5: error: 'with' statements are not valid in strict mode.",
+  ],
+  "using-in-case.ts": [
+    `
+      export function open(kind, resource) {
+        switch (kind) {
+          case "file":
+            console.log(kind);
+            using handle = resource;
+            return handle;
+        }
+      }
+    `,
+    "5:7: error: 'using' declaration is not allowed directly in a switch case or default clause.",
+  ],
+  "await-using-in-case.ts": [
+    `
+      export async function open(kind, resource) {
+        switch (kind) {
+          case "file":
+            console.log(kind);
+            await using handle = resource;
+            return handle;
+        }
+      }
+    `,
+    "5:7: error: 'await using' declaration is not allowed directly in a switch case or default clause.",
+  ],
+};
+devTest("every file of a chunk that the server runtime does not parse is reported", {
+  framework: minimalFramework,
+  files: {
+    ...Object.fromEntries(
+      Object.entries(rejectedByServerRuntime).map(([name, [contents]]) => [`rejected/${name}`, contents]),
+    ),
     "accepted.ts": `export const accepted = "accepted";`,
     "routes/index.ts": `
-      import "../rejected/regex-in-function";
-      import "../rejected/regex-last-in-array";
-      import "../rejected/regex-group-name";
-      import "../rejected/new-target";
-      import "../rejected/new-target-in-arrow";
+      ${Object.keys(rejectedByServerRuntime)
+        .map(name => `import "../rejected/${name}";`)
+        .join("\n      ")}
       import { accepted } from "../accepted";
       export default function (req, meta) {
         return new Response("index " + accepted);
@@ -1826,26 +1936,17 @@ devTest("every file of a chunk that the server runtime does not parse is reporte
   async test(dev) {
     {
       await using c = await dev.client("/", {
-        errors: [
-          "rejected/regex-in-function.ts:2:10: error: Invalid regular expression: missing )",
-          "rejected/regex-last-in-array.ts:3:3: error: Invalid regular expression: range out of order in character class",
-          "rejected/regex-group-name.ts:1:24: error: Invalid regular expression: duplicate group specifier name",
-          "rejected/new-target.ts:1:23: error: new.target is not valid inside arrow functions in global code.",
-          "rejected/new-target-in-arrow.ts:1:29: error: new.target is not valid inside arrow functions in global code.",
-        ],
+        errors: Object.entries(rejectedByServerRuntime).map(([name, [, error]]) => `rejected/${name}:${error}`),
       });
     }
     // A route that imports none of the rejected files works, with the accepted file of that chunk.
     await dev.fetch("/other").equals("other accepted");
 
-    for (const file of [
-      "regex-in-function",
-      "regex-last-in-array",
-      "regex-group-name",
-      "new-target",
-      "new-target-in-arrow",
-    ]) {
-      await dev.write(`rejected/${file}.ts`, `export {};`, { errors: null });
+    {
+      await using batch = await dev.batchChanges({ errors: null });
+      for (const name of Object.keys(rejectedByServerRuntime)) {
+        await dev.write(`rejected/${name}`, "");
+      }
     }
     await dev.fetch("/").equals("index accepted");
   },
@@ -1874,23 +1975,26 @@ devTest("a client component that the server runtime does not parse is a build er
     `,
   },
   async test(dev) {
+    const rejected = dev.read("components/Button.ts");
+    const accepted = rejected.replace("/a**/", "/a*/");
+    const errors = ["components/Button.ts:2:24: error: Invalid regular expression: nothing to repeat"];
     {
-      await using c = await dev.client("/", {
-        errors: ["components/Button.ts:2:24: error: Invalid regular expression: nothing to repeat"],
-      });
+      await using c = await dev.client("/", { errors });
     }
-    await dev.write(
-      "components/Button.ts",
-      `
-        "use client";
-        export const pattern = /a*/;
-        export function Button() {}
-      `,
-    );
+    await dev.write("components/Button.ts", accepted);
+    await dev.fetch("/").equals("page: object");
+
+    // A hot update of the component that the server runtime has loaded.
+    await dev.write("components/Button.ts", rejected, { errors: null });
+    {
+      await using c = await dev.client("/", { errors });
+    }
+    await dev.write("components/Button.ts", accepted);
     await dev.fetch("/").equals("page: object");
   },
 });
-// JavaScriptCore does not run a Program while a Proxy is in the prototype chain of the global object.
+// JavaScriptCore does not run a Program while a Proxy is in the prototype chain of the global object. A server chunk is
+// a Program.
 devTest("a server chunk that throws when the server runtime loads it fails its files", {
   framework: minimalFramework,
   files: {
@@ -1907,9 +2011,11 @@ devTest("a server chunk that throws when the server runtime loads it fails its f
         return new Response(restore ? "restored" : "proxied");
       }
     `,
+    "message.ts": `export const message = "other";`,
     "routes/other.ts": `
+      import { message } from "../message";
       export default function (req, meta) {
-        return new Response("other");
+        return new Response(message);
       }
     `,
   },
@@ -1917,8 +2023,11 @@ devTest("a server chunk that throws when the server runtime loads it fails its f
     await dev.fetch("/").equals("index");
     await dev.fetch("/prototype").equals("proxied");
     {
+      // The error is not about one file, so each file of the chunk has it.
+      const error =
+        "error: The server code of this bundle did not load: Proxy is not allowed in the global prototype chain.";
       await using c = await dev.client("/other", {
-        errors: ["routes/other.ts: error: Proxy is not allowed in the global prototype chain."],
+        errors: [`message.ts: ${error}`, `routes/other.ts: ${error}`],
       });
     }
     // A route that was loaded before still works.
@@ -1970,6 +2079,103 @@ devTest("a server chunk that is not loaded keeps the source map of the loaded co
       `,
     );
     expect(await dev.fetch("/").text()).toBe(stack);
+  },
+});
+// JavaScriptCore's parser has the stack budget of this option. Bun's parser and printer have the stack of their thread,
+// so they accept a file that is too deep for JavaScriptCore.
+devTest("a server file that is too deep for the parser of the server runtime is a build error", {
+  framework: minimalFramework,
+  env: { BUN_JSC_maxPerThreadStackUsage: String(512 * 1024) },
+  files: {
+    "deep.ts": `export {};`,
+    "routes/index.ts": `
+      import "../deep";
+      export default function (req, meta) {
+        return new Response("index");
+      }
+    `,
+    // The first depth of nested blocks that JavaScriptCore's parser does not take in this build, with this budget.
+    "routes/depth.ts": `
+      export default function (req, meta) {
+        for (let depth = 8; ; depth = Math.ceil(depth * 1.25)) {
+          try {
+            new Function(Buffer.alloc(depth, "{").toString() + Buffer.alloc(depth, "}").toString());
+          } catch {
+            return new Response(String(depth));
+          }
+        }
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index");
+    const depth = 2 * Number(await dev.fetch("/depth").text());
+    const blocks = Buffer.alloc(depth, "{").toString() + Buffer.alloc(depth, "}").toString();
+
+    await dev.write("deep.ts", `${blocks}\nexport {};\n`, { errors: null });
+    {
+      await using c = await dev.client("/", {
+        // The column is the depth where JavaScriptCore stopped.
+        errors: [expect.stringMatching(/^deep\.ts:1:\d+: error: Maximum call stack size exceeded$/) as any],
+      });
+    }
+    await dev.write("deep.ts", `export {};`);
+    await dev.fetch("/").equals("index");
+  },
+});
+// A Program is alive while the server runtime, or anything else, holds the chunk that it ran.
+devTest("the server runtime does not keep the server chunks of rejected saves", {
+  framework: minimalFramework,
+  files: {
+    "version.ts": `export const version = 0;`,
+    "routes/index.ts": `
+      export default function (req, meta) {
+        return new Response("index");
+      }
+    `,
+    "routes/other.ts": `
+      import { version } from "../version";
+      export default function (req, meta) {
+        return new Response("other " + version);
+      }
+    `,
+    "routes/programs.ts": `
+      import { heapStats } from "bun:jsc";
+      export default function (req, meta) {
+        Bun.gc(true);
+        return new Response(String(heapStats().objectTypeCounts.ProgramExecutable ?? 0));
+      }
+    `,
+  },
+  async test(dev) {
+    const livePrograms = async () => Number(await dev.fetch("/programs").text());
+    const rejected = `export const pattern = /a**/;\n` + dev.read("routes/index.ts");
+    await dev.fetch("/").equals("index");
+    await dev.fetch("/other").equals("other 0");
+    const saves = 5;
+    const before = await livePrograms();
+
+    // The server runtime loads no file of these saves.
+    for (let save = 1; save <= saves; save++) {
+      await dev.write("routes/index.ts", rejected, { errors: null });
+      expect((await dev.fetch("/")).status).toBe(500);
+    }
+    const afterRejected = await livePrograms();
+
+    // The server runtime loads one of the two files of these saves.
+    for (let save = 1; save <= saves; save++) {
+      {
+        await using batch = await dev.batchChanges({ errors: null });
+        await dev.write("routes/index.ts", rejected);
+        await dev.write("version.ts", `export const version = ${save};`);
+      }
+      await dev.fetch("/other").equals("other " + save);
+    }
+    const afterPartlyRejected = await livePrograms();
+
+    // A chunk that is never released adds one for each save.
+    expect(afterRejected - before).toBeLessThan(saves - 2);
+    expect(afterPartlyRejected - afterRejected).toBeLessThan(saves - 2);
   },
 });
 devTest("a route loads after a request for it was answered with 413", {

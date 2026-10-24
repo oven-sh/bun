@@ -212,6 +212,47 @@ test.concurrent("Bun.serve({ app }) serves routes when root is a relative path",
   expect(exitCode).toBe(0);
 });
 
+// The server runtime of the dev server is a Program. JavaScriptCore does not run a Program while a Proxy is in the
+// prototype chain of the global object.
+test.concurrent("Bun.serve({ app }) throws what the server runtime throws when it loads", async () => {
+  using dir = tempDir("bake-app-runtime-throws", {
+    "server.ts": `export function render(req, meta) { return meta.pageModule.default(); }`,
+    "routes/index.ts": `export default () => new Response("index route");`,
+    "fixture.ts": `
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+      const options = { port: 0, development: true, app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      const prototype = Object.getPrototypeOf(globalThis);
+      Object.setPrototypeOf(globalThis, new Proxy(prototype, {}));
+      try {
+        Bun.serve(options).stop(true);
+        console.log("no error");
+      } catch (e) {
+        console.log("threw: " + e.message);
+      }
+      Object.setPrototypeOf(globalThis, prototype);
+      const server = Bun.serve(options);
+      const res = await fetch(server.url);
+      console.log(res.status + " " + (await res.text()));
+      await server.stop(true);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  // The dev server also prints a "Bundled page" line.
+  expect(stdout.split("\n")).toEqual(
+    expect.arrayContaining(["threw: Proxy is not allowed in the global prototype chain.", "200 index route"]),
+  );
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("Bun.serve({ app }) rejects a root longer than the path buffer", async () => {
   using dir = tempDir("bake-app-long-root", {
     "server.ts": `export function render() { return new Response("ok"); }`,

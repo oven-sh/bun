@@ -154,33 +154,10 @@ pub(super) fn drain_current_bundle_requests(current_bundle: &mut CurrentBundle) 
 
 /// Why the server runtime did not load a part of a bundle's server code.
 enum ServerPartRejection {
-    /// JavaScriptCore's parser stopped at this token of the part's code. The
-    /// position is zero-based, and `column` counts UTF-16 code units.
-    Parse {
-        message: BunString,
-        line: i32,
-        column: i32,
-    },
-    /// A failure of the chunk that names no place in the part's code.
+    /// JavaScriptCore did not parse the code of the part.
+    Parse(server_hmr_ffi::ParseFailure),
+    /// What the chunk of the part threw. It names no place in the part's code.
     Chunk(Rc<[u8]>),
-}
-
-impl ServerPartRejection {
-    /// `failure` is from a parse of `prefix` followed by the part's code.
-    fn from_parse_failure(failure: server_hmr_ffi::ParseFailure, prefix: &[u8]) -> Self {
-        let line = failure.line - strings::count_char(prefix, b'\n') as i32;
-        let column = if line == 0 {
-            let line_start = strings::last_index_of_char(prefix, b'\n').map_or(0, |i| i + 1);
-            failure.column - (prefix.len() - line_start) as i32
-        } else {
-            failure.column
-        };
-        Self::Parse {
-            message: failure.message,
-            line,
-            column,
-        }
-    }
 }
 
 /// What the server runtime did with the server code of a bundle.
@@ -188,8 +165,6 @@ impl ServerPartRejection {
 struct ServerPatch {
     /// The object of the loaded modules, and the provider of their source.
     /// `None` if the bundle has no server code, or the runtime loaded none.
-    /// The object is in a root handle: a copy of the value left in the frame
-    /// of `finalize_bundle` keeps the chunk alive after the bundle is done.
     loaded: Option<(jsc::Strong, server_hmr_ffi::ServerPatchProvider)>,
     /// How many parts `loaded` holds.
     loaded_count: usize,
@@ -240,13 +215,12 @@ fn load_server_patch(
     }
 
     let global = dev.global();
-    let options = incremental_graph::TakeJSBundleOptionsServer {
-        kind: ChunkKind::HmrChunk,
-    };
     let load = |files: &[(usize, &[u8])]| {
-        let (code, _) = IncrementalGraph::<{ bake::Side::Server }>::server_js_bundle(
+        let code = IncrementalGraph::<{ bake::Side::Server }>::server_js_bundle(
             files.iter().map(|file| file.1),
-            &options,
+            &incremental_graph::TakeJSBundleOptionsServer {
+                kind: ChunkKind::HmrChunk,
+            },
         );
         server_hmr_ffi::bake_load_server_hmr_patch(global, BunString::clone_utf8(&code))
     };
@@ -256,33 +230,26 @@ fn load_server_patch(
         loading,
         Err((
             _,
-            server_hmr_ffi::ServerPatchFailure::SyntaxError
-                | server_hmr_ffi::ServerPatchFailure::ParserOutOfStackOrMemory
+            server_hmr_ffi::ServerLoadFailure::SyntaxError
+                | server_hmr_ffi::ServerLoadFailure::ParserOutOfStackOrMemory
         ))
     ) {
         // The failure names one place in the chunk. Parse each part alone to
         // find every part JavaScriptCore rejects, then load the others.
         patch.rejected.resize_with(parts.len(), || None);
         let count = files.len();
-        files.retain(|&(position, file)| {
-            let (code, file_start) = IncrementalGraph::<{ bake::Side::Server }>::server_js_bundle(
-                ::core::iter::once(file),
-                &options,
-            );
-            match server_hmr_ffi::bake_check_server_hmr_patch_syntax(
+        files.retain(
+            |&(position, file)| match server_hmr_ffi::bake_check_server_hmr_module_syntax(
                 global,
-                BunString::clone_utf8(&code),
+                BunString::clone_utf8(file),
             ) {
                 Ok(()) => true,
                 Err(failure) => {
-                    patch.rejected[position] = Some(ServerPartRejection::from_parse_failure(
-                        failure,
-                        &code[..file_start],
-                    ));
+                    patch.rejected[position] = Some(ServerPartRejection::Parse(failure));
                     false
                 }
-            }
-        });
+            },
+        );
         if files.is_empty() {
             return patch;
         }
@@ -299,7 +266,7 @@ fn load_server_patch(
         }
         Err(failed) => failed,
     };
-    if failure == server_hmr_ffi::ServerPatchFailure::SyntaxError {
+    if failure == server_hmr_ffi::ServerLoadFailure::SyntaxError {
         // Each part of this chunk parses alone.
         dev.vm_mut().print_error_like_object_to_console(exception);
         panic!("Error thrown while evaluating server code. This is always a bug in the bundler.");
@@ -312,19 +279,16 @@ fn load_server_patch(
     patch
 }
 
-/// The message of what loading a server chunk threw.
+/// The message of what the load of a server chunk threw. The load runs no
+/// code of the user's, so that is an error JavaScriptCore made, or the
+/// termination of the runtime.
 fn thrown_message(global: &JSGlobalObject, exception: JSValue) -> Vec<u8> {
     if exception.is_termination_exception() {
-        return b"JavaScript execution was terminated while the server runtime loaded this file"
-            .to_vec();
+        return b"JavaScript execution was terminated".to_vec();
     }
-    match bun_ast_jsc::msg_from_js(global, Vec::new(), exception) {
-        Ok(msg) => msg.data.text.into_owned(),
-        Err(_) => {
-            let _ = global.clear_exception_except_termination();
-            b"The server runtime threw a value that could not be converted to a string".to_vec()
-        }
-    }
+    let mut holder = jsc::zig_exception::Holder::init();
+    exception.to_zig_exception(global, holder.zig_exception());
+    holder.zig_exception().message.to_owned_slice()
 }
 
 /// The failure to report for a part that the server runtime rejected.
@@ -336,32 +300,41 @@ fn server_part_rejection_log(
 ) -> Log {
     let mut log = Log::init();
     match rejection {
-        ServerPartRejection::Parse {
-            message,
-            line,
-            column,
-        } => log.add_error(
+        ServerPartRejection::Parse(failure) => log.add_range_error_with_notes(
             Some(source),
-            source_map
-                .and_then(|map| source_loc_before(source, map, *line, *column))
-                .unwrap_or(bun_ast::Loc::EMPTY),
-            message.to_owned_slice(),
+            bun_ast::Range {
+                loc: source_map
+                    .and_then(|map| parse_failure_loc(source, map, failure))
+                    .unwrap_or(bun_ast::Loc::EMPTY),
+                ..Default::default()
+            },
+            failure.message.to_owned_slice(),
+            // The file can be valid: Bun can print code that is not.
+            Box::new([bun_ast::range_data(
+                None,
+                bun_ast::Range::NONE,
+                "JavaScriptCore rejected the code that Bun generated for this file",
+            )]),
         ),
-        ServerPartRejection::Chunk(message) => {
-            log.add_error(Some(source), bun_ast::Loc::EMPTY, message.to_vec())
-        }
+        ServerPartRejection::Chunk(message) => log.add_error_fmt(
+            Some(source),
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "The server code of this bundle did not load: {}",
+                bstr::BStr::new(message)
+            ),
+        ),
     }
     log
 }
 
-/// Where in `source` the code before (`line`, `column`) of its generated code
-/// came from. JavaScriptCore's parser stops at the token after a construct it
-/// rejects as a whole, such as a regular expression.
-fn source_loc_before(
+/// Where in `source` the code that JavaScriptCore rejected came from: the last
+/// position that `map` has before the token of `failure`. For most rejections
+/// the parser stops after the rejected code, so this is the end of that code.
+fn parse_failure_loc(
     source: &bun_ast::Source,
     map: &bun_sourcemap::Chunk,
-    line: i32,
-    column: i32,
+    failure: &server_hmr_ffi::ParseFailure,
 ) -> Option<bun_ast::Loc> {
     let mappings = bun_sourcemap::mapping::parse(
         map.buffer.list.as_slice(),
@@ -370,13 +343,14 @@ fn source_loc_before(
         bun_sourcemap::mapping::ParseOptions::default(),
     )
     .ok()?;
+    let token = (failure.line, failure.column);
     let mut original: Option<bun_sourcemap::LineColumnOffset> = None;
     mappings.for_each_mapping(|mapping| {
         let generated = (
             mapping.generated.lines.zero_based(),
             mapping.generated.columns.zero_based(),
         );
-        if generated < (line, column) {
+        if generated < token || (failure.at_rejected_code && generated == token) {
             original = Some(mapping.original);
         }
     });

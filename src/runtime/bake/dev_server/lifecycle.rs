@@ -751,14 +751,8 @@ impl DevServer {
                 .unwrap_or(false),
         ) {
             Ok(v) => v,
-            // Nothing says that what the dev server bundles is static code.
-            Err(err)
-                if bun_core::code_generation_from_strings()
-                    == bun_core::CodeGenerationFromStrings::Strict =>
-            {
-                return Err(err);
-            }
-            Err(err) => {
+            // The runtime is Bun's code, so only Bun can make it fail to parse.
+            Err((err, server_hmr_ffi::ServerLoadFailure::SyntaxError)) => {
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
                 // `print_error_like_object_to_console` needs `&mut VM`, so cast
                 // the shared borrow through a raw pointer (single-threaded JS).
@@ -766,6 +760,10 @@ impl DevServer {
                     .print_error_like_object_to_console(global.take_exception(err));
                 panic!("Server runtime failed to start. The above error is always a bug in Bun");
             }
+            // The program of the user can make the runtime throw: it replaced a
+            // global, it left almost no stack, or it runs with an option that
+            // refuses code that is not static.
+            Err((err, _)) => return Err(err),
         };
 
         if !interface.is_object() {

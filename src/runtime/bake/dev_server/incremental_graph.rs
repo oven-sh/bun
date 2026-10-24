@@ -1928,12 +1928,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     }
 
     /// The text of a server chunk that holds `files`: one Program that
-    /// evaluates to the object of their modules. Also returns where the first
-    /// file starts in the text.
+    /// evaluates to the object of their modules.
     pub(crate) fn server_js_bundle<'a>(
         files: impl Iterator<Item = &'a [u8]> + Clone,
         options: &TakeJSBundleOptionsServer,
-    ) -> (Vec<u8>, usize) {
+    ) -> Vec<u8> {
         debug_assert!(matches!(SIDE, Side::Server));
 
         let runtime: bake::HmrRuntime = match options.kind {
@@ -1956,7 +1955,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
         list.extend_from_slice(end);
 
-        (list, runtime_code.len())
+        list
     }
 
     /// `IncrementalGraph(side).takeSourceMap` (spec :1843).

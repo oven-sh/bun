@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 use super::*;
 use crate::bake::source_provider_exports::DevServerSourceProvider;
 
-/// What JavaScriptCore's parser reports for source it rejects. Mirrors
+/// What JavaScriptCore's parser reports for a module it rejects. Mirrors
 /// `Bake::ParseFailure` in BakeSourceProvider.cpp.
 #[repr(C)]
 pub(super) struct ParseFailure {
@@ -14,17 +14,30 @@ pub(super) struct ParseFailure {
     /// counts UTF-16 code units.
     pub(super) line: i32,
     pub(super) column: i32,
+    /// The token starts the code that the parser rejects. If false, the token
+    /// is after that code.
+    pub(super) at_rejected_code: bool,
 }
 
-/// Why a server patch did not load. `Bake::ServerPatchFailure` in
+/// Why server code did not load. `Bake::ServerLoadFailure` in
 /// BakeSourceProvider.cpp has the values.
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub(super) enum ServerPatchFailure {
-    /// The patch threw when it ran.
+pub(super) enum ServerLoadFailure {
+    /// The code threw when it ran.
     Threw,
-    /// JavaScriptCore did not parse the patch, so none of it ran.
+    /// JavaScriptCore did not parse the code, so none of it ran.
     SyntaxError,
     ParserOutOfStackOrMemory,
+}
+
+impl ServerLoadFailure {
+    fn decode(failure: u8) -> Self {
+        match failure {
+            1 => Self::SyntaxError,
+            2 => Self::ParserOutOfStackOrMemory,
+            _ => Self::Threw,
+        }
+    }
 }
 
 /// A ref on the C++ `DevServerSourceProvider` of a loaded server patch.
@@ -71,7 +84,7 @@ impl Drop for ServerPatchProvider {
 pub(super) fn bake_load_server_hmr_patch(
     global: &JSGlobalObject,
     code: BunString,
-) -> Result<(JSValue, ServerPatchProvider), (JSValue, ServerPatchFailure)> {
+) -> Result<(JSValue, ServerPatchProvider), (JSValue, ServerLoadFailure)> {
     unsafe extern "C" {
         safe fn BakeLoadServerHmrPatch(
             global: &JSGlobalObject,
@@ -91,24 +104,21 @@ pub(super) fn bake_load_server_hmr_patch(
         )),
         Err(err) => Err((
             global.take_exception(err),
-            match failure {
-                1 => ServerPatchFailure::SyntaxError,
-                2 => ServerPatchFailure::ParserOutOfStackOrMemory,
-                _ => ServerPatchFailure::Threw,
-            },
+            ServerLoadFailure::decode(failure),
         )),
     }
 }
 
-/// Parses `code` the way `bake_load_server_hmr_patch` does, without running it.
-pub(super) fn bake_check_server_hmr_patch_syntax(
+/// Parses one module of a server patch the way `bake_load_server_hmr_patch`
+/// does, without running it.
+pub(super) fn bake_check_server_hmr_module_syntax(
     global: &JSGlobalObject,
-    code: BunString,
+    module: BunString,
 ) -> Result<(), ParseFailure> {
     unsafe extern "C" {
-        safe fn BakeCheckServerHmrPatchSyntax(
+        safe fn BakeCheckServerHmrModuleSyntax(
             global: &JSGlobalObject,
-            code: BunString,
+            module: BunString,
             failure: &mut ParseFailure,
         ) -> bool;
     }
@@ -116,27 +126,32 @@ pub(super) fn bake_check_server_hmr_patch_syntax(
         message: BunString::EMPTY,
         line: 0,
         column: 0,
+        at_rejected_code: false,
     };
-    if BakeCheckServerHmrPatchSyntax(global, code, &mut failure) {
+    if BakeCheckServerHmrModuleSyntax(global, module, &mut failure) {
         Ok(())
     } else {
         Err(failure)
     }
 }
 
+/// `Err` holds what the load threw, and why.
 pub(super) fn bake_load_initial_server_code(
     global: &JSGlobalObject,
     code: BunString,
     separate_ssr_graph: bool,
-) -> JsResult<JSValue> {
+) -> Result<JSValue, (jsc::JsError, ServerLoadFailure)> {
     unsafe extern "C" {
         safe fn BakeLoadInitialServerCode(
             global: &JSGlobalObject,
             code: BunString,
             separate_ssr_graph: bool,
+            failure: &mut u8,
         ) -> JSValue;
     }
+    let mut failure: u8 = 0;
     jsc::from_js_host_call(global, || {
-        BakeLoadInitialServerCode(global, code, separate_ssr_graph)
+        BakeLoadInitialServerCode(global, code, separate_ssr_graph, &mut failure)
     })
+    .map_err(|err| (err, ServerLoadFailure::decode(failure)))
 }

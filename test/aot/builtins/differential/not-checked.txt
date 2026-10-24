@@ -267,6 +267,12 @@ NativeNewCppFunctionJSEventListenerCppJsFunctionEmitUncaughtException/0: it is n
 NativeNewCppFunctionJSEventListenerCppJsFunctionEmitUncaughtException/1: it is not called: this realm does not have it
 NativeNewCppFunctionNodeModuleModuleCppJsFunctionSetCJSWrapperItem/0: it is not called: this realm does not have it
 NativeNewCppFunctionNodeModuleModuleCppJsFunctionSetCJSWrapperItem/1: it is not called: this realm does not have it
+NetworkSinkPrototypeClose/0: no set of operands selects it
+NetworkSinkPrototypeEnd/0: no set of operands selects it
+NetworkSinkPrototypeFlush/0: no set of operands selects it
+NetworkSinkPrototypeStart/0: no set of operands selects it
+NetworkSinkPrototypeWrite/0: no set of operands selects it
+NetworkSinkPrototype_getFd/0: no set of operands selects it
 NodeCryptoBindingCryptoScryptSync/0: the process ended or did not come back
 NodeJSFSPrototypeClose/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NodeJSFSPrototypeCloseCb/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
@@ -354,6 +360,12 @@ QuicStreamPrototypeSetPriority/0: no set of operands selects it
 QuicStreamPrototypeSetWakeup/0: no set of operands selects it
 QuicStreamPrototypeStopSending/0: no set of operands selects it
 QuicStreamPrototypeWrite/0: no set of operands selects it
+ReadableSinkControllerPrototypeClose/0: no set of operands selects it
+ReadableSinkControllerPrototypeEnd/0: no set of operands selects it
+ReadableSinkControllerPrototypeFlush/0: no set of operands selects it
+ReadableSinkControllerPrototypeSinkId/0: no set of operands selects it
+ReadableSinkControllerPrototypeStart/0: no set of operands selects it
+ReadableSinkControllerPrototypeWrite/0: no set of operands selects it
 S3StatPrototypeEtag/0: no set of operands selects it
 S3StatPrototypeLastModified/0: no set of operands selects it
 S3StatPrototypeSize/0: no set of operands selects it

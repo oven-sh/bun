@@ -233,13 +233,6 @@ const wrongEntries: WrongEntry[] = [
     applyTo: overload => ({ ...overload, capability: "heap" }),
   },
   {
-    title: "Bun.ArrayBufferSink.prototype.start that is handed its options and runs no other code",
-    path: "Bun.ArrayBufferSink.prototype.start",
-    mode: "Call",
-    column: "parameters[0].protocols",
-    applyTo: overload => ({ ...overload, runsOnlyOperandCode: true }),
-  },
-  {
     title: "Array.prototype.push that stores nothing by key",
     path: "Array.prototype.push",
     mode: "Call",

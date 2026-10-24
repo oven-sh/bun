@@ -1,11 +1,12 @@
 use super::*;
-use crate::builtins::{RuntimeFunction, RuntimeModule};
-use crate::ir::generated::{FieldFlags, FunctionVisibility, RuntimeFunctionEntry};
+use crate::builtins::RuntimeFunction;
+use crate::ir::generated::FieldFlags;
 use crate::ir::{FunctionKey, PropertyKeyId};
-use crate::link::program_keys::{InProject, ProgramModule};
+use crate::link::program_keys::ProgramModule;
 use crate::link::testing::{
-    Prepared, Projects, SHARED_NAME_IMPORTERS, application_file, define_test_function, find_file,
-    find_synthetic_export, in_application, link_sources_without_bun_modules, prepare, reverse,
+    COMMON_JS_IMPORTER, Prepared, Projects, SHARED_NAME_IMPORTERS, application_file,
+    create_runtime_function, define_test_function, find_file, find_synthetic_export,
+    in_application, key_in, link_sources_without_bun_modules, path_source, prepare, reverse,
     test_class_key, test_function_key, test_object_type_key, test_variable_key, unit_in,
     with_projects, with_projects_without_bun_modules, with_test_files,
 };
@@ -92,17 +93,6 @@ fn variable_fragment(file: FileId, key: VariableKey) -> Fragment {
     let mut fragment = FragmentBuilder::new(file);
     define_variable(&mut fragment, key);
     finish(fragment)
-}
-
-fn path_source_index(projects: &Projects<'_, '_>, modules: &ModuleTable) -> u32 {
-    let file = projects
-        .runtime
-        .sources
-        .runtime_module_file(RuntimeModule::NodePath);
-    modules.index_of(ProgramModule::File(ProgramFile {
-        project: ProjectId::Runtime,
-        file: file.expect("the runtime project has no source of node:path"),
-    }))
 }
 
 fn synthetic_key(
@@ -329,22 +319,11 @@ fn equal_keys_of_two_projects_do_not_conflict() {
                 project,
                 file: main,
             });
-            let function_key = InProject {
-                project,
-                key: function,
-            };
-            let site = function_site(&prepared, function_key);
+            let site = function_site(&prepared, key_in(project, function));
             assert_eq!(defining_file(&prepared, site), file);
-            let layout_key = InProject {
-                project,
-                key: layout,
-            };
-            let site = layout_site(&prepared, layout_key);
+            let site = layout_site(&prepared, key_in(project, layout));
             assert_eq!(defining_file(&prepared, site), file);
-            let variable_key = ProgramVariableKey::Declared(InProject {
-                project,
-                key: variable,
-            });
+            let variable_key = ProgramVariableKey::Declared(key_in(project, variable));
             let Some(VariableDefinition::Unit(site)) = variable_definition(&prepared, variable_key)
             else {
                 panic!("each project defines its variable");
@@ -356,14 +335,7 @@ fn equal_keys_of_two_projects_do_not_conflict() {
 
 #[test]
 fn only_link_defines_synthetic_exports() {
-    let files = [
-        (
-            "main.js",
-            "import { a, b } from './legacy.cjs';\nconsole.log(a, b);\n",
-        ),
-        ("legacy.cjs", "exports.a = 1;\nexports.b = 2;\n"),
-    ];
-    with_projects_without_bun_modules(&files, |projects| {
+    with_projects_without_bun_modules(&COMMON_JS_IMPORTER, |projects| {
         let main = find_file(projects, "main.js");
         let id = find_synthetic_export(projects, ProjectId::Application, b"a");
         let fragment = variable_fragment(main, VariableKey::SyntheticExport(id));
@@ -467,8 +439,9 @@ fn synthetic_export_of_two_projects_is_one_variable() {
         );
 
         let name = projects.application.loaded.files().atoms.intern(b"shared");
+        let exporter = ProgramModule::File(path_source(projects));
         let definition = VariableDefinition::SyntheticExport {
-            module: path_source_index(projects, &prepared.modules),
+            module: prepared.modules.index_of(exporter),
             name,
             is_known_member: false,
             writer: ExportWriter::Loader,
@@ -532,18 +505,12 @@ fn edge_fragment(file: FileId, edges: &[(LayoutKey, LayoutKey)]) -> Fragment {
 }
 
 fn choose_in_reverse(prepared: &Prepared, projects: &Projects<'_, '_>) -> Definitions {
-    let input = MergeInput {
-        units: &prepared.units,
-        projects,
-        modules: &prepared.modules,
-        functions: &prepared.functions,
-        layouts: &prepared.layouts,
-        variables: &prepared.variables,
-        in_parallel: &reverse,
-        beside: &crate::link::run_one_after_the_other,
-    };
+    let (merged, beside) = (
+        prepared.merged(&reverse),
+        &crate::link::run_one_after_the_other,
+    );
     let mut errors = Vec::new();
-    let definitions = choose_definitions(&input, &mut errors);
+    let definitions = choose_definitions(&merged, projects, beside, &mut errors);
     assert!(errors.is_empty(), "{errors:?}");
     definitions
 }
@@ -572,11 +539,7 @@ fn runtime_function_fragment(file: FileId, ids: &[u32]) -> Fragment {
     let mut fragment = FragmentBuilder::new(file);
     for (index, &id) in (0..).zip(ids) {
         let function = fragment.declare_function(test_function_key(file.0, index));
-        fragment.add_runtime_function(RuntimeFunctionEntry {
-            id: RuntimeFunction(id),
-            function,
-            visibility: FunctionVisibility::Public,
-        });
+        fragment.add_runtime_function(create_runtime_function(id, function));
     }
     finish(fragment)
 }

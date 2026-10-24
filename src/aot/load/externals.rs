@@ -52,7 +52,7 @@ fn matches_path(paths: &[Vec<u8>], specifier: &[u8], directory: &[u8]) -> bool {
         .is_some_and(|path| contains(paths, path))
 }
 
-fn contains(sorted_list: &[Vec<u8>], item: &[u8]) -> bool {
+pub(crate) fn contains(sorted_list: &[Vec<u8>], item: &[u8]) -> bool {
     sorted_list
         .binary_search_by(|entry| entry.as_slice().cmp(item))
         .is_ok()

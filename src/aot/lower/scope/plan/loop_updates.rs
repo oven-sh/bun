@@ -1,4 +1,4 @@
-use bun_sema::bind::{BindingStability, Bound, ScopeId};
+use bun_sema::bind::{Bound, ScopeId};
 use bun_sema::fold::{TreeNode, push_children};
 use bun_sema::hir::{self, ExprId, StmtId, StmtKind, VarKind};
 use smallvec::SmallVec;
@@ -67,14 +67,11 @@ pub(super) fn is_stored_only_by_own_loop_update(
     let Some(update) = find_by_key(&context.loop_updates, context.scope_of(binding)) else {
         return false;
     };
-    let bound = context.input.bound;
-    if bound.is_visible_to_eval(symbol) {
+    if context.input.bound.is_visible_to_eval(symbol) {
         return false;
     }
     let Some(targets) = collect_store_targets(context, update) else {
         return false;
     };
-    let is_ignored_store =
-        |target: ExprId| context.decisions.is_dead_expr(target) || targets.contains(&target);
-    bound.binding_stability_ignoring(symbol, &is_ignored_store) == BindingStability::Stable
+    context.is_stable_ignoring(symbol, |target| targets.contains(&target))
 }

@@ -1,7 +1,7 @@
 use super::*;
 use crate::builtins::{BuiltinName, RuntimeModule};
 use crate::modules::BindInput;
-use crate::modules::testing::{file_named, with_graph};
+use crate::modules::testing::{file_named, symbol_named, with_graph};
 use bun_sema::bind::{
     BindingStability, NamespaceReferent, StaticReferent, UnknownReferent, symbol_referent,
 };
@@ -14,16 +14,26 @@ type Referent = StaticReferent<BuiltinId, ModuleRef>;
 const UNLINKED_IMPORT: Referent = StaticReferent::Unknown(UnknownReferent::UnlinkedImport);
 const CLASS_FILE: (&str, &str) = ("a.js", "export class A {}\n");
 
-struct BoundProgram<'a, 'i, 's> {
-    graph: &'a ModuleGraph,
-    input: &'a BindInput<'i, 's>,
+pub(super) struct BoundProgram<'a, 'i, 's> {
+    pub(super) graph: &'a ModuleGraph,
+    pub(super) input: &'a BindInput<'i, 's>,
 }
 
-fn with_program(files: &[(&str, &str)], check: impl FnOnce(&BoundProgram<'_, '_, '_>)) {
+pub(super) fn with_program(files: &[(&str, &str)], check: impl FnOnce(&BoundProgram<'_, '_, '_>)) {
     with_graph(files, |graph, input| check(&BoundProgram { graph, input }));
 }
 
-impl BoundProgram<'_, '_, '_> {
+impl<'s> BoundProgram<'_, '_, 's> {
+    pub(super) fn project(&self) -> LinkedProject<'_, 's> {
+        LinkedProject {
+            files: self.input.files,
+            graph: self.graph,
+            builtin_names: self.input.builtin_names,
+            platform: self.input.platform,
+            library: None,
+        }
+    }
+
     fn namespace(&self, name: &str) -> Referent {
         let module = ModuleRef::File(file_named(self.input, name));
         StaticReferent::Namespace(NamespaceReferent::Module(module))
@@ -37,20 +47,9 @@ impl BoundProgram<'_, '_, '_> {
     }
 
     fn referent(&self, file: &str, local_name: &str) -> Referent {
-        let files = self.input.files;
         let file = file_named(self.input, file);
-        let bound = files.bound(file);
-        let name = files.atoms.intern(local_name.as_bytes());
-        let id = bound.lookup(bound.scopes[0].locals, name);
-        let id = id.expect("the file scope does not declare the name");
-        let context = LinkedProject {
-            files,
-            graph: self.graph,
-            builtin_names: self.input.builtin_names,
-            platform: self.input.platform,
-            library: None,
-        };
-        symbol_referent(&context, Sym { file, id }).referent
+        let id = symbol_named(self.input, file, local_name);
+        symbol_referent(&self.project(), Sym { file, id }).referent
     }
 
     fn builtin_name(&self, text: &str) -> BuiltinName {

@@ -54,25 +54,19 @@ fn implicit_reference_path(
 
 impl Resolver<'_, '_> {
     pub(super) fn collect_exported_symbols(&mut self) {
-        if self.has_facts() {
+        if self.facts.is_some() {
             return;
         }
         let input = self.input;
-        for index in 0..input.hir.export_specs.len() as u32 {
-            let spec = ExportSpecId(index);
+        let specs = (0..input.hir.export_specs.len() as u32).map(ExportSpecId);
+        let exported = specs.filter(|&spec| {
             let export = &input.hir[input.hir[spec].export];
-            if export.has_module_specifier || export.type_only || input.hir[spec].type_only {
-                continue;
-            }
-            match input.bound.exported_binding(spec) {
-                Binding::Symbol(symbol) => {
-                    self.exported_symbols.insert(symbol);
-                }
-                Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => {}
-            }
-        }
-        for reference in input.bound.runtime.implicit_references() {
-            match reference.binding {
+            !export.has_module_specifier && !export.type_only && !input.hir[spec].type_only
+        });
+        let exported = exported.map(|spec| input.bound.exported_binding(spec));
+        let implicit = input.bound.runtime.implicit_references().iter();
+        for binding in exported.chain(implicit.map(|reference| reference.binding)) {
+            match binding {
                 Binding::Symbol(symbol) => {
                     self.exported_symbols.insert(symbol);
                 }
@@ -97,24 +91,17 @@ impl Resolver<'_, '_> {
         }
     }
 
-    fn find_exposed_object(id: BuiltinId) -> Option<BuiltinId> {
-        if table::entry(id)
-            .flags
-            .contains(BuiltinFlags::IS_GLOBAL_OBJECT)
-        {
-            Some(BuiltinId::GlobalThis)
-        } else {
-            exposes_members(id).then_some(id)
-        }
-    }
-
     pub(super) fn expose(&mut self, id: BuiltinId) {
         self.output.called.push(id);
         // Whoever has it makes a `require` that nobody follows.
         if makes_require(id) {
             self.output.called.push(BuiltinId::ModuleRequire);
         }
-        self.output.exposed.extend(Self::find_exposed_object(id));
+        if table::has_flag(id, BuiltinFlags::IS_GLOBAL_OBJECT) {
+            self.output.exposed.push(BuiltinId::GlobalThis);
+        } else if exposes_members(id) {
+            self.output.exposed.push(id);
+        }
     }
 
     pub(super) fn classify_mentions(&mut self) {

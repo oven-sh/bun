@@ -3,7 +3,7 @@ use bun_builtin_sources::Archive;
 use bun_options_types::aot_options::AotOptions;
 use bun_sema::fold::FoldOptions;
 use bun_sema::hir::FileKind;
-use bun_sema::hir_from_data::{DataModule, DataValue};
+use bun_sema::hir_from_data::DataModule;
 use bun_sema::module_format::DeclaredModuleType;
 use bun_sema::program::HostModuleId;
 use bun_sema::resolve::{CodeOptions, ParseOptions, TranspileSettings};
@@ -18,7 +18,7 @@ use crate::diagnostics::Diagnostics;
 use crate::engine::ExecutableIdentity;
 use crate::load::host_platform;
 use crate::load::source_provider::{
-    DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, ModuleName, Resolution, ResolveRequest,
+    DeferredLoad, Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest,
     WithoutServices,
 };
 use crate::options::{LoadOptions, PathOptions, RemovableOptions};
@@ -131,26 +131,6 @@ impl SourceProvider for ScriptedProvider {
         WithoutServices.parse_data(file, arena, atoms, log)
     }
 
-    fn run_macro<'s>(
-        &self,
-        call: &MacroCall<'_, 's>,
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<&'s DataValue<'s>, Failed> {
-        WithoutServices.run_macro(call, arena, atoms, log)
-    }
-
-    fn bundle_pages<'s>(
-        &self,
-        pages: &[&[u8]],
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<Vec<&'s DataValue<'s>>, Failed> {
-        WithoutServices.bundle_pages(pages, arena, atoms, log)
-    }
-
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
         WithoutServices.check_embedded_files(log)
     }
@@ -211,13 +191,17 @@ impl<'s> Fixture<'_, 's> {
     }
 
     fn take_messages(&self) -> Vec<Vec<u8>> {
-        let mut diagnostics = Diagnostics::new();
-        diagnostics.add_load_messages(self.messages);
-        let mut log = Log::init();
-        diagnostics.write_to(&mut log);
-        let messages = log.msgs.iter();
-        messages.map(|message| message.data.text.to_vec()).collect()
+        take_messages(self.messages)
     }
+}
+
+pub(crate) fn take_messages(messages: &LoadMessages) -> Vec<Vec<u8>> {
+    let mut diagnostics = Diagnostics::new();
+    diagnostics.add_load_messages(messages);
+    let mut log = Log::init();
+    diagnostics.write_to(&mut log);
+    let messages = log.msgs.iter();
+    messages.map(|message| message.data.text.to_vec()).collect()
 }
 
 fn with_host<R>(files: &[(&str, &str)], then: impl FnOnce(&Fixture<'_, '_>) -> R) -> R {
@@ -227,15 +211,7 @@ fn with_host<R>(files: &[(&str, &str)], then: impl FnOnce(&Fixture<'_, '_>) -> R
     };
     let mut in_memory_files: Vec<(Vec<u8>, Vec<u8>)> = files.iter().map(in_memory_file).collect();
     in_memory_files.sort_unstable();
-    with_host_in(b"/project", in_memory_files, then)
-}
-
-fn with_host_in<R>(
-    root: &[u8],
-    in_memory_files: Vec<(Vec<u8>, Vec<u8>)>,
-    then: impl FnOnce(&Fixture<'_, '_>) -> R,
-) -> R {
-    with_host_under(AotOptions::default(), root, in_memory_files, then)
+    with_host_under(AotOptions::default(), b"/project", in_memory_files, then)
 }
 
 fn with_host_under<R>(
@@ -315,7 +291,7 @@ fn loader_of(host: &LoadHost<'_>, path: &[u8], type_attribute: Option<&[u8]>) ->
     })
 }
 
-fn payload_of<'p>(parsed: &'p ParsedCode<'_>) -> &'p ParsedSource {
+pub(crate) fn payload_of<'p>(parsed: &'p ParsedCode<'_>) -> &'p ParsedSource {
     let payload = parsed
         .payload
         .as_ref()
@@ -340,19 +316,15 @@ fn resolve_code_takes_first_claim() {
     with_host(&[], |fixture| {
         let unclaimed = HostResolution::Unclaimed;
         assert_eq!(fixture.resolve(b"bun:bundle", MAIN), HostResolution::Erased);
-        assert_eq!(
-            fixture.resolve(b"fs", MAIN),
-            module_by_id(RuntimeModule::NodeFs)
-        );
+        let expected = module_by_id(RuntimeModule::NodeFs);
+        assert_eq!(fixture.resolve(b"fs", MAIN), expected);
         assert!(fixture.take_calls().is_empty());
 
         let claimed = HostResolution::Path(CLAIMED.to_vec());
         assert_eq!(fixture.resolve(b"./lib", MAIN), claimed);
         assert_eq!(fixture.resolve(b"claimed-package", MAIN), claimed);
-        assert_eq!(
-            fixture.resolve(b"./outside", MAIN),
-            uncompiled_code(b"renamed-outside")
-        );
+        let expected = uncompiled_code(b"renamed-outside");
+        assert_eq!(fixture.resolve(b"./outside", MAIN), expected);
         assert_eq!(fixture.resolve(b"react", MAIN), uncompiled_code(b"react"));
         assert_eq!(fixture.resolve(b"react", b""), unclaimed);
         assert_eq!(fixture.resolve(b"./nothing", MAIN), unclaimed);
@@ -403,10 +375,8 @@ fn bun_module_is_answered_by_id() {
 fn runtime_module_resolution_asks_no_plugin() {
     with_host(&[], |fixture| {
         let host = fixture.host;
-        assert_eq!(
-            host.resolve_runtime_module(b"fs"),
-            module_by_id(RuntimeModule::NodeFs)
-        );
+        let expected = module_by_id(RuntimeModule::NodeFs);
+        assert_eq!(host.resolve_runtime_module(b"fs"), expected);
         let other_specifiers: [&[u8]; 5] = [
             b"./lib",
             b"virtual:config",
@@ -416,12 +386,8 @@ fn runtime_module_resolution_asks_no_plugin() {
         ];
         for specifier in other_specifiers {
             let resolution = host.resolve_runtime_module(specifier);
-            assert_eq!(
-                resolution,
-                HostResolution::Unclaimed,
-                "{}",
-                BStr::new(specifier)
-            );
+            let name = BStr::new(specifier);
+            assert_eq!(resolution, HostResolution::Unclaimed, "{name}");
         }
         assert!(fixture.take_calls().is_empty());
     });
@@ -446,10 +412,8 @@ fn internal_module_is_not_visible_to_the_application() {
         let unclaimed = HostResolution::Unclaimed;
         for specifier in [&b"internal/primordials"[..], b"internal/validators"] {
             assert_eq!(fixture.resolve(specifier, MAIN), unclaimed);
-            assert_eq!(
-                fixture.resolve(specifier, b"/$bun/js/node/fs.ts"),
-                unclaimed
-            );
+            let actual = fixture.resolve(specifier, b"/$bun/js/node/fs.ts");
+            assert_eq!(actual, unclaimed);
             assert_eq!(fixture.host.resolve_runtime_module(specifier), unclaimed);
         }
     });
@@ -468,10 +432,8 @@ fn computed_prefix_finds_both_spellings() {
         assert!(!node_modules.is_empty() && node_modules.iter().all(is_id));
         assert!(host.find_runtime_modules(b"", b"").is_empty());
         assert!(host.find_runtime_modules(b"internal/", b"").is_empty());
-        assert!(
-            host.find_runtime_modules(b"internal/primordials", b"")
-                .is_empty()
-        );
+        let primordials = host.find_runtime_modules(b"internal/primordials", b"");
+        assert!(primordials.is_empty());
         assert!(host.find_runtime_modules(b"./", b"").is_empty());
     });
 }
@@ -489,18 +451,11 @@ fn external_flag_is_uncompiled_code() {
 #[test]
 fn plugin_external_is_uncompiled_code() {
     with_host(&[], |fixture| {
-        assert_eq!(
-            fixture.resolve(b"./outside", MAIN),
-            uncompiled_code(b"renamed-outside")
-        );
-        assert_eq!(
-            fixture.resolve(b"./outside", b""),
-            uncompiled_code(b"renamed-outside")
-        );
-        assert_eq!(
-            fixture.take_calls(),
-            ["resolve ./outside", "resolve ./outside"]
-        );
+        let expected = uncompiled_code(b"renamed-outside");
+        assert_eq!(fixture.resolve(b"./outside", MAIN), expected);
+        assert_eq!(fixture.resolve(b"./outside", b""), expected);
+        let expected = ["resolve ./outside", "resolve ./outside"];
+        assert_eq!(fixture.take_calls(), expected);
     });
 }
 
@@ -515,27 +470,18 @@ fn external_entry_point_stops_build() {
 fn loader_follows_attribute_options_and_entry_points() {
     with_host(&[], |fixture| {
         let host = fixture.host;
-        let cases: [(&[u8], Option<&[u8]>, HostLoaderKind); 8] = [
-            (b"/project/a.ts", None, HostLoaderKind::ByName),
-            (b"/project/a.txt", Some(b"text"), HostLoaderKind::ByName),
-            (
-                b"/project/a.ts",
-                Some(b"text"),
-                HostLoaderKind::Loader(Loader::Text),
-            ),
-            (
-                b"/project/a.ts",
-                Some(b"no-such-loader"),
-                HostLoaderKind::ByName,
-            ),
-            (b"/project/tool", None, HostLoaderKind::ByName),
-            (
-                b"/project/with.dots.in-its-name",
-                None,
-                HostLoaderKind::Loader(Loader::Tsx),
-            ),
-            (b"/project/other.in-its-name", None, HostLoaderKind::ByName),
-            (b"/project/a.vue", None, HostLoaderKind::Loader(Loader::Tsx)),
+        let (by_name, named) = (HostLoaderKind::ByName, HostLoaderKind::Loader);
+        let cases: [(&[u8], Option<&[u8]>, HostLoaderKind); 10] = [
+            (b"/project/a.ts", None, by_name),
+            (b"/project/a.ts", Some(b""), by_name),
+            (b"/project/a.txt", Some(b"text"), by_name),
+            (b"/project/a.ts", Some(b"text"), named(Loader::Text)),
+            (b"/project/a.ts", Some(b"json"), named(Loader::Json)),
+            (b"/project/a.ts", Some(b"no-such-loader"), by_name),
+            (b"/project/tool", None, by_name),
+            (b"/project/with.dots.in-its-name", None, named(Loader::Tsx)),
+            (b"/project/other.in-its-name", None, by_name),
+            (b"/project/a.vue", None, named(Loader::Tsx)),
         ];
         for (path, type_attribute, kind) in cases {
             let loader = loader_of(host, path, type_attribute);
@@ -555,6 +501,23 @@ fn loader_follows_attribute_options_and_entry_points() {
 }
 
 #[test]
+fn type_attributes_are_classified() {
+    with_host(&[], |fixture| {
+        let classify = |type_attribute: Option<&[u8]>| {
+            let loader = loader_of(fixture.host, b"/project/a.ts", type_attribute);
+            (host_loader_kind(loader), fixture.take_messages().len())
+        };
+        let (by_name, named) = (HostLoaderKind::ByName, HostLoaderKind::Loader);
+        assert_eq!(classify(None), (Some(by_name), 0));
+        assert_eq!(classify(Some(b"macro")), (Some(by_name), 1));
+        assert_eq!(classify(Some(b"text")), (Some(named(Loader::Text)), 0));
+        assert_eq!(classify(Some(b"json")), (Some(named(Loader::Json)), 0));
+        assert_eq!(classify(Some(b"nonsense")), (Some(by_name), 0));
+        assert_eq!(classify(Some(b"")), (Some(by_name), 0));
+    });
+}
+
+#[test]
 fn required_file_without_loader_is_carried_like_an_imported_one() {
     with_host(&[], |fixture| {
         let settings = default_settings();
@@ -570,10 +533,8 @@ fn required_file_without_loader_is_carried_like_an_imported_one() {
         assert_eq!(loader_by_name(path), Loader::File);
         assert_eq!(kind_for(path, CodeImportKind::Require), by_name);
         assert_eq!(kind_for(path, CodeImportKind::Import), by_name);
-        assert_eq!(
-            kind_for(b"/project/a.txt", CodeImportKind::Require),
-            by_name
-        );
+        let actual = kind_for(b"/project/a.txt", CodeImportKind::Require);
+        assert_eq!(actual, by_name);
     });
 }
 
@@ -610,10 +571,8 @@ fn empty_module_stands_in_place_of_text_that_is_no_program_where_code_runs_in_pl
             payload_of(&parsed).parse_failure.clone()
         };
         let said = |text: &str| Some(text.as_bytes().to_vec());
-        assert_eq!(
-            failure_of(b"/project/library.so"),
-            said("Invalid character. (1:1)")
-        );
+        let actual = failure_of(b"/project/library.so");
+        assert_eq!(actual, said("Invalid character. (1:1)"));
         assert_eq!(failure_of(b"/project/prose"), said("';' expected. (2:6)"));
         for path in [&b"/project/library.so"[..], b"/project/prose"] {
             let parsed = parse_as_required(fixture, path);
@@ -659,14 +618,10 @@ fn embedded_sqlite_has_its_own_loader() {
             host_loader_kind(loader)
         };
         let loaded_as = |loader: Loader| Some(HostLoaderKind::Loader(loader));
-        assert_eq!(
-            kind_for(b"sqlite", Some(b"true")),
-            loaded_as(Loader::SqliteEmbedded)
-        );
-        assert_eq!(
-            kind_for(b"sqlite", Some(b"false")),
-            loaded_as(Loader::Sqlite)
-        );
+        let expected = loaded_as(Loader::SqliteEmbedded);
+        assert_eq!(kind_for(b"sqlite", Some(b"true")), expected);
+        let expected = loaded_as(Loader::Sqlite);
+        assert_eq!(kind_for(b"sqlite", Some(b"false")), expected);
         assert_eq!(kind_for(b"sqlite", None), loaded_as(Loader::Sqlite));
         assert_eq!(kind_for(b"text", Some(b"true")), loaded_as(Loader::Text));
     });
@@ -682,19 +637,15 @@ fn plugin_loader_decides_language() {
         assert_eq!(template.hir.kind, FileKind::Ts);
         assert!(!template.hir.is_js && !template.hir.has_errors);
         let source = payload_of(&template);
-        assert_eq!(
-            (source.kind, source.loader),
-            (SourceKind::Program, Loader::Ts)
-        );
+        let expected = (SourceKind::Program, Loader::Ts);
+        assert_eq!((source.kind, source.loader), expected);
         assert!(source.is_from_plugin && source.plugin_module.is_none());
         assert_eq!(host.script_kind(TEMPLATE), Some(ScriptKind::Ts));
 
         let data = fixture.parse(DATA, BY_NAME);
         let source = payload_of(&data);
-        assert_eq!(
-            (source.kind, source.loader),
-            (SourceKind::Data, Loader::Json)
-        );
+        let expected = (SourceKind::Data, Loader::Json);
+        assert_eq!((source.kind, source.loader), expected);
         assert!(source.is_from_plugin);
         assert_eq!(host.script_kind(DATA), None);
         let calls = [
@@ -749,10 +700,8 @@ fn typed_file_keeps_its_text_beside_javascript_from_a_plugin() {
 #[test]
 fn script_kind_asks_only_plugins_that_see_the_file() {
     with_host(&[("without-plugin.vue", "")], |fixture| {
-        assert_eq!(
-            fixture.host.script_kind(WITHOUT_PLUGIN),
-            Some(ScriptKind::Tsx)
-        );
+        let expected = Some(ScriptKind::Tsx);
+        assert_eq!(fixture.host.script_kind(WITHOUT_PLUGIN), expected);
         assert_eq!(fixture.host.script_kind(b"/project/missing.tmpl"), None);
         assert!(fixture.take_calls().is_empty());
     });
@@ -783,12 +732,8 @@ fn every_tree_has_a_payload() {
         for (path, host_loader, kind, loader) in cases {
             let parsed = fixture.parse(path, host_loader);
             let source = payload_of(&parsed);
-            assert_eq!(
-                (source.kind, source.loader),
-                (kind, loader),
-                "{}",
-                BStr::new(path)
-            );
+            let name = BStr::new(path);
+            assert_eq!((source.kind, source.loader), (kind, loader), "{name}");
             assert!(!source.is_from_plugin && source.plugin_module.is_none());
             assert!(source.web_assembly.is_none() && !source.is_page);
         }
@@ -811,10 +756,8 @@ fn plugin_module_name_is_in_the_payload() {
         };
         assert_eq!(source.plugin_module.as_ref(), Some(&expected));
         assert!(source.is_from_plugin);
-        assert_eq!(
-            (source.kind, source.loader),
-            (SourceKind::Program, Loader::Ts)
-        );
+        let typescript = (SourceKind::Program, Loader::Ts);
+        assert_eq!((source.kind, source.loader), typescript);
     });
 }
 
@@ -848,7 +791,8 @@ fn entry_point_with_unknown_name_that_is_not_text_is_a_file() {
     directory.write("tool", "\u{FFFD}\u{1}\u{2}");
     directory.write("with.dots.in-its-name", "console.log(1);\n");
     directory.write("main.ts", "\u{FFFD}");
-    with_host_in(directory.path(), Vec::new(), |fixture| {
+    let aot = AotOptions::default();
+    with_host_under(aot, directory.path(), Vec::new(), |fixture| {
         let host = fixture.host;
         let path = |name: &[u8]| [&from_native(directory.path())[..], b"/", name].concat();
         let kind_of = |name: &[u8]| host_loader_kind(loader_of(host, &path(name), None));
@@ -866,7 +810,8 @@ fn entry_point_with_unknown_name_that_is_not_text_is_a_file() {
 fn typed_file_is_typescript_and_hidden_from_plugins() {
     let directory = TemporaryDirectory::new("host_typed_file");
     directory.write_typed_package("export const x = 1;\n", "export const x: number = 1;\n");
-    with_host_in(directory.path(), Vec::new(), |fixture| {
+    let aot = AotOptions::default();
+    with_host_under(aot, directory.path(), Vec::new(), |fixture| {
         let host = fixture.host;
         let package_directory = [&from_native(directory.path())[..], b"/node_modules/p"].concat();
         let installed = [&package_directory[..], b"/x.js"].concat();
@@ -885,10 +830,8 @@ fn typed_file_is_typescript_and_hidden_from_plugins() {
         assert_eq!(parsed.hir.kind, FileKind::Ts);
         assert!(!parsed.hir.is_js && !parsed.hir.has_errors);
         let source = payload_of(&parsed);
-        assert_eq!(
-            (source.kind, source.loader),
-            (SourceKind::Program, Loader::Ts)
-        );
+        let expected = (SourceKind::Program, Loader::Ts);
+        assert_eq!((source.kind, source.loader), expected);
         assert!(!host.is_plugin_source(&typed));
         assert!(fixture.take_calls().is_empty());
         assert!(fixture.take_messages().is_empty());
@@ -920,10 +863,8 @@ fn evaluated_text_is_served_as_javascript() {
         let parsed = fixture.parse(&path, BY_NAME);
         assert!(parsed.hir.is_js && !parsed.hir.has_errors);
         let source = payload_of(&parsed);
-        assert_eq!(
-            (source.kind, source.loader),
-            (SourceKind::EvaluatedText, Loader::Js)
-        );
+        let javascript = (SourceKind::EvaluatedText, Loader::Js);
+        assert_eq!((source.kind, source.loader), javascript);
         assert!(!host.is_plugin_source(&path));
         assert!(fixture.take_calls().is_empty());
 
@@ -937,10 +878,8 @@ fn react_compiler_declarations_are_served() {
         let (host, path) = (fixture.host, react_compiler::DECLARATIONS_PATH);
         assert!(host.is_file(path));
         assert_eq!(host.realpath(path), path);
-        assert_eq!(
-            host.read(path).as_deref(),
-            Some(react_compiler::DECLARATIONS)
-        );
+        let expected = Some(react_compiler::DECLARATIONS);
+        assert_eq!(host.read(path).as_deref(), expected);
         assert_eq!(&*host.read_source(path), react_compiler::DECLARATIONS);
         assert_eq!(host.script_kind(path), None);
         assert_eq!(loader_of(host, path, None), BY_NAME);
@@ -966,12 +905,8 @@ fn host_paths_are_not_directories() {
         for path in host_directories {
             assert!(!host.is_dir(path), "{}", BStr::new(path));
             assert!(!host.is_file(path), "{}", BStr::new(path));
-            assert_eq!(
-                host.entries(path),
-                (Vec::new(), Vec::new()),
-                "{}",
-                BStr::new(path)
-            );
+            let name = BStr::new(path);
+            assert_eq!(host.entries(path), (Vec::new(), Vec::new()), "{name}");
             assert!(host.list_dir(path).is_empty(), "{}", BStr::new(path));
         }
         assert!(!host.is_dir(&module));
@@ -994,23 +929,21 @@ fn bun_sources_are_not_served() {
 
 #[test]
 fn plugin_source_is_text_from_on_load() {
-    with_host(
-        &[("hello.tmpl", ""), ("plain.ts", "export {};")],
-        |fixture| {
-            let host = fixture.host;
-            let virtual_module = fixture.resolve_to_path(b"virtual:config");
-            let plain: &[u8] = b"/project/plain.ts";
-            for path in [TEMPLATE, &virtual_module[..], plain] {
-                assert!(!fixture.read_code(path).is_empty(), "{}", BStr::new(path));
-                assert_eq!(host.read_source(path), fixture.read_code(path));
-            }
-            assert!(host.is_plugin_source(TEMPLATE));
-            assert!(host.is_plugin_source(&virtual_module));
-            assert!(!host.is_plugin_source(plain));
-            assert_eq!(host.read(&virtual_module).as_deref(), Some(TYPESCRIPT_TEXT));
-            assert!(fixture.take_messages().is_empty());
-        },
-    );
+    let files = [("hello.tmpl", ""), ("plain.ts", "export {};")];
+    with_host(&files, |fixture| {
+        let host = fixture.host;
+        let virtual_module = fixture.resolve_to_path(b"virtual:config");
+        let plain: &[u8] = b"/project/plain.ts";
+        for path in [TEMPLATE, &virtual_module[..], plain] {
+            assert!(!fixture.read_code(path).is_empty(), "{}", BStr::new(path));
+            assert_eq!(host.read_source(path), fixture.read_code(path));
+        }
+        assert!(host.is_plugin_source(TEMPLATE));
+        assert!(host.is_plugin_source(&virtual_module));
+        assert!(!host.is_plugin_source(plain));
+        assert_eq!(host.read(&virtual_module).as_deref(), Some(TYPESCRIPT_TEXT));
+        assert!(fixture.take_messages().is_empty());
+    });
 }
 
 #[test]
@@ -1058,17 +991,13 @@ fn deferred_read_of_missing_file_is_unreadable() {
 fn deferred_read_gets_text_and_loader_of_plugin() {
     with_host(&[], |fixture| {
         let host = fixture.host;
-        assert!(matches!(
-            host.read_code(DEFERRED_TEMPLATE),
-            CodeRead::Deferred
-        ));
+        let read = host.read_code(DEFERRED_TEMPLATE);
+        assert!(matches!(read, CodeRead::Deferred));
         assert!(!host.is_plugin_source(DEFERRED_TEMPLATE));
 
         let texts = host.finish_deferred_reads();
-        assert_eq!(
-            texts,
-            [(DEFERRED_TEMPLATE.to_vec(), Cow::Borrowed(TYPESCRIPT_TEXT))]
-        );
+        let expected = [(DEFERRED_TEMPLATE.to_vec(), Cow::Borrowed(TYPESCRIPT_TEXT))];
+        assert_eq!(texts, expected);
         assert!(host.is_plugin_source(DEFERRED_TEMPLATE));
         assert_eq!(host.script_kind(DEFERRED_TEMPLATE), Some(ScriptKind::Ts));
         let parsed = fixture.parse(DEFERRED_TEMPLATE, BY_NAME);

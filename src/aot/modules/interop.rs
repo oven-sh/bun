@@ -39,7 +39,7 @@ impl Interop {
         SyntheticExportRule::RuntimeModule,
         RequireResult::DefaultExport,
     );
-    const ES_MODULE: Interop = Interop::new(
+    pub(crate) const ES_MODULE: Interop = Interop::new(
         ModuleKind::SourceText,
         SyntheticExportRule::None,
         RequireResult::Namespace,

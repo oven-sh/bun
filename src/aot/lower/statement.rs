@@ -1,12 +1,11 @@
 mod declarations;
 mod loops;
 
+use bun_sema::bind::ScopeId;
 use bun_sema::hir::{ExprId, ExprKind, IdList, StmtId, StmtKind};
 
 use super::control::BreakTargetKind;
-use super::{
-    FunctionLowering, commonjs, dispose, exception, iteration, module, switch, typescript,
-};
+use super::{FunctionLowering, commonjs, dispose, module};
 use crate::builtins::SourceDialect;
 use crate::ir::BlockId;
 
@@ -79,48 +78,60 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
             }
             StmtKind::Fn(function) => {
-                self.lower_function_statement(statement, function);
+                let implicit_block = self.enter_own_scope(statement);
+                self.lower_function_declaration(function);
+                self.leave_own_scope(implicit_block);
             }
             StmtKind::Class(class) => self.lower_class_statement(statement, class),
-            StmtKind::Enum(declaration) => typescript::lower_enum(self, declaration),
+            StmtKind::Enum(declaration) => self.lower_enum(declaration),
             StmtKind::Module(declaration) => self.lower_namespace(declaration),
-            StmtKind::ImportEquals(declaration) => {
-                self.lower_import_equals(declaration);
-            }
-            StmtKind::ExportAssign(expression) => {
-                self.lower_export_assignment(expression);
-            }
-            StmtKind::ExportDefault(expression) => {
-                self.lower_export_default(statement, expression);
-            }
+            StmtKind::ImportEquals(declaration) => self.lower_import_equals(declaration),
+            StmtKind::ExportAssign(expression) => self.lower_export_assignment(expression),
+            StmtKind::ExportDefault(expression) => self.lower_export_default(statement, expression),
             StmtKind::Return(expression) => self.lower_return(expression),
             StmtKind::If { test, yes, no } => self.lower_if(test, yes, no),
-            StmtKind::For { .. } => loops::lower_for(self, statement),
-            StmtKind::While { .. } => loops::lower_while(self, statement),
-            StmtKind::DoWhile { .. } => loops::lower_do_while(self, statement),
-            StmtKind::ForIn { .. } => iteration::lower_for_in(self, statement),
-            StmtKind::ForOf { .. } => iteration::lower_for_of(self, statement),
-            StmtKind::Switch { .. } => switch::lower_switch(self, statement),
-            StmtKind::Try { .. } => exception::lower_try(self, statement),
-            StmtKind::Throw(_) => exception::lower_throw(self, statement),
+            StmtKind::For { init, .. } => self.lower_for(statement, init),
+            StmtKind::While { test, body } => self.lower_while(statement, test, body),
+            StmtKind::DoWhile { body, test } => self.lower_do_while(statement, body, test),
+            StmtKind::ForIn { .. } => self.lower_for_in(statement),
+            StmtKind::ForOf { .. } => self.lower_for_of(statement),
+            StmtKind::Switch { expr, cases } => self.lower_switch(statement, expr, cases),
+            StmtKind::Try {
+                block,
+                param,
+                handler,
+                finalizer,
+            } => self.lower_try(statement, block, param, handler, finalizer),
+            StmtKind::Throw(expression) => {
+                let value = self.lower_expression(expression);
+                self.set_position(stmt.start);
+                self.emit_throw(value);
+            }
             StmtKind::Break(_) => self.lower_break(statement),
             StmtKind::Continue(_) => self.lower_continue(statement),
-            StmtKind::Block(statements) => self.lower_block(statement, statements),
+            StmtKind::Block(statements) => {
+                let scope = self.enter_own_scope(statement);
+                self.lower_statements(statements);
+                self.leave_own_scope(scope);
+            }
             StmtKind::Labeled { body, .. } => self.lower_labeled(statement, body),
             StmtKind::With { object, body } => self.lower_with(statement, object, body),
         }
         self.leave_nesting();
     }
 
-    fn lower_block(&mut self, statement: StmtId, statements: IdList<StmtId>) {
+    pub(in crate::lower) fn enter_own_scope(&mut self, statement: StmtId) -> ScopeId {
         let scope = self.file.bound.own_scope(statement);
-        if scope.is_none() {
-            self.lower_statements(statements);
-            return;
+        if scope.is_some() {
+            self.enter_scope(scope);
         }
-        self.enter_scope(scope);
-        self.lower_statements(statements);
-        self.leave_scope(scope);
+        scope
+    }
+
+    pub(in crate::lower) fn leave_own_scope(&mut self, scope: ScopeId) {
+        if scope.is_some() {
+            self.leave_scope(scope);
+        }
     }
 
     fn lower_return(&mut self, expression: ExprId) {
@@ -135,7 +146,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         }
         let value = self.lower_tail_expression(expression);
-        let value = self.prepare_return_value(value);
+        let value = self.await_in_async_generator(value);
         self.emit_return(value, Some(expression));
     }
 
@@ -157,46 +168,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
         let then_block = self.create_block_of_arm(yes);
         let after = self.create_block();
-        if no.is_none() {
-            self.lower_condition(test, then_block, after);
-            self.lower_if_arm(then_block, yes, after);
-        } else {
-            let else_block = self.create_block_of_arm(no);
-            self.lower_condition(test, then_block, else_block);
-            self.lower_if_arm(then_block, yes, after);
+        let else_block = no.some().map(|no| self.create_block_of_arm(no));
+        self.lower_condition(test, then_block, else_block.unwrap_or(after));
+        self.lower_if_arm(then_block, yes, after);
+        if let Some(else_block) = else_block {
             self.lower_if_arm(else_block, no, after);
         }
         self.continue_in(after);
     }
 
     fn create_block_of_arm(&mut self, arm: StmtId) -> BlockId {
-        if self.is_marked_unlikely(arm) {
-            self.create_unlikely_block()
-        } else {
-            self.create_block()
-        }
-    }
-
-    fn is_marked_unlikely(&self, arm: StmtId) -> bool {
-        if self.file.source.dialect() != SourceDialect::Runtime {
-            return false;
-        }
         let hir = self.file.hir;
-        let StmtKind::Block(statements) = hir[arm].kind else {
-            return false;
-        };
-        if statements.len == 0 {
-            return false;
+        if self.file.source.dialect() == SourceDialect::Runtime
+            && let StmtKind::Block(statements) = hir[arm].kind
+            && statements.len != 0
+            && let StmtKind::Expr(first) | StmtKind::Directive { expr: first, .. } =
+                hir[hir.id_at(statements, 0)].kind
+            && let ExprKind::String(text) = hir[first].kind
+            && self.file.queries.atom_bytes(text) == b"unlikely"
+        {
+            return self.create_unlikely_block();
         }
-        let (StmtKind::Expr(first) | StmtKind::Directive { expr: first, .. }) =
-            hir[hir.id_at(statements, 0)].kind
-        else {
-            return false;
-        };
-        let ExprKind::String(text) = hir[first].kind else {
-            return false;
-        };
-        self.file.queries.atom_bytes(text) == b"unlikely"
+        self.create_block()
     }
 
     fn lower_if_arm(&mut self, block: BlockId, statement: StmtId, after: BlockId) {

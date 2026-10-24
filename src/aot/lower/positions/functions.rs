@@ -1,6 +1,6 @@
 use bun_sema::bind::FnOwner;
 use bun_sema::check::aot::{
-    ClassRef, FunctionRef, GaveUp, PositionTypes, SignatureParameter, SignatureShape, WrittenType,
+    ClassRef, FunctionRef, GaveUp, PositionTypes, SignatureShape, WrittenType,
 };
 use bun_sema::hir::{ClassId, Flags, FnId, Member, MemberId, MemberKind};
 
@@ -31,7 +31,7 @@ pub(super) fn compute_function_positions(
     }
     let shape = file.queries.function_signature(source);
     let parameters = file.compute_parameter_positions(function, &shape);
-    let this = compute_this_position(file, function, &shape);
+    let this = compute_this_position(file, source, &shape);
     let result_origin = SiteOrigin {
         kind: TypeSiteKind::Result,
         position: func.start,
@@ -42,8 +42,7 @@ pub(super) fn compute_function_positions(
     let (returned, yielded) = match (is_async, is_generator) {
         (false, false) => (result, DeclaredType::untyped()),
         (true, false) => {
-            let awaited = file.get_awaited_types(shape.result);
-            let returned = file.create_awaited_position(awaited, result_origin);
+            let returned = file.create_awaited_position(shape.result, result_origin);
             (returned, DeclaredType::untyped())
         }
         (false, true) | (true, true) => {
@@ -62,7 +61,7 @@ pub(super) fn compute_function_positions(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    pub(super) fn compute_class_this_type(
+    pub(crate) fn class_this_type(
         &mut self,
         class: ClassRef,
         member: Option<MemberId>,
@@ -97,32 +96,22 @@ impl FileLowering<'_, '_, '_, '_> {
         let parameters = hir[function].params;
         let mut positions = Vec::with_capacity(parameters.len());
         for (index, parameter) in parameters.iter().enumerate() {
-            let position = match shape.parameters.get(index) {
-                Some(entry) => {
-                    let origin = SiteOrigin {
-                        kind: TypeSiteKind::Parameter,
-                        position: hir[hir[parameter].pat].pos,
-                    };
-                    self.create_parameter_position(entry, origin)
-                }
-                None => DeclaredType::untyped(),
+            let Some(entry) = shape.parameters.get(index) else {
+                positions.push(DeclaredType::untyped());
+                continue;
             };
-            positions.push(position);
+            let origin = SiteOrigin {
+                kind: TypeSiteKind::Parameter,
+                position: hir[hir[parameter].pat].pos,
+            };
+            let position = self.create_position(entry.types, origin);
+            // An argument that is left out arrives as `undefined`, before the default value takes its place.
+            positions.push(match entry.is_optional {
+                true => self.add_undefined(position),
+                false => position,
+            });
         }
         positions
-    }
-
-    // An argument that is left out arrives as `undefined`, before the default value takes its place.
-    fn create_parameter_position(
-        &mut self,
-        parameter: &SignatureParameter,
-        origin: SiteOrigin,
-    ) -> DeclaredType {
-        let position = self.create_position(parameter.types, origin);
-        match parameter.is_optional {
-            true => self.add_undefined(position),
-            false => position,
-        }
     }
 
     fn find_class_member(&self, function: FnId) -> Option<(ClassId, MemberId)> {
@@ -153,18 +142,6 @@ impl FileLowering<'_, '_, '_, '_> {
         )
     }
 
-    fn get_awaited_types(&mut self, types: PositionTypes) -> PositionTypes {
-        let written = match types.written {
-            WrittenType::Written(ty) => match self.queries.awaited_type(ty) {
-                Ok(awaited) => WrittenType::Written(awaited),
-                Err(reason) => WrittenType::GaveUp(reason),
-            },
-            WrittenType::Unwritten | WrittenType::GaveUp(_) => types.written,
-        };
-        let checked = types.checked.and_then(|ty| self.queries.awaited_type(ty));
-        PositionTypes { written, checked }
-    }
-
     fn get_contents_types(&mut self, types: PositionTypes, slot: ContentsSlot) -> PositionTypes {
         let written = match types.written {
             WrittenType::Written(ty) => match find_contents_type(self, ty, slot) {
@@ -185,27 +162,30 @@ impl FileLowering<'_, '_, '_, '_> {
         types: PositionTypes,
         origin: SiteOrigin,
     ) -> DeclaredType {
-        let Some(mut source) = self.choose_source(types, Some(origin)) else {
+        let written = match types.written {
+            WrittenType::Written(ty) => match self.queries.awaited_type(ty) {
+                Ok(awaited) => WrittenType::Written(awaited),
+                Err(reason) => WrittenType::GaveUp(reason),
+            },
+            WrittenType::Unwritten | WrittenType::GaveUp(_) => types.written,
+        };
+        let checked = types.checked.and_then(|ty| self.queries.awaited_type(ty));
+        let awaited = PositionTypes { written, checked };
+        let Some(mut source) = self.choose_source(awaited, Some(origin)) else {
             return DeclaredType::untyped();
         };
-        source.mapped.ty = self
-            .fragment
-            .types
-            .union(source.mapped.ty, TypeTable::OBJECT);
+        let types = &mut self.fragment.types;
+        source.mapped.ty = types.union(source.mapped.ty, TypeTable::OBJECT);
         self.finish_position(source, Some(origin), PositionFlags::default())
     }
 }
 
 fn compute_this_position(
     file: &mut FileLowering<'_, '_, '_, '_>,
-    function: FnId,
+    source: FunctionRef,
     shape: &SignatureShape<'_>,
 ) -> DeclaredType {
-    let func = file.hir[function];
-    let source = FunctionRef {
-        file: file.file,
-        function,
-    };
+    let func = file.hir[source.function];
     if func.this_param.is_some() {
         // `new` and the constructors below bring what the function makes, not everything that fits the written type.
         if file.queries.is_prototype_object_used(source)
@@ -220,12 +200,12 @@ fn compute_this_position(
         };
         return file.create_position(shape.this_type, origin);
     }
-    if let Some((class, member)) = file.find_class_member(function) {
+    if let Some((class, member)) = file.find_class_member(source.function) {
         let class = ClassRef {
             file: file.file,
             class,
         };
-        return file.compute_class_this_type(class, Some(member));
+        return file.class_this_type(class, Some(member));
     }
     if let Some(layout) = file.constructor_function_layout(source) {
         let instance = file.fragment.types.intern(Type::layout(layout));
@@ -239,10 +219,7 @@ fn compute_this_position(
 }
 
 fn is_static_member(member: &Member) -> bool {
-    match member.kind {
-        MemberKind::StaticBlock => true,
-        _ => member.flags.contains(Flags::STATIC),
-    }
+    member.kind == MemberKind::StaticBlock || member.flags.contains(Flags::STATIC)
 }
 
 fn has_known_receiver(member: &Member) -> bool {

@@ -29,7 +29,6 @@ struct FunctionLink {
     parent: Option<ClassParent>,
 }
 
-// The links of the prototype objects of the functions of one file, with what the calls in that file do to their arguments.
 pub(super) struct LinkedFunctions<'s> {
     links: &'s [FunctionLink],
     ends: &'s [FnId],
@@ -141,7 +140,6 @@ fn find_ambient_module_around(hir: &hir::File<'_>, class: ClassId) -> Option<Ato
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
-    // The class or the constructor function to whose prototype object the file that declares `function` links the prototype object of `function`.
     pub fn constructor_function_parent(&mut self, function: FunctionRef) -> Option<ClassParent> {
         let parent = self.find_linked_parent(function)?;
         let mut ancestor = parent;
@@ -154,23 +152,19 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 None => return Some(parent),
             }
         }
-        // Links that come back to a function describe no chain of prototypes.
         None
     }
 
-    // The class or the constructor function that the heritage of `class` names.
     pub fn class_parent(&mut self, class: ClassRef) -> Option<ClassParent> {
         let heritage = self.c.hir(class.file)[class.class].extends.some()?;
         let parent = self.end_finder(class.file).find_parent(heritage)?;
         (parent != ClassParent::Declared(ClassDeclaration::Class(class))).then_some(parent)
     }
 
-    // The class or the constructor function that the callee of a `new` expression names. Nothing proves it.
     pub fn constructed_declaration(&mut self, file: FileId, callee: ExprId) -> Option<ClassParent> {
         self.end_finder(file).find_parent(callee)
     }
 
-    // The classes and the functions of Bun's own modules that make what has the type.
     pub fn library_declarations_of_type(&mut self, ty: TypeId) -> SmallVec<[ClassDeclaration; 1]> {
         let parts: SmallVec<[TypeId; 2]> = match self.c.data(ty) {
             TypeData::Intersection(parts) => parts.iter().copied().collect(),
@@ -216,7 +210,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             .find_library_export(specifier, name)
     }
 
-    /// Whether the program gives members to the prototype object of `function` or links it to another one, as it does for a function that it constructs with.
     pub fn is_prototype_object_used(&mut self, function: FunctionRef) -> bool {
         let Some(shape) = self.constructor_function_shape(function) else {
             return false;
@@ -261,7 +254,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         LinkedFunctions::new(self.c.arena, file, &links)
     }
 
-    // The links that a call of `function` makes between its arguments and what the program names, in terms of its parameters.
     fn find_links_of_parameters(
         &mut self,
         function: FunctionRef,
@@ -309,7 +301,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Some(links)
     }
 
-    // The own shape, the fields that the functions store to which `function` hands its `this`, and the members that are copied into its prototype object.
     pub(super) fn complete_constructor_function_shape(
         &mut self,
         function: FunctionRef,
@@ -360,7 +351,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let mut fields = Vec::new();
             self.add_fields_stored_by(call.callee, &mut given_this, &mut fields);
             for field in fields {
-                // The store may be in another file. What stores the name for this function is the call.
                 let field = ClassMember {
                     source: ClassMemberSource::ThisStore(call.call),
                     is_optional: true,
@@ -385,7 +375,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Some(shape)
     }
 
-    // In the order in which a call of `function` stores them first.
     fn add_fields_stored_by(
         &mut self,
         function: FunctionRef,
@@ -460,7 +449,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 hir[property.value].kind,
                 ExprKind::Fn(function) if hir[function].kind != FnKind::Arrow
             );
-            // The copy reads the property: it stores what a getter returns, and `undefined` where there is none.
             let (kind, is_stored_value) = match property.kind {
                 PropKind::Spread => continue,
                 PropKind::Getter | PropKind::Setter => (ObjectMemberKind::Field, false),
@@ -599,7 +587,6 @@ mod tests {
     #[test]
     fn declarations_of_the_library_are_parents_only() {
         let arena = Arena::new();
-        // The file of the library has the number of the file of the program.
         let of_library = function_in(FILE, 1);
         let links = [
             link(function(4), Some(LinkEnd::LibraryDeclaration(of_library))),

@@ -89,11 +89,11 @@ impl KnownCallee {
         }
     }
 
-    fn predicted(file: FileId, values: &BindingValues) -> KnownCallee {
+    fn predicted(self) -> KnownCallee {
         KnownCallee {
             certainty: Certainty::MayHoldOtherValues,
             holds_from_the_start: false,
-            ..KnownCallee::new(file, values)
+            ..self
         }
     }
 
@@ -174,7 +174,13 @@ pub fn resolve_callee(
             return None;
         }
         return match bound.binding(callee) {
-            Binding::Symbol(symbol) => resolve_symbol(input, file, symbol),
+            Binding::Symbol(symbol) => match input.helpers.binding(file, symbol) {
+                Some(values) => Some(KnownCallee::new(file, values)),
+                None if bound.binding_kind(symbol) == BindingKind::Import => {
+                    resolve_import(input, input.modules.import_binding(file, symbol))
+                }
+                None => None,
+            },
             Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => None,
         };
     }
@@ -188,12 +194,7 @@ pub fn resolve_callee(
         return None;
     }
     let required = find_required_file(input, file, object)?;
-    let found = resolve_export(input, required, name)?;
-    Some(KnownCallee {
-        certainty: Certainty::MayHoldOtherValues,
-        holds_from_the_start: false,
-        ..found
-    })
+    Some(resolve_export(input, required, name)?.predicted())
 }
 
 pub fn resolve_reference(
@@ -302,20 +303,6 @@ fn find_member_kind(
     }
 }
 
-fn resolve_symbol(
-    input: &ResolveInput<'_, '_>,
-    file: FileId,
-    symbol: SymbolId,
-) -> Option<KnownCallee> {
-    if let Some(values) = input.helpers.binding(file, symbol) {
-        return Some(KnownCallee::new(file, values));
-    }
-    if input.files.bound(file).binding_kind(symbol) != BindingKind::Import {
-        return None;
-    }
-    resolve_import(input, input.modules.import_binding(file, symbol))
-}
-
 // Code of another file can run while the file of the variable has not started.
 fn resolve_variable(input: &ResolveInput<'_, '_>, variable: Sym) -> Option<KnownCallee> {
     let values = input.helpers.binding(variable.file, variable.id)?;
@@ -377,7 +364,7 @@ fn predict_member(
     let bound = input.files.bound(file);
     let mut bindings = input.helpers.file(file)?.bindings();
     let (_, values) = bindings.find(|&(symbol, _)| bound.symbol(symbol).name == name)?;
-    Some(KnownCallee::predicted(file, values))
+    Some(KnownCallee::new(file, values).predicted())
 }
 
 fn find_required_file(
@@ -409,8 +396,7 @@ fn find_required_file(
     match input.modules.site_answer(file, site.kind) {
         SiteAnswer::Module(ModuleRef::File(required)) => Some(required),
         SiteAnswer::Module(
-            ModuleRef::Inner { .. }
-            | ModuleRef::Face(_)
+            ModuleRef::Face(_)
             | ModuleRef::Check(_)
             | ModuleRef::Runtime(_)
             | ModuleRef::External { .. },
@@ -425,24 +411,9 @@ fn find_required_file(
 mod tests {
     use super::*;
     use crate::ir::run_serially;
+    use crate::known_helpers::tests::{CREATE_BINDING, EXPORT_STAR};
     use crate::modules::testing::{file_named, with_graph};
     use bun_sema::hir::StmtKind;
-
-    const HELPERS: &str = r#"var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __exportStar = (this && this.__exportStar) || function(m, exports) {
-    for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
-};
-"#;
 
     const PRIVATE_FIELD_GET: &str = r#"function __classPrivateFieldGet(receiver, state, kind, f) {
     if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
@@ -504,7 +475,8 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
 
     #[test]
     fn resolves_local_helper_variable() {
-        let main = format!("{HELPERS}__exportStar(require(\"./a.cjs\"), exports);");
+        let main =
+            format!("{CREATE_BINDING}{EXPORT_STAR}__exportStar(require(\"./a.cjs\"), exports);");
         let files = [("main.cjs", main.as_str()), ("a.cjs", "exports.a = 1;")];
         let (helper, certainty, path) = describe_last_call(&files, "main.cjs").expect("resolved");
         assert_eq!(helper, Helper::ExportStar);
@@ -589,7 +561,8 @@ helpers.__classPrivateFieldGet({}, new WeakMap(), "f");"#;
 
     #[test]
     fn predicts_member_of_required_module() {
-        let library = format!("{HELPERS}module.exports = [{{ __exportStar }}][0];");
+        let library =
+            format!("{CREATE_BINDING}{EXPORT_STAR}module.exports = [{{ __exportStar }}][0];");
         let main = r#"const library = require("./library.cjs");
 library.__exportStar(require("./a.cjs"), exports);"#;
         let files = [
@@ -608,7 +581,8 @@ library.__exportStar(require("./a.cjs"), exports);"#;
         let main = "function __exportStar(m, o) { return [m, o]; }\n__exportStar(1, 2);";
         assert_eq!(describe_last_call(&[("main.cjs", main)], "main.cjs"), None);
         let library = "exports.__exportStar = function (m, o) { return [m, o]; };";
-        let main = format!("{HELPERS}require(\"./library.cjs\").__exportStar(1, 2);");
+        let main =
+            format!("{CREATE_BINDING}{EXPORT_STAR}require(\"./library.cjs\").__exportStar(1, 2);");
         let files = [("main.cjs", main.as_str()), ("library.cjs", library)];
         assert_eq!(describe_last_call(&files, "main.cjs"), None);
     }

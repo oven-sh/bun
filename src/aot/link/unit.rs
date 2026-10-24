@@ -330,7 +330,6 @@ const fn assert_send<T: Send>() {}
 const _: () = assert_send::<LinkUnit>();
 
 impl LinkUnit {
-    // What only the merge of the strings and the types reads.
     pub(super) fn release_hashes_of_strings_and_types(&mut self) {
         self.string_shards.ids = Vec::new();
         self.type_hashes.types = Vec::new();
@@ -338,7 +337,6 @@ impl LinkUnit {
         self.type_shards.ids = Vec::new();
     }
 
-    // Each with its level.
     pub fn defined_object_types(&self) -> impl Iterator<Item = (DefinedObjectType, u8)> {
         let types = self.object_types.iter().zip(&self.object_type_levels);
         types.filter_map(|(&(definition, ty), &level)| {

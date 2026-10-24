@@ -1,31 +1,14 @@
 use super::*;
-use crate::ir::builder::{Edge, FunctionBuilder};
+use crate::ir::builder::Edge;
 use crate::ir::generated::TerminatorKind;
-use crate::ir::ids::{ABSENT_WORD, BlockId, TypeId, VariableId};
+use crate::ir::ids::{ABSENT_WORD, BlockId, VariableId};
 use crate::ir::program::Program;
-use crate::ir::testing::build_function;
-use crate::ir::tests::print_alone;
+use crate::ir::testing::{build_function, create_blocks, print_with};
+use crate::ir::tests::assert_graph;
 use crate::ir::types::TypeTable;
 
-#[track_caller]
-fn assert_printed(parameters: &[TypeId], expected: &str, fill: impl FnOnce(&mut FunctionBuilder)) {
-    let printed = print_alone(&build_function(parameters, fill));
-    assert_eq!(printed, expected, "\n{printed}");
-}
-
-fn print_with(print: impl FnOnce(&mut Printer<'_>)) -> String {
-    let program = Program::new();
-    let mut out = String::new();
-    print(&mut Printer::new(program.name_tables(), &mut out));
-    out
-}
-
 fn body_text(body: &Body) -> String {
-    print_with(|printer| print_body(printer, body))
-}
-
-fn create_blocks<const COUNT: usize>(builder: &mut FunctionBuilder) -> [BlockId; COUNT] {
-    [(); COUNT].map(|()| builder.create_block(None))
+    print_with(&Program::new(), |printer| printer.print_body(body))
 }
 
 fn build_returning_body() -> Body {
@@ -49,7 +32,7 @@ function f0 module=m0 thisType={type=anything} parameters=[{type=anything}] resu
 
 #[test]
 fn value_without_result_takes_an_id() {
-    assert_printed(&[TypeTable::ANYTHING], VALUES_WITHOUT_RESULT, |builder| {
+    assert_graph(&[TypeTable::ANYTHING], VALUES_WITHOUT_RESULT, |builder| {
         let value = builder.parameter(0);
         builder.put_module_variable(VariableId::new(0), value);
         builder.loop_hint();
@@ -76,7 +59,7 @@ function f0 module=m0 thisType={type=anything} parameters=[{type=anything}] resu
 
 #[test]
 fn positions_are_suffixes() {
-    assert_printed(&[TypeTable::ANYTHING], POSITIONS, |builder| {
+    assert_graph(&[TypeTable::ANYTHING], POSITIONS, |builder| {
         let value = builder.parameter(0);
         let [taken, not_taken] = create_blocks(builder);
         builder.undefined();
@@ -110,7 +93,7 @@ function f0 module=m0 thisType={type=anything} parameters=[{type=anything}] resu
 
 #[test]
 fn declared_parameter_type_follows_a_colon() {
-    assert_printed(&[TypeTable::ANYTHING], PARAMETER_TYPES, |builder| {
+    assert_graph(&[TypeTable::ANYTHING], PARAMETER_TYPES, |builder| {
         let value = builder.parameter(0);
         let block = builder.create_block(None);
         for declared in [Some(TypeTable::NUMBER), None, Some(TypeTable::NULLISH)] {
@@ -140,7 +123,7 @@ function f0 module=m0 thisType={type=anything} parameters=[{type=anything}] resu
 
 #[test]
 fn block_attributes_in_order() {
-    assert_printed(&[TypeTable::ANYTHING], BLOCK_ATTRIBUTES, |builder| {
+    assert_graph(&[TypeTable::ANYTHING], BLOCK_ATTRIBUTES, |builder| {
         let iterator = builder.parameter(0);
         let outer = builder.create_handler(BlockRole::CatchHandler, None, None);
         let role = BlockRole::IterationCleanup;
@@ -181,7 +164,7 @@ fn proofs_after_bar() {
             proofs,
         };
         assert_eq!(
-            print_with(|printer| print_target(printer, target)),
+            print_with(&Program::new(), |printer| printer.print_target(target)),
             expected
         );
     }
@@ -189,13 +172,16 @@ fn proofs_after_bar() {
 
 #[test]
 fn position_is_printed_only_when_present() {
-    assert_eq!(print_with(|printer| print_position(printer, None)), "");
     assert_eq!(
-        print_with(|printer| print_position(printer, Some(0))),
+        print_with(&Program::new(), |printer| printer.print_position(None)),
+        ""
+    );
+    assert_eq!(
+        print_with(&Program::new(), |printer| printer.print_position(Some(0))),
         " @0"
     );
     assert_eq!(
-        print_with(|printer| print_position(printer, Some(120))),
+        print_with(&Program::new(), |printer| printer.print_position(Some(120))),
         " @120"
     );
 }
@@ -215,7 +201,7 @@ function f0 module=m0 thisType={type=anything} parameters=[{type=anything}] resu
 
 #[test]
 fn switch_repeats_case() {
-    assert_printed(&[TypeTable::ANYTHING], SWITCHES, |builder| {
+    assert_graph(&[TypeTable::ANYTHING], SWITCHES, |builder| {
         let subject = builder.parameter(0);
         let [shared, narrowing, otherwise] = create_blocks(builder);
         let narrowed = builder.add_edge_result(narrowing);
@@ -251,7 +237,7 @@ function f0 module=m0 thisType={type=anything} results=[{type=anything}] {
 
 #[test]
 fn undeclared_target_prints_invalid() {
-    assert_printed(&[], TARGETS_WITHOUT_NAME, |builder| {
+    assert_graph(&[], TARGETS_WITHOUT_NAME, |builder| {
         let [first, second] = create_blocks(builder);
         let edges = [Edge::to(first), Edge::to(second)];
         builder.terminate(TerminatorKind::Jump, &[], &edges);

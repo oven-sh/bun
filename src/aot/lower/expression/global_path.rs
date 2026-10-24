@@ -18,8 +18,7 @@ pub(in crate::lower) struct GlobalPathMember {
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(super) fn lower_global_path(&mut self, expression: ExprId, path: &[Atom]) -> ValueId {
-        let resolved = self.file.builtins.of_expr(expression);
-        match resolved {
+        match self.file.builtins.of_expr(expression) {
             Some(Resolved::Builtin(builtin)) if builtin.locked_builtin().is_some() => {
                 self.emit_locked_builtin(builtin.id)
             }

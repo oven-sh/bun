@@ -92,14 +92,6 @@ enum PendingRead {
 }
 
 #[derive(Default)]
-pub(super) struct SsaScratch {
-    states: Vec<BlockState>,
-    definitions: Definitions,
-    pending_reads: Vec<PendingRead>,
-    observed_values: FxHashSet<ValueId>,
-    variables: Vec<VariableState>,
-}
-
 pub(super) struct SsaState {
     states: Vec<BlockState>,
     definitions: Definitions,
@@ -109,38 +101,20 @@ pub(super) struct SsaState {
 }
 
 impl SsaState {
-    pub(super) fn new(scratch: SsaScratch) -> SsaState {
+    pub(super) fn recycle(mut self) -> SsaState {
+        if self.definitions.0.capacity() > MAX_SPARE_DEFINITIONS {
+            self.definitions = Definitions::default();
+        }
+        if self.observed_values.capacity() > MAX_SPARE_OBSERVED_VALUES {
+            self.observed_values = FxHashSet::default();
+        }
+        self.definitions.0.clear();
+        self.observed_values.clear();
         SsaState {
-            states: scratch.states,
-            definitions: scratch.definitions,
-            pending_reads: scratch.pending_reads,
-            observed_values: scratch.observed_values,
-            variables: scratch.variables,
-        }
-    }
-
-    pub(super) fn into_scratch(self) -> SsaScratch {
-        let SsaState {
-            states,
-            mut definitions,
-            pending_reads,
-            mut observed_values,
-            variables,
-        } = self;
-        if definitions.0.capacity() > MAX_SPARE_DEFINITIONS {
-            definitions = Definitions::default();
-        }
-        if observed_values.capacity() > MAX_SPARE_OBSERVED_VALUES {
-            observed_values = FxHashSet::default();
-        }
-        definitions.0.clear();
-        observed_values.clear();
-        SsaScratch {
-            states: recycle_vector(states, MAX_SPARE_BLOCK_STATES),
-            definitions,
-            pending_reads: recycle_vector(pending_reads, MAX_SPARE_PENDING_READS),
-            observed_values,
-            variables: recycle_vector(variables, MAX_SPARE_VARIABLES),
+            states: recycle_vector(self.states, MAX_SPARE_BLOCK_STATES),
+            pending_reads: recycle_vector(self.pending_reads, MAX_SPARE_PENDING_READS),
+            variables: recycle_vector(self.variables, MAX_SPARE_VARIABLES),
+            ..self
         }
     }
 
@@ -318,271 +292,6 @@ impl SsaState {
     }
 }
 
-pub(super) fn write_variable(
-    builder: &mut FunctionBuilder,
-    variable: LocalVariable,
-    value: ValueId,
-) {
-    if must_split_before_store(builder, variable) {
-        split_current_block(builder);
-    }
-    let (block, is_open) = (builder.current_block, builder.is_open());
-    builder.ssa.definitions.insert(block, variable, value);
-    builder.ssa.record_definition_block(variable, block);
-    let stores = &mut builder.ssa.variables[variable.0 as usize].stores;
-    *stores = match *stores {
-        StoreCount::Never => StoreCount::Once(value, block),
-        StoreCount::Once(_, definition_block) if definition_block == block && is_open => {
-            StoreCount::Once(value, definition_block)
-        }
-        StoreCount::Once(..) | StoreCount::Many => StoreCount::Many,
-    };
-}
-
-fn must_split_before_store(builder: &FunctionBuilder, variable: LocalVariable) -> bool {
-    let block = &builder.blocks[builder.current_block.index()];
-    let Some(covering) = block.covering else {
-        return false;
-    };
-    let is_visible = variable.0 < covering.visible_variable_count;
-    builder.is_open() && is_visible && !block.values.is_empty()
-}
-
-fn split_current_block(builder: &mut FunctionBuilder) {
-    let current = builder.current_block;
-    let covering = builder.handler_of(current);
-    let next = builder.create_block(covering);
-    builder.blocks[next.index()].frequency = builder.blocks[current.index()].frequency;
-    builder.terminate(TerminatorKind::Jump, &[], &[Edge::to(next)]);
-    seal(builder, next);
-    builder.switch_to(next);
-}
-
-pub(super) fn declare_loop_header(
-    builder: &mut FunctionBuilder,
-    block: BlockId,
-    modified: &[LocalVariable],
-) {
-    let pending = &builder.blocks[block.index()];
-    debug_assert!(
-        !builder.ssa.is_sealed(block),
-        "a loop header is declared before its back edges"
-    );
-    debug_assert!(
-        pending.variable_parameters.is_empty(),
-        "a loop header has no variable parameter yet"
-    );
-    builder.ssa.states[block.index()].is_loop_header = true;
-    for &variable in modified {
-        if builder.ssa.definitions.get(block, variable).is_none() {
-            create_incomplete_parameter(builder, variable, block);
-        }
-    }
-}
-
-pub(super) fn seal(builder: &mut FunctionBuilder, block: BlockId) {
-    let state = &mut builder.ssa.states[block.index()];
-    if state.is_sealed {
-        return;
-    }
-    state.is_sealed = true;
-    let incomplete_variables = core::mem::take(&mut state.incomplete_variables);
-    builder.ssa.link_dominator(block);
-    for variable in incomplete_variables {
-        complete_parameter(builder, variable, block);
-    }
-}
-
-pub(super) fn read_variable_in(
-    builder: &mut FunctionBuilder,
-    variable: LocalVariable,
-    mut block: BlockId,
-) -> ValueId {
-    if let Some(value) = builder.ssa.find_dominating_store(variable, block) {
-        return value;
-    }
-    debug_assert!(
-        builder.ssa.pending_reads.is_empty() && builder.ssa.observed_values.is_empty(),
-        "a read ends before the next one begins"
-    );
-    loop {
-        let value = find_definition(builder, variable, block);
-        match resolve_pending_reads(builder, variable, value) {
-            ControlFlow::Continue(predecessor) => block = predecessor,
-            ControlFlow::Break(value) => {
-                builder.ssa.observed_values.clear();
-                return value;
-            }
-        }
-    }
-}
-
-fn find_definition(
-    builder: &mut FunctionBuilder,
-    variable: LocalVariable,
-    mut block: BlockId,
-) -> ValueId {
-    let mut single_predecessor_run = 0;
-    loop {
-        if let Some(definition) = builder.ssa.definitions.get(block, variable) {
-            builder.ssa.record_observed_value(definition);
-            return definition;
-        }
-        let should_try_shortcut =
-            builder.ssa.predecessor_count(block) != 1 || single_predecessor_run % 4 == 3;
-        if should_try_shortcut {
-            match builder.ssa.find_shortcut(variable, block) {
-                Shortcut::Value(definition) => {
-                    builder.ssa.record_observed_value(definition);
-                    return definition;
-                }
-                Shortcut::To(ancestor) => {
-                    block = ancestor;
-                    continue;
-                }
-                Shortcut::No => {}
-            }
-        }
-        let state = &builder.ssa.states[block.index()];
-        let (is_sealed, predecessor_count) = (state.is_sealed, state.predecessors.len());
-        let is_pass_through = state.is_loop_header || (is_sealed && predecessor_count == 1);
-        let is_run_exhausted = single_predecessor_run > builder.ssa.states.len();
-        if is_pass_through && predecessor_count > 0 && !is_run_exhausted {
-            let pending_read = PendingRead::SinglePredecessor(block);
-            block = state.predecessors[0];
-            builder.ssa.pending_reads.push(pending_read);
-            single_predecessor_run += 1;
-            continue;
-        }
-        if !is_sealed {
-            return create_incomplete_parameter(builder, variable, block);
-        }
-        if predecessor_count == 0 || is_run_exhausted {
-            return create_undefined_value(builder, variable, block);
-        }
-        let predecessors = builder.ssa.unique_predecessors(block);
-        let Some(&first) = predecessors.first() else {
-            return create_undefined_value(builder, variable, block);
-        };
-        let parameter = add_variable_parameter(builder, variable, block);
-        builder.ssa.definitions.insert(block, variable, parameter);
-        let pending_read = PendingRead::Join(PendingJoin {
-            block,
-            parameter,
-            predecessors,
-            next: 0,
-            single_value: None,
-        });
-        builder.ssa.pending_reads.push(pending_read);
-        block = first;
-        single_predecessor_run = 0;
-    }
-}
-
-fn resolve_pending_reads(
-    builder: &mut FunctionBuilder,
-    variable: LocalVariable,
-    mut value: ValueId,
-) -> ControlFlow<ValueId, BlockId> {
-    while let Some(pending_read) = builder.ssa.pending_reads.pop() {
-        match pending_read {
-            PendingRead::SinglePredecessor(successor) => {
-                builder.ssa.definitions.insert(successor, variable, value);
-            }
-            PendingRead::Join(mut join) => {
-                append_argument(builder, join.predecessors[join.next], join.block, value);
-                let is_single_value = join.next == 0 || join.single_value == Some(value);
-                join.single_value = is_single_value.then_some(value);
-                join.next += 1;
-                if let Some(&predecessor) = join.predecessors.get(join.next) {
-                    builder.ssa.pending_reads.push(PendingRead::Join(join));
-                    return ControlFlow::Continue(predecessor);
-                }
-                value = resolve_join(builder, variable, &join);
-            }
-        }
-    }
-    ControlFlow::Break(value)
-}
-
-fn resolve_join(
-    builder: &mut FunctionBuilder,
-    variable: LocalVariable,
-    join: &PendingJoin,
-) -> ValueId {
-    let (block, parameter) = (join.block, join.parameter);
-    let is_observed = builder.ssa.observed_values.contains(&parameter);
-    if let Some(value) = join.single_value
-        && value != parameter
-        && !is_observed
-        && try_remove_parameter(builder, block, parameter, &join.predecessors)
-    {
-        builder.ssa.definitions.insert(block, variable, value);
-        return value;
-    }
-    builder.ssa.variables[variable.0 as usize].stores = StoreCount::Many;
-    builder.ssa.record_definition_block(variable, block);
-    parameter
-}
-
-fn add_variable_parameter(
-    builder: &mut FunctionBuilder,
-    variable: LocalVariable,
-    block: BlockId,
-) -> ValueId {
-    let pending = &builder.blocks[block.index()];
-    debug_assert!(
-        pending.role == BlockRole::Ordinary || variable.0 < pending.visible_variable_count,
-        "a handler reads only variables created before it"
-    );
-    let declared = builder.ssa.variables[variable.0 as usize].declared;
-    let parameter = builder.add_parameter_value(declared);
-    let pending = &mut builder.blocks[block.index()];
-    pending.variable_parameters.push(parameter);
-    parameter
-}
-
-fn create_incomplete_parameter(
-    builder: &mut FunctionBuilder,
-    variable: LocalVariable,
-    block: BlockId,
-) -> ValueId {
-    let parameter = add_variable_parameter(builder, variable, block);
-    let state = &mut builder.ssa.states[block.index()];
-    state.incomplete_variables.push(variable);
-    record_computed_definition(builder, variable, block, parameter);
-    parameter
-}
-
-fn create_undefined_value(
-    builder: &mut FunctionBuilder,
-    variable: LocalVariable,
-    block: BlockId,
-) -> ValueId {
-    let value = ValueId::new(builder.values.len());
-    builder.values.push(PendingValue {
-        definition: PendingDefinition::Operation {
-            opcode: Opcode::Undefined,
-            fields: 0..0,
-        },
-        position: None,
-    });
-    builder.blocks[block.index()].values.insert(0, value);
-    record_computed_definition(builder, variable, block, value);
-    value
-}
-
-fn record_computed_definition(
-    builder: &mut FunctionBuilder,
-    variable: LocalVariable,
-    block: BlockId,
-    value: ValueId,
-) {
-    builder.ssa.definitions.insert(block, variable, value);
-    builder.ssa.variables[variable.0 as usize].stores = StoreCount::Many;
-    builder.ssa.record_definition_block(variable, block);
-}
-
 fn edge_targets(
     predecessor: &mut PendingBlock,
     block: BlockId,
@@ -593,42 +302,272 @@ fn edge_targets(
     targets.filter(move |target| target.block == block)
 }
 
-fn try_remove_parameter(
-    builder: &mut FunctionBuilder,
-    block: BlockId,
-    parameter: ValueId,
-    predecessors: &[BlockId],
-) -> bool {
-    let variable_parameters = &mut builder.blocks[block.index()].variable_parameters;
-    if variable_parameters.last() != Some(&parameter) {
-        return false;
+impl FunctionBuilder {
+    pub fn write_variable(&mut self, variable: LocalVariable, value: ValueId) {
+        if self.must_split_before_store(variable) {
+            self.split_current_block();
+        }
+        let (block, is_open) = (self.current_block, self.is_open());
+        self.ssa.definitions.insert(block, variable, value);
+        self.ssa.record_definition_block(variable, block);
+        let stores = &mut self.ssa.variables[variable.0 as usize].stores;
+        *stores = match *stores {
+            StoreCount::Never => StoreCount::Once(value, block),
+            StoreCount::Once(_, definition_block) if definition_block == block && is_open => {
+                StoreCount::Once(value, definition_block)
+            }
+            StoreCount::Once(..) | StoreCount::Many => StoreCount::Many,
+        };
     }
-    variable_parameters.pop();
-    for &predecessor in predecessors {
-        for target in edge_targets(&mut builder.blocks[predecessor.index()], block) {
-            target.variable_arguments.pop();
+
+    fn must_split_before_store(&self, variable: LocalVariable) -> bool {
+        let block = &self.blocks[self.current_block.index()];
+        let Some(covering) = block.covering else {
+            return false;
+        };
+        let is_visible = variable.0 < covering.visible_variable_count;
+        self.is_open() && is_visible && !block.values.is_empty()
+    }
+
+    fn split_current_block(&mut self) {
+        let current = self.current_block;
+        let covering = self.handler_of(current);
+        let next = self.create_block(covering);
+        self.blocks[next.index()].frequency = self.blocks[current.index()].frequency;
+        self.terminate(TerminatorKind::Jump, &[], &[Edge::to(next)]);
+        self.seal(next);
+        self.switch_to(next);
+    }
+
+    pub fn declare_loop_header(&mut self, block: BlockId, modified: &[LocalVariable]) {
+        let pending = &self.blocks[block.index()];
+        debug_assert!(
+            !self.ssa.is_sealed(block),
+            "a loop header is declared before its back edges"
+        );
+        debug_assert!(
+            pending.variable_parameters.is_empty(),
+            "a loop header has no variable parameter yet"
+        );
+        self.ssa.states[block.index()].is_loop_header = true;
+        for &variable in modified {
+            if self.ssa.definitions.get(block, variable).is_none() {
+                self.create_incomplete_parameter(variable, block);
+            }
         }
     }
-    if parameter.index() + 1 == builder.values.len() {
-        builder.values.pop();
-    }
-    true
-}
 
-fn append_argument(
-    builder: &mut FunctionBuilder,
-    predecessor: BlockId,
-    block: BlockId,
-    value: ValueId,
-) {
-    for target in edge_targets(&mut builder.blocks[predecessor.index()], block) {
-        target.variable_arguments.push(value);
+    pub fn seal(&mut self, block: BlockId) {
+        let state = &mut self.ssa.states[block.index()];
+        if state.is_sealed {
+            return;
+        }
+        state.is_sealed = true;
+        let incomplete_variables = core::mem::take(&mut state.incomplete_variables);
+        self.ssa.link_dominator(block);
+        for variable in incomplete_variables {
+            for predecessor in self.ssa.unique_predecessors(block) {
+                let value = self.read_variable_in(variable, predecessor);
+                self.append_argument(predecessor, block, value);
+            }
+        }
     }
-}
 
-fn complete_parameter(builder: &mut FunctionBuilder, variable: LocalVariable, block: BlockId) {
-    for predecessor in builder.ssa.unique_predecessors(block) {
-        let value = read_variable_in(builder, variable, predecessor);
-        append_argument(builder, predecessor, block, value);
+    pub fn read_variable(&mut self, variable: LocalVariable) -> ValueId {
+        self.read_variable_in(variable, self.current_block)
+    }
+
+    fn read_variable_in(&mut self, variable: LocalVariable, mut block: BlockId) -> ValueId {
+        if let Some(value) = self.ssa.find_dominating_store(variable, block) {
+            return value;
+        }
+        debug_assert!(
+            self.ssa.pending_reads.is_empty() && self.ssa.observed_values.is_empty(),
+            "a read ends before the next one begins"
+        );
+        loop {
+            let value = self.find_definition(variable, block);
+            match self.resolve_pending_reads(variable, value) {
+                ControlFlow::Continue(predecessor) => block = predecessor,
+                ControlFlow::Break(value) => {
+                    self.ssa.observed_values.clear();
+                    return value;
+                }
+            }
+        }
+    }
+
+    fn find_definition(&mut self, variable: LocalVariable, mut block: BlockId) -> ValueId {
+        let mut single_predecessor_run = 0;
+        loop {
+            if let Some(definition) = self.ssa.definitions.get(block, variable) {
+                self.ssa.record_observed_value(definition);
+                return definition;
+            }
+            let should_try_shortcut =
+                self.ssa.predecessor_count(block) != 1 || single_predecessor_run % 4 == 3;
+            if should_try_shortcut {
+                match self.ssa.find_shortcut(variable, block) {
+                    Shortcut::Value(definition) => {
+                        self.ssa.record_observed_value(definition);
+                        return definition;
+                    }
+                    Shortcut::To(ancestor) => {
+                        block = ancestor;
+                        continue;
+                    }
+                    Shortcut::No => {}
+                }
+            }
+            let state = &self.ssa.states[block.index()];
+            let (is_sealed, predecessor_count) = (state.is_sealed, state.predecessors.len());
+            let is_pass_through = state.is_loop_header || (is_sealed && predecessor_count == 1);
+            let is_run_exhausted = single_predecessor_run > self.ssa.states.len();
+            if is_pass_through && predecessor_count > 0 && !is_run_exhausted {
+                let pending_read = PendingRead::SinglePredecessor(block);
+                block = state.predecessors[0];
+                self.ssa.pending_reads.push(pending_read);
+                single_predecessor_run += 1;
+                continue;
+            }
+            if !is_sealed {
+                return self.create_incomplete_parameter(variable, block);
+            }
+            if predecessor_count == 0 || is_run_exhausted {
+                return self.create_undefined_value(variable, block);
+            }
+            let predecessors = self.ssa.unique_predecessors(block);
+            let Some(&first) = predecessors.first() else {
+                return self.create_undefined_value(variable, block);
+            };
+            let parameter = self.add_variable_parameter(variable, block);
+            self.ssa.definitions.insert(block, variable, parameter);
+            let pending_read = PendingRead::Join(PendingJoin {
+                block,
+                parameter,
+                predecessors,
+                next: 0,
+                single_value: None,
+            });
+            self.ssa.pending_reads.push(pending_read);
+            block = first;
+            single_predecessor_run = 0;
+        }
+    }
+
+    fn resolve_pending_reads(
+        &mut self,
+        variable: LocalVariable,
+        mut value: ValueId,
+    ) -> ControlFlow<ValueId, BlockId> {
+        while let Some(pending_read) = self.ssa.pending_reads.pop() {
+            match pending_read {
+                PendingRead::SinglePredecessor(successor) => {
+                    self.ssa.definitions.insert(successor, variable, value);
+                }
+                PendingRead::Join(mut join) => {
+                    self.append_argument(join.predecessors[join.next], join.block, value);
+                    let is_single_value = join.next == 0 || join.single_value == Some(value);
+                    join.single_value = is_single_value.then_some(value);
+                    join.next += 1;
+                    if let Some(&predecessor) = join.predecessors.get(join.next) {
+                        self.ssa.pending_reads.push(PendingRead::Join(join));
+                        return ControlFlow::Continue(predecessor);
+                    }
+                    value = self.resolve_join(variable, &join);
+                }
+            }
+        }
+        ControlFlow::Break(value)
+    }
+
+    fn resolve_join(&mut self, variable: LocalVariable, join: &PendingJoin) -> ValueId {
+        let (block, parameter) = (join.block, join.parameter);
+        let is_observed = self.ssa.observed_values.contains(&parameter);
+        if let Some(value) = join.single_value
+            && value != parameter
+            && !is_observed
+            && self.try_remove_parameter(block, parameter, &join.predecessors)
+        {
+            self.ssa.definitions.insert(block, variable, value);
+            return value;
+        }
+        self.ssa.variables[variable.0 as usize].stores = StoreCount::Many;
+        self.ssa.record_definition_block(variable, block);
+        parameter
+    }
+
+    fn add_variable_parameter(&mut self, variable: LocalVariable, block: BlockId) -> ValueId {
+        let pending = &self.blocks[block.index()];
+        debug_assert!(
+            pending.role == BlockRole::Ordinary || variable.0 < pending.visible_variable_count,
+            "a handler reads only variables created before it"
+        );
+        let declared = self.ssa.variables[variable.0 as usize].declared;
+        let parameter = self.add_parameter_value(declared);
+        let pending = &mut self.blocks[block.index()];
+        pending.variable_parameters.push(parameter);
+        parameter
+    }
+
+    fn create_incomplete_parameter(&mut self, variable: LocalVariable, block: BlockId) -> ValueId {
+        let parameter = self.add_variable_parameter(variable, block);
+        let state = &mut self.ssa.states[block.index()];
+        state.incomplete_variables.push(variable);
+        self.record_computed_definition(variable, block, parameter);
+        parameter
+    }
+
+    fn create_undefined_value(&mut self, variable: LocalVariable, block: BlockId) -> ValueId {
+        let value = ValueId::new(self.values.len());
+        self.values.push(PendingValue {
+            definition: PendingDefinition::Operation {
+                opcode: Opcode::Undefined,
+                fields: 0..0,
+            },
+            position: None,
+        });
+        self.blocks[block.index()].values.insert(0, value);
+        self.record_computed_definition(variable, block, value);
+        value
+    }
+
+    fn record_computed_definition(
+        &mut self,
+        variable: LocalVariable,
+        block: BlockId,
+        value: ValueId,
+    ) {
+        self.ssa.definitions.insert(block, variable, value);
+        self.ssa.variables[variable.0 as usize].stores = StoreCount::Many;
+        self.ssa.record_definition_block(variable, block);
+    }
+
+    fn try_remove_parameter(
+        &mut self,
+        block: BlockId,
+        parameter: ValueId,
+        predecessors: &[BlockId],
+    ) -> bool {
+        let variable_parameters = &mut self.blocks[block.index()].variable_parameters;
+        if variable_parameters.last() != Some(&parameter) {
+            return false;
+        }
+        variable_parameters.pop();
+        for &predecessor in predecessors {
+            for target in edge_targets(&mut self.blocks[predecessor.index()], block) {
+                target.variable_arguments.pop();
+            }
+        }
+        if parameter.index() + 1 == self.values.len() {
+            self.values.pop();
+        }
+        true
+    }
+
+    fn append_argument(&mut self, predecessor: BlockId, block: BlockId, value: ValueId) {
+        for target in edge_targets(&mut self.blocks[predecessor.index()], block) {
+            target.variable_arguments.push(value);
+        }
     }
 }

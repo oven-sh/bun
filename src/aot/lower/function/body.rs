@@ -12,7 +12,14 @@ impl FileLowering<'_, '_, '_, '_> {
         let top = self.bound.fns[source.idx()].scope;
         let mut lowering = FunctionLowering::begin(self, function);
         lowering.returned = returned;
-        lowering.bind_naked_constructor_this(source);
+        match module::library_function_form(lowering.file, source) {
+            Some(LibraryFunctionForm::NakedConstructor) => {
+                let new_target = lowering.builder.new_target();
+                let new_target = new_target.expect("a constructor takes new.target");
+                lowering.scopes.entry_this = Some(new_target);
+            }
+            Some(LibraryFunctionForm::Method | LibraryFunctionForm::Constructor) | None => {}
+        }
         lowering.lower_parameters(source);
         lowering.emit_coroutine_start();
         lowering.emit_fast_path(source);
@@ -36,17 +43,6 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    fn bind_naked_constructor_this(&mut self, source: FnId) {
-        match module::library_function_form(self.file, source) {
-            Some(LibraryFunctionForm::NakedConstructor) => {
-                let new_target = self.builder.new_target();
-                let new_target = new_target.expect("a constructor takes new.target");
-                self.scopes.set_entry_this(new_target);
-            }
-            Some(LibraryFunctionForm::Method | LibraryFunctionForm::Constructor) | None => {}
-        }
-    }
-
     pub(crate) fn lower_function_body(&mut self, source: FnId) {
         match self.file.hir[source].body {
             FnBody::Block(statements) => {

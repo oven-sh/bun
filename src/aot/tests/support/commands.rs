@@ -7,9 +7,11 @@ use bun_aot::ir::{FunctionId, Id, Program, print_function, print_program, run_se
 use bun_aot::statistics::Statistics;
 use bun_aot::{BuildFailed, WithoutServices, link_program};
 use bun_ast::{Log, Metadata};
+use bun_options_types::aot_options::AotOptions;
 use std::ffi::OsStr;
 use std::num::NonZeroU32;
 use std::path::Path;
+use std::process::Output;
 use std::sync::Once;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -20,29 +22,7 @@ const STDERR_LINES_SHOWN: usize = 3;
 
 static NEXT_PROGRAM_FILE_NUMBER: AtomicU32 = AtomicU32::new(0);
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct FrontEndWords {
-    pub erases_types: bool,
-    pub reports_type_mismatches: bool,
-    pub thread_count: NonZeroU32,
-}
-
-impl Default for FrontEndWords {
-    fn default() -> FrontEndWords {
-        FrontEndWords {
-            erases_types: false,
-            reports_type_mismatches: false,
-            thread_count: NonZeroU32::MIN,
-        }
-    }
-}
-
-pub struct CommandInput<'a> {
-    pub path: &'a Path,
-    pub words: FrontEndWords,
-}
-
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct CommandResult {
     pub output: String,
     pub diagnostics: Vec<(DiagnosticName, String)>,
@@ -50,87 +30,40 @@ pub struct CommandResult {
     pub engine_was_skipped: Option<String>,
 }
 
-pub enum CommandOutcome {
-    Finished(CommandResult),
-    Failed(String),
+pub type CommandOutcome = Result<CommandResult, String>;
+
+pub type Command = fn(&Program) -> String;
+
+pub fn find_command(name: &str) -> Option<Command> {
+    let command: Command = match name {
+        "lower" => print_entry_functions,
+        "link" | "emit" => print_program,
+        _ => return None,
+    };
+    Some(command)
 }
 
-pub struct Command {
-    pub name: &'static str,
-    pub run: fn(&CommandInput<'_>) -> CommandOutcome,
-}
-
-pub static COMMANDS: [Command; 3] = [
-    Command {
-        name: "lower",
-        run: run_lower,
-    },
-    Command {
-        name: "link",
-        run: run_link,
-    },
-    Command {
-        name: "emit",
-        run: run_link,
-    },
-];
-
-#[derive(PartialEq, Eq, Debug)]
-enum EngineAnswer {
-    Text(String),
-    Diagnostics(Vec<(DiagnosticName, String)>),
-    /// The tool and these tests were built from two states of the schema, so it reads nothing that they emit.
-    OtherSchema,
-}
-
-pub fn find_command(name: &str) -> Option<&'static Command> {
-    COMMANDS.iter().find(|command| command.name == name)
-}
-
-pub fn parse_option_words(words: &[OptionWord]) -> Result<FrontEndWords, TestFailure> {
-    let mut parsed = FrontEndWords::default();
-    for option in words {
-        if !try_apply_option_word(&mut parsed, &option.word) {
-            return Err(TestFailure {
-                line: option.line,
-                message: format!("unknown option word {}", option.word),
-            });
-        }
-    }
-    Ok(parsed)
-}
-
-fn try_apply_option_word(words: &mut FrontEndWords, word: &str) -> bool {
-    match word {
-        "erase-types" => words.erases_types = true,
-        "type-errors=silent" => words.reports_type_mismatches = false,
-        "type-errors=log" => words.reports_type_mismatches = true,
-        _ => {
-            let count = word.strip_prefix("threads=");
-            match count.and_then(parse_decimal::<NonZeroU32>) {
-                Some(count) => words.thread_count = count,
-                None => return false,
+pub fn parse_option_words(words: &[OptionWord]) -> Result<AotOptions, TestFailure> {
+    let mut aot = AotOptions {
+        thread_count: Some(NonZeroU32::MIN),
+        ..AotOptions::default()
+    };
+    for OptionWord { word, line } in words {
+        match word.as_str() {
+            "erase-types" => aot.erases_types = true,
+            "type-errors=silent" => aot.reports_type_mismatches = false,
+            "type-errors=log" => aot.reports_type_mismatches = true,
+            _ => {
+                let count = word.strip_prefix("threads=");
+                let Some(count) = count.and_then(parse_decimal::<NonZeroU32>) else {
+                    let message = format!("unknown option word {word}");
+                    return Err(TestFailure::new(*line, message));
+                };
+                aot.thread_count = Some(count);
             }
         }
     }
-    true
-}
-
-fn create_build(input: &CommandInput<'_>) -> StandaloneBuild {
-    static OUTPUT: Once = Once::new();
-    // A thread of Bun's pool asserts that Bun's `main` has set up the output.
-    OUTPUT.call_once(bun_core::output::stdio::init);
-    let folder = input.path.parent().expect("a test file is in a folder");
-    let name = input.path.file_name().expect("a test file has a name");
-    let mut build = StandaloneBuild::new(
-        folder.as_os_str().as_encoded_bytes().to_vec(),
-        vec![name.as_encoded_bytes().to_vec()],
-    );
-    build.omits_builtin_modules = true;
-    build.aot.erases_types = input.words.erases_types;
-    build.aot.reports_type_mismatches = input.words.reports_type_mismatches;
-    build.aot.thread_count = Some(input.words.thread_count);
-    build
+    Ok(aot)
 }
 
 fn create_command_result(log: &Log, statistics: &Statistics) -> CommandResult {
@@ -159,37 +92,38 @@ fn create_command_result(log: &Log, statistics: &Statistics) -> CommandResult {
     }
 }
 
-fn print_log(log: &Log) -> String {
-    let mut text = String::new();
-    let _ = log.print(&mut text);
-    text
-}
-
 fn failed_build_outcome(log: &Log, failed: &BuildFailed) -> CommandOutcome {
     if failed.is_internal_error {
-        return CommandOutcome::Failed(format!(
-            "internal error in stage {}: {}",
-            failed.stage.name(),
-            print_log(log)
-        ));
+        let mut text = String::new();
+        let _ = log.print(&mut text);
+        let stage = failed.stage.name();
+        return Err(format!("internal error in stage {stage}: {text}"));
     }
-    CommandOutcome::Finished(create_command_result(log, &failed.statistics))
+    Ok(create_command_result(log, &failed.statistics))
 }
 
-fn run_front_end(input: &CommandInput<'_>, select: fn(&Program) -> String) -> CommandOutcome {
-    let build = create_build(input);
+pub fn run_command(command: Command, path: &Path, aot: &AotOptions) -> CommandOutcome {
+    static OUTPUT: Once = Once::new();
+    // A thread of Bun's pool asserts that Bun's `main` has set up the output.
+    OUTPUT.call_once(bun_core::output::stdio::init);
+    let folder = path.parent().expect("a test file is in a folder");
+    let name = path.file_name().expect("a test file has a name");
+    let mut build = StandaloneBuild::new(
+        folder.as_os_str().as_encoded_bytes().to_vec(),
+        vec![name.as_encoded_bytes().to_vec()],
+    );
+    build.omits_builtin_modules = true;
+    build.aot = aot.clone();
     let mut log = Log::init();
     let linked = match link_program(&build.options(), &WithoutServices, &mut log) {
         Ok(linked) => linked,
         Err(failed) => return failed_build_outcome(&log, &failed),
     };
     let mut result = create_command_result(&log, &linked.summary.statistics);
-    result.output = select(&linked.program);
+    result.output = command(&linked.program);
     let text = print_program(&linked.program);
-    let bytes = match emit(linked.program, &run_serially) {
-        Ok(bytes) => bytes,
-        Err(error) => return CommandOutcome::Failed(format!("emit failed: {error:?}")),
-    };
+    let bytes =
+        emit(linked.program, &run_serially).map_err(|error| format!("emit failed: {error:?}"))?;
     let byte_count = bytes.as_slice().len() as u64;
     result
         .statistics
@@ -206,26 +140,36 @@ fn check_with_engine(
 ) -> CommandOutcome {
     let Some(testaot) = testaot else {
         result.engine_was_skipped = Some(format!("{ENGINE_TOOL_VARIABLE} is not set"));
-        return CommandOutcome::Finished(result);
+        return Ok(result);
     };
-    match print_with_engine(testaot, program) {
-        Ok(EngineAnswer::Text(engine_text)) => {
-            match find_first_difference(&engine_text, front_end_text) {
-                Some(difference) => CommandOutcome::Failed(difference),
-                None => CommandOutcome::Finished(result),
-            }
-        }
-        Ok(EngineAnswer::Diagnostics(diagnostics)) => {
-            result.diagnostics.extend(diagnostics);
-            CommandOutcome::Finished(result)
-        }
-        Ok(EngineAnswer::OtherSchema) => {
-            let why = format!("{ENGINE_TOOL_VARIABLE} was built from another schema");
-            result.engine_was_skipped = Some(why);
-            CommandOutcome::Finished(result)
-        }
-        Err(why) => CommandOutcome::Failed(why),
+    let output = print_with_engine(testaot, program)?;
+    if output.status.success() {
+        let engine_text = String::from_utf8_lossy(&output.stdout);
+        return match find_first_difference(&engine_text, front_end_text) {
+            Some(difference) => Err(difference),
+            None => Ok(result),
+        };
     }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if reports_other_schema(&stderr) {
+        let why = format!("{ENGINE_TOOL_VARIABLE} was built from another schema");
+        result.engine_was_skipped = Some(why);
+        return Ok(result);
+    }
+    let exit_code = output.status.code();
+    if exit_code == Some(EXIT_CODE_WITH_DIAGNOSTICS) {
+        let diagnostics = parse_engine_diagnostics(&stderr);
+        if !diagnostics.is_empty() {
+            result.diagnostics.extend(diagnostics);
+            return Ok(result);
+        }
+    }
+    let exit = match exit_code {
+        Some(code) => format!("exit code {code}"),
+        None => output.status.to_string(),
+    };
+    let shown: Vec<&str> = stderr.lines().take(STDERR_LINES_SHOWN).collect();
+    Err(format!("testaot print: {exit}: {}", shown.join("; ")))
 }
 
 fn print_entry_functions(program: &Program) -> String {
@@ -240,58 +184,22 @@ fn print_entry_functions(program: &Program) -> String {
     output
 }
 
-fn run_lower(input: &CommandInput<'_>) -> CommandOutcome {
-    run_front_end(input, print_entry_functions)
-}
-
-fn run_link(input: &CommandInput<'_>) -> CommandOutcome {
-    run_front_end(input, print_program)
-}
-
-fn print_with_engine(testaot: &OsStr, program: &[u8]) -> Result<EngineAnswer, String> {
+fn print_with_engine(testaot: &OsStr, program: &[u8]) -> Result<Output, String> {
     let number = NEXT_PROGRAM_FILE_NUMBER.fetch_add(1, Ordering::Relaxed);
     let name = format!("bun-aot-ir-{}-{number}.bin", std::process::id());
     let file = std::env::temp_dir().join(name);
-    let printed = print_file_with_engine(testaot, &file, program);
+    let output = std::fs::write(&file, program)
+        .map_err(|error| format!("cannot write {}: {error}", file.display()))
+        .and_then(|()| {
+            let mut command = std::process::Command::new(testaot);
+            let output = command.args(ENGINE_TOOL_ARGUMENTS).arg(&file).output();
+            output.map_err(|error| format!("testaot print: cannot be started: {error}"))
+        });
     let _ = std::fs::remove_file(&file);
-    printed
+    output
 }
 
-fn print_file_with_engine(
-    testaot: &OsStr,
-    file: &Path,
-    program: &[u8],
-) -> Result<EngineAnswer, String> {
-    std::fs::write(file, program)
-        .map_err(|error| format!("cannot write {}: {error}", file.display()))?;
-    let output = std::process::Command::new(testaot)
-        .args(ENGINE_TOOL_ARGUMENTS)
-        .arg(file)
-        .output()
-        .map_err(|error| format!("testaot print: cannot be started: {error}"))?;
-    if output.status.success() {
-        let text = String::from_utf8_lossy(&output.stdout).into_owned();
-        return Ok(EngineAnswer::Text(text));
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if reports_other_schema(&stderr) {
-        return Ok(EngineAnswer::OtherSchema);
-    }
-    let exit_code = output.status.code();
-    if exit_code == Some(EXIT_CODE_WITH_DIAGNOSTICS) {
-        let diagnostics = parse_engine_diagnostics(&stderr);
-        if !diagnostics.is_empty() {
-            return Ok(EngineAnswer::Diagnostics(diagnostics));
-        }
-    }
-    let exit = match exit_code {
-        Some(code) => format!("exit code {code}"),
-        None => output.status.to_string(),
-    };
-    let shown: Vec<&str> = stderr.lines().take(STDERR_LINES_SHOWN).collect();
-    Err(format!("testaot print: {exit}: {}", shown.join("; ")))
-}
-
+/// The tool and these tests were built from two states of the schema, so it reads nothing that they emit.
 fn reports_other_schema(stderr: &str) -> bool {
     let message = InternalErrorKind::SchemaMismatch.message();
     stderr.lines().any(|line| line.contains(message))
@@ -336,8 +244,6 @@ mod tests {
     use bun_ast::{BabyString, Data, ImportKind, MetadataResolve, Msg, TypeScriptKind};
     use std::borrow::Cow;
 
-    const MISSING_EXECUTABLE: &str = "/nonexistent/testaot";
-
     fn create_failed_build(is_internal_error: bool) -> BuildFailed {
         let mut statistics = Statistics::default();
         statistics.count(StatisticId::FunctionsLowered, 3);
@@ -352,78 +258,46 @@ mod tests {
         }
     }
 
-    fn create_log(messages: [(&'static [u8], Metadata); 3]) -> Log {
-        let mut log = Log::init();
-        for (text, metadata) in messages {
-            log.add_msg(Msg {
-                data: Data {
-                    text: Cow::Borrowed(text),
-                    location: None,
-                },
-                metadata,
-                ..Msg::default()
-            });
-        }
-        log
-    }
-
-    fn create_result_with_output() -> CommandResult {
-        CommandResult {
+    fn check_with_tool(testaot: Option<&str>, front_end_text: &str) -> CommandOutcome {
+        let result = CommandResult {
             output: "function f0\n".to_owned(),
             ..CommandResult::default()
-        }
+        };
+        check_with_engine(testaot.map(OsStr::new), b"", front_end_text, result)
     }
 
-    fn thread_count(count: u32) -> NonZeroU32 {
-        NonZeroU32::new(count).unwrap()
-    }
-
-    fn parse(words: &[&str]) -> Result<FrontEndWords, TestFailure> {
-        let words: Vec<OptionWord> = words
-            .iter()
-            .zip(1..)
-            .map(|(word, line)| OptionWord {
-                word: (*word).to_owned(),
-                line,
-            })
-            .collect();
-        parse_option_words(&words)
+    fn parse(words: &[&str]) -> Result<(bool, bool, u32), TestFailure> {
+        let words = words.iter().zip(1..).map(|(word, line)| OptionWord {
+            word: (*word).to_owned(),
+            line,
+        });
+        let aot = parse_option_words(&words.collect::<Vec<_>>())?;
+        let thread_count = aot.thread_count.map_or(0, NonZeroU32::get);
+        Ok((aot.erases_types, aot.reports_type_mismatches, thread_count))
     }
 
     #[test]
-    fn default_words() {
-        let expected = FrontEndWords {
-            erases_types: false,
-            reports_type_mismatches: false,
-            thread_count: thread_count(1),
-        };
-        assert_eq!(parse(&[]), Ok(expected));
+    fn command_lookup() {
+        for name in ["lower", "link", "emit"] {
+            assert!(find_command(name).is_some(), "{name}");
+        }
+        for name in ["print", "verify", "compile", ""] {
+            assert!(find_command(name).is_none(), "{name}");
+        }
     }
 
     #[test]
     fn front_end_words() {
-        let expected = FrontEndWords {
-            erases_types: true,
-            reports_type_mismatches: true,
-            thread_count: thread_count(4),
-        };
-        let words = ["erase-types", "type-errors=log", "threads=4"];
-        assert_eq!(parse(&words), Ok(expected));
-    }
-
-    #[test]
-    fn last_scalar_word_wins() {
-        let words = [
+        assert_eq!(parse(&[]), Ok((false, false, 1)));
+        let listed = ["erase-types", "type-errors=log", "threads=4"];
+        assert_eq!(parse(&listed), Ok((true, true, 4)));
+        let listed = [
             "type-errors=log",
             "threads=4",
             "type-errors=silent",
             "threads=2",
         ];
-        let expected = FrontEndWords {
-            thread_count: thread_count(2),
-            ..FrontEndWords::default()
-        };
-        assert_eq!(parse(&words), Ok(expected));
+        assert_eq!(parse(&listed), Ok((false, false, 2)));
     }
 
     #[test]
@@ -440,33 +314,17 @@ mod tests {
             "threads=+1",
             "threads=many",
             "threads=4294967296",
-        ] {
-            let failure = parse(&["erase-types", word]).unwrap_err();
-            assert_eq!(failure.line, 2, "{word}");
-        }
-    }
-
-    #[test]
-    fn engine_words_are_unknown() {
-        for word in [
             "validate",
             "check=verify-each-pass",
             "disable=flow-results",
             "limit=MaxTypeNodes:1",
             "layout-seed=9",
         ] {
+            let message = format!("unknown option word {word}");
+            let failure = parse(&["erase-types", word]).unwrap_err();
+            assert_eq!(failure, TestFailure::new(2, message.clone()));
             let failure = parse(&[word]).unwrap_err();
-            assert_eq!(failure.message, format!("unknown option word {word}"));
-        }
-    }
-
-    #[test]
-    fn command_lookup() {
-        for name in ["lower", "link", "emit"] {
-            assert_eq!(find_command(name).expect(name).name, name);
-        }
-        for name in ["print", "verify", "compile", ""] {
-            assert!(find_command(name).is_none(), "{name}");
+            assert_eq!(failure, TestFailure::new(1, message));
         }
     }
 
@@ -481,15 +339,24 @@ mod tests {
             import_kind: ImportKind::Stmt,
             err: bun_ast::Error::ModuleNotFound,
         });
-        let log = create_log([
+        let messages: [(&[u8], Metadata); 3] = [
             (b"not assignable", type_error),
             (b"no entry", Metadata::Build),
             (b"not found", resolve_error),
-        ]);
-        let failed = create_failed_build(false);
-        let CommandOutcome::Finished(result) = failed_build_outcome(&log, &failed) else {
-            panic!("a user's error is judged by the DIAGNOSTIC lines");
-        };
+        ];
+        let mut log = Log::init();
+        for (text, metadata) in messages {
+            log.add_msg(Msg {
+                data: Data {
+                    text: Cow::Borrowed(text),
+                    location: None,
+                },
+                metadata,
+                ..Msg::default()
+            });
+        }
+        let result = failed_build_outcome(&log, &create_failed_build(false))
+            .expect("a user's error is judged by the DIAGNOSTIC lines");
         let expected = [
             (DiagnosticName::FrontEnd(2322), "not assignable".to_owned()),
             (DiagnosticName::Build, "no entry".to_owned()),
@@ -503,39 +370,34 @@ mod tests {
 
     #[test]
     fn internal_error_fails_command() {
-        let CommandOutcome::Failed(why) =
-            failed_build_outcome(&Log::init(), &create_failed_build(true))
-        else {
-            panic!("a test cannot expect an internal error");
-        };
+        let why = failed_build_outcome(&Log::init(), &create_failed_build(true))
+            .expect_err("a test cannot expect an internal error");
         let prefix = "internal error in stage LinkAndEmit: ";
         assert!(why.starts_with(prefix), "{why}");
     }
 
     #[test]
     fn missing_engine_variable_is_recorded() {
-        let outcome = check_with_engine(None, b"", "", create_result_with_output());
-        let CommandOutcome::Finished(result) = outcome else {
-            panic!("the CHECK lines are compared without the engine");
-        };
-        assert_eq!(
-            result.engine_was_skipped.as_deref(),
-            Some("TESTAOT is not set")
-        );
+        let result =
+            check_with_tool(None, "").expect("the CHECK lines are compared without the engine");
+        let why = result.engine_was_skipped.as_deref();
+        assert_eq!(why, Some("TESTAOT is not set"));
         assert_eq!(result.output, "function f0\n");
     }
 
     #[test]
     fn missing_engine_executable_fails_command() {
-        let testaot = Some(OsStr::new(MISSING_EXECUTABLE));
-        let outcome = check_with_engine(testaot, b"", "", create_result_with_output());
-        let CommandOutcome::Failed(why) = outcome else {
-            panic!("a tool that cannot be started verifies nothing");
-        };
-        assert!(
-            why.starts_with("testaot print: cannot be started: "),
-            "{why}"
-        );
+        let why = check_with_tool(Some("/nonexistent/testaot"), "")
+            .expect_err("a tool that cannot be started verifies nothing");
+        let prefix = "testaot print: cannot be started: ";
+        assert!(why.starts_with(prefix), "{why}");
+    }
+
+    #[test]
+    fn missing_engine_cannot_start() {
+        let why = print_with_engine(OsStr::new("/nonexistent/testaot"), b"").unwrap_err();
+        let prefix = "testaot print: cannot be started: ";
+        assert!(why.starts_with(prefix), "{why}");
     }
 
     #[test]
@@ -549,40 +411,21 @@ mod tests {
         assert!(!reports_other_schema(""));
     }
 
-    #[test]
-    fn missing_engine_cannot_start() {
-        let why = print_with_engine(OsStr::new(MISSING_EXECUTABLE), b"").unwrap_err();
-        assert!(
-            why.starts_with("testaot print: cannot be started: "),
-            "{why}"
-        );
-    }
-
     #[cfg(unix)]
     #[test]
     fn engine_exit_code_without_diagnostic_fails() {
-        let why = print_with_engine(OsStr::new("false"), b"").unwrap_err();
+        let why = check_with_tool(Some("false"), "").unwrap_err();
         assert!(why.starts_with("testaot print: exit code 1: "), "{why}");
     }
 
     #[cfg(unix)]
     #[test]
     fn engine_text_must_equal_front_end_text() {
-        let testaot = Some(OsStr::new("true"));
-        let equal = check_with_engine(testaot, b"", "", create_result_with_output());
-        let CommandOutcome::Finished(result) = equal else {
-            panic!("both texts are empty");
-        };
+        let result = check_with_tool(Some("true"), "").expect("both texts are empty");
         assert_eq!(result.engine_was_skipped, None);
-
-        let different = check_with_engine(testaot, b"", "entry\n", create_result_with_output());
-        let CommandOutcome::Failed(why) = different else {
-            panic!("the engine printed nothing");
-        };
-        assert_eq!(
-            why,
-            "line 1: the engine prints <nothing>, the front end entry"
-        );
+        let why = check_with_tool(Some("true"), "entry\n").expect_err("the engine printed nothing");
+        let expected = "line 1: the engine prints <nothing>, the front end entry";
+        assert_eq!(why, expected);
     }
 
     #[test]
@@ -592,44 +435,40 @@ mod tests {
             IdOutOfRange: f3: v9\n\
             Unknown: nothing\n\
             NoSuchKind: text\n";
+        let unproven = DiagnosticName::User(UserDiagnosticKind::UnprovenInt32);
+        let out_of_range = DiagnosticName::Internal(InternalErrorKind::IdOutOfRange);
         let expected = [
-            (
-                DiagnosticName::User(UserDiagnosticKind::UnprovenInt32),
-                "a.ts:1:2: not an int32".to_owned(),
-            ),
-            (
-                DiagnosticName::Internal(InternalErrorKind::IdOutOfRange),
-                "f3: v9".to_owned(),
-            ),
+            (unproven, "a.ts:1:2: not an int32".to_owned()),
+            (out_of_range, "f3: v9".to_owned()),
         ];
         assert_eq!(parse_engine_diagnostics(stderr), expected);
         assert!(parse_engine_diagnostics("").is_empty());
     }
 
     #[test]
-    fn equal_texts_have_no_difference() {
-        assert_eq!(find_first_difference("", ""), None);
-        assert_eq!(find_first_difference("a\nb\n", "a\nb\n"), None);
-        assert_eq!(find_first_difference("a\r\nb\r\n", "a\nb\n"), None);
-    }
-
-    #[test]
-    fn first_difference_names_line() {
-        let difference = find_first_difference("a\nb\nc\n", "a\nx\ny\n").unwrap();
-        assert_eq!(difference, "line 2: the engine prints b, the front end x");
-    }
-
-    #[test]
-    fn missing_line_differs() {
-        let shorter_engine_text = find_first_difference("a\n", "a\nb\n").unwrap();
-        assert_eq!(
-            shorter_engine_text,
-            "line 2: the engine prints <nothing>, the front end b"
-        );
-        let shorter_front_end_text = find_first_difference("a\nb\n", "a\n").unwrap();
-        assert_eq!(
-            shorter_front_end_text,
-            "line 2: the engine prints b, the front end <nothing>"
-        );
+    fn first_difference() {
+        for (engine_text, front_end_text, expected) in [
+            ("", "", None),
+            ("a\nb\n", "a\nb\n", None),
+            ("a\r\nb\r\n", "a\nb\n", None),
+            (
+                "a\nb\nc\n",
+                "a\nx\ny\n",
+                Some("line 2: the engine prints b, the front end x"),
+            ),
+            (
+                "a\n",
+                "a\nb\n",
+                Some("line 2: the engine prints <nothing>, the front end b"),
+            ),
+            (
+                "a\nb\n",
+                "a\n",
+                Some("line 2: the engine prints b, the front end <nothing>"),
+            ),
+        ] {
+            let difference = find_first_difference(engine_text, front_end_text);
+            assert_eq!(difference.as_deref(), expected);
+        }
     }
 }

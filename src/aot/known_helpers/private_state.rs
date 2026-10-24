@@ -1,17 +1,19 @@
+use super::find_by_key;
+use super::quiet::{has_fixed_binding, is_global_name, is_in_statement_of_file, plain_member};
 use super::resolve::{
     PrivateStateKind, PrivateStateRole, PrivateStateSite, ResolveInput, resolve_private_field_call,
 };
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self, Mutability};
 use crate::modules::ExportBinding;
-use bun_sema::atom::{Atom, known};
+use bun_sema::atom::known;
 use bun_sema::bind::{
     Binding, BindingInitializer, BindingKind, BindingStability, Bound, Parent, StoreKind, SymbolId,
 };
 use bun_sema::fold::{Decision, Decisions};
 use bun_sema::hir::{
-    self, BinOp, Call, Chain, ClassId, ExprId, ExprKind, Flags, FnId, FnKind, MemberKey, NodeData,
-    PatKind, StmtId, StmtKind, UnOp,
+    self, BinOp, Call, Chain, ClassId, ExprId, ExprKind, Flags, FnId, FnKind, NodeData, PatKind,
+    StmtKind, UnOp,
 };
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
@@ -45,23 +47,15 @@ pub struct FilePrivateStates {
 
 impl FilePrivateStates {
     pub fn site(&self, call: ExprId) -> Option<PrivateStateSite> {
-        let at = self.sites.binary_search_by_key(&call, |site| site.0);
-        at.ok().map(|at| self.sites[at].1)
+        find_by_key(&self.sites, call).copied()
     }
 
     pub fn state(&self, symbol: SymbolId) -> Option<PrivateState> {
-        let at = self
-            .by_symbol
-            .binary_search_by_key(&symbol, |entry| entry.0);
-        at.ok().map(|at| self.states[self.by_symbol[at].1 as usize])
+        Some(self.states[*find_by_key(&self.by_symbol, symbol)? as usize])
     }
 
     pub fn created_by(&self, creation: ExprId) -> Option<PrivateState> {
-        let at = self
-            .by_creation
-            .binary_search_by_key(&creation, |entry| entry.0);
-        at.ok()
-            .map(|at| self.states[self.by_creation[at].1 as usize])
+        Some(self.states[*find_by_key(&self.by_creation, creation)? as usize])
     }
 
     pub fn states_of_class(&self, class: ClassId) -> &[PrivateState] {
@@ -97,17 +91,14 @@ struct Finder<'a, 'i, 's> {
     candidates: Vec<Candidate>,
 }
 
-// An entry that is in a field is missing in the collection.
-fn are_methods_locked() -> bool {
-    let mut methods = METHODS_OF_COLLECTIONS.iter();
-    methods.all(|&method| table::entry(method).mutability == Mutability::AlwaysLocked)
-}
-
 pub(super) fn find_in_file(input: &ResolveInput<'_, '_>, file: FileId) -> FilePrivateStates {
     let Some(compiled) = input.files.compiled(file) else {
         return FilePrivateStates::default();
     };
-    if !input.modules.has_record(file) || !are_methods_locked() {
+    // An entry that is in a field is missing in the collection.
+    let mut methods = METHODS_OF_COLLECTIONS.iter();
+    let is_locked = |&method| table::entry(method).mutability == Mutability::AlwaysLocked;
+    if !input.modules.has_record(file) || !methods.all(is_locked) {
         return FilePrivateStates::default();
     }
     let mut finder = Finder {
@@ -118,7 +109,13 @@ pub(super) fn find_in_file(input: &ResolveInput<'_, '_>, file: FileId) -> FilePr
         decisions: &compiled.analysis.decisions,
         candidates: Vec::new(),
     };
-    finder.collect_candidates();
+    let creations = (0..finder.hir.exprs.len() as u32).map(ExprId);
+    finder.candidates = creations
+        .filter_map(|creation| finder.find_candidate(creation))
+        .collect();
+    finder
+        .candidates
+        .shared_sort_unstable_by_key(|candidate| candidate.symbol);
     if finder.candidates.is_empty() {
         return FilePrivateStates::default();
     }
@@ -127,15 +124,6 @@ pub(super) fn find_in_file(input: &ResolveInput<'_, '_>, file: FileId) -> FilePr
 }
 
 impl Finder<'_, '_, '_> {
-    fn collect_candidates(&mut self) {
-        for index in 0..self.hir.exprs.len() as u32 {
-            let candidate = self.find_candidate(ExprId(index));
-            self.candidates.extend(candidate);
-        }
-        self.candidates
-            .shared_sort_unstable_by_key(|candidate| candidate.symbol);
-    }
-
     fn find_candidate(&self, creation: ExprId) -> Option<Candidate> {
         let ExprKind::New(site) = self.hir[creation].kind else {
             return None;
@@ -157,46 +145,20 @@ impl Finder<'_, '_, '_> {
         })
     }
 
-    fn is_global_name(&self, identifier: ExprId) -> bool {
-        self.bound.binding(identifier) == Binding::Free
-            && self
-                .bound
-                .dynamic_lookup_scope(NodeData::Expr(identifier))
-                .is_none()
-            && self.decisions.decision(identifier) == Decision::Unknown
-    }
-
     fn find_created_kind(&self, site: Call) -> Option<PrivateStateKind> {
         let ExprKind::Ident(name) = self.hir[site.callee].kind else {
             return None;
         };
-        if !site.args.is_empty() || !self.is_global_name(site.callee) {
+        if !site.args.is_empty()
+            || !is_global_name(self.bound, site.callee)
+            || self.decisions.decision(site.callee) != Decision::Unknown
+        {
             return None;
         }
         if name == known::WeakMap {
             return Some(PrivateStateKind::Field);
         }
         (name == known::WeakSet).then_some(PrivateStateKind::Brand)
-    }
-
-    fn enclosing_statement(&self, expression: ExprId) -> Option<StmtId> {
-        let mut child = expression;
-        loop {
-            match self.bound.parent_of_expr(child) {
-                Parent::Expr(parent) => child = parent,
-                Parent::VarInit(declaration) => {
-                    return self.bound.var_stmt[declaration.idx()].some();
-                }
-                Parent::Stmt(statement) => return statement.some(),
-                _ => return None,
-            }
-        }
-    }
-
-    // Only the first collection that a variable holds has its entries in fields.
-    fn is_at_top_level(&self, expression: ExprId) -> bool {
-        let statement = self.enclosing_statement(expression);
-        statement.is_some_and(|statement| self.bound.parent_of_stmt(statement) == Parent::File)
     }
 
     fn is_value_unused(&self, expression: ExprId) -> bool {
@@ -227,7 +189,8 @@ impl Finder<'_, '_, '_> {
 
     fn find_holder(&self, creation: ExprId) -> Option<(SymbolId, Option<ExprId>)> {
         let (hir, bound) = (self.hir, self.bound);
-        if !self.is_at_top_level(creation) {
+        // Only the first collection that a variable holds has its entries in fields.
+        if !is_in_statement_of_file(bound, creation) {
             return None;
         }
         match bound.parent_of_expr(creation) {
@@ -306,13 +269,6 @@ impl Finder<'_, '_, '_> {
         })
     }
 
-    fn find_candidate_index(&self, symbol: SymbolId) -> Option<usize> {
-        let candidates = &self.candidates;
-        candidates
-            .binary_search_by_key(&symbol, |candidate| candidate.symbol)
-            .ok()
-    }
-
     fn classify_mentions(&mut self) {
         for index in 0..self.hir.exprs.len() as u32 {
             let mention = ExprId(index);
@@ -325,7 +281,8 @@ impl Finder<'_, '_, '_> {
             let Binding::Symbol(symbol) = self.bound.binding(mention) else {
                 continue;
             };
-            if let Some(candidate) = self.find_candidate_index(symbol) {
+            let candidates = &self.candidates;
+            if let Ok(candidate) = candidates.binary_search_by_key(&symbol, |it| it.symbol) {
                 self.classify_mention(candidate, mention);
             }
         }
@@ -336,10 +293,7 @@ impl Finder<'_, '_, '_> {
         if self.candidates[candidate].stored_name == Some(mention) {
             return;
         }
-        let is_looked_up = self
-            .bound
-            .dynamic_lookup_scope(NodeData::Expr(mention))
-            .is_some();
+        let is_looked_up = !has_fixed_binding(self.bound, mention);
         let definition = self.find_definition(mention, kind);
         let site = match definition {
             Some(call) => Some((call, PrivateStateRole::Definition)),
@@ -364,53 +318,31 @@ impl Finder<'_, '_, '_> {
         }
     }
 
-    fn is_name_of_definition(&self, name: Atom, kind: PrivateStateKind) -> bool {
-        match kind {
-            PrivateStateKind::Field => name == known::set,
-            PrivateStateKind::Brand => self.input.files.atoms.bytes(name) == b"add",
-        }
-    }
-
-    fn has_arguments_of_definition(&self, site: Call, kind: PrivateStateKind) -> bool {
-        let hir = self.hir;
-        let count = match kind {
-            PrivateStateKind::Field => 2,
-            PrivateStateKind::Brand => 1,
-        };
-        let mut arguments = hir.ids(site.args);
-        site.args.len() == count
-            && !arguments.any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_)))
-    }
-
     // `W.set(x, v)` and `W.add(x)` answer the collection.
     fn find_definition(&self, mention: ExprId, kind: PrivateStateKind) -> Option<ExprId> {
         let (hir, bound) = (self.hir, self.bound);
         let Parent::Expr(method) = bound.parent_of_expr(mention) else {
             return None;
         };
-        let (ExprKind::Dot {
-            chain: Chain::No, ..
-        }
-        | ExprKind::Index {
-            chain: Chain::No, ..
-        }) = hir[method].kind
-        else {
-            return None;
-        };
-        let (object, MemberKey::Name(name)) = hir.member_key(method)? else {
-            return None;
-        };
+        let (object, name) = plain_member(hir, method)?;
         let Parent::Expr(call) = bound.parent_of_expr(method) else {
             return None;
         };
         let ExprKind::Call(site) = hir[call].kind else {
             return None;
         };
+        let site = hir[site];
+        let (method_name, argument_count) = match kind {
+            PrivateStateKind::Field => (&b"set"[..], 2),
+            PrivateStateKind::Brand => (&b"add"[..], 1),
+        };
+        let mut arguments = hir.ids(site.args);
         let is_definition = object == mention
-            && self.is_name_of_definition(name, kind)
-            && hir[site].callee == method
-            && matches!(hir[site].chain, Chain::No)
-            && self.has_arguments_of_definition(hir[site], kind)
+            && self.input.files.atoms.bytes(name) == method_name
+            && site.callee == method
+            && matches!(site.chain, Chain::No)
+            && site.args.len() == argument_count
+            && !arguments.any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_)))
             && self.is_value_unused(call);
         is_definition.then_some(call)
     }

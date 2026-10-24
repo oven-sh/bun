@@ -3,7 +3,7 @@ mod tested_field;
 
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::SymbolId;
-use bun_sema::hir::{BinOp, Branches, ExprId, ExprKind, UnOp};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, UnOp};
 use smallvec::SmallVec;
 
 use self::leaf_test::{LeafTest, TypeofName};
@@ -19,12 +19,6 @@ pub(crate) struct Split {
     pub(crate) taken_value: ValueId,
     pub(crate) not_taken: BlockId,
     pub(crate) not_taken_value: ValueId,
-}
-
-#[derive(Copy, Clone)]
-struct Targets {
-    if_true: BlockId,
-    if_false: BlockId,
 }
 
 #[derive(Copy, Clone)]
@@ -170,9 +164,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn finish_split(&mut self, split: Split, on_taken: BlockId, on_not_taken: BlockId) {
-        self.builder.switch_to(split.taken);
-        self.jump(on_taken);
-        self.builder.switch_to(split.not_taken);
+        self.jump_if_taken(split, on_taken);
         self.jump(on_not_taken);
     }
 
@@ -202,12 +194,39 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ExprKind::Binary {
                 op: op @ (BinOp::And | BinOp::Or),
                 ..
-            } => self.lower_logical_condition(expression, op, if_true, if_false),
+            } => {
+                let operands = self.file.collect_logical_operands(expression, op);
+                let Some((&last, leading)) = operands.split_last() else {
+                    unreachable!("a logical condition has a left operand");
+                };
+                for &operand in leading {
+                    let next = self.create_block();
+                    let (on_true, on_false) = if op == BinOp::And {
+                        (next, if_false)
+                    } else {
+                        (if_true, next)
+                    };
+                    self.lower_condition(operand, on_true, on_false);
+                    self.continue_in(next);
+                }
+                self.lower_condition(last, if_true, if_false);
+            }
             ExprKind::Binary {
                 op: BinOp::Nullish,
                 left,
                 right,
-            } => self.lower_nullish_condition(expression, left, right, if_true, if_false),
+            } => {
+                if self.file.decisions().is_dead_expr(right) {
+                    return self.lower_truthiness(expression, if_true, if_false);
+                }
+                let value = self.lower_expression(left);
+                self.set_position(hir[expression].pos);
+                let right_block = self.create_block();
+                let present = self.branch_if_expression_nullish(left, value, right_block);
+                self.branch_on_truthiness(Some(left), present, if_true, if_false);
+                self.continue_in(right_block);
+                self.lower_condition(right, if_true, if_false);
+            }
             ExprKind::Binary {
                 op: BinOp::Comma,
                 left,
@@ -217,7 +236,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.lower_condition(right, if_true, if_false);
             }
             ExprKind::Cond { .. } => {
-                self.lower_conditional_condition(expression, if_true, if_false);
+                self.lower_conditional_arms(expression, false, &mut |lowering, arm| {
+                    lowering.lower_condition(arm, if_true, if_false);
+                });
             }
             ExprKind::Satisfies { expr: operand, .. }
             | ExprKind::AsConst(operand)
@@ -228,98 +249,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_)
                 if self.file.is_chain_root(expression) =>
             {
-                self.lower_chain_condition(expression, if_true, if_false);
+                let exit = self.create_block();
+                let evaluation = Evaluation::in_chain(exit, Tail::No);
+                let value = self.lower_expression_in(expression, evaluation);
+                self.set_position(hir[expression].pos);
+                self.branch_on_truthiness(None, value, if_true, if_false);
+                self.continue_in(exit);
+                self.jump(if_false);
             }
             _ => self.lower_leaf_test(expression, if_true, if_false),
         }
-    }
-
-    fn lower_logical_condition(
-        &mut self,
-        expression: ExprId,
-        op: BinOp,
-        if_true: BlockId,
-        if_false: BlockId,
-    ) {
-        let operands = self.file.collect_logical_operands(expression, op);
-        let Some((&last, leading)) = operands.split_last() else {
-            unreachable!("a logical condition has a left operand");
-        };
-        for &operand in leading {
-            let next = self.create_block();
-            let (on_true, on_false) = if op == BinOp::And {
-                (next, if_false)
-            } else {
-                (if_true, next)
-            };
-            self.lower_condition(operand, on_true, on_false);
-            self.continue_in(next);
-        }
-        self.lower_condition(last, if_true, if_false);
-    }
-
-    fn lower_nullish_condition(
-        &mut self,
-        expression: ExprId,
-        left: ExprId,
-        right: ExprId,
-        if_true: BlockId,
-        if_false: BlockId,
-    ) {
-        if self.file.decisions().is_dead_expr(right) {
-            self.lower_truthiness(expression, if_true, if_false);
-            return;
-        }
-        let value = self.lower_expression(left);
-        self.set_position(self.file.hir[expression].pos);
-        let right_block = self.create_block();
-        let present = self.branch_if_expression_nullish(left, value, right_block);
-        self.branch_on_truthiness(Some(left), present, if_true, if_false);
-        self.continue_in(right_block);
-        self.lower_condition(right, if_true, if_false);
-    }
-
-    fn lower_conditional_condition(
-        &mut self,
-        expression: ExprId,
-        if_true: BlockId,
-        if_false: BlockId,
-    ) {
-        let (hir, decisions) = (self.file.hir, self.file.decisions());
-        let mut current = expression;
-        while let ExprKind::Cond { test, branches } = hir[current].kind {
-            if current != expression && self.file.is_statically_resolved(current) {
-                break;
-            }
-            let Branches { yes, no } = hir.branches(branches);
-            if decisions.is_dead_expr(yes) {
-                self.lower_expression_for_effect(test);
-                current = no;
-                continue;
-            }
-            if decisions.is_dead_expr(no) {
-                self.lower_expression_for_effect(test);
-                current = yes;
-                break;
-            }
-            let yes_block = self.create_block();
-            let no_block = self.create_block();
-            self.lower_condition(test, yes_block, no_block);
-            self.continue_in(yes_block);
-            self.lower_condition(yes, if_true, if_false);
-            self.continue_in(no_block);
-            current = no;
-        }
-        self.lower_condition(current, if_true, if_false);
-    }
-
-    fn lower_chain_condition(&mut self, expression: ExprId, if_true: BlockId, if_false: BlockId) {
-        let exit = self.create_block();
-        let value = self.lower_expression_in(expression, Evaluation::in_chain(exit, Tail::No));
-        self.set_position(self.file.hir[expression].pos);
-        self.branch_on_truthiness(None, value, if_true, if_false);
-        self.continue_in(exit);
-        self.jump(if_false);
     }
 
     fn lower_truthiness(&mut self, expression: ExprId, if_true: BlockId, if_false: BlockId) {
@@ -359,7 +298,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 is_negated,
             } => {
                 let (passed, failed) = order_targets(is_negated, if_true, if_false);
-                self.lower_typeof_object(expression, operand, passed, failed);
+                let value = self.lower_typeof_operand(operand);
+                self.set_position(self.file.hir[expression].pos);
+                self.jump_by_typeof(operand, value, &[(known::object, passed)], failed);
             }
             LeafTest::NumberQuestion { question, operand } => {
                 let value = self.lower_operand_of_question(expression, operand);
@@ -373,8 +314,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.branch_on_truthiness(None, answer, if_true, if_false);
             }
             LeafTest::Comparison { op, left, right } => {
-                let targets = Targets { if_true, if_false };
-                self.lower_comparison(expression, op, left, right, targets);
+                self.lower_comparison(expression, op, left, right, if_true, if_false);
             }
         }
     }
@@ -387,24 +327,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn lower_typeof_object(
-        &mut self,
-        expression: ExprId,
-        operand: ExprId,
-        passed: BlockId,
-        failed: BlockId,
-    ) {
-        let value = self.lower_typeof_operand(operand);
-        self.set_position(self.file.hir[expression].pos);
-        let first = self.split_expression_on_type(Some(operand), value, TypeTable::FUNCTION);
-        let remaining = self.jump_if_taken(first, failed);
-        let types = &mut self.file.fragment.types;
-        let object_or_null = types.union(TypeTable::OBJECT, TypeTable::NULL);
-        let second = self.split_expression_on_type(Some(operand), remaining, object_or_null);
-        self.finish_split(second, passed, failed);
-    }
-
-    /// `switch (typeof operand)` over written names.
+    /// `switch (typeof operand)` over written names, and `typeof operand === "object"`.
     pub(in crate::lower) fn jump_by_typeof(
         &mut self,
         operand: ExprId,
@@ -446,7 +369,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         op: BinOp,
         left: ExprId,
         right: ExprId,
-        targets: Targets,
+        if_true: BlockId,
+        if_false: BlockId,
     ) {
         let left_value = self.lower_expression(left);
         let left_field = self.find_compared_field(op, left, right);
@@ -457,19 +381,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let left_subject = self.find_subject(left, left_value);
         let right_subject = self.find_subject(right, right_value);
         let right_subject = right_subject.filter(|&symbol| Some(symbol) != left_subject);
+        let select = |local: Option<SymbolId>, field: Option<TestedField>| {
+            let local = local.map(TestedOperand::Local);
+            local.or_else(|| field.map(TestedOperand::Field))
+        };
         let subjects = [
-            select_tested_operand(left_subject, left_field),
-            select_tested_operand(right_subject, right_field),
+            select(left_subject, left_field),
+            select(right_subject, right_field),
         ];
-        let comparison = operator::emit_comparison(self, op, left_value, right_value);
-        let (on_taken, on_not_taken) =
-            order_targets(comparison.is_negated, targets.if_true, targets.if_false);
+        let (test, is_negated) = operator::emit_comparison(self, op, left_value, right_value);
+        let (on_taken, on_not_taken) = order_targets(is_negated, if_true, if_false);
         if let [None, None] = subjects {
             let (taken, not_taken) = (Edge::to(on_taken), Edge::to(on_not_taken));
-            self.builder.branch(comparison.test, taken, not_taken);
+            self.builder.branch(test, taken, not_taken);
             return;
         }
-        let (taken, not_taken) = self.split_on_comparison(comparison.test, subjects);
+        let [taken, not_taken] = self.split_on_comparison(test, subjects);
         self.builder.switch_to(taken);
         self.jump(on_taken);
         self.builder.switch_to(not_taken);
@@ -489,36 +416,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .filter(|_| self.file.has_unit_type(other))
     }
 
-    fn narrow_tested_operand(&mut self, operand: TestedOperand, narrowed: ValueId) {
-        match operand {
-            TestedOperand::Local(symbol) => self.rebind_local(symbol, narrowed),
-            TestedOperand::Field(field) => {
-                self.narrow_holder(field, narrowed);
-            }
-        }
-    }
-
     fn split_on_comparison(
         &mut self,
         test: ValueId,
         subjects: [Option<TestedOperand>; 2],
-    ) -> (BlockId, BlockId) {
+    ) -> [BlockId; 2] {
         let taken = self.create_block();
         let not_taken = self.create_block();
         let mut proofs: SmallVec<[u32; 2]> = SmallVec::new();
-        let mut splits: SmallVec<[(TestedOperand, Split); 2]> = SmallVec::new();
+        let mut narrowed: SmallVec<[(TestedOperand, [ValueId; 2]); 2]> = SmallVec::new();
         for (operand, subject) in (0u32..).zip(subjects) {
             let Some(subject) = subject else {
                 continue;
             };
-            let split = Split {
-                taken,
-                taken_value: self.builder.add_edge_result(taken),
-                not_taken,
-                not_taken_value: self.builder.add_edge_result(not_taken),
-            };
+            let taken_value = self.builder.add_edge_result(taken);
+            let not_taken_value = self.builder.add_edge_result(not_taken);
             proofs.push(operand);
-            splits.push((subject, split));
+            narrowed.push((subject, [taken_value, not_taken_value]));
         }
         self.builder.branch(
             test,
@@ -527,17 +441,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         );
         self.builder.seal(taken);
         self.builder.seal(not_taken);
-        self.builder.switch_to(taken);
-        for &(subject, split) in &splits {
-            self.narrow_tested_operand(subject, split.taken_value);
+        let mut ends = [taken, not_taken];
+        for (edge, end) in ends.iter_mut().enumerate() {
+            self.builder.switch_to(*end);
+            for &(subject, values) in &narrowed {
+                match subject {
+                    TestedOperand::Local(symbol) => self.rebind_local(symbol, values[edge]),
+                    TestedOperand::Field(field) => {
+                        self.narrow_holder(field, values[edge]);
+                    }
+                }
+            }
+            *end = self.builder.current_block();
         }
-        let taken_end = self.builder.current_block();
-        self.builder.switch_to(not_taken);
-        for &(subject, split) in &splits {
-            self.narrow_tested_operand(subject, split.not_taken_value);
-        }
-        let not_taken_end = self.builder.current_block();
-        (taken_end, not_taken_end)
+        ends
     }
 
     fn lower_condition_as_value(&mut self, expression: ExprId) -> ValueId {
@@ -592,16 +509,5 @@ impl FileLowering<'_, '_, '_, '_> {
         operands.push(current);
         operands.reverse();
         operands
-    }
-}
-
-fn select_tested_operand(
-    local: Option<SymbolId>,
-    field: Option<TestedField>,
-) -> Option<TestedOperand> {
-    match (local, field) {
-        (Some(symbol), _) => Some(TestedOperand::Local(symbol)),
-        (None, Some(field)) => Some(TestedOperand::Field(field)),
-        (None, None) => None,
     }
 }

@@ -1,5 +1,5 @@
 use bun_sema::atom::known;
-use bun_sema::bind::{Binding, CommonJsVariable, Decl, SymbolId};
+use bun_sema::bind::{Binding, CommonJsVariable, Decl};
 use bun_sema::hir::{self, ExprId, Flags, ImportEqualsId, ImportEqualsTarget, NameId};
 
 use crate::ir::ValueId;
@@ -13,17 +13,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if data.flags.contains(Flags::TYPE_ONLY) {
             return;
         }
-        let symbol = self
-            .file
-            .bound
-            .declared_symbol(Decl::ImportEquals(declaration));
+        let declared = Decl::ImportEquals(declaration);
+        let symbol = self.file.bound.declared_symbol(declared);
         debug_assert!(
             symbol.is_some(),
             "an import alias with a value declares a symbol"
         );
+        let unused_symbols = self.file.compiled.analysis.unused_import_symbols;
         let value = match data.target {
             ImportEqualsTarget::Require(_) => self.lower_import_equals_require(declaration),
-            ImportEqualsTarget::Entity(_) if self.is_unused_alias(symbol) => None,
+            ImportEqualsTarget::Entity(_) if unused_symbols.binary_search(&symbol).is_ok() => None,
             ImportEqualsTarget::Entity(names) => self.lower_entity_name(declaration, names),
         };
         let Some(value) = value else {
@@ -52,11 +51,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.set_position(position);
         let exports = PropertyName::Constant(self.file.name_key(known::exports));
         self.emit_set(module_object, exports, value);
-    }
-
-    fn is_unused_alias(&self, symbol: SymbolId) -> bool {
-        let unused_symbols = self.file.compiled.analysis.unused_import_symbols;
-        unused_symbols.binary_search(&symbol).is_ok()
     }
 
     fn lower_entity_name(

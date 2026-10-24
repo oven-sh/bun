@@ -31,12 +31,6 @@ enum Receiver {
     WithoutSlots,
 }
 
-#[derive(Copy, Clone)]
-struct Slot {
-    layout: LayoutId,
-    field: u32,
-}
-
 impl FileLowering<'_, '_, '_, '_> {
     // `X["foo"]` is `X.foo`.
     fn has_constant_key(&self, key: MemberKey) -> bool {
@@ -83,14 +77,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // A built-in that the table resolves says more than the type the checker has for it.
-    fn names_resolved_builtin(&self, reference: Reference) -> bool {
-        match reference {
-            Reference::Binding(symbol) => self.builtins.of_symbol(symbol).is_some(),
-            Reference::This | Reference::Member | Reference::NotAReference => false,
-        }
-    }
-
     // The types of the fields of a class are only expected where nobody checked the file of the class.
     fn has_typed_fields(&self, class: ClassRef) -> bool {
         match self.queries.role(class.file) {
@@ -115,44 +101,29 @@ impl FileLowering<'_, '_, '_, '_> {
                 None => Receiver::WithoutSlots,
             },
             ShapeKind::Union(members) => {
-                let has_slots_in_every_member =
-                    members
-                        .iter()
-                        .all(|&member| match self.classify_receiver_type(member) {
-                            Receiver::ObjectType(_) | Receiver::Class(_) | Receiver::Declared => {
-                                true
-                            }
-                            Receiver::WithoutSlots => false,
-                        });
-                match has_slots_in_every_member {
-                    true => Receiver::Declared,
-                    false => Receiver::WithoutSlots,
+                for &member in members {
+                    match self.classify_receiver_type(member) {
+                        Receiver::ObjectType(_) | Receiver::Class(_) | Receiver::Declared => {}
+                        Receiver::WithoutSlots => return Receiver::WithoutSlots,
+                    }
                 }
+                Receiver::Declared
             }
             _ => Receiver::WithoutSlots,
         }
     }
 
-    fn classify_receiver(&mut self, object: ExprId) -> Receiver {
-        let receiver = self.queries.expression_type(object);
-        match receiver.and_then(|receiver| self.queries.without_nullish(receiver)) {
-            Ok(receiver) => self.classify_receiver_type(receiver),
-            Err(_) => Receiver::WithoutSlots,
-        }
-    }
-
-    fn find_listed_slot(&mut self, receiver: Receiver, key: MemberKey) -> Option<Slot> {
+    fn find_listed_slot(&mut self, receiver: Receiver, key: MemberKey) -> Option<(LayoutId, u32)> {
         let layout = match receiver {
             Receiver::ObjectType(layout) | Receiver::Class(layout) => layout,
             Receiver::Declared | Receiver::WithoutSlots => return None,
         };
         let name = find_constant_name(self, key)?;
         let key = self.name_key(name);
-        let field = self.find_field(layout, key)?;
-        Some(Slot { layout, field })
+        Some((layout, self.find_field(layout, key)?))
     }
 
-    fn find_private_slot(&mut self, access: ExprId) -> Option<Slot> {
+    fn find_private_slot(&mut self, access: ExprId) -> Option<(LayoutId, u32)> {
         let name = self.bound.private_name_of_reference(access)?;
         let binding = self.resolve_private_name(name);
         let is_read_from_slot = match binding.members {
@@ -161,9 +132,7 @@ impl FileLowering<'_, '_, '_, '_> {
             PrivateMembers::Method(_) | PrivateMembers::Accessor { .. } => false,
         };
         match binding.holder {
-            PrivateHolder::Instance { layout, field } if is_read_from_slot => {
-                Some(Slot { layout, field })
-            }
+            PrivateHolder::Instance { layout, field } if is_read_from_slot => Some((layout, field)),
             PrivateHolder::Instance { .. } | PrivateHolder::ClassObject => None,
         }
     }
@@ -210,7 +179,12 @@ impl FileLowering<'_, '_, '_, '_> {
         let (slot, fields_have_slots) = match key {
             MemberKey::PrivateName(_) => (self.find_private_slot(access), false),
             MemberKey::Name(_) | MemberKey::Computed(_) => {
-                let receiver = self.classify_receiver(object);
+                let receiver = self.queries.expression_type(object);
+                let receiver = receiver.and_then(|receiver| self.queries.without_nullish(receiver));
+                let receiver = match receiver {
+                    Ok(receiver) => self.classify_receiver_type(receiver),
+                    Err(_) => Receiver::WithoutSlots,
+                };
                 let fields_have_slots = match receiver {
                     Receiver::Class(_) | Receiver::Declared => true,
                     Receiver::ObjectType(_) | Receiver::WithoutSlots => false,
@@ -218,24 +192,14 @@ impl FileLowering<'_, '_, '_, '_> {
                 (self.find_listed_slot(receiver, key), fields_have_slots)
             }
         };
-        let Some(slot) = slot else {
+        let Some((layout, field)) = slot else {
             return self.find_declared_position(access, fields_have_slots);
         };
-        match self.is_method_field(slot.layout, slot.field) {
-            true => method_position(),
-            false => {
-                let position = self.field_position(slot.layout, slot.field);
-                self.widen_int32_of_united_layout(slot.layout, position)
-            }
+        if self.is_method_field(layout, field) {
+            return method_position();
         }
-    }
-
-    // What is an `int32` in the definitions seen so far may be a `number` in one that comes later or lies in another file, so each read claims the `int32` for itself.
-    fn widen_int32_of_united_layout(
-        &mut self,
-        layout: LayoutId,
-        position: DeclaredType,
-    ) -> DeclaredType {
+        let position = self.field_position(layout, field);
+        // What is an `int32` in the definitions seen so far may be a `number` in one that comes later or lies in another file, so each read claims the `int32` for itself.
         let is_united = self.fragment.layout_keys()[layout.index()].has_united_definitions();
         if !is_united || !position.flags.contains(PositionFlags::IS_INT32_PROMISE) {
             return position;
@@ -245,7 +209,6 @@ impl FileLowering<'_, '_, '_, '_> {
         DeclaredType::new(Mapped::checked(ty), position.site, flags)
     }
 
-    // A type that lists all that the position lists adds nothing to it.
     fn includes_all_of(&mut self, ty: TypeId, position: TypeId) -> bool {
         if ty == position || position == TypeTable::ANYTHING {
             return ty == position;
@@ -306,20 +269,6 @@ fn method_position() -> DeclaredType {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // The position that the reference reads. It is untyped where nothing holds what is read to a type.
-    fn find_position_before_narrowing(
-        &mut self,
-        expression: ExprId,
-        reference: Reference,
-    ) -> DeclaredType {
-        match reference {
-            Reference::Binding(symbol) => self.file.binding_position(symbol),
-            Reference::This => find_this_position(self),
-            Reference::Member => self.file.find_member_position(expression),
-            Reference::NotAReference => DeclaredType::untyped(),
-        }
-    }
-
     // The checker keeps what it knows of a member across calls and aliases, so each read has its own conversion and nothing rests on an earlier one.
     pub(in crate::lower) fn convert_narrowed_reference(
         &mut self,
@@ -330,13 +279,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return value;
         }
         let reference = self.file.classify_reference(expression);
-        if reference == Reference::NotAReference || self.file.names_resolved_builtin(reference) {
+        // A built-in that the table resolves says more than the type the checker has for it.
+        let names_resolved_builtin = match reference {
+            Reference::Binding(symbol) => self.file.builtins.of_symbol(symbol).is_some(),
+            Reference::This | Reference::Member | Reference::NotAReference => false,
+        };
+        if reference == Reference::NotAReference || names_resolved_builtin {
             return value;
         }
         if self.file.reads_prototype_object_of_declaration(expression) {
             return value;
         }
-        let before = self.find_position_before_narrowing(expression, reference);
+        let before = match reference {
+            Reference::Binding(symbol) => self.file.binding_position(symbol),
+            Reference::This => find_this_position(self),
+            Reference::Member => self.file.find_member_position(expression),
+            Reference::NotAReference => DeclaredType::untyped(),
+        };
         // The compiler says which function, class or instance it is.
         if before.flags.contains(PositionFlags::IS_FROM_COMPILER) {
             return value;
@@ -359,18 +318,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.convert_narrowed(value, before.ty, narrowed, origin)
     }
 
-    // The build proves the promise from what is known about the value before it enters the binding.
-    fn is_int32_promise(&mut self, pattern: PatId) -> bool {
-        match self.file.bound.initialized_binding(pattern) {
-            Binding::Symbol(symbol) => self
-                .file
-                .binding_position(symbol)
-                .flags
-                .contains(PositionFlags::IS_INT32_PROMISE),
-            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => false,
-        }
-    }
-
     // A variable and a parameter have the type in their position, and the pattern itself makes what a rest element receives.
     pub(in crate::lower) fn convert_pattern_element(
         &mut self,
@@ -386,8 +333,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             PatParent::Prop(..) | PatParent::Elem(..) => !parent.has_dot_dot_dot_token(hir),
             PatParent::None | PatParent::Var(_) | PatParent::Param(_) => false,
         };
-        if !is_taken_out || self.is_int32_promise(pattern) {
+        if !is_taken_out {
             return value;
+        }
+        // The build proves the promise of an `int32` from what is known about the value before it enters the binding.
+        match self.file.bound.initialized_binding(pattern) {
+            Binding::Symbol(symbol) => {
+                let flags = self.file.binding_position(symbol).flags;
+                if flags.contains(PositionFlags::IS_INT32_PROMISE) {
+                    return value;
+                }
+            }
+            Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => {}
         }
         let Ok(ty) = self.file.queries.binding_type(pattern) else {
             return value;
@@ -453,67 +410,66 @@ mod tests {
     }
 
     #[test]
-    fn function_binding_is_not_converted() {
-        let source = "function g() {}
-export function probe() { return g; }
-";
-        let narrowed = narrowed_types(source, "probe");
-        assert!(narrowed.is_empty(), "{narrowed:?}");
-    }
-
-    #[test]
-    fn called_method_is_not_converted() {
-        let source = "class C { m(): number { return 1; } }
+    fn what_has_its_declared_type_is_not_converted() {
+        let methods = "class C { m(): number { return 1; } }
 interface I { m(): number }
 export function ofClass(c: C) { return c.m(); }
 export function ofInterface(i: I) { return i.m(); }
 ";
-        for function_name in ["ofClass", "ofInterface"] {
-            let narrowed = narrowed_types(source, function_name);
-            assert!(narrowed.is_empty(), "{function_name}: {narrowed:?}");
-        }
-    }
-
-    #[test]
-    fn read_through_index_signature_is_not_converted_again() {
-        let source = "type Counts = { [name: string]: number };
+        let cases = [
+            (
+                "probe",
+                "function g() {}
+export function probe() { return g; }
+",
+            ),
+            ("ofClass", methods),
+            ("ofInterface", methods),
+            (
+                "probe",
+                "type Counts = { [name: string]: number };
 export function probe(counts: Counts) { return counts.a; }
-";
-        let narrowed = narrowed_types(source, "probe");
-        assert!(narrowed.is_empty(), "{narrowed:?}");
-    }
-
-    #[test]
-    fn receiver_and_fields_with_their_declared_types_are_not_converted() {
-        let source = "export class C {
+",
+            ),
+            (
+                "probe",
+                "export class C {
   x = 1;
   #y = 2;
   probe() { return this.x + this.#y; }
 }
-";
-        let narrowed = narrowed_types(source, "probe");
-        assert!(narrowed.is_empty(), "{narrowed:?}");
-    }
-
-    #[test]
-    fn instance_in_its_constructor_is_not_converted() {
-        let source = "export class Probe {
+",
+            ),
+            (
+                "Probe",
+                "export class Probe {
   x: number;
   constructor() { this.x = 1; }
 }
-";
-        let narrowed = narrowed_types(source, "Probe");
-        assert!(narrowed.is_empty(), "{narrowed:?}");
-    }
-
-    #[test]
-    fn inherited_field_with_its_declared_type_is_not_converted() {
-        let source = "class Base { x: number = 1; }
+",
+            ),
+            (
+                "probe",
+                "class Base { x: number = 1; }
 class Derived extends Base { y: number = 2; }
 export function probe(d: Derived) { return d.x + d.y; }
-";
-        let narrowed = narrowed_types(source, "probe");
-        assert!(narrowed.is_empty(), "{narrowed:?}");
+",
+            ),
+            (
+                "probe",
+                "interface A { kind: 1; a: number }
+interface B { kind: 2; b: number }
+export function probe(node: A | B) { return node.kind; }
+",
+            ),
+        ];
+        for (function_name, source) in cases {
+            let narrowed = narrowed_types(source, function_name);
+            assert!(
+                narrowed.is_empty(),
+                "{function_name} of {source}: {narrowed:?}"
+            );
+        }
     }
 
     #[test]
@@ -536,16 +492,6 @@ export function probe(c: C) { return c.x + 1; }
             ("c.ts", "export class C { x: number = 1; }\n"),
         ];
         let narrowed = narrowed_types_in(&files, "probe");
-        assert!(narrowed.is_empty(), "{narrowed:?}");
-    }
-
-    #[test]
-    fn field_of_a_union_with_its_declared_type_is_not_converted() {
-        let source = "interface A { kind: 1; a: number }
-interface B { kind: 2; b: number }
-export function probe(node: A | B) { return node.kind; }
-";
-        let narrowed = narrowed_types(source, "probe");
         assert!(narrowed.is_empty(), "{narrowed:?}");
     }
 

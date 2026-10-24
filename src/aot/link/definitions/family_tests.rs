@@ -1,9 +1,9 @@
 use super::*;
 use crate::ir::Type;
 use crate::link::testing::{
-    Prepared, Projects, in_application, prepare, test_object_type_key, unit_in, with_test_files,
+    Prepared, Projects, finish_unit, in_application, prepare, test_object_type_key, with_test_files,
 };
-use crate::lower::{FragmentBuilder, ModuleFragment};
+use crate::lower::FragmentBuilder;
 
 fn layout(fragment: &mut FragmentBuilder, identity: u64) -> LayoutId {
     fragment.declare_layout(test_object_type_key(identity))
@@ -18,10 +18,7 @@ fn close<const COUNT: usize>(
     projects: &Projects<'_, '_>,
     fragments: [FragmentBuilder; COUNT],
 ) -> Prepared {
-    let units = fragments.map(|fragment| {
-        let fragment = fragment.finish(ModuleFragment::default());
-        unit_in(projects, ProjectId::Application, fragment)
-    });
+    let units = fragments.map(|fragment| finish_unit(projects, fragment));
     let prepared = prepare(units.into(), projects);
     assert!(prepared.errors.is_empty(), "{:?}", prepared.errors);
     prepared

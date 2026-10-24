@@ -21,64 +21,24 @@ fn write_types(index: usize) -> String {
             index - 1
         ),
     };
-    writeln!(text, "export interface Shared{index} {{ id: number; name: string; next?: Shared{index}; deep: Deep{index}A; {link} }}").unwrap();
-    writeln!(text, "export interface Twin{index} {{ id: string; name: number; next?: Twin{index}; deep: Deep{index}B; {link} }}").unwrap();
+    // Where the literal of `narrow` stands it has the layout of what it is written under, elsewhere the layout of its own names.
     writeln!(
         text,
-        "export interface Deep{index}A {{ inner: Deep{index}B }}"
-    )
-    .unwrap();
-    writeln!(
-        text,
-        "export interface Deep{index}B {{ inner: Deep{index}C }}"
-    )
-    .unwrap();
-    writeln!(
-        text,
-        "export interface Deep{index}C {{ inner: Deep{index}D }}"
-    )
-    .unwrap();
-    writeln!(
-        text,
-        "export interface Deep{index}D {{ inner: Deep{index}E; own{index}: number }}"
-    )
-    .unwrap();
-    writeln!(
-        text,
-        "export interface Deep{index}E {{ inner?: Deep{index}A; last{index}: string }}"
-    )
-    .unwrap();
-    writeln!(
-        text,
-        "export interface First{index} {{ kind: 'first'; value: number; owner?: Shared{index} }}"
-    )
-    .unwrap();
-    writeln!(text, "export interface Second{index} {{ kind: 'second'; text: string; call(x: number): Box{index}<string> }}").unwrap();
-    writeln!(
-        text,
-        "export type Kind{index} = First{index} | Second{index};"
-    )
-    .unwrap();
-    writeln!(
-        text,
-        "export interface Box{index}<T> {{ value: T; items: T[]; owner?: Twin{index} }}"
-    )
-    .unwrap();
-    writeln!(
-        text,
-        "export type Loose{index} = {{ [K in keyof Shared{index}]?: Shared{index}[K] }};"
-    )
-    .unwrap();
-    writeln!(text, "export const sample{index} = {{ id: {index}, nested: {{ depth: {index}, label: 'sample' }} }};").unwrap();
-    // Where the literal stands it has the layout of what it is written under, elsewhere the layout of its own names.
-    writeln!(
-        text,
-        "export interface Wide{index} {{ width: number; height?: number; inside?: Deep{index}C }}"
-    )
-    .unwrap();
-    writeln!(
-        text,
-        "export const narrow{index} = {{ width: {index} }} satisfies Wide{index};"
+        "export interface Shared{index} {{ id: number; name: string; next?: Shared{index}; deep: Deep{index}A; {link} }}
+export interface Twin{index} {{ id: string; name: number; next?: Twin{index}; deep: Deep{index}B; {link} }}
+export interface Deep{index}A {{ inner: Deep{index}B }}
+export interface Deep{index}B {{ inner: Deep{index}C }}
+export interface Deep{index}C {{ inner: Deep{index}D }}
+export interface Deep{index}D {{ inner: Deep{index}E; own{index}: number }}
+export interface Deep{index}E {{ inner?: Deep{index}A; last{index}: string }}
+export interface First{index} {{ kind: 'first'; value: number; owner?: Shared{index} }}
+export interface Second{index} {{ kind: 'second'; text: string; call(x: number): Box{index}<string> }}
+export type Kind{index} = First{index} | Second{index};
+export interface Box{index}<T> {{ value: T; items: T[]; owner?: Twin{index} }}
+export type Loose{index} = {{ [K in keyof Shared{index}]?: Shared{index}[K] }};
+export const sample{index} = {{ id: {index}, nested: {{ depth: {index}, label: 'sample' }} }};
+export interface Wide{index} {{ width: number; height?: number; inside?: Deep{index}C }}
+export const narrow{index} = {{ width: {index} }} satisfies Wide{index};"
     )
     .unwrap();
     text

@@ -1,33 +1,11 @@
 use super::*;
-use crate::ir::builder::{BuilderScratch, Handler};
-use crate::ir::generated::{BlockFrequency, FunctionFlags};
-use crate::ir::testing::function_with_parameters;
+use crate::ir::generated::BlockFrequency;
+use crate::ir::testing::{create_blocks, create_builder, create_catch_handler, enter_block};
 use crate::ir::types::TypeTable;
 
 struct Diamond {
     arms: [BlockId; 2],
     join: BlockId,
-}
-
-fn create_builder(parameters: &[TypeId]) -> FunctionBuilder {
-    let function = function_with_parameters(FunctionFlags::default(), parameters);
-    FunctionBuilder::new(function, BuilderScratch::default())
-}
-
-fn create_blocks<const COUNT: usize>(builder: &mut FunctionBuilder) -> [BlockId; COUNT] {
-    [(); COUNT].map(|()| builder.create_block(None))
-}
-
-fn create_catch_handler(builder: &mut FunctionBuilder) -> Handler {
-    builder.create_handler(BlockRole::CatchHandler, None, None)
-}
-
-fn enter_block(builder: &mut FunctionBuilder, handler: Option<Handler>) -> BlockId {
-    let block = builder.create_block(handler);
-    builder.jump(Edge::to(block));
-    builder.seal(block);
-    builder.switch_to(block);
-    block
 }
 
 fn enter_blocks(builder: &mut FunctionBuilder, count: usize) -> BlockId {
@@ -114,7 +92,7 @@ fn dominator_of(builder: &FunctionBuilder, block: BlockId) -> DominatorLink {
 
 #[test]
 fn scratch_keeps_cleared_lists() {
-    let mut state = SsaState::new(SsaScratch::default());
+    let mut state = SsaState::default();
     state.add_block();
     state.create_variable(None);
     let (block, variable, value) = (BlockId::new(0), LocalVariable(0), ValueId::new(0));
@@ -133,7 +111,7 @@ fn scratch_keeps_cleared_lists() {
         state.observed_values.capacity(),
     ];
 
-    let scratch = state.into_scratch();
+    let scratch = state.recycle();
     assert!(scratch.states.is_empty());
     assert!(scratch.pending_reads.is_empty());
     assert!(scratch.variables.is_empty());
@@ -154,13 +132,13 @@ fn scratch_keeps_cleared_lists() {
 
 #[test]
 fn scratch_drops_oversized_lists() {
-    let mut state = SsaState::new(SsaScratch::default());
+    let mut state = SsaState::default();
     state.states.reserve(MAX_SPARE_BLOCK_STATES + 1);
     state.definitions.0.reserve(MAX_SPARE_DEFINITIONS + 1);
     state.pending_reads.reserve(MAX_SPARE_PENDING_READS + 1);
     state.observed_values.reserve(MAX_SPARE_OBSERVED_VALUES + 1);
     state.variables.reserve(MAX_SPARE_VARIABLES + 1);
-    let scratch = state.into_scratch();
+    let scratch = state.recycle();
     assert_eq!(scratch.states.capacity(), 0);
     assert_eq!(scratch.definitions.0.capacity(), 0);
     assert_eq!(scratch.pending_reads.capacity(), 0);
@@ -170,7 +148,7 @@ fn scratch_drops_oversized_lists() {
 
 #[test]
 fn variables_are_numbered_in_creation_order() {
-    let mut state = SsaState::new(SsaScratch::default());
+    let mut state = SsaState::default();
     assert_eq!(state.variable_count(), 0);
     assert_eq!(state.create_variable(None), LocalVariable(0));
     assert_eq!(
@@ -312,21 +290,11 @@ fn parameter_before_last_is_not_removed() {
     let parameters = [first, second].map(|variable| builder.read_variable(variable));
     builder.seal(next);
 
-    assert!(!try_remove_parameter(
-        &mut builder,
-        next,
-        parameters[0],
-        &[entry]
-    ));
+    assert!(!builder.try_remove_parameter(next, parameters[0], &[entry]));
     assert_eq!(variable_parameters(&builder, next), parameters);
     assert_eq!(variable_arguments(&builder, entry, 0), [value, value]);
 
-    assert!(try_remove_parameter(
-        &mut builder,
-        next,
-        parameters[1],
-        &[entry]
-    ));
+    assert!(builder.try_remove_parameter(next, parameters[1], &[entry]));
     assert_eq!(variable_parameters(&builder, next), [parameters[0]]);
     assert_eq!(variable_arguments(&builder, entry, 0), [value]);
 }
@@ -738,17 +706,17 @@ fn split_needs_open_covered_block_with_a_value_and_a_visible_variable() {
     let mut builder = create_builder(&[]);
     let visible = builder.create_variable(None);
     builder.undefined();
-    assert!(!must_split_before_store(&builder, visible));
+    assert!(!builder.must_split_before_store(visible));
 
     let handler = create_catch_handler(&mut builder);
     let inner = builder.create_variable(None);
     enter_block(&mut builder, Some(handler));
-    assert!(!must_split_before_store(&builder, visible));
+    assert!(!builder.must_split_before_store(visible));
     builder.undefined();
-    assert!(must_split_before_store(&builder, visible));
-    assert!(!must_split_before_store(&builder, inner));
+    assert!(builder.must_split_before_store(visible));
+    assert!(!builder.must_split_before_store(inner));
     builder.return_value(None);
-    assert!(!must_split_before_store(&builder, visible));
+    assert!(!builder.must_split_before_store(visible));
 }
 
 #[test]
@@ -759,7 +727,7 @@ fn split_continues_in_sealed_block_under_same_handler() {
     builder.set_frequency(covered, BlockFrequency::Unlikely);
     builder.undefined();
 
-    split_current_block(&mut builder);
+    builder.split_current_block();
     let next = builder.current_block();
     assert_ne!(next, covered);
     assert!(builder.is_open());

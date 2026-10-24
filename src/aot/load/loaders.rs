@@ -6,24 +6,6 @@ use bun_sema::resolve::{CodeImportKind, ScriptKind};
 use crate::options::DEFAULT_LOADERS;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) enum TypeAttribute {
-    Absent,
-    Loader(Loader),
-    Macro,
-    Unknown,
-}
-
-pub(crate) fn classify_type_attribute(value: Option<&[u8]>) -> TypeAttribute {
-    match value {
-        None => TypeAttribute::Absent,
-        Some(b"macro") => TypeAttribute::Macro,
-        Some(text) => {
-            Loader::from_string(text).map_or(TypeAttribute::Unknown, TypeAttribute::Loader)
-        }
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum HostLoaderKind {
     ByName,
     Loader(Loader),
@@ -199,10 +181,8 @@ mod tests {
                     true => HostLoaderKind::ByName,
                     false => HostLoaderKind::Loader(loader),
                 };
-                assert_eq!(
-                    host_loader_kind(to_host_loader(loader, path)),
-                    Some(expected)
-                );
+                let actual = host_loader_kind(to_host_loader(loader, path));
+                assert_eq!(actual, Some(expected));
             }
         }
     }
@@ -299,17 +279,6 @@ mod tests {
         assert_eq!(loader_by_name(b"/project/a.md"), Loader::Md);
         assert_eq!(loader_by_name(b"/project/a.sh"), Loader::Bunsh);
         assert_eq!(loader_by_name(b"/project/a.sqlite"), Loader::Sqlite);
-    }
-
-    #[test]
-    fn type_attributes_are_classified() {
-        let classify = |text: &[u8]| classify_type_attribute(Some(text));
-        assert_eq!(classify_type_attribute(None), TypeAttribute::Absent);
-        assert_eq!(classify(b"macro"), TypeAttribute::Macro);
-        assert_eq!(classify(b"text"), TypeAttribute::Loader(Loader::Text));
-        assert_eq!(classify(b"json"), TypeAttribute::Loader(Loader::Json));
-        assert_eq!(classify(b"nonsense"), TypeAttribute::Unknown);
-        assert_eq!(classify(b""), TypeAttribute::Unknown);
     }
 
     #[test]

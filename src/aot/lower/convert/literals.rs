@@ -4,10 +4,8 @@ use smallvec::SmallVec;
 use super::supertypes::ConversionKind;
 use crate::lower::{CheckerTypeId, FileLowering};
 
-type HeldTypes = SmallVec<[CheckerTypeId; 4]>;
-
 impl FileLowering<'_, '_, '_, '_> {
-    fn record_spread_elements(&mut self, spread: ExprId, held: &[CheckerTypeId]) {
+    pub(super) fn record_spread_elements(&mut self, spread: ExprId, held: &[CheckerTypeId]) {
         let Ok(copied) = self.queries.expression_type(spread) else {
             return;
         };
@@ -17,18 +15,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 let kind = ConversionKind::Asserted;
                 self.record_conversion(element, held, position, kind);
             }
-        }
-    }
-
-    fn find_held_types(
-        &mut self,
-        list: CheckerTypeId,
-        index: usize,
-        first_spread: Option<usize>,
-    ) -> HeldTypes {
-        match first_spread {
-            Some(first_spread) => self.collect_element_types_from(list, first_spread),
-            None => self.find_element_type(list, index).into_iter().collect(),
         }
     }
 
@@ -43,18 +29,18 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         let mut first_spread = None;
         for (index, &element) in elements.iter().enumerate() {
-            if matches!(hir[element].kind, ExprKind::Missing) {
-                continue;
-            }
-            let spread = if let ExprKind::Spread(spread) = hir[element].kind {
-                Some(spread)
-            } else {
-                None
+            let spread = match hir[element].kind {
+                ExprKind::Missing => continue,
+                ExprKind::Spread(spread) => Some(spread),
+                _ => None,
             };
             if spread.is_some() && first_spread.is_none() {
                 first_spread = Some(index);
             }
-            let held = self.find_held_types(list, index, first_spread);
+            let held = match first_spread {
+                Some(first_spread) => self.collect_element_types_from(list, first_spread),
+                None => self.find_element_type(list, index).into_iter().collect(),
+            };
             match spread {
                 Some(spread) => self.record_spread_elements(spread, &held),
                 None => {

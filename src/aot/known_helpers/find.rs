@@ -1,9 +1,12 @@
-use super::canonical::{CanonicalInput, OuterName, canonical_function};
-use super::quiet::{Quiet, is_absent_from_object_prototype, is_locked};
+use super::canonical::{CanonicalFunction, CanonicalInput, OuterName, canonical_function};
+use super::quiet::{
+    Quiet, enclosing_statement, is_absent_from_object_prototype, is_global_name,
+    is_in_statement_of_file, plain_member,
+};
 use super::table::{Table, TableEntry, signature_of};
-use super::{Reference, Shape};
+use super::{Reference, Shape, find_by_key};
 use crate::builtins::id::BuiltinId;
-use crate::builtins::table::{self, MemberLookup, Mutability};
+use crate::builtins::table::{self, MemberLookup, Mutability, is_locked};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{
     Binding, BindingInitializer, BindingKind, BindingStability, Bound, Decl, FnOwner, Parent,
@@ -11,8 +14,7 @@ use bun_sema::bind::{
 };
 use bun_sema::fold::{Decision, Decisions};
 use bun_sema::hir::{
-    self, BinOp, Chain, ExprId, ExprKind, Flags, FnBody, FnId, MemberKey, NodeData, StmtId,
-    StmtKind,
+    self, BinOp, ExprId, ExprKind, Flags, FnBody, FnId, MemberKey, StmtId, StmtKind,
 };
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{FileId, Files};
@@ -25,7 +27,6 @@ const MAX_ALTERNATIVES: usize = 8;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum KnownReference {
-    Itself,
     Helper {
         symbol: SymbolId,
         is_initialized_first: bool,
@@ -72,20 +73,15 @@ pub struct BindingValues {
 pub struct FileHelpers {
     functions: Box<[(FnId, KnownFunction)]>,
     bindings: Box<[(SymbolId, BindingValues)]>,
-    head_allows_reads_of_open_globals: bool,
 }
 
 impl FileHelpers {
     pub fn function(&self, function: FnId) -> Option<&KnownFunction> {
-        let at = self
-            .functions
-            .binary_search_by_key(&function, |entry| entry.0);
-        at.ok().map(|at| &self.functions[at].1)
+        find_by_key(&self.functions, function)
     }
 
     pub fn binding(&self, symbol: SymbolId) -> Option<&BindingValues> {
-        let at = self.bindings.binary_search_by_key(&symbol, |entry| entry.0);
-        at.ok().map(|at| &self.bindings[at].1)
+        find_by_key(&self.bindings, symbol)
     }
 
     pub fn functions(&self) -> impl ExactSizeIterator<Item = (FnId, &KnownFunction)> {
@@ -94,11 +90,6 @@ impl FileHelpers {
 
     pub fn bindings(&self) -> impl ExactSizeIterator<Item = (SymbolId, &BindingValues)> {
         self.bindings.iter().map(|entry| (entry.0, &entry.1))
-    }
-
-    /// What `Quiet::allows_reads_of_open_globals` is for the head of the file: code of other files that runs while the head does has no way to call into the file.
-    pub fn head_allows_reads_of_open_globals(&self) -> bool {
-        self.head_allows_reads_of_open_globals
     }
 }
 
@@ -112,19 +103,10 @@ enum Verdict {
 
 struct Matched {
     entry: &'static TableEntry,
-    outer_names: Vec<OuterName>,
-    functions: Vec<FnId>,
-    globals: Vec<ExprId>,
+    canonical: CanonicalFunction,
     references: Vec<KnownReference>,
     verdict: Verdict,
     relies_on_facts: Option<bool>,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Alternative {
-    Function(FnId),
-    ResultOfCall(FnId),
-    Other,
 }
 
 #[derive(Copy, Clone)]
@@ -135,17 +117,13 @@ struct Definition {
 }
 
 struct Finder<'a, 's> {
-    atoms: &'a Interner<'s>,
-    hir: &'a hir::File<'s>,
-    bound: &'a Bound<'s>,
-    decisions: &'a Decisions<'s>,
+    file: &'a FindInput<'a, 's>,
     is_es_module: bool,
-    is_held_early: &'a dyn Fn() -> bool,
     matched: FxHashMap<FnId, Matched>,
     bindings: FxHashMap<SymbolId, BindingValues>,
     end_of_head: OnceCell<u32>,
     end_of_silent_head: OnceCell<u32>,
-    exports_function_declaration: OnceCell<bool>,
+    may_start_early: OnceCell<bool>,
 }
 
 pub(super) struct FindInput<'a, 's> {
@@ -162,7 +140,7 @@ fn runs_something(_: hir::CallId) -> bool {
     false
 }
 
-fn find_global(path: &[&str]) -> Option<BuiltinId> {
+pub(super) fn find_global(path: &[&str]) -> Option<BuiltinId> {
     let (root, members) = path.split_first()?;
     let mut builtin = table::global(table::find_name(root.as_bytes())?)?;
     for member in members {
@@ -195,92 +173,85 @@ pub(super) fn find_in_file(
 
 pub(super) fn find(input: &FindInput<'_, '_>) -> FileHelpers {
     let mut finder = Finder {
-        atoms: input.atoms,
-        hir: input.hir,
-        bound: input.bound,
-        decisions: input.decisions,
+        file: input,
         is_es_module: input.module_format == ModuleFormat::Esm,
-        is_held_early: input.is_held_early,
         matched: FxHashMap::default(),
         bindings: FxHashMap::default(),
         end_of_head: OnceCell::new(),
         end_of_silent_head: OnceCell::new(),
-        exports_function_declaration: OnceCell::new(),
+        may_start_early: OnceCell::new(),
     };
-    finder.match_functions();
-    if finder.matched.is_empty() {
+    let functions = finder.match_functions();
+    if functions.is_empty() {
         return FileHelpers::default();
     }
-    finder.verify_functions();
-    finder.collect_bindings();
-    finder.collect_facts();
+    for &function in &functions {
+        finder.verify(function);
+    }
+    for &function in &functions {
+        if finder.matched[&function].verdict == Verdict::Accepted
+            && let Some(owner) = finder.find_owner(function)
+        {
+            finder.values_of(owner);
+        }
+    }
+    for &function in &functions {
+        finder.relies_on_facts(function);
+    }
     finder.finish()
 }
 
 impl<'a, 's> Finder<'a, 's> {
     fn quiet(&self) -> Quiet<'a, 's> {
         Quiet {
-            atoms: self.atoms,
-            hir: self.hir,
-            bound: self.bound,
-            decisions: self.decisions,
+            atoms: self.file.atoms,
+            hir: self.file.hir,
+            bound: self.file.bound,
+            decisions: self.file.decisions,
             allows_reads_of_open_globals: false,
             runs_nothing: &runs_something,
         }
     }
-}
 
-impl Finder<'_, '_> {
-    fn match_functions(&mut self) {
+    fn match_functions(&mut self) -> Vec<FnId> {
         let table = Table::get();
+        let mut functions = Vec::new();
         let input = CanonicalInput {
-            hir: self.hir,
-            bound: self.bound,
-            atoms: self.atoms,
-            max_bytes: table.max_bytes(),
+            file: self.file,
+            max_bytes: table.max_bytes,
             is_outer_name: &|_| false,
         };
-        for function in (0..self.hir.fns.len() as u32).map(FnId) {
-            if matches!(self.hir[function].body, FnBody::None)
-                || !table.has_signature(signature_of(self.hir, function))
-                || self.decisions.is_dead_function(function)
+        for function in (0..self.file.hir.fns.len() as u32).map(FnId) {
+            if matches!(self.file.hir[function].body, FnBody::None)
+                || !table
+                    .signatures
+                    .contains(&signature_of(self.file.hir, function))
+                || self.file.decisions.is_dead_function(function)
             {
                 continue;
             }
             let Some(canonical) = canonical_function(&input, function) else {
                 continue;
             };
-            let Some(entry) = table.find(&canonical.bytes) else {
+            let Some(entry) = table.entries.get(canonical.bytes.as_slice()) else {
                 continue;
             };
             if entry.references.len() != canonical.outer_names.len() {
                 continue;
             }
+            functions.push(function);
             self.matched.insert(
                 function,
                 Matched {
                     entry,
-                    outer_names: canonical.outer_names,
-                    functions: canonical.inner_functions,
-                    globals: canonical.globals,
+                    canonical,
                     references: Vec::new(),
                     verdict: Verdict::Unknown,
                     relies_on_facts: None,
                 },
             );
         }
-    }
-
-    fn sorted_matches(&self) -> Vec<FnId> {
-        let mut functions: Vec<FnId> = self.matched.keys().copied().collect();
-        functions.shared_sort_unstable();
         functions
-    }
-
-    fn verify_functions(&mut self) {
-        for function in self.sorted_matches() {
-            self.verify(function);
-        }
     }
 
     fn verify(&mut self, function: FnId) -> bool {
@@ -293,7 +264,7 @@ impl Finder<'_, '_> {
             Verdict::Unknown => matched.verdict = Verdict::InProgress,
         }
         let entry = matched.entry;
-        let outer_names = matched.outer_names.clone();
+        let outer_names = matched.canonical.outer_names.clone();
         let references: Option<Vec<KnownReference>> = entry
             .references
             .iter()
@@ -301,17 +272,12 @@ impl Finder<'_, '_> {
             .map(|(&reference, &outer)| self.verify_reference(function, reference, outer))
             .collect();
         let matched = self.matched.get_mut(&function).expect("it was found above");
-        match references {
-            Some(references) => {
-                matched.references = references;
-                matched.verdict = Verdict::Accepted;
-                true
-            }
-            None => {
-                matched.verdict = Verdict::Rejected;
-                false
-            }
-        }
+        matched.verdict = match references {
+            Some(_) => Verdict::Accepted,
+            None => Verdict::Rejected,
+        };
+        matched.references = references.unwrap_or_default();
+        matched.verdict == Verdict::Accepted
     }
 
     fn verify_reference(
@@ -324,9 +290,6 @@ impl Finder<'_, '_> {
             return None;
         };
         match reference {
-            Reference::Itself => {
-                (self.find_owner(function)? == symbol).then_some(KnownReference::Itself)
-            }
             Reference::Helper(helper) => {
                 let values = self.values_of(symbol);
                 let mut held = values.functions.iter();
@@ -352,7 +315,10 @@ impl Finder<'_, '_> {
 
     // `var __defProp = Object.defineProperty;`: what the path held when the variable was initialized.
     fn is_alias_of_global(&self, symbol: SymbolId, path: &[&str]) -> bool {
-        let recorded = self.bound.binding_stability_ignoring(symbol, &|_| true);
+        let recorded = self
+            .file
+            .bound
+            .binding_stability_ignoring(symbol, &|_| true);
         let definition = self.find_definition(symbol);
         definition.is_some_and(|definition| {
             !definition.is_stored_again
@@ -362,48 +328,26 @@ impl Finder<'_, '_> {
     }
 
     fn names_global(&self, expression: ExprId, path: &[&str]) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
+        let (hir, bound) = (self.file.hir, self.file.bound);
         let Some((last, holders)) = path.split_last() else {
             return false;
         };
         let expression = hir.skip_type_assertions(expression);
-        if self.decisions.decision(expression) != Decision::Unknown {
+        if self.file.decisions.decision(expression) != Decision::Unknown {
             return false;
         }
-        let is_last = |name: Atom| self.atoms.bytes(name) == last.as_bytes();
+        let is_last = |name: Atom| self.file.atoms.bytes(name) == last.as_bytes();
         match hir[expression].kind {
             ExprKind::Ident(name) => {
-                holders.is_empty()
-                    && is_last(name)
-                    && bound.binding(expression) == Binding::Free
-                    && bound
-                        .dynamic_lookup_scope(NodeData::Expr(expression))
-                        .is_none()
+                holders.is_empty() && is_last(name) && is_global_name(bound, expression)
             }
-            ExprKind::Dot {
-                chain: Chain::No, ..
-            }
-            | ExprKind::Index {
-                chain: Chain::No, ..
-            } => match hir.member_key(expression) {
-                Some((object, MemberKey::Name(name))) => {
-                    is_last(name) && self.names_global(object, holders)
-                }
-                Some((_, MemberKey::PrivateName(_) | MemberKey::Computed(_))) | None => false,
-            },
-            _ => false,
-        }
-    }
-
-    fn creation_of(&self, function: FnId) -> Option<ExprId> {
-        match self.bound.fns[function.idx()].owner {
-            FnOwner::Expr(expression) => Some(expression),
-            FnOwner::None | FnOwner::Stmt(_) | FnOwner::Member(_) | FnOwner::Type(_) => None,
+            _ => plain_member(hir, expression)
+                .is_some_and(|(object, name)| is_last(name) && self.names_global(object, holders)),
         }
     }
 
     fn find_owner(&self, function: FnId) -> Option<SymbolId> {
-        let (hir, bound) = (self.hir, self.bound);
+        let (hir, bound) = (self.file.hir, self.file.bound);
         let mut child = match bound.fns[function.idx()].owner {
             FnOwner::Expr(expression) => expression,
             FnOwner::Stmt(_) => return bound.declared_symbol(Decl::Fn(function)).some(),
@@ -447,49 +391,31 @@ impl Finder<'_, '_> {
         }
     }
 
-    fn enclosing_statement(&self, expression: ExprId) -> Option<StmtId> {
-        let mut child = expression;
-        loop {
-            match self.bound.parent_of_expr(child) {
-                Parent::Expr(parent) => child = parent,
-                Parent::VarInit(declaration) => {
-                    return self.bound.var_stmt[declaration.idx()].some();
-                }
-                Parent::Stmt(statement) => return Some(statement),
-                _ => return None,
-            }
-        }
-    }
-
-    fn is_in_straight_line(&self, statement: StmtId) -> bool {
-        matches!(
-            self.bound.parent_of_stmt(statement),
-            Parent::File | Parent::FnBody(_)
-        )
-    }
-
     fn is_initialized_before(&self, symbol: SymbolId, function: FnId) -> bool {
         let Some(definition) = self.find_definition(symbol) else {
             return false;
         };
-        let created = self.creation_of(function);
-        let created = created.and_then(|created| self.enclosing_statement(created));
+        let created = match self.file.bound.fns[function.idx()].owner {
+            FnOwner::Expr(created) => enclosing_statement(self.file.bound, created),
+            FnOwner::None | FnOwner::Stmt(_) | FnOwner::Member(_) | FnOwner::Type(_) => None,
+        };
         let (Some(defined), Some(created)) = (definition.statement, created) else {
             return false;
         };
-        self.is_in_straight_line(defined)
-            && self.bound.parent_of_stmt(defined) == self.bound.parent_of_stmt(created)
-            && self.hir[defined].start < self.hir[created].start
+        let parent = self.file.bound.parent_of_stmt(defined);
+        matches!(parent, Parent::File | Parent::FnBody(_))
+            && parent == self.file.bound.parent_of_stmt(created)
+            && self.file.hir[defined].start < self.file.hir[created].start
     }
 
     fn find_definition(&self, symbol: SymbolId) -> Option<Definition> {
-        let (hir, bound) = (self.hir, self.bound);
+        let (hir, bound) = (self.file.hir, self.file.bound);
         let stores = bound.stores_to(symbol);
-        let is_live = |target: ExprId| !self.decisions.is_dead_expr(target);
+        let is_live = |target: ExprId| !self.file.decisions.is_dead_expr(target);
         match bound.binding_initializer(hir, symbol) {
             BindingInitializer::Expression(value) => Some(Definition {
                 value,
-                statement: self.enclosing_statement(value),
+                statement: enclosing_statement(bound, value),
                 is_stored_again: stores.iter().any(|store| is_live(store.target)),
             }),
             BindingInitializer::Opaque if bound.binding_kind(symbol) == BindingKind::Var => {
@@ -525,16 +451,14 @@ impl Finder<'_, '_> {
     }
 
     fn is_undefined_this(&self, expression: ExprId) -> bool {
-        if !self.is_es_module || !matches!(self.hir[expression].kind, ExprKind::This) {
-            return false;
-        }
-        let statement = self.enclosing_statement(expression);
-        statement.is_some_and(|it| self.bound.parent_of_stmt(it) == Parent::File)
+        self.is_es_module
+            && matches!(self.file.hir[expression].kind, ExprKind::This)
+            && is_in_statement_of_file(self.file.bound, expression)
     }
 
     // A bundler's `((x) => typeof require !== "undefined" ? require : ..)(function (x) { .. })` answers `require`.
     fn is_call_of_require_factory(&self, call: hir::CallId) -> bool {
-        let hir = self.hir;
+        let hir = self.file.hir;
         match hir[hir.skip_type_assertions(hir[call].callee)].kind {
             ExprKind::Fn(function) => self
                 .matched
@@ -546,16 +470,14 @@ impl Finder<'_, '_> {
 
     // Code of another file that holds the exports of a file that has not run to its end finds nothing to call in a CommonJS file that has stored no export yet, and the function declarations in an ES module.
     fn may_start_early(&self) -> bool {
-        self.is_es_module && self.exports_function_declaration() && (self.is_held_early)()
-    }
-
-    fn head_allows_reads_of_open_globals(&self) -> bool {
-        !self.may_start_early()
+        *self.may_start_early.get_or_init(|| {
+            self.is_es_module && self.exports_function_declaration() && (self.file.is_held_early)()
+        })
     }
 
     fn ask_quiet_of_head<R>(&self, ask: impl FnOnce(&Quiet<'_, '_>) -> R) -> R {
         ask(&Quiet {
-            allows_reads_of_open_globals: self.head_allows_reads_of_open_globals(),
+            allows_reads_of_open_globals: !self.may_start_early(),
             runs_nothing: &|call| self.is_call_of_require_factory(call),
             ..self.quiet()
         })
@@ -569,11 +491,11 @@ impl Finder<'_, '_> {
 
     /// Nothing of the file but quiet code runs until the variable holds the value.
     fn is_in_head(&self, definition: Definition) -> bool {
-        let hir = self.hir;
+        let hir = self.file.hir;
         let Some(statement) = definition.statement else {
             return false;
         };
-        if self.bound.parent_of_stmt(statement) != Parent::File {
+        if self.file.bound.parent_of_stmt(statement) != Parent::File {
             return false;
         }
         match hir[statement].kind {
@@ -591,19 +513,11 @@ impl Finder<'_, '_> {
         let end = *self
             .end_of_silent_head
             .get_or_init(|| self.quiet().find_end_of_head());
-        let statement = self.enclosing_statement(expression);
-        statement.is_some_and(|it| self.bound.parent_of_stmt(it) == Parent::File)
-            && self.hir[expression].pos < end
+        is_in_statement_of_file(self.file.bound, expression) && self.file.hir[expression].pos < end
     }
 
     fn exports_function_declaration(&self) -> bool {
-        *self
-            .exports_function_declaration
-            .get_or_init(|| self.find_exported_function_declaration())
-    }
-
-    fn find_exported_function_declaration(&self) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
+        let (hir, bound) = (self.file.hir, self.file.bound);
         hir.ids(hir.body)
             .any(|statement| match hir[statement].kind {
                 StmtKind::Fn(function) => hir[function]
@@ -632,31 +546,20 @@ impl Finder<'_, '_> {
         if self.is_es_module {
             return false;
         }
-        let (hir, quiet) = (self.hir, self.quiet());
+        let (hir, quiet) = (self.file.hir, self.quiet());
         let member = hir.skip_type_assertions(member);
-        let Some((object, MemberKey::Name(name))) = hir.member_key(member) else {
+        let Some((object, name)) = plain_member(hir, member) else {
             return false;
         };
-        let is_plain_read = matches!(
-            hir[member].kind,
-            ExprKind::Dot {
-                chain: Chain::No,
-                ..
-            } | ExprKind::Index {
-                chain: Chain::No,
-                ..
-            }
-        );
-        is_plain_read
-            && quiet.is_this_of_file(this)
+        quiet.is_this_of_file(this)
             && quiet.is_this_of_file(object)
-            && is_absent_from_object_prototype(self.atoms, name)
+            && is_absent_from_object_prototype(self.file.atoms, name)
             && self.is_in_silent_head(member)
     }
 
     fn is_written_in(&self, function: FnId, expression: ExprId) -> bool {
-        let hir = self.hir;
-        let (start, end) = match self.bound.fns[function.idx()].owner {
+        let hir = self.file.hir;
+        let (start, end) = match self.file.bound.fns[function.idx()].owner {
             FnOwner::Expr(owner) => (hir[owner].pos, hir[owner].end),
             FnOwner::Stmt(owner) => (hir[owner].start, hir[owner].loc.end),
             FnOwner::None | FnOwner::Member(_) | FnOwner::Type(_) => return false,
@@ -667,19 +570,22 @@ impl Finder<'_, '_> {
     fn collect_alternatives(
         &self,
         expression: ExprId,
-        alternatives: &mut SmallVec<[Alternative; 4]>,
+        alternatives: &mut SmallVec<[Option<HeldFunction>; 4]>,
     ) {
-        let hir = self.hir;
-        if self.decisions.is_dead_expr(expression) {
+        let hir = self.file.hir;
+        if self.file.decisions.is_dead_expr(expression) {
             return;
         }
         let expression = hir.skip_type_assertions(expression);
         if alternatives.len() >= MAX_ALTERNATIVES {
-            alternatives.push(Alternative::Other);
+            alternatives.push(None);
             return;
         }
         match hir[expression].kind {
-            ExprKind::Fn(function) => alternatives.push(Alternative::Function(function)),
+            ExprKind::Fn(function) => alternatives.push(Some(HeldFunction {
+                definition: function,
+                closure: function,
+            })),
             ExprKind::Binary {
                 op: BinOp::And,
                 left,
@@ -707,26 +613,30 @@ impl Finder<'_, '_> {
                 }
             }
             ExprKind::Call(call) if hir[call].args.is_empty() => {
-                match hir[hir.skip_type_assertions(hir[call].callee)].kind {
-                    ExprKind::Fn(function) => {
-                        alternatives.push(Alternative::ResultOfCall(function));
+                alternatives.push(match hir[hir.skip_type_assertions(hir[call].callee)].kind {
+                    ExprKind::Fn(definition) => {
+                        let returned = self.returned_function(definition);
+                        returned.map(|closure| HeldFunction {
+                            definition,
+                            closure,
+                        })
                     }
-                    _ => alternatives.push(Alternative::Other),
-                }
+                    _ => None,
+                });
             }
-            _ => alternatives.push(Alternative::Other),
+            _ => alternatives.push(None),
         }
     }
 
     fn returned_function(&self, function: FnId) -> Option<FnId> {
-        let hir = self.hir;
+        let hir = self.file.hir;
         let FnBody::Block(statements) = hir[function].body else {
             return None;
         };
         let StmtKind::Return(value) = hir[hir.ids(statements).last()?].kind else {
             return None;
         };
-        let returns = self.bound.fns[function.idx()].returns;
+        let returns = self.file.bound.fns[function.idx()].returns;
         if returns.len() != 1 || value.is_none() {
             return None;
         }
@@ -746,7 +656,7 @@ impl Finder<'_, '_> {
     }
 
     fn compute_values(&mut self, symbol: SymbolId) -> BindingValues {
-        let (hir, bound) = (self.hir, self.bound);
+        let (hir, bound) = (self.file.hir, self.file.bound);
         if let BindingInitializer::Function(function) = bound.binding_initializer(hir, symbol) {
             if !self.verify(function) {
                 return BindingValues::default();
@@ -775,21 +685,7 @@ impl Finder<'_, '_> {
         self.collect_alternatives(definition.value, &mut alternatives);
         let mut values = BindingValues::default();
         let mut has_other = definition.is_stored_again;
-        for alternative in alternatives {
-            let held = match alternative {
-                Alternative::Function(function) => Some(HeldFunction {
-                    definition: function,
-                    closure: function,
-                }),
-                Alternative::ResultOfCall(function) => {
-                    let returned = self.returned_function(function);
-                    returned.map(|closure| HeldFunction {
-                        definition: function,
-                        closure,
-                    })
-                }
-                Alternative::Other => None,
-            };
+        for held in alternatives {
             match held {
                 Some(held) if self.verify(held.definition) => values.functions.push(held),
                 Some(_) | None => has_other = true,
@@ -809,8 +705,8 @@ impl Finder<'_, '_> {
 
     // The longest path of names that the table knows, from each global that the function names.
     fn names_only_locked_globals(&self, globals: &[ExprId]) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
-        let find_name = |name: Atom| table::find_name(self.atoms.bytes(name));
+        let (hir, bound) = (self.file.hir, self.file.bound);
+        let find_name = |name: Atom| table::find_name(self.file.atoms.bytes(name));
         globals.iter().all(|&global| {
             let ExprKind::Ident(name) = hir[global].kind else {
                 return false;
@@ -839,7 +735,6 @@ impl Finder<'_, '_> {
 
     fn is_fact(&mut self, reference: KnownReference) -> bool {
         match reference {
-            KnownReference::Itself => true,
             KnownReference::Helper {
                 symbol,
                 is_initialized_first,
@@ -869,7 +764,7 @@ impl Finder<'_, '_> {
         }
         let references = matched.references.clone();
         let answer = matched.verdict == Verdict::Accepted
-            && self.names_only_locked_globals(&matched.globals)
+            && self.names_only_locked_globals(&matched.canonical.globals)
             && references
                 .into_iter()
                 .all(|reference| self.is_fact(reference));
@@ -878,30 +773,12 @@ impl Finder<'_, '_> {
         answer
     }
 
-    fn collect_facts(&mut self) {
-        for function in self.sorted_matches() {
-            self.relies_on_facts(function);
-        }
-    }
-
-    fn collect_bindings(&mut self) {
-        for function in self.sorted_matches() {
-            if self.matched[&function].verdict != Verdict::Accepted {
-                continue;
-            }
-            if let Some(owner) = self.find_owner(function) {
-                self.values_of(owner);
-            }
-        }
-    }
-
     fn finish(self) -> FileHelpers {
-        let head_allows_reads_of_open_globals = self.head_allows_reads_of_open_globals();
         let accepted = self.matched.into_iter().filter_map(|(function, matched)| {
             (matched.verdict == Verdict::Accepted).then(|| {
                 let known = KnownFunction {
                     shape: matched.entry.shape,
-                    functions: matched.functions.into_boxed_slice(),
+                    functions: matched.canonical.inner_functions.into_boxed_slice(),
                     references: matched.references.into_boxed_slice(),
                     relies_on_facts: matched.relies_on_facts.unwrap_or(false),
                 };
@@ -917,7 +794,6 @@ impl Finder<'_, '_> {
         FileHelpers {
             functions: functions.into_boxed_slice(),
             bindings: bindings.into_boxed_slice(),
-            head_allows_reads_of_open_globals,
         }
     }
 }

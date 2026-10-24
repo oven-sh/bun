@@ -41,11 +41,8 @@ fn inherited_member_of_listed_holder() {
         assert_builtin(case, "Math.toString", BuiltinId::ObjectPrototypeToString);
         for (text, holder, name) in members {
             let path = case.path(text);
-            assert_eq!(
-                path.map(|path| path.id),
-                find_member(holder, name),
-                "{text}"
-            );
+            let found = path.map(|path| path.id);
+            assert_eq!(found, find_member(holder, name), "{text}");
             let is_predicted =
                 path.is_none_or(|path| path.mutability <= Mutability::ConstantUnlessWritten);
             assert!(is_predicted, "{text}");
@@ -89,10 +86,8 @@ fn global_and_members() {
         ];
         for (text, id) in expected {
             assert_builtin(case, text, id);
-            assert_eq!(
-                case.resolved.builtin_of_expression(case.expr(text)),
-                Some(id)
-            );
+            let found = case.resolved.builtin_of_expression(case.expr(text));
+            assert_eq!(found, Some(id));
             assert!(case.mentions(id), "{text}");
         }
     });
@@ -144,26 +139,23 @@ fn well_known_symbol_key() {
     let MemberLookup::Found(iterator) = iterator else {
         panic!("Array.prototype[Symbol.iterator] is {iterator:?}");
     };
-    assert_eq!(
-        table::canonical_id(iterator),
-        BuiltinId::ArrayPrototypeValues
-    );
+    let found = table::canonical_id(iterator);
+    assert_eq!(found, BuiltinId::ArrayPrototypeValues);
     with_case(PROGRAM, "Array.prototype[Symbol.iterator];", |case| {
         let values = BuiltinId::ArrayPrototypeValues;
         assert_builtin(case, "Array.prototype[Symbol.iterator]", values);
     });
-    with_case(PROGRAM, "Array.prototype[\"@@iterator\"];", |case| {
-        assert_unresolved(case, "Array.prototype[\"@@iterator\"]");
-    });
-    with_case(PROGRAM, "Array.prototype[\"iterator\"];", |case| {
-        assert_unresolved(case, "Array.prototype[\"iterator\"]");
-    });
-    with_case(PROGRAM, "Array.prototype[Symbol.for(\"x\")];", |case| {
-        assert_unresolved(case, "Array.prototype[Symbol.for(\"x\")]");
-    });
-    with_case(PROGRAM, "Array.prototype[Math.PI];", |case| {
-        assert_unresolved(case, "Array.prototype[Math.PI]");
-    });
+    for key in [
+        "\"@@iterator\"",
+        "\"iterator\"",
+        "Symbol.for(\"x\")",
+        "Math.PI",
+    ] {
+        let text = format!("Array.prototype[{key}]");
+        with_case(PROGRAM, &format!("{text};"), |case| {
+            assert_unresolved(case, &text);
+        });
+    }
 }
 
 #[test]
@@ -279,21 +271,16 @@ mod mutability {
 
     #[test]
     fn only_object_or_symbol_stands_for_locked_path() {
-        with_case(
-            PROGRAM,
-            "Math.imul; Math.PI; Symbol.iterator; Math.random;",
-            |case| {
-                assert_mutability(case, "Math.PI", Mutability::AlwaysLocked);
-                let locked_builtin = |text| case.path(text).and_then(|path| path.locked_builtin());
-                assert_eq!(locked_builtin("Math.imul"), Some(BuiltinId::MathImul));
-                assert_eq!(
-                    locked_builtin("Symbol.iterator"),
-                    Some(BuiltinId::SymbolIterator)
-                );
-                assert_eq!(locked_builtin("Math.PI"), None);
-                assert_eq!(locked_builtin("Math.random"), None);
-            },
-        );
+        let source = "Math.imul; Math.PI; Symbol.iterator; Math.random;";
+        with_case(PROGRAM, source, |case| {
+            assert_mutability(case, "Math.PI", Mutability::AlwaysLocked);
+            let locked_builtin = |text| case.path(text).and_then(|path| path.locked_builtin());
+            assert_eq!(locked_builtin("Math.imul"), Some(BuiltinId::MathImul));
+            let found = locked_builtin("Symbol.iterator");
+            assert_eq!(found, Some(BuiltinId::SymbolIterator));
+            assert_eq!(locked_builtin("Math.PI"), None);
+            assert_eq!(locked_builtin("Math.random"), None);
+        });
     }
 
     #[test]

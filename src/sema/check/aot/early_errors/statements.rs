@@ -126,7 +126,6 @@ impl Checker<'_, '_> {
         list_parent: Kind,
     ) {
         let hir = self.hir(file);
-        // An ambient declaration has no early error, and its check may compute a type.
         for d in decls
             .iter()
             .filter(|&d| !hir[d].flags.contains(Flags::AMBIENT))
@@ -146,7 +145,6 @@ impl Checker<'_, '_> {
                 self.check_variable_declarations(file, decls, list_parent);
             }
             StmtKind::Expr(target) => {
-                // TypeScript allows `for (async of` in an await context.
                 if self.is_for_async_of(file, s) {
                     self.early_grammar_error_on_node(file, target, 1106, &[]);
                 }
@@ -218,7 +216,6 @@ impl Checker<'_, '_> {
         if !is_loop_or_with_body && !is_if_branch {
             return;
         }
-        // `bun run` puts a plain function under `if` in a block, in strict mode code too.
         let (keyword, is_error) = match declaration {
             BodyDeclaration::Function(f) => (
                 "function",

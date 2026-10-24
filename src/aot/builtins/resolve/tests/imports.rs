@@ -200,23 +200,17 @@ fn require_call() {
         assert_builtin(case, "require(\"bun:jsc\")", jsc_namespace());
         assert_builtin(case, "require(\"bun:jsc\").heapStats", jsc_heap_stats());
     });
-    with_case(
-        SCRIPT,
-        "const { heapStats } = require(\"bun:jsc\");",
-        |case| {
-            assert_eq!(case.symbol_id("heapStats"), Some(jsc_heap_stats()));
-        },
-    );
-    with_case(
-        SCRIPT,
-        "require(\"node:fs\"); require(\"./b\"); require(name);",
-        |case| {
-            assert_unresolved(case, "require(\"node:fs\")");
-            assert_unresolved(case, "require(\"./b\")");
-            assert_unresolved(case, "require(name)");
-            assert!(case.mentions(table::namespace_of(RuntimeModule::NodeFs)));
-        },
-    );
+    let source = "const { heapStats } = require(\"bun:jsc\");";
+    with_case(SCRIPT, source, |case| {
+        assert_eq!(case.symbol_id("heapStats"), Some(jsc_heap_stats()));
+    });
+    let source = "require(\"node:fs\"); require(\"./b\"); require(name);";
+    with_case(SCRIPT, source, |case| {
+        assert_unresolved(case, "require(\"node:fs\")");
+        assert_unresolved(case, "require(\"./b\")");
+        assert_unresolved(case, "require(name)");
+        assert!(case.mentions(table::namespace_of(RuntimeModule::NodeFs)));
+    });
 }
 
 #[test]
@@ -228,13 +222,10 @@ fn get_builtin_module_call() {
         assert!(!case.exposes(jsc_namespace()));
         assert!(!case.exposes(BuiltinId::Process));
     });
-    with_case(
-        PROGRAM,
-        &format!("const {{ heapStats }} = {call};"),
-        |case| {
-            assert_eq!(case.symbol_id("heapStats"), Some(jsc_heap_stats()));
-        },
-    );
+    let source = format!("const {{ heapStats }} = {call};");
+    with_case(PROGRAM, &source, |case| {
+        assert_eq!(case.symbol_id("heapStats"), Some(jsc_heap_stats()));
+    });
     with_case(PROGRAM, &format!("f({call});"), |case| {
         assert!(case.exposes(jsc_namespace()));
     });
@@ -242,14 +233,11 @@ fn get_builtin_module_call() {
         assert_unresolved(case, "process.getBuiltinModule(\"node:fs\")");
         assert!(case.mentions(table::namespace_of(RuntimeModule::NodeFs)));
     });
-    with_case(
-        PROGRAM,
-        "process.getBuiltinModule(name).heapStats;",
-        |case| {
-            assert_unresolved(case, "process.getBuiltinModule(name)");
-            assert!(!case.mentions(jsc_namespace()));
-        },
-    );
+    let source = "process.getBuiltinModule(name).heapStats;";
+    with_case(PROGRAM, source, |case| {
+        assert_unresolved(case, "process.getBuiltinModule(name)");
+        assert!(!case.mentions(jsc_namespace()));
+    });
 }
 
 #[test]
@@ -266,14 +254,11 @@ fn namespace_object_exposes() {
             assert!(case.exposes(jsc_namespace()), "{source}");
         });
     }
-    with_case(
-        PROGRAM,
-        "import(\"node:fs\"); export * from \"node:fs\";",
-        |case| {
-            assert!(case.mentions(table::namespace_of(RuntimeModule::NodeFs)));
-            assert!(case.resolved.exposed().is_empty());
-        },
-    );
+    let source = "import(\"node:fs\"); export * from \"node:fs\";";
+    with_case(PROGRAM, source, |case| {
+        assert!(case.mentions(table::namespace_of(RuntimeModule::NodeFs)));
+        assert!(case.resolved.exposed().is_empty());
+    });
 }
 
 fn is_loaded(case: &Case<'_, '_>, module: RuntimeModule) -> bool {
@@ -332,27 +317,26 @@ fn import_mutability() {
     with_case(PROGRAM, "import d from \"bun:jsc\"; d;", |case| {
         assert_mutability(case, "d", Mutability::AlwaysLocked);
     });
-    with_case(
-        PROGRAM,
-        "import { heapStats } from \"bun:jsc\"; heapStats;",
-        |case| {
-            let export = table::own_member(jsc_namespace(), find_name("heapStats")).unwrap();
-            assert_mutability(case, "heapStats", table::entry(export).mutability);
-        },
-    );
+    let source = "import { heapStats } from \"bun:jsc\"; heapStats;";
+    with_case(PROGRAM, source, |case| {
+        let export = table::own_member(jsc_namespace(), find_name("heapStats")).unwrap();
+        assert_mutability(case, "heapStats", table::entry(export).mutability);
+    });
     with_case(SCRIPT, "require(\"bun:jsc\");", |case| {
         let predicted = Mutability::ConstantUnlessWritten;
         assert_mutability(case, "require(\"bun:jsc\")", predicted);
     });
-    with_case(
-        PROGRAM,
-        "import p from \"node:process\"; p; process;",
-        |case| {
-            assert_builtin(case, "p", BuiltinId::Process);
-            assert_mutability(case, "p", Mutability::AlwaysLocked);
-            assert_mutability(case, "process", Mutability::ConstantUnlessWritten);
-        },
-    );
+    let source = "import p from \"node:process\"; p; process;";
+    with_case(PROGRAM, source, |case| {
+        assert_builtin(case, "p", BuiltinId::Process);
+        assert_mutability(case, "p", Mutability::AlwaysLocked);
+        assert_mutability(case, "process", Mutability::ConstantUnlessWritten);
+    });
+}
+
+fn module_export(case: &Case<'_, '_>, module: RuntimeModule, name: &str) -> ModuleExport {
+    let name = case.atoms.intern(name.as_bytes());
+    find_module_export(case.names, module, name, Platforms::LINUX)
 }
 
 fn module_flags(module: RuntimeModule) -> ModuleFlags {
@@ -362,85 +346,57 @@ fn module_flags(module: RuntimeModule) -> ModuleFlags {
 #[test]
 fn module_exports() {
     with_case(PROGRAM, "1;", |case| {
-        let find = |module, name: &str, platform| {
-            find_module_export(
-                case.names,
-                module,
-                case.atoms.intern(name.as_bytes()),
-                platform,
-            )
-        };
-        let linux = Platforms::LINUX;
+        let find = |module, name| module_export(case, module, name);
         let jsc = RuntimeModule::BunJsc;
-        assert_eq!(
-            find(jsc, "default", linux),
-            ModuleExport::Found(jsc_namespace())
-        );
-        assert_eq!(
-            find(jsc, "heapStats", linux),
-            ModuleExport::Found(jsc_heap_stats())
-        );
+        let found = find(jsc, "default");
+        assert_eq!(found, ModuleExport::Found(jsc_namespace()));
+        let found = find(jsc, "heapStats");
+        assert_eq!(found, ModuleExport::Found(jsc_heap_stats()));
 
         assert!(module_flags(jsc).contains(ModuleFlags::LISTS_ALL_EXPORTS));
-        assert_eq!(find(jsc, "nothing", linux), ModuleExport::Absent);
-        assert_eq!(find(jsc, "push", linux), ModuleExport::Absent);
+        assert_eq!(find(jsc, "nothing"), ModuleExport::Absent);
+        assert_eq!(find(jsc, "push"), ModuleExport::Absent);
 
         let bun = RuntimeModule::Bun;
         assert!(module_flags(bun).contains(ModuleFlags::HAS_OPEN_NAMESPACE));
-        assert_eq!(
-            find(bun, "serve", linux),
-            ModuleExport::Found(BuiltinId::BunServe)
-        );
+        let found = find(bun, "serve");
+        assert_eq!(found, ModuleExport::Found(BuiltinId::BunServe));
         let open = ModuleExport::PropertyOfNamespace(BuiltinId::Bun);
-        assert_eq!(find(bun, "nothing", linux), open);
+        assert_eq!(find(bun, "nothing"), open);
 
         let process = RuntimeModule::NodeProcess;
         assert!(
             !module_flags(process)
                 .intersects(ModuleFlags::LISTS_ALL_EXPORTS | ModuleFlags::HAS_OPEN_NAMESPACE)
         );
-        assert_eq!(
-            find(process, "pid", linux),
-            ModuleExport::Found(BuiltinId::ProcessPid)
-        );
-        assert_eq!(find(process, "nothing", linux), ModuleExport::Unknown);
+        let found = find(process, "pid");
+        assert_eq!(found, ModuleExport::Found(BuiltinId::ProcessPid));
+        assert_eq!(find(process, "nothing"), ModuleExport::Unknown);
     });
 }
 
 #[test]
 fn default_export_of_module_with_source() {
     with_case(PROGRAM, "1;", |case| {
-        let find = |module, name: &str| {
-            let name = case.atoms.intern(name.as_bytes());
-            find_module_export(case.names, module, name, Platforms::LINUX)
-        };
+        let find = |module, name| module_export(case, module, name);
         let fs = RuntimeModule::NodeFs;
         assert_eq!(find(fs, "default"), ModuleExport::Found(BuiltinId::NodeFs));
 
         let sqlite = RuntimeModule::BunSqlite;
-        assert_eq!(
-            find(sqlite, "default"),
-            ModuleExport::Found(BuiltinId::BunSqliteDefault)
-        );
-        assert_eq!(
-            find(sqlite, "Database"),
-            ModuleExport::Found(BuiltinId::BunSqliteDatabase)
-        );
+        let found = find(sqlite, "default");
+        assert_eq!(found, ModuleExport::Found(BuiltinId::BunSqliteDefault));
+        let found = find(sqlite, "Database");
+        assert_eq!(found, ModuleExport::Found(BuiltinId::BunSqliteDatabase));
 
-        assert_eq!(
-            find(RuntimeModule::NodeFetch, "default"),
-            ModuleExport::Unknown
-        );
+        let found = find(RuntimeModule::NodeFetch, "default");
+        assert_eq!(found, ModuleExport::Unknown);
     });
 }
 
 #[test]
 fn export_that_only_the_namespace_holds() {
     with_case(PROGRAM, "1;", |case| {
-        let find = |module, name: &str| {
-            let name = case.atoms.intern(name.as_bytes());
-            find_module_export(case.names, module, name, Platforms::LINUX)
-        };
+        let find = |module, name| module_export(case, module, name);
         let held = ModuleExport::HeldByNamespace;
         assert_eq!(find(RuntimeModule::Utf8Validate, "default"), held);
         assert_eq!(find(RuntimeModule::NodeModule, "wrapper"), held);
@@ -513,9 +469,7 @@ fn exports_agree_with_aliases() {
     }
     with_case(PROGRAM, &source, |case| {
         for (index, &export) in exports.iter().enumerate() {
-            let name = case.atoms.intern(export_name(export).as_bytes());
-            let module = RuntimeModule::BunJsc;
-            let found = find_module_export(case.names, module, name, Platforms::LINUX);
+            let found = module_export(case, RuntimeModule::BunJsc, export_name(export));
             let ModuleExport::Found(found) = found else {
                 panic!("{} is {found:?}", export_name(export));
             };

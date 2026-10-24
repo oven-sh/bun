@@ -8,9 +8,9 @@ pub(super) use entries::collect_export_entries;
 use self::commonjs::{CommonJsNames, resolve_commonjs_names};
 use super::ModuleRef;
 use super::bindings::{ExportBinding, ModuleExport, RequiredName};
-use super::code_unit_order::compare_code_units;
 use super::commonjs_exports::{CommonJsImport, CommonJsTexts};
-use super::failures::{FailureOrder, ModuleFailure, ModuleFailureKind, PendingFailure};
+use super::compare_code_units;
+use super::failures::{FailureOrder, ModuleFailureKind, PendingFailure};
 use super::interop::{ImportPhase, ModuleKind};
 use super::module_set::ModuleSet;
 use super::requests::{ScannedSite, Scans, phase_towards};
@@ -106,9 +106,7 @@ fn captured_resolution(modules: &ModuleSet, module: ModuleRef, name: Atom) -> Re
         ModuleRef::File(_) | ModuleRef::External { .. } if modules.is_uncompiled_code(module) => {
             Resolution::LiveName { module, name }
         }
-        ModuleRef::File(_) | ModuleRef::Inner { .. } | ModuleRef::External { .. } => {
-            Resolution::Synthetic { module, name }
-        }
+        ModuleRef::File(_) | ModuleRef::External { .. } => Resolution::Synthetic { module, name },
         // It shows the names of the file.
         ModuleRef::Face(file) => Resolution::Synthetic {
             module: ModuleRef::File(file),
@@ -139,15 +137,13 @@ enum Identity {
 }
 
 fn compare_module_identity(a: ModuleRef, b: ModuleRef) -> Identity {
-    use ModuleRef::{Check, External, Face, File, Inner, Runtime};
+    use ModuleRef::{Check, External, Face, File, Runtime};
     match (a, b) {
         _ if a == b => Identity::Same,
         (External { specifier: a, .. }, External { specifier: b, .. }) if a == b => {
             Identity::Unknown
         }
-        (File(_) | Inner { .. } | Face(_) | Check(_) | Runtime(_) | External { .. }, _) => {
-            Identity::Different
-        }
+        (File(_) | Face(_) | Check(_) | Runtime(_) | External { .. }, _) => Identity::Different,
     }
 }
 
@@ -491,11 +487,17 @@ impl ResolutionGraph<'_> {
         *start = start.join(end, nodes.keys[node as usize]);
     }
 
-    fn solve(self) -> Solution {
+    /// What each name comes to, and the tables that follow every star.
+    fn solve(self) -> (Vec<(Atom, ResolvedName)>, Vec<usize>) {
         let (component_of, components) = strongly_connected_components(&self.edges);
         let mut summaries: Vec<Summary> = Vec::with_capacity(components.len());
         for (component, members) in components.iter().enumerate() {
-            let key = self.nodes.keys[self.find_representative(members)];
+            let is_star_name = |&&node: &&usize| self.nodes.find_star_table(node as u32).is_some();
+            let representative = match members[..] {
+                [node] => node,
+                _ => *members.iter().find(is_star_name).unwrap_or(&members[0]),
+            };
+            let key = self.nodes.keys[representative];
             let mut summary = Summary::EMPTY;
             for &member in members {
                 summary = summary.join(self.starts[member], key);
@@ -513,18 +515,8 @@ impl ResolutionGraph<'_> {
         let results = keys.map(|(node, &(_, name))| (name, summary_of(node).resolve()));
         let is_followed = |&node: &u32| summary_of(node as usize).should_follow_every_star();
         let followed_nodes = (0..self.edges.len() as u32).filter(is_followed);
-        Solution {
-            results: results.collect(),
-            followed_tables: self.find_star_tables(followed_nodes.collect()),
-        }
-    }
-
-    fn find_representative(&self, members: &[usize]) -> usize {
-        let is_star_name = |&&node: &&usize| self.nodes.find_star_table(node as u32).is_some();
-        match members {
-            [node] => *node,
-            _ => *members.iter().find(is_star_name).unwrap_or(&members[0]),
-        }
+        let results = results.collect();
+        (results, self.find_star_tables(followed_nodes.collect()))
     }
 
     fn find_star_tables(&self, mut pending_nodes: Vec<u32>) -> Vec<usize> {
@@ -546,11 +538,6 @@ impl ResolutionGraph<'_> {
         }
         tables
     }
-}
-
-struct Solution {
-    results: Vec<(Atom, ResolvedName)>,
-    followed_tables: Vec<usize>,
 }
 
 fn find_link_failure(
@@ -575,18 +562,7 @@ fn find_link_failure(
         Resolution::Ambiguous => ModuleFailureKind::ExportAmbiguous { exporter, name },
         _ => return None,
     };
-    let order = FailureOrder {
-        site,
-        part: written.part,
-    };
-    let failure = ModuleFailure {
-        kind,
-        importer,
-        site: written.site_kind,
-        start: written.start,
-        end: written.end,
-    };
-    Some(PendingFailure { order, failure })
+    Some(written.fail(importer, kind))
 }
 
 // A name that an ES module imports and that some run of the body of the CommonJS module may end without.
@@ -609,16 +585,8 @@ fn find_absent_name(
             }
             _ => false,
         };
-    may_be_absent.then_some(PendingFailure {
-        order: written.order,
-        failure: ModuleFailure {
-            kind: ModuleFailureKind::ExportMayBeAbsent { exporter, name },
-            importer,
-            site: written.site_kind,
-            start: written.start,
-            end: written.end,
-        },
-    })
+    let kind = ModuleFailureKind::ExportMayBeAbsent { exporter, name };
+    may_be_absent.then(|| written.written.fail(importer, kind))
 }
 
 pub(super) fn resolve_exports(
@@ -652,10 +620,7 @@ pub(super) fn resolve_exports(
     for (table, module) in nodes.tables.iter().zip(&entries) {
         graph.add_file(table, module);
     }
-    let Solution {
-        results,
-        followed_tables,
-    } = graph.solve();
+    let (results, followed_tables) = graph.solve();
     for table in followed_tables {
         nodes.tables[table].follows_every_star = true;
     }
@@ -677,10 +642,7 @@ pub(super) fn resolve_exports(
         results,
         index: nodes.index,
         failures,
-        commonjs: CommonJsNames::default(),
-        commonjs_imports: Vec::new(),
-        absent_commonjs_names: Vec::new(),
-        commonjs_namespace_loads: Vec::new(),
+        ..ExportTables::default()
     };
     tables.commonjs = resolve_commonjs_names(modules, &tables, commonjs.entries());
     for position in 0..tables.results.len() {
@@ -699,37 +661,35 @@ pub(super) fn resolve_exports(
     for written in &commonjs_imports {
         if let Some(pending) = find_absent_name(&tables, modules, written) {
             tables.failures.push(pending);
-            absent_names.push((written.imported, written.order));
+            absent_names.push((written.imported, written.written.order));
         }
     }
-    tables
-        .failures
-        .shared_sort_by_key(|pending| (pending.failure.importer, pending.order));
+    let failures = &mut tables.failures;
+    failures.shared_sort_by_key(|pending| (pending.failure.importer, pending.order));
     absent_names.shared_sort_by_key(|&(imported, order)| (imported.importer, order));
     tables.absent_commonjs_names = absent_names;
-    tables.commonjs_imports = commonjs_imports
-        .iter()
-        .map(|written| written.imported)
-        .collect();
+    let imported = commonjs_imports.iter().map(|written| written.imported);
+    tables.commonjs_imports = imported.collect();
     commonjs_namespace_loads.sort_unstable();
     commonjs_namespace_loads.dedup();
     tables.commonjs_namespace_loads = commonjs_namespace_loads;
     tables
 }
 
+#[derive(Default)]
 pub(super) struct ExportTables {
     files: Vec<FileId>,
     tables: Vec<FileTable>,
     results: Vec<(Atom, ResolvedName)>,
     index: FxHashMap<NodeKey, u32>,
     failures: Vec<PendingFailure>,
-    commonjs: CommonJsNames,
+    pub(super) commonjs: CommonJsNames,
     /// The names that import statements and `export { .. } from` of ES modules read of CommonJS files.
-    commonjs_imports: Vec<CommonJsImport>,
+    pub(super) commonjs_imports: Vec<CommonJsImport>,
     /// Those that the body of the CommonJS module may end without, by importer and by where they are written.
-    absent_commonjs_names: Vec<(CommonJsImport, FailureOrder)>,
+    pub(super) absent_commonjs_names: Vec<(CommonJsImport, FailureOrder)>,
     /// The CommonJS files that `import()`, `export *` or an exported namespace name.
-    commonjs_namespace_loads: Vec<FileId>,
+    pub(super) commonjs_namespace_loads: Vec<FileId>,
 }
 
 impl ExportTables {
@@ -773,36 +733,13 @@ impl ExportTables {
         }
     }
 
-    /// The CommonJS modules with a name that stands for something that has no variable: they keep their objects.
-    pub(super) fn refused_commonjs_modules(&self) -> &[ModuleRef] {
-        self.commonjs.refused()
-    }
-
-    /// The names that the namespace object of a CommonJS module shows, in no order. `None`: its text does not say.
-    pub(super) fn names_of_commonjs_module(&self, module: ModuleRef) -> Option<Vec<Atom>> {
-        self.commonjs.names_of(module)
-    }
-
-    pub(super) fn commonjs_imports(&self) -> &[CommonJsImport] {
-        &self.commonjs_imports
-    }
-
     /// The modules whose captured `default` an ES module exports, under whatever name and through however many files.
     pub(super) fn modules_whose_default_is_exported(&self) -> impl Iterator<Item = ModuleRef> + '_ {
-        self.results
-            .iter()
-            .filter_map(|&(_, resolved)| match resolved.resolution {
-                Resolution::Synthetic { module, name } if name == known::default => Some(module),
-                _ => None,
-            })
-    }
-
-    pub(super) fn absent_commonjs_names(&self) -> &[(CommonJsImport, FailureOrder)] {
-        &self.absent_commonjs_names
-    }
-
-    pub(super) fn commonjs_namespace_loads(&self) -> &[FileId] {
-        &self.commonjs_namespace_loads
+        let results = self.results.iter();
+        results.filter_map(|&(_, resolved)| match resolved.resolution {
+            Resolution::Synthetic { module, name } if name == known::default => Some(module),
+            _ => None,
+        })
     }
 
     pub(super) fn names(&self, module: FileId) -> &[(Atom, ResolvedName)] {

@@ -1,8 +1,8 @@
-use super::definitions::{MergeInput, choose_definitions, synthetic_export_keys};
+use super::definitions::{MergedUnits, choose_definitions, synthetic_export_keys};
 use super::keys::{MergedKeys, merge_keys};
-use super::marks::{MarkInput, mark};
+use super::marks::mark;
 use super::module_table::collect_modules;
-use super::numbering::{NumberingInput, number_program};
+use super::numbering::number_program;
 use super::property_keys::merge_property_keys;
 use super::state::{
     Definitions, MergedTypes, ModuleTable, Numbering, ProgramCounts, Retained, UnitIds, UnitMarks,
@@ -11,16 +11,17 @@ use super::strings::merge_strings;
 use super::types::merge_types;
 use super::{
     InProject, KeyContext, LinkError, LinkInput, LinkProject, LinkUnit, Linked, ProgramFunctionKey,
-    ProgramLayoutKey, ProgramModule, ProgramVariableKey, collect_key_lists, key_context, link,
-    run_one_after_the_other,
+    ProgramLayoutKey, ProgramModule, ProgramVariableKey, collect_key_lists, key_context,
+    link_while, run_one_after_the_other,
 };
+use crate::builtins::{RuntimeFunction, RuntimeModule};
 use crate::compile::testing::{
     default_settings, describe_messages, set_up_output, with_loaded_build,
 };
 use crate::compile::{BoundBuild, Build, LoadedBuild};
 use crate::diagnostics::Diagnostics;
 use crate::engine::ExecutableIdentity;
-use crate::ir::generated::{Function, FunctionFlags};
+use crate::ir::generated::{Function, FunctionFlags, FunctionVisibility, RuntimeFunctionEntry};
 use crate::ir::testing::function_with_parameters;
 use crate::ir::{
     BuilderScratch, FunctionBuilder, FunctionId, FunctionKey, Id, InParallel, LayoutKey,
@@ -78,7 +79,15 @@ pub(super) const SHARED_NAME_IMPORTERS: [(&str, &str); 2] = [
     ),
 ];
 
-pub(super) type Projects<'a, 's> = PerProject<LinkProject<'a, 's>>;
+pub(super) const COMMON_JS_IMPORTER: [(&str, &str); 2] = [
+    (
+        "main.js",
+        "import { a, b } from './legacy.cjs';\nconsole.log(a, b);\n",
+    ),
+    ("legacy.cjs", "exports.a = 1;\nexports.b = 2;\n"),
+];
+
+pub(super) use super::Projects;
 
 pub(crate) fn reverse(count: usize, work: &(dyn Fn(usize) + Sync)) {
     for index in (0..count).rev() {
@@ -114,11 +123,12 @@ pub(crate) fn test_variable_key(file: u32, symbol: u32) -> VariableKey {
     })
 }
 
+pub(crate) fn key_in<K>(project: ProjectId, key: K) -> InProject<K> {
+    InProject { project, key }
+}
+
 pub(crate) fn in_application<K>(key: K) -> InProject<K> {
-    InProject {
-        project: ProjectId::Application,
-        key,
-    }
+    key_in(ProjectId::Application, key)
 }
 
 pub(super) fn application_file(file: FileId) -> ProgramFile {
@@ -176,6 +186,11 @@ impl TestUnit {
             module,
             body: None,
         }
+    }
+
+    pub(super) fn declare_function(&mut self, file: FileId, function: u32) -> FunctionId {
+        let key = test_function_key(file.0, function);
+        self.fragment.declare_function(key)
     }
 
     pub(super) fn define_function(
@@ -356,6 +371,17 @@ pub(super) fn find_file(projects: &Projects<'_, '_>, name: &str) -> FileId {
     file.expect("the program has no file with this name")
 }
 
+pub(super) fn path_source(projects: &Projects<'_, '_>) -> ProgramFile {
+    let file = projects
+        .runtime
+        .sources
+        .runtime_module_file(RuntimeModule::NodePath);
+    ProgramFile {
+        project: ProjectId::Runtime,
+        file: file.expect("the runtime project has no source of node:path"),
+    }
+}
+
 pub(super) fn find_synthetic_export(
     projects: &Projects<'_, '_>,
     project: ProjectId,
@@ -375,6 +401,19 @@ pub(super) fn unit_in(
     LinkUnit::new(&key_context(projects, project), fragment)
 }
 
+pub(super) fn finish_unit(projects: &Projects<'_, '_>, fragment: FragmentBuilder) -> LinkUnit {
+    let fragment = fragment.finish(ModuleFragment::default());
+    unit_in(projects, ProjectId::Application, fragment)
+}
+
+pub(super) fn create_runtime_function(id: u32, function: FunctionId) -> RuntimeFunctionEntry {
+    RuntimeFunctionEntry {
+        id: RuntimeFunction(id),
+        function,
+        visibility: FunctionVisibility::Public,
+    }
+}
+
 pub(crate) fn unit_of(fragment: Fragment) -> LinkUnit {
     with_projects_without_bun_modules(&[("main.js", "export {};\n")], |projects| {
         let keys = application_keys(projects.application.graph, projects.runtime.sources);
@@ -392,10 +431,22 @@ pub(super) struct Prepared {
     pub errors: Vec<LinkError>,
 }
 
+impl Prepared {
+    pub(super) fn merged<'a>(&'a self, in_parallel: InParallel<'a>) -> MergedUnits<'a> {
+        MergedUnits {
+            units: &self.units,
+            modules: &self.modules,
+            functions: &self.functions,
+            layouts: &self.layouts,
+            variables: &self.variables,
+            in_parallel,
+        }
+    }
+}
+
 pub(super) fn prepare(mut units: Vec<LinkUnit>, projects: &Projects<'_, '_>) -> Prepared {
     units.sort_by_key(|unit| unit.file);
-    let atoms = &projects.application.loaded.files().atoms;
-    let modules = collect_modules(projects, &units, atoms);
+    let modules = collect_modules(projects, &units);
     let functions = merge_keys(&collect_key_lists(&units, |unit| &unit.functions), &forward);
     let layouts = merge_keys(&collect_key_lists(&units, |unit| &unit.layouts), &forward);
     let synthetic_exports = synthetic_export_keys(projects);
@@ -403,19 +454,15 @@ pub(super) fn prepare(mut units: Vec<LinkUnit>, projects: &Projects<'_, '_>) -> 
     variable_lists.push(&synthetic_exports);
     let variables = merge_keys(&variable_lists, &forward);
     let mut errors = Vec::new();
-    let definitions = choose_definitions(
-        &MergeInput {
-            units: &units,
-            projects,
-            modules: &modules,
-            functions: &functions,
-            layouts: &layouts,
-            variables: &variables,
-            in_parallel: &forward,
-            beside: &run_one_after_the_other,
-        },
-        &mut errors,
-    );
+    let merged = MergedUnits {
+        units: &units,
+        modules: &modules,
+        functions: &functions,
+        layouts: &layouts,
+        variables: &variables,
+        in_parallel: &forward,
+    };
+    let definitions = choose_definitions(&merged, projects, &run_one_after_the_other, &mut errors);
     Prepared {
         units,
         modules,
@@ -430,30 +477,11 @@ pub(super) fn prepare(mut units: Vec<LinkUnit>, projects: &Projects<'_, '_>) -> 
 pub(super) fn mark_prepared(
     prepared: &Prepared,
     projects: &Projects<'_, '_>,
-    errors: &mut Vec<LinkError>,
-) -> Retained {
-    mark_prepared_in_order(prepared, projects, &forward, errors)
-}
-
-pub(super) fn mark_prepared_in_order(
-    prepared: &Prepared,
-    projects: &Projects<'_, '_>,
     in_parallel: InParallel<'_>,
     errors: &mut Vec<LinkError>,
 ) -> Retained {
-    mark(
-        &MarkInput {
-            units: &prepared.units,
-            projects,
-            modules: &prepared.modules,
-            functions: &prepared.functions,
-            layouts: &prepared.layouts,
-            variables: &prepared.variables,
-            definitions: &prepared.definitions,
-            in_parallel,
-        },
-        errors,
-    )
+    let merged = prepared.merged(in_parallel);
+    mark(&merged, projects, &prepared.definitions, errors)
 }
 
 pub(super) struct Numbered {
@@ -467,23 +495,19 @@ pub(super) fn number_units(units: Vec<LinkUnit>, projects: &Projects<'_, '_>) ->
     let prepared = prepare(units, projects);
     assert!(prepared.errors.is_empty(), "{:?}", prepared.errors);
     let mut errors = Vec::new();
-    let retained = mark_prepared(&prepared, projects, &mut errors);
+    let retained = mark_prepared(&prepared, projects, &forward, &mut errors);
     assert!(errors.is_empty(), "{errors:?}");
     let units = &prepared.units;
     let merged_strings = merge_strings(units, &retained.units, &forward);
     let merged_types = merge_types(units, &retained.units, &forward);
-    let mut numbering = number_program(NumberingInput {
-        units,
-        functions: &prepared.functions,
-        layouts: &prepared.layouts,
-        variables: &prepared.variables,
-        definitions: &prepared.definitions,
-        retained: &retained,
-        modules: &prepared.modules,
-        strings: merged_strings.local_to_program,
-        types: merged_types.types,
-        in_parallel: &forward,
-    });
+    let merged = prepared.merged(&forward);
+    let mut numbering = number_program(&merged, &prepared.definitions, &retained);
+    let merged_ids = merged_strings.local_to_program.into_iter();
+    let merged_ids = merged_ids.zip(merged_types.types);
+    for (ids, (strings, types)) in numbering.units.iter_mut().zip(merged_ids) {
+        ids.strings = strings;
+        ids.types = types;
+    }
     let property_keys = merge_property_keys(units, &retained.units, &numbering.units, &forward);
     let unit_ids = numbering.units.iter_mut();
     for (ids, property_keys) in unit_ids.zip(property_keys.local_to_program) {
@@ -498,29 +522,16 @@ pub(super) fn number_units(units: Vec<LinkUnit>, projects: &Projects<'_, '_>) ->
 }
 
 pub(super) fn mark_everything(unit: &LinkUnit) -> UnitMarks {
-    let mut marks = UnitMarks::new(unit);
-    let UnitMarks {
-        strings,
-        property_keys,
-        types,
-        type_sites,
-        expected_results,
-        eval_scopes,
-        data,
-    } = &mut marks;
-    let lists = [
-        strings,
-        property_keys,
-        types,
-        type_sites,
-        expected_results,
-        eval_scopes,
-        data,
-    ];
-    for list in lists {
-        list.fill(true);
+    let records = &unit.records;
+    UnitMarks {
+        strings: vec![true; unit.strings.len()],
+        property_keys: vec![true; unit.property_keys.len()],
+        types: vec![true; unit.types.len()],
+        type_sites: vec![true; records.type_sites.len()],
+        expected_results: vec![true; records.expected_results.len()],
+        eval_scopes: vec![true; records.eval_scopes.len()],
+        data: vec![true; records.data.len()],
     }
-    marks
 }
 
 fn allocate_ids<I: Id>(allocated_count: &mut usize, count: usize) -> Vec<Option<I>> {
@@ -529,10 +540,6 @@ fn allocate_ids<I: Id>(allocated_count: &mut usize, count: usize) -> Vec<Option<
     (start..*allocated_count)
         .map(|index| Some(I::new(index)))
         .collect()
-}
-
-fn number_merged_keys<I: Id, K>(keys: &MergedKeys<K>) -> Vec<Option<I>> {
-    allocate_ids(&mut 0, keys.keys.len())
 }
 
 fn ids_from_merged_indexes<I: Id>(merged_indexes: &[u32]) -> Vec<Option<I>> {
@@ -557,7 +564,10 @@ fn number_module(
 fn number_module_failures(units: &[LinkUnit]) -> PerProject<Vec<Option<ModuleFailureId>>> {
     let mut key_counts = PerProject::<usize>::default();
     for unit in units {
-        let key_count = key_counts.get_mut(unit.file.project);
+        let key_count = match unit.file.project {
+            ProjectId::Application => &mut key_counts.application,
+            ProjectId::Runtime => &mut key_counts.runtime,
+        };
         for failure in &unit.module_failures {
             *key_count = (*key_count).max(failure.0 as usize + 1);
         }
@@ -566,7 +576,8 @@ fn number_module_failures(units: &[LinkUnit]) -> PerProject<Vec<Option<ModuleFai
     key_counts.map(|_, key_count| allocate_ids(&mut allocated_count, key_count))
 }
 
-pub(super) fn number_everything(units: &[LinkUnit]) -> Numbering {
+/// The ids of each unit in a program that keeps everything.
+pub(super) fn number_everything(units: &[LinkUnit]) -> Vec<UnitIds> {
     let marks: Vec<UnitMarks> = units.iter().map(mark_everything).collect();
     let functions = merge_keys(&collect_key_lists(units, |unit| &unit.functions), &forward);
     let layouts = merge_keys(&collect_key_lists(units, |unit| &unit.layouts), &forward);
@@ -575,13 +586,7 @@ pub(super) fn number_everything(units: &[LinkUnit]) -> Numbering {
     let MergedTypes { types, .. } = merge_types(units, &marks, &forward);
     let module_failures = number_module_failures(units);
 
-    let mut counts = ProgramCounts {
-        functions: functions.keys.len(),
-        layouts: layouts.keys.len(),
-        variables: variables.keys.len(),
-        module_failures: module_failures.iter().map(|(_, ids)| ids.len()).sum(),
-        ..ProgramCounts::default()
-    };
+    let mut counts = ProgramCounts::default();
     let mut numbered_modules = Vec::new();
     let mut unit_ids = Vec::with_capacity(units.len());
     let merged_ids = strings.into_iter().zip(types);
@@ -617,16 +622,16 @@ pub(super) fn number_everything(units: &[LinkUnit]) -> Numbering {
     for (ids, property_keys) in unit_ids.iter_mut().zip(property_keys) {
         ids.property_keys = property_keys;
     }
-    let modules = allocate_ids(&mut counts.modules, numbered_modules.len());
-    Numbering {
-        functions: number_merged_keys(&functions),
-        layouts: number_merged_keys(&layouts),
-        variables: number_merged_keys(&variables),
-        modules,
-        module_failures,
-        counts,
-        units: unit_ids,
-    }
+    unit_ids
+}
+
+/// The program lists its functions.
+pub(super) fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
+    let in_parallel = input.in_parallel;
+    let mut linked = link_while(input, &mut |_| {})?;
+    let body_remap = core::mem::take(&mut linked.body_remap);
+    linked.program.functions = body_remap.into_program_functions(in_parallel);
+    Ok(linked)
 }
 
 pub(super) fn link_units(

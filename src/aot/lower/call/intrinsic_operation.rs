@@ -14,12 +14,6 @@ use crate::lower::{FileLowering, FunctionLowering};
 
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(super) enum KeySpelling {
-    Text,
-    EnginePrivateName,
-}
-
 #[derive(Copy, Clone)]
 enum FieldValue {
     Operand(ValueId, OperandKind),
@@ -32,14 +26,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         site: IntrinsicCall<'_>,
         opcode: Opcode,
-        keys: KeySpelling,
+        private_key: bool,
     ) -> Lowered<ValueId> {
         let Some(fields) = opcode.simple_fields() else {
             return Err((site.call, Misuse::Position));
         };
-        let values = self.lower_field_values(site, fields, keys)?;
-        let position = self.file.hir[site.call].pos;
-        self.set_position(position);
+        let values = self.lower_field_values(site, fields, private_key)?;
+        self.set_position(self.file.hir[site.call].pos);
         let mut words: SmallVec<[u32; 8]> = SmallVec::new();
         for value in values {
             match value {
@@ -65,7 +58,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         site: IntrinsicCall<'_>,
         fields: &[EntryField],
-        keys: KeySpelling,
+        private_key: bool,
     ) -> Lowered<SmallVec<[FieldValue; 6]>> {
         let mut values: SmallVec<[FieldValue; 6]> = SmallVec::new();
         let mut remaining = site.arguments.iter().copied();
@@ -75,7 +68,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     FieldValue::Operand(self.lower_intrinsic_argument(argument)?, kind)
                 }
                 (EntryField::Payload { kind, .. }, Some(argument)) => {
-                    let Some(bits) = self.payload_bits(kind, keys, argument) else {
+                    let Some(bits) = self.payload_bits(kind, private_key, argument) else {
                         return Err((argument, Misuse::ArgumentNotLiteral));
                     };
                     FieldValue::Words(bits, kind.words())
@@ -102,7 +95,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn payload_bits(
         &mut self,
         kind: PayloadKind,
-        keys: KeySpelling,
+        private_key: bool,
         argument: ExprId,
     ) -> Option<u64> {
         match kind {
@@ -112,9 +105,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             PayloadKind::PropertyKey => {
                 let text = self.file.find_string_literal(argument)?;
-                let key = match keys {
-                    KeySpelling::Text => self.file.atom_key(text),
-                    KeySpelling::EnginePrivateName => {
+                let key = match private_key {
+                    false => self.file.atom_key(text),
+                    true => {
                         let bytes = self.file.queries.atom_bytes(text);
                         self.file.engine_private_key(bytes)
                     }

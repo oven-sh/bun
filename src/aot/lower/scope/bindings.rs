@@ -1,5 +1,5 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, BindingKind, CodeUnit, SymbolId};
+use bun_sema::bind::{Binding, BindingKind, CodeUnit, ScopeId, SymbolId};
 use bun_sema::hir::{ExprId, FnId};
 
 use super::lexical_owners::find_container_binding;
@@ -17,7 +17,7 @@ enum BindingStore {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    fn code_unit_slot(&self, unit: CodeUnit, slot: ScopeSlot) -> BindingRef {
+    pub(super) fn code_unit_slot(&self, unit: CodeUnit, slot: ScopeSlot) -> BindingRef {
         BindingRef::Slot(self.bound.top_scope(self.hir, unit), slot)
     }
 }
@@ -35,6 +35,15 @@ pub(super) fn normalize_binding(file: &FileLowering<'_, '_, '_, '_>, binding: Bi
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(in crate::lower) fn get_environment(&mut self, scope: ScopeId) -> ValueId {
+        match self.scopes.find_environment(scope) {
+            Some(variable) => self.builder.read_variable(variable),
+            None => self
+                .find_captured_value(Capture::Environment(scope))
+                .expect("a function captures every environment it reaches"),
+        }
+    }
+
     pub(in crate::lower) fn get_stored(&mut self, binding: BindingRef) -> ValueId {
         if let Some(local) = self.scopes.find_local(binding) {
             return self.builder.read_variable(local.variable);
@@ -91,22 +100,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match normalize_binding(self.file, binding) {
             Binding::Symbol(symbol) => self.get_symbol(symbol, name),
             Binding::Arguments(unit) => {
-                let slot = self.file.code_unit_slot(unit, ScopeSlot::ArgumentsBinding);
-                self.get_stored(slot)
+                self.get_stored(self.file.code_unit_slot(unit, ScopeSlot::ArgumentsBinding))
             }
             Binding::CommonJs(variable) => self.get_commonjs_variable(variable),
-            Binding::Free => self.get_free_name(name, false),
+            Binding::Free => self.emit_free_name_get(name, false),
         }
-    }
-
-    pub(super) fn store_checked_binding(
-        &mut self,
-        binding: Binding,
-        name: Atom,
-        value: ValueId,
-        source: Option<ExprId>,
-    ) {
-        self.store_binding(binding, name, value, source, false);
     }
 
     pub(crate) fn initialize_converted_symbol(
@@ -119,8 +117,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(super) fn get_arguments_object(&mut self, unit: CodeUnit) -> ValueId {
-        let slot = self.file.code_unit_slot(unit, ScopeSlot::Arguments);
-        self.get_stored(slot)
+        self.get_stored(self.file.code_unit_slot(unit, ScopeSlot::Arguments))
     }
 
     pub(in crate::lower) fn get_mapped_argument(&mut self, unit: CodeUnit, index: u32) -> ValueId {
@@ -154,7 +151,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_throw_runtime_error(error, Some(name));
     }
 
-    fn store_binding(
+    pub(super) fn store_binding(
         &mut self,
         binding: Binding,
         name: Atom,
@@ -162,27 +159,54 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         source: Option<ExprId>,
         tests_dead_zone: bool,
     ) {
-        match normalize_binding(self.file, binding) {
-            Binding::Symbol(symbol) => {
-                self.store_symbol(symbol, name, value, source, tests_dead_zone);
-            }
+        let symbol = match normalize_binding(self.file, binding) {
+            Binding::Symbol(symbol) => symbol,
             Binding::Arguments(unit) => {
                 let slot = self.file.code_unit_slot(unit, ScopeSlot::ArgumentsBinding);
-                self.set_stored(slot, value);
+                return self.set_stored(slot, value);
             }
-            Binding::CommonJs(variable) => self.set_commonjs_variable(variable, value),
-            Binding::Free => self.set_free_name(name, value),
+            Binding::CommonJs(variable) => return self.set_commonjs_variable(variable, value),
+            Binding::Free => return self.emit_free_name_set(name, value),
+        };
+        let error = match self.file.bound.binding_kind(symbol) {
+            BindingKind::Const | BindingKind::ClassInnerName => {
+                if tests_dead_zone {
+                    self.get_symbol(symbol, name);
+                }
+                Some(RuntimeErrorKind::ConstantAssignment)
+            }
+            BindingKind::FunctionName if self.mode() == ECMAMode::Strict => {
+                Some(RuntimeErrorKind::ConstantAssignment)
+            }
+            BindingKind::FunctionName => return,
+            BindingKind::Import => Some(RuntimeErrorKind::ImportAssignment),
+            BindingKind::NoBinding
+            | BindingKind::TypeScriptContainer
+            | BindingKind::Var
+            | BindingKind::Let
+            | BindingKind::SimpleCatchParameter
+            | BindingKind::Class
+            | BindingKind::Function
+            | BindingKind::Parameter => None,
+        };
+        if let Some(error) = error {
+            return self.emit_binding_error(error, Binding::Symbol(symbol), name);
         }
+        let position = self.file.binding_position(symbol);
+        let subject = convert::Int32Subject::Binding(symbol);
+        self.describe_int32_flow(position, subject, source);
+        let value = convert::convert(self, value, position, source);
+        if tests_dead_zone && self.file.scopes.form(symbol) == BindingForm::Stored {
+            self.check_before_store(symbol, name);
+        }
+        self.write_symbol(symbol, name, value, BindingStore::Assign);
     }
 
     fn get_symbol(&mut self, symbol: SymbolId, name: Atom) -> ValueId {
         match self.file.scopes.form(symbol) {
             BindingForm::NotAValue => {
-                self.emit_binding_error(
-                    RuntimeErrorKind::UnresolvableReference,
-                    Binding::Free,
-                    name,
-                );
+                let error = RuntimeErrorKind::UnresolvableReference;
+                self.emit_binding_error(error, Binding::Free, name);
                 self.builder.undefined()
             }
             BindingForm::Import => self.get_import(symbol),
@@ -195,63 +219,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             BindingForm::Stored => self.get_checked(symbol, name),
         }
-    }
-
-    fn store_symbol(
-        &mut self,
-        symbol: SymbolId,
-        name: Atom,
-        value: ValueId,
-        source: Option<ExprId>,
-        tests_dead_zone: bool,
-    ) {
-        match self.file.bound.binding_kind(symbol) {
-            BindingKind::Const | BindingKind::ClassInnerName => {
-                if tests_dead_zone {
-                    self.get_symbol(symbol, name);
-                }
-                self.emit_binding_error(
-                    RuntimeErrorKind::ConstantAssignment,
-                    Binding::Symbol(symbol),
-                    name,
-                );
-                return;
-            }
-            BindingKind::FunctionName => {
-                if self.mode() == ECMAMode::Strict {
-                    self.emit_binding_error(
-                        RuntimeErrorKind::ConstantAssignment,
-                        Binding::Symbol(symbol),
-                        name,
-                    );
-                }
-                return;
-            }
-            BindingKind::Import => {
-                self.emit_binding_error(
-                    RuntimeErrorKind::ImportAssignment,
-                    Binding::Symbol(symbol),
-                    name,
-                );
-                return;
-            }
-            BindingKind::NoBinding
-            | BindingKind::TypeScriptContainer
-            | BindingKind::Var
-            | BindingKind::Let
-            | BindingKind::SimpleCatchParameter
-            | BindingKind::Class
-            | BindingKind::Function
-            | BindingKind::Parameter => {}
-        }
-        let position = self.file.binding_position(symbol);
-        let subject = convert::Int32Subject::Binding(symbol);
-        self.describe_int32_flow(position, subject, source);
-        let value = convert::convert(self, value, position, source);
-        if tests_dead_zone && self.file.scopes.form(symbol) == BindingForm::Stored {
-            self.check_before_store(symbol, name);
-        }
-        self.write_symbol(symbol, name, value, BindingStore::Assign);
     }
 
     fn write_symbol(&mut self, symbol: SymbolId, name: Atom, value: ValueId, store: BindingStore) {
@@ -277,11 +244,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     debug_assert!(false, "a symbol without a value is never initialized");
                 }
                 BindingStore::Assign => {
-                    self.emit_binding_error(
-                        RuntimeErrorKind::UnresolvableReference,
-                        Binding::Free,
-                        name,
-                    );
+                    let error = RuntimeErrorKind::UnresolvableReference;
+                    self.emit_binding_error(error, Binding::Free, name);
                 }
             },
             BindingForm::Callee { .. } | BindingForm::Import => {
@@ -305,16 +269,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-pub(super) fn set_binding(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    binding: Binding,
-    name: Atom,
-    value: ValueId,
-    source: Option<ExprId>,
-) {
-    lowering.store_binding(binding, name, value, source, true);
-}
-
 pub(super) fn initialize_binding(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     binding: Binding,
@@ -331,7 +285,7 @@ pub(super) fn initialize_binding(
             lowering.write_symbol(symbol, name, value, BindingStore::Initialize);
         }
         Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => {
-            set_binding(lowering, binding, name, value, source);
+            lowering.store_binding(binding, name, value, source, true);
         }
     }
 }

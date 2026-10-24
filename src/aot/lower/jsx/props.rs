@@ -11,11 +11,6 @@ use crate::lower::member::PropertyName;
 use crate::lower::object::{self, ObjectBuilder};
 use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, convert};
 
-struct Children {
-    value: ValueId,
-    source: Option<ExprId>,
-}
-
 fn collect_attributes(
     hir: &hir::File<'_>,
     jsx: JsxId,
@@ -83,24 +78,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         self.untyped_layout(&members)
     }
-
-    fn record_flow_into_child_list(
-        &mut self,
-        props_type: Option<CheckerTypeId>,
-        children: &[ExprId],
-    ) {
-        let Some(props_type) = props_type else {
-            return;
-        };
-        let Ok(MemberLookup::Member(member)) =
-            self.queries.find_member(props_type, known::children)
-        else {
-            return;
-        };
-        if let Ok(list) = member.types.checked {
-            self.record_list_flow(children, list);
-        }
-    }
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -137,10 +114,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         source: Option<ExprId>,
     ) {
         let name = PropertyName::Constant(self.file.name_key(name));
-        match source {
-            Some(source) => self.add_property_with_source(object, name, value, source),
-            None => self.add_property(object, name, value),
-        }
+        self.add_property(object, name, value, source);
     }
 
     fn add_attributes(
@@ -177,34 +151,27 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    pub(super) fn lower_child_list(
-        &mut self,
-        position: u32,
-        leading: &[ValueId],
-        children: &[ExprId],
-    ) -> ValueId {
-        self.lower_argument_list(leading, children, position)
-    }
-
     fn lower_children(
         &mut self,
         element: Element,
         props_type: Option<CheckerTypeId>,
-    ) -> Option<Children> {
+    ) -> Option<(ValueId, Option<ExprId>)> {
         let hir = self.file.hir;
         let children: SmallVec<[ExprId; 8]> = jsx_children(hir, element.jsx).collect();
         if has_static_children(hir, element.jsx) {
-            self.file.record_flow_into_child_list(props_type, &children);
-            return Some(Children {
-                value: self.lower_child_list(element.position, &[], &children),
-                source: None,
-            });
+            if let Some(props_type) = props_type
+                && let Ok(MemberLookup::Member(member)) =
+                    self.file.queries.find_member(props_type, known::children)
+                && let Ok(list) = member.types.checked
+            {
+                self.file.record_list_flow(&children, list);
+            }
+            let list = self.lower_argument_list(&[], &children, element.position);
+            return Some((list, None));
         }
         let name = PropertyName::Constant(self.file.name_key(known::children));
-        children.first().map(|&only| Children {
-            value: self.lower_named_evaluation(only, name),
-            source: Some(only),
-        })
+        let &only = children.first()?;
+        Some((self.lower_named_evaluation(only, name), Some(only)))
     }
 
     pub(super) fn lower_runtime_props(&mut self, element: Element) -> ValueId {
@@ -219,10 +186,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.file
                     .record_type_flow(own, props_type, hir[literal].pos);
             }
-            if let Some(children) = self.lower_children(element, props_type) {
+            if let Some((children, _)) = self.lower_children(element, props_type) {
                 let name = PropertyName::Constant(self.file.name_key(known::children));
                 self.set_position(element.position);
-                self.emit_define(props, name, children.value);
+                self.emit_define(props, name, children);
             }
             return props;
         }
@@ -232,9 +199,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .find_props_layout(props_type, &attributes, has_children);
         let mut object = self.begin_object(layout);
         self.add_attributes(&mut object, props_type, &attributes);
-        if let Some(children) = self.lower_children(element, props_type) {
+        if let Some((value, source)) = self.lower_children(element, props_type) {
             self.set_position(element.position);
-            let Children { value, source } = children;
             self.add_named_property(&mut object, known::children, value, source);
         }
         self.set_position(element.position);

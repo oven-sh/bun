@@ -1,7 +1,6 @@
-use bun_sema::hir::{ExprId, ExprKind, PropId, PropKey, PropKind, Span};
+use bun_sema::hir::{BinOp, ExprId, ExprKind, PropId, PropKey, PropKind, Span};
 use smallvec::SmallVec;
 
-use super::{BinaryForm, binary_form};
 use crate::lower::FunctionLowering;
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -31,9 +30,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match hir[expression].kind {
             ExprKind::Cond { test, .. } => parts.push(test),
             ExprKind::Unary { operand, .. } => parts.push(operand),
-            ExprKind::Binary { op, left, right } => match binary_form(op) {
-                BinaryForm::Logical => parts.push(left),
-                BinaryForm::Operator | BinaryForm::Comma => parts.extend([left, right]),
+            ExprKind::Binary { op, left, right } => match op {
+                BinOp::And | BinOp::Or | BinOp::Nullish => parts.push(left),
+                _ => parts.extend([left, right]),
             },
             ExprKind::Call(site) | ExprKind::New(site) => parts.extend(hir.ids(hir[site].args)),
             ExprKind::Array(items) => parts.extend(hir.ids(items)),

@@ -2,7 +2,7 @@ use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, StoreKind, SymbolId};
 use bun_sema::hir::{ExprId, ExprKind, NodeData, PatId, PatKind};
 
-use super::{BindingForm, BindingRef, DeadZone, IdentifierTarget, IdentifierTargetKind, bindings};
+use super::{BindingForm, BindingRef, DeadZone, IdentifierTarget, bindings};
 use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
 use crate::ir::ValueId;
@@ -28,8 +28,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         identifier: ExprId,
     ) -> (ValueId, Option<ValueId>) {
-        if self.file.has_dynamic_lookup(identifier) {
-            let found = self.resolve_dynamic_binding(identifier);
+        if let Some(found) = self.resolve_dynamic_binding(identifier) {
             let function = self.get_dynamic_value(identifier, found.holder, BindingRead::Value);
             return (function, Some(found.with_base));
         }
@@ -43,44 +42,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         (function, Some(object))
     }
 
-    pub(crate) fn delete_identifier(&mut self, identifier: ExprId) -> ValueId {
-        if self.file.has_dynamic_lookup(identifier) {
-            return self.delete_dynamic_binding(identifier);
-        }
-        let name = self.file.identifier_name(identifier);
-        let binding = self.file.bound.binding(identifier);
-        self.delete_binding(binding, name)
-    }
-
-    pub(crate) fn resolve_identifier_target(&mut self, identifier: ExprId) -> IdentifierTarget {
-        IdentifierTarget {
-            kind: self.resolve_binding(identifier),
-        }
-    }
-
     pub(crate) fn resolve_pattern_target(&mut self, pattern: PatId) -> IdentifierTarget {
         let name = self.file.pattern_name(pattern);
         let bound = self.file.bound;
         let binding = bound.initialized_binding(pattern);
-        let kind = match bound.dynamic_lookup_scope(NodeData::Pat(pattern)) {
-            Some(start) => IdentifierTargetKind::Dynamic {
+        match bound.dynamic_lookup_scope(NodeData::Pat(pattern)) {
+            Some(start) => IdentifierTarget::Dynamic {
                 binding,
                 name,
                 holder: self.resolve_dynamic_name(start, binding, name).holder,
             },
-            None => IdentifierTargetKind::Binding {
+            None => IdentifierTarget::Binding {
                 binding,
                 name,
                 is_dead_zone_tested: true,
             },
-        };
-        IdentifierTarget { kind }
+        }
     }
 
     pub(crate) fn get_identifier_target(&mut self, target: &IdentifierTarget) -> ValueId {
-        match target.kind {
-            IdentifierTargetKind::Binding { binding, name, .. } => self.get_binding(binding, name),
-            IdentifierTargetKind::Dynamic {
+        match *target {
+            IdentifierTarget::Binding { binding, name, .. } => self.get_binding(binding, name),
+            IdentifierTarget::Dynamic {
                 binding,
                 name,
                 holder,
@@ -94,24 +77,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         value: ValueId,
         source: Option<ExprId>,
     ) {
-        match target.kind {
-            IdentifierTargetKind::Binding {
+        match *target {
+            IdentifierTarget::Binding {
                 binding,
                 name,
-                is_dead_zone_tested: true,
-            } => self.store_checked_binding(binding, name, value, source),
-            IdentifierTargetKind::Binding {
-                binding,
-                name,
-                is_dead_zone_tested: false,
-            } => bindings::set_binding(self, binding, name, value, source),
-            IdentifierTargetKind::Dynamic {
+                is_dead_zone_tested,
+            } => self.store_binding(binding, name, value, source, !is_dead_zone_tested),
+            IdentifierTarget::Dynamic {
                 binding,
                 name,
                 holder,
-            } => {
-                self.store_dynamic_binding(binding, name, holder, value);
-            }
+            } => self.store_dynamic_binding(binding, name, holder, value),
         }
     }
 
@@ -145,14 +121,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.write_variable(local.variable, value);
     }
 
-    pub(super) fn get_free_name(&mut self, name: Atom, is_for_typeof: bool) -> ValueId {
-        self.emit_free_name_get(name, is_for_typeof)
-    }
-
-    pub(super) fn set_free_name(&mut self, name: Atom, value: ValueId) {
-        self.emit_free_name_set(name, value);
-    }
-
     pub(super) fn read_binding(
         &mut self,
         binding: Binding,
@@ -162,7 +130,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match read {
             BindingRead::Value => self.get_binding(binding, name),
             BindingRead::TypeOf => match bindings::normalize_binding(self.file, binding) {
-                Binding::Free => self.get_free_name(name, true),
+                Binding::Free => self.emit_free_name_get(name, true),
                 Binding::CommonJs(variable) => self.get_commonjs_variable_for_typeof(variable),
                 Binding::Symbol(_) | Binding::Arguments(_) => self.get_binding(binding, name),
             },
@@ -179,8 +147,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn read_identifier(&mut self, identifier: ExprId, read: BindingRead) -> ValueId {
-        if self.file.has_dynamic_lookup(identifier) {
-            let found = self.resolve_dynamic_binding(identifier);
+        if let Some(found) = self.resolve_dynamic_binding(identifier) {
             return self.get_dynamic_value(identifier, found.holder, read);
         }
         let name = self.file.identifier_name(identifier);
@@ -199,15 +166,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn resolve_binding(&mut self, identifier: ExprId) -> IdentifierTargetKind {
+    pub(crate) fn resolve_identifier_target(&mut self, identifier: ExprId) -> IdentifierTarget {
         let name = self.file.identifier_name(identifier);
         let binding = self.file.bound.binding(identifier);
-        if self.file.has_dynamic_lookup(identifier) {
-            let holder = self.resolve_dynamic_binding(identifier).holder;
-            return IdentifierTargetKind::Dynamic {
+        if let Some(found) = self.resolve_dynamic_binding(identifier) {
+            return IdentifierTarget::Dynamic {
                 binding,
                 name,
-                holder,
+                holder: found.holder,
             };
         }
         let is_dead_zone_tested = match binding {
@@ -218,7 +184,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 false
             }
         };
-        IdentifierTargetKind::Binding {
+        IdentifierTarget::Binding {
             binding,
             name,
             is_dead_zone_tested,
@@ -255,7 +221,8 @@ pub(crate) fn find_tested_local(
     let ExprKind::Ident(_) = file.hir[tested].kind else {
         return None;
     };
-    if file.has_dynamic_lookup(tested) {
+    let dynamic_lookup = file.bound.dynamic_lookup_scope(NodeData::Expr(tested));
+    if dynamic_lookup.is_some() {
         return None;
     }
     let symbol = match file.bound.binding(tested) {
@@ -296,12 +263,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn has_dynamic_lookup(&self, identifier: ExprId) -> bool {
-        let start = self.bound.dynamic_lookup_scope(NodeData::Expr(identifier));
-        start.is_some()
-    }
-
-    fn identifier_name(&self, identifier: ExprId) -> Atom {
+    pub(super) fn identifier_name(&self, identifier: ExprId) -> Atom {
         let ExprKind::Ident(name) = self.hir[identifier].kind else {
             unreachable!("the expression is an identifier");
         };

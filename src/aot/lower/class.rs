@@ -8,6 +8,7 @@ mod slots;
 
 use std::rc::Rc;
 
+use bun_sema::check::aot::ClassRef;
 use bun_sema::hir::{ClassId, ExprId, FnId, MemberId, ParamId};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -18,7 +19,6 @@ use super::member::PropertyName;
 use crate::ir::{LayoutId, PropertyKeyId, StringId, ValueId};
 
 pub(in crate::lower) use self::accessors::{AccessorFunction, declare_accessor_function};
-pub(in crate::lower) use self::fields::find_private_state_field;
 pub(crate) use self::fields::static_field_position;
 pub(crate) use self::plan::class_slots;
 pub(in crate::lower) use self::plan::{
@@ -111,6 +111,15 @@ impl FileLowering<'_, '_, '_, '_> {
         let plan = Rc::new(plan);
         self.classes.plans.insert(class, Rc::clone(&plan));
         plan
+    }
+
+    pub(in crate::lower) fn own_class(&self, class: ClassId) -> ClassRef {
+        let file = self.file;
+        ClassRef { file, class }
+    }
+
+    pub(in crate::lower) fn own_class_layout(&mut self, class: ClassId) -> LayoutId {
+        self.class_layout(self.own_class(class))
     }
 }
 

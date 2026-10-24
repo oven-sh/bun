@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use bun_sema::hir::{FnKind, StmtKind};
 
-use super::{analyze_source, is_field, storage_in};
+use super::{analyze_source, first_field, is_field, storage_in};
 use crate::lower::captures::{Capture, max_captures};
 use crate::lower::scope::{Placement, Storage};
 
@@ -27,17 +27,9 @@ fn loop_variable_is_copied() {
             is_shared: true,
         };
         assert_eq!(probe.placement_of("i"), expected);
-        let arrow = probe.only_function(FnKind::Arrow);
-        assert_eq!(probe.captures(arrow), [Capture::Value(probe.binding("i"))]);
-        assert!(
-            !probe
-                .analysis
-                .has_environment(probe.bound.own_scope(statement))
-        );
-        assert_eq!(
-            probe.analysis.stored_in_loop(statement),
-            [probe.binding("i")]
-        );
+        assert_eq!(probe.captures(probe.arrow()), [probe.copy_of("i")]);
+        assert!(!probe.has_environment(probe.bound.own_scope(statement)));
+        assert_eq!(probe.stored_in_loop(statement), [probe.binding("i")]);
     });
 }
 
@@ -46,8 +38,7 @@ fn top_level_loop_variable_is_copied() {
     let source = "export const list = []; for (let i = 0; i < 3; i++) list.push(() => i);";
     analyze_source("main.js", source, |probe| {
         assert_eq!(probe.placement_of("i").storage, Storage::Local);
-        let arrow = probe.only_function(FnKind::Arrow);
-        assert_eq!(probe.captures(arrow), [Capture::Value(probe.binding("i"))]);
+        assert_eq!(probe.captures(probe.arrow()), [probe.copy_of("i")]);
     });
 }
 
@@ -155,15 +146,10 @@ fn each_variable_of_the_head_is_decided_alone() {
     analyze_source("main.mjs", source, |probe| {
         let scope = probe.bound.own_scope(probe.first_statement(is_for_loop));
         assert_eq!(probe.placement_of("i").storage, Storage::Local);
-        assert_eq!(
-            probe.placement_of("j").storage,
-            Storage::Field { scope, field: 0 }
-        );
-        let expected = [
-            Capture::Environment(scope),
-            Capture::Value(probe.binding("i")),
-        ];
-        assert_eq!(probe.captures(probe.only_function(FnKind::Arrow)), expected);
+        let field = Storage::Field { scope, field: 0 };
+        assert_eq!(probe.placement_of("j").storage, field);
+        let expected = [Capture::Environment(scope), probe.copy_of("i")];
+        assert_eq!(probe.captures(probe.arrow()), expected);
     });
 }
 
@@ -173,19 +159,10 @@ fn field_of_a_loop_variable_is_not_immutable() {
         for (let i = 0; i < n; i++) { function h() { return i; } f(h, () => i); } }";
     analyze_source("main.mjs", source, |probe| {
         let scope = probe.bound.own_scope(probe.first_statement(is_for_loop));
-        let expected = Placement {
-            storage: Storage::Field { scope, field: 0 },
-            has_local: false,
-            is_immutable: false,
-            is_shared: true,
-        };
+        let expected = first_field(scope, false);
         assert_eq!(probe.placement_of("i"), expected);
-        assert_eq!(
-            probe.captures(probe.function("h")),
-            [Capture::Environment(scope)]
-        );
-        let arrow = probe.only_function(FnKind::Arrow);
-        assert_eq!(probe.captures(arrow), [Capture::Value(probe.binding("i"))]);
+        assert_eq!(probe.captures_of("h"), [Capture::Environment(scope)]);
+        assert_eq!(probe.captures(probe.arrow()), [probe.copy_of("i")]);
     });
 }
 
@@ -205,9 +182,9 @@ fn closure_over_the_capture_limit_takes_the_environment() {
         let [all, one] = probe.functions(FnKind::Arrow)[..] else {
             panic!("the source has two arrow functions");
         };
-        assert!(probe.analysis.has_too_many_captures(probe.key(all)));
+        assert!(probe.has_too_many_captures(probe.key(all)));
         assert!(probe.captures(all).contains(&Capture::Environment(scope)));
-        assert_eq!(probe.captures(one), [Capture::Value(probe.binding("i"))]);
+        assert_eq!(probe.captures(one), [probe.copy_of("i")]);
         let placement = probe.placement_of("i");
         assert!(is_field(placement.storage));
         assert!(!placement.has_local && !placement.is_immutable);

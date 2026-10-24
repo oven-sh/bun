@@ -1,5 +1,5 @@
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::Parent;
+use bun_sema::bind::{CodeUnit, Parent};
 use bun_sema::check::aot::{
     IndexKey, IndexSignature, MemberLookup, MemberName, PositionTypes, ShapeKind,
 };
@@ -11,17 +11,11 @@ use smallvec::{SmallVec, smallvec};
 
 use super::{ObjectBuilder, builder};
 use crate::builtins::id::BuiltinId;
+use crate::ir::ValueId;
 use crate::ir::generated::TypeSiteKind;
-use crate::ir::{PropertyKeyId, ValueId};
 use crate::lower::member::PropertyName;
 use crate::lower::positions::SiteOrigin;
-use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, convert, function};
-
-struct AccessorDefinition {
-    head: ValueId,
-    name: PropertyName,
-    closure: ValueId,
-}
+use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, captures, convert};
 
 #[derive(Copy, Clone)]
 struct Dictionary {
@@ -71,10 +65,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 );
         }
         false
-    }
-
-    fn is_marked_literal(&self, literal: ExprId) -> bool {
-        has_only_written_names(self.hir, literal) && !self.is_map_of_descriptors(literal)
     }
 
     // `{ ...source, a }` where no type says which names the object will have.
@@ -221,21 +211,6 @@ impl FileLowering<'_, '_, '_, '_> {
         found.map(|signature| signature.types)
     }
 
-    fn find_member_types(
-        &mut self,
-        dictionary: CheckerTypeId,
-        key: PropKey,
-    ) -> Option<PositionTypes> {
-        match key {
-            PropKey::Name(name) => self.find_types_under_name(dictionary, name),
-            PropKey::Computed(key) => {
-                let kind = self.find_key_kind(key)?;
-                self.find_types_under_key_kind(dictionary, kind)
-            }
-            PropKey::Private(_) | PropKey::None => None,
-        }
-    }
-
     fn record_flow_into_signature(
         &mut self,
         copied: PositionTypes,
@@ -249,16 +224,17 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
-fn has_only_written_names(hir: &File<'_>, literal: ExprId) -> bool {
+fn has_only_named_values(hir: &File<'_>, literal: ExprId, allows_methods: bool) -> bool {
     let ExprKind::Object(properties) = hir[literal].kind else {
         return false;
     };
     properties.iter().all(|property| {
         let prop = hir[property];
-        let is_value = matches!(
-            prop.kind,
-            PropKind::Init | PropKind::Shorthand | PropKind::Method
-        );
+        let is_value = match prop.kind {
+            PropKind::Init | PropKind::Shorthand => true,
+            PropKind::Method => allows_methods,
+            PropKind::Spread | PropKind::Getter | PropKind::Setter => false,
+        };
         is_value
             && !is_proto_setter(&prop)
             && matches!(hir.runtime_property_key(property), PropKey::Name(_))
@@ -266,17 +242,6 @@ fn has_only_written_names(hir: &File<'_>, literal: ExprId) -> bool {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // `const levels: Record<string, number> = { debug: 0, info: 1 }`: the type allows any name, and the names that the object has are written.
-    fn begin_under_dictionary_type(&mut self, literal: ExprId) -> ObjectBuilder {
-        let layout = self.file.literal_layout(literal);
-        self.file
-            .fragment
-            .note_literal_under_dictionary_type(layout);
-        let mut object = self.begin_object(layout);
-        self.open_head(&mut object);
-        object
-    }
-
     // A member of the literal is converted like the value of `dictionary[key] = value`.
     fn convert_dictionary_member(
         &mut self,
@@ -288,7 +253,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(dictionary) = dictionary else {
             return value;
         };
-        let Some(types) = self.file.find_member_types(dictionary.ty, key) else {
+        let file = &mut *self.file;
+        let types = match key {
+            PropKey::Name(name) => file.find_types_under_name(dictionary.ty, name),
+            PropKey::Computed(key) => match file.find_key_kind(key) {
+                Some(kind) => file.find_types_under_key_kind(dictionary.ty, kind),
+                None => None,
+            },
+            PropKey::Private(_) | PropKey::None => None,
+        };
+        let Some(types) = types else {
             return value;
         };
         let origin = SiteOrigin {
@@ -376,47 +350,41 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let value = self.lower_named_evaluation(prop.value, name);
                 self.set_position(prop.pos);
                 let value = self.convert_dictionary_member(dictionary, key, value, prop.value);
-                builder::add_member(self, object, name, value, Some(prop.value));
+                self.add_property(object, name, value, Some(prop.value));
             }
             PropKind::Method => {
                 let Some(name) = self.try_lower_property_name(key) else {
                     return;
                 };
                 self.set_position(prop.pos);
-                let closure = self.lower_method_closure(object, &prop, name);
+                let function = self.get_method_function(&prop);
+                let function_key = self.file.scopes.function_key(CodeUnit::Function(function));
+                let captures_home = captures::captures_home_object(self.file, function_key);
+                let home = captures_home.then(|| self.open_head(object));
+                let closure = self.create_named_closure(function, Some(name), home);
                 let closure = self.convert_dictionary_member(dictionary, key, closure, prop.value);
-                builder::add_member(self, object, name, closure, Some(prop.value));
+                self.add_property(object, name, closure, Some(prop.value));
             }
-            PropKind::Getter => {
-                if let Some(getter) = self.lower_accessor_definition(object, &prop, key) {
-                    let (computed_key, constant_key) = getter.name.key_operands();
-                    self.note_accessor(constant_key);
-                    self.builder.define_getter(
-                        getter.head,
-                        getter.closure,
-                        computed_key,
-                        constant_key,
-                    );
+            PropKind::Getter | PropKind::Setter => {
+                let Some(name) = self.try_lower_property_name(key) else {
+                    return;
+                };
+                self.set_position(prop.pos);
+                let head = self.open_head(object);
+                let function = self.get_method_function(&prop);
+                let closure = self.lower_method(function, name, head);
+                let (computed_key, constant_key) = name.key_operands();
+                if let Some(key) = constant_key {
+                    self.file.fragment.note_write(key);
+                }
+                if prop.kind == PropKind::Getter {
+                    self.builder
+                        .define_getter(head, closure, computed_key, constant_key);
+                } else {
+                    self.builder
+                        .define_setter(head, closure, computed_key, constant_key);
                 }
             }
-            PropKind::Setter => {
-                if let Some(setter) = self.lower_accessor_definition(object, &prop, key) {
-                    let (computed_key, constant_key) = setter.name.key_operands();
-                    self.note_accessor(constant_key);
-                    self.builder.define_setter(
-                        setter.head,
-                        setter.closure,
-                        computed_key,
-                        constant_key,
-                    );
-                }
-            }
-        }
-    }
-
-    fn note_accessor(&mut self, constant_key: Option<PropertyKeyId>) {
-        if let Some(key) = constant_key {
-            self.file.fragment.note_write(key);
         }
     }
 
@@ -425,38 +393,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             PropKey::Name(_) | PropKey::Computed(_) => Some(self.lower_property_name(key)),
             PropKey::Private(_) | PropKey::None => None,
         }
-    }
-
-    fn lower_method_closure(
-        &mut self,
-        object: &mut ObjectBuilder,
-        prop: &Prop,
-        name: PropertyName,
-    ) -> ValueId {
-        let function = self.get_method_function(prop);
-        if !function::captures_home_object(self.file, function) {
-            return self.lower_function_expression(function, Some(name));
-        }
-        let head = self.open_head(object);
-        self.lower_method(function, name, head)
-    }
-
-    fn lower_accessor_definition(
-        &mut self,
-        object: &mut ObjectBuilder,
-        prop: &Prop,
-        key: PropKey,
-    ) -> Option<AccessorDefinition> {
-        let name = self.try_lower_property_name(key)?;
-        self.set_position(prop.pos);
-        let head = self.open_head(object);
-        let function = self.get_method_function(prop);
-        let closure = self.lower_method(function, name, head);
-        Some(AccessorDefinition {
-            head,
-            name,
-            closure,
-        })
     }
 
     fn get_method_function(&self, prop: &Prop) -> FnId {
@@ -561,8 +497,17 @@ pub(crate) fn lower_object_literal(
     };
     let mut rest = props.iter();
     let mut object = match dictionary {
-        Some(_) if lowering.file.is_marked_literal(literal) => {
-            lowering.begin_under_dictionary_type(literal)
+        // `const levels: Record<string, number> = { debug: 0, info: 1 }`: the type allows any name, and the names that the object has are written.
+        Some(_)
+            if has_only_named_values(hir, literal, true)
+                && !lowering.file.is_map_of_descriptors(literal) =>
+        {
+            let layout = lowering.file.literal_layout(literal);
+            let fragment = &mut lowering.file.fragment;
+            fragment.note_literal_under_dictionary_type(layout);
+            let mut object = lowering.begin_object(layout);
+            lowering.open_head(&mut object);
+            object
         }
         Some(_) => lowering.begin_dictionary(),
         None if is_prototype_object => lowering.begin_dictionary(),
@@ -585,18 +530,6 @@ pub(crate) fn lower_object_literal(
     super::finish_object(lowering, object)
 }
 
-fn has_only_plain_members(hir: &File<'_>, literal: ExprId) -> bool {
-    let ExprKind::Object(properties) = hir[literal].kind else {
-        return false;
-    };
-    properties.iter().all(|property| {
-        let prop = hir[property];
-        matches!(prop.kind, PropKind::Init | PropKind::Shorthand)
-            && !is_proto_setter(&prop)
-            && matches!(hir.runtime_property_key(property), PropKey::Name(_))
-    })
-}
-
 fn ends_in_literal_of_plain_members(file: &FileLowering<'_, '_, '_, '_>, source: ExprId) -> bool {
     let hir = file.hir;
     if file.is_statically_resolved(source) || file.is_simplified(source) {
@@ -604,7 +537,7 @@ fn ends_in_literal_of_plain_members(file: &FileLowering<'_, '_, '_, '_>, source:
     }
     let is_dead = |arm: ExprId| file.decisions().is_dead_expr(arm);
     match hir[source].kind {
-        ExprKind::Object(_) => has_only_plain_members(hir, source),
+        ExprKind::Object(_) => has_only_named_values(hir, source, false),
         ExprKind::Binary {
             op: BinOp::And,
             right,

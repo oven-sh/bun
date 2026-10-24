@@ -20,30 +20,29 @@ use super::state::{
     VariableDefinition,
 };
 use super::unit::{KeyList, LinkUnit};
-use super::united_layouts::has_united_definitions;
-use super::{LinkError, LinkProject, key_context};
+use super::{LinkError, Projects, key_context};
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{Layout, LayoutFlags, LayoutKind, Variable, VariableInitialization};
 use crate::ir::{
     DeclaredType, FunctionId, FunctionKey, Id, InParallel, LayoutId, LayoutKey, ModuleId, StringId,
     TypeFlags, TypeTable, VariableKey, for_each_mut,
 };
-use crate::load::{PerProject, ProgramFile, ProjectId};
+use crate::load::{ProgramFile, ProjectId};
 use crate::lower::ObjectTypeKey;
 use crate::modules::{ModuleKind, SyntheticExport, SyntheticExportId};
 use core::mem::replace;
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
-pub(super) struct MergeInput<'a, 's> {
+/// The units in the order of their files, and what their keys were merged into.
+#[derive(Copy, Clone)]
+pub(super) struct MergedUnits<'a> {
     pub units: &'a [LinkUnit],
-    pub projects: &'a PerProject<LinkProject<'a, 's>>,
     pub modules: &'a ModuleTable,
     pub functions: &'a MergedKeys<ProgramFunctionKey>,
     pub layouts: &'a MergedKeys<ProgramLayoutKey>,
     pub variables: &'a MergedKeys<ProgramVariableKey>,
     pub in_parallel: InParallel<'a>,
-    pub beside: Beside<'a>,
 }
 
 fn numbered_synthetic_exports<'a>(
@@ -54,7 +53,7 @@ fn numbered_synthetic_exports<'a>(
         .zip(context.graph.synthetic_exports())
 }
 
-fn is_common_js_file(projects: &PerProject<LinkProject<'_, '_>>, file: ProgramFile) -> bool {
+fn is_common_js_file(projects: &Projects<'_, '_>, file: ProgramFile) -> bool {
     let graph = projects.get(file.project).graph;
     graph.has_record(file.file)
         && graph.kind(file.file) == ModuleKind::CommonJs
@@ -63,7 +62,7 @@ fn is_common_js_file(projects: &PerProject<LinkProject<'_, '_>>, file: ProgramFi
 
 // ES importers hold copies of the names of a CommonJS file alone.
 fn find_file_with_copies(
-    projects: &PerProject<LinkProject<'_, '_>>,
+    projects: &Projects<'_, '_>,
     exporter: ProgramModule,
 ) -> Option<ProgramFile> {
     match exporter {
@@ -72,25 +71,19 @@ fn find_file_with_copies(
     }
 }
 
-fn find_writer(
-    projects: &PerProject<LinkProject<'_, '_>>,
-    exporter: ProgramModule,
-) -> ExportWriter {
+fn find_writer(projects: &Projects<'_, '_>, exporter: ProgramModule) -> ExportWriter {
     match exporter {
         ProgramModule::File(file) => match is_common_js_file(projects, file) {
             true => ExportWriter::Body,
             false => ExportWriter::Loader,
         },
-        ProgramModule::Inner { .. } => ExportWriter::Body,
         ProgramModule::Face(_) | ProgramModule::Check(_) => ExportWriter::Face,
         ProgramModule::Runtime(_) | ProgramModule::External { .. } => ExportWriter::Loader,
     }
 }
 
 // The variables that link defines: every synthetic export, then the copy of each that can have one.
-pub(super) fn synthetic_export_keys(
-    projects: &PerProject<LinkProject<'_, '_>>,
-) -> KeyList<ProgramVariableKey> {
+pub(super) fn synthetic_export_keys(projects: &Projects<'_, '_>) -> KeyList<ProgramVariableKey> {
     let mut keys = Vec::new();
     for project in ProjectId::ALL {
         let context = key_context(projects, project);
@@ -133,14 +126,16 @@ pub(super) fn forget_library_layouts_without_definition(
 }
 
 pub(super) fn choose_definitions(
-    input: &MergeInput<'_, '_>,
+    input: &MergedUnits<'_>,
+    projects: &Projects<'_, '_>,
+    beside: Beside<'_>,
     errors: &mut Vec<LinkError>,
 ) -> Definitions {
     debug_assert!(input.units.is_sorted_by_key(|unit| unit.file));
     let units = 0..input.units.len() as u32;
     // Each kind of key has its own definitions. An error stands where one walk over the units would have put it.
     let (of_layouts, (of_functions, of_variables)) = run_beside(
-        input.beside,
+        beside,
         || {
             let mut layouts = vec![None; input.layouts.keys.len()];
             let mut other_layout_definitions = Vec::new();
@@ -155,14 +150,12 @@ pub(super) fn choose_definitions(
         },
         || {
             run_beside(
-                input.beside,
+                beside,
                 || {
                     let mut functions = vec![None; input.functions.keys.len()];
                     let mut errors_by_unit = Vec::new();
                     for unit in units.clone() {
-                        let mut errors = Vec::new();
-                        choose_functions(input, unit, &mut functions, &mut errors);
-                        errors_by_unit.extend(errors.into_iter().map(|error| (unit, 0u8, error)));
+                        choose_functions(input, unit, &mut functions, &mut errors_by_unit);
                     }
                     let function_types = merge_function_type_edges(input);
                     let function_types =
@@ -178,11 +171,12 @@ pub(super) fn choose_definitions(
                     let mut variables = vec![None; input.variables.keys.len()];
                     let mut errors_by_unit = Vec::new();
                     for unit in units.clone() {
-                        let mut errors = Vec::new();
-                        choose_variables(input, unit, &mut variables, &mut errors);
-                        errors_by_unit.extend(errors.into_iter().map(|error| (unit, 1u8, error)));
+                        choose_variables(input, unit, &mut variables, &mut errors_by_unit);
                     }
-                    (add_synthetic_exports(input, variables), errors_by_unit)
+                    (
+                        add_synthetic_exports(input, projects, variables),
+                        errors_by_unit,
+                    )
                 },
             )
         },
@@ -242,10 +236,10 @@ fn try_define_at_home(
 }
 
 fn choose_functions(
-    input: &MergeInput<'_, '_>,
+    input: &MergedUnits<'_>,
     unit: u32,
     sites: &mut [Option<DefinitionSite>],
-    errors: &mut Vec<LinkError>,
+    errors: &mut Vec<(u32, u8, LinkError)>,
 ) {
     let definitions = &input.units[unit as usize].function_definitions;
     for (merged, key, site) in merged_definitions(input.functions, unit, definitions) {
@@ -259,14 +253,14 @@ fn choose_functions(
         };
         if let Err(files) = try_define_at_home(input.units, home, site, &mut sites[merged]) {
             let key = ProgramKey::Function(key);
-            errors.push(LinkError::ConflictingDefinitions { key, files });
+            errors.push((unit, 0, LinkError::ConflictingDefinitions { key, files }));
         }
     }
 }
 
 // A plain layout is shown under the name, and at the place, of its first definition by a type that is declared in a file of the program.
 fn choose_layouts(
-    input: &MergeInput<'_, '_>,
+    input: &MergedUnits<'_>,
     unit: u32,
     sites: &mut [Option<DefinitionSite>],
     others: &mut Vec<(u32, DefinitionSite)>,
@@ -294,7 +288,7 @@ fn choose_layouts(
         match sites[merged] {
             None => sites[merged] = Some(site),
             Some(_) if home == Some(here) && is_mentioned_by_code => sites[merged] = Some(site),
-            Some(_) if !has_united_definitions(&key.key) => {}
+            Some(_) if !key.key.has_united_definitions() => {}
             Some(first) if has_place(site) && !has_place(first) => {
                 others.push((merged as u32, first));
                 sites[merged] = Some(site);
@@ -305,10 +299,10 @@ fn choose_layouts(
 }
 
 fn choose_variables(
-    input: &MergeInput<'_, '_>,
+    input: &MergedUnits<'_>,
     unit: u32,
     sites: &mut [Option<DefinitionSite>],
-    errors: &mut Vec<LinkError>,
+    errors: &mut Vec<(u32, u8, LinkError)>,
 ) {
     let definitions = &input.units[unit as usize].variable_definitions;
     for (merged, key, site) in merged_definitions(input.variables, unit, definitions) {
@@ -327,13 +321,14 @@ fn choose_variables(
         };
         if let Err(files) = result {
             let key = ProgramKey::Variable(key);
-            errors.push(LinkError::ConflictingDefinitions { key, files });
+            errors.push((unit, 1, LinkError::ConflictingDefinitions { key, files }));
         }
     }
 }
 
 fn add_synthetic_exports(
-    input: &MergeInput<'_, '_>,
+    input: &MergedUnits<'_>,
+    projects: &Projects<'_, '_>,
     sites: Vec<Option<DefinitionSite>>,
 ) -> Vec<Option<VariableDefinition>> {
     let mut variables: Vec<Option<VariableDefinition>> = sites
@@ -360,7 +355,7 @@ fn add_synthetic_exports(
     };
     let index_by_module = &input.modules.index_by_module;
     for project in ProjectId::ALL {
-        let context = key_context(input.projects, project);
+        let context = key_context(projects, project);
         for (id, export) in numbered_synthetic_exports(&context) {
             let exporter = context.module(export.module);
             // The program does not reach the module.
@@ -368,27 +363,23 @@ fn add_synthetic_exports(
                 continue;
             };
             let key = context.variable_key(VariableKey::SyntheticExport(id));
-            define(key, module, export, find_writer(input.projects, exporter));
+            define(key, module, export, find_writer(projects, exporter));
+            let Some(file) = find_file_with_copies(projects, exporter) else {
+                continue;
+            };
             // A file that no ES module imports has no face.
-            let face = find_file_with_copies(input.projects, exporter)
-                .and_then(|file| index_by_module.get(&ProgramModule::Face(file)));
-            if let Some(&face) = face {
-                let key = context.variable_key(VariableKey::Copy(id));
-                let file =
-                    find_file_with_copies(input.projects, exporter).expect("the face has a file");
-                let captures = input
-                    .projects
-                    .get(file.project)
-                    .graph
-                    .commonjs()
-                    .face_captures(file.file);
-                // Whatever a CommonJS file exports, its importers find a `default`.
-                let writer = match captures && export.name != bun_sema::atom::known::default {
-                    true => ExportWriter::Capture,
-                    false => ExportWriter::Face,
-                };
-                define(key, face, export, writer);
-            }
+            let Some(&face) = index_by_module.get(&ProgramModule::Face(file)) else {
+                continue;
+            };
+            let key = context.variable_key(VariableKey::Copy(id));
+            let captures = projects.get(file.project).graph.commonjs();
+            let captures = captures.face_captures(file.file);
+            // Whatever a CommonJS file exports, its importers find a `default`.
+            let writer = match captures && export.name != bun_sema::atom::known::default {
+                true => ExportWriter::Capture,
+                false => ExportWriter::Face,
+            };
+            define(key, face, export, writer);
         }
     }
     variables
@@ -413,7 +404,7 @@ fn create_supertype_edges(layout_count: usize, sorted_edges: &[(u32, u32)]) -> S
     }
 }
 
-fn merge_supertype_edges(input: &MergeInput<'_, '_>) -> Vec<(u32, u32)> {
+fn merge_supertype_edges(input: &MergedUnits<'_>) -> Vec<(u32, u32)> {
     let (units, local_to_merged) = (input.units, &input.layouts.local_to_merged);
     let mut slots: Vec<(usize, Vec<(u32, u32)>)> =
         (0..units.len()).map(|unit| (unit, Vec::new())).collect();
@@ -435,7 +426,7 @@ fn merge_supertype_edges(input: &MergeInput<'_, '_>) -> Vec<(u32, u32)> {
     edges
 }
 
-fn merge_function_type_edges(input: &MergeInput<'_, '_>) -> Vec<(u32, u32)> {
+fn merge_function_type_edges(input: &MergedUnits<'_>) -> Vec<(u32, u32)> {
     let mut edges: Vec<(u32, u32)> = Vec::new();
     for (unit, local_to_merged) in input.units.iter().zip(&input.functions.local_to_merged) {
         let to_merged = |function: FunctionId| local_to_merged[function.index()];
@@ -461,7 +452,7 @@ fn merge_function_type_edges(input: &MergeInput<'_, '_>) -> Vec<(u32, u32)> {
     edges
 }
 
-fn merge_builtin_members(input: &MergeInput<'_, '_>) -> Vec<(u32, BuiltinId)> {
+fn merge_builtin_members(input: &MergedUnits<'_>) -> Vec<(u32, BuiltinId)> {
     let mut members: Vec<(u32, BuiltinId)> = Vec::new();
     for (unit, local_to_merged) in input.units.iter().zip(&input.functions.local_to_merged) {
         let unit_members = unit.builtin_members.iter();
@@ -491,20 +482,7 @@ struct FamilyCloser<'a> {
     visit: u32,
 }
 
-impl<'a> FamilyCloser<'a> {
-    fn new(input: &MergeInput<'a, '_>) -> FamilyCloser<'a> {
-        let layout_count = input.layouts.keys.len();
-        FamilyCloser {
-            units: input.units,
-            merged_layouts: &input.layouts.local_to_merged,
-            above: vec![Vec::new(); layout_count],
-            added_supertypes: Vec::new(),
-            has_members_without_layout: vec![false; layout_count],
-            visit_of: vec![0; layout_count],
-            visit: 0,
-        }
-    }
-
+impl FamilyCloser<'_> {
     fn layout(&self, unit: u32, layout: LayoutId) -> u32 {
         self.merged_layouts[unit as usize][layout.index()]
     }
@@ -520,16 +498,6 @@ impl<'a> FamilyCloser<'a> {
     fn add_supertype(&mut self, layout: u32, supertype: u32) {
         if self.connect(layout, supertype) {
             self.added_supertypes.push((layout, supertype));
-        }
-    }
-
-    fn add_members_without_layout(&mut self) {
-        let units = self.units;
-        for (unit, link_unit) in (0u32..).zip(units) {
-            for &layout in &link_unit.family_facts.layouts_with_members_without_layout {
-                let layout = self.layout(unit, layout);
-                self.has_members_without_layout[layout as usize] = true;
-            }
         }
     }
 
@@ -603,11 +571,20 @@ impl<'a> FamilyCloser<'a> {
 
 // The family of a type is what reaches it over the conversions that the program performs, each in the direction the checker allows, and over the base of each class.
 fn close_families(
-    input: &MergeInput<'_, '_>,
+    input: &MergedUnits<'_>,
     layouts: &[Option<DefinitionSite>],
     mut supertypes: Vec<(u32, u32)>,
 ) -> ClosedFamilies {
-    let mut closer = FamilyCloser::new(input);
+    let layout_count = input.layouts.keys.len();
+    let mut closer = FamilyCloser {
+        units: input.units,
+        merged_layouts: &input.layouts.local_to_merged,
+        above: vec![Vec::new(); layout_count],
+        added_supertypes: Vec::new(),
+        has_members_without_layout: vec![false; layout_count],
+        visit_of: vec![0; layout_count],
+        visit: 0,
+    };
     for &(layout, supertype) in &supertypes {
         closer.connect(layout, supertype);
     }
@@ -622,21 +599,26 @@ fn close_families(
             closer.connect(layout, base);
         }
     }
-    closer.add_members_without_layout();
+    for (unit, link_unit) in (0u32..).zip(input.units) {
+        for &layout in &link_unit.family_facts.layouts_with_members_without_layout {
+            let layout = closer.layout(unit, layout);
+            closer.has_members_without_layout[layout as usize] = true;
+        }
+    }
     let conversions_outside_family = closer.widen_families();
     closer.spread_members_without_layout();
     supertypes.extend(closer.added_supertypes);
     supertypes.sort_unstable();
     supertypes.dedup();
     ClosedFamilies {
-        supertypes: create_supertype_edges(input.layouts.keys.len(), &supertypes),
+        supertypes: create_supertype_edges(layout_count, &supertypes),
         has_members_without_layout: closer.has_members_without_layout,
         conversions_outside_family,
     }
 }
 
 fn collect_runtime_functions(
-    input: &MergeInput<'_, '_>,
+    input: &MergedUnits<'_>,
     errors: &mut Vec<LinkError>,
 ) -> Vec<RuntimeFunctionRoot> {
     let mut roots = Vec::new();

@@ -75,7 +75,6 @@ impl BuiltinTypeSymbols {
         }
     }
 
-    /// Whether `program_subtypes` or `classes_with_static_member` can name a declaration of `file`.
     pub fn can_list_declarations_of(files: &Files<'_>, file: FileId) -> bool {
         resolve::can_list_declarations_of(files, file)
     }
@@ -84,25 +83,21 @@ impl BuiltinTypeSymbols {
         self.classes.get(&symbol).copied()
     }
 
-    // In hash order.
     pub fn classes(&self) -> impl Iterator<Item = (Sym, BuiltinTypeClass)> + '_ {
         let classes = self.classes.iter();
         classes.map(|(&symbol, &class)| (symbol, class))
     }
 
-    /// The interfaces that extend a built-in type in files with code, in the order of the files.
     pub fn program_subtypes(&self) -> &[Sym] {
         &self.program_subtypes
     }
 
-    /// The classes that declare a static member `name` in files with code, in the order of the files.
     pub fn classes_with_static_member(&self, name: Atom) -> &[Sym] {
         self.classes_by_static_member
             .get(&name)
             .map_or(&[], |classes| &classes[..])
     }
 
-    /// Whether the table has a type whose values are the instances of `class` and nothing else.
     pub fn has_exact_type(&self, class: BuiltinClassIndex) -> bool {
         self.classes_with_exact_type.binary_search(&class).is_ok()
     }

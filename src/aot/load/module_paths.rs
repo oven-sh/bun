@@ -18,12 +18,6 @@ pub(super) fn file_ids(file_count: usize) -> impl Iterator<Item = FileId> {
     (0..file_count).map(|index| FileId(index as u32))
 }
 
-fn host_loader_of(files: &Files<'_>, file: FileId) -> HostLoader {
-    files
-        .compiled(file)
-        .map_or(BY_NAME, |compiled| compiled.loader)
-}
-
 pub(super) fn is_linkable(files: &Files<'_>, file: FileId) -> bool {
     files.is_compiled(file) || files.role(file) == FileRole::TypesOnly
 }
@@ -47,7 +41,8 @@ impl<'s> FileMaps<'s> {
         for file in file_ids(files.modules.len()) {
             if is_linkable(files, file) {
                 let path = files.modules[file.idx()].path.text;
-                maps.add_linkable_file(path, file, host_loader_of(files, file));
+                let compiled = files.compiled(file);
+                maps.add_linkable_file(path, file, compiled.map_or(BY_NAME, |it| it.loader));
             }
         }
         for (index, &file) in files.entry_points().iter().enumerate() {
@@ -62,15 +57,10 @@ impl<'s> FileMaps<'s> {
     }
 
     fn add_linkable_file(&mut self, path: &'s [u8], file: FileId, loader: HostLoader) {
-        let candidate = (file, loader);
-        self.primary_files
-            .entry(path)
-            .and_modify(|current| {
-                if loader < current.1 {
-                    *current = candidate;
-                }
-            })
-            .or_insert(candidate);
+        let primary = self.primary_files.entry(path).or_insert((file, loader));
+        if loader < primary.1 {
+            *primary = (file, loader);
+        }
     }
 
     fn primary_file(&self, path: &[u8]) -> Option<FileId> {
@@ -208,11 +198,9 @@ pub(crate) fn with_separators_of_host(native_path: &[u8], is_windows: bool) -> V
 
 /// What the executable prints for a file at run time: its path from the project's folder, with forward slashes.
 pub(super) fn compute_display_path(project_root: &[u8], native_path: &[u8]) -> Box<[u8]> {
-    let relative_path = if is_absolute(project_root) && is_absolute(native_path) {
-        compute_relative_path(project_root, native_path)
-    } else {
-        None
-    };
+    let are_absolute = is_absolute(project_root) && is_absolute(native_path);
+    let relative_path = are_absolute.then(|| compute_relative_path(project_root, native_path));
+    let relative_path = relative_path.flatten();
     relative_path.map_or_else(|| native_path.into(), Vec::into_boxed_slice)
 }
 
@@ -304,13 +292,6 @@ mod tests {
             module_prefix: b"/$bunfs/root/".to_vec(),
             root_directory: b"/project".to_vec(),
             entry_point_names: vec![b"main.js".to_vec(), b"worker.js".to_vec()],
-        }
-    }
-
-    fn paths_with_entry_point_name(name: &[u8]) -> PathOptions {
-        PathOptions {
-            entry_point_names: vec![name.to_vec()],
-            ..path_options()
         }
     }
 
@@ -445,6 +426,7 @@ mod tests {
         let path = |index| compute_program_path(true, &paths, b"/project/a.ts", index);
         assert_eq!(path(None), b"/project/a.ts");
         assert_eq!(path(Some(0)), b"/project/a.ts");
+        assert!(collect_entry_point_paths(true, &paths).is_empty());
     }
 
     #[test]
@@ -471,15 +453,11 @@ mod tests {
     }
 
     #[test]
-    fn plugin_module_path_has_namespace() {
+    fn plugin_module_path_has_namespace_with_its_separator_escaped() {
         assert_eq!(
             plugin_public_path(b"v", b"virtual:config"),
             b"v:virtual:config"
         );
-    }
-
-    #[test]
-    fn plugin_namespace_separator_is_escaped() {
         assert_eq!(plugin_public_path(b"a", b"b:c"), b"a:b:c");
         assert_eq!(plugin_public_path(b"a:b", b"c"), b"a%3ab:c");
         assert_eq!(plugin_public_path(b"a%3ab", b"c"), b"a%253ab:c");
@@ -543,7 +521,10 @@ mod tests {
     #[test]
     fn import_at_sanitized_entry_point_name_has_suffix() {
         let (entry_point, imported) = (b"/lib/b.ts", b"/lib/b.js");
-        let paths = paths_with_entry_point_name(b"../lib/b.js");
+        let paths = PathOptions {
+            entry_point_names: vec![b"../lib/b.js".to_vec()],
+            ..path_options()
+        };
         let mut maps = FileMaps {
             entry_point_paths: collect_entry_point_paths(false, &paths),
             ..FileMaps::default()
@@ -595,40 +576,26 @@ mod tests {
     }
 
     #[test]
-    fn default_library_keeps_file_name() {
-        let path = b"/bundled:///libs/lib.es5.d.ts";
-        let maps = FileMaps::default();
-        for kind in [SourceKind::Program, SourceKind::Data, SourceKind::TypesOnly] {
+    fn default_library_runtime_file_and_evaluated_text_keep_their_file_names() {
+        let library: &[u8] = b"/bundled:///libs/lib.es5.d.ts";
+        let runtime_file: &[u8] = b"/$bun/js/node/fs.ts";
+        let text: &[u8] = b"/$bun/text/%2fproject%2fa.ts/7.cjs";
+        let rows = [
+            (SourceKind::Program, true, library),
+            (SourceKind::Data, true, library),
+            (SourceKind::TypesOnly, true, library),
+            (runtime_kind(), false, runtime_file),
+            (SourceKind::RuntimeFunctions, false, runtime_file),
+            (SourceKind::EvaluatedText, false, text),
+        ];
+        for (kind, is_default_library, path) in rows {
             let input = PathInput {
                 kind,
-                is_default_library: true,
+                is_default_library,
                 ..program_file(1, path, BY_NAME)
             };
-            assert_eq!(public_path(&maps, input), path);
+            assert_eq!(public_path(&FileMaps::default(), input), path);
         }
-    }
-
-    #[test]
-    fn runtime_file_without_specifier_uses_virtual_path() {
-        let path = b"/$bun/js/node/fs.ts";
-        let maps = FileMaps::default();
-        for kind in [runtime_kind(), SourceKind::RuntimeFunctions] {
-            let input = PathInput {
-                kind,
-                ..program_file(1, path, BY_NAME)
-            };
-            assert_eq!(public_path(&maps, input), path);
-        }
-    }
-
-    #[test]
-    fn evaluated_text_keeps_virtual_path() {
-        let path = b"/$bun/text/%2fproject%2fa.ts/7.cjs";
-        let input = PathInput {
-            kind: SourceKind::EvaluatedText,
-            ..program_file(1, path, BY_NAME)
-        };
-        assert_eq!(public_path(&FileMaps::default(), input), path);
     }
 
     #[test]
@@ -671,11 +638,6 @@ mod tests {
     }
 
     #[test]
-    fn entry_point_names_run_in_place_are_unused() {
-        assert!(collect_entry_point_paths(true, &path_options()).is_empty());
-    }
-
-    #[test]
     fn lowest_loader_is_primary() {
         let mut maps = FileMaps::default();
         maps.add_linkable_file(b"/p/a.ts", FileId(2), as_text());
@@ -683,11 +645,6 @@ mod tests {
         maps.add_linkable_file(b"/p/a.ts", FileId(3), as_ts());
         assert_eq!(maps.primary_file(b"/p/a.ts"), Some(FileId(1)));
         assert_eq!(maps.primary_file(b"/p/b.ts"), None);
-    }
-
-    #[test]
-    fn file_with_other_loader_alone_is_primary() {
-        let mut maps = FileMaps::default();
         maps.add_linkable_file(b"/p/a.js", FileId(4), as_ts());
         assert_eq!(maps.primary_file(b"/p/a.js"), Some(FileId(4)));
     }

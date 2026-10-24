@@ -2,7 +2,7 @@ use bun_options_types::aot_options::ExplainSet;
 use bun_sema::util::SharedSort;
 
 use super::declines::write_limit;
-use super::format::{lower_camel_case, write_count};
+use super::format::{lower_camel_case, write_count, write_parts};
 use super::positions::{
     PathStyle, Positions, is_listed_site, resolve_ascending, write_shown_position,
 };
@@ -13,21 +13,6 @@ use crate::engine::{AllocationRemarkRecord, Position, position_of};
 use crate::ir::generated::{AllocationEscapeReason, AllocationOutcome};
 use crate::link::ProgramNames;
 
-fn forcing_operation_name<'o>(
-    record: &AllocationRemarkRecord,
-    operation: &'o [u8],
-) -> Option<&'o [u8]> {
-    if !operation.is_empty() {
-        Some(operation)
-    } else if record.reasons.contains(AllocationEscapeReason::RETURNED) {
-        Some(b"Return")
-    } else if record.reasons.contains(AllocationEscapeReason::THROWN) {
-        Some(b"Throw")
-    } else {
-        None
-    }
-}
-
 fn write_heap_outcome(out: &mut Vec<u8>, record: &AllocationRemarkRecord, operation: &[u8]) {
     if record.copies <= 1 {
         out.extend_from_slice(b"heap");
@@ -36,9 +21,12 @@ fn write_heap_outcome(out: &mut Vec<u8>, record: &AllocationRemarkRecord, operat
         write_count(out, u64::from(record.copies));
         out.extend_from_slice(b" sites");
     }
-    if let Some(name) = forcing_operation_name(record, operation) {
-        out.extend_from_slice(b": ");
-        out.extend_from_slice(name);
+    if !operation.is_empty() {
+        write_parts(out, &[b": ", operation]);
+    } else if record.reasons.contains(AllocationEscapeReason::RETURNED) {
+        out.extend_from_slice(b": Return");
+    } else if record.reasons.contains(AllocationEscapeReason::THROWN) {
+        out.extend_from_slice(b": Throw");
     }
 }
 
@@ -62,33 +50,17 @@ pub(super) fn write_reasons(out: &mut Vec<u8>, reasons: AllocationEscapeReason) 
     for (reason, sentence) in ESCAPE_REASONS {
         covered |= reason.0;
         if reasons.contains(reason) {
-            out.extend_from_slice(separator);
-            out.extend_from_slice(sentence.as_bytes());
+            write_parts(out, &[separator, sentence.as_bytes()]);
             separator = b"; ";
         }
     }
     for bit in 0..u32::BITS {
         if reasons.0 & !covered & (1 << bit) != 0 {
-            out.extend_from_slice(separator);
-            out.extend_from_slice(b"reason bit ");
+            write_parts(out, &[separator, b"reason bit "]);
             write_count(out, u64::from(bit));
             separator = b"; ";
         }
     }
-}
-
-fn write_cause_and_reasons(out: &mut Vec<u8>, record: &AllocationRemarkRecord) {
-    let cause = heap_cause_sentence(record.cause);
-    if cause.is_none() && record.reasons.is_empty() {
-        return;
-    }
-    out.extend_from_slice(b" (");
-    out.extend_from_slice(cause.unwrap_or_default().as_bytes());
-    if cause.is_some() && !record.reasons.is_empty() {
-        out.extend_from_slice(b": ");
-    }
-    write_reasons(out, record.reasons);
-    out.push(b')');
 }
 
 fn write_remark_line(
@@ -99,23 +71,25 @@ fn write_remark_line(
     forced_by: Option<&SourcePosition>,
     limit_value: u64,
 ) {
-    out.extend_from_slice(b"allocation: ");
-    out.extend_from_slice(&lower_camel_case(record.kind.name()));
-    out.extend_from_slice(b" at ");
+    let kind = lower_camel_case(record.kind.name());
+    write_parts(out, &[b"allocation: ", &kind, b" at "]);
     write_shown_position(out, location);
     out.extend_from_slice(b": ");
     write_outcome(out, record, operation);
-    write_cause_and_reasons(out, record);
+    let cause = heap_cause_sentence(record.cause);
+    if cause.is_some() || !record.reasons.is_empty() {
+        write_parts(out, &[b" (", cause.unwrap_or_default().as_bytes()]);
+        if cause.is_some() && !record.reasons.is_empty() {
+            out.extend_from_slice(b": ");
+        }
+        write_reasons(out, record.reasons);
+        out.push(b')');
+    }
     write_limit(out, record.limit, limit_value);
     if let Some(forced_by) = forced_by.filter(|_| forced_by != location) {
         out.extend_from_slice(b", escapes at ");
         write_shown_position(out, Some(forced_by));
     }
-}
-
-fn sort_key(record: &AllocationRemarkRecord) -> (bool, Option<Position>) {
-    let position = position_of(record.location);
-    (position.is_none(), position)
 }
 
 fn listed_remarks<'r>(
@@ -126,34 +100,11 @@ fn listed_remarks<'r>(
         .iter()
         .filter(|record| is_listed_site(names, record.location, record.function_id()))
         .collect();
-    listed.shared_sort_by_key(|record| sort_key(record));
+    listed.shared_sort_by_key(|record| {
+        let position = position_of(record.location);
+        (position.is_none(), position)
+    });
     listed
-}
-
-fn remark_entry(
-    input: &ReportInput<'_>,
-    record: &AllocationRemarkRecord,
-    location: Option<&SourcePosition>,
-    forced_by: Option<&SourcePosition>,
-) -> ReportEntry {
-    let operation = input.engine.text(record.forcing_operation);
-    let limit_value = input.engine.limit_value(record.limit);
-
-    let mut text = Vec::new();
-    write_remark_line(
-        &mut text,
-        record,
-        operation,
-        location,
-        forced_by,
-        limit_value,
-    );
-    ReportEntry {
-        kind: ExplainSet::ALLOCATIONS,
-        text,
-        position: position_of(record.location),
-        notes: Vec::new(),
-    }
 }
 
 pub(super) fn collect(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
@@ -171,12 +122,13 @@ pub(super) fn collect(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
     let mut positions = Positions::new(input, PathStyle::Native);
     let resolved = resolve_ascending(&wanted, |position| positions.resolve(position));
     for (record, shown) in records.iter().zip(resolved.as_chunks::<2>().0) {
-        out.push(remark_entry(
-            input,
-            record,
-            shown[0].as_ref(),
-            shown[1].as_ref(),
-        ));
+        let (location, forced_by) = (shown[0].as_ref(), shown[1].as_ref());
+        let operation = input.engine.text(record.forcing_operation);
+        let limit = input.engine.limit_value(record.limit);
+        let mut text = Vec::new();
+        write_remark_line(&mut text, record, operation, location, forced_by, limit);
+        let position = position_of(record.location);
+        out.push(ReportEntry::at(ExplainSet::ALLOCATIONS, text, position));
     }
 }
 

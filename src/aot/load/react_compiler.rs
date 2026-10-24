@@ -1,4 +1,4 @@
-mod module_items;
+pub(super) mod module_items;
 #[cfg(test)]
 mod tests;
 mod write_bindings;
@@ -18,11 +18,11 @@ use bun_lint_react_compiler::code_generation::{
 use bun_sema::atom::Interner;
 use bun_sema::hir::{self, FileBuilder};
 use bun_sema::module_format::ModuleFormat;
-use bun_sema::resolve::{JsxRuntime, JsxSettings, TransformRequest, TreeChange};
+use bun_sema::resolve::{JsxRuntime, TransformRequest, TreeChange};
 use bun_sema::session::Arena;
 use bun_sema_driver::host::to_native;
 
-use self::writer::{TreeWriter, UnsupportedNode, WriterSettings};
+use self::writer::{TreeWriter, UnsupportedNode};
 use crate::diagnostics::LoadMessages;
 use crate::load::is_in_node_modules;
 use crate::load::sources::{ParsedSource, SourceKind};
@@ -96,12 +96,15 @@ impl<'a> ReactCompiler<'a> {
         }
         let jsx = request.settings.jsx.with_pragmas(&tree.jsx_pragmas, atoms);
         let file_jsx = jsx.as_ref().unwrap_or(&request.settings.jsx);
-        let options = self.generation_options(file_jsx);
-        let settings = WriterSettings {
-            is_typescript: !tree.is_js,
-            jsx: file_jsx,
+        let options = GenerationOptions {
+            is_development: file_jsx.is_development,
+            is_server: self.mode.is_ssr(),
+            uses_classic_jsx: match file_jsx.runtime {
+                JsxRuntime::Classic => true,
+                JsxRuntime::Automatic => false,
+            },
         };
-        let mut writer = TreeWriter::new(FileBuilder::from_file(tree), atoms, settings);
+        let mut writer = TreeWriter::new(FileBuilder::from_file(tree), atoms, file_jsx);
         let mut has_compiled_function = false;
         for candidate in &candidates {
             let function = candidate.function.id();
@@ -124,19 +127,7 @@ impl<'a> ReactCompiler<'a> {
         if !has_compiled_function {
             return None;
         }
-        writer.finish_module();
         Some(writer.into_file(arena))
-    }
-
-    fn generation_options(&self, jsx: &JsxSettings) -> GenerationOptions {
-        GenerationOptions {
-            is_development: jsx.is_development,
-            is_server: self.mode.is_ssr(),
-            uses_classic_jsx: match jsx.runtime {
-                JsxRuntime::Classic => true,
-                JsxRuntime::Automatic => false,
-            },
-        }
     }
 
     fn report_unsupported_node(&self, name: &str, path: &[u8]) {

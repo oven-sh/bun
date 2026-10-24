@@ -85,7 +85,6 @@ struct Walk {
     visits: FxHashMap<TypeId, Visit>,
     pending: Vec<TypeId>,
     lowest_reference: Option<usize>,
-    /// The members of a component have keys that are not final yet, and so has whatever is described from them.
     is_refining: bool,
 }
 
@@ -138,7 +137,6 @@ impl Walk {
             (Ok(key), None) => {
                 self.pending.truncate(index);
                 self.visits.insert(ty, Visit::Described(key));
-                // Nothing in it refers back to a type that is being described, so another walk finds the same key.
                 if !self.is_refining {
                     queries.remember_identity(ty, TypeIdentity(key), unstable_answers);
                 }
@@ -172,7 +170,6 @@ impl Walk {
         self.is_refining = was_refining;
         match refined {
             Ok(keys) => {
-                // All of them or none: a walk that found one member known and the others not would describe a smaller component, and give a member another key than the walk that began elsewhere.
                 for (&member, &key) in members.iter().zip(&keys) {
                     self.visits.insert(member, Visit::Described(key));
                     if !self.is_refining {
@@ -212,7 +209,6 @@ impl Walk {
                 break;
             }
         }
-        // Equal keys mean equal types only in components that have the same classes.
         let mut component = Description::new(Tag::Cyclic);
         component.keys(&classes);
         let component = component.finish();
@@ -288,7 +284,6 @@ impl Walk {
             }
             ShapeKind::Symbol => Ok(leaf(Tag::Symbol)),
             ShapeKind::AnyObject => Ok(leaf(Tag::AnyObject)),
-            // The compiler knows a function type by the declaration of its signature.
             ShapeKind::Function(signatures) => {
                 let declaration = match signatures {
                     &[signature] => queries.signature_declaration(signature),
@@ -547,7 +542,6 @@ impl Walk {
         let mut description = Description::new(Tag::Object);
         description.word(u64::from(accepted_primitives.bits()));
         description.word(members.len() as u64);
-        // No declaration orders the members of a computed type.
         let mut described = Vec::with_capacity(members.len());
         for member in members {
             let name = member_name_key(queries, member.name);

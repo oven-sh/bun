@@ -31,11 +31,6 @@ const TEXT_PATH: &[u8] = b"/$bun/text/%2fproject%2fmain.ts/3.cjs";
 const MAX_FOLDED_STRING_BYTES: usize = 1 << 16;
 const STDOUT_USE: &str = "process.stdout.write('a');";
 
-struct Fixture<'a, 's> {
-    input: BuiltinUseInput<'a>,
-    request: FinishedFile<'a, 's>,
-}
-
 struct Finished {
     answers: Vec<HostResolution>,
     source: ParsedSource,
@@ -64,7 +59,11 @@ fn external(kind: ExternalKind) -> CodeResolution<'static> {
     }
 }
 
-fn with_finished_file<R>(path: &[u8], text: &str, then: impl FnOnce(&Fixture<'_, '_>) -> R) -> R {
+fn with_finished_file<R>(
+    path: &[u8],
+    text: &str,
+    then: impl FnOnce(&BuiltinUseInput<'_>, &FinishedFile<'_, '_>) -> R,
+) -> R {
     let session = Session::new();
     let (arena, atoms) = (session.arena(), Interner::new_in(&session));
     let names = BuiltinNames::new(&atoms);
@@ -103,27 +102,25 @@ fn with_finished_file<R>(path: &[u8], text: &str, then: impl FnOnce(&Fixture<'_,
         analysis.import_sites.is_empty(),
         "the fixture resolves no import: {text}"
     );
-    then(&Fixture {
-        input: BuiltinUseInput {
-            names: &names,
-            platform: host_platform(),
-        },
-        request: FinishedFile {
-            path,
-            loader: BY_NAME,
-            hir: &hir,
-            bound: &bound,
-            analysis: &analysis,
-            atoms: &atoms,
-            resolutions: &[],
-        },
-    })
+    let input = BuiltinUseInput {
+        names: &names,
+        platform: host_platform(),
+    };
+    let request = FinishedFile {
+        path,
+        loader: BY_NAME,
+        hir: &hir,
+        bound: &bound,
+        analysis: &analysis,
+        atoms: &atoms,
+        resolutions: &[],
+    };
+    then(&input, &request)
 }
 
 fn finish_application(text: &str) -> Finished {
-    with_finished_file(PROGRAM_PATH, text, |fixture| {
+    with_finished_file(PROGRAM_PATH, text, |input, request| {
         let mut source = ParsedSource::new(SourceKind::Program, Loader::Ts);
-        let (input, request) = (&fixture.input, &fixture.request);
         let texts = EvaluatedTexts::new();
         let answers = finish_application_file(input, Some(&texts), false, request, &mut source);
         Finished { answers, source }
@@ -131,9 +128,8 @@ fn finish_application(text: &str) -> Finished {
 }
 
 fn finish_runtime(text: &str) -> Finished {
-    with_finished_file(RUNTIME_PATH, text, |fixture| {
+    with_finished_file(RUNTIME_PATH, text, |input, request| {
         let mut source = ParsedSource::new(SourceKind::RuntimeFunctions, Loader::Ts);
-        let (input, request) = (&fixture.input, &fixture.request);
         let answers = finish_runtime_file(input, &runtime_modules(), request, &mut source);
         Finished { answers, source }
     })
@@ -427,10 +423,9 @@ fn evaluated_text_site_indexes_its_answer() {
                 Function('return (');\n\
                 Function('return 1');\n\
                 new Function('a', 'return a');";
-    with_finished_file(PROGRAM_PATH, text, |fixture| {
+    with_finished_file(PROGRAM_PATH, text, |input, request| {
         let texts = EvaluatedTexts::new();
         let mut source = ParsedSource::new(SourceKind::Program, Loader::Ts);
-        let (input, request) = (&fixture.input, &fixture.request);
         let answers = finish_application_file(input, Some(&texts), false, request, &mut source);
 
         assert_eq!(source.builtins.evaluated_texts().len(), 3);
@@ -479,9 +474,9 @@ fn loader_keeps_implied_answer_order() {
 
 #[test]
 fn forbidden_text_evaluation_compiles_no_text() {
-    with_finished_file(PROGRAM_PATH, "new Function('a', 'return a');", |fixture| {
+    let text = "new Function('a', 'return a');";
+    with_finished_file(PROGRAM_PATH, text, |input, request| {
         let mut source = ParsedSource::new(SourceKind::Program, Loader::Ts);
-        let (input, request) = (&fixture.input, &fixture.request);
         let answers = finish_application_file(input, None, false, request, &mut source);
         assert!(source.evaluated_text_sites.is_empty());
         assert!(
@@ -495,8 +490,7 @@ fn forbidden_text_evaluation_compiles_no_text() {
 #[test]
 fn react_declarations_come_last() {
     let text = "process.stdout;\nFunction('return 1');";
-    with_finished_file(PROGRAM_PATH, text, |fixture| {
-        let (input, request) = (&fixture.input, &fixture.request);
+    with_finished_file(PROGRAM_PATH, text, |input, request| {
         let finish = |needs_react_declarations: bool| {
             let mut source = ParsedSource::new(SourceKind::Program, Loader::Ts);
             let texts = EvaluatedTexts::new();
@@ -522,14 +516,13 @@ fn react_declarations_come_last() {
 #[test]
 fn evaluated_function_is_recorded_for_text_files_only() {
     let text = "(function anonymous(\n) {\nreturn this\n})";
-    with_finished_file(TEXT_PATH, text, |fixture| {
+    with_finished_file(TEXT_PATH, text, |input, request| {
         let cases = [
             (SourceKind::EvaluatedText, true),
             (SourceKind::Program, false),
         ];
         for (kind, is_recorded) in cases {
             let mut source = ParsedSource::new(kind, Loader::Js);
-            let (input, request) = (&fixture.input, &fixture.request);
             let texts = EvaluatedTexts::new();
             let answers = finish_application_file(input, Some(&texts), false, request, &mut source);
             assert!(answers.is_empty());

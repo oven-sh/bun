@@ -1,3 +1,5 @@
+mod code_unit_order;
+
 use super::testing::{describe_module, file_named, with_graph, with_runtime_graph};
 use super::*;
 use crate::builtins::RuntimeModule;
@@ -84,6 +86,13 @@ fn failure_keys(failures: &[ModuleFailure]) -> Vec<FailureKey> {
     failures.iter().map(failure_key).collect()
 }
 
+fn only<T: core::fmt::Debug>(list: &[T]) -> &T {
+    let [item] = list else {
+        panic!("the list is {list:?}");
+    };
+    item
+}
+
 fn check_entry_points(graph: &ModuleGraph, input: &BindInput<'_, '_>) {
     assert!(!input.sources.entry_points().is_empty());
     for entry_point in input.sources.entry_points() {
@@ -97,10 +106,8 @@ fn check_entry_points(graph: &ModuleGraph, input: &BindInput<'_, '_>) {
             _ => None,
         };
         assert_eq!(graph.runtime_module(file), module);
-        assert_eq!(
-            graph.kind(file) == ModuleKind::RuntimeSource,
-            module.is_some()
-        );
+        let is_runtime_source = graph.kind(file) == ModuleKind::RuntimeSource;
+        assert_eq!(is_runtime_source, module.is_some());
     }
 }
 
@@ -165,31 +172,28 @@ fn task_order_does_not_change_graph() {
             in_parallel: &in_reverse,
             ..*input
         };
-        let reversed_graph = bind_modules(&reversed_input).graph;
+        let reversed = bind_modules(&reversed_input).graph;
         for (name, _) in PROGRAM {
             assert_eq!(
-                describe_module(&reversed_graph, input, name),
+                describe_module(&reversed, input, name),
                 describe_module(graph, input, name),
                 "{name}"
             );
         }
         assert!(!graph.errors().is_empty());
         assert_eq!(
-            failure_keys(reversed_graph.errors()),
+            failure_keys(reversed.errors()),
             failure_keys(graph.errors())
         );
         assert!(!graph.failures().is_empty());
         assert_eq!(
-            failure_keys(reversed_graph.failures()),
+            failure_keys(reversed.failures()),
             failure_keys(graph.failures())
         );
         assert!(!graph.synthetic_exports().is_empty());
-        assert_eq!(
-            reversed_graph.synthetic_exports(),
-            graph.synthetic_exports()
-        );
-        assert_eq!(reversed_graph.record_files(), graph.record_files());
-        assert_eq!(reversed_graph.other_modules(), graph.other_modules());
+        assert_eq!(reversed.synthetic_exports(), graph.synthetic_exports());
+        assert_eq!(reversed.record_files(), graph.record_files());
+        assert_eq!(reversed.other_modules(), graph.other_modules());
     });
 }
 
@@ -203,27 +207,16 @@ fn failed_statements_are_errors_and_failed_calls_are_failures() {
             .map(|(importer, site, _, _, exporter, name)| (importer, site, exporter, name))
             .collect();
         let exporter = ModuleRef::File(file_named(input, "b.ts"));
+        let import = |id| ImportSiteKind::Import(ImportId(id));
         let expected = [
-            (
-                main,
-                ImportSiteKind::Import(ImportId(4)),
-                Some(exporter),
-                atom("missing"),
-            ),
-            (
-                main,
-                ImportSiteKind::Import(ImportId(5)),
-                None,
-                atom("./nope"),
-            ),
+            (main, import(4), Some(exporter), atom("missing")),
+            (main, import(5), None, atom("./nope")),
         ];
         assert_eq!(error_names, expected);
         for error in graph.errors() {
             assert_eq!(error.effect(), FailureEffect::StopsBuild);
         }
-        let [failure] = graph.failures() else {
-            panic!("the failures are {:?}", graph.failures());
-        };
+        let failure = only(graph.failures());
         assert_eq!(failure.effect(), FailureEffect::ThrowsAtSite);
         assert_eq!(failure.importer, main);
         assert!(matches!(failure.site, ImportSiteKind::ImportCall(_)));
@@ -231,10 +224,8 @@ fn failed_statements_are_errors_and_failed_calls_are_failures() {
             failure.kind,
             ModuleFailureKind::Unresolved { specifier, .. } if specifier == atom("./gone")
         ));
-        assert_eq!(
-            graph.site_answer(main, failure.site),
-            SiteAnswer::Failed(ModuleFailureId(0))
-        );
+        let answer = graph.site_answer(main, failure.site);
+        assert_eq!(answer, SiteAnswer::Failed(ModuleFailureId(0)));
     });
 }
 
@@ -259,9 +250,7 @@ fn import_that_names_nothing_fails_the_load_of_what_only_a_late_site_loads() {
     with_graph(&files, |graph, input| {
         let file = |name: &str| file_named(input, name);
         assert!(graph.errors().is_empty(), "{:?}", graph.errors());
-        let [failure] = graph.failures() else {
-            panic!("the failures are {:?}", graph.failures());
-        };
+        let failure = only(graph.failures());
         assert!(matches!(
             failure.kind,
             ModuleFailureKind::UnresolvedAtLoad { .. }
@@ -273,21 +262,15 @@ fn import_that_names_nothing_fails_the_load_of_what_only_a_late_site_loads() {
         let load_failures = names.map(|name| graph.load_failure(file(name)));
         assert_eq!(load_failures, [None, thrown, None, thrown, None]);
         let targets = |name: &str| -> Vec<ModuleRef> {
-            graph
-                .requests(file(name))
-                .iter()
-                .map(|request| request.target)
-                .collect()
+            let requests = graph.requests(file(name)).iter();
+            requests.map(|request| request.target).collect()
         };
         assert_eq!(targets("above.js"), [ModuleRef::File(file("broken.js"))]);
         assert!(targets("broken.js").is_empty());
         for name in ["above.js", "broken.js"] {
             let hir = input.files.hir(file(name));
-            assert!(
-                hir.ids(hir.body)
-                    .all(|statement| graph.erased(file(name), statement)),
-                "{name}"
-            );
+            let is_erased = |statement| graph.erased(file(name), statement);
+            assert!(hir.ids(hir.body).all(is_erased), "{name}");
         }
     });
 }
@@ -303,9 +286,7 @@ fn import_that_names_nothing_stops_the_build_where_an_entry_point_reaches_it() {
         ("broken.js", "import x from './gone.js'; console.log(x);"),
     ];
     with_graph(&files, |graph, input| {
-        let [error] = graph.errors() else {
-            panic!("the errors are {:?}", graph.errors());
-        };
+        let error = only(graph.errors());
         assert!(matches!(error.kind, ModuleFailureKind::Unresolved { .. }));
         assert_eq!(error.effect(), FailureEffect::StopsBuild);
         assert_eq!(error.importer, file_named(input, "broken.js"));
@@ -325,9 +306,7 @@ fn import_that_names_nothing_stops_the_build_though_late_modules_reach_it_too() 
         ("broken.js", "import x from './gone.js'; console.log(x);"),
     ];
     with_graph(&files, |graph, input| {
-        let [error] = graph.errors() else {
-            panic!("the errors are {:?}", graph.errors());
-        };
+        let error = only(graph.errors());
         assert!(matches!(error.kind, ModuleFailureKind::Unresolved { .. }));
         assert_eq!(error.importer, file_named(input, "broken.js"));
         assert!(graph.failures().is_empty(), "{:?}", graph.failures());
@@ -353,9 +332,7 @@ fn name_that_a_module_lacks_is_no_error_in_a_module_whose_load_fails() {
         ("fine.js", "export {};"),
     ];
     with_graph(&files, |graph, input| {
-        let [error] = graph.errors() else {
-            panic!("the errors are {:?}", graph.errors());
-        };
+        let error = only(graph.errors());
         assert!(matches!(
             error.kind,
             ModuleFailureKind::ExportNotFound { .. }
@@ -413,10 +390,8 @@ fn entry_point_kind_and_source_kind_reach_graph() {
         assert!(has_kind(EntryPointKind::Library));
         assert!(has_kind(EntryPointKind::ImportedModule));
         let path_source = file_named(input, "/$bun/js/node/path.ts");
-        assert_eq!(
-            graph.runtime_module(path_source),
-            Some(RuntimeModule::NodePath)
-        );
+        let path = Some(RuntimeModule::NodePath);
+        assert_eq!(graph.runtime_module(path_source), path);
     });
 }
 
@@ -457,10 +432,8 @@ fn external_package_no_site_names_has_a_module() {
             specifier: input.files.atoms.intern(b"outside"),
         };
         assert_eq!(graph.other_modules(), [outside]);
-        assert_eq!(
-            graph.external_kind(outside),
-            Some(ExternalKind::UncompiledCode)
-        );
+        let uncompiled_code = Some(ExternalKind::UncompiledCode);
+        assert_eq!(graph.external_kind(outside), uncompiled_code);
     });
 }
 
@@ -471,17 +444,12 @@ fn site_over_candidate_limit_is_a_loss() {
     let main = format!("export const load = (name) => import({specifier});\n");
     let page_names: Vec<String> = (0..=limit).map(|page| format!("pages/{page}.js")).collect();
     let mut files = vec![("main.js", main.as_str())];
-    files.extend(
-        page_names
-            .iter()
-            .map(|name| (name.as_str(), "export {};\n")),
-    );
+    let pages = page_names.iter();
+    files.extend(pages.map(|name| (name.as_str(), "export {};\n")));
     with_graph(&files, |graph, input| {
         let main = file_named(input, "main.js");
         let counters = bind_modules(input).counters;
-        let [loss] = counters.losses() else {
-            panic!("the losses are {:?}", counters.losses());
-        };
+        let loss = only(counters.losses());
         assert_eq!(loss.limit, LimitId::MaxComputedSpecifierCandidates);
         assert_eq!(loss.count, 1);
         let span = loss.subject.expect("the loss names the import site");
@@ -531,36 +499,18 @@ fn a_module_says_which_deferred_exports_of_the_library_it_binds() {
         ),
     ];
     with_graph(&program, |graph, input| {
-        assert!(
-            input
-                .deferred_exports
-                .contains(RuntimeModule::NodeFs, b"promises")
-        );
-        assert!(
-            input
-                .deferred_exports
-                .contains(RuntimeModule::NodeFs, b"WriteStream")
-        );
-        assert!(
-            !input
-                .deferred_exports
-                .contains(RuntimeModule::NodeFs, b"existsSync")
-        );
-        assert!(
-            !input
-                .deferred_exports
-                .contains(RuntimeModule::NodePath, b"promises")
-        );
-        assert!(
-            input
-                .deferred_exports
-                .contains(RuntimeModule::NodeAssert, b"AssertionError")
-        );
-        assert!(
-            !input
-                .deferred_exports
-                .contains(RuntimeModule::NodeAssert, b"ok")
-        );
+        let deferred = [
+            (RuntimeModule::NodeFs, "promises", true),
+            (RuntimeModule::NodeFs, "WriteStream", true),
+            (RuntimeModule::NodeFs, "existsSync", false),
+            (RuntimeModule::NodePath, "promises", false),
+            (RuntimeModule::NodeAssert, "AssertionError", true),
+            (RuntimeModule::NodeAssert, "ok", false),
+        ];
+        for (module, name, expected) in deferred {
+            let is_deferred = input.deferred_exports.contains(module, name.as_bytes());
+            assert_eq!(is_deferred, expected, "{module:?} {name}");
+        }
         let names_bound_by = |file: &str| -> Vec<String> {
             let required_names = graph.required_names(file_named(input, file)).iter();
             let mut names: Vec<String> = required_names

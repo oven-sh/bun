@@ -198,7 +198,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // A member that is answered without the object.
     fn is_answered_without_object(&self, object: ExprId, owner: ModuleObjectOwner) -> bool {
         let Some(member) = self.find_member_of(object) else {
             return false;
@@ -269,25 +268,21 @@ impl Resolver<'_, '_> {
             ExprState::Held(value) => (value, true),
             _ => return None,
         };
-        match table::canonical_id(value.path.id) {
+        let owner = match table::canonical_id(value.path.id) {
             // Whoever has let it into the binding or the list has been counted.
-            BuiltinId::ModuleObject if is_held => None,
-            BuiltinId::ModuleObject => {
-                let owner = ModuleObjectOwner::OwnFile;
-                self.find_use_of_object(e, owner)
-                    .map(|object_use| (owner, object_use))
-            }
+            BuiltinId::ModuleObject if is_held => return None,
+            BuiltinId::ModuleObject => ModuleObjectOwner::OwnFile,
             BuiltinId::ModuleRequireMain | BuiltinId::ProcessMainModule => {
-                let owner = ModuleObjectOwner::EntryPoint;
-                self.find_use_of_object(e, owner)
-                    .map(|object_use| (owner, object_use))
+                ModuleObjectOwner::EntryPoint
             }
             id @ (BuiltinId::ModuleObjectChildren | BuiltinId::ModuleObjectParent) => {
-                self.find_use_of_member(e, id)
+                return self.find_use_of_member(e, id);
             }
-            id if field_of(id).is_some() => self.find_use_of_member(e, id),
-            _ => None,
-        }
+            id if field_of(id).is_some() => return self.find_use_of_member(e, id),
+            _ => return None,
+        };
+        let object_use = self.find_use_of_object(e, owner)?;
+        Some((owner, object_use))
     }
 
     // `const { parent } = module`: a pattern reads the members that it names, and a rest element or a computed key reads any.
@@ -341,14 +336,8 @@ impl Resolver<'_, '_> {
         }
         let mut mentions = Vec::new();
         for expr in self.evaluated_exprs() {
-            if let Some((owner, object_use)) = self.find_module_object_mention(expr) {
-                mentions.push(ModuleObjectMention {
-                    expr,
-                    owner,
-                    object_use,
-                });
-            }
-            for (owner, object_use) in self.find_ways_that_pattern_reads(expr) {
+            let found = self.find_module_object_mention(expr).into_iter();
+            for (owner, object_use) in found.chain(self.find_ways_that_pattern_reads(expr)) {
                 mentions.push(ModuleObjectMention {
                     expr,
                     owner,

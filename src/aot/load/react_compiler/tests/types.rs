@@ -2,12 +2,11 @@ use bstr::BStr;
 use bun_ast::runtime::ReactCompilerMode;
 use bun_sema::hir::{Flags, Func, Keyword, Param, TypeNodeId, TypeNodeKind};
 use bun_sema::program::{FileId, FileRole};
-use bun_sema::resolve::{JsxSettings, TranspileSettings};
 use bun_sema_driver::{check_and_lower, decide_roles};
 
 use super::{
-    HELLO, MAIN_PATH, Tree, UNTYPED_HELLO, with_compiled_tree, with_project, with_tree,
-    with_tree_and_settings,
+    HELLO, MAIN_PATH, Tree, UNTYPED_HELLO, production_settings, with_compiled_tree, with_project,
+    with_tree, with_tree_and_settings,
 };
 use crate::compile::testing::{default_settings, link_program_with_react_compiler};
 use crate::load::SourceKind;
@@ -90,6 +89,13 @@ fn check_project(files: &[(&str, &str)], mode: ReactCompilerMode) -> Vec<Reporte
             })
             .collect()
     })
+}
+
+#[track_caller]
+fn assert_both_modes_report(files: &[(&str, &str)], expected: &[Reported]) {
+    for mode in [ReactCompilerMode::Disabled, ReactCompilerMode::Client] {
+        assert_eq!(check_project(files, mode), expected, "{mode:?}");
+    }
 }
 
 fn is_any(tree: &Tree<'_>, annotation: TypeNodeId) -> bool {
@@ -291,14 +297,7 @@ fn this_argument_of_jsx_dev_has_a_type() {
             );
         },
     );
-    let production = TranspileSettings {
-        jsx: JsxSettings {
-            is_development: false,
-            ..JsxSettings::default()
-        },
-        ..default_settings()
-    };
-    with_tree_and_settings(HELLO, &production, |tree| {
+    with_tree_and_settings(HELLO, &production_settings(), |tree| {
         assert!(tree.has_compiled_components());
         assert!(
             tree.hir()[tree.function_named("Hello")]
@@ -350,10 +349,7 @@ fn compiled_file_has_no_new_diagnostics() {
                 return [label, suffix];\n\
                 }\n";
     let files = with_react_package(&[("main.tsx", text)]);
-    for mode in [ReactCompilerMode::Disabled, ReactCompilerMode::Client] {
-        let reported = check_project(&files, mode);
-        assert!(reported.is_empty(), "{mode:?}: {reported:?}");
-    }
+    assert_both_modes_report(&files, &[]);
 }
 
 const ITEM_HOOK: &str = "import { useState } from 'react';\n\
@@ -380,10 +376,7 @@ fn caller_of_compiled_hook_sees_written_type_arguments() {
                 const item = useItem();\n\
                 export const name = item !== null ? item.name : '';\n";
     let files = with_react_package(&[("main.ts", main), ("item.tsx", ITEM_HOOK)]);
-    for mode in [ReactCompilerMode::Disabled, ReactCompilerMode::Client] {
-        let reported = check_project(&files, mode);
-        assert!(reported.is_empty(), "{mode:?}: {reported:?}");
-    }
+    assert_both_modes_report(&files, &[]);
 }
 
 #[test]
@@ -394,21 +387,11 @@ fn replaced_function_reports_nothing() {
                 return <b>{name}</b>;\n\
                 }\n";
     let as_written = with_react_package(&[("main.tsx", text)]);
-    for mode in [ReactCompilerMode::Disabled, ReactCompilerMode::Client] {
-        let reported = check_project(&as_written, mode);
-        assert!(reported.is_empty(), "{mode:?}: {reported:?}");
-    }
+    assert_both_modes_report(&as_written, &[]);
     let helper = "export function read(item?: Item) {\nreturn item.name;\n}\n";
     let with_helper = [text, helper].concat();
     let files = with_react_package(&[("main.tsx", with_helper.as_str())]);
-    for mode in [ReactCompilerMode::Disabled, ReactCompilerMode::Client] {
-        let reported = check_project(&files, mode);
-        assert_eq!(
-            reported,
-            [(18048, "/project/main.tsx".to_owned(), 7)],
-            "{mode:?}"
-        );
-    }
+    assert_both_modes_report(&files, &[(18048, "/project/main.tsx".to_owned(), 7)]);
 }
 
 #[test]

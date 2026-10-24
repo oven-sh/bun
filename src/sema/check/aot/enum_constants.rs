@@ -8,7 +8,6 @@ use crate::hir::{self, BinOp, Chain, EnumMemberId, ExprId, ExprKind, MemberKey};
 use crate::program::{FileId, Sym};
 use crate::types::EnumValue;
 
-// The bits of `Evaluated::run_time_inputs`.
 pub(in crate::check) const READS_OTHER_FILE_OR_VARIABLE: u8 = 1 << 0;
 pub(in crate::check) const RESTS_ON_INEXACT_POWER: u8 = 1 << 1;
 pub(in crate::check) const ALL_RUN_TIME_INPUTS: u8 =
@@ -50,7 +49,6 @@ fn has_optional_link(hir: &hir::File<'_>, access: ExprId) -> bool {
     false
 }
 
-/// `bun run` drops a cast when it reads the text, so `(Kind as any).Late` is `Kind.Late` to it.
 fn without_casts(hir: &hir::File<'_>, mut expression: ExprId) -> ExprId {
     while let ExprKind::As { expr, .. }
     | ExprKind::Satisfies { expr, .. }
@@ -102,7 +100,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(constant.and_then(EnumConstant::value_known_to_build))
     }
 
-    /// `bun run` puts the value in the place of an access where its transpiler has seen the member by then.
     fn is_member_seen_before_access(&self, member: EnumMemberId, access: ExprId) -> bool {
         let hir = self.hir();
         if hir[member].pos < hir::start_of(hir, access) {
@@ -145,7 +142,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !flags.intersects(SymFlags::ENUM) {
             return None;
         }
-        // The value is what the file's own code says, as `bun run` inlines it: the file's role has no say.
         let is_declared_here = self.is_first_identifier_own_declaration(object);
         let is_const_enum_elsewhere =
             reach == EnumReach::ConstEnums && flags.intersects(SymFlags::CONST_ENUM);
@@ -189,7 +185,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 }
 
 impl Checker<'_, '_> {
-    /// Whether `bun run` can read the entity name as the checker does: it has no optional link, and it names `NaN`, `Infinity` or what has one declaration.
     pub(in crate::check) fn names_one_declaration(&self, file: FileId, entity: ExprId) -> bool {
         let named = self.resolve_constant_entity(file, entity);
         named.is_some_and(|symbol| {

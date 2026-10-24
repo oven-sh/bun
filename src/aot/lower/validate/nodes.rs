@@ -13,14 +13,15 @@ use bun_sema::hir::TypeNodeId;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use super::ValidationError;
-use super::unsupported::{Origin, Step};
+use super::rules::AppliesConstraints;
+use super::unsupported::{DescribesUnsupported, Origin, Step};
+use super::{ValidatedFile, ValidationError};
 use crate::ir::LayoutId;
 use crate::ir::generated::{
     LimitId, TemplatePart, TemplatePlaceholder, UndeclaredMembers, ValidatedPrimitive,
     ValidationMember, ValidationNode, ValidationRule, ValidationShape,
 };
-use crate::lower::{CheckerTypeId, FileLowering};
+use crate::lower::CheckerTypeId;
 
 const ROOT: u32 = 0;
 const MAX_NESTED_CONSTRAINT_LISTS: usize = 8;
@@ -33,8 +34,8 @@ struct Source<'c> {
     is_deep_strict: bool,
 }
 
-struct NodeBuilder<'f, 'a, 'c, 'p, 's> {
-    file: &'f mut FileLowering<'a, 'c, 'p, 's>,
+struct NodeBuilder<'f, 'c, F> {
+    file: &'f mut F,
     nodes: Vec<ValidationNode>,
     origins: Vec<Option<Origin>>,
     ids: FxHashMap<(CheckerTypeId, bool), u32>,
@@ -43,18 +44,18 @@ struct NodeBuilder<'f, 'a, 'c, 'p, 's> {
     position: u32,
 }
 
-pub(super) fn validation_nodes(
-    file: &mut FileLowering<'_, '_, '_, '_>,
+pub(super) fn validation_nodes<'c, 'p: 'c, 's: 'p>(
+    file: &mut impl ValidatedFile<'c, 'p, 's>,
     ty: CheckerTypeId,
     written: TypeNodeId,
     position: u32,
 ) -> Result<Rc<[ValidationNode]>, ValidationError> {
-    let key = (ty, file.queries.written_place(written));
-    if let Some(nodes) = file.modules.validation.nodes_by_type.get(&key) {
+    let key = (ty, file.queries().written_place(written));
+    if let Some(nodes) = file.validation().nodes_by_type.get(&key) {
         return Ok(Rc::clone(nodes));
     }
-    let max_declarations = file.inputs.limits.get(LimitId::MaxValidationNodes) as usize;
-    let orders = file.queries.written_union_orders(written, max_declarations);
+    let max_declarations = file.limit(LimitId::MaxValidationNodes) as usize;
+    let orders = (file.queries()).written_union_orders(written, max_declarations);
     let mut builder = NodeBuilder {
         file: &mut *file,
         nodes: Vec::new(),
@@ -69,7 +70,7 @@ pub(super) fn validation_nodes(
         builder.fill(source)?;
     }
     let nodes: Rc<[ValidationNode]> = builder.nodes.into();
-    let memo = &mut file.modules.validation.nodes_by_type;
+    let memo = &mut file.validation().nodes_by_type;
     memo.insert(key, Rc::clone(&nodes));
     Ok(nodes)
 }
@@ -144,9 +145,9 @@ fn primitive_shape(primitive: ValidatedPrimitive) -> ValidationShape {
     ValidationShape::Primitive { primitive }
 }
 
-impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
+impl<'c, 'p: 'c, 's: 'p, F: ValidatedFile<'c, 'p, 's>> NodeBuilder<'_, 'c, F> {
     fn shape_of(&mut self, ty: CheckerTypeId) -> Result<TypeShape<'c>, ValidationError> {
-        let shape = self.file.queries.type_shape(ty);
+        let shape = self.file.queries().type_shape(ty);
         shape.map_err(ValidationError::GaveUp)
     }
 
@@ -195,7 +196,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
         ty: CheckerTypeId,
         origin: Option<Origin>,
     ) -> Result<u32, ValidationError> {
-        if self.nodes.len() as u64 >= self.file.inputs.limits.get(LimitId::MaxValidationNodes) {
+        if self.nodes.len() as u64 >= self.file.limit(LimitId::MaxValidationNodes) {
             self.file
                 .gave_up(LimitId::MaxValidationNodes, self.position);
             return Err(ValidationError::TooLarge);
@@ -237,9 +238,9 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
     }
 
     fn compute_shape(&mut self, source: Source<'c>) -> Result<ValidationShape, ValidationError> {
-        let is_builtin_subtype = self.file.queries.is_builtin_subtype(source.ty);
+        let is_builtin_subtype = self.file.queries().is_builtin_subtype(source.ty);
         if is_builtin_subtype.map_err(ValidationError::GaveUp)?
-            || self.file.queries.says_more_than_its_shape(source.ty)
+            || self.file.queries().says_more_than_its_shape(source.ty)
         {
             return Err(self.unsupported(source));
         }
@@ -257,7 +258,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
                 })
             }
             ShapeKind::TypeVariable { .. } if source.node == ROOT => {
-                let text = self.file.queries.type_text(source.ty);
+                let text = self.file.queries().type_text(source.ty);
                 Err(ValidationError::TypeParameter { text })
             }
             ShapeKind::Never => Ok(ValidationShape::Never),
@@ -366,7 +367,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
         let mut parts = Vec::with_capacity(types.len());
         for (&ty, &text) in types.iter().zip(tail) {
             let placeholder = placeholder_of(self.shape_of(ty)?.kind)
-                .filter(|_| !self.file.queries.says_more_than_its_shape(ty));
+                .filter(|_| !self.file.queries().says_more_than_its_shape(ty));
             let Some(placeholder) = placeholder else {
                 return Err(self.unsupported(source));
             };
@@ -374,7 +375,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
             parts.push(TemplatePart { placeholder, text });
         }
         let head = self.file.intern_atom(*head);
-        let text = self.file.queries.template_literal_text(source.ty);
+        let text = self.file.queries().template_literal_text(source.ty);
         let text = self.file.intern_bytes(&text);
         let node = &mut self.nodes[source.node as usize];
         node.rules.push(ValidationRule::Template { head, parts });
@@ -404,14 +405,14 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
         &mut self,
         source: Source<'c>,
     ) -> Result<ValidationShape, ValidationError> {
-        let declared = self.file.queries.object_members(source.ty);
+        let declared = self.file.queries().object_members(source.ty);
         let declared = declared.map_err(ValidationError::GaveUp)?;
         let layout = self.file.object_type_layout(source.ty);
         let mut members = Vec::with_capacity(declared.len());
         for member in declared {
             members.push(self.compute_member(source, layout, member)?);
         }
-        let signatures = self.file.queries.index_signatures(source.ty);
+        let signatures = self.file.queries().index_signatures(source.ty);
         let value_type = match signatures.map_err(ValidationError::GaveUp)? {
             [] => None,
             [signature] => match signature.key {
@@ -453,7 +454,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
                 return Err(self.unsupported(source));
             }
         };
-        if self.file.queries.is_schema_key(name) {
+        if self.file.queries().is_schema_key(name) {
             return Err(self.unsupported(source));
         }
         let key = self.file.name_key(name);
@@ -484,7 +485,7 @@ impl<'c> NodeBuilder<'_, '_, 'c, '_, '_> {
     }
 
     fn set_object_text(&mut self, source: Source<'c>) {
-        let name = self.file.queries.type_display_name(source.ty);
+        let name = self.file.queries().type_display_name(source.ty);
         let text = name.map(|name| self.file.intern_bytes(&name.text));
         self.nodes[source.node as usize].text = text;
     }

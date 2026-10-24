@@ -21,6 +21,10 @@ use crate::statistics::{LimitId, LimitValues};
 
 const DEFINED_NAME: &[u8] = b"PROBE_DATA";
 const NESTING_DEPTH: usize = 1900;
+const MAIN_FILE: (&str, &str) = (
+    "main.js",
+    "import value from \"./data.json\";\nexport default value;\n",
+);
 
 type CreateValue = for<'s> fn(&'s Arena, &Interner<'s>) -> DataValue<'s>;
 
@@ -111,13 +115,7 @@ fn create_nested_arrays<'s>(arena: &'s Arena, _: &Interner<'s>) -> DataValue<'s>
 }
 
 fn lower_data_module(json: &str) -> Vec<Fragment> {
-    let files = [
-        (
-            "main.js",
-            "import value from \"./data.json\";\nexport default value;\n",
-        ),
-        ("data.json", json),
-    ];
+    let files = [MAIN_FILE, ("data.json", json)];
     let lowered = lower_program_with_settings(&files, &default_settings());
     lowered
         .into_iter()
@@ -315,13 +313,7 @@ fn deep_value_needs_no_stack() {
 
 fn count_nesting_errors(depth: usize) -> usize {
     let json = "[".repeat(depth) + &"]".repeat(depth);
-    let files = [
-        (
-            "main.js",
-            "import value from \"./data.json\";\nexport default value;\n",
-        ),
-        ("data.json", json.as_str()),
-    ];
+    let files = [MAIN_FILE, ("data.json", json.as_str())];
     let lowered = lower_program_with_settings(&files, &default_settings());
     let diagnostics = lowered.iter().flat_map(|(_, file)| file.diagnostics.iter());
     diagnostics

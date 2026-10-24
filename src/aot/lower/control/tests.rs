@@ -47,13 +47,6 @@ fn cleanup() -> ControlEntry {
 }
 
 #[test]
-fn empty_stack_has_no_target() {
-    let stack = ControlState::default();
-    assert_eq!(stack.innermost_break_statement(), None);
-    assert_eq!(stack.innermost_continue_statement(), None);
-}
-
-#[test]
 fn unlabeled_break_skips_labels() {
     let mut stack = create_stack(vec![
         break_target(1, BreakTargetKind::Label),
@@ -80,10 +73,14 @@ fn unlabeled_continue_skips_switches() {
 }
 
 #[test]
-fn handlers_and_cleanups_are_no_targets() {
-    let stack = create_stack(vec![handler(), cleanup()]);
-    assert_eq!(stack.innermost_break_statement(), None);
-    assert_eq!(stack.innermost_continue_statement(), None);
+fn empty_stack_handlers_and_cleanups_have_no_target() {
+    for stack in [
+        ControlState::default(),
+        create_stack(vec![handler(), cleanup()]),
+    ] {
+        assert_eq!(stack.innermost_break_statement(), None);
+        assert_eq!(stack.innermost_continue_statement(), None);
+    }
 }
 
 #[test]

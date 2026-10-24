@@ -4,7 +4,7 @@ use crate::modules::module_set::collect_modules;
 use crate::modules::order::compute_order;
 use crate::modules::requests::scan_files;
 use crate::modules::testing::{describe_module, file_named, with_graph};
-use crate::modules::{BindInput, ExportLookup};
+use crate::modules::{BindInput, ExportLookup, ModuleFailure};
 use bstr::BString;
 use bun_core::strings;
 use bun_sema::bind::SymbolId;
@@ -80,7 +80,6 @@ fn with_export_tables(
             bind: input,
             scans: &scans,
             modules: &modules,
-            inner_modules: &|_| &[],
             half: &|module| order.half(module),
             is_prefix_root: &|_| true,
         });

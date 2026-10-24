@@ -364,6 +364,12 @@ impl FragmentBuilder {
         add_record(&mut self.expected_results, expected)
     }
 
+    pub(crate) fn is_validated(&self, expected: ExpectedResultId) -> bool {
+        !self.expected_results[expected.index()]
+            .validation
+            .is_empty()
+    }
+
     // What a call is declared to answer where nothing of the compiler's builds the answer.
     pub(crate) fn add_described_result(&mut self, expected: ExpectedResult) -> ExpectedResultId {
         add_record(&mut self.expected_results, expected)

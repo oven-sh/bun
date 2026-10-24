@@ -26,14 +26,13 @@ impl OwnFields {
         index
     }
 
-    pub(super) fn add_accessor_storage(&mut self, member: MemberId, field: Field) -> u32 {
+    pub(super) fn add_accessor_storage(&mut self, member: MemberId, field: Field) {
         debug_assert!(
             field.flags.contains(FieldFlags::IS_PRIVATE),
             "storage is private state"
         );
         let index = self.add(field);
         self.accessor_storages.push((member, index));
-        index
     }
 
     pub(super) fn replace(&mut self, index: u32, field: Field) {
@@ -109,7 +108,7 @@ mod tests {
     }
 
     #[test]
-    fn fields_keep_declaration_order() {
+    fn fields_keep_declaration_order_and_are_found_by_key() {
         let mut fields = OwnFields::default();
         assert_eq!(fields.add(named(9)), 0);
         assert_eq!(fields.add(named(2)), 1);
@@ -118,15 +117,6 @@ mod tests {
         let keys: Vec<_> = fields.as_slice().iter().map(|field| field.key).collect();
         let expected = [9, 2, 5].map(|key| Some(PropertyKeyId::new(key)));
         assert_eq!(keys, expected);
-    }
-
-    #[test]
-    fn field_is_found_by_key() {
-        let mut fields = OwnFields::default();
-        for key in [9, 2, 5] {
-            fields.add(named(key));
-        }
-        let fields = fields.finish();
         assert_eq!(fields.find(PropertyKeyId::new(9)), Some(0));
         assert_eq!(fields.find(PropertyKeyId::new(2)), Some(1));
         assert_eq!(fields.find(PropertyKeyId::new(5)), Some(2));
@@ -152,12 +142,8 @@ mod tests {
         assert_eq!(fields.brand(), None);
         assert_eq!(fields.find(PropertyKeyId::new(0)), None);
         assert!(fields.as_slice().is_empty());
-    }
-
-    #[test]
-    fn unfinished_fields_are_unknown() {
-        let fields = OwnFields::default();
-        assert_eq!(fields.find(PropertyKeyId::new(0)), None);
+        let unfinished = OwnFields::default();
+        assert_eq!(unfinished.find(PropertyKeyId::new(0)), None);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use super::{lower_runtime_module, terminator_operands};
 use crate::builtins::id::{BuiltinId, CheckedJSType};
 use crate::ir::generated::{EntryParameter, FunctionFlags, TerminatorKind};
-use crate::ir::{EntryPosition, Id, Opcode, Reference, TypeId, TypeTable, ValueId};
+use crate::ir::{EntryPosition, Id, Opcode, TypeId, TypeTable, ValueId};
 
 #[test]
 fn object_and_callable_tests_are_type_tests() {
@@ -14,20 +14,15 @@ fn object_and_callable_tests_are_type_tests() {
     let probe = module.function("probe");
     let tests = probe.all(Opcode::TypeTest);
     let tested: Vec<TypeId> = tests.iter().flat_map(|test| test.types()).collect();
-    assert_eq!(
-        tested,
-        [TypeTable::OBJECT, TypeTable::FUNCTION, TypeTable::NULLISH],
-        "{probe}"
-    );
+    let expected = [TypeTable::OBJECT, TypeTable::FUNCTION, TypeTable::NULLISH];
+    assert_eq!(tested, expected, "{probe}");
     for test in &tests {
         assert_eq!(test.operands(), [probe.parameter(0)], "{probe}");
     }
     assert_eq!(probe.count(Opcode::Call), 0, "{probe}");
     assert_eq!(probe.count(Opcode::PropGet), 0, "{probe}");
-    assert!(
-        probe.terminators(TerminatorKind::Branch).is_empty(),
-        "{probe}"
-    );
+    let branches = probe.terminators(TerminatorKind::Branch);
+    assert!(branches.is_empty(), "{probe}");
 }
 
 #[test]
@@ -36,11 +31,8 @@ fn js_type_test_names_first_and_last_type() {
     let probe = module.function("probe");
     let map = CheckedJSType::JSMapType.to_wire();
     let expected = [probe.parameter(0).to_word(), map, map];
-    assert_eq!(
-        probe.only(Opcode::HasJSType).value.fields,
-        expected,
-        "{probe}"
-    );
+    let test = probe.only(Opcode::HasJSType);
+    assert_eq!(test.value.fields, expected, "{probe}");
     assert_eq!(probe.count(Opcode::Call), 0, "{probe}");
 }
 
@@ -97,11 +89,8 @@ export function probeUntyped(value: any) { return $isConstructor(value); }
     assert_eq!(array_claim.types(), [TypeTable::ARRAY], "{typed}");
     assert_eq!(index_claim.operands(), [index.id()], "{typed}");
     let read = typed.only(Opcode::GetContiguousIndex);
-    assert_eq!(
-        read.operands(),
-        [array_claim.id(), index_claim.id()],
-        "{typed}"
-    );
+    let expected = [array_claim.id(), index_claim.id()];
+    assert_eq!(read.operands(), expected, "{typed}");
 
     let untyped = module.function("probeUntyped");
     let test = untyped.only(Opcode::IsConstructor);
@@ -140,11 +129,8 @@ export function probeKey(x: any) { return $toPropertyKey(x); }
     ];
     for (name, opcode) in conversions {
         let probe = module.function(name);
-        assert_eq!(
-            probe.only(opcode).operands(),
-            [probe.parameter(0)],
-            "{probe}"
-        );
+        let converted = probe.only(opcode);
+        assert_eq!(converted.operands(), [probe.parameter(0)], "{probe}");
         assert_eq!(probe.count(Opcode::Call), 0, "{probe}");
     }
 }
@@ -161,11 +147,8 @@ fn array_push_defines_element_at_length() {
     assert_eq!(length.operands(), [array.id()], "{probe}");
     assert_eq!(length.keys(), [probe.text_key("length")], "{probe}");
     let expected = [array.id(), length.id(), probe.parameter(1)];
-    assert_eq!(
-        probe.only(Opcode::ElemDefine).operands(),
-        expected,
-        "{probe}"
-    );
+    let define = probe.only(Opcode::ElemDefine);
+    assert_eq!(define.operands(), expected, "{probe}");
     assert_eq!(probe.count(Opcode::Call), 0, "{probe}");
 }
 
@@ -178,11 +161,8 @@ fn put_by_val_direct_defines_element() {
     let object = probe.only_demanded_conversion();
     assert_eq!(object.operands(), [probe.parameter(0)], "{probe}");
     let expected = [object.id(), probe.parameter(1), probe.parameter(2)];
-    assert_eq!(
-        probe.only(Opcode::ElemDefine).operands(),
-        expected,
-        "{probe}"
-    );
+    let define = probe.only(Opcode::ElemDefine);
+    assert_eq!(define.operands(), expected, "{probe}");
     assert_eq!(probe.count(Opcode::ElemSet), 0, "{probe}");
 }
 
@@ -215,13 +195,8 @@ fn arguments_object_holds_undeclared_parameters() {
     let module =
         lower_runtime_module("export function probe(a: any) { return [arguments, $argument(1)]; }");
     let probe = module.function("probe");
-    assert!(
-        probe
-            .function
-            .flags
-            .contains(FunctionFlags::HAS_HIDDEN_REST),
-        "{probe}"
-    );
+    let flags = probe.function.flags;
+    assert!(flags.contains(FunctionFlags::HAS_HIDDEN_REST), "{probe}");
     let arguments = probe.only(Opcode::CreateUnmappedArguments);
     let expected = [probe.parameter(0), probe.parameter(1)];
     assert_eq!(arguments.operands()[2..], expected, "{probe}");
@@ -232,25 +207,14 @@ fn promise_status_is_compared_with_peeked_status() {
     let module =
         lower_runtime_module("export function probe(p: any) { return $isPromisePending(p); }");
     let probe = module.function("probe");
-    let global = probe.only(Opcode::Builtin);
-    assert_eq!(
-        global.references(),
-        [Reference::Builtin(BuiltinId::GlobalThis)],
-        "{probe}"
-    );
+    let global = probe.only_builtin(BuiltinId::GlobalThis);
     let peek = probe.only(Opcode::PropGet);
     assert_eq!(peek.operands(), [global.id()], "{probe}");
-    assert_eq!(
-        peek.keys(),
-        [probe.private_key("peekPromiseStatus")],
-        "{probe}"
-    );
+    let key = probe.private_key("peekPromiseStatus");
+    assert_eq!(peek.keys(), [key], "{probe}");
     let status = probe.only(Opcode::Call);
-    assert_eq!(
-        status.operands(),
-        [peek.id(), probe.parameter(0)],
-        "{probe}"
-    );
+    let expected = [peek.id(), probe.parameter(0)];
+    assert_eq!(status.operands(), expected, "{probe}");
     let pending = probe.only(Opcode::Integer);
     assert_eq!(pending.integer(), 0, "{probe}");
     let expected = [status.id(), pending.id()];

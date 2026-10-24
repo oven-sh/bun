@@ -1,8 +1,7 @@
 use crate::diagnostics::LoadMessages;
 use crate::load::loaders::reads_raw_bytes;
 use crate::load::source_provider::{
-    DeferredLoad, Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest,
-    SourceProvider,
+    Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest, SourceProvider,
 };
 use crate::load::{HOST_ROOT, is_host_path, read_file_bytes};
 use bun_ast::{ImportKind, Loader};
@@ -36,12 +35,6 @@ pub(crate) enum ModuleText {
     Failed,
 }
 
-#[derive(Copy, Clone, Debug)]
-pub(crate) struct LoadedModule {
-    pub loader: Loader,
-    pub is_from_plugin: bool,
-}
-
 #[derive(Default)]
 pub(crate) struct DeferredReads {
     pub texts: Vec<(Vec<u8>, Cow<'static, [u8]>)>,
@@ -55,9 +48,9 @@ enum ModuleLoad {
     Failed,
 }
 
-struct StoredModule {
-    loader: Loader,
-    is_from_plugin: bool,
+pub(crate) struct StoredModule {
+    pub loader: Loader,
+    pub is_from_plugin: bool,
     contents: Option<Cow<'static, [u8]>>,
 }
 
@@ -134,7 +127,29 @@ impl<'a> PluginModules<'a> {
             Some(cell) => cell,
             None => self.resolutions.insert_ref(key, OnceLock::new()),
         };
-        cell.get_or_init(|| self.resolve_now(request)).clone()
+        let resolve = || {
+            let provider_request = ResolveRequest {
+                specifier: request.specifier,
+                importer: self.module_name(request.importer),
+                kind: import_kind(request.kind, request.form),
+            };
+            let provider = self.provider;
+            match (self.messages).with_log(|log| provider.resolve(&provider_request, log)) {
+                Ok(Resolution::NotHandled) | Err(Failed) => PluginResolution::NotHandled,
+                Ok(Resolution::External { specifier }) => PluginResolution::External { specifier },
+                Ok(Resolution::Module { namespace, path })
+                    if namespace.is_empty() || namespace == FILE_NAMESPACE =>
+                {
+                    PluginResolution::Path(from_native(&path))
+                }
+                Ok(Resolution::Module { namespace, path }) => {
+                    let virtual_path = create_virtual_path(&namespace, &path);
+                    (self.virtual_modules).insert_ref(virtual_path.clone(), (namespace, path));
+                    PluginResolution::Path(virtual_path)
+                }
+            }
+        };
+        cell.get_or_init(resolve).clone()
     }
 
     pub(crate) fn read(&self, path: &[u8], default_loader: Loader) -> ModuleText {
@@ -144,9 +159,37 @@ impl<'a> PluginModules<'a> {
         };
         let mut first_text = None;
         let load = cell.get_or_init(|| {
-            let (load, text) = self.load_now(path, default_loader);
-            first_text = text;
-            load
+            let module = self.module_name(path);
+            let read_file = || self.read_file(path, default_loader);
+            let request = LoadRequest {
+                module,
+                default_loader,
+                read_file: &read_file,
+            };
+            match (self.messages).with_log(|log| self.provider.load(&request, log)) {
+                Ok(Loaded::Source {
+                    contents,
+                    loader,
+                    is_from_plugin,
+                }) => {
+                    if is_from_plugin {
+                        bun_sema_driver::did_read_source(contents.len());
+                    }
+                    let stored = StoredModule::new(&contents, loader, is_from_plugin);
+                    first_text = Some(contents);
+                    ModuleLoad::Loaded(stored)
+                }
+                Ok(Loaded::Deferred) => {
+                    self.deferred.lock().push(DeferredModule {
+                        host_path: path.to_vec(),
+                        namespace: module.namespace.to_vec(),
+                        path: module.path.to_vec(),
+                    });
+                    ModuleLoad::Deferred(OnceLock::new())
+                }
+                Ok(Loaded::NotFound) => ModuleLoad::Missing,
+                Err(Failed) => ModuleLoad::Failed,
+            }
         });
         if let Some(text) = first_text {
             return ModuleText::Text(text);
@@ -172,18 +215,46 @@ impl<'a> PluginModules<'a> {
         let answers = (self.messages).with_log(|log| self.provider.finish_deferred_loads(log));
         pending.shared_sort_unstable_by(|a, b| a.compare_name(&b.namespace, &b.path));
         for load in answers {
-            let DeferredLoad {
-                namespace,
-                path,
-                answer,
-            } = load;
-            let found = pending.binary_search_by(|entry| entry.compare_name(&namespace, &path));
-            if let Ok(index) = found {
-                self.finish_deferred_read(&pending[index].host_path, answer, &mut reads);
+            let found =
+                pending.binary_search_by(|entry| entry.compare_name(&load.namespace, &load.path));
+            let Ok(index) = found else {
+                continue;
+            };
+            let host_path = &pending[index].host_path;
+            let Some(cell) = self.unanswered_read(host_path) else {
+                continue;
+            };
+            match load.answer {
+                Ok(Loaded::Source {
+                    contents,
+                    loader,
+                    is_from_plugin,
+                }) => {
+                    cell.get_or_init(|| Some(StoredModule::new(&contents, loader, is_from_plugin)));
+                    reads.texts.push((host_path.clone(), contents));
+                }
+                Ok(Loaded::NotFound) => {
+                    cell.get_or_init(|| None);
+                    reads.missing.push(host_path.clone());
+                }
+                Ok(Loaded::Deferred) => {}
+                Err(Failed) => {
+                    cell.get_or_init(|| None);
+                }
             }
         }
-        for entry in &pending {
-            self.fail_unanswered_read(entry);
+        for module in &pending {
+            let Some(cell) = self.unanswered_read(&module.host_path) else {
+                continue;
+            };
+            let message = [
+                &b"a deferred load was never answered: "[..],
+                module.namespace.as_slice(),
+                b":",
+                module.path.as_slice(),
+            ];
+            self.messages.report_internal_error(message.concat());
+            cell.get_or_init(|| None);
         }
         reads.texts.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
         reads.missing.shared_sort_unstable();
@@ -195,25 +266,19 @@ impl<'a> PluginModules<'a> {
             return answer;
         }
         let answer = self.provider.has_load_plugin(self.module_name(path));
-        *self
-            .paths_asked_for_load_plugin
-            .insert_ref(path.to_vec(), answer)
+        *(self.paths_asked_for_load_plugin).insert_ref(path.to_vec(), answer)
     }
 
     pub(crate) fn was_read(&self, path: &[u8]) -> bool {
         self.modules.get_ref(path).is_some()
     }
 
-    pub(crate) fn loaded(&self, path: &[u8]) -> Option<LoadedModule> {
-        let module = match self.modules.get_ref(path)?.get()? {
-            ModuleLoad::Loaded(module) => module,
-            ModuleLoad::Deferred(answer) => answer.get()?.as_ref()?,
-            ModuleLoad::Missing | ModuleLoad::Failed => return None,
-        };
-        Some(LoadedModule {
-            loader: module.loader,
-            is_from_plugin: module.is_from_plugin,
-        })
+    pub(crate) fn loaded(&self, path: &[u8]) -> Option<&StoredModule> {
+        match self.modules.get_ref(path)?.get()? {
+            ModuleLoad::Loaded(module) => Some(module),
+            ModuleLoad::Deferred(answer) => answer.get()?.as_ref(),
+            ModuleLoad::Missing | ModuleLoad::Failed => None,
+        }
     }
 
     pub(crate) fn virtual_module(&self, path: &[u8]) -> Option<(&[u8], &[u8])> {
@@ -236,10 +301,7 @@ impl<'a> PluginModules<'a> {
     }
 
     pub(crate) fn provider_path<'p>(&'p self, path: &'p [u8]) -> &'p [u8] {
-        match self.virtual_module(path) {
-            Some((_, plugin_path)) => plugin_path,
-            None => to_native(path),
-        }
+        self.module_name(path).path
     }
 
     fn module_name<'p>(&'p self, path: &'p [u8]) -> ModuleName<'p> {
@@ -252,71 +314,6 @@ impl<'a> PluginModules<'a> {
                 namespace: FILE_NAMESPACE,
                 path: to_native(path),
             },
-        }
-    }
-
-    fn resolve_now(&self, request: &CodeRequest<'_>) -> PluginResolution {
-        let provider_request = ResolveRequest {
-            specifier: request.specifier,
-            importer: self.module_name(request.importer),
-            kind: import_kind(request.kind, request.form),
-        };
-        let answer = (self.messages).with_log(|log| self.provider.resolve(&provider_request, log));
-        match answer {
-            Ok(Resolution::NotHandled) | Err(Failed) => PluginResolution::NotHandled,
-            Ok(Resolution::External { specifier }) => PluginResolution::External { specifier },
-            Ok(Resolution::Module { namespace, path }) => {
-                PluginResolution::Path(self.host_path(namespace, path))
-            }
-        }
-    }
-
-    fn host_path(&self, namespace: Vec<u8>, path: Vec<u8>) -> Vec<u8> {
-        if namespace.is_empty() || namespace == FILE_NAMESPACE {
-            return from_native(&path);
-        }
-        let virtual_path = create_virtual_path(&namespace, &path);
-        (self.virtual_modules).insert_ref(virtual_path.clone(), (namespace, path));
-        virtual_path
-    }
-
-    fn load_now(
-        &self,
-        path: &[u8],
-        default_loader: Loader,
-    ) -> (ModuleLoad, Option<Cow<'static, [u8]>>) {
-        let module = self.module_name(path);
-        let read_file = || self.read_file(path, default_loader);
-        let request = LoadRequest {
-            module,
-            default_loader,
-            read_file: &read_file,
-        };
-        match self
-            .messages
-            .with_log(|log| self.provider.load(&request, log))
-        {
-            Ok(Loaded::Source {
-                contents,
-                loader,
-                is_from_plugin,
-            }) => {
-                if is_from_plugin {
-                    bun_sema_driver::did_read_source(contents.len());
-                }
-                let stored = StoredModule::new(&contents, loader, is_from_plugin);
-                (ModuleLoad::Loaded(stored), Some(contents))
-            }
-            Ok(Loaded::Deferred) => {
-                self.deferred.lock().push(DeferredModule {
-                    host_path: path.to_vec(),
-                    namespace: module.namespace.to_vec(),
-                    path: module.path.to_vec(),
-                });
-                (ModuleLoad::Deferred(OnceLock::new()), None)
-            }
-            Ok(Loaded::NotFound) => (ModuleLoad::Missing, None),
-            Err(Failed) => (ModuleLoad::Failed, None),
         }
     }
 
@@ -343,60 +340,11 @@ impl<'a> PluginModules<'a> {
         Some(Cow::Owned(bytes))
     }
 
-    fn deferred_answer(&self, host_path: &[u8]) -> Option<&OnceLock<Option<StoredModule>>> {
+    fn unanswered_read(&self, host_path: &[u8]) -> Option<&OnceLock<Option<StoredModule>>> {
         match self.modules.get_ref(host_path)?.get()? {
-            ModuleLoad::Deferred(answer) => Some(answer),
+            ModuleLoad::Deferred(answer) => answer.get().is_none().then_some(answer),
             ModuleLoad::Loaded(_) | ModuleLoad::Missing | ModuleLoad::Failed => None,
         }
-    }
-
-    fn finish_deferred_read(
-        &self,
-        host_path: &[u8],
-        answer: Result<Loaded, Failed>,
-        reads: &mut DeferredReads,
-    ) {
-        let Some(cell) = self.deferred_answer(host_path) else {
-            return;
-        };
-        if cell.get().is_some() {
-            return;
-        }
-        match answer {
-            Ok(Loaded::Source {
-                contents,
-                loader,
-                is_from_plugin,
-            }) => {
-                cell.get_or_init(|| Some(StoredModule::new(&contents, loader, is_from_plugin)));
-                reads.texts.push((host_path.to_vec(), contents));
-            }
-            Ok(Loaded::NotFound) => {
-                cell.get_or_init(|| None);
-                reads.missing.push(host_path.to_vec());
-            }
-            Ok(Loaded::Deferred) => {}
-            Err(Failed) => {
-                cell.get_or_init(|| None);
-            }
-        }
-    }
-
-    fn fail_unanswered_read(&self, module: &DeferredModule) {
-        let Some(cell) = self.deferred_answer(&module.host_path) else {
-            return;
-        };
-        if cell.get().is_some() {
-            return;
-        }
-        let message = [
-            &b"a deferred load was never answered: "[..],
-            module.namespace.as_slice(),
-            b":",
-            module.path.as_slice(),
-        ];
-        self.messages.report_internal_error(message.concat());
-        cell.get_or_init(|| None);
     }
 }
 
@@ -412,10 +360,6 @@ fn import_kind(kind: CodeImportKind, form: CodeImportForm) -> ImportKind {
             ImportKind::Require
         }
     }
-}
-
-fn is_plain_name_byte(byte: u8) -> bool {
-    matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-')
 }
 
 fn create_virtual_path(namespace: &[u8], path: &[u8]) -> Vec<u8> {
@@ -435,7 +379,7 @@ pub(crate) fn append_encoded_segment(target: &mut Vec<u8>, segment: &[u8]) {
     }
     let is_dot_segment = matches!(segment, b"." | b"..");
     for &byte in segment {
-        if is_plain_name_byte(byte) && !is_dot_segment {
+        if matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-') && !is_dot_segment {
             target.push(byte);
         } else {
             let [high_digit, low_digit] = hex_byte_lower(byte);

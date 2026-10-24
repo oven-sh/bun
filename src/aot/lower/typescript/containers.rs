@@ -13,27 +13,23 @@ pub(super) struct Container {
     ends_dead_zone: bool,
 }
 
-pub(super) fn find_container(
-    lowering: &FunctionLowering<'_, '_, '_, '_, '_>,
-    declaration: Decl,
-    name: Atom,
-) -> Container {
-    let bound = lowering.file.bound;
-    let binding = bound.declared_symbol(declaration);
-    // Each block of a namespace has a binding of its own for what it exports, and a class or a function that a namespace merges with is the binding.
-    let has_dead_zone = bound.binding_kind(binding) == BindingKind::TypeScriptContainer
-        && bound.initial_state(binding) == InitialState::Uninitialized;
-    let mut declarations = bound.symbol(binding).decls.iter().copied();
-    let first = declarations.find(|&it| lowering.produces_code(it));
-    Container {
-        binding,
-        merged: bound.export_symbol_of_value_symbol_if_exported(binding),
-        name,
-        ends_dead_zone: has_dead_zone && first == Some(declaration),
-    }
-}
-
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(super) fn find_container(&self, declaration: Decl, name: Atom) -> Container {
+        let bound = self.file.bound;
+        let binding = bound.declared_symbol(declaration);
+        // Each block of a namespace has a binding of its own for what it exports, and a class or a function that a namespace merges with is the binding.
+        let has_dead_zone = bound.binding_kind(binding) == BindingKind::TypeScriptContainer
+            && bound.initial_state(binding) == InitialState::Uninitialized;
+        let mut declarations = bound.symbol(binding).decls.iter().copied();
+        let first = declarations.find(|&it| self.produces_code(it));
+        Container {
+            binding,
+            merged: bound.export_symbol_of_value_symbol_if_exported(binding),
+            name,
+            ends_dead_zone: has_dead_zone && first == Some(declaration),
+        }
+    }
+
     fn produces_code(&self, declaration: Decl) -> bool {
         let (hir, bound) = (self.file.hir, self.file.bound);
         match declaration {
@@ -108,7 +104,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ModuleInstanceState::NonInstantiated => return,
             ModuleInstanceState::Instantiated | ModuleInstanceState::ConstEnumOnly => {}
         }
-        let container = find_container(self, Decl::Module(declaration), name);
+        let container = self.find_container(Decl::Module(declaration), name);
         self.ensure_container(container);
         let scope = bound.module_scope[declaration.idx()];
         self.enter_scope(scope);

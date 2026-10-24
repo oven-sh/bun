@@ -51,12 +51,6 @@ pub(crate) const TYPED_PACKAGE_JSON: &str =
 pub(crate) const TYPED_PACKAGE_SOUND_JSON: &str =
     r#"{"format":2,"name":"p","version":"1.0.0","when":{},"lay":{"x.js":""},"needs":[]}"#;
 
-struct LoweringRequest<'a> {
-    project: ProjectId,
-    files_to_lower: &'a [FileId],
-    options: LoweringOptions,
-}
-
 pub fn lower_program_with_libs(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
@@ -88,20 +82,13 @@ pub fn lower_program(
         with_bound_build(build, |build, loaded, bound| {
             let application = loaded.project(ProjectId::Application).loaded.files();
             let runtime = loaded.project(ProjectId::Runtime).loaded.files();
-            let application_request = LoweringRequest {
-                project: ProjectId::Application,
-                files_to_lower: application.compiled_files(),
-                options,
+            let lower = |project: ProjectId, files: &[FileId]| {
+                lower_project_files(build, loaded, bound, project, files, options)
             };
-            let mut lowered = lower_project_files(build, loaded, bound, &application_request);
+            let mut lowered = lower(ProjectId::Application, application.compiled_files());
             let replaced_sources = find_replaced_runtime_sources(runtime, files);
             if !replaced_sources.is_empty() {
-                let runtime_request = LoweringRequest {
-                    project: ProjectId::Runtime,
-                    files_to_lower: &replaced_sources,
-                    options,
-                };
-                lowered.extend(lower_project_files(build, loaded, bound, &runtime_request));
+                lowered.extend(lower(ProjectId::Runtime, &replaced_sources));
             }
             lowered
         })
@@ -161,41 +148,12 @@ pub fn lower_program_with_provider(
 }
 
 #[cfg(test)]
-pub fn lower_program_with_options(
-    files: &[(&str, &str)],
-    settings: &TranspileSettings,
-    aot: AotOptions,
-) -> Vec<(FileId, LoweredFile)> {
-    lower_application(&TestProject::new(files, settings).with_aot_options(aot))
-}
-
-#[cfg(test)]
 pub fn lower_program_with_limits(
     files: &[(&str, &str)],
     limits: LimitValues,
 ) -> Vec<(FileId, LoweredFile)> {
-    lower_application(&TestProject::new(files, &default_settings()).with_limits(limits))
-}
-
-#[cfg(test)]
-pub fn lower_program_with_entry_points(
-    files: &[(&str, &str)],
-    settings: &TranspileSettings,
-    entry_point_count: usize,
-) -> Vec<(FileId, LoweredFile)> {
-    lower_application(&TestProject::with_entry_points(
-        files,
-        entry_point_count,
-        settings,
-    ))
-}
-
-#[cfg(test)]
-pub fn lower_runtime_project(files: &[(&str, &str)]) -> Vec<(FileId, LoweredFile)> {
-    let settings = default_settings();
-    with_build(BUNDLED_LIBS, files, &settings, &WithoutServices, |build| {
-        lower_files(build, ProjectId::Runtime)
-    })
+    let project = TestProject::new(files, &default_settings());
+    lower_application(&TestProject { limits, ..project })
 }
 
 #[cfg(test)]
@@ -213,15 +171,6 @@ pub fn lower_and_link_program<R>(
         })?;
         Ok(then(&output.program, &output.names))
     })
-}
-
-#[cfg(test)]
-pub fn link_program_with_options(
-    files: &[(&str, &str)],
-    settings: &TranspileSettings,
-    aot: AotOptions,
-) -> Result<LinkedProgram, BuildFailed> {
-    link_project(&TestProject::new(files, settings).with_aot_options(aot))
 }
 
 #[cfg(test)]
@@ -281,10 +230,8 @@ pub(crate) fn with_loaded_build_and_react_compiler<R>(
     mode: ReactCompilerMode,
     then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>) -> R,
 ) -> R {
-    with_loaded_project(
-        &TestProject::new(files, settings).with_react_compiler(mode),
-        then,
-    )
+    let project = TestProject::new(files, settings).with_react_compiler(mode);
+    with_loaded_project(&project, then)
 }
 
 #[cfg(test)]
@@ -293,7 +240,9 @@ pub(crate) fn with_loaded_test_run<R>(
     settings: &TranspileSettings,
     then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>) -> R,
 ) -> R {
-    with_loaded_project(&TestProject::new(files, settings).with_test_run(), then)
+    let mut project = TestProject::new(files, settings);
+    project.runs_tests = true;
+    with_loaded_project(&project, then)
 }
 
 #[cfg(test)]
@@ -303,10 +252,8 @@ pub(crate) fn with_loaded_build_and_options<R>(
     aot: AotOptions,
     then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>) -> R,
 ) -> R {
-    with_loaded_project(
-        &TestProject::new(files, settings).with_aot_options(aot),
-        then,
-    )
+    let project = TestProject::new(files, settings).with_aot_options(aot);
+    with_loaded_project(&project, then)
 }
 
 #[cfg(test)]
@@ -402,12 +349,9 @@ fn lower_files(
     project: ProjectId,
 ) -> Result<Vec<(FileId, LoweredFile)>, Stage> {
     with_bound_build(build, |build, loaded, bound| {
-        let request = LoweringRequest {
-            project,
-            files_to_lower: loaded.project(project).loaded.files().compiled_files(),
-            options: build.lowering_options(),
-        };
-        lower_project_files(build, loaded, bound, &request)
+        let files = loaded.project(project).loaded.files().compiled_files();
+        let options = build.lowering_options();
+        lower_project_files(build, loaded, bound, project, files, options)
     })
 }
 
@@ -415,16 +359,15 @@ fn lower_project_files(
     build: &Build<'_>,
     loaded: &LoadedBuild<'_, '_>,
     bound: &BoundBuild<'_>,
-    lowering: &LoweringRequest<'_>,
+    id: ProjectId,
+    files: &[FileId],
+    options: LoweringOptions,
 ) -> Vec<(FileId, LoweredFile)> {
-    let project = loaded.project(lowering.project);
+    let project = loaded.project(id);
     let roles = decide_project_roles(project);
-    let files_to_lower = find_files_to_lower(lowering.files_to_lower, &roles);
-    build.with_lowering_inputs(loaded, bound, lowering.project, &roles, |inputs| {
-        let inputs = LoweringInputs {
-            options: lowering.options,
-            ..*inputs
-        };
+    let files_to_lower = find_files_to_lower(files, &roles);
+    build.with_lowering_inputs(loaded, bound, id, &roles, |inputs| {
+        let inputs = LoweringInputs { options, ..*inputs };
         let checked = check_and_lower(
             project.loaded,
             project.host,
@@ -438,13 +381,8 @@ fn lower_project_files(
 }
 
 pub(super) fn decide_project_roles(project: &LoadedProject<'_, '_>) -> RoleDecision {
-    let files_to_lower = project.loaded.files().compiled_files();
-    decide_roles(
-        project.loaded,
-        project.host,
-        project.request,
-        files_to_lower,
-    )
+    let files = project.loaded.files().compiled_files();
+    decide_roles(project.loaded, project.host, project.request, files)
 }
 
 pub(super) fn with_bound_build<R>(
@@ -654,22 +592,9 @@ impl TestProject {
     }
 
     #[cfg(test)]
-    fn with_limits(self, limits: LimitValues) -> TestProject {
-        TestProject { limits, ..self }
-    }
-
-    #[cfg(test)]
     fn with_react_compiler(self, react_compiler: ReactCompilerMode) -> TestProject {
         TestProject {
             react_compiler,
-            ..self
-        }
-    }
-
-    #[cfg(test)]
-    fn with_test_run(self) -> TestProject {
-        TestProject {
-            runs_tests: true,
             ..self
         }
     }

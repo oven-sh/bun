@@ -1,5 +1,5 @@
 use crate::diagnostics::LoadMessages;
-use crate::load::source_provider::{Failed, SourceFile, SourceProvider};
+use crate::load::source_provider::{SourceFile, SourceProvider};
 use bun_ast::Loader;
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::spans::skip_trivia;
@@ -17,18 +17,6 @@ pub(crate) struct ParsedDataModule<'s> {
     pub is_page: bool,
 }
 
-impl<'s> ParsedDataModule<'s> {
-    fn empty(arena: &'s Arena, atoms: &Interner<'s>) -> ParsedDataModule<'s> {
-        let DataModuleTree { file, host_values } = empty_module(arena, atoms);
-        ParsedDataModule {
-            hir: file,
-            host_values,
-            web_assembly: None,
-            is_page: false,
-        }
-    }
-}
-
 pub(crate) fn parse_data_module<'s>(
     provider: &dyn SourceProvider,
     messages: &LoadMessages,
@@ -36,25 +24,20 @@ pub(crate) fn parse_data_module<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> ParsedDataModule<'s> {
-    let module = match messages.with_log(|log| provider.parse_data(source, arena, atoms, log)) {
-        Ok(module) => module,
-        Err(Failed) => return ParsedDataModule::empty(arena, atoms),
-    };
-    let DataModuleTree { file, host_values } = module_from_data(&module, atoms, arena);
-    ParsedDataModule {
-        hir: file,
-        host_values,
-        web_assembly: (source.loader == Loader::Wasm).then(|| source.contents.to_vec()),
-        is_page: module == DataModule::Page,
-    }
-}
-
-pub(crate) fn empty_module<'s>(arena: &'s Arena, atoms: &Interner<'s>) -> DataModuleTree<'s> {
-    let module = DataModule::Value {
+    let module = messages.with_log(|log| provider.parse_data(source, arena, atoms, log));
+    let in_place_of_failed = DataModule::Value {
         default: &DataValue::Undefined,
         exports_keys: false,
     };
-    module_from_data(&module, atoms, arena)
+    let DataModuleTree { file, host_values } =
+        module_from_data(module.as_ref().unwrap_or(&in_place_of_failed), atoms, arena);
+    let is_web_assembly = module.is_ok() && source.loader == Loader::Wasm;
+    ParsedDataModule {
+        hir: file,
+        host_values,
+        web_assembly: is_web_assembly.then(|| source.contents.to_vec()),
+        is_page: matches!(module, Ok(DataModule::Page)),
+    }
 }
 
 pub(crate) fn parse_json<'s>(
@@ -91,7 +74,10 @@ fn compute_json_value<'s>(hir: &File<'_>, arena: &'s Arena) -> Option<DataValue<
             ExprKind::Unary {
                 op: UnOp::Minus,
                 operand,
-            } => negate(computed_value(&values, operand)),
+            } => match computed_value(&values, operand) {
+                Some(DataValue::Number(number)) => Some(DataValue::Number(-number)),
+                _ => None,
+            },
             ExprKind::Array(items) => collect_array_items(hir, items, &values, arena),
             ExprKind::Object(props) => collect_object_entries(hir, props, &values, arena),
             ExprKind::Unary {
@@ -149,13 +135,6 @@ fn computed_value<'s>(values: &[Option<DataValue<'s>>], expr: ExprId) -> Option<
     *values.get(expr.idx())?
 }
 
-fn negate(value: Option<DataValue<'_>>) -> Option<DataValue<'_>> {
-    match value? {
-        DataValue::Number(number) => Some(DataValue::Number(-number)),
-        _ => None,
-    }
-}
-
 fn collect_array_items<'s>(
     hir: &File<'_>,
     items: IdList<ExprId>,
@@ -201,7 +180,7 @@ mod tests {
     use super::*;
     use crate::diagnostics::Diagnostics;
     use crate::load::source_provider::{
-        DeferredLoad, LoadRequest, Loaded, MacroCall, Resolution, ResolveRequest, WithoutServices,
+        DeferredLoad, Failed, LoadRequest, Loaded, Resolution, ResolveRequest, WithoutServices,
     };
     use bstr::BStr;
     use bun_ast::Log;
@@ -261,26 +240,6 @@ mod tests {
             }
         }
 
-        fn run_macro<'s>(
-            &self,
-            call: &MacroCall<'_, 's>,
-            arena: &'s Arena,
-            atoms: &Interner<'s>,
-            log: &mut Log,
-        ) -> Result<&'s DataValue<'s>, Failed> {
-            WithoutServices.run_macro(call, arena, atoms, log)
-        }
-
-        fn bundle_pages<'s>(
-            &self,
-            pages: &[&[u8]],
-            arena: &'s Arena,
-            atoms: &Interner<'s>,
-            log: &mut Log,
-        ) -> Result<Vec<&'s DataValue<'s>>, Failed> {
-            WithoutServices.bundle_pages(pages, arena, atoms, log)
-        }
-
         fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
             WithoutServices.check_embedded_files(log)
         }
@@ -328,10 +287,8 @@ mod tests {
         assert_eq!(parse(b"false"), Some(DataValue::Boolean(false)));
         assert_eq!(parse(b"1.5"), Some(DataValue::Number(1.5)));
         assert_eq!(parse(b"-2"), Some(DataValue::Number(-2.0)));
-        assert_eq!(
-            parse(b"\"a\\n\""),
-            Some(DataValue::String(atoms.intern(b"a\n")))
-        );
+        let actual = parse(b"\"a\\n\"");
+        assert_eq!(actual, Some(DataValue::String(atoms.intern(b"a\n"))));
         assert_eq!(parse(b"[]"), Some(DataValue::Array(&[])));
         assert_eq!(parse(b"{}"), Some(DataValue::Object(&[])));
         assert_eq!(
@@ -367,10 +324,8 @@ mod tests {
         let atoms = Interner::new_in(&session);
         let text = b"// line\n{ /* block */ \"a\": true } // end";
         let value = parse_json(text, session.arena(), &atoms).unwrap();
-        assert_eq!(
-            *value,
-            DataValue::Object(&[(atoms.intern(b"a"), DataValue::Boolean(true))])
-        );
+        let entries = [(atoms.intern(b"a"), DataValue::Boolean(true))];
+        assert_eq!(*value, DataValue::Object(&entries));
     }
 
     #[test]
@@ -437,20 +392,14 @@ mod tests {
     #[test]
     fn failed_provider_gives_empty_module() {
         let session = Session::new();
-        let atoms = Interner::new_in(&session);
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
         let messages = LoadMessages::default();
         let source = SourceFile {
             path: b"/project/a.toml",
             contents: b"a = 1",
             loader: Loader::Toml,
         };
-        let parsed = parse_data_module(
-            &WithoutServices,
-            &messages,
-            &source,
-            session.arena(),
-            &atoms,
-        );
+        let parsed = parse_data_module(&WithoutServices, &messages, &source, arena, &atoms);
         let default = default_export(&parsed.hir);
         let ExprKind::Unary {
             op: UnOp::Void,
@@ -460,10 +409,8 @@ mod tests {
             panic!("expected `void 0`");
         };
         assert!(matches!(parsed.hir[operand].kind, ExprKind::Number(_)));
-        assert_eq!(
-            parsed.host_values,
-            [(default, HostValue::Data(&DataValue::Undefined))]
-        );
+        let undefined = [(default, HostValue::Data(&DataValue::Undefined))];
+        assert_eq!(parsed.host_values, undefined);
         assert!(parsed.web_assembly.is_none());
         assert!(!parsed.is_page);
         assert_eq!(written_log(&messages).errors, 1);
@@ -472,20 +419,14 @@ mod tests {
     #[test]
     fn failed_wasm_module_has_no_bytes() {
         let session = Session::new();
-        let atoms = Interner::new_in(&session);
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
         let messages = LoadMessages::default();
         let source = SourceFile {
             path: b"/project/a.wasm",
             contents: b"\0asm",
             loader: Loader::Wasm,
         };
-        let parsed = parse_data_module(
-            &WithoutServices,
-            &messages,
-            &source,
-            session.arena(),
-            &atoms,
-        );
+        let parsed = parse_data_module(&WithoutServices, &messages, &source, arena, &atoms);
         assert!(parsed.web_assembly.is_none());
         assert_eq!(written_log(&messages).errors, 1);
     }
@@ -493,7 +434,7 @@ mod tests {
     #[test]
     fn only_wasm_loader_returns_bytes() {
         let session = Session::new();
-        let atoms = Interner::new_in(&session);
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
         let messages = LoadMessages::default();
         let parse = |loader| {
             let source = SourceFile {
@@ -501,13 +442,7 @@ mod tests {
                 contents: b"\0asm",
                 loader,
             };
-            parse_data_module(
-                &EmbeddingProvider,
-                &messages,
-                &source,
-                session.arena(),
-                &atoms,
-            )
+            parse_data_module(&EmbeddingProvider, &messages, &source, arena, &atoms)
         };
 
         let wasm = parse(Loader::Wasm);
@@ -529,67 +464,45 @@ mod tests {
     #[test]
     fn page_module_has_a_deferred_default() {
         let session = Session::new();
-        let atoms = Interner::new_in(&session);
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
         let messages = LoadMessages::default();
         let source = SourceFile {
             path: b"/project/index.html",
             contents: b"<html></html>",
             loader: Loader::Html,
         };
-        let page = parse_data_module(
-            &EmbeddingProvider,
-            &messages,
-            &source,
-            session.arena(),
-            &atoms,
-        );
+        let page = parse_data_module(&EmbeddingProvider, &messages, &source, arena, &atoms);
         assert!(page.is_page);
         let default = default_export(&page.hir);
         assert_eq!(page.host_values, [(default, HostValue::Deferred)]);
         assert!(page.web_assembly.is_none());
         assert!(written_log(&messages).msgs.is_empty());
 
-        let failed = parse_data_module(
-            &WithoutServices,
-            &messages,
-            &source,
-            session.arena(),
-            &atoms,
-        );
+        let failed = parse_data_module(&WithoutServices, &messages, &source, arena, &atoms);
         assert!(!failed.is_page);
         let default = default_export(&failed.hir);
-        assert_eq!(
-            failed.host_values,
-            [(default, HostValue::Data(&DataValue::Undefined))]
-        );
+        let expected = [(default, HostValue::Data(&DataValue::Undefined))];
+        assert_eq!(failed.host_values, expected);
         assert_eq!(written_log(&messages).errors, 1);
     }
 
     #[test]
     fn host_values_come_back_with_the_tree() {
         let session = Session::new();
-        let atoms = Interner::new_in(&session);
+        let (arena, atoms) = (session.arena(), Interner::new_in(&session));
         let messages = LoadMessages::default();
         let source = SourceFile {
             path: b"/project/a.json",
             contents: br#"{"a":1}"#,
             loader: Loader::Json,
         };
-        let parsed = parse_data_module(
-            &WithoutServices,
-            &messages,
-            &source,
-            session.arena(),
-            &atoms,
-        );
+        let parsed = parse_data_module(&WithoutServices, &messages, &source, arena, &atoms);
         let [(root, HostValue::Data(value))] = *parsed.host_values else {
             panic!("expected one value, found {:?}", parsed.host_values);
         };
         assert!(matches!(parsed.hir[root].kind, ExprKind::Object(_)));
-        assert_eq!(
-            *value,
-            DataValue::Object(&[(atoms.intern(b"a"), DataValue::Number(1.0))])
-        );
+        let entries = [(atoms.intern(b"a"), DataValue::Number(1.0))];
+        assert_eq!(*value, DataValue::Object(&entries));
         assert!(!parsed.is_page);
         assert!(written_log(&messages).msgs.is_empty());
     }

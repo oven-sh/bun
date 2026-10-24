@@ -1,5 +1,5 @@
 use bun_aot_interface as interface;
-use bun_aot_interface::{Opaque, signatures};
+use bun_aot_interface::Opaque;
 use bun_ast::Log;
 use bun_options_types::aot_options::{ExplainSet, ReportDetail};
 use bun_sema::atom::Interner;
@@ -10,56 +10,30 @@ use bun_sema::session::Arena;
 use bun_trim::UsedFeatures;
 
 use crate::builtins::unlinked_files::UnlinkedFiles;
-use crate::compile::{BuildFailed, Compilation, compile};
+use crate::compile::{BuildFailed, Compilation, compile, plan_validated_calls};
 use crate::diagnostic_codes::Code;
-use crate::diagnostics::{InternalError, log_diagnostic, log_internal_error};
+use crate::diagnostics::log_diagnostic;
 use crate::engine::{self, EngineModuleId, EngineResult, RejectedOptionWord};
 use crate::load::data_modules::parse_json;
 use crate::load::source_provider::SourceProvider;
 use crate::options::Options;
 use crate::report::{self, ReportEntry, ReportInput, ReportMessage};
 use crate::statistics::{StatisticId, Statistics};
-
-macro_rules! linked_functions {
-    ($(fn $name:ident $(<$($lifetime:lifetime),*>)? ($($argument:ident: $type:ty),* $(,)?) $(-> $result:ty)? $body:block)*) => {$(
-        #[unsafe(no_mangle)]
-        #[inline(never)]
-        fn $name $(<$($lifetime),*>)? ($($argument: $type),*) $(-> $result)? $body
-
-        const _: signatures::$name = $name;
-    )*};
-}
+use crate::validation_plans::ValidationPlans;
 
 fn wrap_statistics(statistics: Statistics) -> interface::statistics::Statistics {
     interface::statistics::Statistics(Opaque::new(statistics))
 }
 
 fn wrap_compilation(compilation: Compilation) -> interface::Compilation {
-    let Compilation {
-        engine,
-        summary,
-        further_programs,
-        ..
-    } = compilation;
     let wrap_engine = |engine| interface::engine::EngineResult(Opaque::new(engine));
-    let entry_points = summary.entry_points.into_iter();
-    let folders = summary.folders.into_iter();
+    let (summary, further) = (compilation.summary, compilation.further_programs);
     interface::Compilation {
-        engine: wrap_engine(engine),
-        further_programs: further_programs.into_iter().map(wrap_engine).collect(),
+        engine: wrap_engine(compilation.engine),
+        further_programs: further.into_iter().map(wrap_engine).collect(),
         summary: interface::compile::ProgramSummary {
-            entry_points: entry_points
-                .map(|entry| interface::compile::EntryPointPaths {
-                    public_path: entry.public_path,
-                    source_path: entry.source_path,
-                })
-                .collect(),
-            folders: folders
-                .map(|folder| interface::compile::FolderPaths {
-                    public_path: folder.public_path,
-                    source_path: folder.source_path,
-                })
-                .collect(),
+            entry_points: summary.entry_points,
+            folders: summary.folders,
             names: interface::link::ProgramNames(Opaque::new(summary.names)),
             texts: interface::report::SourceTexts(Opaque::new(summary.texts)),
             statistics: wrap_statistics(summary.statistics),
@@ -97,17 +71,17 @@ fn wrap_entry(entry: ReportEntry) -> interface::report::ReportEntry {
     interface::report::ReportEntry(Opaque::new(entry))
 }
 
-linked_functions! {
+interface::define_linked_functions! {
     fn bun_aot_compile(options: &Options<'_>, provider: &dyn SourceProvider, log: &mut Log) -> Result<interface::Compilation, interface::BuildFailed> {
         compile(options, provider, log).map(wrap_compilation).map_err(wrap_failure)
     }
 
-    fn bun_aot_log_diagnostic(log: &mut Log, code: Code, arguments: &[&[u8]]) {
-        log_diagnostic(log, code, arguments);
+    fn bun_aot_plan_validated_calls(options: &Options<'_>, provider: &dyn SourceProvider, log: &mut Log) -> Option<ValidationPlans> {
+        plan_validated_calls(options, provider, log)
     }
 
-    fn bun_aot_log_internal_error(log: &mut Log, error: InternalError) {
-        log_internal_error(log, error);
+    fn bun_aot_log_diagnostic(log: &mut Log, code: Code, arguments: &[&[u8]]) {
+        log_diagnostic(log, code, arguments);
     }
 
     fn bun_aot_parse_json<'s>(text: &[u8], arena: &'s Arena, atoms: &Interner<'s>) -> Option<&'s DataValue<'s>> {

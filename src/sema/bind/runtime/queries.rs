@@ -51,6 +51,21 @@ impl<S: Storage> RuntimeDeclarationsIn<S> {
 }
 
 impl<S: Storage> BoundIn<S> {
+    pub fn binding_kind(&self, symbol: SymbolId) -> BindingKind {
+        let kind = self.runtime.declarations.binding_kinds.get(symbol.idx());
+        kind.copied().unwrap_or(BindingKind::NoBinding)
+    }
+
+    pub fn symbol_scope(&self, symbol: SymbolId) -> ScopeId {
+        let scope = self.runtime.declarations.symbol_scopes.get(symbol.idx());
+        scope.copied().unwrap_or(ScopeId::NONE)
+    }
+
+    pub fn function_flags(&self, function: FnId) -> FunctionFlags {
+        let flags = self.runtime.function_flags.get(function.idx());
+        flags.copied().unwrap_or_default()
+    }
+
     pub fn variable_kind(&self, hir: &File, declaration: VarDeclId) -> VarKind {
         let written = hir[declaration].kind;
         let statement = self.var_stmt[declaration.idx()];
@@ -236,11 +251,6 @@ impl Bound<'_> {
         !has_bit(&self.runtime.declarations.valueless_symbols, symbol.idx())
     }
 
-    pub fn binding_kind(&self, symbol: SymbolId) -> BindingKind {
-        let kind = self.runtime.declarations.binding_kinds.get(symbol.idx());
-        kind.copied().unwrap_or(BindingKind::NoBinding)
-    }
-
     pub fn initial_state(&self, symbol: SymbolId) -> InitialState {
         match self.binding_kind(symbol) {
             BindingKind::Var => InitialState::Undefined,
@@ -292,11 +302,6 @@ impl Bound<'_> {
         }
     }
 
-    pub fn symbol_scope(&self, symbol: SymbolId) -> ScopeId {
-        let scope = self.runtime.declarations.symbol_scopes.get(symbol.idx());
-        scope.copied().unwrap_or(ScopeId::NONE)
-    }
-
     pub fn own_scope(&self, stmt: StmtId) -> ScopeId {
         self.runtime.declarations.created_scope(stmt)
     }
@@ -322,11 +327,6 @@ impl Bound<'_> {
 
     pub fn is_strict_scope(&self, scope: ScopeId) -> bool {
         self.runtime.is_module || has_bit(&self.runtime.strict_scopes, scope.idx())
-    }
-
-    pub fn function_flags(&self, function: FnId) -> FunctionFlags {
-        let flags = self.runtime.function_flags.get(function.idx());
-        flags.copied().unwrap_or_default()
     }
 
     pub fn file_uses_arguments(&self) -> bool {

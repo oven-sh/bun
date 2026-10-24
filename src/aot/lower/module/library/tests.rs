@@ -232,47 +232,30 @@ fn directives_apply_to_next_function() {
 }
 
 #[test]
-fn directive_selects_function_form() {
-    let text = r#"
+fn directive_selects_function_form_and_without_one_it_is_method() {
+    use LibraryFunctionForm::{Constructor, Method, NakedConstructor};
+    let with_directives = r#"
         $constructor;
         export function first() {}
         $nakedConstructor;
         export function second() {}
     "#;
-    let forms: Vec<LibraryFunctionForm> = collect_directives(text)
-        .iter()
-        .map(|directives| directives.form)
-        .collect();
-    assert_eq!(
-        forms,
-        [
-            LibraryFunctionForm::Constructor,
-            LibraryFunctionForm::NakedConstructor
-        ]
-    );
-}
-
-#[test]
-fn function_without_form_directive_is_method() {
-    let text = r#"
+    let without_directive = r#"
         export function first() {}
         $constructor;
         export function second() {}
         $getter;
         export function third() {}
     "#;
-    let forms: Vec<LibraryFunctionForm> = collect_directives(text)
-        .iter()
-        .map(|directives| directives.form)
-        .collect();
-    assert_eq!(
-        forms,
-        [
-            LibraryFunctionForm::Method,
-            LibraryFunctionForm::Constructor,
-            LibraryFunctionForm::Method
-        ]
-    );
+    let cases: [(&str, &[LibraryFunctionForm]); 2] = [
+        (with_directives, &[Constructor, NakedConstructor]),
+        (without_directive, &[Method, Constructor, Method]),
+    ];
+    for (text, expected) in cases {
+        let directives = collect_directives(text);
+        let forms: Vec<LibraryFunctionForm> = directives.iter().map(|it| it.form).collect();
+        assert_eq!(forms, expected, "{text}");
+    }
 }
 
 #[test]
@@ -302,8 +285,8 @@ fn top_level_code_keeps_pending_directives() {
 }
 
 #[test]
-fn malformed_directives_are_top_level_code() {
-    let text = r#"
+fn statements_are_erased_or_top_level_code() {
+    let malformed_directives = r#"
         $visibility;
         $visibility = "Hidden";
         $visibility = 1;
@@ -313,8 +296,53 @@ fn malformed_directives_are_top_level_code() {
         $getter();
         $nakedConstructor = "probe";
     "#;
-    let statements = with_runtime_source(text, classify_statements);
-    assert_eq!(statements, [LibraryStatement::TopLevelCode; 8]);
+    let constants_with_primitive_values = r#"
+        const limit = 8;
+        const label: string = "probe";
+        const enabled = true;
+        const nothing = null;
+        const wide = 10n;
+        const negative = -1;
+        const mask = 1 << 4;
+        const first = 1, second = 2;
+        const copy = limit;
+    "#;
+    let other_variable_declarations = r#"
+        let variable = 1;
+        var legacy = 1;
+        const computed = probe();
+        const list = [1];
+        const record = { a: 1 };
+        const { length } = "abc";
+        const constant = 1, other = probe();
+    "#;
+    let statements_with_code = r#"
+        let variable = 1;
+        probe();
+        probe;
+        class Class {}
+        enum Enum { A }
+        namespace Namespace { export const member = 1; }
+        import "side-effect";
+        export { variable };
+        export * from "star";
+        export default 1;
+        if (variable) {}
+        debugger;
+    "#;
+    for (text, expected, count) in [
+        (malformed_directives, LibraryStatement::TopLevelCode, 8),
+        (constants_with_primitive_values, LibraryStatement::Erased, 9),
+        (
+            other_variable_declarations,
+            LibraryStatement::TopLevelCode,
+            7,
+        ),
+        (statements_with_code, LibraryStatement::TopLevelCode, 12),
+    ] {
+        let statements = with_runtime_source(text, classify_statements);
+        assert_eq!(statements, vec![expected; count], "{text}");
+    }
 }
 
 #[test]
@@ -344,58 +372,6 @@ fn declarations_without_code_are_erased() {
 }
 
 #[test]
-fn constants_with_primitive_values_are_erased() {
-    let text = r#"
-        const limit = 8;
-        const label: string = "probe";
-        const enabled = true;
-        const nothing = null;
-        const wide = 10n;
-        const negative = -1;
-        const mask = 1 << 4;
-        const first = 1, second = 2;
-        const copy = limit;
-    "#;
-    let statements = with_runtime_source(text, classify_statements);
-    assert_eq!(statements, [LibraryStatement::Erased; 9]);
-}
-
-#[test]
-fn other_variable_declarations_are_top_level_code() {
-    let text = r#"
-        let variable = 1;
-        var legacy = 1;
-        const computed = probe();
-        const list = [1];
-        const record = { a: 1 };
-        const { length } = "abc";
-        const constant = 1, other = probe();
-    "#;
-    let statements = with_runtime_source(text, classify_statements);
-    assert_eq!(statements, [LibraryStatement::TopLevelCode; 7]);
-}
-
-#[test]
-fn statements_with_code_are_top_level_code() {
-    let text = r#"
-        let variable = 1;
-        probe();
-        probe;
-        class Class {}
-        enum Enum { A }
-        namespace Namespace { export const member = 1; }
-        import "side-effect";
-        export { variable };
-        export * from "star";
-        export default 1;
-        if (variable) {}
-        debugger;
-    "#;
-    let statements = with_runtime_source(text, classify_statements);
-    assert_eq!(statements, [LibraryStatement::TopLevelCode; 12]);
-}
-
-#[test]
 fn parses_visibility_names() {
     let visibilities: [(&[u8], FunctionVisibility); 3] = [
         (b"Public", FunctionVisibility::Public),
@@ -412,22 +388,14 @@ fn parses_visibility_names() {
 
 #[test]
 fn computes_default_visibility() {
+    use FunctionVisibility::{Private, Public};
     let mut pending = PendingDirectives::default();
-    assert_eq!(
-        pending.compute_visibility(false),
-        FunctionVisibility::Public
-    );
-    assert_eq!(
-        pending.compute_visibility(true),
-        FunctionVisibility::Private
-    );
+    assert_eq!(pending.compute_visibility(false), Public);
+    assert_eq!(pending.compute_visibility(true), Private);
     pending.add(Directive::LinkTimeConstant);
-    assert_eq!(
-        pending.compute_visibility(false),
-        FunctionVisibility::Private
-    );
-    pending.add(Directive::Visibility(FunctionVisibility::Public));
-    assert_eq!(pending.compute_visibility(true), FunctionVisibility::Public);
+    assert_eq!(pending.compute_visibility(false), Private);
+    pending.add(Directive::Visibility(Public));
+    assert_eq!(pending.compute_visibility(true), Public);
 }
 
 #[test]
@@ -447,26 +415,15 @@ fn function_form_decides_header_kind() {
     assert_eq!(constructor.kind, FunctionKind::Plain);
     assert_eq!(naked_constructor.kind, FunctionKind::BaseConstructor);
 
-    for takes_this in [method, constructor] {
-        assert!(takes_this.flags.contains(FunctionFlags::HAS_THIS));
-        assert!(!takes_this.flags.contains(FunctionFlags::HAS_NEW_TARGET));
-        assert!(
-            !takes_this
-                .flags
-                .contains(FunctionFlags::IS_NAKED_CONSTRUCTOR)
-        );
+    for flags in [method.flags, constructor.flags] {
+        assert!(flags.contains(FunctionFlags::HAS_THIS));
+        assert!(!flags.contains(FunctionFlags::HAS_NEW_TARGET));
+        assert!(!flags.contains(FunctionFlags::IS_NAKED_CONSTRUCTOR));
     }
-    assert!(!naked_constructor.flags.contains(FunctionFlags::HAS_THIS));
-    assert!(
-        naked_constructor
-            .flags
-            .contains(FunctionFlags::HAS_NEW_TARGET)
-    );
-    assert!(
-        naked_constructor
-            .flags
-            .contains(FunctionFlags::IS_NAKED_CONSTRUCTOR)
-    );
+    let flags = naked_constructor.flags;
+    assert!(!flags.contains(FunctionFlags::HAS_THIS));
+    assert!(flags.contains(FunctionFlags::HAS_NEW_TARGET));
+    assert!(flags.contains(FunctionFlags::IS_NAKED_CONSTRUCTOR));
     assert_eq!(naked_constructor.this_type, DeclaredType::untyped());
     assert_eq!(
         naked_constructor.results,
@@ -483,12 +440,8 @@ fn listed_export_implements_builtin() {
     "#;
     let fragment = lower_array_prototype(text).fragment;
     let at = find_runtime_function(ARRAY_PROTOTYPE, "at");
-    let entries: Vec<RuntimeFunction> = fragment
-        .runtime_functions
-        .iter()
-        .map(|entry| entry.id)
-        .collect();
-    assert_eq!(entries, [at]);
+    let entries = fragment.runtime_functions.iter().map(|entry| entry.id);
+    assert_eq!(entries.collect::<Vec<RuntimeFunction>>(), [at]);
     let builtin = array_header(&fragment, "at");
     assert_eq!(builtin.enclosing_runtime_function, Some(at));
     assert!(!is_hidden(builtin));

@@ -44,6 +44,14 @@ impl TypeTree {
     }
 }
 
+#[track_caller]
+fn contents_of(ty: &TypeTree, class: BuiltinClass) -> &[TypeTree] {
+    match &ty.classes[..] {
+        [(only, contents)] if *only == class => contents,
+        _ => panic!("the type names one {class:?}: {ty:?}"),
+    }
+}
+
 fn expand_types(fragment: &Fragment, types: &[TypeId]) -> Vec<TypeTree> {
     types.iter().map(|&ty| expand_type(fragment, ty)).collect()
 }
@@ -204,14 +212,11 @@ fn map_aliases_sharing_union(literal_count: usize, alias_count: usize) -> String
 }
 
 #[test]
-fn recursive_alias_is_order_independent() {
+fn recursive_and_oversized_types_are_order_independent() {
     assert_order_independent("type Json = string | Json[];", ["Json", "Json[]"], None);
-}
-
-#[test]
-fn mutually_recursive_aliases_are_order_independent() {
     let aliases = "type A = string | [B];\ntype B = number | [A];";
     assert_order_independent(aliases, ["A", "B"], None);
+    assert_order_independent(EXPANDING_ALIAS, ["G<number>", "G<number[]>"], LOWERED_LIMIT);
 }
 
 #[test]
@@ -223,16 +228,12 @@ fn recursive_alias_is_cut_to_shallow_form() {
         ty.value_primitives(),
         Primitives::STRING | Primitives::NULLISH
     );
-    let [(BuiltinClass::Array, contents)] = &ty.classes[..] else {
-        panic!("the alias names one array: {ty:?}");
-    };
+    let contents = contents_of(&ty, BuiltinClass::Array);
     assert_eq!(
         contents[0].primitives,
         Primitives::STRING | Primitives::NULLISH
     );
-    let [(BuiltinClass::Array, cut_contents)] = &contents[0].classes[..] else {
-        panic!("the contents name the alias: {ty:?}");
-    };
+    let cut_contents = contents_of(&contents[0], BuiltinClass::Array);
     assert!(cut_contents[0].is_anything(), "{ty:?}");
 }
 
@@ -245,13 +246,9 @@ fn dense_cycle_is_one_component_and_below_limit() {
     let lowered = lower(&source, None);
     assert_eq!(count_type_node_losses(&lowered), 0);
     let ty = expand_variable(&lowered, "v").ty;
-    let [(BuiltinClass::Array, elements)] = &ty.classes[..] else {
-        panic!("a tuple is an array: {ty:?}");
-    };
+    let elements = contents_of(&ty, BuiltinClass::Array);
     assert_eq!(elements[0].primitives, Primitives::NULLISH);
-    let [(BuiltinClass::Array, cut_elements)] = &elements[0].classes[..] else {
-        panic!("the elements are the other tuples: {ty:?}");
-    };
+    let cut_elements = contents_of(&elements[0], BuiltinClass::Array);
     assert!(cut_elements[0].is_anything(), "{ty:?}");
 }
 
@@ -262,9 +259,7 @@ fn expanding_alias_is_exhausted() {
     assert!(count_type_node_losses(&lowered) > 0);
     let ty = expand_variable(&lowered, "v").ty;
     assert!(!ty.is_anything(), "{ty:?}");
-    let [(BuiltinClass::Map, contents)] = &ty.classes[..] else {
-        panic!("the type keeps its own level: {ty:?}");
-    };
+    let contents = contents_of(&ty, BuiltinClass::Map);
     assert_eq!(contents.len(), 2);
     for part in contents {
         assert!(
@@ -291,21 +286,11 @@ export let v: Tree<string> = { leaf: \"a\", left: { leaf: [\"b\"] } };
 }
 
 #[test]
-fn nested_type_that_is_written_out_keeps_its_typed_fields() {
-    let source = "interface Box<T> { value: T }
+fn nested_types_within_the_limit_keep_their_typed_fields() {
+    let written_out = "interface Box<T> { value: T }
 export let v: Box<Box<Box<Box<number>>>> = { value: { value: { value: { value: 1 } } } };
 ";
-    let values = declared_types_of_fields(&lower(source, None), "value");
-    assert!(!values.is_empty());
-    assert!(
-        values.iter().all(|&value| value != DeclaredType::untyped()),
-        "{values:?}"
-    );
-}
-
-#[test]
-fn instantiations_of_one_height_keep_their_typed_fields() {
-    let source = "interface List<T> { first: T; count: number }
+    let of_one_height = "interface List<T> { first: T; count: number }
 interface Holder<T> { list: List<T> }
 interface A { next: Holder<B> }
 interface B { next: Holder<C> }
@@ -314,12 +299,14 @@ interface D { last: number }
 export let v: Holder<A> | undefined;
 export function read(): number | undefined { return v?.list.first.next.list.first.next.list.first.next.list.count; }
 ";
-    let counts = declared_types_of_fields(&lower(source, None), "count");
-    assert!(!counts.is_empty());
-    assert!(
-        counts.iter().all(|&count| count != DeclaredType::untyped()),
-        "{counts:?}"
-    );
+    for (source, name) in [(written_out, "value"), (of_one_height, "count")] {
+        let fields = declared_types_of_fields(&lower(source, None), name);
+        assert!(!fields.is_empty(), "{name}");
+        assert!(
+            fields.iter().all(|&field| field != DeclaredType::untyped()),
+            "{fields:?}"
+        );
+    }
 }
 
 #[test]
@@ -328,9 +315,7 @@ fn part_beside_oversized_part_stays() {
     let lowered = lower(&source, LOWERED_LIMIT);
     assert!(count_type_node_losses(&lowered) > 0);
     let ty = expand_variable(&lowered, "v").ty;
-    let [(BuiltinClass::Map, contents)] = &ty.classes[..] else {
-        panic!("the type names one map: {ty:?}");
-    };
+    let contents = contents_of(&ty, BuiltinClass::Map);
     assert_eq!(contents.len(), 2);
     assert_eq!(
         contents[0].primitives,
@@ -341,22 +326,13 @@ fn part_beside_oversized_part_stays() {
 }
 
 #[test]
-fn oversized_type_is_order_independent() {
-    assert_order_independent(EXPANDING_ALIAS, ["G<number>", "G<number[]>"], LOWERED_LIMIT);
-}
-
-#[test]
 fn shared_union_is_counted_once() {
     let source = format!("{}export let v: H;\n", map_aliases_sharing_union(40, 8));
     let lowered = lower(&source, LOWERED_LIMIT);
     assert_eq!(count_type_node_losses(&lowered), 0);
     let ty = expand_variable(&lowered, "v").ty;
-    let [(BuiltinClass::Array, elements)] = &ty.classes[..] else {
-        panic!("a tuple is an array: {ty:?}");
-    };
-    let [(BuiltinClass::Map, contents)] = &elements[0].classes[..] else {
-        panic!("a type within the limit is mapped in full: {ty:?}");
-    };
+    let elements = contents_of(&ty, BuiltinClass::Array);
+    let contents = contents_of(&elements[0], BuiltinClass::Map);
     assert_eq!(contents[0].strings.len(), 40);
 }
 
@@ -394,9 +370,7 @@ fn references_take_nullish_and_numbers_do_not() {
     let position = expand_variable(&lower("export let v: number[] = [];\n", None), "v");
     assert!(!position.is_expected, "{position:?}");
     assert_eq!(position.ty.value_primitives(), Primitives::NULLISH);
-    let [(BuiltinClass::Array, contents)] = &position.ty.classes[..] else {
-        panic!("the type names one array: {position:?}");
-    };
+    let contents = contents_of(&position.ty, BuiltinClass::Array);
     assert_eq!(contents[0].primitives, Primitives::NUMBER);
 }
 
@@ -509,44 +483,22 @@ fn receiver_of_method_is_tested_at_entry() {
 }
 
 #[test]
-fn array_literal_contents_are_the_declared_elements() {
-    let source = "export function probe(a: number) { const v: number[] = [a]; return v; }\n";
-    assert_eq!(collect_array_literal_contents(source), [TypeTable::NUMBER]);
-}
-
-#[test]
-fn array_literal_without_a_declared_type_takes_the_checked_elements() {
-    let source = "export function probe(a: number) { const v = [a]; return v; }\n";
-    assert_eq!(collect_array_literal_contents(source), [TypeTable::NUMBER]);
-}
-
-#[test]
-fn empty_array_literal_without_annotation_holds_anything() {
-    let source = "export function probe() { const v = []; v.push(1); return v; }\n";
-    assert_eq!(
-        collect_array_literal_contents(source),
-        [TypeTable::ANYTHING]
-    );
-}
-
-#[test]
-fn empty_array_literal_holds_what_it_is_written_under() {
-    let source = "export function probe() { const v: number[] = []; return v; }\n";
-    assert_eq!(collect_array_literal_contents(source), [TypeTable::NUMBER]);
-}
-
-#[test]
-fn array_literal_in_a_tuple_position_holds_what_the_elements_hold() {
-    let source =
-        "export function probe(a: number) { const v: [number, number] = [a, a]; return v; }\n";
-    assert_eq!(collect_array_literal_contents(source), [TypeTable::NUMBER]);
-}
-
-#[test]
-fn array_literal_under_a_tuple_with_a_variadic_element_holds_anything() {
-    let source = "export function probe<T extends unknown[]>(a: number, rest: T) { const v: [number, ...T] = [a, ...rest]; return v; }\n";
-    assert_eq!(
-        collect_array_literal_contents(source),
-        [TypeTable::ANYTHING]
-    );
+fn array_literal_holds_the_declared_elements_or_else_the_checked_ones() {
+    let numbers = [
+        "(a: number) { const v: number[] = [a]; return v; }",
+        "(a: number) { const v = [a]; return v; }",
+        "() { const v: number[] = []; return v; }",
+        "(a: number) { const v: [number, number] = [a, a]; return v; }",
+    ];
+    let anything = [
+        "() { const v = []; v.push(1); return v; }",
+        "<T extends unknown[]>(a: number, rest: T) { const v: [number, ...T] = [a, ...rest]; return v; }",
+    ];
+    let numbers = numbers.map(|function| (function, TypeTable::NUMBER));
+    let anything = anything.map(|function| (function, TypeTable::ANYTHING));
+    for (function, contents) in numbers.into_iter().chain(anything) {
+        let source = format!("export function probe{function}\n");
+        let found = collect_array_literal_contents(&source);
+        assert_eq!(found, [contents], "{function}");
+    }
 }

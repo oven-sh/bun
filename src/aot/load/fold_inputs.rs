@@ -13,14 +13,6 @@ use crate::load::data_modules::parse_json;
 use crate::load::locked_builtin_defines::{locked_builtin_defines, runtime_identity_defines};
 use crate::statistics::{LimitId, LimitValues};
 
-pub(crate) struct ApplicationFoldRequest<'a, 's> {
-    pub provided: FoldOptions<'s>,
-    pub arena: &'s Arena,
-    pub atoms: &'a Interner<'s>,
-    pub limits: &'a LimitValues,
-    pub platform: Platforms,
-}
-
 // What the build tells Bun's own sources about the program. They are read after the program.
 #[derive(Copy, Clone)]
 pub(crate) struct ProgramFacts {
@@ -28,72 +20,50 @@ pub(crate) struct ProgramFacts {
     pub can_be_cluster_worker: bool,
 }
 
-pub(crate) struct RuntimeFoldRequest<'a, 's> {
-    pub manifest: &'a Manifest,
-    pub arena: &'s Arena,
-    pub atoms: &'a Interner<'s>,
-    pub messages: &'a LoadMessages,
-    pub limits: &'a LimitValues,
-    pub platform: Platforms,
-    pub facts: ProgramFacts,
-}
-
 fn max_string_bytes(limits: &LimitValues) -> usize {
     usize::try_from(limits.get(LimitId::MaxFoldedStringBytes)).unwrap_or(usize::MAX)
 }
 
 pub(crate) fn create_application_fold_inputs<'s>(
-    request: &ApplicationFoldRequest<'_, 's>,
+    provided: &FoldOptions<'s>,
+    arena: &'s Arena,
+    atoms: &Interner<'s>,
+    limits: &LimitValues,
+    platform: Platforms,
 ) -> FoldInputs<'s> {
-    let &ApplicationFoldRequest {
-        provided,
-        arena,
-        atoms,
-        limits,
-        platform,
-    } = request;
     let options = FoldOptions {
         defines: after_constant_globals(provided.defines, platform, arena, atoms),
         compiler_functions: bundle_export_names(arena, atoms),
         max_string_bytes: max_string_bytes(limits),
-        ..provided
+        ..*provided
     };
     FoldInputs::new(options, arena)
 }
 
 pub(crate) fn create_runtime_fold_inputs<'s>(
-    request: &RuntimeFoldRequest<'_, 's>,
+    manifest: &Manifest,
+    arena: &'s Arena,
+    atoms: &Interner<'s>,
+    messages: &LoadMessages,
+    limits: &LimitValues,
+    platform: Platforms,
+    facts: ProgramFacts,
 ) -> FoldInputs<'s> {
-    let &RuntimeFoldRequest {
-        manifest,
-        arena,
-        atoms,
-        messages,
-        limits,
-        platform,
-        facts,
-    } = request;
-    let manifest_defines = runtime_defines(manifest, arena, atoms, messages);
+    let mut defines = runtime_defines(manifest, arena, atoms, messages);
     let define_fact = |name: &[u8], holds: bool| Define {
         path: define_path(name, arena, atoms),
         value: DefineValue::Constant(Constant::Boolean(holds)),
     };
-    let build_defines = [
+    defines.extend([
         define_fact(
             b"CAN_LOAD_CODE_AT_RUN_TIME",
             facts.can_load_code_at_run_time,
         ),
         define_fact(b"CAN_BE_CLUSTER_WORKER", facts.can_be_cluster_worker),
         define_fact(b"IS_COMPILED_AHEAD_OF_TIME", true),
-    ];
-    let defines: Vec<Define<'s>> = manifest_defines
-        .iter()
-        .chain(&build_defines)
-        .copied()
-        .collect();
-    let defines = arena.alloc_slice_copy(&defines);
+    ]);
     let options = FoldOptions {
-        defines: after_constant_globals(defines, platform, arena, atoms),
+        defines: after_constant_globals(&defines, platform, arena, atoms),
         max_string_bytes: max_string_bytes(limits),
         ..FoldOptions::default()
     };
@@ -162,7 +132,7 @@ fn runtime_defines<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
     messages: &LoadMessages,
-) -> &'s [Define<'s>] {
+) -> Vec<Define<'s>> {
     let mut defines = Vec::with_capacity(manifest.defines().len());
     for (name, json) in manifest.defines() {
         let Some(value) = parse_json(json, arena, atoms).and_then(define_value) else {
@@ -173,7 +143,7 @@ fn runtime_defines<'s>(
         let path = define_path(name, arena, atoms);
         defines.push(Define { path, value });
     }
-    arena.alloc_slice_copy(&defines)
+    defines
 }
 
 fn define_path<'s>(name: &[u8], arena: &'s Arena, atoms: &Interner<'s>) -> DefinePath<'s> {
@@ -253,33 +223,25 @@ mod tests {
     ) -> PerProject<FoldInputs<'s>> {
         let messages = LoadMessages::default();
         let fold = PerProject {
-            application: create_application_fold_inputs(&ApplicationFoldRequest {
-                provided: FoldOptions::default(),
-                arena: sessions.application.arena(),
+            application: create_application_fold_inputs(
+                &FoldOptions::default(),
+                sessions.application.arena(),
                 atoms,
                 limits,
-                platform: Platforms::LINUX,
-            }),
-            runtime: create_runtime_fold_inputs(&RuntimeFoldRequest {
-                manifest: Archive::embedded().manifest(),
-                arena: sessions.runtime.arena(),
+                Platforms::LINUX,
+            ),
+            runtime: create_runtime_fold_inputs(
+                Archive::embedded().manifest(),
+                sessions.runtime.arena(),
                 atoms,
-                messages: &messages,
+                &messages,
                 limits,
-                platform: Platforms::LINUX,
+                Platforms::LINUX,
                 facts,
-            }),
+            ),
         };
         assert!(!has_internal_errors(&messages));
         fold
-    }
-
-    fn fold_inputs_with_limits<'s>(
-        sessions: &'s PerProject<Session>,
-        atoms: &Interner<'s>,
-        limits: &LimitValues,
-    ) -> PerProject<FoldInputs<'s>> {
-        fold_inputs_with_facts(sessions, atoms, limits, NO_FACTS)
     }
 
     fn analyze<'s>(
@@ -447,7 +409,7 @@ mod tests {
     fn count_import_sites(source: &'static str) -> usize {
         let sessions = create_sessions();
         let atoms = Interner::new_in(&sessions.application);
-        let fold = fold_inputs_with_limits(&sessions, &atoms, &LimitValues::for_host());
+        let fold = fold_inputs_with_facts(&sessions, &atoms, &LimitValues::for_host(), NO_FACTS);
         let arena = sessions.application.arena();
         analyze(source, &fold.application, arena, &atoms)
             .import_sites
@@ -570,7 +532,7 @@ mod tests {
     fn file_on_cycle_of_imports_reads_variables_in_its_functions() {
         let sessions = create_sessions();
         let atoms = Interner::new_in(&sessions.application);
-        let fold = fold_inputs_with_limits(&sessions, &atoms, &LimitValues::for_host());
+        let fold = fold_inputs_with_facts(&sessions, &atoms, &LimitValues::for_host(), NO_FACTS);
         let arena = sessions.application.arena();
         let on_cycle = fold.application.for_file_called_before_it_runs();
         for (index, source) in (0..).zip(READS_BEHIND_INITIALIZER) {
@@ -594,7 +556,7 @@ mod tests {
     fn store_and_delete_are_left_as_written() {
         let sessions = create_sessions();
         let atoms = Interner::new_in(&sessions.application);
-        let fold = fold_inputs_with_limits(&sessions, &atoms, &LimitValues::for_host());
+        let fold = fold_inputs_with_facts(&sessions, &atoms, &LimitValues::for_host(), NO_FACTS);
         let arena = sessions.application.arena();
         let source = "Bun = false; globalThis.Bun = false; delete globalThis.Bun;";
         let analysis = analyze(source, &fold.application, arena, &atoms);
@@ -672,7 +634,7 @@ mod tests {
     fn other_bundle_export_is_unknown() {
         let sessions = create_sessions();
         let atoms = Interner::new_in(&sessions.application);
-        let fold = fold_inputs_with_limits(&sessions, &atoms, &LimitValues::for_host());
+        let fold = fold_inputs_with_facts(&sessions, &atoms, &LimitValues::for_host(), NO_FACTS);
         let source = "import { nope } from 'bun:bundle'; nope();";
         let analysis = analyze(
             source,
@@ -693,7 +655,7 @@ mod tests {
         let atoms = Interner::new_in(&sessions.application);
         let mut limits = LimitValues::for_host();
         limits.lower(LimitId::MaxFoldedStringBytes, 4);
-        let fold = fold_inputs_with_limits(&sessions, &atoms, &limits);
+        let fold = fold_inputs_with_facts(&sessions, &atoms, &limits, NO_FACTS);
         for (project, inputs) in fold.iter() {
             let arena = sessions.get(project).arena();
             let count_over_limit = |source| {

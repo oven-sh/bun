@@ -14,12 +14,8 @@ fn namespaces_belong_to_modules() {
     for module in RuntimeModule::ALL {
         let namespace = namespace_of(module);
         assert_eq!(namespace, module_data(module).namespace);
-        assert_eq!(
-            entry(namespace).module,
-            Some(module),
-            "{}",
-            text_of(namespace)
-        );
+        let owner = entry(namespace).module;
+        assert_eq!(owner, Some(module), "{}", text_of(namespace));
     }
     assert_eq!(namespace_of(RuntimeModule::Bun), BuiltinId::Bun);
     assert_eq!(namespace_of(RuntimeModule::NodeProcess), BuiltinId::Process);
@@ -36,11 +32,8 @@ fn specifier_finds_module() {
     assert_eq!(module_by_specifier(b"bun"), Some(RuntimeModule::Bun));
     for module in RuntimeModule::ALL {
         let specifier = module_data(module).specifier;
-        assert_eq!(
-            module_by_specifier(specifier.as_bytes()),
-            Some(module),
-            "{specifier}"
-        );
+        let found = module_by_specifier(specifier.as_bytes());
+        assert_eq!(found, Some(module), "{specifier}");
     }
 }
 
@@ -67,11 +60,8 @@ fn module_export_lists() {
         .filter(|&module| lists_all_exports(module))
     {
         let open_or_compiled = ModuleFlags::HAS_SOURCE | ModuleFlags::HAS_OPEN_NAMESPACE;
-        assert!(
-            !module_flags(module).intersects(open_or_compiled),
-            "{}",
-            module.name()
-        );
+        let is_either = module_flags(module).intersects(open_or_compiled);
+        assert!(!is_either, "{}", module.name());
     }
 }
 
@@ -79,10 +69,8 @@ fn module_export_lists() {
 fn open_namespace() {
     assert!(module_flags(RuntimeModule::Bun).contains(ModuleFlags::HAS_OPEN_NAMESPACE));
     assert!(!module_flags(RuntimeModule::BunJsc).contains(ModuleFlags::HAS_OPEN_NAMESPACE));
-    assert_eq!(
-        object_replacing_namespace(RuntimeModule::Bun),
-        Some(BuiltinId::Bun)
-    );
+    let found = object_replacing_namespace(RuntimeModule::Bun);
+    assert_eq!(found, Some(BuiltinId::Bun));
     assert_eq!(object_replacing_namespace(RuntimeModule::BunJsc), None);
     assert_eq!(object_replacing_namespace(RuntimeModule::NodeFs), None);
 }
@@ -113,12 +101,8 @@ fn default_export_is_the_module_object() {
         RuntimeModule::NodeProcess,
         RuntimeModule::Bun,
     ] {
-        assert_eq!(
-            default_export_of(module),
-            module_object_of(module),
-            "{}",
-            module.name()
-        );
+        let found = default_export_of(module);
+        assert_eq!(found, module_object_of(module), "{}", module.name());
     }
 }
 
@@ -139,12 +123,8 @@ fn default_export_is_the_own_default_of_the_module_object() {
 #[test]
 fn own_default_that_holds_the_module_object_is_the_module_object() {
     for module in [RuntimeModule::Undici, RuntimeModule::AbortController] {
-        assert_eq!(
-            default_export_of(module),
-            module_object_of(module),
-            "{}",
-            module.name()
-        );
+        let found = default_export_of(module);
+        assert_eq!(found, module_object_of(module), "{}", module.name());
     }
 }
 
@@ -168,11 +148,8 @@ fn export_that_only_the_namespace_holds() {
 fn module_object_that_is_a_class_is_a_constructor_with_other_members() {
     let module_object = entry(namespace_of(RuntimeModule::AbortController));
     assert_eq!(module_object.kind, BuiltinKind::Constructor);
-    assert!(
-        !module_object
-            .flags
-            .contains(BuiltinFlags::LISTS_ALL_MEMBERS)
-    );
+    let flags = module_object.flags;
+    assert!(!flags.contains(BuiltinFlags::LISTS_ALL_MEMBERS));
 }
 
 #[test]
@@ -223,10 +200,8 @@ fn bundle_exports_have_hidden_root() {
     assert_eq!(entry(BuiltinId::BunBundle).holder, None);
     assert_eq!(entry(BuiltinId::BunBundle).module, None);
     assert_eq!(module_by_specifier(b"bun:bundle"), None);
-    assert_eq!(
-        own_member(BuiltinId::BunBundle, name("validate")),
-        Some(BuiltinId::BunBundleValidate)
-    );
+    let found = own_member(BuiltinId::BunBundle, name("validate"));
+    assert_eq!(found, Some(BuiltinId::BunBundleValidate));
     assert_eq!(find_name(b"bun:bundle").and_then(global), None);
 }
 

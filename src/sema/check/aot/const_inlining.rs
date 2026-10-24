@@ -19,7 +19,6 @@ struct Reader {
 }
 
 impl Checker<'_, '_> {
-    /// `initializer`: what the initializer of `constant` evaluates to.
     pub(in crate::check) fn is_const_inlined_by_transpiler(
         &self,
         constant: Option<(FileId, VarDeclId)>,

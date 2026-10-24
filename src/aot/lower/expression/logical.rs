@@ -12,38 +12,37 @@ pub(super) enum LogicalOperator {
     Nullish,
 }
 
-#[derive(Copy, Clone)]
-pub(super) struct LogicalBranch {
-    pub(super) operator: LogicalOperator,
-    pub(super) tested: Option<ExprId>,
-    pub(super) result: Option<LocalVariable>,
-    pub(super) right: BlockId,
-    pub(super) join: BlockId,
-}
-
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    pub(super) fn branch_on_logical_operator(&mut self, left: ValueId, branch: LogicalBranch) {
-        let split = match branch.operator {
+    pub(super) fn branch_on_logical_operator(
+        &mut self,
+        left: ValueId,
+        operator: LogicalOperator,
+        tested: Option<ExprId>,
+        result: Option<LocalVariable>,
+        right: BlockId,
+        join: BlockId,
+    ) {
+        let split = match operator {
             LogicalOperator::And | LogicalOperator::Or => {
-                self.split_expression_on_truthiness(branch.tested, left)
+                self.split_expression_on_truthiness(tested, left)
             }
             LogicalOperator::Nullish => {
-                self.split_expression_on_type(branch.tested, left, TypeTable::NULLISH)
+                self.split_expression_on_type(tested, left, TypeTable::NULLISH)
             }
         };
-        let (right_edge, short_circuit_edge, short_circuit_value) = match branch.operator {
+        let (right_edge, short_circuit_edge, short_circuit_value) = match operator {
             LogicalOperator::And | LogicalOperator::Nullish => {
                 (split.taken, split.not_taken, split.not_taken_value)
             }
             LogicalOperator::Or => (split.not_taken, split.taken, split.taken_value),
         };
         self.builder.switch_to(right_edge);
-        self.jump(branch.right);
+        self.jump(right);
         self.builder.switch_to(short_circuit_edge);
-        if let Some(result) = branch.result {
+        if let Some(result) = result {
             self.builder.write_variable(result, short_circuit_value);
         }
-        self.jump(branch.join);
+        self.jump(join);
     }
 
     pub(super) fn lower_logical(
@@ -57,8 +56,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut spine: SmallVec<[(ExprId, LogicalOperator, ExprId); 4]> = SmallVec::new();
         let mut innermost = expression;
         while let ExprKind::Binary { op, left, right } = hir[innermost].kind {
-            let Some(operator) = logical_operator(op) else {
-                break;
+            let operator = match op {
+                BinOp::And => LogicalOperator::And,
+                BinOp::Or => LogicalOperator::Or,
+                BinOp::Nullish => LogicalOperator::Nullish,
+                _ => break,
             };
             if innermost != expression && is_decided(self.file, innermost) {
                 break;
@@ -86,14 +88,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let result = needs_result.then(|| self.builder.create_variable(None));
             let rhs = self.create_block();
             let join = self.create_block();
-            let branch = LogicalBranch {
-                operator,
-                tested,
-                result,
-                right: rhs,
-                join,
-            };
-            self.branch_on_logical_operator(value, branch);
+            self.branch_on_logical_operator(value, operator, tested, result, rhs, join);
             self.continue_in(rhs);
             let right_tail = if is_outermost { tail } else { Tail::No };
             self.lower_arm(right, result, right_tail);
@@ -113,14 +108,33 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         usage: ResultUsage,
         tail: Tail<'_>,
     ) -> ValueId {
-        let hir = self.file.hir;
-        let decisions = self.file.decisions();
         let join = self.create_block();
         let result = (usage == ResultUsage::Value).then(|| self.builder.create_variable(None));
+        self.lower_conditional_arms(expression, true, &mut |lowering, arm| {
+            lowering.lower_arm(arm, result, tail);
+            lowering.jump(join);
+        });
+        self.continue_in(join);
+        match result {
+            Some(result) => self.builder.read_variable(result),
+            None => self.builder.undefined(),
+        }
+    }
+
+    /// Tests `a ? b : c ? d : e` in turn: `lower_arm` gets each arm that can run, in the block where it runs.
+    pub(in crate::lower) fn lower_conditional_arms(
+        &mut self,
+        expression: ExprId,
+        stops_at_simplified: bool,
+        lower_arm: &mut dyn FnMut(&mut FunctionLowering<'_, '_, '_, '_, '_>, ExprId),
+    ) {
+        let hir = self.file.hir;
+        let decisions = self.file.decisions();
         let mut current = expression;
         while let ExprKind::Cond { test, branches } = hir[current].kind {
             if current != expression
-                && (self.file.is_statically_resolved(current) || self.file.is_simplified(current))
+                && (self.file.is_statically_resolved(current)
+                    || (stops_at_simplified && self.file.is_simplified(current)))
             {
                 break;
             }
@@ -139,18 +153,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let if_false = self.create_block();
             self.lower_condition(test, if_true, if_false);
             self.continue_in(if_true);
-            self.lower_arm(yes, result, tail);
-            self.jump(join);
+            lower_arm(self, yes);
             self.continue_in(if_false);
             current = no;
         }
-        self.lower_arm(current, result, tail);
-        self.jump(join);
-        self.continue_in(join);
-        match result {
-            Some(result) => self.builder.read_variable(result),
-            None => self.builder.undefined(),
-        }
+        lower_arm(self, current);
     }
 
     fn lower_arm(&mut self, arm: ExprId, result: Option<LocalVariable>, tail: Tail<'_>) {
@@ -191,13 +198,4 @@ pub(super) fn lower_comma_prefix(
         lowering.lower_expression_for_effect(right);
     }
     last
-}
-
-fn logical_operator(op: BinOp) -> Option<LogicalOperator> {
-    match op {
-        BinOp::And => Some(LogicalOperator::And),
-        BinOp::Or => Some(LogicalOperator::Or),
-        BinOp::Nullish => Some(LogicalOperator::Nullish),
-        _ => None,
-    }
 }

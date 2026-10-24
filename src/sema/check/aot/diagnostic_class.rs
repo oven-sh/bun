@@ -22,7 +22,6 @@ const MODULE_SYNTAX_CODES: [u32; 27] = [
     1293, 1294, 1295, 1448, 1484, 1485, 2748, 2865, 2866, 18055, 18056,
 ];
 
-// Rules about what tsc would write: its module format, its helpers, the names it reserves, the files that a project which is built by itself has to list.
 const EMITTED_OUTPUT_CODES: [u32; 27] = [
     1202, 1203, 1218, 1309, 1323, 1324, 1343, 1378, 1432, 1470, 1471, 1479, 1541, 1542, 1543, 1544,
     2343, 2354, 2725, 2807, 2823, 2854, 2856, 6142, 6307, 17004, 18057,
@@ -137,7 +136,6 @@ mod tests {
         assert_eq!(DiagnosticClass::of_code(2322), DiagnosticClass::Semantic);
         assert_eq!(DiagnosticClass::of_code(7006), DiagnosticClass::Style);
         assert_eq!(DiagnosticClass::of_code(6133), DiagnosticClass::Style);
-        // They say nothing about a type: a condition that is always true, `override` where nothing is overridden.
         for code in [1313, 2774, 2869, 2872, 4112, 4113] {
             assert_eq!(
                 DiagnosticClass::of_code(code),

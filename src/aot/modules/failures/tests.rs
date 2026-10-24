@@ -2,49 +2,21 @@ use super::*;
 use bun_sema::atom::known;
 use bun_sema::hir::{ExportId, ExprId, ImportEqualsId, ImportId, StmtId};
 
-const UNRESOLVED_SITE_EFFECTS: [(ImportSiteKind, FailureEffect); 12] = [
-    (ImportSiteKind::JsxRuntime, FailureEffect::StopsBuild),
-    (ImportSiteKind::JsxPackage, FailureEffect::StopsBuild),
-    (
-        ImportSiteKind::Import(ImportId(0)),
-        FailureEffect::StopsBuild,
-    ),
-    (
-        ImportSiteKind::ExportFrom(ExportId(0)),
-        FailureEffect::StopsBuild,
-    ),
-    (
-        ImportSiteKind::ExportStar(StmtId(0)),
-        FailureEffect::StopsBuild,
-    ),
-    (
-        ImportSiteKind::ImportEquals(ImportEqualsId(0)),
-        FailureEffect::ThrowsAtSite,
-    ),
-    (
-        ImportSiteKind::ImportCall(ExprId(0)),
-        FailureEffect::ThrowsAtSite,
-    ),
-    (
-        ImportSiteKind::Require(ExprId(0)),
-        FailureEffect::ThrowsAtSite,
-    ),
-    (
-        ImportSiteKind::RequireResolve(ExprId(0)),
-        FailureEffect::ThrowsAtSite,
-    ),
-    (
-        ImportSiteKind::ImportMetaRequire(ExprId(0)),
-        FailureEffect::ThrowsAtSite,
-    ),
-    (
-        ImportSiteKind::ImportMetaResolve(ExprId(0)),
-        FailureEffect::ThrowsAtSite,
-    ),
-    (
-        ImportSiteKind::GetBuiltinModule(ExprId(0)),
-        FailureEffect::ThrowsAtSite,
-    ),
+const STATEMENT_SITES: [ImportSiteKind; 5] = [
+    ImportSiteKind::JsxRuntime,
+    ImportSiteKind::JsxPackage,
+    ImportSiteKind::Import(ImportId(0)),
+    ImportSiteKind::ExportFrom(ExportId(0)),
+    ImportSiteKind::ExportStar(StmtId(0)),
+];
+const SITES_THAT_CAN_CATCH: [ImportSiteKind; 7] = [
+    ImportSiteKind::ImportEquals(ImportEqualsId(0)),
+    ImportSiteKind::ImportCall(ExprId(0)),
+    ImportSiteKind::Require(ExprId(0)),
+    ImportSiteKind::RequireResolve(ExprId(0)),
+    ImportSiteKind::ImportMetaRequire(ExprId(0)),
+    ImportSiteKind::ImportMetaResolve(ExprId(0)),
+    ImportSiteKind::GetBuiltinModule(ExprId(0)),
 ];
 
 const UNRESOLVED: ModuleFailureKind = ModuleFailureKind::Unresolved {
@@ -114,11 +86,15 @@ fn pending_list(
     (importer, list.collect())
 }
 
-fn site_number(failure: &ModuleFailure) -> u32 {
-    match failure.site {
+fn sites_of(failures: &[ModuleFailure]) -> Vec<(FileId, u32)> {
+    let site_number = |failure: &ModuleFailure| match failure.site {
         ImportSiteKind::Import(ImportId(site)) | ImportSiteKind::Require(ExprId(site)) => site,
         site => panic!("{site:?} is not a site of these tests"),
-    }
+    };
+    let failures = failures.iter();
+    failures
+        .map(|failure| (failure.importer, site_number(failure)))
+        .collect()
 }
 
 #[test]
@@ -196,10 +172,6 @@ fn statement_failures_are_errors_in_order() {
     ];
     let (errors, failures) = number_failures(4, shuffled_importers).into_lists();
     assert!(failures.is_empty());
-    let error_sites: Vec<(FileId, u32)> = errors
-        .iter()
-        .map(|error| (error.importer, site_number(error)))
-        .collect();
     let expected = [
         (FileId(0), 0),
         (FileId(0), 1),
@@ -207,7 +179,7 @@ fn statement_failures_are_errors_in_order() {
         (FileId(3), 0),
         (FileId(3), 0),
     ];
-    assert_eq!(error_sites, expected);
+    assert_eq!(sites_of(&errors), expected);
     let is_unresolved =
         |error: &ModuleFailure| matches!(error.kind, ModuleFailureKind::Unresolved { .. });
     let unresolved: Vec<bool> = errors.iter().map(is_unresolved).collect();
@@ -226,29 +198,13 @@ fn errors_take_no_ids() {
     let only_errors = pending_list(1, &[specifier_order(0)], failed_import);
     let last = pending_list(2, &[specifier_order(0)], failed_require);
     let numbered = number_failures(3, vec![last, (first, first_list), only_errors]);
-    assert_eq!(
-        numbered.id_of(first, specifier_order(1)),
-        ModuleFailureId(0)
-    );
-    assert_eq!(
-        numbered.id_of(first, specifier_order(3)),
-        ModuleFailureId(1)
-    );
-    assert_eq!(
-        numbered.id_of(FileId(2), specifier_order(0)),
-        ModuleFailureId(2)
-    );
+    let thrown = [(first, 1), (first, 3), (FileId(2), 0)];
+    for (id, (importer, site)) in (0..).map(ModuleFailureId).zip(thrown) {
+        assert_eq!(numbered.id_of(importer, specifier_order(site)), id);
+    }
     let (errors, failures) = numbered.into_lists();
-    let error_sites: Vec<(FileId, u32)> = errors
-        .iter()
-        .map(|error| (error.importer, site_number(error)))
-        .collect();
-    assert_eq!(error_sites, [(first, 0), (first, 2), (FileId(1), 0)]);
-    let failure_sites: Vec<(FileId, u32)> = failures
-        .iter()
-        .map(|failure| (failure.importer, site_number(failure)))
-        .collect();
-    assert_eq!(failure_sites, [(first, 1), (first, 3), (FileId(2), 0)]);
+    assert_eq!(sites_of(&errors), [(first, 0), (first, 2), (FileId(1), 0)]);
+    assert_eq!(sites_of(&failures), thrown);
 }
 
 #[test]
@@ -260,7 +216,9 @@ fn program_without_failures_has_empty_lists() {
 
 #[test]
 fn effect_of_every_site_kind() {
-    for (site, expected) in UNRESOLVED_SITE_EFFECTS {
+    let stops = STATEMENT_SITES.map(|site| (site, FailureEffect::StopsBuild));
+    let throws = SITES_THAT_CAN_CATCH.map(|site| (site, FailureEffect::ThrowsAtSite));
+    for (site, expected) in stops.into_iter().chain(throws) {
         let failure = create_failure(UNRESOLVED, FileId(0), site);
         assert_eq!(failure.effect(), expected, "{site:?}");
     }
@@ -268,7 +226,7 @@ fn effect_of_every_site_kind() {
 
 #[test]
 fn name_failures_always_stop() {
-    for (site, _) in UNRESOLVED_SITE_EFFECTS {
+    for site in STATEMENT_SITES.into_iter().chain(SITES_THAT_CAN_CATCH) {
         for kind in [EXPORT_NOT_FOUND, EXPORT_AMBIGUOUS] {
             let failure = create_failure(kind, FileId(0), site);
             assert_eq!(failure.effect(), FailureEffect::StopsBuild, "{failure:?}");

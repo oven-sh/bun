@@ -10,6 +10,7 @@ use core::fmt;
 use bun_builtin_sources::{Archive, VIRTUAL_ROOT};
 use bun_sema::program::FileId;
 
+use crate::builtins::id::BuiltinId;
 use crate::builtins::table;
 use crate::compile::testing::lower_program;
 use crate::ir::generated::{
@@ -175,6 +176,13 @@ impl<'a> Probe<'a> {
             panic!("expected one {}:\n{self}", opcode.name());
         };
         operation
+    }
+
+    #[track_caller]
+    fn only_builtin(self, builtin: BuiltinId) -> Operation<'a> {
+        let found = self.only(Opcode::Builtin);
+        assert_eq!(found.references(), [Reference::Builtin(builtin)], "{self}");
+        found
     }
 
     #[track_caller]

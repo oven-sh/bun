@@ -102,15 +102,15 @@ interface Run {
   reported: Map<object, unknown[]> | undefined;
   optionalUnions: Map<number, number>;
   matchesPattern: MatchesPattern;
-  // Undefined when the whole value is a copy that nobody else has.
-  copies: Set<object> | undefined;
-  // The copies of arrays that are not read to the end.
-  unread: Map<object, Unread> | undefined;
+  // Undefined when the whole value is a copy that nobody else has. Else, for each private copy, what it was read from: the object of the value, or for an array its HeldArray.
+  copies: Map<object, object> | undefined;
+  // Something has looked at a part of the value and has not taken it: a private copy may hold private copies of parts that the next to look at it does not describe.
+  isLookedAtAgain: boolean;
   remainingHoles: number;
 }
 
-// A copy holds the elements that have been read so far.
-interface Unread {
+// The private copy of an array holds the elements that have been read so far.
+interface HeldArray {
   source: any;
   length: number;
 }
@@ -249,8 +249,8 @@ function createRun(plan: string, preparedByText: Map<string, any>, isCopy: boole
     reported: undefined,
     optionalUnions: prepared.optionalUnions,
     matchesPattern: preparedUnder("matchesPattern", preparedByText),
-    copies: isCopy ? undefined : new $Set(),
-    unread: isCopy ? undefined : new $Map(),
+    copies: isCopy ? undefined : new $Map(),
+    isLookedAtAgain: false,
     remainingHoles: maxHoleCount(),
   };
 }
@@ -483,17 +483,18 @@ function toLength(value: any): number {
 // the length is read first, and an element when somebody asks for it.
 function holdArray(run: Run, value: any): any[] {
   const copy: any[] = [];
-  const length = toLength(value.length);
-  if (length !== 0) run.unread!.set(copy, { source: value, length });
+  run.copies!.set(copy, { source: value, length: toLength(value.length) });
   return copy;
 }
 
-function unreadOf(run: Run, input: any): Unread | undefined {
-  return run.unread === undefined ? undefined : run.unread.get(input);
+// Undefined for an array that is read to the end.
+function unreadOf(run: Run, input: any[]): HeldArray | undefined {
+  const held = run.copies === undefined ? undefined : (run.copies.get(input) as HeldArray | undefined);
+  return held === undefined || input.length === held.length ? undefined : held;
 }
 
 // Reads the next element into the copy. A hole is read as undefined. False if the arrays of the value have too many holes.
-function tryReadNext(run: Run, input: any[], unread: Unread): boolean {
+function tryReadNext(run: Run, input: any[], unread: HeldArray): boolean {
   const index = input.length;
   const element = unread.source[index];
   if (element === undefined && !$hasOwn(unread.source, index)) {
@@ -501,35 +502,21 @@ function tryReadNext(run: Run, input: any[], unread: Unread): boolean {
     run.remainingHoles--;
   }
   input.push(element);
-  if (index + 1 === unread.length) run.unread!.delete(input);
   return true;
 }
 
-function readNext(run: Run, input: any[], unread: Unread): void {
+function readNext(run: Run, input: any[], unread: HeldArray): void {
   if (!tryReadNext(run, input, unread))
     throw new RangeError("The arrays of the value have more than " + maxHoleCount() + " holes");
 }
 
-function heldElement(run: Run, input: any[], unread: Unread | undefined, index: number, at: number): any {
+function heldElement(run: Run, input: any[], unread: HeldArray | undefined, index: number, at: number): any {
   if (unread !== undefined && index >= input.length) readNext(run, input, unread);
   return heldAt(run, input, index, at);
 }
 
-// A copy that is handed on as it is holds all that its array holds.
-function readToEnd(run: Run, input: any): void {
-  const unread = isObject(input) ? unreadOf(run, input) : undefined;
-  if (unread === undefined) return;
-  while (input.length < unread.length) readNext(run, input, unread);
-}
-
-// An arm of a union that refuses an array has read only its beginning, and a later arm may hand that copy on as it is, at any depth.
-function readAllToEnd(run: Run): void {
-  for (const [input, unread] of run.unread!) {
-    while ((input as any[]).length < unread.length) readNext(run, input as any[], unread);
-  }
-}
-
-// Reading an object may run code of the program: getters, the traps of a proxy.
+// Reading an object may run code of the program: getters, the traps of a proxy. So it is read once, into a private copy that all arms of a union look at.
+// No result holds a private copy: sourceOf() and putSourcesBack() are the two ways by which a part that is not described goes into a result.
 function heldAt(run: Run, holder: any, key: any, at: number): any {
   const value = holder[key];
   const copies = run.copies;
@@ -538,10 +525,27 @@ function heldAt(run: Run, holder: any, key: any, at: number): any {
   if (!describes(run, at, true) && !describes(run, at, false)) return value;
   const isArray = $isArray(value);
   if (!describes(run, at, isArray)) return value;
-  const copy = isArray ? holdArray(run, value) : { ...value };
-  copies.add(copy);
+  let copy: any;
+  if (isArray) copy = holdArray(run, value);
+  else copies.set((copy = { ...value }), value);
   define(holder, key, copy);
   return copy;
+}
+
+// What the type does not describe is handed on as it is: the object of the value.
+function sourceOf(run: Run, input: any): any {
+  const held = run.copies === undefined || !isObject(input) ? undefined : run.copies.get(input);
+  return held === undefined ? input : $isArray(input) ? (held as HeldArray).source : held;
+}
+
+// A result begins as all that a private copy of an object holds. It holds them as they were read.
+function putSourcesBack(run: Run, result: any): void {
+  const keys = $objectKeys(result);
+  for (let i = 0; i < keys.length; i++) {
+    const held = result[keys[i]];
+    const source = sourceOf(run, held);
+    if (source !== held) define(result, keys[i], source);
+  }
 }
 
 // The holder is a copy that heldAt made: what it has of its own is enumerable.
@@ -619,6 +623,7 @@ function buildTuple(run: Run, node: PlanNode, input: any): any {
 function buildDictionary(run: Run, node: PlanNode, input: any): any {
   if (!isPlainObject(input)) return run.refused;
   const result: any = { ...input };
+  if (run.isLookedAtAgain) putSourcesBack(run, result);
   const keys = $objectKeys(result);
   for (let i = 0; i < keys.length; i++) {
     const item = build(run, node.element!, heldAt(run, input, keys[i], node.element!));
@@ -632,6 +637,7 @@ function buildObject(run: Run, node: PlanNode, input: any): any {
   if (!isPlainObject(input)) return run.refused;
   const members = node.members ?? [];
   const result: any = { ...input };
+  if (run.isLookedAtAgain) putSourcesBack(run, result);
   for (let i = 0; i < members.length; i++) {
     const member = members[i];
     const memberValue = heldMember(run, input, member);
@@ -668,11 +674,13 @@ function buildUnion(run: Run, at: number, input: any): any {
   if (discriminant !== undefined) {
     const tagIndex = discriminant.tags.indexOf(memberOf(input, discriminant));
     if (tagIndex >= 0) result = build(run, discriminant.tagged[tagIndex], input);
+    if (tagIndex >= 0 && result === refused) run.isLookedAtAgain = true;
     if (tagIndex >= 0 && result === refused && remembers) startRemembering(run);
     arms = discriminant.untagged;
   }
   for (let i = 0; i < arms.length && result === refused; i++) {
     result = build(run, arms[i], input);
+    if (result === refused) run.isLookedAtAgain = true;
     if (result === refused && remembers) startRemembering(run);
   }
   if (result !== refused && !allHold(run, node, result)) result = refused;
@@ -687,7 +695,7 @@ function build(run: Run, at: number, input: any): any {
   let result: any = input;
   switch (node.shape) {
     case "Unknown":
-      readToEnd(run, input);
+      result = sourceOf(run, input);
       break;
     case "Never":
       return refused;
@@ -699,7 +707,7 @@ function build(run: Run, at: number, input: any): any {
       break;
     case "AnyObject":
       if (!isObject(input)) return refused;
-      readToEnd(run, input);
+      result = sourceOf(run, input);
       break;
     case "Primitive":
       if (typeof input !== node.primitive) return refused;
@@ -1189,12 +1197,10 @@ export function validateByPlan(
   if (isRefused) {
     const found = findIssues(run, held);
     if (found.length !== 0) throw errorOf(found);
+    run.isLookedAtAgain = true;
   }
   const result = build(run, 0, held);
-  if (result !== run.refused) {
-    readAllToEnd(run);
-    return result;
-  }
+  if (result !== run.refused) return result;
   const found = findIssues(run, held);
   if (found.length === 0) addIssueOfRoot(run, found, held);
   throw errorOf(found);
@@ -1203,9 +1209,7 @@ export function validateByPlan(
 export function interpretNode(value: unknown, plan: string, prepared: Map<string, Prepared>): [boolean, unknown] {
   const run = createRun(plan, prepared, false);
   const result = build(run, 0, heldRoot(run, value));
-  if (result === run.refused) return [false, undefined];
-  readAllToEnd(run);
-  return [true, result];
+  return result === run.refused ? [false, undefined] : [true, result];
 }
 
 export function holdsRule(value: unknown, rule: string, prepared: Map<string, any>): boolean {

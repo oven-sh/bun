@@ -38,7 +38,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if matches!(argument, Some(b"any" | b"unknown")) {
             self.parse_members_without_check.push(member);
         } else {
-            self.parse_members_with_type_arguments.push(member);
+            self.parse_members_with_type_arguments
+                .push((member, start as u32));
         }
     }
 

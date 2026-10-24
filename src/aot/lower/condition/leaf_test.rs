@@ -9,7 +9,8 @@ use crate::builtins::id::BuiltinId;
 use crate::builtins::{Intrinsic, Resolved};
 use crate::ir::{TypeId, TypeTable};
 use crate::lower::expression::{find_constant, is_decided};
-use crate::lower::{FileLowering, FunctionLowering, operator, scope};
+use crate::lower::operator::{OperatorClass, classify_operator};
+use crate::lower::{FileLowering, FunctionLowering, scope};
 
 #[derive(Copy, Clone, Debug)]
 pub(super) enum LeafTest {
@@ -36,11 +37,6 @@ pub(super) enum LeafTest {
 }
 
 #[derive(Copy, Clone)]
-struct Equality {
-    is_loose: bool,
-    is_negated: bool,
-}
-
 pub(super) enum TypeofName {
     Type(TypeId),
     Object,
@@ -53,20 +49,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ExprKind::Call(site) => {
                 return match file.find_number_question(expression) {
                     Some((question, operand)) => LeafTest::NumberQuestion { question, operand },
-                    None => file.classify_type_test_call(site),
+                    None => file
+                        .find_type_test_call(site)
+                        .unwrap_or(LeafTest::Truthiness),
                 };
             }
             ExprKind::Binary { op, left, right } => (op, left, right),
             _ => return LeafTest::Truthiness,
         };
-        if !operator::is_comparison(op)
-            || main_module_operand(file.hir, file.bound, expression).is_some()
-        {
-            return LeafTest::Truthiness;
-        }
-        match find_equality(op) {
-            Some(equality) => self.classify_equality(op, equality, left, right),
-            None => self
+        match classify_operator(op) {
+            OperatorClass::Plain | OperatorClass::In | OperatorClass::ControlFlow => {
+                LeafTest::Truthiness
+            }
+            OperatorClass::Ordering | OperatorClass::Equality { .. }
+                if main_module_operand(file.hir, file.bound, expression).is_some() =>
+            {
+                LeafTest::Truthiness
+            }
+            OperatorClass::Equality {
+                is_loose,
+                is_negated,
+            } => self.classify_equality(op, is_loose, is_negated, left, right),
+            OperatorClass::Ordering => self
                 .classify_typeof_order(op, left, right)
                 .unwrap_or(LeafTest::Comparison { op, left, right }),
         }
@@ -99,7 +103,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
         };
         let (passing, failing): (SmallVec<[Atom; 8]>, SmallVec<[Atom; 8]>) =
-            TYPEOF_NAMES.into_iter().partition(passes);
+            TYPEOF_NAMES.iter().map(|row| row.0).partition(passes);
         match (&passing[..], &failing[..]) {
             (&[name], _) => typeof_test(operand, name, false),
             (_, &[name]) => typeof_test(operand, name, true),
@@ -110,12 +114,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn classify_equality(
         &self,
         op: BinOp,
-        equality: Equality,
+        is_loose: bool,
+        is_negated: bool,
         left: ExprId,
         right: ExprId,
     ) -> LeafTest {
         let file = &*self.file;
-        let is_negated = equality.is_negated;
         let sides = [(left, right), (right, left)];
         for (side, other) in sides {
             let Some(operand) = self.find_typeof_operand(side) else {
@@ -131,7 +135,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             });
         }
         for (side, other) in sides {
-            let Some(tested) = file.find_nullish_type(side, equality.is_loose) else {
+            let Some(tested) = file.find_nullish_type(side, is_loose) else {
                 continue;
             };
             if find_constant(file, other).is_none() {
@@ -214,20 +218,6 @@ fn typeof_test(operand: ExprId, name: Atom, is_negated: bool) -> Option<LeafTest
     })
 }
 
-fn find_equality(op: BinOp) -> Option<Equality> {
-    let (is_loose, is_negated) = match op {
-        BinOp::EqEq => (true, false),
-        BinOp::NotEq => (true, true),
-        BinOp::EqEqEq => (false, false),
-        BinOp::NotEqEq => (false, true),
-        _ => return None,
-    };
-    Some(Equality {
-        is_loose,
-        is_negated,
-    })
-}
-
 impl FileLowering<'_, '_, '_, '_> {
     fn find_nullish_type(&self, side: ExprId, is_loose: bool) -> Option<TypeId> {
         match find_constant(self, side)? {
@@ -241,71 +231,44 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn classify_type_test_call(&self, site: CallId) -> LeafTest {
-        let Some((intrinsic, operand)) = self.find_unary_intrinsic_call(site) else {
-            return LeafTest::Truthiness;
+    fn find_type_test_call(&self, site: CallId) -> Option<LeafTest> {
+        let hir = self.hir;
+        let call = hir[site];
+        let tested = match self.builtins.of_expr(self.skip_type_syntax(call.callee))? {
+            Resolved::Intrinsic(Intrinsic::IsNullish) => TypeTable::NULLISH,
+            Resolved::Intrinsic(Intrinsic::IsObject) => TypeTable::OBJECT,
+            Resolved::Intrinsic(Intrinsic::IsCallable) => TypeTable::FUNCTION,
+            Resolved::Intrinsic(_) | Resolved::Builtin(_) | Resolved::DynamicGlobal(_) => {
+                return None;
+            }
         };
-        let tested = match intrinsic {
-            Intrinsic::IsNullish => TypeTable::NULLISH,
-            Intrinsic::IsObject => TypeTable::OBJECT,
-            Intrinsic::IsCallable => TypeTable::FUNCTION,
-            _ => return LeafTest::Truthiness,
+        let mut arguments = hir.ids(call.args);
+        let (Some(operand), None) = (arguments.next(), arguments.next()) else {
+            return None;
         };
-        LeafTest::Type {
+        let is_well_formed =
+            call.chain == Chain::No && !matches!(hir[operand].kind, ExprKind::Spread(_));
+        is_well_formed.then_some(LeafTest::Type {
             operand,
             is_typeof: false,
             tested,
             is_negated: false,
-        }
-    }
-
-    fn find_unary_intrinsic_call(&self, site: CallId) -> Option<(Intrinsic, ExprId)> {
-        let hir = self.hir;
-        let call = hir[site];
-        let callee = self.skip_type_syntax(call.callee);
-        let intrinsic = match self.builtins.of_expr(callee) {
-            Some(Resolved::Intrinsic(intrinsic)) => intrinsic,
-            Some(Resolved::Builtin(_) | Resolved::DynamicGlobal(_)) | None => return None,
-        };
-        let mut arguments = hir.ids(call.args);
-        let (Some(argument), None) = (arguments.next(), arguments.next()) else {
-            return None;
-        };
-        let is_well_formed =
-            call.chain == Chain::No && !matches!(hir[argument].kind, ExprKind::Spread(_));
-        is_well_formed.then_some((intrinsic, argument))
+        })
     }
 }
 
-const TYPEOF_NAMES: [Atom; 8] = [
-    known::undefined,
-    known::boolean,
-    known::number,
-    known::string,
-    known::symbol,
-    known::bigint,
-    known::function,
-    known::object,
+const TYPEOF_NAMES: [(Atom, TypeofName); 8] = [
+    (known::undefined, TypeofName::Type(TypeTable::UNDEFINED)),
+    (known::boolean, TypeofName::Type(TypeTable::BOOLEAN)),
+    (known::number, TypeofName::Type(TypeTable::NUMBER)),
+    (known::string, TypeofName::Type(TypeTable::STRING)),
+    (known::symbol, TypeofName::Type(TypeTable::SYMBOL)),
+    (known::bigint, TypeofName::Type(TypeTable::BIGINT)),
+    (known::function, TypeofName::Type(TypeTable::FUNCTION)),
+    (known::object, TypeofName::Object),
 ];
 
 pub(super) fn typeof_name(name: Atom) -> Option<TypeofName> {
-    if name == known::undefined {
-        Some(TypeofName::Type(TypeTable::UNDEFINED))
-    } else if name == known::boolean {
-        Some(TypeofName::Type(TypeTable::BOOLEAN))
-    } else if name == known::number {
-        Some(TypeofName::Type(TypeTable::NUMBER))
-    } else if name == known::string {
-        Some(TypeofName::Type(TypeTable::STRING))
-    } else if name == known::symbol {
-        Some(TypeofName::Type(TypeTable::SYMBOL))
-    } else if name == known::bigint {
-        Some(TypeofName::Type(TypeTable::BIGINT))
-    } else if name == known::function {
-        Some(TypeofName::Type(TypeTable::FUNCTION))
-    } else if name == known::object {
-        Some(TypeofName::Object)
-    } else {
-        None
-    }
+    let row = TYPEOF_NAMES.iter().find(|row| row.0 == name)?;
+    Some(row.1)
 }

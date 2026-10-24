@@ -3,7 +3,6 @@ mod closures;
 mod header;
 mod this;
 
-pub(crate) use self::closures::captures_home_object;
 pub(crate) use self::header::{
     create_header, declare_source_function, declare_source_function_with,
 };

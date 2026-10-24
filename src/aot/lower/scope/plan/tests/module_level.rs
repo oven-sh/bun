@@ -4,7 +4,7 @@ use bun_sema::program::Sym;
 
 use super::super::Context;
 use super::super::storage::find_initial_functions;
-use super::{Probe, analyze_source, is_field, storage_in};
+use super::{COPIED, Probe, analyze_source, is_field, storage_in};
 use crate::ir::VariableKey;
 use crate::lower::captures::{Capture, CaptureList, CapturePlan};
 use crate::lower::scope::testing::{functions_of_kind, walk_scopes, with_scope_input};
@@ -33,8 +33,8 @@ fn shared_at_top_level_is_module_variable() {
         let placement = probe.placement_of("a");
         assert_eq!(placement.storage, symbol_variable(probe, "a"));
         assert!(placement.is_shared);
-        assert!(probe.captures(probe.function("f")).is_empty());
-        assert!(!probe.analysis.has_environment(probe.file_scope()));
+        assert!(probe.captures_of("f").is_empty());
+        assert!(!probe.has_environment(probe.file_scope()));
     });
 }
 
@@ -53,22 +53,14 @@ fn commonjs_top_level_binding_is_captured() {
     let immutable = "let a = 1; module.exports = function f() { return a; };";
     analyze_source("main.cjs", immutable, |probe| {
         assert_eq!(probe.placement_of("a").storage, Storage::Local);
-        assert_eq!(
-            probe.captures(probe.function("f")),
-            [Capture::Value(probe.binding("a"))]
-        );
+        assert_eq!(probe.captures_of("f"), [probe.copy_of("a")]);
     });
     let stored = "let a = 1; module.exports = function f() { return a; }; a = 2;";
     analyze_source("main.cjs", stored, |probe| {
         let scope = probe.file_scope();
-        assert_eq!(
-            probe.placement_of("a").storage,
-            Storage::Field { scope, field: 0 }
-        );
-        assert_eq!(
-            probe.captures(probe.function("f")),
-            [Capture::Environment(scope)]
-        );
+        let field = Storage::Field { scope, field: 0 };
+        assert_eq!(probe.placement_of("a").storage, field);
+        assert_eq!(probe.captures_of("f"), [Capture::Environment(scope)]);
     });
 }
 
@@ -77,14 +69,8 @@ fn commonjs_hoisted_function_takes_the_environment() {
     let source = "const a = 1; function f() { return a; } module.exports = f;";
     analyze_source("main.cjs", source, |probe| {
         let scope = probe.file_scope();
-        assert_eq!(
-            probe.captures(probe.function("f")),
-            [Capture::Environment(scope)]
-        );
-        assert_eq!(
-            probe.analysis.environment_fields(scope),
-            [probe.binding("a")]
-        );
+        assert_eq!(probe.captures_of("f"), [Capture::Environment(scope)]);
+        assert_eq!(probe.environment_fields(scope), [probe.binding("a")]);
     });
 }
 
@@ -113,8 +99,7 @@ fn top_level_binding_in_loop_is_not_a_variable() {
     let source = "export const list = []; for (const x of [1]) list.push(() => x);";
     analyze_source("main.js", source, |probe| {
         assert_eq!(probe.placement_of("x").storage, Storage::Local);
-        let arrow = probe.only_function(FnKind::Arrow);
-        assert_eq!(probe.captures(arrow), [Capture::Value(probe.binding("x"))]);
+        assert_eq!(probe.captures(probe.arrow()), [probe.copy_of("x")]);
     });
     let stored = "export const list = []; for (let x of [1]) { list.push(() => x); x = 2; }";
     assert!(is_field(storage_in("main.js", stored, "x")));
@@ -125,11 +110,7 @@ fn top_level_block_binding_is_a_variable() {
     let source = "export let read; { let a = 1; read = () => a; }";
     analyze_source("main.js", source, |probe| {
         assert_eq!(probe.placement_of("a").storage, symbol_variable(probe, "a"));
-        assert!(
-            probe
-                .captures(probe.only_function(FnKind::Arrow))
-                .is_empty()
-        );
+        assert!(probe.captures(probe.arrow()).is_empty());
     });
 }
 
@@ -153,10 +134,7 @@ fn unused_export_is_module_variable() {
         let placement = probe.placement_of("a");
         assert_eq!(placement.storage, symbol_variable(probe, "a"));
         assert!(placement.is_shared);
-        assert_eq!(
-            probe.analysis.bindings(probe.file_scope()),
-            [probe.binding("a")]
-        );
+        assert_eq!(probe.bindings(probe.file_scope()), [probe.binding("a")]);
     });
 }
 
@@ -170,21 +148,14 @@ fn initial_function_of_module_variable() {
             let placement = probe.placement(BindingRef::Symbol(symbol));
             assert_eq!(placement.storage, symbol_variable(probe, name), "{name}");
             assert!(!placement.has_local, "{name}");
-            assert_eq!(
-                probe.analysis.initial_function(symbol),
-                Some(function),
-                "{name}"
-            );
+            assert_eq!(probe.initial_function(symbol), Some(function), "{name}");
         }
     });
 
     let unshared = "function helper() { return 1; } console.log(helper()); export {};";
     analyze_source("main.ts", unshared, |probe| {
         assert_eq!(probe.placement_of("helper").storage, Storage::Local);
-        assert_eq!(
-            probe.analysis.initial_function(probe.symbol("helper")),
-            None
-        );
+        assert_eq!(probe.initial_function(probe.symbol("helper")), None);
     });
 }
 
@@ -193,15 +164,8 @@ fn commonjs_function_is_not_initial() {
     let source = "function helper() { return 1; } module.exports = () => helper();";
     analyze_source("main.cjs", source, |probe| {
         assert_eq!(probe.placement_of("helper").storage, Storage::Local);
-        assert_eq!(
-            probe.analysis.initial_function(probe.symbol("helper")),
-            None
-        );
-        let arrow = probe.only_function(FnKind::Arrow);
-        assert_eq!(
-            probe.captures(arrow),
-            [Capture::Value(probe.binding("helper"))]
-        );
+        assert_eq!(probe.initial_function(probe.symbol("helper")), None);
+        assert_eq!(probe.captures(probe.arrow()), [probe.copy_of("helper")]);
     });
 }
 
@@ -213,10 +177,7 @@ fn function_in_block_is_not_initial() {
             probe.placement_of("helper").storage,
             symbol_variable(probe, "helper")
         );
-        assert_eq!(
-            probe.analysis.initial_function(probe.symbol("helper")),
-            None
-        );
+        assert_eq!(probe.initial_function(probe.symbol("helper")), None);
     });
 }
 
@@ -267,13 +228,9 @@ fn commonjs_name_is_no_binding_without_wrapper_parameters() {
         "exports = module.exports = function f() { return exports; };",
     ] {
         analyze_source("main.cjs", source, |probe| {
-            assert!(!probe.analysis.has_wrapper_parameters(), "{source}");
+            assert!(!probe.has_wrapper_parameters(), "{source}");
             assert!(
-                probe
-                    .analysis
-                    .bindings(probe.file_scope())
-                    .iter()
-                    .all(is_symbol),
+                probe.bindings(probe.file_scope()).iter().all(is_symbol),
                 "{source}"
             );
             for kind in [FnKind::Decl, FnKind::Expr] {
@@ -299,11 +256,11 @@ fn text_that_needs_the_five_parameters_keeps_them() {
         "function f() { __dirname = ''; } f();",
     ] {
         analyze_source("main.cjs", source, |probe| {
-            assert!(probe.analysis.has_wrapper_parameters(), "{source}");
+            assert!(probe.has_wrapper_parameters(), "{source}");
         });
     }
     analyze_source("main.mjs", "console.log(typeof arguments);", |probe| {
-        assert!(!probe.analysis.has_wrapper_parameters());
+        assert!(!probe.has_wrapper_parameters());
     });
 }
 
@@ -312,17 +269,8 @@ fn commonjs_slot_is_captured_when_shared() {
     let shared = "'use strict'; arguments; function f() { return module; } f();";
     analyze_source("main.cjs", shared, |probe| {
         let module = BindingRef::Slot(probe.file_scope(), MODULE);
-        let expected = Placement {
-            storage: Storage::Local,
-            has_local: true,
-            is_immutable: true,
-            is_shared: true,
-        };
-        assert_eq!(probe.placement(module), expected);
-        assert_eq!(
-            probe.captures(probe.function("f")),
-            [Capture::Value(module)]
-        );
+        assert_eq!(probe.placement(module), COPIED);
+        assert_eq!(probe.captures_of("f"), [Capture::Value(module)]);
     });
 
     let unshared = "'use strict'; arguments; module.exports = 1;";
@@ -337,10 +285,7 @@ fn commonjs_slot_is_captured_when_shared() {
         let scope = probe.file_scope();
         let placement = probe.placement(BindingRef::Slot(scope, MODULE));
         assert_eq!(placement.storage, Storage::Field { scope, field: 0 });
-        assert_eq!(
-            probe.captures(probe.function("f")),
-            [Capture::Environment(scope)]
-        );
+        assert_eq!(probe.captures_of("f"), [Capture::Environment(scope)]);
     });
 }
 

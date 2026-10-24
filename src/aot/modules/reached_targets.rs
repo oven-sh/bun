@@ -99,10 +99,8 @@ impl RemainingTargets {
 
     /// The edges lead from `file` to a target that the walk has not come to.
     pub(super) fn has_some_below(&self, reached: &ReachedTargets, file: FileId) -> bool {
-        self.words
-            .iter()
-            .zip(reached.set_of(file))
-            .any(|(&left, &below)| left & below != 0)
+        let mut pairs = self.words.iter().zip(reached.set_of(file));
+        pairs.any(|(&left, &below)| left & below != 0)
     }
 
     /// The walk has come to `file`. `true`: it is a target, for the first time.

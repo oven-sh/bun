@@ -123,19 +123,26 @@ pub trait SourceProvider: Sync {
 
     fn run_macro<'s>(
         &self,
-        call: &MacroCall<'_, 's>,
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
+        _call: &MacroCall<'_, 's>,
+        _arena: &'s Arena,
+        _atoms: &Interner<'s>,
         log: &mut Log,
-    ) -> Result<&'s DataValue<'s>, Failed>;
+    ) -> Result<&'s DataValue<'s>, Failed> {
+        Err(report_unsupported(log, b"macros without the bundler"))
+    }
 
     fn bundle_pages<'s>(
         &self,
         pages: &[&[u8]],
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
+        _arena: &'s Arena,
+        _atoms: &Interner<'s>,
         log: &mut Log,
-    ) -> Result<Vec<&'s DataValue<'s>>, Failed>;
+    ) -> Result<Vec<&'s DataValue<'s>>, Failed> {
+        if pages.is_empty() {
+            return Ok(Vec::new());
+        }
+        Err(report_unsupported(log, b"HTML pages without the bundler"))
+    }
 
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed>;
 }
@@ -212,29 +219,6 @@ impl SourceProvider for WithoutServices {
                 Err(report_unsupported(log, feature.as_bytes()))
             }
         }
-    }
-
-    fn run_macro<'s>(
-        &self,
-        _call: &MacroCall<'_, 's>,
-        _arena: &'s Arena,
-        _atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<&'s DataValue<'s>, Failed> {
-        Err(report_unsupported(log, b"macros without the bundler"))
-    }
-
-    fn bundle_pages<'s>(
-        &self,
-        pages: &[&[u8]],
-        _arena: &'s Arena,
-        _atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<Vec<&'s DataValue<'s>>, Failed> {
-        if pages.is_empty() {
-            return Ok(Vec::new());
-        }
-        Err(report_unsupported(log, b"HTML pages without the bundler"))
     }
 
     fn check_embedded_files(&self, _log: &mut Log) -> Result<(), Failed> {

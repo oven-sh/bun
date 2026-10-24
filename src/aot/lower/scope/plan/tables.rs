@@ -3,59 +3,65 @@ use bun_sema::check::aot::ClassRef;
 use bun_sema::hir::{Flags, FnId, FnKind, MemberId, MemberKind};
 use bun_sema::util::SharedSort;
 
-use super::storage::find_initial_functions;
 use super::{Context, Parts, Placements};
+use crate::ir::FunctionKey;
 use crate::ir::generated::FunctionFlags;
-use crate::ir::{FunctionKey, VariableKey};
 use crate::lower::captures::Capture;
 use crate::lower::scope::analysis::{
-    ClassUnits, FunctionSummary, GroupedList, LoopStores, ScopeAnalysis, find_by_key,
+    FunctionSummary, GroupedList, LoopStores, ScopeAnalysis, find_by_key,
 };
+use crate::lower::scope::lexical_owners::scope_chain;
 use crate::lower::scope::walk::{ArgumentRead, WalkedLoop};
-use crate::lower::scope::{
-    ArgumentsObject, BindingForm, BindingRef, ScopeSlot, Storage, WalkedFunctionId,
-};
+use crate::lower::scope::{ArgumentsObject, BindingForm, BindingRef, ScopeSlot, WalkedFunctionId};
 
 pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAnalysis {
-    let variables = collect_symbol_variables(&parts.placements);
+    let walk = context.walk;
     let (functions, captures) = compute_function_summaries(context, &parts);
+    let symbols = (0..).map(SymbolId).zip(&parts.forms);
+    let stored = symbols.filter(|entry| *entry.1 == BindingForm::Stored);
+    let stored = stored.map(|(symbol, _)| {
+        let scope = context.declaring_scope(symbol);
+        (scope, BindingRef::Symbol(symbol))
+    });
+    let slots = parts.placements.slots.iter();
+    let slots = slots.map(|&((scope, slot), _)| (scope, BindingRef::Slot(scope, slot)));
+    let hoisted = walk.hoisted_functions.iter();
+    let hoisted = hoisted.map(|&(scope, symbol, function)| (scope, (symbol, function)));
+    let switch_scopes = (0..).map(ScopeId).zip(&walk.is_switch_scope);
+    let switch_scopes = switch_scopes.filter(|entry| *entry.1).map(|entry| entry.0);
+    let holders = parts.initialized_holders.iter();
+    let holders = holders.map(|&(function, symbol)| (walk.functions[function.index()].key, symbol));
+    let mut initialized_holders: Vec<(FunctionKey, SymbolId)> = holders.collect();
+    initialized_holders.sort_unstable();
     ScopeAnalysis {
         file: context.input.file,
         max_captures: context.input.max_captures,
-        bindings: group_bindings(context, &parts.forms, &parts.placements),
-        environment_fields: group_fields(context, &parts.placements),
-        hoisted_functions: group_hoisted_functions(context),
-        initial_functions: find_initial_functions(context, &variables, &parts.captures),
-        switch_scopes: collect_switch_scopes(context),
+        bindings: group_by_scope(context, stored.chain(slots)),
+        environment_fields: group_by_scope(context, parts.placements.fields.iter().copied()),
+        hoisted_functions: group_by_scope(context, hoisted),
+        switch_scopes: switch_scopes.collect(),
         functions,
         captures,
         loops: compute_loop_stores(context, &parts.forms, &parts.placements),
-        class_units: find_class_units(context),
+        field_initializers: find_field_initializers(context),
         forms: parts.forms,
         symbol_placements: parts.placements.symbols,
         slot_placements: parts.placements.slots,
+        initial_functions: parts.placements.initial_functions,
         lexical_owners: parts.lexical_owners,
         arguments_objects: parts.arguments_objects,
-        initialized_holders: name_initialized_holders(context, &parts.initialized_holders),
-        has_wrapper_parameters: context.walk.has_wrapper_parameters,
+        initialized_holders,
+        has_wrapper_parameters: walk.has_wrapper_parameters,
     }
 }
 
-fn name_initialized_holders(
+fn group_by_scope<T: Copy>(
     context: &Context<'_, '_>,
-    holders: &[(WalkedFunctionId, SymbolId)],
-) -> Vec<(FunctionKey, SymbolId)> {
-    let key_of = |function: WalkedFunctionId| context.walk.functions[function.index()].key;
-    let named = holders
-        .iter()
-        .map(|&(function, symbol)| (key_of(function), symbol));
-    let mut named: Vec<(FunctionKey, SymbolId)> = named.collect();
-    named.sort_unstable();
-    named
-}
-
-fn is_stored_form(form: BindingForm) -> bool {
-    matches!(form, BindingForm::Stored)
+    entries: impl Iterator<Item = (ScopeId, T)>,
+) -> GroupedList<T> {
+    let entries = entries.map(|(scope, item)| (scope.idx(), item));
+    let entries: Vec<(usize, T)> = entries.collect();
+    GroupedList::new(context.input.bound.scopes.len(), &entries)
 }
 
 fn has_slot(placements: &Placements, scope: ScopeId, slot: ScopeSlot) -> bool {
@@ -65,7 +71,7 @@ fn has_slot(placements: &Placements, scope: ScopeId, slot: ScopeSlot) -> bool {
 fn has_local(forms: &[BindingForm], placements: &Placements, binding: BindingRef) -> bool {
     match binding {
         BindingRef::Symbol(symbol) => {
-            is_stored_form(forms[symbol.idx()]) && placements.symbols[symbol.idx()].has_local
+            forms[symbol.idx()] == BindingForm::Stored && placements.symbols[symbol.idx()].has_local
         }
         BindingRef::Slot(scope, slot) => {
             let placement = find_by_key(&placements.slots, (scope, slot));
@@ -74,80 +80,9 @@ fn has_local(forms: &[BindingForm], placements: &Placements, binding: BindingRef
     }
 }
 
-fn group_bindings(
-    context: &Context<'_, '_>,
-    forms: &[BindingForm],
-    placements: &Placements,
-) -> GroupedList<BindingRef> {
-    let mut entries: Vec<(usize, BindingRef)> = Vec::new();
-    for (symbol, &form) in (0..).map(SymbolId).zip(forms) {
-        if is_stored_form(form) {
-            entries.push((
-                context.declaring_scope(symbol).idx(),
-                BindingRef::Symbol(symbol),
-            ));
-        }
-    }
-    for &((scope, slot), _) in &placements.slots {
-        entries.push((scope.idx(), BindingRef::Slot(scope, slot)));
-    }
-    GroupedList::new(context.input.bound.scopes.len(), &entries)
-}
-
-fn group_fields(context: &Context<'_, '_>, placements: &Placements) -> GroupedList<BindingRef> {
-    let fields = placements.fields.iter();
-    let entries = fields.map(|&(scope, binding)| (scope.idx(), binding));
-    GroupedList::new(
-        context.input.bound.scopes.len(),
-        &entries.collect::<Vec<_>>(),
-    )
-}
-
-fn group_hoisted_functions(context: &Context<'_, '_>) -> GroupedList<(SymbolId, FnId)> {
-    let functions = context.walk.hoisted_functions.iter();
-    let entries = functions.map(|&(scope, symbol, function)| (scope.idx(), (symbol, function)));
-    GroupedList::new(
-        context.input.bound.scopes.len(),
-        &entries.collect::<Vec<_>>(),
-    )
-}
-
-fn collect_symbol_variables(placements: &Placements) -> Vec<(BindingRef, VariableKey)> {
-    let mut variables = Vec::new();
-    for (symbol, placement) in (0..).map(SymbolId).zip(&placements.symbols) {
-        match placement.storage {
-            Storage::Variable(key) => variables.push((BindingRef::Symbol(symbol), key)),
-            Storage::Local | Storage::Field { .. } => {}
-        }
-    }
-    variables
-}
-
-fn collect_switch_scopes(context: &Context<'_, '_>) -> Vec<ScopeId> {
-    let scopes = (0..).map(ScopeId).zip(&context.walk.is_switch_scope);
-    let switch_scopes = scopes.filter(|entry| *entry.1);
-    switch_scopes.map(|entry| entry.0).collect()
-}
-
-fn compute_scope_depths(context: &Context<'_, '_>) -> Vec<u32> {
-    let scopes = &context.input.bound.scopes;
-    let mut depths: Vec<u32> = Vec::with_capacity(scopes.len());
-    for (index, scope) in scopes.iter().enumerate() {
-        let parent = scope.parent.some().map(ScopeId::idx);
-        debug_assert!(parent.is_none_or(|parent| parent < index));
-        let depth = parent.map_or(0, |parent| depths[parent] + 1);
-        depths.push(depth);
-    }
-    depths
-}
-
-fn encloses(context: &Context<'_, '_>, depths: &[u32], outer: ScopeId, inner: ScopeId) -> bool {
-    let depth_of = |scope: ScopeId| depths.get(scope.idx());
-    let mut scope = inner;
-    while depth_of(scope) > depth_of(outer) {
-        scope = context.input.bound.scopes[scope.idx()].parent;
-    }
-    scope == outer
+// A scope has a greater number than the scope around it.
+fn encloses(context: &Context<'_, '_>, outer: ScopeId, inner: ScopeId) -> bool {
+    scope_chain(context.input.bound, inner).find(|&scope| scope <= outer) == Some(outer)
 }
 
 fn compute_loop_stores(
@@ -155,7 +90,6 @@ fn compute_loop_stores(
     forms: &[BindingForm],
     placements: &Placements,
 ) -> LoopStores {
-    let depths = compute_scope_depths(context);
     let mut loops: Vec<&WalkedLoop> = context.walk.loops.iter().collect();
     loops.shared_sort_unstable_by_key(|walked| walked.statement);
     let mut stored = Vec::new();
@@ -163,12 +97,7 @@ fn compute_loop_stores(
         let is_loop_carried = |binding: &BindingRef| {
             has_local(forms, placements, *binding)
                 && context.owner_of(*binding) == Some(walked.function)
-                && encloses(
-                    context,
-                    &depths,
-                    context.scope_of(*binding),
-                    walked.boundary,
-                )
+                && encloses(context, context.scope_of(*binding), walked.boundary)
         };
         let bindings = walked.stored.iter().copied().filter(is_loop_carried);
         stored.extend(bindings.map(|binding| (index, binding)));
@@ -185,22 +114,18 @@ fn compute_function_summaries(
 ) -> (Vec<FunctionSummary>, Vec<Capture>) {
     let functions = &context.walk.functions;
     debug_assert_eq!(functions.len(), parts.captures.captures.len());
+    let over_limit = &parts.captures.functions_over_limit;
     let mut summaries = Vec::with_capacity(functions.len());
     let mut captures = Vec::new();
     for (id, function) in (0..).map(WalkedFunctionId).zip(functions) {
         let start = captures.len() as u32;
         captures.extend_from_slice(&parts.captures.captures[id.index()]);
-        let is_over_limit = parts
-            .captures
-            .functions_over_limit
-            .binary_search(&id)
-            .is_ok();
         summaries.push(FunctionSummary {
             key: function.key,
             entry_flags: compute_entry_flags(context, function.key, parts),
             undeclared_parameters: count_undeclared_parameters(context, function.key),
             captures: start..captures.len() as u32,
-            has_too_many_captures: is_over_limit,
+            has_too_many_captures: over_limit.binary_search(&id).is_ok(),
         });
     }
     summaries.sort_unstable_by_key(|summary| summary.key);
@@ -211,9 +136,8 @@ fn compute_function_summaries(
 fn argument_reads(context: &Context<'_, '_>, function: FnId) -> impl Iterator<Item = ArgumentRead> {
     let walked = context.walk.function_of_fn[function.idx()];
     let reads = context.walk.argument_reads.iter();
-    reads
-        .filter(move |read| Some(read.0) == walked)
-        .map(|read| read.1)
+    let reads = reads.filter(move |read| Some(read.0) == walked);
+    reads.map(|read| read.1)
 }
 
 fn count_undeclared_parameters(context: &Context<'_, '_>, key: FunctionKey) -> u32 {
@@ -224,16 +148,17 @@ fn count_undeclared_parameters(context: &Context<'_, '_>, key: FunctionKey) -> u
         ArgumentRead::Count => None,
         ArgumentRead::At(position) => Some(position + 1),
     });
-    let hir = context.input.hir;
-    let declared = hir[source.function].params;
-    if declared
-        .iter()
-        .next_back()
-        .is_some_and(|last| hir[last].flags.contains(Flags::REST))
-    {
+    if has_rest_parameter(context, source.function) {
         return 0;
     }
-    positions.max().unwrap_or(0).saturating_sub(declared.len)
+    let declared = context.input.hir[source.function].params.len;
+    positions.max().unwrap_or(0).saturating_sub(declared)
+}
+
+fn has_rest_parameter(context: &Context<'_, '_>, function: FnId) -> bool {
+    let hir = context.input.hir;
+    let last = hir[function].params.iter().next_back();
+    last.is_some_and(|last| hir[last].flags.contains(Flags::REST))
 }
 
 fn compute_entry_flags(
@@ -282,11 +207,10 @@ fn compute_source_entry_flags(
     function: FnId,
     parts: &Parts,
 ) -> FunctionFlags {
-    let hir = context.input.hir;
-    let func = hir[function];
     let top = context.input.bound.fns[function.idx()].scope;
     let has = |slot: ScopeSlot| has_slot(&parts.placements, top, slot);
-    let is_constructor = hir.runtime_function_kind(function) == FnKind::Constructor;
+    let kind = context.input.hir.runtime_function_kind(function);
+    let is_constructor = kind == FnKind::Constructor;
     let mut flags = compute_arguments_entry_flags(parts, CodeUnit::Function(function));
     if argument_reads(context, function).any(|read| read == ArgumentRead::Count) {
         flags |= FunctionFlags::HAS_ARGUMENT_COUNT;
@@ -300,14 +224,13 @@ fn compute_source_entry_flags(
     if has(ScopeSlot::Callee) {
         flags |= FunctionFlags::TAKES_CALLEE;
     }
-    let last_parameter = func.params.iter().next_back();
-    if last_parameter.is_some_and(|parameter| hir[parameter].flags.contains(Flags::REST)) {
+    if has_rest_parameter(context, function) {
         flags = flags.without(FunctionFlags::HAS_HIDDEN_REST);
     }
     flags
 }
 
-fn find_class_units(context: &Context<'_, '_>) -> ClassUnits {
+fn find_field_initializers(context: &Context<'_, '_>) -> Vec<(MemberId, FunctionKey)> {
     let (file, hir, bound) = (context.input.file, context.input.hir, context.input.bound);
     let mut field_initializers = Vec::new();
     for (member, node) in (0..).map(MemberId).zip(hir.members.iter()) {
@@ -325,5 +248,5 @@ fn find_class_units(context: &Context<'_, '_>) -> ClassUnits {
         };
         field_initializers.push((member, initializer));
     }
-    ClassUnits { field_initializers }
+    field_initializers
 }

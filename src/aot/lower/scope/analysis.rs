@@ -123,10 +123,6 @@ pub(super) struct LoopStores {
     pub(super) stored: GroupedList<BindingRef>,
 }
 
-pub(super) struct ClassUnits {
-    pub(super) field_initializers: Vec<(MemberId, FunctionKey)>,
-}
-
 pub(crate) struct ScopeAnalysis {
     pub(super) file: FileId,
     pub(super) max_captures: usize,
@@ -143,7 +139,7 @@ pub(crate) struct ScopeAnalysis {
     pub(super) captures: Vec<Capture>,
     pub(super) arguments_objects: ArgumentsObjects,
     pub(super) loops: LoopStores,
-    pub(super) class_units: ClassUnits,
+    pub(super) field_initializers: Vec<(MemberId, FunctionKey)>,
     pub(super) initialized_holders: Vec<(FunctionKey, SymbolId)>,
     pub(super) has_wrapper_parameters: bool,
 }
@@ -151,6 +147,11 @@ pub(crate) struct ScopeAnalysis {
 pub(super) fn find_by_key<K: Copy + Ord, V: Copy>(list: &[(K, V)], key: K) -> Option<V> {
     let index = list.binary_search_by_key(&key, |entry| entry.0).ok()?;
     Some(list[index].1)
+}
+
+pub(super) fn sort_unique<T: Ord>(list: &mut Vec<T>) {
+    list.sort_unstable();
+    list.dedup();
 }
 
 impl ScopeAnalysis {
@@ -229,9 +230,8 @@ impl ScopeAnalysis {
         function: FunctionKey,
         symbol: SymbolId,
     ) -> bool {
-        self.initialized_holders
-            .binary_search(&(function, symbol))
-            .is_ok()
+        let holders = &self.initialized_holders;
+        holders.binary_search(&(function, symbol)).is_ok()
     }
 
     /// The text of the file is a function of `this` and the five names of a CommonJS module, with an `arguments` object.
@@ -260,16 +260,15 @@ impl ScopeAnalysis {
             CodeUnit::File => FunctionKey::ModuleBody(file),
             CodeUnit::Function(function) => FunctionKey::Source(FunctionRef { file, function }),
             CodeUnit::FieldInitializer(member) => {
-                let initializer = find_by_key(&self.class_units.field_initializers, member);
+                let initializer = find_by_key(&self.field_initializers, member);
                 initializer.expect("the member is a class field with an initializer")
             }
         }
     }
 
     fn find_function(&self, key: FunctionKey) -> Option<&FunctionSummary> {
-        let index = self
-            .functions
-            .binary_search_by_key(&key, |function| function.key);
-        index.ok().map(|index| &self.functions[index])
+        let functions = &self.functions;
+        let index = functions.binary_search_by_key(&key, |function| function.key);
+        index.ok().map(|index| &functions[index])
     }
 }

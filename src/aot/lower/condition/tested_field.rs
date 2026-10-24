@@ -52,9 +52,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if !self.is_holder_unchanged(field) {
             return None;
         }
-        let narrowed = self
-            .builder
-            .narrow_by_field(field.holder_value, read, field.key);
+        let (holder, key) = (field.holder_value, field.key);
+        let narrowed = self.builder.narrow_by_field(holder, read, key);
         self.rebind_local(field.holder, narrowed);
         Some(TestedField {
             holder_value: narrowed,
@@ -91,12 +90,8 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             layer = self.hir.type_assertion_operand(current);
         }
-        if self
-            .inputs
-            .modules
-            .member_binding(self.file, access)
-            .is_some()
-        {
+        let modules = self.inputs.modules;
+        if modules.member_binding(self.file, access).is_some() {
             return false;
         }
         if !self.hir.has_typescript_semantics() {

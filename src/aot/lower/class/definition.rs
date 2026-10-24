@@ -1,7 +1,6 @@
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Decl};
-use bun_sema::check::aot::ClassRef;
-use bun_sema::hir::{ClassId, ExprId};
+use bun_sema::hir::ClassId;
 
 use super::members::ClassHead;
 use super::{
@@ -11,15 +10,8 @@ use super::{
 use crate::ir::generated::MethodKind;
 use crate::ir::{ClassSlot, StringId, ValueId};
 use crate::lower::decorators::StandardDecorationResult;
-use crate::lower::function::EntryArguments;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, layouts, scope};
-
-#[derive(Copy, Clone)]
-struct Heritage {
-    value: ValueId,
-    prototype_parent: ValueId,
-}
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_class_expression(
@@ -65,14 +57,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         self.enter_scope(class_scope);
 
-        let extends = node.extends.some();
-        let heritage = extends.map(|extends| self.lower_heritage(class, extends));
+        let heritage = node.extends.some().map(|extends| {
+            let value = self.lower_expression(extends);
+            self.set_position(node.start);
+            (value, self.builder.resolve_heritage(value))
+        });
         if has_instance_brand(hir, bound, class) {
-            let reference = ClassRef {
-                file: self.file.file,
-                class,
-            };
-            let layout = self.file.class_layout(reference);
+            let layout = self.file.own_class_layout(class);
             self.set_position(node.start);
             let token = self.builder.new_class_token(layout);
             self.set_class_slot(class, ClassSlot::ClassToken, token);
@@ -96,7 +87,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             class,
             layout: head.layout,
             class_object,
-            heritage: heritage.map(|heritage| heritage.value),
+            heritage: heritage.map(|(value, _)| value),
             name: static_name.unwrap_or_else(|| self.file.intern_bytes(b"")),
             class_decorators,
             member_decorators: values.decorators,
@@ -112,12 +103,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             scope::initialize_binding(self, inner, node.name, decorated);
         }
         if !plan.static_elements.is_empty() {
-            let initializer = fields::declare_static_initializer(self.file, class);
-            let arguments = EntryArguments {
-                this: Some(class_object),
-                ..EntryArguments::default()
-            };
-            self.emit_direct_call(initializer, arguments);
+            let initializer = fields::declare_initializer(self.file, class, true);
+            self.emit_call_on(initializer, class_object);
         }
         let value = self.emit_class_result(&plan, &evaluation, decoration, outer);
 
@@ -128,26 +115,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         value
     }
 
-    fn lower_heritage(&mut self, class: ClassId, extends: ExprId) -> Heritage {
-        let value = self.lower_expression(extends);
-        self.set_position(self.file.hir[class].start);
-        let prototype_parent = self.builder.resolve_heritage(value);
-        Heritage {
-            value,
-            prototype_parent,
-        }
-    }
-
     fn emit_class_head(
         &mut self,
         class: ClassId,
         plan: &ClassPlan,
         name: Option<PropertyName>,
-        heritage: Option<Heritage>,
+        heritage: Option<(ValueId, ValueId)>,
     ) -> ClassHead {
         let static_name = self.file.find_static_name(name);
         let constructor = constructor::declare_constructor(self.file, class, plan, static_name);
-        let layout = layouts::define_class_layout(self.file, class, constructor);
+        let layout = layouts::define_class_layout(self.file, class, Some(constructor));
 
         self.set_position(self.file.hir[class].start);
         let closure = self.emit_closure(constructor, None);
@@ -156,12 +133,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.builder
                 .set_function_name(closure, key, MethodKind::Method);
         }
-        let value = self.builder.new_class(
-            layout,
-            closure,
-            heritage.map(|heritage| heritage.value),
-            heritage.map(|heritage| heritage.prototype_parent),
-        );
+        let (parent, prototype_parent) = heritage.unzip();
+        let value = self
+            .builder
+            .new_class(layout, closure, parent, prototype_parent);
         self.set_class_slot(class, ClassSlot::ClassObject, value);
         ClassHead {
             class,

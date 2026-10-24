@@ -12,7 +12,6 @@ use crate::ir::{
 use crate::lower::{FileLowering, class, generator};
 
 impl FileLowering<'_, '_, '_, '_> {
-    /// Of `function f() {}`: the name of the binding `f`.
     pub(crate) fn intern_own_name(&mut self, function: FnId) -> StringId {
         let func = self.hir[function];
         let binding = match func.kind {
@@ -215,18 +214,15 @@ fn create_source_header(
 ) -> Function {
     let hir = file.hir;
     let func = hir[function];
-    let key = FunctionKey::Source(FunctionRef {
-        file: file.file,
-        function,
-    });
-    let declared = file.function_positions(function);
-    let kind = file.compute_function_kind(function);
-    let mut header = create_header(file, key, kind, func.start);
-    header.flags |= compute_source_flags(hir, function);
     let source = FunctionRef {
         file: file.file,
         function,
     };
+    let key = FunctionKey::Source(source);
+    let declared = file.function_positions(function);
+    let kind = file.compute_function_kind(function);
+    let mut header = create_header(file, key, kind, func.start);
+    header.flags |= compute_source_flags(hir, function);
     if file.inputs.library_functions.is_left_out(source) {
         header.flags = header
             .flags
@@ -239,7 +235,13 @@ fn create_source_header(
         None => None,
     };
     header.text = file.compute_text_range(function);
-    header.length = compute_length(hir, function);
+    header.length = func
+        .params
+        .iter()
+        .take_while(|&parameter| {
+            hir[parameter].default.is_none() && !hir[parameter].flags.contains(Flags::REST)
+        })
+        .count() as u32;
     let has_strict_this = header.flags.contains(FunctionFlags::HAS_THIS)
         && !header.flags.contains(FunctionFlags::IS_SLOPPY);
     if has_strict_this {
@@ -277,17 +279,14 @@ fn compute_source_flags(hir: &hir::File<'_>, function: FnId) -> FunctionFlags {
     if last_parameter.is_some_and(|parameter| hir[parameter].flags.contains(Flags::REST)) {
         flags |= FunctionFlags::HAS_REST_PARAMETER;
     }
-    if has_written_this(hir, function) {
+    let has_written_this = match hir.runtime_function_kind(function) {
+        FnKind::Arrow | FnKind::Constructor => false,
+        _ => func.this_param.is_some(),
+    };
+    if has_written_this {
         flags |= FunctionFlags::HAS_THIS;
     }
     flags
-}
-
-fn has_written_this(hir: &hir::File<'_>, function: FnId) -> bool {
-    match hir.runtime_function_kind(function) {
-        FnKind::Arrow | FnKind::Constructor => false,
-        _ => hir[function].this_param.is_some(),
-    }
 }
 
 fn is_array_type(ty: &Type) -> bool {
@@ -296,15 +295,4 @@ fn is_array_type(ty: &Type) -> bool {
     };
     part.builtin_class == BuiltinClass::Array
         && *ty == Type::class(BuiltinClass::Array, &part.contents)
-}
-
-fn compute_length(hir: &hir::File<'_>, function: FnId) -> u32 {
-    let length = hir[function]
-        .params
-        .iter()
-        .take_while(|&parameter| {
-            hir[parameter].default.is_none() && !hir[parameter].flags.contains(Flags::REST)
-        })
-        .count();
-    length as u32
 }

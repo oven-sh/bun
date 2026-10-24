@@ -1,19 +1,17 @@
 mod builder;
 mod literal;
 
-use bun_sema::hir::ExprId;
 use smallvec::SmallVec;
 
 pub(in crate::lower) use self::builder::set_prototype;
 pub(crate) use self::literal::lower_object_literal;
 use super::FunctionLowering;
-use super::member::PropertyName;
 use crate::ir::{LayoutId, ValueId};
 
 pub(crate) struct ObjectBuilder {
     layout: LayoutId,
     state: ObjectState,
-    is_dictionary: bool,
+    // `FinishObject` closes a `NewObject`: a dictionary and a copy have none to close.
     is_finished: bool,
 }
 
@@ -55,7 +53,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         ObjectBuilder {
             layout,
             state: ObjectState::Pending(InitialFields::default()),
-            is_dictionary: false,
             is_finished: false,
         }
     }
@@ -66,8 +63,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         ObjectBuilder {
             layout: self.file.untyped_layout(&[]),
             state: ObjectState::Open { head },
-            is_dictionary: true,
-            is_finished: false,
+            is_finished: true,
         }
     }
 
@@ -77,28 +73,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         ObjectBuilder {
             layout: self.file.untyped_layout(&[]),
             state: ObjectState::Open { head },
-            is_dictionary: true,
-            is_finished: false,
+            is_finished: true,
         }
-    }
-
-    pub(crate) fn add_property(
-        &mut self,
-        object: &mut ObjectBuilder,
-        name: PropertyName,
-        value: ValueId,
-    ) {
-        builder::add_member(self, object, name, value, None);
-    }
-
-    pub(in crate::lower) fn add_property_with_source(
-        &mut self,
-        object: &mut ObjectBuilder,
-        name: PropertyName,
-        value: ValueId,
-        source: ExprId,
-    ) {
-        builder::add_member(self, object, name, value, Some(source));
     }
 
     pub(crate) fn add_spread(&mut self, object: &mut ObjectBuilder, source: ValueId) {
@@ -111,10 +87,6 @@ pub(crate) fn finish_object(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     mut object: ObjectBuilder,
 ) -> ValueId {
-    let head = lowering.open_head(&mut object);
-    // `FinishObject` closes a `NewObject`.
-    if object.is_dictionary || object.is_finished {
-        return head;
-    }
-    lowering.builder.finish_object(head)
+    lowering.finish_head(&mut object);
+    lowering.open_head(&mut object)
 }

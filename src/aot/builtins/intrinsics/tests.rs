@@ -1,6 +1,7 @@
 use super::*;
 use crate::builtins::table::{Conversion, ErrorKind};
 use crate::ir::Opcode;
+use IntrinsicPosition::{Call, Member, Value};
 use bun_sema::atom::Interner;
 use bun_sema::session::Session;
 
@@ -33,33 +34,31 @@ fn with_names<R>(then: impl FnOnce(&Spellings<'_, '_>) -> R) -> R {
     })
 }
 
+macro_rules! assert_found {
+    ($spellings:ident, $($spelling:literal, $position:ident => $found:pat,)*) => {$(
+        let found = $spellings.intrinsic($spelling, $position);
+        assert!(matches!(found, Some($found)), "{}: {found:?}", $spelling);
+    )*};
+}
+
+#[track_caller]
+fn assert_absent(spellings: &Spellings<'_, '_>, absent: &[(&str, IntrinsicPosition)]) {
+    for &(spelling, position) in absent {
+        let found = spellings.intrinsic(spelling, position);
+        assert!(found.is_none(), "{spelling}: {found:?}");
+    }
+}
+
 #[test]
 fn resolves_private_spellings_by_position() {
     with_names(|spellings| {
-        assert!(matches!(
-            spellings.intrinsic("$toLength", IntrinsicPosition::Call),
-            Some(Intrinsic::Operation(Opcode::ToLength))
-        ));
-        assert!(matches!(
-            spellings.intrinsic("$isObject", IntrinsicPosition::Call),
-            Some(Intrinsic::IsObject)
-        ));
-        assert!(matches!(
-            spellings.intrinsic("$isCallable", IntrinsicPosition::Call),
-            Some(Intrinsic::IsCallable)
-        ));
-        assert!(matches!(
-            spellings.intrinsic("$call", IntrinsicPosition::Member),
-            Some(Intrinsic::Call {
-                is_never_inlined: false
-            })
-        ));
-        assert!(matches!(
-            spellings.intrinsic("$callNoInline", IntrinsicPosition::Call),
-            Some(Intrinsic::Call {
-                is_never_inlined: true
-            })
-        ));
+        assert_found!(spellings,
+            "$toLength", Call => Intrinsic::Operation(Opcode::ToLength),
+            "$isObject", Call => Intrinsic::IsObject,
+            "$isCallable", Call => Intrinsic::IsCallable,
+            "$call", Member => Intrinsic::Call { is_never_inlined: false },
+            "$callNoInline", Call => Intrinsic::Call { is_never_inlined: true },
+        );
         assert_eq!(
             spellings.native_call_kind("$cpp"),
             Some(NativeCallKind::Cpp)
@@ -70,31 +69,14 @@ fn resolves_private_spellings_by_position() {
 #[test]
 fn rejects_other_positions_and_spellings() {
     with_names(|spellings| {
-        assert!(
-            spellings
-                .intrinsic("$isObject", IntrinsicPosition::Member)
-                .is_none()
-        );
-        assert!(
-            spellings
-                .intrinsic("$isObject", IntrinsicPosition::Value)
-                .is_none()
-        );
-        assert!(
-            spellings
-                .intrinsic("isObject", IntrinsicPosition::Call)
-                .is_none()
-        );
-        assert!(
-            spellings
-                .intrinsic("$$isObject", IntrinsicPosition::Call)
-                .is_none()
-        );
-        assert!(
-            spellings
-                .intrinsic("$notAnIntrinsic", IntrinsicPosition::Call)
-                .is_none()
-        );
+        let absent = [
+            ("$isObject", Member),
+            ("$isObject", Value),
+            ("isObject", Call),
+            ("$$isObject", Call),
+            ("$notAnIntrinsic", Call),
+        ];
+        assert_absent(spellings, &absent);
         assert_eq!(spellings.native_call_kind("$isObject"), None);
         assert_eq!(spellings.native_call_kind("cpp"), None);
     });
@@ -103,52 +85,24 @@ fn rejects_other_positions_and_spellings() {
 #[test]
 fn position_selects_entry() {
     with_names(|spellings| {
-        assert!(matches!(
-            spellings.intrinsic("$isArray", IntrinsicPosition::Call),
-            Some(Intrinsic::Builtin(table::BuiltinId::ArrayIsArray))
-        ));
-        assert!(matches!(
-            spellings.intrinsic("$isArray", IntrinsicPosition::Value),
-            Some(Intrinsic::Builtin(
-                table::BuiltinId::LinkTimeConstantIsArray
-            ))
-        ));
+        assert_found!(spellings,
+            "$isArray", Call => Intrinsic::Builtin(table::BuiltinId::ArrayIsArray),
+            "$isArray", Value => Intrinsic::Builtin(table::BuiltinId::LinkTimeConstantIsArray),
+        );
     });
 }
 
 #[test]
 fn conversions_and_throws() {
     with_names(|spellings| {
-        assert!(matches!(
-            spellings.intrinsic("$toNumber", IntrinsicPosition::Call),
-            Some(Intrinsic::Conversion(Conversion::ToNumber))
-        ));
-        assert!(matches!(
-            spellings.intrinsic("$throwTypeError", IntrinsicPosition::Call),
-            Some(Intrinsic::Throw(ErrorKind::TypeError))
-        ));
-        assert!(matches!(
-            spellings.intrinsic("$throwRangeError", IntrinsicPosition::Call),
-            Some(Intrinsic::Throw(ErrorKind::RangeError))
-        ));
-        assert!(matches!(
-            spellings.intrinsic("$ifAbruptCloseIterator", IntrinsicPosition::Call),
-            Some(Intrinsic::IfAbruptCloseIterator)
-        ));
-        assert!(matches!(
-            spellings.intrinsic("$undefined", IntrinsicPosition::Value),
-            Some(Intrinsic::Undefined)
-        ));
-        assert!(
-            spellings
-                .intrinsic("$toNumber", IntrinsicPosition::Value)
-                .is_none()
+        assert_found!(spellings,
+            "$toNumber", Call => Intrinsic::Conversion(Conversion::ToNumber),
+            "$throwTypeError", Call => Intrinsic::Throw(ErrorKind::TypeError),
+            "$throwRangeError", Call => Intrinsic::Throw(ErrorKind::RangeError),
+            "$ifAbruptCloseIterator", Call => Intrinsic::IfAbruptCloseIterator,
+            "$undefined", Value => Intrinsic::Undefined,
         );
-        assert!(
-            spellings
-                .intrinsic("$undefined", IntrinsicPosition::Call)
-                .is_none()
-        );
+        assert_absent(spellings, &[("$toNumber", Value), ("$undefined", Call)]);
     });
 }
 
@@ -166,30 +120,18 @@ fn symbol_keys() {
         assert_eq!(spellings.symbol_key("$iterator"), None);
         assert_eq!(spellings.symbol_key("iterator"), None);
         assert_eq!(spellings.symbol_key("$$call"), None);
-        assert!(
-            spellings
-                .intrinsic("$iterator", IntrinsicPosition::Member)
-                .is_none()
-        );
-        assert!(
-            spellings
-                .intrinsic("$$iterator", IntrinsicPosition::Member)
-                .is_none()
-        );
+        let absent = [("$iterator", Member), ("$$iterator", Member)];
+        assert_absent(spellings, &absent);
     });
 }
 
 #[test]
 fn native_call_is_no_intrinsic() {
     with_names(|spellings| {
-        assert!(
-            spellings
-                .intrinsic("$cpp", IntrinsicPosition::Call)
-                .is_none()
-        );
+        assert_absent(spellings, &[("$cpp", Call)]);
         let mut native_call_count = 0;
         for name in table::intrinsic_names() {
-            let found = table::intrinsic_of(name, IntrinsicPosition::Call);
+            let found = table::intrinsic_of(name, Call);
             let Some(Intrinsic::NativeCall(kind)) = found else {
                 continue;
             };
@@ -198,7 +140,7 @@ fn native_call_is_no_intrinsic() {
             let spelling = spellings.atoms.intern(&spelling);
             let names = spellings.names;
             assert_eq!(find_native_call_kind(names, spelling), Some(kind));
-            assert!(find_intrinsic(names, spelling, IntrinsicPosition::Call).is_none());
+            assert!(find_intrinsic(names, spelling, Call).is_none());
         }
         assert_eq!(native_call_count, 5);
     });
@@ -214,11 +156,8 @@ fn native_call_kinds() {
             ("$newRustFunction", NativeCallKind::NewRustFunction),
         ];
         for (spelling, kind) in kinds {
-            assert_eq!(
-                spellings.native_call_kind(spelling),
-                Some(kind),
-                "{spelling}"
-            );
+            let found = spellings.native_call_kind(spelling);
+            assert_eq!(found, Some(kind), "{spelling}");
         }
     });
 }

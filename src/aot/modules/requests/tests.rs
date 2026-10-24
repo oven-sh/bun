@@ -2,7 +2,9 @@ mod module_set;
 
 use super::*;
 use crate::modules::testing::{describe_module, file_named, with_graph};
-use crate::modules::{Candidates, ModuleFailureId, ModuleGraph, SiteAnswer, compare_modules};
+use crate::modules::{
+    Candidates, ModuleFailure, ModuleFailureId, ModuleGraph, SiteAnswer, compare_modules,
+};
 use bstr::BStr;
 use bun_core::strings::split;
 use bun_sema::hir::ImportEqualsId;

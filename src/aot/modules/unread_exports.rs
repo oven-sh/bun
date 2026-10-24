@@ -31,72 +31,59 @@ struct DataModule {
     is_namespace_reached: bool,
 }
 
+impl DataModule {
+    fn load(&mut self, value: LoadedValue) {
+        self.is_namespace_reached |= match value {
+            LoadedValue::Namespace => true,
+            LoadedValue::RequireResult => self.is_required_as_namespace,
+            LoadedValue::Nothing => false,
+        };
+    }
+}
+
 struct ExportReads {
-    index_by_file: FxHashMap<FileId, usize>,
-    modules: Vec<DataModule>,
+    modules: FxHashMap<FileId, DataModule>,
     read_symbols: FxHashSet<Sym>,
 }
 
 impl ExportReads {
     fn new(files: &[FileRow]) -> ExportReads {
-        let mut reads = ExportReads {
-            index_by_file: FxHashMap::default(),
-            modules: Vec::new(),
-            read_symbols: FxHashSet::default(),
-        };
+        let mut modules = FxHashMap::default();
         for parts in files {
             if parts.interop.kind == ModuleKind::Data && !parts.exports.is_empty() {
-                reads.index_by_file.insert(parts.file, reads.modules.len());
-                reads.modules.push(DataModule {
-                    is_required_as_namespace: parts.interop.require_result
-                        == RequireResult::Namespace,
+                let is_required_as_namespace =
+                    parts.interop.require_result == RequireResult::Namespace;
+                let data_module = DataModule {
+                    is_required_as_namespace,
                     is_namespace_reached: parts.is_library,
-                });
+                };
+                modules.insert(parts.file, data_module);
             }
         }
-        reads
-    }
-
-    fn find(&mut self, module: ModuleRef) -> Option<&mut DataModule> {
-        match module {
-            ModuleRef::File(file) => {
-                let index = *self.index_by_file.get(&file)?;
-                Some(&mut self.modules[index])
-            }
-            _ => None,
-        }
-    }
-
-    fn reach_namespace(&mut self, module: ModuleRef) {
-        if let Some(data_module) = self.find(module) {
-            data_module.is_namespace_reached = true;
+        ExportReads {
+            modules,
+            read_symbols: FxHashSet::default(),
         }
     }
 
     fn read_symbol(&mut self, symbol: Sym) {
-        if self.index_by_file.contains_key(&symbol.file) {
+        if self.modules.contains_key(&symbol.file) {
             self.read_symbols.insert(symbol);
         }
     }
 
     fn load(&mut self, module: ModuleRef, value: LoadedValue) {
-        if let Some(data_module) = self.find(module) {
-            data_module.is_namespace_reached |= match value {
-                LoadedValue::Namespace => true,
-                LoadedValue::RequireResult => data_module.is_required_as_namespace,
-                LoadedValue::Nothing => false,
-            };
+        let data_module = match module {
+            ModuleRef::File(file) => self.modules.get_mut(&file),
+            _ => None,
+        };
+        if let Some(data_module) = data_module {
+            data_module.load(value);
         }
     }
 
-    fn load_any_module(&mut self, value: LoadedValue) {
-        for data_module in &mut self.modules {
-            data_module.is_namespace_reached |= match value {
-                LoadedValue::Namespace => true,
-                LoadedValue::RequireResult => data_module.is_required_as_namespace,
-                LoadedValue::Nothing => false,
-            };
-        }
+    fn reach_namespace(&mut self, module: ModuleRef) {
+        self.load(module, LoadedValue::Namespace);
     }
 
     fn add_import(&mut self, binding: ImportBinding) {
@@ -136,7 +123,9 @@ impl ExportReads {
         let value = loaded_value(site);
         match answer {
             StoredSiteAnswer::Module(module) => self.load(*module, value),
-            StoredSiteAnswer::AllModules => self.load_any_module(value),
+            StoredSiteAnswer::AllModules => {
+                self.modules.values_mut().for_each(|it| it.load(value));
+            }
             StoredSiteAnswer::Candidates(range) => {
                 for spelled in &parts.spellings[range.start as usize..range.end as usize] {
                     self.load(spelled.module, value);
@@ -193,11 +182,9 @@ pub(super) fn remove_unread_data_exports(files: &mut [FileRow]) {
         reads.add_file(parts);
     }
     for parts in files {
-        let Some(&index) = reads.index_by_file.get(&parts.file) else {
-            continue;
-        };
-        if reads.modules[index].is_namespace_reached {
-            continue;
+        match reads.modules.get(&parts.file) {
+            Some(data_module) if !data_module.is_namespace_reached => {}
+            Some(_) | None => continue,
         }
         let module = parts.file;
         let kept_symbols: FxHashSet<SymbolId> = parts
@@ -210,15 +197,14 @@ pub(super) fn remove_unread_data_exports(files: &mut [FileRow]) {
             })
             .collect();
         let mut unread_exports = Vec::new();
-        parts
-            .exports
-            .retain(|export| match reads.is_unread(module, export) {
-                Some(symbol) if !kept_symbols.contains(&symbol) => {
-                    unread_exports.push(symbol);
-                    false
-                }
-                Some(_) | None => true,
-            });
+        let exports = &mut parts.exports;
+        exports.retain(|export| match reads.is_unread(module, export) {
+            Some(symbol) if !kept_symbols.contains(&symbol) => {
+                unread_exports.push(symbol);
+                false
+            }
+            Some(_) | None => true,
+        });
         unread_exports.sort_unstable();
         unread_exports.dedup();
         parts.unread_exports = unread_exports;

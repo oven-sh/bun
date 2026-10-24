@@ -26,7 +26,6 @@ pub(super) const NAMES_THE_SAME_IN_EVERY_FILE: u8 = 1 << 7;
 // Beside the level of a definition: the type is declared in a file of the program.
 pub(super) const HAS_PLACE: u8 = 1 << 6;
 
-// A type under a layout.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct DefinedObjectType {
     names: TypeIdentity,
@@ -49,21 +48,17 @@ impl DefinedObjectType {
     }
 }
 
-// The first file, in the order of the files, that has defined each type at each level, among the files that are lowered for good.
 #[derive(Default)]
 pub struct DefinedObjectTypes {
     first_definers: ShardedMap<DefinedObjectType, FirstDefiners>,
-    // The first file that has defined any type under each layout, and the first that has defined one with a place.
     first_definers_of_layouts: ShardedMap<TypeIdentity, AtomicU32>,
     first_placed_definers_of_layouts: ShardedMap<TypeIdentity, AtomicU32>,
     names_of_types: ShardedMap<TypeId, NamesOfObjectType>,
-    // What each file has worked out and is not yet lowered for good.
     names_of_files: Guarded<FxHashMap<FileId, Vec<(TypeId, NamesOfObjectType)>>>,
     #[cfg(test)]
     late_answers: late_answers::Choice,
 }
 
-// What the layout of an object type is known by.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) struct NamesOfObjectType {
     pub identity: TypeIdentity,
@@ -83,7 +78,6 @@ impl DefinedObjectTypes {
         self.names_of_types.get_ref(&ty).copied()
     }
 
-    // A file that is lowered again says it again.
     pub(super) fn hold_names_of_file(&self, file: FileId, names: Vec<(TypeId, NamesOfObjectType)>) {
         self.names_of_files.lock().insert(file, names);
     }
@@ -99,20 +93,16 @@ impl DefinedObjectTypes {
     }
 
     pub fn add_definition(&self, ty: DefinedObjectType, level: u8, definer: FileId) {
-        let of_layout = match self.first_definers_of_layouts.get_ref(&ty.names) {
-            Some(first_definer) => first_definer,
-            None => self
-                .first_definers_of_layouts
-                .insert_ref(ty.names, AtomicU32::new(u32::MAX)),
-        };
-        of_layout.fetch_min(definer.0, Ordering::Relaxed);
-        if level & HAS_PLACE != 0 {
-            let placed = &self.first_placed_definers_of_layouts;
-            let of_layout = match placed.get_ref(&ty.names) {
+        let add_definer_of_layout = |first_definers: &ShardedMap<TypeIdentity, AtomicU32>| {
+            let first_definer = match first_definers.get_ref(&ty.names) {
                 Some(first_definer) => first_definer,
-                None => placed.insert_ref(ty.names, AtomicU32::new(u32::MAX)),
+                None => first_definers.insert_ref(ty.names, AtomicU32::new(u32::MAX)),
             };
-            of_layout.fetch_min(definer.0, Ordering::Relaxed);
+            first_definer.fetch_min(definer.0, Ordering::Relaxed);
+        };
+        add_definer_of_layout(&self.first_definers_of_layouts);
+        if level & HAS_PLACE != 0 {
+            add_definer_of_layout(&self.first_placed_definers_of_layouts);
         }
         let first_definers = match self.first_definers.get_ref(&ty) {
             Some(first_definers) => first_definers,
@@ -150,7 +140,6 @@ impl DefinedObjectTypes {
         first_definers.any(|first_definer| first_definer.load(Ordering::Relaxed) < file.0)
     }
 
-    // `with_place`: by a definition that has a place.
     pub(in crate::lower) fn is_layout_defined_by_earlier_file(
         &self,
         layout: LayoutKey,

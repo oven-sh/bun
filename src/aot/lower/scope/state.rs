@@ -26,22 +26,14 @@ pub(super) struct EnteredScope {
 
 #[derive(Default)]
 pub(crate) struct ScopeState {
-    entered: Vec<EnteredScope>,
-    locals: FxHashMap<BindingRef, LocalBinding>,
-    entry_this: Option<ValueId>,
+    pub(super) entered: Vec<EnteredScope>,
+    pub(in crate::lower) locals: FxHashMap<BindingRef, LocalBinding>,
+    pub(in crate::lower) entry_this: Option<ValueId>,
     /// The captures of a function that gets them in one object, read out of it at entry.
-    unpacked_captures: Vec<ValueId>,
+    pub(in crate::lower) unpacked_captures: Vec<ValueId>,
 }
 
 impl ScopeState {
-    pub(super) fn push_scope(&mut self, entered: EnteredScope) {
-        self.entered.push(entered);
-    }
-
-    pub(super) fn pop_scope(&mut self) -> Option<EnteredScope> {
-        self.entered.pop()
-    }
-
     pub(super) fn innermost_scope(&self) -> ScopeId {
         let innermost = self.entered.last();
         innermost.map_or(ScopeId::NONE, |entered| entered.scope)
@@ -56,31 +48,11 @@ impl ScopeState {
         self.locals.get(&binding).copied()
     }
 
-    pub(in crate::lower) fn declare_local(&mut self, binding: BindingRef, local: LocalBinding) {
-        self.locals.insert(binding, local);
-    }
-
     pub(super) fn end_dead_zone(&mut self, binding: BindingRef) {
         if let Some(local) = self.locals.get_mut(&binding)
             && local.dead_zone == DeadZone::Uninitialized
         {
             local.dead_zone = DeadZone::Initialized;
         }
-    }
-
-    pub(in crate::lower) fn unpacked_captures(&self) -> &[ValueId] {
-        &self.unpacked_captures
-    }
-
-    pub(in crate::lower) fn set_unpacked_captures(&mut self, values: Vec<ValueId>) {
-        self.unpacked_captures = values;
-    }
-
-    pub(in crate::lower) fn entry_this(&self) -> Option<ValueId> {
-        self.entry_this
-    }
-
-    pub(in crate::lower) fn set_entry_this(&mut self, value: ValueId) {
-        self.entry_this = Some(value);
     }
 }

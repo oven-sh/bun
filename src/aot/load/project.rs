@@ -9,13 +9,6 @@ pub enum ProjectId {
 impl ProjectId {
     pub const COUNT: usize = 2;
     pub const ALL: [ProjectId; ProjectId::COUNT] = [ProjectId::Application, ProjectId::Runtime];
-
-    pub fn index(self) -> usize {
-        match self {
-            ProjectId::Application => 0,
-            ProjectId::Runtime => 1,
-        }
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -35,13 +28,6 @@ impl<T> PerProject<T> {
         match project {
             ProjectId::Application => &self.application,
             ProjectId::Runtime => &self.runtime,
-        }
-    }
-
-    pub fn get_mut(&mut self, project: ProjectId) -> &mut T {
-        match project {
-            ProjectId::Application => &mut self.application,
-            ProjectId::Runtime => &mut self.runtime,
         }
     }
 
@@ -73,7 +59,7 @@ mod tests {
     #[test]
     fn index_follows_declaration_order() {
         for (index, project) in ProjectId::ALL.into_iter().enumerate() {
-            assert_eq!(project.index(), index);
+            assert_eq!(project as usize, index);
         }
     }
 

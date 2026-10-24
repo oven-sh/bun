@@ -6,10 +6,9 @@ use crate::ir::{
     DataId, EvalScopeId, ExpectedResultId, ModuleFailureId as WireModuleFailureId, ModuleId,
     PropertyKeyId, StringId, Type, TypeId, TypeSiteId,
 };
-use crate::link::InProject;
 use crate::link::testing::{
-    TestUnit, forward, reverse, test_class_key, test_function_key, test_variable_key, unit_in,
-    with_test_files,
+    TestUnit, forward, key_in, reverse, test_class_key, test_function_key, test_variable_key,
+    unit_in, with_test_files,
 };
 use crate::load::ProjectId;
 use crate::lower::FragmentBuilder;
@@ -342,29 +341,11 @@ fn keys_carry_the_project() {
             );
 
             let in_project = |file| ProgramFile { project, file };
-            let declared = InProject {
-                project,
-                key: variable,
-            };
+            let declared = ProgramVariableKey::Declared(key_in(project, variable));
             assert_eq!(unit.file, in_project(main));
-            assert_eq!(
-                unit.functions.keys,
-                [InProject {
-                    project,
-                    key: function
-                }]
-            );
-            assert_eq!(
-                unit.layouts.keys,
-                [InProject {
-                    project,
-                    key: layout
-                }]
-            );
-            assert_eq!(
-                unit.variables.keys,
-                [ProgramVariableKey::Declared(declared)]
-            );
+            assert_eq!(unit.functions.keys, [key_in(project, function)]);
+            assert_eq!(unit.layouts.keys, [key_in(project, layout)]);
+            assert_eq!(unit.variables.keys, [declared]);
             assert_eq!(unit.modules, [ProgramModule::File(in_project(first))]);
         }
     });

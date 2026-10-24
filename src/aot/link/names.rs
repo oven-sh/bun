@@ -5,11 +5,7 @@ use super::program_keys::{
     ProgramFunctionKey, ProgramLayoutKey, ProgramModule, ProgramVariableKey,
 };
 use super::state::{ModuleTable, Numbering};
-use crate::engine::Position;
-use crate::ir::generated::SourceRange;
-use crate::ir::{
-    FunctionId, Id, LayoutId, ModuleId, Program, PropertyKey, StringId, StringTable, VariableId,
-};
+use crate::ir::{FunctionId, Id, LayoutId, ModuleId, Program, StringId, StringTable};
 
 pub struct ProgramKeys {
     pub functions: Vec<ProgramFunctionKey>,
@@ -57,83 +53,46 @@ pub enum ModuleOrigin {
     Runtime,
 }
 
-pub(super) struct NameInput<'a> {
-    pub program: &'a Program,
-    pub functions: &'a BodyRemap,
-    pub module_origins: Vec<ModuleOrigin>,
-    pub beside: Beside<'a>,
-}
+type NameRange = core::ops::Range<usize>;
 
-#[derive(Copy, Clone, Default)]
-struct NameRange {
-    start: usize,
-    end: usize,
+#[derive(Default)]
+struct FunctionRow {
+    name: NameRange,
+    module: Option<ModuleId>,
+    range: Option<(u32, u32)>,
+    // How many values the function had when the front end sent it.
+    values: u32,
 }
 
 pub struct ProgramNames {
     bytes: Vec<u8>,
-    function_names: Vec<NameRange>,
-    function_modules: Vec<Option<ModuleId>>,
-    function_ranges: Vec<Option<(u32, u32)>>,
-    function_values: Vec<u32>,
+    functions: Vec<FunctionRow>,
     layout_names: Vec<NameRange>,
-    layout_positions: Vec<Option<Position>>,
-    variable_names: Vec<NameRange>,
     module_paths: Vec<NameRange>,
     module_origins: Vec<ModuleOrigin>,
-    field_starts: Vec<usize>,
-    field_names: Vec<NameRange>,
-}
-
-fn text_range(text: SourceRange) -> Option<(u32, u32)> {
-    (text.start < text.end).then_some((text.start, text.end))
 }
 
 impl ProgramNames {
     pub fn function_name(&self, function: FunctionId) -> &[u8] {
-        self.name_at(&self.function_names, function.index())
+        let row = self.functions.get(function.index());
+        row.map_or(&[][..], |row| &self.bytes[row.name.start..row.name.end])
     }
 
     pub fn function_module(&self, function: FunctionId) -> Option<ModuleId> {
-        self.function_modules
-            .get(function.index())
-            .copied()
-            .flatten()
+        self.functions.get(function.index())?.module
     }
 
     pub fn function_range(&self, function: FunctionId) -> Option<(u32, u32)> {
-        self.function_ranges
-            .get(function.index())
-            .copied()
-            .flatten()
+        self.functions.get(function.index())?.range
     }
 
-    // How many values the function had when the front end sent it.
     pub fn function_values(&self, function: FunctionId) -> u32 {
-        self.function_values
-            .get(function.index())
-            .copied()
-            .unwrap_or(0)
+        let row = self.functions.get(function.index());
+        row.map_or(0, |row| row.values)
     }
 
     pub fn layout_name(&self, layout: LayoutId) -> &[u8] {
         self.name_at(&self.layout_names, layout.index())
-    }
-
-    pub fn layout_position(&self, layout: LayoutId) -> Option<Position> {
-        self.layout_positions.get(layout.index()).copied().flatten()
-    }
-
-    pub fn field_name(&self, layout: LayoutId, field: u32) -> &[u8] {
-        let starts = self.field_starts.get(layout.index()..);
-        let Some(&[start, end]) = starts.and_then(|starts| starts.first_chunk()) else {
-            return &[];
-        };
-        self.name_at(&self.field_names[start..end], field as usize)
-    }
-
-    pub fn variable_name(&self, variable: VariableId) -> &[u8] {
-        self.name_at(&self.variable_names, variable.index())
     }
 
     pub fn module_path(&self, module: ModuleId) -> &[u8] {
@@ -145,74 +104,41 @@ impl ProgramNames {
         origin.unwrap_or(ModuleOrigin::Runtime)
     }
 
-    pub(super) fn new(input: NameInput<'_>) -> ProgramNames {
-        let NameInput {
-            program,
-            functions,
-            module_origins,
-            beside,
-        } = input;
+    pub(super) fn new(
+        program: &Program,
+        functions: &BodyRemap,
+        module_origins: Vec<ModuleOrigin>,
+        beside: Beside<'_>,
+    ) -> ProgramNames {
         debug_assert_eq!(module_origins.len(), program.modules.len());
-        let (of_functions, mut names) = run_beside(
+        let ((bytes, rows), mut names) = run_beside(
             beside,
-            || FunctionNames::new(program, functions),
-            || ProgramNames::without_functions(program, module_origins),
+            || name_functions(program, functions),
+            || {
+                let mut pool = NamePool::new(&program.strings);
+                let (layouts, modules) = (program.layouts.iter(), program.modules.iter());
+                ProgramNames {
+                    functions: Vec::new(),
+                    layout_names: layouts
+                        .map(|layout| pool.copy_optional(layout.name))
+                        .collect(),
+                    module_paths: modules
+                        .map(|module| pool.copy(module.display_path))
+                        .collect(),
+                    module_origins,
+                    bytes: pool.bytes,
+                }
+            },
         );
         // The names of the functions lie behind the others.
         let first = names.bytes.len();
-        names.bytes.extend_from_slice(&of_functions.bytes);
-        let moved = of_functions.names.into_iter().map(|range| NameRange {
-            start: range.start + first,
-            end: range.end + first,
-        });
-        names.function_names = moved.collect();
-        names.function_modules = of_functions.modules;
-        names.function_ranges = of_functions.ranges;
-        names.function_values = of_functions.values;
+        names.bytes.extend_from_slice(&bytes);
+        names.functions = rows;
+        for row in &mut names.functions {
+            row.name.start += first;
+            row.name.end += first;
+        }
         names
-    }
-
-    fn without_functions(program: &Program, module_origins: Vec<ModuleOrigin>) -> ProgramNames {
-        let mut pool = NamePool::new(&program.strings);
-        let mut layout_names = Vec::with_capacity(program.layouts.len());
-        let mut layout_positions = Vec::with_capacity(program.layouts.len());
-        let mut field_starts = Vec::with_capacity(program.layouts.len() + 1);
-        let mut field_names = Vec::new();
-        for layout in &program.layouts {
-            let offset = layout.position;
-            layout_names.push(pool.copy_optional(layout.name));
-            layout_positions.push(layout.module.map(|module| Position { module, offset }));
-            field_starts.push(field_names.len());
-            for field in &layout.fields {
-                let key = field.key.map(|key| program.property_keys.get(key));
-                field_names.push(pool.copy_optional(key.and_then(PropertyKey::string_name)));
-            }
-        }
-        field_starts.push(field_names.len());
-
-        let variables = program.variables.iter();
-        let variable_names = variables
-            .map(|variable| pool.copy_optional(variable.name))
-            .collect();
-        let modules = program.modules.iter();
-        let module_paths = modules
-            .map(|module| pool.copy(module.display_path))
-            .collect();
-
-        ProgramNames {
-            bytes: pool.bytes,
-            function_names: Vec::new(),
-            function_modules: Vec::new(),
-            function_ranges: Vec::new(),
-            function_values: Vec::new(),
-            layout_names,
-            layout_positions,
-            variable_names,
-            module_paths,
-            module_origins,
-            field_starts,
-            field_names,
-        }
     }
 
     #[cfg(test)]
@@ -223,10 +149,12 @@ impl ProgramNames {
     ) -> ProgramNames {
         let strings = StringTable::default();
         let mut pool = NamePool::new(&strings);
-        let function_names = functions
-            .iter()
-            .map(|&(name, _)| pool.copy_bytes(name))
-            .collect();
+        let functions = functions.iter().map(|&(name, module)| FunctionRow {
+            name: pool.copy_bytes(name),
+            module,
+            ..FunctionRow::default()
+        });
+        let functions = functions.collect();
         let layout_names = layouts.iter().map(|name| pool.copy_bytes(name)).collect();
         let module_paths = modules
             .iter()
@@ -234,17 +162,10 @@ impl ProgramNames {
             .collect();
         ProgramNames {
             bytes: pool.bytes,
-            function_names,
-            function_modules: functions.iter().map(|&(_, module)| module).collect(),
-            function_ranges: vec![None; functions.len()],
-            function_values: vec![0; functions.len()],
+            functions,
             layout_names,
-            layout_positions: vec![None; layouts.len()],
-            variable_names: Vec::new(),
             module_paths,
             module_origins: modules.iter().map(|&(_, origin)| origin).collect(),
-            field_starts: vec![0; layouts.len() + 1],
-            field_names: Vec::new(),
         }
     }
 
@@ -255,37 +176,22 @@ impl ProgramNames {
     }
 }
 
-struct FunctionNames {
-    bytes: Vec<u8>,
-    names: Vec<NameRange>,
-    modules: Vec<Option<ModuleId>>,
-    ranges: Vec<Option<(u32, u32)>>,
-    values: Vec<u32>,
-}
-
-impl FunctionNames {
-    fn new(program: &Program, functions: &BodyRemap) -> FunctionNames {
-        let mut pool = NamePool::new(&program.strings);
-        let count = functions.function_count();
-        let mut names = FunctionNames {
-            bytes: Vec::new(),
-            names: Vec::with_capacity(count),
-            modules: Vec::with_capacity(count),
-            ranges: Vec::with_capacity(count),
-            values: Vec::with_capacity(count),
-        };
-        for (ids, function) in functions.functions() {
-            let name = function.name.map(|name| {
-                ids.strings[name.index()].expect("the name of a retained function is retained")
-            });
-            names.names.push(pool.copy_optional(name));
-            names.modules.push(ids.modules[function.module.index()]);
-            names.ranges.push(text_range(function.text));
-            names.values.push(function.body.value_count);
-        }
-        names.bytes = pool.bytes;
-        names
+fn name_functions(program: &Program, functions: &BodyRemap) -> (Vec<u8>, Vec<FunctionRow>) {
+    let mut pool = NamePool::new(&program.strings);
+    let mut rows = Vec::with_capacity(functions.function_count());
+    for (ids, function) in functions.functions() {
+        let name = function.name.map(|name| {
+            ids.strings[name.index()].expect("the name of a retained function is retained")
+        });
+        let text = function.text;
+        rows.push(FunctionRow {
+            name: pool.copy_optional(name),
+            module: ids.modules[function.module.index()],
+            range: (text.start < text.end).then_some((text.start, text.end)),
+            values: function.body.value_count,
+        });
     }
+    (pool.bytes, rows)
 }
 
 struct NamePool<'a> {
@@ -304,21 +210,18 @@ impl<'a> NamePool<'a> {
     }
 
     fn copy(&mut self, id: StringId) -> NameRange {
-        if let Some(range) = self.copied[id.index()] {
-            return range;
+        if let Some(range) = &self.copied[id.index()] {
+            return range.clone();
         }
         let range = self.copy_bytes(self.strings.get(id));
-        self.copied[id.index()] = Some(range);
+        self.copied[id.index()] = Some(range.clone());
         range
     }
 
     fn copy_bytes(&mut self, bytes: &[u8]) -> NameRange {
         let start = self.bytes.len();
         self.bytes.extend_from_slice(bytes);
-        NameRange {
-            start,
-            end: self.bytes.len(),
-        }
+        start..self.bytes.len()
     }
 
     fn copy_optional(&mut self, id: Option<StringId>) -> NameRange {

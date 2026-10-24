@@ -1,6 +1,8 @@
 use bun_sema::atom::{Atom, written_name};
 use bun_sema::fold::Decision;
-use bun_sema::hir::{BinOp, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, MemberKey, StmtKind};
+use bun_sema::hir::{
+    BinOp, Call, Chain, ExprFlags, ExprId, ExprKind, FnBody, FnId, MemberKey, StmtKind,
+};
 
 use super::Callee;
 use crate::builtins::Resolved;
@@ -10,29 +12,24 @@ use crate::lower::member::{self, KeyConversion, PropertyName};
 use crate::lower::{FileLowering, FunctionLowering};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    pub(in crate::lower) fn lower_callee(
+    // `f?.()` leaves its chain where `f` is null or undefined.
+    pub(in crate::lower) fn leave_chain_if_nullish(
         &mut self,
-        callee: ExprId,
+        site: Call,
+        function: ValueId,
         exit: Option<BlockId>,
-    ) -> Callee {
-        self.lower_expected_callee(callee, exit, None)
+    ) -> ValueId {
+        match site.chain {
+            Chain::Start => {
+                let exit = exit.expect("an optional call has the exit of its chain");
+                self.branch_if_expression_nullish(site.callee, function, exit)
+            }
+            Chain::No | Chain::Continue => function,
+        }
     }
 
     // A built-in that the signature of the call names says more than the type the checker has for the callee.
-    pub(super) fn lower_expected_callee(
-        &mut self,
-        callee: ExprId,
-        exit: Option<BlockId>,
-        expected: Option<BuiltinId>,
-    ) -> Callee {
-        let mut lowered = self.lower_callee_by_decision(callee, exit, expected);
-        if let Some(builtin) = expected {
-            lowered.function = self.expect_builtin(lowered.function, builtin);
-        }
-        lowered
-    }
-
-    fn lower_callee_by_decision(
+    pub(in crate::lower) fn lower_callee(
         &mut self,
         callee: ExprId,
         exit: Option<BlockId>,
@@ -40,26 +37,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> Callee {
         let hir = self.file.hir;
         let inner = self.file.skip_type_syntax(callee);
-        match self.file.decisions().decision(inner) {
-            Decision::Unknown => {}
+        let is_parenthesized = hir.expr_flags(inner).contains(ExprFlags::PARENTHESIZED);
+        let mut lowered = match self.file.decisions().decision(inner) {
+            Decision::Unknown
+                if self.file.is_chain_root(inner) && (exit.is_none() || is_parenthesized) =>
+            {
+                self.lower_chain_callee(inner, expected)
+            }
+            Decision::Unknown => self.lower_callee_with_exit(callee, inner, exit, expected),
             Decision::GlobalPath(path) => {
                 self.set_position(hir[inner].pos);
-                return self.lower_global_path_callee(inner, path);
+                self.lower_global_path_callee(inner, path)
             }
             Decision::Constant(_) | Decision::Data(_) | Decision::DeferredData => {
-                return Callee {
-                    function: self.lower_expression(inner),
-                    this: None,
-                    key: None,
-                    name: None,
-                };
+                Callee::without_key(self.lower_expression(inner), None, None)
             }
+        };
+        if let Some(builtin) = expected {
+            lowered.function = self.expect_builtin(lowered.function, builtin);
         }
-        let is_parenthesized = hir.expr_flags(inner).contains(ExprFlags::PARENTHESIZED);
-        if self.file.is_chain_root(inner) && (exit.is_none() || is_parenthesized) {
-            return self.lower_chain_callee(inner, expected);
-        }
-        self.lower_callee_with_exit(callee, inner, exit, expected)
+        lowered
     }
 
     fn finish_callee(
@@ -78,12 +75,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let last = self.lower_global_path_holder(path);
         let name = Some(self.file.intern_atom(last.name));
         if let Some(builtin) = find_locked_builtin(self.file, inner) {
-            return Callee {
-                function: self.emit_locked_builtin(builtin),
-                this: last.holder,
-                key: None,
-                name,
-            };
+            return Callee::without_key(self.emit_locked_builtin(builtin), last.holder, name);
         }
         let (function, key) = match last.holder {
             Some(holder) => {
@@ -91,10 +83,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let function = self.emit_get(holder, PropertyName::Constant(key));
                 (function, Some(key))
             }
-            None => {
-                let function = self.emit_free_name_get(last.name, false);
-                (function, None)
-            }
+            None => (self.emit_free_name_get(last.name, false), None),
         };
         Callee {
             function: self.expect_resolved_path(inner, function),
@@ -111,10 +100,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let this_variable = self.builder.create_variable(None);
 
         let lowered = self.lower_callee_with_exit(inner, inner, Some(own_exit), expected);
-        let this = match lowered.this {
-            Some(this) => this,
-            None => self.builder.undefined(),
-        };
+        let this = lowered.this.unwrap_or_else(|| self.builder.undefined());
         self.builder
             .write_variable(function_variable, lowered.function);
         self.builder.write_variable(this_variable, this);
@@ -127,12 +113,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump(join);
 
         self.continue_in(join);
-        Callee {
-            function: self.builder.read_variable(function_variable),
-            this: Some(self.builder.read_variable(this_variable)),
-            key: None,
-            name: lowered.name,
-        }
+        let function = self.builder.read_variable(function_variable);
+        let this = self.builder.read_variable(this_variable);
+        Callee::without_key(function, Some(this), lowered.name)
     }
 
     fn lower_callee_with_exit(
@@ -162,61 +145,34 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let name = self.file.find_callee_name(access);
         if let Some(builtin) = find_locked_builtin(self.file, access) {
             let this = self.lower_expression(object);
-            return Callee {
-                function: self.emit_locked_builtin(builtin),
-                this: Some(this),
-                key: None,
-                name,
-            };
+            return Callee::without_key(self.emit_locked_builtin(builtin), Some(this), name);
         }
         if matches!(hir[object].kind, ExprKind::Super) {
             let this = self.get_this();
             let reference = self.lower_reference(access, KeyConversion::AtAccess);
             self.set_position(hir[access].pos);
-            return Callee {
-                function: self.get_reference(&reference),
-                this: Some(this),
-                key: None,
-                name,
-            };
+            return Callee::without_key(self.get_reference(&reference), Some(this), name);
         }
         if matches!(member_key, MemberKey::PrivateName(_)) {
             let base = self.lower_member_base(access, object, exit);
-            return Callee {
-                function: self.emit_private_get(base, access),
-                this: Some(base),
-                key: None,
-                name,
-            };
+            return Callee::without_key(self.emit_private_get(base, access), Some(base), name);
         }
         if let Some(function) = self.lower_namespace_member(access) {
-            return Callee {
-                function,
-                this: Some(self.lower_namespace_receiver(object)),
-                key: None,
-                name,
-            };
+            let this = self.lower_namespace_receiver(object);
+            return Callee::without_key(function, Some(this), name);
         }
         if let Some(function) = self.lower_export_member(access) {
-            return Callee {
-                function,
-                this: Some(self.lower_export_receiver(access)),
-                key: None,
-                name,
-            };
+            let this = self.lower_export_receiver(access);
+            return Callee::without_key(function, Some(this), name);
         }
         let (base, property) = member::lower_member_operands(self, access, exit);
         let function = member::emit_member_read(self, access, base, property);
         let function = self.finish_callee(access, function, expected);
         let function = self.expect_resolved_path(access, function);
-        let key = match property {
-            PropertyName::Constant(key) => Some(key),
-            PropertyName::Computed(_) => None,
-        };
         Callee {
             function,
             this: Some(base),
-            key,
+            key: property.key_operands().1,
             name,
         }
     }
@@ -230,30 +186,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> Callee {
         let hir = self.file.hir;
         if !matches!(hir[inner].kind, ExprKind::Ident(_)) {
-            return Callee {
-                function: self.lower_chain_base(callee, exit),
-                this: None,
-                key: None,
-                name: None,
-            };
+            return Callee::without_key(self.lower_chain_base(callee, exit), None, None);
         }
         let name = self.file.find_callee_name(inner);
         if let Some(builtin) = find_locked_builtin(self.file, inner) {
-            return Callee {
-                function: self.emit_locked_builtin(builtin),
-                this: None,
-                key: None,
-                name,
-            };
+            return Callee::without_key(self.emit_locked_builtin(builtin), None, name);
         }
         self.set_position(hir[inner].pos);
         let (function, this) = self.lower_identifier_callee(inner);
-        Callee {
-            function: self.finish_callee(inner, function, expected),
-            this,
-            key: None,
-            name,
-        }
+        Callee::without_key(self.finish_callee(inner, function, expected), this, name)
     }
 }
 
@@ -347,13 +288,6 @@ impl FileLowering<'_, '_, '_, '_> {
     fn append_written_path(&self, expression: ExprId, path: &mut Vec<u8>) -> bool {
         const LONGEST_PATH: usize = 80;
         let hir = self.hir;
-        let optional = |chain| {
-            if chain == Chain::Start {
-                &b"?."[..]
-            } else {
-                &b""[..]
-            }
-        };
         let inner = self.skip_type_syntax(expression);
         match hir[inner].kind {
             ExprKind::Ident(name) => self.append_identifier(inner, name, path),
@@ -375,7 +309,9 @@ impl FileLowering<'_, '_, '_, '_> {
                 if !self.append_written_path(obj, path) {
                     return false;
                 }
-                path.extend_from_slice(optional(chain));
+                if chain == Chain::Start {
+                    path.extend_from_slice(b"?.");
+                }
                 path.push(b'[');
                 self.append_identifier(index, key, path);
                 path.push(b']');

@@ -1,9 +1,9 @@
 use bun_sema::check::aot::{SchemaConstraint, SchemaDefault, SchemaFormat};
 
+use super::ValidatedFile;
 use crate::ir::generated::{
     TextFormat, UndeclaredMembers, ValidationNode, ValidationRule, ValidationShape,
 };
-use crate::lower::FileLowering;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum RuleKind {
@@ -12,12 +12,8 @@ enum RuleKind {
     Default,
 }
 
-impl FileLowering<'_, '_, '_, '_> {
-    pub(super) fn apply_constraint(
-        &mut self,
-        node: &mut ValidationNode,
-        constraint: SchemaConstraint,
-    ) {
+pub(super) trait AppliesConstraints<'c, 'p: 'c, 's: 'p>: ValidatedFile<'c, 'p, 's> {
+    fn apply_constraint(&mut self, node: &mut ValidationNode, constraint: SchemaConstraint) {
         match constraint {
             SchemaConstraint::Int => node.rules.push(ValidationRule::Integer),
             SchemaConstraint::Int32 => node.rules.extend([
@@ -78,6 +74,8 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 }
+
+impl<'c, 'p: 'c, 's: 'p, F: ValidatedFile<'c, 'p, 's>> AppliesConstraints<'c, 'p, 's> for F {}
 
 fn text_format(format: SchemaFormat) -> TextFormat {
     match format {

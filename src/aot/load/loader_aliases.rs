@@ -14,19 +14,6 @@ pub(crate) enum LoaderAlias {
     Import(SymbolId),
 }
 
-fn stable_symbol(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<SymbolId> {
-    let Binding::Symbol(symbol) = bound.binding(e) else {
-        return None;
-    };
-    let is_stable = matches!(
-        bound.binding_stability(symbol),
-        BindingStability::Stable | BindingStability::Linked
-    );
-    let is_ident = matches!(hir[e].kind, ExprKind::Ident(_));
-    (is_ident && is_stable && bound.dynamic_lookup_scope(NodeData::Expr(e)).is_none())
-        .then_some(symbol)
-}
-
 fn is_unmodified_require(
     hir: &File<'_>,
     bound: &Bound<'_>,
@@ -60,7 +47,16 @@ pub(crate) fn resolve_loader_alias(
         }
         let next = match hir[e].kind {
             ExprKind::Ident(_) => {
-                let symbol = stable_symbol(hir, bound, e)?;
+                let Binding::Symbol(symbol) = bound.binding(e) else {
+                    return None;
+                };
+                let is_stable = matches!(
+                    bound.binding_stability(symbol),
+                    BindingStability::Stable | BindingStability::Linked
+                );
+                if !is_stable || bound.dynamic_lookup_scope(NodeData::Expr(e)).is_some() {
+                    return None;
+                }
                 match bound.binding_initializer(hir, symbol) {
                     BindingInitializer::Expression(source) => source,
                     BindingInitializer::Import => return Some(LoaderAlias::Import(symbol)),

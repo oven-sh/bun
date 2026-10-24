@@ -1,10 +1,10 @@
 use std::fmt::Write;
 
-use super::body::Body;
-use super::generated::{Function, ProgramList};
-use super::ids::{FunctionId, Id, PropertyKeyId, StringId, TypeId};
-use super::print_body::print_body;
-use super::print_names::{print_bytes, print_double, print_property_key, print_string, print_type};
+use super::generated::{
+    Data, Entry, EvalScope, ExpectedResult, Function, Layout, Module, ModuleFailure, ProgramList,
+    RuntimeFunctionEntry, TypeSite, Variable, WebAssemblyModule,
+};
+use super::ids::{FunctionId, Id};
 use super::program::{NameTables, Program};
 
 pub struct Printer<'a> {
@@ -15,30 +15,6 @@ pub struct Printer<'a> {
 impl<'a> Printer<'a> {
     pub fn new(names: NameTables<'a>, out: &'a mut String) -> Printer<'a> {
         Printer { out, names }
-    }
-
-    pub fn print_string(&mut self, id: StringId) {
-        print_string(self, id);
-    }
-
-    pub fn print_bytes(&mut self, bytes: &[u8]) {
-        print_bytes(self.out, bytes);
-    }
-
-    pub fn print_property_key(&mut self, id: PropertyKeyId) {
-        print_property_key(self, id);
-    }
-
-    pub fn print_type(&mut self, id: TypeId) {
-        print_type(self, id);
-    }
-
-    pub fn print_double(&mut self, value: f64) {
-        print_double(self.out, value);
-    }
-
-    pub fn print_body(&mut self, body: &Body) {
-        print_body(self, body);
     }
 
     pub fn print_separated<T>(
@@ -74,64 +50,52 @@ impl<'a> Printer<'a> {
     fn print_list(&mut self, program: &Program, list: ProgramList) {
         match list {
             ProgramList::TypeSites => {
-                self.print_lines(list, &program.type_sites, |record, printer| {
-                    record.print_fields(printer);
-                });
+                self.print_lines(list, &program.type_sites, TypeSite::print_fields);
             }
             ProgramList::ExpectedResults => {
-                self.print_lines(list, &program.expected_results, |record, printer| {
-                    record.print_fields(printer);
-                });
+                self.print_lines(
+                    list,
+                    &program.expected_results,
+                    ExpectedResult::print_fields,
+                );
             }
             ProgramList::Layouts => {
-                self.print_lines(list, &program.layouts, |record, printer| {
-                    record.print_fields(printer);
-                });
+                self.print_lines(list, &program.layouts, Layout::print_fields);
             }
             ProgramList::Variables => {
-                self.print_lines(list, &program.variables, |record, printer| {
-                    record.print_fields(printer);
-                });
+                self.print_lines(list, &program.variables, Variable::print_fields);
             }
             ProgramList::Modules => {
-                self.print_lines(list, &program.modules, |record, printer| {
-                    record.print_fields(printer);
-                });
+                self.print_lines(list, &program.modules, Module::print_fields);
             }
             ProgramList::ModuleFailures => {
-                self.print_lines(list, &program.module_failures, |record, printer| {
-                    record.print_fields(printer);
-                });
+                self.print_lines(list, &program.module_failures, ModuleFailure::print_fields);
             }
             ProgramList::EvalScopes => {
-                self.print_lines(list, &program.eval_scopes, |record, printer| {
-                    record.print_fields(printer);
-                });
+                self.print_lines(list, &program.eval_scopes, EvalScope::print_fields);
             }
             ProgramList::Functions => {
-                self.print_lines(list, &program.functions, |record, printer| {
-                    record.print_fields(printer);
-                });
+                self.print_lines(list, &program.functions, Function::print_fields);
             }
             ProgramList::Data => {
-                self.print_lines(list, &program.data, |record, printer| {
-                    record.print_fields(printer);
-                });
+                self.print_lines(list, &program.data, Data::print_fields);
             }
             ProgramList::Entries => {
-                self.print_lines(list, &program.entries, |record, printer| {
-                    record.print_fields(printer);
-                });
+                self.print_lines(list, &program.entries, Entry::print_fields);
             }
             ProgramList::RuntimeFunctions => {
-                self.print_lines(list, &program.runtime_functions, |record, printer| {
-                    record.print_fields(printer);
-                });
+                self.print_lines(
+                    list,
+                    &program.runtime_functions,
+                    RuntimeFunctionEntry::print_fields,
+                );
             }
             ProgramList::WebAssemblyModules => {
-                self.print_lines(list, &program.web_assembly_modules, |record, printer| {
-                    record.print_fields(printer);
-                });
+                self.print_lines(
+                    list,
+                    &program.web_assembly_modules,
+                    WebAssemblyModule::print_fields,
+                );
             }
             _ => debug_assert!(list.keyword().is_none()),
         }

@@ -244,22 +244,15 @@ fn direct_eval_uses_arguments_of_commonjs_body() {
             slots.map(is_seen)
         })
     };
-    assert_eq!(
-        uses_arguments("main.cjs", "var s = ''; eval(s);"),
-        [true, true]
-    );
-    assert_eq!(
-        uses_arguments("main.cjs", "module.exports = (s) => eval(s);"),
-        [true, true]
-    );
-    assert_eq!(
-        uses_arguments("main.cjs", "function f(s) { eval(s); }"),
-        [false, false]
-    );
-    assert_eq!(
-        uses_arguments("main.mjs", "var s = ''; eval(s); export {};"),
-        [false, false]
-    );
+    let rows = [
+        ("main.cjs", "var s = ''; eval(s);", true),
+        ("main.cjs", "module.exports = (s) => eval(s);", true),
+        ("main.cjs", "function f(s) { eval(s); }", false),
+        ("main.mjs", "var s = ''; eval(s); export {};", false),
+    ];
+    for (file, source, is_seen) in rows {
+        assert_eq!(uses_arguments(file, source), [is_seen; 2], "{source}");
+    }
     let sloppy = stored_slots("main.cjs", "var s = ''; eval(s);");
     assert!(sloppy.contains(&ScopeSlot::ArgumentsBinding));
     let strict = stored_slots("main.cjs", "'use strict'; var s = ''; eval(s);");
@@ -325,20 +318,14 @@ fn eval_variables_are_used_by_dynamic_lookups() {
         let function = only_function(hir, FnKind::Decl);
         let variables = BindingRef::Slot(top_scope(bound, function), ScopeSlot::EvalVariables);
         assert!(has_use(walk, walked(walk, function), variables));
-        assert!(has_use(
-            walk,
-            walked(walk, only_function(hir, FnKind::Arrow)),
-            variables
-        ));
+        let arrow = walked(walk, only_function(hir, FnKind::Arrow));
+        assert!(has_use(walk, arrow, variables));
     });
     let declared = "function f(s) { let y = 1; eval(s); return () => y; }";
     with_walk(&[("main.cjs", declared)], |hir, bound, walk| {
         let function = only_function(hir, FnKind::Decl);
         let variables = BindingRef::Slot(top_scope(bound, function), ScopeSlot::EvalVariables);
-        assert!(!has_use(
-            walk,
-            walked(walk, only_function(hir, FnKind::Arrow)),
-            variables
-        ));
+        let arrow = walked(walk, only_function(hir, FnKind::Arrow));
+        assert!(!has_use(walk, arrow, variables));
     });
 }

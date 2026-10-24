@@ -1,16 +1,12 @@
-use super::graphs::create_blocks;
-use super::handlers::{create_catch_handler, emit_call};
+use super::handlers::emit_call;
 use crate::ir::builder::{BuilderScratch, Edge, FunctionBuilder, MAX_SPARE_VALUES};
 use crate::ir::declared::DeclaredType;
 use crate::ir::generated::{BlockFrequency, FunctionFlags, Opcode, TerminatorKind};
 use crate::ir::ids::{ABSENT_WORD, BlockId, Id, TypeId, ValueId, VariableId};
-use crate::ir::testing::{build_function, function_with_parameters};
+use crate::ir::testing::{
+    build_function, create_blocks, create_builder, create_catch_handler, function_with_parameters,
+};
 use crate::ir::types::TypeTable;
-
-fn create_builder(parameters: &[TypeId]) -> FunctionBuilder {
-    let function = function_with_parameters(FunctionFlags::default(), parameters);
-    FunctionBuilder::new(function, BuilderScratch::default())
-}
 
 #[test]
 fn entry_parameters_follow_function() {

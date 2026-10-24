@@ -10,51 +10,34 @@ fn classify_number(number: f64) -> CaseKey {
 }
 
 #[test]
-fn integral_numbers_are_integers() {
-    assert_eq!(classify_number(0.0), CaseKey::Integer(0));
-    assert_eq!(classify_number(1.0), CaseKey::Integer(1));
-    assert_eq!(classify_number(-1.0), CaseKey::Integer(-1));
-    assert_eq!(classify_number(4294967296.0), CaseKey::Integer(4294967296));
-    assert_eq!(
-        classify_number(9007199254740992.0),
-        CaseKey::Integer(9007199254740992)
-    );
+fn integral_numbers_in_tracked_range_are_integers() {
+    let integers = [
+        (0.0, 0),
+        (-0.0, 0),
+        (1.0, 1),
+        (-1.0, -1),
+        (4294967296.0, 4294967296),
+        (9007199254740992.0, 9007199254740992),
+        (4611686018427387392.0, 4611686018427387392),
+        (-4611686018427387392.0, -4611686018427387392),
+    ];
+    for (number, integer) in integers {
+        let expected = CaseKey::Integer(integer);
+        assert_eq!(classify_number(number), expected, "{number}");
+    }
 }
 
 #[test]
-fn negative_zero_is_zero() {
-    assert_eq!(classify_number(-0.0), CaseKey::Integer(0));
-}
-
-#[test]
-fn largest_tracked_integer_is_integer() {
-    assert_eq!(
-        classify_number(4611686018427387392.0),
-        CaseKey::Integer(4611686018427387392)
-    );
-    assert_eq!(
-        classify_number(-4611686018427387392.0),
-        CaseKey::Integer(-4611686018427387392)
-    );
-}
-
-#[test]
-fn numbers_outside_tracked_range_are_other() {
+fn other_numbers_are_other() {
     let numbers = [
         4611686018427387904.0,
         -4611686018427387904.0,
         f64::INFINITY,
         f64::NEG_INFINITY,
+        1.5,
+        -0.5,
     ];
     for number in numbers {
-        let other = CaseKey::Other(Constant::Number(number));
-        assert_eq!(classify_number(number), other, "{number}");
-    }
-}
-
-#[test]
-fn fractions_and_nan_are_other() {
-    for number in [1.5, -0.5] {
         let other = CaseKey::Other(Constant::Number(number));
         assert_eq!(classify_number(number), other, "{number}");
     }

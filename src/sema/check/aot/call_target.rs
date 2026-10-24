@@ -126,7 +126,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// `compute_signature(signature).result.checked`, and nothing else of the signature.
     pub(super) fn compute_signature_result(&mut self, signature: SigId) -> CheckedType {
         match *self.c.types().sig(signature) {
             SigData::Decl { file, func, mapper }
@@ -153,7 +152,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// The file in which `signature` is heard otherwise than in every other.
     pub(super) fn find_file_of_signature(&self, signature: SigId) -> Option<FileId> {
         match *self.c.types().sig(signature) {
             SigData::Decl { file, .. } | SigData::Construct { file, .. } => Some(file),
@@ -233,7 +231,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let parameters = self.c.hir(of)[func].type_params;
         let mut pairs: SmallVec<[(TypeId, TypeId); 4]> = SmallVec::new();
         for (parameter, argument) in parameters.iter().zip(hir.ids(arguments)) {
-            // A form with a part stripped would decide a conditional type otherwise than the argument does.
             if let Some(form) = self.written_type(argument).written()
                 && form == self.c.type_from_node(self.file, argument)
             {

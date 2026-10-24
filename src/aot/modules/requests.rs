@@ -4,8 +4,8 @@ mod tests;
 use super::bindings::{ModuleRequest, SpelledModule};
 use super::exports::ExportTables;
 use super::failures::{
-    FailureEffect, FailureOrder, ModuleFailure, ModuleFailureKind, NumberedFailures,
-    PendingFailure, SitePart,
+    FailureEffect, FailureOrder, ModuleFailureKind, NumberedFailures, PendingFailure, SitePart,
+    WrittenPart,
 };
 use super::graph::StoredSiteAnswer;
 use super::interop::{ImportPhase, Interop, ModuleKind, file_interop};
@@ -108,26 +108,15 @@ fn scan_file(files: &Files<'_>, sources: &Sources, file: FileId) -> FileScan {
     let sites = scanner.scan_sites();
     if parsed_source(files, file).is_some_and(|source| source.parse_failure.is_some()) {
         debug_assert!(sites.is_empty());
-        scanner.failures.push(PendingFailure {
-            order: FailureOrder {
-                site: 0,
-                part: SitePart::Specifier,
-            },
-            failure: ModuleFailure {
-                kind: ModuleFailureKind::NotAProgram {
-                    is_loaded_at_start: true,
-                },
-                importer: file,
-                site: ImportSiteKind::ExportFrom(ExportId(0)),
-                start: 0,
-                end: 0,
-            },
-        });
+        let site = ImportSiteKind::ExportFrom(ExportId(0));
+        let kind = ModuleFailureKind::NotAProgram {
+            is_loaded_at_start: true,
+        };
+        let written = WrittenPart::new(0, SitePart::Specifier, site, 0..0);
+        scanner.failures.push(written.fail(file, kind));
     }
-    let named_modules = scanner
-        .named_in_choices
-        .iter()
-        .map(|it| ModuleRef::Runtime(it.module));
+    let named = scanner.named_in_choices.iter();
+    let named_modules = named.map(|it| ModuleRef::Runtime(it.module));
     scanner.candidates.extend(named_modules);
     let interop = file_interop(files, sources, file);
     let mut requests = match interop.kind {
@@ -270,18 +259,9 @@ impl FileScanner<'_, '_> {
             (Err(reason), SiteForm::Declaration | SiteForm::Load) => reason,
         };
         let (start, end) = range_of_node(self.hir, diagnostic_node(self.hir, site));
-        let order = FailureOrder {
-            site: index,
-            part: SitePart::Specifier,
-        };
-        let failure = ModuleFailure {
-            kind: ModuleFailureKind::Unresolved { specifier, reason },
-            importer: self.file,
-            site: site.kind,
-            start,
-            end,
-        };
-        self.failures.push(PendingFailure { order, failure });
+        let written = WrittenPart::new(index as usize, SitePart::Specifier, site.kind, start..end);
+        let kind = ModuleFailureKind::Unresolved { specifier, reason };
+        self.failures.push(written.fail(self.file, kind));
         ScannedSite::Unresolved
     }
 
@@ -316,9 +296,22 @@ impl FileScanner<'_, '_> {
                 ScannedSite::Module(target) => *target,
                 _ => continue,
             };
-            if let Some(draft) = create_request_draft(self.hir, site.kind, target) {
-                requests.add(draft);
-            }
+            let (phase, is_star_export) = match site.kind {
+                ImportSiteKind::JsxRuntime
+                | ImportSiteKind::JsxPackage
+                | ImportSiteKind::ExportFrom(_) => (ImportPhase::Evaluation, false),
+                ImportSiteKind::Import(import) => (import_phase(self.hir, import), false),
+                ImportSiteKind::ExportStar(statement) => (
+                    ImportPhase::Evaluation,
+                    is_star_export_entry(self.hir, statement),
+                ),
+                _ => continue,
+            };
+            requests.add(RequestDraft {
+                target,
+                phase,
+                is_star_export,
+            });
         }
         requests.drafts
     }
@@ -335,14 +328,14 @@ fn find_spelled_module(&(spelling, target): &(Atom, ComputedTarget)) -> Option<S
 }
 
 #[derive(Copy, Clone)]
-enum SiteForm {
+pub(super) enum SiteForm {
     Declaration,
     Load,
     Resolve,
     GetBuiltinModule,
 }
 
-fn site_form(site: ImportSiteKind) -> SiteForm {
+pub(super) fn site_form(site: ImportSiteKind) -> SiteForm {
     match site {
         ImportSiteKind::JsxRuntime
         | ImportSiteKind::JsxPackage
@@ -396,28 +389,6 @@ pub(super) fn phase_towards(target: ModuleKind, written: ImportPhase) -> ImportP
     }
 }
 
-fn create_request_draft(
-    hir: &hir::File<'_>,
-    site: ImportSiteKind,
-    target: ModuleRef,
-) -> Option<RequestDraft> {
-    let (phase, is_star_export) = match site {
-        ImportSiteKind::JsxRuntime | ImportSiteKind::JsxPackage => (ImportPhase::Evaluation, false),
-        ImportSiteKind::Import(import) => (import_phase(hir, import), false),
-        ImportSiteKind::ExportFrom(_) => (ImportPhase::Evaluation, false),
-        ImportSiteKind::ExportStar(statement) => (
-            ImportPhase::Evaluation,
-            is_star_export_entry(hir, statement),
-        ),
-        _ => return None,
-    };
-    Some(RequestDraft {
-        target,
-        phase,
-        is_star_export,
-    })
-}
-
 fn is_star_export_entry(hir: &hir::File<'_>, statement: StmtId) -> bool {
     matches!(hir[statement].kind, StmtKind::ExportStar { alias, .. } if alias.is_none())
 }
@@ -456,21 +427,15 @@ impl RequestList {
     }
 }
 
-pub(super) struct FinishedRequests {
-    /// By record file.
-    pub files: Vec<Vec<ModuleRequest>>,
-    /// In the order of `ModuleSet::inner_modules`.
-    pub inner_modules: Vec<(ModuleRef, Vec<ModuleRequest>)>,
-}
-
-/// What a module imports, which runs in front of its body, and then what its sites evaluate, in the order of the text.
+/// By record file: what a module imports, which runs in front of its body, and then what its sites evaluate, in the order of the text.
 pub(super) fn finish_requests(
     scans: &Scans,
     modules: &ModuleSet,
     tables: &ExportTables,
     order: &EvaluationOrder,
     sites: &PlannedSites,
-) -> FinishedRequests {
+) -> Vec<Vec<ModuleRequest>> {
+    let mut seen = FxHashSet::default();
     let finish_file = |&file: &FileId| {
         let follows_every_star = tables.follows_every_star(file);
         let finish_request = |draft: &RequestDraft| ModuleRequest {
@@ -479,20 +444,10 @@ pub(super) fn finish_requests(
                 && (follows_every_star || tables.has_dynamic_names(draft.target)),
             ..ModuleRequest::import(draft.target)
         };
-        match scans.find(file) {
+        let mut requests: Vec<ModuleRequest> = match scans.find(file) {
             Some(scan) => scan.requests.iter().map(finish_request).collect(),
             None => Vec::new(),
-        }
-    };
-    let inner_modules = modules.inner_modules().iter();
-    let mut finished = FinishedRequests {
-        files: modules.record_files.iter().map(finish_file).collect(),
-        inner_modules: inner_modules
-            .map(|&(file, callback)| (ModuleRef::Inner { file, callback }, Vec::new()))
-            .collect(),
-    };
-    let mut seen = FxHashSet::default();
-    for (requests, &file) in finished.files.iter_mut().zip(&modules.record_files) {
+        };
         seen.clear();
         let evaluated = sites.of(file).iter().filter(|site| site.evaluates);
         let evaluated = evaluated.map(|site| (site.referrer, site.target));
@@ -502,18 +457,11 @@ pub(super) fn finish_requests(
             }
             // Behind a site of such a target it has run to its end, or it lies on a cycle that the requests show.
             let completes = modules.keeps_error(target) || !order.exposed(target);
-            let request = ModuleRequest::require(target, completes);
-            match referrer {
-                ModuleRef::Inner { file, callback } => {
-                    let position = modules.inner_module_position(file, callback);
-                    let position = position.expect("a site in an unlisted module");
-                    finished.inner_modules[position].1.push(request);
-                }
-                _ => requests.push(request),
-            }
+            requests.push(ModuleRequest::require(target, completes));
         }
-    }
-    finished
+        requests
+    };
+    modules.record_files.iter().map(finish_file).collect()
 }
 
 pub(super) fn finish_site_answers(
@@ -549,10 +497,9 @@ fn finish_unresolved_site(
         site: index,
         part: SitePart::Specifier,
     };
-    let position = scan
-        .failures
-        .binary_search_by_key(&order, |pending| pending.order);
-    let pending = &scan.failures[position.expect("an unresolved site without a failure")];
+    let list = &scan.failures;
+    let position = list.binary_search_by_key(&order, |pending| pending.order);
+    let pending = &list[position.expect("an unresolved site without a failure")];
     match pending.failure.effect() {
         FailureEffect::ThrowsAtSite => StoredSiteAnswer::Failed(failures.id_of(file, order)),
         FailureEffect::StopsBuild => StoredSiteAnswer::Erased,

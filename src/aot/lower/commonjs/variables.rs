@@ -4,11 +4,10 @@ use bun_sema::hir::{ExprId, ExprKind, StmtId, StmtKind, UnOp};
 use bun_sema::program::FileId;
 use smallvec::SmallVec;
 
-use super::ReadPurpose;
 use crate::builtins::id::BuiltinId;
 use crate::builtins::resolve::{ModuleField, ModuleObjectOwner, ModuleObjectUse};
 use crate::builtins::table::{self, Scope};
-use crate::builtins::{BuiltinPath, Mutability, Resolved, ResolvedBuiltins};
+use crate::builtins::{Mutability, Resolved, ResolvedBuiltins};
 use crate::ir::generated::CommonJsParameter;
 use crate::ir::{FunctionKey, PropertyKeyId, Type, TypeId, ValueId, VariableId, VariableKey};
 use crate::lower::member::PropertyName;
@@ -37,9 +36,8 @@ pub(in crate::lower) const WRAPPER_PARAMETERS: [CommonJsVariable; CommonJsParame
 };
 
 pub(in crate::lower) fn wrapper_parameter_index(variable: CommonJsVariable) -> u32 {
-    let index = WRAPPER_PARAMETERS
-        .iter()
-        .position(|&parameter| parameter == variable);
+    let mut parameters = WRAPPER_PARAMETERS.iter();
+    let index = parameters.position(|&parameter| parameter == variable);
     index.expect("every CommonJS variable is a wrapper parameter") as u32
 }
 
@@ -48,9 +46,8 @@ pub(in crate::lower) fn undeclared_wrapper_parameters(
     bound: &Bound<'_>,
 ) -> impl Iterator<Item = CommonJsVariable> {
     let redeclared = bound.runtime.redeclared_commonjs_variables();
-    WRAPPER_PARAMETERS
-        .into_iter()
-        .filter(move |&variable| !redeclared.iter().any(|entry| entry.1 == variable))
+    let parameters = WRAPPER_PARAMETERS.into_iter();
+    parameters.filter(move |&variable| !redeclared.iter().any(|entry| entry.1 == variable))
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
@@ -100,10 +97,8 @@ impl FileLowering<'_, '_, '_, '_> {
         let Parent::Expr(access) = bound.parent_of_expr(module_name) else {
             return true;
         };
-        if !hir
-            .member_key(access)
-            .is_some_and(|(object, _)| object == module_name)
-        {
+        let key = hir.member_key(access);
+        if !key.is_some_and(|(object, _)| object == module_name) {
             return true;
         }
         match self.builtins.of_expr(access) {
@@ -164,10 +159,11 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn find_plain_source(&self, variable: CommonJsVariable) -> VariableSource {
+        let modules = self.inputs.modules;
         match variable {
-            CommonJsVariable::Exports => match self.own_shape() {
+            CommonJsVariable::Exports => match modules.shape(ModuleRef::File(self.file)) {
                 Shape::Names | Shape::EsModule => VariableSource::NoObject,
-                Shape::Value | Shape::AsToday if keeps_first_exports(self) => {
+                Shape::Value | Shape::AsToday if self.modules.commonjs.keeps_first_exports => {
                     VariableSource::FirstExports
                 }
                 Shape::Value | Shape::AsToday => VariableSource::ModuleExports,
@@ -198,15 +194,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 VariableSource::ModuleVariable
             }
             CommonJsVariable::Require | CommonJsVariable::Filename | CommonJsVariable::Dirname => {
-                match self.builtins.commonjs_variable(variable) {
-                    Some(BuiltinPath {
-                        id,
-                        mutability: Mutability::AlwaysLocked,
-                    }) => VariableSource::ModuleValue(id),
-                    Some(BuiltinPath {
-                        mutability: Mutability::ConstantUnlessWritten | Mutability::ChangesOnItsOwn,
-                        ..
-                    })
+                let path = self.builtins.commonjs_variable(variable);
+                match path.map(|path| (path.id, path.mutability)) {
+                    Some((id, Mutability::AlwaysLocked)) => VariableSource::ModuleValue(id),
+                    Some((_, Mutability::ConstantUnlessWritten | Mutability::ChangesOnItsOwn))
                     | None => VariableSource::ImportMetaMember(import_meta_member_name(variable)),
                 }
             }
@@ -239,7 +230,11 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut properties = SmallVec::new();
         let mut entry = builtin;
         loop {
-            if let Some(variable) = find_variable(self, entry) {
+            let variable = WRAPPER_PARAMETERS.into_iter().find(|&variable| {
+                let path = self.builtins.commonjs_variable(variable);
+                path.is_some_and(|path| path.id == entry)
+            });
+            if let Some(variable) = variable {
                 return Some((variable, properties));
             }
             properties.push(entry);
@@ -261,11 +256,8 @@ pub(in crate::lower) fn keeps_wrapper(
     if direct_evals.any(|&(call, _)| !decisions.is_dead_expr(call)) {
         return true;
     }
-    if bound
-        .scopes
-        .iter()
-        .any(|scope| matches!(scope.kind, ScopeKind::With(_)))
-    {
+    let mut scopes = bound.scopes.iter();
+    if scopes.any(|scope| matches!(scope.kind, ScopeKind::With(_))) {
         return true;
     }
     let mut stores = bound.runtime.unbound_name_stores().iter();
@@ -284,12 +276,9 @@ pub(in crate::lower) fn keeps_wrapper(
     })
 }
 
-pub(super) fn prepare(file: &mut FileLowering<'_, '_, '_, '_>) {
+/// Before anything of the file is lowered.
+pub(in crate::lower) fn prepare(file: &mut FileLowering<'_, '_, '_, '_>) {
     file.modules.commonjs = file.compute_state();
-}
-
-pub(super) fn keeps_first_exports(file: &FileLowering<'_, '_, '_, '_>) -> bool {
-    file.modules.commonjs.keeps_first_exports
 }
 
 const fn builtin_of(variable: CommonJsVariable) -> BuiltinId {
@@ -340,8 +329,7 @@ fn text_key(file: &mut FileLowering<'_, '_, '_, '_>, text: &[u8]) -> PropertyKey
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn emit_value_of_module(&mut self, owner: FileId, builtin: BuiltinId) -> ValueId {
         if let Some(text) = self.file.find_path_text(owner, builtin) {
-            let text = self.file.intern_bytes(&text);
-            return self.builder.string(text);
+            return self.emit_text(&text);
         }
         let module = self.file.fragment.declare_module(ModuleRef::File(owner));
         let member: &[u8] = match builtin {
@@ -381,30 +369,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ModuleField::Loaded => return Some(self.builder.boolean(true)),
             // The first CommonJS file under an ES entry point is "." too.
             ModuleField::Id if main.is_none() => return None,
-            ModuleField::Id if main == Some(owner) => {
-                let text = self.file.intern_bytes(b".");
-                return Some(self.builder.string(text));
-            }
+            ModuleField::Id if main == Some(owner) => return Some(self.emit_text(b".")),
             ModuleField::Id | ModuleField::Filename => BuiltinId::ImportMetaPath,
             ModuleField::Path => BuiltinId::ImportMetaDir,
         };
         Some(self.emit_value_of_module(owner, location))
     }
 
-    fn emit_import_meta(&mut self) -> ValueId {
-        emit_module_value(self, BuiltinId::ImportMeta)
-    }
-
     // Whoever holds the module object can put another object in place of the exports, so the layout is only expected.
-    fn find_own_exports_type(&mut self) -> Option<TypeId> {
-        let file = self.file.file;
+    pub(in crate::lower) fn find_exports_type(&mut self, file: FileId) -> Option<TypeId> {
         let layout = self.file.module_exports_layout(file)?;
         Some(self.file.fragment.types.intern(Type::layout(layout)))
     }
 
     fn expect_module_value(&mut self, builtin: BuiltinId, value: ValueId) -> ValueId {
         if builtin == BuiltinId::ModuleObjectExports
-            && let Some(expected) = self.find_own_exports_type()
+            && let Some(expected) = self.find_exports_type(self.file.file)
         {
             return self.expect_type(value, expected);
         }
@@ -413,72 +393,67 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn expect_variable(&mut self, variable: CommonJsVariable, value: ValueId) -> ValueId {
         if variable == CommonJsVariable::Exports
-            && let Some(expected) = self.find_own_exports_type()
+            && let Some(expected) = self.find_exports_type(self.file.file)
         {
             return self.expect_type(value, expected);
         }
-        match self.file.builtins.commonjs_variable(variable) {
-            Some(BuiltinPath {
-                id,
-                mutability: Mutability::AlwaysLocked | Mutability::ConstantUnlessWritten,
-            }) => self.expect_builtin(value, id),
-            Some(BuiltinPath {
-                mutability: Mutability::ChangesOnItsOwn,
-                ..
-            })
-            | None => value,
+        let path = self.file.builtins.commonjs_variable(variable);
+        match path.map(|path| (path.id, path.mutability)) {
+            Some((id, Mutability::AlwaysLocked | Mutability::ConstantUnlessWritten)) => {
+                self.expect_builtin(value, id)
+            }
+            Some((_, Mutability::ChangesOnItsOwn)) | None => value,
         }
     }
 
-    pub(super) fn get_variable(
+    pub(crate) fn get_commonjs_variable(&mut self, variable: CommonJsVariable) -> ValueId {
+        self.get_variable(variable, false)
+    }
+
+    pub(crate) fn get_commonjs_variable_for_typeof(
         &mut self,
         variable: CommonJsVariable,
-        purpose: ReadPurpose,
     ) -> ValueId {
-        match self.file.find_source(variable) {
+        self.get_variable(variable, true)
+    }
+
+    fn get_variable(&mut self, variable: CommonJsVariable, is_for_type_of: bool) -> ValueId {
+        let value = match self.file.find_source(variable) {
             VariableSource::WrapperParameter => {
                 let scope = module::file_scope(self.file);
-                let value = self.get_slot(scope, ScopeSlot::CommonJs(variable));
-                self.expect_variable(variable, value)
+                self.get_slot(scope, ScopeSlot::CommonJs(variable))
             }
             VariableSource::MappedWrapperParameter => {
                 let index = wrapper_parameter_index(variable);
-                let value = self.get_mapped_argument(CodeUnit::File, index);
-                self.expect_variable(variable, value)
+                self.get_mapped_argument(CodeUnit::File, index)
             }
-            VariableSource::ModuleValue(builtin) => emit_module_value(self, builtin),
-            VariableSource::ModuleExports => {
-                let value = self.get_own_exports();
-                self.expect_variable(variable, value)
+            VariableSource::ModuleValue(builtin) => {
+                return self.emit_value_of_module(self.file.file, builtin);
             }
+            VariableSource::ModuleExports => self.get_own_exports(),
             VariableSource::FirstExports => {
                 let first = ensure_path_variable(self.file, variable);
-                let value = self.builder.get_module_variable(first);
-                self.expect_variable(variable, value)
+                self.builder.get_module_variable(first)
             }
             // Only whether it is an object can be asked of it.
-            VariableSource::NoObject => self.builder.boolean(true),
+            VariableSource::NoObject => return self.builder.boolean(true),
             VariableSource::ImportMetaMember(name) => {
-                let meta = self.emit_import_meta();
+                let meta = self.emit_value_of_module(self.file.file, BuiltinId::ImportMeta);
                 let key = text_key(self.file, name);
-                let value = self.emit_get(meta, PropertyName::Constant(key));
-                self.expect_variable(variable, value)
+                self.emit_get(meta, PropertyName::Constant(key))
             }
             VariableSource::ModuleVariable => {
                 let variable = ensure_path_variable(self.file, variable);
-                self.builder.get_module_variable(variable)
+                return self.builder.get_module_variable(variable);
             }
             VariableSource::FreeName => {
-                let is_for_type_of = match purpose {
-                    ReadPurpose::Value => false,
-                    ReadPurpose::TypeofOperand => true,
-                };
-                self.emit_free_name_get(variable.name(), is_for_type_of)
+                return self.emit_free_name_get(variable.name(), is_for_type_of);
             }
-        }
+        };
+        self.expect_variable(variable, value)
     }
 
-    pub(super) fn set_variable(&mut self, variable: CommonJsVariable, value: ValueId) {
+    pub(crate) fn set_commonjs_variable(&mut self, variable: CommonJsVariable, value: ValueId) {
         match self.file.find_source(variable) {
             VariableSource::WrapperParameter => {
                 let scope = module::file_scope(self.file);
@@ -493,7 +468,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     !self.file.is_commonjs_module(),
                     "a file that stores to the name keeps its wrapper"
                 );
-                let meta = self.emit_import_meta();
+                let meta = self.emit_value_of_module(self.file.file, BuiltinId::ImportMeta);
                 let key = text_key(self.file, import_meta_member_name(variable));
                 self.emit_set(meta, PropertyName::Constant(key), value);
             }
@@ -511,7 +486,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     // `exports` goes on naming the object that the body begins with when `module.exports` comes to hold another value.
     pub(super) fn store_first_exports(&mut self, first_exports: ValueId) {
-        if keeps_first_exports(self.file) {
+        if self.file.modules.commonjs.keeps_first_exports {
             let variable = ensure_path_variable(self.file, CommonJsVariable::Exports);
             self.builder.put_module_variable(variable, first_exports);
         }
@@ -519,7 +494,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     /// What the body of the module passes to the function that holds its text.
     pub(super) fn emit_passed_value(&mut self, variable: CommonJsVariable) -> ValueId {
-        emit_module_value(self, builtin_of(variable))
+        self.emit_value_of_module(self.file.file, builtin_of(variable))
     }
 
     pub(in crate::lower) fn initialize_path_variables(&mut self) {
@@ -528,10 +503,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 VariableSource::ModuleVariable => {}
                 _ => continue,
             }
-            let meta = self.emit_import_meta();
+            let meta = self.emit_value_of_module(self.file.file, BuiltinId::ImportMeta);
             let key = text_key(self.file, import_meta_member_name(variable));
             let value = self.emit_get(meta, PropertyName::Constant(key));
-            self.set_variable(variable, value);
+            self.set_commonjs_variable(variable, value);
         }
     }
 
@@ -542,29 +517,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             "a built-in of the realm is a Builtin value"
         );
         let Some((variable, properties)) = self.file.find_wrapper_path(builtin) else {
-            return emit_module_value(self, builtin);
+            return self.emit_value_of_module(self.file.file, builtin);
         };
-        let mut value = self.get_variable(variable, ReadPurpose::Value);
+        let mut value = self.get_commonjs_variable(variable);
         for &property in properties.iter().rev() {
-            let name = table::entry(property).name;
-            debug_assert!(
-                !table::is_symbol_name(name),
-                "a member of a module value has a text name"
-            );
-            let key = text_key(self.file, table::text_of_name(name));
+            let key = self.file.text_key_of_name(table::entry(property).name);
             value = self.emit_get(value, PropertyName::Constant(key));
             value = self.expect_module_value(property, value);
         }
         value
     }
-}
-
-fn emit_module_value(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    builtin: BuiltinId,
-) -> ValueId {
-    let own_file = lowering.file.file;
-    lowering.emit_value_of_module(own_file, builtin)
 }
 
 pub(super) fn emit_entry_value(
@@ -581,18 +543,7 @@ pub(super) fn emit_entry_value(
         FunctionKey::WrappedModuleBody(lowering.file.file),
         "the wrapper's parameters are entry values of the function that holds the text"
     );
-    let value = lowering
-        .builder
-        .parameter(wrapper_parameter_index(variable));
+    let index = wrapper_parameter_index(variable);
+    let value = lowering.builder.parameter(index);
     lowering.expect_variable(variable, value)
-}
-
-fn find_variable(
-    file: &FileLowering<'_, '_, '_, '_>,
-    builtin: BuiltinId,
-) -> Option<CommonJsVariable> {
-    WRAPPER_PARAMETERS.into_iter().find(|&variable| {
-        let path = file.builtins.commonjs_variable(variable);
-        path.is_some_and(|path| path.id == builtin)
-    })
 }

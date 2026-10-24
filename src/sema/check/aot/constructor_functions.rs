@@ -14,7 +14,6 @@ fn is_constructible_function(function: &Func) -> bool {
 }
 
 impl Checker<'_, '_> {
-    // `if (!(this instanceof F)) return new F(..)`: what `F` returns there is what another call of `F` got as `this`.
     fn returns_own_constructions_only(
         &mut self,
         file: FileId,

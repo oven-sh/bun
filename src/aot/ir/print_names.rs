@@ -35,32 +35,6 @@ pub(super) fn print_quoted(out: &mut String, bytes: &[u8]) {
     out.push('"');
 }
 
-pub(super) fn print_bytes(out: &mut String, bytes: &[u8]) {
-    out.push('"');
-    for &byte in bytes {
-        if byte < 0x20 || byte > 0x7e || byte == b'"' || byte == b'\\' {
-            let _ = write!(out, "\\x{byte:02x}");
-        } else {
-            out.push(byte as char);
-        }
-    }
-    out.push('"');
-}
-
-pub(super) fn print_double(out: &mut String, value: f64) {
-    if value.is_nan() {
-        out.push_str("NaN");
-    } else if value == f64::INFINITY {
-        out.push_str("Infinity");
-    } else if value == f64::NEG_INFINITY {
-        out.push_str("-Infinity");
-    } else if value == 0.0 && value.is_sign_negative() {
-        out.push_str("-0");
-    } else {
-        out.extend(number_to_string(value).into_iter().map(char::from));
-    }
-}
-
 fn print_invalid(out: &mut String, kind: &str, number: usize) {
     let _ = write!(out, "<invalid {kind} {number}>");
 }
@@ -74,216 +48,232 @@ fn print_optional(out: &mut String, value: Option<impl Display>) {
     }
 }
 
-pub(super) fn print_string(printer: &mut Printer<'_>, id: StringId) {
-    let strings = printer.names.strings;
-    if id.index() >= strings.len() {
-        print_invalid(printer.out, "string", id.index());
-        return;
-    }
-    print_quoted(printer.out, strings.get(id));
-}
-
-fn print_optional_string(printer: &mut Printer<'_>, id: Option<StringId>) {
-    match id {
-        Some(id) => print_string(printer, id),
-        None => printer.out.push('-'),
-    }
-}
-
 fn print_symbol_name(out: &mut String, symbol: WellKnownSymbol) {
     let mut characters = symbol.name().chars();
     out.extend(characters.next().map(|first| first.to_ascii_lowercase()));
     out.push_str(characters.as_str());
 }
 
-pub(super) fn print_property_key(printer: &mut Printer<'_>, id: PropertyKeyId) {
-    let keys = printer.names.property_keys;
-    if id.index() >= keys.len() {
-        print_invalid(printer.out, "key", id.index());
-        return;
-    }
-    let key = keys.get(id);
-    match key.kind {
-        PropertyKeyKind::Text => print_optional_string(printer, key.text),
-        PropertyKeyKind::EnginePrivateName => {
-            printer.out.push('@');
-            print_optional_string(printer, key.text);
-        }
-        PropertyKeyKind::PrivateName => {
-            printer.out.push('#');
-            print_optional_string(printer, key.text);
-            printer.out.push('@');
-            print_optional(printer.out, key.owner);
-        }
-        PropertyKeyKind::WellKnownSymbol => {
-            printer.out.push_str("@@");
-            match key.symbol {
-                Some(symbol) => print_symbol_name(printer.out, symbol),
-                None => printer.out.push('-'),
+impl Printer<'_> {
+    pub fn print_bytes(&mut self, bytes: &[u8]) {
+        self.out.push('"');
+        for &byte in bytes {
+            if byte < 0x20 || byte > 0x7e || byte == b'"' || byte == b'\\' {
+                let _ = write!(self.out, "\\x{byte:02x}");
+            } else {
+                self.out.push(byte as char);
             }
         }
-        PropertyKeyKind::CreatedSymbol => {
-            printer.out.push_str("symbol");
-            if let Some(description) = key.text {
-                printer.out.push('(');
-                print_string(printer, description);
-                printer.out.push(')');
-            }
-            printer.out.push('@');
-            print_optional(printer.out, key.module);
-            printer.out.push(':');
-            print_optional(printer.out, key.position);
-        }
+        self.out.push('"');
     }
-}
 
-pub(super) fn print_type(printer: &mut Printer<'_>, id: TypeId) {
-    let types = printer.names.types;
-    if id.index() >= types.len() {
-        print_invalid(printer.out, "type", id.index());
-        return;
-    }
-    let ty = types.get(id);
-    let mut separator = "";
-    if ty.is_anything() {
-        print_type_word_part(printer, "anything", &mut separator);
-    } else {
-        print_primitive_parts(printer, ty, &mut separator);
-        print_any_object_part(printer, ty.flags, &mut separator);
-    }
-    if ty.primitives.contains(Primitives::ABSENT) {
-        print_type_word_part(printer, "absent", &mut separator);
-    }
-    print_string_literals(printer, ty, &mut separator);
-    print_object_parts(printer, ty, &mut separator);
-    for part in &ty.classes {
-        begin_type_part(printer, &mut separator);
-        print_class_part(printer, id, part);
-    }
-    if let Some(kind) = ty.opaque {
-        print_type_word_part(printer, &kind.name().to_ascii_lowercase(), &mut separator);
-    }
-    if separator.is_empty() {
-        printer.out.push_str("never");
-    }
-}
-
-fn begin_type_part(printer: &mut Printer<'_>, separator: &mut &'static str) {
-    printer.out.push_str(separator);
-    *separator = "|";
-}
-
-fn print_type_word_part(printer: &mut Printer<'_>, word: &str, separator: &mut &'static str) {
-    begin_type_part(printer, separator);
-    printer.out.push_str(word);
-}
-
-fn print_primitive_parts(printer: &mut Printer<'_>, ty: &Type, separator: &mut &'static str) {
-    let primitives = ty.primitives;
-    if primitives.contains(Primitives::UNDEFINED) {
-        print_type_word_part(printer, "undefined", separator);
-    }
-    if primitives.contains(Primitives::NULL) {
-        print_type_word_part(printer, "null", separator);
-    }
-    if primitives.contains(Primitives::BOOLEAN) {
-        print_type_word_part(printer, "boolean", separator);
-    } else if primitives.contains(Primitives::TRUE) {
-        print_type_word_part(printer, "true", separator);
-    } else if primitives.contains(Primitives::FALSE) {
-        print_type_word_part(printer, "false", separator);
-    }
-    if primitives.contains(Primitives::NUMBER) {
-        print_type_word_part(printer, "number", separator);
-    } else if let Some((minimum, maximum)) = ty.integer_range() {
-        begin_type_part(printer, separator);
-        print_integer_part(printer, minimum, maximum);
-    }
-    if primitives.contains(Primitives::STRING) {
-        print_type_word_part(printer, "string", separator);
-    }
-    if primitives.contains(Primitives::SYMBOL) {
-        print_type_word_part(printer, "symbol", separator);
-    }
-    if primitives.contains(Primitives::BIG_INT) {
-        print_type_word_part(printer, "bigint", separator);
-    }
-}
-
-fn print_integer_part(printer: &mut Printer<'_>, minimum: i64, maximum: i64) {
-    if minimum == -MAX_TRACKED_INTEGER && maximum == MAX_TRACKED_INTEGER {
-        printer.out.push_str("int");
-    } else if minimum == i64::from(i32::MIN) && maximum == i64::from(i32::MAX) {
-        printer.out.push_str("i32");
-    } else if minimum == maximum {
-        let _ = write!(printer.out, "{minimum}");
-    } else {
-        let _ = write!(printer.out, "int[{minimum}, {maximum}]");
-    }
-}
-
-fn print_any_object_part(
-    printer: &mut Printer<'_>,
-    flags: TypeFlags,
-    separator: &mut &'static str,
-) {
-    if flags.contains(TypeFlags::ANY_OBJECT) {
-        print_type_word_part(printer, "object", separator);
-    } else if flags.contains(TypeFlags::ANY_FUNCTION) {
-        print_type_word_part(printer, "function", separator);
-    }
-}
-
-fn print_string_literals(printer: &mut Printer<'_>, ty: &Type, separator: &mut &'static str) {
-    let strings = printer.names.strings;
-    let mut literals = ty.strings.clone();
-    if literals
-        .iter()
-        .all(|literal| literal.index() < strings.len())
-    {
-        literals.sort_unstable_by_key(|&literal| strings.get(literal));
-    }
-    for literal in literals {
-        begin_type_part(printer, separator);
-        print_string(printer, literal);
-    }
-}
-
-fn print_object_parts(printer: &mut Printer<'_>, ty: &Type, separator: &mut &'static str) {
-    for &layout in &ty.layouts {
-        begin_type_part(printer, separator);
-        let _ = write!(printer.out, "{layout}");
-    }
-    if ty.flags.contains(TypeFlags::HAS_MEMBERS_WITHOUT_LAYOUT) {
-        begin_type_part(printer, separator);
-        printer.out.push_str("nolayout");
-    }
-    if let Some(layout) = ty.environment {
-        begin_type_part(printer, separator);
-        let _ = write!(printer.out, "env {layout}");
-    }
-    for &function in &ty.functions {
-        begin_type_part(printer, separator);
-        let _ = write!(printer.out, "{function}");
-    }
-    for &builtin in &ty.builtins {
-        begin_type_part(printer, separator);
-        let _ = write!(printer.out, "builtin({})", builtin.name());
-    }
-}
-
-fn print_class_part(printer: &mut Printer<'_>, holder: TypeId, part: &ClassPart) {
-    printer.out.push_str(part.builtin_class.name());
-    if part.contents.iter().all(|&ty| ty == TypeTable::ANYTHING) {
-        return;
-    }
-    printer.out.push('<');
-    printer.print_separated(&part.contents, |printer, &ty| {
-        if ty < holder {
-            print_type(printer, ty);
+    pub fn print_double(&mut self, value: f64) {
+        if value.is_nan() {
+            self.out.push_str("NaN");
+        } else if value == f64::INFINITY {
+            self.out.push_str("Infinity");
+        } else if value == f64::NEG_INFINITY {
+            self.out.push_str("-Infinity");
+        } else if value == 0.0 && value.is_sign_negative() {
+            self.out.push_str("-0");
         } else {
-            print_invalid(printer.out, "type", ty.index());
+            self.out
+                .extend(number_to_string(value).into_iter().map(char::from));
         }
-    });
-    printer.out.push('>');
+    }
+
+    pub fn print_string(&mut self, id: StringId) {
+        let strings = self.names.strings;
+        if id.index() >= strings.len() {
+            print_invalid(self.out, "string", id.index());
+            return;
+        }
+        print_quoted(self.out, strings.get(id));
+    }
+
+    fn print_optional_string(&mut self, id: Option<StringId>) {
+        match id {
+            Some(id) => self.print_string(id),
+            None => self.out.push('-'),
+        }
+    }
+
+    pub fn print_property_key(&mut self, id: PropertyKeyId) {
+        let keys = self.names.property_keys;
+        if id.index() >= keys.len() {
+            print_invalid(self.out, "key", id.index());
+            return;
+        }
+        let key = keys.get(id);
+        match key.kind {
+            PropertyKeyKind::Text => self.print_optional_string(key.text),
+            PropertyKeyKind::EnginePrivateName => {
+                self.out.push('@');
+                self.print_optional_string(key.text);
+            }
+            PropertyKeyKind::PrivateName => {
+                self.out.push('#');
+                self.print_optional_string(key.text);
+                self.out.push('@');
+                print_optional(self.out, key.owner);
+            }
+            PropertyKeyKind::WellKnownSymbol => {
+                self.out.push_str("@@");
+                match key.symbol {
+                    Some(symbol) => print_symbol_name(self.out, symbol),
+                    None => self.out.push('-'),
+                }
+            }
+            PropertyKeyKind::CreatedSymbol => {
+                self.out.push_str("symbol");
+                if let Some(description) = key.text {
+                    self.out.push('(');
+                    self.print_string(description);
+                    self.out.push(')');
+                }
+                self.out.push('@');
+                print_optional(self.out, key.module);
+                self.out.push(':');
+                print_optional(self.out, key.position);
+            }
+        }
+    }
+
+    pub fn print_type(&mut self, id: TypeId) {
+        let types = self.names.types;
+        if id.index() >= types.len() {
+            print_invalid(self.out, "type", id.index());
+            return;
+        }
+        let ty = types.get(id);
+        let mut separator = "";
+        if ty.is_anything() {
+            self.print_type_word_part("anything", &mut separator);
+        } else {
+            self.print_primitive_parts(ty, &mut separator);
+            if ty.flags.contains(TypeFlags::ANY_OBJECT) {
+                self.print_type_word_part("object", &mut separator);
+            } else if ty.flags.contains(TypeFlags::ANY_FUNCTION) {
+                self.print_type_word_part("function", &mut separator);
+            }
+        }
+        if ty.primitives.contains(Primitives::ABSENT) {
+            self.print_type_word_part("absent", &mut separator);
+        }
+        self.print_string_literals(ty, &mut separator);
+        self.print_object_parts(ty, &mut separator);
+        for part in &ty.classes {
+            self.begin_type_part(&mut separator);
+            self.print_class_part(id, part);
+        }
+        if let Some(kind) = ty.opaque {
+            self.print_type_word_part(&kind.name().to_ascii_lowercase(), &mut separator);
+        }
+        if separator.is_empty() {
+            self.out.push_str("never");
+        }
+    }
+
+    fn begin_type_part(&mut self, separator: &mut &'static str) {
+        self.out.push_str(separator);
+        *separator = "|";
+    }
+
+    fn print_type_word_part(&mut self, word: impl Display, separator: &mut &'static str) {
+        self.begin_type_part(separator);
+        let _ = write!(self.out, "{word}");
+    }
+
+    fn print_primitive_parts(&mut self, ty: &Type, separator: &mut &'static str) {
+        let primitives = ty.primitives;
+        if primitives.contains(Primitives::UNDEFINED) {
+            self.print_type_word_part("undefined", separator);
+        }
+        if primitives.contains(Primitives::NULL) {
+            self.print_type_word_part("null", separator);
+        }
+        if primitives.contains(Primitives::BOOLEAN) {
+            self.print_type_word_part("boolean", separator);
+        } else if primitives.contains(Primitives::TRUE) {
+            self.print_type_word_part("true", separator);
+        } else if primitives.contains(Primitives::FALSE) {
+            self.print_type_word_part("false", separator);
+        }
+        if primitives.contains(Primitives::NUMBER) {
+            self.print_type_word_part("number", separator);
+        } else if let Some((minimum, maximum)) = ty.integer_range() {
+            self.begin_type_part(separator);
+            self.print_integer_part(minimum, maximum);
+        }
+        if primitives.contains(Primitives::STRING) {
+            self.print_type_word_part("string", separator);
+        }
+        if primitives.contains(Primitives::SYMBOL) {
+            self.print_type_word_part("symbol", separator);
+        }
+        if primitives.contains(Primitives::BIG_INT) {
+            self.print_type_word_part("bigint", separator);
+        }
+    }
+
+    fn print_integer_part(&mut self, minimum: i64, maximum: i64) {
+        if minimum == -MAX_TRACKED_INTEGER && maximum == MAX_TRACKED_INTEGER {
+            self.out.push_str("int");
+        } else if minimum == i64::from(i32::MIN) && maximum == i64::from(i32::MAX) {
+            self.out.push_str("i32");
+        } else if minimum == maximum {
+            let _ = write!(self.out, "{minimum}");
+        } else {
+            let _ = write!(self.out, "int[{minimum}, {maximum}]");
+        }
+    }
+
+    fn print_string_literals(&mut self, ty: &Type, separator: &mut &'static str) {
+        let strings = self.names.strings;
+        let mut literals = ty.strings.clone();
+        if literals
+            .iter()
+            .all(|literal| literal.index() < strings.len())
+        {
+            literals.sort_unstable_by_key(|&literal| strings.get(literal));
+        }
+        for literal in literals {
+            self.begin_type_part(separator);
+            self.print_string(literal);
+        }
+    }
+
+    fn print_object_parts(&mut self, ty: &Type, separator: &mut &'static str) {
+        for &layout in &ty.layouts {
+            self.print_type_word_part(layout, separator);
+        }
+        if ty.flags.contains(TypeFlags::HAS_MEMBERS_WITHOUT_LAYOUT) {
+            self.print_type_word_part("nolayout", separator);
+        }
+        if let Some(layout) = ty.environment {
+            self.print_type_word_part(format_args!("env {layout}"), separator);
+        }
+        for &function in &ty.functions {
+            self.print_type_word_part(function, separator);
+        }
+        for &builtin in &ty.builtins {
+            self.print_type_word_part(format_args!("builtin({})", builtin.name()), separator);
+        }
+    }
+
+    fn print_class_part(&mut self, holder: TypeId, part: &ClassPart) {
+        self.out.push_str(part.builtin_class.name());
+        if part.contents.iter().all(|&ty| ty == TypeTable::ANYTHING) {
+            return;
+        }
+        self.out.push('<');
+        self.print_separated(&part.contents, |printer, &ty| {
+            if ty < holder {
+                printer.print_type(ty);
+            } else {
+                print_invalid(printer.out, "type", ty.index());
+            }
+        });
+        self.out.push('>');
+    }
 }

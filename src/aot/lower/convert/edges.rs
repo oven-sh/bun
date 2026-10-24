@@ -1,6 +1,6 @@
 use bun_sema::bind::FnOwner;
 use bun_sema::check::aot::{FunctionRef, ShapeKind};
-use bun_sema::hir::{Flags, FnBody, FnKind};
+use bun_sema::hir::{ExprId, ExprKind, Flags, FnBody, FnKind};
 use smallvec::{SmallVec, smallvec};
 
 use crate::ir::generated::IllTypedCause;
@@ -17,14 +17,6 @@ pub(super) enum Construct {
         declaration: Option<FunctionRef>,
         is_instantiated: bool,
     },
-}
-
-#[derive(Copy, Clone)]
-pub(super) struct Edge {
-    pub(super) source: Option<CheckerTypeId>,
-    pub(super) target: Option<CheckerTypeId>,
-    pub(super) position: DeclaredType,
-    pub(super) construct: Construct,
 }
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -85,31 +77,6 @@ impl FileLowering<'_, '_, '_, '_> {
             && self.fragment.types.union(position.ty, source) == position.ty
     }
 
-    fn classify_flow(&mut self, edge: Edge, refused: IllTypedCause) -> IllTypedCause {
-        let Some(source) = edge.source else {
-            return IllTypedCause::FromLooseType;
-        };
-        if is_loose(self, source) {
-            return IllTypedCause::FromLooseType;
-        }
-        let Some(target) = edge.target else {
-            return match self.is_inside_position(source, edge.position) {
-                true => IllTypedCause::None,
-                false => IllTypedCause::FromLooseType,
-            };
-        };
-        if source == target {
-            return IllTypedCause::None;
-        }
-        match self.queries.is_assignable(source, target) {
-            Ok(true) => IllTypedCause::None,
-            // `x?: T` is written `T`, and the position takes `undefined` too.
-            Ok(false) if self.is_inside_position(source, edge.position) => IllTypedCause::None,
-            Ok(false) => refused,
-            Err(_) => IllTypedCause::FromLooseType,
-        }
-    }
-
     // What a function with a body returns was converted to its result.
     fn classify_call_result(&self, declaration: Option<FunctionRef>) -> IllTypedCause {
         let Some(declaration) = declaration else {
@@ -148,25 +115,77 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    pub(super) fn classify_edge(&mut self, edge: Edge) -> IllTypedCause {
-        match edge.construct {
-            Construct::Flow => self.classify_flow(edge, IllTypedCause::SuppressedError),
+    fn is_non_null_assertion(&self, mut expression: ExprId) -> bool {
+        while let ExprKind::Satisfies { expr: operand, .. } = self.hir[expression].kind {
+            expression = operand;
+        }
+        matches!(self.hir[expression].kind, ExprKind::NonNull(_))
+    }
+
+    pub(super) fn find_cause(
+        &mut self,
+        position: DeclaredType,
+        source: Option<ExprId>,
+        target: Option<CheckerTypeId>,
+        construct: Construct,
+    ) -> IllTypedCause {
+        if position.is_expected() {
+            return IllTypedCause::None;
+        }
+        // `x!` takes the programmer's word for what the checker could not show.
+        if source.is_some_and(|source| self.is_non_null_assertion(source)) {
+            return IllTypedCause::Assertion;
+        }
+        let source_position = source.map_or(0, |source| self.hir[source].pos);
+        let source = source.and_then(|source| self.queries.expression_type(source).ok());
+        if let (Some(source), Construct::Flow) = (source, construct)
+            && !target.is_some_and(|target| self.flows_into_container(source, target))
+        {
+            let source = self.map_type_at(source, source_position).ty;
+            self.fragment
+                .family_facts
+                .record_conversion(source, position.ty);
+        }
+        let refused = match construct {
+            Construct::Flow => IllTypedCause::SuppressedError,
             // `never` goes into every type, and no value is one: an assertion has taken the type of this value away.
-            Construct::Assertion if edge.source.is_some_and(|source| self.is_never(source)) => {
-                IllTypedCause::Assertion
+            Construct::Assertion if source.is_some_and(|source| self.is_never(source)) => {
+                return IllTypedCause::Assertion;
             }
-            Construct::Assertion => self.classify_flow(edge, IllTypedCause::Assertion),
-            Construct::ContentsRead => IllTypedCause::ContainerWriterUnseen,
+            Construct::Assertion => IllTypedCause::Assertion,
+            Construct::ContentsRead => return IllTypedCause::ContainerWriterUnseen,
             // The result of a generic function comes out of a type parameter.
             Construct::IndexSignatureRead
             | Construct::CallResult {
                 is_instantiated: true,
                 ..
-            } => IllTypedCause::FromLooseType,
+            } => return IllTypedCause::FromLooseType,
             Construct::CallResult {
                 declaration,
                 is_instantiated: false,
-            } => self.classify_call_result(declaration),
+            } => return self.classify_call_result(declaration),
+        };
+        let Some(source) = source else {
+            return IllTypedCause::FromLooseType;
+        };
+        if is_loose(self, source) {
+            return IllTypedCause::FromLooseType;
+        }
+        let Some(target) = target else {
+            return match self.is_inside_position(source, position) {
+                true => IllTypedCause::None,
+                false => IllTypedCause::FromLooseType,
+            };
+        };
+        if source == target {
+            return IllTypedCause::None;
+        }
+        match self.queries.is_assignable(source, target) {
+            Ok(true) => IllTypedCause::None,
+            // `x?: T` is written `T`, and the position takes `undefined` too.
+            Ok(false) if self.is_inside_position(source, position) => IllTypedCause::None,
+            Ok(false) => refused,
+            Err(_) => IllTypedCause::FromLooseType,
         }
     }
 }

@@ -10,6 +10,9 @@ mod lower_stage;
 mod module_list;
 #[cfg(test)]
 mod module_reach_tests;
+#[cfg(test)]
+mod paths;
+mod plan_stage;
 mod program_reach;
 pub(crate) mod removable;
 mod runtime_reach;
@@ -22,8 +25,13 @@ mod time_tests;
 
 #[cfg(test)]
 pub(crate) use self::lower_stage::collect_file_inputs;
+#[cfg(test)]
+pub use self::paths::{EntryPointPaths, FolderPaths};
+#[cfg(not(test))]
+pub use bun_aot_interface::compile::{EntryPointPaths, FolderPaths};
 
 use self::import_graph::ImportGraph;
+use self::load_stage::AssetReads;
 use self::module_list::ListedModules;
 use self::program_reach::LeftOutCode;
 use self::runtime_reach::loads_modules_by_computed_names;
@@ -47,6 +55,7 @@ use crate::options::{Options, PathOptions};
 use crate::package_diagnostics::PackageView;
 use crate::report::SourceTexts;
 use crate::statistics::{LimitValues, Stage, StageClock, StatisticId, Statistics};
+use crate::validation_plans::ValidationPlans;
 use bun_ast::{Kind, Loader, Log, Msg};
 use bun_core::ZBox;
 use bun_sema::atom::Interner;
@@ -81,18 +90,6 @@ pub struct ProgramSummary {
     pub modules: Option<ModuleList>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct EntryPointPaths {
-    pub public_path: Vec<u8>,
-    pub source_path: Vec<u8>,
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct FolderPaths {
-    pub public_path: Vec<u8>,
-    pub source_path: Vec<u8>,
-}
-
 pub struct LinkedProgram {
     pub program: Program,
     pub summary: ProgramSummary,
@@ -115,7 +112,6 @@ pub struct Compilation {
 /// What the programs that are compiled say about the Workers that they start.
 #[derive(Default)]
 pub(crate) struct StartedWorkers {
-    /// `find_embedded_files_that_start_workers`
     pub files: Vec<WorkerFile>,
     /// The files of the application that the programs hold, each once, with the sizes of their texts.
     pub held_texts: Vec<(Vec<u8>, usize)>,
@@ -166,6 +162,7 @@ pub(crate) struct Build<'a> {
     clock: StageClock,
     statistics: Statistics,
     retired_sessions: Vec<Session>,
+    // Nothing waits for the memory of what a stage has read for the last time, and one thread takes a while to free it.
     leftovers: Vec<Leftovers>,
     // In ascending order.
     unreached_runtime_files: Vec<FileId>,
@@ -174,7 +171,6 @@ pub(crate) struct Build<'a> {
     import_graph: Option<ImportGraph>,
     /// `QueryInputs::checked_elsewhere` of the program that is lowered as the application.
     pub(crate) checked_elsewhere: Vec<FileId>,
-    /// What `report_rejected_versions` returned.
     full_types_refused_at_load: BTreeSet<Vec<u8>>,
     pub(crate) place: ProgramPlace,
     /// Of a build that loads the files of several programs together.
@@ -186,7 +182,6 @@ pub(crate) struct Build<'a> {
     pub(crate) has_left_all_entry_points: bool,
     pub(crate) is_one_program: bool,
     pub(crate) started_workers: StartedWorkers,
-    /// `LoadedProgram::brings_bun_types`
     pub(crate) brings_bun_types: bool,
     pub(crate) has_withdrawn_trust: bool,
 }
@@ -203,6 +198,7 @@ pub(crate) struct ProgramsOfOneLoad<'a> {
     pub held_elsewhere: Option<&'a [(Vec<u8>, usize)]>,
 }
 
+#[derive(Clone)]
 pub(crate) struct LoadedProject<'b, 's> {
     pub loaded: &'b LoadedProgram<'s>,
     pub host: &'b dyn CodeHost,
@@ -330,33 +326,22 @@ pub fn emit_program(
     Ok(EmittedProgram { bytes, summary })
 }
 
-struct HandsOutLastFreedMemory;
-
-static BUILDS_THAT_HAND_OUT_LAST_FREED_MEMORY: AtomicUsize = AtomicUsize::new(0);
-
-impl HandsOutLastFreedMemory {
-    fn begin() -> HandsOutLastFreedMemory {
-        if bun_alloc::USE_MIMALLOC
-            && BUILDS_THAT_HAND_OUT_LAST_FREED_MEMORY.fetch_add(1, Ordering::AcqRel) == 0
-        {
-            bun_alloc::mimalloc::mi_option_set_default(
-                bun_alloc::mimalloc::Option::hand_out_last_freed,
-                1,
-            );
-        }
-        HandsOutLastFreedMemory
-    }
-}
-
-impl Drop for HandsOutLastFreedMemory {
-    fn drop(&mut self) {
-        if bun_alloc::USE_MIMALLOC
-            && BUILDS_THAT_HAND_OUT_LAST_FREED_MEMORY.fetch_sub(1, Ordering::AcqRel) == 1
-        {
-            bun_alloc::mimalloc::mi_option_set_default(
-                bun_alloc::mimalloc::Option::hand_out_last_freed,
-                0,
-            );
+/// What the run time makes the validators of the one entry point's `JSON.parse<T>()` and `validate<T>()` calls of. Nothing is
+/// compiled: the file and what it imports are loaded, and the checker is asked for each `T`.
+/// `None`: they could not be loaded, and `log` says why.
+pub fn plan_validated_calls(
+    options: &Options<'_>,
+    provider: &dyn SourceProvider,
+    log: &mut Log,
+) -> Option<ValidationPlans> {
+    let caches = ThreadCaches::default();
+    let mut build = Build::new(options, provider, &caches, LimitValues::for_host());
+    match build.plan_validated_calls() {
+        // What else is wrong with the files does not keep a program that is not compiled from running.
+        Ok(plans) => Some(plans),
+        Err(stage) => {
+            drop(build.finish::<()>(Err(stage), log));
+            None
         }
     }
 }
@@ -387,6 +372,7 @@ impl PaceOfGivingBack {
     }
 }
 
+/// While a build runs the allocator also hands out the memory that was freed last.
 struct KeepsFreeBlocksBelowThePeak {
     is_over: Arc<AtomicBool>,
     watcher: Option<JoinHandle<()>>,
@@ -405,12 +391,18 @@ impl KeepsFreeBlocksBelowThePeak {
         let is_first = BUILDS_THAT_KEEP_FREE_BLOCKS.fetch_add(1, Ordering::AcqRel) == 0;
         let watcher = (bun_alloc::USE_MIMALLOC && is_first)
             .then(|| {
+                Self::hand_out_last_freed_memory(true);
                 let is_over = Arc::clone(&is_over);
                 let thread = std::thread::Builder::new().name("AOT memory".into());
                 thread.spawn(move || Self::watch(&is_over)).ok()
             })
             .flatten();
         KeepsFreeBlocksBelowThePeak { is_over, watcher }
+    }
+
+    fn hand_out_last_freed_memory(does: bool) {
+        use bun_alloc::mimalloc::{Option, mi_option_set_default};
+        mi_option_set_default(Option::hand_out_last_freed, does.into());
     }
 
     fn watch(is_over: &AtomicBool) {
@@ -482,7 +474,11 @@ impl KeepsFreeBlocksBelowThePeak {
 
 impl Drop for KeepsFreeBlocksBelowThePeak {
     fn drop(&mut self) {
-        BUILDS_THAT_KEEP_FREE_BLOCKS.fetch_sub(1, Ordering::AcqRel);
+        if BUILDS_THAT_KEEP_FREE_BLOCKS.fetch_sub(1, Ordering::AcqRel) == 1
+            && bun_alloc::USE_MIMALLOC
+        {
+            Self::hand_out_last_freed_memory(false);
+        }
         self.is_over.store(true, Ordering::Release);
         if let Some(watcher) = self.watcher.take() {
             watcher.thread().unpark();
@@ -697,20 +693,15 @@ fn add_programs_of_worker_files(
 }
 
 fn add_program(first: &mut Compilation, program: Compilation) {
-    let Compilation {
-        engine,
-        summary,
-        started_workers,
-        ..
-    } = program;
-    first.further_programs.push(engine);
+    let summary = program.summary;
+    first.further_programs.push(program.engine);
     first.summary.entry_points.extend(summary.entry_points);
     first.summary.folders.extend(summary.folders);
     first.summary.validates_by_type |= summary.validates_by_type;
     if let (Some(listed), Some(further)) = (&mut first.summary.modules, summary.modules) {
         add_modules(listed, further);
     }
-    first.started_workers.add(started_workers);
+    first.started_workers.add(program.started_workers);
 }
 
 fn compile_written_entry_points(
@@ -879,7 +870,6 @@ fn compile_program(
 struct CompiledPrograms {
     /// In the order of their entry points.
     programs: Vec<(ProgramPlace, Compilation)>,
-    /// `Build::left_entry_points`
     left_entry_points: Vec<Vec<usize>>,
 }
 
@@ -890,7 +880,6 @@ fn compile_programs<'a>(
     provider: &'a dyn SourceProvider,
     log: &mut Log,
 ) -> Result<CompiledPrograms, BuildFailed> {
-    let _hands_out_last_freed_memory = HandsOutLastFreedMemory::begin();
     let _keeps_free_blocks_below_the_peak = KeepsFreeBlocksBelowThePeak::begin();
     let request = EngineRequest {
         options: options.aot,
@@ -967,7 +956,9 @@ fn compile_programs<'a>(
     started_workers.held_texts.shared_sort_unstable();
     started_workers.writes_preload = compiled.iter().any(|it| it.2.writes_preload);
     let mut started_workers = Some(started_workers);
-    let statistics = build.finish_writing_messages(log);
+    build.clock.add_to(&mut build.statistics);
+    build.diagnostics.write_to(log);
+    let statistics = build.statistics;
     let mut programs: Vec<(ProgramPlace, Compilation)> = compiled
         .into_iter()
         .map(|(place, engine, output)| {
@@ -1019,10 +1010,6 @@ fn fail(
     }
 }
 
-fn write_file(path: &[u8], bytes: &[u8]) -> bun_sys::Maybe<()> {
-    File::create(Fd::cwd(), path, true)?.write_all(bytes)
-}
-
 impl<'a> Build<'a> {
     pub(crate) fn new(
         options: &'a Options<'a>,
@@ -1071,12 +1058,6 @@ impl<'a> Build<'a> {
         self.checked_elsewhere.clear();
     }
 
-    pub(crate) fn keep_import_graph(&mut self, files: &Files<'_>) {
-        if self.options.aot.checks_only && self.options.entry_points.len() > 1 {
-            self.import_graph = Some(ImportGraph::of(files));
-        }
-    }
-
     fn find_refused_entry_points(&self) -> Option<Vec<u32>> {
         let paths = self.diagnostics.paths_of_errors()?;
         self.import_graph
@@ -1089,13 +1070,12 @@ impl<'a> Build<'a> {
         Ok(outputs.pop().expect("a build has a program").1)
     }
 
-    /// Each with the place of its program.
     fn run_front_end_for_each_program(
         &mut self,
     ) -> Result<Vec<(ProgramPlace, FrontEndOutput)>, Stage> {
         let mut linked_at = None;
         let mut outputs = Vec::new();
-        let output = self.with_loaded_projects_before_assets(|build, loaded| {
+        let output = self.load_in_new_sessions(AssetReads::FinishedLater, &mut |build, loaded| {
             let application = loaded.project(ProjectId::Application).loaded.files();
             let starts_workers =
                 build.place != ProgramPlace::Only && mentions_worker_constructor(application);
@@ -1141,24 +1121,6 @@ impl<'a> Build<'a> {
         output.map(|()| outputs)
     }
 
-    pub(crate) fn retire_sessions(&mut self, sessions: PerProject<Session>) {
-        let PerProject {
-            application,
-            runtime,
-        } = sessions;
-        self.retired_sessions.extend([application, runtime]);
-    }
-
-    pub(crate) fn retire_world_sessions(&mut self, sessions: Vec<Session>) {
-        let used = sessions.into_iter().filter(|session| !session.is_unused());
-        self.retired_sessions.extend(used);
-    }
-
-    // Nothing waits for the memory of what a stage has read for the last time, and one thread takes a while to free it.
-    pub(crate) fn retire(&mut self, leftovers: Leftovers) {
-        self.leftovers.push(leftovers);
-    }
-
     fn run_through_emit(
         &mut self,
         body_placement: BodyPlacement,
@@ -1196,7 +1158,7 @@ impl<'a> Build<'a> {
                 }
             },
         );
-        self.retire(Box::new(program));
+        self.leftovers.push(Box::new(program));
         drop_thread_caches(self.caches);
         self.count_time(StatisticId::EmitNanoseconds, started);
         match emitted {
@@ -1226,7 +1188,8 @@ impl<'a> Build<'a> {
                 &numbered[..]
             }
         };
-        let Err(error) = write_file(path, bytes.as_slice()) else {
+        let file = File::create(Fd::cwd(), path, true);
+        let Err(error) = file.and_then(|file| file.write_all(bytes.as_slice())) else {
             return Ok(());
         };
         let reason = error.to_string();
@@ -1296,12 +1259,6 @@ impl<'a> Build<'a> {
             true => Err(stage),
             false => Ok(()),
         }
-    }
-
-    fn finish_writing_messages(mut self, log: &mut Log) -> Statistics {
-        self.clock.add_to(&mut self.statistics);
-        self.diagnostics.write_to(log);
-        self.statistics
     }
 
     pub(crate) fn finish<T>(

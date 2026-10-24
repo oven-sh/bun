@@ -3,7 +3,7 @@ use super::{
     BuiltinPath, CommonJsBuiltins, EvaluatedText, ModuleObjectMention, ResolveInput, Resolved,
     ResolvedBuiltins, SourceDialect,
 };
-use crate::builtins::runtime_uses::{Mentions, RuntimeUses, reaches_unknown_module_loader};
+use crate::builtins::runtime_uses::{RuntimeUses, reaches_unknown_module_loader};
 use crate::builtins::table::{
     BuiltinId, BuiltinName, Intrinsic, Mutability, RuntimeFunction, RuntimeModule,
 };
@@ -35,15 +35,10 @@ impl ResolvedValue {
         }
     }
 
-    pub(super) fn predicted(self) -> ResolvedValue {
-        let mutability = weaker(self.path.mutability, Mutability::ConstantUnlessWritten);
-        ResolvedValue {
-            path: BuiltinPath {
-                id: self.path.id,
-                mutability,
-            },
-            kind: self.kind,
-        }
+    pub(super) fn predicted(mut self) -> ResolvedValue {
+        let mutability = &mut self.path.mutability;
+        *mutability = (*mutability).min(Mutability::ConstantUnlessWritten);
+        self
     }
 }
 
@@ -82,16 +77,11 @@ pub(super) enum AliasSource {
     },
 }
 
-pub(super) struct DeclaredAlias {
-    pub(super) symbol: SymbolId,
-    pub(super) source: AliasSource,
-}
-
 /// What the resolver reads off a file whichever part of it is resolved.
 pub struct FileFacts {
     // The position and the id of every expression, in the order of the positions.
     exprs_by_position: Vec<(u32, u32)>,
-    declared_aliases: Vec<DeclaredAlias>,
+    declared_aliases: Vec<(SymbolId, AliasSource)>,
     // Where the name is written, or the id of the initializer without its type assertions, and the index of the alias. Both in order.
     aliases_by_position: Vec<(u32, u32)>,
     aliases_by_initializer: Vec<(u32, u32)>,
@@ -134,9 +124,7 @@ impl FileFacts {
                 facts.aliases_by_initializer.push((initializer.0, index));
             }
             facts.aliases_by_position.push((hir[name].pos, index));
-            facts
-                .declared_aliases
-                .push(DeclaredAlias { symbol, source });
+            facts.declared_aliases.push((symbol, source));
         }
         facts.exprs_by_position.shared_sort_unstable();
         facts.aliases_by_position.shared_sort_unstable();
@@ -165,7 +153,6 @@ pub(super) struct ResolverOutput {
     // What would be in `mentioned` but for the text of the call.
     pub(super) called_with_other_texts: Vec<BuiltinId>,
     pub(super) called: Vec<BuiltinId>,
-    // The objects of the modules that the import sites load.
     pub(super) loaded: Vec<BuiltinId>,
     pub(super) exposed: Vec<BuiltinId>,
     pub(super) linked_functions: Vec<RuntimeFunction>,
@@ -179,7 +166,7 @@ pub(super) struct Resolver<'a, 's> {
     // Of the expressions from `first_state` on. What has none does not count as evaluated.
     states: Vec<ExprState>,
     first_state: u32,
-    facts: Option<&'a FileFacts>,
+    pub(super) facts: Option<&'a FileFacts>,
     has_seen_declarations: bool,
     pub(super) aliases: FxHashMap<SymbolId, AliasSource>,
     // The one built-in that is stored into a binding all of whose reads are in this file. `None`: several are.
@@ -187,7 +174,6 @@ pub(super) struct Resolver<'a, 's> {
     pub(super) exported_symbols: FxHashSet<SymbolId>,
     pub(super) commonjs: CommonJsBuiltins,
     pub(super) exposes_own_module_object: bool,
-    // The targets of the stores to the name `exports` of a CommonJS file.
     pub(super) stores_to_exports: Vec<ExprId>,
     // `createRequire` comes out of it.
     pub(super) loads_node_module: bool,
@@ -199,10 +185,6 @@ pub(super) struct Resolver<'a, 's> {
     // The ids of the expressions that count as evaluated lie in this range, which is short for a part of a file.
     evaluated: Range<u32>,
     work_stack: Vec<ExprId>,
-}
-
-pub(super) fn weaker(left: Mutability, right: Mutability) -> Mutability {
-    left.min(right)
 }
 
 fn sorted_unique<T: Ord>(mut list: Vec<T>) -> Box<[T]> {
@@ -298,10 +280,6 @@ impl<'a, 's> Resolver<'a, 's> {
             })
     }
 
-    pub(super) fn has_facts(&self) -> bool {
-        self.facts.is_some()
-    }
-
     // An alias whose name and whose initializer are both written elsewhere stands for nothing here, and nobody asks for it.
     pub(super) fn add_declared_aliases_of_part(&mut self, facts: &FileFacts) {
         self.has_seen_declarations = true;
@@ -311,15 +289,11 @@ impl<'a, 's> Resolver<'a, 's> {
         let by_position =
             ranges.flat_map(|range| entries_within(&facts.aliases_by_position, range.clone()));
         for &(_, index) in by_initializer.iter().chain(by_position) {
-            let alias = &facts.declared_aliases[index as usize];
+            let (symbol, source) = &facts.declared_aliases[index as usize];
             self.aliases
-                .entry(alias.symbol)
-                .or_insert_with(|| alias.source.clone());
+                .entry(*symbol)
+                .or_insert_with(|| source.clone());
         }
-    }
-
-    pub(super) fn facts(&self) -> Option<&'a FileFacts> {
-        self.facts
     }
 
     pub(super) fn value_of(&self, expr: ExprId) -> Option<ResolvedValue> {
@@ -360,7 +334,6 @@ impl<'a, 's> Resolver<'a, 's> {
         })
     }
 
-    // Whether a name that is written outside the part of the file that is resolved is bound to the symbol.
     pub(super) fn is_named_outside(&self, symbol: SymbolId) -> bool {
         if self.within.is_none() {
             return false;
@@ -519,15 +492,7 @@ impl<'a, 's> Resolver<'a, 's> {
 
     fn finish(self) -> ResolvedBuiltins {
         let symbols = self.collect_symbol_paths();
-        let Resolver {
-            input,
-            states,
-            first_state,
-            evaluated,
-            commonjs,
-            mut output,
-            ..
-        } = self;
+        let (input, mut output) = (self.input, self.output);
         output
             .mentioned
             .extend(symbols.iter().map(|entry| entry.1.id));
@@ -537,13 +502,13 @@ impl<'a, 's> Resolver<'a, 's> {
         let called_with_other_texts = sorted_unique(called_with_other_texts);
         let mentioned = sorted_unique(output.mentioned);
         let exposed = sorted_unique(output.exposed);
-        let mentions = Mentions {
-            mentioned: &mentioned,
-            called_with_other_texts: &called_with_other_texts,
-            exposed: &exposed,
-            linked_functions: &output.linked_functions,
-        };
-        let uses = RuntimeUses::of_mentions(mentions, input.platform);
+        let uses = RuntimeUses::of_mentions(
+            &mentioned,
+            &called_with_other_texts,
+            &exposed,
+            &output.linked_functions,
+            input.platform,
+        );
         let loads_unknown_modules = match input.dialect {
             SourceDialect::Program => reaches_unknown_module_loader(
                 &output.loaded,
@@ -555,8 +520,8 @@ impl<'a, 's> Resolver<'a, 's> {
         };
         let mut exprs = Vec::new();
         let mut expr_bits = vec![0u64; input.hir.exprs.len().div_ceil(64)];
-        for expr in evaluated.map(ExprId) {
-            let resolved = match states[(expr.0 - first_state) as usize] {
+        for expr in self.evaluated.map(ExprId) {
+            let resolved = match self.states[(expr.0 - self.first_state) as usize] {
                 ExprState::Builtin(ResolvedValue {
                     path,
                     kind: HolderKind::Object,
@@ -580,7 +545,7 @@ impl<'a, 's> Resolver<'a, 's> {
             exprs: exprs.into_boxed_slice(),
             expr_bits: expr_bits.into_boxed_slice(),
             symbols: symbols.into_boxed_slice(),
-            commonjs,
+            commonjs: self.commonjs,
             evaluated_texts: output.evaluated_texts.into_boxed_slice(),
             module_object_mentions: output.module_object_mentions.into_boxed_slice(),
             stores_with_module_exports: output.stores_with_module_exports.into_boxed_slice(),

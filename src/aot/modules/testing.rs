@@ -6,6 +6,8 @@ use crate::compile::testing::{default_settings, with_bind_input, with_runtime_bi
 use crate::ir::generated::ModuleRequestKind;
 use bstr::BStr;
 use bun_sema::atom::Atom;
+use bun_sema::bind::SymbolId;
+use bun_sema::hir::{ExprId, MemberKey};
 use bun_sema::program::FileId;
 
 const PROJECT_ROOT: &[u8] = b"/project/";
@@ -33,6 +35,24 @@ pub(crate) fn file_named(input: &BindInput<'_, '_>, name: &str) -> FileId {
     file.expect("the program has no file with this name")
 }
 
+pub(crate) fn symbol_named(input: &BindInput<'_, '_>, file: FileId, name: &str) -> SymbolId {
+    let name = input.files.atoms.intern(name.as_bytes());
+    let bound = input.files.bound(file);
+    let symbol = bound.lookup(bound.scopes[0].locals, name);
+    symbol.expect("the file scope does not declare the name")
+}
+
+/// The first access under the name.
+pub(crate) fn member_named(input: &BindInput<'_, '_>, file: FileId, name: &str) -> ExprId {
+    let name = input.files.atoms.intern(name.as_bytes());
+    let hir = input.files.hir(file);
+    let mut exprs = (0..hir.exprs.len() as u32).map(ExprId);
+    let member = exprs.find(
+        |&expr| matches!(hir.member_key(expr), Some((_, MemberKey::Name(key))) if key == name),
+    );
+    member.expect("the file has no access under this name")
+}
+
 pub(crate) fn describe_module(
     graph: &ModuleGraph,
     input: &BindInput<'_, '_>,
@@ -57,11 +77,7 @@ pub(crate) fn describe_module(
     for required in graph.required_names(file) {
         let module = describe_module_ref(input, required.module);
         let name = atom_text(input, required.name);
-        let suffix = if required.may_be_absent {
-            " may-be-absent"
-        } else {
-            ""
-        };
+        let suffix = ["", " may-be-absent"][usize::from(required.may_be_absent)];
         lines.push(format!("required {module} {name}{suffix}"));
     }
     let mut text = lines.join("\n");
@@ -75,10 +91,8 @@ pub(crate) fn describe_requests_of(
     input: &BindInput<'_, '_>,
     module: ModuleRef,
 ) -> Vec<String> {
-    let requests = graph.requests_of(module).iter();
-    requests
-        .map(|&request| describe_request(input, request))
-        .collect()
+    let describe = |&request: &ModuleRequest| describe_request(input, request);
+    graph.requests_of(module).iter().map(describe).collect()
 }
 
 fn describe_request(input: &BindInput<'_, '_>, request: ModuleRequest) -> String {
@@ -153,9 +167,6 @@ fn describe_binding(
 pub(crate) fn describe_module_ref(input: &BindInput<'_, '_>, module: ModuleRef) -> String {
     match module {
         ModuleRef::File(file) => project_path(input, file).to_string(),
-        ModuleRef::Inner { file, callback } => {
-            format!("{}#{}", project_path(input, file), callback.0)
-        }
         ModuleRef::Face(file) => format!("face:{}", project_path(input, file)),
         ModuleRef::Check(file) => format!("check:{}", project_path(input, file)),
         ModuleRef::Runtime(module) => format!("runtime:{module:?}"),
@@ -180,7 +191,13 @@ mod tests {
     use super::*;
     use crate::builtins::RuntimeModule;
 
-    const ES_MODULE: &str = "kind SourceText None Namespace\n";
+    fn check_descriptions(files: &[(&str, &str)], expected: &[(&str, &str)]) {
+        with_graph(files, |graph, input| {
+            for &(name, description) in expected {
+                assert_eq!(describe_module(graph, input, name), description, "{name}");
+            }
+        });
+    }
 
     #[test]
     fn describes_requests_and_exports() {
@@ -196,26 +213,17 @@ mod tests {
             ("a.ts", "export const a = 1;\n"),
             ("legacy.cjs", "exports.named = 1;\n"),
         ];
-        with_graph(&files, |graph, input| {
-            assert_eq!(
-                describe_module(graph, input, "main.ts"),
-                "kind SourceText None Namespace\n\
-                 dynamic\n\
-                 request a.ts\n\
-                 request legacy.cjs dynamic-star\n\
-                 export all = namespace a.ts\n\
-                 export named = synthetic legacy.cjs named\n\
-                 export own = main.ts#own\n"
-            );
-            assert_eq!(
-                describe_module(graph, input, "a.ts"),
-                format!("{ES_MODULE}export a = a.ts#a\n")
-            );
-            assert_eq!(
-                describe_module(graph, input, "legacy.cjs"),
-                "kind CommonJs CommonJs ModuleExports\ndynamic\n"
-            );
-        });
+        let main = "kind SourceText None Namespace\n\
+                    dynamic\n\
+                    request a.ts\n\
+                    request legacy.cjs dynamic-star\n\
+                    export all = namespace a.ts\n\
+                    export named = synthetic legacy.cjs named\n\
+                    export own = main.ts#own\n";
+        let a = "kind SourceText None Namespace\nexport a = a.ts#a\n";
+        let legacy = "kind CommonJs CommonJs ModuleExports\ndynamic\n";
+        let expected = [("main.ts", main), ("a.ts", a), ("legacy.cjs", legacy)];
+        check_descriptions(&files, &expected);
     }
 
     #[test]
@@ -229,22 +237,15 @@ mod tests {
             ("one.cjs", "exports.x = 1;\n"),
             ("two.cjs", "exports.x = 2;\n"),
         ];
-        with_graph(&files, |graph, input| {
-            assert_eq!(
-                describe_module(graph, input, "main.js"),
-                "kind SourceText None Namespace\n\
-                 await\n\
-                 request barrel.js\n\
-                 required barrel.js x\n"
-            );
-            assert_eq!(
-                describe_module(graph, input, "barrel.js"),
-                "kind SourceText None Namespace\n\
-                 dynamic\n\
-                 request one.cjs dynamic-star\n\
-                 request two.cjs dynamic-star\n"
-            );
-        });
+        let main = "kind SourceText None Namespace\n\
+                    await\n\
+                    request barrel.js\n\
+                    required barrel.js x\n";
+        let barrel = "kind SourceText None Namespace\n\
+                      dynamic\n\
+                      request one.cjs dynamic-star\n\
+                      request two.cjs dynamic-star\n";
+        check_descriptions(&files, &[("main.js", main), ("barrel.js", barrel)]);
     }
 
     #[test]
@@ -261,24 +262,17 @@ mod tests {
             ("inner.js", "export const y = 1;\n"),
             ("one.cjs", "exports.x = 1;\n"),
         ];
-        with_graph(&files, |graph, input| {
-            assert_eq!(
-                describe_module(graph, input, "main.js"),
-                "kind SourceText None Namespace\n\
-                 dynamic\n\
-                 request es.js\n\
-                 request one.cjs dynamic-star\n\
-                 export x = es.js#x star can-be-ambiguous\n\
-                 export y = inner.js#y star can-be-ambiguous\n"
-            );
-            assert_eq!(
-                describe_module(graph, input, "es.js"),
-                format!(
-                    "{ES_MODULE}request inner.js\n\
-                     export x = es.js#x\nexport y = inner.js#y star\n"
-                )
-            );
-        });
+        let main = "kind SourceText None Namespace\n\
+                    dynamic\n\
+                    request es.js\n\
+                    request one.cjs dynamic-star\n\
+                    export x = es.js#x star can-be-ambiguous\n\
+                    export y = inner.js#y star can-be-ambiguous\n";
+        let es = "kind SourceText None Namespace\n\
+                  request inner.js\n\
+                  export x = es.js#x\n\
+                  export y = inner.js#y star\n";
+        check_descriptions(&files, &[("main.js", main), ("es.js", es)]);
     }
 
     #[test]
@@ -290,15 +284,10 @@ mod tests {
             ),
             ("later.js", "export {};\n"),
         ];
-        with_graph(&files, |graph, input| {
-            assert_eq!(
-                describe_module(graph, input, "main.js"),
-                format!(
-                    "{ES_MODULE}request later.js defer\n\
-                     export later = namespace later.js defer\n"
-                )
-            );
-        });
+        let main = "kind SourceText None Namespace\n\
+                    request later.js defer\n\
+                    export later = namespace later.js defer\n";
+        check_descriptions(&files, &[("main.js", main)]);
     }
 
     #[test]
@@ -310,12 +299,8 @@ mod tests {
             ),
             ("later.js", "export {};\n"),
         ];
-        with_graph(&files, |graph, input| {
-            assert_eq!(
-                describe_module(graph, input, "main.js"),
-                format!("{ES_MODULE}request later.js defer\n")
-            );
-        });
+        let main = "kind SourceText None Namespace\nrequest later.js defer\n";
+        check_descriptions(&files, &[("main.js", main)]);
     }
 
     #[test]

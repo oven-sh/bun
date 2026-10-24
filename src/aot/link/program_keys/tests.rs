@@ -1,8 +1,9 @@
 use super::*;
 use crate::link::key_context;
 use crate::link::testing::{
-    Projects, SHARED_NAME_IMPORTERS, find_synthetic_export, in_application, test_class_key,
-    test_function_key, test_variable_key, with_projects, with_projects_without_bun_modules,
+    Projects, SHARED_NAME_IMPORTERS, find_synthetic_export, in_application, key_in, path_source,
+    test_class_key, test_function_key, test_variable_key, with_projects,
+    with_projects_without_bun_modules,
 };
 use bun_sema::program::FileId;
 use bun_sema::session::Session;
@@ -11,17 +12,6 @@ const EMPTY_PROGRAM: [(&str, &str); 1] = [("main.js", "export {};\n")];
 
 fn contexts<'a>(projects: &Projects<'a, '_>) -> [KeyContext<'a>; ProjectId::COUNT] {
     ProjectId::ALL.map(|project| key_context(projects, project))
-}
-
-fn path_source(projects: &Projects<'_, '_>) -> ProgramModule {
-    let file = projects
-        .runtime
-        .sources
-        .runtime_module_file(RuntimeModule::NodePath);
-    ProgramModule::File(ProgramFile {
-        project: ProjectId::Runtime,
-        file: file.expect("the runtime project has no source of node:path"),
-    })
 }
 
 #[test]
@@ -54,10 +44,7 @@ fn equal_keys_of_two_projects_differ() {
 #[test]
 fn keys_order_by_project_first() {
     let application = in_application(test_function_key(9, 0));
-    let runtime = InProject {
-        project: ProjectId::Runtime,
-        key: test_function_key(0, 0),
-    };
+    let runtime = key_in(ProjectId::Runtime, test_function_key(0, 0));
     assert!(application.key > runtime.key);
     assert!(application < runtime);
 }
@@ -65,10 +52,8 @@ fn keys_order_by_project_first() {
 #[test]
 fn bun_module_with_source_is_its_file() {
     with_projects(&[("main.js", "import 'node:path';\n")], |projects| {
-        let source = path_source(projects);
-        let ProgramModule::File(file) = source else {
-            unreachable!("a source is a file");
-        };
+        let file = path_source(projects);
+        let source = ProgramModule::File(file);
         let [application, runtime] = contexts(projects);
         let named = ModuleRef::Runtime(RuntimeModule::NodePath);
         assert_eq!(application.module(named), source);
@@ -102,7 +87,7 @@ fn synthetic_export_is_named_by_module_and_name() {
         let ProgramVariableKey::SyntheticExport { module, name } = shared else {
             panic!("{shared:?}");
         };
-        assert_eq!(module, path_source(projects));
+        assert_eq!(module, ProgramModule::File(path_source(projects)));
         let atoms = &projects.application.loaded.files().atoms;
         assert_eq!(atoms.bytes(name), b"shared");
     });
@@ -147,14 +132,8 @@ fn modules_order_by_variant_project_file() {
     };
     let (first, second) = (RuntimeModule::NodeBuffer, RuntimeModule::NodePath);
     let (application, runtime) = (ProjectId::Application, ProjectId::Runtime);
-    let inner = |file, callback| ProgramModule::Inner {
-        file,
-        callback: FnId(callback),
-    };
     let modules_in_order = [
         file(application, 0),
-        inner(in_project(application, 0), 1),
-        inner(in_project(application, 0), 5),
         ProgramModule::Face(in_project(application, 0)),
         ProgramModule::Check(in_project(application, 0)),
         file(application, 9),

@@ -6,14 +6,12 @@ use crate::types::{MapperId, TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use smallvec::SmallVec;
 
-/// Where a type is written. Equal places have equal orders.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum WrittenPlace {
     Declaration(Sym),
     Node(FileId, TypeNodeId),
 }
 
-/// The order in which the members of the unions below one type node are written.
 #[derive(Default, Debug)]
 pub struct WrittenUnionOrders {
     members: FxHashMap<TypeId, Box<[TypeId]>>,
@@ -29,12 +27,10 @@ enum Rank {
 }
 
 impl WrittenUnionOrders {
-    /// Whether `ty` is written as a member of a union.
     pub fn is_written(&self, ty: TypeId) -> bool {
         self.first_mentions.contains_key(&ty.plain())
     }
 
-    /// Puts `members`, which stand for members of `union`, in the order in which the types that `written_type` gives for them are written.
     pub fn sort_members_by<T>(
         &self,
         union: TypeId,
@@ -128,7 +124,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// Follows what a value of the type at `node` is made of: the aliases and interfaces that are named, with their type arguments, members, elements and the members of unions.
     pub(super) fn compute_written_union_orders(
         &mut self,
         file: FileId,
@@ -240,8 +235,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 (parameter, self.c.instantiate(declared, mapper))
             })
             .collect();
-        // An argument that is still a type variable, such as `infer P` in an arm of a conditional type, stands for no type of a value. What the declaration writes without it is
-        // the same each time, and an alias that names itself with such an argument has a new one at every level.
         let has_type_variables =
             (pairs.iter()).any(|&(_, argument)| self.c.has_type_variables(argument));
         if has_type_variables && !walk.entered_with_type_variables.insert(symbol) {
@@ -292,7 +285,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// A member that is a union itself, and that nobody wrote, stands for its members in the checker's order.
     fn add_members_of_unwritten_unions(&mut self, orders: &mut WrittenUnionOrders) {
         let mut unwritten: Vec<TypeId> = Vec::new();
         for members in orders.members.values() {

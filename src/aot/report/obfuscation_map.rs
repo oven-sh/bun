@@ -32,14 +32,6 @@ struct Site {
     name: Option<u32>,
 }
 
-#[derive(Default)]
-struct Previous {
-    source: i32,
-    line: i32,
-    column: i32,
-    name: i32,
-}
-
 pub fn write(
     engine: &EngineResult,
     names: &ProgramNames,
@@ -106,20 +98,19 @@ fn locate_records(records: &[ObfuscatedSiteRecord], texts: &SourceTexts) -> Vec<
         .map(|record| position_of(record.location))
         .collect();
     let mut locator = ModuleLocator::new(texts);
-    resolve_ascending(&wanted, |position| locate(&mut locator, position))
-}
-
-fn locate(locator: &mut ModuleLocator<'_>, position: Position) -> Option<Located> {
-    let found = locator.position_of(position)?;
-    Some(Located {
-        module: position.module,
-        line: found.line.saturating_sub(1),
-        column: found.column.saturating_sub(1),
+    resolve_ascending(&wanted, |position| {
+        let (line, column) = locator.line_and_column(position)?;
+        Some(Located {
+            module: position.module,
+            line: line.saturating_sub(1),
+            column: column.saturating_sub(1),
+        })
     })
 }
 
 fn write_mappings(sites: &[Site], out: &mut Vec<u8>) {
-    let mut previous = Previous::default();
+    let (mut last_source, mut last_name) = (0, 0);
+    let (mut last_line, mut last_column) = (0, 0);
     let mut line = 0;
     let mut generated_column = 0;
     let mut is_line_empty = true;
@@ -139,23 +130,19 @@ fn write_mappings(sites: &[Site], out: &mut Vec<u8>) {
         let Some(original) = &site.original else {
             continue;
         };
-        push_delta(out, &mut previous.source, original.source);
-        push_delta(out, &mut previous.line, original.line);
-        push_delta(out, &mut previous.column, original.column);
+        push_delta(out, &mut last_source, original.source);
+        push_delta(out, &mut last_line, original.line);
+        push_delta(out, &mut last_column, original.column);
         if let Some(name) = site.name {
-            push_delta(out, &mut previous.name, name);
+            push_delta(out, &mut last_name, name);
         }
     }
 }
 
 fn push_delta(out: &mut Vec<u8>, previous: &mut i32, value: u32) {
     let value = i32::try_from(value).unwrap_or(i32::MAX);
-    push_vlq(out, value - *previous);
+    out.extend_from_slice(VLQ::encode(value - *previous).slice());
     *previous = value;
-}
-
-fn push_vlq(out: &mut Vec<u8>, value: i32) {
-    out.extend_from_slice(VLQ::encode(value).slice());
 }
 
 #[cfg(test)]

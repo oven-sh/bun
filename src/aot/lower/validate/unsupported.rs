@@ -1,8 +1,8 @@
 use bun_sema::atom::Atom;
 use smallvec::SmallVec;
 
-use super::ValidationError;
-use crate::lower::{CheckerTypeId, FileLowering};
+use super::{ValidatedFile, ValidationError};
+use crate::lower::CheckerTypeId;
 
 #[derive(Copy, Clone)]
 pub(super) enum Step {
@@ -19,8 +19,10 @@ pub(super) struct Origin {
     pub(super) step: Step,
 }
 
-impl FileLowering<'_, '_, '_, '_> {
-    pub(super) fn describe_unsupported(
+pub(super) trait DescribesUnsupported<'c, 'p: 'c, 's: 'p>:
+    ValidatedFile<'c, 'p, 's>
+{
+    fn describe_unsupported(
         &mut self,
         origins: &[Option<Origin>],
         origin: Option<Origin>,
@@ -39,17 +41,17 @@ impl FileLowering<'_, '_, '_, '_> {
         if !described.is_empty() {
             described.extend_from_slice(b": ");
         }
-        described.extend_from_slice(&self.queries.type_text(ty));
+        described.extend_from_slice(&self.queries().type_text(ty));
         ValidationError::Unsupported { described }
     }
 
-    fn write_step(&self, described: &mut Vec<u8>, step: Step) {
+    fn write_step(&mut self, described: &mut Vec<u8>, step: Step) {
         match step {
             Step::NamedMember(name) => {
                 if !described.is_empty() {
                     described.push(b'.');
                 }
-                described.extend_from_slice(self.queries.atom_bytes(name));
+                described.extend_from_slice(self.queries().atom_bytes(name));
             }
             Step::ArrayElement => described.extend_from_slice(b"[number]"),
             Step::TupleElement(index) => {
@@ -60,3 +62,5 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 }
+
+impl<'c, 'p: 'c, 's: 'p, F: ValidatedFile<'c, 'p, 's>> DescribesUnsupported<'c, 'p, 's> for F {}

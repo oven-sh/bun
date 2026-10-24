@@ -1,6 +1,6 @@
 use bun_sema::bind::ScopeId;
 use bun_sema::check::aot::ClassRef;
-use bun_sema::hir::{ClassId, Flags, FnId, MemberId, MemberKind, PropKey};
+use bun_sema::hir::{ClassId, Flags, MemberId, MemberKind, PropKey};
 use bun_sema::util::SharedSort;
 
 use super::walker::{bindings_of, entries_of};
@@ -8,13 +8,6 @@ use super::{Context, Task, WalkedFunctionId, Walker};
 use crate::ir::{ClassSlot, FunctionKey};
 use crate::lower::class;
 use crate::lower::scope::ScopeSlot;
-
-#[derive(Copy, Clone)]
-struct ClassFunctions {
-    constructor: WalkedFunctionId,
-    instance_initializer: WalkedFunctionId,
-    static_initializer: WalkedFunctionId,
-}
 
 fn has_slot(sorted_slots: &[ClassSlot], slot: ClassSlot) -> bool {
     sorted_slots.binary_search(&slot).is_ok()
@@ -34,11 +27,41 @@ impl Walker<'_, '_> {
         let inner_name = bound.inner_class_symbol(class);
         let mut slots = class::class_slots(hir, bound, self.input.compiled.settings, class);
         slots.shared_sort_unstable();
-        let source_constructor = self.find_source_constructor(class);
-        let functions = self.add_class_functions(class, source_constructor, context.function);
+        let source_constructor = hir[class].members.iter().find(|&member| {
+            hir.runtime_member_kind(member) == MemberKind::Constructor
+                && self.is_live_function(hir[member].func)
+        });
+        let source_constructor = source_constructor.map(|member| hir[member].func);
+        let (file, creator) = (self.input.file, context.function);
+        let reference = ClassRef { file, class };
+        let constructor = match source_constructor {
+            Some(function) => {
+                let declared = self.declare_function(function, creator);
+                declared.expect("a live constructor is declared once")
+            }
+            None => self.add_function(FunctionKey::ImplicitConstructor(reference), Some(creator)),
+        };
+        let instance_key = FunctionKey::InstanceInitializer(reference);
+        let instance_initializer = self.add_function(instance_key, Some(constructor));
+        let static_key = FunctionKey::StaticInitializer(reference);
+        let static_initializer = self.add_function(static_key, Some(creator));
         self.enter_scope(bound.symbol_scope(inner_name), context);
         self.enter_scope(scope, context);
-        self.record_class_uses(class, functions, &slots, context);
+        for binding in bindings_of(&self.metadata_uses, class) {
+            self.record_binding_use(context, binding, false);
+        }
+        let (of_instances, of_class) = (Some(instance_initializer), Some(static_initializer));
+        for &slot in &slots {
+            let users = match slot {
+                ClassSlot::ClassToken => [of_instances, None],
+                ClassSlot::ComputedKey(_) | ClassSlot::DecoratorState => [of_instances, of_class],
+                ClassSlot::ClassObject | ClassSlot::StaticField(_) => [None, of_class],
+                ClassSlot::PrivateMethod(_) => [None, None],
+            };
+            for user in users.into_iter().flatten() {
+                self.record_slot_use(user, scope, ScopeSlot::Class(slot));
+            }
+        }
 
         for &(_, decorator) in entries_of(&self.class_decorators, class) {
             self.stack.push((Task::Expression(decorator), context));
@@ -47,20 +70,17 @@ impl Walker<'_, '_> {
         if has_slot(&slots, ClassSlot::ClassToken) {
             self.push_task(slot_initialization(scope, ClassSlot::ClassToken), context);
         }
-        self.push_task(Task::MarkCreated(functions.constructor), context);
-        self.push_task(Task::MarkCreated(functions.instance_initializer), context);
+        self.push_task(Task::MarkCreated(constructor), context);
+        self.push_task(Task::MarkCreated(instance_initializer), context);
         if let Some(function) = source_constructor {
             let top_scope = bound.fns[function.idx()].scope;
-            self.record_slot_use(functions.constructor, top_scope, ScopeSlot::This);
-            self.push_function_code(function, functions.constructor);
+            self.record_slot_use(constructor, top_scope, ScopeSlot::This);
+            let inner = self.enter_unit(constructor, top_scope);
+            self.push_function_code(function, inner);
         }
         self.push_task(slot_initialization(scope, ClassSlot::ClassObject), context);
-        self.push_members(class, functions, &slots, context);
-        let initialize_inner_name = Task::InitializeSymbol {
-            symbol: inner_name,
-            precedes_hoisted_functions: false,
-        };
-        self.push_task(initialize_inner_name, context);
+        self.push_members(class, instance_initializer, &slots, context);
+        self.push_initialization(inner_name, context);
         for &slot in &slots {
             match slot {
                 ClassSlot::PrivateMethod(member) => {
@@ -75,68 +95,26 @@ impl Walker<'_, '_> {
                 | ClassSlot::DecoratorState => {}
             }
         }
-        self.push_static_members(class, functions, context);
-    }
-
-    fn find_source_constructor(&self, class: ClassId) -> Option<FnId> {
-        let hir = self.hir;
-        let constructor = hir[class].members.iter().find(|&member| {
-            hir.runtime_member_kind(member) == MemberKind::Constructor
-                && self.is_live_function(hir[member].func)
-        });
-        constructor.map(|member| hir[member].func)
-    }
-
-    fn add_class_functions(
-        &mut self,
-        class: ClassId,
-        source_constructor: Option<FnId>,
-        creator: WalkedFunctionId,
-    ) -> ClassFunctions {
-        let file = self.input.file;
-        let reference = ClassRef { file, class };
-        let constructor = match source_constructor {
-            Some(function) => {
-                let declared = self.declare_function(function, creator);
-                declared.expect("a live constructor is declared once")
+        self.push_task(Task::MarkCreated(static_initializer), context);
+        for member in hir[class].members.iter() {
+            let node = hir[member];
+            if node.flags.contains(Flags::AMBIENT) {
+                continue;
             }
-            None => self.add_function(FunctionKey::ImplicitConstructor(reference), Some(creator)),
-        };
-        let instance_key = FunctionKey::InstanceInitializer(reference);
-        let instance_initializer = self.add_function(instance_key, Some(constructor));
-        let static_key = FunctionKey::StaticInitializer(reference);
-        let static_initializer = self.add_function(static_key, Some(creator));
-        ClassFunctions {
-            constructor,
-            instance_initializer,
-            static_initializer,
-        }
-    }
-
-    fn record_class_uses(
-        &mut self,
-        class: ClassId,
-        functions: ClassFunctions,
-        slots: &[ClassSlot],
-        context: Context,
-    ) {
-        let scope = self.bound.class_scope[class.idx()];
-        let instance_initializer = Some(functions.instance_initializer);
-        let static_initializer = Some(functions.static_initializer);
-        for binding in bindings_of(&self.metadata_uses, class) {
-            self.record_binding_use(context, binding, false);
-        }
-        for &slot in slots {
-            let users = match slot {
-                ClassSlot::ClassToken => [instance_initializer, None],
-                ClassSlot::ComputedKey(_) | ClassSlot::DecoratorState => {
-                    [instance_initializer, static_initializer]
+            match node.kind {
+                MemberKind::Property => {
+                    if node.flags.contains(Flags::STATIC) {
+                        self.push_field_initializer(member, static_initializer);
+                    }
                 }
-                ClassSlot::ClassObject | ClassSlot::StaticField(_) => [None, static_initializer],
-                ClassSlot::PrivateMethod(_) => [None, None],
-            };
-            for user in users.into_iter().flatten() {
-                self.record_slot_use(user, scope, ScopeSlot::Class(slot));
+                MemberKind::StaticBlock => self.visit_function(node.func, static_initializer),
+                MemberKind::Method
+                | MemberKind::Getter
+                | MemberKind::Setter
+                | MemberKind::Constructor
+                | MemberKind::CallSignature
+                | MemberKind::ConstructSignature
+                | MemberKind::IndexSignature => {}
             }
         }
     }
@@ -144,7 +122,7 @@ impl Walker<'_, '_> {
     fn push_members(
         &mut self,
         class: ClassId,
-        functions: ClassFunctions,
+        instance_initializer: WalkedFunctionId,
         slots: &[ClassSlot],
         context: Context,
     ) {
@@ -167,9 +145,7 @@ impl Walker<'_, '_> {
             let is_decorated = class::has_decorators(hir, node.modifiers);
             match hir.runtime_member_kind(member) {
                 MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
-                    if let Some(id) = self.declare_function(node.func, context.function) {
-                        self.push_function(node.func, id);
-                    }
+                    self.visit_function(node.func, context.function);
                     let slot = ClassSlot::PrivateMethod(member);
                     if !is_decorated && has_slot(slots, slot) {
                         self.push_task(slot_initialization(scope, slot), context);
@@ -177,7 +153,7 @@ impl Walker<'_, '_> {
                 }
                 MemberKind::Property => {
                     if !node.flags.contains(Flags::STATIC) {
-                        self.push_field_initializer(member, functions.instance_initializer);
+                        self.push_field_initializer(member, instance_initializer);
                     }
                 }
                 _ => continue,
@@ -189,51 +165,13 @@ impl Walker<'_, '_> {
         }
     }
 
-    fn push_static_members(&mut self, class: ClassId, functions: ClassFunctions, context: Context) {
-        let hir = self.hir;
-        let initializer = functions.static_initializer;
-        self.push_task(Task::MarkCreated(initializer), context);
-        for member in hir[class].members.iter() {
-            let node = hir[member];
-            if node.flags.contains(Flags::AMBIENT) {
-                continue;
-            }
-            match node.kind {
-                MemberKind::Property => {
-                    if node.flags.contains(Flags::STATIC) {
-                        self.push_field_initializer(member, initializer);
-                    }
-                }
-                MemberKind::StaticBlock => {
-                    if let Some(id) = self.declare_function(node.func, initializer) {
-                        self.push_function(node.func, id);
-                    }
-                }
-                MemberKind::Method
-                | MemberKind::Getter
-                | MemberKind::Setter
-                | MemberKind::Constructor
-                | MemberKind::CallSignature
-                | MemberKind::ConstructSignature
-                | MemberKind::IndexSignature => {}
-            }
-        }
-    }
-
     fn push_field_initializer(&mut self, member: MemberId, function: WalkedFunctionId) {
         let initializer = self.hir[member].init;
         let Some(scope) = self.bound.field_initializer_scope(member) else {
             debug_assert!(initializer.is_none());
             return;
         };
-        let context = Context {
-            function,
-            lexical_scope: self.input.lexical_owners[scope.idx()],
-            enclosing_loop: None,
-            is_repeated: true,
-            is_conditional: false,
-        };
-        self.enter_scope(scope, context);
+        let context = self.enter_unit(function, scope);
         self.walk.function_of_field.push((member, function));
         self.push_expressions([initializer], context);
     }

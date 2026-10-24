@@ -6,16 +6,6 @@ use crate::ir::{LayoutId, PropertyKeyId, ValueId};
 use crate::lower::member::PropertyName;
 use crate::lower::{FunctionLowering, convert};
 
-fn define_member(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    object: &mut ObjectBuilder,
-    name: PropertyName,
-    value: ValueId,
-) {
-    let head = lowering.open_head(object);
-    lowering.emit_define(head, name, value);
-}
-
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(super) fn open_head(&mut self, object: &mut ObjectBuilder) -> ValueId {
         let initial = match &object.state {
@@ -35,7 +25,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(super) fn finish_head(&mut self, object: &mut ObjectBuilder) {
         let head = self.open_head(object);
-        if object.is_dictionary || object.is_finished {
+        if object.is_finished {
             return;
         }
         let head = self.builder.finish_object(head);
@@ -81,33 +71,34 @@ pub(in crate::lower) fn set_prototype(
     lowering.builder.set_literal_prototype(head, prototype);
 }
 
-pub(super) fn add_member(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    object: &mut ObjectBuilder,
-    name: PropertyName,
-    value: ValueId,
-    source: Option<ExprId>,
-) {
-    let field = match name {
-        PropertyName::Constant(key) => {
-            lowering.file.fragment.note_write(key);
-            lowering.file.find_field(object.layout, key)
+impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(crate) fn add_property(
+        &mut self,
+        object: &mut ObjectBuilder,
+        name: PropertyName,
+        mut value: ValueId,
+        source: Option<ExprId>,
+    ) {
+        let field = match name {
+            PropertyName::Constant(key) => {
+                self.file.fragment.note_write(key);
+                self.file.find_field(object.layout, key)
+            }
+            PropertyName::Computed(_) => None,
+        };
+        if let Some(field) = field {
+            let position = self.file.field_position(object.layout, field);
+            let subject = convert::Int32Subject::LiteralProperty;
+            self.describe_int32_flow(position, subject, source);
+            value = self.convert_initializer(value, position, source);
+            if let ObjectState::Pending(initial) = &mut object.state {
+                if convert::establishes_type(position) && !initial.contains(field) {
+                    initial.add(field, value);
+                    return;
+                }
+            }
         }
-        PropertyName::Computed(_) => None,
-    };
-    let Some(field) = field else {
-        define_member(lowering, object, name, value);
-        return;
-    };
-    let position = lowering.file.field_position(object.layout, field);
-    let subject = convert::Int32Subject::LiteralProperty;
-    lowering.describe_int32_flow(position, subject, source);
-    let value = lowering.convert_initializer(value, position, source);
-    if let ObjectState::Pending(initial) = &mut object.state {
-        if convert::establishes_type(position) && !initial.contains(field) {
-            initial.add(field, value);
-            return;
-        }
+        let head = self.open_head(object);
+        self.emit_define(head, name, value);
     }
-    define_member(lowering, object, name, value);
 }

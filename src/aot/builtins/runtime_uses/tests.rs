@@ -1,16 +1,10 @@
 use super::*;
-use crate::builtins::table::RuntimeFunctionRole;
+use crate::builtins::table::{BuiltinClass, RuntimeFunctionRole};
 
 const LINUX: Platforms = Platforms::LINUX;
 
 fn uses_of(mentioned: &[BuiltinId], exposed: &[BuiltinId]) -> RuntimeUses {
-    let mentions = Mentions {
-        mentioned,
-        called_with_other_texts: &[],
-        exposed,
-        linked_functions: &[],
-    };
-    RuntimeUses::of_mentions(mentions, LINUX)
+    RuntimeUses::of_mentions(mentioned, &[], exposed, &[], LINUX)
 }
 
 fn includes(uses: &RuntimeUses, part: &RuntimeUses) -> bool {
@@ -119,10 +113,8 @@ fn nothing_mentioned_needs_nothing() {
 
 #[test]
 fn entry_without_lists_needs_nothing() {
-    assert_eq!(
-        uses_of(&[BuiltinId::MathFloor], &[]),
-        RuntimeUses::default()
-    );
+    let found = uses_of(&[BuiltinId::MathFloor], &[]);
+    assert_eq!(found, RuntimeUses::default());
 }
 
 #[test]
@@ -141,10 +133,8 @@ fn lists_ascend_and_are_unique() {
     assert!(!uses.modules.is_empty() && !uses.functions.is_empty());
     assert!(uses.modules.is_sorted_by(|left, right| left < right));
     assert!(uses.functions.is_sorted_by(|left, right| left < right));
-    assert_eq!(
-        uses_of(&[stdout, stdout, stdout], &[]),
-        uses_of(&[stdout], &[])
-    );
+    let found = uses_of(&[stdout, stdout, stdout], &[]);
+    assert_eq!(found, uses_of(&[stdout], &[]));
 }
 
 #[test]
@@ -198,13 +188,9 @@ fn call_with_another_text_does_without_what_some_texts_need() {
         &[BuiltinId::EventEmitterPrototypeEmit],
         &[]
     )));
-    let mentions = Mentions {
-        mentioned: &[BuiltinId::Process, on],
-        called_with_other_texts: &[on],
-        exposed: &[],
-        linked_functions: &[],
-    };
-    assert!(has_none(&RuntimeUses::of_mentions(mentions, LINUX)));
+    let mentioned = [BuiltinId::Process, on];
+    let uses = RuntimeUses::of_mentions(&mentioned, &[on], &[], &[], LINUX);
+    assert!(has_none(&uses));
 }
 
 #[test]
@@ -341,13 +327,7 @@ fn entry_of_other_platform_needs_nothing() {
         .find(|&id| !table::exists_on(id, Platforms::WINDOWS) && own_functions(id).next().is_some())
         .unwrap();
     assert!(!uses_of(&[id], &[]).functions.is_empty());
-    let mentions = Mentions {
-        mentioned: &[id],
-        called_with_other_texts: &[],
-        exposed: &[],
-        linked_functions: &[],
-    };
-    let on_windows = RuntimeUses::of_mentions(mentions, Platforms::WINDOWS);
+    let on_windows = RuntimeUses::of_mentions(&[id], &[], &[], &[], Platforms::WINDOWS);
     assert_eq!(on_windows, RuntimeUses::default());
 }
 
@@ -358,15 +338,9 @@ fn function_of_other_platform_is_excluded() {
         .find(|data| data.platforms == Platforms::WINDOWS)
         .unwrap()
         .function;
-    let mentions = Mentions {
-        mentioned: &[],
-        called_with_other_texts: &[],
-        exposed: &[],
-        linked_functions: &[windows_only],
-    };
-    let on_linux = RuntimeUses::of_mentions(mentions, LINUX);
-    assert_eq!(on_linux, RuntimeUses::default());
-    let on_windows = RuntimeUses::of_mentions(mentions, Platforms::WINDOWS);
+    let on = |platform| RuntimeUses::of_mentions(&[], &[], &[], &[windows_only], platform);
+    assert_eq!(on(LINUX), RuntimeUses::default());
+    let on_windows = on(Platforms::WINDOWS);
     assert_eq!(*on_windows.functions, [windows_only]);
 
     let everything = uses_of(&[], &[BuiltinId::GlobalThis]);
@@ -382,13 +356,8 @@ fn linked_functions_are_needed() {
         panic!("the table has fewer than two functions");
     };
     assert!(exists_on_linux(first.function) && exists_on_linux(second.function));
-    let mentions = Mentions {
-        mentioned: &[],
-        called_with_other_texts: &[],
-        exposed: &[],
-        linked_functions: &[second.function, first.function, second.function],
-    };
-    let uses = RuntimeUses::of_mentions(mentions, LINUX);
+    let linked = [second.function, first.function, second.function];
+    let uses = RuntimeUses::of_mentions(&[], &[], &[], &linked, LINUX);
     assert_eq!(*uses.functions, [first.function, second.function]);
     assert!(uses.modules.is_empty());
 }

@@ -17,8 +17,7 @@ use std::sync::{Mutex, MutexGuard, Once, OnceLock, PoisonError};
 use support::TestFailure;
 use support::check_lines::match_check_lines;
 use support::commands::{
-    Command, CommandInput, CommandOutcome, CommandResult, FrontEndWords, find_command,
-    parse_option_words,
+    CommandOutcome, CommandResult, find_command, parse_option_words, run_command,
 };
 use support::test_file::{
     DiagnosticName, RunDirective, TestFile, holds, is_test_file_name, parse_test_file,
@@ -46,13 +45,6 @@ struct TestOutcome {
     skipped: Vec<TestFailure>,
 }
 
-struct FinishedRun<'a> {
-    file: &'a TestFile,
-    run: &'a RunDirective,
-    command: &'static str,
-    result: &'a CommandResult,
-}
-
 #[test]
 fn commands() {
     run_area("commands");
@@ -71,15 +63,12 @@ fn every_area_tested() {
     assert_eq!(folders, AREAS);
 }
 
-fn repository_root() -> &'static Path {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+fn test_root() -> PathBuf {
+    let repository_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)
-        .expect("src/aot is two folders below the repository root")
-}
-
-fn test_root() -> PathBuf {
-    repository_root().join(PathBuf::from_iter(TEST_ROOT))
+        .expect("src/aot is two folders below the repository root");
+    repository_root.join(PathBuf::from_iter(TEST_ROOT))
 }
 
 fn display_folder_of(area: &str) -> String {
@@ -115,11 +104,8 @@ fn find_tests(folder: &Path, display_folder: &str, found: &mut Vec<FoundTest>) {
 
 fn find_area_tests(area: &str) -> Vec<FoundTest> {
     let mut tests = Vec::new();
-    find_tests(
-        &test_root().join(area),
-        &display_folder_of(area),
-        &mut tests,
-    );
+    let folder = test_root().join(area);
+    find_tests(&folder, &display_folder_of(area), &mut tests);
     tests
 }
 
@@ -169,11 +155,9 @@ fn run_area(area: &str) {
 }
 
 fn describe_skipped_runs(display_folder: &str, skipped: &[&TestFailure]) -> Option<String> {
-    let first = skipped.first()?;
+    let (count, why) = (skipped.len(), &skipped.first()?.message);
     Some(format!(
-        "SKIP {display_folder}: the engine verified none of {} runs: {}\n",
-        skipped.len(),
-        first.message
+        "SKIP {display_folder}: the engine verified none of {count} runs: {why}\n"
     ))
 }
 
@@ -213,21 +197,16 @@ fn name_running_files_on_panic() {
 
 fn run_guarded_test_file(test: &FoundTest) -> TestOutcome {
     lock_running_files().push(test.display_path.clone());
-    let outcome = std::panic::catch_unwind(|| run_test_file(test)).unwrap_or_else(|payload| {
+    let run = || match std::fs::read(&test.path).map(String::from_utf8) {
+        Ok(Ok(text)) => run_test_text(&test.path, &text),
+        Ok(Err(_)) => fail_whole_file("is not UTF-8"),
+        Err(_) => fail_whole_file("cannot be read"),
+    };
+    let outcome = std::panic::catch_unwind(run).unwrap_or_else(|payload| {
         fail_whole_file(format!("panicked: {}", panic_message(payload.as_ref())))
     });
     lock_running_files().retain(|path| *path != test.display_path);
     outcome
-}
-
-fn run_test_file(test: &FoundTest) -> TestOutcome {
-    let Ok(bytes) = std::fs::read(&test.path) else {
-        return fail_whole_file("cannot be read".to_owned());
-    };
-    let Ok(text) = String::from_utf8(bytes) else {
-        return fail_whole_file("is not UTF-8".to_owned());
-    };
-    run_test_text(&test.path, text)
 }
 
 fn panic_message(payload: &(dyn Any + Send)) -> &str {
@@ -240,78 +219,61 @@ fn panic_message(payload: &(dyn Any + Send)) -> &str {
     }
 }
 
-fn fail_whole_file(message: String) -> TestOutcome {
+fn fail_whole_file(message: impl Into<String>) -> TestOutcome {
     TestOutcome {
-        failures: vec![TestFailure { line: 1, message }],
+        failures: vec![TestFailure::new(1, message)],
         skipped: Vec::new(),
     }
 }
 
-fn create_failure(command: &str, line: u32, why: impl Display) -> TestFailure {
-    TestFailure {
-        line,
-        message: format!("{command}: {why}"),
-    }
+fn create_failure(run: &RunDirective, line: u32, why: impl Display) -> TestFailure {
+    TestFailure::new(line, format!("{}: {why}", run.command))
 }
 
-fn run_test_text(path: &Path, text: String) -> TestOutcome {
+fn run_test_text(path: &Path, text: &str) -> TestOutcome {
     let file = parse_test_file(text);
     let mut outcome = TestOutcome::default();
     if !file.errors.is_empty() {
-        outcome
-            .failures
-            .extend(file.errors.into_iter().map(|error| TestFailure {
-                line: error.line,
-                message: error.message,
-            }));
+        outcome.failures = file.errors;
         return outcome;
     }
-    let words = match parse_option_words(&file.option_words) {
-        Ok(words) => words,
+    let aot = match parse_option_words(&file.option_words) {
+        Ok(aot) => aot,
         Err(failure) => {
             outcome.failures.push(failure);
             return outcome;
         }
     };
     for run in &file.runs {
-        run_directive(path, &file, words, run, &mut outcome);
+        let Some(command) = find_command(&run.command) else {
+            let message = format!("unknown command {}", run.command);
+            outcome.failures.push(TestFailure::new(run.line, message));
+            continue;
+        };
+        if !run.arguments.is_empty() {
+            let message = format!("{} takes no argument", run.command);
+            outcome.failures.push(TestFailure::new(run.line, message));
+            continue;
+        }
+        let command_outcome = run_command(command, path, &aot);
+        if let Some(folder) = std::env::var_os(OUTPUT_FOLDER_VARIABLE) {
+            write_command_outcome(Path::new(&folder), path, run, &command_outcome);
+        }
+        record_command_outcome(&file, run, command_outcome, &mut outcome);
     }
     outcome.failures.sort_by_key(|failure| failure.line);
     outcome
 }
 
-fn run_directive(
-    path: &Path,
-    file: &TestFile,
-    words: FrontEndWords,
-    run: &RunDirective,
-    outcome: &mut TestOutcome,
-) {
-    let command = match resolve_command(run) {
-        Ok(command) => command,
-        Err(failure) => {
-            outcome.failures.push(failure);
-            return;
-        }
-    };
-    let command_outcome = (command.run)(&CommandInput { path, words });
-    if let Some(folder) = std::env::var_os(OUTPUT_FOLDER_VARIABLE) {
-        write_command_outcome(Path::new(&folder), path, run, &command_outcome);
-    }
-    record_command_outcome(file, run, command.name, command_outcome, outcome);
-}
-
 fn describe_command_outcome(outcome: &CommandOutcome) -> String {
     let result = match outcome {
-        CommandOutcome::Finished(result) => result,
-        CommandOutcome::Failed(why) => return format!("FAILED: {why}\n"),
+        Ok(result) => result,
+        Err(why) => return format!("FAILED: {why}\n"),
     };
     let mut text = result.output.clone();
     for (name, message) in &result.diagnostics {
-        text.push_str(&format!(
-            "DIAGNOSTIC: {} ({message})\n",
-            diagnostic_text(*name)
-        ));
+        let name = diagnostic_text(*name);
+        text.push_str(&format!("DIAGNOSTIC: {name} ({message})\n"));
     }
     for (statistic, value) in &result.statistics {
         text.push_str(&format!("STATISTIC: {} = {value}\n", statistic.name()));
@@ -320,12 +282,8 @@ fn describe_command_outcome(outcome: &CommandOutcome) -> String {
 }
 
 fn write_command_outcome(folder: &Path, test: &Path, run: &RunDirective, outcome: &CommandOutcome) {
-    let root = test_root();
-    let mut name = test
-        .strip_prefix(&root)
-        .unwrap_or(test)
-        .as_os_str()
-        .to_owned();
+    let below_root = test.strip_prefix(test_root()).unwrap_or(test);
+    let mut name = below_root.as_os_str().to_owned();
     name.push(format!(".{}.txt", run.prefix));
     let target = folder.join(name);
     let written = std::fs::create_dir_all(target.parent().unwrap_or(folder))
@@ -338,45 +296,18 @@ fn write_command_outcome(folder: &Path, test: &Path, run: &RunDirective, outcome
 fn record_command_outcome(
     file: &TestFile,
     run: &RunDirective,
-    command: &'static str,
     command_outcome: CommandOutcome,
     outcome: &mut TestOutcome,
 ) {
     match command_outcome {
-        CommandOutcome::Finished(result) => {
-            let finished = FinishedRun {
-                file,
-                run,
-                command,
-                result: &result,
-            };
-            finished.check_expectations(&mut outcome.failures);
+        Ok(result) => {
+            check_expectations(file, run, &result, &mut outcome.failures);
             if let Some(why) = &result.engine_was_skipped {
-                outcome.skipped.push(create_failure(command, run.line, why));
+                outcome.skipped.push(create_failure(run, run.line, why));
             }
         }
-        CommandOutcome::Failed(why) => {
-            outcome
-                .failures
-                .push(create_failure(command, run.line, why));
-        }
+        Err(why) => outcome.failures.push(create_failure(run, run.line, why)),
     }
-}
-
-fn resolve_command(run: &RunDirective) -> Result<&'static Command, TestFailure> {
-    let Some(command) = find_command(&run.command) else {
-        return Err(TestFailure {
-            line: run.line,
-            message: format!("unknown command {}", run.command),
-        });
-    };
-    if !run.arguments.is_empty() {
-        return Err(TestFailure {
-            line: run.line,
-            message: format!("{} takes no argument", command.name),
-        });
-    }
-    Ok(command)
 }
 
 fn diagnostic_text(name: DiagnosticName) -> String {
@@ -396,74 +327,60 @@ fn is_reported_by_engine(name: DiagnosticName) -> bool {
     }
 }
 
-impl FinishedRun<'_> {
-    fn check_expectations(&self, failures: &mut Vec<TestFailure>) {
-        self.compare_diagnostics(failures);
-        self.compare_statistics(failures);
-        self.compare_output(failures);
-    }
-
-    fn report(&self, failures: &mut Vec<TestFailure>, line: u32, why: impl Display) {
-        failures.push(create_failure(self.command, line, why));
-    }
-
-    fn compare_diagnostics(&self, failures: &mut Vec<TestFailure>) {
-        let listed = &self.file.diagnostics;
-        let reported = &self.result.diagnostics;
-        let engine_was_skipped = self.result.engine_was_skipped.is_some();
-        for expected in listed {
-            if engine_was_skipped && is_reported_by_engine(expected.name) {
-                continue;
-            }
-            let name = diagnostic_text(expected.name);
-            let count = reported
-                .iter()
-                .filter(|(name, _)| *name == expected.name)
-                .count();
-            let why = if count == 0 {
-                format!("{name} was not reported")
-            } else if expected
-                .count
-                .is_some_and(|listed_count| listed_count as usize != count)
-            {
-                format!("{name} was reported {count} times")
-            } else {
-                continue;
-            };
-            self.report(failures, expected.line, why);
+fn check_expectations(
+    file: &TestFile,
+    run: &RunDirective,
+    result: &CommandResult,
+    failures: &mut Vec<TestFailure>,
+) {
+    let mut report = |line: u32, why: String| failures.push(create_failure(run, line, why));
+    let listed = &file.diagnostics;
+    let reported = &result.diagnostics;
+    let engine_was_skipped = result.engine_was_skipped.is_some();
+    for expected in listed {
+        if engine_was_skipped && is_reported_by_engine(expected.name) {
+            continue;
         }
-
-        let mut unexpected = reported
+        let name = diagnostic_text(expected.name);
+        let count = reported
             .iter()
-            .filter(|(name, _)| listed.iter().all(|expected| expected.name != *name));
-        for (name, message) in unexpected.by_ref().take(MAX_UNEXPECTED_DIAGNOSTICS_SHOWN) {
-            let why = format!("unexpected {}: {message}", diagnostic_text(*name));
-            self.report(failures, self.run.line, why);
-        }
-        let hidden_count = unexpected.count();
-        if hidden_count > 0 {
-            let why = format!("and {hidden_count} more");
-            self.report(failures, self.run.line, why);
-        }
-    }
-
-    fn compare_statistics(&self, failures: &mut Vec<TestFailure>) {
-        for expected in &self.file.statistics {
-            let mut statistics = self.result.statistics.iter();
-            let counted = statistics.find(|(id, _)| *id == expected.name);
-            let actual = counted.map_or(0, |&(_, value)| value);
-            if !holds(expected.comparison, actual, expected.value) {
-                let why = format!("{} is {actual}", expected.name.name());
-                self.report(failures, expected.line, why);
-            }
+            .filter(|(name, _)| *name == expected.name)
+            .count();
+        if count == 0 {
+            report(expected.line, format!("{name} was not reported"));
+        } else if expected
+            .count
+            .is_some_and(|listed_count| listed_count as usize != count)
+        {
+            report(expected.line, format!("{name} was reported {count} times"));
         }
     }
 
-    fn compare_output(&self, failures: &mut Vec<TestFailure>) {
-        let lines = self.file.check_lines_for(&self.run.prefix);
-        if let Err(failure) = match_check_lines(lines, &hide_function_texts(&self.result.output)) {
-            self.report(failures, failure.line, failure.message);
+    let mut unexpected = reported
+        .iter()
+        .filter(|(name, _)| listed.iter().all(|expected| expected.name != *name));
+    for (name, message) in unexpected.by_ref().take(MAX_UNEXPECTED_DIAGNOSTICS_SHOWN) {
+        let name = diagnostic_text(*name);
+        report(run.line, format!("unexpected {name}: {message}"));
+    }
+    let hidden_count = unexpected.count();
+    if hidden_count > 0 {
+        report(run.line, format!("and {hidden_count} more"));
+    }
+
+    for expected in &file.statistics {
+        let mut statistics = result.statistics.iter();
+        let counted = statistics.find(|(id, _)| *id == expected.name);
+        let actual = counted.map_or(0, |&(_, value)| value);
+        if !holds(expected.comparison, actual, expected.value) {
+            let name = expected.name.name();
+            report(expected.line, format!("{name} is {actual}"));
         }
+    }
+
+    let lines = file.check_lines_for(&run.prefix);
+    if let Err(failure) = match_check_lines(lines, &hide_function_texts(&result.output)) {
+        report(failure.line, failure.message);
     }
 }
 
@@ -494,10 +411,8 @@ mod tests {
         let output = "module m0 path=\"a\" functionText=\"// CHECK-NOT: Call\\x0af(\\x22x\\x22);\"\n  v0 = Call\nmodule m1 functionText=\"\" kind=Data\n";
         let hidden = "module m0 path=\"a\" functionText=\"\"\n  v0 = Call\nmodule m1 functionText=\"\" kind=Data\n";
         assert_eq!(hide_function_texts(output), hidden);
-        assert_eq!(
-            hide_function_texts("function f0 {\n}\n"),
-            "function f0 {\n}\n"
-        );
+        let without_module = "function f0 {\n}\n";
+        assert_eq!(hide_function_texts(without_module), without_module);
     }
 
     fn failure_lines(failures: &[TestFailure]) -> Vec<u32> {
@@ -510,22 +425,11 @@ mod tests {
     }
 
     #[track_caller]
-    fn expect_failures_before_any_run(directives: &str, lines: &[u32]) {
-        let outcome = run_test_text(Path::new("never-read.ts"), directives.to_owned());
-        let failures = &outcome.failures;
-        assert_eq!(failure_lines(failures), lines, "{failures:?}");
-        assert!(outcome.skipped.is_empty());
-    }
-
-    #[track_caller]
     fn expect_failures_on_program(directives: &str, lines: &[u32]) {
         let path = test_root().join("commands").join(PROGRAM_WITH_IMPORT);
         let outcome = OnceLock::new();
         for_each_parallel(1, 1, |_| {
-            let is_first_run = outcome
-                .set(run_test_text(&path, directives.to_owned()))
-                .is_ok();
-            assert!(is_first_run);
+            assert!(outcome.set(run_test_text(&path, directives)).is_ok());
         });
         let outcome: TestOutcome = outcome.into_inner().expect("the run has finished");
         let failures = &outcome.failures;
@@ -533,21 +437,15 @@ mod tests {
     }
 
     fn parse_directives(directives: &str) -> TestFile {
-        let file = parse_test_file(directives.to_owned());
+        let file = parse_test_file(directives);
         assert!(file.errors.is_empty(), "{:?}", file.errors);
         file
     }
 
     fn finished_run_failures(directives: &str, result: &CommandResult) -> Vec<u32> {
         let file = parse_directives(directives);
-        let finished = FinishedRun {
-            file: &file,
-            run: &file.runs[0],
-            command: "link",
-            result,
-        };
         let mut failures = Vec::new();
-        finished.check_expectations(&mut failures);
+        check_expectations(&file, &file.runs[0], result, &mut failures);
         failure_lines(&failures)
     }
 
@@ -558,7 +456,7 @@ mod tests {
             // CHECK: Add\n";
         let file = parse_directives(directives);
         let mut outcome = TestOutcome::default();
-        record_command_outcome(&file, &file.runs[0], "emit", command_outcome, &mut outcome);
+        record_command_outcome(&file, &file.runs[0], command_outcome, &mut outcome);
         outcome
     }
 
@@ -600,13 +498,9 @@ mod tests {
     }
 
     #[test]
-    fn matching_check_lines_pass() {
+    fn check_lines_are_matched() {
         let directives = "// RUN: lower\n// CHECK-LABEL: name=\"add\"\n// CHECK: Return\n";
         expect_failures_on_program(directives, &[]);
-    }
-
-    #[test]
-    fn unmatched_check_line() {
         expect_failures_on_program("// RUN: lower\n// CHECK: NoSuchOperation\n", &[2]);
     }
 
@@ -645,33 +539,26 @@ mod tests {
     }
 
     #[test]
-    fn malformed_directive() {
-        let directives = "// RUN: lower\n// NOTE: x\n// CHECK: NoSuchOperation\n";
-        expect_failures_before_any_run(directives, &[2]);
-    }
-
-    #[test]
-    fn unknown_command() {
-        expect_failures_before_any_run("// RUN: no-such-command\n", &[1]);
-        expect_failures_before_any_run("// RUN: print\n", &[1]);
-        expect_failures_before_any_run("// RUN: verify\n", &[1]);
-    }
-
-    #[test]
-    fn unexpected_argument() {
-        expect_failures_before_any_run("// RUN: lower f0\n", &[1]);
-    }
-
-    #[test]
-    fn form_directive() {
-        expect_failures_before_any_run("// RUN: lower\n// FORM: AsRead\n", &[2]);
-    }
-
-    #[test]
-    fn unknown_option_word() {
-        let directives = "// RUN: lower\n// CHECK: Add\n// OPTIONS: threads=1 nonsense\n";
-        expect_failures_before_any_run(directives, &[3]);
-        expect_failures_before_any_run("// RUN: lower\n// OPTIONS: validate\n", &[2]);
+    fn failures_before_any_run() {
+        for (directives, line) in [
+            ("// RUN: lower\n// NOTE: x\n// CHECK: NoSuchOperation\n", 2),
+            ("// RUN: no-such-command\n", 1),
+            ("// RUN: print\n", 1),
+            ("// RUN: verify\n", 1),
+            ("// RUN: compile\n", 1),
+            ("// RUN: lower f0\n", 1),
+            ("// RUN: lower\n// FORM: AsRead\n", 2),
+            (
+                "// RUN: lower\n// CHECK: Add\n// OPTIONS: threads=1 nonsense\n",
+                3,
+            ),
+            ("// RUN: lower\n// OPTIONS: validate\n", 2),
+        ] {
+            let outcome = run_test_text(Path::new("never-read.ts"), directives);
+            let failures = &outcome.failures;
+            assert_eq!(failure_lines(failures), [line], "{failures:?}");
+            assert!(outcome.skipped.is_empty());
+        }
     }
 
     #[test]
@@ -710,10 +597,8 @@ mod tests {
             ..CommandResult::default()
         };
         assert_eq!(finished_run_failures(listed, &without_engine), [3]);
-        assert_eq!(
-            finished_run_failures(listed, &CommandResult::default()),
-            [2, 3]
-        );
+        let with_engine = CommandResult::default();
+        assert_eq!(finished_run_failures(listed, &with_engine), [2, 3]);
     }
 
     #[test]
@@ -769,52 +654,35 @@ mod tests {
             ..CommandResult::default()
         };
         assert_eq!(finished_run_failures(directives, &result), [3, 5, 7]);
-    }
-
-    #[test]
-    fn absent_statistic_is_zero() {
-        let directives = "// RUN: link\n\
+        let absent_is_zero = "// RUN: link\n\
             // STATISTIC: MaxNestingDepthHits = 0\n\
             // STATISTIC: MaxNestingDepthHits >= 1\n";
-        let result = CommandResult {
-            statistics: vec![(StatisticId::ProgramBytes, 64)],
-            ..CommandResult::default()
-        };
-        assert_eq!(finished_run_failures(directives, &result), [3]);
+        assert_eq!(finished_run_failures(absent_is_zero, &result), [3]);
     }
 
     #[test]
     fn finished_outcome_checks_expectations() {
-        let finished = CommandOutcome::Finished(CommandResult::default());
-        let outcome = record_outcome_with_expectations(finished);
+        let outcome = record_outcome_with_expectations(Ok(CommandResult::default()));
         assert_eq!(failure_lines(&outcome.failures), [2, 3, 4]);
         assert!(outcome.skipped.is_empty());
     }
 
     #[test]
     fn failed_outcome_ignores_expectations() {
-        let failed = CommandOutcome::Failed("internal error".to_owned());
-        let outcome = record_outcome_with_expectations(failed);
-        let expected = TestFailure {
-            line: 1,
-            message: "emit: internal error".to_owned(),
-        };
+        let outcome = record_outcome_with_expectations(Err("internal error".to_owned()));
+        let expected = TestFailure::new(1, "emit: internal error");
         assert_eq!(outcome.failures, [expected]);
         assert!(outcome.skipped.is_empty());
     }
 
     #[test]
     fn skipped_engine_is_reported_beside_expectations() {
-        let finished = CommandOutcome::Finished(CommandResult {
+        let outcome = record_outcome_with_expectations(Ok(CommandResult {
             engine_was_skipped: Some("TESTAOT is not set".to_owned()),
             ..CommandResult::default()
-        });
-        let outcome = record_outcome_with_expectations(finished);
-        let expected = TestFailure {
-            line: 1,
-            message: "emit: TESTAOT is not set".to_owned(),
-        };
+        }));
         assert_eq!(failure_lines(&outcome.failures), [2, 3, 4]);
+        let expected = TestFailure::new(1, "emit: TESTAOT is not set");
         assert_eq!(outcome.skipped, [expected]);
     }
 
@@ -851,10 +719,7 @@ mod tests {
 
     #[test]
     fn skipped_runs_are_summarized() {
-        let skipped = [1, 4].map(|line| TestFailure {
-            line,
-            message: "lower: TESTAOT is not set".to_owned(),
-        });
+        let skipped = [1, 4].map(|line| TestFailure::new(line, "lower: TESTAOT is not set"));
         let skipped: Vec<&TestFailure> = skipped.iter().collect();
         let summary = describe_skipped_runs("test/aot/ir/lower", &skipped);
         let expected = "SKIP test/aot/ir/lower: the engine verified none of 2 runs: \

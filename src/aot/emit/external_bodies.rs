@@ -146,10 +146,8 @@ impl ExternalBodies {
     }
 
     pub fn size_in_bytes(&self) -> usize {
-        self.bodies
-            .iter()
-            .map(|body| body.word_count as usize * 4)
-            .sum()
+        let sizes = self.bodies.iter().map(|body| body.word_count as usize * 4);
+        sizes.sum()
     }
 
     /// Valid while `self` is alive.

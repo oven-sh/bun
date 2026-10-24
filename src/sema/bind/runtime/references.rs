@@ -1,5 +1,5 @@
 use super::bits::insert_bit;
-use super::declaration_kinds::{DeclarationKind, declaration_kind};
+use super::declaration_kinds::{DeclarationKind, declaration_kind, for_each_name};
 use super::direct_evals::{DirectEval, compute_dynamic_scopes, find_direct_evals};
 use super::lookup::{COMMONJS_VARIABLES, Lookup};
 use super::namespace_exports::ExportedBlockBindings;
@@ -210,7 +210,6 @@ impl ReferencePass<'_, '_> {
         if self.lookup.dynamic_scopes.is_empty() {
             return;
         }
-        let mut pats = Vec::new();
         for (index, decl) in hir.var_decls.iter().enumerate() {
             let stmt = bound.var_stmt[index];
             if decl.kind != VarKind::Var || stmt.is_none() {
@@ -221,22 +220,14 @@ impl ReferencePass<'_, '_> {
             if parent == Parent::None || !is_stored {
                 continue;
             }
-            pats.push(decl.pat);
-            while let Some(pat) = pats.pop() {
-                match hir[pat].kind {
-                    PatKind::Missing => {}
-                    PatKind::Ident(name) => {
-                        let scope = bound.stmt_scope[stmt.idx()];
-                        let dynamic_scope = self.lookup.find(scope, name).dynamic_scope;
-                        if dynamic_scope.is_some() {
-                            let lookup = (pat, dynamic_scope);
-                            self.references.dynamic_declarator_lookups.push(lookup);
-                        }
-                    }
-                    PatKind::Object(props) => pats.extend(props.iter().map(|p| hir[p].value)),
-                    PatKind::Array(elems) => pats.extend(elems.iter().map(|e| hir[e].pat)),
+            for_each_name(hir, decl.pat, |pat, name| {
+                let scope = bound.stmt_scope[stmt.idx()];
+                let dynamic_scope = self.lookup.find(scope, name).dynamic_scope;
+                if dynamic_scope.is_some() {
+                    let lookup = (pat, dynamic_scope);
+                    self.references.dynamic_declarator_lookups.push(lookup);
                 }
-            }
+            });
         }
     }
 

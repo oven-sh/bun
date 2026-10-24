@@ -16,7 +16,6 @@ impl Resolver<'_, '_> {
             && is_locked(BuiltinId::ArrayIteratorPrototypeNext)
     }
 
-    // `list.forEach(function)`: the list.
     fn find_receiver_of_for_each(&self, function: FnId) -> Option<ExprId> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let FnOwner::Expr(callback) = bound.fns[function.idx()].owner else {
@@ -47,7 +46,6 @@ impl Resolver<'_, '_> {
         is_for_each.then_some(obj)
     }
 
-    // Nothing is done with the list but to go over it.
     fn is_walk(&self, mention: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let mut node = mention;

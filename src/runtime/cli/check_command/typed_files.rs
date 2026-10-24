@@ -298,7 +298,7 @@ pub(crate) fn typed_files_for_build(
             }
         }
     };
-    let without_emitted_declarations = sound_files(outdir, &outputs, Some(modules), &[]);
+    let without_emitted_declarations = sound_files(outdir, &outputs, modules, &[]);
     let untyped_modules = without_emitted_declarations
         .as_ref()
         .map_or(&[][..], |found| &found.modules_of_untyped_values[..]);
@@ -341,7 +341,7 @@ pub(crate) fn typed_files_for_build(
     let emitted_modules = emitted_modules.take();
     let found = match emitted_modules.is_empty() {
         true => without_emitted_declarations,
-        false => sound_files(outdir, &outputs, Some(modules), &emitted_modules),
+        false => sound_files(outdir, &outputs, modules, &emitted_modules),
     };
     let mut warn = |why: core::fmt::Arguments<'_>| {
         log.add_warning_fmt(

@@ -64,12 +64,14 @@ pub(crate) fn find_evaluated_function(request: &FinishedFile<'_, '_>) -> Option<
         return None;
     };
     let is_script_wrapper = hir[function].name.is_none();
+    let has_wrapper_reference = hir.rare_syntax & rare::NEW_TARGET != 0
+        || (bound.function_flags(function)).contains(FunctionFlags::USES_ARGUMENTS);
     let is_global_code = analysis.module_format == ModuleFormat::CommonJs
         && analysis.import_sites.is_empty()
         && bound.runtime.eval_scopes().is_empty()
         && !has_outer_scope_reference(hir, bound, function)
         && !has_replaced_expression(hir, &analysis.decisions)
-        && !(is_script_wrapper && has_wrapper_reference(hir, bound, function));
+        && !(is_script_wrapper && has_wrapper_reference);
     is_global_code.then_some(function)
 }
 
@@ -109,11 +111,6 @@ fn has_replaced_expression(hir: &File<'_>, decisions: &Decisions<'_>) -> bool {
     })
 }
 
-fn has_wrapper_reference(hir: &File<'_>, bound: &Bound<'_>, wrapper: FnId) -> bool {
-    let flags = bound.function_flags(wrapper);
-    flags.contains(FunctionFlags::USES_ARGUMENTS) || hir.rare_syntax & rare::NEW_TARGET != 0
-}
-
 fn create_virtual_path(importer: &[u8], call: ExprId) -> Vec<u8> {
     let mut path = [HOST_ROOT, VIRTUAL_DIRECTORY].concat();
     append_encoded_segment(&mut path, importer);
@@ -139,7 +136,7 @@ fn try_create_script_text(source: &[u8]) -> Option<Vec<u8>> {
         ParsedShape::OneFunctionExpression | ParsedShape::OneExpression => {}
         ParsedShape::Other => return None,
     }
-    let text = create_script_text(source);
+    let text = [&b"(function () {\nreturn (\n"[..], source, b"\n);\n})"].concat();
     (parses_alone(&text) == Some(ParsedShape::OneFunctionExpression)).then_some(text)
 }
 
@@ -153,10 +150,6 @@ fn create_function_text(parameters: &[&[u8]], body: &[u8]) -> Vec<u8> {
         b"\n})",
     ]
     .concat()
-}
-
-fn create_script_text(source: &[u8]) -> Vec<u8> {
-    [&b"(function () {\nreturn (\n"[..], source, b"\n);\n})"].concat()
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -182,7 +175,12 @@ fn parses_alone(text: &[u8]) -> Option<ParsedShape> {
         keeps_function_directives: true,
     };
     let mut hir = parse_for_compile(arena, &parse_options, text, &atoms);
-    if has_syntax_error(&hir) || has_unsupported_syntax(&hir) {
+    let mut diagnostics = hir.diagnostics.iter();
+    if hir.has_errors
+        || hir.ran_out_of_stack
+        || diagnostics.any(|diagnostic| diagnostic.class == DiagnosticClass::EarlyError)
+        || has_unsupported_syntax(&hir)
+    {
         return None;
     }
     hir.text = Cow::Borrowed(text);
@@ -191,17 +189,17 @@ fn parses_alone(text: &[u8]) -> Option<ParsedShape> {
         ..BindOptions::default()
     };
     let bound = bind(&hir, bind_options, &atoms, arena);
-    if bound.ran_out_of_stack || has_early_redeclaration(&bound) {
+    if bound.ran_out_of_stack
+        || !bound.runtime.early_redeclarations().is_empty()
+        || (0..bound.redeclarations.len()).any(|index| bound.is_early_error_redeclaration(index))
+    {
         return None;
     }
-    Some(classify_shape(&hir))
-}
-
-fn has_syntax_error(hir: &File<'_>) -> bool {
-    let mut diagnostics = hir.diagnostics.iter();
-    hir.has_errors
-        || hir.ran_out_of_stack
-        || diagnostics.any(|diagnostic| diagnostic.class == DiagnosticClass::EarlyError)
+    Some(match find_only_expression(&hir) {
+        Some(it) if matches!(hir[it].kind, ExprKind::Fn(_)) => ParsedShape::OneFunctionExpression,
+        Some(_) => ParsedShape::OneExpression,
+        None => ParsedShape::Other,
+    })
 }
 
 // `await` or `yield` in a list of parameters, `for (var a = 1 in b)`, and `010`.
@@ -247,16 +245,12 @@ fn declares_function_twice_in_block(hir: &File<'_>) -> bool {
     })
 }
 
-// Each is legal in sloppy code and an early error in strict code, or the other way round by where it stands.
-fn has_syntax_that_strict_code_forbids(hir: &File<'_>) -> bool {
+// Each of the first four is legal in sloppy code and an early error in strict code, or the other way round by where it stands.
+fn has_unsupported_syntax(hir: &File<'_>) -> bool {
     hir.rare_syntax & SYNTAX_THAT_MAY_BE_AN_ERROR != 0
         || has_yield_as_name(hir)
         || has_function_as_body(hir)
         || declares_function_twice_in_block(hir)
-}
-
-fn has_unsupported_syntax(hir: &File<'_>) -> bool {
-    has_syntax_that_strict_code_forbids(hir)
         || !hir.decorators.is_empty()
         || (hir.members.iter()).any(|member| member.flags.contains(Flags::ACCESSOR))
         || (hir.exprs.iter()).any(|expression| !is_supported_expression(expression.kind))
@@ -276,21 +270,6 @@ fn is_supported_expression(kind: ExprKind) -> bool {
             | ExprKind::ImportMeta
             | ExprKind::JsxText(_)
     )
-}
-
-fn has_early_redeclaration(bound: &Bound<'_>) -> bool {
-    !bound.runtime.early_redeclarations().is_empty()
-        || (0..bound.redeclarations.len()).any(|index| bound.is_early_error_redeclaration(index))
-}
-
-fn classify_shape(hir: &File<'_>) -> ParsedShape {
-    let Some(expression) = find_only_expression(hir) else {
-        return ParsedShape::Other;
-    };
-    match matches!(hir[expression].kind, ExprKind::Fn(_)) {
-        true => ParsedShape::OneFunctionExpression,
-        false => ParsedShape::OneExpression,
-    }
 }
 
 fn find_only_expression(hir: &File<'_>) -> Option<ExprId> {
@@ -651,66 +630,30 @@ mod tests {
     }
 
     #[test]
-    fn text_that_names_require_is_not_compiled() {
-        assert_eq!(count_compiled_texts(r#"Function("return require");"#), 0);
-        assert_eq!(
-            count_compiled_texts(r#"Function("require", "return require");"#),
-            1
-        );
-    }
-
-    #[test]
-    fn text_with_import_call_is_not_compiled() {
-        assert_eq!(
-            count_compiled_texts(r#"Function("return import('./b.js')");"#),
-            0
-        );
-    }
-
-    #[test]
-    fn script_that_reads_arguments_is_not_compiled() {
-        assert_eq!(count_compiled_texts(r#"(0, eval)("this");"#), 1);
-        assert_eq!(count_compiled_texts(r#"(0, eval)("arguments");"#), 0);
-        assert_eq!(count_compiled_texts(r#"(0, eval)("() => arguments");"#), 0);
-        assert_eq!(count_compiled_texts(r#"(0, eval)("new.target");"#), 0);
-    }
-
-    #[test]
-    fn return_this_is_compiled() {
-        assert_eq!(count_compiled_texts(r#"Function("return this")();"#), 1);
-        assert_eq!(
-            count_compiled_texts(r#"new Function("a", "b", "return a + b");"#),
-            1
-        );
-        assert_eq!(count_compiled_texts(r#"Function("return new.target");"#), 1);
-    }
-
-    #[test]
-    fn text_that_names_a_constant_global_is_compiled() {
-        assert_eq!(
-            count_compiled_texts(r#"Function("a", "return a === undefined");"#),
-            1
-        );
-        assert_eq!(count_compiled_texts(r#"Function("return NaN");"#), 1);
-        assert_eq!(count_compiled_texts(r#"Function("return -Infinity");"#), 1);
-        assert_eq!(count_compiled_texts(r#"(0, eval)("undefined");"#), 1);
-        assert_eq!(
-            count_linked_function_bodies("return [undefined, NaN, Infinity];"),
-            1
-        );
-    }
-
-    #[test]
-    fn own_name_reference_is_not_compiled() {
-        assert_eq!(count_compiled_texts(r#"Function("return anonymous");"#), 0);
-        assert_eq!(
-            count_compiled_texts(r#"Function("anonymous", "return anonymous");"#),
-            1
-        );
-    }
-
-    #[test]
-    fn direct_eval_is_not_compiled() {
-        assert_eq!(count_compiled_texts(r#"Function("return eval('1')");"#), 0);
+    fn only_text_that_reads_nothing_around_it_is_compiled() {
+        let rows = [
+            (r#"Function("return require");"#, 0),
+            (r#"Function("require", "return require");"#, 1),
+            (r#"Function("return import('./b.js')");"#, 0),
+            (r#"(0, eval)("this");"#, 1),
+            (r#"(0, eval)("arguments");"#, 0),
+            (r#"(0, eval)("() => arguments");"#, 0),
+            (r#"(0, eval)("new.target");"#, 0),
+            (r#"Function("return this")();"#, 1),
+            (r#"new Function("a", "b", "return a + b");"#, 1),
+            (r#"Function("return new.target");"#, 1),
+            (r#"Function("a", "return a === undefined");"#, 1),
+            (r#"Function("return NaN");"#, 1),
+            (r#"Function("return -Infinity");"#, 1),
+            (r#"(0, eval)("undefined");"#, 1),
+            (r#"Function("return anonymous");"#, 0),
+            (r#"Function("anonymous", "return anonymous");"#, 1),
+            (r#"Function("return eval('1')");"#, 0),
+        ];
+        for (source, count) in rows {
+            assert_eq!(count_compiled_texts(source), count, "{source}");
+        }
+        let globals = "return [undefined, NaN, Infinity];";
+        assert_eq!(count_linked_function_bodies(globals), 1);
     }
 }

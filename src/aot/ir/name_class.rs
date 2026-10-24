@@ -8,11 +8,7 @@ const MAX_ARRAY_INDEX: u64 = u32::MAX as u64 - 1;
 const MAX_EXACT_INTEGER_DIGITS: usize = 15;
 const MAX_CANONICAL_NUMERIC_STRING_LENGTH: usize = 32;
 
-#[derive(Copy, Clone)]
-struct ClassifiedWord {
-    text: &'static [u8],
-    class: NameClass,
-}
+type ClassifiedWord = (&'static [u8], NameClass);
 
 const CLASSIFIED_WORD_COUNT: usize = count_classified_words();
 const CLASSIFIED_WORDS: [ClassifiedWord; CLASSIFIED_WORD_COUNT] = collect_classified_words();
@@ -23,17 +19,13 @@ pub fn classify_name(text: &[u8]) -> NameClass {
         [] => NameClass::Ordinary,
         b"0" => NameClass::Index,
         b"-0" | b"Infinity" | b"-Infinity" | b"NaN" => NameClass::CanonicalNumericString,
-        [b'0'..=b'9' | b'-', ..] => classify_numeric_text(text),
+        [b'0'..=b'9' | b'-', ..] => match parse_exact_integer(text) {
+            Some(0..=MAX_ARRAY_INDEX) => NameClass::Index,
+            Some(_) => NameClass::CanonicalNumericString,
+            None if is_canonical_numeric_string(text) => NameClass::CanonicalNumericString,
+            None => NameClass::Ordinary,
+        },
         _ => classify_word(text),
-    }
-}
-
-fn classify_numeric_text(text: &[u8]) -> NameClass {
-    match parse_exact_integer(text) {
-        Some(0..=MAX_ARRAY_INDEX) => NameClass::Index,
-        Some(_) => NameClass::CanonicalNumericString,
-        None if is_canonical_numeric_string(text) => NameClass::CanonicalNumericString,
-        None => NameClass::Ordinary,
     }
 }
 
@@ -59,8 +51,8 @@ fn classify_word(text: &[u8]) -> NameClass {
     if text.len() > MAX_WORD_LENGTH {
         return NameClass::Ordinary;
     }
-    match CLASSIFIED_WORDS.iter().find(|word| word.text == text) {
-        Some(word) => word.class,
+    match CLASSIFIED_WORDS.iter().find(|(word, _)| *word == text) {
+        Some(&(_, class)) => class,
         None => NameClass::Ordinary,
     }
 }
@@ -97,10 +89,7 @@ const fn count_classified_words() -> usize {
 }
 
 const fn collect_classified_words() -> [ClassifiedWord; CLASSIFIED_WORD_COUNT] {
-    let unfilled = ClassifiedWord {
-        text: &[],
-        class: NameClass::Ordinary,
-    };
+    let unfilled: ClassifiedWord = (&[], NameClass::Ordinary);
     let mut classified = [unfilled; CLASSIFIED_WORD_COUNT];
     let mut count = 0;
     let mut class_index = 0;
@@ -108,7 +97,7 @@ const fn collect_classified_words() -> [ClassifiedWord; CLASSIFIED_WORD_COUNT] {
         let class = NameClass::ALL[class_index];
         let mut words = class.words().as_bytes();
         while let Some((text, rest)) = split_first_word(words) {
-            classified[count] = ClassifiedWord { text, class };
+            classified[count] = (text, class);
             count += 1;
             words = rest;
         }
@@ -121,7 +110,7 @@ const fn longest_word_length() -> usize {
     let mut longest = 0;
     let mut index = 0;
     while index < CLASSIFIED_WORD_COUNT {
-        let length = CLASSIFIED_WORDS[index].text.len();
+        let length = CLASSIFIED_WORDS[index].0.len();
         if length > longest {
             longest = length;
         }

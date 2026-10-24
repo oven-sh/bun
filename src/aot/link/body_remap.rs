@@ -31,12 +31,10 @@ impl BodyRemap {
         lists.flat_map(|(ids, functions)| functions.iter().map(move |function| (ids, &**function)))
     }
 
-    /// A list for each unit.
     pub fn take_functions(&mut self) -> Vec<Vec<Arc<Function>>> {
         take(&mut self.functions)
     }
 
-    /// The functions with program ids, as a program lists them.
     pub fn into_program_functions(mut self, in_parallel: InParallel<'_>) -> Vec<Function> {
         let lists = self.take_functions();
         let mut tasks: Vec<(&UnitIds, Vec<Arc<Function>>, Vec<Function>)> = self

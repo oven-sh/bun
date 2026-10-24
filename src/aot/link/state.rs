@@ -51,11 +51,8 @@ pub(super) struct SupertypeEdges {
 
 impl SupertypeEdges {
     pub(super) fn of(&self, layout: u32) -> &[u32] {
-        let (start, end) = (
-            self.starts[layout as usize],
-            self.starts[layout as usize + 1],
-        );
-        &self.supertypes[start as usize..end as usize]
+        let (start, end) = (layout as usize, layout as usize + 1);
+        &self.supertypes[self.starts[start] as usize..self.starts[end] as usize]
     }
 }
 
@@ -69,7 +66,7 @@ pub(super) struct RuntimeFunctionRoot {
 pub(super) struct Definitions {
     pub functions: Vec<Option<DefinitionSite>>,
     pub layouts: Vec<Option<DefinitionSite>>,
-    // By layout and then by site: see `has_united_definitions`.
+    // By layout and then by site: see `LayoutKey::has_united_definitions`.
     pub other_layout_definitions: Vec<(u32, DefinitionSite)>,
     pub variables: Vec<Option<VariableDefinition>>,
     pub supertypes: SupertypeEdges,
@@ -127,6 +124,7 @@ pub(super) struct Retained {
     pub units: Vec<UnitMarks>,
 }
 
+#[derive(Default)]
 pub struct UnitIds {
     pub strings: Vec<Option<StringId>>,
     pub property_keys: Vec<Option<PropertyKeyId>>,

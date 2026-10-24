@@ -23,21 +23,18 @@ use crate::ir::{DeclaredType, LayoutId, LayoutKey};
 use crate::lower::{CheckerTypeId, FileLowering};
 use crate::modules::{ModuleKind, ModuleRef, Shape};
 
-fn find_name_position(hir: &hir::File<'_>, declaration: Decl) -> Option<u32> {
-    match declaration {
-        Decl::Enum(declaration) => Some(hir[declaration].name_pos),
-        Decl::Module(declaration) => Some(hir[declaration].name_pos),
-        Decl::Fn(function) => Some(hir[function].name_pos),
-        Decl::Class(class) => Some(hir[class].name_pos),
-        _ => None,
-    }
-}
-
 impl FileLowering<'_, '_, '_, '_> {
     fn find_container_position(&self, symbol: Sym) -> u32 {
+        let hir = self.hir;
         let declarations = self.queries.files().decls_of(symbol);
         let mut own_declarations = declarations.iter().filter(|entry| entry.0 == self.file);
-        let position = own_declarations.find_map(|entry| find_name_position(self.hir, entry.1));
+        let position = own_declarations.find_map(|entry| match entry.1 {
+            Decl::Enum(declaration) => Some(hir[declaration].name_pos),
+            Decl::Module(declaration) => Some(hir[declaration].name_pos),
+            Decl::Fn(function) => Some(hir[function].name_pos),
+            Decl::Class(class) => Some(hir[class].name_pos),
+            _ => None,
+        });
         position.unwrap_or(0)
     }
 
@@ -50,33 +47,25 @@ impl FileLowering<'_, '_, '_, '_> {
         self.queries.files().bound(symbol.file).file_symbol == symbol.id
     }
 
-    fn has_exports_object(&self, module: FileId) -> bool {
-        match self.inputs.modules.shape(ModuleRef::File(module)) {
-            Shape::Value | Shape::AsToday => true,
-            Shape::EsModule | Shape::Names => false,
-        }
-    }
-
-    // The layout of the object that the body of a CommonJS module begins with as its `exports`, where its exports are one value.
     pub(crate) fn module_exports_layout(&mut self, module: FileId) -> Option<LayoutId> {
         let modules = self.inputs.modules;
         if !modules.has_record(module)
             || modules.kind(module) != ModuleKind::CommonJs
             || modules.is_library(module)
-            || !self.has_exports_object(module)
         {
             return None;
+        }
+        match modules.shape(ModuleRef::File(module)) {
+            Shape::Value | Shape::AsToday => {}
+            Shape::EsModule | Shape::Names => return None,
         }
         let bound = self.queries.files().bound(module);
         // `arguments.callee` is the function that holds the text of the module.
         if bound.file_uses_arguments() {
             return None;
         }
-        let file_symbol = bound.file_symbol;
-        if file_symbol.is_none() {
-            return None;
-        }
-        // A self symbol that declarations of other files merge into is defined by no self alone.
+        let file_symbol = bound.file_symbol.some()?;
+        // A file symbol that declarations of other files merge into is defined by no file alone.
         let symbol = self.queries.canonical_symbol(module, file_symbol);
         if symbol.file != module || symbol.id != file_symbol {
             return None;
@@ -103,40 +92,33 @@ impl FileLowering<'_, '_, '_, '_> {
         if modules.half(own_module) || modules.keeps_module_object(own_module) {
             return true;
         }
+        let replaces_first = self.ask_module_text(module, replaces_exports_first);
+        !replaces_first.unwrap_or(false)
+    }
+
+    fn ask_module_text<R>(
+        &self,
+        module: FileId,
+        ask: impl FnOnce(&ModuleText<'_, '_>) -> R,
+    ) -> Option<R> {
         let files = self.queries.files();
-        let (Some(compiled), Some(inputs)) =
-            (files.compiled(module), self.inputs.files[module.idx()])
-        else {
-            return true;
-        };
-        let text = ModuleText {
+        let (compiled, inputs) = (files.compiled(module)?, self.inputs.files[module.idx()]?);
+        Some(ask(&ModuleText {
             files,
             hir: files.hir(module),
             bound: files.bound(module),
             decisions: &compiled.analysis.decisions,
             builtins: inputs.builtins,
             is_this_exports: !compiled.analysis.has_esm_syntax,
-        };
-        !replaces_exports_first(&text)
+        }))
     }
 
     // The fields are in the order in which the body creates the properties, which is the one order of keys that a creating store goes on from without a call.
     fn compute_exports_fields(&mut self, module: FileId) -> OwnFields {
-        let files = self.queries.files();
-        let (Some(compiled), Some(inputs)) =
-            (files.compiled(module), self.inputs.files[module.idx()])
-        else {
+        let Some(creations) = self.ask_module_text(module, collect_creations) else {
             return OwnFields::default().finish();
         };
-        let text = ModuleText {
-            files,
-            hir: files.hir(module),
-            bound: files.bound(module),
-            decisions: &compiled.analysis.decisions,
-            builtins: inputs.builtins,
-            is_this_exports: !compiled.analysis.has_esm_syntax,
-        };
-        let mut creations = collect_creations(&text).unwrap_or_default();
+        let mut creations = creations.unwrap_or_default();
         creations.sort_by_key(|it| (it.is_deferred, it.end, Reverse(it.start)));
 
         let limit = self.inputs.limits.get(LimitId::FieldsInKeyOrder);
@@ -210,10 +192,9 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(super) fn define_container_layout(&mut self, layout: LayoutId, symbol: Sym) {
         debug_assert!(
             symbol.file == self.file,
-            "a container is defined by its self"
+            "a container is defined by its file"
         );
         let name = self.bound.symbol(symbol.id).name;
-        // The exports of a module are an ordinary object to every pass that looks at the kind.
         let is_module_exports = self.is_file_symbol(symbol);
         let kind = match is_module_exports {
             true => LayoutKind::Record,
@@ -228,7 +209,6 @@ impl FileLowering<'_, '_, '_, '_> {
             fields: super::own_fields(self, layout).as_slice().to_vec(),
             ..Layout::default()
         };
-        // The body of the module makes the object, and a field is there because the module puts something under its name.
         self.fragment.note_allocation(layout);
         for key in definition.fields.iter().filter_map(|field| field.key) {
             self.fragment.note_write(key);
@@ -304,17 +284,25 @@ fn find_enclosing_unit(text: &ModuleText<'_, '_>, function: FnId) -> CodeUnit {
     CodeUnit::File
 }
 
-fn reads_this_of_file(text: &ModuleText<'_, '_>, this: ExprId) -> bool {
-    let Some(mut unit) = find_code_unit(text, this) else {
+fn is_in_body_through(
+    text: &ModuleText<'_, '_>,
+    expression: ExprId,
+    mut passes: impl FnMut(FnId) -> bool,
+) -> bool {
+    let Some(mut unit) = find_code_unit(text, expression) else {
         return false;
     };
     while let CodeUnit::Function(function) = unit {
-        if text.hir[function].kind != FnKind::Arrow {
+        if !passes(function) {
             return false;
         }
         unit = find_enclosing_unit(text, function);
     }
     unit == CodeUnit::File
+}
+
+fn reads_this_of_file(text: &ModuleText<'_, '_>, this: ExprId) -> bool {
+    is_in_body_through(text, this, |it| text.hir[it].kind == FnKind::Arrow)
 }
 
 fn is_called_where_written(text: &ModuleText<'_, '_>, function: FnId) -> bool {
@@ -326,19 +314,6 @@ fn is_called_where_written(text: &ModuleText<'_, '_>, function: FnId) -> bool {
             .bound
             .get_immediately_invoked_function_expression(hir, function)
             .is_some()
-}
-
-fn runs_in_text_order(text: &ModuleText<'_, '_>, node: ExprId) -> bool {
-    let Some(mut unit) = find_code_unit(text, node) else {
-        return false;
-    };
-    while let CodeUnit::Function(function) = unit {
-        if !is_called_where_written(text, function) {
-            return false;
-        }
-        unit = find_enclosing_unit(text, function);
-    }
-    unit == CodeUnit::File
 }
 
 fn names_exports_object(text: &ModuleText<'_, '_>, expression: ExprId) -> bool {
@@ -387,21 +362,6 @@ fn find_constant_name(text: &ModuleText<'_, '_>, key: ExprId) -> Option<Atom> {
     }
 }
 
-fn find_constant_flag(text: &ModuleText<'_, '_>, value: ExprId) -> Option<bool> {
-    match find_constant(text, value)? {
-        Constant::Boolean(flag) => Some(flag),
-        Constant::Undefined | Constant::Null => Some(false),
-        Constant::Number(_) | Constant::String(_) | Constant::BigInt(_) => None,
-    }
-}
-
-fn with_part(form: FieldForm, part: FieldForm, has_part: bool) -> FieldForm {
-    match has_part {
-        true => form | part,
-        false => form.without(part),
-    }
-}
-
 // What ToPropertyDescriptor reads from an object literal.
 fn find_defined_form(text: &ModuleText<'_, '_>, descriptor: ExprId) -> Option<FieldForm> {
     let hir = text.hir;
@@ -420,25 +380,21 @@ fn find_defined_form(text: &ModuleText<'_, '_>, descriptor: ExprId) -> Option<Fi
             PropKind::Init | PropKind::Shorthand | PropKind::Method => {}
             PropKind::Spread | PropKind::Getter | PropKind::Setter => return None,
         }
-        match text.files.atoms.bytes(name) {
-            b"value" => is_data = true,
-            b"get" | b"set" => is_accessor = true,
-            b"writable" => {
-                is_data = true;
-                let is_writable = find_constant_flag(text, property.value)?;
-                form = with_part(form, FieldForm::IS_READ_ONLY, !is_writable);
-            }
-            b"enumerable" => {
-                let is_enumerable = find_constant_flag(text, property.value)?;
-                form = with_part(form, FieldForm::IS_NOT_ENUMERABLE, !is_enumerable);
-            }
-            b"configurable" => {
-                let is_configurable = find_constant_flag(text, property.value)?;
-                form = with_part(form, FieldForm::IS_NOT_CONFIGURABLE, !is_configurable);
-            }
+        let name = text.files.atoms.bytes(name);
+        is_data |= matches!(name, b"value" | b"writable");
+        is_accessor |= matches!(name, b"get" | b"set");
+        let denied = match name {
+            b"writable" => FieldForm::IS_READ_ONLY,
+            b"enumerable" => FieldForm::IS_NOT_ENUMERABLE,
+            b"configurable" => FieldForm::IS_NOT_CONFIGURABLE,
             b"__proto__" => return None,
-            _ => {}
-        }
+            _ => continue,
+        };
+        form = match find_constant(text, property.value)? {
+            Constant::Boolean(true) => form.without(denied),
+            Constant::Boolean(false) | Constant::Undefined | Constant::Null => form | denied,
+            Constant::Number(_) | Constant::String(_) | Constant::BigInt(_) => return None,
+        };
     }
     match (is_accessor, is_data) {
         (true, true) => None,
@@ -456,7 +412,7 @@ fn create_creation(
     Creation {
         name,
         form,
-        is_deferred: !runs_in_text_order(text, node),
+        is_deferred: !is_in_body_through(text, node, |it| is_called_where_written(text, it)),
         end: text.hir[node].end,
         start: text.hir[node].pos,
     }
@@ -467,9 +423,8 @@ fn find_definition(text: &ModuleText<'_, '_>, expression: ExprId, call: &Call) -
     if call.args.len() != 3 {
         return None;
     }
-    let callee = text
-        .builtins
-        .builtin_of_expression(hir.skip_type_assertions(call.callee))?;
+    let callee = hir.skip_type_assertions(call.callee);
+    let callee = text.builtins.builtin_of_expression(callee)?;
     let defines_property = matches!(
         callee,
         BuiltinId::ObjectDefineProperty | BuiltinId::ReflectDefineProperty
@@ -480,14 +435,6 @@ fn find_definition(text: &ModuleText<'_, '_>, expression: ExprId, call: &Call) -
     let name = find_constant_name(text, hir.id_at(call.args, 1))?;
     let form = find_defined_form(text, hir.id_at(call.args, 2));
     Some(create_creation(text, name, form, expression))
-}
-
-fn find_stored_name(text: &ModuleText<'_, '_>, key: MemberKey) -> Option<Atom> {
-    match key {
-        MemberKey::Name(name) => Some(name),
-        MemberKey::Computed(computed) => find_constant_name(text, computed),
-        MemberKey::PrivateName(_) => None,
-    }
 }
 
 fn has_export_assignment(bound: &Bound<'_>) -> bool {
@@ -544,17 +491,18 @@ fn collect_creations(text: &ModuleText<'_, '_>) -> Option<Vec<Creation>> {
         if !is_exports_object(text, object) {
             continue;
         }
-        let Some(name) = find_stored_name(text, key) else {
+        let name = match key {
+            MemberKey::Name(name) => Some(name),
+            MemberKey::Computed(computed) => find_constant_name(text, computed),
+            MemberKey::PrivateName(_) => None,
+        };
+        let Some(name) = name else {
             continue;
         };
         // The value is evaluated before the store.
         let node = assignment.map_or(expression, |it| it.node);
-        creations.push(create_creation(
-            text,
-            name,
-            Some(FieldForm::default()),
-            node,
-        ));
+        let form = Some(FieldForm::default());
+        creations.push(create_creation(text, name, form, node));
     }
     Some(creations)
 }
@@ -579,15 +527,9 @@ fn find_plain_store(text: &ModuleText<'_, '_>, expression: ExprId) -> Option<(Ex
     }
 }
 
-// The `module` of a `module.exports` that is written so.
 fn find_module_name(text: &ModuleText<'_, '_>, access: ExprId) -> Option<ExprId> {
     let (object, _) = text.hir.member_key(access)?;
     names_exports_object(text, access).then(|| text.hir.skip_type_assertions(object))
-}
-
-fn names_variable(text: &ModuleText<'_, '_>, name: ExprId, variable: CommonJsVariable) -> bool {
-    matches!(text.hir[name].kind, ExprKind::Ident(_))
-        && text.bound.binding(name) == Binding::CommonJs(variable)
 }
 
 // `module.exports = value` or `exports = module.exports = value` as a statement of the body.
@@ -599,42 +541,24 @@ fn find_replacement(text: &ModuleText<'_, '_>, statement: StmtId) -> Option<Repl
     if text.decisions.is_dead_stmt(statement) {
         return None;
     }
-    let (start, end) = (hir[expression].pos, hir[expression].end);
     let (target, value) = find_plain_store(text, expression)?;
-    if let Some(module_name) = find_module_name(text, target) {
-        return Some(Replacement {
-            module_name,
-            exports_name: None,
-            value,
-            start,
-            end,
-        });
-    }
-    if !names_variable(text, target, CommonJsVariable::Exports) {
-        return None;
-    }
-    let (inner_target, value) = find_plain_store(text, value)?;
-    Some(Replacement {
-        module_name: find_module_name(text, inner_target)?,
-        exports_name: Some(target),
-        value,
-        start,
-        end,
-    })
-}
-
-// A function declaration can be called from the first statement on. Any other function is made where it is written.
-fn runs_behind_its_position(text: &ModuleText<'_, '_>, mention: ExprId) -> bool {
-    let Some(mut unit) = find_code_unit(text, mention) else {
-        return false;
+    let (module_name, exports_name, value) = match find_module_name(text, target) {
+        Some(module_name) => (module_name, None, value),
+        None if matches!(hir[target].kind, ExprKind::Ident(_))
+            && text.bound.binding(target) == Binding::CommonJs(CommonJsVariable::Exports) =>
+        {
+            let (inner_target, value) = find_plain_store(text, value)?;
+            (find_module_name(text, inner_target)?, Some(target), value)
+        }
+        None => return None,
     };
-    let mut outermost = None;
-    while let CodeUnit::Function(function) = unit {
-        outermost = Some(function);
-        unit = find_enclosing_unit(text, function);
-    }
-    unit == CodeUnit::File
-        && outermost.is_none_or(|function| text.hir[function].kind != FnKind::Decl)
+    Some(Replacement {
+        module_name,
+        exports_name,
+        value,
+        start: hir[expression].pos,
+        end: hir[expression].end,
+    })
 }
 
 fn is_evaluated_behind(
@@ -645,26 +569,19 @@ fn is_evaluated_behind(
     let hir = text.hir;
     let position = hir[mention].pos;
     if position >= replacement.end {
-        return runs_behind_its_position(text, mention);
+        // A function declaration can be called from the first statement on. Any other function is made where it is written.
+        let mut outermost = None;
+        let is_in_body = is_in_body_through(text, mention, |function| {
+            outermost = Some(function);
+            true
+        });
+        return is_in_body && outermost.is_none_or(|function| hir[function].kind != FnKind::Decl);
     }
     // A function that is the value itself is not called before it is stored.
     let value = hir.skip_type_assertions(replacement.value);
     position >= replacement.start && matches!(hir[value].kind, ExprKind::Fn(_))
 }
 
-// A body that returns in front of the statement exports the object it began with.
-fn can_return_in_front_of(text: &ModuleText<'_, '_>, replacement: &Replacement) -> bool {
-    let (hir, bound) = (text.hir, text.bound);
-    (0..hir.stmts.len() as u32).map(StmtId).any(|statement| {
-        let scope = bound.scope_of_stmt(statement);
-        matches!(hir[statement].kind, StmtKind::Return(_))
-            && hir[statement].loc.pos < replacement.start
-            && !text.decisions.is_dead_stmt(statement)
-            && (scope.is_none() || bound.code_unit(scope) == CodeUnit::File)
-    })
-}
-
-// Everything that the text says of the exports comes behind a statement that puts a value in their place.
 fn replaces_exports_first(text: &ModuleText<'_, '_>) -> bool {
     let (hir, bound) = (text.hir, text.bound);
     let mut statements = hir.ids(hir.body);
@@ -672,7 +589,15 @@ fn replaces_exports_first(text: &ModuleText<'_, '_>) -> bool {
     else {
         return false;
     };
-    if can_return_in_front_of(text, &replacement) {
+    // A body that returns in front of the statement exports the object it began with.
+    let can_return_first = (0..hir.stmts.len() as u32).map(StmtId).any(|statement| {
+        let scope = bound.scope_of_stmt(statement);
+        matches!(hir[statement].kind, StmtKind::Return(_))
+            && hir[statement].loc.pos < replacement.start
+            && !text.decisions.is_dead_stmt(statement)
+            && (scope.is_none() || bound.code_unit(scope) == CodeUnit::File)
+    });
+    if can_return_first {
         return false;
     }
     (0..hir.exprs.len() as u32).map(ExprId).all(|mention| {

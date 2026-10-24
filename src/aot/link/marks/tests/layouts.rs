@@ -173,19 +173,38 @@ fn links_constructor_function_layout() {
     assert_eq!(point.fields.len(), 1);
 }
 
-fn is_field_name_retained(layout_key: fn(FileId) -> LayoutKey) -> [bool; 2] {
+fn define_with_field(unit: &mut TestUnit, layout_key: &LayoutKey) -> (StringId, Layout) {
+    let (key, name) = intern_text_key(&mut unit.fragment, b"field");
+    let definition = Layout {
+        fields: vec![create_field(key, TypeTable::NUMBER)],
+        ..empty_layout(layout_key)
+    };
+    (name, definition)
+}
+
+fn define_with_name(unit: &mut TestUnit, layout_key: &LayoutKey) -> (StringId, Layout) {
+    let name = format!("Name{}", unit.file.0);
+    let name = unit.fragment.strings.intern(name.as_bytes());
+    let definition = Layout {
+        name: Some(name),
+        ..empty_layout(layout_key)
+    };
+    (name, definition)
+}
+
+// Two files define the layout. Whether the string that `define` answers is retained, in the order of the files.
+fn is_string_retained(
+    layout_key: fn(FileId) -> LayoutKey,
+    define: fn(&mut TestUnit, &LayoutKey) -> (StringId, Layout),
+) -> [bool; 2] {
     with_test_files(|projects, [main, first, second]| {
         let layout_key = layout_key(second);
         let mut names = Vec::new();
         let units = [main, first].map(|file| {
             let mut unit = create_unit_with_allocation(file, layout_key);
             let layout = unit.fragment.declare_layout(layout_key);
-            let (key, name) = intern_text_key(&mut unit.fragment, b"field");
+            let (name, definition) = define(&mut unit, &layout_key);
             names.push((file, name));
-            let definition = Layout {
-                fields: vec![create_field(key, TypeTable::NUMBER)],
-                ..empty_layout(&layout_key)
-            };
             unit.fragment.define_layout(layout, definition);
             unit
         });
@@ -215,7 +234,7 @@ fn ignored_definition_retains_nothing() {
         instantiation: TypeIdentity([1, 0]),
     };
     assert_eq!(
-        is_field_name_retained(written_in_another_file),
+        is_string_retained(written_in_another_file, define_with_field),
         [true, false]
     );
 }
@@ -223,47 +242,17 @@ fn ignored_definition_retains_nothing() {
 #[test]
 fn every_definition_of_plain_layout_retains_what_it_names() {
     assert_eq!(
-        is_field_name_retained(|_| test_object_type_key(1)),
+        is_string_retained(|_| test_object_type_key(1), define_with_field),
         [true, true]
     );
 }
 
 #[test]
 fn only_first_definition_of_plain_layout_retains_its_name() {
-    with_test_files(|projects, [main, first, _]| {
-        let layout_key = test_object_type_key(1);
-        let mut names = Vec::new();
-        let units = [main, first].map(|file| {
-            let mut unit = create_unit_with_allocation(file, layout_key);
-            let layout = unit.fragment.declare_layout(layout_key);
-            let name = unit
-                .fragment
-                .strings
-                .intern(format!("Name{}", file.0).as_bytes());
-            names.push((file, name));
-            let definition = Layout {
-                name: Some(name),
-                ..empty_layout(&layout_key)
-            };
-            unit.fragment.define_layout(layout, definition);
-            unit
-        });
-        let [main_unit, first_unit] = units;
-        let fragments = [
-            call_first_functions(main_unit, &[main, first]),
-            first_unit.finish(),
-        ];
-
-        let marked = mark_fragments(projects, fragments);
-
-        assert!(marked.errors.is_empty(), "{:?}", marked.errors);
-        assert!(marked.has_layout(layout_key));
-        names.sort_unstable_by_key(|&(file, _)| file);
-        let is_retained = names
-            .iter()
-            .map(|&(file, name)| marked.unit_marks(file).strings[name.index()]);
-        assert_eq!(is_retained.collect::<Vec<bool>>(), [true, false]);
-    });
+    assert_eq!(
+        is_string_retained(|_| test_object_type_key(1), define_with_name),
+        [true, false]
+    );
 }
 
 #[test]

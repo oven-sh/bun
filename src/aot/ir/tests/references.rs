@@ -122,12 +122,11 @@ fn references_of_word() -> Vec<(ReferenceKind, Reference)> {
 }
 
 #[test]
-fn from_word_and_kind_are_inverse() {
+fn from_word_gives_the_reference_of_the_kind() {
     let references = references_of_word();
     assert_eq!(references.len(), 17);
     for (kind, reference) in references {
         assert_eq!(Reference::from_word(kind, WORD), Some(reference));
-        assert_eq!(reference.kind(), kind);
     }
 }
 
@@ -135,7 +134,7 @@ fn from_word_and_kind_are_inverse() {
 fn builtin_word_past_table_is_no_reference() {
     let last = BuiltinId::COUNT - 1;
     let reference = Reference::from_word(ReferenceKind::Builtin, last);
-    assert_eq!(reference.map(Reference::kind), Some(ReferenceKind::Builtin));
+    assert!(matches!(reference, Some(Reference::Builtin(_))));
     assert_eq!(
         Reference::from_word(ReferenceKind::Builtin, BuiltinId::COUNT),
         None

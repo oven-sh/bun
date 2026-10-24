@@ -35,11 +35,11 @@ test.each([
   isASAN || isDebug ? 450_000 : 120_000,
 );
 
-test("without --aot the import of validate is an error", async () => {
+test("without --aot validate validates too", async () => {
   using dir = tempDir("validation-without-aot", {
-    "program.ts": `import { validate } from "bun:bundle"; console.log(validate<number>(1));`,
+    "program.ts": `import { validate } from "bun:bundle"; console.log(validate<number>(1)); validate<number>("1");`,
   });
   const { stdout, stderr, exitCode } = await run([bunExe(), "run", "./program.ts"], String(dir));
-  expect(stderr).toContain(`"bun:bundle" has no export named "validate"`);
-  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  expect(stderr).toContain(`TypeError: value must be number, received string`);
+  expect({ stdout, exitCode }).toEqual({ stdout: "1\n", exitCode: 1 });
 });

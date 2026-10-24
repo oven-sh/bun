@@ -1,26 +1,18 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, ScopeId, ScopeKind};
-use bun_sema::hir::{ExprId, ExprKind, NodeData};
+use bun_sema::hir::{ExprId, NodeData};
 
 use super::identifiers::BindingRead;
 use super::{BindingRef, ScopeSlot, bindings};
 use crate::builtins::{Mutability, Resolved};
 use crate::ir::generated::ECMAMode;
-use crate::ir::{BlockId, Edge, LocalVariable, PropertyKeyId, TypeTable, ValueId};
+use crate::ir::{BlockId, Edge, LocalVariable, TypeTable, ValueId};
+use crate::lower::FunctionLowering;
 use crate::lower::member::PropertyName;
-use crate::lower::{FileLowering, FunctionLowering};
 
 pub(super) struct DynamicBinding {
     pub(super) holder: ValueId,
     pub(super) with_base: ValueId,
-}
-
-#[derive(Copy, Clone)]
-struct DynamicLookup {
-    key: PropertyKeyId,
-    holder: LocalVariable,
-    with_base: LocalVariable,
-    found: BlockId,
 }
 
 #[derive(Copy, Clone)]
@@ -30,21 +22,12 @@ struct DynamicUse {
     result: LocalVariable,
 }
 
-impl FileLowering<'_, '_, '_, '_> {
-    fn find_identifier_binding(&self, identifier: ExprId) -> (Binding, Atom) {
-        let ExprKind::Ident(name) = self.hir[identifier].kind else {
-            unreachable!("a dynamic lookup names an Ident expression");
-        };
-        (self.bound.binding(identifier), name)
-    }
-}
-
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    pub(super) fn resolve_dynamic_binding(&mut self, identifier: ExprId) -> DynamicBinding {
-        let (binding, name) = self.file.find_identifier_binding(identifier);
-        let node = NodeData::Expr(identifier);
-        let start = self.file.bound.dynamic_lookup_scope(node);
-        self.resolve_dynamic_name(start.unwrap_or(ScopeId::NONE), binding, name)
+    pub(super) fn resolve_dynamic_binding(&mut self, identifier: ExprId) -> Option<DynamicBinding> {
+        let bound = self.file.bound;
+        let start = bound.dynamic_lookup_scope(NodeData::Expr(identifier))?;
+        let name = self.file.identifier_name(identifier);
+        Some(self.resolve_dynamic_name(start, bound.binding(identifier), name))
     }
 
     pub(super) fn resolve_dynamic_name(
@@ -59,25 +42,48 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Binding::Arguments(unit) => bound.top_scope(self.file.hir, unit),
             Binding::Free | Binding::CommonJs(_) => ScopeId::NONE,
         };
-        let lookup = DynamicLookup {
-            key: self.file.name_key(name),
-            holder: self.builder.create_variable(None),
-            with_base: self.builder.create_variable(None),
-            found: self.create_block(),
-        };
-        let mut scope = start;
-        while scope.is_some() && scope != until {
-            self.emit_dynamic_scope_test(scope, lookup);
-            scope = bound.scopes[scope.idx()].parent;
+        let key = self.file.name_key(name);
+        let holder = self.builder.create_variable(None);
+        let with_base = self.builder.create_variable(None);
+        let found = self.create_block();
+        let mut enclosing = start;
+        while enclosing.is_some() && enclosing != until {
+            let scope = enclosing;
+            enclosing = bound.scopes[scope.idx()].parent;
+            let is_with = matches!(bound.scopes[scope.idx()].kind, ScopeKind::With(_));
+            let stored = if is_with {
+                BindingRef::Slot(scope, ScopeSlot::WithObject)
+            } else {
+                BindingRef::Slot(scope, ScopeSlot::EvalVariables)
+            };
+            if !is_with && self.file.scopes.placement(stored).is_none() {
+                continue;
+            }
+            let object = self.get_stored(stored);
+            let has_binding = self.builder.scope_has_binding(object, key);
+            let hit = self.create_block();
+            let next = self.create_block();
+            self.builder
+                .branch(has_binding, Edge::to(hit), Edge::to(next));
+            self.continue_in(hit);
+            self.builder.write_variable(holder, object);
+            let base = if is_with {
+                object
+            } else {
+                self.builder.undefined()
+            };
+            self.builder.write_variable(with_base, base);
+            self.jump(found);
+            self.continue_in(next);
         }
         let missing = self.builder.undefined();
-        self.builder.write_variable(lookup.holder, missing);
-        self.builder.write_variable(lookup.with_base, missing);
-        self.jump(lookup.found);
-        self.continue_in(lookup.found);
+        self.builder.write_variable(holder, missing);
+        self.builder.write_variable(with_base, missing);
+        self.jump(found);
+        self.continue_in(found);
         DynamicBinding {
-            holder: self.builder.read_variable(lookup.holder),
-            with_base: self.builder.read_variable(lookup.with_base),
+            holder: self.builder.read_variable(holder),
+            with_base: self.builder.read_variable(with_base),
         }
     }
 
@@ -87,9 +93,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         holder: ValueId,
         read: BindingRead,
     ) -> ValueId {
-        let (binding, name) = self.file.find_identifier_binding(identifier);
+        let name = self.file.identifier_name(identifier);
         let dynamic = self.emit_object_path_get(name, holder);
-        let value = self.read_binding(binding, name, read);
+        let value = self.read_binding(self.file.bound.binding(identifier), name, read);
         let value = match self.file.builtins.of_expr(identifier) {
             Some(Resolved::DynamicGlobal(path))
                 if path.mutability >= Mutability::ConstantUnlessWritten =>
@@ -126,14 +132,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.prop_has(object, key);
         self.emit_set(object, PropertyName::Constant(key), value);
         self.finish_object_path(dynamic, value);
-        bindings::set_binding(self, binding, name, value, None);
+        self.store_binding(binding, name, value, None, true);
         self.finish_binding_path(dynamic, value);
     }
 
-    pub(super) fn delete_dynamic_binding(&mut self, identifier: ExprId) -> ValueId {
-        let (binding, name) = self.file.find_identifier_binding(identifier);
-        let holder = self.resolve_dynamic_binding(identifier).holder;
-        let (object, dynamic) = self.begin_dynamic_use(holder);
+    pub(crate) fn delete_identifier(&mut self, identifier: ExprId) -> ValueId {
+        let name = self.file.identifier_name(identifier);
+        let binding = self.file.bound.binding(identifier);
+        let Some(found) = self.resolve_dynamic_binding(identifier) else {
+            return self.delete_binding(binding, name);
+        };
+        let (object, dynamic) = self.begin_dynamic_use(found.holder);
         let key = self.file.name_key(name);
         let deleted = self
             .builder
@@ -141,35 +150,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.finish_object_path(dynamic, deleted);
         let deleted = self.delete_binding(binding, name);
         self.finish_binding_path(dynamic, deleted)
-    }
-
-    fn emit_dynamic_scope_test(&mut self, scope: ScopeId, lookup: DynamicLookup) {
-        let kind = self.file.bound.scopes[scope.idx()].kind;
-        let is_with = matches!(kind, ScopeKind::With(_));
-        let binding = if is_with {
-            BindingRef::Slot(scope, ScopeSlot::WithObject)
-        } else {
-            BindingRef::Slot(scope, ScopeSlot::EvalVariables)
-        };
-        if !is_with && self.file.scopes.placement(binding).is_none() {
-            return;
-        }
-        let object = self.get_stored(binding);
-        let has_binding = self.builder.scope_has_binding(object, lookup.key);
-        let hit = self.create_block();
-        let next = self.create_block();
-        self.builder
-            .branch(has_binding, Edge::to(hit), Edge::to(next));
-        self.continue_in(hit);
-        self.builder.write_variable(lookup.holder, object);
-        let with_base = if is_with {
-            object
-        } else {
-            self.builder.undefined()
-        };
-        self.builder.write_variable(lookup.with_base, with_base);
-        self.jump(lookup.found);
-        self.continue_in(next);
     }
 
     fn begin_dynamic_use(&mut self, holder: ValueId) -> (ValueId, DynamicUse) {

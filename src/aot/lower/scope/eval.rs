@@ -10,7 +10,7 @@ use super::identifiers::BindingRead;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{ECMAMode, EvalScope, EvalScopeFlags};
 use crate::ir::{Edge, ValueId};
-use crate::lower::call::{self, Arguments, CallSite};
+use crate::lower::call::{self, Arguments, Callee};
 use crate::lower::{FileLowering, FunctionLowering, commonjs, expression};
 use crate::modules::ModuleKind;
 
@@ -20,13 +20,6 @@ pub(super) struct EvalContext {
     pub(super) this_scope: Option<ScopeId>,
     pub(super) owner: CodeUnit,
     pub(super) class: Option<ClassId>,
-}
-
-#[derive(Copy, Clone)]
-enum EvalText {
-    Absent,
-    Value(ValueId),
-    FirstElement(ValueId),
 }
 
 pub(crate) fn lower_direct_eval(
@@ -39,12 +32,10 @@ pub(crate) fn lower_direct_eval(
     };
     let site = hir[site];
     let callee = lowering.file.skip_type_syntax(site.callee);
-    let ExprKind::Ident(callee_name) = hir[callee].kind else {
-        unreachable!("the callee of a direct eval is an identifier");
-    };
+    let callee_name = lowering.file.identifier_name(callee);
     lowering.set_position(hir[callee].pos);
     let (function, this) = lowering.lower_identifier_callee(callee);
-    let (arguments, text) = lowering.lower_eval_arguments(site.args);
+    let arguments = lowering.lower_arguments(site.args);
     lowering.set_position(hir[call].pos);
     let eval = lowering.builder.builtin(BuiltinId::Eval);
     let is_eval = lowering.builder.strict_eq(function, eval);
@@ -63,16 +54,14 @@ pub(crate) fn lower_direct_eval(
     lowering.continue_in(direct);
     let evaluated = match lowering.file.find_binding_named_by_text(call, site.args) {
         Some((binding, name)) => lowering.read_binding(binding, name, BindingRead::Value),
-        None => lowering.emit_direct_eval(call, text),
+        None => lowering.emit_direct_eval(call, &arguments),
     };
     lowering.jump_with(join, &[evaluated]);
 
     lowering.continue_in(ordinary);
-    let call_site = CallSite {
-        callee_name: Some(lowering.file.intern_atom(callee_name)),
-        ..CallSite::default()
-    };
-    let returned = call::emit_call(lowering, other_function, this, arguments, call_site);
+    let name = Some(lowering.file.intern_atom(callee_name));
+    let callee = Callee::without_key(other_function, this, name);
+    let returned = call::emit_call_of(lowering, callee, arguments);
     lowering.jump_with(join, &[returned]);
 
     lowering.continue_in(join);
@@ -91,12 +80,8 @@ impl FileLowering<'_, '_, '_, '_> {
         let Constant::String(name) = text else {
             return None;
         };
-        if bound
-            .runtime
-            .eval_scopes()
-            .iter()
-            .any(|entry| entry.1.is_sloppy)
-        {
+        let mut eval_scopes = bound.runtime.eval_scopes().iter();
+        if eval_scopes.any(|entry| entry.1.is_sloppy) {
             return None;
         }
         let eval_scope = bound.eval_scope(call)?;
@@ -134,69 +119,55 @@ impl FileLowering<'_, '_, '_, '_> {
         };
         let this_scope = self.scopes.lexical_owner(scope);
         let owner = bound.code_unit(this_scope);
-        match owner {
-            CodeUnit::File => EvalContext {
-                flags: arrow_flags | compute_module_flags(self.inputs.modules.kind(self.file)),
-                this_scope: None,
-                owner,
-                class: None,
+        let (flags, this_scope, class) = match owner {
+            CodeUnit::File => match self.inputs.modules.kind(self.file) {
+                ModuleKind::CommonJs => (compute_function_flags(FnKind::Expr, false), None, None),
+                _ => (EvalScopeFlags::default(), None, None),
             },
             CodeUnit::Function(function) => {
                 let is_derived = self.is_derived_constructor(function);
                 let kind = hir.runtime_function_kind(function);
-                EvalContext {
-                    flags: arrow_flags | compute_function_flags(kind, is_derived),
-                    this_scope: Some(this_scope),
-                    owner,
-                    class: bound.function_class(function),
-                }
+                let flags = compute_function_flags(kind, is_derived);
+                (flags, Some(this_scope), bound.function_class(function))
             }
-            CodeUnit::FieldInitializer(member) => EvalContext {
-                flags: arrow_flags | compute_initializer_flags(),
-                this_scope: Some(this_scope),
-                owner,
-                class: bound.member_class(member),
-            },
+            CodeUnit::FieldInitializer(member) => {
+                let flags = compute_initializer_flags();
+                (flags, Some(this_scope), bound.member_class(member))
+            }
+        };
+        EvalContext {
+            flags: arrow_flags | flags,
+            this_scope,
+            owner,
+            class,
         }
     }
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    fn lower_eval_arguments(&mut self, arguments: IdList<ExprId>) -> (Arguments, EvalText) {
-        let arguments = self.lower_arguments(arguments);
-        let text = match &arguments {
+    fn emit_direct_eval(&mut self, call: ExprId, arguments: &Arguments) -> ValueId {
+        let text = match arguments {
             Arguments::Values(values) => match values.first() {
-                Some(&text) => EvalText::Value(text),
-                None => EvalText::Absent,
+                Some(&text) => text,
+                None => return self.builder.undefined(),
             },
-            Arguments::List(list) => EvalText::FirstElement(*list),
-        };
-        (arguments, text)
-    }
-
-    fn emit_direct_eval(&mut self, call: ExprId, text: EvalText) -> ValueId {
-        let text = match text {
-            EvalText::Absent => return self.builder.undefined(),
-            EvalText::Value(text) => text,
-            EvalText::FirstElement(list) => {
+            Arguments::List(list) => {
                 let index = self.builder.integer(0);
-                self.builder.elem_get(list, index)
+                self.builder.elem_get(*list, index)
             }
         };
         let eval_scope = self.file.bound.eval_scope(call);
         let eval_scope = *eval_scope.expect("lower_direct_eval takes a call with an eval scope");
         let context = self.file.compute_eval_context(eval_scope.scope);
-        let this_value = if context
-            .flags
-            .contains(EvalScopeFlags::IS_IN_DERIVED_CONSTRUCTOR)
-        {
+        let flags = context.flags;
+        let this_value = if flags.contains(EvalScopeFlags::IS_IN_DERIVED_CONSTRUCTOR) {
             self.builder.undefined()
         } else {
             self.get_this()
         };
-        let is_in_function = context.flags.contains(EvalScopeFlags::IS_IN_FUNCTION);
+        let is_in_function = flags.contains(EvalScopeFlags::IS_IN_FUNCTION);
         let new_target = is_in_function.then(|| self.get_new_target());
-        let record = self.collect_eval_bindings(eval_scope, context);
+        let (bindings, operands) = self.collect_eval_bindings(eval_scope, context);
         let mode = if eval_scope.is_sloppy {
             ECMAMode::Sloppy
         } else {
@@ -204,18 +175,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let scope = self.file.fragment.add_eval_scope(EvalScope {
             mode,
-            flags: context.flags,
-            bindings: record.bindings,
+            flags,
+            bindings,
         });
         self.builder
-            .direct_eval(scope, text, this_value, new_target, &record.operands)
-    }
-}
-
-fn compute_module_flags(kind: ModuleKind) -> EvalScopeFlags {
-    match kind {
-        ModuleKind::CommonJs => compute_function_flags(FnKind::Expr, false),
-        _ => EvalScopeFlags::default(),
+            .direct_eval(scope, text, this_value, new_target, &operands)
     }
 }
 

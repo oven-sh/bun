@@ -16,7 +16,7 @@ impl JsonWriter {
 
     pub(super) fn string(&mut self, key: &str, value: &[u8]) {
         self.write_key(key);
-        self.write_string(value);
+        json_stringify(value, &mut self.bytes);
     }
 
     pub(super) fn number(&mut self, key: &str, value: u64) {
@@ -24,7 +24,6 @@ impl JsonWriter {
         self.write_decimal(value);
     }
 
-    /// A number with one decimal.
     pub(super) fn tenths(&mut self, key: &str, tenths: u32) {
         self.write_key(key);
         self.write_decimal(u64::from(tenths / 10));
@@ -45,7 +44,7 @@ impl JsonWriter {
             if index > 0 {
                 self.bytes.push(b',');
             }
-            self.write_string(value);
+            json_stringify(value, &mut self.bytes);
         }
         self.bytes.push(b']');
     }
@@ -78,6 +77,21 @@ impl JsonWriter {
     pub(super) fn end_array(&mut self) {
         self.bytes.push(b']');
         self.needs_comma = true;
+    }
+
+    pub(super) fn objects<T>(
+        &mut self,
+        key: &str,
+        items: impl IntoIterator<Item = T>,
+        mut write_members: impl FnMut(&mut JsonWriter, T),
+    ) {
+        self.begin_array(key);
+        for item in items {
+            self.begin_element();
+            write_members(self, item);
+            self.end_object();
+        }
+        self.end_array();
     }
 
     pub(super) fn begin_element(&mut self) {
@@ -117,10 +131,6 @@ impl JsonWriter {
     fn write_decimal(&mut self, value: u64) {
         let mut buffer = ItoaBuf::new();
         self.bytes.extend_from_slice(itoa(&mut buffer, value));
-    }
-
-    fn write_string(&mut self, value: &[u8]) {
-        json_stringify(value, &mut self.bytes);
     }
 }
 

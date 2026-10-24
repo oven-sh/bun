@@ -3,22 +3,18 @@ use crate::ir::{Id, StringId, StringTable};
 use crate::link::LinkUnit;
 use crate::link::state::{MergedStrings, UnitMarks};
 use crate::link::strings::merge_strings;
-use crate::link::testing::{Projects, forward, mark_everything, reverse, unit_in, with_test_files};
-use crate::load::ProjectId;
-use crate::lower::{FragmentBuilder, ModuleFragment};
+use crate::link::testing::{
+    Projects, finish_unit, forward, mark_everything, reverse, with_test_files,
+};
+use crate::lower::FragmentBuilder;
 use bun_sema::program::FileId;
-
-fn finish(projects: &Projects<'_, '_>, fragment: FragmentBuilder) -> LinkUnit {
-    let fragment = fragment.finish(ModuleFragment::default());
-    unit_in(projects, ProjectId::Application, fragment)
-}
 
 fn create_unit(projects: &Projects<'_, '_>, file: u32, texts: &[&[u8]]) -> LinkUnit {
     let mut fragment = FragmentBuilder::new(FileId(file));
     for text in texts {
         fragment.strings.intern(text);
     }
-    finish(projects, fragment)
+    finish_unit(projects, fragment)
 }
 
 fn mark_all(units: &[LinkUnit]) -> Vec<UnitMarks> {
@@ -207,7 +203,7 @@ fn task_order_does_not_change_table() {
         }
         let units: Vec<LinkUnit> = fragments
             .into_iter()
-            .map(|fragment| finish(projects, fragment))
+            .map(|fragment| finish_unit(projects, fragment))
             .collect();
         let marks = mark_all(&units);
         let in_order = merge_strings(&units, &marks, &forward);

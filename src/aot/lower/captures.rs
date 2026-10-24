@@ -6,9 +6,9 @@ mod values;
 use bun_sema::bind::ScopeId;
 use smallvec::SmallVec;
 
-pub(in crate::lower) use self::needs::is_initialized_before;
+pub(in crate::lower) use self::needs::{compute_captures, is_initialized_before};
 pub(in crate::lower) use self::values::captures_home_object;
-use super::FunctionLowering;
+pub(crate) use self::values::unpack_captures;
 use super::scope::{BindingRef, Initialization, WalkedFunction, WalkedFunctionId};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -48,13 +48,4 @@ pub(in crate::lower) struct CapturePlan {
 pub(in crate::lower) fn max_captures() -> usize {
     let limit = crate::ir::generated::LimitId::MaxCaptures;
     limit.value_on_arm64().min(limit.value_on_x86_64()) as usize
-}
-
-pub(in crate::lower) fn compute_captures(input: &CaptureInput<'_>) -> CapturePlan {
-    needs::solve(input)
-}
-
-/// At the entry of every function.
-pub(crate) fn unpack_captures(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) {
-    values::unpack_captures(lowering);
 }

@@ -2,7 +2,7 @@
 mod tests;
 
 use bun_sema::atom::{Atom, Interner, known};
-use bun_sema::bind::{Binding, Bound, Decl, SymbolId};
+use bun_sema::bind::{Binding, Bound, Decl};
 use bun_sema::check::aot::ObjectMemberKind;
 use bun_sema::hir::{self, ExportSpecId, StmtId, StmtKind};
 use bun_sema::util::SharedSort;
@@ -55,7 +55,9 @@ impl ExportScan<'_, '_> {
         let bound = self.bound;
         let mut named = Vec::new();
         for &(exported, symbol) in bound.table(bound.symbol(bound.file_symbol).exports) {
-            let (local, binding) = match self.find_exported_value(symbol) {
+            let mut declarations = bound.symbol(symbol).decls.iter();
+            let value = declarations.find_map(|&declaration| self.find_declared_value(declaration));
+            let (local, binding) = match value {
                 Some(ExportedValue::Expression(statement)) => {
                     return ModuleValue::DefaultExpression(statement);
                 }
@@ -78,11 +80,6 @@ impl ExportScan<'_, '_> {
         let text_of = |export: &NamedExport| self.atoms.bytes(export.exported);
         named.shared_sort_unstable_by(|a, b| compare_code_units(text_of(a), text_of(b)));
         ModuleValue::NamedExports(named)
-    }
-
-    fn find_exported_value(&self, symbol: SymbolId) -> Option<ExportedValue> {
-        let mut declarations = self.bound.symbol(symbol).decls.iter();
-        declarations.find_map(|&declaration| self.find_declared_value(declaration))
     }
 
     fn find_declared_value(&self, declaration: Decl) -> Option<ExportedValue> {
@@ -131,10 +128,8 @@ pub(super) fn emit_module_value(
     match value {
         ModuleValue::Nothing => lowering.builder.undefined(),
         ModuleValue::DefaultExpression(statement) => {
-            let symbol = lowering
-                .file
-                .bound
-                .declared_symbol(Decl::ExportExpr(*statement));
+            let declaration = Decl::ExportExpr(*statement);
+            let symbol = lowering.file.bound.declared_symbol(declaration);
             lowering.get_binding(Binding::Symbol(symbol), known::default)
         }
         ModuleValue::DefaultDeclaration(binding) => lowering.get_binding(*binding, known::default),
@@ -144,18 +139,16 @@ pub(super) fn emit_module_value(
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn emit_named_exports(&mut self, exports: &[NamedExport]) -> ValueId {
-        let members: Vec<(PropertyKeyId, ObjectMemberKind)> = exports
+        let keys = exports
             .iter()
-            .map(|export| {
-                let key = self.file.name_key(export.exported);
-                (key, ObjectMemberKind::Field)
-            })
-            .collect();
+            .map(|export| self.file.name_key(export.exported));
+        let members: Vec<(PropertyKeyId, ObjectMemberKind)> =
+            keys.map(|key| (key, ObjectMemberKind::Field)).collect();
         let layout = self.file.untyped_layout(&members);
         let mut created = self.begin_object(layout);
         for (export, &(key, _)) in exports.iter().zip(&members) {
             let value = self.get_binding(export.binding, export.local);
-            self.add_property(&mut created, PropertyName::Constant(key), value);
+            self.add_property(&mut created, PropertyName::Constant(key), value, None);
         }
         object::finish_object(self, created)
     }

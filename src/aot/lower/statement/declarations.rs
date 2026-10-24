@@ -116,16 +116,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         scope::initialize_binding(self, Binding::Symbol(symbol), name, undefined);
     }
 
-    pub(super) fn lower_function_statement(&mut self, statement: StmtId, function: FnId) {
-        let Some(implicit_block) = self.file.bound.own_scope(statement).some() else {
-            return self.lower_function_declaration(function);
-        };
-        self.enter_scope(implicit_block);
-        self.lower_function_declaration(function);
-        self.leave_scope(implicit_block);
-    }
-
-    fn lower_function_declaration(&mut self, function: FnId) {
+    pub(super) fn lower_function_declaration(&mut self, function: FnId) {
         let (hir, bound) = (self.file.hir, self.file.bound);
         if matches!(hir[function].body, FnBody::None) {
             return;

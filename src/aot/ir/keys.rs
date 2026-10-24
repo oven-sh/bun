@@ -83,8 +83,6 @@ pub enum VariableKey {
     Copy(SyntheticExportId),
     /// `module.exports` of a CommonJS file whose exports are one value.
     ModuleExports(FileId),
-    /// The same for the callback of `__commonJS(cb)`.
-    InnerModuleExports(FunctionRef),
     ClassSlot {
         class: ClassRef,
         slot: ClassSlot,
@@ -159,7 +157,6 @@ impl VariableKey {
             VariableKey::Symbol(symbol) => Some(symbol.file),
             VariableKey::ClassSlot { class, .. } => Some(class.file),
             VariableKey::ModuleExports(file) | VariableKey::ModulePath { file, .. } => Some(file),
-            VariableKey::InnerModuleExports(callback) => Some(callback.file),
             VariableKey::PrivateState { state, .. } => Some(state.file),
             VariableKey::SyntheticExport(_) | VariableKey::Copy(_) => None,
         }
@@ -284,10 +281,6 @@ mod tests {
         }
         assert_eq!(VariableKey::Symbol(SYMBOL).home_file(), Some(FILE));
         assert_eq!(VariableKey::ModuleExports(FILE).home_file(), Some(FILE));
-        assert_eq!(
-            VariableKey::InnerModuleExports(FUNCTION).home_file(),
-            Some(FILE)
-        );
         let synthetic_export = VariableKey::SyntheticExport(SyntheticExportId(9));
         assert_eq!(synthetic_export.home_file(), None);
         assert_eq!(VariableKey::Copy(SyntheticExportId(9)).home_file(), None);

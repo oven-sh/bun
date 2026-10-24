@@ -1,25 +1,19 @@
-//! What the build knows of the module graph, as the rest of the front end asks for it.
-
 #[cfg(test)]
 mod tests;
 
 use super::ApplicationGraph;
-use super::bindings::{
-    Holder, ImportBinding, ModuleExport, ModuleRequest, SyntheticExport, SyntheticExportId,
-};
-use super::failures::ModuleFailureId;
-use super::graph::ModuleGraph;
+use super::bindings::{ImportBinding, ModuleExport, ModuleRequest, SyntheticExportId};
+use super::graph::{ModuleGraph, find};
 use super::imports::NamedMember;
 use super::interop::{ImportPhase, ModuleKind};
-use super::order::{ModuleNumbers, OrderParts, SiteKey};
+use super::order::{OrderParts, SiteKey};
 use super::reached_targets::ReachedTargets;
-use super::wrapped::InnerModuleKind;
 use crate::builtins::RuntimeModule;
 use crate::ir::generated::ModuleRequestKind;
 use crate::ir::parallel::{InParallel, for_each_mut};
 use bun_sema::atom::Atom;
 use bun_sema::bind::SymbolId;
-use bun_sema::hir::{ExprId, FnId, ImportEqualsId, StmtId};
+use bun_sema::hir::{ExprId, ImportEqualsId, StmtId};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Sym};
 use bun_sema::util::{FxHashMap, FxHashSet};
@@ -28,11 +22,6 @@ use core::ops::Range;
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleRef {
     File(FileId),
-    /// The callback of `__commonJS(cb)` or `__esm(fn)` in a bundle.
-    Inner {
-        file: FileId,
-        callback: FnId,
-    },
     /// What an ES importer of a CommonJS file requests in its place: it evaluates the file and takes the copies.
     Face(FileId),
     /// Throws the link error for the first name that an ES graph imports and no CommonJS file of it has stored.
@@ -48,10 +37,6 @@ impl ModuleRef {
     pub fn map_file(self, map: &dyn Fn(FileId) -> Option<FileId>) -> Option<ModuleRef> {
         Some(match self {
             ModuleRef::File(file) => ModuleRef::File(map(file)?),
-            ModuleRef::Inner { file, callback } => ModuleRef::Inner {
-                file: map(file)?,
-                callback,
-            },
             ModuleRef::Face(file) => ModuleRef::Face(map(file)?),
             ModuleRef::Check(file) => ModuleRef::Check(map(file)?),
             ModuleRef::Runtime(_) => self,
@@ -89,7 +74,6 @@ pub enum Site {
     AsToday,
 }
 
-/// What a holder stands for.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum View {
     Namespace(ModuleRef),
@@ -108,7 +92,6 @@ pub enum Member {
     OnObject,
 }
 
-/// A site that evaluates its target.
 #[derive(Copy, Clone, Debug)]
 pub(super) struct StoredSite {
     pub referrer: ModuleRef,
@@ -117,138 +100,66 @@ pub(super) struct StoredSite {
 }
 
 pub(super) struct Plan {
-    numbers: ModuleNumbers,
-    /// The callbacks of `numbers.inner_modules()`.
-    inner_callbacks: Vec<FnId>,
-    is_code_of_program: Vec<bool>,
-    is_exposed: Vec<bool>,
-    is_half: Vec<bool>,
+    order: OrderParts,
     keeps_module_object: Vec<bool>,
     names_way_to_module_objects: Vec<bool>,
     is_namespace_seen: Vec<bool>,
-    prefix_roots: Vec<FileId>,
-    /// The statements that define inner modules.
+    /// The statements of modules that cannot be loaded.
     erased_statements: Vec<(FileId, StmtId)>,
-    named_members: FxHashMap<(ModuleRef, Atom), NamedMember<ImportBinding>>,
-    variables: FxHashMap<(ModuleRef, Atom), SyntheticExportId>,
-    /// What the inner modules ask for.
-    pub(super) inner_requests: Vec<Vec<ModuleRequest>>,
+    pub named_members: FxHashMap<(ModuleRef, Atom), NamedMember<ImportBinding>>,
+    pub variables: FxHashMap<(ModuleRef, Atom), SyntheticExportId>,
     final_requests: Vec<ModuleRequest>,
     final_ranges: FxHashMap<ModuleRef, Range<u32>>,
-    is_finished: bool,
-}
-
-pub(super) struct PlanParts {
-    pub order: OrderParts,
-    pub erased_statements: Vec<(FileId, StmtId)>,
-    pub named_members: Vec<((ModuleRef, Atom), NamedMember<ImportBinding>)>,
-    pub seen_namespaces: Vec<ModuleRef>,
+    pub is_finished: bool,
 }
 
 impl Plan {
-    pub(super) fn new(parts: PlanParts, synthetic_exports: &[SyntheticExport]) -> Plan {
-        let OrderParts {
-            numbers,
-            is_code_of_program,
-            is_exposed,
-            is_half,
-            prefix_roots,
-        } = parts.order;
-        let ids = (0..).map(SyntheticExportId);
-        let variables = synthetic_exports.iter().zip(ids);
-        let mut erased_statements = parts.erased_statements;
+    pub(super) fn new(order: OrderParts, mut erased_statements: Vec<(FileId, StmtId)>) -> Plan {
         erased_statements.sort_unstable();
-        let mut plan = Plan {
-            inner_callbacks: numbers
-                .inner_modules()
-                .iter()
-                .map(|inner| inner.1)
-                .collect(),
-            keeps_module_object: vec![false; numbers.len()],
-            names_way_to_module_objects: vec![false; numbers.len()],
-            is_namespace_seen: vec![false; numbers.len()],
-            numbers,
-            is_code_of_program,
-            is_exposed,
-            is_half,
-            prefix_roots,
+        Plan {
+            keeps_module_object: vec![false; order.numbers.len()],
+            names_way_to_module_objects: vec![false; order.numbers.len()],
+            is_namespace_seen: vec![false; order.numbers.len()],
+            order,
             erased_statements,
-            named_members: parts.named_members.into_iter().collect(),
-            variables: variables
-                .map(|(export, id)| ((export.module, export.name), id))
-                .collect(),
-            inner_requests: Vec::new(),
+            named_members: FxHashMap::default(),
+            variables: FxHashMap::default(),
             final_requests: Vec::new(),
             final_ranges: FxHashMap::default(),
             is_finished: false,
-        };
-        for module in parts.seen_namespaces {
-            plan.add(|plan| &mut plan.is_namespace_seen, module);
         }
-        plan
     }
 
     fn has(&self, set: &[bool], module: ModuleRef) -> bool {
-        self.numbers
-            .number_of(module)
-            .is_some_and(|number| set[number])
+        let number = self.order.numbers.number_of(module);
+        number.is_some_and(|number| set[number])
     }
 
     fn add(&mut self, set: fn(&mut Plan) -> &mut Vec<bool>, module: ModuleRef) {
-        if let Some(number) = self.numbers.number_of(module) {
+        if let Some(number) = self.order.numbers.number_of(module) {
             set(self)[number] = true;
         }
     }
-
-    pub(super) fn inner_modules(&self) -> &[(FileId, FnId)] {
-        self.numbers.inner_modules()
-    }
-
-    fn inner_modules_of(&self, file: FileId) -> Range<usize> {
-        let inner_modules = self.numbers.inner_modules();
-        let start = inner_modules.partition_point(|inner| inner.0 < file);
-        let end = inner_modules.partition_point(|inner| inner.0 <= file);
-        start..end
-    }
-}
-
-fn find<K: Copy + Ord, V: Copy>(entries: &[(K, V)], key: K) -> Option<V> {
-    let at = entries.binary_search_by_key(&key, |entry| entry.0).ok()?;
-    Some(entries[at].1)
 }
 
 impl ModuleGraph {
     /// Final behind `finish_plan`.
     pub fn shape(&self, module: ModuleRef) -> Shape {
         match module {
-            ModuleRef::File(_) | ModuleRef::Inner { .. } if !self.is_code_of_program(module) => {
-                Shape::AsToday
-            }
+            ModuleRef::File(_) if !self.is_code_of_program(module) => Shape::AsToday,
             ModuleRef::File(file) => match self.kind(file) {
                 ModuleKind::SourceText => Shape::EsModule,
                 ModuleKind::CommonJs => self.commonjs().shape(module),
                 _ => Shape::AsToday,
             },
-            ModuleRef::Inner { file, callback } => {
-                match self
-                    .wrapped()
-                    .of_callback(file, callback)
-                    .map(|inner| inner.kind)
-                {
-                    // Its variables are the bindings of the file.
-                    Some(InnerModuleKind::Esm) => Shape::EsModule,
-                    Some(InnerModuleKind::CommonJs) => self.commonjs().shape(module),
-                    None => Shape::AsToday,
-                }
-            }
             ModuleRef::Face(_) | ModuleRef::Check(_) => Shape::EsModule,
             ModuleRef::Runtime(_) | ModuleRef::External { .. } => Shape::AsToday,
         }
     }
 
-    /// A file of the program that is code and no library, or an inner module of one: what a site can evaluate.
+    /// A file of the program that is code and no library: what a site can evaluate.
     pub fn is_code_of_program(&self, module: ModuleRef) -> bool {
-        self.plan().has(&self.plan().is_code_of_program, module)
+        self.plan.has(&self.plan.order.is_code_of_program, module)
     }
 
     /// `require(K)`, `module.require(K)`, `import.meta.require(K)`, a call of what `createRequire` made for the file itself, `require_x()` and `init_x()`.
@@ -260,13 +171,10 @@ impl ModuleGraph {
             ImportSiteKind::Require(call),
             ImportSiteKind::ImportMetaRequire(call),
         ];
-        let is_site = kinds
-            .iter()
-            .any(|&kind| self.find_site_answer(file, kind).is_some());
-        is_site.then_some(Site::AsToday)
+        let is_site = |&kind: &ImportSiteKind| self.find_site_answer(file, kind).is_some();
+        kinds.iter().any(is_site).then_some(Site::AsToday)
     }
 
-    /// `import a = require(K)`.
     pub fn import_equals_site(&self, file: FileId, declaration: ImportEqualsId) -> Option<Site> {
         if let Some(site) = self.find_stored_site(file, SiteKey::ImportEquals(declaration)) {
             return Some(self.finish_site(site));
@@ -286,26 +194,21 @@ impl ModuleGraph {
     }
 
     fn finish_site(&self, site: StoredSite) -> Site {
-        let StoredSite {
-            referrer,
-            target,
-            is_bare,
-        } = site;
         // From the first `require` on the namespace object of an ES module has `__esModule`.
-        let shows_mark = self.shape(target) == Shape::EsModule
-            && self.plan().has(&self.plan().is_namespace_seen, target);
+        let shows_mark = self.shape(site.target) == Shape::EsModule
+            && self.plan.has(&self.plan.is_namespace_seen, site.target);
         Site::Evaluate {
-            target,
-            is_bare,
+            target: site.target,
+            is_bare: site.is_bare,
             records: shows_mark
-                || self.keeps_module_object(referrer)
-                || self.keeps_module_object(target),
+                || self.keeps_module_object(site.referrer)
+                || self.keeps_module_object(site.target),
         }
     }
 
     /// `false`: the call is a statement, the initializer of a holder or of a bound pattern, the object of a bound member, or only tested.
     pub fn is_site_read_as_value(&self, file: FileId, call: ExprId) -> bool {
-        let Some(is_unread_in_every_shape) = find(self.unread_sites(file), call) else {
+        let Some(is_unread_in_every_shape) = find(&self.row(file).unread_sites, call) else {
             return true;
         };
         if is_unread_in_every_shape {
@@ -329,33 +232,28 @@ impl ModuleGraph {
 
     /// A name that stands for a module and holds `true`. A name that has to hold the object is an ordinary binding.
     pub fn holder(&self, file: FileId, symbol: SymbolId) -> Option<View> {
-        let holder = self.find_holder(file, symbol)?;
-        (!holder.is_needed_as_value).then_some(holder.view)
-    }
-
-    fn find_holder(&self, file: FileId, symbol: SymbolId) -> Option<Holder> {
         let holders = self.holders(file);
         let at = holders
             .binary_search_by_key(&symbol, |holder| holder.symbol)
             .ok()?;
-        Some(holders[at])
+        (!holders[at].is_needed_as_value).then_some(holders[at].view)
     }
 
     /// `E.N`, `R.N`, `d.N` and `ns.N`, where the access is bound to a name of a module.
     pub fn member(&self, file: FileId, access: ExprId) -> Option<Member> {
-        if let Some((module, member)) = find(self.fixed_members(file), access) {
+        if let Some((module, member)) = find(&self.row(file).fixed_members, access) {
             return Some(self.finish_fixed_member(module, member));
         }
-        let Some(binding) = find(self.bound_members(file), access) else {
+        let Some(binding) = find(&self.row(file).members, access) else {
             return self.commonjs().own_member(file, access);
         };
-        let accessed = find(self.accessed_modules(file), access)?;
+        let accessed = find(&self.row(file).accessed, access)?;
         self.finish_member(accessed.module, binding, accessed.is_imported)
     }
 
     /// `R.N` for a name that no expression spells: a key of `const { N } = require(K)`, a key of `module.exports = { N }`, the source of a copy.
     pub fn member_named(&self, module: ModuleRef, name: Atom) -> Option<Member> {
-        match self.plan().named_members.get(&(module, name)) {
+        match self.plan.named_members.get(&(module, name)) {
             Some(&NamedMember::Fixed(member)) => Some(self.finish_fixed_member(module, member)),
             Some(&NamedMember::Binding(binding)) => self.finish_member(module, binding, false),
             None => {
@@ -367,7 +265,7 @@ impl ModuleGraph {
 
     /// What such a name of an ES module is bound to, where it stands for a name of a CommonJS module: `export { N } from "./k.cjs"`.
     pub fn binding_of_member_named(&self, module: ModuleRef, name: Atom) -> Option<ImportBinding> {
-        match self.plan().named_members.get(&(module, name)) {
+        match self.plan.named_members.get(&(module, name)) {
             Some(&NamedMember::Binding(binding)) => Some(binding),
             Some(NamedMember::Fixed(_)) | None => None,
         }
@@ -402,7 +300,7 @@ impl ModuleGraph {
             }
             ImportBinding::Synthetic(_) if is_es_module => None,
             ImportBinding::Synthetic(variable) => Some(match is_imported {
-                true => self.commonjs().imported_member(accessed, variable),
+                true => self.commonjs().imported_member(variable),
                 false => self.commonjs().required_member(accessed, variable),
             }),
             _ => None,
@@ -411,26 +309,23 @@ impl ModuleGraph {
 
     /// The variable of a name of a CommonJS module. `None`: no binding asks for it.
     pub fn variable_of(&self, module: ModuleRef, name: Atom) -> Option<SyntheticExportId> {
-        self.plan().variables.get(&(module, name)).copied()
+        self.plan.variables.get(&(module, name)).copied()
     }
 
-    /// The statement has no code.
     pub fn erased(&self, file: FileId, statement: StmtId) -> bool {
-        self.plan()
-            .erased_statements
-            .binary_search(&(file, statement))
-            .is_ok()
+        let erased_statements = &self.plan.erased_statements;
+        erased_statements.binary_search(&(file, statement)).is_ok()
             || self.commonjs().erased(file, statement)
     }
 
     /// A late site names the module, or a module that a late site may run asks for it.
     pub fn exposed(&self, module: ModuleRef) -> bool {
-        self.plan().has(&self.plan().is_exposed, module)
+        self.plan.has(&self.plan.order.is_exposed, module)
     }
 
     /// Somebody may look at the module while its body runs: it lies on a cycle of requests, or it is exposed.
     pub fn half(&self, module: ModuleRef) -> bool {
-        self.plan().has(&self.plan().is_half, module)
+        self.plan.has(&self.plan.order.is_half, module)
     }
 
     /// A later site of a module whose body threw throws the same error again.
@@ -438,23 +333,19 @@ impl ModuleGraph {
         match module {
             ModuleRef::File(_) => self.is_code_of_program(module),
             ModuleRef::Face(_) | ModuleRef::Check(_) => true,
-            ModuleRef::Inner { file, callback } => {
-                let inner = self.wrapped().of_callback(file, callback);
-                inner.is_some_and(|inner| inner.keeps_error)
-            }
             ModuleRef::Runtime(_) | ModuleRef::External { .. } => false,
         }
     }
 
     /// A read that the build resolved can reach the module object.
     pub fn keeps_module_object(&self, module: ModuleRef) -> bool {
-        self.plan().has(&self.plan().keeps_module_object, module)
+        self.plan.has(&self.plan.keeps_module_object, module)
     }
 
     /// Code of the file names a way from one module object to another.
     pub fn names_way_to_module_objects(&self, module: ModuleRef) -> bool {
-        self.plan()
-            .has(&self.plan().names_way_to_module_objects, module)
+        let plan = &self.plan;
+        plan.has(&plan.names_way_to_module_objects, module)
     }
 
     pub fn settled(&self, module: ModuleRef, name: Atom) -> bool {
@@ -478,16 +369,6 @@ impl ModuleGraph {
         self.commonjs().face(module)
     }
 
-    /// The names that the body of a face copies.
-    pub fn copies(&self, face: FileId) -> &[SyntheticExportId] {
-        self.commonjs().copies(face)
-    }
-
-    /// The copies that must not be empty once every CommonJS file of the graph has run, in the order of the imports.
-    pub fn checked_copies(&self, check: FileId) -> &[(SyntheticExportId, ModuleFailureId)] {
-        self.commonjs().checked_copies(check)
-    }
-
     pub fn exports_of(&self, module: ModuleRef) -> &[ModuleExport] {
         match module {
             ModuleRef::File(file) if self.has_record(file) => self.exports(file),
@@ -496,42 +377,21 @@ impl ModuleGraph {
         }
     }
 
-    /// The callbacks in the file that are modules of their own.
-    pub fn inner_modules(&self, file: FileId) -> &[FnId] {
-        &self.plan().inner_callbacks[self.plan().inner_modules_of(file)]
-    }
-
-    pub fn inner_module(&self, file: FileId, callback: FnId) -> Option<ModuleRef> {
-        let module = ModuleRef::Inner { file, callback };
-        self.plan().numbers.number_of(module).map(|_| module)
-    }
-
     /// With the faces, the checks and the CommonJS files that run first. Final behind `finish_plan`.
     pub fn requests_of(&self, module: ModuleRef) -> &[ModuleRequest] {
-        if let Some(range) = self.plan().final_ranges.get(&module) {
-            return &self.plan().final_requests[range.start as usize..range.end as usize];
+        if let Some(range) = self.plan.final_ranges.get(&module) {
+            return &self.plan.final_requests[range.start as usize..range.end as usize];
         }
-        self.written_requests(module)
-    }
-
-    // What the text of the module asks for.
-    fn written_requests(&self, module: ModuleRef) -> &[ModuleRequest] {
         match module {
             ModuleRef::File(file) if self.has_record(file) => self.requests(file),
-            ModuleRef::Inner { file, callback } => {
-                let inner_modules = self.plan().inner_modules();
-                match inner_modules.binary_search(&(file, callback)) {
-                    Ok(position) => &self.plan().inner_requests[position],
-                    Err(_) => &[],
-                }
-            }
             _ => &[],
         }
     }
 
     /// The object of the module is a value somewhere: the module is `Value`, and with it every module whose names stand for names of it.
     pub fn look_at(&mut self, module: ModuleRef) {
-        self.commonjs_mut().look_at(module);
+        self.plan.is_finished = false;
+        self.commonjs_exports.look_at(module);
     }
 
     /// The modules whose names the text of the module hands on: by a star, by a name that stands for another, or as a whole.
@@ -541,27 +401,23 @@ impl ModuleGraph {
 
     /// A read that the build resolved reaches the module object, which shows `exports`.
     pub fn set_keeps_module_object(&mut self, module: ModuleRef) {
-        self.plan_mut()
-            .add(|plan| &mut plan.keeps_module_object, module);
+        self.plan.add(|plan| &mut plan.keeps_module_object, module);
         self.look_at(module);
     }
 
     pub fn set_names_way_to_module_objects(&mut self, module: ModuleRef) {
-        self.plan_mut()
+        self.plan
             .add(|plan| &mut plan.names_way_to_module_objects, module);
     }
 
-    /// Something looks at the namespace object of the ES module.
     pub fn set_namespace_is_seen(&mut self, module: ModuleRef) {
-        self.plan_mut()
-            .add(|plan| &mut plan.is_namespace_seen, module);
+        self.plan.add(|plan| &mut plan.is_namespace_seen, module);
     }
 
     /// `finish_plan` has to follow.
     pub fn adopt_plan(&mut self, application: &ApplicationGraph<'_>) {
-        let theirs = application.graph;
-        let modules: Vec<ModuleRef> = self.plan().numbers.modules().collect();
-        let mut left_out_inner_modules = Vec::new();
+        let (theirs, their_plan) = (application.graph, &application.graph.plan);
+        let modules: Vec<ModuleRef> = self.plan.order.numbers.modules().collect();
         for module in modules {
             let Some(their_module) = application.application_module(module) else {
                 continue;
@@ -572,51 +428,30 @@ impl ModuleGraph {
             if theirs.names_way_to_module_objects(their_module) {
                 self.set_names_way_to_module_objects(module);
             }
-            if theirs
-                .plan()
-                .has(&theirs.plan().is_namespace_seen, their_module)
-            {
+            if their_plan.has(&their_plan.is_namespace_seen, their_module) {
                 self.set_namespace_is_seen(module);
             }
-            if matches!(module, ModuleRef::Inner { .. }) && theirs.is_left_out(their_module) {
-                left_out_inner_modules.push(module);
-            }
         }
-        self.leave_out_inner_modules(&left_out_inner_modules);
-    }
-
-    pub(super) fn mark_plan_unfinished(&mut self) {
-        self.plan_mut().is_finished = false;
-    }
-
-    pub(super) fn is_plan_finished(&self) -> bool {
-        self.plan().is_finished
     }
 
     /// Behind the last change to a shape and to the files that are left out: which holders do without the object, and what each module asks for at last.
     pub fn finish_plan(&mut self, in_parallel: InParallel<'_>) {
-        if self.is_plan_finished() {
+        if self.plan.is_finished {
             return;
         }
-        self.settle_holders();
-        let (requests, ranges) = self.settle_requests(in_parallel);
-        let plan = self.plan_mut();
-        plan.final_requests = requests;
-        plan.final_ranges = ranges;
-        plan.is_finished = true;
-    }
-
-    fn settle_holders(&mut self) {
         let module_of = |view: View| match view {
             View::Namespace(module) | View::Exports(module) => module,
         };
-        let needs_object: Vec<bool> = self
-            .all_holders()
+        let holders = self.rows.iter().flat_map(|row| &row.holders);
+        let needs_object: Vec<bool> = holders
             .map(|holder| !self.stands_without_object(module_of(holder.view)))
             .collect();
-        for (holder, needs_object) in self.all_holders_mut().zip(needs_object) {
+        let holders = self.rows.iter_mut().flat_map(|row| &mut row.holders);
+        for (holder, needs_object) in holders.zip(needs_object) {
             holder.is_needed_as_value |= needs_object;
         }
+        (self.plan.final_requests, self.plan.final_ranges) = self.settle_requests(in_parallel);
+        self.plan.is_finished = true;
     }
 
     // The CommonJS files, or their faces, that imports between ES modules reach from `root`, depth first, in the order of the imports.
@@ -673,7 +508,7 @@ impl ModuleGraph {
     // By ES module: the CommonJS files that imports between ES modules lead to.
     fn find_commonjs_files_below(&self) -> ReachedTargets {
         let mut successors = Vec::new();
-        successors.resize_with(self.file_count(), Vec::new);
+        successors.resize_with(self.row_by_file.len(), Vec::new);
         let mut commonjs_files = Vec::new();
         for &file in self.record_files() {
             if !self.is_code_of_program(ModuleRef::File(file))
@@ -681,10 +516,8 @@ impl ModuleGraph {
             {
                 continue;
             }
-            let linked = self
-                .requests(file)
-                .iter()
-                .filter_map(|request| self.find_linked_file(request));
+            let requests = self.requests(file).iter();
+            let linked = requests.filter_map(|request| self.find_linked_file(request));
             for target in linked {
                 match self.kind(target) {
                     ModuleKind::SourceText => {}
@@ -697,36 +530,9 @@ impl ModuleGraph {
         ReachedTargets::compute(commonjs_files.into_iter(), &successors)
     }
 
-    /// The ES modules that are linked with `root`, itself first, depth first, in the order of the imports.
-    pub fn modules_linked_with(&self, root: FileId) -> Vec<FileId> {
-        let mut linked = vec![root];
-        let mut seen = FxHashSet::default();
-        seen.insert(root);
-        let mut path = vec![(root, 0)];
-        while let Some((file, next)) = path.last_mut() {
-            let Some(&request) = self.requests(*file).get(*next) else {
-                path.pop();
-                continue;
-            };
-            *next += 1;
-            if let ModuleRef::File(target) = request.target
-                && request.kind == ModuleRequestKind::Import
-                && request.phase == ImportPhase::Evaluation
-                && self.is_code_of_program(request.target)
-                && !self.is_left_out(request.target)
-                && self.kind(target) == ModuleKind::SourceText
-                && seen.insert(target)
-            {
-                linked.push(target);
-                path.push((target, 0));
-            }
-        }
-        linked
-    }
-
     /// The ES modules at which a graph of imports is linked: entry points, and what `import()` or a `require` names.
     pub fn prefix_roots(&self) -> &[FileId] {
-        &self.plan().prefix_roots
+        &self.plan.order.prefix_roots
     }
 
     /// The faces of the other files that have the names which the face of `file` shows, in the order of its copies.
@@ -755,7 +561,8 @@ impl ModuleGraph {
             self.is_code_of_program(ModuleRef::File(file))
                 && self.kind(file) == ModuleKind::SourceText
         };
-        let is_prefix_root = |file: FileId| self.plan().prefix_roots.binary_search(&file).is_ok();
+        let prefix_roots = &self.plan.order.prefix_roots;
+        let is_prefix_root = |file: FileId| prefix_roots.binary_search(&file).is_ok();
         let roots = self.record_files().iter().copied();
         let mut prefixes: Vec<(FileId, Vec<ModuleRef>)> = roots
             .filter(|&file| is_es_module(file) && is_prefix_root(file))
@@ -775,7 +582,7 @@ impl ModuleGraph {
                 let (root, prefix) = prefixes.next().expect("a prefix for each root");
                 debug_assert_eq!(root, file);
                 requests.extend(prefix.into_iter().map(ModuleRequest::import));
-                if !self.checked_copies(file).is_empty() {
+                if !self.commonjs().checked_copies(file).is_empty() {
                     requests.push(ModuleRequest::import(ModuleRef::Check(file)));
                 }
             }

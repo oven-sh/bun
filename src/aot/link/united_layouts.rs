@@ -1,36 +1,13 @@
 use crate::ir::generated::{Field, FieldFlags, Layout, LayoutFlags, LayoutKind, PositionFlags};
 use crate::ir::{
-    DeclaredType, Id, InParallel, LayoutId, LayoutKey, Mapped, Primitives, PropertyKeyId, StringId,
-    Type, TypeFlags, TypeId, TypeTable, drop_each, for_each_mut,
+    DeclaredType, Id, InParallel, LayoutId, Mapped, Primitives, PropertyKeyId, StringId, Type,
+    TypeFlags, TypeId, TypeTable, drop_each, for_each_mut,
 };
 use bun_sema::util::SharedSort;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-pub(super) fn has_united_definitions(key: &LayoutKey) -> bool {
-    key.has_united_definitions()
-}
-
 const FLAGS_THAT_ALL_GIVE: FieldFlags =
     FieldFlags(FieldFlags::IS_REQUIRED.0 | FieldFlags::IS_METHOD.0 | FieldFlags::IS_IMMUTABLE.0);
-
-// Many files define a layout with the same few types.
-struct Unions<'a> {
-    types: &'a mut TypeTable,
-    known: FxHashMap<(TypeId, TypeId), TypeId>,
-}
-
-impl Unions<'_> {
-    fn union(&mut self, left: TypeId, right: TypeId) -> TypeId {
-        if left == right {
-            return left;
-        }
-        let types = &mut *self.types;
-        *self
-            .known
-            .entry((left, right))
-            .or_insert_with(|| types.union(left, right))
-    }
-}
 
 // `ty` holds what either holds.
 fn unite_positions(first: DeclaredType, other: DeclaredType, ty: TypeId) -> DeclaredType {
@@ -149,13 +126,6 @@ fn find_only_literal(ty: &Type) -> Option<Literal> {
 
 type Literals = Vec<(PropertyKeyId, Literal)>;
 
-fn says_what_fields_hold(definition: &Layout) -> bool {
-    definition
-        .fields
-        .iter()
-        .all(|field| field.declared.is_said())
-}
-
 fn list_literals(definition: &Layout, types: &TypeTable) -> Literals {
     let checked = definition
         .fields
@@ -196,7 +166,12 @@ fn collect_views_of_literals(
 ) {
     let definitions = core::iter::once(first).chain(others.iter().copied());
     let mut listed: Vec<(Literals, &Layout)> = definitions
-        .filter(|definition| says_what_fields_hold(definition))
+        .filter(|definition| {
+            definition
+                .fields
+                .iter()
+                .all(|field| field.declared.is_said())
+        })
         .map(|definition| (list_literals(definition, types), definition))
         .collect();
     if listed.iter().all(|(literals, _)| *literals == listed[0].0) {
@@ -217,7 +192,6 @@ fn collect_views_of_literals(
 // The list, and the index in it.
 type Place = (u32, u32);
 
-// A layout with several definitions.
 struct UnitedLayout<'a> {
     id: LayoutId,
     united: &'a mut Layout,
@@ -240,14 +214,14 @@ impl UnitedLayout<'_> {
         }
     }
 
-    fn unite_waiting_positions(&mut self, unions: &mut Unions<'_>) {
+    fn unite_waiting_positions(&mut self, unite: &mut impl FnMut(TypeId, TypeId) -> TypeId) {
         for position in &self.waiting {
             let record = match position.record {
                 0 => &mut *self.united,
                 view => &mut self.views[view as usize - 1],
             };
             let first = &mut record.fields[position.field as usize].declared;
-            let ty = unions.union(first.ty, position.declared.ty);
+            let ty = unite(first.ty, position.declared.ty);
             *first = unite_positions(*first, position.declared, ty);
         }
     }
@@ -306,13 +280,17 @@ pub(super) fn unite_layout_definitions(
             layout.unite_without_table(&others, known_types);
         }
     });
-    let mut unions = Unions {
-        types,
-        known: FxHashMap::default(),
+    // Many files define a layout with the same few types.
+    let mut known: FxHashMap<(TypeId, TypeId), TypeId> = FxHashMap::default();
+    let mut unite = |left: TypeId, right: TypeId| match left == right {
+        true => left,
+        false => *known
+            .entry((left, right))
+            .or_insert_with(|| types.union(left, right)),
     };
     let mut views = Vec::new();
     for mut layout in united_layouts {
-        layout.unite_waiting_positions(&mut unions);
+        layout.unite_waiting_positions(&mut unite);
         views.append(&mut layout.views);
     }
     let mut tasks: Vec<&mut [Layout]> = layouts.chunks_mut(LAYOUTS_IN_A_TASK * 4).collect();
@@ -544,8 +522,8 @@ mod tests {
 
     #[test]
     fn only_plain_object_without_home_has_united_definitions() {
-        assert!(has_united_definitions(&test_object_type_key(1)));
-        assert!(!has_united_definitions(&test_class_key(0, 0)));
+        assert!(test_object_type_key(1).has_united_definitions());
+        assert!(!test_class_key(0, 0).has_united_definitions());
     }
 
     #[test]

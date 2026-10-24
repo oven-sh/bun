@@ -1,6 +1,6 @@
+use super::tests::{BoundProgram, with_program};
 use super::*;
-use crate::modules::BindInput;
-use crate::modules::testing::{file_named, with_graph, with_runtime_graph};
+use crate::modules::testing::{file_named, with_runtime_graph};
 use bun_sema::check::aot::PrototypeOperation;
 use bun_sema::hir::{CallId, StmtKind};
 
@@ -21,29 +21,13 @@ fn declaring_file(value: Option<NamedValue>) -> Option<FileId> {
     }
 }
 
-struct LinkedProgram<'a, 'i, 's> {
-    graph: &'a ModuleGraph,
-    input: &'a BindInput<'i, 's>,
+fn with_runtime_program(files: &[(&str, &str)], check: impl FnOnce(&BoundProgram<'_, '_, '_>)) {
+    with_runtime_graph(files, |graph, input| check(&BoundProgram { graph, input }));
 }
 
-fn with_program(files: &[(&str, &str)], check: impl FnOnce(&LinkedProgram<'_, '_, '_>)) {
-    with_graph(files, |graph, input| check(&LinkedProgram { graph, input }));
-}
-
-fn with_runtime_program(files: &[(&str, &str)], check: impl FnOnce(&LinkedProgram<'_, '_, '_>)) {
-    with_runtime_graph(files, |graph, input| check(&LinkedProgram { graph, input }));
-}
-
-impl LinkedProgram<'_, '_, '_> {
+impl BoundProgram<'_, '_, '_> {
     fn named_value(&self, file: FileId, expression: ExprId) -> Option<NamedValue> {
-        let project = LinkedProject {
-            files: self.input.files,
-            graph: self.graph,
-            builtin_names: self.input.builtin_names,
-            platform: self.input.platform,
-            library: None,
-        };
-        project.find_named_value(file, expression)
+        self.project().find_named_value(file, expression)
     }
 
     fn statement_calls(&self, file: FileId) -> Vec<CallId> {

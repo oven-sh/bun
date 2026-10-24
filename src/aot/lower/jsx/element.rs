@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{ImplicitReference, ImplicitReferenceKind};
 use bun_sema::fold::Constant;
-use bun_sema::hir::{self, ExprId, ExprKind, NodeData, is_intrinsic_jsx_name};
+use bun_sema::hir::{ExprId, ExprKind, NodeData, is_intrinsic_jsx_name};
 use bun_sema::import_sites::{
     JsxCallee, JsxImport, find_key_attribute, has_static_children, is_ignored_key, jsx_callee,
     jsx_children,
@@ -14,7 +14,7 @@ use smallvec::{SmallVec, smallvec};
 use super::Element;
 use crate::diagnostic_codes::Code;
 use crate::ir::ValueId;
-use crate::lower::call::{self, Arguments, CallSite, Callee};
+use crate::lower::call::{self, Arguments, Callee};
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, module};
 
@@ -24,33 +24,24 @@ enum JsxRoot {
     Fragment,
 }
 
-fn jsx_reference_order(reference: &ImplicitReference) -> Option<(ExprId, JsxRoot)> {
-    let root = match reference.kind {
-        ImplicitReferenceKind::JsxFactory => JsxRoot::Factory,
-        ImplicitReferenceKind::JsxFragment => JsxRoot::Fragment,
-        ImplicitReferenceKind::DecoratorMetadata(_) => return None,
-    };
-    let NodeData::Expr(expression) = reference.node else {
-        unreachable!("the binder records a JSX root at its element");
-    };
-    Some((expression, root))
-}
-
 fn find_jsx_reference(
     references: &[ImplicitReference],
     expression: ExprId,
     root: JsxRoot,
 ) -> ImplicitReference {
-    let found = references.binary_search_by(|reference| match jsx_reference_order(reference) {
-        Some(order) => order.cmp(&(expression, root)),
-        None => Ordering::Greater,
+    let found = references.binary_search_by(|reference| {
+        let recorded_root = match reference.kind {
+            ImplicitReferenceKind::JsxFactory => JsxRoot::Factory,
+            ImplicitReferenceKind::JsxFragment => JsxRoot::Fragment,
+            ImplicitReferenceKind::DecoratorMetadata(_) => return Ordering::Greater,
+        };
+        let NodeData::Expr(element) = reference.node else {
+            unreachable!("the binder records a JSX root at its element");
+        };
+        (element, recorded_root).cmp(&(expression, root))
     });
     let index = found.expect("the binder records the root of every classic element");
     references[index]
-}
-
-fn is_spread(hir: &hir::File<'_>, expression: ExprId) -> bool {
-    matches!(hir[expression].kind, ExprKind::Spread(_))
 }
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -80,73 +71,65 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
-// The element has no spread attribute.
-pub(super) fn lower_parts_for_effect(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-) {
-    let hir = lowering.file.hir;
-    let ExprKind::Jsx(jsx) = hir[expression].kind else {
-        unreachable!("lower_parts_for_effect takes a Jsx expression");
-    };
-    let tag = hir[jsx].tag.some();
-    let tag = tag.filter(|&tag| lowering.file.find_intrinsic_tag_name(tag).is_none());
-    let values = hir[jsx].attrs.iter().filter_map(|it| hir[it].value.some());
-    let parts: SmallVec<[ExprId; 8]> = tag
-        .into_iter()
-        .chain(values)
-        .chain(hir.ids(hir[jsx].children))
-        .collect();
-    for part in parts {
-        lowering.lower_expression_for_effect(part);
-    }
-}
-
-pub(super) fn lower_element(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-) -> ValueId {
-    let hir = lowering.file.hir;
-    let ExprKind::Jsx(jsx) = hir[expression].kind else {
-        debug_assert!(false, "lower_element takes a Jsx expression");
-        return lowering.builder.undefined();
-    };
-    let element = Element {
-        expression,
-        jsx,
-        position: hir[expression].pos,
-        key: find_key_attribute(hir, jsx).key,
-    };
-    let target = jsx_callee(hir, lowering.file.compiled.jsx_mode, jsx);
-    debug_assert!(
-        target != JsxCallee::Import(JsxImport::Fragment),
-        "Fragment is a tag, never a callee"
-    );
-    lowering.file.report_jsx_key_warnings(element, target);
-    lowering.set_position(element.position);
-    let callee = lowering.lower_jsx_callee(element, target);
-    let tag = lowering.lower_jsx_tag(element);
-    let arguments = match target {
-        JsxCallee::Factory | JsxCallee::Import(JsxImport::CreateElement) => {
-            lowering.lower_create_element_arguments(element, tag)
-        }
-        JsxCallee::Import(JsxImport::Jsx | JsxImport::Jsxs | JsxImport::Fragment) => {
-            lowering.lower_jsx_runtime_arguments(element, tag, false)
-        }
-        JsxCallee::Import(JsxImport::JsxDev) => {
-            lowering.lower_jsx_runtime_arguments(element, tag, true)
-        }
-    };
-    lowering.set_position(element.position);
-    let site = CallSite {
-        callee_key: callee.key,
-        callee_name: callee.name,
-        ..CallSite::default()
-    };
-    call::emit_call(lowering, callee.function, callee.this, arguments, site)
-}
-
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    // The element has no spread attribute.
+    pub(crate) fn lower_element_parts_for_effect(&mut self, expression: ExprId) {
+        let hir = self.file.hir;
+        let ExprKind::Jsx(jsx) = hir[expression].kind else {
+            unreachable!("lower_element_parts_for_effect takes a Jsx expression");
+        };
+        let tag = hir[jsx].tag.some();
+        let tag = tag.filter(|&tag| self.file.find_intrinsic_tag_name(tag).is_none());
+        let values = hir[jsx].attrs.iter().filter_map(|it| hir[it].value.some());
+        let parts = tag.into_iter().chain(values);
+        let parts: SmallVec<[ExprId; 8]> = parts.chain(hir.ids(hir[jsx].children)).collect();
+        for part in parts {
+            self.lower_expression_for_effect(part);
+        }
+    }
+
+    pub(crate) fn lower_jsx(&mut self, expression: ExprId) -> ValueId {
+        let hir = self.file.hir;
+        let ExprKind::Jsx(jsx) = hir[expression].kind else {
+            debug_assert!(false, "lower_jsx takes a Jsx expression");
+            return self.builder.undefined();
+        };
+        let element = Element {
+            expression,
+            jsx,
+            position: hir[expression].pos,
+            key: find_key_attribute(hir, jsx).key,
+        };
+        let target = jsx_callee(hir, self.file.compiled.jsx_mode, jsx);
+        debug_assert!(
+            target != JsxCallee::Import(JsxImport::Fragment),
+            "Fragment is a tag, never a callee"
+        );
+        self.file.report_jsx_key_warnings(element, target);
+        self.set_position(element.position);
+        let callee = match target {
+            JsxCallee::Import(import) => self.get_jsx_import(import),
+            JsxCallee::Factory => {
+                let settings = self.file.compiled.jsx;
+                self.lower_jsx_member_path(element, JsxRoot::Factory, &settings.factory)
+            }
+        };
+        let tag = self.lower_jsx_tag(element);
+        let arguments = match target {
+            JsxCallee::Factory | JsxCallee::Import(JsxImport::CreateElement) => {
+                self.lower_create_element_arguments(element, tag)
+            }
+            JsxCallee::Import(JsxImport::Jsx | JsxImport::Jsxs | JsxImport::Fragment) => {
+                self.lower_jsx_runtime_arguments(element, tag, false)
+            }
+            JsxCallee::Import(JsxImport::JsxDev) => {
+                self.lower_jsx_runtime_arguments(element, tag, true)
+            }
+        };
+        self.set_position(element.position);
+        call::emit_call_of(self, callee, arguments)
+    }
+
     fn get_jsx_import(&mut self, import: JsxImport) -> Callee {
         let binding = self.file.inputs.modules.jsx_binding(self.file.file, import);
         let name = self.file.intern_bytes(import.export_name());
@@ -155,16 +138,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             this: None,
             key: None,
             name: Some(name),
-        }
-    }
-
-    fn lower_jsx_callee(&mut self, element: Element, target: JsxCallee) -> Callee {
-        match target {
-            JsxCallee::Import(import) => self.get_jsx_import(import),
-            JsxCallee::Factory => {
-                let settings = self.file.compiled.jsx;
-                self.lower_jsx_member_path(element, JsxRoot::Factory, &settings.factory)
-            }
         }
     }
 
@@ -202,7 +175,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn lower_jsx_tag(&mut self, element: Element) -> ValueId {
         let hir = self.file.hir;
         let Some(tag) = hir[element.jsx].tag.some() else {
-            return self.lower_jsx_fragment_tag(element);
+            let settings = self.file.compiled.jsx;
+            let fragment = match settings.runtime {
+                JsxRuntime::Automatic => self.get_jsx_import(JsxImport::Fragment),
+                JsxRuntime::Classic => {
+                    self.lower_jsx_member_path(element, JsxRoot::Fragment, &settings.fragment)
+                }
+            };
+            return fragment.function;
         };
         match self.file.find_intrinsic_tag_name(tag) {
             Some(name) => {
@@ -210,18 +190,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.emit_constant(Constant::String(name))
             }
             None => self.lower_expression(tag),
-        }
-    }
-
-    fn lower_jsx_fragment_tag(&mut self, element: Element) -> ValueId {
-        let settings = self.file.compiled.jsx;
-        match settings.runtime {
-            JsxRuntime::Automatic => self.get_jsx_import(JsxImport::Fragment).function,
-            JsxRuntime::Classic => {
-                let path = &settings.fragment;
-                self.lower_jsx_member_path(element, JsxRoot::Fragment, path)
-                    .function
-            }
         }
     }
 
@@ -251,8 +219,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let hir = self.file.hir;
         let props = self.lower_create_element_props(element);
         let children: SmallVec<[ExprId; 8]> = jsx_children(hir, element.jsx).collect();
-        if children.iter().any(|&child| is_spread(hir, child)) {
-            let list = self.lower_child_list(element.position, &[tag, props], &children);
+        let mut kinds = children.iter().map(|&child| hir[child].kind);
+        if kinds.any(|kind| matches!(kind, ExprKind::Spread(_))) {
+            let list = self.lower_argument_list(&[tag, props], &children, element.position);
             return Arguments::List(list);
         }
         let mut arguments: SmallVec<[ValueId; 4]> = smallvec![tag, props];

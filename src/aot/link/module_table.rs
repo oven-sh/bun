@@ -5,7 +5,6 @@ use super::unit::LinkUnit;
 use super::{LinkProject, is_unit_optional, key_context};
 use crate::ir::Id;
 use crate::load::{PerProject, ProgramFile, ProjectId};
-use bun_sema::atom::Interner;
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::util::SharedSort;
 use rustc_hash::FxHashSet;
@@ -13,9 +12,16 @@ use rustc_hash::FxHashSet;
 pub(super) fn collect_modules(
     projects: &PerProject<LinkProject<'_, '_>>,
     units: &[LinkUnit],
-    atoms: &Interner<'_>,
 ) -> ModuleTable {
-    let mut modules = collect_record_files(projects, units);
+    let has_unit = |file: ProgramFile| find_unit(units, ProgramModule::File(file)).is_some();
+    let mut modules = Vec::new();
+    for (project, linked) in projects.iter() {
+        let record_files = linked.graph.record_files().iter();
+        let record_files = record_files.map(|&file| ProgramFile { project, file });
+        let record_files =
+            record_files.filter(|&file| !is_unit_optional(projects, file) || has_unit(file));
+        modules.extend(record_files.map(ProgramModule::File));
+    }
     let mut known_modules = FxHashSet::default();
     let mut add_named_module = |module: ProgramModule| match module {
         ProgramModule::File(file) => {
@@ -43,8 +49,22 @@ pub(super) fn collect_modules(
         }
     }
     add_requested_records(projects, &mut modules, &mut known_modules);
+    let atoms = &projects.application.loaded.files().atoms;
     modules.shared_sort_unstable_by(|&a, &b| compare_program_modules(a, b, atoms));
-    create_module_table(modules, units)
+    assert!(
+        modules.len() <= u32::MAX as usize,
+        "a module index has 32 bits"
+    );
+    let index_by_module = modules.iter().copied().zip(0..).collect();
+    let unit_by_module = modules
+        .iter()
+        .map(|&module| find_unit(units, module))
+        .collect();
+    ModuleTable {
+        modules,
+        index_by_module,
+        unit_by_module,
+    }
 }
 
 // No code names the face of a CommonJS file that is imported for its effects, or the check of a graph: a request does.
@@ -63,7 +83,7 @@ fn add_requested_records(
         for request in context.graph.requests_of(requester) {
             let target = context.module(request.target);
             match target {
-                ProgramModule::Inner { .. } | ProgramModule::Face(_) | ProgramModule::Check(_) => {
+                ProgramModule::Face(_) | ProgramModule::Check(_) => {
                     if known_modules.insert(target) {
                         modules.push(target);
                     }
@@ -76,44 +96,6 @@ fn add_requested_records(
     }
 }
 
-fn collect_record_files(
-    projects: &PerProject<LinkProject<'_, '_>>,
-    units: &[LinkUnit],
-) -> Vec<ProgramModule> {
-    let has_unit = |file: ProgramFile| find_unit(units, ProgramModule::File(file)).is_some();
-    let mut modules = Vec::new();
-    for (project, linked) in projects.iter() {
-        let record_files = linked.graph.record_files().iter();
-        let record_files = record_files.map(|&file| ProgramFile { project, file });
-        let record_files =
-            record_files.filter(|&file| !is_unit_optional(projects, file) || has_unit(file));
-        modules.extend(record_files.map(ProgramModule::File));
-    }
-    modules
-}
-
-fn create_module_table(modules: Vec<ProgramModule>, units: &[LinkUnit]) -> ModuleTable {
-    assert!(
-        modules.len() <= u32::MAX as usize,
-        "a module index has 32 bits"
-    );
-    let index_by_module = modules
-        .iter()
-        .enumerate()
-        .map(|(index, &module)| (module, index as u32))
-        .collect();
-    let unit_by_module = modules
-        .iter()
-        .map(|&module| find_unit(units, module))
-        .collect();
-    ModuleTable {
-        modules,
-        index_by_module,
-        unit_by_module,
-    }
-}
-
-// The unit of the file that holds the text of the module.
 fn find_unit(units: &[LinkUnit], module: ProgramModule) -> Option<u32> {
     let file = module.file()?;
     let unit = units.binary_search_by_key(&file, |unit| unit.file).ok()?;
@@ -141,13 +123,12 @@ fn find_module_origin(
     module: ProgramModule,
 ) -> ModuleOrigin {
     let file = match module {
-        ProgramModule::File(file)
-        | ProgramModule::Inner { file, .. }
-        | ProgramModule::Face(file)
-        | ProgramModule::Check(file) => match file.project {
-            ProjectId::Application => file.file,
-            ProjectId::Runtime => return ModuleOrigin::Runtime,
-        },
+        ProgramModule::File(file) | ProgramModule::Face(file) | ProgramModule::Check(file) => {
+            match file.project {
+                ProjectId::Application => file.file,
+                ProjectId::Runtime => return ModuleOrigin::Runtime,
+            }
+        }
         ProgramModule::Runtime(_) => return ModuleOrigin::Runtime,
         ProgramModule::External { .. } => return ModuleOrigin::Dependency,
     };
@@ -171,25 +152,9 @@ mod tests {
     use crate::builtins::RuntimeModule;
     use crate::ir::ModuleId;
     use crate::link::state::ProgramCounts;
-    use crate::link::testing::with_projects;
+    use crate::link::testing::{Projects, find_file, with_projects};
     use crate::lower::{FragmentBuilder, ModuleFragment};
     use crate::modules::ModuleRef;
-    use bun_sema::hir::FnId;
-    use bun_sema::program::FileId;
-
-    const PROJECT_ROOT: &[u8] = b"/project/";
-
-    type Projects<'a, 's> = PerProject<LinkProject<'a, 's>>;
-
-    fn collect(projects: &Projects<'_, '_>, units: &[LinkUnit]) -> ModuleTable {
-        collect_modules(projects, units, &projects.application.loaded.files().atoms)
-    }
-
-    fn find_file(projects: &Projects<'_, '_>, name: &str) -> FileId {
-        let path = [PROJECT_ROOT, name.as_bytes()].concat();
-        let file = projects.application.loaded.files().by_path.get(&path);
-        file.expect("the program has no file with this name")
-    }
 
     fn application_module(projects: &Projects<'_, '_>, module: ModuleRef) -> ProgramModule {
         key_context(projects, ProjectId::Application).module(module)
@@ -260,7 +225,7 @@ mod tests {
             assert_eq!(application_module(projects, imported), source);
 
             let unit = create_unit(projects, "index.ts", &[imported]);
-            let table = collect(projects, &[unit]);
+            let table = collect_modules(projects, &[unit]);
             assert_eq!(count_of(&table, source), 1);
             let without_source = ProgramModule::Runtime(RuntimeModule::NodePath);
             assert_eq!(count_of(&table, without_source), 0);
@@ -278,7 +243,7 @@ mod tests {
         with_projects(&files, |projects| {
             let externals = [&b"z"[..], b"a"];
             let externals = externals.map(|name| create_external(projects, "index.ts", name));
-            let table = collect(projects, &[create_unit(projects, "index.ts", &externals)]);
+            let table = collect_modules(projects, &[create_unit(projects, "index.ts", &externals)]);
 
             let leading_files = table.modules.iter().map_while(|&module| match module {
                 ProgramModule::File(file) => Some(file),
@@ -323,12 +288,12 @@ mod tests {
                 ModuleRef::Runtime(RuntimeModule::NodeBuffer),
             ];
             let [external, runtime] = declared.map(|module| application_module(projects, module));
-            assert_eq!(count_of(&collect(projects, &[]), external), 0);
+            assert_eq!(count_of(&collect_modules(projects, &[]), external), 0);
 
             let names = ["index.ts", "other.ts"];
             let mut units = names.map(|name| create_unit(projects, name, &declared));
             units.sort_unstable_by_key(|unit| unit.file);
-            let table = collect(projects, &units);
+            let table = collect_modules(projects, &units);
             assert_eq!(count_of(&table, external), 1);
             assert_eq!(count_of(&table, runtime), 1);
             assert_eq!(
@@ -346,28 +311,14 @@ mod tests {
         ];
         with_projects(&files, |projects| {
             let [index, legacy] = ["index.ts", "legacy.cjs"].map(|name| find_file(projects, name));
-            let inner = |callback| ModuleRef::Inner {
-                file: legacy,
-                callback: FnId(callback),
-            };
-            let declared = [
-                ModuleRef::Check(index),
-                ModuleRef::Face(legacy),
-                inner(4),
-                inner(2),
-            ];
+            let declared = [ModuleRef::Check(index), ModuleRef::Face(legacy)];
             let names = ["index.ts", "legacy.cjs"];
             let mut units = names.map(|name| create_unit(projects, name, &declared));
             units.sort_unstable_by_key(|unit| unit.file);
-            let table = collect(projects, &units);
+            let table = collect_modules(projects, &units);
 
             let records_of_index = [ModuleRef::File(index), ModuleRef::Check(index)];
-            let records_of_legacy = [
-                ModuleRef::File(legacy),
-                inner(2),
-                inner(4),
-                ModuleRef::Face(legacy),
-            ];
+            let records_of_legacy = [ModuleRef::File(legacy), ModuleRef::Face(legacy)];
             for records in [&records_of_index[..], &records_of_legacy[..]] {
                 let records = records
                     .iter()
@@ -405,7 +356,7 @@ mod tests {
         ];
         with_projects(&files, |projects| {
             let external = create_external(projects, "main.js", b"package");
-            let table = collect(projects, &[create_unit(projects, "main.js", &[external])]);
+            let table = collect_modules(projects, &[create_unit(projects, "main.js", &[external])]);
             let origins =
                 collect_module_origins(projects, &table, &number_modules(&table, |_| true));
             assert_eq!(origins.len(), table.modules.len());

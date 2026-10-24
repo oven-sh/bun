@@ -8,10 +8,7 @@ use rustc_hash::FxBuildHasher;
 pub use super::generated::{ClassPart, OpaqueKind, Primitives, Type, TypeFlags};
 use super::ids::{FunctionId, Id, LayoutId, StringId, TypeId};
 use super::references::Reference;
-use super::type_union::{
-    add_missing_objects, normalize_type, normalize_without_table, remove_primitives,
-    union_all_types, union_types,
-};
+use super::type_union::{normalize_type, normalize_without_table};
 use crate::builtins::id::{BuiltinClass, BuiltinId};
 use crate::builtins::table::class_data;
 
@@ -220,16 +217,6 @@ impl TypeList {
             TypeList::Shared(list) => list.types.len(),
         }
     }
-
-    fn push(&mut self, hash: u64, ty: Type) {
-        match self {
-            TypeList::Own(types) => types.push(ty),
-            TypeList::Shared(list) => {
-                debug_assert!(list.copies.get().is_none());
-                list.types.push(list.known.intern(hash, ty));
-            }
-        }
-    }
 }
 
 // Not `shrink_to_fit`: the allocator leaves a block where it is while more than half of it stays in use.
@@ -242,7 +229,7 @@ pub fn release_spare_capacity<T>(list: &mut Vec<T>) {
     *list = exact;
 }
 
-fn hash_of<T: core::hash::Hash>(value: &T) -> u64 {
+pub(super) fn hash_of<T: core::hash::Hash>(value: &T) -> u64 {
     FxBuildHasher.hash_one(value)
 }
 
@@ -267,20 +254,7 @@ impl TypeTable {
     pub const ANYTHING_OR_ABSENT: TypeId = TypeId::from_word(16);
     pub const WELL_KNOWN_COUNT: usize = 17;
 
-    pub fn new() -> TypeTable {
-        Self::with_list(TypeList::Own(Vec::with_capacity(Self::WELL_KNOWN_COUNT)))
-    }
-
-    /// For the many tables that are alive at a time: a type that reads the same in several of them is held once.
-    pub fn sharing_types() -> TypeTable {
-        Self::with_list(TypeList::Shared(SharedTypeList {
-            known: TypesOfAllTables::current(),
-            types: Vec::with_capacity(Self::WELL_KNOWN_COUNT),
-            copies: OnceLock::new(),
-        }))
-    }
-
-    /// For a table that is complete and waits with many others.
+    /// For a table that waits with many others: a type that reads the same in several of them is held once.
     pub fn share_types(&mut self) {
         let TypeList::Own(types) = &mut self.types else {
             return;
@@ -297,7 +271,7 @@ impl TypeTable {
         });
     }
 
-    fn with_list(types: TypeList) -> TypeTable {
+    pub fn new() -> TypeTable {
         let well_known_types: [(TypeId, Type); Self::WELL_KNOWN_COUNT] = [
             (Self::NEVER, Type::never()),
             (Self::UNDEFINED, Type::primitives(Primitives::UNDEFINED)),
@@ -330,7 +304,7 @@ impl TypeTable {
             ),
         ];
         let mut table = TypeTable {
-            types,
+            types: TypeList::Own(Vec::with_capacity(Self::WELL_KNOWN_COUNT)),
             type_ids: HashTable::with_capacity(Self::WELL_KNOWN_COUNT),
         };
         for (id, ty) in well_known_types {
@@ -369,7 +343,13 @@ impl TypeTable {
         let count = self.types.len();
         debug_assert!(ty.references_only_types_below(count));
         let id = TypeId::new(count);
-        self.types.push(hash, ty);
+        match &mut self.types {
+            TypeList::Own(types) => types.push(ty),
+            TypeList::Shared(list) => {
+                debug_assert!(list.copies.get().is_none());
+                list.types.push(list.known.intern(hash, ty));
+            }
+        }
         let types = &self.types;
         self.type_ids
             .insert_unique(hash, id, |&id| hash_of(types.get(id.index())));
@@ -394,27 +374,11 @@ impl TypeTable {
         }
     }
 
-    pub fn union(&mut self, left: TypeId, right: TypeId) -> TypeId {
-        union_types(self, left, right)
-    }
-
-    pub fn union_all(&mut self, members: impl IntoIterator<Item = TypeId>) -> TypeId {
-        union_all_types(self, members)
-    }
-
     pub fn with_nullish(&mut self, ty: TypeId) -> TypeId {
         if self.get(ty).primitives.contains(Primitives::NULLISH) {
             return ty;
         }
-        union_types(self, ty, Self::NULLISH)
-    }
-
-    pub fn with_missing_objects_of(&mut self, target: TypeId, source: TypeId) -> TypeId {
-        add_missing_objects(self, target, source)
-    }
-
-    pub fn without_primitives(&mut self, ty: TypeId, removed: Primitives) -> TypeId {
-        remove_primitives(self, ty, removed)
+        self.union(ty, Self::NULLISH)
     }
 
     #[inline]

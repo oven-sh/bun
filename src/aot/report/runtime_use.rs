@@ -2,6 +2,7 @@ use bun_options_types::aot_options::ExplainSet;
 use bun_sema::util::SharedSort;
 use bun_trim::{Decision, Feature, RetainReason, Retained, UsedLocales, WitnessIndex};
 
+use super::format::write_parts;
 use super::positions::{PathStyle, Positions, write_shown_position};
 use super::wording::{trim_blocker_code, unseen_code_sentence};
 use super::{ReportEntry, ReportInput};
@@ -29,34 +30,16 @@ pub(super) fn collect(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
 
 fn line_from(parts: &[&[u8]]) -> Vec<u8> {
     let mut line = PREFIX.to_vec();
-    for part in parts {
-        line.extend_from_slice(part);
-    }
+    write_parts(&mut line, parts);
     line
 }
 
 fn entry_at(text: Vec<u8>, position: Option<Position>) -> ReportEntry {
-    ReportEntry {
-        position,
-        ..ReportEntry::line(ExplainSet::RUNTIME_USE, text)
-    }
+    ReportEntry::at(ExplainSet::RUNTIME_USE, text, position)
 }
 
-fn record_at<T>(records: &[T], witness: Option<WitnessIndex>) -> Option<&T> {
+pub(super) fn record_at<T>(records: &[T], witness: Option<WitnessIndex>) -> Option<&T> {
     records.get(witness?.0 as usize)
-}
-
-fn write_location(
-    line: &mut Vec<u8>,
-    location: SourceLocation,
-    positions: &mut Positions<'_>,
-) -> Option<Position> {
-    let position = position_of(location)?;
-    if let Some(shown) = positions.resolve(position) {
-        line.extend_from_slice(b" at ");
-        write_shown_position(line, Some(&shown));
-    }
-    Some(position)
 }
 
 fn write_witness(
@@ -66,11 +49,14 @@ fn write_witness(
     positions: &mut Positions<'_>,
 ) -> Option<Position> {
     if let Some(id) = builtin_of(builtin) {
-        line.extend_from_slice(b" (");
-        line.extend_from_slice(table::text_of(id).as_bytes());
-        line.push(b')');
+        write_parts(line, &[b" (", table::text_of(id).as_bytes(), b")"]);
     }
-    write_location(line, location, positions)
+    let position = position_of(location)?;
+    if let Some(shown) = positions.resolve(position) {
+        line.extend_from_slice(b" at ");
+        write_shown_position(line, Some(&shown));
+    }
+    Some(position)
 }
 
 fn cause_lines(input: &ReportInput<'_>, positions: &mut Positions<'_>, out: &mut Vec<ReportEntry>) {
@@ -83,15 +69,11 @@ fn cause_lines(input: &ReportInput<'_>, positions: &mut Positions<'_>, out: &mut
         let code = trim_blocker_code(unseen.cause).as_bytes();
         let sentence = unseen_code_sentence(unseen.cause).as_bytes();
         let mut line = line_from(&[b"blocked by ", code, b": ", sentence]);
-        let position = match record_at(input.engine.unseen_code(), unseen.witness) {
-            Some(record) => write_witness(
-                &mut line,
-                record.builtin,
-                record.witness.location,
-                positions,
-            ),
-            None => None,
-        };
+        let record = record_at(input.engine.unseen_code(), unseen.witness);
+        let position = record.and_then(|record| {
+            let location = record.witness.location;
+            write_witness(&mut line, record.builtin, location, positions)
+        });
         out.push(entry_at(line, position));
     }
 }
@@ -109,11 +91,8 @@ fn item_lines(records: &[BuiltinUseRecord]) -> Vec<Vec<u8>> {
         push_item(&mut items, table::root_of(id));
         if record.uses.contains(BuiltinUse::ESCAPED) {
             let holder = table::text_of(id);
-            items.push(line_from(&[
-                b"uses ",
-                holder.as_bytes(),
-                b" (escapes, so any member may be used)",
-            ]));
+            let note = b" (escapes, so any member may be used)";
+            items.push(line_from(&[b"uses ", holder.as_bytes(), note]));
         }
     }
     items.shared_sort_unstable();
@@ -136,28 +115,19 @@ fn write_item(line: &mut Vec<u8>, id: BuiltinId) -> bool {
     let name = table::text_of_name(entry.name);
     line.extend_from_slice(b"uses ");
     match entry.holder {
-        Some(BuiltinId::GlobalThis) => {
-            line.extend_from_slice(b"global ");
-            line.extend_from_slice(name);
-        }
+        Some(BuiltinId::GlobalThis) => write_parts(line, &[b"global ", name]),
         None => {
             let word: &[u8] = match entry.kind {
                 BuiltinKind::Namespace => b"module ",
                 BuiltinKind::NativeBinding => b"native ",
                 _ => b"builtin ",
             };
-            line.extend_from_slice(word);
-            line.extend_from_slice(table::text_of(id).as_bytes());
+            write_parts(line, &[word, table::text_of(id).as_bytes()]);
         }
         Some(holder) if table::entry(holder).kind == BuiltinKind::Prototype => {
-            line.extend_from_slice(b"property ");
-            line.extend_from_slice(name);
+            write_parts(line, &[b"property ", name]);
         }
-        Some(holder) => {
-            line.extend_from_slice(table::text_of(holder).as_bytes());
-            line.push(b' ');
-            line.extend_from_slice(name);
-        }
+        Some(holder) => write_parts(line, &[table::text_of(holder).as_bytes(), b" ", name]),
     }
     true
 }
@@ -177,10 +147,7 @@ fn locale_line(input: &ReportInput<'_>, positions: &mut Positions<'_>) -> Report
         }
         UsedLocales::Listed(tags) => {
             let tags: Vec<&[u8]> = tags.iter().map(|tag| &tag.0[..]).collect();
-            entry_at(
-                line_from(&[b"locales: ", tags.join(&b", "[..]).as_slice()]),
-                None,
-            )
+            entry_at(line_from(&[b"locales: ", &tags.join(&b", "[..])]), None)
         }
         UsedLocales::Unknown(witness) => {
             let Some(record) = record_at(input.engine.locales_used(), *witness) else {
@@ -233,15 +200,13 @@ fn write_reason(
 ) -> Option<Position> {
     match reason {
         RetainReason::Allowed(name) => {
-            line.extend_from_slice(b"listed in compile.trim.allow (");
-            line.extend_from_slice(name.name().as_bytes());
-            line.push(b')');
-            None
+            let name = name.name().as_bytes();
+            write_parts(line, &[b"listed in compile.trim.allow (", name, b")"]);
         }
         RetainReason::Used(witness) => {
             line.extend_from_slice(b"used");
             let record = record_at(input.engine.features_used(), witness)?;
-            write_witness(line, record.builtin, record.witness.location, positions)
+            return write_witness(line, record.builtin, record.witness.location, positions);
         }
         RetainReason::RequiredByOption(index) => {
             line.extend_from_slice(b"needed by ");
@@ -249,20 +214,14 @@ fn write_reason(
                 Some(requirement) => line.extend_from_slice(&requirement.label),
                 None => line.extend_from_slice(b"an option"),
             }
-            None
         }
-        RetainReason::AlwaysEntered => {
-            line.extend_from_slice(b"runs at startup");
-            None
-        }
+        RetainReason::AlwaysEntered => line.extend_from_slice(b"runs at startup"),
         RetainReason::ReachableByUnseenCode(index) => {
             line.extend_from_slice(b"code loaded at run time could use it");
             if let Some(unseen) = input.used_features.causes.get(index) {
-                line.extend_from_slice(b" (");
-                line.extend_from_slice(trim_blocker_code(unseen.cause).as_bytes());
-                line.push(b')');
+                let code = trim_blocker_code(unseen.cause).as_bytes();
+                write_parts(line, &[b" (", code, b")"]);
             }
-            None
         }
         RetainReason::NeededBy { .. } => {
             let chain = decision.chain_of(feature);
@@ -270,23 +229,17 @@ fn write_reason(
                 .iter()
                 .map(|dependent| dependent.text().as_bytes())
                 .collect();
-            line.extend_from_slice(b"needed by ");
-            line.extend_from_slice(&dependents.join(&b" <- "[..]));
-            None
+            write_parts(line, &[b"needed by ", &dependents.join(&b" <- "[..])]);
         }
-        RetainReason::NotRequested => {
-            line.extend_from_slice(b"not selected for removal");
-            None
-        }
+        RetainReason::NotRequested => line.extend_from_slice(b"not selected for removal"),
     }
+    None
 }
 
 fn write_feature(line: &mut Vec<u8>, feature: Feature) {
     line.extend_from_slice(feature.text().as_bytes());
     if let Some(trim_feature) = feature.narrowest_trim_feature() {
-        line.extend_from_slice(b" (");
-        line.extend_from_slice(trim_feature.name().as_bytes());
-        line.push(b')');
+        write_parts(line, &[b" (", trim_feature.name().as_bytes(), b")"]);
     }
 }
 

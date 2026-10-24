@@ -50,12 +50,8 @@ impl ImportGraph {
                 }
             }
         }
-        let positions = 0..self.entry_points.len();
-        Some(
-            positions
-                .filter(|&position| reaches[self.entry_points[position] as usize])
-                .map(|position| position as u32)
-                .collect(),
-        )
+        let positions = (0u32..).zip(&self.entry_points);
+        let reaching = positions.filter(|&(_, &file)| reaches[file as usize]);
+        Some(reaching.map(|(position, _)| position).collect())
     }
 }

@@ -1,10 +1,9 @@
 use super::EarlyRedeclaration;
-use super::declaration_kinds::{creates_binding, declaration_symbol};
+use super::declaration_kinds::{creates_binding, declaration_symbol, for_each_name};
 use crate::atom::{Atom, known};
 use crate::bind::{BoundBuilder, Decl, SymbolId};
 use crate::hir::*;
 use crate::util::FxHashMap;
-use smallvec::SmallVec;
 use std::collections::hash_map::Entry;
 
 type ExportedNames = FxHashMap<Atom, (Decl, SymbolId)>;
@@ -156,26 +155,12 @@ impl DuplicateNames<'_, '_> {
     }
 
     fn check_exported_pattern(&mut self, names: &mut ExportedNames, pattern: PatId) {
-        let hir = self.hir;
-        let mut pending: SmallVec<[PatId; 8]> = SmallVec::new();
-        pending.push(pattern);
-        while let Some(pat) = pending.pop() {
-            match hir[pat].kind {
-                PatKind::Missing => {}
-                PatKind::Ident(name) => {
-                    let decl = Decl::Var(pat);
-                    if creates_binding(hir, self.bound, decl) {
-                        self.check_exported_name(names, name, decl);
-                    }
-                }
-                PatKind::Object(props) => {
-                    pending.extend(props.iter().rev().map(|prop| hir[prop].value));
-                }
-                PatKind::Array(elements) => {
-                    pending.extend(elements.iter().rev().map(|element| hir[element].pat));
-                }
+        for_each_name(self.hir, pattern, |pat, name| {
+            let decl = Decl::Var(pat);
+            if creates_binding(self.hir, self.bound, decl) {
+                self.check_exported_name(names, name, decl);
             }
-        }
+        });
     }
 
     fn check_exported_declaration(&mut self, names: &mut ExportedNames, decl: Decl, name: Atom) {

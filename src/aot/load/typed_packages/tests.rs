@@ -60,12 +60,7 @@ impl Project {
     }
 
     fn add_typed_version(&self, folder: &str) {
-        let manifest = sound_manifest(folder, &["cjs/x.js"]);
-        self.write(&format!(".full-types/{folder}/full-types.json"), &manifest);
-        self.write(
-            &format!(".full-types/{folder}/lay/cjs/x.js"),
-            INSTALLED_CODE,
-        );
+        self.install_typed_version(&format!(".full-types/{folder}"), folder);
     }
 
     fn install_typed_version(&self, directory: &str, name: &str) {
@@ -191,21 +186,11 @@ fn file_without_typed_version_is_none() {
     project.write("node_modules/p/x.js", INSTALLED_CODE);
     project.install("node_modules/other", "other", "1.0.0");
     with_packages(&project, |fixture| {
-        assert!(
-            fixture
-                .typed_version(&project.path(INSTALLED_FILE))
-                .is_some()
-        );
-        assert_eq!(
-            fixture.typed_version(&project.path("node_modules/p/index.js")),
-            None
-        );
-        assert_eq!(
-            fixture.typed_version(&project.path("node_modules/p/x.js")),
-            None
-        );
-        let file_of_other_package = project.path("node_modules/other/cjs/x.js");
-        assert_eq!(fixture.typed_version(&file_of_other_package), None);
+        let typed_version = |file: &str| fixture.typed_version(&project.path(file));
+        assert!(typed_version(INSTALLED_FILE).is_some());
+        assert_eq!(typed_version("node_modules/p/index.js"), None);
+        assert_eq!(typed_version("node_modules/p/x.js"), None);
+        assert_eq!(typed_version("node_modules/other/cjs/x.js"), None);
     });
 }
 
@@ -228,10 +213,9 @@ fn other_version_still_has_typed_files() {
     with_packages(&project, |fixture| {
         let typed = project.path(".full-types/p/lay/cjs/x.js");
         let nested_file = project.path("node_modules/q/node_modules/p/cjs/x.js");
+        let installed_file = project.path(INSTALLED_FILE);
         assert_eq!(
-            fixture
-                .typed_version(&project.path(INSTALLED_FILE))
-                .as_ref(),
+            fixture.typed_version(&installed_file).as_ref(),
             Some(&typed)
         );
         assert_eq!(fixture.typed_version(&nested_file).as_ref(), Some(&typed));
@@ -242,12 +226,10 @@ fn other_version_still_has_typed_files() {
             name: b"p",
             version: b"9.9.9",
         };
-        let installed_file = project.path(INSTALLED_FILE);
-        let found = fixture.packages.typed_version(
-            TypedPackagePlace::Project,
-            &installed_file,
-            Some(package),
-        );
+        let place = TypedPackagePlace::Project;
+        let found = fixture
+            .packages
+            .typed_version(place, &installed_file, Some(package));
         assert_eq!(found, Some(typed));
         let mismatch = fixture.packages.find_manifest_mismatch(package, &|_| None);
         let expected = b"they are for version 1.0.0, but 9.9.9 is installed. \
@@ -263,10 +245,8 @@ fn package_manifest_has_no_typed_version() {
     project.write("node_modules/p/dist/package.json", "{}");
     project.write(".full-types/p/lay/dist/package.json", "{}");
     with_packages(&project, |fixture| {
-        assert_eq!(
-            fixture.typed_version(&project.path("node_modules/p/package.json")),
-            None
-        );
+        let manifest = project.path("node_modules/p/package.json");
+        assert_eq!(fixture.typed_version(&manifest), None);
         let nested_manifest = project.path("node_modules/p/dist/package.json");
         let typed = project.path(".full-types/p/lay/dist/package.json");
         assert_eq!(fixture.typed_version(&nested_manifest), Some(typed));
@@ -288,15 +268,10 @@ fn scoped_package_is_found() {
         let typed = project.path(".full-types/@s/p/lay/cjs/x.js");
         let found = fixture.typed_version(&project.path("node_modules/@s/p/cjs/x.js"));
         assert_eq!(found.as_ref(), Some(&typed));
-        assert_eq!(fixture.packages.script_kind(&typed), Some(ScriptKind::Ts));
-        assert_eq!(
-            fixture.packages.display_directory(&typed),
-            b".full-types/@s/p"
-        );
-        assert_eq!(
-            fixture.packages.display_relative_path(&typed),
-            b"lay/cjs/x.js"
-        );
+        let packages = fixture.packages;
+        assert_eq!(packages.script_kind(&typed), Some(ScriptKind::Ts));
+        assert_eq!(packages.display_directory(&typed), b".full-types/@s/p");
+        assert_eq!(packages.display_relative_path(&typed), b"lay/cjs/x.js");
     });
 }
 

@@ -13,16 +13,16 @@ impl PathPrinter {
             Ok(directory) => directory.as_bytes().to_vec(),
             Err(_) => Vec::new(),
         };
-        PathPrinter::in_directory(working_directory)
-    }
-
-    pub(super) fn in_directory(working_directory: Vec<u8>) -> PathPrinter {
         PathPrinter { working_directory }
     }
 
     pub(super) fn write_path(&self, out: &mut Vec<u8>, path: &[u8]) {
         let start = out.len();
-        if self.can_relativize(path) {
+        // `relative` fills fixed buffers: at most "../" per directory component, then `path`.
+        let can_relativize = is_absolute(&self.working_directory)
+            && is_absolute(path)
+            && 2 * self.working_directory.len() + path.len() < MAX_PATH_BYTES;
+        if can_relativize {
             out.extend_from_slice(relative(&self.working_directory, path));
         }
         if out.len() == start {
@@ -36,12 +36,11 @@ impl PathPrinter {
         platform_to_posix_in_place(&mut shown[..]);
         shown
     }
+}
 
-    fn can_relativize(&self, path: &[u8]) -> bool {
-        // `relative` fills fixed buffers: at most "../" per directory component, then `path`.
-        is_absolute(&self.working_directory)
-            && is_absolute(path)
-            && 2 * self.working_directory.len() + path.len() < MAX_PATH_BYTES
+pub(super) fn write_parts(out: &mut Vec<u8>, parts: &[&[u8]]) {
+    for part in parts {
+        out.extend_from_slice(part);
     }
 }
 
@@ -117,6 +116,12 @@ mod tests {
     use bun_sema_standalone as _;
 
     use super::*;
+
+    impl PathPrinter {
+        pub(in crate::report) fn in_directory(working_directory: Vec<u8>) -> PathPrinter {
+            PathPrinter { working_directory }
+        }
+    }
 
     fn written(write: impl FnOnce(&mut Vec<u8>)) -> BString {
         let mut out = Vec::new();

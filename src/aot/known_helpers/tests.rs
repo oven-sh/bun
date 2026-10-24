@@ -1,21 +1,12 @@
 use super::Reference;
 use super::canonical::{CanonicalInput, canonical_function};
-use super::find::{Certainty, FileHelpers, FindInput, KnownReference, find};
+use super::find::{
+    BindingValues, Certainty, FileHelpers, FindInput, KnownReference, find, find_global,
+};
 use super::published::{Helper, PUBLISHED_FUNCTIONS, Shape};
-use super::table::Table;
-use crate::builtins::table::{self as builtins, MemberLookup};
-use bun_sema::atom::Interner;
-use bun_sema::bind::{BindOptions, RuntimeBindOptions};
-use bun_sema::file_analysis::{FileInputs, analyze_file};
-use bun_sema::fold::{FoldInputs, FoldOptions};
-use bun_sema::hir::{ExprKind, StmtKind};
-use bun_sema::import_sites::JsxMode;
-use bun_sema::module_format::DeclaredModuleType;
-use bun_sema::session::Session;
-use bun_sema_parser::{CompileParseOptions, parse_for_compile};
-use std::borrow::Cow;
+use super::table::{Table, analyze, find_published_function};
 
-const CREATE_BINDING: &str = r#"var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+pub(super) const CREATE_BINDING: &str = r#"var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
     if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
@@ -28,7 +19,7 @@ const CREATE_BINDING: &str = r#"var __createBinding = (this && this.__createBind
 }));
 "#;
 
-const EXPORT_STAR: &str = r#"var __exportStar = (this && this.__exportStar) || function(m, exports) {
+pub(super) const EXPORT_STAR: &str = r#"var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 "#;
@@ -84,51 +75,12 @@ fn the_export_helper_of_swc_is_known() {
 }
 
 fn with_file<R>(path: &str, source: &str, then: impl FnOnce(&FindInput<'_, '_>) -> R) -> R {
-    let session = Session::new();
-    let atoms = Interner::new_in(&session);
-    let arena = session.arena();
-    let parse_options = CompileParseOptions {
-        path: path.as_bytes(),
-        script_kind: None,
-        experimental_decorators: false,
-        every_file_is_a_module: false,
-        reads_jsdoc: false,
-        keeps_function_directives: false,
-    };
-    let mut hir = parse_for_compile(arena, &parse_options, source.as_bytes(), &atoms);
-    hir.text = Cow::Borrowed(source.as_bytes());
-    let fold = FoldInputs::new(FoldOptions::default(), arena);
-    let bind_options = BindOptions {
-        runtime: Some(RuntimeBindOptions {
-            jsx_factory_root: None,
-            jsx_fragment_root: None,
-            emits_decorator_metadata: false,
-            hoists_top_level_variables: false,
-        }),
-        ..BindOptions::default()
-    };
-    let file = FileInputs {
-        declared_module_type: match path.ends_with(".cjs") {
-            true => DeclaredModuleType::CommonJs,
-            false => DeclaredModuleType::Unknown,
-        },
-        import_meta_main: None,
-        is_library: false,
-        host_values: &[],
-        jsx: JsxMode::Classic,
-    };
-    let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
-    assert!(
-        !hir.has_errors && !hir.has_parse_diagnostics,
-        "syntax error in: {source}"
-    );
-    then(&FindInput {
-        atoms: &atoms,
-        hir: &hir,
-        bound: &bound,
-        decisions: &analysis.decisions,
-        module_format: analysis.module_format,
-        is_held_early: &|| true,
+    analyze(path, source, |input| {
+        assert!(
+            !input.hir.has_errors && !input.hir.has_parse_diagnostics,
+            "syntax error in: {source}"
+        );
+        then(input)
     })
 }
 
@@ -141,32 +93,27 @@ fn shapes_in(path: &str, source: &str) -> Vec<Shape> {
     found.functions().map(|(_, known)| known.shape).collect()
 }
 
-fn certainties_in(path: &str, source: &str) -> Vec<Certainty> {
+fn bindings_in<T>(path: &str, source: &str, read: impl Fn(&BindingValues) -> T) -> Vec<T> {
     let found = find_in(path, source);
-    found
-        .bindings()
-        .map(|(_, values)| values.certainty)
-        .collect()
+    found.bindings().map(|(_, values)| read(values)).collect()
+}
+
+fn certainties_in(path: &str, source: &str) -> Vec<Certainty> {
+    bindings_in(path, source, |values| values.certainty)
+}
+
+fn holds_in(path: &str, source: &str) -> Vec<bool> {
+    bindings_in(path, source, |values| values.holds_from_the_start)
 }
 
 fn tree_of(function: &str) -> Vec<u8> {
     with_file("/a.cjs", &format!("var written = {function};"), |input| {
         let hir = input.hir;
         let statement = hir.ids(hir.body).next().expect("the file has a statement");
-        let StmtKind::Var(declarations) = hir[statement].kind else {
-            panic!("the statement declares a variable: {function}");
-        };
-        let declaration = declarations
-            .iter()
-            .next()
-            .expect("it declares one variable");
-        let ExprKind::Fn(written) = hir[hir[declaration].init].kind else {
-            panic!("the value of the variable is a function: {function}");
-        };
+        let written = find_published_function(hir, statement);
+        let written = written.expect("the value of the variable is a function");
         let canonical_input = CanonicalInput {
-            hir,
-            bound: input.bound,
-            atoms: input.atoms,
+            file: input,
             max_bytes: usize::MAX,
             is_outer_name: &|_| false,
         };
@@ -203,7 +150,7 @@ fn every_published_function_is_read() {
 fn no_tree_is_published_twice() {
     let (table, _) = Table::read(PUBLISHED_FUNCTIONS);
     let message = "two published texts are one tree";
-    assert_eq!(table.tree_count(), PUBLISHED_FUNCTIONS.len(), "{message}");
+    assert_eq!(table.entries.len(), PUBLISHED_FUNCTIONS.len(), "{message}");
 }
 
 #[test]
@@ -212,23 +159,11 @@ fn every_reference_of_a_published_function_can_be_verified() {
         .iter()
         .map(|function| function.shape.helper())
         .collect();
-    let is_known_global = |path: &[&str]| {
-        let mut names = path.iter().map(|name| builtins::find_name(name.as_bytes()));
-        let mut holder = builtins::global(names.next()??)?;
-        for name in names {
-            let MemberLookup::Found(member) = builtins::member(holder, name?) else {
-                return None;
-            };
-            holder = member;
-        }
-        Some(holder)
-    };
     for function in PUBLISHED_FUNCTIONS {
         for &(name, reference) in function.references {
             let can_be_verified = match reference {
-                Reference::Itself => true,
                 Reference::Helper(helper) => published.contains(&helper),
-                Reference::Global(path) => is_known_global(path).is_some(),
+                Reference::Global(path) => find_global(path).is_some(),
             };
             assert!(
                 can_be_verified,
@@ -535,14 +470,6 @@ fn helpers_of_esbuild_are_recognized() {
         shapes_in("/a.cjs", shortened),
         [Shape::ExportDefinesGetters]
     );
-    let wrapper = r#"var names = Object.getOwnPropertyNames;
-        var wrap = (cb, mod) => function __require() {
-          return mod || (0, cb[names(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-        };"#;
-    assert_eq!(
-        shapes_in("/a.mjs", wrapper),
-        [Shape::CommonJsRunsFirstOwnNameOnce]
-    );
 }
 
 #[test]
@@ -555,34 +482,9 @@ fn the_require_of_an_es_module_is_the_require_of_the_published_text() {
 });
 export {};
 "#;
-    let both = [
-        Shape::RequireFactoryPrefersRequire,
-        Shape::RequireAppliesRequireOrThrowsError,
-    ];
-    assert_eq!(shapes_in("/a.mjs", source), both);
-}
-
-#[test]
-fn helpers_of_rolldown_are_recognized_as_it_prints_them() {
-    let source = "var __defProp = Object.defineProperty;
-var __exportAll = (all, no_symbols) => {
-\tlet target = {};
-\tfor (var name in all) __defProp(target, name, {
-\t\tget: all[name],
-\t\tenumerable: true
-\t});
-\tif (!no_symbols) __defProp(target, Symbol.toStringTag, { value: \"Module\" });
-\treturn target;
-};
-var __commonJSMin = (cb, mod) => () => (mod || (cb((mod = { exports: {} }).exports, mod), cb = null), mod.exports);
-var __esmMin = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
-";
     assert_eq!(
         shapes_in("/a.mjs", source),
-        [
-            Shape::CommonJsRunsCallbackOnceThenDropsIt,
-            Shape::EsmRunsFunctionOnce,
-        ]
+        [Shape::RequireFactoryPrefersRequire]
     );
 }
 
@@ -602,7 +504,6 @@ var __export = (target, all) => {
       set: __exportSetter.bind(all, name)
     });
 };
-var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 "#;
     assert_eq!(
         shapes_in("/a.mjs", source),
@@ -610,7 +511,6 @@ var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, 
             Shape::ReturnValueReturnsArgument,
             Shape::ExportSetterStoresBoundReturnValue,
             Shape::ExportDefinesGettersAndBoundSetters,
-            Shape::CommonJsRunsCallbackOnce,
         ]
     );
 }
@@ -653,76 +553,56 @@ fn a_variable_that_is_no_alias_of_the_global_makes_an_ordinary_function() {
 
 #[test]
 fn a_branch_that_a_locked_built_in_rules_out_is_no_alternative() {
-    let found = find_in("/a.cjs", CREATE_BINDING);
-    let held: Vec<usize> = found
-        .bindings()
-        .map(|(_, values)| values.functions.len())
-        .collect();
-    assert_eq!(held, [1]);
+    let count_held = |source: &str| bindings_in("/a.cjs", source, |values| values.functions.len());
+    assert_eq!(count_held(CREATE_BINDING), [1]);
     let asks_something_else = CREATE_BINDING.replace("Object.create ?", "globalThis.flag ?");
-    let found = find_in("/a.cjs", &asks_something_else);
-    let held: Vec<usize> = found
-        .bindings()
-        .map(|(_, values)| values.functions.len())
-        .collect();
-    assert_eq!(held, [2]);
+    assert_eq!(count_held(&asks_something_else), [2]);
 }
 
 #[test]
 fn a_definition_in_the_head_holds_from_the_start() {
-    let holds = |path: &str, source: &str| -> Vec<bool> {
-        let found = find_in(path, source);
-        found
-            .bindings()
-            .map(|(_, values)| values.holds_from_the_start)
-            .collect()
-    };
-    let wrapper = "var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);\n";
-    assert_eq!(holds("/a.mjs", &format!("{wrapper}export {{}};")), [true]);
+    let wrapper = "var __returnValue = (v) => v;\n";
+    assert_eq!(
+        holds_in("/a.mjs", &format!("{wrapper}export {{}};")),
+        [true]
+    );
     let behind_reads = format!(
         "var names = Object.getOwnPropertyNames;\nvar load = import.meta.require;\n{wrapper}export {{}};"
     );
-    assert_eq!(holds("/a.mjs", &behind_reads), [true]);
+    assert_eq!(holds_in("/a.mjs", &behind_reads), [true]);
     let behind_a_call = format!("globalThis.start();\n{wrapper}export {{}};");
-    assert_eq!(holds("/a.mjs", &behind_a_call), [false]);
+    assert_eq!(holds_in("/a.mjs", &behind_a_call), [false]);
     let in_a_function =
-        format!("function outer() {{ {wrapper} return __commonJS; }}\nexport {{}};");
-    assert_eq!(holds("/a.mjs", &in_a_function), [false]);
+        format!("function outer() {{ {wrapper} return __returnValue; }}\nexport {{}};");
+    assert_eq!(holds_in("/a.mjs", &in_a_function), [false]);
 }
 
 #[test]
 fn a_definition_behind_other_code_of_its_statement_does_not_hold_from_the_start() {
-    let holds = |source: &str| -> Vec<bool> {
-        let found = find_in("/a.mjs", &format!("{source}\nexport {{}};"));
-        found
-            .bindings()
-            .map(|(_, values)| values.holds_from_the_start)
-            .collect()
-    };
-    let wrapper =
-        "(cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports)";
+    let holds = |source: &str| holds_in("/a.mjs", &format!("{source}\nexport {{}};"));
+    let wrapper = "(v) => v";
     let in_front =
-        format!("var keys = Object.keys, __commonJS = {wrapper}, started = globalThis.start();");
+        format!("var keys = Object.keys, __returnValue = {wrapper}, started = globalThis.start();");
     assert_eq!(holds(&in_front), [true]);
     assert_eq!(
         holds(&format!(
-            "var started = globalThis.start(), __commonJS = {wrapper};"
+            "var started = globalThis.start(), __returnValue = {wrapper};"
         )),
         [false]
     );
     assert_eq!(
         holds(&format!(
-            "var __commonJS = (globalThis.start(), {wrapper});"
+            "var __returnValue = (globalThis.start(), {wrapper});"
         )),
         [false]
     );
     assert_eq!(
-        holds(&format!("var __commonJS;\n__commonJS = {wrapper};")),
+        holds(&format!("var __returnValue;\n__returnValue = {wrapper};")),
         [true]
     );
     assert_eq!(
         holds(&format!(
-            "var __commonJS;\n__commonJS = (globalThis.start(), {wrapper});"
+            "var __returnValue;\n__returnValue = (globalThis.start(), {wrapper});"
         )),
         [false]
     );
@@ -730,12 +610,7 @@ fn a_definition_behind_other_code_of_its_statement_does_not_hold_from_the_start(
 
 #[test]
 fn exports_that_the_statement_has_handed_out_are_not_untouched() {
-    let certainty = |source: &str| -> Vec<Certainty> {
-        find_in("/a.cjs", source)
-            .bindings()
-            .map(|(_, values)| values.certainty)
-            .collect()
-    };
+    let certainty = |source: &str| certainties_in("/a.cjs", source);
     let helper = "__createBinding = (this && this.__createBinding) || function (o, m, k, k2) {\n    if (k2 === undefined) k2 = k;\n    o[k2] = m[k];\n}";
     assert_eq!(
         certainty(&format!("var {helper};")),

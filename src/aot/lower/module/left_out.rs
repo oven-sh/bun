@@ -5,13 +5,16 @@ use bun_sema::hir::{self, ClassId, StmtId, StmtKind, VarDeclId};
 use bun_sema::program::FileId;
 use rustc_hash::FxHashSet;
 
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+enum Declaration {
+    Declarator(VarDeclId),
+    Class(ClassId),
+    Statement(StmtId),
+}
+
 /// One declarator of `const a = f(), b = 1` can go while the other stays, so a declarator is named by itself.
 #[derive(Default, Clone)]
-pub struct LeftOutDeclarations {
-    declarators: FxHashSet<(FileId, VarDeclId)>,
-    classes: FxHashSet<(FileId, ClassId)>,
-    statements: FxHashSet<(FileId, StmtId)>,
-}
+pub struct LeftOutDeclarations(FxHashSet<(FileId, Declaration)>);
 
 impl LeftOutDeclarations {
     /// The same declarations under the numbers that another program gives the files.
@@ -19,53 +22,46 @@ impl LeftOutDeclarations {
         &self,
         file_of: &dyn Fn(FileId) -> Option<FileId>,
     ) -> LeftOutDeclarations {
-        LeftOutDeclarations {
-            declarators: (self.declarators.iter())
-                .filter_map(|&(file, id)| Some((file_of(file)?, id)))
-                .collect(),
-            classes: (self.classes.iter())
-                .filter_map(|&(file, id)| Some((file_of(file)?, id)))
-                .collect(),
-            statements: (self.statements.iter())
-                .filter_map(|&(file, id)| Some((file_of(file)?, id)))
-                .collect(),
-        }
+        let renumbered = (self.0.iter()).filter_map(|&(file, id)| Some((file_of(file)?, id)));
+        LeftOutDeclarations(renumbered.collect())
     }
 
     pub fn leave_out_declarator(&mut self, file: FileId, declarator: VarDeclId) {
-        self.declarators.insert((file, declarator));
+        self.0.insert((file, Declaration::Declarator(declarator)));
     }
 
     pub fn leave_out_class(&mut self, file: FileId, class: ClassId) {
-        self.classes.insert((file, class));
+        self.0.insert((file, Declaration::Class(class)));
     }
 
     pub fn leave_out_statement(&mut self, file: FileId, hir: &hir::File<'_>, statement: StmtId) {
         match hir[statement].kind {
             StmtKind::Var(declarators) => {
-                self.declarators
-                    .extend(declarators.iter().map(|declarator| (file, declarator)));
+                let declarators = declarators.iter().map(Declaration::Declarator);
+                self.0
+                    .extend(declarators.map(|declarator| (file, declarator)));
             }
             StmtKind::Class(class) => self.leave_out_class(file, class),
             _ => {
-                self.statements.insert((file, statement));
+                self.0.insert((file, Declaration::Statement(statement)));
             }
         }
     }
 
     pub fn is_declarator_left_out(&self, file: FileId, declarator: VarDeclId) -> bool {
-        self.declarators.contains(&(file, declarator))
+        self.0
+            .contains(&(file, Declaration::Declarator(declarator)))
     }
 
     pub fn is_class_left_out(&self, file: FileId, class: ClassId) -> bool {
-        self.classes.contains(&(file, class))
+        self.0.contains(&(file, Declaration::Class(class)))
     }
 
     pub fn is_statement_left_out(&self, file: FileId, statement: StmtId) -> bool {
-        self.statements.contains(&(file, statement))
+        self.0.contains(&(file, Declaration::Statement(statement)))
     }
 
     pub fn is_empty(&self) -> bool {
-        self.declarators.is_empty() && self.classes.is_empty() && self.statements.is_empty()
+        self.0.is_empty()
     }
 }

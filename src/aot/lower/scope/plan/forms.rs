@@ -5,7 +5,7 @@ use bun_sema::util::SharedSort;
 use super::{Context, NormalizedUses};
 use crate::ir::FunctionKey;
 use crate::lower::commonjs;
-use crate::lower::scope::analysis::ArgumentsObjects;
+use crate::lower::scope::analysis::{ArgumentsObjects, sort_unique};
 use crate::lower::scope::lexical_owners::find_container_binding;
 use crate::lower::scope::walk::EvalUse;
 use crate::lower::scope::{ArgumentsObject, BindingForm, BindingRef, ScopeSlot, WalkedFunctionId};
@@ -99,8 +99,7 @@ pub(super) fn normalize_uses(
         let callee = BindingRef::Slot(context.file_scope, ScopeSlot::Callee);
         uses.push((WalkedFunctionId::MODULE_BODY, callee));
     }
-    uses.sort_unstable();
-    uses.dedup();
+    sort_unique(&mut uses);
 
     let stored_eval_uses = walk.eval_uses.iter().filter_map(|&eval_use| {
         let binding = normalize(eval_use.function, eval_use.binding)?;
@@ -113,16 +112,13 @@ pub(super) fn normalize_uses(
     eval_uses.shared_sort_unstable();
     eval_uses.dedup();
 
-    let walked_references = walk
-        .function_references
-        .iter()
-        .filter_map(|&(user, function)| {
-            let walked = walk.function_of_fn[function.idx()]?;
-            (walked != user).then_some((user, walked))
-        });
+    let walked_references = walk.function_references.iter();
+    let walked_references = walked_references.filter_map(|&(user, function)| {
+        let walked = walk.function_of_fn[function.idx()]?;
+        (walked != user).then_some((user, walked))
+    });
     let mut references: Vec<(WalkedFunctionId, WalkedFunctionId)> = walked_references.collect();
-    references.sort_unstable();
-    references.dedup();
+    sort_unique(&mut references);
 
     let home_objects = uses.iter().filter_map(|&(_, binding)| {
         let BindingRef::Slot(scope, ScopeSlot::HomeObject) = binding else {
@@ -131,8 +127,7 @@ pub(super) fn normalize_uses(
         Some((context.scope_functions[scope.idx()]?, binding))
     });
     let mut entry_captures: Vec<(WalkedFunctionId, BindingRef)> = home_objects.collect();
-    entry_captures.sort_unstable();
-    entry_captures.dedup();
+    sort_unique(&mut entry_captures);
 
     NormalizedUses {
         uses,
@@ -169,7 +164,11 @@ fn compute_form(context: &Context<'_, '_>, symbol: SymbolId, kind: BindingKind) 
         return BindingForm::ContainerMember { container };
     }
     if kind == BindingKind::FunctionName {
-        let function = find_named_function(context, symbol);
+        let mut declarations = bound.symbol(symbol).decls.iter();
+        let function = declarations.find_map(|&decl| match decl {
+            Decl::Fn(function) if bound.declared_symbol(decl) == symbol => Some(function),
+            _ => None,
+        });
         let function = function.expect("a function declares its own name");
         return BindingForm::Callee { function };
     }
@@ -186,18 +185,6 @@ fn find_container(context: &Context<'_, '_>, symbol: SymbolId) -> Option<SymbolI
     let bound = context.input.bound;
     let parent = bound.symbol(symbol).parent.some();
     parent.filter(|&parent| parent != bound.file_symbol)
-}
-
-fn find_named_function(context: &Context<'_, '_>, symbol: SymbolId) -> Option<FnId> {
-    let bound = context.input.bound;
-    bound.symbol(symbol).decls.iter().find_map(|&decl| {
-        if let Decl::Fn(function) = decl
-            && bound.declared_symbol(decl) == symbol
-        {
-            return Some(function);
-        }
-        None
-    })
 }
 
 fn top_scope(context: &Context<'_, '_>, function: WalkedFunctionId) -> ScopeId {

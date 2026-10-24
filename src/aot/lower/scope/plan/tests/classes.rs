@@ -1,17 +1,25 @@
 use bun_sema::bind::{BindingKind, FnOwner};
+use bun_sema::check::aot::ClassRef;
 use bun_sema::hir::{ClassId, FnId, FnKind, MemberId};
 
-use super::{Probe, analyze_source, is_field};
+use super::{Probe, analyze_source, first_field, is_field};
 use crate::ir::generated::FunctionFlags;
 use crate::ir::{ClassSlot, FunctionKey, VariableKey};
 use crate::lower::captures::Capture;
-use crate::lower::scope::{BindingRef, Placement, ScopeSlot, Storage};
+use crate::lower::scope::{BindingRef, ScopeSlot, Storage};
 
 fn member_of(probe: &Probe<'_, '_, '_>, function: FnId) -> MemberId {
     let FnOwner::Member(member) = probe.bound.fns[function.idx()].owner else {
         panic!("the function is a class member");
     };
     member
+}
+
+fn initializer_and_constructor(class: ClassRef) -> [FunctionKey; 2] {
+    [
+        FunctionKey::InstanceInitializer(class),
+        FunctionKey::ImplicitConstructor(class),
+    ]
 }
 
 #[test]
@@ -22,10 +30,10 @@ fn member_captures_what_it_needs() {
         let [first, second, third] = probe.functions(FnKind::Method)[..] else {
             panic!("the class has three methods");
         };
-        assert_eq!(probe.captures(first), [Capture::Value(probe.binding("a"))]);
-        assert_eq!(probe.captures(second), [Capture::Value(probe.binding("b"))]);
+        assert_eq!(probe.captures(first), [probe.copy_of("a")]);
+        assert_eq!(probe.captures(second), [probe.copy_of("b")]);
         assert!(probe.captures(third).is_empty());
-        assert!(!probe.analysis.has_environment(probe.class_scope(0)));
+        assert!(!probe.has_environment(probe.class_scope(0)));
     });
 }
 
@@ -33,20 +41,11 @@ fn member_captures_what_it_needs() {
 fn constructor_supplies_initializer() {
     let source = "export function f() { const a = 1; class C { x = a; } return C; }";
     analyze_source("main.mjs", source, |probe| {
-        let copy = [Capture::Value(probe.binding("a"))];
+        let copy = [probe.copy_of("a")];
         let class = probe.class(0);
-        assert_eq!(
-            probe
-                .analysis
-                .captures(FunctionKey::InstanceInitializer(class)),
-            copy
-        );
-        assert_eq!(
-            probe
-                .analysis
-                .captures(FunctionKey::ImplicitConstructor(class)),
-            copy
-        );
+        for key in initializer_and_constructor(class) {
+            assert_eq!(probe.analysis.captures(key), copy, "{key:?}");
+        }
     });
 }
 
@@ -55,18 +54,9 @@ fn constructor_captures_nothing_for_constant_field() {
     let source = "export function f() { const a = 1; class C { x = 1; } return [C, a]; }";
     analyze_source("main.mjs", source, |probe| {
         let class = probe.class(0);
-        assert!(
-            probe
-                .analysis
-                .captures(FunctionKey::InstanceInitializer(class))
-                .is_empty()
-        );
-        assert!(
-            probe
-                .analysis
-                .captures(FunctionKey::ImplicitConstructor(class))
-                .is_empty()
-        );
+        for key in initializer_and_constructor(class) {
+            assert!(probe.analysis.captures(key).is_empty(), "{key:?}");
+        }
     });
 }
 
@@ -84,10 +74,7 @@ fn later_method_copies_private_method() {
             Capture::Value(probe.class_slot(0, method_slot)),
         ];
         assert_eq!(probe.captures(caller), expected);
-        assert_eq!(
-            probe.captures(private_method),
-            [Capture::Value(probe.binding("a"))]
-        );
+        assert_eq!(probe.captures(private_method), [probe.copy_of("a")]);
     });
 }
 
@@ -100,12 +87,7 @@ fn earlier_method_reads_private_method_from_environment() {
         };
         let scope = probe.class_scope(0);
         let method_slot = ClassSlot::PrivateMethod(member_of(probe, private_method));
-        let expected = Placement {
-            storage: Storage::Field { scope, field: 0 },
-            has_local: true,
-            is_immutable: true,
-            is_shared: true,
-        };
+        let expected = first_field(scope, true);
         assert_eq!(probe.placement(probe.class_slot(0, method_slot)), expected);
         let token = probe.class_slot(0, ClassSlot::ClassToken);
         let captures = [Capture::Environment(scope), Capture::Value(token)];
@@ -120,7 +102,7 @@ fn derived_constructor_takes_callee() {
     analyze_source("main.mjs", source, |probe| {
         let constructor = probe.only_function(FnKind::Constructor);
         let flags = FunctionFlags::HAS_NEW_TARGET | FunctionFlags::TAKES_CALLEE;
-        assert_eq!(probe.analysis.entry_flags(probe.key(constructor)), flags);
+        assert_eq!(probe.entry_flags(probe.key(constructor)), flags);
         assert!(probe.captures(constructor).is_empty());
         let class_object = probe.class_slot(0, ClassSlot::ClassObject);
         let method = probe.only_function(FnKind::Method);
@@ -136,15 +118,12 @@ fn arrow_with_super_call_supplies_initializer() {
         let constructor = probe.only_function(FnKind::Constructor);
         let expected = [
             Capture::Environment(probe.top_scope(constructor)),
-            Capture::Value(probe.binding("a")),
+            probe.copy_of("a"),
             Capture::Value(probe.slot(constructor, ScopeSlot::NewTarget)),
             Capture::Value(probe.slot(constructor, ScopeSlot::Callee)),
         ];
-        assert_eq!(probe.captures(probe.only_function(FnKind::Arrow)), expected);
-        assert_eq!(
-            probe.captures(constructor),
-            [Capture::Value(probe.binding("a"))]
-        );
+        assert_eq!(probe.captures(probe.arrow()), expected);
+        assert_eq!(probe.captures(constructor), [probe.copy_of("a")]);
     });
 }
 
@@ -153,11 +132,7 @@ fn arrow_without_super_call_supplies_nothing() {
     let source = "export function f(B, g) { const a = g(); class D extends B { \
         x = a; constructor() { super(); const s = () => 1; s(); } } return D; }";
     analyze_source("main.mjs", source, |probe| {
-        assert!(
-            probe
-                .captures(probe.only_function(FnKind::Arrow))
-                .is_empty()
-        );
+        assert!(probe.captures(probe.arrow()).is_empty());
     });
 }
 
@@ -167,15 +142,7 @@ fn derived_this_is_mutable() {
         return class extends B { constructor() { const s = () => super(); s(); } }; }";
     analyze_source("main.mjs", source, |probe| {
         let constructor = probe.only_function(FnKind::Constructor);
-        let expected = Placement {
-            storage: Storage::Field {
-                scope: probe.top_scope(constructor),
-                field: 0,
-            },
-            has_local: false,
-            is_immutable: false,
-            is_shared: true,
-        };
+        let expected = first_field(probe.top_scope(constructor), false);
         assert_eq!(
             probe.placement(probe.slot(constructor, ScopeSlot::This)),
             expected
@@ -190,10 +157,7 @@ fn derived_this_is_never_copied() {
     analyze_source("main.mjs", source, |probe| {
         let constructor = probe.only_function(FnKind::Constructor);
         let environment = [Capture::Environment(probe.top_scope(constructor))];
-        assert_eq!(
-            probe.captures(probe.only_function(FnKind::Arrow)),
-            environment
-        );
+        assert_eq!(probe.captures(probe.arrow()), environment);
     });
 }
 
@@ -202,10 +166,7 @@ fn base_this_is_copied() {
     let source = "export class C { constructor() { this.read = () => this; } }";
     analyze_source("main.mjs", source, |probe| {
         let this = probe.slot(probe.only_function(FnKind::Constructor), ScopeSlot::This);
-        assert_eq!(
-            probe.captures(probe.only_function(FnKind::Arrow)),
-            [Capture::Value(this)]
-        );
+        assert_eq!(probe.captures(probe.arrow()), [Capture::Value(this)]);
         assert_eq!(probe.placement(this).storage, Storage::Local);
     });
 }
@@ -217,19 +178,10 @@ fn token_is_copied_by_all() {
         let copy = [Capture::Value(probe.class_slot(0, ClassSlot::ClassToken))];
         let class = probe.class(0);
         assert_eq!(probe.captures(probe.only_function(FnKind::Method)), copy);
-        assert_eq!(
-            probe
-                .analysis
-                .captures(FunctionKey::InstanceInitializer(class)),
-            copy
-        );
-        assert_eq!(
-            probe
-                .analysis
-                .captures(FunctionKey::ImplicitConstructor(class)),
-            copy
-        );
-        assert!(!probe.analysis.has_environment(probe.class_scope(0)));
+        for key in initializer_and_constructor(class) {
+            assert_eq!(probe.analysis.captures(key), copy, "{key:?}");
+        }
+        assert!(!probe.has_environment(probe.class_scope(0)));
     });
 }
 
@@ -274,12 +226,7 @@ fn inner_class_name_has_a_field() {
     analyze_source("main.mjs", source, |probe| {
         let scope = probe.class_scope(0);
         let inner = BindingRef::Symbol(probe.bound.inner_class_symbol(ClassId(0)));
-        let expected = Placement {
-            storage: Storage::Field { scope, field: 0 },
-            has_local: true,
-            is_immutable: true,
-            is_shared: true,
-        };
+        let expected = first_field(scope, true);
         assert_eq!(probe.placement(inner), expected);
         let method = probe.only_function(FnKind::Method);
         assert_eq!(probe.captures(method), [Capture::Environment(scope)]);
@@ -291,10 +238,7 @@ fn static_arrow_copies_inner_name() {
     let source = "export function f() { class C { static make = () => new C(); } return C; }";
     analyze_source("main.mjs", source, |probe| {
         let inner = BindingRef::Symbol(probe.bound.inner_class_symbol(ClassId(0)));
-        assert_eq!(
-            probe.captures(probe.only_function(FnKind::Arrow)),
-            [Capture::Value(inner)]
-        );
+        assert_eq!(probe.captures(probe.arrow()), [Capture::Value(inner)]);
         let initializer = [
             Capture::Value(inner),
             Capture::Value(probe.class_slot(0, ClassSlot::ClassObject)),
@@ -318,7 +262,7 @@ fn class_declaration_has_two_bindings() {
         let placement = probe.placement(BindingRef::Symbol(outer));
         assert_eq!(placement.storage, Storage::Local);
         assert!(!placement.is_shared);
-        let fields = probe.analysis.environment_fields(probe.class_scope(0));
+        let fields = probe.environment_fields(probe.class_scope(0));
         assert_eq!(fields, [BindingRef::Symbol(inner)]);
     });
 }
@@ -344,11 +288,11 @@ fn home_object_is_an_entry_capture() {
     analyze_source("main.mjs", source, |probe| {
         let method = probe.only_function(FnKind::Method);
         let expected = [
-            Capture::Value(probe.binding("a")),
+            probe.copy_of("a"),
             Capture::Value(probe.slot(method, ScopeSlot::HomeObject)),
         ];
         assert_eq!(probe.captures(method), expected);
-        assert!(probe.captures(probe.function("f")).is_empty());
+        assert!(probe.captures_of("f").is_empty());
     });
 }
 
@@ -370,10 +314,7 @@ fn arrow_in_method_copies_home_object() {
         let method = probe.only_function(FnKind::Method);
         let home_object = Capture::Value(probe.slot(method, ScopeSlot::HomeObject));
         let this = Capture::Value(probe.slot(method, ScopeSlot::This));
-        assert_eq!(
-            probe.captures(probe.only_function(FnKind::Arrow)),
-            [this, home_object]
-        );
+        assert_eq!(probe.captures(probe.arrow()), [this, home_object]);
         assert_eq!(probe.captures(method), [home_object]);
     });
 }
@@ -389,7 +330,7 @@ fn variables_of_static_blocks_are_locals() {
         assert_eq!(blocks.len(), 2);
         for block in blocks {
             assert!(matches!(probe.key(block), FunctionKey::Source(_)));
-            assert!(!probe.analysis.has_environment(probe.top_scope(block)));
+            assert!(!probe.has_environment(probe.top_scope(block)));
         }
         for name in ["first", "second"] {
             let placement = probe.placement_of(name);

@@ -2,11 +2,9 @@ mod layouts;
 mod modules;
 
 use super::*;
-use crate::builtins::RuntimeFunction;
 use crate::ir::generated::{
-    Data, DataMember, DataNode, EvalBinding, EvalBindingKind, EvalScope, ExpectedResult,
-    FunctionVisibility, RuntimeFunctionEntry, TypeSite, TypeSiteKind, Variable,
-    VariableInitialization,
+    Data, DataMember, DataNode, EvalBinding, EvalBindingKind, EvalScope, ExpectedResult, TypeSite,
+    TypeSiteKind, Variable, VariableInitialization,
 };
 use crate::ir::{
     DeclaredType, FunctionId, FunctionKey, ModuleId, PropertyKey, StringId, Type, VariableId,
@@ -14,10 +12,11 @@ use crate::ir::{
 };
 use crate::link::definitions::empty_layout;
 use crate::link::key_context;
+use crate::link::program_keys::ProgramVariableKey;
 use crate::link::testing::{
-    Prepared, Projects, TestUnit, application_file, find_file, find_synthetic_export,
-    in_application, mark_prepared, mark_prepared_in_order, prepare, reverse, test_class_key,
-    test_function_key, test_object_type_key, test_variable_key, unit_in,
+    COMMON_JS_IMPORTER, Prepared, Projects, TestUnit, application_file, create_runtime_function,
+    find_file, find_synthetic_export, forward, in_application, mark_prepared, prepare, reverse,
+    test_class_key, test_function_key, test_object_type_key, test_variable_key, unit_in,
     with_projects_without_bun_modules, with_test_files,
 };
 use crate::load::ProjectId;
@@ -93,7 +92,7 @@ fn mark_fragments<const COUNT: usize>(
     let prepared = prepare(units.into(), projects);
     assert!(prepared.errors.is_empty(), "{:?}", prepared.errors);
     let mut errors = Vec::new();
-    let retained = mark_prepared(&prepared, projects, &mut errors);
+    let retained = mark_prepared(&prepared, projects, &forward, &mut errors);
     Marked {
         prepared,
         retained,
@@ -143,14 +142,6 @@ fn intern_text_key(fragment: &mut FragmentBuilder, text: &[u8]) -> (PropertyKeyI
         fragment.property_keys.intern(PropertyKey::from_text(text)),
         text,
     )
-}
-
-fn create_runtime_function(id: u32, function: FunctionId) -> RuntimeFunctionEntry {
-    RuntimeFunctionEntry {
-        id: RuntimeFunction(id),
-        function,
-        visibility: FunctionVisibility::Public,
-    }
 }
 
 fn create_eval_scope(variable: VariableId) -> EvalScope {
@@ -213,9 +204,7 @@ fn drops_uncalled_function() {
 fn retains_cross_unit_callee() {
     with_test_files(|projects, [main, first, _]| {
         let mut caller = TestUnit::new(main);
-        let callee = caller
-            .fragment
-            .declare_function(test_function_key(first.0, 0));
+        let callee = caller.declare_function(first, 0);
         caller.define_body(|builder| {
             builder.call_direct(callee, &[]);
         });
@@ -259,9 +248,8 @@ fn order_of_units_does_not_change_marks() {
         let units = units.map(|unit| unit_in(projects, ProjectId::Application, unit.finish()));
         let prepared = prepare(units.into(), projects);
         let (mut errors, mut errors_in_reverse) = (Vec::new(), Vec::new());
-        let retained = mark_prepared(&prepared, projects, &mut errors);
-        let in_reverse =
-            mark_prepared_in_order(&prepared, projects, &reverse, &mut errors_in_reverse);
+        let retained = mark_prepared(&prepared, projects, &forward, &mut errors);
+        let in_reverse = mark_prepared(&prepared, projects, &reverse, &mut errors_in_reverse);
 
         assert_eq!(retained.functions, in_reverse.functions);
         assert_eq!(retained.layouts, in_reverse.layouts);
@@ -383,14 +371,7 @@ fn variable_keeps_its_function_and_type() {
 
 #[test]
 fn retains_read_synthetic_export() {
-    let files = [
-        (
-            "main.js",
-            "import { a, b } from './legacy.cjs';\nconsole.log(a, b);\n",
-        ),
-        ("legacy.cjs", "exports.a = 1;\nexports.b = 2;\n"),
-    ];
-    with_projects_without_bun_modules(&files, |projects| {
+    with_projects_without_bun_modules(&COMMON_JS_IMPORTER, |projects| {
         let application = ProjectId::Application;
         let keys = [&b"a"[..], b"b"].map(|name| {
             VariableKey::SyntheticExport(find_synthetic_export(projects, application, name))

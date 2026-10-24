@@ -1,4 +1,4 @@
-use super::compare_code_units;
+use crate::modules::compare_code_units;
 use core::cmp::Ordering;
 
 const GRINNING_FACE: &[u8] = "\u{1F600}".as_bytes();

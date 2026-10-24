@@ -1,9 +1,9 @@
 use bun_sema::bind::{CodeUnit, CommonJsVariable};
 use bun_sema::hir::{FnKind, StmtKind};
 
-use super::{analyze_source, is_field, storage_in};
+use super::{COPIED, analyze_source, is_field, storage_in};
 use crate::lower::captures::Capture;
-use crate::lower::scope::{ArgumentsObject, BindingRef, Placement, ScopeSlot, Storage};
+use crate::lower::scope::{ArgumentsObject, BindingRef, ScopeSlot, Storage};
 
 const EVAL_BETWEEN_DECLARATIONS: &str = "export function f(s) { \
     let a = 1; const b = 2; eval(s); const c = 3; return [a, b, c]; }";
@@ -23,19 +23,11 @@ fn mutable_binding_seen_by_eval_has_a_field() {
 #[test]
 fn const_seen_by_eval_stays_local() {
     analyze_source("main.mjs", EVAL_BETWEEN_DECLARATIONS, |probe| {
-        let expected = Placement {
-            storage: Storage::Local,
-            has_local: true,
-            is_immutable: true,
-            is_shared: true,
-        };
-        assert_eq!(probe.placement_of("b"), expected);
+        assert_eq!(probe.placement_of("b"), COPIED);
         let later = probe.placement_of("c");
         assert!(is_field(later.storage));
         assert!(later.has_local && later.is_immutable);
-        let fields = probe
-            .analysis
-            .environment_fields(probe.top_scope(probe.function("f")));
+        let fields = probe.environment_fields(probe.top_of("f"));
         assert!(!fields.contains(&probe.binding("b")));
         assert_eq!(fields.len(), 3);
     });
@@ -75,14 +67,14 @@ fn eval_in_later_closure_takes_values() {
     analyze_source("main.mjs", source, |probe| {
         let function = probe.function("f");
         let expected = [
-            Capture::Value(probe.binding("a")),
+            probe.copy_of("a"),
             Capture::Value(probe.slot(function, ScopeSlot::This)),
             Capture::Value(probe.slot(function, ScopeSlot::NewTarget)),
             Capture::Value(probe.slot(function, ScopeSlot::Arguments)),
             Capture::Value(probe.slot(function, ScopeSlot::ArgumentsBinding)),
         ];
-        assert_eq!(probe.captures(probe.only_function(FnKind::Arrow)), expected);
-        assert!(!probe.analysis.has_environment(probe.top_scope(function)));
+        assert_eq!(probe.captures(probe.arrow()), expected);
+        assert!(!probe.has_environment(probe.top_scope(function)));
     });
 }
 
@@ -90,13 +82,9 @@ fn eval_in_later_closure_takes_values() {
 fn eval_in_hoisted_function_needs_a_field() {
     let source = "export function f() { const a = 1; function g(s) { return eval(s); } return g; }";
     analyze_source("main.mjs", source, |probe| {
-        let top = probe.top_scope(probe.function("f"));
+        let top = probe.top_of("f");
         assert!(is_field(probe.placement_of("a").storage));
-        assert!(
-            probe
-                .captures(probe.function("g"))
-                .contains(&Capture::Environment(top))
-        );
+        assert!(probe.captures_of("g").contains(&Capture::Environment(top)));
     });
 }
 
@@ -116,14 +104,11 @@ fn slot_stored_by_eval_has_a_field() {
     assert!(is_field(exports_in(
         "function f(text) { eval(text); } f(''); exports.a = 1;"
     )));
-    analyze_source(
-        "main.cjs",
-        "var text = ''; (0, eval)(text); exports.a = 1;",
-        |probe| {
-            let slot = ScopeSlot::CommonJs(CommonJsVariable::Exports);
-            assert_eq!(probe.analysis.placement(probe.file_slot(slot)), None);
-        },
-    );
+    let source = "var text = ''; (0, eval)(text); exports.a = 1;";
+    analyze_source("main.cjs", source, |probe| {
+        let slot = ScopeSlot::CommonJs(CommonJsVariable::Exports);
+        assert_eq!(probe.analysis.placement(probe.file_slot(slot)), None);
+    });
 
     let arguments_in = |source: &str| {
         analyze_source("main.cjs", source, |probe| {
@@ -156,16 +141,11 @@ fn sloppy_eval_in_commonjs_body_maps_wrapper_parameters() {
             assert!(is_field(binding.storage), "{source}");
         });
     }
-    analyze_source(
-        "main.cjs",
-        "function f(text) { eval(text); } f('');",
-        |probe| {
-            assert_eq!(
-                probe.analysis.arguments_object(CodeUnit::File),
-                ArgumentsObject::None
-            );
-        },
-    );
+    let source = "function f(text) { eval(text); } f('');";
+    analyze_source("main.cjs", source, |probe| {
+        let object = probe.analysis.arguments_object(CodeUnit::File);
+        assert_eq!(object, ArgumentsObject::None);
+    });
 }
 
 #[test]
@@ -178,7 +158,7 @@ fn this_stored_by_eval_has_a_field() {
         assert!(is_field(placement.storage));
         assert!(!placement.has_local);
         let statement = probe.first_statement(|kind| matches!(kind, StmtKind::While { .. }));
-        assert!(!probe.analysis.stored_in_loop(statement).contains(&this));
+        assert!(!probe.stored_in_loop(statement).contains(&this));
     });
 }
 
@@ -189,12 +169,9 @@ fn with_object_is_copied() {
         let statement = probe.first_statement(|kind| matches!(kind, StmtKind::With { .. }));
         let scope = probe.bound.own_scope(statement);
         let object = BindingRef::Slot(scope, ScopeSlot::WithObject);
-        assert_eq!(probe.analysis.bindings(scope), [object]);
+        assert_eq!(probe.bindings(scope), [object]);
         assert_eq!(probe.placement(object).storage, Storage::Local);
-        assert_eq!(
-            probe.captures(probe.only_function(FnKind::Arrow)),
-            [Capture::Value(object)]
-        );
+        assert_eq!(probe.captures(probe.arrow()), [Capture::Value(object)]);
     });
 }
 
@@ -204,18 +181,13 @@ fn eval_variables_object_is_copied() {
     analyze_source("main.cjs", source, |probe| {
         let variables = probe.slot(probe.function("f"), ScopeSlot::EvalVariables);
         assert_eq!(probe.placement(variables).storage, Storage::Local);
-        let arrow = probe.only_function(FnKind::Arrow);
-        assert_eq!(probe.captures(arrow), [Capture::Value(variables)]);
+        assert_eq!(probe.captures(probe.arrow()), [Capture::Value(variables)]);
     });
     let strict = "export function f(s) { eval(s); return () => x; }";
     analyze_source("main.mjs", strict, |probe| {
         let variables = probe.slot(probe.function("f"), ScopeSlot::EvalVariables);
         assert_eq!(probe.analysis.placement(variables), None);
-        assert!(
-            probe
-                .captures(probe.only_function(FnKind::Arrow))
-                .is_empty()
-        );
+        assert!(probe.captures(probe.arrow()).is_empty());
     });
 }
 

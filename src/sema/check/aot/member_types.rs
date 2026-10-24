@@ -97,7 +97,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// The name of the member that `object[key]` reaches where `key` names a `const` that declares a symbol.
     pub(super) fn symbol_member_name(&mut self, file: FileId, key: ExprId) -> Option<Atom> {
         if !matches!(self.c.hir(file)[key].kind, ExprKind::Ident(_)) {
             return None;
@@ -112,7 +111,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// Where the symbol is made that names the member `name`.
     pub fn symbol_creation(&mut self, name: Atom) -> Option<SymbolCreation> {
         let key = self.c.key_type_of_name(name)?;
         let &TypeData::UniqueSymbol {
@@ -203,7 +201,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// See `note_inferred_member`.
     pub(super) fn is_inferred_member(&mut self, prop: &'p Prop<'p>) -> bool {
         match &prop.source {
             PropSource::Type(_) | PropSource::Copy(..) | PropSource::Mapped(..) => false,
@@ -382,7 +379,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Ok(checked) => checked,
             Err(reason) => return WrittenType::GaveUp(reason),
         };
-        // A copy names declarations, not what it was copied from.
         match self.c.union(&sources.types) == checked {
             true => WrittenType::Written(checked),
             false => WrittenType::Unwritten,
@@ -406,7 +402,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if self.c.is_union(whole) {
             return WrittenType::Written(self.c.union(&written.types));
         }
-        // Some parts of an intersection say nothing about the whole: `{ brand: true } & string` is a string.
         let written = WrittenType::Written(self.c.intersection(&written.types));
         written_as_checked(written, self.type_without_optional_undefined(prop, outer))
     }

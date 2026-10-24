@@ -1,14 +1,11 @@
 use super::{Probe, analyze_files};
-use crate::lower::captures::Capture;
 
 const NAMES: (&str, &str) = ("names.cjs", "exports.f = () => 1; exports.n = 2;");
 const ES_NAMES: (&str, &str) = ("names.mjs", "export const f = () => 1; export let n = 2;");
 
 fn is_initialized_holder(probe: &Probe<'_, '_, '_>, function: &str, name: &str) -> bool {
     let key = probe.key(probe.function(function));
-    probe
-        .analysis
-        .is_initialized_holder(key, probe.symbol(name))
+    probe.is_initialized_holder(key, probe.symbol(name))
 }
 
 #[test]
@@ -26,10 +23,7 @@ fn holder_is_not_captured_by_a_function_made_behind_it() {
             target.0
         );
         analyze_files(&[("main.cjs", source.as_str()), target], |probe| {
-            assert!(
-                probe.captures(probe.function("later")).is_empty(),
-                "{source}"
-            );
+            assert!(probe.captures_of("later").is_empty(), "{source}");
             assert!(is_initialized_holder(probe, "later", "a"), "{source}");
         });
     }
@@ -41,7 +35,7 @@ fn hoisted_function_asks_whether_the_holder_is_initialized() {
                   module.exports = hoisted;";
     analyze_files(&[("main.cjs", source), NAMES], |probe| {
         assert!(!is_initialized_holder(probe, "hoisted", "a"));
-        assert!(!probe.captures(probe.function("hoisted")).is_empty());
+        assert!(!probe.captures_of("hoisted").is_empty());
         assert!(probe.placement_of("a").is_shared);
     });
 }
@@ -52,10 +46,7 @@ fn holder_that_is_a_value_is_captured() {
                   module.exports = function later() { return a; };";
     analyze_files(&[("main.cjs", source), NAMES], |probe| {
         assert!(!is_initialized_holder(probe, "later", "a"));
-        assert_eq!(
-            probe.captures(probe.function("later")),
-            [Capture::Value(probe.binding("a"))]
-        );
+        assert_eq!(probe.captures_of("later"), [probe.copy_of("a")]);
     });
 }
 
@@ -65,7 +56,7 @@ fn var_holder_initialized_in_a_branch_is_read() {
                   module.exports = function later() { return a.f(); };";
     analyze_files(&[("main.cjs", source), NAMES], |probe| {
         assert!(!is_initialized_holder(probe, "later", "a"));
-        assert!(!probe.captures(probe.function("later")).is_empty());
+        assert!(!probe.captures_of("later").is_empty());
     });
 }
 
@@ -75,7 +66,7 @@ fn holder_that_is_stored_again_is_an_ordinary_variable() {
                   module.exports = function later() { return a.f(); }; a = null;";
     analyze_files(&[("main.cjs", source), NAMES], |probe| {
         assert!(!is_initialized_holder(probe, "later", "a"));
-        assert!(!probe.captures(probe.function("later")).is_empty());
+        assert!(!probe.captures_of("later").is_empty());
     });
 }
 
@@ -83,12 +74,12 @@ fn holder_that_is_stored_again_is_an_ordinary_variable() {
 fn require_in_a_function_captures_nothing() {
     let source = "module.exports = function load() { return require('./names.cjs').n; };";
     analyze_files(&[("main.cjs", source), NAMES], |probe| {
-        assert!(probe.captures(probe.function("load")).is_empty());
+        assert!(probe.captures_of("load").is_empty());
     });
     let wrapped = "'use strict'; arguments; \
                    module.exports = function load() { return require('./names.cjs').n; };";
     analyze_files(&[("main.cjs", wrapped), NAMES], |probe| {
-        assert!(probe.analysis.has_wrapper_parameters());
-        assert!(probe.captures(probe.function("load")).is_empty());
+        assert!(probe.has_wrapper_parameters());
+        assert!(probe.captures_of("load").is_empty());
     });
 }

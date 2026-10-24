@@ -57,7 +57,7 @@ impl Resolver<'_, '_> {
 
     pub(super) fn collect_declared_aliases(&mut self) {
         let input = self.input;
-        if let Some(facts) = self.facts() {
+        if let Some(facts) = self.facts {
             self.add_declared_aliases_of_part(facts);
             self.collect_entity_aliases();
             return;

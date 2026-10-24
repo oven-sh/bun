@@ -43,10 +43,8 @@ fn tokens_round_trip() {
 #[test]
 fn tokens_spell_paths() {
     assert_eq!(BuiltinId::ArrayPrototypePush.name(), "ArrayPrototypePush");
-    assert_eq!(
-        BuiltinId::from_name("MathFloor"),
-        Some(BuiltinId::MathFloor)
-    );
+    let found = BuiltinId::from_name("MathFloor");
+    assert_eq!(found, Some(BuiltinId::MathFloor));
     assert_eq!(BuiltinClass::Map.name(), "Map");
     assert_eq!(RuntimeModule::NodeFs.name(), "NodeFs");
 }

@@ -14,14 +14,9 @@ use crate::ir::ValueId;
 use crate::ir::generated::TypeSiteKind;
 
 #[derive(Copy, Clone, Debug)]
-enum PatternNode {
+pub(super) enum PatternNode {
     Binding(PatId),
     Assignment(ExprId),
-}
-
-enum PreparedTarget {
-    AtStore,
-    Reference(Reference),
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -45,7 +40,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn destructure(&mut self, node: PatternNode, value: ValueId, source: Option<ExprId>) {
         match self.file.node_shape(node) {
             NodeShape::Hole => {}
-            NodeShape::Leaf => self.store_leaf(node, value, source),
+            NodeShape::Leaf => {
+                let position = self.file.node_position(node);
+                self.set_position(position);
+                let value = self.convert_element(node, value);
+                match node {
+                    PatternNode::Binding(pattern) => {
+                        self.initialize_pattern_name(pattern, value, source);
+                    }
+                    PatternNode::Assignment(target) => {
+                        let reference = self.lower_reference(target, KeyConversion::AtAccess);
+                        self.put_reference(&reference, value, source);
+                    }
+                }
+            }
             NodeShape::Object => {
                 let module = source.and_then(|source| self.file.find_destructured_module(source));
                 if let Some(module) = module {
@@ -85,63 +93,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn store_leaf(&mut self, node: PatternNode, value: ValueId, source: Option<ExprId>) {
-        let position = self.file.node_position(node);
-        self.set_position(position);
-        let value = self.convert_element(node, value);
-        match node {
-            PatternNode::Binding(pattern) => {
-                self.initialize_pattern_name(pattern, value, source);
-            }
-            PatternNode::Assignment(target) => {
-                let reference = self.lower_reference(target, KeyConversion::AtAccess);
-                self.put_reference(&reference, value, source);
-            }
-        }
-    }
-
-    fn prepare_target(&mut self, target: PatternNode) -> PreparedTarget {
+    // The reference of `[a.b] = ..` is evaluated before the value is read. Every other target is resolved at the store.
+    fn prepare_target(&mut self, target: PatternNode) -> Option<Reference> {
         let PatternNode::Assignment(expression) = target else {
-            return PreparedTarget::AtStore;
+            return None;
         };
         match self.file.classify_assignment_target(expression) {
             AssignmentTarget::Expression => {
-                let reference = self.lower_reference(expression, KeyConversion::AtAccess);
-                PreparedTarget::Reference(reference)
+                Some(self.lower_reference(expression, KeyConversion::AtAccess))
             }
-            _ => PreparedTarget::AtStore,
+            _ => None,
         }
     }
 
-    fn finish_target(&mut self, target: PatternNode, prepared: PreparedTarget, value: ValueId) {
+    fn finish_target(&mut self, target: PatternNode, prepared: Option<Reference>, value: ValueId) {
         match prepared {
-            PreparedTarget::Reference(reference) => {
+            Some(reference) => {
                 let position = self.file.node_position(target);
                 self.set_position(position);
                 self.put_reference(&reference, value, None);
             }
-            PreparedTarget::AtStore => self.destructure(target, value, None),
+            None => self.destructure(target, value, None),
         }
-    }
-
-    // Under an annotation the node has the type the annotation gives the member, and the default is converted to it.
-    fn convert_default(&mut self, target: PatternNode, default: ExprId, value: ValueId) -> ValueId {
-        let PatternNode::Binding(pattern) = target else {
-            return value;
-        };
-        if !self.file.has_annotated_root(target) {
-            return value;
-        }
-        let types = PositionTypes {
-            written: WrittenType::Unwritten,
-            checked: self.file.queries.binding_type(pattern),
-        };
-        let origin = SiteOrigin {
-            kind: TypeSiteKind::Variable,
-            position: self.file.hir[pattern].pos,
-        };
-        let position = self.file.create_position(types, origin);
-        self.convert_initializer(value, position, Some(default))
     }
 }
 
@@ -150,6 +123,33 @@ fn apply_default(
     value: ValueId,
     default: ExprId,
     target: PatternNode,
+) -> ValueId {
+    // Under an annotation the node has the type the annotation gives the member, and the default is converted to it.
+    apply_default_with(lowering, value, default, target, &mut |lowering, value| {
+        let pattern = match target {
+            PatternNode::Binding(pattern) if lowering.file.has_annotated_root(target) => pattern,
+            PatternNode::Binding(_) | PatternNode::Assignment(_) => return value,
+        };
+        let types = PositionTypes {
+            written: WrittenType::Unwritten,
+            checked: lowering.file.queries.binding_type(pattern),
+        };
+        let origin = SiteOrigin {
+            kind: TypeSiteKind::Variable,
+            position: lowering.file.hir[pattern].pos,
+        };
+        let position = lowering.file.create_position(types, origin);
+        lowering.convert_initializer(value, position, Some(default))
+    })
+}
+
+// The default is evaluated where the value is `undefined`, and `convert` gives it the type of what receives it.
+pub(super) fn apply_default_with(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    value: ValueId,
+    default: ExprId,
+    target: PatternNode,
+    convert: &mut dyn FnMut(&mut FunctionLowering<'_, '_, '_, '_, '_>, ValueId) -> ValueId,
 ) -> ValueId {
     if default.is_none() {
         return value;
@@ -172,7 +172,7 @@ fn apply_default(
         }
         None => lowering.lower_expression(default),
     };
-    let default_value = lowering.convert_default(target, default, default_value);
+    let default_value = convert(lowering, default_value);
     lowering.builder.write_variable(result, default_value);
     lowering.jump(join);
     lowering.continue_in(join);

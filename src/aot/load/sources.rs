@@ -166,7 +166,6 @@ struct SourceEntry {
     kind: SourceKind,
     loader: Loader,
     byte_count: u64,
-    is_from_plugin: bool,
     public_path: Box<[u8]>,
     display_path: Box<[u8]>,
     diagnostic_path: Box<[u8]>,
@@ -206,10 +205,6 @@ impl Sources {
         self.entries[file.idx()].byte_count
     }
 
-    pub fn is_from_plugin(&self, file: FileId) -> bool {
-        self.entries[file.idx()].is_from_plugin
-    }
-
     pub fn module_paths(&self, file: FileId) -> ModulePaths<'_> {
         let entry = &self.entries[file.idx()];
         ModulePaths {
@@ -218,7 +213,6 @@ impl Sources {
         }
     }
 
-    /// What a message of the build names the file by.
     pub fn diagnostic_path(&self, file: FileId) -> &[u8] {
         &self.entries[file.idx()].diagnostic_path
     }
@@ -274,7 +268,6 @@ impl Sources {
             .map(|entry| (entry.0.0, entry.1.file))
     }
 
-    /// The file that evaluates the text `text_file` was made of.
     pub fn evaluator_of(&self, text_file: FileId) -> Option<FileId> {
         let mut functions = self.evaluated_functions.iter();
         let entry = functions.find(|entry| entry.1.file == text_file)?;

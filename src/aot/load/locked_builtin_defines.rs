@@ -27,24 +27,20 @@ fn runtime_value_kind(object: BuiltinId) -> Option<RuntimeValueKind> {
     }
 }
 
-impl<'s> LockedPathWalk<'_, 's> {
-    fn is_locked_location(&self, location: BuiltinId) -> bool {
-        let entry = table::entry(location);
-        entry.mutability == Mutability::AlwaysLocked
-            && !table::is_symbol_name(entry.name)
-            && table::exists_on(location, self.platform)
-    }
-
+impl LockedPathWalk<'_, '_> {
     fn add_location(&mut self, location: BuiltinId) {
-        let object = table::canonical_id(location);
+        let (object, entry) = (table::canonical_id(location), table::entry(location));
         let Some(kind) = runtime_value_kind(object) else {
             return;
         };
-        if !self.is_locked_location(location) {
+        if entry.mutability != Mutability::AlwaysLocked
+            || table::is_symbol_name(entry.name)
+            || !table::exists_on(location, self.platform)
+        {
             return;
         }
-        let name = table::text_of_name(table::entry(location).name);
-        self.names.push(self.atoms.intern(name));
+        let name = self.atoms.intern(table::text_of_name(entry.name));
+        self.names.push(name);
         self.defines.push(Define {
             path: DefinePath {
                 root: DefineRoot::Global(self.names[0]),
@@ -53,17 +49,13 @@ impl<'s> LockedPathWalk<'_, 's> {
             value: DefineValue::RuntimeValue(kind),
         });
         if !self.holders.contains(&object) {
-            self.add_members(object);
+            self.holders.push(object);
+            for &member in table::members(object) {
+                self.add_location(member);
+            }
+            self.holders.pop();
         }
         self.names.pop();
-    }
-
-    fn add_members(&mut self, holder: BuiltinId) {
-        self.holders.push(holder);
-        for &member in table::members(holder) {
-            self.add_location(member);
-        }
-        self.holders.pop();
     }
 }
 
@@ -89,30 +81,18 @@ pub(crate) fn locked_builtin_defines<'s>(
 }
 
 /// `Bun` says which runtime this is. ZigGlobalObject.lut.txt: the property is read-only and cannot be deleted, so no program replaces it.
-const RUNTIME_IDENTITY: [&[&str]; 1] = [&["Bun"]];
-
 pub(crate) fn runtime_identity_defines<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
-) -> Vec<Define<'s>> {
-    let global_this = atoms.intern(b"globalThis");
-    let mut defines = Vec::with_capacity(2 * RUNTIME_IDENTITY.len());
-    for names in RUNTIME_IDENTITY {
-        let names: Vec<Atom> = names
-            .iter()
-            .map(|name| atoms.intern(name.as_bytes()))
-            .collect();
-        for (root, members) in [(names[0], &names[1..]), (global_this, &names[..])] {
-            defines.push(Define {
-                path: DefinePath {
-                    root: DefineRoot::Global(root),
-                    members: arena.alloc_slice_copy(members),
-                },
-                value: DefineValue::RuntimeValue(RuntimeValueKind::Object),
-            });
-        }
-    }
-    defines
+) -> [Define<'s>; 2] {
+    let (global_this, bun) = (atoms.intern(b"globalThis"), atoms.intern(b"Bun"));
+    [(bun, &[][..]), (global_this, &[bun][..])].map(|(root, members)| Define {
+        path: DefinePath {
+            root: DefineRoot::Global(root),
+            members: arena.alloc_slice_copy(members),
+        },
+        value: DefineValue::RuntimeValue(RuntimeValueKind::Object),
+    })
 }
 
 #[cfg(test)]

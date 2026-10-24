@@ -1,17 +1,18 @@
-use bun_ast::{Loader, Log};
+use bun_ast::Loader;
 use bun_builtin_sources::Archive;
 use bun_sema::hir::FileKind;
 use bun_sema::module_format::DeclaredModuleType;
 use bun_sema::program::HostModuleId;
-use bun_sema::resolve::{CodeImportForm, ParseOptions};
+use bun_sema::resolve::{CodeImportForm, CodeRead, LoaderRequest, ParseOptions};
 use bun_sema::session::Session;
 
 use super::*;
 use crate::builtins::RuntimeModule;
 use crate::builtins::table::STARTUP_FUNCTIONS;
 use crate::compile::testing::{default_settings, set_up_output};
-use crate::diagnostics::Diagnostics;
+use crate::load::host::tests::{payload_of, take_messages};
 use crate::load::host_platform;
+use crate::load::loaders::BY_NAME;
 
 const FS_SOURCE: &[u8] = b"/$bun/js/node/fs.ts";
 const CONFIGURATION: &[u8] = b"/$bun/js/tsconfig.json";
@@ -29,7 +30,7 @@ struct Fixture<'f, 's> {
 
 impl<'s> Fixture<'_, 's> {
     fn runtime_modules(&self) -> &RuntimeModules {
-        self.host.input.runtime_modules
+        self.host.runtime_modules
     }
 
     fn resolve(&self, specifier: &[u8], importer: &[u8], kind: CodeImportKind) -> HostResolution {
@@ -72,12 +73,7 @@ impl<'s> Fixture<'_, 's> {
     }
 
     fn take_messages(&self) -> Vec<Vec<u8>> {
-        let mut diagnostics = Diagnostics::new();
-        diagnostics.add_load_messages(self.host.input.messages);
-        let mut log = Log::init();
-        diagnostics.write_to(&mut log);
-        let messages = log.msgs.iter();
-        messages.map(|message| message.data.text.to_vec()).collect()
+        take_messages(self.host.messages)
     }
 }
 
@@ -91,25 +87,19 @@ fn with_host<R>(then: impl FnOnce(&Fixture<'_, '_>) -> R) -> R {
     let builtin_names = BuiltinNames::new(&atoms);
     let runtime_modules = RuntimeModules::new(Archive::embedded(), false);
     let messages = LoadMessages::default();
-    let host = RuntimeHost::new(RuntimeHostInput {
+    let host = RuntimeHost {
         disk: &disk,
         runtime_modules: &runtime_modules,
         builtin_names: &builtin_names,
         platform: host_platform(),
         messages: &messages,
-    });
+        unreadable: Guarded::default(),
+    };
     then(&Fixture {
         host: &host,
         session: &session,
         atoms,
     })
-}
-
-fn payload_of<'p>(parsed: &'p ParsedCode<'_>) -> &'p ParsedSource {
-    let payload = parsed.payload.as_ref();
-    let payload = payload.expect("parse_code gives every tree a payload");
-    let source = payload.downcast_ref::<ParsedSource>();
-    source.expect("the payload of a tree is a ParsedSource")
 }
 
 fn host_module_id(module: RuntimeModule) -> HostModuleId {
@@ -181,10 +171,8 @@ fn internal_module_resolves_from_archive_importer() {
         assert_eq!(fixture.import(specifier, b""), unclaimed);
         let host = fixture.host;
         assert_eq!(host.resolve_runtime_module(specifier), unclaimed);
-        assert!(
-            host.find_runtime_modules(b"internal/validators", b"")
-                .is_empty()
-        );
+        let validators = host.find_runtime_modules(b"internal/validators", b"");
+        assert!(validators.is_empty());
     });
 }
 
@@ -196,10 +184,8 @@ fn relative_import_of_module_keeps_module_id() {
         assert!(matches!(path_source, HostResolution::ModuleSource { .. }));
         assert_eq!(fixture.import(b"./path", FS_SOURCE), path_source);
         assert_eq!(fixture.import(b"node:path", FS_SOURCE), path_source);
-        assert_eq!(
-            fixture.import(b"../internal/validators", FS_SOURCE),
-            fixture.import(b"internal/validators", FS_SOURCE)
-        );
+        let actual = fixture.import(b"../internal/validators", FS_SOURCE);
+        assert_eq!(actual, fixture.import(b"internal/validators", FS_SOURCE));
 
         let unclaimed = HostResolution::Unclaimed;
         assert_eq!(fixture.import(b"./nothing", FS_SOURCE), unclaimed);
@@ -263,12 +249,8 @@ fn entry_point_is_unclaimed() {
     with_host(|fixture| {
         for specifier in [&b"node:fs"[..], b"bun:jsc", b"bun:main", FS_SOURCE] {
             let resolution = fixture.resolve(specifier, b"", CodeImportKind::EntryPoint);
-            assert_eq!(
-                resolution,
-                HostResolution::Unclaimed,
-                "{}",
-                BStr::new(specifier)
-            );
+            let name = BStr::new(specifier);
+            assert_eq!(resolution, HostResolution::Unclaimed, "{name}");
         }
     });
 }
@@ -298,10 +280,8 @@ fn other_paths_are_served_by_the_disk() {
         assert_eq!(host.read(PROGRAM_FILE).as_deref(), Some(PROGRAM_TEXT));
         assert_eq!(&*host.read_source(PROGRAM_FILE), PROGRAM_TEXT);
         assert!(host.is_dir(b"/project/src"));
-        assert_eq!(
-            host.entries(b"/project/src"),
-            (vec![b"a.ts".to_vec()], Vec::new())
-        );
+        let expected = (vec![b"a.ts".to_vec()], Vec::new());
+        assert_eq!(host.entries(b"/project/src"), expected);
         assert_eq!(host.list_dir(b"/project/src"), [b"a.ts"]);
         assert!(!host.is_file(MISSING_PROGRAM_FILE));
         assert_eq!(host.read(MISSING_PROGRAM_FILE), None);
@@ -318,21 +298,12 @@ fn payload_kind_follows_file_kind() {
             (&prelude_file, SourceKind::RuntimeFunctions),
         ];
         for (path, kind) in cases {
-            let parsed = fixture.parse(path);
-            assert_eq!(parsed.hir.kind, FileKind::Ts, "{}", BStr::new(path));
-            assert!(
-                !parsed.hir.is_js && !parsed.hir.has_errors,
-                "{}",
-                BStr::new(path)
-            );
+            let (parsed, name) = (fixture.parse(path), BStr::new(path));
+            assert_eq!(parsed.hir.kind, FileKind::Ts, "{name}");
+            assert!(!parsed.hir.is_js && !parsed.hir.has_errors, "{name}");
             assert!(parsed.host_values.is_empty());
             let source = payload_of(&parsed);
-            assert_eq!(
-                (source.kind, source.loader),
-                (kind, Loader::Ts),
-                "{}",
-                BStr::new(path)
-            );
+            assert_eq!((source.kind, source.loader), (kind, Loader::Ts), "{name}");
             assert!(!source.is_from_plugin && source.plugin_module.is_none());
             assert!(source.web_assembly.is_none() && !source.is_page);
         }
@@ -345,19 +316,12 @@ fn payload_kind_follows_file_kind() {
 fn declaration_root_is_types_only() {
     with_host(|fixture| {
         for path in fixture.runtime_modules().declaration_paths() {
-            let parsed = fixture.parse(&path);
-            assert_eq!(
-                parsed.hir.kind,
-                FileKind::Declaration,
-                "{}",
-                BStr::new(&path)
-            );
+            let (parsed, name) = (fixture.parse(&path), BStr::new(&path));
+            assert_eq!(parsed.hir.kind, FileKind::Declaration, "{name}");
             assert!(parsed.hir.source_len > 0);
             let source = payload_of(&parsed);
-            assert_eq!(
-                (source.kind, source.loader),
-                (SourceKind::TypesOnly, Loader::Ts)
-            );
+            let expected = (SourceKind::TypesOnly, Loader::Ts);
+            assert_eq!((source.kind, source.loader), expected);
         }
         assert!(fixture.take_messages().is_empty());
     });
@@ -413,52 +377,26 @@ fn unknown_host_path_is_unreadable() {
 }
 
 #[test]
-fn only_function_files_are_library_files() {
+fn only_function_files_are_library_files_and_only_modules_hoist_top_level_variables() {
     with_host(|fixture| {
         let host = fixture.host;
-        assert!(host.is_library_file(&fixture.function_file()));
-        assert!(host.is_library_file(&fixture.prelude_file()));
-
-        let [builtins, private] = fixture.runtime_modules().declaration_paths();
-        let other_files: [&[u8]; 7] = [
-            FS_SOURCE,
-            &builtins,
-            &private,
-            CONFIGURATION,
-            MISSING_SOURCE,
-            LIBRARY,
-            PROGRAM_FILE,
-        ];
-        for path in other_files {
-            assert!(!host.is_library_file(path), "{}", BStr::new(path));
-        }
-    });
-}
-
-#[test]
-fn only_modules_hoist_top_level_variables() {
-    with_host(|fixture| {
-        let host = fixture.host;
-        assert!(host.hoists_top_level_variables(FS_SOURCE));
-
         let [builtins, private] = fixture.runtime_modules().declaration_paths();
         let (function_file, prelude_file) = (fixture.function_file(), fixture.prelude_file());
-        let other_files: [&[u8]; 8] = [
-            &function_file,
-            &prelude_file,
-            &builtins,
-            &private,
-            CONFIGURATION,
-            MISSING_SOURCE,
-            LIBRARY,
-            PROGRAM_FILE,
+        let cases: [(&[u8], bool, bool); 9] = [
+            (&function_file, true, false),
+            (&prelude_file, true, false),
+            (FS_SOURCE, false, true),
+            (&builtins, false, false),
+            (&private, false, false),
+            (CONFIGURATION, false, false),
+            (MISSING_SOURCE, false, false),
+            (LIBRARY, false, false),
+            (PROGRAM_FILE, false, false),
         ];
-        for path in other_files {
-            assert!(
-                !host.hoists_top_level_variables(path),
-                "{}",
-                BStr::new(path)
-            );
+        for (path, is_library_file, hoists) in cases {
+            let name = BStr::new(path);
+            assert_eq!(host.is_library_file(path), is_library_file, "{name}");
+            assert_eq!(host.hoists_top_level_variables(path), hoists, "{name}");
         }
     });
 }

@@ -6,10 +6,6 @@ struct Bytes {
     length: usize,
 }
 
-fn no_engine(symbol: &str) -> ! {
-    panic!("{symbol}: this program has no engine")
-}
-
 // Weak: where the engine itself is linked, its definitions win.
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
@@ -17,85 +13,34 @@ extern "C" fn Bun__AOT__hasCompiler() -> bool {
     false
 }
 
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn Bun__AOT__initializeOptions(_options: *mut c_void) {
-    no_engine("Bun__AOT__initializeOptions")
+macro_rules! functions_of_no_engine {
+    ($(fn $name:ident($($argument:ty),*) $(-> $result:ty)?;)*) => {$(
+        #[unsafe(no_mangle)]
+        #[linkage = "weak"]
+        extern "C" fn $name($(_: $argument),*) $(-> $result)? {
+            panic!("{}: this program has no engine", stringify!($name))
+        }
+    )*};
 }
 
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn Bun__AOT__applyOptionWord(
-    _options: *mut c_void,
-    _word: Bytes,
-    _message: *mut u8,
-    _capacity: usize,
-) -> usize {
-    no_engine("Bun__AOT__applyOptionWord")
-}
-
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn Bun__AOT__compile(
-    _program: Bytes,
-    _external_bodies: *const c_void,
-    _release_program: unsafe extern "C" fn(*mut c_void),
-    _program_owner: *mut c_void,
-    _options: *const c_void,
-    _thread_pool: *const c_void,
-) -> *mut c_void {
-    no_engine("Bun__AOT__compile")
-}
-
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn Bun__AOT__resultSection(_result: *const c_void, _section: u32) -> Bytes {
-    no_engine("Bun__AOT__resultSection")
-}
-
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn Bun__AOT__freeResult(_result: *mut c_void) {
-    no_engine("Bun__AOT__freeResult")
-}
-
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-extern "C" fn Bun__AOT__imageAlignment() -> usize {
-    no_engine("Bun__AOT__imageAlignment")
-}
-
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn Bun__AOT__relocateImage(_image: *mut u8, _size: usize, _address: u64) {
-    no_engine("Bun__AOT__relocateImage")
-}
-
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-unsafe extern "C" fn Bun__AOT__describeDifferenceOfRuntime(
-    _description: *const u8,
-    _size: usize,
-    _message: *mut u8,
-    _capacity: usize,
-) -> usize {
-    no_engine("Bun__AOT__describeDifferenceOfRuntime")
-}
-
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-extern "C" fn Bun__AOT__operationCount() -> usize {
-    no_engine("Bun__AOT__operationCount")
-}
-
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-extern "C" fn Bun__AOT__operationName(_index: usize) -> Bytes {
-    no_engine("Bun__AOT__operationName")
-}
-
-#[unsafe(no_mangle)]
-#[linkage = "weak"]
-extern "C" fn Bun__AOT__isOptionalPass(_pass: u32) -> bool {
-    no_engine("Bun__AOT__isOptionalPass")
+functions_of_no_engine! {
+    fn Bun__AOT__initializeOptions(*mut c_void);
+    fn Bun__AOT__applyOptionWord(*mut c_void, Bytes, *mut u8, usize) -> usize;
+    fn Bun__AOT__compile(
+        Bytes,
+        *const c_void,
+        unsafe extern "C" fn(*mut c_void),
+        *mut c_void,
+        *const c_void,
+        *const c_void
+    ) -> *mut c_void;
+    fn Bun__AOT__writeValidationPlans(Bytes) -> *mut c_void;
+    fn Bun__AOT__resultSection(*const c_void, u32) -> Bytes;
+    fn Bun__AOT__freeResult(*mut c_void);
+    fn Bun__AOT__imageAlignment() -> usize;
+    fn Bun__AOT__relocateImage(*mut u8, usize, u64);
+    fn Bun__AOT__describeDifferenceOfRuntime(*const u8, usize, *mut u8, usize) -> usize;
+    fn Bun__AOT__operationCount() -> usize;
+    fn Bun__AOT__operationName(usize) -> Bytes;
+    fn Bun__AOT__isOptionalPass(u32) -> bool;
 }

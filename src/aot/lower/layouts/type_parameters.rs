@@ -27,14 +27,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn find_class_position(&self, class: ClassRef) -> u32 {
-        match class.file == self.file {
-            true => self.hir[class.class].start,
-            false => 0,
-        }
-    }
-
-    // Type mapping only lists the class types it meets, because a flow asks for layouts and types in turn.
     pub(super) fn record_class_type_arguments_of_file(&mut self) {
         let mut recorded: FxHashSet<(ClassRef, CheckerTypeId)> = FxHashSet::default();
         while !self.layouts.class_types.is_empty() {
@@ -43,7 +35,10 @@ impl FileLowering<'_, '_, '_, '_> {
                     continue;
                 }
                 if let Ok(pairs) = self.queries.class_type_arguments(class, ty) {
-                    let position = self.find_class_position(class);
+                    let position = match class.file == self.file {
+                        true => self.hir[class.class].start,
+                        false => 0,
+                    };
                     self.record_type_arguments(pairs, position);
                 }
             }

@@ -1,12 +1,12 @@
 use super::*;
 use crate::compile::testing::set_up_output;
-use crate::diagnostics::Diagnostics;
-use crate::load::source_provider::{MacroCall, SourceFile, WithoutServices};
+use crate::load::host::tests::take_messages;
+use crate::load::source_provider::{DeferredLoad, SourceFile, WithoutServices};
 use bstr::BStr;
 use bun_ast::{Loc, Log};
 use bun_sema::atom::Interner;
 use bun_sema::fold::FoldOptions;
-use bun_sema::hir_from_data::{DataModule, DataValue};
+use bun_sema::hir_from_data::DataModule;
 use bun_sema::session::Arena;
 use bun_sema_standalone as _;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
@@ -25,7 +25,7 @@ impl Default for TestProvider {
     fn default() -> TestProvider {
         TestProvider {
             resolve_answer: |_| Ok(Resolution::NotHandled),
-            load_answer: load_from_file,
+            load_answer: |request, log| WithoutServices.load(request, log),
             has_load_plugin_answer: |_| true,
             deferred_answers: Guarded::new(Vec::new()),
             resolve_count: AtomicUsize::new(0),
@@ -74,34 +74,9 @@ impl SourceProvider for TestProvider {
         WithoutServices.parse_data(file, arena, atoms, log)
     }
 
-    fn run_macro<'s>(
-        &self,
-        call: &MacroCall<'_, 's>,
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<&'s DataValue<'s>, Failed> {
-        WithoutServices.run_macro(call, arena, atoms, log)
-    }
-
-    fn bundle_pages<'s>(
-        &self,
-        pages: &[&[u8]],
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<Vec<&'s DataValue<'s>>, Failed> {
-        WithoutServices.bundle_pages(pages, arena, atoms, log)
-    }
-
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
         WithoutServices.check_embedded_files(log)
     }
-}
-
-fn load_from_file(request: &LoadRequest<'_>, _log: &mut Log) -> Result<Loaded, Failed> {
-    let file = (request.read_file)();
-    Ok(Loaded::from_file(file, request.default_loader))
 }
 
 fn plugin_source(text: &'static [u8]) -> Loaded {
@@ -109,6 +84,14 @@ fn plugin_source(text: &'static [u8]) -> Loaded {
         contents: Cow::Borrowed(text),
         loader: Loader::Json,
         is_from_plugin: true,
+    }
+}
+
+fn deferring_provider(answers: Vec<DeferredLoad>) -> TestProvider {
+    TestProvider {
+        load_answer: |_, _| Ok(Loaded::Deferred),
+        deferred_answers: Guarded::new(answers),
+        ..TestProvider::default()
     }
 }
 
@@ -178,15 +161,6 @@ fn text(read: ModuleText) -> Vec<u8> {
     }
 }
 
-fn take_messages(messages: &LoadMessages) -> Vec<Vec<u8>> {
-    let mut diagnostics = Diagnostics::new();
-    diagnostics.add_load_messages(messages);
-    let mut log = Log::init();
-    diagnostics.write_to(&mut log);
-    let messages = log.msgs.iter();
-    messages.map(|message| message.data.text.to_vec()).collect()
-}
-
 #[test]
 fn resolve_calls_provider_once_per_request() {
     let provider = TestProvider::default();
@@ -238,12 +212,7 @@ fn plugins_are_told_how_an_import_is_written() {
 #[test]
 fn imports_of_virtual_module_start_in_directory_of_its_path() {
     let provider = TestProvider {
-        resolve_answer: |request| {
-            Ok(Resolution::Module {
-                namespace: b"v".to_vec(),
-                path: request.specifier.to_vec(),
-            })
-        },
+        resolve_answer: |request| module(b"v", request.specifier),
         ..TestProvider::default()
     };
     let (disk, messages) = (empty_disk(), LoadMessages::default());
@@ -254,10 +223,7 @@ fn imports_of_virtual_module_start_in_directory_of_its_path() {
         (b"/elsewhere/made-up/name", b"/elsewhere/made-up"),
     ];
     for (plugin_path, directory) in directories {
-        let PluginResolution::Path(path) = plugins.resolve(&request(plugin_path, b"/p/main.ts"))
-        else {
-            panic!("the provider answers every request");
-        };
+        let path = resolved_path(plugins.resolve(&request(plugin_path, b"/p/main.ts")));
         let found = plugins.directory_of_virtual_module(&path, b"/work");
         assert_eq!(
             found.as_deref(),
@@ -266,10 +232,8 @@ fn imports_of_virtual_module_start_in_directory_of_its_path() {
             BStr::new(plugin_path)
         );
     }
-    assert_eq!(
-        plugins.directory_of_virtual_module(b"/p/main.ts", b"/work"),
-        None
-    );
+    let actual = plugins.directory_of_virtual_module(b"/p/main.ts", b"/work");
+    assert_eq!(actual, None);
 }
 
 #[test]
@@ -310,14 +274,10 @@ fn virtual_paths_keep_modules_apart() {
         assert!(!bun_core::strings::contains_char(path, b':'));
         assert!(!bun_core::strings::contains_char(path, b'\\'));
     }
-    assert_eq!(
-        plugins.virtual_module(&upper),
-        Some((&b"v"[..], &b"virtual:Config"[..]))
-    );
-    assert_eq!(
-        plugins.virtual_module(&lower),
-        Some((&b"v"[..], &b"virtual:config"[..]))
-    );
+    let expected = Some((&b"v"[..], &b"virtual:Config"[..]));
+    assert_eq!(plugins.virtual_module(&upper), expected);
+    let expected = Some((&b"v"[..], &b"virtual:config"[..]));
+    assert_eq!(plugins.virtual_module(&lower), expected);
     assert_eq!(plugins.provider_path(&upper), b"virtual:Config");
     assert_eq!(plugins.virtual_module(b"/p/other.ts"), None);
     assert_eq!(plugins.virtual_module(b"/$bun/plugin/v/unknown"), None);
@@ -561,28 +521,20 @@ fn in_memory_file_name_case_follows_disk() {
     let plugins = PluginModules::new(&provider, &disk, &messages, &in_memory_files);
 
     let read = plugins.read(b"/project/A.bin", Loader::File);
-    assert_eq!(
-        matches!(read, ModuleText::Text(_)),
-        !disk.is_case_sensitive()
-    );
+    let expected = !disk.is_case_sensitive();
+    assert_eq!(matches!(read, ModuleText::Text(_)), expected);
 }
 
 #[test]
 fn deferred_module_gets_text_once() {
-    let provider = TestProvider {
-        load_answer: |_, _| Ok(Loaded::Deferred),
-        ..TestProvider::default()
-    };
     let path = b"/project/a.ts";
-    *provider.deferred_answers.lock() = vec![answer_for_file(path, Ok(plugin_source(b"late")))];
+    let provider = deferring_provider(vec![answer_for_file(path, Ok(plugin_source(b"late")))]);
     let (disk, messages) = (empty_disk(), LoadMessages::default());
     let plugins = PluginModules::new(&provider, &disk, &messages, &[]);
 
     for _ in 0..2 {
-        assert!(matches!(
-            plugins.read(path, Loader::Ts),
-            ModuleText::Deferred
-        ));
+        let read = plugins.read(path, Loader::Ts);
+        assert!(matches!(read, ModuleText::Deferred));
     }
     assert_eq!(provider.load_count.load(Relaxed), 1);
     assert!(plugins.loaded(path).is_none());
@@ -620,10 +572,8 @@ fn deferred_virtual_module_is_answered_by_plugin_name() {
     let (disk, messages) = (empty_disk(), LoadMessages::default());
     let plugins = PluginModules::new(&provider, &disk, &messages, &[]);
     let path = resolved_path(plugins.resolve(&request(b"virtual:Config", b"/p/a.ts")));
-    assert!(matches!(
-        plugins.read(&path, Loader::Js),
-        ModuleText::Deferred
-    ));
+    let read = plugins.read(&path, Loader::Js);
+    assert!(matches!(read, ModuleText::Deferred));
 
     let reads = plugins.finish_deferred_reads();
     assert_eq!(reads.texts.len(), 1);
@@ -634,16 +584,12 @@ fn deferred_virtual_module_is_answered_by_plugin_name() {
 
 #[test]
 fn deferred_answers_are_sorted_by_host_path() {
-    let provider = TestProvider {
-        load_answer: |_, _| Ok(Loaded::Deferred),
-        ..TestProvider::default()
-    };
-    *provider.deferred_answers.lock() = vec![
+    let provider = deferring_provider(vec![
         answer_for_file(b"/p/d.ts", Ok(Loaded::NotFound)),
         answer_for_file(b"/p/b.ts", Ok(plugin_source(b"b"))),
         answer_for_file(b"/p/c.ts", Ok(Loaded::NotFound)),
         answer_for_file(b"/p/a.ts", Ok(plugin_source(b"a"))),
-    ];
+    ]);
     let (disk, messages) = (empty_disk(), LoadMessages::default());
     let plugins = PluginModules::new(&provider, &disk, &messages, &[]);
     for path in [b"/p/a.ts", b"/p/b.ts", b"/p/c.ts", b"/p/d.ts"] {
@@ -658,12 +604,8 @@ fn deferred_answers_are_sorted_by_host_path() {
 
 #[test]
 fn deferred_not_found_is_missing() {
-    let provider = TestProvider {
-        load_answer: |_, _| Ok(Loaded::Deferred),
-        ..TestProvider::default()
-    };
     let path = b"/project/a.ts";
-    *provider.deferred_answers.lock() = vec![answer_for_file(path, Ok(Loaded::NotFound))];
+    let provider = deferring_provider(vec![answer_for_file(path, Ok(Loaded::NotFound))]);
     let (disk, messages) = (empty_disk(), LoadMessages::default());
     let plugins = PluginModules::new(&provider, &disk, &messages, &[]);
     plugins.read(path, Loader::Ts);
@@ -678,15 +620,11 @@ fn deferred_not_found_is_missing() {
 
 #[test]
 fn deferred_failure_is_failed() {
-    let provider = TestProvider {
-        load_answer: |_, _| Ok(Loaded::Deferred),
-        ..TestProvider::default()
-    };
     let (failed_path, deferred_path) = (b"/project/a.ts", b"/project/b.ts");
-    *provider.deferred_answers.lock() = vec![
+    let provider = deferring_provider(vec![
         answer_for_file(failed_path, Err(Failed)),
         answer_for_file(deferred_path, Ok(Loaded::Deferred)),
-    ];
+    ]);
     let (disk, messages) = (empty_disk(), LoadMessages::default());
     let plugins = PluginModules::new(&provider, &disk, &messages, &[]);
     plugins.read(failed_path, Loader::Ts);
@@ -705,15 +643,11 @@ fn deferred_failure_is_failed() {
 
 #[test]
 fn repeated_deferred_answer_counts_once() {
-    let provider = TestProvider {
-        load_answer: |_, _| Ok(Loaded::Deferred),
-        ..TestProvider::default()
-    };
     let path = b"/project/a.ts";
-    *provider.deferred_answers.lock() = vec![
+    let provider = deferring_provider(vec![
         answer_for_file(path, Ok(plugin_source(b"first"))),
         answer_for_file(path, Ok(plugin_source(b"second"))),
-    ];
+    ]);
     let (disk, messages) = (empty_disk(), LoadMessages::default());
     let plugins = PluginModules::new(&provider, &disk, &messages, &[]);
     plugins.read(path, Loader::Ts);
@@ -726,12 +660,8 @@ fn repeated_deferred_answer_counts_once() {
 
 #[test]
 fn answer_without_deferred_module_changes_nothing() {
-    let provider = TestProvider {
-        load_answer: |_, _| Ok(Loaded::Deferred),
-        ..TestProvider::default()
-    };
     let (path, other_path) = (b"/project/a.ts", b"/project/other.ts");
-    *provider.deferred_answers.lock() = vec![answer_for_file(other_path, Ok(plugin_source(b"x")))];
+    let provider = deferring_provider(vec![answer_for_file(other_path, Ok(plugin_source(b"x")))]);
     let (disk, messages) = (empty_disk(), LoadMessages::default());
     let plugins = PluginModules::new(&provider, &disk, &messages, &[]);
     plugins.read(path, Loader::Ts);

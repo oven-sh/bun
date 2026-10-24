@@ -40,19 +40,23 @@ pub struct StreamError {
 }
 
 impl Body {
-    pub fn blocks(&self) -> Blocks<'_> {
-        Blocks {
-            rest: &self.code,
-            next_block: 0,
-            block_count: self.block_count,
-            next_value: 0,
-        }
+    pub fn blocks(&self) -> impl Iterator<Item = BlockView<'_>> {
+        let (mut rest, mut next_value) = (&*self.code, 0);
+        (0..self.block_count).map(move |id| {
+            let read = read_block(rest, BlockId::from_word(id), next_value);
+            let (block, after) = read.expect(WELL_FORMED);
+            (rest, next_value) = (after, block.first_value().to_word() + block.value_count);
+            block
+        })
     }
 
     pub fn check_stream(&self) -> Result<(), StreamError> {
-        let mut blocks = self.blocks();
-        while blocks.read_next()?.is_some() {}
-        if blocks.rest.is_empty() && blocks.next_value == self.value_count {
+        let (mut rest, mut next_value) = (&*self.code, 0);
+        for id in 0..self.block_count {
+            let (block, after) = read_block(rest, BlockId::from_word(id), next_value)?;
+            (rest, next_value) = (after, block.first_value().to_word() + block.value_count);
+        }
+        if rest.is_empty() && next_value == self.value_count {
             return Ok(());
         }
         Err(StreamError {
@@ -80,35 +84,6 @@ impl Body {
             FieldWord::Operand => {}
             FieldWord::Reference(kind) => cells[at].set(map.remap_word(kind, cells[at].get())),
         });
-    }
-}
-
-pub struct Blocks<'a> {
-    rest: &'a [u32],
-    next_block: u32,
-    block_count: u32,
-    next_value: u32,
-}
-
-impl<'a> Blocks<'a> {
-    fn read_next(&mut self) -> Result<Option<BlockView<'a>>, StreamError> {
-        if self.next_block == self.block_count {
-            return Ok(None);
-        }
-        let id = BlockId::from_word(self.next_block);
-        let (block, rest) = read_block(self.rest, id, self.next_value)?;
-        self.rest = rest;
-        self.next_block += 1;
-        self.next_value = block.first_value().to_word() + block.value_count;
-        Ok(Some(block))
-    }
-}
-
-impl<'a> Iterator for Blocks<'a> {
-    type Item = BlockView<'a>;
-
-    fn next(&mut self) -> Option<BlockView<'a>> {
-        self.read_next().expect(WELL_FORMED)
     }
 }
 
@@ -152,35 +127,21 @@ impl<'a> BlockView<'a> {
         Some(read_target(self.handler).expect(WELL_FORMED).0)
     }
 
-    pub fn values(&self) -> Values<'a> {
-        Values {
-            rest: self.values,
-            next_value: self.first_value().to_word(),
-        }
+    pub fn values(&self) -> impl Iterator<Item = ValueView<'a>> + use<'a> {
+        let (mut rest, mut next_value) = (self.values, self.first_value().to_word());
+        core::iter::from_fn(move || {
+            if rest.is_empty() {
+                return None;
+            }
+            let id = ValueId::from_word(next_value);
+            let (value, after) = read_value(rest, id).expect(WELL_FORMED);
+            (rest, next_value) = (after, next_value + 1);
+            Some(value)
+        })
     }
 
     pub fn terminator(&self) -> TerminatorView<'a> {
         read_terminator(self.terminator).expect(WELL_FORMED).0
-    }
-}
-
-pub struct Values<'a> {
-    rest: &'a [u32],
-    next_value: u32,
-}
-
-impl<'a> Iterator for Values<'a> {
-    type Item = ValueView<'a>;
-
-    fn next(&mut self) -> Option<ValueView<'a>> {
-        if self.rest.is_empty() {
-            return None;
-        }
-        let id = ValueId::from_word(self.next_value);
-        let (value, rest) = read_value(self.rest, id).expect(WELL_FORMED);
-        self.rest = rest;
-        self.next_value += 1;
-        Some(value)
     }
 }
 
@@ -206,25 +167,16 @@ impl<'a> TerminatorView<'a> {
         self.target_count as usize
     }
 
-    pub fn targets(&self) -> Targets<'a> {
-        Targets { rest: self.targets }
-    }
-}
-
-pub struct Targets<'a> {
-    rest: &'a [u32],
-}
-
-impl<'a> Iterator for Targets<'a> {
-    type Item = TargetView<'a>;
-
-    fn next(&mut self) -> Option<TargetView<'a>> {
-        if self.rest.is_empty() {
-            return None;
-        }
-        let (target, rest) = read_target(self.rest).expect(WELL_FORMED);
-        self.rest = rest;
-        Some(target)
+    pub fn targets(&self) -> impl Iterator<Item = TargetView<'a>> + use<'a> {
+        let mut rest = self.targets;
+        core::iter::from_fn(move || {
+            if rest.is_empty() {
+                return None;
+            }
+            let (target, after) = read_target(rest).expect(WELL_FORMED);
+            rest = after;
+            Some(target)
+        })
     }
 }
 

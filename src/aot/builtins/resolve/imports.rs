@@ -8,7 +8,7 @@ use crate::builtins::table::{
 };
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::Decl;
-use bun_sema::hir::{ExportSpecId, ExprId, ExprKind, Flags, ImportId};
+use bun_sema::hir::{ExprId, ExprKind, Flags, ImportId};
 use bun_sema::import_sites::ImportSiteKind;
 
 fn has_source(module: RuntimeModule) -> bool {
@@ -40,7 +40,6 @@ pub fn find_module_export(
     name: Atom,
     platform: Platforms,
 ) -> ModuleExport {
-    // An export is a location of the module.
     let data = table::module_data(module);
     let export = match names.get(name) {
         Some(name) => table::find_export(data.namespace, name),
@@ -90,11 +89,6 @@ impl Resolver<'_, '_> {
                 | ImportSiteKind::GetBuiltinModule(_) => {}
             }
         }
-        self.collect_bundle_import_aliases();
-    }
-
-    fn collect_bundle_import_aliases(&mut self) {
-        let input = self.input;
         if !table::exists_on(BuiltinId::BunBundle, input.platform) {
             return;
         }
@@ -196,7 +190,6 @@ impl Resolver<'_, '_> {
         ExprState::Unresolved
     }
 
-    // `Object.getPrototypeOf(process)`: the object that the table links the operand to.
     fn find_prototype_asked_for(&self, expr: ExprId) -> Option<BuiltinId> {
         let hir = self.input.hir;
         let ExprKind::Call(call) = hir[expr].kind else {
@@ -236,7 +229,14 @@ impl Resolver<'_, '_> {
                 }
                 ImportSiteKind::ExportFrom(export) => {
                     for item in input.hir[export].items.iter() {
-                        self.visit_reexport(namespace, item);
+                        let item = &input.hir[item];
+                        if item.type_only {
+                            continue;
+                        }
+                        if let Some(path) = self.find_named_export(namespace, item.local) {
+                            self.output.mentioned.push(path.id);
+                            self.expose(path.id);
+                        }
                     }
                 }
                 ImportSiteKind::JsxRuntime
@@ -245,17 +245,6 @@ impl Resolver<'_, '_> {
                 | ImportSiteKind::RequireResolve(_) | ImportSiteKind::ImportMetaRequire(_)
                 | ImportSiteKind::ImportMetaResolve(_) | ImportSiteKind::GetBuiltinModule(_) => {}
             }
-        }
-    }
-
-    fn visit_reexport(&mut self, namespace: BuiltinId, item: ExportSpecId) {
-        let item = &self.input.hir[item];
-        if item.type_only {
-            return;
-        }
-        if let Some(path) = self.find_named_export(namespace, item.local) {
-            self.output.mentioned.push(path.id);
-            self.expose(path.id);
         }
     }
 }

@@ -154,7 +154,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !shape.props.is_empty() {
             return self.strongest_prop_trust(&shape.props);
         }
-        // `typeof box<number>` has the signatures of `box` and no member.
         let signatures = shape.call.iter().chain(shape.construct.iter());
         let files: Option<SmallVec<[FileId; 2]>> = signatures
             .map(|&signature| self.c.sig_decl(signature).map(|declaration| declaration.0))

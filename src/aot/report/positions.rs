@@ -16,7 +16,7 @@ pub(super) enum PathStyle {
 
 pub(super) struct Positions<'a> {
     names: &'a ProgramNames,
-    locator: ModuleLocator<'a>,
+    pub(super) locator: ModuleLocator<'a>,
     printer: PathPrinter,
     style: PathStyle,
     last_shown_path: Option<(ModuleId, Vec<u8>)>,
@@ -30,17 +30,6 @@ impl<'a> Positions<'a> {
             printer: PathPrinter::new(),
             style,
             last_shown_path: None,
-        }
-    }
-
-    pub(super) fn shown_path(&self, path: &[u8]) -> Vec<u8> {
-        match self.style {
-            PathStyle::Posix => self.printer.posix_path(path),
-            PathStyle::Native => {
-                let mut shown = Vec::new();
-                self.printer.write_path(&mut shown, path);
-                shown
-            }
         }
     }
 
@@ -59,28 +48,21 @@ impl<'a> Positions<'a> {
         {
             return path.clone();
         }
-        let path = self.shown_path(self.names.module_path(module));
+        let path = self.names.module_path(module);
+        let path = match self.style {
+            PathStyle::Posix => self.printer.posix_path(path),
+            PathStyle::Native => {
+                let mut shown = Vec::new();
+                self.printer.write_path(&mut shown, path);
+                shown
+            }
+        };
         self.last_shown_path = Some((module, path.clone()));
         path
     }
 
-    pub(super) fn resolve_optional(
-        &mut self,
-        position: Option<Position>,
-    ) -> Option<SourcePosition> {
-        self.resolve(position?)
-    }
-
     pub(super) fn resolve_location(&mut self, location: SourceLocation) -> Option<SourcePosition> {
         self.resolve(position_of(location)?)
-    }
-
-    pub(super) fn source_line(&mut self, position: Position) -> Vec<u8> {
-        self.locator.source_line(position)
-    }
-
-    pub(super) fn has_text(&self, module: ModuleId) -> bool {
-        self.locator.has_text(module)
     }
 }
 

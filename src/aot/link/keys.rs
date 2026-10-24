@@ -1,103 +1,131 @@
-use super::unit::{KeyList, SHARD_COUNT, hash_key, shard_of};
-use crate::ir::{InParallel, for_each_mut};
+use super::unit::{FindsByUnit, KeyList, SHARD_COUNT, hash_key, shard_of};
+use crate::ir::parallel::map_each;
+use crate::ir::{Id, InParallel};
 use core::hash::Hash;
 use hashbrown::HashTable;
+use hashbrown::hash_table::Entry;
+
+/// The distinct entries whose hashes fall into one shard, in the order in which they were added.
+pub(super) struct Shard<E, H = u64> {
+    table: HashTable<u32>,
+    entries: Vec<E>,
+    hashes: Vec<H>,
+}
+
+impl<E, H: Copy + Into<u64>> Shard<E, H> {
+    pub(super) fn find(&self, hash: H, is_equal: impl Fn(&E, H) -> bool) -> Option<u32> {
+        let is_equal =
+            |&other: &u32| is_equal(&self.entries[other as usize], self.hashes[other as usize]);
+        self.table.find(hash.into(), is_equal).copied()
+    }
+
+    pub(super) fn add(&mut self, hash: H, entry: E, is_equal: impl Fn(&E, H) -> bool) {
+        let (entries, hashes) = (&self.entries, &self.hashes);
+        let place = self.table.entry(
+            hash.into(),
+            |&other| is_equal(&entries[other as usize], hashes[other as usize]),
+            |&other| hashes[other as usize].into(),
+        );
+        if let Entry::Vacant(vacant) = place {
+            vacant.insert(self.entries.len() as u32);
+            self.entries.push(entry);
+            self.hashes.push(hash);
+        }
+    }
+}
+
+/// `fill` adds to a shard, given its number, all that falls into it.
+pub(super) fn collect_shards<E: Send, H: Send>(
+    in_parallel: InParallel<'_>,
+    fill: &(dyn Fn(usize, &mut Shard<E, H>) + Sync),
+) -> Vec<Shard<E, H>> {
+    map_each((0..SHARD_COUNT).collect(), in_parallel, &|number| {
+        let mut shard = Shard {
+            table: HashTable::new(),
+            entries: Vec::new(),
+            hashes: Vec::new(),
+        };
+        fill(number, &mut shard);
+        shard
+    })
+}
+
+/// Numbers the entries, each with the unit that is the first to hold it: the units in order, the entries of one unit by `key`.
+/// The numbers by shard and entry, then the entries by number.
+pub(super) fn number_by_unit<I: Id + Send + Sync, H, K: Ord>(
+    shards: &[Shard<(u32, I), H>],
+    unit_count: usize,
+    in_parallel: InParallel<'_>,
+    key: &(dyn Fn(u32, I) -> K + Sync),
+) -> (Vec<Vec<I>>, Vec<(u32, I)>) {
+    let entries: Vec<&[(u32, I)]> = shards.iter().map(|shard| &shard.entries[..]).collect();
+    let by_unit = FindsByUnit::new(unit_count, &entries);
+    let order = by_unit.order_rows_by(in_parallel, key);
+    let by_place = by_unit.number_in(&order);
+    let places = by_unit.places.iter().collect();
+    let numbers = map_each(places, in_parallel, &|places: &Vec<u32>| {
+        places
+            .iter()
+            .map(|&place| by_place[place as usize])
+            .collect()
+    });
+    let entry = |&place: &u32| by_unit.finds[place as usize];
+    (numbers, order.iter().map(entry).collect())
+}
 
 pub(super) struct MergedKeys<K> {
     pub keys: Vec<K>,
     pub local_to_merged: Vec<Vec<u32>>,
-    shards: Vec<KeyShard<K>>,
+    shards: Vec<Shard<K>>,
     bases: [u32; SHARD_COUNT + 1],
 }
 
 impl<K: Copy + Eq + Hash> MergedKeys<K> {
     pub(super) fn find(&self, key: &K) -> Option<u32> {
-        find_merged_index(&self.shards, &self.bases, hash_key(key), key)
-    }
-}
-
-struct KeyShard<K> {
-    shard: usize,
-    table: HashTable<u32>,
-    keys: Vec<K>,
-    hashes: Vec<u64>,
-}
-
-impl<K: Copy + Eq> KeyShard<K> {
-    fn new(shard: usize) -> KeyShard<K> {
-        KeyShard {
-            shard,
-            table: HashTable::new(),
-            keys: Vec::new(),
-            hashes: Vec::new(),
-        }
+        self.find_hashed(hash_key(key), key)
     }
 
-    fn find(&self, hash: u64, key: &K) -> Option<u32> {
-        self.table
-            .find(hash, |&index| self.keys[index as usize] == *key)
-            .copied()
+    fn find_hashed(&self, hash: u64, key: &K) -> Option<u32> {
+        let shard = shard_of(hash);
+        Some(self.bases[shard] + self.shards[shard].find(hash, |other, _| other == key)?)
     }
-
-    fn collect_keys(&mut self, lists: &[&KeyList<K>]) {
-        for list in lists {
-            for &local in list.shards.shard(self.shard) {
-                let (hash, key) = (list.hashes[local as usize], list.keys[local as usize]);
-                if self.find(hash, &key).is_some() {
-                    continue;
-                }
-                let index = self.keys.len() as u32;
-                self.keys.push(key);
-                self.hashes.push(hash);
-                let hashes = &self.hashes;
-                self.table
-                    .insert_unique(hash, index, |&other| hashes[other as usize]);
-            }
-        }
-    }
-}
-
-fn find_merged_index<K: Copy + Eq>(
-    shards: &[KeyShard<K>],
-    bases: &[u32; SHARD_COUNT + 1],
-    hash: u64,
-    key: &K,
-) -> Option<u32> {
-    let shard = shard_of(hash);
-    Some(bases[shard] + shards[shard].find(hash, key)?)
 }
 
 pub(super) fn merge_keys<K: Copy + Eq + Hash + Send + Sync>(
     lists: &[&KeyList<K>],
     in_parallel: InParallel<'_>,
 ) -> MergedKeys<K> {
-    let mut shards: Vec<KeyShard<K>> = (0..SHARD_COUNT).map(KeyShard::new).collect();
-    for_each_mut(&mut shards, in_parallel, &|shard| shard.collect_keys(lists));
-
-    let mut bases = [0; SHARD_COUNT + 1];
-    let mut keys = Vec::with_capacity(shards.iter().map(|shard| shard.keys.len()).sum());
-    for shard in &shards {
-        keys.extend_from_slice(&shard.keys);
-        bases[shard.shard + 1] = keys.len() as u32;
-    }
-
-    let mut slots: Vec<(usize, Vec<u32>)> =
-        (0..lists.len()).map(|list| (list, Vec::new())).collect();
-    for_each_mut(&mut slots, in_parallel, &|(position, indexes)| {
-        let list = lists[*position];
-        indexes.reserve_exact(list.keys.len());
-        for (key, &hash) in list.keys.iter().zip(&list.hashes) {
-            let index = find_merged_index(&shards, &bases, hash, key);
-            indexes.push(index.expect("every declared key was merged"));
+    let shards = collect_shards(in_parallel, &|number, shard: &mut Shard<K>| {
+        for list in lists {
+            for &local in list.shards.shard(number) {
+                let key = list.keys[local as usize];
+                shard.add(list.hashes[local as usize], key, |&other, _| other == key);
+            }
         }
     });
 
-    MergedKeys {
+    let mut bases = [0; SHARD_COUNT + 1];
+    let mut keys = Vec::with_capacity(shards.iter().map(|shard| shard.entries.len()).sum());
+    for (number, shard) in shards.iter().enumerate() {
+        keys.extend_from_slice(&shard.entries);
+        bases[number + 1] = keys.len() as u32;
+    }
+
+    let mut merged = MergedKeys {
         keys,
-        local_to_merged: slots.into_iter().map(|(_, indexes)| indexes).collect(),
+        local_to_merged: Vec::new(),
         shards,
         bases,
-    }
+    };
+    merged.local_to_merged = map_each(lists.to_vec(), in_parallel, &|list: &KeyList<K>| {
+        let merged_index = |(key, &hash): (&K, &u64)| {
+            let index = merged.find_hashed(hash, key);
+            index.expect("every declared key was merged")
+        };
+        let keys = list.keys.iter().zip(&list.hashes);
+        keys.map(merged_index).collect()
+    });
+    merged
 }
 
 #[cfg(test)]

@@ -27,8 +27,8 @@ pub(crate) fn run_beside<A: Send, B>(
 mod tests {
     use super::*;
     use crate::ir::print_program;
-    use crate::link::testing::{forward, with_lowered_units};
-    use crate::link::{LinkInput, link, link_while};
+    use crate::link::testing::{forward, link, with_lowered_units};
+    use crate::link::{LinkInput, link_while};
     use crate::statistics::LimitValues;
     use std::thread::ThreadId;
 

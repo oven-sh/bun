@@ -72,6 +72,7 @@ const stopped: Record<string, string[]> = {
     "what-one-call-reaches-through-call-or-through-a-bound-built-in-makes-what-it-declares-anew-at-each-entry",
   ],
   "classes": [
+    "a-closure-kept-from-an-earlier-call-reads-a-constant-of-a-later-block-inside-a-loop",
     "a-method-under-a-name-that-looks-like-a-number-is-hidden-by-a-store-to-the-class-below",
     "a-name-that-looks-like-a-negative-number-is-stored-to-a-prototype-object-held-in-a-frozen-box",
     "a-name-that-looks-like-a-number-is-stored-to-the-prototype-object-of-a-class",

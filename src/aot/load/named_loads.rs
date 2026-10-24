@@ -1,12 +1,12 @@
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
-    Binding, BindingKind, BindingStability, Decl, FnOwner, FunctionFlags, Parent, PatParent,
+    Binding, BindingKind, BindingStability, Bound, Decl, FnOwner, FunctionFlags, Parent, PatParent,
     StoreKind, SymbolId,
 };
-use bun_sema::fold::{Constant, FoldedValue};
+use bun_sema::fold::{Constant, Decisions, FoldedValue};
 use bun_sema::hir::{
-    BinOp, Branches, ExportSpecId, ExprId, ExprKind, Flags, FnId, FnKind, ImportEqualsId, NodeData,
-    PatId, PatKind, StmtKind, UnOp,
+    BinOp, Branches, ExportSpecId, ExprId, ExprKind, File, Flags, FnId, FnKind, ImportEqualsId,
+    ImportId, NodeData, PatId, PatKind, StmtKind, UnOp,
 };
 use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{CodeAnswer, FileId, Files};
@@ -48,17 +48,12 @@ pub(crate) struct NamedLoads {
     pub imports_given_unknown_names: Vec<SymbolId>,
 }
 
-pub(crate) struct Scan<'a, 's> {
+struct Scan<'a, 's> {
     request: &'a FinishedFile<'a, 's>,
     builtins: &'a ResolvedBuiltins,
     runtime_modules: &'a RuntimeModules,
     limits: &'a LimitValues,
-    named: Vec<NamedModule>,
-    passed_to_imports: Vec<(SymbolId, NamedModule)>,
-    passed_for_parameters: Vec<RuntimeModule>,
-    loads_by_unknown_name: bool,
-    unknown_names_at: Vec<u32>,
-    imports_given_unknown_names: Vec<SymbolId>,
+    found: NamedLoads,
 }
 
 // What an expression holds of a text that the program writes: the text itself, or a list or a set with the text in it.
@@ -68,7 +63,6 @@ enum Held {
     List,
 }
 
-// Where that goes from the expression.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Way {
     Anywhere,
@@ -102,31 +96,33 @@ fn sort_modules(modules: &mut Vec<RuntimeModule>) {
     modules.dedup();
 }
 
-// The library modules that the arms of `require(flag ? "node:vm" : "node:v8")` name.
 pub(crate) fn find_library_modules_named_in_choices(
     request: &FinishedFile<'_, '_>,
     builtins: &ResolvedBuiltins,
     runtime_modules: &RuntimeModules,
     limits: &LimitValues,
 ) -> NamedLoads {
-    let mut scan = Scan::new(request, builtins, runtime_modules, limits);
+    let found = NamedLoads {
+        loads_by_unknown_name: builtins.loads_unknown_modules(),
+        ..NamedLoads::default()
+    };
+    let mut scan = Scan {
+        request,
+        builtins,
+        runtime_modules,
+        limits,
+        found,
+    };
     scan.visit_import_sites();
     scan.visit_calls_of_other_loaders();
-    sort_named_modules(&mut scan.named);
-    let mut written_as_values = scan.find_modules_written_as_values();
-    sort_modules(&mut written_as_values);
-    sort_modules(&mut scan.passed_for_parameters);
-    scan.imports_given_unknown_names.shared_sort_unstable();
-    scan.imports_given_unknown_names.dedup();
-    NamedLoads {
-        modules: scan.named,
-        passed_to_imports: scan.passed_to_imports,
-        passed_for_parameters: scan.passed_for_parameters,
-        written_as_values,
-        loads_by_unknown_name: scan.loads_by_unknown_name,
-        unknown_names_at: scan.unknown_names_at,
-        imports_given_unknown_names: scan.imports_given_unknown_names,
-    }
+    scan.found.written_as_values = scan.find_modules_written_as_values();
+    let mut found = scan.found;
+    sort_named_modules(&mut found.modules);
+    sort_modules(&mut found.written_as_values);
+    sort_modules(&mut found.passed_for_parameters);
+    found.imports_given_unknown_names.shared_sort_unstable();
+    found.imports_given_unknown_names.dedup();
+    found
 }
 
 fn sort_named_modules(named: &mut Vec<NamedModule>) {
@@ -136,27 +132,30 @@ fn sort_named_modules(named: &mut Vec<NamedModule>) {
 
 const MAX_REEXPORTS: usize = 8;
 
+pub(crate) fn find_import_of(
+    files: &Files<'_>,
+    file: FileId,
+    symbol: SymbolId,
+) -> Option<(ImportId, Atom)> {
+    let hir = files.hir(file);
+    let mut declarations = files.bound(file).symbol(symbol).decls.iter();
+    declarations.find_map(|&declaration| match declaration {
+        Decl::ImportSpec(specifier) => {
+            let specifier = hir[specifier];
+            (!specifier.type_only).then_some((specifier.import, specifier.imported))
+        }
+        Decl::ImportDefault(import) => Some((import, known::default)),
+        _ => None,
+    })
+}
+
 fn imports_loader(files: &Files<'_>, mut file: FileId, mut symbol: SymbolId) -> bool {
     for _ in 0..MAX_REEXPORTS {
-        let (hir, bound) = (files.hir(file), files.bound(file));
-        let import = bound
-            .symbol(symbol)
-            .decls
-            .iter()
-            .find_map(|&declaration| match declaration {
-                Decl::ImportSpec(specifier) => {
-                    let specifier = hir[specifier];
-                    (!specifier.type_only).then_some((specifier.import, specifier.imported))
-                }
-                Decl::ImportDefault(import) => Some((import, known::default)),
-                _ => None,
-            });
-        let Some((import, export_name)) = import else {
+        let Some((import, export_name)) = find_import_of(files, file, symbol) else {
             return false;
         };
-        let site = files
-            .analysis(file)
-            .import_site_index(ImportSiteKind::Import(import));
+        let kind = ImportSiteKind::Import(import);
+        let site = files.analysis(file).import_site_index(kind);
         let answer = site.and_then(|site| files.compiled(file)?.code_answers.get(site));
         let Some(&CodeAnswer::File(exporter)) = answer else {
             return false;
@@ -175,7 +174,6 @@ fn imports_loader(files: &Files<'_>, mut file: FileId, mut symbol: SymbolId) -> 
     false
 }
 
-// Whether a function that the file imports and gives a name that the build does not know is a loader.
 pub(crate) fn gives_unknown_name_to_imported_loader(application: &Files<'_>, file: FileId) -> bool {
     parsed_source(application, file).is_some_and(|source| {
         let mut callees = source.imports_given_unknown_names.iter();
@@ -183,19 +181,15 @@ pub(crate) fn gives_unknown_name_to_imported_loader(application: &Files<'_>, fil
     })
 }
 
-// Whether some loader may be given a name that the build does not know.
 pub(crate) fn loads_by_unknown_name(application: &Files<'_>) -> bool {
     let loads_by_unknown_name = |&file: &FileId| {
         parsed_source(application, file).is_none_or(|source| source.loads_by_unknown_name)
             || gives_unknown_name_to_imported_loader(application, file)
     };
-    application
-        .compiled_files()
-        .iter()
-        .any(loads_by_unknown_name)
+    let mut files = application.compiled_files().iter();
+    files.any(loads_by_unknown_name)
 }
 
-// Whether some loader may be given the path of a file that the build has not seen.
 pub(crate) fn loads_by_unknown_path(application: &Files<'_>) -> bool {
     let names_unknown_path = |&file: &FileId| {
         parsed_source(application, file).is_some_and(|source| !source.unknown_names_at.is_empty())
@@ -209,11 +203,8 @@ pub(crate) fn find_library_modules_that_unknown_names_may_stand_for(
     application: &Files<'_>,
 ) -> Vec<RuntimeModule> {
     let files = application.compiled_files();
-    let sources = || {
-        files
-            .iter()
-            .filter_map(|&file| parsed_source(application, file))
-    };
+    let source_of = |&file: &FileId| parsed_source(application, file);
+    let sources = || files.iter().filter_map(source_of);
     let passed = sources().flat_map(|it| &it.library_modules_passed_for_parameters);
     let mut modules: Vec<RuntimeModule> = passed.copied().collect();
     if loads_by_unknown_name(application) {
@@ -253,27 +244,113 @@ pub(crate) fn resolve_loads_through_imported_loaders(application: &Files<'_>) {
     }
 }
 
-impl<'a, 's> Scan<'a, 's> {
-    pub(crate) fn new(
-        request: &'a FinishedFile<'a, 's>,
-        builtins: &'a ResolvedBuiltins,
-        runtime_modules: &'a RuntimeModules,
-        limits: &'a LimitValues,
-    ) -> Scan<'a, 's> {
-        Scan {
-            request,
-            builtins,
-            runtime_modules,
-            limits,
-            named: Vec::new(),
-            passed_to_imports: Vec::new(),
-            passed_for_parameters: Vec::new(),
-            loads_by_unknown_name: builtins.loads_unknown_modules(),
-            unknown_names_at: Vec::new(),
-            imports_given_unknown_names: Vec::new(),
+fn way_into_pattern(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId, held: Held) -> Way {
+    match (hir[pattern].kind, bound.initialized_binding(pattern)) {
+        (PatKind::Ident(_), Binding::Symbol(symbol))
+            if bound.dynamic_lookup_scope(NodeData::Pat(pattern)).is_none() =>
+        {
+            Way::Variable(symbol, held)
         }
+        _ => Way::Anywhere,
     }
+}
 
+fn is_exported(hir: &File<'_>, bound: &Bound<'_>, symbol: SymbolId) -> bool {
+    let binding = Binding::Symbol(symbol);
+    let mut declarations = bound.symbol(symbol).decls.iter();
+    let mut specifiers = (0..hir.export_specs.len() as u32).map(ExportSpecId);
+    let mut entity_names = (0..hir.import_equals.len() as u32).map(ImportEqualsId);
+    declarations.any(|&it| bound.modifier_flags(hir, it).contains(Flags::EXPORT))
+        || specifiers.any(|it| bound.exported_binding(it) == binding)
+        || entity_names.any(|it| bound.entity_root_binding(it) == binding)
+}
+
+fn find_only_name_of(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<SymbolId> {
+    let name = match (hir[function].kind, bound.fns[function.idx()].owner) {
+        (FnKind::Decl, _) => bound.declared_symbol(Decl::Fn(function)),
+        (FnKind::Expr | FnKind::Arrow, FnOwner::Expr(expression))
+            if !bound.finds_itself(hir, function) =>
+        {
+            let Parent::VarInit(declaration) = bound.parent_of_expr(expression) else {
+                return None;
+            };
+            match way_into_pattern(hir, bound, hir[declaration].pat, Held::Text) {
+                Way::Variable(name, _) => name,
+                Way::Anywhere | Way::Nowhere => return None,
+            }
+        }
+        _ => return None,
+    };
+    let mut hoisted = bound.runtime.annex_b_functions().iter();
+    // `arguments.callee` and evaluated text hand the function on without its name.
+    let other_ways = FunctionFlags::USES_ARGUMENTS | FunctionFlags::HAS_DIRECT_EVAL;
+    let is_only_name = name.is_some()
+        && !bound.function_flags(function).intersects(other_ways)
+        && bound.is_stable_binding(name)
+        && !bound.is_visible_to_eval(name)
+        && !hoisted.any(|it| it.function == function)
+        && !is_exported(hir, bound, name);
+    is_only_name.then_some(name)
+}
+
+// `function load(name) { return require(name); }`, where every mention of `load` calls it: what the calls pass for `name`.
+pub(crate) fn find_values_of_parameter(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    mention: ExprId,
+) -> Option<SmallVec<[ExprId; 4]>> {
+    let Binding::Symbol(parameter) = bound.binding(mention) else {
+        return None;
+    };
+    let &[Decl::Param(pattern)] = bound.symbol(parameter).decls else {
+        return None;
+    };
+    let PatParent::Param(id) = bound.pat_parent[pattern.idx()] else {
+        return None;
+    };
+    let function = bound.param_fn[id.idx()];
+    let index = hir[function].params.iter().position(|it| it == id)?;
+    let is_settled = matches!(
+        bound.binding_stability(parameter),
+        BindingStability::Stable | BindingStability::NotInitializedOnce
+    ) && bound.stores_to(parameter).is_empty()
+        && !bound.is_visible_to_eval(parameter)
+        && bound
+            .dynamic_lookup_scope(NodeData::Expr(mention))
+            .is_none()
+        && !hir[id].flags.contains(Flags::REST);
+    let name = find_only_name_of(hir, bound, function).filter(|_| is_settled)?;
+    let text = bound.symbol(name).name;
+    let mut values: SmallVec<[ExprId; 4]> = SmallVec::new();
+    if hir[id].default.is_some() {
+        values.push(hir[id].default);
+    }
+    for callee in (0..hir.exprs.len() as u32).map(ExprId) {
+        let is_mention = matches!(hir[callee].kind, ExprKind::Ident(it) if it == text)
+            && bound.is_evaluated_ident(callee)
+            && !decisions.is_dead_expr(callee)
+            && bound.binding(callee) == Binding::Symbol(name);
+        if !is_mention {
+            continue;
+        }
+        let Parent::Expr(above) = bound.parent_of_expr(callee) else {
+            return None;
+        };
+        let ExprKind::Call(call) = hir[above].kind else {
+            return None;
+        };
+        let mut passed = hir.ids(hir[call].args).take(index + 1);
+        let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
+        if hir[call].callee != callee || passed.clone().any(is_spread) {
+            return None;
+        }
+        values.extend(passed.nth(index));
+    }
+    Some(values)
+}
+
+impl Scan<'_, '_> {
     fn visit_import_sites(&mut self) {
         for site in self.request.analysis.import_sites {
             let loads = matches!(
@@ -299,38 +376,26 @@ impl<'a, 's> Scan<'a, 's> {
                 self.add_names_given_to_loader(site.specifier_node);
             } else if !matches!(site.specifier, ImportSpecifier::Constant(_)) {
                 let position = self.request.hir[site.specifier_node].pos;
-                self.unknown_names_at.push(position);
+                self.found.unknown_names_at.push(position);
             }
         }
     }
 
     fn add_names_given_to_loader(&mut self, name: ExprId) {
         if self.add_names_in(name, true) {
-            self.loads_by_unknown_name = true;
-            self.unknown_names_at.push(self.request.hir[name].pos);
+            self.found.loads_by_unknown_name = true;
+            self.found.unknown_names_at.push(self.request.hir[name].pos);
         }
     }
 
-    fn is_constant_text(&self, expression: ExprId) -> bool {
-        matches!(
-            self.request
-                .analysis
-                .decisions
-                .constant(self.request.hir, expression),
-            FoldedValue::Constant(Constant::String(_))
-                | FoldedValue::ConstantOutsideDeadZone(Constant::String(_))
-        )
-    }
-
-    fn way_into_pattern(&self, pattern: PatId, held: Held) -> Way {
-        let (hir, bound) = (self.request.hir, self.request.bound);
-        match (hir[pattern].kind, bound.initialized_binding(pattern)) {
-            (PatKind::Ident(_), Binding::Symbol(symbol))
-                if bound.dynamic_lookup_scope(NodeData::Pat(pattern)).is_none() =>
-            {
-                Way::Variable(symbol, held)
-            }
-            _ => Way::Anywhere,
+    fn constant_text(&self, expression: ExprId) -> Option<Atom> {
+        let decisions = &self.request.analysis.decisions;
+        match decisions.constant(self.request.hir, expression) {
+            FoldedValue::Constant(Constant::String(text))
+            | FoldedValue::ConstantOutsideDeadZone(Constant::String(text)) => Some(text),
+            FoldedValue::Constant(_)
+            | FoldedValue::ConstantOutsideDeadZone(_)
+            | FoldedValue::Unknown => None,
         }
     }
 
@@ -407,25 +472,20 @@ impl<'a, 's> Scan<'a, 's> {
             let above = match bound.parent_of_expr(expression) {
                 Parent::Expr(above) => above,
                 Parent::VarInit(declaration) => {
-                    return self.way_into_pattern(hir[declaration].pat, held);
+                    return way_into_pattern(hir, bound, hir[declaration].pat, held);
                 }
                 Parent::Stmt(statement) => {
-                    let ends_here = match (hir[statement].kind, held) {
-                        (StmtKind::Expr(_) | StmtKind::If { .. }, _) => true,
+                    return match (hir[statement].kind, held) {
+                        (StmtKind::Expr(_) | StmtKind::If { .. }, _) => Way::Nowhere,
                         (
                             StmtKind::Return(_)
                             | StmtKind::Throw(_)
                             | StmtKind::ExportDefault(_)
                             | StmtKind::ExportAssign(_),
                             _,
-                        ) => false,
-                        (_, Held::Text) => true,
-                        (_, Held::List) => false,
-                    };
-                    return if ends_here {
-                        Way::Nowhere
-                    } else {
-                        Way::Anywhere
+                        ) => Way::Anywhere,
+                        (_, Held::Text) => Way::Nowhere,
+                        (_, Held::List) => Way::Anywhere,
                     };
                 }
                 Parent::ParamDefault(_)
@@ -477,7 +537,7 @@ impl<'a, 's> Scan<'a, 's> {
                 (
                     ExprKind::Binary { op: BinOp::Add, .. } | ExprKind::Template { .. },
                     Held::Text,
-                ) if !self.is_constant_text(above) => return Way::Anywhere,
+                ) if self.constant_text(above).is_none() => return Way::Anywhere,
                 (ExprKind::Binary { .. } | ExprKind::Template { .. }, Held::Text) => {
                     return Way::Nowhere;
                 }
@@ -508,18 +568,6 @@ impl<'a, 's> Scan<'a, 's> {
         }
     }
 
-    fn is_exported(&self, symbol: SymbolId) -> bool {
-        let (hir, bound) = (self.request.hir, self.request.bound);
-        let binding = Binding::Symbol(symbol);
-        let mut declarations = bound.symbol(symbol).decls.iter();
-        let mut specifiers = (0..hir.export_specs.len() as u32).map(ExportSpecId);
-        let mut entity_names = (0..hir.import_equals.len() as u32).map(ImportEqualsId);
-        declarations.any(|&it| bound.modifier_flags(hir, it).contains(Flags::EXPORT))
-            || specifiers.any(|it| bound.exported_binding(it) == binding)
-            || entity_names.any(|it| bound.entity_root_binding(it) == binding)
-    }
-
-    // Whether whoever reads the variable writes its name in this file.
     fn is_read_by_name_alone(&self, symbol: SymbolId) -> bool {
         let bound = self.request.bound;
         let redeclared = bound.runtime.redeclared_commonjs_variables();
@@ -533,7 +581,7 @@ impl<'a, 's> Scan<'a, 's> {
                 | BindingStability::NotInitializedOnce
         ) && !bound.is_visible_to_eval(symbol)
             && !redeclared.iter().any(|it| it.0 == symbol)
-            && !self.is_exported(symbol)
+            && !is_exported(self.request.hir, bound, symbol)
     }
 
     fn way_of_mention(&self, mention: ExprId, holder: &Holder) -> Way {
@@ -542,10 +590,8 @@ impl<'a, 's> Scan<'a, 's> {
             return self.way_of(mention, holder.held);
         }
         let mut stores = bound.stores_to(holder.symbol).iter();
-        match stores
-            .find(|store| store.target == mention)
-            .map(|it| it.kind)
-        {
+        let store = stores.find(|store| store.target == mention);
+        match store.map(|it| it.kind) {
             Some(
                 StoreKind::Assign | StoreKind::Destructure | StoreKind::ForIn | StoreKind::ForOf,
             ) => Way::Nowhere,
@@ -554,12 +600,7 @@ impl<'a, 's> Scan<'a, 's> {
     }
 
     fn follow_variables(&self, holders: &mut Vec<Holder>) {
-        let &FinishedFile {
-            hir,
-            bound,
-            analysis,
-            ..
-        } = self.request;
+        let (hir, bound, analysis) = (self.request.hir, self.request.bound, self.request.analysis);
         let mut first_new = 0;
         for _ in 0..self.limits.get(LimitId::MaxVariablesFollowedToLoader) {
             let end = holders.len();
@@ -637,13 +678,8 @@ impl<'a, 's> Scan<'a, 's> {
             {
                 continue;
             }
-            let (FoldedValue::Constant(Constant::String(name))
-            | FoldedValue::ConstantOutsideDeadZone(Constant::String(name))) =
-                analysis.decisions.constant(hir, expression)
-            else {
-                continue;
-            };
-            let Some(module) = self.find_module(name) else {
+            let name = self.constant_text(expression);
+            let Some(module) = name.and_then(|name| self.find_module(name)) else {
                 continue;
             };
             if written.contains(&module) {
@@ -662,24 +698,14 @@ impl<'a, 's> Scan<'a, 's> {
         if !held_by_variables.is_empty() {
             self.follow_variables(&mut holders);
         }
-        let reach = |it: &(u32, RuntimeModule)| holders[it.0 as usize].leads_anywhere;
-        written.extend(
-            held_by_variables
-                .iter()
-                .filter(|it| reach(it))
-                .map(|it| it.1),
-        );
+        held_by_variables.retain(|it| holders[it.0 as usize].leads_anywhere);
+        written.extend(held_by_variables.iter().map(|it| it.1));
         written
     }
 
     // A call of process.getBuiltinModule with a name that is no constant is no import site.
     fn visit_calls_of_other_loaders(&mut self) {
-        let &FinishedFile {
-            hir,
-            bound,
-            analysis,
-            ..
-        } = self.request;
+        let (hir, bound, analysis) = (self.request.hir, self.request.bound, self.request.analysis);
         for expression in (0..hir.exprs.len() as u32).map(ExprId) {
             let ExprKind::Call(call) = hir[expression].kind else {
                 continue;
@@ -702,113 +728,23 @@ impl<'a, 's> Scan<'a, 's> {
                 Some(LoaderAlias::Local) => self.add_names_given_to_loader(argument),
                 // Whether what is imported is a loader is known once the exporting file is loaded.
                 Some(LoaderAlias::Import(symbol)) => {
-                    let first_new = self.named.len();
+                    let first_new = self.found.modules.len();
                     if self.add_names_in(argument, false) {
-                        self.imports_given_unknown_names.push(symbol);
+                        self.found.imports_given_unknown_names.push(symbol);
                     }
-                    let named = self.named.drain(first_new..);
-                    self.passed_to_imports
-                        .extend(named.map(|module| (symbol, module)));
+                    let named = self.found.modules.drain(first_new..);
+                    let passed = named.map(|module| (symbol, module));
+                    self.found.passed_to_imports.extend(passed);
                 }
                 None => {}
             }
         }
     }
 
-    // The one name under which a function is reached.
-    fn find_only_name_of(&self, function: FnId) -> Option<SymbolId> {
-        let (hir, bound) = (self.request.hir, self.request.bound);
-        let name = match (hir[function].kind, bound.fns[function.idx()].owner) {
-            (FnKind::Decl, _) => bound.declared_symbol(Decl::Fn(function)),
-            (FnKind::Expr | FnKind::Arrow, FnOwner::Expr(expression))
-                if !bound.finds_itself(hir, function) =>
-            {
-                let Parent::VarInit(declaration) = bound.parent_of_expr(expression) else {
-                    return None;
-                };
-                match self.way_into_pattern(hir[declaration].pat, Held::Text) {
-                    Way::Variable(name, _) => name,
-                    Way::Anywhere | Way::Nowhere => return None,
-                }
-            }
-            _ => return None,
-        };
-        let mut hoisted = bound.runtime.annex_b_functions().iter();
-        // `arguments.callee` and evaluated text hand the function on without its name.
-        let other_ways = FunctionFlags::USES_ARGUMENTS | FunctionFlags::HAS_DIRECT_EVAL;
-        let is_only_name = name.is_some()
-            && !bound.function_flags(function).intersects(other_ways)
-            && bound.is_stable_binding(name)
-            && !bound.is_visible_to_eval(name)
-            && !hoisted.any(|it| it.function == function)
-            && !self.is_exported(name);
-        is_only_name.then_some(name)
-    }
-
-    // `function load(name) { return require(name); }`, where every mention of `load` calls it: what the calls pass for `name`.
-    pub(crate) fn find_values_of_parameter(
-        &self,
-        mention: ExprId,
-    ) -> Option<SmallVec<[ExprId; 4]>> {
-        let &FinishedFile {
-            hir,
-            bound,
-            analysis,
-            ..
-        } = self.request;
-        let Binding::Symbol(parameter) = bound.binding(mention) else {
-            return None;
-        };
-        let &[Decl::Param(pattern)] = bound.symbol(parameter).decls else {
-            return None;
-        };
-        let PatParent::Param(id) = bound.pat_parent[pattern.idx()] else {
-            return None;
-        };
-        let function = bound.param_fn[id.idx()];
-        let index = hir[function].params.iter().position(|it| it == id)?;
-        let is_settled = matches!(
-            bound.binding_stability(parameter),
-            BindingStability::Stable | BindingStability::NotInitializedOnce
-        ) && bound.stores_to(parameter).is_empty()
-            && !bound.is_visible_to_eval(parameter)
-            && bound
-                .dynamic_lookup_scope(NodeData::Expr(mention))
-                .is_none()
-            && !hir[id].flags.contains(Flags::REST);
-        let name = self.find_only_name_of(function).filter(|_| is_settled)?;
-        let text = bound.symbol(name).name;
-        let mut values: SmallVec<[ExprId; 4]> = SmallVec::new();
-        if hir[id].default.is_some() {
-            values.push(hir[id].default);
-        }
-        for callee in (0..hir.exprs.len() as u32).map(ExprId) {
-            let is_mention = matches!(hir[callee].kind, ExprKind::Ident(it) if it == text)
-                && bound.is_evaluated_ident(callee)
-                && !analysis.decisions.is_dead_expr(callee)
-                && bound.binding(callee) == Binding::Symbol(name);
-            if !is_mention {
-                continue;
-            }
-            let Parent::Expr(above) = bound.parent_of_expr(callee) else {
-                return None;
-            };
-            let ExprKind::Call(call) = hir[above].kind else {
-                return None;
-            };
-            let mut passed = hir.ids(hir[call].args).take(index + 1);
-            let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
-            if hir[call].callee != callee || passed.clone().any(is_spread) {
-                return None;
-            }
-            values.extend(passed.nth(index));
-        }
-        Some(values)
-    }
-
     // Whether the argument may also be a name that the build does not know.
     fn add_names_in(&mut self, argument: ExprId, follows_parameters: bool) -> bool {
-        let (hir, decisions) = (self.request.hir, &self.request.analysis.decisions);
+        let (hir, bound) = (self.request.hir, self.request.bound);
+        let decisions = &self.request.analysis.decisions;
         let mut has_unknown_name = false;
         let mut parameters_left = if follows_parameters {
             self.limits.get(LimitId::MaxParametersFollowedToLoader)
@@ -824,11 +760,16 @@ impl<'a, 's> Scan<'a, 's> {
             match decisions.constant(hir, expression) {
                 FoldedValue::Constant(Constant::String(name))
                 | FoldedValue::ConstantOutsideDeadZone(Constant::String(name)) => {
+                    let module = self.find_module(name);
                     if is_passed {
-                        let module = self.find_module(name);
-                        self.passed_for_parameters.extend(module);
+                        self.found.passed_for_parameters.extend(module);
                     } else {
-                        self.add_name(argument, name);
+                        let named = module.map(|module| NamedModule {
+                            argument,
+                            name,
+                            module,
+                        });
+                        self.found.modules.extend(named);
                     }
                 }
                 FoldedValue::Constant(_) | FoldedValue::ConstantOutsideDeadZone(_) => {}
@@ -839,7 +780,7 @@ impl<'a, 's> Scan<'a, 's> {
                     }
                     ExprKind::Ident(_) if parameters_left > 0 => {
                         parameters_left -= 1;
-                        match self.find_values_of_parameter(expression) {
+                        match find_values_of_parameter(hir, bound, decisions, expression) {
                             Some(values) => pending.extend(values.iter().map(|&it| (it, true))),
                             None => has_unknown_name = true,
                         }
@@ -858,22 +799,16 @@ impl<'a, 's> Scan<'a, 's> {
             Some(RuntimeResolution::HostValue) | None => None,
         }
     }
-
-    fn add_name(&mut self, argument: ExprId, name: Atom) {
-        let module = self.find_module(name);
-        self.named.extend(module.map(|module| NamedModule {
-            argument,
-            name,
-            module,
-        }));
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use bun_builtin_sources::Archive;
 
-    use crate::builtins::RuntimeModule;
+    use crate::builtins::RuntimeModule::{
+        self, NodeDgram, NodeHttp2, NodeOs, NodeReadline, NodeRepl, NodeTty, NodeV8, NodeVm,
+        NodeZlib,
+    };
     use crate::compile::testing::{default_settings, with_bind_input};
     use crate::load::runtime_modules::RuntimeModules;
     use crate::load::runtime_roots::collect_runtime_roots;
@@ -919,7 +854,6 @@ mod tests {
 
     #[test]
     fn esbuild_require_shim_keeps_named_modules() {
-        use RuntimeModule::{NodeDgram, NodeRepl, NodeZlib};
         let source = format!(
             "var __require = {ESBUILD_REQUIRE};\n__require('zlib'); __require('node:dgram');"
         );
@@ -934,7 +868,6 @@ mod tests {
 
     #[test]
     fn iife_that_returns_a_loader_keeps_named_modules() {
-        use RuntimeModule::{NodeDgram, NodeRepl, NodeV8, NodeVm, NodeZlib};
         let source = "import { createRequire } from 'node:module';
 const a = (() => require)();
 const b = (function () { return import.meta.require; })();
@@ -950,7 +883,6 @@ a('zlib'); b('dgram'); c('vm'); d('v8');";
 
     #[test]
     fn callee_that_may_be_a_loader_keeps_named_modules() {
-        use RuntimeModule::{NodeDgram, NodeHttp2, NodeRepl, NodeV8, NodeVm, NodeZlib};
         let source = format!(
             "{FLAG}let reassigned = (() => require)(); reassigned = String;
 const chosen = flag ? require : String;
@@ -968,9 +900,6 @@ reassigned('zlib'); chosen('dgram'); parameter('vm'); asynchronous('v8'); longer
 
     #[test]
     fn name_that_comes_to_a_load_as_a_value_is_kept() {
-        use RuntimeModule::{
-            NodeDgram, NodeHttp2, NodeOs, NodeReadline, NodeRepl, NodeV8, NodeVm, NodeZlib,
-        };
         let source = "function load(name: string) { try { return require(name); } catch { return null; } }
 const table = { first: 'node:vm' };
 enum Names { Second = 'node:v8' }
@@ -995,23 +924,14 @@ load(table.first); load(Names.Second); load(new Holder().name); load(choose()); 
 
     #[test]
     fn name_written_in_another_file_than_the_load_is_kept() {
-        use RuntimeModule::{NodeDgram, NodeRepl};
-        let files = [
-            (
-                "main.mjs",
-                "import { ask } from './ask.mjs';\nask('node:dgram');",
-            ),
-            (
-                "ask.mjs",
-                "export function ask(name) { return process.getBuiltinModule(name); }",
-            ),
-        ];
+        let main = "import { ask } from './ask.mjs';\nask('node:dgram');";
+        let ask = "export function ask(name) { return process.getBuiltinModule(name); }";
+        let files = [("main.mjs", main), ("ask.mjs", ask)];
         assert_files_keep(&files, &[NodeDgram], &[NodeRepl]);
     }
 
     #[test]
     fn holder_of_a_loader_in_unknown_hands_keeps_named_modules() {
-        use RuntimeModule::{NodeDgram, NodeRepl, NodeV8, NodeVm, NodeZlib};
         let source =
             "function ask(holder: typeof process) { return holder.getBuiltinModule('node:dgram'); }
 ask(process);
@@ -1029,7 +949,6 @@ process.getBuiltinModule.call(process, 'node:v8');";
 
     #[test]
     fn name_written_where_every_load_has_a_known_name_keeps_nothing() {
-        use RuntimeModule::{NodeDgram, NodeOs, NodeVm, NodeZlib};
         let source = format!(
             "{FLAG}import 'node:os';
 function log(text: string) {{ console.log(text); }}
@@ -1041,7 +960,6 @@ require(flag ? 'node:os' : 'os'); process.getBuiltinModule('node:os'); process.e
 
     #[test]
     fn text_that_goes_nowhere_keeps_nothing() {
-        use RuntimeModule::{NodeDgram, NodeOs, NodeRepl, NodeV8, NodeVm, NodeZlib};
         let source = format!(
             "{FLAG}declare const table: Record<string, unknown>;
 require(name);
@@ -1060,7 +978,6 @@ if (false) console.log('node:os');"
 
     #[test]
     fn list_that_is_only_searched_keeps_nothing() {
-        use RuntimeModule::{NodeDgram, NodeOs, NodeRepl, NodeV8, NodeVm, NodeZlib};
         let source = format!(
             "{FLAG}require(name);
 const list = ['node:dgram', 'zlib'] as const;
@@ -1079,9 +996,6 @@ export const found = list.includes(name as never) || list.indexOf(name as never)
 
     #[test]
     fn list_that_hands_out_an_element_is_kept() {
-        use RuntimeModule::{
-            NodeDgram, NodeHttp2, NodeOs, NodeReadline, NodeRepl, NodeTty, NodeV8, NodeVm, NodeZlib,
-        };
         let source = "function load(name: string) { return require(name); }
 const read = ['node:dgram']; if (read.includes('x')) load(read[0]);
 const looped = ['zlib']; for (const name of looped) load(name);
@@ -1114,12 +1028,11 @@ const replaced = ['tty']; replaced.includes = load as never; replaced.includes('
         let source = "const list = ['node:dgram'];
 function load(text) { return list.includes(text) && eval(text); }
 load('require(list[0])');";
-        assert_files_keep(&[("main.cjs", source)], &[RuntimeModule::NodeDgram], &[]);
+        assert_files_keep(&[("main.cjs", source)], &[NodeDgram], &[]);
     }
 
     #[test]
     fn text_in_a_variable_goes_where_the_variable_is_read() {
-        use RuntimeModule::{NodeDgram, NodeRepl, NodeV8, NodeVm, NodeZlib};
         let source = format!(
             "{FLAG}require(name);
 const first = 'node:dgram';
@@ -1133,54 +1046,33 @@ let fourth; console.log(fourth = 'repl');"
 
     #[test]
     fn default_export_that_is_a_name_is_kept() {
-        let files = [
-            (
-                "main.mjs",
-                "import name from './name.mjs';\nprocess.getBuiltinModule(name);",
-            ),
-            ("name.mjs", "export default 'node:dgram';"),
-        ];
-        assert_files_keep(&files, &[RuntimeModule::NodeDgram], &[]);
+        let main = "import name from './name.mjs';\nprocess.getBuiltinModule(name);";
+        let name = "export default 'node:dgram';";
+        let files = [("main.mjs", main), ("name.mjs", name)];
+        assert_files_keep(&files, &[NodeDgram], &[]);
     }
 
     #[test]
     fn unknown_argument_of_an_imported_function_that_is_no_loader_keeps_nothing() {
-        use RuntimeModule::{NodeDgram, NodeZlib};
-        let files = [
-            (
-                "main.mjs",
-                "import { log } from './log.mjs';
-log(process.argv[2]); log('zlib'); console.log({ kind: 'node:dgram' });",
-            ),
-            (
-                "log.mjs",
-                "export function log(text) { console.log(text); }",
-            ),
-        ];
+        let main = "import { log } from './log.mjs';
+log(process.argv[2]); log('zlib'); console.log({ kind: 'node:dgram' });";
+        let log = "export function log(text) { console.log(text); }";
+        let files = [("main.mjs", main), ("log.mjs", log)];
         assert_files_keep(&files, &[], &[NodeZlib, NodeDgram]);
     }
 
     #[test]
     fn unknown_argument_of_an_imported_loader_keeps_written_names() {
-        use RuntimeModule::{NodeDgram, NodeRepl};
-        let files = [
-            (
-                "main.mjs",
-                "import { load } from './load.mjs';
-load(process.argv[2]); console.log({ kind: 'node:dgram' });",
-            ),
-            (
-                "load.mjs",
-                "import { createRequire } from 'node:module';
-export const load = createRequire(import.meta.url);",
-            ),
-        ];
+        let main = "import { load } from './load.mjs';
+load(process.argv[2]); console.log({ kind: 'node:dgram' });";
+        let load = "import { createRequire } from 'node:module';
+export const load = createRequire(import.meta.url);";
+        let files = [("main.mjs", main), ("load.mjs", load)];
         assert_files_keep(&files, &[NodeDgram], &[NodeRepl]);
     }
 
     #[test]
     fn parameter_of_a_function_that_is_only_called_takes_what_the_calls_pass() {
-        use RuntimeModule::{NodeDgram, NodeOs, NodeRepl, NodeV8, NodeVm, NodeZlib};
         let source = format!(
             "{FLAG}function load(name: string) {{ try {{ return require(name); }} catch {{ return null; }} }}
 const later = (first: number, name = 'node:v8') => import(name);
@@ -1197,7 +1089,6 @@ console.log('repl');"
 
     #[test]
     fn parameter_of_a_function_in_unknown_hands_takes_any_written_name() {
-        use RuntimeModule::NodeRepl;
         for hands in [
             "console.log(load);",
             "export { load };",
@@ -1230,67 +1121,46 @@ load('x'); console.log('repl');"
         let source = format!(
             "{FLAG}require('./' + name); import(`../${{name}}.js`); console.log('node:dgram');"
         );
-        assert_keeps(&source, &[], &[RuntimeModule::NodeDgram]);
+        assert_keeps(&source, &[], &[NodeDgram]);
     }
 
     #[test]
     fn loader_imported_from_another_file_keeps_named_modules() {
-        use RuntimeModule::{NodeDgram, NodeRepl, NodeV8, NodeVm, NodeZlib};
         let chunk = format!(
             "import {{ createRequire }} from 'node:module';
 var __require = {ESBUILD_REQUIRE};
 export var made = createRequire(import.meta.url);
 export {{ __require as a }};"
         );
-        let files = [
-            (
-                "main.mjs",
-                "import { a as load, made } from './chunk.mjs';
+        let main = "import { a as load, made } from './chunk.mjs';
 import { again } from './barrel.mjs';
-load('zlib'); made('node:dgram'); again(globalThis.flag ? 'vm' : 'v8');",
-            ),
+load('zlib'); made('node:dgram'); again(globalThis.flag ? 'vm' : 'v8');";
+        let barrel = "import { a } from './chunk.mjs';\nexport { a as again };";
+        let files = [
+            ("main.mjs", main),
             ("chunk.mjs", &chunk),
-            (
-                "barrel.mjs",
-                "import { a } from './chunk.mjs';\nexport { a as again };",
-            ),
+            ("barrel.mjs", barrel),
         ];
         assert_files_keep(&files, &[NodeZlib, NodeDgram, NodeVm, NodeV8], &[NodeRepl]);
     }
 
     #[test]
     fn imported_function_that_is_no_loader_keeps_nothing() {
-        use RuntimeModule::{NodeRepl, NodeZlib};
-        let files = [
-            (
-                "main.mjs",
-                "import { log } from './log.mjs';
+        let main = "import { log } from './log.mjs';
 import other from './log.mjs';
-log('zlib'); other('repl');",
-            ),
-            (
-                "log.mjs",
-                "export function log(text) { console.log(text); }
-export default log;",
-            ),
-        ];
+log('zlib'); other('repl');";
+        let log = "export function log(text) { console.log(text); }
+export default log;";
+        let files = [("main.mjs", main), ("log.mjs", log)];
         assert_files_keep(&files, &[], &[NodeZlib, NodeRepl]);
     }
 
     #[test]
     fn imported_binding_that_may_hold_a_loader_keeps_named_modules() {
-        use RuntimeModule::{NodeDgram, NodeRepl};
-        let files = [
-            (
-                "main.mjs",
-                "import { swapped } from './log.mjs';\nswapped('dgram');",
-            ),
-            (
-                "log.mjs",
-                "export let swapped = require;
-export function swap() { swapped = console.log; }",
-            ),
-        ];
+        let main = "import { swapped } from './log.mjs';\nswapped('dgram');";
+        let log = "export let swapped = require;
+export function swap() { swapped = console.log; }";
+        let files = [("main.mjs", main), ("log.mjs", log)];
         assert_files_keep(&files, &[NodeDgram], &[NodeRepl]);
     }
 
@@ -1298,7 +1168,6 @@ export function swap() { swapped = console.log; }",
 
     #[test]
     fn each_arm_of_a_choice_is_kept() {
-        use RuntimeModule::{NodeDgram, NodeHttp2, NodeRepl, NodeV8, NodeVm, NodeZlib};
         for load in [
             "require",
             "import",
@@ -1322,11 +1191,7 @@ export function swap() { swapped = console.log; }",
 const load = createRequire(import.meta.url);
 load(flag ? 'node:vm' : 'node:v8');"
         );
-        assert_keeps(
-            &source,
-            &[RuntimeModule::NodeVm, RuntimeModule::NodeV8],
-            &[RuntimeModule::NodeDgram],
-        );
+        assert_keeps(&source, &[NodeVm, NodeV8], &[NodeDgram]);
     }
 
     #[test]
@@ -1335,47 +1200,31 @@ load(flag ? 'node:vm' : 'node:v8');"
 var require = createRequire('/');
 export const tty = require('tty');
 export const os = createRequire('/elsewhere/')('node:os');";
-        assert_keeps(
-            source,
-            &[RuntimeModule::NodeTty, RuntimeModule::NodeOs],
-            &[RuntimeModule::NodeDgram],
-        );
+        assert_keeps(source, &[NodeTty, NodeOs], &[NodeDgram]);
     }
 
     #[test]
     fn constant_arm_beside_unknown_arm_is_kept() {
         let source = format!("{FLAG}require(flag ? 'node:vm' : name);");
-        assert_keeps(&source, &[RuntimeModule::NodeVm], &[RuntimeModule::NodeV8]);
+        assert_keeps(&source, &[NodeVm], &[NodeV8]);
     }
 
     #[test]
     fn name_with_constant_start_keeps_nothing() {
         let source =
             format!("{FLAG}require('node:v' + name); require(`node:${{name}}`); require(name);");
-        assert_keeps(
-            &source,
-            &[],
-            &[RuntimeModule::NodeVm, RuntimeModule::NodeV8],
-        );
+        assert_keeps(&source, &[], &[NodeVm, NodeV8]);
     }
 
     #[test]
     fn choice_that_only_names_a_module_keeps_nothing() {
         let source = format!("{FLAG}require.resolve(flag ? 'node:vm' : 'node:v8');");
-        assert_keeps(
-            &source,
-            &[],
-            &[RuntimeModule::NodeVm, RuntimeModule::NodeV8],
-        );
+        assert_keeps(&source, &[], &[NodeVm, NodeV8]);
     }
 
     #[test]
     fn choice_in_dead_code_keeps_nothing() {
         let source = format!("{FLAG}if (false) require(flag ? 'node:vm' : 'node:v8');");
-        assert_keeps(
-            &source,
-            &[],
-            &[RuntimeModule::NodeVm, RuntimeModule::NodeV8],
-        );
+        assert_keeps(&source, &[], &[NodeVm, NodeV8]);
     }
 }

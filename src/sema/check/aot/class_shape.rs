@@ -43,7 +43,6 @@ impl StoreCandidate {
         }
     }
 
-    // A method updates what is there. Only a constructor starts from nothing.
     fn is_of_constructor_function(&self) -> bool {
         match self.place {
             StorePlace::Instance => self.form == StoreForm::Plain,
@@ -429,7 +428,6 @@ fn is_stored_into(
     )
 }
 
-// `F.prototype.name = function () { .. }`, the same through a variable that holds `F.prototype`, a function in the literal that becomes a prototype object, the `get` or the `set` of a property descriptor.
 fn is_written_as_method(hir: &hir::File<'_>, bound: &Bound<'_>, function: FnId) -> bool {
     let FnOwner::Expr(expression) = bound.fns[function.idx()].owner else {
         return false;
@@ -518,7 +516,6 @@ fn binding_candidate(store: &BindingStore) -> StoreCandidate {
     }
 }
 
-// The expression whose value the member holds first.
 fn find_stored_value(stores: &[StoreCandidate], candidate: &StoreCandidate) -> Option<ExprId> {
     match candidate.form {
         StoreForm::Plain | StoreForm::Logical => Some(candidate.value),

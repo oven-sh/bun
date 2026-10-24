@@ -6,39 +6,34 @@ use crate::ir::{Opcode, WellKnownSymbol};
 use bstr::BStr;
 use bun_core::strings;
 
+macro_rules! assert_intrinsic {
+    ($found:expr, $intrinsic:pat) => {{
+        let found = $found;
+        assert!(matches!(found, Some($intrinsic)), "{found:?}");
+    }};
+}
+
 case_tests! {
-    operation: RUNTIME, "$toLength(x);", |case| {
-        let found = case.intrinsic("$toLength");
-        assert!(matches!(found, Some(Intrinsic::Operation(Opcode::ToLength))), "{found:?}");
-    };
+    operation: RUNTIME, "$toLength(x);", |case|
+        assert_intrinsic!(case.intrinsic("$toLength"), Intrinsic::Operation(Opcode::ToLength));
     type_test: RUNTIME, "$isObject(x); $isCallable(x);", |case| {
-        let is_object = case.intrinsic("$isObject");
-        assert!(matches!(is_object, Some(Intrinsic::IsObject)), "{is_object:?}");
-        let is_callable = case.intrinsic("$isCallable");
-        assert!(matches!(is_callable, Some(Intrinsic::IsCallable)), "{is_callable:?}");
+        assert_intrinsic!(case.intrinsic("$isObject"), Intrinsic::IsObject);
+        assert_intrinsic!(case.intrinsic("$isCallable"), Intrinsic::IsCallable);
     };
     position_selects_entry: RUNTIME, "$isArray(x); const a = $isArray;", |case| {
-        let call = case.intrinsic_at("$isArray", 0);
-        assert!(matches!(call, Some(Intrinsic::Builtin(BuiltinId::ArrayIsArray))), "{call:?}");
-        let value = case.intrinsic_at("$isArray", 1);
-        let is_constant_of_realm = matches!(value, Some(Intrinsic::Builtin(BuiltinId::LinkTimeConstantIsArray)));
-        assert!(is_constant_of_realm, "{value:?}");
+        let (call, value) = (case.intrinsic_at("$isArray", 0), case.intrinsic_at("$isArray", 1));
+        assert_intrinsic!(call, Intrinsic::Builtin(BuiltinId::ArrayIsArray));
+        assert_intrinsic!(value, Intrinsic::Builtin(BuiltinId::LinkTimeConstantIsArray));
     };
     construct_global: RUNTIME, "new $Promise(g);", |case| {
-        let found = case.intrinsic("$Promise");
-        assert!(matches!(found, Some(Intrinsic::Builtin(BuiltinId::Promise))), "{found:?}");
+        assert_intrinsic!(case.intrinsic("$Promise"), Intrinsic::Builtin(BuiltinId::Promise));
         assert!(case.mentions(BuiltinId::Promise));
     };
-    erased_call: RUNTIME, "$debug(\"x\");", |case| {
-        let found = case.intrinsic("$debug");
-        assert!(matches!(found, Some(Intrinsic::Erased)), "{found:?}");
-    };
+    erased_call: RUNTIME, "$debug(\"x\");", |case|
+        assert_intrinsic!(case.intrinsic("$debug"), Intrinsic::Erased);
     conversion_and_throw: RUNTIME, "$toNumber(x); $throwTypeError(\"m\");", |case| {
-        let conversion = case.intrinsic("$toNumber");
-        let is_to_number = matches!(conversion, Some(Intrinsic::Conversion(Conversion::ToNumber)));
-        assert!(is_to_number, "{conversion:?}");
-        let throw = case.intrinsic("$throwTypeError");
-        assert!(matches!(throw, Some(Intrinsic::Throw(ErrorKind::TypeError))), "{throw:?}");
+        assert_intrinsic!(case.intrinsic("$toNumber"), Intrinsic::Conversion(Conversion::ToNumber));
+        assert_intrinsic!(case.intrinsic("$throwTypeError"), Intrinsic::Throw(ErrorKind::TypeError));
     };
     replaced_global_changes_nothing: RUNTIME, "$throwTypeError(\"m\");", |case| {
         assert!(!case.mentions(BuiltinId::TypeError));
@@ -63,21 +58,18 @@ case_tests! {
 fn member_intrinsics() {
     with_case(RUNTIME, "f.$call(t, 1);", |case| {
         let found = case.intrinsic("f.$call");
-        let is_call = matches!(
+        assert_intrinsic!(
             found,
-            Some(Intrinsic::Call {
+            Intrinsic::Call {
                 is_never_inlined: false
-            })
+            }
         );
-        assert!(is_call, "{found:?}");
     });
     with_case(RUNTIME, "o.$then;", |case| {
-        let found = case.intrinsic("o.$then");
-        assert!(matches!(found, Some(Intrinsic::PrivateName)), "{found:?}");
+        assert_intrinsic!(case.intrinsic("o.$then"), Intrinsic::PrivateName);
     });
     with_case(RUNTIME, "Math.$call;", |case| {
-        let found = case.intrinsic("Math.$call");
-        assert!(matches!(found, Some(Intrinsic::Call { .. })), "{found:?}");
+        assert_intrinsic!(case.intrinsic("Math.$call"), Intrinsic::Call { .. });
     });
 }
 
@@ -85,8 +77,7 @@ fn member_intrinsics() {
 fn symbol_key_member() {
     with_case(RUNTIME, "x.$$iterator;", |case| {
         let found = case.intrinsic("x.$$iterator");
-        let is_iterator = matches!(found, Some(Intrinsic::SymbolKey(WellKnownSymbol::Iterator)));
-        assert!(is_iterator, "{found:?}");
+        assert_intrinsic!(found, Intrinsic::SymbolKey(WellKnownSymbol::Iterator));
     });
     with_case(RUNTIME, "x.$iterator; x.iterator;", |case| {
         assert_unresolved(case, "x.$iterator");
@@ -115,10 +106,7 @@ fn originals_are_locked() {
 fn prefixed_global() {
     with_case(RUNTIME, "Array;", |case| {
         let found = case.intrinsic("Array");
-        assert!(
-            matches!(found, Some(Intrinsic::Builtin(BuiltinId::Array))),
-            "{found:?}"
-        );
+        assert_intrinsic!(found, Intrinsic::Builtin(BuiltinId::Array));
         assert!(case.mentions(BuiltinId::Array));
     });
     with_case(PROGRAM, "Array;", |case| {
@@ -130,14 +118,8 @@ fn prefixed_global() {
     });
 }
 
-struct NativeBinding {
-    id: BuiltinId,
-    callee: BuiltinName,
-    file: &'static [u8],
-    symbol: &'static [u8],
-}
-
-fn find_native_binding(id: BuiltinId) -> Option<NativeBinding> {
+// The callee, the file and the symbol that name it.
+fn find_native_binding(id: BuiltinId) -> Option<(BuiltinName, &'static [u8], &'static [u8])> {
     let entry = table::entry(id);
     if entry.holder.is_some() {
         return None;
@@ -154,12 +136,7 @@ fn find_native_binding(id: BuiltinId) -> Option<NativeBinding> {
         let found = table::native_binding(kind, file_name, symbol_name);
         matches!(found, Some(Intrinsic::NativeBinding(binding)) if binding == id)
     })?;
-    Some(NativeBinding {
-        id,
-        callee,
-        file,
-        symbol,
-    })
+    Some((callee, file, symbol))
 }
 
 #[test]
@@ -168,20 +145,20 @@ fn native_binding() {
     let id = ids
         .find(|&id| table::entry(id).kind == BuiltinKind::NativeBinding)
         .unwrap();
-    let binding = find_native_binding(id).unwrap();
-    let callee = format!("${}", BStr::new(table::text_of_name(binding.callee)));
-    let (file, symbol) = (BStr::new(binding.file), BStr::new(binding.symbol));
+    let (callee, file, symbol) = find_native_binding(id).unwrap();
+    let callee = format!("${}", BStr::new(table::text_of_name(callee)));
+    let (file, symbol) = (BStr::new(file), BStr::new(symbol));
     let call = format!("{callee}(\"{file}\", \"{symbol}\")");
     with_case(RUNTIME, &format!("{call};"), |case| {
         assert_unresolved(case, &callee);
         let found = case.intrinsic(&call);
-        let is_binding = matches!(found, Some(Intrinsic::NativeBinding(id)) if id == binding.id);
+        let is_binding = matches!(found, Some(Intrinsic::NativeBinding(binding)) if binding == id);
         assert!(is_binding, "{found:?}");
-        assert!(case.mentions(binding.id));
+        assert!(case.mentions(id));
     });
     with_case(PROGRAM, &format!("{call};"), |case| {
         assert_unresolved(case, &call);
-        assert!(!case.mentions(binding.id));
+        assert!(!case.mentions(id));
     });
 }
 

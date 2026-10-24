@@ -19,9 +19,9 @@ use crate::builtins::Resolved;
 use crate::builtins::id::BuiltinId;
 use crate::ir::{BlockId, Edge, FunctionId, FunctionKey, TypeTable, ValueId};
 use crate::known_helpers::{
-    HeldFunction, Helper, KnownCallee, PrivateFieldAccess, PrivateFieldCall, PrivateMemberKind,
-    PrivateStateKind, PrivateStateRole, PrivateStateSite, ResolveInput, ResolvedReference, Shape,
-    resolve_callee, resolve_private_field_call, resolve_reference,
+    HeldFunction, Helper, KnownCallee, PrivateFieldAccess, PrivateMemberKind, PrivateStateKind,
+    PrivateStateRole, PrivateStateSite, ResolveInput, ResolvedReference, Shape, resolve_callee,
+    resolve_private_field_call, resolve_reference,
 };
 use crate::statistics::StatisticId;
 
@@ -39,11 +39,8 @@ struct LoweredCall {
     slow_path: BlockId,
 }
 
-#[derive(Copy, Clone)]
-struct BuiltinPathExpr {
-    path: ExprId,
-    builtin: BuiltinId,
-}
+// An expression of a helper's text and the built-in that it names.
+pub(in crate::lower) type BuiltinPathExpr = (ExprId, BuiltinId);
 
 struct ExportStarPlan {
     create_binding: ResolvedReference,
@@ -53,12 +50,6 @@ struct ExportStarPlan {
     has_own_property: BuiltinPathExpr,
     call_name: Atom,
     create_binding_builtins: SmallVec<[BuiltinPathExpr; 2]>,
-}
-
-#[derive(Copy, Clone)]
-enum StaticMemberAccess {
-    GetMethod { member: usize },
-    Has,
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -72,7 +63,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         };
         let site = hir[id];
-        if let Some(state) = self.file.find_private_state(call) {
+        let (files, modules) = (self.file.queries.files(), self.file.inputs.modules);
+        let states = helpers.private_states(files, modules, self.file.file);
+        if let Some(state) = states.and_then(|states| states.site(call)) {
             return match state.role {
                 PrivateStateRole::Definition => {
                     self.lower_private_state_definition(call, site, state)
@@ -119,7 +112,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn lower_call_operands(&mut self, call: ExprId, site: Call) -> LoweredCall {
-        let callee = self.lower_callee(site.callee, None);
+        let callee = self.lower_callee(site.callee, None, None);
         let Arguments::Values(arguments) = self.lower_arguments(site.args) else {
             unreachable!("a call with a spread argument is not a known call");
         };
@@ -149,7 +142,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.read_variable(result)
     }
 
-    fn emit_guard(&mut self, condition: ValueId, slow_path: BlockId) {
+    pub(in crate::lower) fn emit_guard(&mut self, condition: ValueId, slow_path: BlockId) {
         let passed = self.create_block();
         self.builder
             .branch(condition, Edge::to(passed), Edge::to(slow_path));
@@ -168,9 +161,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_guard(is_unchanged, slow_path);
     }
 
-    fn guard_builtin_path(&mut self, expected: BuiltinPathExpr, slow_path: BlockId) -> ValueId {
-        let value = self.lower_expression(expected.path);
-        self.guard_builtin(value, expected.builtin, slow_path);
+    // A fast path stands in for calls of built-ins, and the program may have put other functions in their places.
+    pub(in crate::lower) fn guard_builtin_path(
+        &mut self,
+        (path, builtin): BuiltinPathExpr,
+        slow_path: BlockId,
+    ) -> ValueId {
+        let value = self.lower_expression(path);
+        self.guard_builtin(value, builtin, slow_path);
         value
     }
 
@@ -206,11 +204,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if self.find_captured_value(Capture::Value(binding)).is_some() {
             return true;
         }
-        match file
-            .scopes
-            .placement(binding)
-            .map(|placement| placement.storage)
-        {
+        let placement = file.scopes.placement(binding);
+        match placement.map(|placement| placement.storage) {
             Some(Storage::Variable(_)) => true,
             Some(Storage::Field { scope, .. }) => {
                 let captured = self.find_captured_value(Capture::Environment(scope));
@@ -345,15 +340,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let helper_call = helper_call.expect("private_state only accepts supported helper calls");
         let kind = helper_call.access(state.kind);
         let kind = kind.expect("a supported helper call has an access kind");
-        if !is_lowered(self.file, helper_call.callee.file) {
+        let callee = &helper_call.callee;
+        if !is_lowered(self.file, callee.file) {
             return None;
         }
         let lowered = self.lower_call_operands(call, site);
-        self.guard_callee(
-            &lowered,
-            &helper_call.callee,
-            helper_call.callee.functions[0],
-        );
+        self.guard_callee(&lowered, callee, callee.functions[0]);
         let access = PrivateStateAccess {
             state: state.state,
             collection: lowered.arguments[helper_call.state],
@@ -376,31 +368,33 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn lower_static_member_access(&mut self, call: ExprId, site: Call) -> Option<ValueId> {
         let helper_call =
             resolve_private_field_call(&resolve_input(self.file), self.file.file, call)?;
-        let kind = classify_static_member_access(&helper_call)?;
+        let (helper, kind) = (helper_call.helper, helper_call.member_kind);
+        let member = match (helper, kind, helper_call.member) {
+            (Helper::ClassPrivateFieldGet, PrivateMemberKind::Method, Some(member)) => Some(member),
+            (Helper::ClassPrivateFieldIn, _, _) => None,
+            _ => return None,
+        };
         let state = self.file.hir.id_at(site.args, helper_call.state);
         if !self.file.may_hold_class(state) {
             return None;
         }
         let lowered = self.lower_call_operands(call, site);
-        self.guard_callee(
-            &lowered,
-            &helper_call.callee,
-            helper_call.callee.functions[0],
-        );
+        let callee = &helper_call.callee;
+        self.guard_callee(&lowered, callee, callee.functions[0]);
         let slow_path = lowered.slow_path;
         let object = lowered.arguments[helper_call.receiver];
         let class = lowered.arguments[helper_call.state];
         let is_class = self.builder.type_test(class, TypeTable::FUNCTION);
         self.emit_guard(is_class, slow_path);
-        let result = match kind {
-            StaticMemberAccess::GetMethod { member } => {
+        let result = match member {
+            Some(member) => {
                 let is_receiver = self.builder.strict_eq(object, class);
                 self.emit_guard(is_receiver, slow_path);
                 let is_declared = self.builder.to_boolean(lowered.arguments[member]);
                 self.emit_guard(is_declared, slow_path);
                 lowered.arguments[member]
             }
-            StaticMemberAccess::Has => {
+            None => {
                 let is_object = self.builder.type_test(object, TypeTable::OBJECT);
                 self.emit_guard(is_object, slow_path);
                 self.builder.strict_eq(object, class)
@@ -419,23 +413,18 @@ fn resolve_input<'x, 's>(file: &'x FileLowering<'_, '_, '_, 's>) -> ResolveInput
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    fn find_private_state(&self, call: ExprId) -> Option<PrivateStateSite> {
-        let inputs = self.inputs;
-        let files = self.queries.files();
-        let states = inputs
-            .known_helpers
-            .private_states(files, inputs.modules, self.file)?;
-        states.site(call)
-    }
-
-    fn resolves_to_builtin(&self, expected: BuiltinPathExpr) -> bool {
-        match self.builtins.of_expr(expected.path) {
-            Some(Resolved::Builtin(path)) => path.id == expected.builtin,
+    fn resolves_to_builtin(&self, (path, builtin): BuiltinPathExpr) -> bool {
+        match self.builtins.of_expr(path) {
+            Some(Resolved::Builtin(path)) => path.id == builtin,
             Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => false,
         }
     }
 
-    fn find_parameter(&self, function: FnId, index: usize) -> Option<(SymbolId, Atom)> {
+    pub(in crate::lower) fn find_parameter(
+        &self,
+        function: FnId,
+        index: usize,
+    ) -> Option<(SymbolId, Atom)> {
         let (hir, bound) = (self.hir, self.bound);
         let pattern = hir[hir[function].params.iter().nth(index)?].pat;
         let PatKind::Ident(name) = hir[pattern].kind else {
@@ -475,32 +464,26 @@ impl FileLowering<'_, '_, '_, '_> {
         let (function, MemberKey::Name(call_name)) = hir.member_key(callee)? else {
             return None;
         };
-        let call = BuiltinPathExpr {
-            path: callee,
-            builtin: BuiltinId::FunctionPrototypeCall,
-        };
-        let has_own_property = BuiltinPathExpr {
-            path: self.skip_type_syntax(function),
-            builtin: BuiltinId::ObjectPrototypeHasOwnProperty,
-        };
+        let call = (callee, BuiltinId::FunctionPrototypeCall);
+        let function = self.skip_type_syntax(function);
+        let has_own_property = (function, BuiltinId::ObjectPrototypeHasOwnProperty);
         let is_resolved =
             self.resolves_to_builtin(call) && self.resolves_to_builtin(has_own_property);
         is_resolved.then_some((has_own_property, call_name))
     }
 
-    fn find_create_binding_builtins(
+    // The built-ins that `__createBinding` calls, and the call that defines the property.
+    pub(in crate::lower) fn find_create_binding_builtins(
         &self,
         create_binding: FnId,
         shape: Shape,
-    ) -> Option<SmallVec<[BuiltinPathExpr; 2]>> {
+    ) -> Option<(SmallVec<[BuiltinPathExpr; 2]>, ExprId)> {
         let mut builtins = SmallVec::new();
         let define = match (shape, &find_statements(self, create_binding)[..]) {
             (Shape::CreateBindingReusesDescriptor, &[_, describe, _, define]) => {
                 let describe = find_first_initializer(self, describe)?;
-                builtins.push(BuiltinPathExpr {
-                    path: find_callee(self, describe)?,
-                    builtin: BuiltinId::ObjectGetOwnPropertyDescriptor,
-                });
+                let describe = find_callee(self, describe)?;
+                builtins.push((describe, BuiltinId::ObjectGetOwnPropertyDescriptor));
                 define
             }
             (Shape::CreateBindingDefinesGetter, &[_, define]) => define,
@@ -509,14 +492,11 @@ impl FileLowering<'_, '_, '_, '_> {
         let StmtKind::Expr(define) = self.hir[define].kind else {
             return None;
         };
-        builtins.push(BuiltinPathExpr {
-            path: find_callee(self, define)?,
-            builtin: BuiltinId::ObjectDefineProperty,
-        });
-        let is_resolved = builtins
-            .iter()
-            .all(|&expected| self.resolves_to_builtin(expected));
-        is_resolved.then_some(builtins)
+        let path = find_callee(self, define)?;
+        builtins.push((path, BuiltinId::ObjectDefineProperty));
+        let mut paths = builtins.iter();
+        let is_resolved = paths.all(|&expected| self.resolves_to_builtin(expected));
+        is_resolved.then_some((builtins, define))
     }
 
     fn plan_export_star(&self, export_star: FnId) -> Option<ExportStarPlan> {
@@ -548,7 +528,7 @@ impl FileLowering<'_, '_, '_, '_> {
             key_is_first_capture: is_key_first_capture(self, definition, getter)?,
             has_own_property,
             call_name,
-            create_binding_builtins: self.find_create_binding_builtins(definition, shape)?,
+            create_binding_builtins: self.find_create_binding_builtins(definition, shape)?.0,
         })
     }
 
@@ -650,20 +630,6 @@ fn is_key_first_capture(
     }
 }
 
-fn classify_static_member_access(helper_call: &PrivateFieldCall) -> Option<StaticMemberAccess> {
-    match (
-        helper_call.helper,
-        helper_call.member_kind,
-        helper_call.member,
-    ) {
-        (Helper::ClassPrivateFieldGet, PrivateMemberKind::Method, Some(member)) => {
-            Some(StaticMemberAccess::GetMethod { member })
-        }
-        (Helper::ClassPrivateFieldIn, _, _) => Some(StaticMemberAccess::Has),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use crate::compile::testing::lower_program;
@@ -750,11 +716,8 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
         ] {
             let main = format!("{HELPERS}{call}");
             let files = [("main.cjs", main.as_str())];
-            assert_eq!(
-                count_in_module_bodies(&files, Opcode::TryReExportFields),
-                0,
-                "{call}"
-            );
+            let count = count_in_module_bodies(&files, Opcode::TryReExportFields);
+            assert_eq!(count, 0, "{call}");
         }
     }
 }

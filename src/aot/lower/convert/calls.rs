@@ -1,5 +1,5 @@
 use bun_sema::check::aot::{
-    CallTarget, FunctionRef, GaveUp, PositionTypes, ShapeKind, SignatureParameter, WrittenType,
+    CallTarget, GaveUp, PositionTypes, ShapeKind, SignatureParameter, WrittenType,
 };
 use bun_sema::hir::{ExprId, ExprKind};
 
@@ -11,7 +11,7 @@ use crate::ir::generated::TypeSiteKind;
 use crate::ir::{DeclaredType, ValueId};
 use crate::lower::positions::SiteOrigin;
 use crate::lower::types::lists_int32;
-use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering};
+use crate::lower::{FileLowering, FunctionLowering};
 
 impl FileLowering<'_, '_, '_, '_> {
     // `box.get()` with `box: Box<string>` and `get(): T`: the type argument was written with the receiver's type.
@@ -32,31 +32,6 @@ impl FileLowering<'_, '_, '_, '_> {
         is_instantiated.then_some(written)
     }
 
-    fn has_instantiated_result(&mut self, target: CallTarget) -> bool {
-        let Some(declaration) = target.declaration else {
-            return false;
-        };
-        let called = self.queries.signature_result(target.signature);
-        called != self.queries.function_signature(declaration).result.checked
-    }
-
-    fn find_int32_position(&mut self, parameter: Parameter, position: u32) -> Option<DeclaredType> {
-        let declared = parameter.declared.written()?;
-        if !lists_int32(self, declared) {
-            return None;
-        }
-        let origin = SiteOrigin {
-            kind: TypeSiteKind::Parameter,
-            position,
-        };
-        let declared = self.create_position(parameter.types, origin);
-        Some(match parameter.is_optional {
-            true => self.add_undefined(declared),
-            false => declared,
-        })
-    }
-
-    // In front of the first spread each argument has its parameter.
     fn record_listed_arguments(&mut self, call: ExprId, target: CallTarget) {
         let hir = self.hir;
         let (ExprKind::Call(site) | ExprKind::New(site)) = hir[call].kind else {
@@ -90,7 +65,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     continue;
                 };
                 match spread {
-                    Some(spread) => record_spread_flow(self, spread, parameter_type),
+                    Some(spread) => self.record_spread_elements(spread, &[parameter_type]),
                     None => self.record_flow_into_type(argument, parameter_type, kind),
                 }
             }
@@ -133,7 +108,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Ok(Some(mut target)) = self.file.queries.resolved_call(call) else {
             return value;
         };
-        let is_instantiated = self.file.has_instantiated_result(target);
+        let queries = &mut *self.file.queries;
+        let is_instantiated = target.declaration.is_some_and(|declaration| {
+            let called = queries.signature_result(target.signature);
+            called != queries.function_signature(declaration).result.checked
+        });
         match self.file.find_result_through_written_receiver(call) {
             Some(written) => target.result.written = written,
             // What is written is the type parameter. The checker has what this call puts in its place.
@@ -185,45 +164,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 .map_or(WrittenType::Unwritten, |declared| declared.written);
             let is_optional =
                 (shape.parameters.get(index)).is_some_and(|parameter| parameter.is_optional);
-            let parameter = Parameter {
-                callee: target.declaration,
-                index,
-                types,
-                declared,
-                is_optional,
+            // The callee tests its parameters where it is entered.
+            let checked = types.checked.ok();
+            let written = types.written.written();
+            let distinct_written = written.filter(|_| written != checked);
+            for parameter_type in checked.into_iter().chain(distinct_written) {
+                let kind = ConversionKind::Performed;
+                self.file
+                    .record_flow_into_type(expression, parameter_type, kind);
+            }
+            let position = hir[expression].pos;
+            let found = find_int32_position(self.file, types, declared, is_optional, position);
+            let Some(declared) = found else {
+                continue;
             };
-            *value = self.convert_argument(expression, parameter, *value);
+            if let Some(callee) = target.declaration {
+                let subject = Int32Subject::Argument { callee, index };
+                self.describe_int32_flow(declared, subject, Some(expression));
+            }
+            *value = self.convert_initializer(*value, declared, Some(expression));
         }
-    }
-
-    // The callee tests its parameters where it is entered.
-    fn convert_argument(
-        &mut self,
-        expression: ExprId,
-        parameter: Parameter,
-        value: ValueId,
-    ) -> ValueId {
-        let types = parameter.types;
-        let checked = types.checked.ok();
-        let written = types.written.written();
-        let distinct_written = written.filter(|_| written != checked);
-        for parameter_type in checked.into_iter().chain(distinct_written) {
-            let kind = ConversionKind::Performed;
-            self.file
-                .record_flow_into_type(expression, parameter_type, kind);
-        }
-        let position = self.file.hir[expression].pos;
-        let Some(declared) = self.file.find_int32_position(parameter, position) else {
-            return value;
-        };
-        if let Some(callee) = parameter.callee {
-            let subject = Int32Subject::Argument {
-                callee,
-                index: parameter.index,
-            };
-            self.describe_int32_flow(declared, subject, Some(expression));
-        }
-        self.convert_initializer(value, declared, Some(expression))
     }
 
     // No operation holds one element of a spread argument, so the flow into the first `int32` parameter that the spread can reach is a request for the list, which no proof admits.
@@ -252,14 +212,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             if parameter.is_rest {
                 return;
             }
-            let parameter = Parameter {
-                callee: Some(callee),
-                index,
-                types: parameter.types,
-                declared: parameter.types.written,
-                is_optional: parameter.is_optional,
-            };
-            let Some(declared) = self.file.find_int32_position(parameter, position) else {
+            let (types, is_optional) = (parameter.types, parameter.is_optional);
+            let found = find_int32_position(self.file, types, types.written, is_optional, position);
+            let Some(declared) = found else {
                 continue;
             };
             self.described_int32_flow = Some(Int32FlowDescription {
@@ -275,26 +230,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-#[derive(Copy, Clone)]
-struct Parameter {
-    callee: Option<FunctionRef>,
-    index: usize,
+fn find_int32_position(
+    file: &mut FileLowering<'_, '_, '_, '_>,
     types: PositionTypes,
     declared: WrittenType,
     is_optional: bool,
-}
-
-fn record_spread_flow(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    spread: ExprId,
-    parameter_type: CheckerTypeId,
-) {
-    let Ok(list) = file.queries.expression_type(spread) else {
-        return;
-    };
-    let position = file.hir[spread].pos;
-    for element in file.collect_element_types_from(list, 0) {
-        let kind = ConversionKind::Asserted;
-        file.record_conversion(element, parameter_type, position, kind);
+    position: u32,
+) -> Option<DeclaredType> {
+    if !lists_int32(file, declared.written()?) {
+        return None;
     }
+    let origin = SiteOrigin {
+        kind: TypeSiteKind::Parameter,
+        position,
+    };
+    let declared = file.create_position(types, origin);
+    Some(match is_optional {
+        true => file.add_undefined(declared),
+        false => declared,
+    })
 }

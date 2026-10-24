@@ -108,10 +108,8 @@ fn scoped_package_is_checked() {
     project.add_typed_version("@s/p", &manifest("@s/p", ""));
     project.add_typed_version("p", &manifest("p", r#","needs":["@s/p"]"#));
     assert_eq!(project.find_mismatch(("@s/p", "1.0.0"), &[]), None);
-    assert_eq!(
-        project.find_mismatch(("@s/p", "1.0.1"), &[]).as_deref(),
-        Some(OTHER_VERSION)
-    );
+    let found = project.find_mismatch(("@s/p", "1.0.1"), &[]);
+    assert_eq!(found.as_deref(), Some(OTHER_VERSION));
     assert_eq!(project.find_mismatch(P, &[]), None);
 }
 
@@ -132,11 +130,8 @@ fn text_that_is_no_manifest_is_mismatch() {
         (r#"{"format":2,"name":"p","version":"1.0.0"}"#, EMPTY_LAY),
     ] {
         project.add_typed_version("p", text);
-        assert_eq!(
-            project.find_mismatch(P, &[]).as_deref(),
-            Some(expected),
-            "{text}"
-        );
+        let found = project.find_mismatch(P, &[]);
+        assert_eq!(found.as_deref(), Some(expected), "{text}");
     }
 }
 
@@ -167,11 +162,8 @@ fn field_of_wrong_shape_is_mismatch() {
         ),
     ] {
         project.add_typed_version("p", &manifest("p", more));
-        assert_eq!(
-            project.find_mismatch(P, &[]).as_deref(),
-            Some(expected),
-            "{more}"
-        );
+        let found = project.find_mismatch(P, &[]);
+        assert_eq!(found.as_deref(), Some(expected), "{more}");
     }
 }
 
@@ -194,27 +186,20 @@ fn first_mismatch_is_reported() {
         ),
     ] {
         project.add_typed_version("p", &manifest("p", more));
-        assert_eq!(
-            project.find_mismatch(installed, &[]).as_deref(),
-            Some(expected),
-            "{more}"
-        );
+        let found = project.find_mismatch(installed, &[]);
+        assert_eq!(found.as_deref(), Some(expected), "{more}");
     }
     let more = r#","when":{"MODE":"test"},"lay":{"y.js":""},"needs":["q"]"#;
     project.add_typed_version("p", &manifest("p", more));
     let needs_define = "they need MODE to be defined as \"test\". Pass --define 'MODE=\"test\"'";
     assert_eq!(project.find_mismatch(P, &[]).as_deref(), Some(needs_define));
     let defines = [("MODE", "test")];
-    assert_eq!(
-        project.find_mismatch(P, &defines).as_deref(),
-        Some("lay/y.js is missing")
-    );
+    let found = project.find_mismatch(P, &defines);
+    assert_eq!(found.as_deref(), Some("lay/y.js is missing"));
     project.directory.write(".full-types/p/lay/y.js", CODE);
     let adds_file = "they add y.js, and full types can only replace installed files";
-    assert_eq!(
-        project.find_mismatch(P, &defines).as_deref(),
-        Some(adds_file)
-    );
+    let found = project.find_mismatch(P, &defines);
+    assert_eq!(found.as_deref(), Some(adds_file));
     project.directory.write("node_modules/p/y.js", CODE);
     assert_eq!(project.find_mismatch(P, &defines).as_deref(), Some(NEEDS_Q));
 }
@@ -222,10 +207,8 @@ fn first_mismatch_is_reported() {
 #[test]
 fn other_installed_version_is_mismatch() {
     let project = Project::new("other_version");
-    assert_eq!(
-        project.find_mismatch(("p", "1.0.1"), &[]).as_deref(),
-        Some(OTHER_VERSION)
-    );
+    let found = project.find_mismatch(("p", "1.0.1"), &[]);
+    assert_eq!(found.as_deref(), Some(OTHER_VERSION));
 }
 
 #[test]
@@ -251,10 +234,8 @@ fn listed_file_must_be_below_lay() {
     let project = Project::new("typed_file");
     let more = r#","lay":{"x.js":"","cjs/y.js":""}"#;
     project.add_typed_version("p", &manifest("p", more));
-    assert_eq!(
-        project.find_mismatch(P, &[]).as_deref(),
-        Some("lay/cjs/y.js is missing")
-    );
+    let found = project.find_mismatch(P, &[]);
+    assert_eq!(found.as_deref(), Some("lay/cjs/y.js is missing"));
     project.directory.write(".full-types/p/lay/cjs/y.js", CODE);
     assert_eq!(
         project.find_mismatch(P, &[]).as_deref(),
@@ -288,10 +269,8 @@ fn needed_package_must_have_matching_typed_version() {
     assert_eq!(project.find_mismatch(P, &[]).as_deref(), Some(NEEDS_Q));
     assert_eq!(project.find_mismatch(P, &[("MODE", "test")]), None);
     project.install("node_modules/q", "q", "1.0.1");
-    assert_eq!(
-        project.find_mismatch(P, &[("MODE", "test")]).as_deref(),
-        Some(NEEDS_Q)
-    );
+    let found = project.find_mismatch(P, &[("MODE", "test")]);
+    assert_eq!(found.as_deref(), Some(NEEDS_Q));
 }
 
 #[test]
@@ -304,10 +283,8 @@ fn packages_that_need_each_other_are_both_used() {
     assert_eq!(project.find_mismatch(Q, &[]), None);
     project.install("node_modules/q", "q", "1.0.1");
     assert_eq!(project.find_mismatch(P, &[]).as_deref(), Some(NEEDS_Q));
-    assert_eq!(
-        project.find_mismatch(("q", "1.0.1"), &[]).as_deref(),
-        Some(OTHER_VERSION)
-    );
+    let found = project.find_mismatch(("q", "1.0.1"), &[]);
+    assert_eq!(found.as_deref(), Some(OTHER_VERSION));
 }
 
 #[test]

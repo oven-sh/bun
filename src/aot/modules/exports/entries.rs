@@ -1,7 +1,9 @@
 use crate::ir::for_each_mut;
 use crate::modules::commonjs_exports::CommonJsImport;
-use crate::modules::failures::{FailureOrder, SitePart};
-use crate::modules::imports::{find_imported_value_site, may_name_value};
+use crate::modules::failures::{SitePart, WrittenPart};
+use crate::modules::imports::{
+    ImportedItem, find_imported_value_site, imported_items, may_name_value,
+};
 use crate::modules::interop::{ImportPhase, ModuleKind};
 use crate::modules::module_set::ModuleSet;
 use crate::modules::requests::{FileScan, ScannedSite, Scans, import_phase};
@@ -12,14 +14,6 @@ use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::hir::{self, ExportSpecId, ImportId, StmtId};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, FileRole, Files, Sym};
-
-#[derive(Copy, Clone, Debug)]
-pub(in crate::modules) struct WrittenName {
-    pub site_kind: ImportSiteKind,
-    pub part: SitePart,
-    pub start: u32,
-    pub end: u32,
-}
 
 #[derive(Copy, Clone, Debug)]
 pub(in crate::modules) enum ExportEntry {
@@ -34,7 +28,7 @@ pub(in crate::modules) enum ExportEntry {
     Indirect {
         site: u32,
         name: Atom,
-        written: Option<WrittenName>,
+        written: Option<WrittenPart>,
     },
 }
 
@@ -52,10 +46,7 @@ pub(in crate::modules) struct WrittenImport {
     pub imported: CommonJsImport,
     /// `false`: the name may be a type, which no module has at run time.
     pub must_be_there: bool,
-    pub order: FailureOrder,
-    pub site_kind: ImportSiteKind,
-    pub start: u32,
-    pub end: u32,
+    pub written: WrittenPart,
 }
 
 pub(in crate::modules) struct CollectedEntries {
@@ -81,13 +72,8 @@ fn collect_namespace_loads(
     let mut loads = Vec::new();
     for &file in &modules.compiled_files {
         let scan = scans.of(file);
-        for (site, scanned) in input
-            .files
-            .analysis(file)
-            .import_sites
-            .iter()
-            .zip(&scan.sites)
-        {
+        let sites = input.files.analysis(file).import_sites.iter();
+        for (site, scanned) in sites.zip(&scan.sites) {
             match site.kind {
                 ImportSiteKind::ImportCall(_) | ImportSiteKind::ExportStar(_) => {}
                 _ => continue,
@@ -97,9 +83,7 @@ fn collect_namespace_loads(
                 ScannedSite::Candidates(range) => {
                     let spelled = &scan.spellings[range.start as usize..range.end as usize];
                     let candidates = spelled.iter().map(|spelled| spelled.module);
-                    loads.extend(
-                        candidates.filter_map(|module| find_commonjs_file(modules, module)),
-                    );
+                    loads.extend(candidates.filter_map(|it| find_commonjs_file(modules, it)));
                 }
                 ScannedSite::Unresolved | ScannedSite::AllModules | ScannedSite::Erased => {}
             }
@@ -143,9 +127,8 @@ pub(in crate::modules) fn collect_export_entries(
         module.stars = collector.collect_stars();
         module.commonjs_imports = collector.collect_commonjs_imports(&module.own);
     });
-    let commonjs_imports = entries
-        .iter_mut()
-        .flat_map(|module| module.commonjs_imports.drain(..));
+    let tables = entries.iter_mut();
+    let commonjs_imports = tables.flat_map(|module| module.commonjs_imports.drain(..));
     CollectedEntries {
         commonjs_imports: commonjs_imports.collect(),
         tables: entries,
@@ -156,14 +139,6 @@ pub(in crate::modules) fn collect_export_entries(
 pub(super) enum ImportedName {
     Name(Atom),
     Namespace,
-}
-
-enum DeclarationKind {
-    ExportSpecifier(ExportSpecId),
-    NamespaceExport(StmtId),
-    Import(ImportId, ImportedName),
-    Value,
-    Other,
 }
 
 struct EntryCollector<'a, 's> {
@@ -192,7 +167,11 @@ impl EntryCollector<'_, '_> {
         let Some(exporter) = self.commonjs_file_at(site) else {
             return;
         };
-        let mut add_name = |declaration: Decl, name: Atom, position: u32, start: u32, end: u32| {
+        for (declaration, item) in imported_items(self.files, self.hir, id) {
+            let (name, part, range) = match item {
+                ImportedItem::Name { name, part, range } => (name, part, range),
+                ImportedItem::Namespace(_) => continue,
+            };
             let symbol = self.bound.declared_symbol(declaration);
             let is_value = symbol.is_some()
                 && find_imported_value_site(self.files, self.file, self.scan, id, symbol).is_some();
@@ -204,32 +183,9 @@ impl EntryCollector<'_, '_> {
                         name,
                     },
                     must_be_there: true,
-                    order: FailureOrder {
-                        site: site as u32,
-                        part: SitePart::Name(position),
-                    },
-                    site_kind,
-                    start,
-                    end,
+                    written: WrittenPart::new(site, part, site_kind, range),
                 });
             }
-        };
-        let import = self.hir[id];
-        if import.default.is_some() {
-            let start = import.default_pos;
-            let end = start + self.files.atoms.bytes(import.default).len() as u32;
-            add_name(Decl::ImportDefault(id), known::default, 0, start, end);
-        }
-        for (position, specifier_id) in (1..).zip(import.named.iter()) {
-            let specifier = self.hir[specifier_id];
-            let declaration = Decl::ImportSpec(specifier_id);
-            add_name(
-                declaration,
-                specifier.imported,
-                position,
-                specifier.start,
-                specifier.end,
-            );
         }
     }
 
@@ -255,13 +211,7 @@ impl EntryCollector<'_, '_> {
                     name,
                 },
                 must_be_there: !self.hir.has_typescript_semantics(),
-                order: FailureOrder {
-                    site,
-                    part: written.part,
-                },
-                site_kind: written.site_kind,
-                start: written.start,
-                end: written.end,
+                written,
             }));
         }
         imports
@@ -289,16 +239,12 @@ impl EntryCollector<'_, '_> {
         stars.filter_map(site_of).collect()
     }
 
-    fn classify(&self, declaration: Decl) -> DeclarationKind {
-        use DeclarationKind::{ExportSpecifier, Import, NamespaceExport, Other, Value};
+    fn declaration_entry(&self, symbol: SymbolId, declaration: Decl) -> Option<ExportEntry> {
         match declaration {
-            Decl::ExportSpec(specifier) => ExportSpecifier(specifier),
-            Decl::ExportStarAs(statement) => NamespaceExport(statement),
-            Decl::ImportDefault(import) => Import(import, ImportedName::Name(known::default)),
-            Decl::ImportNamespace(import) => Import(import, ImportedName::Namespace),
-            Decl::ImportSpec(specifier) => {
-                let specifier = self.hir[specifier];
-                Import(specifier.import, ImportedName::Name(specifier.imported))
+            Decl::ExportSpec(specifier) => self.specifier_entry(symbol, specifier),
+            Decl::ExportStarAs(statement) => {
+                let site = self.find_value_site(ImportSiteKind::ExportStar(statement), symbol)?;
+                Some(ExportEntry::Namespace { site })
             }
             Decl::Var(_)
             | Decl::Fn(_)
@@ -306,24 +252,12 @@ impl EntryCollector<'_, '_> {
             | Decl::Enum(_)
             | Decl::Module(_)
             | Decl::ImportEquals(_)
-            | Decl::ExportExpr(_) => Value,
-            _ => Other,
-        }
-    }
-
-    fn declaration_entry(&self, symbol: SymbolId, declaration: Decl) -> Option<ExportEntry> {
-        match self.classify(declaration) {
-            DeclarationKind::ExportSpecifier(specifier) => self.specifier_entry(symbol, specifier),
-            DeclarationKind::NamespaceExport(statement) => {
-                let site = self.find_value_site(ImportSiteKind::ExportStar(statement), symbol)?;
-                Some(ExportEntry::Namespace { site })
-            }
-            DeclarationKind::Value => {
+            | Decl::ExportExpr(_) => {
                 let local = self.bound.declared_symbol(declaration);
                 let has_value = local.is_some() && self.bound.has_runtime_value(local);
                 has_value.then_some(ExportEntry::Local(local))
             }
-            DeclarationKind::Import(..) | DeclarationKind::Other => None,
+            _ => None,
         }
     }
 
@@ -340,14 +274,11 @@ impl EntryCollector<'_, '_> {
             };
         }
         let site_kind = ImportSiteKind::ExportFrom(item.export);
-        let written = WrittenName {
-            site_kind,
-            part: SitePart::Name(specifier.0 - export.items.start),
-            start: item.start,
-            end: item.end,
-        };
+        let site = self.find_value_site(site_kind, alias)?;
+        let part = SitePart::Name(specifier.0 - export.items.start);
+        let written = WrittenPart::new(site as usize, part, site_kind, item.start..item.end);
         Some(ExportEntry::Indirect {
-            site: self.find_value_site(site_kind, alias)?,
+            site,
             name: item.local,
             written: Some(written),
         })
@@ -355,12 +286,17 @@ impl EntryCollector<'_, '_> {
 
     fn find_import_declaration(&self, local: SymbolId) -> Option<(ImportId, ImportedName)> {
         let mut declarations = self.bound.symbol(local).decls.iter();
-        declarations.find_map(|&declaration| match self.classify(declaration) {
-            DeclarationKind::Import(import, imported) => {
-                let binds_local = self.bound.declared_symbol(declaration) == local;
-                binds_local.then_some((import, imported))
-            }
-            _ => None,
+        declarations.find_map(|&declaration| {
+            let import = match declaration {
+                Decl::ImportDefault(import) => (import, ImportedName::Name(known::default)),
+                Decl::ImportNamespace(import) => (import, ImportedName::Namespace),
+                Decl::ImportSpec(specifier) => {
+                    let specifier = self.hir[specifier];
+                    (specifier.import, ImportedName::Name(specifier.imported))
+                }
+                _ => return None,
+            };
+            (self.bound.declared_symbol(declaration) == local).then_some(import)
         })
     }
 

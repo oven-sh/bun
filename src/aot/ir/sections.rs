@@ -64,10 +64,6 @@ impl<'a> SectionWriter<'a> {
         self.counts[list as usize]
     }
 
-    pub fn first_index_of(&self, list: ProgramList) -> u64 {
-        self.first_indices[list as usize]
-    }
-
     pub fn blobs(&self) -> &[&'a [u8]] {
         &self.blobs
     }

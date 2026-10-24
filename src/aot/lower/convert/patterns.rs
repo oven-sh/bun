@@ -1,6 +1,6 @@
 use bun_sema::atom::Atom;
 use bun_sema::check::aot::{MemberLookup, ShapeKind, TupleElement, TupleElementKind};
-use bun_sema::hir::{ExprId, ExprKind, PatId, PatKind, PropId, PropKey, PropKind};
+use bun_sema::hir::{ExprId, ExprKind, PatId, PatKind, PropKey, PropKind};
 use smallvec::{SmallVec, smallvec};
 
 use super::supertypes::ConversionKind;
@@ -19,11 +19,11 @@ enum Taken {
 type PendingTargets = SmallVec<[(ExprId, Taken); 8]>;
 
 impl FileLowering<'_, '_, '_, '_> {
-    fn record_default(&mut self, pattern: PatId, default: ExprId) {
-        if let Some(default) = default.some()
+    fn record_flow_into_pattern(&mut self, pattern: PatId, source: Option<ExprId>) {
+        if let Some(source) = source
             && let Ok(target) = self.queries.binding_type(pattern)
         {
-            self.record_flow_into_type(default, target, ConversionKind::Performed);
+            self.record_flow_into_type(source, target, ConversionKind::Performed);
         }
     }
 
@@ -38,23 +38,19 @@ impl FileLowering<'_, '_, '_, '_> {
             PatKind::Object(_) | PatKind::Array(_) => {}
             PatKind::Missing | PatKind::Ident(_) => return,
         }
-        if let Some(source) = source
-            && let Ok(target) = self.queries.binding_type(pattern)
-        {
-            self.record_flow_into_type(source, target, ConversionKind::Performed);
-        }
+        self.record_flow_into_pattern(pattern, source);
         let mut pending: SmallVec<[PatId; 8]> = smallvec![pattern];
         while let Some(pattern) = pending.pop() {
             match hir[pattern].kind {
                 PatKind::Object(properties) => {
                     for property in properties.iter().map(|property| hir[property]) {
-                        self.record_default(property.value, property.default);
+                        self.record_flow_into_pattern(property.value, property.default.some());
                         pending.push(property.value);
                     }
                 }
                 PatKind::Array(elements) => {
                     for element in elements.iter().map(|element| hir[element]) {
-                        self.record_default(element.pat, element.default);
+                        self.record_flow_into_pattern(element.pat, element.default.some());
                         pending.push(element.pat);
                     }
                 }
@@ -72,31 +68,25 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn find_common_element_type(
-        &mut self,
-        lists: &[CheckerTypeId],
-        index: usize,
-    ) -> Option<CheckerTypeId> {
-        let mut common = None;
-        for &list in lists {
-            let Some(element) = self.find_element_type(list, index) else {
-                continue;
-            };
-            if common.is_some_and(|common| common != element) {
-                return None;
-            }
-            common = Some(element);
-        }
-        common
-    }
-
     pub(super) fn find_element_type(
         &mut self,
         list: CheckerTypeId,
         index: usize,
     ) -> Option<CheckerTypeId> {
-        if let Some(members) = find_union_members(self, list) {
-            return self.find_common_element_type(members, index);
+        let stripped = self.queries.without_nullish(list);
+        let shape = stripped.and_then(|list| self.queries.type_shape(list));
+        if let Ok(ShapeKind::Union(members)) = shape.map(|shape| shape.kind) {
+            let mut common = None;
+            for &list in members {
+                let Some(element) = self.find_element_type(list, index) else {
+                    continue;
+                };
+                if common.is_some_and(|common| common != element) {
+                    return None;
+                }
+                common = Some(element);
+            }
+            return common;
         }
         let Some(elements) = find_tuple_elements(self, list) else {
             return find_contents_type(self, list, ContentsSlot::Element);
@@ -142,19 +132,6 @@ impl FileLowering<'_, '_, '_, '_> {
         types
     }
 
-    fn split_default(&self, target: ExprId) -> (ExprId, Option<ExprId>) {
-        let erased = self.skip_type_syntax(target);
-        if let ExprKind::Assign {
-            op: None,
-            target,
-            value,
-        } = self.hir[erased].kind
-        {
-            return (target, Some(value));
-        }
-        (target, None)
-    }
-
     fn add_flowing_operands(
         &mut self,
         pending: &mut PendingTargets,
@@ -174,49 +151,19 @@ impl FileLowering<'_, '_, '_, '_> {
         target: ExprId,
         taken: Option<CheckerTypeId>,
     ) {
-        let (target, default) = self.split_default(target);
+        let erased = self.skip_type_syntax(target);
+        let (target, default) = match self.hir[erased].kind {
+            ExprKind::Assign {
+                op: None,
+                target,
+                value,
+            } => (target, Some(value)),
+            _ => (target, None),
+        };
         pending.extend(taken.map(|taken| (target, Taken::Value(taken))));
         if let Some(default) = default {
             self.add_flowing_operands(pending, target, default);
         }
-    }
-
-    fn add_property_target(
-        &mut self,
-        pending: &mut PendingTargets,
-        property: PropId,
-        object: CheckerTypeId,
-    ) {
-        let hir = self.hir;
-        match hir[property].kind {
-            PropKind::Init | PropKind::Shorthand => {}
-            PropKind::Spread => {
-                let target = skip_spread(self, hir[property].value);
-                pending.push((target, Taken::RestOfObject(object)));
-                return;
-            }
-            PropKind::Method | PropKind::Getter | PropKind::Setter => return,
-        }
-        let member = match hir.runtime_property_key(property) {
-            PropKey::Name(name) => self.find_member_type(object, name),
-            PropKey::None | PropKey::Private(_) | PropKey::Computed(_) => None,
-        };
-        self.add_target(pending, hir[property].value, member);
-    }
-
-    fn add_element_target(
-        &mut self,
-        pending: &mut PendingTargets,
-        element: ExprId,
-        list: CheckerTypeId,
-        index: usize,
-    ) {
-        if let ExprKind::Spread(target) = self.hir[element].kind {
-            pending.push((target, Taken::RestOfList { list, first: index }));
-            return;
-        }
-        let taken = self.find_element_type(list, index);
-        self.add_target(pending, element, taken);
     }
 
     fn record_flow_into_target(&mut self, target: ExprId, taken: Taken) {
@@ -257,7 +204,23 @@ impl FileLowering<'_, '_, '_, '_> {
                         continue;
                     };
                     for property in properties.iter() {
-                        self.add_property_target(&mut pending, property, object);
+                        match hir[property].kind {
+                            PropKind::Init | PropKind::Shorthand => {}
+                            PropKind::Spread => {
+                                let target = match hir[hir[property].value].kind {
+                                    ExprKind::Spread(target) => target,
+                                    _ => hir[property].value,
+                                };
+                                pending.push((target, Taken::RestOfObject(object)));
+                                continue;
+                            }
+                            PropKind::Method | PropKind::Getter | PropKind::Setter => continue,
+                        }
+                        let member = match hir.runtime_property_key(property) {
+                            PropKey::Name(name) => self.find_member_type(object, name),
+                            PropKey::None | PropKey::Private(_) | PropKey::Computed(_) => None,
+                        };
+                        self.add_target(&mut pending, hir[property].value, member);
                     }
                 }
                 AssignmentTarget::ArrayPattern(elements) => {
@@ -266,8 +229,13 @@ impl FileLowering<'_, '_, '_, '_> {
                         Taken::RestOfList { list, first } => (list, first),
                         Taken::RestOfObject(_) => continue,
                     };
-                    for (index, element) in hir.ids(elements).enumerate() {
-                        self.add_element_target(&mut pending, element, list, first + index);
+                    for (index, element) in (first..).zip(hir.ids(elements)) {
+                        if let ExprKind::Spread(target) = hir[element].kind {
+                            pending.push((target, Taken::RestOfList { list, first: index }));
+                            continue;
+                        }
+                        let taken = self.find_element_type(list, index);
+                        self.add_target(&mut pending, element, taken);
                     }
                 }
             }
@@ -306,23 +274,4 @@ pub(super) fn find_tuple_elements<'c>(
         return None;
     };
     Some(elements)
-}
-
-fn find_union_members<'c>(
-    file: &mut FileLowering<'_, 'c, '_, '_>,
-    list: CheckerTypeId,
-) -> Option<&'c [CheckerTypeId]> {
-    let list = file.queries.without_nullish(list).ok()?;
-    let ShapeKind::Union(members) = file.queries.type_shape(list).ok()?.kind else {
-        return None;
-    };
-    Some(members)
-}
-
-fn skip_spread(file: &FileLowering<'_, '_, '_, '_>, element: ExprId) -> ExprId {
-    if let ExprKind::Spread(target) = file.hir[element].kind {
-        target
-    } else {
-        element
-    }
 }

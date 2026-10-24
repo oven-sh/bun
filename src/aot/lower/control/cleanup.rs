@@ -1,19 +1,8 @@
 use smallvec::SmallVec;
 
 use super::{Cleanup, CleanupExit, CleanupLanding, CleanupPath, ControlEntry, Exit};
-use crate::ir::{BlockId, Edge, Handler, ValueId};
+use crate::ir::{BlockId, Edge, ValueId};
 use crate::lower::FunctionLowering;
-
-type PathBlocks = SmallVec<[BlockId; 4]>;
-type EmitCleanup<'e> = &'e mut dyn FnMut(&mut FunctionLowering<'_, '_, '_, '_, '_>, CleanupPath);
-
-struct SharedCleanup {
-    block: BlockId,
-    path_count: usize,
-    selector: Option<ValueId>,
-    returned: Option<ValueId>,
-    thrown: ValueId,
-}
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn pop_cleanup(&mut self) -> (Cleanup, BlockId) {
@@ -44,19 +33,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    pub(super) fn end_per_exit(&mut self, landing: CleanupLanding, emit: EmitCleanup<'_>) {
+    pub(crate) fn end_cleanup_per_exit(
+        &mut self,
+        landing: CleanupLanding,
+        emit: &mut dyn FnMut(&mut FunctionLowering<'_, '_, '_, '_, '_>, CleanupPath),
+    ) {
         let (cleanup, after) = self.pop_cleanup();
         for exit in &cleanup.exits {
             self.continue_in(exit.block);
             emit(self, CleanupPath::Normal);
             self.continue_exit(*exit, exit.returned, after);
         }
-        self.emit_landing(cleanup.handler, landing, emit);
-        self.continue_in(after);
-    }
-
-    fn emit_landing(&mut self, handler: Handler, landing: CleanupLanding, emit: EmitCleanup<'_>) {
-        self.continue_in(handler.block());
+        self.continue_in(cleanup.handler.block());
         match landing {
             CleanupLanding::KeepsException => {
                 let exception = self.builder.catch_exception();
@@ -71,88 +59,66 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
             }
         }
+        self.continue_in(after);
     }
 
-    pub(super) fn end_shared(
+    pub(in crate::lower) fn end_cleanup_shared(
         &mut self,
         body: &mut dyn FnMut(&mut FunctionLowering<'_, '_, '_, '_, '_>),
     ) {
         let (cleanup, after) = self.pop_cleanup();
-        let shared = self.create_shared_cleanup(&cleanup);
+        let exits = &cleanup.exits;
+        let shared = self.create_block();
+        let builder = &mut self.builder;
+        let selector = (!exits.is_empty()).then(|| builder.add_parameter(shared, None));
+        let has_return_path = exits.iter().any(|path| path.exit == Exit::Return);
+        let shared_returned = has_return_path.then(|| builder.add_parameter(shared, None));
+        let shared_thrown = builder.add_parameter(shared, None);
 
-        for (path, exit) in cleanup.exits.iter().enumerate() {
-            self.continue_in(exit.block);
-            self.enter_shared_cleanup(&shared, path, exit.returned, None);
+        let landing = (cleanup.handler.block(), None);
+        let entries = exits.iter().map(|exit| (exit.block, exit.returned));
+        for (path, (block, returned)) in entries.chain([landing]).enumerate() {
+            self.continue_in(block);
+            let builder = &mut self.builder;
+            let thrown = (path == exits.len()).then(|| builder.catch_value());
+            let mut arguments: SmallVec<[ValueId; 3]> = SmallVec::new();
+            if selector.is_some() {
+                arguments.push(builder.integer(path as i64));
+            }
+            if shared_returned.is_some() {
+                arguments.push(returned.unwrap_or_else(|| builder.undefined()));
+            }
+            arguments.push(thrown.unwrap_or_else(|| builder.undefined()));
+            self.jump_with(shared, &arguments);
         }
-        self.continue_in(cleanup.handler.block());
-        let thrown = self.builder.catch_value();
-        self.enter_shared_cleanup(&shared, cleanup.exits.len(), None, Some(thrown));
 
-        self.continue_in(shared.block);
+        self.continue_in(shared);
         body(self);
-        let continuations = self.emit_shared_dispatch(&shared);
+        let continuations: SmallVec<[BlockId; 4]> =
+            (0..=exits.len()).map(|_| self.create_block()).collect();
+        let Some((&landing_path, exit_paths)) = continuations.split_last() else {
+            unreachable!("the landing path always exists");
+        };
+        match selector {
+            Some(selector) => {
+                let cases: SmallVec<[i64; 4]> = (0..exit_paths.len() as i64).collect();
+                let edges: SmallVec<[Edge<'_>; 4]> =
+                    exit_paths.iter().map(|&exit| Edge::to(exit)).collect();
+                let otherwise = Edge::to(landing_path);
+                self.builder.switch(selector, &cases, &edges, otherwise);
+            }
+            None => self.jump(landing_path),
+        }
 
-        for (exit, continuation) in cleanup.exits.iter().zip(&continuations) {
+        for (exit, continuation) in exits.iter().zip(exit_paths) {
             self.continue_in(*continuation);
             // The parameter of the shared block also takes the `undefined` of the paths that return nothing.
-            let returned = exit.returned.and(shared.returned);
+            let returned = exit.returned.and(shared_returned);
             let returned = returned.map(|returned| self.convert_to_result(returned));
             self.continue_exit(*exit, returned, after);
         }
-        self.continue_in(continuations[cleanup.exits.len()]);
-        self.emit_throw(shared.thrown);
+        self.continue_in(landing_path);
+        self.emit_throw(shared_thrown);
         self.continue_in(after);
-    }
-
-    fn create_shared_cleanup(&mut self, cleanup: &Cleanup) -> SharedCleanup {
-        let path_count = cleanup.exits.len() + 1;
-        let has_return_path = cleanup.exits.iter().any(|path| path.exit == Exit::Return);
-        let block = self.create_block();
-        let builder = &mut self.builder;
-        SharedCleanup {
-            block,
-            path_count,
-            selector: (path_count >= 2).then(|| builder.add_parameter(block, None)),
-            returned: has_return_path.then(|| builder.add_parameter(block, None)),
-            thrown: builder.add_parameter(block, None),
-        }
-    }
-
-    fn enter_shared_cleanup(
-        &mut self,
-        shared: &SharedCleanup,
-        path: usize,
-        returned: Option<ValueId>,
-        thrown: Option<ValueId>,
-    ) {
-        let builder = &mut self.builder;
-        let mut arguments: SmallVec<[ValueId; 3]> = SmallVec::new();
-        if shared.selector.is_some() {
-            arguments.push(builder.integer(path as i64));
-        }
-        if shared.returned.is_some() {
-            arguments.push(returned.unwrap_or_else(|| builder.undefined()));
-        }
-        arguments.push(thrown.unwrap_or_else(|| builder.undefined()));
-        self.jump_with(shared.block, &arguments);
-    }
-
-    fn emit_shared_dispatch(&mut self, shared: &SharedCleanup) -> PathBlocks {
-        let mut continuations = PathBlocks::new();
-        for _ in 0..shared.path_count {
-            continuations.push(self.create_block());
-        }
-        match (shared.selector, continuations.split_last()) {
-            (Some(selector), Some((landing_path, exits))) => {
-                let cases: SmallVec<[i64; 4]> = (0..exits.len() as i64).collect();
-                let edges: SmallVec<[Edge<'_>; 4]> =
-                    exits.iter().map(|&exit| Edge::to(exit)).collect();
-                let otherwise = Edge::to(*landing_path);
-                self.builder.switch(selector, &cases, &edges, otherwise);
-            }
-            (None, Some((only_path, _))) => self.jump(*only_path),
-            (_, None) => unreachable!("the landing path always exists"),
-        }
-        continuations
     }
 }

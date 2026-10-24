@@ -5,16 +5,15 @@ mod types;
 use super::definitions::{empty_layout, synthetic_export_variable};
 use super::state::ExportWriter;
 use super::testing::{
-    TestUnit, application_file, find_file, forward, in_application, link_sources, link_sources_in,
-    link_units, number_everything, reverse, test_class_key, test_function_key, test_variable_key,
-    unit_in, with_lowered_units, with_test_files,
+    TestUnit, application_file, create_runtime_function, find_file, finish_unit, forward,
+    in_application, link_sources, link_sources_in, link_units, number_everything, path_source,
+    reverse, test_class_key, test_function_key, test_variable_key, unit_in, with_lowered_units,
+    with_test_files,
 };
 use super::*;
 use crate::builtins::RuntimeModule;
-use crate::ir::generated::{
-    FunctionVisibility, ModuleKind, RuntimeFunctionEntry, TypeSite, TypeSiteKind,
-};
-use crate::ir::{FunctionId, Id, ModuleId, TypeSiteId, print_program};
+use crate::ir::generated::{ModuleKind, TypeSite, TypeSiteKind};
+use crate::ir::{FunctionId, Id, ModuleId, TypeSiteId, TypeTable, print_program};
 use crate::lower::{Fragment, FragmentBuilder, ModuleFragment};
 use crate::modules::ModuleRef;
 use bun_sema::program::FileId;
@@ -128,22 +127,6 @@ const PATH_IMPORTER: [(&str, &str); 1] = [(
 
 const UNUSED_RUNTIME_FUNCTION: u32 = 1 << 30;
 
-fn path_source(projects: &PerProject<LinkProject<'_, '_>>) -> ProgramFile {
-    let file = projects
-        .runtime
-        .sources
-        .runtime_module_file(RuntimeModule::NodePath);
-    ProgramFile {
-        project: ProjectId::Runtime,
-        file: file.expect("the runtime project has no source of node:path"),
-    }
-}
-
-fn create_empty_unit(projects: &PerProject<LinkProject<'_, '_>>, file: FileId) -> LinkUnit {
-    let fragment = FragmentBuilder::new(file).finish(ModuleFragment::default());
-    unit_in(projects, ProjectId::Application, fragment)
-}
-
 fn link_replaced_entry(
     create_fragment: impl FnOnce(FileId) -> Fragment,
 ) -> (Result<Linked, Vec<LinkError>>, FileId) {
@@ -223,7 +206,7 @@ fn repeated_and_uncompiled_units_are_reported() {
     ];
     with_lowered_units(&files, |mut units, projects| {
         let mut added_files = ["main.js", "types.d.ts"].map(|name| find_file(projects, name));
-        units.extend(added_files.map(|file| create_empty_unit(projects, file)));
+        units.extend(added_files.map(|file| finish_unit(projects, FragmentBuilder::new(file))));
         let errors = order_units(units, projects).err();
         let errors = errors.expect("each compiled file has exactly one unit");
         let conflicts: Vec<(ProgramKey, [ProgramFile; 2])> = errors
@@ -419,11 +402,8 @@ fn link_keeps_enclosing_runtime_function_ids() {
             builder.call_direct(nested, &[]);
         });
         for (function, id) in [(first_function, first), (second_function, second)] {
-            unit.fragment.add_runtime_function(RuntimeFunctionEntry {
-                id,
-                function,
-                visibility: FunctionVisibility::Public,
-            });
+            let entry = create_runtime_function(id.0, function);
+            unit.fragment.add_runtime_function(entry);
         }
         let mut fragment = unit.finish();
         let enclosing_functions = [None, Some(second), Some(first), Some(second)];
@@ -518,10 +498,10 @@ fn number_everything_gives_shared_keys_one_id() {
             unit_in(projects, ProjectId::Application, fragment)
         });
 
-        let numbering = number_everything(&units);
+        let unit_ids = number_everything(&units);
 
-        let [first_ids, second_ids] = numbering.units.as_slice() else {
-            panic!("{} units are numbered", numbering.units.len());
+        let [first_ids, second_ids] = unit_ids.as_slice() else {
+            panic!("{} units are numbered", unit_ids.len());
         };
         let shared_function = first_ids.functions[first_function.index()];
         assert!(shared_function.is_some());
@@ -546,7 +526,5 @@ fn number_everything_gives_shared_keys_one_id() {
         );
         assert_eq!(first_ids.type_sites, [Some(TypeSiteId::new(0))]);
         assert_eq!(second_ids.type_sites, [Some(TypeSiteId::new(1))]);
-        assert_eq!(numbering.counts.type_sites, 2);
-        assert_eq!(numbering.counts.modules, 2);
     });
 }

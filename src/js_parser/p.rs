@@ -12,6 +12,9 @@ use bun_ast::{ImportKind, ImportRecord};
 use bun_collections::{ArrayHashMap, HashMap, StringHashMap};
 use bun_core::Output;
 use bun_core::strings;
+use bun_options_types::validation_plans::{
+    ValidatingFunction, ValidationPlans, skip_blanks_and_comments,
+};
 use bun_wyhash::Wyhash;
 
 use crate::defines::{Define, DefineData};
@@ -294,10 +297,16 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) json_imports_from_bun: BumpVec<'a, Ref>,
     /// The local names of all of "bun": `import Bun from "bun"`, `import * as Bun from "bun"`.
     pub(crate) whole_imports_of_bun: BumpVec<'a, Ref>,
-    /// Where the name stands in each `x.parse<T>` and `x["parse"]<T>`. See `check_type_arguments_of_parse`.
-    pub(crate) parse_members_with_type_arguments: BumpVec<'a, bun_ast::Loc>,
+    /// Where the name stands in each `x.parse<T>` and `x["parse"]<T>`, and where the `<` does.
+    pub(crate) parse_members_with_type_arguments: BumpVec<'a, (bun_ast::Loc, u32)>,
     /// The same for `x.parse<any>` and `x.parse<unknown>`.
     pub(crate) parse_members_without_check: BumpVec<'a, bun_ast::Loc>,
+    /// The local names of `import { validate } from "bun:bundle"`.
+    pub(crate) validate_imports: BumpVec<'a, Ref>,
+    /// What `Features::validation_plans` answered for this file. It is asked at the first call that validates.
+    pub(crate) validation_plans: Option<Option<ValidationPlans>>,
+    /// A variable of the module for each call that validates. It holds the validator from the first call on.
+    pub(crate) validator_variables: BumpVec<'a, Ref>,
 
     pub(crate) has_classic_runtime_warned: bool,
     pub(crate) macro_call_count: MacroCallCountType,
@@ -4213,6 +4222,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let r#ref =
                         self.declare_symbol(js_ast::symbol::Kind::Other, item.name.loc, name)?;
                     self.bundler_feature_flag_ref = r#ref;
+                } else if alias == b"validate" && self.options.features.validation_plans.is_some() {
+                    let name = self.load_name_from_ref(item.name.ref_);
+                    let r#ref =
+                        self.declare_symbol(js_ast::symbol::Kind::Other, item.name.loc, name)?;
+                    self.validate_imports.push(r#ref);
+                } else if alias == b"validate" {
+                    let message: &[u8] = if TYPESCRIPT {
+                        b"JSON.parse<T>() from \"bun\" and validate<T>() only work in a TypeScript file that Bun runs, tests or builds with --target=bun"
+                    } else {
+                        b"validate() from \"bun:bundle\" needs a type argument, so it only works in TypeScript files"
+                    };
+                    self.log()
+                        .add_error(Some(self.source), item.alias_loc, message);
                 } else {
                     self.log().add_error_fmt(
                         self.source,
@@ -7165,18 +7187,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         (!found.is_inside_with_scope).then_some((found.r#ref, name))
     }
 
+    /// The name of `expr`, which hasn't been visited yet, if it's an identifier that nothing in the file declares.
+    fn name_of_unvisited_global(&mut self, expr: Expr) -> Option<&'a [u8]> {
+        let (symbol, name) = self.symbol_of_unvisited_identifier(expr)?;
+        let is_global = symbol.is_empty()
+            || self.symbols[symbol.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound;
+        is_global.then_some(name)
+    }
+
     /// True if `expr`, which hasn't been visited yet, is the `JSON` that "bun" exports: a name
     /// that it was imported under, or the property of the `Bun` object.
     fn is_json_of_bun(&mut self, expr: Expr) -> bool {
         if let js_ast::ExprData::EDot(dot) = expr.data {
-            let Some((holder, name)) = self.symbol_of_unvisited_identifier(dot.target) else {
+            if dot.name != b"JSON" {
                 return false;
-            };
-            let is_global = holder.is_empty()
-                || self.symbols[holder.inner_index() as usize].kind
-                    == js_ast::symbol::Kind::Unbound;
-            return dot.name == b"JSON"
-                && (self.whole_imports_of_bun.contains(&holder) || (is_global && name == b"Bun"));
+            }
+            if let js_ast::ExprData::EDot(holder) = dot.target.data {
+                return holder.name == b"Bun"
+                    && self.name_of_unvisited_global(holder.target) == Some(&b"globalThis"[..]);
+            }
+            return self.name_of_unvisited_global(dot.target) == Some(&b"Bun"[..])
+                || (self.symbol_of_unvisited_identifier(dot.target))
+                    .is_some_and(|(holder, _)| self.whole_imports_of_bun.contains(&holder));
         }
         (self.symbol_of_unvisited_identifier(expr))
             .is_some_and(|(symbol, _)| self.json_imports_from_bun.contains(&symbol))
@@ -7191,17 +7223,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// `parse` of the `JSON` of "bun" throws whenever it's reached at run time: only a call that was
-    /// compiled for its type argument validates. This parser erases `T`, so `JSON.parse<T>(text)` is
-    /// an error here, and so is a call without a type argument. `JSON.parse<any>(text)` asks for no
-    /// check: it becomes the global `JSON.parse(text)`. `target`, the object, hasn't been visited yet.
+    /// compiled for its type argument validates. This parser erases `T`, so the callee of
+    /// `JSON.parse<T>(text)` becomes the validator of `T`, which is returned. A call without a type
+    /// argument is an error. `JSON.parse<any>(text)` asks for no check: it becomes the global
+    /// `JSON.parse(text)`. `target`, the object, hasn't been visited yet.
     pub(crate) fn visit_parse_of_json(
         &mut self,
         member: bun_ast::Loc,
         target: &mut Expr,
         is_call_target: bool,
-    ) {
+    ) -> Option<Expr> {
         if self.is_control_flow_dead || !self.is_json_of_bun(*target) {
-            return;
+            return None;
         }
         if self.parse_members_without_check.contains(&member) {
             let global = self.store_name_in_ref(b"globalThis");
@@ -7215,16 +7248,198 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
                 target.loc,
             );
-            return;
+            return None;
         }
-        let message: &[u8] = if self.parse_members_with_type_arguments.contains(&member) {
-            b"JSON.parse<T>() from \"bun\" only validates with --aot. Use \"bun run --aot\", \"bun test --aot\" or \"bun compile\", or remove the type argument"
-        } else if is_call_target {
-            b"JSON.parse() from \"bun\" needs a type argument: JSON.parse<User>(text). Use JSON.parse<any>(text) to skip validation"
-        } else {
-            return;
+        let mut with_type_arguments = self.parse_members_with_type_arguments.iter();
+        let type_arguments = with_type_arguments.find(|(name, _)| *name == member);
+        let message: &[u8] = match type_arguments {
+            Some(&(_, type_arguments)) if is_call_target => {
+                return self.validator_of(member, type_arguments, ValidatingFunction::Parse);
+            }
+            Some(_) => {
+                b"JSON.parse<T> from \"bun\" can only be called: JSON.parse<User>(text). It can't be assigned or passed as an argument"
+            }
+            None if is_call_target => {
+                b"JSON.parse() from \"bun\" needs a type argument: JSON.parse<User>(text). Use JSON.parse<any>(text) to skip validation"
+            }
+            None => return None,
         };
         self.log().add_error(Some(self.source), member, message);
+        None
+    }
+
+    /// True if `expr`, which hasn't been visited yet, is a name that `validate` of "bun:bundle" was imported under.
+    pub(crate) fn is_validate_of_bundle(&mut self, expr: Expr) -> bool {
+        !self.validate_imports.is_empty()
+            && (self.symbol_of_unvisited_identifier(expr))
+                .is_some_and(|(symbol, _)| self.validate_imports.contains(&symbol))
+    }
+
+    /// `symbol` is named at `loc`, and not as the callee of a call that became a validator. One error for a file is enough.
+    pub(crate) fn refuse_validate_as_a_value(&mut self, symbol: Ref, loc: bun_ast::Loc) {
+        if self.validate_imports.is_empty()
+            || self.is_control_flow_dead
+            || !self.validate_imports.contains(&symbol)
+            || self.log().errors > 0
+        {
+            return;
+        }
+        self.log().add_error(
+            Some(self.source),
+            loc,
+            b"validate() from \"bun:bundle\" can only be called. It can't be assigned, passed as an argument or exported",
+        );
+    }
+
+    /// For the callee of `validate<T>(value)`, which hasn't been visited yet: the validator of `T`.
+    pub(crate) fn visit_call_of_validate(
+        &mut self,
+        callee: Expr,
+        is_optional: bool,
+    ) -> Option<Expr> {
+        if self.is_control_flow_dead {
+            return None;
+        }
+        if is_optional {
+            self.log().add_error(
+                Some(self.source),
+                callee.loc,
+                b"validate?.() isn't supported. Call it directly: validate<User>(value)",
+            );
+            return None;
+        }
+        // The import may stand below the call, so nothing was noted when the call was parsed. The type arguments follow the name.
+        let js_ast::ExprData::EIdentifier(identifier) = callee.data else {
+            return None;
+        };
+        let name_end = callee.loc.start as usize + self.load_name_from_ref(identifier.ref_).len();
+        let text: &[u8] = &self.source.contents;
+        let type_arguments = skip_blanks_and_comments(text, name_end as u32);
+        if text.get(type_arguments as usize) == Some(&b'<') {
+            return self.validator_of(callee.loc, type_arguments, ValidatingFunction::Validate);
+        }
+        self.log().add_error(
+            Some(self.source),
+            callee.loc,
+            b"validate() needs a type argument: validate<User>(value)",
+        );
+        None
+    }
+
+    fn ensure_validation_plans(&mut self) -> Option<&ValidationPlans> {
+        if self.validation_plans.is_none() {
+            let plans = match self.options.features.validation_plans {
+                Some(asked) => (asked.find)(asked.context, self.source, self.log()),
+                None => None,
+            };
+            for refused in plans.iter().flat_map(|plans| &plans.refused) {
+                let at = bun_ast::Loc {
+                    start: refused.position as i32,
+                };
+                let message = bstr::BStr::new(&refused.message);
+                self.log()
+                    .add_error_fmt(self.source, at, format_args!("{message}"));
+            }
+            self.validation_plans = Some(plans);
+        }
+        self.validation_plans.as_ref()?.as_ref()
+    }
+
+    /// `(validator ??= globalThis.Bun.JSON.validatorOfPlan(kind, plan))`: the plan of `T` stands in the text of
+    /// the module, and the validator is made of it when the call is first reached. `None`, behind an error:
+    /// nobody knows `T`.
+    fn validator_of(
+        &mut self,
+        loc: bun_ast::Loc,
+        type_arguments: u32,
+        function: ValidatingFunction,
+    ) -> Option<Expr> {
+        if self.options.features.validation_plans.is_none() {
+            self.log().add_error(
+                Some(self.source),
+                loc,
+                b"JSON.parse<T>() from \"bun\" and validate<T>() only work in a TypeScript file that Bun runs, tests or builds with --target=bun",
+            );
+            return None;
+        }
+        let errors_before = self.log().errors;
+        let type_argument = skip_blanks_and_comments(&self.source.contents, type_arguments + 1);
+        let arena = self.arena;
+        let plan: Option<&'a [u8]> = (self.ensure_validation_plans())
+            .and_then(|plans| plans.find(type_argument))
+            .filter(|call| call.function == function)
+            .map(|call| &*arena.alloc_slice_copy(&call.plan));
+        let Some(plan) = plan else {
+            // One error for the file is enough where it says what is wrong with this call.
+            if self.log().errors == errors_before && !self.has_refused_validation() {
+                self.log().add_error(
+                    Some(self.source),
+                    loc,
+                    b"There is no type to validate against here: the type checker doesn't take this for a call of JSON.parse<T>() from \"bun\" or of validate<T>()",
+                );
+            }
+            return None;
+        };
+
+        let name: &'a [u8] = if self.will_use_renamer() {
+            b"validator"
+        } else {
+            let number = self.validator_variables.len();
+            bun_alloc::arena_format!(in self.arena, "__bun_validator_{:x}$", number)
+                .into_bump_str()
+                .as_bytes()
+        };
+        let variable = self.new_symbol(js_ast::symbol::Kind::Other, name);
+        VecExt::append(&mut self.module_scope_mut().generated, variable);
+        self.validator_variables.push(variable);
+        self.record_usage(variable);
+
+        let global = self.find_symbol(loc, b"globalThis").ok()?.r#ref;
+        let mut maker = Expr::init_identifier(global, loc);
+        for name in [&b"Bun"[..], b"JSON", b"validatorOfPlan"] {
+            maker = self.new_expr(
+                E::Dot {
+                    target: maker,
+                    name: name.into(),
+                    name_loc: loc,
+                    ..Default::default()
+                },
+                loc,
+            );
+        }
+        let kind = match function {
+            ValidatingFunction::Parse => 0.0,
+            ValidatingFunction::Validate => 1.0,
+        };
+        let kind = self.new_expr(E::Number::new(kind), loc);
+        let plan = self.new_expr(
+            E::String {
+                data: plan.into(),
+                ..Default::default()
+            },
+            loc,
+        );
+        let args = ExprNodeList::from_arena_slice(self.arena.alloc_slice_copy(&[kind, plan]));
+        let made = self.new_expr(
+            E::Call {
+                target: maker,
+                args,
+                ..Default::default()
+            },
+            loc,
+        );
+        Some(self.new_expr(
+            E::Binary {
+                op: js_ast::op::Code::BinNullishCoalescingAssign,
+                left: Expr::init_identifier(variable, loc),
+                right: made,
+            },
+            loc,
+        ))
+    }
+
+    fn has_refused_validation(&self) -> bool {
+        matches!(&self.validation_plans, Some(Some(plans)) if !plans.refused.is_empty())
     }
 
     pub(crate) fn is_dot_define_match(&mut self, mut expr: Expr, mut parts: &[Box<[u8]>]) -> bool {
@@ -9838,6 +10053,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             whole_imports_of_bun: BumpVec::new_in(arena),
             parse_members_with_type_arguments: BumpVec::new_in(arena),
             parse_members_without_check: BumpVec::new_in(arena),
+            validate_imports: BumpVec::new_in(arena),
+            validation_plans: None,
+            validator_variables: BumpVec::new_in(arena),
             has_classic_runtime_warned: false,
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),

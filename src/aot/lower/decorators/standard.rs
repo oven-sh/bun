@@ -16,20 +16,6 @@ struct DecorationContext<'l> {
     lists: &'l [ValueId],
 }
 
-#[derive(Copy, Clone)]
-struct ElementName {
-    value: ValueId,
-    private_key: Option<PropertyKeyId>,
-}
-
-#[derive(Copy, Clone)]
-struct DecoratedElement {
-    decoration: Decoration,
-    decorators: ValueId,
-    element: ValueId,
-    private_key: Option<PropertyKeyId>,
-}
-
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn emit_standard_decorations(
         &mut self,
@@ -45,8 +31,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Some(heritage) => heritage,
             None => self.builder.undefined(),
         };
-        let metadata = self.call_helper(BuiltinId::CompilerHelpersCreateDecoratorMetadata, &[base]);
-        let lists = self.emit_initializer_lists(plan, evaluation.class);
+        let helper = BuiltinId::CompilerHelpersCreateDecoratorMetadata;
+        let metadata = self.emit_builtin_call(helper, &[base]);
+        let lists: SmallVec<[ValueId; 8]> = (0..plan.initializer_list_count)
+            .map(|_| self.emit_empty_list())
+            .collect();
+        if !lists.is_empty() {
+            let state = self.builder.new_array(TypeTable::ANYTHING, &[], &lists);
+            self.set_class_slot(evaluation.class, ClassSlot::DecoratorState, state);
+        }
         let has_static_methods = plan
             .decorations
             .iter()
@@ -62,9 +55,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.emit_decoration(plan, evaluation, &context, decoration);
         }
         self.set_position(class_position);
-        let decorated_class = self.emit_class_decoration(evaluation, metadata, class_initializers);
+        let class_object = evaluation.class_object;
+        let decorated_class = match evaluation.class_decorators.zip(class_initializers) {
+            Some((decorators, initializers)) => {
+                let name = self.builder.string(evaluation.name);
+                let arguments = [decorators, class_object, name, metadata, initializers];
+                let helper = BuiltinId::CompilerHelpersApplyClassDecorators;
+                Some(self.emit_builtin_call(helper, &arguments))
+            }
+            None => {
+                let arguments = [class_object, metadata];
+                self.emit_builtin_call(BuiltinId::CompilerHelpersSetDecoratorMetadata, &arguments);
+                None
+            }
+        };
         if let Some(initializers) = static_method_initializers {
-            self.emit_initializer_run(initializers, evaluation.class_object);
+            self.emit_initializer_run(initializers, class_object);
         }
         StandardDecorationResult {
             decorated_class,
@@ -78,17 +84,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         receiver: ValueId,
     ) {
         let arguments = [initializers, receiver];
-        self.call_helper(BuiltinId::CompilerHelpersRunInitializers, &arguments);
-    }
-
-    pub(in crate::lower) fn emit_value_initializer_run(
-        &mut self,
-        initializers: ValueId,
-        receiver: ValueId,
-        value: ValueId,
-    ) -> ValueId {
-        let arguments = [initializers, receiver, value];
-        self.call_helper(BuiltinId::CompilerHelpersRunValueInitializers, &arguments)
+        self.emit_builtin_call(BuiltinId::CompilerHelpersRunInitializers, &arguments);
     }
 
     pub(in crate::lower) fn get_initializer_list(
@@ -101,45 +97,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.elem_get(state, index)
     }
 
-    fn call_helper(&mut self, helper: BuiltinId, arguments: &[ValueId]) -> ValueId {
-        self.emit_builtin_call(helper, arguments)
-    }
-
     fn emit_empty_list(&mut self) -> ValueId {
         self.builder.new_array(TypeTable::ANYTHING, &[], &[])
-    }
-
-    fn emit_initializer_lists(
-        &mut self,
-        plan: &ClassPlan,
-        class: ClassId,
-    ) -> SmallVec<[ValueId; 8]> {
-        let lists: SmallVec<[ValueId; 8]> = (0..plan.initializer_list_count)
-            .map(|_| self.emit_empty_list())
-            .collect();
-        if !lists.is_empty() {
-            let state = self.builder.new_array(TypeTable::ANYTHING, &[], &lists);
-            self.set_class_slot(class, ClassSlot::DecoratorState, state);
-        }
-        lists
-    }
-
-    fn emit_class_decoration(
-        &mut self,
-        evaluation: &ClassEvaluation,
-        metadata: ValueId,
-        class_initializers: Option<ValueId>,
-    ) -> Option<ValueId> {
-        let class_object = evaluation.class_object;
-        let Some((decorators, initializers)) = evaluation.class_decorators.zip(class_initializers)
-        else {
-            let arguments = [class_object, metadata];
-            self.call_helper(BuiltinId::CompilerHelpersSetDecoratorMetadata, &arguments);
-            return None;
-        };
-        let name = self.builder.string(evaluation.name);
-        let arguments = [decorators, class_object, name, metadata, initializers];
-        Some(self.call_helper(BuiltinId::CompilerHelpersApplyClassDecorators, &arguments))
     }
 
     fn emit_decoration(
@@ -150,34 +109,83 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         decoration: Decoration,
     ) {
         let member = decoration.member;
-        let position = self.file.hir[member].name_pos;
-        self.set_position(position);
+        self.set_position(self.file.hir[member].name_pos);
         let decorators = find_member_value(&evaluation.member_decorators, member)
             .expect("class evaluation lists the decorators of every decorated member");
-        let name = self.emit_element_name(evaluation, member);
+        let (name, private_key) = self.emit_element_name(evaluation, member);
         debug_assert_eq!(
             decoration.is_private,
-            name.private_key.is_some(),
+            private_key.is_some(),
             "the plan and the tree agree on private names"
         );
-        let element = DecoratedElement {
-            decoration,
-            decorators,
-            element: self.emit_element(decoration, name.value),
-            private_key: name.private_key,
+        let kind: &[u8] = match decoration.kind {
+            DecoratedKind::Method => b"method",
+            DecoratedKind::Getter => b"getter",
+            DecoratedKind::Setter => b"setter",
+            DecoratedKind::Accessor => b"accessor",
+            DecoratedKind::Field => b"field",
         };
-        match decoration.kind {
-            DecoratedKind::Method | DecoratedKind::Getter | DecoratedKind::Setter => {
-                self.emit_method_decoration(plan, evaluation, context, element);
+        let kind = self.file.intern_bytes(kind);
+        let kind = self.builder.string(kind);
+        let is_static = self.builder.boolean(decoration.is_static);
+        let is_private = self.builder.boolean(decoration.is_private);
+        let arguments = [kind, name, is_static, is_private];
+        let element = self.emit_builtin_call(BuiltinId::CompilerHelpersCreateElement, &arguments);
+        let class_object = evaluation.class_object;
+        let metadata = context.metadata;
+        let slot = ClassSlot::PrivateMethod(member);
+        match (decoration.kind, private_key) {
+            (DecoratedKind::Method | DecoratedKind::Getter | DecoratedKind::Setter, None) => {
+                let initializers = find_method_initializers(plan, context, decoration);
+                let holder = self.emit_holder(class_object, decoration.is_static);
+                let arguments = [decorators, holder, element, metadata, initializers];
+                self.emit_builtin_call(BuiltinId::CompilerHelpersApplyMethodDecorators, &arguments);
             }
-            DecoratedKind::Field => self.emit_field_decoration(context, element),
-            DecoratedKind::Accessor => {
-                self.emit_accessor_decoration(evaluation, context, element);
+            (DecoratedKind::Method | DecoratedKind::Getter | DecoratedKind::Setter, Some(key)) => {
+                let initializers = find_method_initializers(plan, context, decoration);
+                let source = self.file.hir[member].func;
+                let value = self.lower_method(source, PropertyName::Constant(key), class_object);
+                let test = self.emit_accessor_closure(member, AccessorFunction::PrivateNameTest);
+                let arguments = [decorators, value, element, test, metadata, initializers];
+                let helper = BuiltinId::CompilerHelpersApplyPrivateMethodDecorators;
+                let result = self.emit_builtin_call(helper, &arguments);
+                self.set_class_slot(evaluation.class, slot, result);
+            }
+            (DecoratedKind::Field, None) => {
+                let [value, extra] = find_value_initializers(context, decoration);
+                let arguments = [decorators, element, metadata, value, extra];
+                self.emit_builtin_call(BuiltinId::CompilerHelpersApplyFieldDecorators, &arguments);
+            }
+            (DecoratedKind::Field, Some(_)) => {
+                let [value, extra] = find_value_initializers(context, decoration);
+                let storage = self.emit_private_storage(member);
+                let arguments = [decorators, element, storage, metadata, value, extra];
+                let helper = BuiltinId::CompilerHelpersApplyPrivateFieldDecorators;
+                self.emit_builtin_call(helper, &arguments);
+            }
+            (DecoratedKind::Accessor, None) => {
+                let [value, extra] = find_value_initializers(context, decoration);
+                let holder = self.emit_holder(class_object, decoration.is_static);
+                let arguments = [decorators, holder, element, metadata, value, extra];
+                let helper = BuiltinId::CompilerHelpersApplyAccessorDecorators;
+                self.emit_builtin_call(helper, &arguments);
+            }
+            (DecoratedKind::Accessor, Some(_)) => {
+                let [value, extra] = find_value_initializers(context, decoration);
+                let storage = self.emit_private_storage(member);
+                let arguments = [decorators, element, storage, metadata, value, extra];
+                let helper = BuiltinId::CompilerHelpersApplyPrivateAccessorDecorators;
+                let pair = self.emit_builtin_call(helper, &arguments);
+                self.set_class_slot(evaluation.class, slot, pair);
             }
         }
     }
 
-    fn emit_element_name(&mut self, evaluation: &ClassEvaluation, member: MemberId) -> ElementName {
+    fn emit_element_name(
+        &mut self,
+        evaluation: &ClassEvaluation,
+        member: MemberId,
+    ) -> (ValueId, Option<PropertyKeyId>) {
         let name = match self.file.hir.runtime_member_key(member) {
             PropKey::Private(name) => {
                 let key = layouts::private_key(self.file, evaluation.layout, name);
@@ -185,10 +193,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     .file
                     .find_key_text(key)
                     .expect("the key of a private name has a text");
-                return ElementName {
-                    value: self.builder.string(text),
-                    private_key: Some(key),
-                };
+                return (self.builder.string(text), Some(key));
             }
             PropKey::Name(name) => PropertyName::Constant(self.file.name_key(name)),
             PropKey::Computed(_) => find_member_value(&evaluation.member_names, member)
@@ -199,28 +204,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 PropertyName::Constant(self.file.text_key(text))
             }
         };
-        ElementName {
-            value: self.emit_name_value(name),
-            private_key: None,
-        }
+        (self.emit_name_value(name), None)
     }
 
-    fn emit_element(&mut self, decoration: Decoration, name: ValueId) -> ValueId {
-        let kind = self.file.intern_bytes(kind_text(decoration.kind));
-        let kind = self.builder.string(kind);
-        let is_static = self.builder.boolean(decoration.is_static);
-        let is_private = self.builder.boolean(decoration.is_private);
-        let arguments = [kind, name, is_static, is_private];
-        self.call_helper(BuiltinId::CompilerHelpersCreateElement, &arguments)
-    }
-
-    fn emit_holder(&mut self, evaluation: &ClassEvaluation, decoration: Decoration) -> ValueId {
-        if decoration.is_static {
-            return evaluation.class_object;
+    pub(super) fn emit_holder(&mut self, class_object: ValueId, is_static: bool) -> ValueId {
+        if is_static {
+            return class_object;
         }
         let prototype = self.file.name_key(known::prototype);
-        let prototype = PropertyName::Constant(prototype);
-        self.emit_get(evaluation.class_object, prototype)
+        self.emit_get(class_object, PropertyName::Constant(prototype))
     }
 
     fn emit_accessor_closure(&mut self, member: MemberId, function: AccessorFunction) -> ValueId {
@@ -233,118 +225,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let get = self.emit_accessor_closure(member, AccessorFunction::Getter);
         let set = self.emit_accessor_closure(member, AccessorFunction::Setter);
         let arguments = [test, get, set];
-        self.call_helper(BuiltinId::CompilerHelpersCreatePrivateStorage, &arguments)
-    }
-
-    fn emit_method_decoration(
-        &mut self,
-        plan: &ClassPlan,
-        evaluation: &ClassEvaluation,
-        context: &DecorationContext<'_>,
-        decorated: DecoratedElement,
-    ) {
-        let DecoratedElement {
-            decoration,
-            decorators,
-            element,
-            private_key,
-        } = decorated;
-        let metadata = context.metadata;
-        let initializers = find_method_initializers(plan, context, decoration);
-        let Some(key) = private_key else {
-            let holder = self.emit_holder(evaluation, decoration);
-            let arguments = [decorators, holder, element, metadata, initializers];
-            self.call_helper(BuiltinId::CompilerHelpersApplyMethodDecorators, &arguments);
-            return;
-        };
-        let member = decoration.member;
-        let source = self.file.hir[member].func;
-        let name = PropertyName::Constant(key);
-        let value = self.lower_method(source, name, evaluation.class_object);
-        let test = self.emit_accessor_closure(member, AccessorFunction::PrivateNameTest);
-        let arguments = [decorators, value, element, test, metadata, initializers];
-        let result = self.call_helper(
-            BuiltinId::CompilerHelpersApplyPrivateMethodDecorators,
-            &arguments,
-        );
-        let slot = ClassSlot::PrivateMethod(member);
-        self.set_class_slot(evaluation.class, slot, result);
-    }
-
-    fn emit_field_decoration(
-        &mut self,
-        context: &DecorationContext<'_>,
-        decorated: DecoratedElement,
-    ) {
-        let DecoratedElement {
-            decoration,
-            decorators,
-            element,
-            private_key,
-        } = decorated;
-        let metadata = context.metadata;
-        let [value, extra] = find_value_initializers(context, decoration);
-        match private_key {
-            None => {
-                let arguments = [decorators, element, metadata, value, extra];
-                self.call_helper(BuiltinId::CompilerHelpersApplyFieldDecorators, &arguments);
-            }
-            Some(_) => {
-                let storage = self.emit_private_storage(decoration.member);
-                let arguments = [decorators, element, storage, metadata, value, extra];
-                self.call_helper(
-                    BuiltinId::CompilerHelpersApplyPrivateFieldDecorators,
-                    &arguments,
-                );
-            }
-        }
-    }
-
-    fn emit_accessor_decoration(
-        &mut self,
-        evaluation: &ClassEvaluation,
-        context: &DecorationContext<'_>,
-        decorated: DecoratedElement,
-    ) {
-        let DecoratedElement {
-            decoration,
-            decorators,
-            element,
-            private_key,
-        } = decorated;
-        let metadata = context.metadata;
-        let [value, extra] = find_value_initializers(context, decoration);
-        match private_key {
-            None => {
-                let holder = self.emit_holder(evaluation, decoration);
-                let arguments = [decorators, holder, element, metadata, value, extra];
-                self.call_helper(
-                    BuiltinId::CompilerHelpersApplyAccessorDecorators,
-                    &arguments,
-                );
-            }
-            Some(_) => {
-                let member = decoration.member;
-                let storage = self.emit_private_storage(member);
-                let arguments = [decorators, element, storage, metadata, value, extra];
-                let pair = self.call_helper(
-                    BuiltinId::CompilerHelpersApplyPrivateAccessorDecorators,
-                    &arguments,
-                );
-                let slot = ClassSlot::PrivateMethod(member);
-                self.set_class_slot(evaluation.class, slot, pair);
-            }
-        }
-    }
-}
-
-fn kind_text(kind: DecoratedKind) -> &'static [u8] {
-    match kind {
-        DecoratedKind::Method => b"method",
-        DecoratedKind::Getter => b"getter",
-        DecoratedKind::Setter => b"setter",
-        DecoratedKind::Accessor => b"accessor",
-        DecoratedKind::Field => b"field",
+        self.emit_builtin_call(BuiltinId::CompilerHelpersCreatePrivateStorage, &arguments)
     }
 }
 

@@ -1,8 +1,8 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, InitialState, ScopeId, ScopeKind, SymbolId};
+use bun_sema::bind::{Binding, InitialState, ScopeKind, SymbolId};
 
 use super::{BindingRef, DeadZone, ScopeSlot};
-use crate::ir::{ClassSlot, DeclaredType, TypeTable, ValueId};
+use crate::ir::{ClassSlot, ValueId};
 use crate::lower::{FileLowering, FunctionLowering, class};
 
 pub(super) fn has_dead_zone(file: &FileLowering<'_, '_, '_, '_>, binding: BindingRef) -> bool {
@@ -11,7 +11,10 @@ pub(super) fn has_dead_zone(file: &FileLowering<'_, '_, '_, '_>, binding: Bindin
             InitialState::Uninitialized => true,
             InitialState::Undefined | InitialState::Initialized => false,
         },
-        BindingRef::Slot(scope, ScopeSlot::This) => is_derived_constructor_scope(file, scope),
+        BindingRef::Slot(scope, ScopeSlot::This) => match file.bound.scopes[scope.idx()].kind {
+            ScopeKind::Fn(function) => file.is_derived_constructor(function),
+            _ => false,
+        },
         BindingRef::Slot(_, ScopeSlot::Class(ClassSlot::StaticField(member))) => {
             class::has_private_static_storage(file.hir, member)
         }
@@ -33,20 +36,6 @@ pub(super) fn has_dead_zone(file: &FileLowering<'_, '_, '_, '_>, binding: Bindin
                 | ClassSlot::DecoratorState,
             ),
         ) => false,
-    }
-}
-
-fn is_derived_constructor_scope(file: &FileLowering<'_, '_, '_, '_>, scope: ScopeId) -> bool {
-    match file.bound.scopes[scope.idx()].kind {
-        ScopeKind::Fn(function) => file.is_derived_constructor(function),
-        _ => false,
-    }
-}
-
-impl FileLowering<'_, '_, '_, '_> {
-    pub(super) fn add_absent(&mut self, mut position: DeclaredType) -> DeclaredType {
-        position.ty = self.fragment.types.union(position.ty, TypeTable::ABSENT);
-        position
     }
 }
 

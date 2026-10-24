@@ -1,22 +1,11 @@
 use crate::builtins::id::{BuiltinClass, BuiltinId};
 use crate::ir::generated::MAX_TRACKED_INTEGER;
-use crate::ir::ids::{Id, LayoutId, StringId, TypeId};
+use crate::ir::ids::{Id, LayoutId, TypeId};
+use crate::ir::testing::{array_of, layout, string};
 use crate::ir::types::{ClassPart, OpaqueKind, Primitives, Type, TypeFlags, TypeTable};
-
-fn layout(index: usize) -> LayoutId {
-    LayoutId::new(index)
-}
-
-fn string(index: usize) -> StringId {
-    StringId::new(index)
-}
 
 fn builtin(word: u32) -> BuiltinId {
     BuiltinId::from_wire(word).expect("the table has the built-in")
-}
-
-fn array_of(contents: TypeId) -> Type {
-    Type::class(BuiltinClass::Array, &[contents])
 }
 
 fn well_known_types() -> [(TypeId, Type); TypeTable::WELL_KNOWN_COUNT] {
@@ -571,8 +560,9 @@ fn tables_that_share_types_number_them_like_a_table_of_its_own() {
         Type::layout(layout(3)),
     ];
     let mut own = TypeTable::new();
-    let mut first = TypeTable::sharing_types();
-    let mut second = TypeTable::sharing_types();
+    let [mut first, mut second] = [(); 2].map(|()| TypeTable::new());
+    first.share_types();
+    second.share_types();
     assert_eq!(first.len(), TypeTable::WELL_KNOWN_COUNT);
     for ty in &written {
         let id = own.intern(ty.clone());

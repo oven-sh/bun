@@ -95,10 +95,8 @@ fn can_have_call_signatures(kind: BuiltinKind) -> bool {
     )
 }
 
-struct PublishedPath {
-    module: Option<&'static str>,
-    reversed_names: SmallVec<[&'static str; 4]>,
-}
+// The module, and the names from the last to the first.
+type PublishedPath = (Option<&'static str>, SmallVec<[&'static str; 4]>);
 
 fn find_published_path(id: BuiltinId) -> Option<PublishedPath> {
     let mut reversed_names = SmallVec::new();
@@ -107,10 +105,7 @@ fn find_published_path(id: BuiltinId) -> Option<PublishedPath> {
         let entry = table::entry(member);
         let Some(holder) = entry.holder else {
             let module = table::module_data(entry.module?).specifier;
-            return Some(PublishedPath {
-                module: Some(module),
-                reversed_names,
-            });
+            return Some((Some(module), reversed_names));
         };
         if table::is_symbol_name(entry.name) || table::entry(holder).kind == BuiltinKind::Prototype
         {
@@ -118,10 +113,7 @@ fn find_published_path(id: BuiltinId) -> Option<PublishedPath> {
         }
         reversed_names.push(std::str::from_utf8(table::text_of_name(entry.name)).ok()?);
         if holder == BuiltinId::GlobalThis {
-            return Some(PublishedPath {
-                module: None,
-                reversed_names,
-            });
+            return Some((None, reversed_names));
         }
         member = holder;
     }
@@ -137,19 +129,19 @@ impl BuiltinValuePaths {
             if !can_have_call_signatures(table::entry(id).kind) || !table::exists_on(id, platform) {
                 continue;
             }
-            let Some(path) = find_published_path(id) else {
+            let Some((module, reversed_names)) = find_published_path(id) else {
                 continue;
             };
-            if path.reversed_names.is_empty() {
+            if reversed_names.is_empty() {
                 continue;
             }
             paths.values.push(ValueSpan {
                 id,
-                module: path.module,
+                module,
                 first_name: paths.names.len() as u32,
-                name_count: path.reversed_names.len() as u32,
+                name_count: reversed_names.len() as u32,
             });
-            paths.names.extend(path.reversed_names.iter().rev());
+            paths.names.extend(reversed_names.iter().rev());
         }
         paths.add_members_under_second_names(platform);
         paths.values.sort_by_key(|value| value.id.to_wire());
@@ -165,7 +157,7 @@ impl BuiltinValuePaths {
             if !table::exists_on(second_name, platform) {
                 continue;
             }
-            let Some(holder) = find_published_path(second_name) else {
+            let Some((module, reversed_names)) = find_published_path(second_name) else {
                 continue;
             };
             for &member in table::members(object) {
@@ -181,11 +173,11 @@ impl BuiltinValuePaths {
                 };
                 self.values.push(ValueSpan {
                     id: member,
-                    module: holder.module,
+                    module,
                     first_name: self.names.len() as u32,
-                    name_count: holder.reversed_names.len() as u32 + 1,
+                    name_count: reversed_names.len() as u32 + 1,
                 });
-                self.names.extend(holder.reversed_names.iter().rev());
+                self.names.extend(reversed_names.iter().rev());
                 self.names.push(name);
             }
         }

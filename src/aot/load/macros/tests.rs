@@ -136,16 +136,6 @@ impl SourceProvider for RecordingProvider {
         }
     }
 
-    fn bundle_pages<'s>(
-        &self,
-        pages: &[&[u8]],
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<Vec<&'s DataValue<'s>>, Failed> {
-        WithoutServices.bundle_pages(pages, arena, atoms, log)
-    }
-
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
         WithoutServices.check_embedded_files(log)
     }
@@ -234,11 +224,6 @@ fn run_rounds(setup: Setup, text: &str) -> Outcome {
         calls: Guarded::new(Vec::new()),
     };
     let messages = LoadMessages::default();
-    let input = MacroInput {
-        provider: &provider,
-        messages: &messages,
-        runs_macros: setup.runs_macros,
-    };
 
     let mut results: Vec<MacroResult<'_>> = Vec::new();
     let mut diagnostics: Vec<FileDiagnostic> = Vec::new();
@@ -267,7 +252,15 @@ fn run_rounds(setup: Setup, text: &str) -> Outcome {
             analysis: &analysis,
             resolve: &resolve_fixture,
         };
-        let round = run_macros(&input, arena, &atoms, &request, &mut diagnostics);
+        let round = run_macros(
+            &provider,
+            &messages,
+            setup.runs_macros,
+            arena,
+            &atoms,
+            &request,
+            &mut diagnostics,
+        );
         assert!(round.is_sorted_by(|a, b| a.0 < b.0));
         if round.is_empty() {
             break;
@@ -342,21 +335,16 @@ fn folded_arguments_are_data() {
 }
 
 #[test]
-fn default_import_names_default_export() {
-    let outcome = run("import d from './m' with { type: 'macro' }; d();");
-    assert_eq!(outcome.export_names(), [b"default"]);
-}
-
-#[test]
-fn namespace_members_name_exports() {
-    let outcome = run("import * as m from './m' with { type: 'macro' }; m.g(); m['g']();");
-    assert_eq!(outcome.export_names(), [b"g", b"g"]);
-}
-
-#[test]
-fn renamed_import_names_imported_export() {
-    let outcome = run("import { f as h } from './m' with { type: 'macro' }; h();");
-    assert_eq!(outcome.export_names(), [b"f"]);
+fn default_namespace_and_renamed_imports_name_their_exports() {
+    let texts: [(&str, &str, &[&[u8]]); 3] = [
+        ("d", "d();", &[b"default"]),
+        ("* as m", "m.g(); m['g']();", &[b"g", b"g"]),
+        ("{ f as h }", "h();", &[b"f"]),
+    ];
+    for (clause, calls, export_names) in texts {
+        let text = format!("import {clause} from './m' with {{ type: 'macro' }}; {calls}");
+        assert_eq!(run(&text).export_names(), export_names, "{text}");
+    }
 }
 
 #[test]
@@ -408,20 +396,23 @@ fn other_uses_of_macro_bindings_are_not_macro_calls() {
 }
 
 #[test]
-fn unknown_argument_reports_at_argument() {
-    let outcome = run("import { f } from './m' with { type: 'macro' }; let x; f(x);");
-    assert!(outcome.calls.is_empty());
-    let expected = (Code::MacroArgumentNotConstant, b"x".to_vec());
-    assert_eq!(outcome.diagnostics, [expected]);
-    assert_eq!(outcome.results, [OwnedValue::Undefined]);
-}
-
-#[test]
-fn unknown_part_of_argument_reports_whole_argument() {
-    let outcome = run("import { f } from './m' with { type: 'macro' }; let x; f(1, [2, x]);");
-    assert!(outcome.calls.is_empty());
-    let expected = (Code::MacroArgumentNotConstant, b"[2, x]".to_vec());
-    assert_eq!(outcome.diagnostics, [expected]);
+fn unknown_argument_reports_once_at_whole_argument() {
+    let named = "import { f } from './m' with { type: 'macro' }; let x; ";
+    let nested = "import { inner, outer } from './m' with { type: 'macro' };let x; ";
+    let texts: [(&str, &str, &[u8], usize); 4] = [
+        (named, "f(x);", b"x", 1),
+        (named, "f(1, [2, x]);", b"[2, x]", 1),
+        (nested, "outer(inner(x));", b"x", 2),
+        (nested, "outer(inner(x)!);", b"x", 2),
+    ];
+    for (start, call, written, result_count) in texts {
+        let outcome = run(&[start, call].concat());
+        assert!(outcome.calls.is_empty(), "{call}");
+        let expected = (Code::MacroArgumentNotConstant, written.to_vec());
+        assert_eq!(outcome.diagnostics, [expected], "{call}");
+        let undefined = vec![OwnedValue::Undefined; result_count];
+        assert_eq!(outcome.results, undefined, "{call}");
+    }
 }
 
 #[test]
@@ -440,24 +431,6 @@ fn nested_call_runs_first() {
     assert_eq!(outcome.export_names(), [&b"inner"[..], &b"outer"[..]]);
     assert_eq!(outcome.calls[1].arguments, [OwnedValue::Number(3.0)]);
     assert!(outcome.diagnostics.is_empty());
-}
-
-#[test]
-fn nested_call_with_unknown_argument_reports_once() {
-    let outcome = run("import { inner, outer } from './m' with { type: 'macro' };\
-         let x; outer(inner(x));");
-    assert!(outcome.calls.is_empty());
-    let expected = (Code::MacroArgumentNotConstant, b"x".to_vec());
-    assert_eq!(outcome.diagnostics, [expected]);
-    assert_eq!(outcome.results.len(), 2);
-}
-
-#[test]
-fn asserted_nested_call_with_unknown_argument_reports_once() {
-    let outcome = run("import { inner, outer } from './m' with { type: 'macro' };\
-         let x; outer(inner(x)!);");
-    let expected = (Code::MacroArgumentNotConstant, b"x".to_vec());
-    assert_eq!(outcome.diagnostics, [expected]);
 }
 
 #[test]
@@ -508,10 +481,8 @@ fn unknown_argument_does_not_delay_later_calls() {
     assert_eq!(outcome.export_names(), [b"g"]);
     let expected = (Code::MacroArgumentNotConstant, b"x".to_vec());
     assert_eq!(outcome.diagnostics, [expected]);
-    assert_eq!(
-        outcome.results,
-        [OwnedValue::Undefined, OwnedValue::Number(2.0)]
-    );
+    let results = [OwnedValue::Undefined, OwnedValue::Number(2.0)];
+    assert_eq!(outcome.results, results);
 }
 
 #[test]
@@ -520,64 +491,33 @@ fn failed_macro_runs_once() {
         answers: &[],
         ..DEFAULT_SETUP
     };
-    let outcome = run_rounds(
-        setup,
-        "import { f } from './m' with { type: 'macro' }; f();",
-    );
+    let text = "import { f } from './m' with { type: 'macro' }; f();";
+    let outcome = run_rounds(setup, text);
     assert_eq!(outcome.calls.len(), 1);
     assert_eq!(outcome.results, [OwnedValue::Undefined]);
     assert!(outcome.diagnostics.is_empty());
 }
 
 #[test]
-fn disabled_macros_do_not_run() {
-    let setup = Setup {
-        runs_macros: false,
-        ..DEFAULT_SETUP
-    };
-    let outcome = run_rounds(
-        setup,
-        "import { f } from './m' with { type: 'macro' }; f();",
-    );
-    assert!(outcome.calls.is_empty());
-    assert_eq!(
-        outcome.diagnostics,
-        [(Code::MacrosDisabled, b"f()".to_vec())]
-    );
-    assert_eq!(outcome.results, [OwnedValue::Undefined]);
-}
-
-#[test]
-fn node_modules_importer_does_not_run_macros() {
-    let setup = Setup {
-        importer: b"/project/node_modules/p/a.ts",
-        ..DEFAULT_SETUP
-    };
-    let outcome = run_rounds(
-        setup,
-        "import { f } from './m' with { type: 'macro' }; f();",
-    );
-    assert!(outcome.calls.is_empty());
-    let expected = (Code::MacroInNodeModules, b"f()".to_vec());
-    assert_eq!(outcome.diagnostics, [expected]);
-    assert_eq!(outcome.results, [OwnedValue::Undefined]);
-}
-
-#[test]
-fn disabled_macros_win_over_node_modules() {
-    let setup = Setup {
-        importer: b"/project/node_modules/p/a.ts",
-        runs_macros: false,
-        ..DEFAULT_SETUP
-    };
-    let outcome = run_rounds(
-        setup,
-        "import { f } from './m' with { type: 'macro' }; f();",
-    );
-    assert_eq!(
-        outcome.diagnostics,
-        [(Code::MacrosDisabled, b"f()".to_vec())]
-    );
+fn disabled_macros_and_importers_in_node_modules_run_nothing() {
+    const IN_NODE_MODULES: &[u8] = b"/project/node_modules/p/a.ts";
+    let cases = [
+        (IMPORTER, false, Code::MacrosDisabled),
+        (IN_NODE_MODULES, true, Code::MacroInNodeModules),
+        (IN_NODE_MODULES, false, Code::MacrosDisabled),
+    ];
+    for (importer, runs_macros, code) in cases {
+        let setup = Setup {
+            importer,
+            runs_macros,
+            ..DEFAULT_SETUP
+        };
+        let text = "import { f } from './m' with { type: 'macro' }; f();";
+        let outcome = run_rounds(setup, text);
+        assert!(outcome.calls.is_empty());
+        assert_eq!(outcome.diagnostics, [(code, b"f()".to_vec())]);
+        assert_eq!(outcome.results, [OwnedValue::Undefined]);
+    }
 }
 
 #[test]
@@ -619,10 +559,8 @@ fn every_call_gets_one_result() {
     ];
     assert_eq!(outcome.results, expected);
     let unknown_argument = (Code::MacroArgumentNotConstant, b"x".to_vec());
-    assert_eq!(
-        outcome.diagnostics,
-        [unknown_argument.clone(), unknown_argument]
-    );
+    let diagnostics = [unknown_argument.clone(), unknown_argument];
+    assert_eq!(outcome.diagnostics, diagnostics);
 }
 
 #[test]
@@ -653,10 +591,8 @@ fn pending_call_without_macro_callee_is_internal_error() {
         lists_every_call_as_pending: true,
         ..DEFAULT_SETUP
     };
-    let outcome = run_rounds(
-        setup,
-        "import * as m from './m' with { type: 'macro' }; m();",
-    );
+    let text = "import * as m from './m' with { type: 'macro' }; m();";
+    let outcome = run_rounds(setup, text);
     assert_eq!(outcome.first_pending_count, 0);
     assert!(outcome.calls.is_empty());
     assert!(outcome.has_internal_errors);

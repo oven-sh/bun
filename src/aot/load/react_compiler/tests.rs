@@ -15,7 +15,7 @@ use bun_sema::hir_from_data::HostValue;
 use bun_sema::import_sites::{AutomaticJsx, JsxMode};
 use bun_sema::module_format::DeclaredModuleType;
 use bun_sema::program::{FileId, Files};
-use bun_sema::resolve::TranspileSettings;
+use bun_sema::resolve::{JsxSettings, TranspileSettings};
 use bun_sema::session::Session;
 use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 
@@ -38,6 +38,20 @@ const UNTYPED_HELLO: &str = "export function Hello({ name }) {\n\
                              return <div>Hello {name}</div>;\n\
                              }\n";
 const RULE: &str = "export function Rule() { return <hr />; }\n";
+
+fn settings_with_jsx(jsx: JsxSettings) -> TranspileSettings {
+    TranspileSettings {
+        jsx,
+        ..default_settings()
+    }
+}
+
+fn production_settings() -> TranspileSettings {
+    settings_with_jsx(JsxSettings {
+        is_development: false,
+        ..JsxSettings::default()
+    })
+}
 
 struct Tree<'s> {
     files: &'s Files<'s>,
@@ -139,13 +153,12 @@ impl<'s> Tree<'s> {
 
     fn calls_of(&self, callee_name: &str) -> Vec<CallId> {
         let hir = self.hir();
-        let calls = self.reachable_expressions().filter_map(|expression| {
-            if let ExprKind::Call(call) = hir[expression].kind {
-                Some(call)
-            } else {
-                None
-            }
-        });
+        let calls = self
+            .reachable_expressions()
+            .filter_map(|it| match hir[it].kind {
+                ExprKind::Call(call) => Some(call),
+                _ => None,
+            });
         calls
             .filter(|&call| self.is_name(hir[call].callee, callee_name))
             .collect()
@@ -169,12 +182,9 @@ impl<'s> Tree<'s> {
         let imports = self
             .top_level_statements()
             .into_iter()
-            .filter_map(|statement| {
-                if let StmtKind::Import(import) = hir[statement].kind {
-                    Some(hir[import])
-                } else {
-                    None
-                }
+            .filter_map(|statement| match hir[statement].kind {
+                StmtKind::Import(import) => Some(hir[import]),
+                _ => None,
             });
         imports
             .filter(|import| self.text(import.spec) == specifier.as_bytes())
@@ -265,12 +275,9 @@ impl<'s> Tree<'s> {
         let mut declarations = self
             .top_level_statements()
             .into_iter()
-            .filter_map(|statement| {
-                if let StmtKind::Var(declarations) = hir[statement].kind {
-                    Some(hir[declarations.at(0)])
-                } else {
-                    None
-                }
+            .filter_map(|statement| match hir[statement].kind {
+                StmtKind::Var(declarations) => Some(hir[declarations.at(0)]),
+                _ => None,
             });
         let declaration = declarations
             .find(|declaration| self.pattern_name(declaration.pat).as_deref() == Some(name))?;

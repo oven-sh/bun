@@ -852,6 +852,8 @@ class Worker extends EventEmitter {
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
+  // Resolves that promise. #onClose calls it, so a terminate() from a listener that #onClose itself calls is answered too.
+  #resolveOnExit: ((exitCode: number) => void) | undefined = undefined;
   #urlToRevoke = "";
   // threadId captured for cleaning up the messaging control port on close.
   #messagingThreadId: number | undefined = undefined;
@@ -1080,16 +1082,17 @@ class Worker extends EventEmitter {
   }
 
   terminate(callback?: (error: null, exitCode: number) => unknown) {
+    const onExitPromise = this.#onExitPromise;
     if (typeof callback === "function") {
       process.emitWarning(
         "Passing a callback to worker.terminate() is deprecated. It returns a Promise instead.",
         "DeprecationWarning",
         "DEP0132",
       );
-      this.#worker.addEventListener("close", (event: { code: number }) => callback(null, event.code), { once: true });
+      // node: a one-time 'exit' listener, and nothing once the worker has exited.
+      if (typeof onExitPromise !== "number") this.once("exit", (exitCode: number) => callback(null, exitCode));
     }
 
-    const onExitPromise = this.#onExitPromise;
     // Not a truthy test: after exit #onExitPromise is the exit code, which can be 0;
     // falling through would wait on a 'close' event that never fires again.
     if (onExitPromise !== undefined) {
@@ -1099,13 +1102,7 @@ class Worker extends EventEmitter {
     }
 
     const { resolve, promise } = Promise.withResolvers<number>();
-    this.#worker.addEventListener(
-      "close",
-      (event: { code: number }) => {
-        resolve(event.code);
-      },
-      { once: true },
-    );
+    this.#resolveOnExit = resolve;
     // Keep the event loop alive until termination completes so the returned
     // promise still resolves even if the worker was unref()'ed.
     this.#worker.ref();
@@ -1226,16 +1223,22 @@ class Worker extends EventEmitter {
     }
     this.#stdinPort?.close();
     // node delivers everything the worker posted before it exited ahead of
-    // 'exit' (kOnExit drains the public port), then closes the port.
-    {
+    // 'exit' (kOnExit drains the public port), then closes the port. 'exit' follows
+    // and the promise of terminate() resolves whatever the listeners do.
+    try {
       let entry;
       while ((entry = _receiveMessageOnPort(this.#publicPort)) !== undefined) {
         this.emit("message", entry.message);
       }
+    } finally {
       this.#publicPort.close();
+      this.#onExitPromise = e.code;
+      try {
+        this.emit("exit", e.code);
+      } finally {
+        this.#resolveOnExit?.(e.code);
+      }
     }
-    this.#onExitPromise = e.code;
-    this.emit("exit", e.code);
   }
 
   #onError(event: ErrorEvent) {

@@ -15,7 +15,7 @@ pub use self::find::{
 use self::held_early::find_files_held_early;
 pub use self::private_state::FilePrivateStates;
 pub use self::published::{Helper, Shape};
-pub use self::quiet::{Quiet, is_absent_from_object_prototype, is_locked};
+pub use self::quiet::Quiet;
 pub use self::resolve::{
     KnownCallee, PrivateFieldAccess, PrivateFieldCall, PrivateMemberKind, PrivateStateKind,
     PrivateStateRole, PrivateStateSite, ResolveInput, ResolvedReference, resolve_callee,
@@ -40,7 +40,6 @@ pub struct PublishedFunction {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Reference {
-    Itself,
     Helper(Helper),
     Global(&'static [&'static str]),
 }
@@ -50,6 +49,11 @@ pub struct KnownHelpers {
     files: Vec<FileHelpers>,
     private_states: Vec<OnceLock<FilePrivateStates>>,
     binding_names: FxHashSet<Atom>,
+}
+
+fn find_by_key<K: Ord, V>(sorted: &[(K, V)], key: K) -> Option<&V> {
+    let at = sorted.binary_search_by(|entry| entry.0.cmp(&key));
+    at.ok().map(|at| &sorted[at].1)
 }
 
 fn reads_private_state(helper: Helper) -> bool {
@@ -105,11 +109,6 @@ impl KnownHelpers {
         self.files.get(file.idx())
     }
 
-    pub fn has_functions(&self, file: FileId) -> bool {
-        self.file(file)
-            .is_some_and(|helpers| helpers.functions().len() != 0)
-    }
-
     pub fn function(&self, file: FileId, function: FnId) -> Option<&KnownFunction> {
         self.file(file)?.function(function)
     }
@@ -133,15 +132,6 @@ impl KnownHelpers {
             };
             private_state::find_in_file(&input, file)
         }))
-    }
-
-    fn certain_binding(&self, file: FileId, symbol: SymbolId) -> Option<&KnownFunction> {
-        let values = self.binding(file, symbol)?;
-        let [held] = values.functions[..] else {
-            return None;
-        };
-        let known = self.function(file, held.definition)?;
-        (values.holds_from_the_start && known.relies_on_facts).then_some(known)
     }
 
     fn find_called_symbol(files: &Files<'_>, file: FileId, callee: ExprId) -> Option<SymbolId> {
@@ -177,6 +167,11 @@ impl KnownHelpers {
         file: FileId,
         callee: ExprId,
     ) -> Option<&KnownFunction> {
-        self.certain_binding(file, KnownHelpers::find_called_symbol(files, file, callee)?)
+        let values = self.binding(file, KnownHelpers::find_called_symbol(files, file, callee)?)?;
+        let [held] = values.functions[..] else {
+            return None;
+        };
+        let known = self.function(file, held.definition)?;
+        (values.holds_from_the_start && known.relies_on_facts).then_some(known)
     }
 }

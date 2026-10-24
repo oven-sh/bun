@@ -193,42 +193,6 @@ fn builtin_name_is_stored() {
 }
 
 #[test]
-fn intern_from_copies_class_and_name() {
-    let mut source = StringTable::default();
-    source.intern(b"padding");
-    let length = source.intern(b"length");
-    let prototype = source.intern(b"prototype");
-
-    let mut table = StringTable::default();
-    let copied_prototype = table.intern_from(&source, prototype);
-    let copied_length = table.intern_from(&source, length);
-    assert_eq!(copied_prototype, StringId::new(0));
-    assert_eq!(copied_length, StringId::new(1));
-    assert_eq!(table.get(copied_length), b"length");
-    assert_eq!(table.hash(copied_length), source.hash(length));
-    assert_eq!(table.name_class(copied_length), NameClass::Length);
-    assert_eq!(table.name_class(copied_prototype), NameClass::Prototype);
-    assert_eq!(
-        table.builtin_name(copied_prototype),
-        source.builtin_name(prototype)
-    );
-    assert!(table.builtin_name(copied_prototype).is_some());
-}
-
-#[test]
-fn intern_from_returns_id_of_equal_bytes() {
-    let mut source = StringTable::default();
-    source.intern(b"padding");
-    let name = source.intern(b"name");
-
-    let mut table = StringTable::default();
-    let interned = table.intern(b"name");
-    assert_eq!(table.intern_from(&source, name), interned);
-    assert_eq!(table.len(), 1);
-    assert_eq!(table.intern(b"name"), interned);
-}
-
-#[test]
 fn bytes_are_back_to_back_in_id_order() {
     let mut table = StringTable::default();
     for text in [&b"name"[..], b"", b"other", b"name", b"x"] {

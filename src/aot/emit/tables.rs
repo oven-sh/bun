@@ -118,7 +118,7 @@ where
     }
 }
 
-fn create_task<'p, 'o>(source: Source<'p>) -> Task<'p, 'o> {
+pub(super) fn create_task<'p, 'o>(source: Source<'p>) -> Task<'p, 'o> {
     Task {
         source,
         counts: [0; ProgramList::COUNT],

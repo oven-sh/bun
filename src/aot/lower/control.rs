@@ -1,5 +1,4 @@
 mod cleanup;
-mod exits;
 #[cfg(test)]
 mod tests;
 
@@ -114,14 +113,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let returned = self.returned;
         let value = match get_return_rule(self.builder.function().kind) {
             ReturnRule::DeclaredResult => {
-                let subject = convert::Int32Subject::Result;
-                self.describe_int32_flow(returned, subject, source);
-                let is_async = self
-                    .builder
-                    .function()
-                    .flags
-                    .contains(FunctionFlags::IS_ASYNC);
-                let source = match is_async {
+                self.describe_int32_flow(returned, convert::Int32Subject::Result, source);
+                let function = self.builder.function();
+                let source = match function.flags.contains(FunctionFlags::IS_ASYNC) {
                     true => {
                         source.and_then(|source| self.file.find_awaited_source(source, returned))
                     }
@@ -209,20 +203,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn lower_continue(&mut self, statement: StmtId) {
-        let target = match self.file.bound.jump_target(statement) {
-            Some(labeled) => Some(self.find_labeled_loop(labeled)),
-            None => self.control.innermost_continue_statement(),
+        let Some(mut target) = self.file.bound.jump_target(statement) else {
+            let target = self.control.innermost_continue_statement();
+            return self.emit_jump_exit(target.map(Exit::Continue));
         };
-        self.emit_jump_exit(target.map(Exit::Continue));
-    }
-
-    fn find_labeled_loop(&self, labeled: StmtId) -> StmtId {
-        let hir = self.file.hir;
-        let mut statement = labeled;
-        while let StmtKind::Labeled { body, .. } = hir[statement].kind {
-            statement = body;
+        while let StmtKind::Labeled { body, .. } = self.file.hir[target].kind {
+            target = body;
         }
-        statement
+        self.emit_jump_exit(Some(Exit::Continue(target)));
     }
 
     fn emit_jump_exit(&mut self, exit: Option<Exit>) {
@@ -291,19 +279,54 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }));
     }
 
-    pub(crate) fn end_cleanup_per_exit(
-        &mut self,
-        landing: CleanupLanding,
-        emit: &mut dyn FnMut(&mut FunctionLowering<'_, '_, '_, '_, '_>, CleanupPath),
-    ) {
-        self.end_per_exit(landing, emit);
+    fn emit_exit(&mut self, exit: Exit, returned: Option<ValueId>) {
+        debug_assert_ne!(exit, Exit::FallThrough);
+        debug_assert_eq!(returned.is_some(), exit == Exit::Return);
+        if self.builder.is_unreachable() {
+            return;
+        }
+        match (self.resolve_exit_block(exit), returned) {
+            (Some(block), Some(value)) => self.jump_with(block, &[value]),
+            (Some(block), None) => self.jump(block),
+            (None, Some(value)) => return self.emit_function_return(value),
+            (None, None) => self.builder.unreachable(),
+        }
+        self.begin_unreachable_block();
     }
 
-    pub(in crate::lower) fn end_cleanup_shared(
-        &mut self,
-        body: &mut dyn FnMut(&mut FunctionLowering<'_, '_, '_, '_, '_>),
-    ) {
-        self.end_shared(body);
+    fn resolve_exit_block(&mut self, exit: Exit) -> Option<BlockId> {
+        for entry in self.control.entries.iter_mut().rev() {
+            match entry {
+                ControlEntry::BreakTarget {
+                    statement, block, ..
+                } if exit == Exit::Break(*statement) => return Some(*block),
+                ControlEntry::ContinueTarget { statement, block }
+                    if exit == Exit::Continue(*statement) =>
+                {
+                    return Some(*block);
+                }
+                ControlEntry::Cleanup(cleanup) => {
+                    if let Some(known) = cleanup.exits.iter().find(|known| known.exit == exit) {
+                        return Some(known.block);
+                    }
+                    let block = self.builder.create_block(cleanup.outer);
+                    let returned = match exit {
+                        Exit::Return => Some(self.builder.add_parameter(block, None)),
+                        Exit::FallThrough | Exit::Break(_) | Exit::Continue(_) => None,
+                    };
+                    cleanup.exits.push(CleanupExit {
+                        exit,
+                        block,
+                        returned,
+                    });
+                    return Some(block);
+                }
+                ControlEntry::BreakTarget { .. }
+                | ControlEntry::ContinueTarget { .. }
+                | ControlEntry::Handler { .. } => {}
+            }
+        }
+        None
     }
 }
 

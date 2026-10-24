@@ -1,128 +1,105 @@
+macro_rules! forward_to_disk {
+    ($services:ident, $disk:ident, $(
+        fn $name:ident $(<$tree:lifetime>)? (&self $(, $argument:ident: $type:ty)* $(,)?)
+            $(-> $answer:ty)?;
+    )*) => {
+        $(fn $name $(<$tree>)? (&self $(, $argument: $type)*) $(-> $answer)? {
+            bun_sema::resolve::$services::$name(self.$disk $(, $argument)*)
+        })*
+    };
+}
+
 macro_rules! delegate_host_services_to_disk {
     ($disk:ident) => {
-        fn origin(&self, path: &[u8]) -> usize {
-            bun_sema::resolve::Host::origin(self.$disk, path)
+        fn take_unreadable(&self) -> Vec<Vec<u8>> {
+            let mut paths = std::mem::take(&mut *self.unreadable.lock());
+            paths.extend(bun_sema::resolve::Host::take_unreadable(self.$disk));
+            paths
         }
 
-        fn is_case_sensitive(&self) -> bool {
-            bun_sema::resolve::Host::is_case_sensitive(self.$disk)
+        fn realpath(&self, path: &[u8]) -> Vec<u8> {
+            match crate::load::is_host_path(path) {
+                true => path.to_vec(),
+                false => bun_sema::resolve::Host::realpath(self.$disk, path),
+            }
         }
 
-        fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
-            bun_sema::resolve::Host::scripts_of_page(self.$disk, page)
+        fn list_dir(&self, path: &[u8]) -> Vec<Vec<u8>> {
+            let (mut names, directories) = bun_sema::resolve::Host::entries(self, path);
+            names.extend(directories);
+            names
         }
 
-        fn parse<'tree>(
-            &self,
-            arena: &'tree bun_sema::session::Arena,
-            path: &[u8],
-            text: &[u8],
-            atoms: &bun_sema::atom::Interner<'tree>,
-            options: bun_sema::resolve::ParseOptions,
-        ) -> bun_sema::hir::File<'tree> {
-            bun_sema::resolve::Host::parse(self.$disk, arena, path, text, atoms, options)
-        }
-
-        fn parse_top_level<'tree>(
-            &self,
-            arena: &'tree bun_sema::session::Arena,
-            path: &[u8],
-            text: &[u8],
-            atoms: &bun_sema::atom::Interner<'tree>,
-            options: bun_sema::resolve::ParseOptions,
-        ) -> Option<bun_sema::hir::File<'tree>> {
-            bun_sema::resolve::Host::parse_top_level(self.$disk, arena, path, text, atoms, options)
-        }
-
-        fn parse_package_json(
-            &self,
-            arena: &bun_sema::session::Arena,
-            text: &[u8],
-        ) -> Option<bun_sema::json::Json> {
-            bun_sema::resolve::Host::parse_package_json(self.$disk, arena, text)
-        }
-
-        fn extended_config(&self, path: &[u8]) -> Option<bun_sema::resolve::CachedConfig> {
-            bun_sema::resolve::Host::extended_config(self.$disk, path)
-        }
-
-        fn cache_extended_config(
-            &self,
-            path: &[u8],
-            parsed: &dyn Fn() -> bun_sema::resolve::CachedConfig,
-        ) {
-            bun_sema::resolve::Host::cache_extended_config(self.$disk, path, parsed);
-        }
-
-        fn shared_paths(
-            &self,
-            paths: std::sync::Arc<bun_sema::resolve::Paths>,
-        ) -> std::sync::Arc<bun_sema::resolve::Paths> {
-            bun_sema::resolve::Host::shared_paths(self.$disk, paths)
-        }
-
-        fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
-            bun_sema::resolve::Host::parallel(self.$disk, count, work);
-        }
-
-        fn parallel_while(
-            &self,
-            count: usize,
-            work: &(dyn Fn(usize) + Sync),
-            meanwhile: &mut dyn FnMut(),
-        ) {
-            bun_sema::resolve::Host::parallel_while(self.$disk, count, work, meanwhile);
-        }
-
-        fn run_regions_inline(&self, work: &mut dyn FnMut()) {
-            bun_sema::resolve::Host::run_regions_inline(self.$disk, work);
-        }
-
-        fn is_single_threaded(&self) -> bool {
-            bun_sema::resolve::Host::is_single_threaded(self.$disk)
-        }
-
-        fn helpers_now(&self) -> Option<usize> {
-            bun_sema::resolve::Host::helpers_now(self.$disk)
-        }
-
-        fn with_helpers(&self, helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
-            bun_sema::resolve::Host::with_helpers(self.$disk, helpers, count, work);
-        }
-
-        fn loaded(&self) {
-            bun_sema::resolve::Host::loaded(self.$disk);
-        }
-
-        fn threads(&self) -> usize {
-            bun_sema::resolve::Host::threads(self.$disk)
-        }
-
-        fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
-            bun_sema::resolve::Host::io_pool(self.$disk)
+        crate::load::disk_delegation::forward_to_disk! { Host, $disk,
+            fn origin(&self, path: &[u8]) -> usize;
+            fn is_case_sensitive(&self) -> bool;
+            fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
+            fn parse<'tree>(
+                &self,
+                arena: &'tree bun_sema::session::Arena,
+                path: &[u8],
+                text: &[u8],
+                atoms: &bun_sema::atom::Interner<'tree>,
+                options: bun_sema::resolve::ParseOptions,
+            ) -> bun_sema::hir::File<'tree>;
+            fn parse_top_level<'tree>(
+                &self,
+                arena: &'tree bun_sema::session::Arena,
+                path: &[u8],
+                text: &[u8],
+                atoms: &bun_sema::atom::Interner<'tree>,
+                options: bun_sema::resolve::ParseOptions,
+            ) -> Option<bun_sema::hir::File<'tree>>;
+            fn parse_package_json(
+                &self,
+                arena: &bun_sema::session::Arena,
+                text: &[u8],
+            ) -> Option<bun_sema::json::Json>;
+            fn extended_config(&self, path: &[u8]) -> Option<bun_sema::resolve::CachedConfig>;
+            fn cache_extended_config(
+                &self,
+                path: &[u8],
+                parsed: &dyn Fn() -> bun_sema::resolve::CachedConfig,
+            );
+            fn shared_paths(
+                &self,
+                paths: std::sync::Arc<bun_sema::resolve::Paths>,
+            ) -> std::sync::Arc<bun_sema::resolve::Paths>;
+            fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync));
+            fn parallel_while(
+                &self,
+                count: usize,
+                work: &(dyn Fn(usize) + Sync),
+                meanwhile: &mut dyn FnMut(),
+            );
+            fn run_regions_inline(&self, work: &mut dyn FnMut());
+            fn is_single_threaded(&self) -> bool;
+            fn helpers_now(&self) -> Option<usize>;
+            fn with_helpers(&self, helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync));
+            fn loaded(&self);
+            fn threads(&self) -> usize;
+            fn io_pool(&self) -> Option<&bun_threading::ThreadPool>;
         }
     };
 }
 
 macro_rules! delegate_runtime_config_parsers_to_disk {
     ($disk:ident) => {
-        fn parse_runtime_package_json(
-            &self,
-            arena: &bun_sema::session::Arena,
-            text: &[u8],
-        ) -> Option<bun_sema::json::Json> {
-            bun_sema::resolve::CodeHost::parse_runtime_package_json(self.$disk, arena, text)
-        }
-
-        fn parse_runtime_tsconfig(
-            &self,
-            arena: &bun_sema::session::Arena,
-            text: &[u8],
-        ) -> Option<bun_sema::json::Json> {
-            bun_sema::resolve::CodeHost::parse_runtime_tsconfig(self.$disk, arena, text)
+        crate::load::disk_delegation::forward_to_disk! { CodeHost, $disk,
+            fn parse_runtime_package_json(
+                &self,
+                arena: &bun_sema::session::Arena,
+                text: &[u8],
+            ) -> Option<bun_sema::json::Json>;
+            fn parse_runtime_tsconfig(
+                &self,
+                arena: &bun_sema::session::Arena,
+                text: &[u8],
+            ) -> Option<bun_sema::json::Json>;
         }
     };
 }
 
 pub(crate) use delegate_host_services_to_disk;
 pub(crate) use delegate_runtime_config_parsers_to_disk;
+pub(crate) use forward_to_disk;

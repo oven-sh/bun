@@ -100,12 +100,8 @@ fn package_that_may_have_side_effects_is_loaded_whole() {
     ];
     for manifest in manifests {
         let manifest = (WITHOUT_SIDE_EFFECTS.0, manifest);
-        assert_eq!(
-            load_package(entry_point, manifest, BARREL),
-            ALL,
-            "{}",
-            manifest.1
-        );
+        let loaded = load_package(entry_point, manifest, BARREL);
+        assert_eq!(loaded, ALL, "{}", manifest.1);
     }
 }
 
@@ -318,11 +314,8 @@ fn module_that_defines_an_export_is_no_barrel() {
         "export { a } from './a.js'; export { b } from './b.js'; export { c } from './c.js'; const d = 4; export { d };",
     ];
     for module in modules {
-        assert_eq!(
-            load_package(entry_point, WITHOUT_SIDE_EFFECTS, module),
-            ALL,
-            "{module}"
-        );
+        let loaded = load_package(entry_point, WITHOUT_SIDE_EFFECTS, module);
+        assert_eq!(loaded, ALL, "{module}");
     }
 }
 
@@ -355,11 +348,8 @@ fn entry_point_is_no_barrel() {
 #[test]
 fn specifier_behind_a_name_that_nothing_asks_for_is_not_resolved() {
     let barrel = "export { b } from './b.js'; export { missing } from './missing.js';";
-    let loaded = load_package(
-        "import { b } from 'lib'; console.log(b);",
-        WITHOUT_SIDE_EFFECTS,
-        barrel,
-    );
+    let entry_point = "import { b } from 'lib'; console.log(b);";
+    let loaded = load_package(entry_point, WITHOUT_SIDE_EFFECTS, barrel);
     assert_eq!(loaded, ["b.js", "index.js"]);
 }
 
@@ -423,11 +413,8 @@ fn files_and_their_order_do_not_depend_on_threads() {
     );
     for thread_count in [2, 3, 8] {
         for _ in 0..8 {
-            assert_eq!(
-                load_with_threads(&NESTED, thread_count),
-                expected,
-                "{thread_count} threads"
-            );
+            let loaded = load_with_threads(&NESTED, thread_count);
+            assert_eq!(loaded, expected, "{thread_count} threads");
         }
     }
 }

@@ -71,11 +71,10 @@ pub(super) fn collect_module_list(
         },
         input_of_file,
     };
-    let main = sources
-        .entry_points()
-        .iter()
-        .find(|entry_point| entry_point.kind == EntryPointKind::Main)
-        .map(|entry_point| entry_point.file);
+    let mut entry_points = sources.entry_points().iter();
+    let main = entry_points
+        .find(|it| it.kind == EntryPointKind::Main)
+        .map(|it| it.file);
     let list = ModuleList {
         inputs: listed_files
             .iter()
@@ -106,10 +105,8 @@ impl ListedModules {
 
 impl Collector<'_, '_> {
     fn describe(&self, file: FileId) -> ModuleInput {
-        let sites = self
-            .files
-            .compiled(file)
-            .map_or(&[][..], |compiled| compiled.analysis.import_sites);
+        let compiled = self.files.compiled(file);
+        let sites = compiled.map_or(&[][..], |compiled| compiled.analysis.import_sites);
         let mut imports = Vec::new();
         for site in sites {
             self.add_imports(file, site, &mut imports);
@@ -247,10 +244,7 @@ impl Collector<'_, '_> {
         original: &[u8],
     ) -> Option<ModuleImport> {
         let target = match module {
-            ModuleRef::File(target)
-            | ModuleRef::Inner { file: target, .. }
-            | ModuleRef::Face(target)
-            | ModuleRef::Check(target) => target,
+            ModuleRef::File(target) | ModuleRef::Face(target) | ModuleRef::Check(target) => target,
             ModuleRef::Runtime(_) | ModuleRef::External { .. } => return None,
         };
         let loader = self.sources.loader(target);

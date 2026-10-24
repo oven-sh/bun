@@ -1,20 +1,20 @@
 use super::{Access, AccessKind, StoredValue};
-use crate::builtins::id::BuiltinId;
-use crate::builtins::{BuiltinNames, ResolvedBuiltins, table};
-use bun_sema::atom::{Atom, Interner, known};
+use crate::builtins::{BuiltinNames, ResolvedBuiltins};
+use crate::modules::namespace_members::{find_outermost_type_assertion, is_plain_name};
+use crate::modules::order::FileText;
+use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{
     AssignmentTarget, Binding, BindingInitializer, Bound, CodeUnit, CommonJsVariable, FnOwner,
-    FunctionFlags, Parent, PatParent, has_mapped_arguments,
+    FunctionFlags, Parent, PatParent,
 };
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, Decisions, FoldedValue};
 use bun_sema::hir::{
-    self, BinOp, Chain, ExprId, ExprKind, Flags, FnId, FnKind, MemberKey, PatId, StmtId, StmtKind,
-    UnOp,
+    self, BinOp, Chain, ExprId, ExprKind, FnId, FnKind, MemberKey, PatId, StmtId, StmtKind, UnOp,
 };
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::{FxHashMap, FxHashSet};
-use std::cell::{OnceCell, RefCell};
+use std::cell::OnceCell;
 
 pub(super) struct Text<'a, 's> {
     pub file: FileId,
@@ -25,9 +25,9 @@ pub(super) struct Text<'a, 's> {
     pub decisions: &'a Decisions<'s>,
     pub builtins: &'a ResolvedBuiltins,
     pub builtin_names: &'a BuiltinNames,
+    pub places: FileText<'a, 's>,
     functions_with_this: OnceCell<Option<FxHashSet<FnId>>>,
     first_returns: OnceCell<FxHashMap<CodeUnit, u32>>,
-    called_only_where_written: RefCell<FxHashMap<FnId, bool>>,
 }
 
 #[derive(Copy, Clone)]
@@ -53,9 +53,9 @@ impl<'a, 's> Text<'a, 's> {
             decisions: &analysis.decisions,
             builtins,
             builtin_names,
+            places: FileText::new(files, file),
             functions_with_this: OnceCell::new(),
             first_returns: OnceCell::new(),
-            called_only_where_written: RefCell::default(),
         }
     }
 
@@ -63,27 +63,14 @@ impl<'a, 's> Text<'a, 's> {
         (0..self.hir.exprs.len() as u32).map(ExprId)
     }
 
-    pub(super) fn outermost_type_assertion(&self, operand: ExprId) -> ExprId {
-        let mut outermost = operand;
-        while let Parent::Expr(parent) = self.bound.parent_of_expr(outermost)
-            && self.hir.type_assertion_operand(parent) == Some(outermost)
-        {
-            outermost = parent;
-        }
-        outermost
-    }
-
     /// The parent of an expression, past the type assertions around it.
     pub(super) fn parent(&self, expression: ExprId) -> (ExprId, Parent) {
-        let outermost = self.outermost_type_assertion(expression);
+        let outermost = find_outermost_type_assertion(self.hir, self.bound, expression);
         (outermost, self.bound.parent_of_expr(outermost))
     }
 
     pub(super) fn is_statement(&self, expression: ExprId) -> bool {
-        match self.parent(expression).1 {
-            Parent::Stmt(statement) => matches!(self.hir[statement].kind, StmtKind::Expr(_)),
-            _ => false,
-        }
+        self.statement_of(expression).is_some()
     }
 
     /// The statement that the expression is, and nothing else.
@@ -119,18 +106,8 @@ impl<'a, 's> Text<'a, 's> {
         }
     }
 
-    /// An object finds these names without having them, or keeps what is stored under them elsewhere.
     pub(super) fn can_name_variable(&self, name: Atom) -> bool {
-        let is_number = self
-            .atoms
-            .bytes(name)
-            .first()
-            .is_some_and(u8::is_ascii_digit);
-        let is_inherited = self
-            .builtin_names
-            .get(name)
-            .is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
-        !is_number && !is_inherited && name != known::__proto__
+        is_plain_name(self.atoms, self.builtin_names, name)
     }
 
     /// The access to a member of `object` that `object` is written in.
@@ -237,18 +214,12 @@ impl<'a, 's> Text<'a, 's> {
     }
 
     fn classify_function(&self, function: FnId) -> StoredValue {
-        let has_eval = self
-            .bound
-            .function_flags(function)
-            .contains(FunctionFlags::HAS_DIRECT_EVAL);
-        let functions_with_this = self
-            .functions_with_this
-            .get_or_init(|| self.find_functions_with_this());
-        let ignores_this = self.hir[function].kind == FnKind::Arrow
-            || (!has_eval
-                && functions_with_this
-                    .as_ref()
-                    .is_some_and(|functions| !functions.contains(&function)));
+        let flags = self.bound.function_flags(function);
+        let has_eval = flags.contains(FunctionFlags::HAS_DIRECT_EVAL);
+        let with_this = &self.functions_with_this;
+        let with_this = with_this.get_or_init(|| self.find_functions_with_this());
+        let has_no_this = || matches!(with_this, Some(set) if !set.contains(&function));
+        let ignores_this = self.hir[function].kind == FnKind::Arrow || (!has_eval && has_no_this());
         match ignores_this {
             true => StoredValue::IgnoresThis,
             false => StoredValue::Unknown,
@@ -318,38 +289,28 @@ impl<'a, 's> Text<'a, 's> {
     pub(super) fn code_unit_of(&self, expression: ExprId) -> Option<CodeUnit> {
         let (hir, bound) = (self.hir, self.bound);
         let mut parent = bound.parent_of_expr(expression);
-        loop {
-            let statement = match parent {
-                Parent::Expr(outer) => {
-                    parent = bound.parent_of_expr(outer);
-                    continue;
-                }
+        let statement = loop {
+            parent = match parent {
+                Parent::Expr(outer) => bound.parent_of_expr(outer),
                 Parent::Prop(property)
                 | Parent::PropKey(property)
                 | Parent::MethodKey(property) => {
-                    parent = bound.parent_of_expr(bound.prop_owner[property.idx()]);
-                    continue;
+                    bound.parent_of_expr(bound.prop_owner[property.idx()])
                 }
                 Parent::PatPropDefault(property) | Parent::PatKey(property) => {
-                    parent = self.parent_of_pattern(hir[property].value);
-                    continue;
+                    self.parent_of_pattern(hir[property].value)
                 }
-                Parent::PatElemDefault(element) => {
-                    parent = self.parent_of_pattern(hir[element].pat);
-                    continue;
-                }
+                Parent::PatElemDefault(element) => self.parent_of_pattern(hir[element].pat),
                 // What a class extends, its decorators and the computed names of its members are evaluated where the class is.
                 Parent::ClassExtends(class) | Parent::ClassDecorator(class) => {
-                    parent = bound.class_owner[class.idx()].to_parent();
-                    continue;
+                    bound.class_owner[class.idx()].to_parent()
                 }
                 Parent::MemberKey(member) | Parent::MemberDecorator(member) => {
-                    parent = bound.class_owner[bound.member_class(member)?.idx()].to_parent();
-                    continue;
+                    bound.class_owner[bound.member_class(member)?.idx()].to_parent()
                 }
-                Parent::Stmt(statement) => statement,
-                Parent::VarInit(declaration) => bound.var_stmt[declaration.idx()],
-                Parent::Case(case) => bound.case_stmt[case.idx()],
+                Parent::Stmt(statement) => break statement,
+                Parent::VarInit(declaration) => break bound.var_stmt[declaration.idx()],
+                Parent::Case(case) => break bound.case_stmt[case.idx()],
                 Parent::File => return Some(CodeUnit::File),
                 Parent::FnBody(function) => return Some(CodeUnit::Function(function)),
                 Parent::ParamDefault(parameter) => {
@@ -358,9 +319,9 @@ impl<'a, 's> Text<'a, 's> {
                 Parent::MemberInit(member) => return Some(CodeUnit::FieldInitializer(member)),
                 _ => return None,
             };
-            let scope = bound.scope_of_stmt(statement);
-            return scope.is_some().then(|| bound.code_unit(scope));
-        }
+        };
+        let scope = bound.scope_of_stmt(statement);
+        scope.is_some().then(|| bound.code_unit(scope))
     }
 
     pub(super) fn enclosing_unit_of(&self, function: FnId) -> CodeUnit {
@@ -404,17 +365,6 @@ impl<'a, 's> Text<'a, 's> {
         Some(unit)
     }
 
-    fn is_called_where_written(&self, function: FnId) -> bool {
-        let hir = self.hir;
-        let mut known = self.called_only_where_written.borrow_mut();
-        !hir[function]
-            .flags
-            .intersects(Flags::ASYNC | Flags::GENERATOR)
-            && *known
-                .entry(function)
-                .or_insert_with(|| self.bound.is_called_only_where_written(hir, function))
-    }
-
     fn find_first_returns(&self) -> FxHashMap<CodeUnit, u32> {
         let mut first_returns = FxHashMap::default();
         for (index, statement) in self.hir.stmts.iter().enumerate() {
@@ -440,32 +390,14 @@ impl<'a, 's> Text<'a, 's> {
             .is_none_or(|&first| position < first)
     }
 
-    // Whether `user` evaluates its operand whenever it is evaluated itself.
+    // Whether `user` evaluates its operand whenever it is evaluated itself, and goes on at once.
     fn always_evaluates(&self, user: ExprId, operand: ExprId) -> bool {
-        let hir = self.hir;
-        let is_choice = |op: BinOp| matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish);
-        match hir[user].kind {
-            ExprKind::Binary { op, left, .. } => !is_choice(op) || operand == left,
-            ExprKind::Assign {
-                op: Some(op),
-                target,
-                ..
-            } => !is_choice(op) || operand == target,
-            // In a pattern `target = value` is a default, which is evaluated only where nothing comes for the target.
-            ExprKind::Assign {
-                op: None, value, ..
-            } => operand != value || self.bound.get_assignment_target(hir, user).is_none(),
-            ExprKind::Cond { test, .. } => operand == test,
-            ExprKind::Index { obj, chain, .. } => chain == Chain::No || operand == obj,
-            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
-                hir[call].chain == Chain::No || operand == hir[call].callee
-            }
+        match self.hir[user].kind {
             ExprKind::Yield { .. } | ExprKind::Await(_) | ExprKind::Jsx(_) => false,
-            _ => true,
+            _ => self.places.always_evaluates(user, operand),
         }
     }
 
-    // Whether a statement runs its part whenever it runs itself.
     fn always_runs(&self, user: StmtId, part: Node) -> bool {
         matches!(
             (self.hir[user].kind, part),
@@ -524,7 +456,7 @@ impl<'a, 's> Text<'a, 's> {
                         return true;
                     }
                     match bound.fns[function.idx()].owner {
-                        FnOwner::Expr(written) if self.is_called_where_written(function) => {
+                        FnOwner::Expr(written) if self.places.is_called_where_written(function) => {
                             Node::Expression(written)
                         }
                         _ => return false,
@@ -544,7 +476,7 @@ impl<'a, 's> Text<'a, 's> {
             let CodeUnit::Function(function) = unit else {
                 return false;
             };
-            if !self.is_called_where_written(function) {
+            if !self.places.is_called_where_written(function) {
                 return false;
             }
             unit = self.enclosing_unit_of(function);
@@ -552,36 +484,17 @@ impl<'a, 's> Text<'a, 's> {
         true
     }
 
-    /// Whether the expression is a statement that every run of `body` passes.
     pub(super) fn is_statement_in_order(&self, expression: ExprId, body: CodeUnit) -> bool {
         self.is_statement(expression) && self.is_in_order(expression, body)
     }
 
-    /// Whoever replaces `require` decides what a call of it answers.
-    pub(super) fn may_replace_require(&self) -> bool {
-        let (bound, decisions) = (self.bound, self.decisions);
-        let require = Binding::CommonJs(CommonJsVariable::Require);
-        let mut stores = bound.runtime.unbound_name_stores().iter();
-        let mut evals = bound.runtime.eval_scopes().iter();
-        let mut idents = bound.ident_bindings().iter();
-        stores
-            .any(|&(target, _)| bound.binding(target) == require && !decisions.is_dead_expr(target))
-            || evals.any(|&(call, _)| !decisions.is_dead_expr(call))
-            || (has_mapped_arguments(self.hir, CodeUnit::File)
-                && idents.any(|&(ident, binding)| {
-                    binding == Binding::Arguments(CodeUnit::File) && !decisions.is_dead_expr(ident)
-                }))
-    }
-
     /// Only a plain call of the name `require` answers with the module for sure, and only in a file that cannot put something else under the name.
     pub(super) fn is_call_of_free_require(&self, call: ExprId) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
+        let hir = self.hir;
         let ExprKind::Call(id) = hir[call].kind else {
             return false;
         };
         let callee = hir.skip_type_assertions(hir[id].callee);
-        hir[id].chain == Chain::No
-            && matches!(hir[callee].kind, ExprKind::Ident(_))
-            && bound.binding(callee) == Binding::CommonJs(CommonJsVariable::Require)
+        hir[id].chain == Chain::No && self.places.is_free(callee, CommonJsVariable::Require)
     }
 }

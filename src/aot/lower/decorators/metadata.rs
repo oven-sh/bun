@@ -20,14 +20,6 @@ struct MetadataRoot {
     global: Option<MetadataGlobal>,
 }
 
-fn design_label(key: DesignKey) -> &'static [u8] {
-    match key {
-        DesignKey::Type => b"design:type",
-        DesignKey::ParameterTypes => b"design:paramtypes",
-        DesignKey::ReturnType => b"design:returntype",
-    }
-}
-
 fn global_builtin(global: MetadataGlobal) -> BuiltinId {
     match global {
         MetadataGlobal::Object => BuiltinId::Object,
@@ -204,9 +196,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn emit_define_metadata(&mut self, key: DesignKey, value: ValueId) -> ValueId {
-        let label = self.file.intern_bytes(design_label(key));
+        let label: &[u8] = match key {
+            DesignKey::Type => b"design:type",
+            DesignKey::ParameterTypes => b"design:paramtypes",
+            DesignKey::ReturnType => b"design:returntype",
+        };
+        let label = self.file.intern_bytes(label);
         let label = self.builder.string(label);
-        let helper = BuiltinId::CompilerHelpersDefineMetadata;
-        self.emit_builtin_call(helper, &[label, value])
+        self.emit_builtin_call(BuiltinId::CompilerHelpersDefineMetadata, &[label, value])
     }
 }

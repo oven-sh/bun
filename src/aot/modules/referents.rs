@@ -224,28 +224,24 @@ impl<'s> ReferentContext<'s> for LinkedProject<'_, 's> {
             return None;
         };
         match (self.graph.interop(module).require_result, module) {
-            (RequireResult::Namespace, _) => Some(LoadedValue::Namespace(module)),
+            // The value of a built-in module is an object. The table of built-ins lists its members as the exports of the module.
+            (RequireResult::Namespace, _)
+            | (RequireResult::DefaultExport, ModuleRef::Runtime(_)) => {
+                Some(LoadedValue::Namespace(module))
+            }
             (RequireResult::DefaultExport, ModuleRef::File(loaded)) => {
                 Some(LoadedValue::DefaultExport(loaded))
             }
             (RequireResult::ModuleExports, ModuleRef::File(loaded)) => {
                 Some(LoadedValue::ModuleExports(loaded))
             }
-            // An object. The table of built-ins lists its members as the exports of the module.
-            (RequireResult::DefaultExport, ModuleRef::Runtime(_)) => {
-                Some(LoadedValue::Namespace(module))
-            }
             (
                 RequireResult::DefaultExport,
-                ModuleRef::Inner { .. }
-                | ModuleRef::Face(_)
-                | ModuleRef::Check(_)
-                | ModuleRef::External { .. },
-            ) => None,
-            (
+                ModuleRef::Face(_) | ModuleRef::Check(_) | ModuleRef::External { .. },
+            )
+            | (
                 RequireResult::ModuleExports,
-                ModuleRef::Inner { .. }
-                | ModuleRef::Face(_)
+                ModuleRef::Face(_)
                 | ModuleRef::Check(_)
                 | ModuleRef::Runtime(_)
                 | ModuleRef::External { .. },

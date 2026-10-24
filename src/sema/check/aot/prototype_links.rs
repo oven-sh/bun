@@ -13,18 +13,12 @@ use crate::session::Arena;
 use crate::util::{FxHashMap, FxHashSet};
 use std::sync::OnceLock;
 
-// What a call of a function does. The numbers are positions of arguments.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum PrototypeOperation {
-    // `parent` becomes the prototype of `object`, which is the result where the call has one.
     SetPrototype { object: u32, parent: u32 },
-    // The result is a new object whose prototype is `parent`.
     CreateObject { parent: u32 },
-    // The prototype object of the function `child` inherits from the prototype object of the function `parent`.
     LinkClasses { child: u32, parent: u32 },
-    // The properties of the arguments behind `target` are stored into `target`, which is the result.
     CopyProperties { target: u32 },
-    // The callee is a member of a function, which is called with `receiver` as its `this`.
     CallFunction { receiver: u32 },
 }
 
@@ -35,22 +29,18 @@ pub enum NamedValue {
     PrototypeOperation(PrototypeOperation),
 }
 
-// What an expression names, decided by the bindings of the program and by nothing else.
 pub trait NamedValues: Sync {
     fn find_named_value(&self, file: FileId, expression: ExprId) -> Option<NamedValue>;
 
-    // The class or the function of Bun's own modules that an expression of another program names. Its file is one of theirs.
     fn find_library_declaration(&self, _: FileId, _: ExprId) -> Option<ClassDeclaration> {
         None
     }
 
-    // The class or the function that the module of Bun's own with this specifier exports under the name.
     fn find_library_export(&self, _specifier: Atom, _name: Atom) -> Option<ClassDeclaration> {
         None
     }
 }
 
-// A parameter is one of a function of the file whose text has the link.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(super) enum LinkEnd {
     Declaration(ClassDeclaration),
@@ -68,7 +58,6 @@ impl LinkEnd {
     }
 }
 
-// The prototype object of `child` gets the prototype object of `parent` as its prototype.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(super) struct PrototypeLink {
     pub(super) child: LinkEnd,
@@ -81,7 +70,6 @@ pub(super) struct FunctionCall {
     pub(super) callee: FunctionRef,
 }
 
-// What the text of one file says.
 pub(in crate::check) struct PrototypeLinks<'s> {
     links_of_declarations: &'s [PrototypeLink],
     links_of_parameters: &'s [(FnId, PrototypeLink)],
@@ -117,19 +105,16 @@ impl<'s> PrototypeLinks<'s> {
         entries_of(self.calls_passing_parameters, function)
     }
 
-    // In the order of the text.
     pub(super) fn calls_passing_this_of(&self, function: FnId) -> &'s [(FnId, FunctionCall)] {
         entries_of(self.calls_passing_this, function)
     }
 
-    // `function.prototype = G.prototype`: what it constructs are objects of `G`, and it has no prototype object of its own.
     pub(super) fn shares_prototype_object(&self, function: FnId) -> bool {
         self.functions_sharing_prototype_objects
             .binary_search(&function)
             .is_ok()
     }
 
-    // The object literals whose properties are copied into the prototype object of `function`, in the order of the text.
     pub(super) fn copied_literals_of(&self, function: FnId) -> &'s [(FnId, ExprId)] {
         entries_of(self.copied_literals, function)
     }
@@ -241,7 +226,6 @@ impl EndFinder<'_, '_, '_> {
         matches!(self.hir[argument].kind, ExprKind::Spread(_))
     }
 
-    // `None`: the call has fewer arguments, or a spread argument comes first.
     fn find_argument(&self, call: ExprId, index: u32) -> Option<ExprId> {
         let mut arguments = self.arguments(call).take(index as usize + 1);
         if arguments.clone().any(|argument| self.is_spread(argument)) {
@@ -280,7 +264,6 @@ impl EndFinder<'_, '_, '_> {
         self.find_owner_of_prototype_object(self.hir[parent].value)
     }
 
-    // The arm of `test ? yes : no` that is evaluated where what `test` compares with `null` is a class or a function.
     fn find_arm_for_declaration(&self, test: ExprId, arms: Branches) -> Option<ExprId> {
         let ExprKind::Binary { op, left, right } = self.hir[test].kind else {
             return None;
@@ -299,7 +282,6 @@ impl EndFinder<'_, '_, '_> {
         self.find_end(compared).map(|_| arm)
     }
 
-    // The owner of the prototype object from which the object that `value` creates inherits.
     fn find_parent_of_created_object(&self, value: ExprId) -> Option<LinkEnd> {
         let value = self.hir.skip_type_assertions(value);
         match self.hir[value].kind {
@@ -332,7 +314,6 @@ impl EndFinder<'_, '_, '_> {
         }
     }
 
-    // What `link`, which the file of the callee has in terms of the parameters of the callee, does to the arguments of `call`, which is a call in this file.
     pub(super) fn apply_to_arguments(
         &self,
         link: PrototypeLink,
@@ -359,7 +340,6 @@ struct CallPassingThis {
 
 struct LinkCollector<'c, 'p, 's> {
     ends: EndFinder<'c, 'p, 's>,
-    // `F.prototype = G.prototype`: what `new F` creates inherits from the prototype object of `G`. `None`: the text has several such stores into `F`.
     owners_of_shared_prototype_objects: FxHashMap<LinkEnd, Option<LinkEnd>>,
     links: Vec<PrototypeLink>,
     known_links: FxHashSet<PrototypeLink>,
@@ -481,7 +461,6 @@ impl<'c, 'p, 's> LinkCollector<'c, 'p, 's> {
                 self.visit_function_call(FunctionCall { call, callee });
             }
             Some(NamedValue::Class(_)) => {}
-            // No binding names a member of a function of the program. Such a function inherits `call` and `apply`.
             None => match self.ends.find_called_member(call) {
                 Some((_, MemberKey::Name(name))) if name == known::call || name == known::apply => {
                     self.visit_call_passing_receiver(call, 0);
@@ -608,7 +587,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         for link in links {
             match link.child {
                 LinkEnd::Declaration(_) => links_of_declarations.push(link),
-                // The program changes a prototype object of the library, which says nothing of its own classes.
                 LinkEnd::LibraryDeclaration(_) => {}
                 LinkEnd::Parameter { function, .. } => links_of_parameters.push((function, link)),
             }

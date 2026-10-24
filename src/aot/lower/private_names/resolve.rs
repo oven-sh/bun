@@ -1,18 +1,8 @@
 use bun_sema::bind::{PrivateMembers, PrivateNameId};
-use bun_sema::check::aot::ClassRef;
-use bun_sema::hir::{ClassId, Flags, MemberId};
+use bun_sema::hir::{Flags, MemberId};
 
-use super::{AccessorStorage, PrivateBinding, PrivateHolder};
-use crate::ir::LayoutId;
+use super::{PrivateBinding, PrivateHolder, StoredValue};
 use crate::lower::{FileLowering, class, layouts};
-
-fn get_class_layout(file: &mut FileLowering<'_, '_, '_, '_>, class: ClassId) -> LayoutId {
-    let reference = ClassRef {
-        file: file.file,
-        class,
-    };
-    file.class_layout(reference)
-}
 
 impl FileLowering<'_, '_, '_, '_> {
     pub(in crate::lower) fn resolve_private_name(&mut self, name: PrivateNameId) -> PrivateBinding {
@@ -22,7 +12,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let holder = if declared.is_static {
             PrivateHolder::ClassObject
         } else {
-            let layout = get_class_layout(self, declared.class);
+            let layout = self.own_class_layout(declared.class);
             let own = layouts::own_fields(self, layout);
             let field = match declared.members {
                 PrivateMembers::Field(_) | PrivateMembers::AutoAccessor(_) => {
@@ -41,21 +31,18 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    pub(in crate::lower) fn resolve_accessor_storage(
-        &mut self,
-        member: MemberId,
-    ) -> AccessorStorage {
+    pub(in crate::lower) fn resolve_accessor_storage(&mut self, member: MemberId) -> StoredValue {
         let class = self.bound.member_class(member);
         let class = class.expect("an accessor field is a member of a class");
         let holder = if self.hir[member].flags.contains(Flags::STATIC) {
             PrivateHolder::ClassObject
         } else {
-            let layout = get_class_layout(self, class);
+            let layout = self.own_class_layout(class);
             let field = layouts::own_fields(self, layout).find_accessor_storage(member);
             let field = field.expect("the layout lists the private state of its class");
             PrivateHolder::Instance { layout, field }
         };
-        AccessorStorage {
+        StoredValue {
             class,
             member,
             holder,

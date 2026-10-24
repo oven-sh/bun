@@ -1,5 +1,5 @@
 use bun_sema::atom::known;
-use bun_sema::bind::{Binding, Decl};
+use bun_sema::bind::{Binding, Decl, ScopeId};
 use bun_sema::check::compute_ecma_line_starts;
 use bun_sema::hir::{ExprId, StmtId};
 
@@ -17,12 +17,15 @@ pub(super) fn declare_module_body(file: &mut FileLowering<'_, '_, '_, '_>) -> Mo
     let kind = file.inputs.modules.kind(file.file);
     let key = FunctionKey::ModuleBody(file.file);
     let body = file.declare_function(key, |file| file.create_body_header(kind));
-    file.ensure_exported_variables();
-    // Link finds the bodies of the further modules of the file by their keys.
     let modules = file.inputs.modules;
-    for &callback in modules.inner_modules(file.file) {
-        file.declare_inner_module_body(callback);
+    for export in modules.exports(file.file) {
+        if let ExportBinding::Variable(symbol) = export.binding
+            && symbol.file == file.file
+        {
+            file.ensure_variable(VariableKey::Symbol(symbol));
+        }
     }
+    // Link finds the bodies of the further modules of the file by their keys.
     file.declare_face_body();
     file.declare_check_body();
     let data = match kind {
@@ -36,6 +39,18 @@ pub(super) fn declare_module_body(file: &mut FileLowering<'_, '_, '_, '_>) -> Mo
         body: Some(body),
         data,
     }
+}
+
+pub(in crate::lower) fn finish_body(
+    mut lowering: FunctionLowering<'_, '_, '_, '_, '_>,
+    scope: Option<ScopeId>,
+) {
+    if let Some(scope) = scope {
+        lowering.leave_scope(scope);
+    }
+    let undefined = lowering.builder.undefined();
+    lowering.emit_return(undefined, None);
+    lowering.finish();
 }
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -64,18 +79,6 @@ impl FileLowering<'_, '_, '_, '_> {
         header
     }
 
-    fn ensure_exported_variables(&mut self) {
-        let modules = self.inputs.modules;
-        for export in modules.exports(self.file) {
-            let ExportBinding::Variable(symbol) = export.binding else {
-                continue;
-            };
-            if symbol.file == self.file {
-                self.ensure_variable(VariableKey::Symbol(symbol));
-            }
-        }
-    }
-
     pub(crate) fn lower_module_body(&mut self, function: FunctionId) {
         self.report_misused_compiler_functions();
         match self.inputs.modules.kind(self.file) {
@@ -98,10 +101,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         lowering.initialize_path_variables();
         lowering.lower_file_statements();
-        lowering.leave_scope(scope);
-        let undefined = lowering.builder.undefined();
-        lowering.emit_return(undefined, None);
-        lowering.finish();
+        finish_body(lowering, Some(scope));
     }
 
     fn lower_runtime_module_body(&mut self, function: FunctionId) {

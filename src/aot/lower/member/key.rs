@@ -6,8 +6,8 @@ use bun_sema::hir::{ExprId, MemberKey, PropKey};
 use super::PropertyName;
 use crate::builtins::table;
 use crate::builtins::{
-    BuiltinName, BuiltinNames, Intrinsic, IntrinsicPosition, Mutability, Resolved, SourceDialect,
-    find_intrinsic, find_symbol_key,
+    Intrinsic, IntrinsicPosition, Mutability, Resolved, SourceDialect, find_intrinsic,
+    find_symbol_key,
 };
 use crate::ir::generated::NameClass;
 use crate::ir::{PropertyKey, PropertyKeyId, PropertyKeyKind, StringId, ValueId};
@@ -22,7 +22,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    /// The key that names the function in `const f = function () {}`.
     pub(in crate::lower) fn function_name_key(
         &mut self,
         binding: Binding,
@@ -53,7 +52,11 @@ impl FileLowering<'_, '_, '_, '_> {
         if let Some(symbol) = find_symbol_key(names, name) {
             return self.symbol_key(symbol);
         }
-        let Some(private_name) = find_engine_private_name(names, name) else {
+        let private_name = match find_intrinsic(names, name, IntrinsicPosition::Member) {
+            Some(Intrinsic::PrivateName) => names.get_private(name),
+            Some(_) | None => None,
+        };
+        let Some(private_name) = private_name else {
             return self.atom_key(name);
         };
         let text = self.intern_bytes(table::text_of_name(private_name));
@@ -89,7 +92,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    pub(super) fn find_element_index(&self, key: PropertyKeyId) -> Option<u32> {
+    fn find_element_index(&self, key: PropertyKeyId) -> Option<u32> {
         let key = self.fragment.property_keys.get(key);
         let text = match key.kind {
             PropertyKeyKind::Text => key.text?,
@@ -122,32 +125,23 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
-fn find_engine_private_name(names: &BuiltinNames, spelling: Atom) -> Option<BuiltinName> {
-    match find_intrinsic(names, spelling, IntrinsicPosition::Member) {
-        Some(Intrinsic::PrivateName) => names.get_private(spelling),
-        Some(_) | None => None,
-    }
-}
-
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_property_name(&mut self, key: PropKey) -> PropertyName {
         match key {
             PropKey::Name(name) => PropertyName::Constant(self.file.name_key(name)),
-            PropKey::Computed(computed) => self.lower_converted_key(computed),
+            PropKey::Computed(computed) => {
+                if let Some(found) = self.file.find_constant_key(computed) {
+                    return PropertyName::Constant(found);
+                }
+                let value = self.lower_expression(computed);
+                self.set_position(self.file.hir[computed].pos);
+                PropertyName::Computed(self.builder.to_property_key(value))
+            }
             PropKey::Private(_) | PropKey::None => {
                 debug_assert!(false, "the caller handles private names");
                 PropertyName::Computed(self.builder.undefined())
             }
         }
-    }
-
-    fn lower_converted_key(&mut self, key: ExprId) -> PropertyName {
-        if let Some(found) = self.file.find_constant_key(key) {
-            return PropertyName::Constant(found);
-        }
-        let value = self.lower_expression(key);
-        self.set_position(self.file.hir[key].pos);
-        PropertyName::Computed(self.builder.to_property_key(value))
     }
 
     pub(crate) fn emit_name_value(&mut self, name: PropertyName) -> ValueId {
@@ -194,7 +188,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn normalize_access_key(&mut self, key: PropertyKeyId) -> PropertyName {
+    pub(super) fn normalize_access_key(&mut self, key: PropertyKeyId) -> PropertyName {
         match self.file.find_element_index(key) {
             Some(index) => PropertyName::Computed(self.builder.integer(i64::from(index))),
             None => PropertyName::Constant(key),
@@ -202,7 +196,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-/// The name in the header of a function defined under the key.
 pub(in crate::lower) fn find_function_name(
     file: &FileLowering<'_, '_, '_, '_>,
     key: PropertyKeyId,

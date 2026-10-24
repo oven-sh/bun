@@ -123,7 +123,8 @@ fn lower_function_text(embeds_function_source: bool) -> Vec<u8> {
         ..AotOptions::default()
     };
     let files = [("main.js", DEBUG_CALL)];
-    let lowered = lower_program_with_options(&files, &default_settings(), aot);
+    let project = TestProject::new(&files, &default_settings()).with_aot_options(aot);
+    let lowered = lower_application(&project);
     find_probe_fragment(&lowered).module.function_text.clone()
 }
 
@@ -334,7 +335,8 @@ fn first_files_are_entry_points() {
     ];
     let settings = default_settings();
     let find_lowered_probes = |entry_point_count: usize| {
-        let lowered = lower_program_with_entry_points(&files, &settings, entry_point_count);
+        let project = TestProject::with_entry_points(&files, entry_point_count, &settings);
+        let lowered = lower_application(&project);
         NAMES.map(|name| find_defining_fragment(&lowered, name).is_some())
     };
     assert_eq!(find_lowered_probes(1), [true, false, false]);
@@ -378,8 +380,9 @@ fn project_view_shows_application_project() {
 #[test]
 fn link_returns_program_or_failure() {
     let settings = default_settings();
-    let link =
-        |files: &[(&str, &str)]| link_program_with_options(files, &settings, AotOptions::default());
+    let link = |files: &[(&str, &str)]| {
+        link_project(&TestProject::new(files, &settings).with_aot_options(AotOptions::default()))
+    };
     let statistics = link(&DEBUG_IMPORT).unwrap().summary.statistics;
     assert_eq!(statistics.get(StatisticId::SourceFilesInferred), 2);
     let stage = link(&TYPE_ERROR).err().map(|failed| failed.stage);
@@ -423,7 +426,10 @@ fn virtual_path_replaces_runtime_source() {
         ));
         assert_eq!(input.files.hir(file).source_len as usize, SOURCE.len());
     });
-    let lowered = lower_runtime_project(&files);
+    let settings = default_settings();
+    let lowered = with_build(BUNDLED_LIBS, &files, &settings, &WithoutServices, |build| {
+        lower_files(build, ProjectId::Runtime)
+    });
     let fragment = find_probe_fragment(&lowered);
     assert!(!has_string(fragment, "$argumentCount"));
 

@@ -3,60 +3,55 @@ use crate::modules::module_set::collect_modules;
 use crate::modules::requests::scan_files;
 use crate::modules::testing::{file_named, with_graph};
 
-struct Ordered<'a, 'i, 's> {
-    input: &'a BindInput<'i, 's>,
-    order: EvaluationOrder,
-    sites: PlannedSites,
-}
+type Sources<'n> = [(&'n str, &'n str)];
 
-fn with_order(files: &[(&str, &str)], check: impl FnOnce(&Ordered<'_, '_, '_>)) {
+fn with_order<R>(
+    files: &Sources<'_>,
+    check: impl FnOnce(&BindInput<'_, '_>, &EvaluationOrder, &PlannedSites) -> R,
+) -> R {
     with_graph(files, |_, input| {
         let scans = scan_files(input);
         let modules = collect_modules(input, &scans);
         let (order, sites) = compute_order(input, &scans, &modules);
-        check(&Ordered {
-            input,
-            order,
-            sites,
-        });
-    });
+        check(input, &order, &sites)
+    })
 }
 
-impl Ordered<'_, '_, '_> {
-    fn module(&self, name: &str) -> ModuleRef {
-        ModuleRef::File(file_named(self.input, name))
-    }
+// What `read` says of each site of the first file.
+fn sites_of_first<T>(files: &Sources<'_>, read: impl Fn(&PlannedSite) -> T) -> Vec<T> {
+    with_order(files, |input, _, sites| {
+        let sites = sites.of(file_named(input, files[0].0)).iter();
+        sites.map(read).collect()
+    })
+}
 
-    fn positions(&self, name: &str) -> Vec<SitePosition> {
-        let sites = self.sites.of(file_named(self.input, name)).iter();
-        sites.map(|site| site.position).collect()
-    }
-
-    fn half_modules<'n>(&self, names: &[&'n str]) -> Vec<&'n str> {
-        let names = names.iter().copied();
+fn files_that<'n>(
+    files: &Sources<'n>,
+    has: impl Fn(&EvaluationOrder, ModuleRef) -> bool,
+) -> Vec<&'n str> {
+    with_order(files, |input, order, _| {
+        let names = files.iter().map(|file| file.0);
         names
-            .filter(|name| self.order.half(self.module(name)))
+            .filter(|name| has(order, ModuleRef::File(file_named(input, name))))
             .collect()
-    }
+    })
+}
 
-    fn exposed_modules<'n>(&self, names: &[&'n str]) -> Vec<&'n str> {
-        let names = names.iter().copied();
-        names
-            .filter(|name| self.order.exposed(self.module(name)))
-            .collect()
-    }
+fn half<'n>(files: &Sources<'n>) -> Vec<&'n str> {
+    files_that(files, EvaluationOrder::half)
+}
+
+fn exposed<'n>(files: &Sources<'n>) -> Vec<&'n str> {
+    files_that(files, EvaluationOrder::exposed)
 }
 
 const LEAF: (&str, &str) = ("leaf.cjs", "exports.x = 1;");
 
-fn position_of(source: &str) -> SitePosition {
-    let mut found = None;
-    with_order(&[("main.cjs", source), LEAF], |ordered| {
-        let positions = ordered.positions("main.cjs");
-        assert_eq!(positions.len(), 1, "{source}");
-        found = Some(positions[0]);
-    });
-    found.expect("the check ran")
+fn assert_position(expected: SitePosition, sources: &[&str]) {
+    for &source in sources {
+        let positions = sites_of_first(&[("main.cjs", source), LEAF], |site| site.position);
+        assert_eq!(positions, [expected], "{source}");
+    }
 }
 
 #[test]
@@ -80,9 +75,7 @@ fn code_that_every_run_passes_is_in_order() {
         "let a; exports.y = [a = require('./leaf.cjs')];",
         "[require('./leaf.cjs').x = 1] = [];",
     ];
-    for source in sources {
-        assert_eq!(position_of(source), SitePosition::InOrder, "{source}");
-    }
+    assert_position(SitePosition::InOrder, &sources);
 }
 
 #[test]
@@ -114,9 +107,7 @@ fn code_that_a_run_may_skip_is_not_in_order() {
         "let a; ({ y: [a = require('./leaf.cjs')] } = { y: [1] });",
         "let a; [a = exports.y = require('./leaf.cjs')] = [1];",
     ];
-    for source in sources {
-        assert_eq!(position_of(source), SitePosition::Sometimes, "{source}");
-    }
+    assert_position(SitePosition::Sometimes, &sources);
 }
 
 #[test]
@@ -138,20 +129,15 @@ fn code_of_a_function_or_under_a_handler_is_late() {
         "exports.o = { get x() { return require('./leaf.cjs'); } };",
         "function f(a = require('./leaf.cjs')) {}",
     ];
-    for source in sources {
-        assert_eq!(position_of(source), SitePosition::Late, "{source}");
-    }
+    assert_position(SitePosition::Late, &sources);
 }
 
 #[test]
 fn no_site_of_a_body_that_awaits_is_in_order() {
     let files = [("main.mjs", "require('./leaf.cjs'); await 0;"), LEAF];
-    with_order(&files, |ordered| {
-        assert_eq!(ordered.positions("main.mjs"), [SitePosition::Sometimes]);
-    });
+    let positions = sites_of_first(&files, |site| site.position);
+    assert_eq!(positions, [SitePosition::Sometimes]);
 }
-
-const NAMES: [&str; 4] = ["main.cjs", "a.cjs", "b.cjs", "c.cjs"];
 
 #[test]
 fn a_chain_of_requires_is_seen_whole() {
@@ -161,10 +147,8 @@ fn a_chain_of_requires_is_seen_whole() {
         ("b.cjs", "require('./c.cjs');"),
         ("c.cjs", "exports.x = 1;"),
     ];
-    with_order(&files, |ordered| {
-        assert!(ordered.half_modules(&NAMES).is_empty());
-        assert!(ordered.exposed_modules(&NAMES).is_empty());
-    });
+    assert!(half(&files).is_empty());
+    assert!(exposed(&files).is_empty());
 }
 
 #[test]
@@ -181,10 +165,8 @@ fn the_modules_of_a_cycle_are_seen_half_done() {
         ),
         ("c.cjs", "exports.x = 1;"),
     ];
-    with_order(&files, |ordered| {
-        assert_eq!(ordered.half_modules(&NAMES), ["a.cjs", "b.cjs"]);
-        assert!(ordered.exposed_modules(&NAMES).is_empty());
-    });
+    assert_eq!(half(&files), ["a.cjs", "b.cjs"]);
+    assert!(exposed(&files).is_empty());
 }
 
 #[test]
@@ -193,9 +175,7 @@ fn a_module_that_requires_itself_is_seen_half_done() {
         ("main.cjs", "require('./a.cjs');"),
         ("a.cjs", "require('./a.cjs');"),
     ];
-    with_order(&files, |ordered| {
-        assert_eq!(ordered.half_modules(&["main.cjs", "a.cjs"]), ["a.cjs"]);
-    });
+    assert_eq!(half(&files), ["a.cjs"]);
 }
 
 #[test]
@@ -205,9 +185,7 @@ fn a_cycle_through_a_branch_counts() {
         ("a.cjs", "require('./b.cjs');"),
         ("b.cjs", "if (exports.y) require('./a.cjs');"),
     ];
-    with_order(&files, |ordered| {
-        assert_eq!(ordered.half_modules(&NAMES[..3]), ["a.cjs", "b.cjs"]);
-    });
+    assert_eq!(half(&files), ["a.cjs", "b.cjs"]);
 }
 
 #[test]
@@ -217,10 +195,7 @@ fn a_cycle_of_imports_and_requires_counts() {
         ("a.mjs", "import './b.cjs'; export const x = 1;"),
         ("b.cjs", "exports.x = require('./a.mjs').x;"),
     ];
-    with_order(&files, |ordered| {
-        let names = ["main.mjs", "a.mjs", "b.cjs"];
-        assert_eq!(ordered.half_modules(&names), ["a.mjs", "b.cjs"]);
-    });
+    assert_eq!(half(&files), ["a.mjs", "b.cjs"]);
 }
 
 // A callback may run the function while the body of any module runs, also of one that the target asks for.
@@ -235,10 +210,8 @@ fn what_a_late_site_may_run_is_exposed() {
         ("b.cjs", "exports.x = 1;"),
         ("c.cjs", "exports.x = 1;"),
     ];
-    with_order(&files, |ordered| {
-        assert_eq!(ordered.exposed_modules(&NAMES), ["a.cjs", "b.cjs"]);
-        assert_eq!(ordered.half_modules(&NAMES), ["a.cjs", "b.cjs"]);
-    });
+    assert_eq!(exposed(&files), ["a.cjs", "b.cjs"]);
+    assert_eq!(half(&files), ["a.cjs", "b.cjs"]);
 }
 
 #[test]
@@ -248,9 +221,7 @@ fn what_an_import_call_names_is_exposed() {
         ("a.cjs", "require('./b.cjs');"),
         ("b.cjs", "exports.x = 1;"),
     ];
-    with_order(&files, |ordered| {
-        assert_eq!(ordered.exposed_modules(&NAMES[..3]), ["a.cjs", "b.cjs"]);
-    });
+    assert_eq!(exposed(&files), ["a.cjs", "b.cjs"]);
 }
 
 #[test]
@@ -262,12 +233,7 @@ fn what_a_computed_require_may_name_is_exposed() {
         ),
         ("pages/home.js", "exports.x = 1;"),
     ];
-    with_order(&files, |ordered| {
-        assert_eq!(
-            ordered.exposed_modules(&["main.cjs", "pages/home.js"]),
-            ["pages/home.js"]
-        );
-    });
+    assert_eq!(exposed(&files), ["pages/home.js"]);
 }
 
 #[test]
@@ -276,21 +242,11 @@ fn a_site_in_a_branch_exposes_nothing() {
         ("main.cjs", "if (exports.y) require('./a.cjs');"),
         ("a.cjs", "exports.x = 1;"),
     ];
-    with_order(&files, |ordered| {
-        assert!(ordered.half_modules(&NAMES[..2]).is_empty());
-    });
+    assert!(half(&files).is_empty());
 }
 
-fn evaluates(files: &[(&str, &str)]) -> Vec<bool> {
-    let mut found = Vec::new();
-    with_order(files, |ordered| {
-        let sites = ordered
-            .sites
-            .of(file_named(ordered.input, files[0].0))
-            .iter();
-        found = sites.map(|site| site.evaluates).collect();
-    });
-    found
+fn evaluates(files: &Sources<'_>) -> Vec<bool> {
+    sites_of_first(files, |site| site.evaluates)
 }
 
 #[test]

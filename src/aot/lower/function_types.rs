@@ -38,10 +38,8 @@ impl FileLowering<'_, '_, '_, '_> {
                 function_type
             }
         };
-        self.types
-            .function_types
-            .classes
-            .insert(class, function_type);
+        let memo = &mut self.types.function_types.classes;
+        memo.insert(class, function_type);
         function_type
     }
 
@@ -97,7 +95,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
-fn find_explicit_constructor(
+pub(in crate::lower) fn find_explicit_constructor(
     file: &FileLowering<'_, '_, '_, '_>,
     class: ClassRef,
 ) -> Option<FunctionRef> {

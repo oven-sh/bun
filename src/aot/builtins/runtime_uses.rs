@@ -1,6 +1,5 @@
 use super::table::{
-    self, BuiltinClass, BuiltinFlags, BuiltinId, Origin, Platforms, Prototype, RuntimeFunction,
-    RuntimeModule,
+    self, BuiltinFlags, BuiltinId, Origin, Platforms, Prototype, RuntimeFunction, RuntimeModule,
 };
 use bun_collections::DynamicBitSet;
 use bun_core::UnwrapOrOom as _;
@@ -8,15 +7,6 @@ use bun_sema::util::SharedSort;
 
 #[cfg(test)]
 mod tests;
-
-#[derive(Copy, Clone)]
-pub struct Mentions<'a> {
-    pub mentioned: &'a [BuiltinId],
-    /// Those of `mentioned` that are only called, each time with a text that is none of those for which the entry calls more. They ascend.
-    pub called_with_other_texts: &'a [BuiltinId],
-    pub exposed: &'a [BuiltinId],
-    pub linked_functions: &'a [RuntimeFunction],
-}
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct RuntimeUses {
@@ -103,21 +93,12 @@ impl Collector {
         }
     }
 
-    fn expose_class(&mut self, class: BuiltinClass) {
-        let data = table::class_data(class);
-        self.work_stack.extend(data.constructor);
-        self.work_stack.extend(data.prototype);
-    }
-
     fn expose_class_of(&mut self, id: BuiltinId) {
         if let Some(class) = table::entry(id).class {
-            self.expose_class(class);
+            let data = table::class_data(class);
+            self.work_stack.extend(data.constructor);
+            self.work_stack.extend(data.prototype);
         }
-    }
-
-    fn add_mention(&mut self, id: BuiltinId) {
-        self.add_entry(id);
-        self.expose_class_of(id);
     }
 
     fn add_reachable_entries(&mut self) {
@@ -133,9 +114,7 @@ impl Collector {
                 Prototype::Builtin(parent) => self.work_stack.push(parent),
                 Prototype::Unknown | Prototype::Null => {}
             }
-            if let Some(class) = entry.class {
-                self.expose_class(class);
-            }
+            self.expose_class_of(id);
         }
     }
 
@@ -181,7 +160,8 @@ pub fn reaches_unknown_module_loader(
         collector.add_entry(id);
     }
     for &id in called {
-        collector.add_mention(id);
+        collector.add_entry(id);
+        collector.expose_class_of(id);
     }
     collector.work_stack.extend_from_slice(exposed);
     collector.add_reachable_entries();
@@ -189,13 +169,14 @@ pub fn reaches_unknown_module_loader(
 }
 
 impl RuntimeUses {
-    pub fn of_mentions(mentions: Mentions<'_>, platform: Platforms) -> RuntimeUses {
-        let Mentions {
-            mentioned,
-            called_with_other_texts,
-            exposed,
-            linked_functions,
-        } = mentions;
+    /// `called_with_other_texts`: those of `mentioned` that are only called, each time with a text that is none of those for which the entry calls more. They ascend.
+    pub fn of_mentions(
+        mentioned: &[BuiltinId],
+        called_with_other_texts: &[BuiltinId],
+        exposed: &[BuiltinId],
+        linked_functions: &[RuntimeFunction],
+        platform: Platforms,
+    ) -> RuntimeUses {
         if mentioned.is_empty() && exposed.is_empty() && linked_functions.is_empty() {
             return RuntimeUses::default();
         }

@@ -5,10 +5,9 @@ use std::borrow::Cow;
 
 use bstr::BStr;
 use bun_sema::atom::Interner;
-use bun_sema::program::HostLoader;
 use bun_sema::resolve::{
-    CodeHost, CodeImportKind, CodeParseRequest, CodeRead, CodeRequest, ExternalKind, FinishedFile,
-    Host, HostPayload, HostResolution, LoaderRequest, ModuleDetection, ParsedCode, ScriptKind,
+    CodeHost, CodeImportKind, CodeParseRequest, CodeRequest, ExternalKind, FinishedFile, Host,
+    HostPayload, HostResolution, ModuleDetection, ParsedCode, ScriptKind,
 };
 use bun_sema::session::Arena;
 use bun_sema_driver::host::{Disk, to_native};
@@ -22,32 +21,17 @@ use crate::load::disk_delegation::{
     delegate_host_services_to_disk, delegate_runtime_config_parsers_to_disk,
 };
 use crate::load::is_host_path;
-use crate::load::loaders::{BY_NAME, loader_by_name};
+use crate::load::loaders::loader_by_name;
 use crate::load::runtime_modules::{RuntimeFileKind, RuntimeModules, RuntimeResolution};
 use crate::load::sources::{ParsedSource, SourceKind, parsed_source_mut};
 
-pub(crate) struct RuntimeHostInput<'a> {
+pub(crate) struct RuntimeHost<'a> {
     pub disk: &'a Disk,
     pub runtime_modules: &'a RuntimeModules,
     pub builtin_names: &'a BuiltinNames,
     pub platform: Platforms,
     pub messages: &'a LoadMessages,
-}
-
-pub(crate) struct RuntimeHost<'a> {
-    disk: &'a Disk,
-    input: RuntimeHostInput<'a>,
-    unreadable: Guarded<Vec<Vec<u8>>>,
-}
-
-impl<'a> RuntimeHost<'a> {
-    pub(crate) fn new(input: RuntimeHostInput<'a>) -> RuntimeHost<'a> {
-        RuntimeHost {
-            disk: input.disk,
-            input,
-            unreadable: Guarded::new(Vec::new()),
-        }
-    }
+    pub unreadable: Guarded<Vec<Vec<u8>>>,
 }
 
 impl RuntimeHost<'_> {
@@ -57,7 +41,7 @@ impl RuntimeHost<'_> {
     }
 
     fn resolve_module(&self, specifier: &[u8], importer: &[u8]) -> HostResolution {
-        let runtime_modules = self.input.runtime_modules;
+        let runtime_modules = self.runtime_modules;
         match runtime_modules.resolve_module(specifier, importer) {
             Some(RuntimeResolution::Module(id)) => runtime_modules.module_resolution(id),
             Some(RuntimeResolution::HostValue) => HostResolution::External {
@@ -69,14 +53,14 @@ impl RuntimeHost<'_> {
     }
 
     fn source_kind(&self, path: &[u8]) -> SourceKind {
-        match self.input.runtime_modules.file_kind(path) {
+        match self.runtime_modules.file_kind(path) {
             Some(RuntimeFileKind::Module(module)) => SourceKind::RuntimeModule(module),
             Some(RuntimeFileKind::Functions) => SourceKind::RuntimeFunctions,
             Some(RuntimeFileKind::Declarations) => SourceKind::TypesOnly,
             Some(RuntimeFileKind::Configuration) | None => {
                 let path = BStr::new(to_native(path));
                 let message = format!("{path} was loaded as code");
-                (self.input.messages).report_internal_error(message.into_bytes());
+                self.messages.report_internal_error(message.into_bytes());
                 SourceKind::TypesOnly
             }
         }
@@ -88,7 +72,7 @@ impl Host for RuntimeHost<'_> {
 
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         match is_host_path(path) {
-            true => self.input.runtime_modules.read(path),
+            true => self.runtime_modules.read(path),
             false => self.disk.read(path),
         }
     }
@@ -97,46 +81,27 @@ impl Host for RuntimeHost<'_> {
         if !is_host_path(path) {
             return self.disk.read_source(path);
         }
-        let text = self.input.runtime_modules.read(path);
+        let text = self.runtime_modules.read(path);
         text.unwrap_or_else(|| self.record_unreadable(path))
-    }
-
-    fn take_unreadable(&self) -> Vec<Vec<u8>> {
-        let mut paths = std::mem::take(&mut *self.unreadable.lock());
-        paths.extend(self.disk.take_unreadable());
-        paths
     }
 
     fn is_file(&self, path: &[u8]) -> bool {
         match is_host_path(path) {
-            true => self.input.runtime_modules.file_kind(path).is_some(),
+            true => self.runtime_modules.file_kind(path).is_some(),
             false => self.disk.is_file(path),
         }
     }
 
     fn is_dir(&self, path: &[u8]) -> bool {
         match is_host_path(path) {
-            true => self.input.runtime_modules.is_directory(path),
+            true => self.runtime_modules.is_directory(path),
             false => self.disk.is_dir(path),
         }
     }
 
-    fn realpath(&self, path: &[u8]) -> Vec<u8> {
-        match is_host_path(path) {
-            true => path.to_vec(),
-            false => self.disk.realpath(path),
-        }
-    }
-
-    fn list_dir(&self, path: &[u8]) -> Vec<Vec<u8>> {
-        let (mut names, directories) = self.entries(path);
-        names.extend(directories);
-        names
-    }
-
     fn entries(&self, path: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
         match is_host_path(path) {
-            true => self.input.runtime_modules.entries(path).unwrap_or_default(),
+            true => self.runtime_modules.entries(path).unwrap_or_default(),
             false => self.disk.entries(path),
         }
     }
@@ -166,21 +131,13 @@ impl CodeHost for RuntimeHost<'_> {
         self.resolve_module(specifier, b"")
     }
 
-    fn loader_of(&self, _request: &LoaderRequest<'_>) -> HostLoader {
-        BY_NAME
-    }
-
-    fn read_code(&self, path: &[u8]) -> CodeRead {
-        CodeRead::Text(self.read_source(path))
-    }
-
     fn hoists_top_level_variables(&self, path: &[u8]) -> bool {
-        let kind = self.input.runtime_modules.file_kind(path);
+        let kind = self.runtime_modules.file_kind(path);
         matches!(kind, Some(RuntimeFileKind::Module(_)))
     }
 
     fn is_library_file(&self, path: &[u8]) -> bool {
-        match self.input.runtime_modules.file_kind(path) {
+        match self.runtime_modules.file_kind(path) {
             Some(RuntimeFileKind::Functions) => true,
             Some(
                 RuntimeFileKind::Module(_)
@@ -221,10 +178,10 @@ impl CodeHost for RuntimeHost<'_> {
         payload: &mut Option<HostPayload>,
     ) -> Vec<HostResolution> {
         let input = BuiltinUseInput {
-            names: self.input.builtin_names,
-            platform: self.input.platform,
+            names: self.builtin_names,
+            platform: self.platform,
         };
         let source = parsed_source_mut(payload);
-        builtin_uses::finish_runtime_file(&input, self.input.runtime_modules, request, source)
+        builtin_uses::finish_runtime_file(&input, self.runtime_modules, request, source)
     }
 }

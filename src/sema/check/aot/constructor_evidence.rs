@@ -23,7 +23,6 @@ fn is_member_of_receiver_or_prototype_object(
     matches!(hir[object].kind, ExprKind::This) || is_prototype_object(hir, bound, object)
 }
 
-// Whether `value`, which is a function, stands where somebody may construct with it: behind `new`, in front of `.prototype`, or on its way to a place that this file does not follow.
 fn stands_where_a_constructor_stands(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -74,13 +73,11 @@ fn stands_where_a_constructor_stands(
     }
 }
 
-// `this: any` names no objects.
 fn declares_this(hir: &hir::File<'_>, function: FnId) -> bool {
     let written = hir[function].this_ty(hir);
     written.is_some() && !matches!(hir[written].kind, TypeNodeKind::Keyword(_))
 }
 
-// `const remove = function remove() { .. }`: the name stands for the function wherever it is written, like the name of a declared one.
 fn find_constant_holding(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -103,7 +100,6 @@ fn find_constant_holding(
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
-    // The declared functions of `file` whose name stands where a constructor stands, or leaves the file. Ascending.
     fn compute_declarations_used_like_constructors(&mut self, file: FileId) -> &'s [SymbolId] {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let functions = (0..hir.fns.len() as u32).map(FnId);
@@ -164,7 +160,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         list_in(self.c.arena, &used)
     }
 
-    // Whether the text of its file lets somebody construct with `function`.
     pub(super) fn is_used_like_constructor(&mut self, function: FunctionRef) -> bool {
         let FunctionRef { file, function } = function;
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));

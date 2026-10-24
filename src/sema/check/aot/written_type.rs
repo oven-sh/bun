@@ -115,7 +115,6 @@ fn is_undeclared_intrinsic(intrinsic: Intrinsic) -> bool {
     )
 }
 
-/// One symbol holds all meanings of a name.
 pub fn declares_type_alone(declaration: Decl) -> bool {
     matches!(
         declaration,
@@ -303,7 +302,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// `keyof T`, `T[K]` and the test of a conditional type answer with what the declaration of `T` says, in a type that does not show who declared it.
     fn add_read_types(
         &mut self,
         file: FileId,
@@ -343,7 +341,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if self.c.is_stack_low() {
             return true;
         }
-        // An alias that names itself finds this answer.
         self.kept.alias_reads.insert(symbol, true);
         let reads = self.collect_declaration_types(symbol).reads_declarations;
         self.kept.alias_reads.insert(symbol, reads);
@@ -391,7 +388,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 | TypeData::Synth(_)
                 | TypeData::ReverseMapped { .. }
         );
-        // A union of some thousand literal types is nothing unusual.
         if !has_parts || !visited.insert(ty) {
             return false;
         }
@@ -417,13 +413,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// `typeof value` says what the declaration of `value` says: for a variable or a parameter its annotation, and without one whatever the checker infers, from wherever that comes.
     fn is_trusted_value(&mut self, value: Option<Sym>) -> bool {
         let Some(value) = value else {
             return false;
         };
         let value = self.c.files().canonical(value);
-        // `let a: typeof b; let b: typeof a;`
         if !self.symbol_trust(value).is_trusted() || self.c.is_stack_low() {
             return false;
         }
@@ -453,7 +447,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         mentions || symbols.any(|&symbol| graph.mentions_untrusted_alias(symbol))
     }
 
-    /// Of a class or an interface only the defaults of its type parameters are scanned. A declaration that adds members to it has none.
     fn has_transparent_defaults(&self, symbol: Sym) -> bool {
         let lists = self.c.files().type_param_lists(symbol);
         self.find_type_alias(symbol).is_none()
@@ -846,7 +839,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     false => self.intersect_forms(&stripped),
                 }
             }
-            // The shape of an array or of a built-in class does not show who wrote it either.
             TypeData::Ref { target, .. } if self.has_undeclared_shape(ty, *target) => {
                 TypeId::UNKNOWN
             }
@@ -861,7 +853,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     self.c.create_type_reference(ty, &stripped)
                 }
             }
-            // It has no declaration: that the value is an array of that length is the word of whoever wrote the type.
             TypeData::Tuple { .. } => TypeId::UNKNOWN,
             _ => TypeId::UNKNOWN,
         }

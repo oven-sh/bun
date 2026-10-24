@@ -3,7 +3,7 @@ use bun_sema::fold::Decision;
 use bun_sema::hir::{BinOp, ExprFlags, ExprId, ExprKind, IdList, PropId, Span, UnOp};
 
 use super::ResultUsage;
-use super::logical::{LogicalBranch, LogicalOperator};
+use super::logical::LogicalOperator;
 use crate::ir::ValueId;
 use crate::lower::member::{KeyConversion, PropertyName};
 use crate::lower::{FileLowering, FunctionLowering};
@@ -15,12 +15,6 @@ pub(in crate::lower) enum AssignmentTarget {
     ArrayPattern(IdList<ExprId>),
     ObjectPattern(Span<PropId>),
     Expression,
-}
-
-#[derive(Copy, Clone)]
-enum UpdateOperator {
-    Increment,
-    Decrement,
 }
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -100,7 +94,16 @@ pub(super) fn lower_assignment(
             | BinOp::BitAnd
             | BinOp::BitOr
             | BinOp::BitXor),
-        ) => lowering.lower_compound_assignment(expression, target, value, op),
+        ) => {
+            let reference = lowering.lower_reference(target, KeyConversion::Once);
+            let old = lowering.get_reference(&reference);
+            let old = lowering.convert_through_assertions(target, old);
+            let right = lowering.lower_expression(value);
+            lowering.set_position(lowering.file.hir[expression].pos);
+            let updated = lowering.emit_binary(op, old, right);
+            lowering.set_position(lowering.file.last_mapped_position(target));
+            lowering.put_reference(&reference, updated, Some(expression))
+        }
         Some(
             BinOp::Lt
             | BinOp::Le
@@ -142,23 +145,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn lower_compound_assignment(
-        &mut self,
-        expression: ExprId,
-        target: ExprId,
-        value: ExprId,
-        op: BinOp,
-    ) -> ValueId {
-        let reference = self.lower_reference(target, KeyConversion::Once);
-        let old = self.get_reference(&reference);
-        let old = self.convert_through_assertions(target, old);
-        let right = self.lower_expression(value);
-        self.set_position(self.file.hir[expression].pos);
-        let updated = self.emit_binary(op, old, right);
-        self.set_position(self.file.last_mapped_position(target));
-        self.put_reference(&reference, updated, Some(expression))
-    }
-
     fn lower_assigned_value(&mut self, target: ExprId, value: ExprId) -> ValueId {
         match self.file.classify_assignment_target(target) {
             AssignmentTarget::Identifier { identifier, name } => {
@@ -167,13 +153,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.lower_named_evaluation(value, PropertyName::Constant(key))
             }
             _ => self.lower_expression(value),
-        }
-    }
-
-    fn emit_update(&mut self, update: UpdateOperator, operand: ValueId) -> ValueId {
-        match update {
-            UpdateOperator::Increment => self.builder.increment(operand),
-            UpdateOperator::Decrement => self.builder.decrement(operand),
         }
     }
 }
@@ -197,14 +176,7 @@ fn lower_logical_assignment(
     let assign = lowering.create_block();
     let join = lowering.create_block();
     lowering.set_position(hir[expression].pos);
-    let branch = LogicalBranch {
-        operator,
-        tested: Some(target),
-        result,
-        right: assign,
-        join,
-    };
-    lowering.branch_on_logical_operator(old, branch);
+    lowering.branch_on_logical_operator(old, operator, Some(target), result, assign, join);
 
     lowering.continue_in(assign);
     let assigned = lowering.lower_assigned_value(target, value);
@@ -233,11 +205,11 @@ pub(super) fn lower_update(
     };
     let reference = lowering.lower_reference(operand, KeyConversion::Once);
     let old = lowering.get_reference(&reference);
-    let (update, is_postfix) = match op {
-        UnOp::PreInc => (UpdateOperator::Increment, false),
-        UnOp::PreDec => (UpdateOperator::Decrement, false),
-        UnOp::PostInc => (UpdateOperator::Increment, true),
-        UnOp::PostDec => (UpdateOperator::Decrement, true),
+    let (is_increment, is_postfix) = match op {
+        UnOp::PreInc => (true, false),
+        UnOp::PreDec => (false, false),
+        UnOp::PostInc => (true, true),
+        UnOp::PostDec => (false, true),
         _ => {
             debug_assert!(false, "not an update operator");
             return old;
@@ -248,15 +220,16 @@ pub(super) fn lower_update(
         true => lowering.file.last_mapped_position(operand),
         false => hir[operand].pos,
     };
-    if is_postfix && usage == ResultUsage::Value {
-        let numeric = lowering.builder.to_numeric(old);
-        let updated = lowering.emit_update(update, numeric);
-        lowering.set_position(store_position);
-        lowering.put_reference(&reference, updated, Some(expression));
-        numeric
-    } else {
-        let updated = lowering.emit_update(update, old);
-        lowering.set_position(store_position);
-        lowering.put_reference(&reference, updated, Some(expression))
-    }
+    let is_old_kept = is_postfix && usage == ResultUsage::Value;
+    let old = match is_old_kept {
+        true => lowering.builder.to_numeric(old),
+        false => old,
+    };
+    let updated = match is_increment {
+        true => lowering.builder.increment(old),
+        false => lowering.builder.decrement(old),
+    };
+    lowering.set_position(store_position);
+    let stored = lowering.put_reference(&reference, updated, Some(expression));
+    if is_old_kept { old } else { stored }
 }

@@ -120,25 +120,19 @@ impl SourceProvider for PageBundler {
     }
 }
 
-fn with_loaded_program(
+fn with_bundle(
     files: &[(&str, &str)],
     provider: &PageBundler,
-    check: impl FnOnce(&BindInput<'_, '_>),
+    check: impl for<'s> FnOnce(&BindInput<'_, '_>, &Interner<'s>, Result<DeferredData<'s>, Failed>),
 ) {
     with_bind_input_and_provider(files, &default_settings(), provider, |input| {
         assert!(provider.calls.lock().is_empty());
-        check(input);
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let mut log = Log::init();
+        let data = bundle_pages(input.sources, provider, session.arena(), &atoms, &mut log);
+        check(input, &atoms, data);
     });
-}
-
-fn bundle<'s>(
-    input: &BindInput<'_, '_>,
-    provider: &PageBundler,
-    session: &'s Session,
-    atoms: &Interner<'s>,
-) -> Result<DeferredData<'s>, Failed> {
-    let mut log = Log::init();
-    bundle_pages(input.sources, provider, session.arena(), atoms, &mut log)
 }
 
 fn page_paths(input: &BindInput<'_, '_>) -> Vec<Vec<u8>> {
@@ -149,19 +143,16 @@ fn page_paths(input: &BindInput<'_, '_>) -> Vec<Vec<u8>> {
 #[test]
 fn manifests_are_found_by_file() {
     let provider = PageBundler::default();
-    with_loaded_program(&TWO_PAGES, &provider, |input| {
-        let session = Session::new();
-        let atoms = Interner::new_in(&session);
-        let data = bundle(input, &provider, &session, &atoms).expect("the bundle succeeds");
+    with_bundle(&TWO_PAGES, &provider, |input, atoms, data| {
+        let data = data.expect("the bundle succeeds");
         for (name, base_name) in [
             ("home.html", "home.html"),
             ("pages/about.html", "about.html"),
         ] {
             let file = file_named(input, name);
             let mut pages = input.sources.pages().iter();
-            let (_, path) = pages
-                .find(|page| page.0 == file)
-                .expect("the file is a page");
+            let page = pages.find(|page| page.0 == file);
+            let (_, path) = page.expect("the file is a page");
             assert!(path.ends_with(base_name.as_bytes()), "{name}");
             let index = (
                 atoms.intern(b"index"),
@@ -175,10 +166,8 @@ fn manifests_are_found_by_file() {
 #[test]
 fn pages_are_bundled_in_one_call() {
     let provider = PageBundler::default();
-    with_loaded_program(&TWO_PAGES, &provider, |input| {
-        let session = Session::new();
-        let atoms = Interner::new_in(&session);
-        assert!(bundle(input, &provider, &session, &atoms).is_ok());
+    with_bundle(&TWO_PAGES, &provider, |input, _, data| {
+        assert!(data.is_ok());
         let paths = page_paths(input);
         assert_eq!(paths.len(), 2);
         let expected = [
@@ -196,10 +185,8 @@ fn pages_are_bundled_in_one_call() {
 #[test]
 fn no_pages_call_with_empty_list() {
     let provider = PageBundler::default();
-    with_loaded_program(&NO_PAGES, &provider, |input| {
-        let session = Session::new();
-        let atoms = Interner::new_in(&session);
-        assert!(bundle(input, &provider, &session, &atoms).is_ok());
+    with_bundle(&NO_PAGES, &provider, |_, _, data| {
+        assert!(data.is_ok());
         let expected = [
             ProviderCall::BundlePages(Vec::new()),
             ProviderCall::CheckEmbeddedFiles,
@@ -214,10 +201,8 @@ fn failed_bundle_fails() {
         fails_to_bundle: true,
         ..PageBundler::default()
     };
-    with_loaded_program(&TWO_PAGES, &provider, |input| {
-        let session = Session::new();
-        let atoms = Interner::new_in(&session);
-        assert!(bundle(input, &provider, &session, &atoms).is_err());
+    with_bundle(&TWO_PAGES, &provider, |input, _, data| {
+        assert!(data.is_err());
         let expected = [ProviderCall::BundlePages(page_paths(input))];
         assert_eq!(*provider.calls.lock(), expected);
     });
@@ -226,10 +211,8 @@ fn failed_bundle_fails() {
 #[test]
 fn file_without_page_has_no_data() {
     let provider = PageBundler::default();
-    with_loaded_program(&TWO_PAGES, &provider, |input| {
-        let session = Session::new();
-        let atoms = Interner::new_in(&session);
-        let data = bundle(input, &provider, &session, &atoms).expect("the bundle succeeds");
+    with_bundle(&TWO_PAGES, &provider, |input, _, data| {
+        let data = data.expect("the bundle succeeds");
         assert_eq!(data.get(file_named(input, "main.js")), None);
         let home = file_named(input, "home.html");
         assert!(data.get(home).is_some());
@@ -243,10 +226,8 @@ fn collision_check_runs_after_the_bundle() {
         finds_collision: true,
         ..PageBundler::default()
     };
-    with_loaded_program(&TWO_PAGES, &provider, |input| {
-        let session = Session::new();
-        let atoms = Interner::new_in(&session);
-        assert!(bundle(input, &provider, &session, &atoms).is_err());
+    with_bundle(&TWO_PAGES, &provider, |input, _, data| {
+        assert!(data.is_err());
         let expected = [
             ProviderCall::BundlePages(page_paths(input)),
             ProviderCall::CheckEmbeddedFiles,
@@ -262,9 +243,5 @@ fn missing_manifest_panics() {
         omits_manifests: true,
         ..PageBundler::default()
     };
-    with_loaded_program(&TWO_PAGES, &provider, |input| {
-        let session = Session::new();
-        let atoms = Interner::new_in(&session);
-        let _ = bundle(input, &provider, &session, &atoms);
-    });
+    with_bundle(&TWO_PAGES, &provider, |_, _, _| {});
 }

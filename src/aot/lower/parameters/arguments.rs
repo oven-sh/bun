@@ -21,7 +21,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let count = self.builder.argument_count();
         let count = count.expect("a function with an arguments object takes the count");
-        let (positional_count, rest) = self.split_rest();
+        let function = self.builder.function();
+        let declared_count = function.parameters.len();
+        let has_rest_parameter = function.flags.contains(FunctionFlags::HAS_REST_PARAMETER);
+        let (positional_count, rest) = match has_rest_parameter {
+            true => {
+                let last = declared_count - 1;
+                (last, Some(self.builder.parameter(last as u32)))
+            }
+            false => (declared_count, self.builder.hidden_rest()),
+        };
         let rest = rest.expect("a function with an arguments object takes the rest");
         let positional = &parameters[..positional_count];
         let builder = &mut self.builder;
@@ -29,15 +38,5 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Some(callee) => builder.create_mapped_arguments(callee, count, rest, positional),
             None => builder.create_unmapped_arguments(count, rest, positional),
         })
-    }
-
-    fn split_rest(&self) -> (usize, Option<ValueId>) {
-        let function = self.builder.function();
-        let declared_count = function.parameters.len();
-        if !function.flags.contains(FunctionFlags::HAS_REST_PARAMETER) {
-            return (declared_count, self.builder.hidden_rest());
-        }
-        let last = declared_count - 1;
-        (last, Some(self.builder.parameter(last as u32)))
     }
 }

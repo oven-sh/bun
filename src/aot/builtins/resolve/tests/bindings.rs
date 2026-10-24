@@ -26,26 +26,23 @@ case_tests! {
 
 #[test]
 fn with_statement() {
-    with_case(
-        SCRIPT,
-        "with (o) { Math.floor(1); } Math.ceil(1);",
-        |case| {
-            assert_unresolved(case, "Math.floor");
-            let inside = case.exprs("Math")[0];
-            let expected = BuiltinPath {
-                id: BuiltinId::Math,
-                mutability: Mutability::ConstantUnlessWritten,
-            };
-            assert_eq!(case.dynamic_global_at(inside), Some(expected));
-            assert_eq!(case.path_at(inside), None);
-            assert_eq!(case.resolved.builtin_of_expression(inside), None);
-            assert!(case.mentions(BuiltinId::Math));
-            assert!(case.exposes(BuiltinId::Math));
-            assert!(!case.mentions(BuiltinId::MathFloor));
-            assert_builtin(case, "Math.ceil", BuiltinId::MathCeil);
-            assert_eq!(case.dynamic_global_at(case.expr("Math")), None);
-        },
-    );
+    let source = "with (o) { Math.floor(1); } Math.ceil(1);";
+    with_case(SCRIPT, source, |case| {
+        assert_unresolved(case, "Math.floor");
+        let inside = case.exprs("Math")[0];
+        let expected = BuiltinPath {
+            id: BuiltinId::Math,
+            mutability: Mutability::ConstantUnlessWritten,
+        };
+        assert_eq!(case.dynamic_global_at(inside), Some(expected));
+        assert_eq!(case.path_at(inside), None);
+        assert_eq!(case.resolved.builtin_of_expression(inside), None);
+        assert!(case.mentions(BuiltinId::Math));
+        assert!(case.exposes(BuiltinId::Math));
+        assert!(!case.mentions(BuiltinId::MathFloor));
+        assert_builtin(case, "Math.ceil", BuiltinId::MathCeil);
+        assert_eq!(case.dynamic_global_at(case.expr("Math")), None);
+    });
 }
 
 #[test]

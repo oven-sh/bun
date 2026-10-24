@@ -35,15 +35,6 @@ fn looks_at_first_operand(builtin: BuiltinId) -> bool {
 }
 
 #[rustfmt::skip]
-fn classify_binary_operand(op: BinOp, node: ExprId, right: ExprId, parent: ExprId) -> ControlFlow<MentionUse, ExprId> {
-    match op {
-        BinOp::And | BinOp::Or | BinOp::Nullish => ControlFlow::Continue(parent),
-        BinOp::Comma if node == right => ControlFlow::Continue(parent),
-        _ => ControlFlow::Break(MentionUse::Inspected),
-    }
-}
-
-#[rustfmt::skip]
 fn classify_stmt_parent(hir: &hir::File<'_>, node: ExprId, stmt: StmtId) -> MentionUse {
     match hir[stmt].kind {
         StmtKind::Expr(_) | StmtKind::Switch { .. } => MentionUse::Inspected,
@@ -92,9 +83,13 @@ impl Resolver<'_, '_> {
             ExprKind::Binary { op: BinOp::In, left, right } if node == right => {
                 MentionUse::SearchedFor(left)
             }
-            ExprKind::Binary { op, right, .. } => {
-                return classify_binary_operand(op, node, right, parent);
+            ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } => {
+                return ControlFlow::Continue(parent);
             }
+            ExprKind::Binary { op: BinOp::Comma, right, .. } if node == right => {
+                return ControlFlow::Continue(parent);
+            }
+            ExprKind::Binary { .. } => MentionUse::Inspected,
             ExprKind::Cond { test, .. } if node != test => return ControlFlow::Continue(parent),
             ExprKind::Cond { .. } => MentionUse::Inspected,
             ExprKind::Dot { .. } => self.classify_object(e, node, parent),
@@ -138,7 +133,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // The function that a name is bound to, once and for all.
     fn find_called_function(&self, callee: ExprId) -> Option<FnId> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let Binding::Symbol(symbol) = bound.binding(callee) else {
@@ -159,7 +153,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // The parameter that takes the operand, where the function finds its operands in its parameters alone.
     fn find_parameter(&self, call: CallId, operand: ExprId) -> Option<SymbolId> {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let function = self.find_called_function(hir.skip_type_assertions(hir[call].callee))?;
@@ -228,17 +221,7 @@ impl Resolver<'_, '_> {
     // `object.method.call(object, ..)`, and `apply` and `bind`, for a method that the object itself holds: what `object.method(..)` does with the object.
     fn is_receiver_of_own_method(&self, e: ExprId, callee: ExprId) -> bool {
         let hir = self.input.hir;
-        let takes_receiver = match self.state(callee) {
-            ExprState::Intrinsic(Intrinsic::Call { .. } | Intrinsic::Apply) => true,
-            state => matches!(
-                mentioned_id(state).map(table::canonical_id),
-                Some(
-                    BuiltinId::FunctionPrototypeApply
-                        | BuiltinId::FunctionPrototypeBind
-                        | BuiltinId::FunctionPrototypeCall
-                )
-            ),
-        };
+        let takes_receiver = self.hands_function_on(callee);
         let Some((function, _)) = hir.member_key(callee).filter(|_| takes_receiver) else {
             return false;
         };
@@ -275,7 +258,7 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // `f.call(..)`, `f.apply(..)` and `f.bind(..)` call the function, now or later, with operands that nobody looks at here.
+    // `f.call(..)`, `f.apply(..)` and `f.bind(..)` call the function, now or later, with operands that nobody looks at here. Only these three: their first operand is the receiver.
     fn hands_function_on(&self, member: ExprId) -> bool {
         match self.state(member) {
             ExprState::Intrinsic(Intrinsic::Call { .. } | Intrinsic::Apply) => true,

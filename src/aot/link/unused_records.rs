@@ -28,7 +28,6 @@ impl UseInput<'_> {
         });
     }
 
-    // `visit` gets a layout and its mark.
     pub(super) fn for_each_layout(
         &self,
         layouts: &mut [Layout],
@@ -88,11 +87,7 @@ pub(super) fn find_program_key(
         return None;
     }
     let text = input.strings.find(unit.strings.get(local.text?))?;
-    input.property_keys.find(&PropertyKey {
-        kind: PropertyKeyKind::Text,
-        text: Some(text),
-        ..PropertyKey::default()
-    })
+    input.property_keys.find(&PropertyKey::from_text(text))
 }
 
 fn find_written_keys(layouts: &[Layout], input: &UseInput<'_>) -> Vec<AtomicBool> {
@@ -128,13 +123,9 @@ pub(super) fn mark_unused_records(
 ) -> bool {
     let is_allocated = find_allocated_layouts(input);
     let is_written = find_written_keys(layouts, input);
-    let asked_key = input.strings.find(asked_name).and_then(|text| {
-        input.property_keys.find(&PropertyKey {
-            kind: PropertyKeyKind::Text,
-            text: Some(text),
-            ..PropertyKey::default()
-        })
-    });
+    let asked_text = input.strings.find(asked_name);
+    let asked_key =
+        asked_text.and_then(|text| input.property_keys.find(&PropertyKey::from_text(text)));
     let is_asked_name_written =
         asked_key.is_some_and(|key| is_written[key.index()].load(Ordering::Relaxed));
     input.for_each_layout(layouts, &is_allocated, &|layout, is_allocated| {

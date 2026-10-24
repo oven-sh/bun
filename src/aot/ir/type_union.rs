@@ -6,7 +6,6 @@ use bun_sema::util::SharedSort;
 use super::generated::MAX_TRACKED_INTEGER;
 use super::ids::TypeId;
 use super::types::{ClassPart, Primitives, Type, TypeFlags, TypeTable};
-use crate::builtins::table::class_data;
 
 pub(super) fn normalize_type(table: &mut TypeTable, ty: &mut Type) {
     if !normalize_without_table(ty) {
@@ -33,85 +32,53 @@ pub(super) fn normalize_without_table(ty: &mut Type) -> bool {
     !neighbors.any(|(left, right)| is_same_class(left, right))
 }
 
-pub(super) fn union_types(table: &mut TypeTable, left: TypeId, right: TypeId) -> TypeId {
-    union_all_types(table, [left, right])
-}
+impl TypeTable {
+    pub fn union(&mut self, left: TypeId, right: TypeId) -> TypeId {
+        self.union_all([left, right])
+    }
 
-pub(super) fn union_all_types(
-    table: &mut TypeTable,
-    members: impl IntoIterator<Item = TypeId>,
-) -> TypeId {
-    let mut members = members
-        .into_iter()
-        .filter(|&member| member != TypeTable::NEVER);
-    let Some(first) = members.next() else {
-        return TypeTable::NEVER;
-    };
-    let Some(second) = members.find(|&member| member != first) else {
-        return first;
-    };
-    let mut union = Type::never();
-    let mut has_internal_member = false;
-    for member in [first, second].into_iter().chain(members) {
-        let member = table.get(member);
-        has_internal_member |= member.is_internal();
-        add_parts(&mut union, member);
-    }
-    debug_assert!(
-        !has_internal_member,
-        "an opaque or environment type is never part of a union"
-    );
-    if has_internal_member {
-        return TypeTable::ANYTHING;
-    }
-    table.intern(union)
-}
-
-/// `target`, and the kinds of object that `source` may hold and `target` has none of.
-pub(super) fn add_missing_objects(table: &mut TypeTable, target: TypeId, source: TypeId) -> TypeId {
-    let (held, offered) = (table.get(target), table.get(source));
-    if held.is_internal() || offered.is_internal() || held.flags.contains(TypeFlags::ANY_OBJECT) {
-        return target;
-    }
-    let mut missing = Type::never();
-    let lacks = |part: &&ClassPart| !held.classes.iter().any(|it| is_same_class(it, part));
-    let has_instance_test = |part: &ClassPart| class_data(part.builtin_class).has_instance_test;
-    let offers_any_object = offered.flags.contains(TypeFlags::ANY_OBJECT)
-        || !offered.layouts.is_empty()
-        || !offered.builtins.is_empty()
-        || !offered.classes.iter().filter(lacks).all(has_instance_test);
-    if offers_any_object {
-        missing.flags |= TypeFlags::ANY_OBJECT;
-    } else {
-        missing.flags |= offered.flags & TypeFlags::ANY_FUNCTION;
-        if !offered.functions.is_empty() {
-            missing.flags |= TypeFlags::ANY_FUNCTION;
-        }
-        let with_unknown_contents = |part: &ClassPart| ClassPart {
-            builtin_class: part.builtin_class,
-            contents: vec![TypeTable::ANYTHING; part.contents.len()],
+    pub fn union_all(&mut self, members: impl IntoIterator<Item = TypeId>) -> TypeId {
+        let mut members = members
+            .into_iter()
+            .filter(|&member| member != TypeTable::NEVER);
+        let Some(first) = members.next() else {
+            return TypeTable::NEVER;
         };
-        let added = offered.classes.iter().filter(lacks);
-        missing.classes = added.map(with_unknown_contents).collect();
+        let Some(second) = members.find(|&member| member != first) else {
+            return first;
+        };
+        let mut union = Type::never();
+        let mut has_internal_member = false;
+        for member in [first, second].into_iter().chain(members) {
+            let member = self.get(member);
+            has_internal_member |= member.is_internal();
+            add_parts(&mut union, member);
+        }
+        debug_assert!(
+            !has_internal_member,
+            "an opaque or environment type is never part of a union"
+        );
+        if has_internal_member {
+            return TypeTable::ANYTHING;
+        }
+        self.intern(union)
     }
-    let missing = table.intern(missing);
-    union_types(table, target, missing)
-}
 
-pub(super) fn remove_primitives(table: &mut TypeTable, ty: TypeId, removed: Primitives) -> TypeId {
-    let current = table.get(ty);
-    if current.is_internal() {
-        return ty;
+    pub fn without_primitives(&mut self, ty: TypeId, removed: Primitives) -> TypeId {
+        let current = self.get(ty);
+        if current.is_internal() {
+            return ty;
+        }
+        let mut remaining = current.clone();
+        remaining.primitives = remaining.primitives.without(removed);
+        if removed.contains(Primitives::NUMBER) {
+            remaining.flags = remaining.flags.without(TypeFlags::HAS_INTEGERS);
+        }
+        if removed.contains(Primitives::STRING) {
+            remaining.strings.clear();
+        }
+        self.intern(remaining)
     }
-    let mut remaining = current.clone();
-    remaining.primitives = remaining.primitives.without(removed);
-    if removed.contains(Primitives::NUMBER) {
-        remaining.flags = remaining.flags.without(TypeFlags::HAS_INTEGERS);
-    }
-    if removed.contains(Primitives::STRING) {
-        remaining.strings.clear();
-    }
-    table.intern(remaining)
 }
 
 fn normalize_integers(ty: &mut Type) {
@@ -167,7 +134,7 @@ fn merge_class_parts(table: &mut TypeTable, classes: &mut Vec<ClassPart>) {
             let members = run
                 .iter()
                 .filter_map(|part| part.contents.get(slot).copied());
-            *content = union_all_types(table, members);
+            *content = table.union_all(members);
         }
         classes.push(merged);
     }

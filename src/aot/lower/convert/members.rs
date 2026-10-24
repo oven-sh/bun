@@ -1,4 +1,3 @@
-use bun_sema::atom::Atom;
 use bun_sema::bind::Binding;
 use bun_sema::check::aot::{
     GaveUp, MemberLookup, ObjectMemberKind, PositionTypes, ShapeKind, WrittenType,
@@ -56,7 +55,6 @@ impl FileLowering<'_, '_, '_, '_> {
         found
     }
 
-    // What the type of the receiver declares for the member, whatever the checker knows of this read beyond that.
     pub(super) fn find_declared_member_type(&mut self, access: ExprId) -> Option<CheckerTypeId> {
         self.resolve_member(access)?.types.checked.ok()
     }
@@ -64,31 +62,20 @@ impl FileLowering<'_, '_, '_, '_> {
     fn resolve_member(&mut self, access: ExprId) -> Option<FoundMember> {
         let (object, key) = self.hir.member_key(access)?;
         match key {
-            MemberKey::Name(name) => self.look_up_named_member(access, object, name),
+            MemberKey::Name(name) => {
+                let receiver = self
+                    .find_written_type(object)
+                    .and_then(|receiver| self.queries.without_nullish(receiver).ok());
+                let found = receiver
+                    .and_then(|receiver| classify_lookup(self.queries.find_member(receiver, name)));
+                found.or_else(|| classify_lookup(self.queries.member_access(access)))
+            }
             MemberKey::Computed(index) => {
                 let found = classify_lookup(self.queries.member_access(access));
                 found.or_else(|| self.look_up_element(object, index))
             }
             MemberKey::PrivateName(_) => None,
         }
-    }
-
-    fn look_up_named_member(
-        &mut self,
-        access: ExprId,
-        object: ExprId,
-        name: Atom,
-    ) -> Option<FoundMember> {
-        let receiver = self
-            .find_written_type(object)
-            .and_then(|receiver| self.queries.without_nullish(receiver).ok());
-        if let Some(receiver) = receiver {
-            let found = classify_lookup(self.queries.find_member(receiver, name));
-            if found.is_some() {
-                return found;
-            }
-        }
-        classify_lookup(self.queries.member_access(access))
     }
 
     fn look_up_element(&mut self, object: ExprId, index: ExprId) -> Option<FoundMember> {
@@ -123,15 +110,6 @@ impl FileLowering<'_, '_, '_, '_> {
             ShapeKind::Array { element, .. } => Some(element),
             ShapeKind::Constrained { base, .. } => self.find_array_element_type(base),
             _ => None,
-        }
-    }
-
-    fn find_tuple_contents_type(&mut self, container: CheckerTypeId) -> Option<CheckerTypeId> {
-        find_tuple_elements(self, container)?;
-        let held = self.collect_element_types_from(container, 0);
-        match held.is_empty() {
-            true => None,
-            false => self.queries.union_of(&held).ok(),
         }
     }
 
@@ -218,9 +196,14 @@ fn find_contents_type(
     is_any_element: bool,
 ) -> Option<CheckerTypeId> {
     let element = file.find_array_element_type(container);
-    match is_any_element {
-        true => element.or_else(|| file.find_tuple_contents_type(container)),
-        false => element,
+    if element.is_some() || !is_any_element {
+        return element;
+    }
+    find_tuple_elements(file, container)?;
+    let held = file.collect_element_types_from(container, 0);
+    match held.is_empty() {
+        true => None,
+        false => file.queries.union_of(&held).ok(),
     }
 }
 

@@ -23,7 +23,7 @@ use crate::ir::generated::{
     Function, FunctionFlags, FunctionKind, FunctionRole, FunctionVisibility, RuntimeFunctionEntry,
 };
 use crate::ir::{DeclaredType, StringId, TypeTable};
-use crate::lower::{FileLowering, function};
+use crate::lower::{FileLowering, SourceKind, function};
 
 #[derive(Copy, Clone)]
 struct LibrarySource<'a, 's> {
@@ -75,12 +75,6 @@ enum LibraryItem {
     TopLevelCode(StmtId),
 }
 
-#[derive(Copy, Clone)]
-enum LibraryFunction {
-    RuntimeBuiltin(RuntimeFunction),
-    Local,
-}
-
 pub(super) fn declare_library_functions(file: &mut FileLowering<'_, '_, '_, '_>) {
     for item in LibrarySource::new(file).library_items() {
         match item {
@@ -102,7 +96,8 @@ pub(super) fn declare_library_functions(file: &mut FileLowering<'_, '_, '_, '_>)
     }
 }
 
-pub(super) fn collect_library_functions(
+/// The functions at the top of a file of library functions, each with the positions it is written between.
+pub fn collect_library_functions(
     files: &Files<'_>,
     file: FileId,
     builtins: &ResolvedBuiltins,
@@ -152,30 +147,19 @@ pub(super) fn collect_link_time_constant_functions(
         .collect()
 }
 
-fn find_runtime_function(
-    file: &FileLowering<'_, '_, '_, '_>,
-    export_name: &[u8],
-) -> Option<RuntimeFunction> {
-    let function = file
-        .inputs
-        .sources
-        .runtime_function(file.file, export_name)?;
-    let platforms = table::runtime_function(function)?.platforms;
-    platforms
-        .contains(file.inputs.options.platform)
-        .then_some(function)
-}
-
 impl FileLowering<'_, '_, '_, '_> {
-    fn classify_library_function(&self, function: FnId) -> LibraryFunction {
+    // `None`: the function serves the others of its file.
+    fn find_runtime_function(&self, function: FnId) -> Option<RuntimeFunction> {
         let func = &self.hir[function];
         if !func.flags.contains(Flags::EXPORT) || func.name.is_none() {
-            return LibraryFunction::Local;
+            return None;
         }
-        match find_runtime_function(self, self.queries.atom_bytes(func.name)) {
-            Some(id) => LibraryFunction::RuntimeBuiltin(id),
-            None => LibraryFunction::Local,
-        }
+        let export_name = self.queries.atom_bytes(func.name);
+        let sources = self.inputs.sources;
+        let id = sources.runtime_function(self.file, export_name)?;
+        let platforms = table::runtime_function(id)?.platforms;
+        let is_on_platform = platforms.contains(self.inputs.options.platform);
+        is_on_platform.then_some(id)
     }
 
     fn intern_directive_name(
@@ -190,21 +174,17 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         pending.overridden_name.map(|name| self.intern_atom(name))
     }
-
-    fn is_declared_without_name(&self, pending: &PendingDirectives) -> bool {
-        let is_empty = |name: Atom| self.queries.atom_bytes(name).is_empty();
-        !pending.is_getter && pending.overridden_name.is_some_and(is_empty)
-    }
 }
 
-pub(super) fn library_function_form(
+pub(in crate::lower) fn library_function_form(
     file: &FileLowering<'_, '_, '_, '_>,
     function: FnId,
 ) -> Option<LibraryFunctionForm> {
-    match file.classify_library_function(function) {
-        LibraryFunction::RuntimeBuiltin(_) => {}
-        LibraryFunction::Local => return None,
+    match file.source {
+        SourceKind::Program | SourceKind::RuntimeModule(_) => return None,
+        SourceKind::RuntimeFunctions => {}
     }
+    file.find_runtime_function(function)?;
     let mut items = LibrarySource::new(file).library_items();
     items.find_map(|item| match item {
         LibraryItem::Function(declared, directives) if declared == function => {
@@ -218,15 +198,12 @@ fn adjust_header(
     file: &mut FileLowering<'_, '_, '_, '_>,
     header: &mut Function,
     function: FnId,
-    kind: LibraryFunction,
+    runtime_function: Option<RuntimeFunction>,
     pending: &PendingDirectives,
 ) {
-    let id = match kind {
-        LibraryFunction::RuntimeBuiltin(id) => id,
-        LibraryFunction::Local => {
-            header.flags |= FunctionFlags::IS_HIDDEN_IN_STACK_TRACES;
-            return;
-        }
+    let Some(id) = runtime_function else {
+        header.flags |= FunctionFlags::IS_HIDDEN_IN_STACK_TRACES;
+        return;
     };
     header.enclosing_runtime_function = Some(id);
     let is_async = header.flags.contains(FunctionFlags::IS_ASYNC);
@@ -248,7 +225,8 @@ fn adjust_header(
             header.results = vec![DeclaredType::from_compiler(TypeTable::OBJECT)];
         }
     }
-    if file.is_declared_without_name(pending) {
+    let is_empty = |name: Atom| file.queries.atom_bytes(name).is_empty();
+    if !pending.is_getter && pending.overridden_name.is_some_and(is_empty) {
         header.name = None;
         header.flags = header.flags.without(FunctionFlags::HAS_EXPLICIT_NAME);
     } else if let Some(name) = file.intern_directive_name(function, pending) {
@@ -271,21 +249,18 @@ fn declare_library_function(
     function: FnId,
     pending: &PendingDirectives,
 ) {
-    let kind = file.classify_library_function(function);
+    let runtime_function = file.find_runtime_function(function);
     let id = function::declare_source_function_with(file, function, &mut |file, header| {
-        adjust_header(file, header, function, kind, pending);
+        adjust_header(file, header, function, runtime_function, pending);
     });
-    match kind {
-        LibraryFunction::RuntimeBuiltin(runtime_function) => {
-            let flags = file.function_header(id).flags;
-            let is_async = flags.contains(FunctionFlags::IS_ASYNC);
-            file.fragment.add_runtime_function(RuntimeFunctionEntry {
-                id: runtime_function,
-                function: id,
-                visibility: pending.compute_visibility(is_async),
-            });
-        }
-        LibraryFunction::Local => {}
+    if let Some(runtime_function) = runtime_function {
+        let flags = file.function_header(id).flags;
+        let is_async = flags.contains(FunctionFlags::IS_ASYNC);
+        file.fragment.add_runtime_function(RuntimeFunctionEntry {
+            id: runtime_function,
+            function: id,
+            visibility: pending.compute_visibility(is_async),
+        });
     }
 }
 
@@ -420,28 +395,22 @@ impl<'a, 's> LibrarySource<'a, 's> {
 
     fn find_directive(&self, expression: ExprId) -> Option<Directive> {
         let hir = self.hir;
-        let (name, value) = if let ExprKind::Assign {
-            op: None,
-            target,
-            value,
-        } = hir[expression].kind
-        {
-            (target, Some(value))
-        } else {
-            (expression, None)
+        let (name, text) = match hir[expression].kind {
+            ExprKind::Assign {
+                op: None,
+                target,
+                value,
+            } => {
+                let ExprKind::String(text) = hir[value].kind else {
+                    return None;
+                };
+                (target, Some(text))
+            }
+            _ => (expression, None),
         };
         let Some(Resolved::Intrinsic(Intrinsic::Directive(kind))) = self.builtins.of_expr(name)
         else {
             return None;
-        };
-        let text = match value {
-            Some(value) => {
-                let ExprKind::String(text) = hir[value].kind else {
-                    return None;
-                };
-                Some(text)
-            }
-            None => None,
         };
         match (kind, text) {
             (DirectiveKind::Visibility, Some(text)) => {

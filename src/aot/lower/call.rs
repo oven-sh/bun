@@ -8,7 +8,7 @@ mod number_questions;
 mod written_operands;
 
 use bun_sema::bind::Parent;
-use bun_sema::hir::{Call, Chain, ExprId, ExprKind, IdList};
+use bun_sema::hir::{Call, ExprId, ExprKind, IdList};
 use smallvec::SmallVec;
 
 use super::expression::{Evaluation, Tail, TailCast};
@@ -29,19 +29,27 @@ pub(crate) enum Arguments {
 // A marked call goes where `bun build` lets it go, and `Removable` decides that.
 const IS_ANNOTATED_PURE: bool = false;
 
-#[derive(Copy, Clone, Default, Debug)]
-pub(crate) struct CallSite {
-    pub(crate) callee_key: Option<PropertyKeyId>,
-    pub(crate) callee_name: Option<StringId>,
-    pub(crate) expected_result: Option<ExpectedResultId>,
-}
-
 #[derive(Copy, Clone, Debug)]
 pub(in crate::lower) struct Callee {
     pub(in crate::lower) function: ValueId,
     pub(in crate::lower) this: Option<ValueId>,
     pub(in crate::lower) key: Option<PropertyKeyId>,
     pub(in crate::lower) name: Option<StringId>,
+}
+
+impl Callee {
+    pub(in crate::lower) fn without_key(
+        function: ValueId,
+        this: Option<ValueId>,
+        name: Option<StringId>,
+    ) -> Callee {
+        Callee {
+            function,
+            this,
+            key: None,
+            name,
+        }
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -60,22 +68,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn emit_construct(
         &mut self,
         callee: ValueId,
-        new_target: Option<ValueId>,
         arguments: Arguments,
-        site: CallSite,
+        name: Option<StringId>,
     ) -> ValueId {
         let builder = &mut self.builder;
         match arguments {
-            Arguments::Values(values) => builder.construct(
-                callee,
-                new_target,
-                &values,
-                site.callee_name,
-                IS_ANNOTATED_PURE,
-            ),
-            Arguments::List(list) => {
-                builder.construct_list(callee, new_target, list, site.callee_name)
+            Arguments::Values(values) => {
+                builder.construct(callee, None, &values, name, IS_ANNOTATED_PURE)
             }
+            Arguments::List(list) => builder.construct_list(callee, None, list, name),
         }
     }
 
@@ -85,8 +86,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         arguments: &[ValueId],
     ) -> ValueId {
         let callee = self.builder.builtin(builtin);
-        let arguments = Arguments::Values(SmallVec::from_slice(arguments));
-        emit_call(self, callee, None, arguments, CallSite::default())
+        emit_call(self, callee, None, arguments)
+    }
+
+    fn emit_locked_call(
+        &mut self,
+        builtin: BuiltinId,
+        this: Option<ValueId>,
+        arguments: &[ValueId],
+    ) -> ValueId {
+        let callee = self.emit_locked_builtin(builtin);
+        emit_call(self, callee, this, arguments)
     }
 
     pub(in crate::lower) fn lower_call(
@@ -127,18 +137,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
 
         let expected = self.file.find_callee_by_signature(call, inner);
-        let mut callee = self.lower_expected_callee(site.callee, exit, expected);
-        if !hir.list_at(site.type_args).is_empty() && self.file.calls_parse_of_bun(inner) {
-            callee.function = self.builder.builtin(BuiltinId::JSONParse);
-        }
-        match site.chain {
-            Chain::Start => {
-                let exit = exit.expect("an optional call has the exit of its chain");
-                let function = callee.function;
-                callee.function = self.branch_if_expression_nullish(site.callee, function, exit);
-            }
-            Chain::No | Chain::Continue => {}
-        }
+        let mut callee = self.lower_callee(site.callee, exit, expected);
+        callee.function = self.leave_chain_if_nullish(site, callee.function, exit);
         let arguments = self.lower_arguments(site.args);
         self.emit_call_expression(call, callee, arguments, evaluation.tail)
     }
@@ -153,12 +153,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return value;
         }
         let function = self.lower_expression(site.callee);
-        let callee = Callee {
-            function,
-            this: None,
-            key: None,
-            name: self.file.find_callee_name(site.callee),
-        };
+        let callee = Callee::without_key(function, None, self.file.find_callee_name(site.callee));
         let arguments = self.lower_arguments(site.args);
         self.file
             .record_construction_by_library(expression, site.callee);
@@ -168,10 +163,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn lower_argument_slice(&mut self, arguments: &[ExprId]) -> Arguments {
-        let hir = self.file.hir;
-        let is_spread = |argument: &ExprId| matches!(hir[*argument].kind, ExprKind::Spread(_));
-        if arguments.iter().any(is_spread) {
-            let position = hir[arguments[0]].pos;
+        if intrinsic::has_spread(self.file.hir, arguments) {
+            let position = self.file.hir[arguments[0]].pos;
             return Arguments::List(self.lower_argument_list(&[], arguments, position));
         }
         let values = arguments
@@ -224,7 +217,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(in crate::lower) fn emit_call_expression(
         &mut self,
         call: ExprId,
-        callee: Callee,
+        mut callee: Callee,
         mut arguments: Arguments,
         tail: Tail<'_>,
     ) -> ValueId {
@@ -237,6 +230,31 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             is_never_inlined: false,
         };
         self.set_position(self.file.last_mapped_position(site.callee));
+        let fragment = &self.file.fragment;
+        let is_validated = options
+            .expected_result
+            .is_some_and(|expected| fragment.is_validated(expected));
+        // The parser of the engine stands in the place of the `parse` that throws only for this call, which validates or says `any`.
+        let may_parse = is_validated || self.file.asks_for_no_check(call);
+        if may_parse && self.file.calls_parse_of_bun(site.callee) {
+            callee.function = self.builder.builtin(BuiltinId::JSONParse);
+        }
+        // `JSON.parse<T>(...list)`: an ordinary call, and `validate<T>()` of what it returns.
+        if is_validated && matches!(arguments, Arguments::List(_)) {
+            let unchecked = CallOptions {
+                expected_result: None,
+                ..options
+            };
+            let parsed = self.emit_call_at(callee, arguments, unchecked);
+            let validate = self.builder.builtin(BuiltinId::BunBundleValidate);
+            callee = Callee {
+                function: validate,
+                this: None,
+                key: None,
+                name: None,
+            };
+            arguments = Arguments::Values(SmallVec::from_slice(&[parsed]));
+        }
         match tail {
             Tail::No => {
                 let value = self.emit_call_at(callee, arguments, options);
@@ -263,11 +281,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> ValueId {
         self.convert_argument_values(expression, &mut arguments);
         self.set_position(self.file.construct_position(expression));
-        let construct_site = CallSite {
-            callee_name: callee.name,
-            ..CallSite::default()
-        };
-        let value = self.emit_construct(callee.function, None, arguments, construct_site);
+        let value = self.emit_construct(callee.function, arguments, callee.name);
         self.set_position(self.file.hir[expression].pos);
         self.claim_call_result(expression, value)
     }
@@ -298,20 +312,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
 pub(crate) fn emit_call(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    callee: ValueId,
+    function: ValueId,
     this: Option<ValueId>,
-    arguments: Arguments,
-    site: CallSite,
+    arguments: &[ValueId],
 ) -> ValueId {
-    let callee = Callee {
-        function: callee,
-        this,
-        key: site.callee_key,
-        name: site.callee_name,
-    };
+    let callee = Callee::without_key(function, this, None);
+    let arguments = Arguments::Values(SmallVec::from_slice(arguments));
+    emit_call_of(lowering, callee, arguments)
+}
+
+pub(in crate::lower) fn emit_call_of(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    callee: Callee,
+    arguments: Arguments,
+) -> ValueId {
     let options = CallOptions {
         tail: Tail::No,
-        expected_result: site.expected_result,
+        expected_result: None,
         is_never_inlined: false,
     };
     lowering.emit_call_at(callee, arguments, options)
@@ -377,10 +394,8 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         }
         let target = self.queries.resolved_call(call).ok()??;
-        let index = self
-            .inputs
-            .builtin_types
-            .value_of_call_signature(target.declaration?)?;
+        let types = self.inputs.builtin_types;
+        let index = types.value_of_call_signature(target.declaration?)?;
         builtin_value_of(index)
     }
 }

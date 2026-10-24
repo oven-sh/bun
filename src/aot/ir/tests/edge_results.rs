@@ -1,8 +1,9 @@
-use super::graphs::{assert_graph, create_blocks, emit_read_marker};
-use super::handlers::{create_catch_handler, emit_call};
+use super::assert_graph;
+use super::graphs::emit_read_marker;
+use super::handlers::emit_call;
 use crate::ir::builder::{Edge, FunctionBuilder, Handler};
 use crate::ir::ids::{BlockId, ValueId};
-use crate::ir::testing::build_function;
+use crate::ir::testing::{build_function, create_blocks, create_catch_handler};
 use crate::ir::types::TypeTable;
 
 struct NarrowingBranch {

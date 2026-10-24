@@ -18,7 +18,7 @@ unknown[][]: RangeError: The arrays of the value have more than 65536 holes
 Record<string, number>: TypeError: value must be object, received array [1 issues]
 Record<string, unknown> | unknown[]: RangeError: The arrays of the value have more than 65536 holes
 number[] | string[]: TypeError: value must be array | array, received array [1 issues]
-number[] | object: RangeError: The arrays of the value have more than 65536 holes
+number[] | object: an array of 4294967295
 unknown: an array of 4294967295
 object: an array of 4294967295
 number[], a Proxy says the length: TypeError: [0] must be number, received undefined (and 99 more) [100 issues]
@@ -41,7 +41,7 @@ unknown[][]: RangeError: The arrays of the value have more than 65536 holes
 Record<string, number>: TypeError: value must be object, received array [1 issues]
 Record<string, unknown> | unknown[]: RangeError: The arrays of the value have more than 65536 holes
 number[] | string[]: TypeError: value must be array | array, received array [1 issues]
-number[] | object: RangeError: The arrays of the value have more than 65536 holes
+number[] | object: an array of 30000000
 unknown: an array of 30000000
 object: an array of 30000000
 number[], a Proxy says the length: TypeError: [0] must be number, received undefined (and 99 more) [100 issues]
@@ -137,7 +137,7 @@ all fit: [1,2,3] {"get length":1,"get 0":1,"get 1":1,"get 2":1}
 the second does not fit: TypeError: [1] must be number, received string {"get length":1,"get 0":1,"get 1":1,"get 2":1}
 too long: TypeError: value must have <=2 items {"get length":1,"get 0":1,"get 1":1,"get 2":1}
 the second arm takes it: [1,2,"three"] {"get length":1,"get 0":1,"get 1":1,"get 2":1}
-an arm that describes nothing takes it: [1,"two",3] {"get length":1,"get 0":1,"get 1":1,"get 2":1}
+an arm that describes nothing takes it: [1,"two",3] {"get length":1,"get 0":1,"get 1":1}
 a hole: [1,null,3] {"get length":1,"get 0":1,"get 1":1,"own 1":1,"get 2":1}
 a tuple: [1,"two"] {"get length":1,"get 0":1,"get 1":1}
 no tuple: TypeError: value must be tuple, received array {"get length":1}

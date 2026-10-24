@@ -1,10 +1,8 @@
 use bun_sema::util::SharedSort;
 
-use super::write_position_members;
+use super::{write_position, write_position_members};
 use crate::diagnostics::SourcePosition;
-use crate::engine::{
-    FunctionReportRecord, OperationCountRecord, Position, SourceLocation, position_of,
-};
+use crate::engine::{FunctionReportRecord, Position, SourceLocation, position_of};
 use crate::ir::generated::{AccessCost, KnowledgeLevel, TypeTestFailure};
 use crate::ir::ids::FunctionId;
 use crate::link::{ModuleOrigin, ProgramNames};
@@ -54,12 +52,11 @@ pub(super) fn write_functions(
         .flat_map(|record| function_bounds(input.names, record.source_id()))
         .collect();
     let resolved = resolve_ascending(&wanted, |position| positions.resolve(position));
-    json.begin_array("functions");
-    for (record, bounds) in records.iter().zip(resolved.as_chunks::<2>().0) {
+    let listed = records.iter().zip(resolved.as_chunks::<2>().0);
+    json.objects("functions", listed, |json, (record, bounds)| {
         let end_line = bounds[1].as_ref().map_or(0, |end| end.line);
         write_function(json, input, record, bounds[0].as_ref(), end_line);
-    }
-    json.end_array();
+    });
 }
 
 pub(super) fn write_access_sites(
@@ -68,40 +65,34 @@ pub(super) fn write_access_sites(
     positions: &mut Positions<'_>,
     functions: &FunctionIndex,
 ) {
-    json.begin_array("accessSites");
-    for record in input.engine.accesses() {
-        let Some(position) = resolve_listed_position(input.names, positions, record.location)
-        else {
-            continue;
-        };
-        json.begin_element();
-        write_position_members(json, &position);
-        json.string("kind", &lower_camel_case(record.kind.name()));
-        json.string("level", level_label(record.level).as_bytes());
-        json.string("cost", &lower_camel_case(record.cost.name()));
-        json.optional_number("function", functions.get(record.function_id()));
-        json.number("distance", u64::from(record.distance));
-        json.number("heat", record.heat as u64);
-        let is_free = record.cost == AccessCost::Free && record.level == KnowledgeLevel::Proven;
-        let cause = (!is_free).then(|| cause_code(record.cause).as_bytes());
-        json.optional_string("cause", cause);
-        let limit = (record.limit != LimitId::None).then(|| record.limit.name().as_bytes());
-        json.optional_string("limit", limit);
-        let layout = record
-            .layout_id()
-            .map(|layout| input.names.layout_name(layout));
-        json.optional_string("layout", layout);
-        match positions.resolve_location(record.witness.location) {
-            Some(witness) => {
-                json.begin_object("witness");
-                write_position_members(json, &witness);
-                json.end_object();
-            }
-            None => json.null("witness"),
-        }
-        json.end_object();
-    }
-    json.end_array();
+    let listed = input.engine.accesses().iter().filter_map(|record| {
+        let position = resolve_listed_position(input.names, positions, record.location)?;
+        let witness = positions.resolve_location(record.witness.location);
+        Some((record, position, witness))
+    });
+    json.objects(
+        "accessSites",
+        listed,
+        |json, (record, position, witness)| {
+            write_position_members(json, Some(&position), "column");
+            json.string("kind", &lower_camel_case(record.kind.name()));
+            json.string("level", level_label(record.level).as_bytes());
+            json.string("cost", &lower_camel_case(record.cost.name()));
+            json.optional_number("function", functions.get(record.function_id()));
+            json.number("distance", u64::from(record.distance));
+            json.number("heat", record.heat as u64);
+            let is_free = record.cost == AccessCost::Free && record.level == KnowledgeLevel::Proven;
+            let cause = (!is_free).then(|| cause_code(record.cause).as_bytes());
+            json.optional_string("cause", cause);
+            let limit = (record.limit != LimitId::None).then(|| record.limit.name().as_bytes());
+            json.optional_string("limit", limit);
+            let layout = record
+                .layout_id()
+                .map(|layout| input.names.layout_name(layout));
+            json.optional_string("layout", layout);
+            write_position(json, "witness", witness.as_ref());
+        },
+    );
 }
 
 pub(super) fn write_type_test_sites(
@@ -110,19 +101,15 @@ pub(super) fn write_type_test_sites(
     positions: &mut Positions<'_>,
     functions: &FunctionIndex,
 ) {
-    json.begin_array("typeTestSites");
-    for record in input.engine.type_tests() {
-        let Some(position) = resolve_listed_position(input.names, positions, record.location)
-        else {
-            continue;
-        };
-        json.begin_element();
-        write_position_members(json, &position);
+    let listed = input.engine.type_tests().iter().filter_map(|record| {
+        let position = resolve_listed_position(input.names, positions, record.location)?;
+        Some((record, position))
+    });
+    json.objects("typeTestSites", listed, |json, (record, position)| {
+        write_position_members(json, Some(&position), "column");
         json.boolean("canThrow", record.failure == TypeTestFailure::Throws);
         json.optional_number("function", functions.get(record.function_id()));
-        json.end_object();
-    }
-    json.end_array();
+    });
 }
 
 fn write_function(
@@ -134,18 +121,10 @@ fn write_function(
 ) {
     let (engine, names) = (input.engine, input.names);
     let source = record.source_id();
-    let unlocated = SourcePosition {
-        path: Vec::new(),
-        line: 0,
-        column: 0,
-    };
-    json.begin_element();
-    write_position_members(json, start.unwrap_or(&unlocated));
+    write_position_members(json, start, "column");
     json.number("endLine", u64::from(end_line));
-    json.string(
-        "name",
-        source.map_or(&[][..], |source| names.function_name(source)),
-    );
+    let name = source.map_or(&[][..], |source| names.function_name(source));
+    json.string("name", name);
     json.string("role", engine.text(record.role));
     json.boolean("isInDependency", !is_program_function(names, source));
     json.number("codeBytes", u64::from(record.code_bytes));
@@ -160,27 +139,24 @@ fn write_function(
     write_access_counts(json, "accesses", &sites);
     write_level_counts(json, "calls", &sites.calls);
     json.begin_object("operations");
-    for operation in operations_of(engine.operation_counts(), record) {
+    let first = record.first_operation as usize;
+    let range = first..first + record.operation_count as usize;
+    for operation in engine.operation_counts().get(range).unwrap_or(&[]) {
         let Ok(name) = core::str::from_utf8(engine.text(operation.name)) else {
             continue;
         };
         json.number(name, u64::from(operation.count));
     }
     json.end_object();
-    json.end_object();
 }
 
 fn function_bounds(names: &ProgramNames, source: Option<FunctionId>) -> [Option<Position>; 2] {
-    let range = source.and_then(|source| {
-        Some((
-            names.function_module(source)?,
-            names.function_range(source)?,
-        ))
-    });
-    let Some((module, (start, end))) = range else {
-        return [None, None];
+    let bounds_of = |source| {
+        let module = names.function_module(source)?;
+        let (start, end) = names.function_range(source)?;
+        Some([start, end].map(|offset| Some(Position { module, offset })))
     };
-    [start, end].map(|offset| Some(Position { module, offset }))
+    source.and_then(bounds_of).unwrap_or([None, None])
 }
 
 fn is_program_function(names: &ProgramNames, source: Option<FunctionId>) -> bool {
@@ -191,26 +167,13 @@ fn is_program_function(names: &ProgramNames, source: Option<FunctionId>) -> bool
     }
 }
 
-fn operations_of<'r>(
-    counts: &'r [OperationCountRecord],
-    record: &FunctionReportRecord,
-) -> &'r [OperationCountRecord] {
-    let first = record.first_operation as usize;
-    counts
-        .get(first..first + record.operation_count as usize)
-        .unwrap_or(&[])
-}
-
-fn listed_position(names: &ProgramNames, location: SourceLocation) -> Option<Position> {
-    position_of(location).filter(|_| is_listed_site(names, location, None))
-}
-
 fn resolve_listed_position(
     names: &ProgramNames,
     positions: &mut Positions<'_>,
     location: SourceLocation,
 ) -> Option<SourcePosition> {
-    positions.resolve(listed_position(names, location)?)
+    let position = position_of(location).filter(|_| is_listed_site(names, location, None))?;
+    positions.resolve(position)
 }
 
 #[cfg(test)]

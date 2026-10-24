@@ -100,9 +100,8 @@ pub(super) fn find_unloadable_modules(
     let is_late = |file: FileId| !is_loaded_at_start[file.idx()];
     found.retain(|module| is_late(module.file) && is_late(module.importer));
     for module in &found {
-        let scan = scans
-            .find_mut(module.file)
-            .expect("an unloadable module was scanned");
+        let scan = scans.find_mut(module.file);
+        let scan = scan.expect("an unloadable module was scanned");
         let mut is_first = true;
         scan.requests.retain(|request| {
             let leads_to_failure = module.through.map(ModuleRef::File) == Some(request.target);
@@ -133,10 +132,8 @@ pub(super) fn drop_errors_of_unloadable_modules(
     unloadable: &[UnloadableModule],
 ) {
     for (importer, failures) in pending {
-        if unloadable
-            .binary_search_by_key(importer, |module| module.file)
-            .is_ok()
-        {
+        let found = unloadable.binary_search_by_key(importer, |module| module.file);
+        if found.is_ok() {
             failures.retain(|pending| pending.failure.effect() != FailureEffect::StopsBuild);
         }
     }

@@ -244,6 +244,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     continue;
                 }
+                p.refuse_validate_as_a_value(ref_, items[i].name.loc);
 
                 items[i].name.ref_ = ref_;
                 // Compaction: items[..end] is the kept prefix; items[i] is dead

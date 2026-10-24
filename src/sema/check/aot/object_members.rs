@@ -70,7 +70,6 @@ fn replace_written_type(lookup: MemberLookup, written: WrittenType) -> MemberLoo
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
-    /// `compute_type_shape` gives the `this` type of an interface the shape of the interface.
     pub(super) fn declared_type_of_this(&mut self, ty: TypeId) -> TypeId {
         if let TypeData::ThisParam(symbol) = self.c.data(ty) {
             return self.c.declared_type(*symbol);
@@ -103,7 +102,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok(self.list(&list))
     }
 
-    /// And whether one of them is inferred.
     pub(super) fn compute_checked_members(
         &mut self,
         ty: TypeId,
@@ -131,7 +129,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok((self.list(&list), has_inferred_member))
     }
 
-    /// The member that `compute_find_member` finds. None where it finds none, or an index signature.
     pub(super) fn compute_find_checked_member(
         &mut self,
         receiver: TypeId,
@@ -257,7 +254,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let key = self.c.type_of_expr(file, index);
         let key = self.resolved(key)?;
-        // A key of one value names a member: a constant that took a unique symbol out of an object, for one.
         if let Some(name) = self.c.property_name_of_type(key) {
             return self.lookup_member(receiver, name, arguments);
         }

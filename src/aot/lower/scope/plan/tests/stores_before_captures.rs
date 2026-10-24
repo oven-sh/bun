@@ -1,7 +1,4 @@
-use bun_sema::hir::FnKind;
-
 use super::{analyze_source, is_field, storage_in};
-use crate::lower::captures::Capture;
 use crate::lower::scope::Storage;
 
 fn storage_of_c(statements: &str) -> Storage {
@@ -14,11 +11,7 @@ fn parameter_stored_before_the_closure_is_copied() {
     let source = "export function g(options) { options = options || {}; return () => options.x; }";
     analyze_source("main.mjs", source, |probe| {
         assert_eq!(probe.placement_of("options").storage, Storage::Local);
-        let arrow = probe.only_function(FnKind::Arrow);
-        assert_eq!(
-            probe.captures(arrow),
-            [Capture::Value(probe.binding("options"))]
-        );
+        assert_eq!(probe.captures(probe.arrow()), [probe.copy_of("options")]);
     });
 }
 

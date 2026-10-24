@@ -10,7 +10,6 @@ use crate::diagnostics::{Int32Flow, Int32FlowValue, range_of_node};
 use crate::ir::{DeclaredType, FunctionKey, PositionFlags};
 use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering};
 
-/// The position a flow enters, as the code that lowers the flow knows it.
 #[derive(Copy, Clone)]
 pub(in crate::lower) enum Subject {
     Binding(SymbolId),
@@ -228,16 +227,6 @@ impl FileLowering<'_, '_, '_, '_> {
         concat(&[&target, b" = (", &target, b" ", step, b" 1) | 0"])
     }
 
-    fn target_text(&self, subject: Subject) -> Option<Vec<u8>> {
-        match subject {
-            Subject::Binding(symbol) => {
-                Some(name_text(self, self.bound.symbol(symbol).name).to_vec())
-            }
-            Subject::Member(access) => Some(text_of(self, access).to_vec()),
-            _ => None,
-        }
-    }
-
     fn describe_value(&mut self, subject: Subject, value: FlowingValue) -> Option<Int32FlowValue> {
         match value {
             FlowingValue::Expression(stored) => Some(Int32FlowValue::Expression {
@@ -247,7 +236,12 @@ impl FileLowering<'_, '_, '_, '_> {
                 is_any: is_any(self, stored),
             }),
             FlowingValue::AssignedByPattern => {
-                self.target_text(subject).map(Int32FlowValue::PatternTarget)
+                let target = match subject {
+                    Subject::Binding(symbol) => name_text(self, self.bound.symbol(symbol).name),
+                    Subject::Member(access) => text_of(self, access),
+                    _ => return None,
+                };
+                Some(Int32FlowValue::PatternTarget(target.to_vec()))
             }
             FlowingValue::PassedBySpread => Some(Int32FlowValue::SpreadArgument),
         }

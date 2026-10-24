@@ -1,12 +1,11 @@
 use super::bindings::{AccessedModule, Holder, ImportBinding};
-use super::imports::{BoundName, FileBinder, NamedMember, PendingBinding};
+use super::imports::{FileBinder, NamedMember, PendingBinding};
 use super::interop::{ImportPhase, ModuleKind};
 use super::order::{PlannedSite, SiteKey};
 use super::plan::{Member, ModuleRef, View};
-use super::wrapped::InnerModuleKind;
 use crate::builtins::id::BuiltinId;
-use crate::builtins::table;
-use bun_sema::atom::{Atom, known};
+use crate::builtins::{BuiltinNames, table};
+use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Bound, Decl, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
@@ -44,34 +43,17 @@ impl StandsFor {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Use {
-    /// The member around it is bound, so that nothing looks at the object.
-    Member,
-    /// Only this counts: it is an object.
-    Tested,
-    Value,
-}
-
-#[derive(Copy, Clone)]
-enum Resolved {
-    Binding(PendingBinding),
-    Fixed(Member),
-}
-
 impl FileBinder<'_, '_> {
     pub(super) fn bind_namespace_members(&mut self) {
         let mut roots = self.collect_imported_roots();
-        let sites: Vec<PlannedSite> = self.context.sites.of(self.file).to_vec();
         let mut holders = Vec::new();
-        for site in &sites {
+        for site in self.context.sites.of(self.file) {
             self.bind_site(site, &mut roots, &mut holders);
         }
         if !roots.is_empty() {
             roots.shared_sort_by_key(|root| root.symbol);
             self.bind_references(&roots, &mut holders);
         }
-        let mut holders: Vec<Holder> = holders.into_iter().flatten().collect();
         holders.shared_sort_unstable_by_key(|holder| holder.symbol);
         self.imports.holders = holders;
         self.imports
@@ -101,7 +83,7 @@ impl FileBinder<'_, '_> {
         roots
     }
 
-    fn bind_references(&mut self, roots: &[Root], holders: &mut [Option<Holder>]) {
+    fn bind_references(&mut self, roots: &[Root], holders: &mut [Holder]) {
         let (hir, bound, analysis) = (self.hir, self.bound, self.analysis);
         for root in roots {
             if bound.is_visible_to_eval(root.symbol) {
@@ -122,38 +104,22 @@ impl FileBinder<'_, '_> {
             }
         }
         references.shared_sort_unstable();
-        let mut rest = &references[..];
-        while let Some(&(position, _)) = rest.first() {
-            let count = rest.partition_point(|reference| reference.0 == position);
-            let (of_root, others) = rest.split_at(count);
-            rest = others;
-            self.bind_references_to(roots[position], of_root, holders);
+        for of_root in references.chunk_by(|first, second| first.0 == second.0) {
+            let root = roots[of_root[0].0];
+            let mut is_needed_as_value = false;
+            for &(_, reference) in of_root {
+                is_needed_as_value |= self.bind_member_path(reference, root.stands_for);
+            }
+            if !is_needed_as_value {
+                continue;
+            }
+            if let Some(holder) = root.holder {
+                holders[holder].is_needed_as_value = true;
+            }
+            self.look_at(root.stands_for);
         }
     }
 
-    fn bind_references_to(
-        &mut self,
-        root: Root,
-        references: &[(usize, ExprId)],
-        holders: &mut [Option<Holder>],
-    ) {
-        let mut is_needed_as_value = false;
-        for &(_, reference) in references {
-            is_needed_as_value |= self.bind_member_path(reference, root.stands_for) == Use::Value;
-        }
-        if !is_needed_as_value {
-            return;
-        }
-        let Some(holder) = root.holder else {
-            return self.look_at(root.stands_for);
-        };
-        if let Some(holder) = &mut holders[holder] {
-            holder.is_needed_as_value = true;
-        }
-        self.look_at(root.stands_for);
-    }
-
-    // Something looks at the object of the module.
     fn look_at(&mut self, stands_for: StandsFor) {
         let module = stands_for.module();
         let is_namespace = match stands_for {
@@ -170,13 +136,6 @@ impl FileBinder<'_, '_> {
         }
     }
 
-    fn what_require_answers(&self, target: ModuleRef) -> StandsFor {
-        match self.context.modules.interop(target).kind {
-            ModuleKind::SourceText => StandsFor::RequiredNamespace(target),
-            _ => StandsFor::Exports(target),
-        }
-    }
-
     fn marker(&self, module: ModuleRef) -> Option<bool> {
         match self.context.modules.interop(module).kind {
             // From the first `require` on.
@@ -186,32 +145,18 @@ impl FileBinder<'_, '_> {
         }
     }
 
-    fn is_esm_wrapper(&self, module: ModuleRef) -> bool {
-        let ModuleRef::Inner { file, callback } = module else {
-            return false;
+    fn bind_site(&mut self, site: &PlannedSite, roots: &mut Vec<Root>, holders: &mut Vec<Holder>) {
+        let target = site.target;
+        let (answer, view) = match self.context.modules.interop(target).kind {
+            ModuleKind::SourceText => (
+                StandsFor::RequiredNamespace(target),
+                View::Namespace(target),
+            ),
+            _ => (StandsFor::Exports(target), View::Exports(target)),
         };
-        let inner = self.context.modules.wrapped.of_callback(file, callback);
-        inner.is_some_and(|inner| inner.kind == InnerModuleKind::Esm)
-    }
-
-    fn bind_site(
-        &mut self,
-        site: &PlannedSite,
-        roots: &mut Vec<Root>,
-        holders: &mut Vec<Option<Holder>>,
-    ) {
-        // `init_x()` gives `undefined`.
-        if self.is_esm_wrapper(site.target) {
-            return;
-        }
-        let answer = self.what_require_answers(site.target);
         if !site.evaluates || !site.is_proven {
             return self.look_at(answer);
         }
-        let view = match answer {
-            StandsFor::RequiredNamespace(module) => View::Namespace(module),
-            _ => View::Exports(site.target),
-        };
         let call = match site.key {
             SiteKey::Call(call) => call,
             SiteKey::ImportEquals(declaration) => {
@@ -225,33 +170,34 @@ impl FileBinder<'_, '_> {
                 };
             }
         };
-        if let Some(symbol) = self.find_holder_initialized_by(call) {
-            self.imports.unread_sites.push((call, false));
-            return add_holder(roots, holders, symbol, call, view, answer);
-        }
-        if self.is_statement(call) {
-            return self.imports.unread_sites.push((call, true));
-        }
-        if self.bind_pattern_initialized_by(call, answer) {
-            return self.imports.unread_sites.push((call, false));
+        let (hir, bound) = (self.hir, self.bound);
+        match bound.parent_of_expr(find_outermost_type_assertion(hir, bound, call)) {
+            Parent::VarInit(declaration) => {
+                let pattern = hir[declaration].pat;
+                if let Some(symbol) = self.find_holder(pattern) {
+                    self.imports.unread_sites.push((call, false));
+                    return add_holder(roots, holders, symbol, call, view, answer);
+                }
+                if self.bind_pattern(pattern, answer) {
+                    return self.imports.unread_sites.push((call, false));
+                }
+            }
+            Parent::Stmt(statement) if matches!(hir[statement].kind, StmtKind::Expr(_)) => {
+                return self.imports.unread_sites.push((call, true));
+            }
+            _ => {}
         }
         match self.bind_member_path(call, answer) {
-            Use::Member => self.imports.unread_sites.push((call, false)),
+            true => self.look_at(answer),
             // A module that is one value may be false, zero or null.
-            Use::Tested => self.imports.unread_sites.push((call, false)),
-            Use::Value => self.look_at(answer),
+            false => self.imports.unread_sites.push((call, false)),
         }
     }
 
     // A `const`, `let` or `var` that is declared once, never stored to again, not exported and not seen by `eval`.
-    fn find_holder_initialized_by(&self, initializer: ExprId) -> Option<SymbolId> {
-        let (hir, bound) = (self.hir, self.bound);
-        let initializer = find_outermost_type_assertion(hir, bound, initializer);
-        let Parent::VarInit(declaration) = bound.parent_of_expr(initializer) else {
-            return None;
-        };
-        let pattern = hir[declaration].pat;
-        if !matches!(hir[pattern].kind, PatKind::Ident(_)) {
+    fn find_holder(&self, pattern: PatId) -> Option<SymbolId> {
+        let bound = self.bound;
+        if !matches!(self.hir[pattern].kind, PatKind::Ident(_)) {
             return None;
         }
         let holder = bound.declared_symbol(Decl::Var(pattern));
@@ -262,112 +208,63 @@ impl FileBinder<'_, '_> {
         is_holder.then_some(holder)
     }
 
-    fn is_statement(&self, expression: ExprId) -> bool {
-        let outermost = find_outermost_type_assertion(self.hir, self.bound, expression);
-        match self.bound.parent_of_expr(outermost) {
-            Parent::Stmt(statement) => matches!(self.hir[statement].kind, StmtKind::Expr(_)),
-            _ => false,
-        }
-    }
-
     // `const { a, b: c = d } = require(K)` reads the names once, at that point.
-    fn bind_pattern_initialized_by(&mut self, call: ExprId, answer: StandsFor) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
-        let initializer = find_outermost_type_assertion(hir, bound, call);
-        let Parent::VarInit(declaration) = bound.parent_of_expr(initializer) else {
+    fn bind_pattern(&mut self, pattern: PatId, answer: StandsFor) -> bool {
+        let hir = self.hir;
+        let PatKind::Object(properties) = hir[pattern].kind else {
             return false;
         };
-        let Some(names) = self.find_names_of_pattern(hir[declaration].pat) else {
-            return false;
-        };
-        let mut resolved = Vec::with_capacity(names.len());
-        for &name in &names {
+        let mut members = Vec::new();
+        for property in properties.iter().map(|id| hir[id]) {
+            let PropKey::Name(name) = property.key else {
+                return false;
+            };
+            if property.is_rest {
+                return false;
+            }
             match self.resolve_member(answer, name) {
                 // A namespace or a built-in object behind the name is no variable that a copy could be taken of.
-                Some(Resolved::Binding(binding)) if !has_variable(binding) => return false,
-                Some(found) => resolved.push(found),
+                Some(NamedMember::Binding(binding)) if !has_variable(binding) => return false,
+                Some(found) => members.push(((answer.module(), name), found)),
                 None => return false,
             }
         }
-        let module = answer.module();
-        for (name, found) in names.into_iter().zip(resolved) {
-            self.imports
-                .named_members
-                .push(((module, name), found.into_named()));
-        }
+        self.imports.named_members.extend(members);
         true
     }
 
-    fn find_names_of_pattern(&self, pattern: PatId) -> Option<Vec<Atom>> {
-        let hir = self.hir;
-        let PatKind::Object(properties) = hir[pattern].kind else {
-            return None;
-        };
-        let mut names = Vec::new();
-        for property in properties.iter().map(|id| hir[id]) {
-            let PropKey::Name(name) = property.key else {
-                return None;
-            };
-            if property.is_rest {
-                return None;
-            }
-            names.push(name);
-        }
-        Some(names)
-    }
-
-    /// An object finds the other names without having them, or keeps what is stored under them elsewhere.
-    fn is_plain_name(&self, name: Atom) -> bool {
-        let context = self.context;
-        let is_index = context
-            .files
-            .atoms
-            .bytes(name)
-            .first()
-            .is_some_and(u8::is_ascii_digit);
-        let is_inherited = context
-            .builtin_names
-            .get(name)
-            .is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
-        !is_index && !is_inherited && name != known::__proto__
-    }
-
     // What a read of the name finds. `None`: only the object knows.
-    fn resolve_member(&self, stands_for: StandsFor, name: Atom) -> Option<Resolved> {
+    fn resolve_member(&self, stands_for: StandsFor, name: Atom) -> Option<NamedMember> {
         let module = stands_for.module();
         let is_exports = match stands_for {
-            StandsFor::ImportedNamespace(_) => false,
-            StandsFor::RequiredNamespace(_) => false,
+            StandsFor::ImportedNamespace(_) | StandsFor::RequiredNamespace(_) => false,
             StandsFor::Exports(_) => true,
         };
-        if is_exports && !self.is_plain_name(name) {
+        let context = self.context;
+        if is_exports && !is_plain_name(&context.files.atoms, context.builtin_names, name) {
             return None;
         }
         if name == known::__esModule {
             // An ES module may export the name itself.
             if let StandsFor::RequiredNamespace(_) = stands_for
-                && let Ok(BoundName {
-                    binding,
-                    required_name: None,
-                }) = self.resolve_name(module, name)
+                && let Ok((binding, None)) = self.resolve_name(module, name)
             {
-                return Some(Resolved::Binding(binding));
+                return Some(NamedMember::Binding(binding));
             }
             return match stands_for {
                 StandsFor::RequiredNamespace(_) | StandsFor::Exports(_) => {
-                    Some(Resolved::Fixed(Member::Marker(self.marker(module)?)))
+                    Some(NamedMember::Fixed(Member::Marker(self.marker(module)?)))
                 }
                 StandsFor::ImportedNamespace(_) => None,
             };
         }
         match self.resolve_name(module, name) {
-            Ok(BoundName {
-                binding,
-                required_name: None,
-            }) => (!is_exports || has_variable(binding)).then_some(Resolved::Binding(binding)),
+            Ok((binding, None)) => {
+                (!is_exports || has_variable(binding)).then_some(NamedMember::Binding(binding))
+            }
             // The namespace object of a module whose names are all known has no such property.
             Err(_) if matches!(stands_for, StandsFor::RequiredNamespace(_)) => {
-                Some(Resolved::Fixed(Member::Undefined))
+                Some(NamedMember::Fixed(Member::Undefined))
             }
             Ok(_) | Err(_) => None,
         }
@@ -388,12 +285,12 @@ impl FileBinder<'_, '_> {
             return None;
         }
         let binding = match self.resolve_member(stands_for, name)? {
-            Resolved::Fixed(_) if is_stored => return None,
-            Resolved::Fixed(fixed) => {
+            NamedMember::Fixed(_) if is_stored => return None,
+            NamedMember::Fixed(fixed) => {
                 self.imports.fixed_members.push((member, (module, fixed)));
                 return Some((member, None));
             }
-            Resolved::Binding(binding) => binding,
+            NamedMember::Binding(binding) => binding,
         };
         if is_stored {
             // The namespace object refuses a store, and so does a name that stands for a name of another module.
@@ -425,24 +322,22 @@ impl FileBinder<'_, '_> {
         Some((member, inner))
     }
 
-    fn bind_member_path(&mut self, mut reference: ExprId, mut stands_for: StandsFor) -> Use {
+    // Whether something looks at the object: no member around the reference is bound, and more counts than that it is an object.
+    fn bind_member_path(&mut self, mut reference: ExprId, mut stands_for: StandsFor) -> bool {
         let mut is_member_bound = false;
         while let Some((member, inner)) = self.bind_enclosing_member(reference, stands_for) {
             is_member_bound = true;
             let Some(inner) = inner else {
-                return Use::Member;
+                return false;
             };
             (reference, stands_for) = (member, inner);
         }
         if is_member_bound {
             // `ns.inner`, where something looks at the namespace that `inner` is.
             self.look_at(stands_for);
-            return Use::Member;
+            return false;
         }
-        match self.is_only_tested(reference) {
-            true => Use::Tested,
-            false => Use::Value,
-        }
+        !self.is_only_tested(reference)
     }
 
     fn is_null_or_undefined(&self, expression: ExprId) -> bool {
@@ -485,15 +380,6 @@ impl FileBinder<'_, '_> {
     }
 }
 
-impl Resolved {
-    fn into_named(self) -> NamedMember {
-        match self {
-            Resolved::Binding(binding) => NamedMember::Binding(binding),
-            Resolved::Fixed(member) => NamedMember::Fixed(member),
-        }
-    }
-}
-
 fn has_variable(binding: PendingBinding) -> bool {
     matches!(
         binding,
@@ -503,7 +389,7 @@ fn has_variable(binding: PendingBinding) -> bool {
 
 fn add_holder(
     roots: &mut Vec<Root>,
-    holders: &mut Vec<Option<Holder>>,
+    holders: &mut Vec<Holder>,
     symbol: SymbolId,
     call: ExprId,
     view: View,
@@ -514,12 +400,12 @@ fn add_holder(
         stands_for,
         holder: Some(holders.len()),
     });
-    holders.push(Some(Holder {
+    holders.push(Holder {
         symbol,
         call,
         view,
         is_needed_as_value: false,
-    }));
+    });
 }
 
 fn imported_module(binding: PendingBinding) -> Option<StandsFor> {
@@ -554,7 +440,16 @@ fn eager_namespace_module(binding: PendingBinding) -> Option<ModuleRef> {
     }
 }
 
-fn find_outermost_type_assertion(
+/// An object finds the other names without having them, or keeps what is stored under them elsewhere.
+pub(super) fn is_plain_name(atoms: &Interner<'_>, names: &BuiltinNames, name: Atom) -> bool {
+    let is_index = atoms.bytes(name).first().is_some_and(u8::is_ascii_digit);
+    let is_inherited = names
+        .get(name)
+        .is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
+    !is_index && !is_inherited && name != known::__proto__
+}
+
+pub(super) fn find_outermost_type_assertion(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     operand: ExprId,

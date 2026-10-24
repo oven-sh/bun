@@ -352,7 +352,7 @@ impl Declarations<'_, '_> {
             let StmtKind::Try { param, handler, .. } = hir.stmts[index].kind else {
                 continue;
             };
-            let catch_scope = self.statement_scope(handler);
+            let catch_scope = self.bound.scope_of_stmt(handler);
             if param.is_none() || catch_scope.is_none() {
                 continue;
             }

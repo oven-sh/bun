@@ -1,5 +1,4 @@
-use bun_sema::bind::{Binding, Bound, Decl, ScopeId, ScopeKind, SymbolId};
-use bun_sema::check::aot::FunctionRef;
+use bun_sema::bind::{Binding, Decl, ScopeId, ScopeKind, SymbolId};
 use bun_sema::fold::{TreeNode, push_children};
 use bun_sema::hir::{ExprId, FnId, StmtId, is_moved_to_file_start};
 use rustc_hash::FxHashMap;
@@ -7,16 +6,20 @@ use smallvec::SmallVec;
 
 use super::prepass::{
     collect_class_decorators, collect_eval_variable_scopes, collect_implicit_uses,
-    collect_inner_module_parameters,
 };
-use super::{
-    Context, Initialization, ScopeWalk, Task, WalkInput, WalkedFunction, WalkedFunctionId, Walker,
-};
+use super::{Context, Initialization, ScopeWalk, Task, WalkedFunction, WalkedFunctionId, Walker};
 use crate::ir::FunctionKey;
-use crate::lower::scope::{BindingRef, ScopeSlot};
+use crate::lower::commonjs;
+use crate::lower::scope::analysis::sort_unique;
+use crate::lower::scope::lexical_owners::scope_chain;
+use crate::lower::scope::{BindingRef, ScopeInput, ScopeSlot};
+use crate::modules::ModuleKind;
 
-pub(super) fn run(input: &WalkInput<'_, '_>) -> ScopeWalk {
-    let mut walker = Walker::new(input);
+pub(in crate::lower::scope) fn walk_file(
+    input: &ScopeInput<'_, '_>,
+    lexical_owners: &[ScopeId],
+) -> ScopeWalk {
+    let mut walker = Walker::new(input, lexical_owners);
     walker.walk_module();
     let mut walk = walker.walk;
     sort_unique(&mut walk.uses);
@@ -33,11 +36,6 @@ pub(super) fn run(input: &WalkInput<'_, '_>) -> ScopeWalk {
     walk
 }
 
-pub(super) fn sort_unique<T: Ord>(list: &mut Vec<T>) {
-    list.sort_unstable();
-    list.dedup();
-}
-
 pub(super) fn entries_of<K: Copy + Ord, V>(list: &[(K, V)], key: K) -> &[(K, V)] {
     let start = list.partition_point(|entry| entry.0 < key);
     let length = list[start..].partition_point(|entry| entry.0 == key);
@@ -46,11 +44,6 @@ pub(super) fn entries_of<K: Copy + Ord, V>(list: &[(K, V)], key: K) -> &[(K, V)]
 
 pub(super) fn bindings_of<K: Copy + Ord>(list: &[(K, Binding)], key: K) -> SmallVec<[Binding; 4]> {
     entries_of(list, key).iter().map(|entry| entry.1).collect()
-}
-
-pub(super) fn scope_chain(bound: &Bound<'_>, from: ScopeId) -> impl Iterator<Item = ScopeId> {
-    let parent_of = move |scope: &ScopeId| bound.scopes[scope.idx()].parent.some();
-    std::iter::successors(from.some(), parent_of)
 }
 
 fn merge_redeclared_functions(functions: &mut Vec<(ScopeId, SymbolId, FnId)>) {
@@ -69,21 +62,19 @@ fn merge_redeclared_functions(functions: &mut Vec<(ScopeId, SymbolId, FnId)>) {
 }
 
 impl<'x, 's> Walker<'x, 's> {
-    fn new(input: &'x WalkInput<'x, 's>) -> Walker<'x, 's> {
+    fn new(input: &'x ScopeInput<'x, 's>, lexical_owners: &'x [ScopeId]) -> Walker<'x, 's> {
         let (hir, bound) = (input.hir, input.bound);
         let decisions = &input.compiled.analysis.decisions;
+        let is_commonjs = input.modules.kind(input.file) == ModuleKind::CommonJs;
         let (jsx_uses, metadata_uses) = collect_implicit_uses(bound);
         Walker {
             input,
             hir,
             bound,
             decisions,
+            lexical_owners,
+            is_commonjs,
             file_scope: bound.scope_of_declaration(hir, Decl::File),
-            inner_module_parameters: collect_inner_module_parameters(
-                hir,
-                bound,
-                input.modules.inner_modules(input.file),
-            ),
             jsx_uses,
             metadata_uses,
             class_decorators: collect_class_decorators(hir, bound),
@@ -98,7 +89,8 @@ impl<'x, 's> Walker<'x, 's> {
                 is_switch_scope: vec![false; bound.scopes.len()],
                 is_repeated_scope: vec![false; bound.scopes.len()],
                 eval_variable_scopes: collect_eval_variable_scopes(bound, decisions),
-                has_wrapper_parameters: input.has_wrapper_parameters,
+                has_wrapper_parameters: is_commonjs
+                    && commonjs::keeps_wrapper(bound, decisions, input.builtins),
                 ..ScopeWalk::default()
             },
             stack: Vec::new(),
@@ -107,56 +99,20 @@ impl<'x, 's> Walker<'x, 's> {
     }
 
     fn walk_module(&mut self) {
-        let key = FunctionKey::ModuleBody(self.input.file);
-        let root = Context {
-            function: self.add_function(key, None),
-            lexical_scope: self.input.lexical_owners[self.file_scope.idx()],
-            enclosing_loop: None,
-            is_repeated: false,
-            is_conditional: false,
-        };
-        let inner_bodies = self.declare_inner_module_bodies();
-        self.enter_scope(self.file_scope, root);
+        let body = self.add_function(FunctionKey::ModuleBody(self.input.file), None);
+        let root = self.enter_unit(body, self.file_scope);
         let hir = self.hir;
-        let moves = self.input.moves_statements_to_file_start;
+        let moves = self.input.modules.kind(self.input.file) != ModuleKind::RuntimeSource;
         let is_moved = |statement: &StmtId| moves && is_moved_to_file_start(hir, *statement);
         let moved = hir.ids(hir.body).filter(is_moved);
         let others = hir.ids(hir.body).filter(|statement| !is_moved(statement));
         self.push_statements(moved.chain(others), root);
-        self.run_pushed_tasks();
-        for (function, id) in inner_bodies {
-            self.push_function_code(function, id);
-            self.run_pushed_tasks();
-        }
-    }
-
-    // The callback of `__commonJS(cb)` or `__esm(fn)` is the body of a module of its own.
-    fn declare_inner_module_bodies(&mut self) -> Vec<(FnId, WalkedFunctionId)> {
-        let file = self.input.file;
-        let callbacks = self.input.modules.inner_modules(file);
-        let mut bodies = Vec::with_capacity(callbacks.len());
-        for &function in callbacks {
-            if !self.is_live_function(function) {
-                continue;
-            }
-            let id = self.add_function(FunctionKey::Source(FunctionRef { file, function }), None);
-            self.walk.function_of_fn[function.idx()] = Some(id);
-            bodies.push((function, id));
-        }
-        bodies
-    }
-
-    fn run_pushed_tasks(&mut self) {
         self.stack.reverse();
         while let Some((task, context)) = self.stack.pop() {
             let first_child = self.stack.len();
             self.run_task(task, context);
             self.stack[first_child..].reverse();
         }
-    }
-
-    pub(super) fn is_module_body(&self, function: WalkedFunctionId) -> bool {
-        self.walk.functions[function.index()].creator.is_none()
     }
 
     fn run_task(&mut self, task: Task, context: Context) {
@@ -167,10 +123,8 @@ impl<'x, 's> Walker<'x, 's> {
                 let time = self.tick();
                 self.walk.functions[function.index()].created_at = time;
             }
-            Task::InitializeSymbol {
-                symbol,
-                precedes_hoisted_functions,
-            } => self.initialize_symbol(symbol, precedes_hoisted_functions, context),
+            Task::InitializeSymbol(symbol) => self.initialize_symbol(symbol, false, context),
+            Task::InitializeParameter(symbol) => self.initialize_symbol(symbol, true, context),
             Task::InitializeSlot(scope, slot) => {
                 let time = self.tick();
                 self.walk.slot_initializations.push(((scope, slot), time));
@@ -251,14 +205,23 @@ impl<'x, 's> Walker<'x, 's> {
         self.children = children;
     }
 
+    // The code of a function, of a field initializer or of the file, whose top scope is `scope`. The file alone runs once.
+    pub(super) fn enter_unit(&mut self, function: WalkedFunctionId, scope: ScopeId) -> Context {
+        let context = Context {
+            function,
+            lexical_scope: self.lexical_owners[scope.idx()],
+            enclosing_loop: None,
+            is_repeated: function != WalkedFunctionId::MODULE_BODY,
+            is_conditional: false,
+        };
+        self.enter_scope(scope, context);
+        context
+    }
+
     pub(super) fn enter_scope(&mut self, scope: ScopeId, context: Context) {
         if scope.is_some() && context.is_repeated {
             self.walk.is_repeated_scope[scope.idx()] = true;
         }
-    }
-
-    pub(super) fn record_use(&mut self, function: WalkedFunctionId, binding: BindingRef) {
-        self.walk.uses.push((function, binding));
     }
 
     pub(super) fn record_symbol_use(&mut self, context: Context, symbol: SymbolId) {
@@ -267,7 +230,8 @@ impl<'x, 's> Walker<'x, 's> {
             return;
         }
         *last_user = Some(context.function);
-        self.record_use(context.function, BindingRef::Symbol(symbol));
+        let binding = BindingRef::Symbol(symbol);
+        self.walk.uses.push((context.function, binding));
     }
 
     pub(super) fn record_slot_use(
@@ -277,7 +241,8 @@ impl<'x, 's> Walker<'x, 's> {
         slot: ScopeSlot,
     ) {
         if scope.is_some() {
-            self.record_use(function, BindingRef::Slot(scope, slot));
+            let binding = BindingRef::Slot(scope, slot);
+            self.walk.uses.push((function, binding));
         }
     }
 

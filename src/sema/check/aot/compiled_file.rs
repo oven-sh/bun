@@ -21,7 +21,6 @@ impl Program<'_> {
 }
 
 impl Checker<'_, '_> {
-    // TypeScript takes a `unique symbol` for `symbol` in every declaration but the one that created it, which is what a declaration file can say.
     pub(in crate::check) fn keeps_unique_symbol(&self, name: Option<(FileId, PatId)>) -> bool {
         let Some((file, pattern)) = name else {
             return false;
@@ -87,18 +86,15 @@ impl<'s> Checker<'_, 's> {
         self.files.is_compiled(file)
     }
 
-    // What one of Bun's loaders makes of a file that is no code is a tree without a text.
     pub(in crate::check) fn is_made_by_loader(&self, file: FileId) -> bool {
         self.is_compiled_file(file) && self.hir(file).source_len == 0
     }
 
-    // Where Bun's types are not installed its modules are declared without a body.
     pub(in crate::check) fn is_declared_in_place_of_bun_types(&self, module: Sym) -> bool {
         self.files.is_shorthand_ambient_module_symbol(module)
             && self.files.is_of_last_resort(module.file)
     }
 
-    // There a class of the run time is of type `any`, which does not say what its constructor takes.
     pub(in crate::check) fn lacks_bun_types(&self) -> bool {
         !self.files.options.declarations_of_last_resort.is_empty()
     }
@@ -111,12 +107,10 @@ impl<'s> Checker<'_, 's> {
         self.module_options(file).no_implicit_any || self.is_inferred_file(file)
     }
 
-    // Types are made under the `strictNullChecks` of the program. What only opens or shuts a message asks the file.
     pub(in crate::check) fn reports_null_checks(&self, file: FileId) -> bool {
         self.files.options.strict_null_checks && self.module_options(file).strict_null_checks
     }
 
-    // Depends only on the signature, so the relation caches hold for every file that asks.
     pub(in crate::check) fn is_under_strict_function_types(&mut self, signature: SigId) -> bool {
         if !self.files.options.strict_function_types || !self.files.is_compile_build() {
             return self.files.options.strict_function_types;
@@ -130,7 +124,6 @@ impl<'s> Checker<'_, 's> {
         self.module_options(file).no_implicit_any && !self.is_inferred_file(file)
     }
 
-    // Types are made under the `strictNullChecks` of the program.
     pub(in crate::check) fn follows_variables_that_start_empty(&self, file: FileId) -> bool {
         self.follows_untyped_variables(file) || self.is_non_strict_file_in_strict_program(file)
     }

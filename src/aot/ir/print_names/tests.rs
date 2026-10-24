@@ -1,15 +1,10 @@
 use super::*;
 use crate::builtins::id::{BuiltinClass, BuiltinId};
-use crate::ir::ids::{LayoutId, ModuleId};
+use crate::ir::ids::ModuleId;
 use crate::ir::program::Program;
 use crate::ir::property_keys::PropertyKey;
+use crate::ir::testing::{array_of, layout, print_with};
 use crate::ir::types::OpaqueKind;
-
-fn print_with(program: &Program, print: impl FnOnce(&mut Printer<'_>)) -> String {
-    let mut out = String::new();
-    print(&mut Printer::new(program.name_tables(), &mut out));
-    out
-}
 
 fn quoted(bytes: &[u8]) -> String {
     let mut out = String::new();
@@ -18,13 +13,11 @@ fn quoted(bytes: &[u8]) -> String {
 }
 
 fn double_text(value: f64) -> String {
-    let mut out = String::new();
-    print_double(&mut out, value);
-    out
+    print_with(&Program::new(), |printer| printer.print_double(value))
 }
 
 fn type_text(program: &Program, id: TypeId) -> String {
-    print_with(program, |printer| print_type(printer, id))
+    print_with(program, |printer| printer.print_type(id))
 }
 
 fn interned_type_text(program: &mut Program, ty: Type) -> String {
@@ -34,15 +27,7 @@ fn interned_type_text(program: &mut Program, ty: Type) -> String {
 
 fn key_text(program: &mut Program, key: PropertyKey) -> String {
     let id = program.property_keys.intern(key);
-    print_with(program, |printer| print_property_key(printer, id))
-}
-
-fn layout(index: usize) -> LayoutId {
-    LayoutId::new(index)
-}
-
-fn array_of(contents: TypeId) -> Type {
-    Type::class(BuiltinClass::Array, &[contents])
+    print_with(program, |printer| printer.print_property_key(id))
 }
 
 #[test]
@@ -81,12 +66,13 @@ fn ill_formed_byte_is_a_hex_escape() {
 
 #[test]
 fn bytes_escape_everything_else() {
-    let mut out = String::new();
-    print_bytes(&mut out, b"a z~\"\\\n\x00\x1f\x7f\xc3\xa9\xff");
-    assert_eq!(out, r#""a z~\x22\x5c\x0a\x00\x1f\x7f\xc3\xa9\xff""#);
-    out.clear();
-    print_bytes(&mut out, b"");
-    assert_eq!(out, "\"\"");
+    let bytes_text =
+        |bytes: &[u8]| print_with(&Program::new(), |printer| printer.print_bytes(bytes));
+    assert_eq!(
+        bytes_text(b"a z~\"\\\n\x00\x1f\x7f\xc3\xa9\xff"),
+        r#""a z~\x22\x5c\x0a\x00\x1f\x7f\xc3\xa9\xff""#
+    );
+    assert_eq!(bytes_text(b""), "\"\"");
 }
 
 #[test]
@@ -398,10 +384,10 @@ fn opaque_is_lower_case() {
 fn invalid_ids_print() {
     let mut program = Program::new();
     program.strings.intern(b"a");
-    let printed = print_with(&program, |printer| print_string(printer, StringId::new(1)));
+    let printed = print_with(&program, |printer| printer.print_string(StringId::new(1)));
     assert_eq!(printed, "<invalid string 1>");
     let printed = print_with(&program, |printer| {
-        print_property_key(printer, PropertyKeyId::new(0));
+        printer.print_property_key(PropertyKeyId::new(0));
     });
     assert_eq!(printed, "<invalid key 0>");
     let past_types = TypeId::new(TypeTable::WELL_KNOWN_COUNT);
@@ -441,7 +427,7 @@ fn content_not_below_holder_prints_invalid() {
         contents: vec![TypeTable::NUMBER, TypeTable::STRING],
     };
     let printed = print_with(&program, |printer| {
-        print_class_part(printer, TypeTable::STRING, &part);
+        printer.print_class_part(TypeTable::STRING, &part);
     });
     assert_eq!(printed, "Map<number, <invalid type 8>>");
 }

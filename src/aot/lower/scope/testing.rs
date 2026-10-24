@@ -5,7 +5,7 @@ use bun_sema::hir::{self, ExprKind, FnId, FnKind, PatKind, StmtId, StmtKind};
 use bun_sema::program::FileId;
 
 use super::lexical_owners::compute_lexical_owners;
-use super::walk::{ScopeWalk, WalkInput, walk_file};
+use super::walk::{ScopeWalk, walk_file};
 use super::{ScopeAnalysis, ScopeInput, analyze_scopes};
 use crate::builtins::{ImportTargets, ResolveInput, SourceDialect, resolve_file};
 use crate::compile::testing::with_lowering_inputs;
@@ -71,7 +71,7 @@ pub(in crate::lower) fn with_scope_analysis<R>(
 
 pub(super) fn walk_scopes(input: &ScopeInput<'_, '_>) -> ScopeWalk {
     let lexical_owners = compute_lexical_owners(input.hir, input.bound);
-    walk_file(&WalkInput::new(input, &lexical_owners))
+    walk_file(input, &lexical_owners)
 }
 
 pub(in crate::lower) fn symbol_named(

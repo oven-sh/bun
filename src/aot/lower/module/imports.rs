@@ -8,7 +8,7 @@ use crate::ir::generated::ImportPhase;
 use crate::ir::{PropertyKeyId, StringId, ValueId, VariableKey};
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, commonjs};
-use crate::modules::{ImportBinding, ModuleRef, Shape, Site, SyntheticExportId, View};
+use crate::modules::{ImportBinding, ModuleRef, Shape, SyntheticExportId, View};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn get_import(&mut self, symbol: SymbolId) -> ValueId {
@@ -20,7 +20,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         emit_import_binding(self, binding, name, path)
     }
 
-    fn emit_variable_read(&mut self, key: VariableKey, name: StringId) -> ValueId {
+    pub(crate) fn emit_variable_read(&mut self, key: VariableKey, name: StringId) -> ValueId {
         let variable = self.file.ensure_variable(key);
         let value = self.builder.get_module_variable(variable);
         self.builder.check_initialized(value, name)
@@ -51,7 +51,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.module_namespace(module, phase)
     }
 
-    fn emit_named_read(&mut self, object: ValueId, name: Atom) -> ValueId {
+    pub(crate) fn emit_named_read(&mut self, object: ValueId, name: Atom) -> ValueId {
         let key = self.file.name_key(name);
         self.emit_get(object, PropertyName::Constant(key))
     }
@@ -61,28 +61,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         id: BuiltinId,
         path: Option<BuiltinPath>,
     ) -> ValueId {
-        match path {
-            Some(BuiltinPath {
-                id: locked,
-                mutability: Mutability::AlwaysLocked,
-            }) if table::is_legal_builtin_constant(locked) => self.builder.builtin(locked),
+        match path.map(|path| (path.id, path.mutability)) {
+            Some((locked, Mutability::AlwaysLocked))
+                if table::is_legal_builtin_constant(locked) =>
+            {
+                self.builder.builtin(locked)
+            }
             // A locked property that holds a function of the host, which has no entry of its own: `import { wrap } from "node:module"`.
-            Some(BuiltinPath {
-                mutability: Mutability::AlwaysLocked,
-                ..
-            }) => self.emit_export_read(id),
-            Some(BuiltinPath {
-                mutability: Mutability::ConstantUnlessWritten,
-                ..
-            })
-            | None => {
+            Some((_, Mutability::AlwaysLocked | Mutability::ChangesOnItsOwn)) => {
+                self.emit_export_read(id)
+            }
+            Some((_, Mutability::ConstantUnlessWritten)) | None => {
                 let value = self.emit_export_read(id);
                 self.expect_builtin(value, table::canonical_id(id))
             }
-            Some(BuiltinPath {
-                mutability: Mutability::ChangesOnItsOwn,
-                ..
-            }) => self.emit_export_read(id),
         }
     }
 
@@ -112,9 +104,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ImportBinding::Namespace { module, .. } if file.inputs.modules.is_left_out(module) => {
                 self.builder.undefined()
             }
-            _ => match file.find_required_namespace(name) {
-                Some(module) => self.emit_module_namespace(module, ImportPhase::Evaluation),
-                None => self.lower_expression(object),
+            // `const a = require("./m.mjs")`: `a` stands for what `import * as a` stands for, and so does the call itself in `require("./m.mjs").f()`, which the read of the member has evaluated.
+            _ => match file.find_view(name) {
+                Some(View::Namespace(module)) => {
+                    self.emit_module_namespace(module, ImportPhase::Evaluation)
+                }
+                Some(View::Exports(_)) | None => self.lower_expression(object),
             },
         }
     }
@@ -194,29 +189,12 @@ pub(super) fn emit_import_binding(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    fn text_key_of_name(&mut self, name: BuiltinName) -> PropertyKeyId {
-        debug_assert!(!table::is_symbol_name(name), "an export has a text name");
+    pub(in crate::lower) fn text_key_of_name(&mut self, name: BuiltinName) -> PropertyKeyId {
+        debug_assert!(
+            !table::is_symbol_name(name),
+            "an export and a member of a module value have a text name"
+        );
         let text = self.intern_bytes(table::text_of_name(name));
         self.text_key(text)
-    }
-
-    // `const a = require("./m.mjs")`: `a` stands for what `import * as a` stands for, and so does the call itself in `require("./m.mjs").f()`, which the read of the member has evaluated.
-    fn find_required_namespace(&self, name: ExprId) -> Option<ModuleRef> {
-        if let ExprKind::Call(_) = self.hir[name].kind {
-            return match self.inputs.modules.site(self.file, name)? {
-                Site::Evaluate { target, .. } => {
-                    (self.inputs.modules.shape(target) == Shape::EsModule).then_some(target)
-                }
-                Site::AsToday => None,
-            };
-        }
-        let holder = match self.bound.binding(name) {
-            Binding::Symbol(holder) if matches!(self.hir[name].kind, ExprKind::Ident(_)) => holder,
-            _ => return None,
-        };
-        match self.inputs.modules.holder(self.file, holder)? {
-            View::Namespace(module) => Some(module),
-            View::Exports(_) => None,
-        }
     }
 }

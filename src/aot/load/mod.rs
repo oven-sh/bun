@@ -44,16 +44,12 @@ use bun_sys::{Fd, File};
 pub(crate) const HOST_ROOT: &[u8] = b"/$bun/";
 
 pub fn host_platform() -> Platforms {
-    if cfg!(target_os = "macos") {
-        Platforms::DARWIN
-    } else if cfg!(target_os = "windows") {
-        Platforms::WINDOWS
-    } else if cfg!(target_os = "freebsd") {
-        Platforms::FREEBSD
-    } else if cfg!(target_os = "android") {
-        Platforms::ANDROID
-    } else {
-        Platforms::LINUX
+    match std::env::consts::OS {
+        "macos" => Platforms::DARWIN,
+        "windows" => Platforms::WINDOWS,
+        "freebsd" => Platforms::FREEBSD,
+        "android" => Platforms::ANDROID,
+        _ => Platforms::LINUX,
     }
 }
 

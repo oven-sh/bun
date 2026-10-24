@@ -9,41 +9,6 @@ enum Pending {
     Layout(LayoutId),
 }
 
-#[derive(Default)]
-struct Reached {
-    pending: Vec<Pending>,
-    types: FxHashSet<TypeId>,
-    layouts: FxHashSet<LayoutId>,
-}
-
-impl Reached {
-    fn add(&mut self, reference: Reference) {
-        match reference {
-            Reference::Type(ty) => {
-                if self.types.insert(ty) {
-                    self.pending.push(Pending::Type(ty));
-                }
-            }
-            Reference::Layout(layout) => {
-                if self.layouts.insert(layout) {
-                    self.pending.push(Pending::Layout(layout));
-                }
-            }
-            Reference::String(_)
-            | Reference::PropertyKey(_)
-            | Reference::TypeSite(_)
-            | Reference::ExpectedResult(_)
-            | Reference::Variable(_)
-            | Reference::Module(..)
-            | Reference::ModuleFailure(_)
-            | Reference::EvalScope(_)
-            | Reference::Function(..)
-            | Reference::Data(_)
-            | Reference::Builtin(_) => {}
-        }
-    }
-}
-
 impl FileLowering<'_, '_, '_, '_> {
     /// `None`: more than `limit` layouts.
     pub(crate) fn collect_reached_layouts(
@@ -52,14 +17,37 @@ impl FileLowering<'_, '_, '_, '_> {
         limit: LimitId,
     ) -> Option<Vec<LayoutId>> {
         let limit = self.inputs.limits.get(limit);
-        let mut reached = Reached::default();
-        reached.add(Reference::Type(ty));
-        while let Some(pending) = reached.pending.pop() {
-            if reached.layouts.len() as u64 > limit {
+        let mut pending = vec![Pending::Type(ty)];
+        let mut types: FxHashSet<TypeId> = FxHashSet::from_iter([ty]);
+        let mut layouts: FxHashSet<LayoutId> = FxHashSet::default();
+        while let Some(next) = pending.pop() {
+            if layouts.len() as u64 > limit {
                 return None;
             }
-            let mut add = |reference: Reference| reached.add(reference);
-            match pending {
+            let mut add = |reference: Reference| match reference {
+                Reference::Type(ty) => {
+                    if types.insert(ty) {
+                        pending.push(Pending::Type(ty));
+                    }
+                }
+                Reference::Layout(layout) => {
+                    if layouts.insert(layout) {
+                        pending.push(Pending::Layout(layout));
+                    }
+                }
+                Reference::String(_)
+                | Reference::PropertyKey(_)
+                | Reference::TypeSite(_)
+                | Reference::ExpectedResult(_)
+                | Reference::Variable(_)
+                | Reference::Module(..)
+                | Reference::ModuleFailure(_)
+                | Reference::EvalScope(_)
+                | Reference::Function(..)
+                | Reference::Data(_)
+                | Reference::Builtin(_) => {}
+            };
+            match next {
                 Pending::Type(ty) => self.fragment.types.get(ty).for_each_reference(&mut add),
                 Pending::Layout(layout) => {
                     let fields = super::own_fields(self, layout);
@@ -69,7 +57,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
             }
         }
-        let mut layouts: Vec<LayoutId> = reached.layouts.into_iter().collect();
+        let mut layouts: Vec<LayoutId> = layouts.into_iter().collect();
         layouts.sort_unstable();
         Some(layouts)
     }

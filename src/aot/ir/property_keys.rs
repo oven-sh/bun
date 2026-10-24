@@ -1,11 +1,8 @@
-use core::hash::BuildHasher;
-
 use hashbrown::HashTable;
-use rustc_hash::FxBuildHasher;
 
 pub use super::generated::{PropertyKey, PropertyKeyKind, WellKnownSymbol};
 use super::ids::{Id, LayoutId, ModuleId, PropertyKeyId, StringId};
-use super::types::release_spare_capacity;
+use super::types::{hash_of, release_spare_capacity};
 
 impl PropertyKey {
     pub fn from_text(text: StringId) -> PropertyKey {
@@ -69,13 +66,9 @@ pub struct PropertyKeyTable {
     ids: HashTable<PropertyKeyId>,
 }
 
-fn hash_key(key: &PropertyKey) -> u64 {
-    FxBuildHasher.hash_one(key)
-}
-
 impl PropertyKeyTable {
     pub fn intern(&mut self, key: PropertyKey) -> PropertyKeyId {
-        let hash = hash_key(&key);
+        let hash = hash_of(&key);
         let list = &self.list;
         if let Some(&id) = self.ids.find(hash, |&id| list[id.index()] == key) {
             return id;
@@ -84,7 +77,7 @@ impl PropertyKeyTable {
         self.list.push(key);
         let list = &self.list;
         self.ids
-            .insert_unique(hash, id, |&id| hash_key(&list[id.index()]));
+            .insert_unique(hash, id, |&id| hash_of(&list[id.index()]));
         id
     }
 
@@ -94,7 +87,7 @@ impl PropertyKeyTable {
 
     pub fn find(&self, key: &PropertyKey) -> Option<PropertyKeyId> {
         let is_equal = |&id: &PropertyKeyId| self.list[id.index()] == *key;
-        self.ids.find(hash_key(key), is_equal).copied()
+        self.ids.find(hash_of(key), is_equal).copied()
     }
 
     #[inline]

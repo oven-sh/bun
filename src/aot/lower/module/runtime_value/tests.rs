@@ -64,10 +64,8 @@ fn default_expression_is_module_value() {
     with_scan("const a = 1;\nexport default { a };\nprobe();", |scan| {
         let statements = top_level_statements(scan);
         assert_eq!(statements.len(), 3);
-        assert_eq!(
-            scan.find_module_value(),
-            ModuleValue::DefaultExpression(statements[1])
-        );
+        let expected = ModuleValue::DefaultExpression(statements[1]);
+        assert_eq!(scan.find_module_value(), expected);
     });
 }
 
@@ -76,10 +74,8 @@ fn first_default_expression_wins() {
     with_scan("export default 1;\nexport default 2;", |scan| {
         let statements = top_level_statements(scan);
         assert_eq!(statements.len(), 2);
-        assert_eq!(
-            scan.find_module_value(),
-            ModuleValue::DefaultExpression(statements[0])
-        );
+        let expected = ModuleValue::DefaultExpression(statements[0]);
+        assert_eq!(scan.find_module_value(), expected);
     });
 }
 
@@ -144,8 +140,8 @@ fn named_exports_are_sorted_and_unique() {
 }
 
 #[test]
-fn types_are_not_exported() {
-    let text = r#"
+fn types_ambient_declarations_and_exports_of_other_modules_are_no_module_value() {
+    let types = r#"
         export interface Shape {}
         export type Alias = number;
         export type { Shape as Renamed };
@@ -154,29 +150,19 @@ fn types_are_not_exported() {
         export namespace OnlyTypes { export type Member = number; }
         probe();
     "#;
-    assert_eq!(find_module_value(text), ModuleValue::Nothing);
-}
-
-#[test]
-fn ambient_declaration_exports_nothing() {
-    let text = "export declare const a: number;";
-    assert_eq!(find_module_value(text), ModuleValue::Nothing);
-}
-
-#[test]
-fn exports_of_other_modules_are_not_module_value() {
-    let text = r#"
+    let ambient_declaration = "export declare const a: number;";
+    let exports_of_other_modules = r#"
         export { a } from "./other";
         export * as all from "./other";
         export * from "./other";
     "#;
-    assert_eq!(find_module_value(text), ModuleValue::Nothing);
-}
-
-#[test]
-fn module_without_exports_has_no_value() {
-    assert_eq!(
-        find_module_value("const a = 1;\nprobe(a);"),
-        ModuleValue::Nothing
-    );
+    let no_exports = "const a = 1;\nprobe(a);";
+    for text in [
+        types,
+        ambient_declaration,
+        exports_of_other_modules,
+        no_exports,
+    ] {
+        assert_eq!(find_module_value(text), ModuleValue::Nothing, "{text}");
+    }
 }

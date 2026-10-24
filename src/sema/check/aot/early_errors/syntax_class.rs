@@ -39,7 +39,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `bun run` drops the directives of functions from a file that it transpiles.
     pub(in crate::check) fn function_directive_error_class(&self, file: FileId) -> DiagnosticClass {
         match self.hir(file).rare_syntax & rare::DIRECTIVE_IN_FUNCTION != 0 {
             true => DiagnosticClass::EarlyError,
@@ -51,7 +50,6 @@ impl Checker<'_, '_> {
         self.is_strict_mode_code(file, node) || self.hir(file).follows_dropped_directive(node)
     }
 
-    /// For what Bun's own parser refuses in strict mode code: a reserved word as a name, `eval` and `arguments` as a target or a declaration.
     pub(in crate::check) fn strict_mode_name_error_class(
         &self,
         file: FileId,

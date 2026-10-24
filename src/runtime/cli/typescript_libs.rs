@@ -57,6 +57,12 @@ pub(crate) const BUNDLED: BundledLibs = BundledLibs {
     read,
 };
 
+/// For src/bundler/aot/validation_plans.rs, which is below this crate.
+#[unsafe(no_mangle)]
+fn bun_bundled_typescript_libs() -> BundledLibs {
+    BUNDLED
+}
+
 /// `process.versions.typescript`
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__typescript_version() -> *const core::ffi::c_char {

@@ -4,8 +4,8 @@ use bun_sema::check::aot::{
 use bun_sema::hir::{Call, Chain, ExprId, ExprKind, FnBody, MemberKey, NodeData};
 use bun_sema::util::SharedSort;
 
-use super::ValidationError;
 use super::nodes::validation_nodes;
+use super::{ValidatedFile, ValidationError};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self, BuiltinName, MemberLookup};
 use crate::builtins::{builtin_class_of, builtin_value_of};
@@ -16,12 +16,7 @@ use crate::ir::generated::{
 use crate::ir::{ExpectedResultId, Primitives, TypeId, TypeTable};
 use crate::lower::positions::{self, SiteOrigin};
 use crate::lower::{CheckerTypeId, FileLowering};
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(super) enum ValidatingFunction {
-    Parse,
-    Validate,
-}
+pub(super) use crate::validation_plans::ValidatingFunction;
 
 pub(super) fn find_validating_function(builtin: BuiltinId) -> Option<ValidatingFunction> {
     match builtin {
@@ -111,15 +106,14 @@ impl FileLowering<'_, '_, '_, '_> {
                 return self.find_validated_result(call, &site, ValidatingFunction::Parse);
             }
             None if !has_type_arguments => return None,
-            Some(ValidatingFunction::Parse) | None => {}
-        }
-        let target = match self.queries.resolved_call(call) {
-            Ok(Some(target)) => target,
-            Ok(None) => return None,
-            Err(_) => {
-                let function = resolved?;
-                return self.find_validated_result(call, &site, function);
+            // Whatever signature the callee is written under, what is called is `parse`.
+            Some(ValidatingFunction::Parse) => {
+                return self.find_validated_result(call, &site, ValidatingFunction::Parse);
             }
+            None => {}
+        }
+        let Ok(Some(target)) = self.queries.resolved_call(call) else {
+            return None;
         };
         let builtin_types = self.inputs.builtin_types;
         let declared = target
@@ -131,92 +125,17 @@ impl FileLowering<'_, '_, '_, '_> {
             return self.find_written_result(call, &target);
         };
         let expected = self.find_validated_result(call, &site, function);
-        if expected.is_some() && resolved.is_none() {
+        if expected.is_some() {
             self.report_at(call, Code::TypedParseCalleeIsNotResolved, &[]);
         }
         expected
     }
 
-    fn find_validated_result(
-        &mut self,
-        call: ExprId,
-        site: &Call,
-        function: ValidatingFunction,
-    ) -> Option<ExpectedResultId> {
-        match function {
-            ValidatingFunction::Validate => {
-                if let Err(code) = self.check_validate_call(site) {
-                    self.report_at(call, code, &[]);
-                    return None;
-                }
-            }
-            ValidatingFunction::Parse if self.hir.list_at(site.type_args).is_empty() => {
-                if self.calls_parse_of_bun(site.callee) {
-                    self.report_at(call, Code::TypedParseNeedsTypeArgument, &[]);
-                }
-                return None;
-            }
-            ValidatingFunction::Parse => {}
-        }
-        let checked = match self.queries.resolved_call(call) {
-            Ok(Some(target)) => target.result.checked,
-            Ok(None) => return None,
-            Err(reason) => Err(reason),
-        };
-        let ty = match checked {
-            Ok(ty) => ty,
-            Err(reason) => {
-                let error = ValidationError::GaveUp(reason);
-                self.report_validation_error(call, function, None, &error);
-                return None;
-            }
-        };
-        let shape = self.queries.type_shape(ty).map(|shape| shape.kind);
-        if let Ok(ShapeKind::Anything(AnythingReason::Any | AnythingReason::Unknown)) = shape {
-            // Only the two words themselves ask for no check. A name that stands for one of them may do so by an oversight.
-            let written = self.find_type_text(call, None);
-            if !matches!(written.trim_ascii(), b"any" | b"unknown") {
-                self.report_at(call, Code::ValidationTypeIsAny, &[written.as_slice()]);
-            }
-            return None;
-        }
-        let position = self.hir[call].pos;
-        let written = self.hir.ids(self.hir.list_at(site.type_args)).next()?;
-        let expected = match validation_nodes(self, ty, written, position) {
-            Ok(nodes) => self.add_expected_result(call, ty, nodes.to_vec()),
-            Err(error) => Err(error),
-        };
-        match expected {
-            Ok(expected) => Some(expected),
-            Err(error) => {
-                self.report_validation_error(call, function, Some(ty), &error);
-                None
-            }
-        }
+    pub(in crate::lower) fn asks_for_no_check(&mut self, call: ExprId) -> bool {
+        self.is_any_written(call)
     }
 
-    fn check_validate_call(&self, site: &Call) -> Result<(), Code> {
-        let hir = self.hir;
-        if hir.is_js {
-            return Err(Code::ValidateNeedsTypeScript);
-        }
-        if hir.list_at(site.type_args).is_empty() {
-            return Err(Code::ValidateNeedsTypeArgument);
-        }
-        if site.chain == Chain::Start {
-            return Err(Code::ValidateOptionalCall);
-        }
-        match hir.ids(site.args).next() {
-            Some(argument)
-                if site.args.len() == 1 && !matches!(hir[argument].kind, ExprKind::Spread(_)) =>
-            {
-                Ok(())
-            }
-            Some(_) | None => Err(Code::ValidateArgumentCount),
-        }
-    }
-
-    // `parse` of the `JSON` that "bun" exports throws when it is reached: a call that has a type argument calls the parser of the engine in its place.
+    // `parse` of the `JSON` that "bun" exports throws when it is reached.
     pub(in crate::lower) fn calls_parse_of_bun(&self, callee: ExprId) -> bool {
         let callee = self.skip_type_syntax(callee);
         self.builtins.builtin_of_expression(callee) == Some(BuiltinId::BunJSONParse)
@@ -282,7 +201,7 @@ impl FileLowering<'_, '_, '_, '_> {
         })
     }
 
-    fn add_expected_result(
+    pub(super) fn add_expected_result(
         &mut self,
         call: ExprId,
         ty: CheckerTypeId,
@@ -319,6 +238,113 @@ impl FileLowering<'_, '_, '_, '_> {
         }))
     }
 
+    pub(super) fn report_at(&mut self, expression: ExprId, code: Code, arguments: &[&[u8]]) {
+        let span = self.span_of(NodeData::Expr(expression));
+        self.diagnostics.report(code, span, arguments);
+    }
+}
+
+/// A call of `JSON.parse<T>()` or `validate<T>()`: the nodes of `T`, or what is wrong with the call.
+pub(super) trait FindsValidatedResults<'c, 'p: 'c, 's: 'p>:
+    ValidatedFile<'c, 'p, 's> + Sized
+{
+    fn find_validated_result(
+        &mut self,
+        call: ExprId,
+        site: &Call,
+        function: ValidatingFunction,
+    ) -> Option<ExpectedResultId> {
+        match function {
+            ValidatingFunction::Validate => {
+                if let Err(code) = self.check_validate_call(site) {
+                    self.report_at(call, code, &[]);
+                    return None;
+                }
+            }
+            ValidatingFunction::Parse if self.hir().list_at(site.type_args).is_empty() => {
+                if self.calls_parse_of_bun(site.callee) {
+                    self.report_at(call, Code::TypedParseNeedsTypeArgument, &[]);
+                }
+                return None;
+            }
+            ValidatingFunction::Parse => {}
+        }
+        let checked = match self.queries().resolved_call(call) {
+            Ok(Some(target)) => target.result.checked,
+            // The callee is `any` to the checker, and so is what it returns.
+            Ok(None) => {
+                self.report_unless_any_is_written(call);
+                return None;
+            }
+            Err(reason) => Err(reason),
+        };
+        let ty = match checked {
+            Ok(ty) => ty,
+            Err(reason) => {
+                let error = ValidationError::GaveUp(reason);
+                self.report_validation_error(call, function, None, &error);
+                return None;
+            }
+        };
+        let shape = self.queries().type_shape(ty).map(|shape| shape.kind);
+        if let Ok(ShapeKind::Anything(AnythingReason::Any | AnythingReason::Unknown)) = shape {
+            self.report_unless_any_is_written(call);
+            return None;
+        }
+        let position = self.hir()[call].pos;
+        let written = self.hir().ids(self.hir().list_at(site.type_args)).next()?;
+        let expected = match validation_nodes(self, ty, written, position) {
+            Ok(nodes) => self.add_expected_result(call, ty, nodes.to_vec()),
+            Err(error) => Err(error),
+        };
+        match expected {
+            Ok(expected) => Some(expected),
+            Err(error) => {
+                self.report_validation_error(call, function, Some(ty), &error);
+                None
+            }
+        }
+    }
+
+    // Only the two words themselves ask for no check, and only alone. A name that stands for one of them may do so by an oversight.
+    fn is_any_written(&mut self, call: ExprId) -> bool {
+        let hir = self.hir();
+        let (ExprKind::Call(id) | ExprKind::TaggedTemplate(id)) = hir[call].kind else {
+            return false;
+        };
+        let is_alone = hir.ids(hir.list_at(hir[id].type_args)).count() == 1;
+        let written = self.find_type_text(call, None);
+        is_alone && matches!(written.trim_ascii(), b"any" | b"unknown")
+    }
+
+    fn report_unless_any_is_written(&mut self, call: ExprId) {
+        if !self.is_any_written(call) {
+            let written = self.find_type_text(call, None);
+            self.report_at(call, Code::ValidationTypeIsAny, &[written.as_slice()]);
+        }
+    }
+
+    fn check_validate_call(&self, site: &Call) -> Result<(), Code> {
+        let hir = self.hir();
+        if hir.is_js {
+            return Err(Code::ValidateNeedsTypeScript);
+        }
+        if hir.list_at(site.type_args).is_empty() {
+            return Err(Code::ValidateNeedsTypeArgument);
+        }
+        if site.chain == Chain::Start {
+            return Err(Code::ValidateOptionalCall);
+        }
+        match hir.ids(site.args).next() {
+            Some(argument)
+                if site.args.len() == 1 && !matches!(hir[argument].kind, ExprKind::Spread(_)) =>
+            {
+                Ok(())
+            }
+            Some(_) | None => Err(Code::ValidateArgumentCount),
+        }
+    }
+
     fn report_validation_error(
         &mut self,
         call: ExprId,
@@ -351,9 +377,9 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn find_type_text(&mut self, call: ExprId, ty: Option<CheckerTypeId>) -> Vec<u8> {
         if let Some(ty) = ty {
-            return self.queries.type_text(ty);
+            return self.queries().type_text(ty);
         }
-        let hir = self.hir;
+        let hir = self.hir();
         let (ExprKind::Call(id) | ExprKind::TaggedTemplate(id)) = hir[call].kind else {
             return Vec::new();
         };
@@ -363,12 +389,9 @@ impl FileLowering<'_, '_, '_, '_> {
         let range = hir[argument].pos as usize..hir[argument].end as usize;
         hir.text.get(range).unwrap_or_default().to_vec()
     }
-
-    pub(super) fn report_at(&mut self, expression: ExprId, code: Code, arguments: &[&[u8]]) {
-        let span = self.span_of(NodeData::Expr(expression));
-        self.diagnostics.report(code, span, arguments);
-    }
 }
+
+impl<'c, 'p: 'c, 's: 'p, F: ValidatedFile<'c, 'p, 's>> FindsValidatedResults<'c, 'p, 's> for F {}
 
 fn callee_text(function: ValidatingFunction) -> &'static [u8] {
     match function {

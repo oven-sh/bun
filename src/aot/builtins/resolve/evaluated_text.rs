@@ -6,20 +6,13 @@ use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{CallId, ExprId, ExprKind};
 use smallvec::SmallVec;
 
-fn evaluates_text(id: BuiltinId) -> bool {
-    table::entry(id)
-        .flags
-        .contains(BuiltinFlags::EVALUATES_TEXT)
-}
-
 fn evaluated_text_form(id: BuiltinId) -> Option<EvaluatedTextForm> {
+    let evaluates_text = |id| table::has_flag(id, BuiltinFlags::EVALUATES_TEXT);
     debug_assert!(evaluates_text(BuiltinId::Function) && evaluates_text(BuiltinId::Eval));
-    if id == BuiltinId::Function {
-        Some(EvaluatedTextForm::FunctionBody)
-    } else if id == BuiltinId::Eval {
-        Some(EvaluatedTextForm::Script)
-    } else {
-        None
+    match id {
+        BuiltinId::Function => Some(EvaluatedTextForm::FunctionBody),
+        BuiltinId::Eval => Some(EvaluatedTextForm::Script),
+        _ => None,
     }
 }
 
@@ -77,10 +70,9 @@ impl Resolver<'_, '_> {
     }
 
     pub(super) fn collect_evaluated_texts(&mut self) {
-        for expr in self.evaluated_exprs() {
-            if let Some(text) = self.find_evaluated_text(expr) {
-                self.output.evaluated_texts.push(text);
-            }
-        }
+        let exprs = self.evaluated_exprs();
+        self.output.evaluated_texts = exprs
+            .filter_map(|expr| self.find_evaluated_text(expr))
+            .collect();
     }
 }

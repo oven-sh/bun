@@ -5,13 +5,6 @@ use super::*;
 
 // `simplify_unused_expr` of src/js_parser/scan/scan_side_effects.rs: what `bun build` and `bun run` leave of an expression whose value nothing uses.
 impl Removable<'_, '_> {
-    fn has_marks(&self) -> bool {
-        let hir = self.hir;
-        !self.options.ignores_pure_annotations
-            && (hir.calls.iter().any(|call| call.is_pure)
-                || (!self.options.jsx_has_side_effects && !hir.jsx.is_empty()))
-    }
-
     // The head of a `for` holds statements which the parser does not visit as statements.
     fn is_in_loop_head(&self, statement: StmtId) -> bool {
         let Parent::Stmt(parent) = self.bound.parent_of_stmt(statement) else {
@@ -29,7 +22,10 @@ impl Removable<'_, '_> {
         let hir = self.hir;
         let decisions = &self.analysis.decisions;
         let mut simplified = Vec::new();
-        if !self.has_marks() {
+        let has_marks = !self.options.ignores_pure_annotations
+            && (hir.calls.iter().any(|call| call.is_pure)
+                || (!self.options.jsx_has_side_effects && !hir.jsx.is_empty()));
+        if !has_marks {
             return simplified;
         }
         for statement in (0..hir.stmts.len() as u32).map(StmtId) {

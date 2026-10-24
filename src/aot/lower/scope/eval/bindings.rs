@@ -1,7 +1,6 @@
 use bun_sema::atom::{Atom, known, written_name};
 use bun_sema::bind::{
-    BindingKind, Bound, CodeUnit, Decl, EvalScope, PrivateMembers, PrivateNameId, ScopeId,
-    ScopeKind, SymbolId,
+    BindingKind, Bound, CodeUnit, Decl, EvalScope, PrivateMembers, ScopeId, ScopeKind, SymbolId,
 };
 use bun_sema::hir::{self, ClassId, MemberId};
 use bun_sema::util::SharedSort;
@@ -12,29 +11,23 @@ use crate::ir::generated::{EvalBinding, EvalBindingKind, EvalScopeFlags, HomeObj
 use crate::ir::{ClassSlot, StringId, ValueId, VariableKey};
 use crate::lower::captures::Capture;
 use crate::lower::member::PropertyName;
-use crate::lower::private_names::PrivateHolder;
+use crate::lower::private_names::{PrivateBinding, PrivateHolder};
 use crate::lower::scope::{
-    ArgumentsObject, BindingForm, BindingRef, ScopeSlot, Storage, environments,
+    ArgumentsObject, BindingForm, BindingRef, ScopeSlot, Storage, environments, find_entry,
 };
 use crate::lower::{FileLowering, FunctionLowering, commonjs, layouts, module};
 use crate::modules::{ImportBinding, Shape, SyntheticExportId};
 
 type ScopeDepths = SmallVec<[(ScopeId, u32); 8]>;
+pub(super) type EvalOperands = SmallVec<[ValueId; 4]>;
 
-#[derive(Default)]
-pub(super) struct EvalScopeBuilder {
-    pub(super) bindings: Vec<EvalBinding>,
-    pub(super) operands: SmallVec<[ValueId; 4]>,
+struct EvalRecord<'l, 'f, 'a, 'c, 'p, 's> {
+    lowering: &'l mut FunctionLowering<'f, 'a, 'c, 'p, 's>,
+    context: EvalContext,
+    bindings: Vec<EvalBinding>,
+    operands: EvalOperands,
     environments: SmallVec<[(ScopeId, u32); 4]>,
     arguments_objects: SmallVec<[(CodeUnit, u32); 1]>,
-}
-
-#[derive(Copy, Clone)]
-struct ClassOperands {
-    scope: ScopeId,
-    depth: u32,
-    token: Option<u32>,
-    class_object: Option<u32>,
 }
 
 fn create_binding(kind: EvalBindingKind, name: Option<StringId>, depth: u32) -> EvalBinding {
@@ -42,18 +35,8 @@ fn create_binding(kind: EvalBindingKind, name: Option<StringId>, depth: u32) -> 
         name,
         kind,
         depth,
-        layout: None,
-        field: None,
-        variable: None,
-        operand: None,
-        function: None,
-        setter: None,
+        ..EvalBinding::default()
     }
-}
-
-fn find_entry<K: Copy + PartialEq>(entries: &[(K, u32)], key: K) -> Option<u32> {
-    let entry = entries.iter().find(|entry| entry.0 == key)?;
-    Some(entry.1)
 }
 
 fn compute_binding_kind(kind: BindingKind) -> EvalBindingKind {
@@ -76,13 +59,6 @@ fn compute_scope_depths(hir: &hir::File<'_>, bound: &Bound<'_>, innermost: Scope
         scope = bound.runtime_parent_scope(hir, scope);
     }
     depths
-}
-
-fn is_lexical_declaration(kind: BindingKind) -> bool {
-    matches!(
-        kind,
-        BindingKind::Let | BindingKind::Const | BindingKind::Class
-    )
 }
 
 fn class_slot(scope: ScopeId, slot: ClassSlot) -> BindingRef {
@@ -128,10 +104,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         &mut self,
         eval_scope: EvalScope,
         context: EvalContext,
-    ) -> EvalScopeBuilder {
+    ) -> (Vec<EvalBinding>, EvalOperands) {
         let bound = self.file.bound;
         let depths = compute_scope_depths(self.file.hir, bound, eval_scope.scope);
-        let mut builder = EvalScopeBuilder::default();
+        let mut record = EvalRecord {
+            lowering: self,
+            context,
+            bindings: Vec::new(),
+            operands: SmallVec::new(),
+            environments: SmallVec::new(),
+            arguments_objects: SmallVec::new(),
+        };
         for symbol in bound.ids(eval_scope.symbols) {
             let Some(depth) = find_entry(&depths, bound.symbol_scope(symbol)) else {
                 debug_assert!(
@@ -140,115 +123,95 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 );
                 continue;
             };
-            self.add_eval_symbol(&mut builder, symbol, depth);
+            record.add_symbol(symbol, depth);
         }
         for &(scope, depth) in &depths {
-            self.add_eval_scope_bindings(&mut builder, context, scope, depth);
+            record.add_scope_bindings(scope, depth);
         }
-        builder.bindings.shared_sort_by_key(|binding| binding.depth);
-        builder
+        record.bindings.shared_sort_by_key(|binding| binding.depth);
+        (record.bindings, record.operands)
     }
+}
 
-    fn add_eval_symbol(&mut self, builder: &mut EvalScopeBuilder, symbol: SymbolId, depth: u32) {
-        let bound = self.file.bound;
-        let name = self.file.intern_atom(self.file.find_spelled_name(symbol));
+impl EvalRecord<'_, '_, '_, '_, '_, '_> {
+    fn add_symbol(&mut self, symbol: SymbolId, depth: u32) {
+        let file = &mut *self.lowering.file;
+        let bound = file.bound;
+        let name = file.intern_atom(file.find_spelled_name(symbol));
         let declared_as = bound.binding_kind(symbol);
-        let depth = if is_lexical_declaration(declared_as) {
-            depth - 1
-        } else {
-            depth
-        };
+        let is_lexical = matches!(
+            declared_as,
+            BindingKind::Let | BindingKind::Const | BindingKind::Class
+        );
+        let depth = depth - u32::from(is_lexical);
         let binding = create_binding(compute_binding_kind(declared_as), Some(name), depth);
-        match self.file.scopes.form(symbol) {
-            BindingForm::Stored => builder.add_stored(self, binding, BindingRef::Symbol(symbol)),
+        match file.scopes.form(symbol) {
+            BindingForm::Stored => self.add_stored(binding, BindingRef::Symbol(symbol)),
             BindingForm::Callee { function } => {
                 let scope = bound.fns[function.idx()].scope;
-                builder.add_stored(self, binding, BindingRef::Slot(scope, ScopeSlot::Callee));
+                self.add_stored(binding, BindingRef::Slot(scope, ScopeSlot::Callee));
             }
             BindingForm::MappedArgument { unit, index } => {
-                self.add_eval_mapped_argument(builder, binding, unit, index);
+                self.add_mapped_argument(binding, unit, index);
             }
-            BindingForm::Import => self.add_eval_import(builder, binding, symbol, name),
+            BindingForm::Import => self.add_import(binding, symbol, name),
             BindingForm::ContainerMember { .. } | BindingForm::NotAValue => {}
         }
     }
 
-    fn add_eval_mapped_argument(
-        &mut self,
-        builder: &mut EvalScopeBuilder,
-        binding: EvalBinding,
-        unit: CodeUnit,
-        index: u32,
-    ) {
-        let operand = builder.ensure_arguments_operand(self, unit);
-        let binding = EvalBinding {
+    fn add_mapped_argument(&mut self, binding: EvalBinding, unit: CodeUnit, index: u32) {
+        let operand = match find_entry(&self.arguments_objects, unit) {
+            Some(operand) => operand,
+            None => {
+                let arguments = self.lowering.get_arguments_object(unit);
+                let operand = self.add_value_operand(arguments);
+                self.arguments_objects.push((unit, operand));
+                operand
+            }
+        };
+        self.bindings.push(EvalBinding {
             kind: EvalBindingKind::MappedArgument,
             field: Some(index),
+            operand: Some(operand),
             ..binding
-        };
-        builder.add_operand(binding, operand);
+        });
     }
 
-    fn add_eval_import(
-        &mut self,
-        builder: &mut EvalScopeBuilder,
-        binding: EvalBinding,
-        symbol: SymbolId,
-        name: StringId,
-    ) {
-        let import = self
-            .file
-            .inputs
-            .modules
-            .import_binding(self.file.file, symbol);
+    fn add_import(&mut self, binding: EvalBinding, symbol: SymbolId, name: StringId) {
+        let file = &*self.lowering.file;
+        let import = file.inputs.modules.import_binding(file.file, symbol);
         match import {
             ImportBinding::Variable(variable) => {
-                builder.add_variable(self, binding, VariableKey::Symbol(variable));
+                self.add_variable(binding, VariableKey::Symbol(variable));
             }
-            ImportBinding::Synthetic(export) if !is_filled_by_loader(self.file, export) => {
-                let value = module::emit_import_binding(self, import, name);
-                builder.add_value(binding, value);
+            ImportBinding::Synthetic(export) if !is_filled_by_loader(file, export) => {
+                let value = module::emit_import_binding(self.lowering, import, name);
+                self.add_value(binding, value);
             }
             ImportBinding::Synthetic(export) | ImportBinding::CapturedBuiltin { export, .. } => {
-                builder.add_variable(self, binding, VariableKey::SyntheticExport(export));
+                self.add_variable(binding, VariableKey::SyntheticExport(export));
             }
             ImportBinding::Unbound | ImportBinding::Unused | ImportBinding::Local => {}
             _ => {
-                let value = module::emit_import_binding(self, import, name);
-                builder.add_value(binding, value);
+                let value = module::emit_import_binding(self.lowering, import, name);
+                self.add_value(binding, value);
             }
         }
     }
 
-    fn add_eval_scope_bindings(
-        &mut self,
-        builder: &mut EvalScopeBuilder,
-        context: EvalContext,
-        scope: ScopeId,
-        depth: u32,
-    ) {
+    fn add_scope_bindings(&mut self, scope: ScopeId, depth: u32) {
         let binding = create_binding(EvalBindingKind::EvalVariables, None, depth);
-        builder.add_stored(
-            self,
-            binding,
-            BindingRef::Slot(scope, ScopeSlot::EvalVariables),
-        );
-        if context.this_scope == Some(scope) {
-            self.add_eval_owner_bindings(builder, context, scope, depth);
+        self.add_stored(binding, BindingRef::Slot(scope, ScopeSlot::EvalVariables));
+        if self.context.this_scope == Some(scope) {
+            self.add_owner_bindings(scope, depth);
         }
-        match self.file.bound.scopes[scope.idx()].kind {
+        match self.lowering.file.bound.scopes[scope.idx()].kind {
             ScopeKind::With(_) => {
                 let binding = create_binding(EvalBindingKind::WithObject, None, depth);
-                builder.add_stored(
-                    self,
-                    binding,
-                    BindingRef::Slot(scope, ScopeSlot::WithObject),
-                );
+                self.add_stored(binding, BindingRef::Slot(scope, ScopeSlot::WithObject));
             }
-            ScopeKind::Class(class) => {
-                self.add_eval_class_bindings(builder, context, class, depth);
-            }
-            ScopeKind::File => self.add_eval_commonjs_bindings(builder, context, depth),
+            ScopeKind::Class(class) => self.add_class_bindings(class, depth),
+            ScopeKind::File => self.add_commonjs_bindings(depth),
             ScopeKind::Module(_)
             | ScopeKind::Fn(_)
             | ScopeKind::Block
@@ -273,339 +236,213 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    fn add_eval_owner_bindings(
-        &mut self,
-        builder: &mut EvalScopeBuilder,
-        context: EvalContext,
-        scope: ScopeId,
-        depth: u32,
-    ) {
-        self.add_eval_arguments_binding(builder, context.owner, depth);
+    fn add_owner_bindings(&mut self, scope: ScopeId, depth: u32) {
+        let flags = self.context.flags;
+        self.add_arguments_binding(self.context.owner, depth);
         let new_target = BindingRef::Slot(scope, ScopeSlot::NewTarget);
-        if self.file.has_location(new_target) {
+        if self.lowering.file.has_location(new_target) {
             let binding = create_binding(EvalBindingKind::NewTarget, None, depth);
-            builder.add_stored(self, binding, new_target);
+            self.add_stored(binding, new_target);
         }
         let this = BindingRef::Slot(scope, ScopeSlot::This);
-        if context
-            .flags
-            .contains(EvalScopeFlags::IS_IN_DERIVED_CONSTRUCTOR)
-            || self.file.has_location(this)
+        if flags.contains(EvalScopeFlags::IS_IN_DERIVED_CONSTRUCTOR)
+            || self.lowering.file.has_location(this)
         {
-            let binding = create_binding(EvalBindingKind::This, None, depth);
-            builder.add_stored(self, binding, this);
+            self.add_stored(create_binding(EvalBindingKind::This, None, depth), this);
         }
-        if context
-            .flags
-            .contains(EvalScopeFlags::ALLOWS_SUPER_PROPERTY)
-        {
+        if flags.contains(EvalScopeFlags::ALLOWS_SUPER_PROPERTY) {
             let binding = create_binding(EvalBindingKind::HomeObject, None, depth);
-            let home_object = match self.get_home_object() {
+            let lowering = &mut *self.lowering;
+            let home_object = match lowering.get_home_object() {
                 (HomeObjectKind::Object, object) => object,
                 (HomeObjectKind::ClassPrototype, class_object) => {
-                    let key = self.file.atom_key(known::prototype);
-                    self.builder.prop_get(class_object, key, false, false)
+                    let key = lowering.file.atom_key(known::prototype);
+                    lowering.builder.prop_get(class_object, key, false, false)
                 }
             };
-            builder.add_value(binding, home_object);
+            self.add_value(binding, home_object);
         }
     }
 
-    fn add_eval_arguments_binding(
-        &mut self,
-        builder: &mut EvalScopeBuilder,
-        owner: CodeUnit,
-        depth: u32,
-    ) {
-        match self.file.scopes.arguments_object(owner) {
+    fn add_arguments_binding(&mut self, owner: CodeUnit, depth: u32) {
+        let file = &mut *self.lowering.file;
+        match file.scopes.arguments_object(owner) {
             ArgumentsObject::Unmapped | ArgumentsObject::Mapped => {
-                let name = self.file.intern_atom(known::arguments);
+                let name = file.intern_atom(known::arguments);
                 let binding = create_binding(EvalBindingKind::Arguments, Some(name), depth);
-                let scope = self.file.bound.top_scope(self.file.hir, owner);
-                let stored = BindingRef::Slot(scope, ScopeSlot::ArgumentsBinding);
-                builder.add_stored(self, binding, stored);
+                let stored = file.code_unit_slot(owner, ScopeSlot::ArgumentsBinding);
+                self.add_stored(binding, stored);
             }
             ArgumentsObject::None => {}
         }
     }
 
-    fn add_eval_class_bindings(
-        &mut self,
-        builder: &mut EvalScopeBuilder,
-        context: EvalContext,
-        class: ClassId,
-        depth: u32,
-    ) {
-        let bound = self.file.bound;
+    fn add_class_bindings(&mut self, class: ClassId, depth: u32) {
+        let (bound, context) = (self.lowering.file.bound, self.context);
         let scope = bound.class_scope[class.idx()];
         let stored_class_object = class_slot(scope, ClassSlot::ClassObject);
         let allows_super_call = context.class == Some(class)
             && context.flags.contains(EvalScopeFlags::ALLOWS_SUPER_CALL);
-        let has_static_name = bound
-            .private_names_of_class(class)
-            .any(|(_, name)| name.is_static);
-        let has_instance_name = bound
-            .private_names_of_class(class)
-            .any(|(_, name)| !name.is_static);
+        let names = || bound.private_names_of_class(class);
+        let has_static_name = names().any(|(_, name)| name.is_static);
+        let has_instance_name = names().any(|(_, name)| !name.is_static);
         if allows_super_call || has_static_name {
             let binding = create_binding(EvalBindingKind::ClassObject, None, depth);
-            builder.add_stored(self, binding, stored_class_object);
+            self.add_stored(binding, stored_class_object);
         }
-        let token = has_instance_name.then(|| {
-            let token = self.get_stored(class_slot(scope, ClassSlot::ClassToken));
-            builder.add_value_operand(token)
-        });
-        let class_object = has_static_name.then(|| {
-            let class_object = self.get_stored(stored_class_object);
-            builder.add_value_operand(class_object)
-        });
-        let operands = ClassOperands {
-            scope,
-            depth,
-            token,
-            class_object,
-        };
-        for (id, name) in bound.private_names_of_class(class) {
-            self.add_eval_private_name(builder, operands, id, name.name);
+        let stored_token = class_slot(scope, ClassSlot::ClassToken);
+        let token = has_instance_name.then(|| self.add_stored_operand(stored_token));
+        let class_object = has_static_name.then(|| self.add_stored_operand(stored_class_object));
+        for (id, name) in names() {
+            let file = &mut *self.lowering.file;
+            let resolved = file.resolve_private_name(id);
+            let text = written_name(file.queries.atom_bytes(name.name));
+            let text = file.intern_bytes(text);
+            let binding = create_binding(EvalBindingKind::PrivateName, Some(text), depth);
+            let binding = match resolved.holder {
+                PrivateHolder::Instance { layout, field } => EvalBinding {
+                    layout: Some(layout),
+                    field: Some(field),
+                    operand: token,
+                    ..binding
+                },
+                PrivateHolder::ClassObject => EvalBinding {
+                    operand: class_object,
+                    ..binding
+                },
+            };
+            self.add_private_name(binding, resolved, scope);
         }
     }
 
-    fn add_eval_private_name(
+    fn add_private_name(
         &mut self,
-        builder: &mut EvalScopeBuilder,
-        operands: ClassOperands,
-        id: PrivateNameId,
-        name: Atom,
+        mut binding: EvalBinding,
+        resolved: PrivateBinding,
+        scope: ScopeId,
     ) {
-        let resolved = self.file.resolve_private_name(id);
-        let text = written_name(self.file.queries.atom_bytes(name));
-        let text = self.file.intern_bytes(text);
-        let binding = create_binding(EvalBindingKind::PrivateName, Some(text), operands.depth);
-        let binding = match resolved.holder {
-            PrivateHolder::Instance { layout, field } => EvalBinding {
-                layout: Some(layout),
-                field: Some(field),
-                operand: operands.token,
-                ..binding
-            },
-            PrivateHolder::ClassObject => EvalBinding {
-                operand: operands.class_object,
-                ..binding
-            },
-        };
-        let scope = operands.scope;
-        match resolved.members {
-            PrivateMembers::Field(member) => {
-                let static_field = class_slot(scope, ClassSlot::StaticField(member));
-                self.add_eval_private_storage(builder, binding, resolved.holder, static_field);
-            }
-            PrivateMembers::AutoAccessor(member) if !resolved.is_decorated => {
-                let static_field = class_slot(scope, ClassSlot::StaticField(member));
-                self.add_eval_private_storage(builder, binding, resolved.holder, static_field);
-            }
-            PrivateMembers::AutoAccessor(member) => {
-                let binding = match resolved.holder {
-                    PrivateHolder::Instance { layout, .. } => EvalBinding {
-                        field: layouts::own_fields(self.file, layout).brand(),
-                        ..binding
-                    },
-                    PrivateHolder::ClassObject => binding,
-                };
+        let (kind, function, setter) = match resolved.members {
+            PrivateMembers::AutoAccessor(member) if resolved.is_decorated => {
+                match resolved.holder {
+                    PrivateHolder::Instance { layout, .. } => {
+                        binding.field = layouts::own_fields(self.lowering.file, layout).brand();
+                    }
+                    PrivateHolder::ClassObject => {}
+                }
                 let stored_pair = class_slot(scope, ClassSlot::PrivateMethod(member));
-                self.add_eval_decorated_accessor(builder, binding, stored_pair);
+                let pair = self.lowering.get_stored(stored_pair);
+                let [function, setter] = [known::get, known::set].map(|name| {
+                    let key = self.lowering.file.name_key(name);
+                    let function = self.lowering.emit_get(pair, PropertyName::Constant(key));
+                    Some(self.add_value_operand(function))
+                });
+                (EvalBindingKind::PrivateAccessor, function, setter)
+            }
+            PrivateMembers::Field(member) | PrivateMembers::AutoAccessor(member) => {
+                match resolved.holder {
+                    PrivateHolder::Instance { .. } => self.bindings.push(binding),
+                    PrivateHolder::ClassObject => {
+                        self.add_stored(binding, class_slot(scope, ClassSlot::StaticField(member)));
+                    }
+                }
+                return;
             }
             PrivateMembers::Method(member) => {
-                let binding = EvalBinding {
-                    kind: EvalBindingKind::PrivateMethod,
-                    ..binding
-                };
-                self.add_eval_private_functions(builder, binding, scope, [Some(member), None]);
+                let function = self.add_private_function(scope, Some(member));
+                (EvalBindingKind::PrivateMethod, function, None)
             }
             PrivateMembers::Accessor { getter, setter } => {
-                let binding = EvalBinding {
-                    kind: EvalBindingKind::PrivateAccessor,
-                    ..binding
-                };
-                self.add_eval_private_functions(builder, binding, scope, [getter, setter]);
+                let function = self.add_private_function(scope, getter);
+                let setter = self.add_private_function(scope, setter);
+                (EvalBindingKind::PrivateAccessor, function, setter)
             }
-        }
-    }
-
-    fn add_eval_private_storage(
-        &mut self,
-        builder: &mut EvalScopeBuilder,
-        binding: EvalBinding,
-        holder: PrivateHolder,
-        static_field: BindingRef,
-    ) {
-        match holder {
-            PrivateHolder::Instance { .. } => builder.bindings.push(binding),
-            PrivateHolder::ClassObject => builder.add_stored(self, binding, static_field),
-        }
-    }
-
-    fn add_eval_private_functions(
-        &mut self,
-        builder: &mut EvalScopeBuilder,
-        binding: EvalBinding,
-        scope: ScopeId,
-        members: [Option<MemberId>; 2],
-    ) {
-        let [function, setter] = members.map(|member| {
-            member.map(|member| {
-                let stored_function = class_slot(scope, ClassSlot::PrivateMethod(member));
-                let function = self.get_stored(stored_function);
-                builder.add_value_operand(function)
-            })
-        });
-        builder.bindings.push(EvalBinding {
+        };
+        self.bindings.push(EvalBinding {
+            kind,
             function,
             setter,
             ..binding
         });
     }
 
-    fn add_eval_decorated_accessor(
-        &mut self,
-        builder: &mut EvalScopeBuilder,
-        binding: EvalBinding,
-        stored_pair: BindingRef,
-    ) {
-        let pair = self.get_stored(stored_pair);
-        let [function, setter] = [known::get, known::set].map(|name| {
-            let key = self.file.name_key(name);
-            let function = self.emit_get(pair, PropertyName::Constant(key));
-            Some(builder.add_value_operand(function))
-        });
-        builder.bindings.push(EvalBinding {
-            kind: EvalBindingKind::PrivateAccessor,
-            function,
-            setter,
-            ..binding
-        });
+    fn add_private_function(&mut self, scope: ScopeId, member: Option<MemberId>) -> Option<u32> {
+        Some(self.add_stored_operand(class_slot(scope, ClassSlot::PrivateMethod(member?))))
     }
 
-    fn add_eval_commonjs_bindings(
-        &mut self,
-        builder: &mut EvalScopeBuilder,
-        context: EvalContext,
-        depth: u32,
-    ) {
-        if !self.file.is_commonjs_module() {
+    fn add_commonjs_bindings(&mut self, depth: u32) {
+        if !self.lowering.file.is_commonjs_module() {
             return;
         }
-        if context.owner == CodeUnit::File {
-            self.add_eval_arguments_binding(builder, CodeUnit::File, depth);
+        if self.context.owner == CodeUnit::File {
+            self.add_arguments_binding(CodeUnit::File, depth);
         }
-        let scope = module::file_scope(self.file);
-        let arguments_object = self.file.scopes.arguments_object(CodeUnit::File);
-        for variable in commonjs::undeclared_wrapper_parameters(self.file.bound) {
-            let name = self.file.intern_atom(variable.name());
+        let scope = module::file_scope(self.lowering.file);
+        let arguments_object = self.lowering.file.scopes.arguments_object(CodeUnit::File);
+        for variable in commonjs::undeclared_wrapper_parameters(self.lowering.file.bound) {
+            let name = self.lowering.file.intern_atom(variable.name());
             let binding = create_binding(EvalBindingKind::Variable, Some(name), depth);
             match arguments_object {
                 ArgumentsObject::Mapped => {
                     let index = commonjs::wrapper_parameter_index(variable);
-                    self.add_eval_mapped_argument(builder, binding, CodeUnit::File, index);
+                    self.add_mapped_argument(binding, CodeUnit::File, index);
                 }
                 ArgumentsObject::None | ArgumentsObject::Unmapped => {
                     let stored = BindingRef::Slot(scope, ScopeSlot::CommonJs(variable));
-                    builder.add_stored(self, binding, stored);
+                    self.add_stored(binding, stored);
                 }
             }
         }
     }
-}
 
-impl EvalScopeBuilder {
     fn add_value_operand(&mut self, value: ValueId) -> u32 {
         let operand = self.operands.len() as u32;
         self.operands.push(value);
         operand
     }
 
-    fn ensure_environment_operand(
-        &mut self,
-        lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-        scope: ScopeId,
-    ) -> u32 {
-        if let Some(operand) = find_entry(&self.environments, scope) {
-            return operand;
-        }
-        let operand = self.add_value_operand(lowering.get_environment(scope));
-        self.environments.push((scope, operand));
-        operand
-    }
-
-    fn ensure_arguments_operand(
-        &mut self,
-        lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-        unit: CodeUnit,
-    ) -> u32 {
-        if let Some(operand) = find_entry(&self.arguments_objects, unit) {
-            return operand;
-        }
-        let operand = self.add_value_operand(lowering.get_arguments_object(unit));
-        self.arguments_objects.push((unit, operand));
-        operand
-    }
-
-    fn add_operand(&mut self, binding: EvalBinding, operand: u32) {
-        self.bindings.push(EvalBinding {
-            operand: Some(operand),
-            ..binding
-        });
+    fn add_stored_operand(&mut self, stored: BindingRef) -> u32 {
+        let value = self.lowering.get_stored(stored);
+        self.add_value_operand(value)
     }
 
     fn add_value(&mut self, binding: EvalBinding, value: ValueId) {
-        let operand = self.add_value_operand(value);
-        self.add_operand(binding, operand);
+        let operand = Some(self.add_value_operand(value));
+        self.bindings.push(EvalBinding { operand, ..binding });
     }
 
-    fn add_variable(
-        &mut self,
-        lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-        binding: EvalBinding,
-        key: VariableKey,
-    ) {
-        let variable = lowering.file.ensure_variable(key);
+    fn add_variable(&mut self, binding: EvalBinding, key: VariableKey) {
+        let variable = Some(self.lowering.file.ensure_variable(key));
         self.bindings.push(EvalBinding {
-            variable: Some(variable),
+            variable,
             ..binding
         });
     }
 
-    fn add_field(
-        &mut self,
-        lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-        binding: EvalBinding,
-        scope: ScopeId,
-        field: u32,
-    ) {
-        let operand = self.ensure_environment_operand(lowering, scope);
-        let binding = EvalBinding {
-            layout: Some(environments::environment_layout(lowering.file, scope)),
-            field: Some(field),
-            ..binding
-        };
-        self.add_operand(binding, operand);
-    }
-
-    fn add_stored(
-        &mut self,
-        lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-        binding: EvalBinding,
-        stored: BindingRef,
-    ) {
-        let Some(placement) = lowering.file.scopes.placement(stored) else {
+    fn add_stored(&mut self, binding: EvalBinding, stored: BindingRef) {
+        let Some(placement) = self.lowering.file.scopes.placement(stored) else {
             return;
         };
         match placement.storage {
-            Storage::Variable(key) => self.add_variable(lowering, binding, key),
-            Storage::Field { scope, field } if lowering.can_reach_environment(scope) => {
-                self.add_field(lowering, binding, scope, field);
+            Storage::Variable(key) => self.add_variable(binding, key),
+            Storage::Field { scope, field } if self.lowering.can_reach_environment(scope) => {
+                let operand = match find_entry(&self.environments, scope) {
+                    Some(operand) => operand,
+                    None => {
+                        let environment = self.lowering.get_environment(scope);
+                        let operand = self.add_value_operand(environment);
+                        self.environments.push((scope, operand));
+                        operand
+                    }
+                };
+                self.bindings.push(EvalBinding {
+                    layout: Some(environments::environment_layout(self.lowering.file, scope)),
+                    field: Some(field),
+                    operand: Some(operand),
+                    ..binding
+                });
             }
             Storage::Field { .. } | Storage::Local => {
-                let value = lowering.get_stored(stored);
+                let value = self.lowering.get_stored(stored);
                 self.add_value(binding, value);
             }
         }

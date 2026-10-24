@@ -41,6 +41,10 @@ fn creator_of(walk: &ScopeWalk, function: WalkedFunctionId) -> Option<WalkedFunc
     walk.functions[function.index()].creator
 }
 
+fn hoisted_to(walk: &ScopeWalk, function: FnId) -> Option<ScopeId> {
+    walk.functions[walked(walk, function).index()].hoisted_to
+}
+
 fn created_at(walk: &ScopeWalk, function: WalkedFunctionId) -> u32 {
     walk.functions[function.index()].created_at
 }

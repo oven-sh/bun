@@ -263,10 +263,9 @@ fn commonjs_notes(
 
 fn module_name<'a>(view: ProgramView<'a, '_>, module: ModuleRef) -> &'a [u8] {
     match module {
-        ModuleRef::File(file)
-        | ModuleRef::Inner { file, .. }
-        | ModuleRef::Face(file)
-        | ModuleRef::Check(file) => view.sources.module_paths(file).display_path,
+        ModuleRef::File(file) | ModuleRef::Face(file) | ModuleRef::Check(file) => {
+            view.sources.module_paths(file).display_path
+        }
         ModuleRef::Runtime(module) => table::specifier_of(module),
         ModuleRef::External { specifier, .. } => view.files().atoms.bytes(specifier),
     }

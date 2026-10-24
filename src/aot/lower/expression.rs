@@ -52,8 +52,7 @@ impl<'t> Evaluation<'t> {
     pub(in crate::lower) fn at_tail(tail: Tail<'t>) -> Evaluation<'t> {
         Evaluation {
             tail,
-            chain_exit: None,
-            name: None,
+            ..Evaluation::PLAIN
         }
     }
 
@@ -64,35 +63,12 @@ impl<'t> Evaluation<'t> {
             name: None,
         }
     }
-
-    pub(in crate::lower) fn named(name: PropertyName) -> Evaluation<'static> {
-        Evaluation {
-            tail: Tail::No,
-            chain_exit: None,
-            name: Some(name),
-        }
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(in crate::lower) enum ResultUsage {
     Value,
     Effect,
-}
-
-#[derive(Copy, Clone)]
-enum BinaryForm {
-    Logical,
-    Comma,
-    Operator,
-}
-
-fn binary_form(op: BinOp) -> BinaryForm {
-    match op {
-        BinOp::And | BinOp::Or | BinOp::Nullish => BinaryForm::Logical,
-        BinOp::Comma => BinaryForm::Comma,
-        _ => BinaryForm::Operator,
-    }
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -131,7 +107,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         expression: ExprId,
         name: PropertyName,
     ) -> ValueId {
-        self.lower_expression_in(expression, Evaluation::named(name))
+        let evaluation = Evaluation {
+            name: Some(name),
+            ..Evaluation::PLAIN
+        };
+        self.lower_expression_in(expression, evaluation)
     }
 
     pub(crate) fn emit_constant(&mut self, constant: Constant) -> ValueId {
@@ -140,14 +120,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Constant::Null => self.builder.null(),
             Constant::Boolean(value) => self.builder.boolean(value),
             Constant::Number(number) => self.emit_number(number),
-            Constant::String(text) => {
-                let string = self.file.intern_atom(text);
-                self.builder.string(string)
-            }
-            Constant::BigInt(digits) => {
-                let digits = self.file.intern_atom(digits);
-                self.builder.big_int(digits)
-            }
+            Constant::String(text) => self.builder.string(self.file.intern_atom(text)),
+            Constant::BigInt(digits) => self.builder.big_int(self.file.intern_atom(digits)),
         }
     }
 
@@ -234,15 +208,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn lower_by_decision(&mut self, expression: ExprId, evaluation: Evaluation<'_>) -> ValueId {
         match self.file.decisions().decision(expression) {
-            Decision::Constant(constant) => self.emit_constant(constant),
-            Decision::Data(_) | Decision::DeferredData => self.lower_decided_data(expression),
-            Decision::GlobalPath(path) => self.lower_global_path(expression, path),
-            Decision::Unknown => self.lower_by_resolution(expression, evaluation),
+            Decision::Constant(constant) => return self.emit_constant(constant),
+            Decision::Data(_) | Decision::DeferredData => {
+                return self.lower_decided_data(expression);
+            }
+            Decision::GlobalPath(path) => return self.lower_global_path(expression, path),
+            Decision::Unknown => {}
         }
-    }
-
-    fn lower_by_resolution(&mut self, expression: ExprId, evaluation: Evaluation<'_>) -> ValueId {
-        let hir = self.file.hir;
         if let Some(value) = self.try_lower_mention(expression) {
             return value;
         }
@@ -251,9 +223,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.emit_locked_builtin(path.id)
             }
             Some(Resolved::Builtin(path))
-                if !matches!(hir[expression].kind, ExprKind::Ident(_)) =>
+                if !matches!(self.file.hir[expression].kind, ExprKind::Ident(_)) =>
             {
-                self.lower_builtin_path(expression, path, evaluation)
+                if let Some(builtin) = path.locked_builtin() {
+                    return self.emit_locked_builtin(builtin);
+                }
+                let value = self.lower_by_kind(expression, evaluation);
+                self.expect_path(path, value)
             }
             Some(Resolved::Intrinsic(intrinsic)) => {
                 let exit = evaluation.chain_exit;
@@ -299,13 +275,41 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ExprKind::Object(_) => object::lower_object_literal(self, expression),
             ExprKind::Fn(function) => self.lower_function_expression(function, evaluation.name),
             ExprKind::Class(class) => self.lower_class_expression(class, evaluation.name),
-            ExprKind::Dot { chain: link, .. } | ExprKind::Index { chain: link, .. } => {
-                self.lower_access(expression, link, evaluation)
+            ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_)
+                if evaluation.chain_exit.is_none() && self.file.is_chain_root(expression) =>
+            {
+                self.lower_in_chain(ShortCircuit::Undefined, &mut |lowering, exit| {
+                    lowering.lower_by_kind(expression, Evaluation::in_chain(exit, evaluation.tail))
+                })
             }
-            ExprKind::Call(site) => self.lower_call_link(expression, hir[site].chain, evaluation),
+            ExprKind::Dot { chain: link, .. } | ExprKind::Index { chain: link, .. } => {
+                let exit = match link {
+                    Chain::No => None,
+                    Chain::Start | Chain::Continue => evaluation.chain_exit,
+                };
+                member::lower_member(self, expression, exit)
+            }
+            ExprKind::Call(site) => match hir[site].chain {
+                Chain::No => self.lower_call(expression, Evaluation::at_tail(evaluation.tail)),
+                Chain::Start | Chain::Continue => self.lower_call(expression, evaluation),
+            },
             ExprKind::New(_) => self.lower_new(expression),
-            ExprKind::Unary { op, .. } => self.lower_unary_kind(expression, op),
-            ExprKind::Binary { op, .. } => self.lower_binary_kind(expression, op, evaluation.tail),
+            ExprKind::Unary { op, .. } => match op {
+                UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => {
+                    assignment::lower_update(self, expression, ResultUsage::Value)
+                }
+                _ => self.lower_unless_constant(expression, operator::lower_unary),
+            },
+            ExprKind::Binary { op, .. } => match op {
+                BinOp::And | BinOp::Or | BinOp::Nullish => {
+                    self.lower_logical(expression, ResultUsage::Value, evaluation.tail)
+                }
+                BinOp::Comma => {
+                    let last = logical::lower_comma_prefix(self, expression);
+                    self.lower_expression_in(last, Evaluation::at_tail(evaluation.tail))
+                }
+                _ => self.lower_unless_constant(expression, operator::lower_binary),
+            },
             ExprKind::Assign { .. } => {
                 assignment::lower_assignment(self, expression, ResultUsage::Value)
             }
@@ -339,61 +343,20 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         expression: ExprId,
         lower: fn(&mut FunctionLowering<'_, '_, '_, '_, '_>, ExprId) -> ValueId,
     ) -> ValueId {
-        if let Some(constant) = find_constant(self.file, expression) {
-            return self.emit_constant(constant);
+        let inner = self.file.skip_type_syntax(expression);
+        let (constant, has_dead_zone) = match self.file.decisions().constant(self.file.hir, inner) {
+            FoldedValue::Constant(constant) => (constant, false),
+            // Such an expression throws for a variable in its dead zone or has this value, and does nothing else: behind its operations the value is known.
+            FoldedValue::ConstantOutsideDeadZone(constant) => (constant, true),
+            FoldedValue::Unknown => return lower(self, expression),
+        };
+        if !self.file.passes_every_assertion(expression, constant) {
+            return lower(self, expression);
         }
-        let computed = lower(self, expression);
-        match self.file.find_constant_outside_dead_zone(expression) {
-            Some(constant) => self.emit_constant(constant),
-            None => computed,
+        if has_dead_zone {
+            lower(self, expression);
         }
-    }
-
-    fn lower_access(&mut self, access: ExprId, link: Chain, evaluation: Evaluation<'_>) -> ValueId {
-        match (link, evaluation.chain_exit) {
-            (Chain::No, _) => member::lower_member(self, access, None),
-            (Chain::Start | Chain::Continue, Some(exit)) => {
-                member::lower_member(self, access, Some(exit))
-            }
-            (Chain::Start | Chain::Continue, None) => {
-                chain::lower_whole_chain(self, access, evaluation.tail)
-            }
-        }
-    }
-
-    fn lower_call_link(
-        &mut self,
-        call: ExprId,
-        link: Chain,
-        evaluation: Evaluation<'_>,
-    ) -> ValueId {
-        match (link, evaluation.chain_exit) {
-            (Chain::No, _) => self.lower_call(call, Evaluation::at_tail(evaluation.tail)),
-            (Chain::Start | Chain::Continue, Some(_)) => self.lower_call(call, evaluation),
-            (Chain::Start | Chain::Continue, None) => {
-                chain::lower_whole_chain(self, call, evaluation.tail)
-            }
-        }
-    }
-
-    fn lower_unary_kind(&mut self, expression: ExprId, op: UnOp) -> ValueId {
-        match op {
-            UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => {
-                assignment::lower_update(self, expression, ResultUsage::Value)
-            }
-            _ => self.lower_unless_constant(expression, operator::lower_unary),
-        }
-    }
-
-    fn lower_binary_kind(&mut self, expression: ExprId, op: BinOp, tail: Tail<'_>) -> ValueId {
-        match binary_form(op) {
-            BinaryForm::Logical => self.lower_logical(expression, ResultUsage::Value, tail),
-            BinaryForm::Comma => {
-                let last = logical::lower_comma_prefix(self, expression);
-                self.lower_expression_in(last, Evaluation::at_tail(tail))
-            }
-            BinaryForm::Operator => self.lower_unless_constant(expression, operator::lower_binary),
-        }
+        self.emit_constant(constant)
     }
 
     fn lower_assertion(
@@ -403,28 +366,24 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         ty: TypeNodeId,
         evaluation: Evaluation<'_>,
     ) -> ValueId {
-        let inner = match evaluation.tail {
+        let cast;
+        let tail = match evaluation.tail {
             Tail::Yes { casts } if self.file.is_checked() => {
                 let position = self.file.assertion_position(ty);
-                let cast = TailCast {
+                cast = TailCast {
                     position,
                     outer: casts,
                 };
-                let operand_evaluation = Evaluation {
-                    tail: Tail::Yes { casts: Some(&cast) },
-                    chain_exit: None,
-                    name: evaluation.name,
-                };
-                self.lower_expression_in(operand, operand_evaluation)
+                Tail::Yes { casts: Some(&cast) }
             }
-            Tail::Yes { .. } | Tail::No => {
-                let operand_evaluation = Evaluation {
-                    chain_exit: None,
-                    ..evaluation
-                };
-                self.lower_expression_in(operand, operand_evaluation)
-            }
+            tail @ (Tail::Yes { .. } | Tail::No) => tail,
         };
+        let operand_evaluation = Evaluation {
+            tail,
+            chain_exit: None,
+            name: evaluation.name,
+        };
+        let inner = self.lower_expression_in(operand, operand_evaluation);
         self.set_position(self.file.hir[assertion].pos);
         let converted = self.convert_assertion(assertion, inner);
         self.rebind_if_local(operand, inner, converted);
@@ -442,15 +401,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             ExprKind::Cond { .. } => {
                 self.lower_conditional(expression, ResultUsage::Effect, Tail::No);
             }
-            ExprKind::Binary { op, .. } => match binary_form(op) {
-                BinaryForm::Logical => {
+            ExprKind::Binary { op, .. } => match op {
+                BinOp::And | BinOp::Or | BinOp::Nullish => {
                     self.lower_logical(expression, ResultUsage::Effect, Tail::No);
                 }
-                BinaryForm::Comma => {
+                BinOp::Comma => {
                     let last = logical::lower_comma_prefix(self, expression);
                     self.lower_expression_for_effect(last);
                 }
-                BinaryForm::Operator => {
+                _ => {
                     self.lower_by_decision(expression, Evaluation::PLAIN);
                 }
             },
@@ -515,17 +474,6 @@ impl FileLowering<'_, '_, '_, '_> {
             current = operand;
         }
         true
-    }
-
-    // Such an expression throws for a variable in its dead zone or has this value, and does nothing else: behind its operations the value is known.
-    fn find_constant_outside_dead_zone(&self, expression: ExprId) -> Option<Constant> {
-        let inner = self.skip_type_syntax(expression);
-        match self.decisions().constant(self.hir, inner) {
-            FoldedValue::ConstantOutsideDeadZone(constant) => self
-                .passes_every_assertion(expression, constant)
-                .then_some(constant),
-            FoldedValue::Constant(_) | FoldedValue::Unknown => None,
-        }
     }
 }
 

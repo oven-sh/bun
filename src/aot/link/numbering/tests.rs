@@ -12,15 +12,15 @@ use crate::link::definitions::{empty_layout, synthetic_export_variable};
 use crate::link::key_context;
 use crate::link::keys::merge_keys;
 use crate::link::move_definitions::{MoveInput, move_definitions};
-use crate::link::program_keys::{InProject, ProgramModule};
-use crate::link::state::{ExportWriter, ProgramTables, SupertypeEdges};
+use crate::link::program_keys::ProgramModule;
+use crate::link::state::{ExportWriter, ModuleTable, ProgramTables, SupertypeEdges};
 use crate::link::testing::{
     Numbered, Projects, TestUnit, application_file, define_test_function, find_file,
-    find_synthetic_export, forward, in_application, number_units, reverse, test_class_key,
-    test_function_key, test_object_type_key, test_variable_key, unit_in, with_projects,
-    with_projects_without_bun_modules, with_test_files,
+    find_synthetic_export, forward, in_application, key_in, number_units, path_source, reverse,
+    test_class_key, test_function_key, test_object_type_key, test_variable_key, unit_in,
+    with_projects, with_projects_without_bun_modules, with_test_files,
 };
-use crate::link::unit::KeyList;
+use crate::link::unit::{KeyList, LinkUnit};
 use crate::load::{PerProject, ProgramFile, ProjectId};
 use crate::lower::Fragment;
 use crate::modules::ModuleRef;
@@ -92,11 +92,15 @@ fn move_units(projects: &Projects<'_, '_>, units: Vec<LinkUnit>) -> Moved {
         strings,
     } = &mut numbered;
     let input = MoveInput {
-        functions: &prepared.functions,
+        defined: ProgramDefinitions::new(
+            &prepared.functions,
+            &prepared.layouts,
+            &prepared.variables,
+            &prepared.definitions,
+            retained,
+        ),
         layouts: &prepared.layouts,
-        variables: &prepared.variables,
         definitions: &prepared.definitions,
-        retained,
         numbering,
         atoms: &projects.application.loaded.files().atoms,
         in_parallel: &forward,
@@ -243,25 +247,16 @@ fn sorted<const COUNT: usize>(mut files: [FileId; COUNT]) -> [FileId; COUNT] {
 
 fn create_function_fragments([main, first, second]: [FileId; 3]) -> ([Fragment; 3], FunctionId) {
     let mut first_unit = TestUnit::new(first);
-    first_unit
-        .fragment
-        .declare_function(test_function_key(first.0, 0));
+    first_unit.declare_function(first, 0);
     define_function(&mut first_unit, 1, &[]);
     let dropped = define_function(&mut first_unit, 2, &[]);
     define_function(&mut first_unit, 0, &[]);
     let mut second_unit = TestUnit::new(second);
-    let callee = second_unit
-        .fragment
-        .declare_function(test_function_key(first.0, 0));
+    let callee = second_unit.declare_function(first, 0);
     define_function(&mut second_unit, 0, &[call(callee)]);
     let mut main_unit = TestUnit::new(main);
-    let callees = [(first, 0), (first, 1), (second, 0)].map(|(file, function)| {
-        call(
-            main_unit
-                .fragment
-                .declare_function(test_function_key(file.0, function)),
-        )
-    });
+    let callees = [(first, 0), (first, 1), (second, 0)]
+        .map(|(file, function)| call(main_unit.declare_function(file, function)));
     let fragments = [
         second_unit.finish(),
         finish_with_body(main_unit, &callees),
@@ -338,13 +333,7 @@ fn ignored_definitions_get_no_ids() {
             define_function(&mut unit, 0, &[Reference::Layout(layout)]);
             unit.finish()
         });
-        let callees = [first, second].map(|file| {
-            call(
-                main_unit
-                    .fragment
-                    .declare_function(test_function_key(file.0, 0)),
-            )
-        });
+        let callees = [first, second].map(|file| call(main_unit.declare_function(file, 0)));
         let [first_fragment, second_fragment] = definers;
         let fragments = [
             finish_with_body(main_unit, &callees),
@@ -483,9 +472,7 @@ fn records_of_later_units_continue_the_count() {
         define_function(&mut first_unit, 0, &[Reference::TypeSite(first_site)]);
         let mut main_unit = TestUnit::new(main);
         let main_site = add_type_site(&mut main_unit, main.0);
-        let callee = main_unit
-            .fragment
-            .declare_function(test_function_key(first.0, 0));
+        let callee = main_unit.declare_function(first, 0);
         let names = [Reference::TypeSite(main_site), call(callee)];
         let fragments = [first_unit.finish(), finish_with_body(main_unit, &names)];
 
@@ -689,16 +676,9 @@ fn module_named_by_dropped_function_has_an_id() {
 #[test]
 fn application_ids_precede_runtime_ids() {
     with_projects(&[("main.js", "import 'node:path';\n")], |projects| {
-        let path = projects
-            .runtime
-            .sources
-            .runtime_module_file(RuntimeModule::NodePath);
         let files = [
             application_file(find_file(projects, "main.js")),
-            ProgramFile {
-                project: ProjectId::Runtime,
-                file: path.expect("the runtime project has no source of node:path"),
-            },
+            path_source(projects),
         ];
         let units = files.map(|file| {
             let mut unit = TestUnit::new(file.file);
@@ -713,24 +693,16 @@ fn application_ids_precede_runtime_ids() {
         let moved = move_units(projects, vec![runtime_unit, application_unit]);
 
         let function_ids = files.map(|file| {
-            moved.program_function_id(InProject {
-                project: file.project,
-                key: FunctionKey::ModuleBody(file.file),
-            })
+            moved.program_function_id(key_in(file.project, FunctionKey::ModuleBody(file.file)))
         });
         assert_eq!(function_ids, some_ids([0, 1]));
         let layout_ids = files.map(|file| {
-            moved.program_layout_id(InProject {
-                project: file.project,
-                key: test_class_key(file.file.0, 0),
-            })
+            moved.program_layout_id(key_in(file.project, test_class_key(file.file.0, 0)))
         });
         assert_eq!(layout_ids, some_ids([0, 1]));
         let variable_ids = files.map(|file| {
-            moved.program_variable_id(ProgramVariableKey::Declared(InProject {
-                project: file.project,
-                key: test_variable_key(file.file.0, 0),
-            }))
+            let key = key_in(file.project, test_variable_key(file.file.0, 0));
+            moved.program_variable_id(ProgramVariableKey::Declared(key))
         });
         assert_eq!(variable_ids, some_ids([0, 1]));
         let [application_module, runtime_module] = files.map(|file| moved.module_id(file));
@@ -751,18 +723,8 @@ fn task_order_does_not_change_ids() {
             ..
         } = number_units(units.into(), projects);
         let unit_ids = &numbering.units;
-        let in_reverse = number_program(NumberingInput {
-            units: &prepared.units,
-            functions: &prepared.functions,
-            layouts: &prepared.layouts,
-            variables: &prepared.variables,
-            definitions: &prepared.definitions,
-            retained: &retained,
-            modules: &prepared.modules,
-            strings: unit_ids.iter().map(|ids| ids.strings.clone()).collect(),
-            types: unit_ids.iter().map(|ids| ids.types.clone()).collect(),
-            in_parallel: &reverse,
-        });
+        let merged = prepared.merged(&reverse);
+        let in_reverse = number_program(&merged, &prepared.definitions, &retained);
         assert_eq!(in_reverse.counts, numbering.counts);
         assert_eq!(in_reverse.functions, numbering.functions);
         assert_eq!(in_reverse.modules, numbering.modules);
@@ -803,18 +765,15 @@ fn number_without_units(
         index_by_module: Default::default(),
         unit_by_module: Vec::new(),
     };
-    number_program(NumberingInput {
+    let merged = MergedUnits {
         units: &[],
+        modules: &modules,
         functions: &merge_keys(&[], &forward),
         layouts: &merge_keys(&[], &forward),
         variables,
-        definitions: &definitions,
-        retained,
-        modules: &modules,
-        strings: Vec::new(),
-        types: Vec::new(),
         in_parallel: &forward,
-    })
+    };
+    number_program(&merged, &definitions, retained)
 }
 
 fn retain_variables(variables: Vec<bool>) -> Retained {

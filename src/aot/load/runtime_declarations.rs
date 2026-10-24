@@ -68,13 +68,9 @@ declare namespace NodeJS {
 const MODULE_WITH_DECLARATIONS: &[u8] = b"bun";
 
 pub(crate) fn text(runtime_modules: &RuntimeModules, runs_tests: bool) -> &'static [u8] {
-    static FOR_PROGRAMS: OnceLock<Vec<u8>> = OnceLock::new();
-    static FOR_TESTS: OnceLock<Vec<u8>> = OnceLock::new();
-    let text = match runs_tests {
-        true => &FOR_TESTS,
-        false => &FOR_PROGRAMS,
-    };
-    text.get_or_init(|| write_declarations(runtime_modules, runs_tests))
+    static FOR_PROGRAMS_AND_FOR_TESTS: [OnceLock<Vec<u8>>; 2] = [OnceLock::new(), OnceLock::new()];
+    FOR_PROGRAMS_AND_FOR_TESTS[usize::from(runs_tests)]
+        .get_or_init(|| write_declarations(runtime_modules, runs_tests))
 }
 
 fn is_identifier(name: &[u8]) -> bool {
@@ -124,10 +120,8 @@ fn write_declarations(runtime_modules: &RuntimeModules, runs_tests: bool) -> Vec
     }
     specifiers.shared_sort_unstable();
     specifiers.dedup();
-    for specifier in specifiers
-        .iter()
-        .filter(|it| it.as_slice() != MODULE_WITH_DECLARATIONS)
-    {
+    specifiers.retain(|it| it.as_slice() != MODULE_WITH_DECLARATIONS);
+    for specifier in &specifiers {
         text.extend_from_slice(&[b"declare module \"", specifier.as_slice(), b"\";\n"].concat());
     }
     text

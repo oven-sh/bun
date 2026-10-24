@@ -7,10 +7,10 @@ use super::exports::{ExportTables, Resolution};
 use super::interop::{ImportPhase, ModuleKind, RequireResult};
 use super::module_set::ModuleSet;
 use super::requests::{FileScan, ScannedSite, Scans};
-use super::wrapped::InnerModule;
 use super::{BindInput, ModuleRef};
 use crate::ir::for_each_mut;
 use crate::load::{EntryPointKind, SourceKind};
+use bun_sema::atom::Atom;
 use bun_sema::bind::{
     Binding, Bound, CodeUnit, CommonJsVariable, FnOwner, Parent, has_mapped_arguments,
 };
@@ -64,42 +64,22 @@ struct FileSites {
     required_candidates: Vec<(ModuleRef, ModuleRef)>,
 }
 
-/// A number for each file and, behind the files, for each inner module.
 pub(super) struct ModuleNumbers {
     file_count: usize,
-    inner_modules: Vec<(FileId, FnId)>,
 }
 
 impl ModuleNumbers {
-    pub(super) fn new(file_count: usize, mut inner_modules: Vec<(FileId, FnId)>) -> ModuleNumbers {
-        inner_modules.shared_sort_unstable();
-        ModuleNumbers {
-            file_count,
-            inner_modules,
-        }
-    }
-
     pub(super) fn len(&self) -> usize {
-        self.file_count + self.inner_modules.len()
-    }
-
-    pub(super) fn inner_modules(&self) -> &[(FileId, FnId)] {
-        &self.inner_modules
+        self.file_count
     }
 
     pub(super) fn modules(&self) -> impl Iterator<Item = ModuleRef> + '_ {
-        let files = (0..self.file_count as u32).map(|file| ModuleRef::File(FileId(file)));
-        let inner_modules = self.inner_modules.iter();
-        files.chain(inner_modules.map(|&(file, callback)| ModuleRef::Inner { file, callback }))
+        (0..self.file_count as u32).map(|file| ModuleRef::File(FileId(file)))
     }
 
     pub(super) fn number_of(&self, module: ModuleRef) -> Option<usize> {
         match module {
             ModuleRef::File(file) => (file.idx() < self.file_count).then_some(file.idx()),
-            ModuleRef::Inner { file, callback } => {
-                let position = self.inner_modules.binary_search(&(file, callback)).ok()?;
-                Some(self.file_count + position)
-            }
             _ => None,
         }
     }
@@ -123,10 +103,20 @@ impl PlannedSites {
 
     /// An ES module answers `require` with its namespace object unless it exports the name "module.exports", which the export tables know.
     pub(super) fn settle(&mut self, files: &Files<'_>, modules: &ModuleSet, tables: &ExportTables) {
+        let name = files.atoms.lookup(b"module.exports");
+        let lacks_name = |module: ModuleRef, name: Atom| {
+            matches!(
+                tables.resolve_in(modules, module, name).resolution,
+                Resolution::NotFound | Resolution::Ambiguous
+            )
+        };
         for site in self.by_file.iter_mut().flatten() {
-            site.evaluates &= match modules.interop(site.target).kind {
+            let interop = modules.interop(site.target);
+            site.evaluates &= match interop.kind {
                 ModuleKind::SourceText => {
-                    answers_require_with_namespace(files, modules, tables, site.target)
+                    interop.require_result == RequireResult::Namespace
+                        && !tables.has_dynamic_names(site.target)
+                        && name.is_none_or(|name| lacks_name(site.target, name))
                 }
                 ModuleKind::CommonJs => true,
                 _ => false,
@@ -136,50 +126,51 @@ impl PlannedSites {
 }
 
 pub(super) struct EvaluationOrder {
-    numbers: ModuleNumbers,
-    is_code_of_program: Vec<bool>,
-    is_exposed: Vec<bool>,
+    parts: OrderParts,
     is_on_cycle: Vec<bool>,
-    is_half: Vec<bool>,
     needs_loader: Vec<bool>,
-    prefix_roots: Vec<FileId>,
 }
 
 impl EvaluationOrder {
     fn has(&self, set: &[bool], module: ModuleRef) -> bool {
-        self.numbers
-            .number_of(module)
-            .is_some_and(|number| set[number])
+        let number = self.parts.numbers.number_of(module);
+        number.is_some_and(|number| set[number])
     }
 
     /// A late site names the module, or a module that a late site may run asks for it.
     pub(super) fn exposed(&self, module: ModuleRef) -> bool {
-        self.has(&self.is_exposed, module)
+        self.has(&self.parts.is_exposed, module)
     }
 
     /// Somebody may look at the module while its body runs.
     pub(super) fn half(&self, module: ModuleRef) -> bool {
-        self.has(&self.is_half, module)
+        self.has(&self.parts.is_half, module)
     }
 
     /// An ES module that something other than an import starts: an entry point, or what `import()` or `require` names.
     pub(super) fn is_prefix_root(&self, file: FileId) -> bool {
-        self.prefix_roots.binary_search(&file).is_ok()
+        self.parts.prefix_roots.binary_search(&file).is_ok()
     }
 
     /// A file of the program that is code, or an inner module of one.
     pub(super) fn is_code_of_program(&self, module: ModuleRef) -> bool {
-        self.has(&self.is_code_of_program, module)
+        self.has(&self.parts.is_code_of_program, module)
     }
 
     pub(super) fn into_parts(self) -> OrderParts {
-        OrderParts {
-            numbers: self.numbers,
-            is_code_of_program: self.is_code_of_program,
-            is_exposed: self.is_exposed,
-            is_half: self.is_half,
-            prefix_roots: self.prefix_roots,
-        }
+        self.parts
+    }
+
+    fn can_evaluate(&self, modules: &ModuleSet, referrer: ModuleRef, target: ModuleRef) -> bool {
+        // Whoever requires an ES module while its body runs gets an object without keys, which is no view of its variables.
+        let is_seen_whole = match modules.interop(target).kind {
+            ModuleKind::SourceText => !self.has(&self.is_on_cycle, target),
+            _ => true,
+        };
+        self.is_code_of_program(referrer)
+            && self.is_code_of_program(target)
+            && !self.has(&self.needs_loader, target)
+            && is_seen_whole
     }
 }
 
@@ -195,7 +186,7 @@ pub(super) struct OrderParts {
 impl OrderParts {
     pub(super) fn without_sites(file_count: usize) -> OrderParts {
         OrderParts {
-            numbers: ModuleNumbers::new(file_count, Vec::new()),
+            numbers: ModuleNumbers { file_count },
             is_code_of_program: vec![false; file_count],
             is_exposed: vec![false; file_count],
             is_half: vec![false; file_count],
@@ -204,39 +195,13 @@ impl OrderParts {
     }
 }
 
-// What a module exports under the name "module.exports" is what `require` answers in place of the namespace.
-pub(super) fn answers_require_with_namespace(
-    files: &Files<'_>,
-    modules: &ModuleSet,
-    tables: &ExportTables,
-    module: ModuleRef,
-) -> bool {
-    let interop = modules.interop(module);
-    let is_es_module = interop.kind == ModuleKind::SourceText
-        && interop.require_result == RequireResult::Namespace;
-    if !is_es_module || tables.has_dynamic_names(module) {
-        return false;
-    }
-    match files.atoms.lookup(b"module.exports") {
-        Some(name) => matches!(
-            tables.resolve_in(modules, module, name).resolution,
-            Resolution::NotFound | Resolution::Ambiguous
-        ),
-        None => true,
-    }
-}
-
-struct FileText<'a, 's> {
-    files: &'a Files<'s>,
-    modules: &'a ModuleSet,
-    file: FileId,
+pub(super) struct FileText<'a, 's> {
     hir: &'a hir::File<'s>,
     bound: &'a Bound<'s>,
     decisions: &'a Decisions<'s>,
-    inner_modules: &'a [InnerModule],
     has_top_level_await: bool,
-    /// For the body of the file and of each inner module: where the first `return` or `using` stands.
-    first_turns: OnceCell<Vec<(CodeUnit, u32)>>,
+    /// Where the first `return` or `using` of the body of the file stands.
+    first_turn: OnceCell<Option<u32>>,
     may_replace_require: OnceCell<bool>,
     may_replace_module: OnceCell<bool>,
     called_only_where_written: RefCell<FxHashMap<FnId, bool>>,
@@ -249,46 +214,24 @@ enum Node {
 }
 
 impl<'a, 's> FileText<'a, 's> {
-    fn new(files: &'a Files<'s>, modules: &'a ModuleSet, file: FileId) -> FileText<'a, 's> {
+    pub(super) fn new(files: &'a Files<'s>, file: FileId) -> FileText<'a, 's> {
         let analysis = files.analysis(file);
         FileText {
-            files,
-            modules,
-            file,
             hir: files.hir(file),
             bound: files.bound(file),
             decisions: &analysis.decisions,
-            inner_modules: modules.wrapped.of_file(file),
             has_top_level_await: analysis.has_live_top_level_await,
-            first_turns: OnceCell::new(),
+            first_turn: OnceCell::new(),
             may_replace_require: OnceCell::new(),
             may_replace_module: OnceCell::new(),
             called_only_where_written: RefCell::default(),
         }
     }
 
-    fn is_body(&self, unit: CodeUnit) -> bool {
-        match unit {
-            CodeUnit::File => true,
-            CodeUnit::Function(function) => self.is_callback_of_inner_module(function),
-            CodeUnit::FieldInitializer(_) => false,
-        }
-    }
-
-    fn is_callback_of_inner_module(&self, function: FnId) -> bool {
-        !self.inner_modules.is_empty()
-            && self
-                .modules
-                .wrapped
-                .of_callback(self.file, function)
-                .is_some()
-    }
-
-    fn find_first_turns(&self) -> Vec<(CodeUnit, u32)> {
+    fn find_first_turn(&self) -> Option<u32> {
         let (hir, bound) = (self.hir, self.bound);
-        let mut first_turns: Vec<(CodeUnit, u32)> = Vec::new();
-        for index in 0..hir.stmts.len() as u32 {
-            let statement = StmtId(index);
+        let statements = (0..hir.stmts.len() as u32).map(StmtId);
+        let turns = statements.filter(|&statement| {
             let is_turn = match hir[statement].kind {
                 StmtKind::Return(_) => true,
                 StmtKind::Var(declarations) => declarations.iter().any(|declaration| {
@@ -297,44 +240,19 @@ impl<'a, 's> FileText<'a, 's> {
                 _ => false,
             };
             if !is_turn || self.decisions.is_dead_stmt(statement) {
-                continue;
+                return false;
             }
             let scope = bound.scope_of_stmt(statement);
-            if scope.is_none() {
-                continue;
-            }
-            let unit = bound.code_unit(scope);
-            if !self.is_body(unit) {
-                continue;
-            }
-            let start = hir[statement].start;
-            match first_turns.iter_mut().find(|entry| entry.0 == unit) {
-                Some(entry) => entry.1 = entry.1.min(start),
-                None => first_turns.push((unit, start)),
-            }
-        }
-        first_turns
+            scope.is_some()
+                && match bound.code_unit(scope) {
+                    CodeUnit::File => true,
+                    CodeUnit::Function(_) | CodeUnit::FieldInitializer(_) => false,
+                }
+        });
+        turns.map(|statement| hir[statement].start).min()
     }
 
-    fn enclosing_module(&self, expression: ExprId) -> ModuleRef {
-        if self.inner_modules.is_empty() {
-            return ModuleRef::File(self.file);
-        }
-        match self
-            .modules
-            .wrapped
-            .enclosing(self.files, self.file, expression)
-        {
-            Some(inner) => ModuleRef::Inner {
-                file: self.file,
-                callback: inner.callback,
-            },
-            None => ModuleRef::File(self.file),
-        }
-    }
-
-    // Whether the parent evaluates the operand whenever it is evaluated itself.
-    fn always_evaluates(&self, parent: ExprId, operand: ExprId) -> bool {
+    pub(super) fn always_evaluates(&self, parent: ExprId, operand: ExprId) -> bool {
         let hir = self.hir;
         let is_choice = |op: BinOp| matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish);
         match hir[parent].kind {
@@ -349,10 +267,7 @@ impl<'a, 's> FileText<'a, 's> {
             ExprKind::Assign {
                 op: None, value, ..
             } => operand != value || self.bound.get_assignment_target(hir, parent).is_none(),
-            ExprKind::Dot { chain, .. } => chain == Chain::No || self.is_object_of(parent, operand),
-            ExprKind::Index { chain, .. } => {
-                chain == Chain::No || self.is_object_of(parent, operand)
-            }
+            ExprKind::Index { obj, chain, .. } => chain == Chain::No || operand == obj,
             ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
                 hir[call].chain == Chain::No || hir[call].callee == operand
             }
@@ -360,13 +275,6 @@ impl<'a, 's> FileText<'a, 's> {
         }
     }
 
-    fn is_object_of(&self, member: ExprId, operand: ExprId) -> bool {
-        self.hir
-            .member_key(member)
-            .is_some_and(|(object, _)| object == operand)
-    }
-
-    // Whether the statement evaluates the expression once whenever it runs.
     fn statement_always_evaluates(&self, statement: StmtId, expression: ExprId) -> bool {
         match self.hir[statement].kind {
             StmtKind::Expr(_)
@@ -383,7 +291,7 @@ impl<'a, 's> FileText<'a, 's> {
         }
     }
 
-    fn is_called_where_written(&self, function: FnId) -> bool {
+    pub(super) fn is_called_where_written(&self, function: FnId) -> bool {
         let hir = self.hir;
         let mut known = self.called_only_where_written.borrow_mut();
         !hir[function]
@@ -394,8 +302,8 @@ impl<'a, 's> FileText<'a, 's> {
                 .or_insert_with(|| self.bound.is_called_only_where_written(hir, function))
     }
 
-    // The body that runs the node, and how. `None`: a function runs it, a handler is around it, or the text does not say.
-    fn find_body(&self, start: Node) -> Option<(CodeUnit, SitePosition)> {
+    // How the body of the file runs the node. `None`: a function runs it, a handler is around it, or the text does not say.
+    fn find_position(&self, start: Node) -> Option<SitePosition> {
         let (hir, bound) = (self.hir, self.bound);
         let mut position = SitePosition::InOrder;
         let mut node = start;
@@ -427,11 +335,11 @@ impl<'a, 's> FileText<'a, 's> {
                         position = SitePosition::Sometimes;
                         Node::Function(bound.param_fn[parameter.idx()])
                     }
-                    Parent::File => return Some((CodeUnit::File, position)),
+                    Parent::File => return Some(position),
                     _ => return None,
                 },
                 Node::Statement(child) => match bound.parent_of_stmt(child) {
-                    Parent::File => return Some((CodeUnit::File, position)),
+                    Parent::File => return Some(position),
                     Parent::FnBody(function) => Node::Function(function),
                     Parent::Stmt(parent) => {
                         match hir[parent].kind {
@@ -443,9 +351,6 @@ impl<'a, 's> FileText<'a, 's> {
                     }
                     _ => return None,
                 },
-                Node::Function(function) if self.is_callback_of_inner_module(function) => {
-                    return Some((CodeUnit::Function(function), position));
-                }
                 Node::Function(function) => {
                     let FnOwner::Expr(written) = bound.fns[function.idx()].owner else {
                         return None;
@@ -460,67 +365,41 @@ impl<'a, 's> FileText<'a, 's> {
         }
     }
 
-    fn locate(&self, node: Node, start: u32, fallback: ModuleRef) -> (ModuleRef, SitePosition) {
-        let Some((unit, position)) = self.find_body(node) else {
-            return (fallback, SitePosition::Late);
+    fn locate(&self, node: Node, start: u32) -> SitePosition {
+        let Some(position) = self.find_position(node) else {
+            return SitePosition::Late;
         };
-        let module = match unit {
-            CodeUnit::Function(callback) => ModuleRef::Inner {
-                file: self.file,
-                callback,
-            },
-            CodeUnit::File | CodeUnit::FieldInitializer(_) => ModuleRef::File(self.file),
-        };
-        let first_turns = self.first_turns.get_or_init(|| self.find_first_turns());
-        let first_turn = first_turns.iter().find(|entry| entry.0 == unit);
-        let may_be_skipped = first_turn.is_some_and(|entry| entry.1 < start)
-            || (unit == CodeUnit::File && self.has_top_level_await);
-        match may_be_skipped {
-            true => (module, position.max(SitePosition::Sometimes)),
-            false => (module, position),
+        let first_turn = self.first_turn.get_or_init(|| self.find_first_turn());
+        match first_turn.is_some_and(|turn| turn < start) || self.has_top_level_await {
+            true => position.max(SitePosition::Sometimes),
+            false => position,
         }
     }
 
-    fn locate_expression(&self, expression: ExprId) -> (ModuleRef, SitePosition) {
-        let start = self.hir[expression].pos;
-        let fallback = self.enclosing_module(expression);
-        self.locate(Node::Expression(expression), start, fallback)
-    }
-
-    fn locate_statement(&self, statement: StmtId) -> (ModuleRef, SitePosition) {
-        let start = self.hir[statement].start;
-        self.locate(
-            Node::Statement(statement),
-            start,
-            ModuleRef::File(self.file),
-        )
-    }
-
-    // Whoever replaces a name that the loader gives the file decides what a call through it answers.
-    fn may_replace(&self, variable: CommonJsVariable) -> bool {
+    /// Whoever replaces a name that the loader gives the file decides what a call through it answers.
+    pub(super) fn may_replace(&self, variable: CommonJsVariable) -> bool {
         let known = match variable {
             CommonJsVariable::Require => &self.may_replace_require,
             _ => &self.may_replace_module,
         };
-        *known.get_or_init(|| self.find_whether_replaced(variable))
+        *known.get_or_init(|| {
+            let (hir, bound, decisions) = (self.hir, self.bound, self.decisions);
+            let binding = Binding::CommonJs(variable);
+            let mut stores = bound.runtime.unbound_name_stores().iter();
+            let mut evals = bound.runtime.eval_scopes().iter();
+            let mut idents = bound.ident_bindings().iter();
+            stores.any(|&(target, _)| {
+                bound.binding(target) == binding && !decisions.is_dead_expr(target)
+            }) || evals.any(|&(call, _)| !decisions.is_dead_expr(call))
+                || (has_mapped_arguments(hir, CodeUnit::File)
+                    && idents.any(|&(ident, binding)| {
+                        binding == Binding::Arguments(CodeUnit::File)
+                            && !decisions.is_dead_expr(ident)
+                    }))
+        })
     }
 
-    fn find_whether_replaced(&self, variable: CommonJsVariable) -> bool {
-        let (hir, bound, decisions) = (self.hir, self.bound, self.decisions);
-        let binding = Binding::CommonJs(variable);
-        let mut stores = bound.runtime.unbound_name_stores().iter();
-        let mut evals = bound.runtime.eval_scopes().iter();
-        let mut idents = bound.ident_bindings().iter();
-        stores
-            .any(|&(target, _)| bound.binding(target) == binding && !decisions.is_dead_expr(target))
-            || evals.any(|&(call, _)| !decisions.is_dead_expr(call))
-            || (has_mapped_arguments(hir, CodeUnit::File)
-                && idents.any(|&(ident, binding)| {
-                    binding == Binding::Arguments(CodeUnit::File) && !decisions.is_dead_expr(ident)
-                }))
-    }
-
-    fn is_free(&self, expression: ExprId, variable: CommonJsVariable) -> bool {
+    pub(super) fn is_free(&self, expression: ExprId, variable: CommonJsVariable) -> bool {
         matches!(self.hir[expression].kind, ExprKind::Ident(_))
             && self.bound.binding(expression) == Binding::CommonJs(variable)
     }
@@ -557,28 +436,23 @@ impl<'a, 's> FileText<'a, 's> {
     }
 }
 
-fn plan_file_sites(
-    files: &Files<'_>,
-    scan: &FileScan,
-    modules: &ModuleSet,
-    file: FileId,
-) -> FileSites {
+fn plan_file_sites(files: &Files<'_>, scan: &FileScan, file: FileId) -> FileSites {
     let mut planned = FileSites::default();
     let sites = files.analysis(file).import_sites;
     let loads_modules = |site: &ImportSite| {
-        loading_call(site.kind).is_some() || matches!(site.kind, ImportSiteKind::ImportEquals(_))
+        is_loading_call(site.kind) || matches!(site.kind, ImportSiteKind::ImportEquals(_))
     };
-    if !sites.iter().any(loads_modules) && modules.wrapped.of_file(file).is_empty() {
+    if !sites.iter().any(loads_modules) {
         return planned;
     }
-    let text = FileText::new(files, modules, file);
+    let text = FileText::new(files, file);
     let hir = text.hir;
     for (site, answer) in sites.iter().zip(&scan.sites) {
         let target = match answer {
             &ScannedSite::Module(target) => target,
             ScannedSite::Candidates(range) => {
-                if let Some(call) = loading_call(site.kind) {
-                    let referrer = text.enclosing_module(call);
+                if is_loading_call(site.kind) {
+                    let referrer = ModuleRef::File(file);
                     let spelled = &scan.spellings[range.start as usize..range.end as usize];
                     let loads = spelled.iter().map(|spelled| (referrer, spelled.module));
                     if !matches!(site.kind, ImportSiteKind::ImportCall(_)) {
@@ -590,34 +464,27 @@ fn plan_file_sites(
             }
             ScannedSite::Unresolved | ScannedSite::AllModules | ScannedSite::Erased => continue,
         };
-        let (key, (referrer, position), is_proven, start) = match site.kind {
+        let (key, node, start, is_proven) = match site.kind {
             ImportSiteKind::Require(call) | ImportSiteKind::ImportMetaRequire(call) => (
                 SiteKey::Call(call),
-                text.locate_expression(call),
-                text.is_proven_call(site.kind, call, scan.interop.kind),
+                Node::Expression(call),
                 hir[call].pos,
+                text.is_proven_call(site.kind, call, scan.interop.kind),
             ),
             ImportSiteKind::ImportEquals(declaration) => {
-                let statement = hir[declaration].stmt;
-                let located = text.locate_statement(statement);
-                (
-                    SiteKey::ImportEquals(declaration),
-                    located,
-                    true,
-                    hir[statement].start,
-                )
+                let (key, statement) = (SiteKey::ImportEquals(declaration), hir[declaration].stmt);
+                (key, Node::Statement(statement), hir[statement].start, true)
             }
-            ImportSiteKind::ImportCall(call) => {
-                planned
-                    .other_loads
-                    .push((text.enclosing_module(call), target));
+            ImportSiteKind::ImportCall(_) => {
+                planned.other_loads.push((ModuleRef::File(file), target));
                 continue;
             }
             _ => continue,
         };
+        let position = text.locate(node, start);
         planned.sites.push(PlannedSite {
             key,
-            referrer,
+            referrer: ModuleRef::File(file),
             target,
             // A test of the callee is a branch around the site.
             position: match is_proven {
@@ -629,66 +496,29 @@ fn plan_file_sites(
             start,
         });
     }
-    if !text.inner_modules.is_empty() {
-        add_calls_of_inner_modules(&text, &mut planned);
-    }
     planned.sites.shared_sort_by_key(|site| site.start);
     planned
 }
 
-fn loading_call(site: ImportSiteKind) -> Option<ExprId> {
-    match site {
-        ImportSiteKind::ImportCall(call)
-        | ImportSiteKind::Require(call)
-        | ImportSiteKind::ImportMetaRequire(call) => Some(call),
-        _ => None,
-    }
+fn is_loading_call(site: ImportSiteKind) -> bool {
+    matches!(
+        site,
+        ImportSiteKind::ImportCall(_)
+            | ImportSiteKind::Require(_)
+            | ImportSiteKind::ImportMetaRequire(_)
+    )
 }
 
-fn add_calls_of_inner_modules(text: &FileText<'_, '_>, planned: &mut FileSites) {
-    let hir = text.hir;
-    for index in 0..hir.exprs.len() as u32 {
-        let call = ExprId(index);
-        if !matches!(hir[call].kind, ExprKind::Call(_)) || text.decisions.is_dead_expr(call) {
-            continue;
-        }
-        let Some(inner) = text.modules.wrapped.of_call(text.files, text.file, call) else {
-            continue;
-        };
-        let (referrer, position) = text.locate_expression(call);
-        planned.sites.push(PlannedSite {
-            key: SiteKey::Call(call),
-            referrer,
-            target: ModuleRef::Inner {
-                file: text.file,
-                callback: inner.callback,
-            },
-            position,
-            is_proven: true,
-            evaluates: true,
-            start: hir[call].pos,
-        });
-    }
-}
-
-struct Edges {
-    /// Every request, of whichever kind.
-    all: Vec<Vec<u32>>,
-    /// By target: the modules that import it.
-    importers: Vec<Vec<u32>>,
-}
-
+// Every request, of whichever kind, and by target the modules that import it.
 fn collect_edges(
     scans: &Scans,
     modules: &ModuleSet,
     numbers: &ModuleNumbers,
     planned: &[(FileId, FileSites)],
-) -> Edges {
-    let mut edges = Edges {
-        all: vec![Vec::new(); numbers.len()],
-        importers: vec![Vec::new(); numbers.len()],
-    };
-    let add = |all: &mut Vec<Vec<u32>>, referrer: ModuleRef, target: ModuleRef| {
+) -> (Vec<Vec<u32>>, Vec<Vec<u32>>) {
+    let mut all = vec![Vec::<u32>::new(); numbers.len()];
+    let mut importers = vec![Vec::new(); numbers.len()];
+    let mut add = |referrer: ModuleRef, target: ModuleRef| {
         let (Some(referrer), Some(target)) =
             (numbers.number_of(referrer), numbers.number_of(target))
         else {
@@ -700,21 +530,21 @@ fn collect_edges(
     };
     for &file in &modules.compiled_files {
         for request in &scans.of(file).requests {
-            add(&mut edges.all, ModuleRef::File(file), request.target);
+            add(ModuleRef::File(file), request.target);
             if let Some(target) = numbers.number_of(request.target) {
-                edges.importers[target].push(file.0);
+                importers[target].push(file.0);
             }
         }
     }
     for (_, file_sites) in planned {
         for site in &file_sites.sites {
-            add(&mut edges.all, site.referrer, site.target);
+            add(site.referrer, site.target);
         }
         for &(referrer, target) in &file_sites.other_loads {
-            add(&mut edges.all, referrer, target);
+            add(referrer, target);
         }
     }
-    edges
+    (all, importers)
 }
 
 fn find_modules_on_cycles(edges: &[Vec<u32>]) -> Vec<bool> {
@@ -725,7 +555,6 @@ fn find_modules_on_cycles(edges: &[Vec<u32>]) -> Vec<bool> {
     edges.iter().enumerate().map(is_on_cycle).collect()
 }
 
-// What is in `pending`, and all that edges lead to from there.
 fn find_reached(edges: &[Vec<u32>], mut pending: Vec<u32>) -> Vec<bool> {
     let mut is_reached = vec![false; edges.len()];
     while let Some(module) = pending.pop() {
@@ -736,33 +565,8 @@ fn find_reached(edges: &[Vec<u32>], mut pending: Vec<u32>) -> Vec<bool> {
     is_reached
 }
 
-// The run time's own algorithm waits for promises, asks the host for code that was not compiled, and finds out what a deferred import has to evaluate.
-fn find_modules_that_need_loader(
-    input: &BindInput<'_, '_>,
-    scans: &Scans,
-    modules: &ModuleSet,
-    edges: &Edges,
-) -> Vec<bool> {
-    let needs_loader_itself = |&&file: &&FileId| {
-        let scan = scans.of(file);
-        let mut requests = scan.requests.iter();
-        (scan.interop.kind == ModuleKind::SourceText
-            && input.files.analysis(file).has_live_top_level_await)
-            || requests.any(|request| {
-                request.phase == ImportPhase::Defer || modules.is_uncompiled_code(request.target)
-            })
-    };
-    let seeds = modules.compiled_files.iter().filter(needs_loader_itself);
-    find_reached(&edges.importers, seeds.map(|file| file.0).collect())
-}
-
-fn find_code_of_program(
-    input: &BindInput<'_, '_>,
-    scans: &Scans,
-    modules: &ModuleSet,
-    numbers: &ModuleNumbers,
-) -> Vec<bool> {
-    let mut is_code = vec![false; numbers.len()];
+fn find_program_code(input: &BindInput<'_, '_>, scans: &Scans, modules: &ModuleSet) -> Vec<bool> {
+    let mut is_code = vec![false; input.files.modules.len()];
     for &file in &modules.compiled_files {
         is_code[file.idx()] = input.sources.kind(file) == SourceKind::Program
             && matches!(
@@ -775,10 +579,6 @@ fn find_code_of_program(
             is_code[entry_point.file.idx()] = false;
         }
     }
-    for &(file, callback) in numbers.inner_modules() {
-        let number = numbers.number_of(ModuleRef::Inner { file, callback });
-        is_code[number.expect("the list has the module")] = is_code[file.idx()];
-    }
     is_code
 }
 
@@ -788,11 +588,8 @@ fn find_prefix_roots(
     is_code_of_program: &[bool],
     planned: &[(FileId, FileSites)],
 ) -> Vec<FileId> {
-    let entry_points = input
-        .sources
-        .entry_points()
-        .iter()
-        .map(|entry| ModuleRef::File(entry.file));
+    let entry_points = input.sources.entry_points().iter();
+    let entry_points = entry_points.map(|entry| ModuleRef::File(entry.file));
     let loaded = planned.iter().flat_map(|(_, file_sites)| {
         let required = file_sites.sites.iter().map(|site| site.target);
         required.chain(file_sites.other_loads.iter().map(|load| load.1))
@@ -822,97 +619,80 @@ pub(super) fn compute_order(
 ) -> (EvaluationOrder, PlannedSites) {
     let files = input.files;
     let file_count = files.modules.len();
-    let numbers = ModuleNumbers::new(file_count, modules.inner_modules().to_vec());
+    let numbers = ModuleNumbers { file_count };
     let compiled_files = modules.compiled_files.iter();
     let mut planned: Vec<(FileId, FileSites)> = compiled_files
         .map(|&file| (file, FileSites::default()))
         .collect();
     for_each_mut(&mut planned, input.in_parallel, &|(file, file_sites)| {
-        *file_sites = plan_file_sites(files, scans.of(*file), modules, *file);
+        *file_sites = plan_file_sites(files, scans.of(*file), *file);
     });
-    let edges = collect_edges(scans, modules, &numbers, &planned);
-    let is_code_of_program = find_code_of_program(input, scans, modules, &numbers);
-    let needs_loader = find_modules_that_need_loader(input, scans, modules, &edges);
+    let (edges, importers) = collect_edges(scans, modules, &numbers, &planned);
+    let is_code_of_program = find_program_code(input, scans, modules);
+    // The run time's own algorithm waits for promises, asks the host for code that was not compiled, and finds out what a deferred import has to evaluate.
+    let needs_loader_itself = |&&file: &&FileId| {
+        let scan = scans.of(file);
+        let mut requests = scan.requests.iter();
+        (scan.interop.kind == ModuleKind::SourceText
+            && files.analysis(file).has_live_top_level_await)
+            || requests.any(|request| {
+                request.phase == ImportPhase::Defer || modules.is_uncompiled_code(request.target)
+            })
+    };
+    let seeds = modules.compiled_files.iter().filter(needs_loader_itself);
+    let needs_loader = find_reached(&importers, seeds.map(|file| file.0).collect());
     let late_targets = planned.iter().flat_map(|(_, file_sites)| {
-        let late_sites = file_sites
-            .sites
-            .iter()
-            .filter(|site| site.position == SitePosition::Late);
+        let sites = file_sites.sites.iter();
+        let late_sites = sites.filter(|site| site.position == SitePosition::Late);
         let other_loads = file_sites.other_loads.iter().map(|load| load.1);
         late_sites.map(|site| site.target).chain(other_loads)
     });
     // The host, or a name that the build does not know, loads an entry point at any time.
-    let loaded_by_name = input
-        .sources
-        .entry_points()
-        .iter()
+    let entry_points = input.sources.entry_points().iter();
+    let loaded_by_name = entry_points
         .filter(|entry| !matches!(entry.kind, EntryPointKind::Main | EntryPointKind::Library));
     let late_targets = late_targets.chain(loaded_by_name.map(|entry| ModuleRef::File(entry.file)));
     let is_exposed_in_application = |module: &ModuleRef| {
         let application = input.application?;
-        Some(
-            application
-                .graph
-                .exposed(application.application_module(*module)?),
-        )
+        let module = application.application_module(*module)?;
+        Some(application.graph.exposed(module))
     };
     let exposed_in_application = numbers.modules();
     let exposed_in_application =
         exposed_in_application.filter(|module| is_exposed_in_application(module) == Some(true));
     let late_targets = late_targets.chain(exposed_in_application);
     let late_targets = late_targets.filter_map(|target| Some(numbers.number_of(target)? as u32));
-    let is_exposed = find_reached(&edges.all, late_targets.collect());
-    // A late site names every exposed module, or an exposed module asks for it.
-    let is_on_cycle = find_modules_on_cycles(&edges.all);
-    let mut is_half = is_on_cycle.clone();
-    for (is_half, &is_exposed) in is_half.iter_mut().zip(&is_exposed) {
-        *is_half |= is_exposed;
-    }
+    let is_exposed = find_reached(&edges, late_targets.collect());
+    let is_on_cycle = find_modules_on_cycles(&edges);
+    let is_half = is_on_cycle.iter().zip(&is_exposed);
+    let is_half = is_half
+        .map(|(&on_cycle, &exposed)| on_cycle || exposed)
+        .collect();
     let prefix_roots = find_prefix_roots(input, scans, &is_code_of_program, &planned);
-    let order = EvaluationOrder {
+    let parts = OrderParts {
         numbers,
         is_code_of_program,
         is_exposed,
-        is_on_cycle,
         is_half,
-        needs_loader,
         prefix_roots,
     };
-    let mut by_file = Vec::new();
-    by_file.resize_with(file_count, Vec::new);
-    let mut candidates_by_file = Vec::new();
-    candidates_by_file.resize_with(file_count, Vec::new);
+    let order = EvaluationOrder {
+        parts,
+        is_on_cycle,
+        needs_loader,
+    };
+    let mut sites = PlannedSites {
+        by_file: vec![Vec::new(); file_count],
+        candidates_by_file: vec![Vec::new(); file_count],
+    };
     for (file, mut file_sites) in planned {
         for site in &mut file_sites.sites {
             site.evaluates = order.can_evaluate(modules, site.referrer, site.target);
         }
-        by_file[file.idx()] = file_sites.sites;
+        sites.by_file[file.idx()] = file_sites.sites;
         let mut candidates = file_sites.required_candidates;
         candidates.retain(|&(referrer, target)| order.can_evaluate(modules, referrer, target));
-        candidates_by_file[file.idx()] = candidates;
+        sites.candidates_by_file[file.idx()] = candidates;
     }
-    let sites = PlannedSites {
-        by_file,
-        candidates_by_file,
-    };
     (order, sites)
-}
-
-impl EvaluationOrder {
-    pub(super) fn can_evaluate(
-        &self,
-        modules: &ModuleSet,
-        referrer: ModuleRef,
-        target: ModuleRef,
-    ) -> bool {
-        // Whoever requires an ES module while its body runs gets an object without keys, which is no view of its variables.
-        let is_seen_whole = match modules.interop(target).kind {
-            ModuleKind::SourceText => !self.has(&self.is_on_cycle, target),
-            _ => true,
-        };
-        self.is_code_of_program(referrer)
-            && self.is_code_of_program(target)
-            && !self.has(&self.needs_loader, target)
-            && is_seen_whole
-    }
 }

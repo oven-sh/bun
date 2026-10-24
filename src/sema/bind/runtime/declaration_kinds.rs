@@ -1,9 +1,11 @@
 use super::declarations::scope_boundary;
 use super::has_simple_parameter_list;
+use crate::atom::Atom;
 use crate::bind::{
     BoundBuilder, BoundIn, Decl, FnOwner, ModuleInstanceState, Parent, PatParent, ScopeId, SymbolId,
 };
 use crate::hir::*;
+use smallvec::SmallVec;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum DeclarationKind {
@@ -286,6 +288,23 @@ pub(super) fn has_parameter_expressions(
         }
     }
     false
+}
+
+pub(super) fn for_each_name(hir: &File<'_>, pattern: PatId, mut visit: impl FnMut(PatId, Atom)) {
+    let mut pending: SmallVec<[PatId; 8]> = SmallVec::new();
+    pending.push(pattern);
+    while let Some(pat) = pending.pop() {
+        match hir[pat].kind {
+            PatKind::Missing => {}
+            PatKind::Ident(name) => visit(pat, name),
+            PatKind::Object(props) => {
+                pending.extend(props.iter().rev().map(|prop| hir[prop].value));
+            }
+            PatKind::Array(elements) => {
+                pending.extend(elements.iter().rev().map(|element| hir[element].pat));
+            }
+        }
+    }
 }
 
 pub(super) fn needs_unique_parameters(hir: &File<'_>, function: FnId) -> bool {

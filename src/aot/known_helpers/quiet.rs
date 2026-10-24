@@ -1,5 +1,4 @@
 use crate::builtins::id::BuiltinId;
-pub use crate::builtins::table::is_locked;
 use crate::builtins::table::{self, BuiltinKind, MemberLookup, Mutability};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, Bound, CommonJsVariable, Parent};
@@ -22,11 +21,53 @@ pub struct Quiet<'a, 's> {
 }
 
 /// A plain object that has no such property of its own answers `undefined`: `Object.prototype` has none and takes none.
-pub fn is_absent_from_object_prototype(atoms: &Interner<'_>, name: Atom) -> bool {
+pub(super) fn is_absent_from_object_prototype(atoms: &Interner<'_>, name: Atom) -> bool {
     let known_name = table::find_name(atoms.bytes(name));
     let is_inherited = known_name
         .is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
     !is_inherited && name != known::__proto__
+}
+
+pub(super) fn enclosing_statement(bound: &Bound<'_>, mut expression: ExprId) -> Option<StmtId> {
+    loop {
+        match bound.parent_of_expr(expression) {
+            Parent::Expr(parent) => expression = parent,
+            Parent::VarInit(declaration) => return bound.var_stmt[declaration.idx()].some(),
+            Parent::Stmt(statement) => return statement.some(),
+            _ => return None,
+        }
+    }
+}
+
+pub(super) fn is_in_statement_of_file(bound: &Bound<'_>, expression: ExprId) -> bool {
+    enclosing_statement(bound, expression)
+        .is_some_and(|statement| bound.parent_of_stmt(statement) == Parent::File)
+}
+
+/// Neither `with` nor evaluated text decides at run time what the name means.
+pub(super) fn has_fixed_binding(bound: &Bound<'_>, name: ExprId) -> bool {
+    bound.dynamic_lookup_scope(NodeData::Expr(name)).is_none()
+}
+
+pub(super) fn is_global_name(bound: &Bound<'_>, name: ExprId) -> bool {
+    bound.binding(name) == Binding::Free && has_fixed_binding(bound, name)
+}
+
+/// `object.name` and `object["name"]` outside an optional chain.
+pub(super) fn plain_member(hir: &hir::File<'_>, expression: ExprId) -> Option<(ExprId, Atom)> {
+    let (ExprKind::Dot {
+        chain: Chain::No, ..
+    }
+    | ExprKind::Index {
+        chain: Chain::No, ..
+    }) = hir[expression].kind
+    else {
+        return None;
+    };
+    match hir.member_key(expression)? {
+        (object, MemberKey::Name(name)) => Some((object, name)),
+        (_, MemberKey::PrivateName(_) | MemberKey::Computed(_)) => None,
+    }
 }
 
 impl Quiet<'_, '_> {
@@ -35,25 +76,11 @@ impl Quiet<'_, '_> {
         let (hir, bound) = (self.hir, self.bound);
         let expression = hir.skip_type_assertions(expression);
         let found = match hir[expression].kind {
-            ExprKind::Ident(name) => {
-                let is_global = bound.binding(expression) == Binding::Free
-                    && bound
-                        .dynamic_lookup_scope(NodeData::Expr(expression))
-                        .is_none();
-                if !is_global {
-                    return None;
-                }
+            ExprKind::Ident(name) if is_global_name(bound, expression) => {
                 table::global(table::find_name(self.atoms.bytes(name))?)?
             }
-            ExprKind::Dot {
-                chain: Chain::No, ..
-            }
-            | ExprKind::Index {
-                chain: Chain::No, ..
-            } => {
-                let (object, MemberKey::Name(name)) = hir.member_key(expression)? else {
-                    return None;
-                };
+            _ => {
+                let (object, name) = plain_member(hir, expression)?;
                 let holder = self.find_locked_builtin(object)?;
                 let name = table::find_name(self.atoms.bytes(name))?;
                 let MemberLookup::Found(found) = table::member(holder, name) else {
@@ -61,7 +88,6 @@ impl Quiet<'_, '_> {
                 };
                 found
             }
-            _ => return None,
         };
         let entry = table::entry(found);
         let is_fixed_value =
@@ -82,27 +108,10 @@ impl Quiet<'_, '_> {
         })
     }
 
-    fn enclosing_statement(&self, expression: ExprId) -> Option<StmtId> {
-        let mut child = expression;
-        loop {
-            match self.bound.parent_of_expr(child) {
-                Parent::Expr(parent) => child = parent,
-                Parent::VarInit(declaration) => {
-                    return self.bound.var_stmt[declaration.idx()].some();
-                }
-                Parent::Stmt(statement) => return Some(statement),
-                _ => return None,
-            }
-        }
-    }
-
-    /// `this` in a statement of the file itself.
     pub fn is_this_of_file(&self, expression: ExprId) -> bool {
         let expression = self.hir.skip_type_assertions(expression);
         matches!(self.hir[expression].kind, ExprKind::This)
-            && self
-                .enclosing_statement(expression)
-                .is_some_and(|statement| self.bound.parent_of_stmt(statement) == Parent::File)
+            && is_in_statement_of_file(self.bound, expression)
     }
 
     // While nothing but quiet code has run, the object that a CommonJS file exports is as it was made: empty.
@@ -110,19 +119,12 @@ impl Quiet<'_, '_> {
         let expression = self.hir.skip_type_assertions(expression);
         let is_exports_variable = matches!(self.hir[expression].kind, ExprKind::Ident(_))
             && self.bound.binding(expression) == Binding::CommonJs(CommonJsVariable::Exports)
-            && self
-                .bound
-                .dynamic_lookup_scope(NodeData::Expr(expression))
-                .is_none();
+            && has_fixed_binding(self.bound, expression);
         is_exports_variable || self.is_this_of_file(expression)
     }
 
     fn is_quiet_name(&self, expression: ExprId, name: Atom) -> bool {
-        if self
-            .bound
-            .dynamic_lookup_scope(NodeData::Expr(expression))
-            .is_some()
-        {
+        if !has_fixed_binding(self.bound, expression) {
             return false;
         }
         match self.bound.binding(expression) {
@@ -142,38 +144,18 @@ impl Quiet<'_, '_> {
         let expression = hir.skip_type_assertions(expression);
         match hir[expression].kind {
             ExprKind::ImportMeta => true,
-            ExprKind::Ident(_) => {
-                bound.binding(expression) == Binding::Free
-                    && bound
-                        .dynamic_lookup_scope(NodeData::Expr(expression))
-                        .is_none()
-            }
-            ExprKind::Dot {
-                chain: Chain::No, ..
-            }
-            | ExprKind::Index {
-                chain: Chain::No, ..
-            } => match hir.member_key(expression) {
-                Some((object, MemberKey::Name(_))) => self.is_path_from_global(object),
-                Some((_, MemberKey::PrivateName(_) | MemberKey::Computed(_))) | None => false,
-            },
-            _ => false,
+            ExprKind::Ident(_) => is_global_name(bound, expression),
+            _ => plain_member(hir, expression)
+                .is_some_and(|(object, _)| self.is_path_from_global(object)),
         }
     }
 
     fn is_quiet_member(&self, expression: ExprId) -> bool {
-        let Some((object, MemberKey::Name(_))) = self.hir.member_key(expression) else {
-            return false;
-        };
-        let (ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. }) =
-            self.hir[expression].kind
-        else {
-            return false;
-        };
-        chain == Chain::No
-            && (self.find_locked_builtin(expression).is_some()
+        plain_member(self.hir, expression).is_some_and(|(object, _)| {
+            self.find_locked_builtin(expression).is_some()
                 || self.is_untouched_exports(object)
-                || (self.allows_reads_of_open_globals && self.is_path_from_global(object)))
+                || (self.allows_reads_of_open_globals && self.is_path_from_global(object))
+        })
     }
 
     fn is_quiet_literal(&self, properties: hir::Span<hir::PropId>) -> bool {

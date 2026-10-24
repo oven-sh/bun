@@ -4,12 +4,10 @@ use bun_sema::bind::{CommonJsVariable, Decl, ScopeId};
 use bun_sema::hir::{FnKind, ModuleId, Pat, PatId, PatKind, StmtKind};
 
 use super::{
-    creator_of, has_symbol_use, has_use, is_commonjs_slot, stored_in_loop, used_slots, walked,
-    with_walk,
+    has_symbol_use, has_use, is_commonjs_slot, stored_in_loop, used_slots, walked, with_walk,
 };
 use crate::lower::scope::testing::{
-    file_scope, first_statement, function_named, functions_of_kind, only_function, symbol_named,
-    top_scope,
+    file_scope, first_statement, function_named, only_function, symbol_named, top_scope,
 };
 use crate::lower::scope::{BindingRef, ScopeSlot, WalkedFunctionId};
 
@@ -112,11 +110,8 @@ fn store_in_nested_function_is_outside_loop() {
         let symbol = symbol_named(hir, bound, "x");
         assert_eq!(walk.loops.len(), 1);
         assert!(walk.loops[0].stored.is_empty());
-        assert!(has_symbol_use(
-            walk,
-            walked(walk, only_function(hir, FnKind::Arrow)),
-            symbol
-        ));
+        let arrow = walked(walk, only_function(hir, FnKind::Arrow));
+        assert!(has_symbol_use(walk, arrow, symbol));
     });
 }
 
@@ -152,11 +147,8 @@ fn commonjs_variable_store_is_recorded() {
     with_walk(&[("main.cjs", stored)], |hir, bound, walk| {
         let scope = file_scope(hir, bound);
         assert_eq!(walk.stored_slots, [(scope, EXPORTS)]);
-        assert!(
-            walk.loops[0]
-                .stored
-                .contains(&BindingRef::Slot(scope, EXPORTS))
-        );
+        let exports = BindingRef::Slot(scope, EXPORTS);
+        assert!(walk.loops[0].stored.contains(&exports));
     });
     let read = format!("{KEEPS_WRAPPER} var i = 0; while (i < 2) {{ exports.n = i; i++; }}");
     with_walk(&[("main.cjs", read.as_str())], |hir, bound, walk| {
@@ -181,11 +173,8 @@ fn the_five_names_are_slots_only_where_the_wrapper_is_kept() {
         assert!(walk.has_wrapper_parameters);
         let function = walked(walk, only_function(hir, FnKind::Expr));
         for slot in [REQUIRE, MODULE, EXPORTS] {
-            assert!(has_use(
-                walk,
-                function,
-                BindingRef::Slot(file_scope(hir, bound), slot)
-            ));
+            let binding = BindingRef::Slot(file_scope(hir, bound), slot);
+            assert!(has_use(walk, function, binding));
         }
     });
 }
@@ -203,11 +192,8 @@ fn callee_of_a_bound_module_call_is_no_use() {
         |hir, bound, walk| {
             let scope = file_scope(hir, bound);
             let uses = |name: &str, slot: ScopeSlot| {
-                has_use(
-                    walk,
-                    walked(walk, function_named(hir, name)),
-                    BindingRef::Slot(scope, slot),
-                )
+                let function = walked(walk, function_named(hir, name));
+                has_use(walk, function, BindingRef::Slot(scope, slot))
             };
             assert!(!uses("lazy", REQUIRE));
             assert!(!uses("resolved", REQUIRE));
@@ -225,11 +211,8 @@ fn callee_of_a_require_that_may_be_replaced_is_a_use() {
         &[("main.cjs", source), ("other.cjs", "")],
         |hir, bound, walk| {
             let require = BindingRef::Slot(file_scope(hir, bound), REQUIRE);
-            assert!(has_use(
-                walk,
-                walked(walk, only_function(hir, FnKind::Decl)),
-                require
-            ));
+            let function = walked(walk, only_function(hir, FnKind::Decl));
+            assert!(has_use(walk, function, require));
         },
     );
 }
@@ -249,34 +232,6 @@ fn initialization_under_a_branch_is_conditional() {
         for name in ["branch", "tried", "labeled", "chosen", "repeated"] {
             assert!(is_conditional(name), "{name}");
         }
-    });
-}
-
-#[test]
-fn callback_of_an_inner_module_is_a_body() {
-    let source = "var __commonJS = (cb, mod) => () => \
-        (mod || cb((mod = { exports: {} }).exports, mod), mod.exports); \
-        var shared = 1; \
-        var require_a = __commonJS((exports) => { \
-            exports.x = shared; exports.f = function () { return exports.x; }; }); \
-        export default require_a().f();";
-    with_walk(&[("main.mjs", source)], |hir, bound, walk| {
-        let callback = walked(walk, functions_of_kind(hir, FnKind::Arrow)[2]);
-        assert_eq!(creator_of(walk, callback), None);
-        assert!(has_symbol_use(
-            walk,
-            callback,
-            symbol_named(hir, bound, "shared")
-        ));
-        let holder = symbol_named(hir, bound, "require_a");
-        assert!(!has_symbol_use(walk, WalkedFunctionId::MODULE_BODY, holder));
-        let function = walked(walk, only_function(hir, FnKind::Expr));
-        assert_eq!(creator_of(walk, function), Some(callback));
-        assert!(!has_symbol_use(
-            walk,
-            function,
-            symbol_named(hir, bound, "exports")
-        ));
     });
 }
 
@@ -344,10 +299,8 @@ fn is_arrow_walked(imports: &str, test: &str, yes: &str, no: &str) -> bool {
     with_walk(&[("main.ts", source.as_str())], |hir, bound, walk| {
         let symbol = symbol_named(hir, bound, "x");
         let arrow = walk.function_of_fn[only_function(hir, FnKind::Arrow).idx()];
-        let users = walk
-            .uses
-            .iter()
-            .filter(|entry| entry.1 == BindingRef::Symbol(symbol));
+        let users = walk.uses.iter();
+        let users = users.filter(|entry| entry.1 == BindingRef::Symbol(symbol));
         assert_eq!(users.count(), 1 + usize::from(arrow.is_some()));
         arrow.is_some_and(|arrow| has_symbol_use(walk, arrow, symbol))
     })
@@ -420,16 +373,10 @@ fn with_object_is_used_by_dynamic_lookups() {
         with_walk(&[("main.cjs", source.as_str())], |hir, bound, walk| {
             let statement = first_statement(hir, |kind| matches!(kind, StmtKind::With { .. }));
             let object = BindingRef::Slot(bound.own_scope(statement), ScopeSlot::WithObject);
-            assert!(has_use(
-                walk,
-                walked(walk, only_function(hir, FnKind::Decl)),
-                object
-            ));
-            has_use(
-                walk,
-                walked(walk, only_function(hir, FnKind::Arrow)),
-                object,
-            )
+            let function = walked(walk, only_function(hir, FnKind::Decl));
+            assert!(has_use(walk, function, object));
+            let arrow = walked(walk, only_function(hir, FnKind::Arrow));
+            has_use(walk, arrow, object)
         })
     };
     assert!(uses_of_arrow("return () => x;"));

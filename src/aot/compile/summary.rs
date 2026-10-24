@@ -9,51 +9,34 @@ use bun_sema::util::SharedSort;
 use bun_sema_driver::host::to_native;
 
 pub(super) fn collect_entry_point_paths(project: &LoadedProject<'_, '_>) -> Vec<EntryPointPaths> {
-    let files = project.loaded.files();
-    let sources = &project.sources;
-    sources
-        .entry_points()
-        .iter()
-        .filter(|entry_point| {
-            matches!(
-                entry_point.kind,
-                EntryPointKind::Main | EntryPointKind::Additional
-            )
-        })
-        .map(|entry_point| EntryPointPaths {
-            public_path: sources.module_paths(entry_point.file).public_path.to_vec(),
+    let (files, sources) = (project.loaded.files(), &project.sources);
+    let entry_points = sources.entry_points().iter();
+    entry_points
+        .filter(|it| matches!(it.kind, EntryPointKind::Main | EntryPointKind::Additional))
+        .map(|it| EntryPointPaths {
+            public_path: sources.module_paths(it.file).public_path.to_vec(),
             source_path: with_separators_of_host(
-                to_native(files.module(entry_point.file).file_name()),
+                to_native(files.module(it.file).file_name()),
                 cfg!(windows),
             ),
         })
         .collect()
 }
 
-fn folder_of(path: &[u8], is_separator: impl Fn(u8) -> bool) -> &[u8] {
-    &path[..path
+fn folder_of(path: &[u8]) -> Vec<u8> {
+    let end = path
         .iter()
-        .rposition(|&byte| is_separator(byte))
-        .unwrap_or(0)]
+        .rposition(|&byte| bun_paths::is_sep_native(byte));
+    path[..end.unwrap_or(0)].to_vec()
 }
 
 pub(super) fn collect_folder_paths(project: &LoadedProject<'_, '_>) -> Vec<FolderPaths> {
-    let files = project.loaded.files();
-    let sources = &project.sources;
-    let mut folders: Vec<FolderPaths> = files
-        .compiled_files()
-        .iter()
+    let (files, sources) = (project.loaded.files(), &project.sources);
+    let compiled = files.compiled_files().iter();
+    let mut folders: Vec<FolderPaths> = compiled
         .map(|&file| FolderPaths {
-            public_path: folder_of(
-                sources.module_paths(file).public_path,
-                bun_paths::is_sep_native,
-            )
-            .to_vec(),
-            source_path: folder_of(
-                to_native(files.module(file).file_name()),
-                bun_paths::is_sep_native,
-            )
-            .to_vec(),
+            public_path: folder_of(sources.module_paths(file).public_path),
+            source_path: folder_of(to_native(files.module(file).file_name())),
         })
         .collect();
     folders.shared_sort_unstable();

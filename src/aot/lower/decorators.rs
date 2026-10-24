@@ -8,7 +8,7 @@ use bun_sema::hir::MemberId;
 use crate::ir::ValueId;
 
 pub(in crate::lower) use self::legacy::{has_legacy_decorators, move_decorated_fields};
-pub(in crate::lower) use self::plan::plan_standard_elements;
+pub(in crate::lower) use self::plan::{InitializerLists, plan_decorations};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(in crate::lower) enum DecoratedKind {
@@ -44,23 +44,12 @@ pub(in crate::lower) struct Decoration {
 
 impl Decoration {
     pub(in crate::lower) fn group(self) -> DecorationGroup {
+        use DecoratedKind::{Accessor, Field, Getter, Method, Setter};
         match (self.kind, self.is_static) {
-            (
-                DecoratedKind::Method
-                | DecoratedKind::Getter
-                | DecoratedKind::Setter
-                | DecoratedKind::Accessor,
-                true,
-            ) => DecorationGroup::StaticMethod,
-            (
-                DecoratedKind::Method
-                | DecoratedKind::Getter
-                | DecoratedKind::Setter
-                | DecoratedKind::Accessor,
-                false,
-            ) => DecorationGroup::InstanceMethod,
-            (DecoratedKind::Field, true) => DecorationGroup::StaticField,
-            (DecoratedKind::Field, false) => DecorationGroup::InstanceField,
+            (Method | Getter | Setter | Accessor, true) => DecorationGroup::StaticMethod,
+            (Method | Getter | Setter | Accessor, false) => DecorationGroup::InstanceMethod,
+            (Field, true) => DecorationGroup::StaticField,
+            (Field, false) => DecorationGroup::InstanceField,
         }
     }
 }

@@ -61,24 +61,6 @@ impl Reference {
             ReferenceKind::Builtin => Reference::Builtin(BuiltinId::from_wire(word)?),
         })
     }
-
-    pub fn kind(self) -> ReferenceKind {
-        match self {
-            Reference::String(_) => ReferenceKind::String,
-            Reference::PropertyKey(_) => ReferenceKind::PropertyKey,
-            Reference::Type(_) => ReferenceKind::Type,
-            Reference::TypeSite(_) => ReferenceKind::TypeSite,
-            Reference::ExpectedResult(_) => ReferenceKind::ExpectedResult,
-            Reference::Layout(_) => ReferenceKind::Layout,
-            Reference::Variable(_) => ReferenceKind::Variable,
-            Reference::Module(_, role) => ReferenceKind::Module(role),
-            Reference::ModuleFailure(_) => ReferenceKind::ModuleFailure,
-            Reference::EvalScope(_) => ReferenceKind::EvalScope,
-            Reference::Function(_, role) => ReferenceKind::Function(role),
-            Reference::Data(_) => ReferenceKind::Data,
-            Reference::Builtin(_) => ReferenceKind::Builtin,
-        }
-    }
 }
 
 #[derive(Copy, Clone)]

@@ -1,16 +1,10 @@
 use bun_ast::Kind;
-#[cfg(test)]
-use bun_ast::Log;
 use bun_options_types::aot_options::ExplainSet;
 use bun_sema::messages::Category;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::{self as driver, log_message};
 
 use super::message::ReportMessage;
-#[cfg(test)]
-use super::message::{
-    add_messages_to_log, has_line_label, is_json_report, is_message_report, write_lines,
-};
 use super::source_texts::{ModuleLocator, SourceTexts};
 use crate::diagnostics::new_driver_diagnostic;
 use crate::engine::Position;
@@ -31,10 +25,14 @@ pub struct ReportEntry {
 
 impl ReportEntry {
     pub fn line(kind: ExplainSet, text: Vec<u8>) -> ReportEntry {
+        ReportEntry::at(kind, text, None)
+    }
+
+    pub(crate) fn at(kind: ExplainSet, text: Vec<u8>, position: Option<Position>) -> ReportEntry {
         ReportEntry {
             kind,
             text,
-            position: None,
+            position,
             notes: Vec::new(),
         }
     }
@@ -47,29 +45,12 @@ impl ReportEntry {
     }
 }
 
-fn locate_text(
-    text: &[u8],
-    position: Option<Position>,
-    locator: &mut ModuleLocator<'_>,
-) -> driver::Diagnostic {
-    let reported = new_driver_diagnostic(0, Category::Warning, text.to_vec(), &[]);
-    match position {
-        Some(position) => locator.locate(position, reported),
-        None => reported,
-    }
-}
-
-/// The text of each entry, followed by the texts of its notes.
-fn locate_texts(texts: &SourceTexts, entries: &[ReportEntry]) -> Vec<driver::Diagnostic> {
+pub fn to_messages(texts: &SourceTexts, entries: &[ReportEntry]) -> Vec<ReportMessage> {
     let mut parts: Vec<(&[u8], Option<Position>)> = Vec::new();
     for entry in entries {
         parts.push((&entry.text[..], entry.position));
-        parts.extend(
-            entry
-                .notes
-                .iter()
-                .map(|note| (&note.text[..], note.position)),
-        );
+        let notes = entry.notes.iter();
+        parts.extend(notes.map(|note| (&note.text[..], note.position)));
     }
     // Ascending, so the locator scans the text of each module once. Entries arrive by rank.
     let mut order: Vec<usize> = (0..parts.len()).collect();
@@ -79,13 +60,14 @@ fn locate_texts(texts: &SourceTexts, entries: &[ReportEntry]) -> Vec<driver::Dia
     let mut located: Vec<Option<driver::Diagnostic>> = parts.iter().map(|_| None).collect();
     for index in order {
         let (text, position) = parts[index];
-        located[index] = Some(locate_text(text, position, &mut locator));
+        let reported = new_driver_diagnostic(0, Category::Warning, text.to_vec(), &[]);
+        located[index] = Some(match position {
+            Some(position) => locator.locate(position, reported),
+            None => reported,
+        });
     }
-    located.into_iter().flatten().collect()
-}
 
-pub fn to_messages(texts: &SourceTexts, entries: &[ReportEntry]) -> Vec<ReportMessage> {
-    let mut located = locate_texts(texts, entries).into_iter();
+    let mut located = located.into_iter().flatten();
     entries
         .iter()
         .map(|entry| {
@@ -104,8 +86,12 @@ pub fn to_messages(texts: &SourceTexts, entries: &[ReportEntry]) -> Vec<ReportMe
 #[cfg(test)]
 mod tests {
     use bstr::BString;
+    use bun_ast::Log;
     use bun_sema_standalone as _;
 
+    use super::super::message::{
+        add_messages_to_log, has_line_label, is_json_report, is_message_report, write_lines,
+    };
     use super::super::source_texts::ModuleSource;
     use super::*;
     use crate::ir::ids::{Id, ModuleId};

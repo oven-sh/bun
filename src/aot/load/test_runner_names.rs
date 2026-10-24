@@ -3,39 +3,32 @@
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::Binding;
 use bun_sema::hir::{
-    Call, Chain, ExprId, ExprKind, File, FileBuilder, Flags, IdList, Import, ImportId, ImportSpec,
-    Keyword, ListAt, NameKind, PatKind, PatProp, PropKey, PropKind, ResolutionMode, StmtId,
-    StmtKind, TextRange, TypeNodeId, TypeNodeKind, VarDecl, VarKind,
+    ExprId, ExprKind, File, FileBuilder, IdList, Keyword, NameKind, PatKind, PatProp, PropKey,
+    PropKind, StmtId, TypeNodeKind,
 };
 use bun_sema::import_sites::ImportSpecifier;
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::{TransformRequest, TreeChange};
 use bun_sema::session::Arena;
 
+use crate::load::react_compiler::module_items::{
+    POSITION, finish_file, put_around_body, write_constant, write_import,
+};
 use crate::load::runtime_declarations::NAMES_OF_EVERY_TEST_FILE;
 
 const MODULE: &[u8] = b"bun:test";
 const MODULES_OF_TEST_RUNNERS: [&[u8]; 3] = [MODULE, b"@jest/globals", b"vitest"];
 // No program can write such a name, so it meets no declaration of the file: `declare const test: ..` stands beside it.
 const LOCAL_NAME_PREFIX: &[u8] = b"%test:";
-const POSITION: u32 = 0;
-
-struct UsedName {
-    imported: Atom,
-    local: Atom,
-}
 
 fn loads_test_runner(request: &TransformRequest<'_, '_>, atoms: &Interner<'_>) -> bool {
-    request
-        .analysis
-        .import_sites
-        .iter()
-        .any(|site| match site.specifier {
-            ImportSpecifier::Constant(specifier) => {
-                MODULES_OF_TEST_RUNNERS.contains(&atoms.bytes(specifier))
-            }
-            ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => false,
-        })
+    let mut sites = request.analysis.import_sites.iter();
+    sites.any(|site| match site.specifier {
+        ImportSpecifier::Constant(specifier) => {
+            MODULES_OF_TEST_RUNNERS.contains(&atoms.bytes(specifier))
+        }
+        ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => false,
+    })
 }
 
 // `typeof a.b` holds `a` as an expression, and asks for its type alone.
@@ -102,61 +95,13 @@ fn write_use(file: &mut FileBuilder, expression: ExprId, written: Atom, local: A
     };
 }
 
-fn add_statement(file: &mut FileBuilder, kind: StmtKind) -> StmtId {
-    let statement = file.stmt(kind, POSITION);
-    file[statement].loc = TextRange {
-        pos: POSITION,
-        end: POSITION,
-    };
-    statement
-}
-
-fn write_import(file: &mut FileBuilder, atoms: &Interner<'_>, names: &[UsedName]) -> StmtId {
-    let import = ImportId(file.imports.len() as u32);
-    let specifiers: Vec<ImportSpec> = names
-        .iter()
-        .map(|name| ImportSpec {
-            start: POSITION,
-            imported: name.imported,
-            local: name.local,
-            pos: POSITION,
-            type_only: false,
-            imported_pos: POSITION,
-            end: POSITION,
-            import,
-        })
-        .collect();
-    let named = file.add_import_specs(&specifiers);
-    let added = file.add_import(Import {
-        spec: atoms.intern(MODULE),
-        default: Atom::NONE,
-        default_pos: POSITION,
-        namespace: Atom::NONE,
-        namespace_pos: POSITION,
-        clause_start: POSITION,
-        clause_end: POSITION,
-        namespace_start: POSITION,
-        named,
-        has_named_imports: true,
-        type_only: false,
-        is_deferred: false,
-        mode: ResolutionMode::None,
-        stmt: StmtId::NONE,
-        attributes: ExprId::NONE,
-    });
-    debug_assert_eq!(added, import);
-    file.has_module_syntax = true;
-    file.is_forced_module = false;
-    add_statement(file, StmtKind::Import(import))
-}
-
-fn write_require(file: &mut FileBuilder, atoms: &Interner<'_>, names: &[UsedName]) -> StmtId {
+fn write_require(file: &mut FileBuilder, atoms: &Interner<'_>, names: &[(Atom, Atom)]) -> StmtId {
     let properties: Vec<PatProp> = names
         .iter()
-        .map(|name| PatProp {
-            key: PropKey::Name(name.imported),
+        .map(|&(imported, local)| PatProp {
+            key: PropKey::Name(imported),
             name_kind: NameKind::Identifier,
-            value: file.pat(PatKind::Ident(name.local), POSITION, POSITION),
+            value: file.pat(PatKind::Ident(local), POSITION, POSITION),
             default: ExprId::NONE,
             is_rest: false,
             pos: POSITION,
@@ -167,42 +112,7 @@ fn write_require(file: &mut FileBuilder, atoms: &Interner<'_>, names: &[UsedName
     let properties = file.add_pat_props(&properties);
     let pat = file.pat(PatKind::Object(properties), POSITION, POSITION);
     let callee = file.expr(ExprKind::Ident(known::require), POSITION, POSITION);
-    let specifier = file.expr(ExprKind::String(atoms.intern(MODULE)), POSITION, POSITION);
-    let args = file.list(&[specifier]);
-    let call = file.add_call(Call {
-        callee,
-        args,
-        type_args: ListAt::EMPTY,
-        close_pos: POSITION,
-        chain: Chain::No,
-        is_pure: false,
-    });
-    let init = file.expr(ExprKind::Call(call), POSITION, POSITION);
-    let declarations = file.add_var_decls(&[VarDecl {
-        pat,
-        ty: TypeNodeId::NONE,
-        init,
-        kind: VarKind::Const,
-        flags: Flags::empty(),
-        loc: TextRange {
-            pos: POSITION,
-            end: POSITION,
-        },
-    }]);
-    add_statement(file, StmtKind::Var(declarations))
-}
-
-fn put_behind_directives(file: &mut FileBuilder, added: StmtId) {
-    let body: Vec<StmtId> = file.ids(file.body).collect();
-    let is_directive =
-        |&statement: &StmtId| matches!(file[statement].kind, StmtKind::Directive { .. });
-    let prologue_len = body
-        .iter()
-        .rposition(is_directive)
-        .map_or(0, |last| last + 1);
-    let (prologue, rest) = body.split_at(prologue_len);
-    let statements = [prologue, &[added][..], rest].concat();
-    file.body = file.list(&statements);
+    write_constant(file, pat, callee, atoms.intern(MODULE))
 }
 
 pub(crate) fn import_used_names<'s>(
@@ -234,23 +144,14 @@ pub(crate) fn import_used_names<'s>(
         }
     }
     let is_used = |name: usize| uses.iter().any(|&(_, used)| used == name);
-    let used: Vec<UsedName> = (0..names.len())
-        .filter(|&name| is_used(name))
-        .map(|name| UsedName {
-            imported: names[name],
-            local: locals[name],
-        })
-        .collect();
+    let used = (0..names.len()).filter(|&name| is_used(name));
+    let used: Vec<(Atom, Atom)> = used.map(|name| (names[name], locals[name])).collect();
     let added = match request.analysis.module_format {
-        ModuleFormat::Esm => write_import(&mut file, atoms, &used),
+        ModuleFormat::Esm => write_import(&mut file, atoms, MODULE, used.iter().copied()),
         ModuleFormat::CommonJs => write_require(&mut file, atoms, &used),
     };
-    put_behind_directives(&mut file, added);
-    // The parser's filter covers the source text only. An empty filter answers "may mention" for every name.
-    file.mentioned.clear();
-    let (mut file, _) = file.into_arena(arena, atoms.session());
-    file.finish_nodes();
-    *request.hir = file;
+    put_around_body(&mut file, &[added], &[]);
+    *request.hir = finish_file(file, arena, atoms);
     TreeChange::Changed
 }
 
@@ -410,65 +311,35 @@ mod tests {
     #[test]
     fn names_of_the_file_and_files_that_load_a_runner_stay_as_written() {
         let rows = [
-            ("a.test.js", "console.log(1);", " | 0 written | 0 typed"),
+            ("js", "console.log(1);", 0),
+            ("ts", "let e: typeof expect;", 0),
+            ("js", "function test() {} test();", 1),
+            ("js", "(expect => expect)(1);", 1),
+            ("js", "x.test; ({ test: 1 });", 0),
             (
-                "a.test.ts",
-                "let e: typeof expect;",
-                " | 0 written | 0 typed",
-            ),
-            (
-                "a.test.js",
-                "function test() {} test();",
-                " | 1 written | 0 typed",
-            ),
-            (
-                "a.test.js",
-                "(expect => expect)(1);",
-                " | 1 written | 0 typed",
-            ),
-            (
-                "a.test.js",
-                "x.test; ({ test: 1 });",
-                " | 0 written | 0 typed",
-            ),
-            (
-                "a.test.js",
+                "js",
                 "import { test } from 'bun:test'; test('a', () => {}); describe;",
-                " | 2 written | 0 typed",
+                2,
             ),
             (
-                "a.test.js",
+                "js",
                 "import { test } from 'vitest'; test('a', () => {}); describe;",
-                " | 2 written | 0 typed",
+                2,
             ),
             (
-                "a.test.js",
+                "js",
                 "import { test } from '@jest/globals'; test('a', () => {}); describe;",
-                " | 2 written | 0 typed",
+                2,
             ),
-            (
-                "a.test.js",
-                "import 'bun:test'; describe;",
-                " | 1 written | 0 typed",
-            ),
-            (
-                "a.test.js",
-                "export * from 'bun:test'; describe;",
-                " | 1 written | 0 typed",
-            ),
-            (
-                "a.test.js",
-                "await import('bun:test'); describe;",
-                " | 1 written | 0 typed",
-            ),
-            (
-                "a.test.cjs",
-                "require('bun:test'); describe;",
-                " | 1 written | 0 typed",
-            ),
+            ("js", "import 'bun:test'; describe;", 1),
+            ("js", "export * from 'bun:test'; describe;", 1),
+            ("js", "await import('bun:test'); describe;", 1),
+            ("cjs", "require('bun:test'); describe;", 1),
         ];
-        for (name, text, expected) in rows {
-            assert_eq!(describe(name, text), expected, "{text}");
+        for (extension, text, written) in rows {
+            let described = describe(&format!("a.test.{extension}"), text);
+            let expected = format!(" | {written} written | 0 typed");
+            assert_eq!(described, expected, "{text}");
         }
     }
 }

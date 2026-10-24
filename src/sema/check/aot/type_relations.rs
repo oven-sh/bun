@@ -32,7 +32,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Some(self.files().sym(function.file, symbol))
     }
 
-    /// The first of `signatures`, if one symbol declares them all: the overloads of a function or a method, the call signatures of an interface.
     pub fn first_overload(&self, signatures: &[SigId]) -> Option<FunctionRef> {
         let (&first, others) = signatures.split_first()?;
         let first = self.signature_declaration(first)?;
@@ -44,7 +43,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         has_one_symbol.then_some(first)
     }
 
-    /// The function that runs where a declaration without a body is called: the only declaration of the same symbol that has one.
     pub fn overload_implementation(&self, overload: FunctionRef) -> Option<FunctionRef> {
         if has_body(&self.c.hir(overload.file)[overload.function]) {
             return None;
@@ -72,7 +70,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
-    /// What the heritage of a class constructs: `$Node.Duplex` for `class Socket extends Duplex` with `Duplex: { new (..): $Node.Duplex }`.
     pub fn base_types_of_class(
         &mut self,
         class: ClassRef,
@@ -92,7 +89,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
-    /// What an interface extends, as it is declared: the type arguments are those of the declaration.
     pub fn declared_base_types(&mut self, interface: Sym) -> Result<SmallVec<[TypeId; 1]>, GaveUp> {
         self.ask(|queries| {
             let bases: SmallVec<[TypeId; 1]> =
@@ -104,7 +100,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
-    /// The names of `object_members`, without their types.
     pub fn member_presence(&mut self, object_type: TypeId) -> Result<&'c [MemberPresence], GaveUp> {
         self.ask(|queries| {
             let ty = queries.declared_type_of_this(object_type);

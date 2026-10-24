@@ -16,7 +16,6 @@ use crate::util::FxHashMap;
 
 #[derive(Default)]
 pub(crate) struct KeptAnswers {
-    // In front of the arena, which its references point into: fields are dropped in this order.
     memo: KeptMemo<'static>,
     arena: Option<Box<Arena>>,
 }
@@ -27,13 +26,11 @@ impl KeptAnswers {
         (std::mem::take(&mut self.memo), arena)
     }
 
-    /// `memo`: its references point into `arena`.
     pub(super) fn put_back(&mut self, memo: KeptMemo<'static>, arena: Box<Arena>) {
         self.memo = memo;
         self.arena = Some(arena);
     }
 
-    /// Forgets every answer and keeps the memory of the tables.
     pub(crate) fn clear(&mut self) {
         self.memo.clear();
         self.arena = None;
@@ -41,27 +38,22 @@ impl KeptAnswers {
 }
 
 impl KeptMemo<'_> {
-    /// SAFETY: Every reference in it points into the arena that it is put back with.
     pub(super) unsafe fn outliving_its_borrow(self) -> KeptMemo<'static> {
         // SAFETY: that arena is freed behind the memo, and `KeptAnswers::take` hands both out together.
         unsafe { std::mem::transmute::<KeptMemo<'_>, KeptMemo<'static>>(self) }
     }
 }
 
-/// What is asked about any type.
 #[derive(Default)]
 pub(super) struct TypeAnswers<'c> {
     pub(super) shape: Option<TypeShape<'c>>,
     pub(super) identity: Option<TypeIdentity>,
     pub(super) awaited: Option<TypeId>,
     pub(super) reads_untrusted_declaration: Option<bool>,
-    /// Two bits a `KeptFact`: whether it is known, and what it is.
     pub(super) facts: u8,
-    /// 1 + the index of its `ObjectAnswers`, or 0.
     object: u32,
 }
 
-/// What is asked about a type that has members.
 #[derive(Default)]
 pub(super) struct ObjectAnswers<'c> {
     pub(super) primitives: Option<PrimitiveKinds>,
@@ -72,19 +64,16 @@ pub(super) struct ObjectAnswers<'c> {
     pub(super) checked_members: Option<&'c [CheckedMember]>,
     pub(super) listed_members: Option<&'c [ListedMember]>,
     pub(super) index_signatures: Option<&'c [IndexSignature]>,
-    /// Its part of `KeptMemo::member_types`, by `ListedMember::property_index`. Empty until the first is asked for.
     first_member_type: u32,
     member_type_count: u32,
 }
 
 #[derive(Default)]
 pub(super) struct KeptMemo<'c> {
-    /// 1 + the index in `types`, or 0.
     rows: ByType,
     types: Vec<TypeAnswers<'c>>,
     objects: Vec<ObjectAnswers<'c>>,
     member_types: Vec<Option<PositionTypes>>,
-    /// As every file but that of the declaration hears them.
     pub(super) signatures: FxHashMap<SigId, SignatureShape<'c>>,
     pub(super) function_signatures: FxHashMap<FunctionRef, SignatureShape<'c>>,
     pub(super) signature_results: FxHashMap<SigId, TypeId>,
@@ -95,7 +84,6 @@ pub(super) struct KeptMemo<'c> {
     pub(super) recursive_conditionals: FxHashMap<(FileId, TypeNodeId), bool>,
 }
 
-/// Where the answers about a type lie. It stays valid while others are added.
 #[derive(Copy, Clone)]
 pub(super) struct TypeRow(u32);
 
@@ -210,7 +198,6 @@ impl<'c> KeptMemo<'c> {
     }
 }
 
-/// What whoever asks the questions works out from the answers about a type alone, and keeps with them.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum KeptFact {
@@ -219,7 +206,6 @@ pub enum KeptFact {
     HasLayoutInEveryValue,
 }
 
-/// The questions about a type for which `Memo::gave_up` holds that the checker gave up.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 #[repr(u8)]
 pub(super) enum TypeQuestion {

@@ -21,6 +21,7 @@
 #include <optional>
 #include <span>
 #include <wtf/BitSet.h>
+#include <wtf/MainThread.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Threading.h>
 #include <wtf/Vector.h>
@@ -415,6 +416,20 @@ extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::
     encodePassTimes(*result);
     result->statistics = result->output->statistics.values();
     result->limitValues = result->output->limitValues;
+    return result;
+}
+
+// The plans are the text of the result.
+extern "C" BunAOTResult* Bun__AOT__writeValidationPlans(BunAOTBytes program)
+{
+    // The first thread that WTF meets has to be the one that it takes for the main thread. A bundler that has not started JavaScriptCore by now may still do so, on another thread.
+    WTF::initializeMainThread();
+    ensureHostBindings();
+
+    Wire::CompileOptions options;
+    Bun__AOT__initializeOptions(&options);
+    auto* result = new BunAOTResult;
+    result->text = JSC::callRemovable<JSC::RemovableFeature::ImageCompiler, JSC::RemovedFeatureStub::Abort, JSC::AOT::writeValidationPlans>(std::span { program.ptr, program.len }, options);
     return result;
 }
 

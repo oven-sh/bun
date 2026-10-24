@@ -42,10 +42,20 @@ pub(in crate::lower) fn lower_tagged_template(
         unreachable!("lower_tagged_template takes a TaggedTemplate expression");
     };
     let site = hir[tagged];
-    let callee = lowering.lower_callee(site.callee, None);
+    let callee = lowering.lower_callee(site.callee, None, None);
     let template = hir.template_of(tagged);
     lowering.set_position(hir[template].pos);
-    let strings = lowering.collect_template_strings(template);
+    let parts = hir.template_parts(template);
+    debug_assert!(
+        !parts.is_empty(),
+        "a template has one more part than substitutions"
+    );
+    let mut strings: SmallVec<[TemplateString; 4]> = SmallVec::with_capacity(parts.len());
+    for part in parts {
+        let cooked = part.cooked.map(|cooked| lowering.file.intern_atom(cooked));
+        let raw = lowering.file.intern_atom(part.raw);
+        strings.push(TemplateString { cooked, raw });
+    }
     let mut arguments: SmallVec<[ValueId; 4]> = SmallVec::with_capacity(site.args.len() + 1);
     arguments.push(lowering.builder.new_template_object(&strings));
     for substitution in hir.ids(site.args) {
@@ -60,23 +70,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if cooked == known::empty {
             return None;
         }
-        let string = self.file.intern_atom(cooked);
-        Some(self.builder.string(string))
-    }
-
-    fn collect_template_strings(&mut self, template: ExprId) -> SmallVec<[TemplateString; 4]> {
-        let hir = self.file.hir;
-        let parts = hir.template_parts(template);
-        debug_assert!(
-            !parts.is_empty(),
-            "a template has one more part than substitutions"
-        );
-        let mut strings = SmallVec::with_capacity(parts.len());
-        for part in parts {
-            let cooked = part.cooked.map(|cooked| self.file.intern_atom(cooked));
-            let raw = self.file.intern_atom(part.raw);
-            strings.push(TemplateString { cooked, raw });
-        }
-        strings
+        Some(self.builder.string(self.file.intern_atom(cooked)))
     }
 }

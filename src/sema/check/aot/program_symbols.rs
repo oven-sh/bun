@@ -126,7 +126,6 @@ impl ProgramSymbols {
     }
 }
 
-// `declared_in` is the compiler's own declaration file: a name means what that file declares, whatever another file declares under it.
 fn find_export(
     files: &Files<'_>,
     container: Sym,
@@ -175,7 +174,6 @@ fn find_tag_literal(files: &Files<'_>, int32: Sym) -> Option<(FileId, TypeNodeId
 }
 
 impl Checker<'_, '_> {
-    // What the compiler declares for its own operations, like `JSON.parse<T>`, comes on top of the types that the program is checked with.
     pub(in crate::check) fn remove_compiler_signatures(
         &self,
         signatures: &mut SmallVec<[SigId; 4]>,

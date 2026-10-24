@@ -1,6 +1,6 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{BindingKind, CodeUnit, CommonJsVariable, Decl, SymbolId};
-use bun_sema::hir::{FnKind, ModuleName, PatKind};
+use bun_sema::hir::{ModuleName, PatKind};
 
 use super::{Probe, analyze_files, analyze_source};
 use crate::ir::generated::FunctionFlags;
@@ -36,7 +36,7 @@ fn type_only_is_not_a_value() {
             let symbols = symbols_with_name(probe, name);
             assert!(!symbols.is_empty());
             for symbol in symbols {
-                assert_eq!(probe.analysis.form(symbol), BindingForm::NotAValue);
+                assert_eq!(probe.form(symbol), BindingForm::NotAValue);
                 assert_eq!(probe.analysis.placement(BindingRef::Symbol(symbol)), None);
             }
         }
@@ -50,9 +50,9 @@ fn import_is_import() {
     analyze_files(&files, |probe| {
         let symbol = probe.symbol("value");
         assert_eq!(probe.bound.binding_kind(symbol), BindingKind::Import);
-        assert_eq!(probe.analysis.form(symbol), BindingForm::Import);
+        assert_eq!(probe.form(symbol), BindingForm::Import);
         assert_eq!(probe.analysis.placement(BindingRef::Symbol(symbol)), None);
-        assert!(probe.analysis.bindings(probe.file_scope()).is_empty());
+        assert!(probe.bindings(probe.file_scope()).is_empty());
     });
 }
 
@@ -61,11 +61,7 @@ fn import_in_closure_is_no_capture() {
     let main = "import { value } from './other'; export function f() { return () => value; }";
     let files = [("main.ts", main), ("other.ts", "export const value = 1;")];
     analyze_files(&files, |probe| {
-        assert!(
-            probe
-                .captures(probe.only_function(FnKind::Arrow))
-                .is_empty()
-        );
+        assert!(probe.captures(probe.arrow()).is_empty());
     });
 }
 
@@ -75,7 +71,7 @@ fn import_equals_require_is_local() {
     analyze_source("main.ts", source, |probe| {
         let symbol = probe.symbol("fs");
         assert_eq!(probe.bound.binding_kind(symbol), BindingKind::Const);
-        assert_eq!(probe.analysis.form(symbol), BindingForm::Stored);
+        assert_eq!(probe.form(symbol), BindingForm::Stored);
         assert_eq!(probe.placement_of("fs").storage, Storage::Local);
     });
 }
@@ -90,7 +86,7 @@ fn type_import_merged_with_function_is_function() {
     analyze_files(&files, |probe| {
         let symbol = probe.symbol("Merged");
         assert_eq!(probe.bound.binding_kind(symbol), BindingKind::Function);
-        assert_eq!(probe.analysis.form(symbol), BindingForm::Stored);
+        assert_eq!(probe.form(symbol), BindingForm::Stored);
         assert_eq!(probe.placement_of("Merged").storage, Storage::Local);
     });
 }
@@ -102,23 +98,17 @@ fn function_expression_name_is_callee() {
         let function = probe.function("self");
         let callee = probe.slot(function, ScopeSlot::Callee);
         let placement = probe.placement(callee);
-        assert_eq!(
-            probe.analysis.form(probe.symbol("self")),
-            BindingForm::Callee { function }
-        );
+        assert_eq!(probe.form_of("self"), BindingForm::Callee { function });
         assert_eq!(probe.analysis.placement(probe.binding("self")), None);
         assert_eq!(placement.storage, Storage::Local);
         assert!(!placement.is_shared);
-        assert_eq!(probe.analysis.bindings(probe.top_scope(function)), [callee]);
+        assert_eq!(probe.bindings(probe.top_scope(function)), [callee]);
     });
 
     let use_in_arrow = "export const probe = function self() { return () => self; };";
     analyze_source("main.ts", use_in_arrow, |probe| {
         let callee = probe.slot(probe.function("self"), ScopeSlot::Callee);
-        assert_eq!(
-            probe.captures(probe.only_function(FnKind::Arrow)),
-            [Capture::Value(callee)]
-        );
+        assert_eq!(probe.captures(probe.arrow()), [Capture::Value(callee)]);
         assert!(probe.placement(callee).is_shared);
     });
 
@@ -138,7 +128,7 @@ fn mapped_argument_index_of_duplicate() {
         let unit = CodeUnit::Function(function);
         let form = BindingForm::MappedArgument { unit, index: 1 };
         assert_eq!(probe.arguments_object(function), ArgumentsObject::Mapped);
-        assert_eq!(probe.analysis.form(probe.symbol("twice")), form);
+        assert_eq!(probe.form_of("twice"), form);
         let callee = probe.placement(probe.slot(function, ScopeSlot::Callee));
         assert_eq!(callee.storage, Storage::Local);
     });
@@ -148,26 +138,16 @@ fn mapped_argument_index_of_duplicate() {
     analyze_source("main.cjs", strict, |probe| {
         let function = probe.function("probe");
         assert_eq!(probe.arguments_object(function), ArgumentsObject::Unmapped);
-        assert_eq!(
-            probe.analysis.form(probe.symbol("once")),
-            BindingForm::Stored
-        );
-        assert_eq!(
-            probe
-                .analysis
-                .placement(probe.slot(function, ScopeSlot::Callee)),
-            None
-        );
+        assert_eq!(probe.form_of("once"), BindingForm::Stored);
+        let callee = probe.slot(function, ScopeSlot::Callee);
+        assert_eq!(probe.analysis.placement(callee), None);
     });
 
     let unused = "function probe(once) { return once; } module.exports = probe;";
     analyze_source("main.cjs", unused, |probe| {
         let object = probe.arguments_object(probe.function("probe"));
         assert_eq!(object, ArgumentsObject::None);
-        assert_eq!(
-            probe.analysis.form(probe.symbol("once")),
-            BindingForm::Stored
-        );
+        assert_eq!(probe.form_of("once"), BindingForm::Stored);
     });
 }
 
@@ -180,16 +160,15 @@ fn mapped_argument_in_closure_shares_arguments_object() {
         let unit = CodeUnit::Function(function);
         let form = BindingForm::MappedArgument { unit, index: 0 };
         let arguments = probe.slot(function, ScopeSlot::Arguments);
-        assert_eq!(probe.analysis.form(probe.symbol("once")), form);
+        assert_eq!(probe.form_of("once"), form);
         assert!(probe.placement(arguments).is_shared);
-        let arrow = probe.only_function(FnKind::Arrow);
-        assert_eq!(probe.captures(arrow), [Capture::Value(arguments)]);
+        assert_eq!(probe.captures(probe.arrow()), [Capture::Value(arguments)]);
         let bindings = [
             probe.slot(function, ScopeSlot::Callee),
             arguments,
             probe.slot(function, ScopeSlot::ArgumentsBinding),
         ];
-        assert_eq!(probe.analysis.bindings(probe.top_scope(function)), bindings);
+        assert_eq!(probe.bindings(probe.top_scope(function)), bindings);
     });
 }
 
@@ -198,29 +177,25 @@ fn wrapper_arguments_object_by_mode() {
     let exports = ScopeSlot::CommonJs(CommonJsVariable::Exports);
     let source = "console.log(arguments.length, exports);";
     analyze_source("main.cjs", source, |probe| {
-        assert_eq!(
-            probe.analysis.arguments_object(CodeUnit::File),
-            ArgumentsObject::Mapped
-        );
+        let object = probe.analysis.arguments_object(CodeUnit::File);
+        assert_eq!(object, ArgumentsObject::Mapped);
         let bindings = [
             probe.file_slot(ScopeSlot::Callee),
             probe.file_slot(ScopeSlot::Arguments),
             probe.file_slot(ScopeSlot::ArgumentsBinding),
         ];
-        assert_eq!(probe.analysis.bindings(probe.file_scope()), bindings);
+        assert_eq!(probe.bindings(probe.file_scope()), bindings);
     });
     let strict = format!("'use strict'; {source}");
     analyze_source("main.cjs", &strict, |probe| {
-        assert_eq!(
-            probe.analysis.arguments_object(CodeUnit::File),
-            ArgumentsObject::Unmapped
-        );
+        let object = probe.analysis.arguments_object(CodeUnit::File);
+        assert_eq!(object, ArgumentsObject::Unmapped);
         let bindings = [
             probe.file_slot(ScopeSlot::Arguments),
             probe.file_slot(ScopeSlot::ArgumentsBinding),
             probe.file_slot(exports),
         ];
-        assert_eq!(probe.analysis.bindings(probe.file_scope()), bindings);
+        assert_eq!(probe.bindings(probe.file_scope()), bindings);
     });
 }
 
@@ -236,12 +211,8 @@ fn only_commonjs_body_has_arguments_object() {
         analyze_source(file, source, |probe| {
             let object = probe.analysis.arguments_object(CodeUnit::File);
             assert_eq!(object, ArgumentsObject::None, "{source}");
-            assert_eq!(
-                probe
-                    .analysis
-                    .placement(probe.file_slot(ScopeSlot::Arguments)),
-                None
-            );
+            let arguments = probe.file_slot(ScopeSlot::Arguments);
+            assert_eq!(probe.analysis.placement(arguments), None);
         });
     }
 }
@@ -252,24 +223,15 @@ fn redeclared_wrapper_parameter_is_mapped_argument() {
     analyze_source("main.cjs", "var module, exports; arguments;", |probe| {
         let module = BindingForm::MappedArgument { unit, index: 2 };
         let exports = BindingForm::MappedArgument { unit, index: 0 };
-        assert_eq!(probe.analysis.form(probe.symbol("module")), module);
-        assert_eq!(probe.analysis.form(probe.symbol("exports")), exports);
+        assert_eq!(probe.form_of("module"), module);
+        assert_eq!(probe.form_of("exports"), exports);
     });
-    analyze_source(
-        "main.cjs",
-        "'use strict'; var module; arguments; module;",
-        |probe| {
-            assert_eq!(
-                probe.analysis.form(probe.symbol("module")),
-                BindingForm::Stored
-            );
-        },
-    );
+    let source = "'use strict'; var module; arguments; module;";
+    analyze_source("main.cjs", source, |probe| {
+        assert_eq!(probe.form_of("module"), BindingForm::Stored);
+    });
     analyze_source("main.cjs", "var module; module;", |probe| {
-        assert_eq!(
-            probe.analysis.form(probe.symbol("module")),
-            BindingForm::Stored
-        );
+        assert_eq!(probe.form_of("module"), BindingForm::Stored);
     });
 }
 
@@ -279,14 +241,12 @@ fn wrapper_parameter_in_closure_shares_arguments_object() {
     analyze_source("main.cjs", source, |probe| {
         let arguments = probe.file_slot(ScopeSlot::Arguments);
         assert!(probe.placement(arguments).is_shared);
-        let arrow = probe.only_function(FnKind::Arrow);
-        assert_eq!(probe.captures(arrow), [Capture::Value(arguments)]);
+        assert_eq!(probe.captures(probe.arrow()), [Capture::Value(arguments)]);
     });
     let source = "module.exports = () => arguments;";
     analyze_source("main.cjs", source, |probe| {
         let binding = probe.file_slot(ScopeSlot::ArgumentsBinding);
-        let arrow = probe.only_function(FnKind::Arrow);
-        assert_eq!(probe.captures(arrow), [Capture::Value(binding)]);
+        assert_eq!(probe.captures(probe.arrow()), [Capture::Value(binding)]);
     });
 }
 
@@ -308,7 +268,7 @@ fn dead_arguments_mention_asks_for_nothing() {
     analyze_source("main.mjs", dead, |probe| {
         let function = probe.function("f");
         assert_eq!(probe.arguments_object(function), ArgumentsObject::None);
-        assert!(probe.analysis.entry_flags(probe.key(function)).is_empty());
+        assert!(probe.entry_flags(probe.key(function)).is_empty());
     });
     let live = "export function f() { if (true) arguments; }";
     analyze_source("main.mjs", live, |probe| {
@@ -331,26 +291,19 @@ fn argument_intrinsics_need_no_arguments_object() {
     let none = FunctionFlags::default();
     let count = entry("export function f() { return $argumentCount(); }");
     assert_eq!(count, (FunctionFlags::HAS_ARGUMENT_COUNT, 0));
-    assert_eq!(
-        entry("export function f() { return $argument(1); }"),
-        (none, 2)
-    );
-    assert_eq!(
-        entry("export function f(a) { return $argument(2) + $argument(1); }"),
-        (none, 2)
-    );
-    assert_eq!(
-        entry("export function f(a, b) { return $argument(1); }"),
-        (none, 0)
-    );
-    assert_eq!(
-        entry("export function f(...a) { return $argument(1); }"),
-        (none, 0)
-    );
-    assert_eq!(
-        entry("export function f(x) { return $isObject(x); }"),
-        (none, 0)
-    );
+    let undeclared_parameters = [
+        ("export function f() { return $argument(1); }", 2),
+        (
+            "export function f(a) { return $argument(2) + $argument(1); }",
+            2,
+        ),
+        ("export function f(a, b) { return $argument(1); }", 0),
+        ("export function f(...a) { return $argument(1); }", 0),
+        ("export function f(x) { return $isObject(x); }", 0),
+    ];
+    for (source, count) in undeclared_parameters {
+        assert_eq!(entry(source), (none, count), "{source}");
+    }
 }
 
 #[test]
@@ -362,12 +315,9 @@ fn implicit_block_binding_is_stored() {
         let symbol = probe.bound.declared_symbol(Decl::Fn(function));
         let scope = probe.bound.symbol_scope(symbol);
         let binding = BindingRef::Symbol(symbol);
-        assert_eq!(probe.analysis.form(symbol), BindingForm::Stored);
-        assert_eq!(probe.analysis.bindings(scope), [binding]);
-        assert_eq!(
-            probe.analysis.hoisted_functions(scope),
-            [(symbol, function)]
-        );
+        assert_eq!(probe.form(symbol), BindingForm::Stored);
+        assert_eq!(probe.bindings(scope), [binding]);
+        assert_eq!(probe.hoisted_functions(scope), [(symbol, function)]);
         let placement = probe.placement(binding);
         assert_eq!(placement.storage, Storage::Field { scope, field: 0 });
         assert!(!placement.is_immutable && !placement.has_local);
@@ -377,10 +327,7 @@ fn implicit_block_binding_is_stored() {
     analyze_source("main.cjs", expression, |probe| {
         let function = probe.function("f");
         let symbol = probe.bound.declared_symbol(Decl::Fn(function));
-        assert_eq!(
-            probe.analysis.form(symbol),
-            BindingForm::Callee { function }
-        );
+        assert_eq!(probe.form(symbol), BindingForm::Callee { function });
     });
 }
 
@@ -390,11 +337,11 @@ fn merged_redeclaration_is_one_binding() {
                   module.exports = probe;";
     analyze_source("main.cjs", source, |probe| {
         let symbol = probe.symbol("twice");
-        let top = probe.top_scope(probe.function("probe"));
+        let top = probe.top_of("probe");
         let function = probe.function("twice");
         assert_eq!(probe.bound.declared_symbol(Decl::Fn(function)), symbol);
-        assert_eq!(probe.analysis.bindings(top), [BindingRef::Symbol(symbol)]);
-        assert_eq!(probe.analysis.hoisted_functions(top), [(symbol, function)]);
+        assert_eq!(probe.bindings(top), [BindingRef::Symbol(symbol)]);
+        assert_eq!(probe.hoisted_functions(top), [(symbol, function)]);
         assert!(!probe.placement_of("twice").is_immutable);
     });
 }
@@ -406,11 +353,11 @@ fn enum_member_is_container_member() {
     analyze_source("main.ts", source, |probe| {
         let container = probe.symbol("Level");
         let form = BindingForm::ContainerMember { container };
-        assert_eq!(probe.analysis.form(probe.symbol("Low")), form);
+        assert_eq!(probe.form_of("Low"), form);
         assert_eq!(
             probe.bound.binding_kind(container),
             BindingKind::TypeScriptContainer
         );
-        assert_eq!(probe.analysis.form(container), BindingForm::Stored);
+        assert_eq!(probe.form(container), BindingForm::Stored);
     });
 }

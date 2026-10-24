@@ -243,13 +243,14 @@ fn unresolved_typed_parse_is_reported() {
 }
 
 #[test]
-fn type_argument_of_another_signature_asks_for_no_validation() {
+fn parse_held_under_another_signature_validates_by_what_that_answers() {
     let body = "const parse: <T>(text: string) => T = JSON.parse;\nparse<{ a: number }>(\"{}\");\n";
     let lowered = lower_main(&format!("{HEADER}{body}"));
     assert!(lowered.diagnostics.is_empty());
-    for expected in &lowered.fragment.expected_results {
-        assert!(expected.validation.is_empty());
-    }
+    let [expected] = &lowered.fragment.expected_results[..] else {
+        panic!("{:?}", lowered.fragment.expected_results);
+    };
+    assert!(!expected.validation.is_empty());
 }
 
 #[test]

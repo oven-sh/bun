@@ -16,7 +16,7 @@ TypeScript takes your word for the type of parsed JSON. `JSON.parse(text) as Use
 
 `JSON.parse<User>(text)` checks. Bun reads the type argument when it compiles the file and generates the check from it, so there's no schema to write and keep in sync with the type. If the data doesn't match, the call throws.
 
-It works under [`bun compile`](/bundler/aot), `bun run --aot` and `bun test --aot`. See [Where it works](#where-it-works).
+It works wherever Bun reads your TypeScript: `bun run`, `bun test`, `bun build --target=bun` and [`bun compile`](/bundler/aot). See [Where it works](#where-it-works).
 
 ## Parse JSON
 
@@ -43,7 +43,7 @@ try {
 ```
 
 ```bash terminal icon="terminal"
-bun run --aot user.ts
+bun run user.ts
 ```
 
 ```txt
@@ -60,7 +60,7 @@ TypeError: id must be number, received string (and 2 more)
 | `JSON.parse<any>(text)` | Returns the value | Returns the value                              | Throws a `SyntaxError` |
 
 - **The result is what `JSON.parse(text)` returns.** Properties that `T` doesn't declare, such as `role`, are still there. To reject them, use [`T & Schema.Strict`](#rules-that-a-type-cant-express).
-- **`JSON` from `"bun"` is an object of its own.** Its `stringify`, `rawJSON` and `isRawJSON` are the global's. Its `parse` is only there for the call that Bun compiles. The import tells Bun that you count on the check, so the check can't be skipped by accident: [a call that lost its type throws](#if-the-type-is-lost), and [without `--aot`](#where-it-works), `JSON.parse<User>(text)` is an error.
+- **`JSON` from `"bun"` is an object of its own.** Its `stringify`, `rawJSON` and `isRawJSON` are the global's. Its `parse` is only there for the call that Bun compiles. The import tells Bun that you count on the check, so the check can't be skipped by accident: [a call that lost its type throws](#if-the-type-is-lost), and [where Bun can't read the type](#where-it-works), `JSON.parse<User>(text)` is an error.
 - **The global `JSON` validates too, but nothing stops you from running it unchecked.** Without `--aot`, its type argument is erased and `JSON.parse<User>(text)` is `JSON.parse(text)`. See [Types in your editor](#types-in-your-editor).
 - **Only a call with a type argument checks.** With `JSON` from `"bun"`, `JSON.parse(text)` is an error, whatever type you write around it: `JSON.parse(text) as User`, `const user: User = JSON.parse(text)`. `.then(JSON.parse)` throws. To parse without a check, say so: `JSON.parse<any>(text)`.
 - **Only the words `any` and `unknown` skip the check.** A `T` that merely turns out to be `any` is an error: `type User = any`, or a type that isn't declared in a file under `// @ts-nocheck`.
@@ -120,7 +120,7 @@ try {
 ```
 
 ```bash terminal icon="terminal"
-bun run --aot login.ts
+bun run login.ts
 ```
 
 ```txt
@@ -128,6 +128,8 @@ TypeError: password must have >=8 characters
 ```
 
 `validate` throws the same `TypeError` as `JSON.parse<T>`. If the value matches, it returns a copy. Bun copies the objects and arrays that `T` describes, with all of their keys in the same order, and never changes the value you passed in.
+
+What `T` says nothing about isn't copied: the value of a property that `T` doesn't declare, or of one whose type is `unknown`, `any` or `object`, is the same object in the result. For a union, what counts is the member that accepts the value. `validate<{ at: { day: number } } | { at: unknown }>({ at: new Date() })` returns a new object whose `at` is that `Date`.
 
 For JSON text, prefer `JSON.parse<T>(await request.text())` to `validate<T>(await request.json())`. It makes no copy.
 
@@ -240,7 +242,7 @@ console.log(validate<Job>({ at: "2026-01-01" }));
 ```
 
 ```bash terminal icon="terminal"
-bun run --aot job.ts
+bun run job.ts
 ```
 
 ```txt
@@ -257,12 +259,17 @@ If `T` refers to itself and the JSON is nested thousands of levels deep, the cal
 
 ## Where it works
 
-| Command                                                                       | `JSON.parse<T>(text)`, `JSON` from `"bun"` | `JSON.parse<T>(text)`, global `JSON` | `validate<T>(value)`   |
-| ----------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------ | ---------------------- |
-| `bun compile`, `bun build --compile --aot`, `bun run --aot`, `bun test --aot` | Validates                                  | Validates                            | Validates              |
-| `bun run`, `bun test`, `bun build`, `Bun.Transpiler`                          | The call is an error                       | Is `JSON.parse(text)`: no check      | The import is an error |
+| Command                                                                          | `JSON.parse<T>(text)`, `JSON` from `"bun"` | `JSON.parse<T>(text)`, global `JSON` | `validate<T>(value)`   |
+| -------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------ | ---------------------- |
+| `bun compile`, `bun build --compile --aot`, `bun run --aot`, `bun test --aot`    | Validates                                  | Validates                            | Validates              |
+| `bun run`, `bun test`, `bun -e`, `bun build --target=bun`, `bun build --compile` | Validates                                  | Is `JSON.parse(text)`: no check      | Validates              |
+| `bun build` for the browser or Node.js, `Bun.Transpiler`                         | The call is an error                       | Is `JSON.parse(text)`: no check      | The import is an error |
 
-**Without `--aot`, Bun can't validate, and it says so if you asked it by name.** `JSON.parse<User>(text)` is an error if `JSON` comes from `"bun"`: an import under any name, or `Bun.JSON`. So is the import of `validate`. `JSON.parse<any>(text)` and `JSON.parse<unknown>(text)` check nothing anywhere: they're the global `JSON.parse(text)`, so they're fine everywhere.
+**Bun's transpiler removes types, so it asks the type checker first.** When a file calls `JSON.parse<T>` on the `JSON` from `"bun"`, or `validate<T>`, Bun's built-in type checker reads `T`, and the transpiler writes what it found into the call. Only files with such a call pay for that. The rest of the file isn't type checked: a type error somewhere else doesn't stop `bun run`.
+
+A type that works in one of these works in all of them, and the errors are the same. `bun compile` generates machine code for the check, so it's faster there.
+
+**Where Bun can't read the type or run the check, the call is an error.** A bundle for the browser or for Node.js has no Bun to validate with. Text that isn't a file, as in `Bun.Transpiler`, has nothing beside it to resolve types against. `JSON.parse<any>(text)` and `JSON.parse<unknown>(text)` check nothing anywhere: they're the global `JSON.parse(text)`, so they're fine everywhere.
 
 ```ts user.ts icon="/icons/typescript.svg"
 import { JSON } from "bun";
@@ -271,14 +278,14 @@ console.log(JSON.parse<{ id: number }>('{"id":"7"}'));
 ```
 
 ```bash terminal icon="terminal"
-bun run user.ts
+bun build --target=node user.ts
 ```
 
 ```txt
-error: JSON.parse<T>() from "bun" only validates with --aot. Use "bun run --aot", "bun test --aot" or "bun compile", or remove the type argument
+error: JSON.parse<T>() from "bun" and validate<T>() only work in a TypeScript file that Bun runs, tests or builds with --target=bun
 ```
 
-**The type argument of the global `JSON` is erased.** Bun removes it like any other type, because a program may have declared that type parameter itself, long before Bun gave it a meaning. `JSON.parse<User>(text)` then parses and checks nothing, and nothing says so. If your program relies on the check, import `JSON` from `"bun"`.
+**Without `--aot`, the type argument of the global `JSON` is erased.** Bun removes it like any other type, because a program may have declared that type parameter itself, long before Bun gave it a meaning. `JSON.parse<User>(text)` then parses and checks nothing, and nothing says so. If your program relies on the check, import `JSON` from `"bun"`.
 
 ### If the type is lost
 

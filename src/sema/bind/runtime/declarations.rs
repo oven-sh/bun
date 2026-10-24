@@ -205,11 +205,6 @@ impl Declarations<'_, '_> {
         declarations.binding_kinds = binding_kinds;
     }
 
-    pub(super) fn statement_scope(&self, statement: StmtId) -> ScopeId {
-        let scope = self.bound.stmt_scope.get(statement.idx());
-        scope.map_or(ScopeId::NONE, |&scope| scope)
-    }
-
     pub(super) fn implicit_block_scope(&self, function: FnId) -> ScopeId {
         let scopes = &self.bound.scopes;
         let top = scopes.get(self.bound.fns[function.idx()].scope.idx());
@@ -227,19 +222,21 @@ impl Declarations<'_, '_> {
             StmtKind::Fn(function) => StatementEntry::OwnScope(self.implicit_block_scope(function)),
             StmtKind::Block(list) if list.is_empty() => StatementEntry::None,
             StmtKind::Block(list) => {
-                StatementEntry::OwnScope(self.statement_scope(hir.id_at(list, 0)))
+                StatementEntry::OwnScope(self.bound.scope_of_stmt(hir.id_at(list, 0)))
             }
             StmtKind::For { body, .. }
             | StmtKind::ForIn { body, .. }
             | StmtKind::ForOf { body, .. }
-            | StmtKind::With { body, .. } => StatementEntry::OwnScope(self.statement_scope(body)),
+            | StmtKind::With { body, .. } => {
+                StatementEntry::OwnScope(self.bound.scope_of_stmt(body))
+            }
             StmtKind::Try { handler, .. } => {
-                StatementEntry::OwnScope(self.statement_scope(handler))
+                StatementEntry::OwnScope(self.bound.scope_of_stmt(handler))
             }
             StmtKind::Switch { cases, .. } => {
                 let clause = cases.iter().find(|&case| !hir[case].body.is_empty());
                 clause.map_or(StatementEntry::None, |case| {
-                    StatementEntry::OwnScope(self.statement_scope(hir.id_at(hir[case].body, 0)))
+                    StatementEntry::OwnScope(self.bound.scope_of_stmt(hir.id_at(hir[case].body, 0)))
                 })
             }
             StmtKind::ExportDefault(_) => StatementEntry::ExportExpression(known::default),

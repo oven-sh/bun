@@ -20,19 +20,15 @@ pub(crate) struct RuntimeRoots {
     pub loads_by_unknown_path: bool,
 }
 
-/// What the application, the language and the start of the process ask of Bun's own code.
-struct RootUses {
-    imported_modules: Vec<RuntimeModule>,
-    host_loaded_modules: Vec<RuntimeModule>,
-    functions: Vec<RuntimeFunction>,
-    imports_uncompiled_code: bool,
-}
-
 fn exists_on(function: RuntimeFunction, platform: Platforms) -> bool {
     runtime_function(function).is_some_and(|data| data.platforms.contains(platform))
 }
 
-fn collect_root_uses(application: &Files<'_>, platform: Platforms) -> RootUses {
+pub(crate) fn collect_runtime_roots(
+    application: &Files<'_>,
+    runtime_modules: &RuntimeModules,
+    platform: Platforms,
+) -> RuntimeRoots {
     let language_uses = RuntimeUses::of_language(platform);
     let mut host_loaded: FxHashSet<RuntimeModule> = language_uses.modules.iter().copied().collect();
     let mut functions: FxHashSet<RuntimeFunction> = STARTUP_FUNCTIONS
@@ -61,35 +57,12 @@ fn collect_root_uses(application: &Files<'_>, platform: Platforms) -> RootUses {
     host_loaded.extend(STARTUP_MODULES);
     let mut host_loaded_modules: Vec<RuntimeModule> = host_loaded.into_iter().collect();
     host_loaded_modules.shared_sort_unstable_by_key(|module| module.registry_id());
-    let mut functions: Vec<RuntimeFunction> = functions.into_iter().collect();
-    functions.shared_sort_unstable();
     let imported = application.host_modules().iter().copied();
-    RootUses {
-        imported_modules: imported.map(to_runtime_module).chain(named).collect(),
-        host_loaded_modules,
-        functions,
-        imports_uncompiled_code,
-    }
-}
-
-pub(crate) fn collect_runtime_roots(
-    application: &Files<'_>,
-    runtime_modules: &RuntimeModules,
-    platform: Platforms,
-) -> RuntimeRoots {
-    let RootUses {
-        imported_modules,
-        host_loaded_modules,
-        functions,
-        imports_uncompiled_code,
-    } = collect_root_uses(application, platform);
-    let imports_cluster = imported_modules.contains(&RuntimeModule::NodeCluster);
-    let modules = imported_modules
-        .into_iter()
-        .chain(host_loaded_modules.iter().copied())
-        .collect();
+    let mut modules: Vec<RuntimeModule> = imported.map(to_runtime_module).chain(named).collect();
+    let imports_cluster = modules.contains(&RuntimeModule::NodeCluster);
+    modules.extend(&host_loaded_modules);
     RuntimeRoots {
-        paths: order_root_paths(runtime_modules, modules, functions),
+        paths: order_root_paths(runtime_modules, modules, functions.into_iter().collect()),
         host_loaded_modules,
         imports_cluster,
         imports_uncompiled_code,
@@ -226,11 +199,19 @@ mod tests {
     }
 
     #[test]
-    fn implied_module_is_host_loaded() {
+    fn implied_module_is_host_loaded_and_roots_are_unique_and_readable() {
         let runtime = runtime_modules();
         let roots = collect_roots_of("process.stdout.write('a');", &runtime);
         assert!(has_module_root(&runtime, &roots, RuntimeModule::NodeTty));
         assert!(roots.host_loaded_modules.contains(&RuntimeModule::NodeTty));
+        for (index, path) in roots.paths.iter().enumerate() {
+            let name = BStr::new(path);
+            assert!(runtime.file_kind(path).is_some(), "{name}");
+            let text = runtime.read(path);
+            assert!(text.is_some_and(|text| !text.is_empty()), "{name}");
+            let earlier = &roots.paths[..index];
+            assert!(!earlier.contains(path), "{name} is listed twice");
+        }
 
         let roots = collect_roots_of("export const text = 'process.stdout';", &runtime);
         assert!(!has_module_root(&runtime, &roots, RuntimeModule::NodeTty));
@@ -255,19 +236,6 @@ mod tests {
             others[0],
             runtime.module_path(RuntimeModule::NodeFs).unwrap()
         );
-    }
-
-    #[test]
-    fn roots_are_unique_and_readable() {
-        let runtime = runtime_modules();
-        let roots = collect_roots_of("process.stdout.write('a');", &runtime).paths;
-        for (index, path) in roots.iter().enumerate() {
-            let name = BStr::new(path);
-            assert!(runtime.file_kind(path).is_some(), "{name}");
-            let text = runtime.read(path);
-            assert!(text.is_some_and(|text| !text.is_empty()), "{name}");
-            assert!(!roots[..index].contains(path), "{name} is listed twice");
-        }
     }
 
     #[test]

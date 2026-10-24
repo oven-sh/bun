@@ -1,8 +1,23 @@
-use super::builder::{BuilderScratch, FunctionBuilder};
+use super::builder::{BuilderScratch, Edge, FunctionBuilder, Handler};
 use super::declared::DeclaredType;
-use super::generated::{Function, FunctionFlags};
-use super::ids::TypeId;
-use super::types::TypeTable;
+use super::generated::{BlockRole, Function, FunctionFlags};
+use super::ids::{BlockId, Id, LayoutId, StringId, TypeId};
+use super::print::Printer;
+use super::program::Program;
+use super::types::{Type, TypeTable};
+use crate::builtins::id::BuiltinClass;
+
+pub fn layout(index: usize) -> LayoutId {
+    LayoutId::new(index)
+}
+
+pub fn string(index: usize) -> StringId {
+    StringId::new(index)
+}
+
+pub fn array_of(contents: TypeId) -> Type {
+    Type::class(BuiltinClass::Array, &[contents])
+}
 
 pub fn function_with_parameters(flags: FunctionFlags, parameters: &[TypeId]) -> Function {
     let declare = |&ty: &TypeId| DeclaredType {
@@ -18,9 +33,35 @@ pub fn function_with_parameters(flags: FunctionFlags, parameters: &[TypeId]) -> 
     }
 }
 
-pub fn build_function(parameters: &[TypeId], fill: impl FnOnce(&mut FunctionBuilder)) -> Function {
+pub fn create_builder(parameters: &[TypeId]) -> FunctionBuilder {
     let function = function_with_parameters(FunctionFlags::default(), parameters);
-    let mut builder = FunctionBuilder::new(function, BuilderScratch::default());
+    FunctionBuilder::new(function, BuilderScratch::default())
+}
+
+pub fn create_blocks<const COUNT: usize>(builder: &mut FunctionBuilder) -> [BlockId; COUNT] {
+    [(); COUNT].map(|()| builder.create_block(None))
+}
+
+pub fn create_catch_handler(builder: &mut FunctionBuilder) -> Handler {
+    builder.create_handler(BlockRole::CatchHandler, None, None)
+}
+
+pub fn enter_block(builder: &mut FunctionBuilder, handler: Option<Handler>) -> BlockId {
+    let block = builder.create_block(handler);
+    builder.jump(Edge::to(block));
+    builder.seal(block);
+    builder.switch_to(block);
+    block
+}
+
+pub fn print_with(program: &Program, print: impl FnOnce(&mut Printer<'_>)) -> String {
+    let mut out = String::new();
+    print(&mut Printer::new(program.name_tables(), &mut out));
+    out
+}
+
+pub fn build_function(parameters: &[TypeId], fill: impl FnOnce(&mut FunctionBuilder)) -> Function {
+    let mut builder = create_builder(parameters);
     fill(&mut builder);
     let (function, _) = builder.finish();
     assert_eq!(function.body.check_stream(), Ok(()));

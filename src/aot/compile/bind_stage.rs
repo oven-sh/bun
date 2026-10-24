@@ -26,27 +26,7 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
     for &module in &reached.naming_ways {
         graph.set_names_way_to_module_objects(module);
     }
-    graph.leave_out_inner_modules(&reached.left_out_inner_modules);
     graph.limit_requests(|referrer, request| reached.keeps_request(referrer, request));
-}
-
-struct BoundGraph<'s> {
-    graph: ModuleGraph,
-    left_out: LeftOutCode,
-    known_helpers: KnownHelpers,
-    deferred_data: DeferredData<'s>,
-}
-
-impl<'s> BoundGraph<'s> {
-    fn with_builtin_types(self, builtin_types: BuiltinTypeSymbols) -> BoundProject<'s> {
-        BoundProject {
-            graph: self.graph,
-            left_out: self.left_out,
-            known_helpers: self.known_helpers,
-            deferred_data: self.deferred_data,
-            builtin_types,
-        }
-    }
 }
 
 impl Build<'_> {
@@ -58,10 +38,8 @@ impl Build<'_> {
         let value_paths = BuiltinValuePaths::collect(self.platform);
         let library = loaded.project(ProjectId::Runtime).view();
         let deferred_exports = DeferredExports::collect(library.files(), library.sources);
-        let files = loaded
-            .projects
-            .as_ref()
-            .map(|_, project| project.loaded.files());
+        let projects = loaded.projects.as_ref();
+        let files = projects.map(|_, project| project.loaded.files());
         let find_builtin_types = move || {
             let (types, values) = (builtin_type_paths(), value_paths.paths());
             files.map(|_, files| BuiltinTypeSymbols::compute(files, &types, &values))
@@ -79,10 +57,8 @@ impl Build<'_> {
         }
         Ok(BoundBuild {
             projects: PerProject {
-                application: graphs
-                    .application
-                    .with_builtin_types(builtin_types.application),
-                runtime: graphs.runtime.with_builtin_types(builtin_types.runtime),
+                application: (graphs.application)(builtin_types.application),
+                runtime: (graphs.runtime)(builtin_types.runtime),
             },
         })
     }
@@ -92,7 +68,7 @@ impl Build<'_> {
         loaded: &LoadedBuild<'_, 's>,
         project: ProjectId,
         deferred_exports: &DeferredExports,
-    ) -> BoundGraph<'s> {
+    ) -> impl FnOnce(BuiltinTypeSymbols) -> BoundProject<'s> + use<'s> {
         let in_parallel = self.parallel_runner();
         let view = loaded.project(project).view();
         let external_packages: &[Vec<u8>] = match project {
@@ -155,11 +131,12 @@ impl Build<'_> {
             ProjectId::Application => self.bundle_pages(loaded, &graph),
             ProjectId::Runtime => DeferredData::default(),
         };
-        BoundGraph {
+        move |builtin_types| BoundProject {
             graph,
             left_out,
             known_helpers,
             deferred_data,
+            builtin_types,
         }
     }
 

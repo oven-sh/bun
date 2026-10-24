@@ -35,30 +35,17 @@ impl LevelCounts {
         self.counts[rank_of(level)]
     }
 
-    pub fn add(&mut self, level: KnowledgeLevel, amount: u64) {
-        self.counts[rank_of(level)] += amount;
-    }
-
     pub fn add_counts(&mut self, other: &LevelCounts) {
-        for level in KnowledgeLevel::ALL {
-            self.add(level, other.get(level));
+        for (count, added) in self.counts.iter_mut().zip(other.counts) {
+            *count += added;
         }
-    }
-
-    pub fn total(&self) -> u64 {
-        self.counts.iter().sum()
     }
 
     pub fn typed(&self) -> u64 {
         self.get(KnowledgeLevel::Proven)
     }
-
-    pub fn untyped(&self) -> u64 {
-        self.get(KnowledgeLevel::Expected) + self.get(KnowledgeLevel::Unknown)
-    }
 }
 
-/// The columns of the line that ends a build.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum AccessColumn {
     Free,
@@ -82,7 +69,6 @@ impl AccessColumn {
     }
 }
 
-/// What the code of each property access does where it stands.
 #[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
 pub struct CostCounts {
     counts: [u64; AccessCost::COUNT],
@@ -192,6 +178,20 @@ pub fn compute_totals(input: &ReportInput<'_>) -> ProgramTotals {
 mod tests {
     use super::*;
     use crate::ir::ids::Id;
+
+    impl LevelCounts {
+        pub fn add(&mut self, level: KnowledgeLevel, amount: u64) {
+            self.counts[rank_of(level)] += amount;
+        }
+
+        pub fn total(&self) -> u64 {
+            self.counts.iter().sum()
+        }
+
+        pub fn untyped(&self) -> u64 {
+            self.get(KnowledgeLevel::Expected) + self.get(KnowledgeLevel::Unknown)
+        }
+    }
 
     const ORIGINS: [ModuleOrigin; 3] = [
         ModuleOrigin::Program,

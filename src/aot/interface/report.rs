@@ -11,6 +11,11 @@ use crate::Opaque;
 use crate::engine::EngineResult;
 use crate::link::ProgramNames;
 use crate::linked;
+pub use crate::linked::{
+    bun_aot_collect_report_entries as collect_entries,
+    bun_aot_report_entries_to_messages as to_messages, bun_aot_write_summary as write_summary,
+    bun_aot_write_untyped_note as write_untyped_note,
+};
 use crate::statistics::Statistics;
 
 pub struct SourceTexts(pub Opaque);
@@ -34,54 +39,15 @@ pub struct ReportInput<'a> {
     pub decision: Option<&'a Decision>,
 }
 
-pub fn write_summary(input: &ReportInput<'_>, out: &mut Vec<u8>) {
-    linked::bun_aot_write_summary(input, out);
-}
-
-pub fn write_untyped_note(statistics: &Statistics, out: &mut Vec<u8>) {
-    linked::bun_aot_write_untyped_note(statistics, out);
-}
-
-pub fn collect_entries(input: &ReportInput<'_>, kinds: ExplainSet) -> Vec<ReportEntry> {
-    linked::bun_aot_collect_report_entries(input, kinds)
-}
-
-pub fn to_messages(texts: &SourceTexts, entries: &[ReportEntry]) -> Vec<ReportMessage> {
-    linked::bun_aot_report_entries_to_messages(texts, entries)
-}
-
 pub mod obfuscation_map {
-    use super::{EngineResult, ProgramNames, SourceTexts, linked};
-
-    pub fn write(
-        engine: &EngineResult,
-        names: &ProgramNames,
-        texts: &SourceTexts,
-        file_name: &[u8],
-    ) -> Vec<u8> {
-        linked::bun_aot_write_obfuscation_map(engine, names, texts, file_name)
-    }
+    pub use crate::linked::bun_aot_write_obfuscation_map as write;
 }
 
 pub mod build_report {
-    use bun_options_types::aot_options::ReportDetail;
-
-    use super::{ReportInput, linked};
-
-    /// `build_id` is the digits that the build prints, where it wrote an executable.
-    pub fn write(
-        input: &ReportInput<'_>,
-        detail: ReportDetail,
-        build_id: Option<&[u8]>,
-    ) -> Vec<u8> {
-        linked::bun_aot_write_build_report(input, detail, build_id)
-    }
+    // `build_id` is the digits that the build prints, where it wrote an executable.
+    pub use crate::linked::bun_aot_write_build_report as write;
 }
 
 pub mod registry {
-    use super::linked;
-
-    pub fn write() -> Vec<u8> {
-        linked::bun_aot_write_registry()
-    }
+    pub use crate::linked::bun_aot_write_registry as write;
 }

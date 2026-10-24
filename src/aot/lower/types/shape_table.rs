@@ -1,12 +1,12 @@
 use bun_sema::check::aot::{
     BuiltinShape, BuiltinTypeClass, Denotation, KeptFact, MemberName, ObjectOrigin, PrimitiveKinds,
-    ShapeKind, TupleElement, TupleElementKind,
+    SchemaConstraint, ShapeKind, TupleElement, TupleElementKind,
 };
 use rustc_hash::FxHashSet;
 use smallvec::{SmallVec, smallvec};
 
-use super::shape_edges::{collect_edges, has_int32_constraint};
-use super::{ChildTypes, EdgeKind, TypeEdge};
+use super::shape_edges::collect_edges;
+use super::{EdgeKind, MapChild, TypeEdge};
 use crate::builtins::id::BuiltinClass;
 use crate::builtins::table::{class_data, contents_index};
 use crate::builtins::{builtin_class_of, type_name_of};
@@ -23,28 +23,11 @@ const ACCEPTED_PRIMITIVE_TYPES: [(PrimitiveKinds, TypeId); 5] = [
 ];
 
 impl FileLowering<'_, '_, '_, '_> {
-    pub(super) fn map_shape(&mut self, ty: CheckerTypeId, children: &mut dyn ChildTypes) -> Mapped {
+    pub(super) fn map_shape(&mut self, ty: CheckerTypeId, children: &mut MapChild<'_>) -> Mapped {
         let Ok(shape) = self.queries.type_shape(ty) else {
             return Mapped::UNKNOWN;
         };
-        let mut mapped = self.map_shape_kind(ty, shape.kind, children);
-        if !shape.trust.is_trusted() {
-            mapped = Mapped::expected(mapped.ty);
-        }
-        let types = &mut self.fragment.types;
-        if holds_reference(types.get(mapped.ty)) {
-            mapped.ty = types.with_nullish(mapped.ty);
-        }
-        mapped
-    }
-
-    fn map_shape_kind(
-        &mut self,
-        ty: CheckerTypeId,
-        kind: ShapeKind<'_>,
-        children: &mut dyn ChildTypes,
-    ) -> Mapped {
-        match kind {
+        let mut mapped = match shape.kind {
             ShapeKind::Anything(_)
             | ShapeKind::TypeVariable {
                 parameter: None,
@@ -58,7 +41,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 if let Some(constraint) = constraint {
                     self.record_type_flow(ty, constraint, 0);
                 }
-                Mapped::checked(self.fragment.types.intern(Type::layout(layout)))
+                self.intern_checked(Type::layout(layout))
             }
             ShapeKind::TypeVariable {
                 parameter: None,
@@ -68,17 +51,15 @@ impl FileLowering<'_, '_, '_, '_> {
             ShapeKind::Undefined => Mapped::checked(TypeTable::UNDEFINED),
             ShapeKind::Null => Mapped::checked(TypeTable::NULL),
             ShapeKind::Boolean => Mapped::checked(TypeTable::BOOLEAN),
-            ShapeKind::BooleanLiteral(value) => {
-                let primitive = if value {
-                    Primitives::TRUE
-                } else {
-                    Primitives::FALSE
-                };
-                self.map_literal(Type::primitives(primitive))
+            ShapeKind::BooleanLiteral(true) => {
+                self.intern_checked(Type::primitives(Primitives::TRUE))
+            }
+            ShapeKind::BooleanLiteral(false) => {
+                self.intern_checked(Type::primitives(Primitives::FALSE))
             }
             ShapeKind::Number => Mapped::checked(TypeTable::NUMBER),
-            ShapeKind::NumberLiteral(value) => self.map_literal(number_literal_type(value)),
-            ShapeKind::NumericEnumMember(value) => self.map_literal(enum_member_type(value)),
+            ShapeKind::NumberLiteral(value) => self.intern_checked(number_literal_type(value)),
+            ShapeKind::NumericEnumMember(value) => self.intern_checked(enum_member_type(value)),
             ShapeKind::BigInt | ShapeKind::BigIntLiteral { .. } => {
                 Mapped::checked(TypeTable::BIGINT)
             }
@@ -87,7 +68,7 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             ShapeKind::StringLiteral(atom) => {
                 let string = self.intern_atom(atom);
-                self.map_literal(Type::string_literal(string))
+                self.intern_checked(Type::string_literal(string))
             }
             ShapeKind::Symbol => Mapped::checked(TypeTable::SYMBOL),
             ShapeKind::AnyObject => match self.module_type_layout(ty) {
@@ -96,12 +77,10 @@ impl FileLowering<'_, '_, '_, '_> {
             },
             ShapeKind::ClassConstructor(class) => {
                 let function_type = self.find_class_function_type(class);
-                Mapped::checked(self.fragment.types.intern(Type::function(function_type)))
+                self.intern_checked(Type::function(function_type))
             }
             ShapeKind::Function(signatures) => match self.find_function_type(signatures) {
-                Some(function_type) => {
-                    Mapped::checked(self.fragment.types.intern(Type::function(function_type)))
-                }
+                Some(function_type) => self.intern_checked(Type::function(function_type)),
                 None => Mapped::checked(TypeTable::FUNCTION),
             },
             ShapeKind::Array { element, .. } => {
@@ -129,38 +108,45 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
             }
             ShapeKind::Union(members) => self.map_union(members, children),
-            ShapeKind::Constrained { base, constraints } => match has_int32_constraint(constraints)
-            {
-                true => Mapped::checked(TypeTable::INT32),
-                false => self.map_child(children, EdgeKind::Transparent, base),
-            },
+            ShapeKind::Constrained { base, constraints } => {
+                match constraints.contains(&SchemaConstraint::Int32) {
+                    true => Mapped::checked(TypeTable::INT32),
+                    false => self.map_child(children, EdgeKind::Transparent, base),
+                }
+            }
+        };
+        if !shape.trust.is_trusted() {
+            mapped = Mapped::expected(mapped.ty);
         }
+        let types = &mut self.fragment.types;
+        if holds_reference(types.get(mapped.ty)) {
+            mapped.ty = types.with_nullish(mapped.ty);
+        }
+        mapped
     }
 
     fn map_child(
         &mut self,
-        children: &mut dyn ChildTypes,
+        children: &mut MapChild<'_>,
         kind: EdgeKind,
         target: CheckerTypeId,
     ) -> Mapped {
-        children.map_child(self, TypeEdge { kind, target })
+        children(self, TypeEdge { kind, target })
     }
 
-    fn map_literal(&mut self, literal: Type) -> Mapped {
-        Mapped::checked(self.fragment.types.intern(literal))
+    fn intern_checked(&mut self, ty: Type) -> Mapped {
+        Mapped::checked(self.fragment.types.intern(ty))
     }
 
     // No test looks at the contents of a container, so what is only expected of them leaves the class checked.
     fn intern_class(&mut self, class: BuiltinClass, contents: &[Mapped]) -> Mapped {
         let contents: SmallVec<[TypeId; 2]> = contents.iter().map(|mapped| mapped.ty).collect();
-        Mapped::checked(self.fragment.types.intern(Type::class(class, &contents)))
+        self.intern_checked(Type::class(class, &contents))
     }
 
     fn union_all(&mut self, members: &[Mapped]) -> Mapped {
-        let ty = self
-            .fragment
-            .types
-            .union_all(members.iter().map(|mapped| mapped.ty));
+        let types = &mut self.fragment.types;
+        let ty = types.union_all(members.iter().map(|mapped| mapped.ty));
         match members.iter().all(|mapped| mapped.is_checked) {
             true => Mapped::checked(ty),
             false => Mapped::expected(ty),
@@ -174,7 +160,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn map_union(&mut self, members: &[CheckerTypeId], children: &mut dyn ChildTypes) -> Mapped {
+    fn map_union(&mut self, members: &[CheckerTypeId], children: &mut MapChild<'_>) -> Mapped {
         let mut mapped_members: SmallVec<[Mapped; 4]> = SmallVec::with_capacity(members.len() + 1);
         let mut enum_member_count = 0;
         for &member in members {
@@ -188,7 +174,7 @@ impl FileLowering<'_, '_, '_, '_> {
         self.union_all(&mapped_members)
     }
 
-    fn map_tuple(&mut self, elements: &[TupleElement], children: &mut dyn ChildTypes) -> Mapped {
+    fn map_tuple(&mut self, elements: &[TupleElement], children: &mut MapChild<'_>) -> Mapped {
         let mut contents: SmallVec<[Mapped; 4]> = SmallVec::with_capacity(elements.len());
         for element in elements {
             contents.push(match element.kind {
@@ -209,7 +195,7 @@ impl FileLowering<'_, '_, '_, '_> {
         ty: CheckerTypeId,
         class: BuiltinTypeClass,
         arguments: &[CheckerTypeId],
-        children: &mut dyn ChildTypes,
+        children: &mut MapChild<'_>,
     ) -> Mapped {
         let (Some(builtin_class), Some(type_name)) =
             (builtin_class_of(class.class), type_name_of(class))
@@ -265,25 +251,18 @@ impl FileLowering<'_, '_, '_, '_> {
         widened
     }
 
-    fn names_field(&self, name: MemberName) -> bool {
-        let name = match name {
-            MemberName::String(name) => name,
-            MemberName::Symbol(_) | MemberName::Private(_) => return false,
-        };
-        !matches!(
-            classify_name(self.queries.atom_bytes(name)),
-            NameClass::Index | NameClass::CanonicalNumericString | NameClass::Proto
-        )
-    }
-
     // A layout tells objects apart by their fields. Every object is of a type that requires none, so its layout is only expected.
     fn requires_field(&mut self, ty: CheckerTypeId) -> bool {
         let Ok(members) = self.queries.member_presence(ty) else {
             return true;
         };
-        members
-            .iter()
-            .any(|member| !member.is_optional && self.names_field(member.name))
+        members.iter().any(|member| match member.name {
+            MemberName::String(name) if !member.is_optional => !matches!(
+                classify_name(self.queries.atom_bytes(name)),
+                NameClass::Index | NameClass::CanonicalNumericString | NameClass::Proto
+            ),
+            MemberName::String(_) | MemberName::Symbol(_) | MemberName::Private(_) => false,
+        })
     }
 
     fn add_accepted_builtin_classes(&mut self, ty: CheckerTypeId, mapped: Mapped) -> Mapped {
@@ -307,7 +286,9 @@ impl FileLowering<'_, '_, '_, '_> {
                 false => self.intern_class(class, &contents).ty,
             };
             widened.ty = self.fragment.types.union(widened.ty, instances);
-            widened.is_checked &= has_exact_type(class);
+            let data = class_data(class);
+            widened.is_checked &=
+                data.has_instance_test && data.type_names.iter().any(|name| !name.is_view);
         }
         widened
     }
@@ -381,24 +362,18 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn find_known_alike(&self, ty: CheckerTypeId) -> Option<bool> {
-        let kept = self
-            .queries
-            .find_kept_fact(ty, KeptFact::IsMappedAlikeInEveryFile);
-        kept.or_else(|| self.types.mapped_alike.get(&ty).copied())
-    }
-
     fn walk_alike_types(&mut self, root: CheckerTypeId, tables: &mut AlikeWalkTables) -> bool {
         let AlikeWalkTables {
             visited,
             pending,
             reached,
         } = tables;
+        let fact = KeptFact::IsMappedAlikeInEveryFile;
         let unstable_answers = self.queries.count_unstable_answers();
         visited.insert(root);
         pending.push(root);
         while let Some(ty) = pending.pop() {
-            match self.find_known_alike(ty) {
+            match self.find_known_fact(ty, fact) {
                 Some(true) => continue,
                 Some(false) => return false,
                 None => {}
@@ -410,10 +385,7 @@ impl FileLowering<'_, '_, '_, '_> {
             pending.extend(reached.drain(..).filter(|&target| visited.insert(target)));
         }
         for &ty in visited.iter() {
-            let fact = KeptFact::IsMappedAlikeInEveryFile;
-            if !self.queries.keep_fact(ty, fact, true, unstable_answers) {
-                self.types.mapped_alike.insert(ty, true);
-            }
+            self.keep_fact(ty, fact, true, unstable_answers);
         }
         true
     }
@@ -449,24 +421,13 @@ fn is_function_class(class: BuiltinClass) -> bool {
         .any(|class| class == BuiltinClass::Function)
 }
 
-fn has_exact_type(class: BuiltinClass) -> bool {
-    let data = class_data(class);
-    data.has_instance_test && data.type_names.iter().any(|name| !name.is_view)
-}
-
 pub(super) fn has_layout_in_every_value(
     file: &mut FileLowering<'_, '_, '_, '_>,
     ty: CheckerTypeId,
 ) -> bool {
     file.requires_field(ty)
-        && file
-            .queries
-            .accepted_builtins(ty)
-            .is_ok_and(|builtins| builtins.is_empty())
-        && file
-            .queries
-            .accepted_class_constructors(ty)
-            .is_ok_and(|classes| classes.is_empty())
+        && matches!(file.queries.accepted_builtins(ty), Ok([]))
+        && matches!(file.queries.accepted_class_constructors(ty), Ok([]))
 }
 
 /// Empty between two walks, which use their memory one after the other.
@@ -496,7 +457,7 @@ pub(super) fn lists_int32(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTy
     };
     match shape.kind {
         ShapeKind::Constrained { base, constraints } => {
-            has_int32_constraint(constraints) || lists_int32(file, base)
+            constraints.contains(&SchemaConstraint::Int32) || lists_int32(file, base)
         }
         // `int32 | number` holds every number: there is nothing to prove.
         ShapeKind::Union(members) => {

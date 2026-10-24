@@ -61,7 +61,7 @@ pub(crate) enum ScopeSlot {
 }
 
 #[derive(Copy, Clone, Debug)]
-enum IdentifierTargetKind {
+pub(crate) enum IdentifierTarget {
     Binding {
         binding: Binding,
         name: Atom,
@@ -74,8 +74,9 @@ enum IdentifierTargetKind {
     },
 }
 
-pub(crate) struct IdentifierTarget {
-    kind: IdentifierTargetKind,
+fn find_entry<K: Copy + PartialEq, V: Copy>(entries: &[(K, V)], key: K) -> Option<V> {
+    let entry = entries.iter().find(|entry| entry.0 == key)?;
+    Some(entry.1)
 }
 
 pub(crate) fn analyze_scopes(input: &ScopeInput<'_, '_>) -> ScopeAnalysis {
@@ -106,7 +107,7 @@ pub(crate) fn set_binding(
     name: Atom,
     value: ValueId,
 ) {
-    bindings::set_binding(lowering, binding, name, value, None);
+    lowering.store_binding(binding, name, value, None, true);
 }
 
 pub(crate) fn initialize_binding(

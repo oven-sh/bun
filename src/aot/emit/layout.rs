@@ -162,15 +162,6 @@ fn byte_count(list: ProgramList, record_count: u64) -> usize {
     record_count as usize * list.element_size()
 }
 
-fn create_header(plan: &SectionPlan) -> Header {
-    Header {
-        magic: MAGIC,
-        schema_hash: SCHEMA_HASH,
-        size_in_bytes: plan.size_in_bytes,
-        sections: plan.sections,
-    }
-}
-
 fn uninitialized_bytes(storage: &mut Vec<u64>, size_in_bytes: usize) -> &mut [MaybeUninit<u8>] {
     let spare = storage.spare_capacity_mut();
     assert!(size_in_bytes <= size_of_val(spare));
@@ -180,53 +171,43 @@ fn uninitialized_bytes(storage: &mut Vec<u64>, size_in_bytes: usize) -> &mut [Ma
     unsafe { std::slice::from_raw_parts_mut(first_byte, size_in_bytes) }
 }
 
-struct SectionOutputs<'o>(Vec<OutputSlice<'o>>);
-
-impl<'o> SectionOutputs<'o> {
-    fn split(mut output: OutputSlice<'o>, plan: &SectionPlan) -> SectionOutputs<'o> {
-        let mut outputs = Vec::with_capacity(ProgramList::COUNT);
-        let mut end = HEADER_SIZE_IN_BYTES;
-        for (list, section) in ProgramList::ALL.into_iter().zip(plan.sections) {
-            let start = section.offset_in_bytes as usize;
-            output.take(start - end).fill_with_zeros();
-            let size = byte_count(list, u64::from(section.count));
-            outputs.push(output.take(size));
-            end = start + size;
-        }
-        let size_in_bytes = plan.size_in_bytes as usize;
-        output.take(size_in_bytes - end).fill_with_zeros();
-        assert!(output.is_empty());
-        SectionOutputs(outputs)
-    }
-
-    fn take(&mut self, list: ProgramList, record_count: u64) -> OutputSlice<'o> {
-        self.0[list as usize].take(byte_count(list, record_count))
-    }
-
-    fn is_exhausted(&self) -> bool {
-        self.0.iter().all(OutputSlice::is_empty)
-    }
-}
-
 fn carve<'o>(mut output: OutputSlice<'o>, plan: &SectionPlan, tasks: &mut [Task<'_, 'o>]) {
     write_header(output.take(HEADER_SIZE_IN_BYTES), plan);
-    let mut outputs = SectionOutputs::split(output, plan);
+    let mut outputs = Vec::with_capacity(ProgramList::COUNT);
+    let mut end = HEADER_SIZE_IN_BYTES;
+    for (list, section) in ProgramList::ALL.into_iter().zip(plan.sections) {
+        let start = section.offset_in_bytes as usize;
+        output.take(start - end).fill_with_zeros();
+        let size = byte_count(list, u64::from(section.count));
+        outputs.push(output.take(size));
+        end = start + size;
+    }
+    output
+        .take(plan.size_in_bytes as usize - end)
+        .fill_with_zeros();
+    assert!(output.is_empty());
     for task in tasks {
         let counts = &task.counts;
         let lists = ProgramList::ALL.into_iter();
         task.outputs = lists
-            .map(|list| outputs.take(list, counts[list as usize]))
+            .map(|list| outputs[list as usize].take(byte_count(list, counts[list as usize])))
             .collect();
     }
     assert!(
-        outputs.is_exhausted(),
+        outputs.iter().all(OutputSlice::is_empty),
         "the tasks fill exactly the sections planned for them"
     );
 }
 
 fn write_header(mut output: OutputSlice<'_>, plan: &SectionPlan) {
     let mut words = Vec::<u32>::with_capacity(Header::WORDS);
-    create_header(plan).append_to(&mut words);
+    let header = Header {
+        magic: MAGIC,
+        schema_hash: SCHEMA_HASH,
+        size_in_bytes: plan.size_in_bytes,
+        sections: plan.sections,
+    };
+    header.append_to(&mut words);
     output.put_words(&words);
     assert!(
         output.is_empty(),

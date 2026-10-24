@@ -255,6 +255,7 @@ closed-world/external-package-finds-the-realm-locked
 closed-world/files-that-load-as-host-objects-by-name
 closed-world/functions-native-code-calls/timer-delay-known-at-run-time
 closed-world/import-of-text-refused
+closed-world/members-of-built-in-objects-are-redefined-by-closures-handed-on-through-a-spread-beside-evaluated-text
 closed-world/package-outside-sees-no-module-object-of-the-program
 closed-world/replaceable-members-out-of-a-table-beside-an-external-package
 closed-world/script-declarations-over-every-global
@@ -327,6 +328,13 @@ data-from-outside/a-counter-below-a-number-of-every-kind
 data-from-outside/a-list-that-one-arm-of-a-union-refuses-comes-back-whole
 data-from-outside/a-refused-value-under-handlers-that-look-at-the-error-and-handlers-that-do-not
 data-from-outside/an-object-from-outside-is-stored-into-its-own-field-whose-name-a-literal-has
+data-from-outside/json-parse-by-type-behind-a-function-of-the-program-stored-into-json-parse
+data-from-outside/json-parse-by-type-behind-a-function-that-returns-something-else-stored-into-json-parse
+data-from-outside/json-parse-by-type-behind-a-getter-defined-for-json-parse
+data-from-outside/json-parse-by-type-behind-a-store-into-json-parse-by-text-that-is-run
+data-from-outside/json-parse-by-type-under-types-that-the-program-gives-the-function
+data-from-outside/json-parse-by-type-whose-only-arguments-are-a-rest-parameter
+data-from-outside/json-parse-by-type-with-a-spread-argument
 data-from-outside/json-parse-hostile-texts-without-a-type
 data-from-outside/json-parse-recursive-union-retry
 data-from-outside/json-parse-type-argument-in-workers
@@ -344,6 +352,7 @@ data-from-outside/validation-error-message-is-the-path-and-the-first-issue
 data-from-outside/validation-issues-from-shared-routine
 data-from-outside/validation-leaves-the-last-match-of-the-program-in-RegExp
 data-from-outside/validators-beside-entry-points-that-print-bun-and-store-into-json
+data-from-outside/what-the-accepting-arm-of-a-union-does-not-describe-is-handed-on-as-it-is
 declarations/class-and-function-bindings-that-are-assigned-again
 declarations/constants-copied-from-returned-object
 definitions-by-descriptor/a-computed-name-among-the-written-names-of-a-map
@@ -625,6 +634,7 @@ memory-of-many-objects/records-made-by-a-callback-for-each-element
 modules/a-computed-path-is-required-again-and-again
 modules/a-cycle-of-modules-one-of-which-throws-is-asked-for-in-a-worker
 modules/a-file-without-an-extension-lies-beside-a-computed-path
+modules/a-member-of-a-cycle-that-another-member-requires-stays-evaluated-when-the-cycle-throws
 modules/a-module-that-cannot-be-linked-exports-functions-and-classes
 modules/a-module-that-ended-on-a-cycle-whose-other-module-throws-is-imported-later
 modules/a-require-is-called-before-create-require-has-made-it
@@ -704,6 +714,7 @@ objects/a-required-field-that-one-of-two-literals-leaves-out-is-returned-through
 objects/a-typed-literal-stands-above-what-object-create-makes-while-it-changes
 objects/accessors-of-every-make-are-read-and-stored-once-and-often
 objects/accessors-of-every-make-are-read-and-stored-once-and-often-untyped
+objects/copies-of-an-object-with-very-many-names-take-time-in-proportion
 objects/dictionaries-are-built-anew-from-the-same-names-between-collections
 objects/every-way-an-allocation-site-meets-its-record
 objects/extra-property-reads-avoid-runtime
@@ -1017,6 +1028,7 @@ workers/sixty-four-at-once
 workers/spinning-workers-are-terminated-at-once
 workers/stacks-of-errors-in-many-workers
 workers/terminated-anywhere
+workers/terminated-in-the-message-listener-of-a-worker-that-ends-by-itself
 workers/terminated-in-the-middle-of-a-native-call
 workers/terminated-while-it-fills-collections
 workers/terminated-while-it-loads

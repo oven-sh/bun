@@ -16,7 +16,7 @@ use crate::builtins::{Intrinsic, Mutability, Resolved};
 use crate::ir::ClassSlot;
 use crate::lower::scope::{BindingRef, ScopeSlot};
 use crate::lower::{class, parameters};
-use crate::modules::{Member, ModuleRef, Site, SiteAnswer};
+use crate::modules::SiteAnswer;
 
 // What `try_lower_module_call` asks before it looks at the callee.
 fn has_module_operation(site: &ImportSite, answer: SiteAnswer<'_>, argument_count: usize) -> bool {
@@ -67,7 +67,7 @@ impl Walker<'_, '_> {
                 self.push_evaluated_children(expression, context);
                 self.push_task(Task::EndStores { first_pending }, context);
             }
-            ExprKind::Fn(function) => self.visit_function(function, context),
+            ExprKind::Fn(function) => self.visit_function(function, context.function),
             ExprKind::Class(class) => self.visit_class(class, context),
             ExprKind::Jsx(jsx) => self.visit_jsx(expression, jsx, context),
             ExprKind::Missing
@@ -113,7 +113,7 @@ impl Walker<'_, '_> {
                 }
             }
             Binding::Arguments(owner) => self.use_arguments_binding(owner, is_store, context),
-            Binding::CommonJs(variable) if self.input.has_wrapper_parameters => {
+            Binding::CommonJs(variable) if self.walk.has_wrapper_parameters => {
                 let slot = ScopeSlot::CommonJs(variable);
                 self.record_slot_use(context.function, self.file_scope, slot);
                 if is_store {
@@ -128,44 +128,11 @@ impl Walker<'_, '_> {
         if matches!(self.hir[object].kind, ExprKind::Super) {
             self.use_this(context);
             self.use_home_object(context);
-        } else if self.names_variable_of_inner_module(access) {
-            return;
         } else {
             self.record_private_name(access, context);
             self.push_expressions([object], context);
         }
         self.push_expressions([index], context);
-    }
-
-    // `exports.a` and `module.exports.a` in the callback of `__commonJS((exports, module) => { .. })`, where `a` is a variable of the module.
-    fn names_variable_of_inner_module(&self, access: ExprId) -> bool {
-        if self.inner_module_parameters.is_empty() {
-            return false;
-        }
-        let hir = self.hir;
-        let mut root = access;
-        while let Some((object, _)) = hir.member_key(root) {
-            root = hir.skip_type_assertions(object);
-        }
-        let is_parameter = match self.bound.binding(root) {
-            Binding::Symbol(symbol) if matches!(hir[root].kind, ExprKind::Ident(_)) => {
-                self.inner_module_parameters.binary_search(&symbol).is_ok()
-            }
-            Binding::Symbol(_) | Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free => {
-                false
-            }
-        };
-        is_parameter
-            && match self.input.modules.member(self.input.file, access) {
-                Some(Member::OnObject) | None => false,
-                Some(
-                    Member::Variable(_)
-                    | Member::Copy(_)
-                    | Member::Binding(_)
-                    | Member::Undefined
-                    | Member::Marker(_),
-                ) => true,
-            }
     }
 
     fn visit_call(&mut self, expression: ExprId, call: CallId, context: Context) {
@@ -188,28 +155,12 @@ impl Walker<'_, '_> {
                 self.visit_direct_eval(eval, context);
             }
             self.record_argument_read(&call, context);
-            if !self.loads_module_without_callee(expression, &call) {
+            // Else the lowering emits the load of the module and never reads the callee.
+            if !self.walk.has_wrapper_parameters || !self.is_bound_module_call(expression, &call) {
                 self.push_expressions([call.callee], context);
             }
         }
         self.push_expressions(self.hir.ids(call.args), context);
-    }
-
-    // The lowering emits the load of the module and never reads the callee.
-    fn loads_module_without_callee(&self, expression: ExprId, call: &Call) -> bool {
-        self.evaluates_inner_module(expression, call)
-            || (self.input.has_wrapper_parameters && self.is_bound_module_call(expression, call))
-    }
-
-    // `require_a()`, where `var require_a = __commonJS(cb)`.
-    fn evaluates_inner_module(&self, expression: ExprId, call: &Call) -> bool {
-        if !call.args.is_empty() || self.input.modules.inner_modules(self.input.file).is_empty() {
-            return false;
-        }
-        match self.input.modules.site(self.input.file, expression) {
-            Some(Site::Evaluate { target, .. }) => matches!(target, ModuleRef::Inner { .. }),
-            Some(Site::AsToday) | None => false,
-        }
     }
 
     // `require("./a")`, `require.resolve("./a")`, `module.require("./a")` in a file that keeps the five names as parameters, where nothing can put another value behind the name.
@@ -223,10 +174,8 @@ impl Walker<'_, '_> {
             return false;
         };
         let site = analysis.import_sites[site];
-        if hir
-            .ids(call.args)
-            .any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_)))
-        {
+        let is_spread = |argument: ExprId| matches!(hir[argument].kind, ExprKind::Spread(_));
+        if hir.ids(call.args).any(is_spread) {
             return false;
         }
         let require_call = match site.kind {
@@ -242,18 +191,15 @@ impl Walker<'_, '_> {
             },
             None => call.args,
         };
-        let Some(answer) = self
-            .input
-            .modules
-            .find_site_answer(self.input.file, site.kind)
-        else {
+        let modules = self.input.modules;
+        let Some(answer) = modules.find_site_answer(self.input.file, site.kind) else {
             return false;
         };
         has_module_operation(&site, answer, given.len()) && self.is_bound_module_callee(call.callee)
     }
 
     fn is_bound_module_callee(&self, callee: ExprId) -> bool {
-        let (hir, builtins) = (self.hir, self.input.builtins);
+        let (hir, bound, builtins) = (self.hir, self.bound, self.input.builtins);
         let callee = hir.skip_type_assertions(callee);
         let Some(Resolved::Builtin(_)) = builtins.of_expr(callee) else {
             return false;
@@ -266,11 +212,8 @@ impl Walker<'_, '_> {
             return false;
         };
         matches!(hir[root].kind, ExprKind::Ident(_))
-            && matches!(self.bound.binding(root), Binding::CommonJs(_))
-            && self
-                .bound
-                .dynamic_lookup_scope(NodeData::Expr(root))
-                .is_none()
+            && matches!(bound.binding(root), Binding::CommonJs(_))
+            && bound.dynamic_lookup_scope(NodeData::Expr(root)).is_none()
             && table::entry(root_path.id).scope == Scope::Module
             && root_path.mutability == Mutability::AlwaysLocked
     }
@@ -284,9 +227,8 @@ impl Walker<'_, '_> {
             }
             Some(_) | None => None,
         };
-        self.walk
-            .argument_reads
-            .extend(read.map(|read| (context.function, read)));
+        let read = read.map(|read| (context.function, read));
+        self.walk.argument_reads.extend(read);
     }
 
     fn visit_jsx(&mut self, expression: ExprId, jsx: JsxId, context: Context) {
@@ -322,34 +264,27 @@ impl Walker<'_, '_> {
             ClassSlot::ClassToken
         };
         self.record_slot_use(function, scope, ScopeSlot::Class(brand));
-        let functions: [Option<MemberId>; 2] = match name.members {
-            PrivateMembers::Field(_) => [None, None],
-            PrivateMembers::Method(member) => [Some(member), None],
-            PrivateMembers::Accessor { getter, setter } => [getter, setter],
+        let (functions, field): ([Option<MemberId>; 2], Option<MemberId>) = match name.members {
+            PrivateMembers::Field(member) => ([None, None], Some(member)),
+            PrivateMembers::Method(member) => ([Some(member), None], None),
+            PrivateMembers::Accessor { getter, setter } => ([getter, setter], None),
             PrivateMembers::AutoAccessor(member) => {
                 let is_decorated = class::has_decorators(hir, hir[member].modifiers);
-                [is_decorated.then_some(member), None]
+                ([is_decorated.then_some(member), None], Some(member))
             }
         };
-        for member in functions.into_iter().flatten() {
-            let slot = ClassSlot::PrivateMethod(member);
+        let functions = functions.into_iter().flatten();
+        let functions = functions.map(ClassSlot::PrivateMethod);
+        let field = field.filter(|&member| class::has_private_static_storage(hir, member));
+        for slot in functions.chain(field.map(ClassSlot::StaticField)) {
             self.record_slot_use(function, scope, ScopeSlot::Class(slot));
-        }
-        match name.members {
-            PrivateMembers::Field(member) | PrivateMembers::AutoAccessor(member) => {
-                if class::has_private_static_storage(hir, member) {
-                    let slot = ClassSlot::StaticField(member);
-                    self.record_slot_use(function, scope, ScopeSlot::Class(slot));
-                }
-            }
-            PrivateMembers::Method(_) | PrivateMembers::Accessor { .. } => {}
         }
     }
 
     fn declaring_scope(&self, binding: Binding) -> ScopeId {
         match binding {
             Binding::Symbol(symbol) => self.bound.symbol_scope(symbol),
-            Binding::Arguments(CodeUnit::File) if !self.input.has_wrapper_parameters => {
+            Binding::Arguments(CodeUnit::File) if !self.walk.has_wrapper_parameters => {
                 ScopeId::NONE
             }
             Binding::Arguments(owner) => self.bound.top_scope(self.hir, owner),
@@ -392,13 +327,14 @@ impl Walker<'_, '_> {
                 }
             }
         }
-        let precedes_hoisted_functions = role == PatternRole::Parameter;
+        let initialize: fn(SymbolId) -> Task = match role {
+            PatternRole::Parameter => Task::InitializeParameter,
+            PatternRole::UnstoredVar | PatternRole::StoredVar | PatternRole::LexicalDeclaration => {
+                Task::InitializeSymbol
+            }
+        };
         for symbol in initialized {
-            let task = Task::InitializeSymbol {
-                symbol,
-                precedes_hoisted_functions,
-            };
-            self.push_task(task, context);
+            self.push_task(initialize(symbol), context);
         }
     }
 

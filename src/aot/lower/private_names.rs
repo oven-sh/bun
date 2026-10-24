@@ -1,14 +1,14 @@
 mod access;
 mod resolve;
 
-use bun_sema::bind::{PrivateMembers, PrivateNameId, SymbolId};
+use bun_sema::bind::{PrivateMembers, SymbolId};
 use bun_sema::hir::{ClassId, ExprId, MemberId};
 use smallvec::{SmallVec, smallvec};
 
-use super::call::{self, Arguments, CallSite};
 use super::known_call::PrivateStateAccess;
-use super::{FileLowering, FunctionLowering, class};
+use super::{FileLowering, FunctionLowering, call, layouts};
 use crate::builtins::id::BuiltinId;
+use crate::ir::generated::RuntimeErrorKind;
 use crate::ir::{BlockId, Edge, LayoutId, PrivateStatePart, TypeId, TypeTable, ValueId};
 use crate::known_helpers::{FilePrivateStates, PrivateStateKind};
 
@@ -26,11 +26,11 @@ pub(in crate::lower) struct PrivateBinding {
     pub(in crate::lower) is_decorated: bool,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(in crate::lower) struct AccessorStorage {
-    pub(in crate::lower) class: ClassId,
-    pub(in crate::lower) member: MemberId,
-    pub(in crate::lower) holder: PrivateHolder,
+#[derive(Copy, Clone)]
+pub(in crate::lower) struct StoredValue {
+    class: ClassId,
+    member: MemberId,
+    holder: PrivateHolder,
 }
 
 #[derive(Copy, Clone)]
@@ -43,9 +43,9 @@ struct StateField {
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn emit_private_get(&mut self, object: ValueId, access: ExprId) -> ValueId {
         self.set_position(self.file.hir[access].pos);
-        match self.find_referenced_name(access) {
+        match self.file.bound.private_name_of_reference(access) {
             Some(name) => self.emit_name_get(object, name),
-            None => self.emit_undeclared_name_error(),
+            None => self.emit_error(RuntimeErrorKind::UnresolvableReference),
         }
     }
 
@@ -56,16 +56,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         value: ValueId,
         source: Option<ExprId>,
     ) {
-        match self.find_referenced_name(access) {
+        match self.file.bound.private_name_of_reference(access) {
             Some(name) => self.emit_name_set(object, name, value, source),
             None => {
-                self.emit_undeclared_name_error();
+                self.emit_error(RuntimeErrorKind::UnresolvableReference);
             }
         }
-    }
-
-    fn find_referenced_name(&self, reference: ExprId) -> Option<PrivateNameId> {
-        self.file.bound.private_name_of_reference(reference)
     }
 
     fn continue_if(&mut self, condition: ValueId, otherwise: BlockId) {
@@ -83,15 +79,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         split.taken_value
     }
 
-    fn get_state_token(&mut self, state: SymbolId) -> ValueId {
-        self.get_private_state_slot(state, PrivateStatePart::Token)
-    }
-
     // A new collection is a new private name, and the fields have room for the entries of one.
     fn continue_if_recorded(&mut self, access: PrivateStateAccess, otherwise: BlockId) {
         let collection = self.continue_if_type(access.collection, TypeTable::OBJECT, otherwise);
-        let part = PrivateStatePart::Collection;
-        let recorded = self.get_private_state_slot(access.state, part);
+        let recorded = self.get_private_state_slot(access.state, PrivateStatePart::Collection);
         let is_recorded = self.builder.strict_eq(collection, recorded);
         self.continue_if(is_recorded, otherwise);
     }
@@ -104,14 +95,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut arguments: SmallVec<[ValueId; 4]> = smallvec![access.object];
         arguments.extend(value);
         let method = self.emit_locked_builtin(method);
-        let arguments = Arguments::Values(arguments);
-        call::emit_call(
-            self,
-            method,
-            Some(access.collection),
-            arguments,
-            CallSite::default(),
-        );
+        call::emit_call(self, method, Some(access.collection), &arguments);
     }
 
     // `new WeakMap()` that is stored in a variable of private state.
@@ -156,7 +140,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.write_variable(result, is_missing);
         self.continue_if_recorded(access, done);
         let object = self.continue_if_type(access.object, TypeTable::OBJECT, done);
-        let token = self.get_state_token(access.state);
+        let token = self.get_private_state_slot(access.state, PrivateStatePart::Token);
         let has_entry = self
             .builder
             .private_has(object, token, state.layout, state.field);
@@ -170,7 +154,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(state) = self.file.resolve_state(access.state) else {
             return self.builder.undefined();
         };
-        let token = self.get_state_token(access.state);
+        let token = self.get_private_state_slot(access.state, PrivateStatePart::Token);
         self.builder
             .private_get(access.object, token, state.layout, state.field)
     }
@@ -179,7 +163,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(state) = self.file.resolve_state(access.state) else {
             return;
         };
-        let token = self.get_state_token(access.state);
+        let token = self.get_private_state_slot(access.state, PrivateStatePart::Token);
         self.builder
             .private_set(access.object, token, state.layout, state.field, value);
     }
@@ -196,7 +180,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let in_collection = self.create_unlikely_block();
         let done = self.create_block();
         self.continue_if_recorded(access, in_collection);
-        let token = self.get_state_token(access.state);
+        let token = self.get_private_state_slot(access.state, PrivateStatePart::Token);
         let stored = match value {
             Some(value) => value,
             None => self.builder.boolean(true),
@@ -224,11 +208,13 @@ fn find_states<'a>(file: &FileLowering<'a, '_, '_, '_>) -> Option<&'a FilePrivat
 impl FileLowering<'_, '_, '_, '_> {
     fn resolve_state(&mut self, state: SymbolId) -> Option<StateField> {
         let found = find_states(self)?.state(state)?;
-        let (layout, field) = class::find_private_state_field(self, found.owner, state)?;
+        let layout = self.own_class_layout(found.owner);
+        let name = self.bound.symbol(state).name;
+        let key = layouts::private_key(self, layout, name);
         Some(StateField {
             kind: found.kind,
             layout,
-            field,
+            field: self.find_field(layout, key)?,
         })
     }
 }

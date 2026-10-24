@@ -20,7 +20,6 @@ fn string_records(count: usize) -> Vec<u32> {
 fn next_index_starts_at_first_index() {
     let writer = create_writer();
     assert_eq!(writer.next_index(ProgramList::Strings), FIRST_STRING as u32);
-    assert_eq!(writer.first_index_of(ProgramList::Strings), FIRST_STRING);
     assert_eq!(writer.next_index(ProgramList::Bytes), FIRST_BYTE as u32);
     assert_eq!(writer.next_index(ProgramList::Words), 0);
     for list in ProgramList::ALL {
@@ -54,7 +53,6 @@ fn push_records_returns_span_and_advances_by_count() {
     assert_eq!(writer.count_of(ProgramList::Strings), 3);
     let words = [string_records(2), string_records(1)].concat();
     assert_eq!(writer.words_of(ProgramList::Strings), words);
-    assert_eq!(writer.first_index_of(ProgramList::Strings), FIRST_STRING);
 }
 
 #[test]

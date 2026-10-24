@@ -6,31 +6,31 @@ use bun_sema::hir::{BinOp, ExprId, ExprKind, UnOp};
 use bun_sema::module_format::main_module_operand;
 use smallvec::SmallVec;
 
+use super::FunctionLowering;
 use super::expression::find_constant;
 use super::member::PropertyName;
-use super::{FileLowering, FunctionLowering};
 use crate::ir::ValueId;
 
-#[derive(Copy, Clone, Debug)]
-pub(in crate::lower) struct Comparison {
-    pub(in crate::lower) test: ValueId,
-    pub(in crate::lower) is_negated: bool,
-}
-
 #[derive(Copy, Clone)]
-enum OperatorClass {
+pub(in crate::lower) enum OperatorClass {
     Plain,
     Ordering,
-    Equality { is_negated: bool },
+    Equality { is_loose: bool, is_negated: bool },
     In,
     ControlFlow,
 }
 
-fn classify_operator(op: BinOp) -> OperatorClass {
+pub(in crate::lower) fn classify_operator(op: BinOp) -> OperatorClass {
+    let equality = |is_loose, is_negated| OperatorClass::Equality {
+        is_loose,
+        is_negated,
+    };
     match op {
         BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => OperatorClass::Ordering,
-        BinOp::EqEq | BinOp::EqEqEq => OperatorClass::Equality { is_negated: false },
-        BinOp::NotEq | BinOp::NotEqEq => OperatorClass::Equality { is_negated: true },
+        BinOp::EqEq => equality(true, false),
+        BinOp::NotEq => equality(true, true),
+        BinOp::EqEqEq => equality(false, false),
+        BinOp::NotEqEq => equality(false, true),
         BinOp::In => OperatorClass::In,
         BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma => OperatorClass::ControlFlow,
         _ => OperatorClass::Plain,
@@ -134,11 +134,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 right
             }
             _ => {
-                let comparison = emit_comparison(self, op, left, right);
-                if comparison.is_negated {
-                    self.builder.logical_not(comparison.test)
+                let (test, is_negated) = emit_comparison(self, op, left, right);
+                if is_negated {
+                    self.builder.logical_not(test)
                 } else {
-                    comparison.test
+                    test
                 }
             }
         }
@@ -155,17 +155,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let meta = self.lower_import_meta();
         let key = self.file.atom_key(known::main);
         let is_main = self.emit_get(meta, PropertyName::Constant(key));
-        match classify_operator(op) {
-            OperatorClass::Equality { is_negated: false } => is_main,
-            OperatorClass::Equality { is_negated: true } => {
-                let boolean = self.builder.to_boolean(is_main);
-                self.builder.logical_not(boolean)
-            }
-            _ => {
-                debug_assert!(false, "the caller passes an equality operator");
-                is_main
-            }
+        let OperatorClass::Equality { is_negated, .. } = classify_operator(op) else {
+            debug_assert!(false, "the caller passes an equality operator");
+            return is_main;
+        };
+        if !is_negated {
+            return is_main;
         }
+        let boolean = self.builder.to_boolean(is_main);
+        self.builder.logical_not(boolean)
     }
 
     fn lower_binary_spine(
@@ -179,11 +177,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut spine: SmallVec<[(ExprId, BinOp, ExprId); 8]> = SmallVec::new();
         spine.push((expression, op, right));
         let mut innermost = left;
-        while let Some((inner_op, inner_left, inner_right)) =
-            self.file.find_spine_operands(innermost)
-        {
-            spine.push((innermost, inner_op, inner_right));
-            innermost = inner_left;
+        while let ExprKind::Binary { op, left, right } = hir[innermost].kind {
+            let is_spine_operator = match classify_operator(op) {
+                OperatorClass::Plain | OperatorClass::Ordering => true,
+                OperatorClass::Equality { .. } | OperatorClass::In | OperatorClass::ControlFlow => {
+                    false
+                }
+            };
+            if !is_spine_operator
+                || self.file.is_statically_resolved(innermost)
+                || find_constant(self.file, innermost).is_some()
+            {
+                break;
+            }
+            spine.push((innermost, op, right));
+            innermost = left;
         }
         let mut value = self.lower_expression(innermost);
         for &(node, node_op, node_right) in spine.iter().rev() {
@@ -210,53 +218,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-pub(in crate::lower) fn is_comparison(op: BinOp) -> bool {
-    match classify_operator(op) {
-        OperatorClass::Ordering | OperatorClass::Equality { .. } => true,
-        OperatorClass::Plain | OperatorClass::In | OperatorClass::ControlFlow => false,
-    }
-}
-
+/// The test, and whether the operator asks for its opposite.
 pub(in crate::lower) fn emit_comparison(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     op: BinOp,
     left: ValueId,
     right: ValueId,
-) -> Comparison {
+) -> (ValueId, bool) {
     let builder = &mut lowering.builder;
-    let test = match op {
-        BinOp::Lt => builder.less(left, right),
-        BinOp::Le => builder.less_eq(left, right),
-        BinOp::Gt => builder.greater(left, right),
-        BinOp::Ge => builder.greater_eq(left, right),
-        BinOp::EqEq | BinOp::NotEq => builder.eq(left, right),
-        BinOp::EqEqEq | BinOp::NotEqEq => builder.strict_eq(left, right),
+    match op {
+        BinOp::Lt => (builder.less(left, right), false),
+        BinOp::Le => (builder.less_eq(left, right), false),
+        BinOp::Gt => (builder.greater(left, right), false),
+        BinOp::Ge => (builder.greater_eq(left, right), false),
+        BinOp::EqEq => (builder.eq(left, right), false),
+        BinOp::NotEq => (builder.eq(left, right), true),
+        BinOp::EqEqEq => (builder.strict_eq(left, right), false),
+        BinOp::NotEqEq => (builder.strict_eq(left, right), true),
         _ => {
             debug_assert!(false, "emit_comparison takes a comparison operator");
-            builder.strict_eq(left, right)
+            (builder.strict_eq(left, right), false)
         }
-    };
-    let is_negated = match classify_operator(op) {
-        OperatorClass::Equality { is_negated } => is_negated,
-        _ => false,
-    };
-    Comparison { test, is_negated }
-}
-
-impl FileLowering<'_, '_, '_, '_> {
-    fn find_spine_operands(&self, expression: ExprId) -> Option<(BinOp, ExprId, ExprId)> {
-        let ExprKind::Binary { op, left, right } = self.hir[expression].kind else {
-            return None;
-        };
-        let is_spine_operator = match classify_operator(op) {
-            OperatorClass::Plain | OperatorClass::Ordering => true,
-            OperatorClass::Equality { .. } | OperatorClass::In | OperatorClass::ControlFlow => {
-                false
-            }
-        };
-        let is_spine_node = is_spine_operator
-            && !self.is_statically_resolved(expression)
-            && find_constant(self, expression).is_none();
-        is_spine_node.then_some((op, left, right))
     }
 }

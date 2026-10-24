@@ -20,7 +20,7 @@ use crate::lower::scope::testing::{
     top_scope, with_scope_analysis,
 };
 use crate::lower::scope::{
-    ArgumentsObject, BindingRef, Placement, ScopeAnalysis, ScopeSlot, Storage,
+    ArgumentsObject, BindingForm, BindingRef, Placement, ScopeAnalysis, ScopeSlot, Storage,
 };
 
 struct Probe<'a, 'h, 'b> {
@@ -47,10 +47,36 @@ fn storage_in(file: &str, source: &str, name: &str) -> Storage {
     analyze_source(file, source, |probe| probe.placement_of(name).storage)
 }
 
+// What closures copy.
+const COPIED: Placement = Placement {
+    storage: Storage::Local,
+    has_local: true,
+    is_immutable: true,
+    is_shared: true,
+};
+
+// What closures read from the first field of the environment of `scope`. Its owner keeps a copy of what is never stored again.
+fn first_field(scope: ScopeId, is_immutable: bool) -> Placement {
+    Placement {
+        storage: Storage::Field { scope, field: 0 },
+        has_local: is_immutable,
+        is_immutable,
+        is_shared: true,
+    }
+}
+
 fn is_field(storage: Storage) -> bool {
     match storage {
         Storage::Field { .. } => true,
         Storage::Local | Storage::Variable(_) => false,
+    }
+}
+
+impl std::ops::Deref for Probe<'_, '_, '_> {
+    type Target = ScopeAnalysis;
+
+    fn deref(&self) -> &ScopeAnalysis {
+        self.analysis
     }
 }
 
@@ -61,6 +87,10 @@ impl Probe<'_, '_, '_> {
 
     fn binding(&self, name: &str) -> BindingRef {
         BindingRef::Symbol(self.symbol(name))
+    }
+
+    fn form_of(&self, name: &str) -> BindingForm {
+        self.form(self.symbol(name))
     }
 
     fn placement(&self, binding: BindingRef) -> Placement {
@@ -84,8 +114,16 @@ impl Probe<'_, '_, '_> {
         only_function(self.hir, kind)
     }
 
+    fn arrow(&self) -> FnId {
+        self.only_function(FnKind::Arrow)
+    }
+
     fn top_scope(&self, function: FnId) -> ScopeId {
         top_scope(self.bound, function)
+    }
+
+    fn top_of(&self, name: &str) -> ScopeId {
+        self.top_scope(self.function(name))
     }
 
     fn file_scope(&self) -> ScopeId {
@@ -114,6 +152,14 @@ impl Probe<'_, '_, '_> {
 
     fn captures(&self, function: FnId) -> &[Capture] {
         self.analysis.captures(self.key(function))
+    }
+
+    fn captures_of(&self, name: &str) -> &[Capture] {
+        self.captures(self.function(name))
+    }
+
+    fn copy_of(&self, name: &str) -> Capture {
+        Capture::Value(self.binding(name))
     }
 
     fn class(&self, class: u32) -> ClassRef {

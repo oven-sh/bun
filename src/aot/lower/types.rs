@@ -6,7 +6,7 @@ mod shape_table;
 #[cfg(test)]
 mod tests;
 
-use bun_sema::check::aot::{KeptFact, ShapeKind, TupleElement, TupleElementKind};
+use bun_sema::check::aot::{KeptFact, ShapeKind, TupleElementKind};
 use bun_sema::hir::{ExprId, ExprKind};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -27,19 +27,17 @@ pub(crate) struct TypeState {
     mapped: FxHashMap<CheckerTypeId, MappedType>,
     shallow: FxHashMap<CheckerTypeId, Mapped>,
     exhausted: FxHashSet<CheckerTypeId>,
-    laid_out: FxHashMap<CheckerTypeId, bool>,
-    lists_int32: FxHashMap<CheckerTypeId, bool>,
-    mapped_alike: FxHashMap<CheckerTypeId, bool>,
+    facts: FxHashMap<(CheckerTypeId, u8), bool>,
     sources: FxHashMap<TypeId, CheckerTypeId>,
-    walk: exploration::WalkTables,
+    walk: exploration::Walk,
     alike_walk: shape_table::AlikeWalkTables,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 struct MappedType {
     mapped: Mapped,
-    weight: u32,
-    is_oversized: bool,
+    // How many types it reaches, itself among them. Nothing, where they are more than the limit.
+    weight: Option<u32>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -61,63 +59,45 @@ struct ExploredType {
     edges: TypeEdges,
 }
 
-struct Component {
-    members: SmallVec<[ExploredType; 1]>,
-}
+type Component = SmallVec<[ExploredType; 1]>;
 
-enum Exploration {
-    Complete(SmallVec<[Component; 1]>),
-    Exhausted,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum Reach {
-    Within(u32),
-    AboveLimit,
-}
-
-trait ChildTypes {
-    fn map_child(&mut self, file: &mut FileLowering<'_, '_, '_, '_>, edge: TypeEdge) -> Mapped;
-}
+type MapChild<'x> = dyn FnMut(&mut FileLowering<'_, '_, '_, '_>, TypeEdge) -> Mapped + 'x;
 
 impl FileLowering<'_, '_, '_, '_> {
-    pub(crate) fn map_type_at(&mut self, ty: CheckerTypeId, position: u32) -> Mapped {
-        self.ensure_mapped(ty, position).mapped
+    fn find_known_fact(&self, ty: CheckerTypeId, fact: KeptFact) -> Option<bool> {
+        let kept = self.queries.find_kept_fact(ty, fact);
+        kept.or_else(|| self.types.facts.get(&(ty, fact as u8)).copied())
     }
 
     // A fact that follows from answers that hold in every file lies with them. Any other holds for this file.
+    fn keep_fact(&mut self, ty: CheckerTypeId, fact: KeptFact, holds: bool, unstable_answers: u64) {
+        if !self.queries.keep_fact(ty, fact, holds, unstable_answers) {
+            self.types.facts.insert((ty, fact as u8), holds);
+        }
+    }
+
     fn find_fact(
         &mut self,
         ty: CheckerTypeId,
         fact: KeptFact,
-        of_file: fn(&mut TypeState) -> &mut FxHashMap<CheckerTypeId, bool>,
         compute: fn(&mut FileLowering<'_, '_, '_, '_>, CheckerTypeId) -> bool,
     ) -> bool {
-        if let Some(known) = self.queries.find_kept_fact(ty, fact) {
-            return known;
-        }
-        if let Some(&known) = of_file(&mut self.types).get(&ty) {
+        if let Some(known) = self.find_known_fact(ty, fact) {
             return known;
         }
         let unstable_answers = self.queries.count_unstable_answers();
         let holds = compute(self, ty);
-        if !self.queries.keep_fact(ty, fact, holds, unstable_answers) {
-            of_file(&mut self.types).insert(ty, holds);
-        }
+        self.keep_fact(ty, fact, holds, unstable_answers);
         holds
     }
 
-    // The array of a tuple type holds what any of its elements holds, as the type itself is mapped.
     fn find_tuple_contents(&mut self, container: CheckerTypeId, position: u32) -> Option<TypeId> {
         let container = self.queries.without_nullish(container).ok()?;
-        let elements: SmallVec<[TupleElement; 4]> =
-            match self.queries.type_shape(container).ok()?.kind {
-                ShapeKind::Tuple { elements, .. } => SmallVec::from_slice(elements),
-                ShapeKind::Constrained { base, .. } => {
-                    return self.find_tuple_contents(base, position);
-                }
-                _ => return None,
-            };
+        let elements = match self.queries.type_shape(container).ok()?.kind {
+            ShapeKind::Tuple { elements, .. } => elements,
+            ShapeKind::Constrained { base, .. } => return self.find_tuple_contents(base, position),
+            _ => return None,
+        };
         let mut contents = TypeTable::NEVER;
         for element in elements {
             let held = match element.kind {
@@ -162,36 +142,21 @@ pub(in crate::lower) fn lists_int32(
     file: &mut FileLowering<'_, '_, '_, '_>,
     ty: CheckerTypeId,
 ) -> bool {
-    file.find_fact(
-        ty,
-        KeptFact::ListsInt32,
-        |types| &mut types.lists_int32,
-        shape_table::lists_int32,
-    )
+    file.find_fact(ty, KeptFact::ListsInt32, shape_table::lists_int32)
 }
 
-/// Whether mapping the type declares the same in whichever file it is mapped.
 pub(in crate::lower) fn is_mapped_alike_in_every_file(
     file: &mut FileLowering<'_, '_, '_, '_>,
     ty: CheckerTypeId,
 ) -> bool {
-    file.find_fact(
-        ty,
-        KeptFact::IsMappedAlikeInEveryFile,
-        |types| &mut types.mapped_alike,
-        shape_table::is_mapped_alike_in_every_file,
-    )
+    let compute = shape_table::is_mapped_alike_in_every_file;
+    file.find_fact(ty, KeptFact::IsMappedAlikeInEveryFile, compute)
 }
 
-/// Whether every value of the object type `ty` has one of the layouts that the type maps to.
 pub(in crate::lower) fn has_layout_in_every_value(
     file: &mut FileLowering<'_, '_, '_, '_>,
     ty: CheckerTypeId,
 ) -> bool {
-    file.find_fact(
-        ty,
-        KeptFact::HasLayoutInEveryValue,
-        |types| &mut types.laid_out,
-        shape_table::has_layout_in_every_value,
-    )
+    let compute = shape_table::has_layout_in_every_value;
+    file.find_fact(ty, KeptFact::HasLayoutInEveryValue, compute)
 }

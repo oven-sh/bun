@@ -1,13 +1,17 @@
 use super::program_keys::{ProgramFunctionKey, ProgramLayoutKey};
-use crate::ir::{
-    ClassPart, FunctionId, Id, LayoutId, StringId, StringTable, Type, TypeId, TypeTable,
-};
+use crate::ir::{ClassPart, FunctionId, Id, LayoutId, StringId, StringTable, Type, TypeTable};
 use bun_sema::check::aot::type_identity::Lanes;
 use core::hash::{Hash, Hasher};
 use smallvec::SmallVec;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub(super) struct ContentHash(pub [u64; 2]);
+
+impl From<ContentHash> for u64 {
+    fn from(hash: ContentHash) -> u64 {
+        hash.0[0]
+    }
+}
 
 pub(super) struct TypeHashes {
     pub types: Vec<ContentHash>,
@@ -17,64 +21,30 @@ pub(super) struct TypeHashes {
 struct ContentHasher(Lanes);
 
 impl ContentHasher {
-    fn new() -> ContentHasher {
-        ContentHasher(Lanes::START)
+    fn hash_with(feed: impl FnOnce(&mut ContentHasher)) -> ContentHash {
+        let mut hasher = ContentHasher(Lanes::START);
+        feed(&mut hasher);
+        ContentHash(hasher.0.0)
     }
 
     fn add(&mut self, word: u64) {
         self.0.add(word);
     }
 
-    fn add_words(&mut self, words: impl ExactSizeIterator<Item = u32>) {
-        self.add(words.len() as u64);
-        for word in words {
-            self.add(u64::from(word));
+    // An optional item is a list of at most one.
+    fn add_list<const N: usize>(&mut self, items: impl ExactSizeIterator<Item = [u64; N]>) {
+        self.add(items.len() as u64);
+        for word in items.flatten() {
+            self.add(word);
         }
     }
 
-    fn add_optional_word(&mut self, word: Option<u32>) {
-        match word {
-            None => self.add(0),
-            Some(word) => {
-                self.add(1);
-                self.add(u64::from(word));
-            }
-        }
-    }
-
-    fn add_hash(&mut self, hash: ContentHash) {
-        self.add(hash.0[0]);
-        self.add(hash.0[1]);
-    }
-
-    fn add_optional_hash(&mut self, hash: Option<ContentHash>) {
-        match hash {
-            None => self.add(0),
-            Some(hash) => {
-                self.add(1);
-                self.add_hash(hash);
-            }
-        }
-    }
-
-    fn add_hashes(&mut self, hashes: impl ExactSizeIterator<Item = ContentHash>) {
-        self.add(hashes.len() as u64);
-        for hash in hashes {
-            self.add_hash(hash);
-        }
-    }
-
-    fn add_hash_set(&mut self, hashes: &mut [ContentHash]) {
+    fn add_hash_set(&mut self, hashes: impl Iterator<Item = ContentHash>) {
+        let mut hashes: SmallVec<[ContentHash; 4]> = hashes.collect();
         hashes.sort_unstable();
-        self.add_hashes(hashes.iter().copied());
-    }
-
-    fn content_hash(&self) -> ContentHash {
-        ContentHash(self.0.0)
+        self.add_list(hashes.iter().map(|hash| hash.0));
     }
 }
-
-type ElementHashes = SmallVec<[ContentHash; 4]>;
 
 struct TypeHasher<'a> {
     strings: &'a StringTable,
@@ -82,42 +52,30 @@ struct TypeHasher<'a> {
     function_keys: &'a [ProgramFunctionKey],
     string_hashes: Vec<Option<ContentHash>>,
     layout_hashes: Vec<Option<ContentHash>>,
-    type_hashes: Vec<ContentHash>,
-    nesting_depths: Vec<u32>,
+    hashes: TypeHashes,
 }
 
 impl TypeHasher<'_> {
     fn hash_string(&mut self, id: StringId) -> ContentHash {
         let strings = self.strings;
         *self.string_hashes[id.index()].get_or_insert_with(|| {
-            let mut hasher = ContentHasher::new();
-            hasher.0.write(strings.get(id));
-            hasher.content_hash()
+            ContentHasher::hash_with(|hasher| hasher.0.write(strings.get(id)))
         })
     }
 
     fn hash_layout(&mut self, id: LayoutId) -> ContentHash {
         let key = self.layout_keys[id.index()];
-        *self.layout_hashes[id.index()].get_or_insert_with(|| {
-            let mut hasher = ContentHasher::new();
-            key.hash(&mut hasher.0);
-            hasher.content_hash()
-        })
+        *self.layout_hashes[id.index()]
+            .get_or_insert_with(|| ContentHasher::hash_with(|hasher| key.hash(&mut hasher.0)))
     }
 
     fn hash_function(&self, id: FunctionId) -> ContentHash {
-        let mut hasher = ContentHasher::new();
-        self.function_keys[id.index()].hash(&mut hasher.0);
-        hasher.content_hash()
-    }
-
-    fn child_hash(&self, id: TypeId) -> ContentHash {
-        self.type_hashes[id.index()]
+        ContentHasher::hash_with(|hasher| self.function_keys[id.index()].hash(&mut hasher.0))
     }
 
     fn nesting_depth(&self, ty: &Type) -> u32 {
         let contents = ty.classes.iter().flat_map(|part| &part.contents);
-        let depths = contents.map(|&id| self.nesting_depths[id.index()] + 1);
+        let depths = contents.map(|&id| self.hashes.nesting_depths[id.index()] + 1);
         depths.max().unwrap_or(0)
     }
 
@@ -126,10 +84,10 @@ impl TypeHasher<'_> {
             builtin_class,
             contents,
         } = part;
-        let mut hasher = ContentHasher::new();
-        hasher.add(u64::from(builtin_class.to_wire()));
-        hasher.add_hashes(contents.iter().map(|&id| self.child_hash(id)));
-        hasher.content_hash()
+        ContentHasher::hash_with(|hasher| {
+            hasher.add(u64::from(builtin_class.to_wire()));
+            hasher.add_list(contents.iter().map(|&id| self.hashes.types[id.index()].0));
+        })
     }
 
     fn hash_type(&mut self, ty: &Type) -> ContentHash {
@@ -146,25 +104,23 @@ impl TypeHasher<'_> {
             builtins,
             functions,
         } = ty;
-        let mut hasher = ContentHasher::new();
-        hasher.add(u64::from(primitives.to_wire()));
-        hasher.add(u64::from(flags.to_wire()));
-        hasher.add_optional_word(opaque.map(|kind| kind.to_wire()));
-        hasher.add_optional_hash(environment.map(|layout| self.hash_layout(layout)));
-        hasher.add(*minimum as u64);
-        hasher.add(*maximum as u64);
-        let mut strings: ElementHashes = strings.iter().map(|&id| self.hash_string(id)).collect();
-        hasher.add_hash_set(&mut strings);
-        let mut layouts: ElementHashes = layouts.iter().map(|&id| self.hash_layout(id)).collect();
-        hasher.add_hash_set(&mut layouts);
-        let parts = classes.iter();
-        let mut classes: ElementHashes = parts.map(|part| self.hash_class_part(part)).collect();
-        hasher.add_hash_set(&mut classes);
-        hasher.add_words(builtins.iter().map(|builtin| builtin.to_wire()));
-        let mut functions: ElementHashes =
-            functions.iter().map(|&id| self.hash_function(id)).collect();
-        hasher.add_hash_set(&mut functions);
-        hasher.content_hash()
+        ContentHasher::hash_with(|hasher| {
+            hasher.add(u64::from(primitives.to_wire()));
+            hasher.add(u64::from(flags.to_wire()));
+            hasher.add_list(opaque.iter().map(|kind| [u64::from(kind.to_wire())]));
+            hasher.add_list(environment.iter().map(|&layout| self.hash_layout(layout).0));
+            hasher.add(*minimum as u64);
+            hasher.add(*maximum as u64);
+            hasher.add_hash_set(strings.iter().map(|&id| self.hash_string(id)));
+            hasher.add_hash_set(layouts.iter().map(|&id| self.hash_layout(id)));
+            hasher.add_hash_set(classes.iter().map(|part| self.hash_class_part(part)));
+            hasher.add_list(
+                builtins
+                    .iter()
+                    .map(|builtin| [u64::from(builtin.to_wire())]),
+            );
+            hasher.add_hash_set(functions.iter().map(|&id| self.hash_function(id)));
+        })
     }
 }
 
@@ -180,19 +136,18 @@ pub(super) fn hash_types(
         function_keys,
         string_hashes: vec![None; strings.len()],
         layout_hashes: vec![None; layout_keys.len()],
-        type_hashes: Vec::with_capacity(types.len()),
-        nesting_depths: Vec::with_capacity(types.len()),
+        hashes: TypeHashes {
+            types: Vec::with_capacity(types.len()),
+            nesting_depths: Vec::with_capacity(types.len()),
+        },
     };
     for ty in types.iter() {
         let hash = hasher.hash_type(ty);
-        hasher.type_hashes.push(hash);
+        hasher.hashes.types.push(hash);
         let depth = hasher.nesting_depth(ty);
-        hasher.nesting_depths.push(depth);
+        hasher.hashes.nesting_depths.push(depth);
     }
-    TypeHashes {
-        types: hasher.type_hashes,
-        nesting_depths: hasher.nesting_depths,
-    }
+    hasher.hashes
 }
 
 #[cfg(test)]
@@ -223,27 +178,6 @@ mod tests {
         }
     }
 
-    fn layout_set(layouts: [LayoutId; 2]) -> Type {
-        Type {
-            layouts: layouts.to_vec(),
-            ..Type::default()
-        }
-    }
-
-    fn literal_set(strings: [StringId; 2]) -> Type {
-        Type {
-            strings: strings.to_vec(),
-            ..Type::default()
-        }
-    }
-
-    fn function_set(functions: [FunctionId; 2]) -> Type {
-        Type {
-            functions: functions.to_vec(),
-            ..Type::default()
-        }
-    }
-
     fn hash_declared_types(builder: &FragmentBuilder, project: ProjectId) -> TypeHashes {
         let layout_keys = builder.layout_keys().iter();
         let layout_keys: Vec<ProgramLayoutKey> =
@@ -267,45 +201,49 @@ mod tests {
         hash_declared_types(&builder, ProjectId::Application).types[id.index()]
     }
 
-    #[test]
-    fn layout_set_hash_ignores_declaration_order() {
-        let hash_layout_set = |keys: [LayoutKey; 2]| {
-            hash_type(|builder| layout_set(keys.map(|key| builder.declare_layout(key))))
-        };
-        let hash = hash_layout_set([dog_key(), animal_key()]);
-        assert_eq!(hash_layout_set([animal_key(), dog_key()]), hash);
-        assert_ne!(hash_layout_set([dog_key(), environment_key()]), hash);
+    fn assert_hash_ignores_order<E: Copy>(
+        [first, second, third]: [E; 3],
+        hash_set: impl Fn([E; 2]) -> ContentHash,
+    ) {
+        let hash = hash_set([first, second]);
+        assert_eq!(hash_set([second, first]), hash);
+        assert_ne!(hash_set([first, third]), hash);
     }
 
     #[test]
-    fn layout_hash_includes_project() {
+    fn set_hash_ignores_order_of_members() {
+        assert_hash_ignores_order([dog_key(), animal_key(), environment_key()], |keys| {
+            hash_type(|builder| Type {
+                layouts: keys.map(|key| builder.declare_layout(key)).to_vec(),
+                ..Type::default()
+            })
+        });
+        let functions = [0, 1, 2].map(|function| test_function_key(9, function));
+        assert_hash_ignores_order(functions, |keys| {
+            hash_type(|builder| Type {
+                functions: keys.map(|key| builder.declare_function(key)).to_vec(),
+                ..Type::default()
+            })
+        });
+        assert_hash_ignores_order([b"x", b"y", b"z"], |texts| {
+            hash_type(|builder| Type {
+                strings: texts.map(|text| builder.strings.intern(text)).to_vec(),
+                ..Type::default()
+            })
+        });
+    }
+
+    #[test]
+    fn layout_and_function_hashes_include_project() {
         let mut builder = FragmentBuilder::new(FileId(0));
         let layout = builder.declare_layout(dog_key());
-        let id = builder.types.intern(Type::layout(layout));
-        let [application, runtime] =
-            ProjectId::ALL.map(|project| hash_declared_types(&builder, project).types[id.index()]);
-        assert_ne!(application, runtime);
-    }
-
-    #[test]
-    fn function_set_hash_ignores_declaration_order() {
-        let hash_function_set = |keys: [FunctionKey; 2]| {
-            hash_type(|builder| function_set(keys.map(|key| builder.declare_function(key))))
-        };
-        let [first, second, third] = [0, 1, 2].map(|function| test_function_key(9, function));
-        let hash = hash_function_set([first, second]);
-        assert_eq!(hash_function_set([second, first]), hash);
-        assert_ne!(hash_function_set([first, third]), hash);
-    }
-
-    #[test]
-    fn function_hash_includes_project() {
-        let mut builder = FragmentBuilder::new(FileId(0));
         let function = builder.declare_function(test_function_key(9, 0));
-        let id = builder.types.intern(Type::function(function));
-        let [application, runtime] =
-            ProjectId::ALL.map(|project| hash_declared_types(&builder, project).types[id.index()]);
-        assert_ne!(application, runtime);
+        for ty in [Type::layout(layout), Type::function(function)] {
+            let id = builder.types.intern(ty);
+            let [application, runtime] = ProjectId::ALL
+                .map(|project| hash_declared_types(&builder, project).types[id.index()]);
+            assert_ne!(application, runtime);
+        }
     }
 
     #[test]
@@ -330,16 +268,6 @@ mod tests {
         distinct_hashes.sort_unstable();
         distinct_hashes.dedup();
         assert_eq!(distinct_hashes.len(), keys.len());
-    }
-
-    #[test]
-    fn literal_set_hash_ignores_intern_order() {
-        let hash_literal_set = |texts: [&[u8]; 2]| {
-            hash_type(|builder| literal_set(texts.map(|text| builder.strings.intern(text))))
-        };
-        let hash = hash_literal_set([b"x", b"y"]);
-        assert_eq!(hash_literal_set([b"y", b"x"]), hash);
-        assert_ne!(hash_literal_set([b"x", b"z"]), hash);
     }
 
     #[test]

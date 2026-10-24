@@ -12,7 +12,6 @@ use crate::session::Arena;
 use crate::util::FxHashMap;
 use std::sync::OnceLock;
 
-/// It depends on the tree, the binder, folding and the types of the constants that name symbols, so the program has one for each file.
 pub(in crate::check) struct StoreIndex<'s> {
     this_stores: &'s [ThisStore],
     binding_stores: &'s [BindingStore],
@@ -45,9 +44,7 @@ pub(super) enum ThisOwner {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum StoreForm {
     Plain,
-    // `||=`, `&&=`, `??=`: it stores its right side or nothing.
     Logical,
-    // `+=` and the like: it stores what the operator computes.
     Compound,
 }
 
@@ -94,7 +91,6 @@ impl<'c> StoreIndex<'c> {
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
-    /// The class that `function` is a member of, and whether it is a static member.
     pub(super) fn class_and_side_of_member_fn(
         &self,
         file: FileId,
@@ -222,7 +218,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    // Whether every run of the constructor that hands out `this` has evaluated `assign`.
     fn is_in_every_construction(
         &self,
         file: FileId,
@@ -251,7 +246,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         hir[statement].start < first_exit
     }
 
-    // A `return` of an object that the expression creates drops `this`: nobody sees what was not stored yet.
     fn find_first_exit_with_this(&self, file: FileId, function: FnId) -> u32 {
         let (hir, bound) = (self.c.hir(file), self.c.bound(file));
         let returns = bound.ids(bound.fns[function.idx()].returns);
@@ -295,7 +289,6 @@ fn classify_store_form(op: Option<BinOp>) -> StoreForm {
     }
 }
 
-// The expression statement that does not end normally without having evaluated `expression`.
 fn find_statement_always_evaluating(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -385,7 +378,6 @@ fn add_prototype_literal_stores(
     }
 }
 
-// `this`, or a variable that holds it: `var self = this`, and `var _this = _super.call(this) || this` wherever the call returns nothing.
 fn find_this_held_by(hir: &hir::File<'_>, bound: &Bound<'_>, object: ExprId) -> Option<ExprId> {
     if matches!(hir[object].kind, ExprKind::This) {
         return Some(object);
@@ -409,7 +401,6 @@ fn find_this_held_by(hir: &hir::File<'_>, bound: &Bound<'_>, object: ExprId) -> 
     matches!(hir[value].kind, ExprKind::This).then_some(value)
 }
 
-// `var members = F.prototype`: the `F.prototype` that the variable `object` holds from its declaration on.
 pub(super) fn find_prototype_object_held_by(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,

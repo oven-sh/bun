@@ -257,13 +257,12 @@ impl StabilityPass<'_, '_> {
 
     fn is_mapped_argument(&self, symbol: SymbolId) -> bool {
         let (hir, bound) = (self.hir, self.bound);
-        let scope = bound.runtime.declarations.symbol_scopes.get(symbol.idx());
-        let scope = scope.and_then(|scope| bound.scopes.get(scope.idx()));
+        let scope = bound.scopes.get(bound.symbol_scope(symbol).idx());
         let Some(ScopeKind::Fn(function)) = scope.map(|scope| scope.kind) else {
             return false;
         };
-        let flags = bound.runtime.function_flags.get(function.idx());
-        flags.is_some_and(|flags| flags.contains(FunctionFlags::USES_ARGUMENTS))
+        let flags = bound.function_flags(function);
+        flags.contains(FunctionFlags::USES_ARGUMENTS)
             && has_mapped_arguments(hir, CodeUnit::Function(function))
     }
 
@@ -276,8 +275,7 @@ impl StabilityPass<'_, '_> {
 
     fn classify(&self, symbol: SymbolId) -> BindingStability {
         let bound = self.bound;
-        let kind = bound.runtime.declarations.binding_kinds.get(symbol.idx());
-        let kind = kind.copied().unwrap_or_default();
+        let kind = bound.binding_kind(symbol);
         match kind {
             BindingKind::NoBinding => return BindingStability::NoBinding,
             BindingKind::Import => return BindingStability::Linked,

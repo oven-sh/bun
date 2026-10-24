@@ -6,8 +6,9 @@ use core::ops::Range;
 
 use super::body::FieldWord;
 use super::builder::{
-    BuilderScratch, ENTRY_BLOCK, FunctionBuilder, MAX_SPARE_BLOCKS, MAX_SPARE_VALUES, PendingBlock,
-    PendingDefinition, PendingTarget, PendingTerminator, PendingValue, recycle_vector,
+    BuilderScratch, ENTRY_BLOCK, FunctionBuilder, MAX_SPARE_BLOCKS, MAX_SPARE_FIELD_WORDS,
+    MAX_SPARE_VALUES, PendingBlock, PendingDefinition, PendingTarget, PendingTerminator,
+    PendingValue, recycle_vector,
 };
 use super::generated::{
     BlockHead, Body, Function, Opcode, ParameterHead, TargetHead, TerminatorHead, ValueHead,
@@ -24,51 +25,53 @@ pub(super) struct FinishScratch {
     stack: Vec<(BlockId, u32)>,
 }
 
-struct BodySize {
-    value_count: u32,
-    word_count: usize,
-}
+impl FunctionBuilder {
+    pub fn finish(self) -> (Function, BuilderScratch) {
+        let FunctionBuilder {
+            mut function,
+            values,
+            field_words,
+            mut blocks,
+            ssa,
+            finish_scratch: mut scratch,
+            ..
+        } = self;
+        debug_assert!(
+            (0..blocks.len()).all(|index| ssa.is_sealed(BlockId::new(index))),
+            "an unsealed block has parameters without arguments"
+        );
+        close_open_blocks(&mut blocks);
+        scratch.order_blocks(&blocks);
+        let (value_count, word_count) = scratch.number_values(&blocks, &values);
+        let mut encoder = Encoder {
+            values: &values,
+            field_words: &field_words,
+            blocks: &blocks,
+            block_numbers: &scratch.block_numbers,
+            value_numbers: &scratch.value_numbers,
+            value_count,
+            words: Vec::with_capacity(word_count),
+        };
+        for block in &scratch.order {
+            encoder.encode_block(&blocks[block.index()]);
+        }
+        let words = encoder.words;
+        debug_assert_eq!(words.len(), word_count);
 
-pub(super) fn finish(builder: FunctionBuilder) -> (Function, BuilderScratch) {
-    let FunctionBuilder {
-        mut function,
-        values,
-        field_words,
-        mut blocks,
-        ssa,
-        finish_scratch: mut scratch,
-        ..
-    } = builder;
-    debug_assert!(
-        (0..blocks.len()).all(|index| ssa.is_sealed(BlockId::new(index))),
-        "an unsealed block has parameters without arguments"
-    );
-    close_open_blocks(&mut blocks);
-    scratch.order_blocks(&blocks);
-    let size = scratch.number_values(&blocks, &values);
-    let mut encoder = Encoder {
-        values: &values,
-        field_words: &field_words,
-        blocks: &blocks,
-        block_numbers: &scratch.block_numbers,
-        value_numbers: &scratch.value_numbers,
-        value_count: size.value_count,
-        words: Vec::with_capacity(size.word_count),
-    };
-    for block in &scratch.order {
-        encoder.encode_block(&blocks[block.index()]);
+        function.body = Body {
+            code: words,
+            block_count: scratch.order.len() as u32,
+            value_count,
+        };
+        let scratch = BuilderScratch {
+            values: recycle_vector(values, MAX_SPARE_VALUES),
+            field_words: recycle_vector(field_words, MAX_SPARE_FIELD_WORDS),
+            blocks: recycle_vector(blocks, MAX_SPARE_BLOCKS),
+            ssa: ssa.recycle(),
+            finish: scratch.recycle(),
+        };
+        (function, scratch)
     }
-    let words = encoder.words;
-    debug_assert_eq!(words.len(), size.word_count);
-
-    function.body = Body {
-        code: words,
-        block_count: scratch.order.len() as u32,
-        value_count: size.value_count,
-    };
-    let ssa = ssa.into_scratch();
-    let scratch = BuilderScratch::recycle(values, field_words, blocks, ssa, scratch.recycle());
-    (function, scratch)
 }
 
 fn close_open_blocks(blocks: &mut [PendingBlock]) {
@@ -138,27 +141,21 @@ fn target_length(target: &PendingTarget) -> usize {
     TargetHead::WORDS + argument_count(target) + target.proofs.len()
 }
 
-fn value_length(value: &PendingValue) -> usize {
-    let (_, fields) = operation_of(value);
-    ValueHead::WORDS + fields.len()
-}
-
-fn terminator_length(terminator: &PendingTerminator) -> usize {
-    let targets_length: usize = terminator.targets.iter().map(target_length).sum();
-    TerminatorHead::WORDS + terminator.fields.len() + targets_length
-}
-
 fn block_length(block: &PendingBlock, values: &[PendingValue]) -> usize {
     let handler_length = block.handler.as_ref().map_or(0, target_length);
     let listed_values = block.values.iter();
     let values_length: usize = listed_values
-        .map(|value| value_length(&values[value.index()]))
+        .map(|value| ValueHead::WORDS + operation_of(&values[value.index()]).1.len())
         .sum();
+    let terminator = terminator_of(block);
+    let targets_length: usize = terminator.targets.iter().map(target_length).sum();
     BlockHead::WORDS
         + parameter_count(block) * ParameterHead::WORDS
         + handler_length
         + values_length
-        + terminator_length(terminator_of(block))
+        + TerminatorHead::WORDS
+        + terminator.fields.len()
+        + targets_length
 }
 
 fn number_of(value_numbers: &[Option<ValueId>], value_count: u32, pending: ValueId) -> u32 {
@@ -197,23 +194,21 @@ impl FinishScratch {
         }
     }
 
-    fn number_values(&mut self, blocks: &[PendingBlock], values: &[PendingValue]) -> BodySize {
+    // The number of values and of words of the body.
+    fn number_values(&mut self, blocks: &[PendingBlock], values: &[PendingValue]) -> (u32, usize) {
         self.value_numbers.resize(values.len(), None);
-        let mut size = BodySize {
-            value_count: 0,
-            word_count: 0,
-        };
+        let (mut value_count, mut word_count) = (0, 0);
         for block in &self.order {
             let block = &blocks[block.index()];
             for value in parameters_of(block).chain(block.values.iter().copied()) {
                 let number = &mut self.value_numbers[value.index()];
                 debug_assert!(number.is_none(), "{value} is listed twice");
-                *number = Some(ValueId::from_word(size.value_count));
-                size.value_count += 1;
+                *number = Some(ValueId::from_word(value_count));
+                value_count += 1;
             }
-            size.word_count += block_length(block, values);
+            word_count += block_length(block, values);
         }
-        size
+        (value_count, word_count)
     }
 
     fn recycle(self) -> FinishScratch {

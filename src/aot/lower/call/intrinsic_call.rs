@@ -5,7 +5,7 @@ use smallvec::{SmallVec, smallvec};
 use super::intrinsic::{
     IntrinsicCall, Lowered, Misuse, get_named_arguments, has_spread, lower_named_arguments,
 };
-use super::{Arguments, CallSite, Callee, emit_call};
+use super::{Arguments, Callee, emit_call};
 use crate::builtins::PromiseStatus;
 use crate::builtins::id::{BuiltinId, BuiltinName, RuntimeFunction};
 use crate::builtins::table::{self, Conversion, ErrorKind};
@@ -16,15 +16,6 @@ use crate::lower::control::{CleanupLanding, CleanupPath};
 use crate::lower::expression::find_constant;
 use crate::lower::function::{self, EntryArguments};
 use crate::lower::member::PropertyName;
-
-pub(super) fn create_anonymous_callee(function: ValueId, this: Option<ValueId>) -> Callee {
-    Callee {
-        function,
-        this,
-        key: None,
-        name: None,
-    }
-}
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(super) fn lower_call_with_rest(
@@ -48,7 +39,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Some((&this, rest)) => (Some(self.lower_intrinsic_argument(this)?), rest),
             None => (None, arguments),
         };
-        let callee = create_anonymous_callee(function, this);
+        let callee = Callee::without_key(function, this, None);
         Ok(self.lower_call_with_rest(site, callee, rest))
     }
 
@@ -70,7 +61,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let function = self.lower_member_base(site.callee, function, site.exit);
         let apply = self.emit_locked_builtin(BuiltinId::FunctionPrototypeApply);
-        let callee = create_anonymous_callee(apply, Some(function));
+        let callee = Callee::without_key(apply, Some(function), None);
         Ok(self.lower_call_with_rest(site, callee, site.arguments))
     }
 
@@ -82,7 +73,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let function = self.emit_locked_builtin(builtin);
         let holder = table::entry(builtin).holder;
         let this = holder.map(|holder| self.emit_locked_builtin(holder));
-        let callee = create_anonymous_callee(function, this);
+        let callee = Callee::without_key(function, this, None);
         self.lower_call_with_rest(site, callee, site.arguments)
     }
 
@@ -106,7 +97,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
             Arguments::Values(_) | Arguments::List(_) => {
                 let closure = self.builder.new_closure(function, &[]);
-                let callee = create_anonymous_callee(closure, None);
+                let callee = Callee::without_key(closure, None, None);
                 self.emit_call_at(callee, arguments, site.options)
             }
         })
@@ -120,7 +111,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> ValueId {
         let hir = self.file.hir;
         let position = hir[site.call].pos;
-        let function = self.emit_private_global_get(callee);
+        let function = self.emit_private_global_get(table::text_of_name(callee));
         let prepended = self.builder.integer(i64::from(argument));
         let arguments = if has_spread(hir, site.arguments) {
             let list = self.lower_argument_list(&[prepended], site.arguments, position);
@@ -132,7 +123,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Arguments::Values(values)
         };
         self.set_position(position);
-        let callee = create_anonymous_callee(function, None);
+        let callee = Callee::without_key(function, None, None);
         self.emit_call_at(callee, arguments, site.options)
     }
 
@@ -146,12 +137,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             PromiseStatus::Fulfilled => 1,
             PromiseStatus::Rejected => 2,
         };
-        let key = self.file.engine_private_key(b"peekPromiseStatus");
-        let global = self.builder.builtin(BuiltinId::GlobalThis);
-        let function = self.builder.prop_get(global, key, true, false);
+        let function = self.emit_private_global_get(b"peekPromiseStatus");
         let [promise] = lower_named_arguments(self, site)?;
-        let arguments = Arguments::Values(smallvec![promise]);
-        let actual = emit_call(self, function, None, arguments, CallSite::default());
+        let actual = emit_call(self, function, None, &[promise]);
         let expected = self.builder.integer(expected);
         Ok(self.builder.strict_eq(actual, expected))
     }
@@ -209,8 +197,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let key = self.file.text_key(text);
         let method = self.emit_get(iterator, PropertyName::Constant(key));
         let method = self.branch_if_nullish(method, if_absent);
-        let arguments = Arguments::Values(SmallVec::new());
-        emit_call(self, method, Some(iterator), arguments, CallSite::default())
+        emit_call(self, method, Some(iterator), &[])
     }
 }
 
@@ -221,23 +208,12 @@ pub(super) fn find_linked_function(
 ) -> Lowered<FunctionId> {
     let function = lowering.file.inputs.library_functions.find(linked);
     let function = function.ok_or((identifier, Misuse::UnknownLinkedFunction))?;
-    if function.file == lowering.file.file {
-        let source = function.function;
-        return Ok(function::declare_source_function(
-            lowering.file,
-            source,
-            None,
-        ));
-    }
     let key = FunctionKey::Source(function);
-    Ok(lowering.file.reference_function(key))
-}
-
-fn get_thrown_error(kind: ErrorKind) -> (generated::ErrorKind, BuiltinId) {
-    match kind {
-        ErrorKind::TypeError => (generated::ErrorKind::TypeError, BuiltinId::TypeError),
-        ErrorKind::RangeError => (generated::ErrorKind::RangeError, BuiltinId::RangeError),
-    }
+    Ok(if function.file == lowering.file.file {
+        function::declare_source_function(lowering.file, function.function, None)
+    } else {
+        lowering.file.reference_function(key)
+    })
 }
 
 pub(super) fn lower_throw(
@@ -247,7 +223,10 @@ pub(super) fn lower_throw(
 ) -> Lowered<ValueId> {
     let [argument] = get_named_arguments(lowering.file, site)?;
     let position = lowering.file.hir[site.call].pos;
-    let (error_kind, constructor) = get_thrown_error(kind);
+    let (error_kind, constructor) = match kind {
+        ErrorKind::TypeError => (generated::ErrorKind::TypeError, BuiltinId::TypeError),
+        ErrorKind::RangeError => (generated::ErrorKind::RangeError, BuiltinId::RangeError),
+    };
     match find_constant(lowering.file, argument) {
         Some(Constant::String(text)) => {
             let message = lowering.file.intern_atom(text);
@@ -268,8 +247,7 @@ pub(super) fn lower_throw(
             lowering.set_position(position);
             let constructor = lowering.emit_locked_builtin(constructor);
             let arguments = Arguments::Values(smallvec![message]);
-            let call_site = CallSite::default();
-            let error = lowering.emit_construct(constructor, None, arguments, call_site);
+            let error = lowering.emit_construct(constructor, arguments, None);
             lowering.emit_throw(error);
         }
     }

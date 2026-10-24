@@ -132,7 +132,7 @@ struct Model {
 enum Rule {
     DefinesEverything,
     LeavesToEarlierFiles,
-    // What the first form did: a file does not go on to what the fields of such a type name, whatever its level.
+    // A file does not go on to what the fields of such a type name, whatever its level.
     LeavesWithoutLevels,
 }
 

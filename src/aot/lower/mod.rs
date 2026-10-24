@@ -54,6 +54,7 @@ pub use self::fragment::{Fragment, ModuleFragment};
 pub(crate) use self::layouts::late_answers;
 pub use self::layouts::{DefinedObjectType, DefinedObjectTypes, ObjectTypeKey};
 pub use self::module::{LeftOutDeclarations, LibraryFunctions, collect_library_functions};
+pub use self::validate::{PlanInputs, PlannedCall, PlannedFile, plan_validated_calls};
 
 pub(crate) use self::context::{FileLowering, FunctionLowering};
 pub(crate) use self::convert::FamilyFacts;
@@ -119,10 +120,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 self.lower_implicit_constructor(function, class.class);
             }
             FunctionKey::InstanceInitializer(class) => {
-                self.lower_instance_initializer(function, class.class);
+                self.lower_initializer(function, class.class, false);
             }
             FunctionKey::StaticInitializer(class) => {
-                self.lower_static_initializer(function, class.class);
+                self.lower_initializer(function, class.class, true);
             }
             FunctionKey::AccessorGetter { member, .. } => {
                 self.lower_accessor_function(function, member, MethodKind::Getter);
@@ -144,15 +145,6 @@ fn lower_source_body(file: &mut FileLowering<'_, '_, '_, '_>, function: Function
     };
     if file.inputs.library_functions.is_left_out(written) {
         file.lower_left_out_function(function);
-        return;
-    }
-    if file
-        .inputs
-        .modules
-        .inner_module(file.file, source)
-        .is_some()
-    {
-        file.lower_inner_module_body(function, source);
         return;
     }
     match file.hir.runtime_function_kind(source) {

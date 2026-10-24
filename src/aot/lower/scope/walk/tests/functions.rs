@@ -2,8 +2,8 @@ use bun_sema::bind::Decl;
 use bun_sema::hir::{FnKind, StmtKind};
 
 use super::{
-    created_at, creator_of, has_symbol_use, has_use, initialized_at, slots_used_by, used_slots,
-    walked, with_walk,
+    created_at, creator_of, has_symbol_use, has_use, hoisted_to, initialized_at, slots_used_by,
+    used_slots, walked, with_walk,
 };
 use crate::ir::FunctionKey;
 use crate::lower::scope::testing::{
@@ -42,10 +42,7 @@ fn implicit_block_function_is_hoisted_to_its_block() {
         let scope = bound.own_scope(statement);
         assert_ne!(scope, file_scope(hir, bound));
         assert_eq!(walk.hoisted_functions, [(scope, symbol, function)]);
-        assert_eq!(
-            walk.functions[walked(walk, function).index()].hoisted_to,
-            Some(scope)
-        );
+        assert_eq!(hoisted_to(walk, function), Some(scope));
         assert!(!walk.is_repeated_scope[scope.idx()]);
     });
     let repeated = "for (var i = 0; i < 2; i++) if (i) function f() {}";
@@ -63,10 +60,7 @@ fn hoisted_function_names_its_scope() {
         let symbol = bound.declared_symbol(Decl::Fn(function));
         let block = first_statement(hir, |kind| matches!(kind, StmtKind::Block(_)));
         let scope = bound.own_scope(block);
-        assert_eq!(
-            walk.functions[walked(walk, function).index()].hoisted_to,
-            Some(scope)
-        );
+        assert_eq!(hoisted_to(walk, function), Some(scope));
         assert_eq!(walk.hoisted_functions, [(scope, symbol, function)]);
         assert_eq!(
             walk.symbol_initializations[symbol.idx()],
@@ -81,10 +75,7 @@ fn function_expression_is_not_hoisted() {
     with_walk(&[("main.mjs", source)], |hir, _, walk| {
         let function = only_function(hir, FnKind::Expr);
         assert!(walk.hoisted_functions.is_empty());
-        assert_eq!(
-            walk.functions[walked(walk, function).index()].hoisted_to,
-            None
-        );
+        assert_eq!(hoisted_to(walk, function), None);
     });
 }
 
@@ -245,12 +236,10 @@ fn wrapper_arguments_object_is_used_by_module_body() {
             [(file_scope(hir, bound), ScopeSlot::ArgumentsBinding)]
         );
     });
-    with_walk(
-        &[("main.mjs", "export default () => typeof arguments;")],
-        |_, _, walk| {
-            assert!(used_slots(walk).is_empty());
-        },
-    );
+    let source = "export default () => typeof arguments;";
+    with_walk(&[("main.mjs", source)], |_, _, walk| {
+        assert!(used_slots(walk).is_empty());
+    });
 }
 
 #[test]

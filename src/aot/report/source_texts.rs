@@ -129,21 +129,17 @@ impl<'t> ModuleLocator<'t> {
     }
 
     pub fn source_line(&mut self, position: Position) -> Vec<u8> {
-        let Some(mut located) = self.locate_position(position) else {
+        if !self.has_text(position.module) {
             return Vec::new();
-        };
+        }
+        let unlocated = new_driver_diagnostic(0, Category::Message, Vec::new(), &[]);
+        let mut located = self.locate(position, unlocated);
         let index = located.line.saturating_sub(located.source_line) as usize;
         if index < located.source.len() {
             located.source.swap_remove(index)
         } else {
             Vec::new()
         }
-    }
-
-    fn locate_position(&mut self, position: Position) -> Option<driver::Diagnostic> {
-        self.texts.get(position.module)?;
-        let unlocated = new_driver_diagnostic(0, Category::Message, Vec::new(), &[]);
-        Some(self.locate(position, unlocated))
     }
 }
 

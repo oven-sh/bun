@@ -1,0 +1,5 @@
+684 of 684 are the object that went in
+{"b":1} true {"b":"x"}
+true true
+{"first":[1,2],"second":[1,"x",3]} true
+true length 0 1

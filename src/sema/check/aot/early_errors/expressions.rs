@@ -75,7 +75,6 @@ fn is_in_parameter_decorator(hir: &File, node: Node) -> bool {
 }
 
 impl Checker<'_, '_> {
-    /// TypeScript reads the decorators of a parameter in the context around the function.
     pub(in crate::check) fn is_await_refused_at(&self, file: FileId, node: Node) -> bool {
         let hir = self.hir(file);
         self.is_in_compile_build(file)

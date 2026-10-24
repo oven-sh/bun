@@ -15,7 +15,6 @@ mod tests {
 
     const BUN_TYPES: &[u8] = include_bytes!("../../../packages/bun-types/bun.d.ts");
     const TAGGED_ALIAS_COUNT: usize = 17;
-    const EMPTY_PROGRAM: [(&str, &str); 1] = [("main.ts", "export {};")];
     const PROGRAM_WITH_OTHER_DECLARATIONS: [(&str, &str); 3] = [
         (
             "main.ts",
@@ -111,19 +110,13 @@ mod tests {
     }
 
     #[test]
-    fn every_build_has_them_as_types_only() {
-        with_application_files(&EMPTY_PROGRAM, |files, declarations| {
+    fn every_build_has_them_as_types_only_and_global_bun_has_members_of_module() {
+        with_application_files(&[("main.ts", "export {};")], |files, declarations| {
             assert_eq!(files.role(declarations), FileRole::TypesOnly);
             assert!(!files.is_compiled(declarations));
             assert!(!files.hir(declarations).has_errors);
             assert!(!files.module(declarations).is_module());
             assert!(files_declaring(files, bun_module(files)).contains(&declarations));
-        });
-    }
-
-    #[test]
-    fn global_bun_has_members_of_module() {
-        with_application_files(&EMPTY_PROGRAM, |files, declarations| {
             let global = global_bun(files);
             let schema = member_of(files, global, b"Schema");
             for member in [

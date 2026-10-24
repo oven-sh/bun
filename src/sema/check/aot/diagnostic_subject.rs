@@ -3,13 +3,11 @@ use crate::check::Checker;
 use crate::program::{Files, Sym};
 use crate::types::{Origin, TypeData, TypeId};
 
-/// The symbol or module specifier that an error is about. A build reads this and the error code, never the message text.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub enum DiagnosticSubject {
     #[default]
     None,
     ModuleSpecifier(Atom),
-    /// The module, namespace, class or interface that a member lookup failed in.
     MemberContainer(Sym),
 }
 
@@ -22,7 +20,6 @@ impl DiagnosticSubject {
     }
 }
 
-/// The module "bun", the type of `import.meta` and the type of `Error`. Without `@types/bun` they are declared with only a few of their members.
 pub fn containers_completed_by_bun_types(files: &Files<'_>) -> [Option<Sym>; 3] {
     let bun_module = files
         .atoms

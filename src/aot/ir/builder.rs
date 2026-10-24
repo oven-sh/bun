@@ -3,13 +3,13 @@ use core::ops::Range;
 use smallvec::SmallVec;
 
 use super::entry_parameters::EntryPosition;
-use super::finish::{self, FinishScratch};
+use super::finish::FinishScratch;
 use super::generated::{
     BlockFrequency, BlockRole, EntryParameter, Function, Opcode, TerminatorKind,
     visit_terminator_fields, visit_value_fields,
 };
 use super::ids::{BlockId, Id, TypeId, ValueId};
-use super::ssa::{self, SsaScratch, SsaState};
+use super::ssa::SsaState;
 
 pub(super) const MAX_SPARE_VALUES: usize = 1 << 16;
 pub(super) const MAX_SPARE_FIELD_WORDS: usize = 1 << 18;
@@ -40,11 +40,7 @@ pub struct Edge<'a> {
 
 impl<'a> Edge<'a> {
     pub fn to(block: BlockId) -> Edge<'a> {
-        Edge {
-            block,
-            arguments: &[],
-            proofs: &[],
-        }
+        Edge::with_arguments(block, &[])
     }
 
     pub fn with_arguments(block: BlockId, arguments: &'a [ValueId]) -> Edge<'a> {
@@ -66,29 +62,11 @@ impl<'a> Edge<'a> {
 
 #[derive(Default)]
 pub struct BuilderScratch {
-    values: Vec<PendingValue>,
-    field_words: Vec<u32>,
-    blocks: Vec<PendingBlock>,
-    ssa: SsaScratch,
-    finish: FinishScratch,
-}
-
-impl BuilderScratch {
-    pub(super) fn recycle(
-        values: Vec<PendingValue>,
-        field_words: Vec<u32>,
-        blocks: Vec<PendingBlock>,
-        ssa: SsaScratch,
-        finish: FinishScratch,
-    ) -> BuilderScratch {
-        BuilderScratch {
-            values: recycle_vector(values, MAX_SPARE_VALUES),
-            field_words: recycle_vector(field_words, MAX_SPARE_FIELD_WORDS),
-            blocks: recycle_vector(blocks, MAX_SPARE_BLOCKS),
-            ssa,
-            finish,
-        }
-    }
+    pub(super) values: Vec<PendingValue>,
+    pub(super) field_words: Vec<u32>,
+    pub(super) blocks: Vec<PendingBlock>,
+    pub(super) ssa: SsaState,
+    pub(super) finish: FinishScratch,
 }
 
 pub(super) fn recycle_vector<T>(mut vector: Vec<T>, max_spare_capacity: usize) -> Vec<T> {
@@ -185,7 +163,7 @@ impl FunctionBuilder {
             blocks: scratch.blocks,
             current_block: ENTRY_BLOCK,
             position: None,
-            ssa: SsaState::new(scratch.ssa),
+            ssa: scratch.ssa,
             finish_scratch: scratch.finish,
         };
         let entry = builder.create_block(None);
@@ -445,26 +423,5 @@ impl FunctionBuilder {
 
     pub fn create_variable(&mut self, declared: Option<TypeId>) -> LocalVariable {
         self.ssa.create_variable(declared)
-    }
-
-    pub fn write_variable(&mut self, variable: LocalVariable, value: ValueId) {
-        ssa::write_variable(self, variable, value);
-    }
-
-    pub fn read_variable(&mut self, variable: LocalVariable) -> ValueId {
-        let block = self.current_block;
-        ssa::read_variable_in(self, variable, block)
-    }
-
-    pub fn declare_loop_header(&mut self, block: BlockId, modified: &[LocalVariable]) {
-        ssa::declare_loop_header(self, block, modified);
-    }
-
-    pub fn seal(&mut self, block: BlockId) {
-        ssa::seal(self, block);
-    }
-
-    pub fn finish(self) -> (Function, BuilderScratch) {
-        finish::finish(self)
     }
 }

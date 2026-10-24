@@ -35,11 +35,8 @@ struct RuntimeFile {
     contents: Option<&'static [u8]>,
 }
 
-#[derive(Default)]
-struct DirectoryEntries {
-    files: Vec<Vec<u8>>,
-    directories: Vec<Vec<u8>>,
-}
+/// The files and the directories.
+type DirectoryEntries = (Vec<Vec<u8>>, Vec<Vec<u8>>);
 
 pub(crate) struct RuntimeModules {
     archive: &'static Archive,
@@ -99,9 +96,8 @@ impl RuntimeModules {
         self.directories.contains_key(path)
     }
 
-    pub(crate) fn entries(&self, path: &[u8]) -> Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)> {
-        let entries = self.directories.get(path)?;
-        Some((entries.files.clone(), entries.directories.clone()))
+    pub(crate) fn entries(&self, path: &[u8]) -> Option<DirectoryEntries> {
+        self.directories.get(path).cloned()
     }
 
     pub(crate) fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
@@ -112,20 +108,12 @@ impl RuntimeModules {
         }
     }
 
-    pub(crate) fn manifest(&self) -> &'static Manifest {
-        self.archive.manifest()
-    }
-
-    pub(crate) fn omits_builtin_modules(&self) -> bool {
-        self.omits_builtin_modules
-    }
-
     pub(crate) fn resolve_module(
         &self,
         specifier: &[u8],
         importer: &[u8],
     ) -> Option<RuntimeResolution> {
-        let manifest = self.manifest();
+        let manifest = self.archive.manifest();
         let internal_module = self
             .files
             .get(importer)
@@ -136,7 +124,7 @@ impl RuntimeModules {
             None => resolve_alias(manifest, specifier, self.aliases)?,
         };
         Some(match resolution {
-            RuntimeResolution::Module(_) if self.omits_builtin_modules() => {
+            RuntimeResolution::Module(_) if self.omits_builtin_modules => {
                 RuntimeResolution::HostValue
             }
             RuntimeResolution::Module(_) | RuntimeResolution::HostValue => resolution,
@@ -190,8 +178,8 @@ impl RuntimeModules {
     }
 
     pub(crate) fn function_file_path(&self, function: RuntimeFunction) -> Option<Vec<u8>> {
-        match self.manifest().function_file(function.0) {
-            Some(_) if self.omits_builtin_modules() => None,
+        match self.archive.manifest().function_file(function.0) {
+            Some(_) if self.omits_builtin_modules => None,
             Some(archive_name) => Some(virtual_path(archive_name)),
             None => {
                 let file = table::runtime_function(function)?.file;
@@ -220,15 +208,15 @@ impl RuntimeModules {
     }
 
     pub(crate) fn function_files_without_ids(&self) -> impl Iterator<Item = Vec<u8>> + '_ {
-        let files = match self.omits_builtin_modules() {
+        let files = match self.omits_builtin_modules {
             true => None,
-            false => Some(self.manifest().function_files_without_ids()),
+            false => Some(self.archive.manifest().function_files_without_ids()),
         };
         files.into_iter().flatten().map(virtual_path)
     }
 
     fn source_path(&self, registry_id: u32) -> Option<&'static [u8]> {
-        if self.omits_builtin_modules() {
+        if self.omits_builtin_modules {
             return None;
         }
         self.archive.path(registry_id)
@@ -330,20 +318,12 @@ fn collect_files(archive: &'static Archive) -> FxHashMap<Vec<u8>, RuntimeFile> {
     for name in DECLARATION_FILES {
         add(name, RuntimeFileKind::Declarations, None);
     }
-    add(b"tsconfig.json", RuntimeFileKind::Configuration, None);
-    let package_json = Some(PACKAGE_JSON);
-    add(
-        b"package.json",
-        RuntimeFileKind::Configuration,
-        package_json,
-    );
+    let configuration = RuntimeFileKind::Configuration;
+    add(b"tsconfig.json", configuration, None);
+    add(b"package.json", configuration, Some(PACKAGE_JSON));
     for &(name, text) in prelude::FILES {
-        let contents = Some(text.as_bytes());
-        add(
-            &prelude_archive_name(name),
-            RuntimeFileKind::Functions,
-            contents,
-        );
+        let name = prelude_archive_name(name);
+        add(&name, RuntimeFileKind::Functions, Some(text.as_bytes()));
     }
     for name in manifest.module_declarations() {
         let file = RuntimeFile {
@@ -372,8 +352,8 @@ fn collect_directories(
             let is_listed = directories.contains_key(directory);
             let entries = directories.entry(directory.to_vec()).or_default();
             let names = match is_child_file {
-                true => &mut entries.files,
-                false => &mut entries.directories,
+                true => &mut entries.0,
+                false => &mut entries.1,
             };
             names.push(child[directory.len() + 1..].to_vec());
             if is_listed || directory == top_directory {
@@ -384,8 +364,8 @@ fn collect_directories(
         }
     }
     for entries in directories.values_mut() {
-        entries.files.shared_sort_unstable();
-        entries.directories.shared_sort_unstable();
+        entries.0.shared_sort_unstable();
+        entries.1.shared_sort_unstable();
     }
     directories
 }
@@ -436,7 +416,7 @@ mod tests {
     fn module_sources_are_listed_at_archive_paths() {
         let runtime = runtime_modules();
         let mut source_count = 0;
-        for module in runtime.manifest().modules() {
+        for module in runtime.archive.manifest().modules() {
             let Some(path) = runtime.archive.path(module.id) else {
                 assert!(module.path.is_none(), "module {}", module.id);
                 continue;
@@ -508,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn find_modules_matches_both_spellings() {
+    fn find_modules_matches_public_specifiers_by_prefix_and_suffix() {
         let runtime = runtime_modules();
         let fs = host_module_id(RuntimeModule::NodeFs);
         assert!(runtime.find_modules(b"node:f", b"").contains(&fs));
@@ -517,25 +497,11 @@ mod tests {
         let every_module = runtime.find_modules(b"", b"");
         assert!(every_module.contains(&fs));
         assert!(every_module.is_sorted_by(|a, b| a < b));
-    }
-
-    #[test]
-    fn find_modules_matches_aliases_of_other_names() {
-        let runtime = runtime_modules();
         let ws = host_module_id(RuntimeModule::Ws);
         assert_eq!(runtime.find_modules(b"ws/lib/", b""), [ws]);
         let util = host_module_id(RuntimeModule::NodeUtil);
         assert_eq!(runtime.find_modules(b"node:sy", b""), [util]);
-    }
-
-    #[test]
-    fn find_modules_needs_room_for_prefix_and_suffix() {
-        assert!(runtime_modules().find_modules(b"node:fs", b"fs").is_empty());
-    }
-
-    #[test]
-    fn find_modules_skips_specifiers_without_public_module() {
-        let runtime = runtime_modules();
+        assert!(runtime.find_modules(b"node:fs", b"fs").is_empty());
         assert!(runtime.find_modules(b"internal/validators", b"").is_empty());
         assert!(runtime.find_modules(b"bun:main", b"").is_empty());
         assert!(runtime.find_modules(b"./", b"").is_empty());
@@ -623,16 +589,16 @@ mod tests {
     fn entries_name_files_and_directories() {
         let runtime = runtime_modules();
         let mut file_count = 0;
-        for (directory, entries) in &runtime.directories {
-            for name in &entries.files {
+        for (directory, (files, directories)) in &runtime.directories {
+            for name in files {
                 let path = [&directory[..], b"/", &name[..]].concat();
                 assert!(runtime.file_kind(&path).is_some(), "{}", BStr::new(&path));
             }
-            for name in &entries.directories {
+            for name in directories {
                 let path = [&directory[..], b"/", &name[..]].concat();
                 assert!(runtime.is_directory(&path), "{}", BStr::new(&path));
             }
-            file_count += entries.files.len();
+            file_count += files.len();
         }
         let listed = runtime.files.values().filter(|it| !it.comes_with_module);
         assert_eq!(file_count, listed.count());
@@ -651,7 +617,7 @@ mod tests {
         let configuration = Some(RuntimeFileKind::Configuration);
         assert_eq!(kind_at(b"tsconfig.json"), configuration);
         assert_eq!(kind_at(b"package.json"), configuration);
-        for file in runtime.manifest().function_files() {
+        for file in runtime.archive.manifest().function_files() {
             assert_eq!(kind_at(file), Some(RuntimeFileKind::Functions));
         }
         for path in runtime.prelude_paths() {
@@ -713,7 +679,7 @@ mod tests {
     fn replaced_source_keeps_kind_and_listing() {
         let unchanged = runtime_modules();
         let module: &[u8] = b"/$bun/js/node/os.ts";
-        let functions = virtual_path(&unchanged.manifest().function_files()[0]);
+        let functions = virtual_path(&unchanged.archive.manifest().function_files()[0]);
         let sources = [
             (module.to_vec(), b"export {};".to_vec()),
             (functions.clone(), b"export function probe() {}".to_vec()),
@@ -759,7 +725,7 @@ mod tests {
     #[test]
     fn omitted_builtin_modules_are_host_values() {
         let runtime = RuntimeModules::new(Archive::embedded(), true);
-        assert!(runtime.omits_builtin_modules());
+        assert!(runtime.omits_builtin_modules);
         for specifier in [&b"fs"[..], b"node:fs", b"bun:jsc", b"bun:main"] {
             assert_eq!(runtime.resolve_module(specifier, b""), HOST_VALUE);
         }

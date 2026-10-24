@@ -228,68 +228,6 @@ pub struct OperandDemand {
     pub objects: ObjectDemand,
 }
 
-/// What an operand of a call is, as far as the text of the call shows it.
-#[derive(Copy, Clone, PartialEq, Debug)]
-pub enum OperandShape {
-    Undefined,
-    Null,
-    Boolean,
-    /// With the number, where it is a constant.
-    Number(Option<f64>),
-    String,
-    Symbol,
-    BigInt,
-    /// An object literal as `ObjectDemand::Literal` describes it.
-    ObjectLiteral,
-    /// An array literal without holes and spread elements.
-    ArrayLiteral {
-        holds_only_literals: bool,
-    },
-    /// Any other object.
-    Object,
-}
-
-impl OperandDemand {
-    /// `None`: the call has no argument at the position.
-    pub fn is_met_by(&self, operand: Option<OperandShape>) -> bool {
-        let Some(operand) = operand else {
-            return self.primitives.contains(OperandKinds::NOT_PASSED);
-        };
-        let kind = match operand {
-            OperandShape::Undefined => OperandKinds::UNDEFINED,
-            OperandShape::Null => OperandKinds::NULL,
-            OperandShape::Boolean => OperandKinds::BOOLEAN,
-            OperandShape::Number(number) => {
-                let is_in_range = match (self.integers, number) {
-                    (None, _) => true,
-                    (Some(_), None) => false,
-                    (Some((first, last)), Some(number)) => {
-                        number.fract() == 0.0 && (first as f64) <= number && number <= (last as f64)
-                    }
-                };
-                return is_in_range && self.primitives.contains(OperandKinds::NUMBER);
-            }
-            OperandShape::String => OperandKinds::STRING,
-            OperandShape::Symbol => OperandKinds::SYMBOL,
-            OperandShape::BigInt => OperandKinds::BIG_INT,
-            OperandShape::ObjectLiteral => {
-                return matches!(self.objects, ObjectDemand::Literal | ObjectDemand::Any);
-            }
-            OperandShape::ArrayLiteral {
-                holds_only_literals,
-            } => {
-                return match self.objects {
-                    ObjectDemand::None => false,
-                    ObjectDemand::Literal | ObjectDemand::ArrayLiteral | ObjectDemand::Any => true,
-                    ObjectDemand::ArrayLiteralOfLiterals => holds_only_literals,
-                };
-            }
-            OperandShape::Object => return self.objects == ObjectDemand::Any,
-        };
-        self.primitives.contains(kind)
-    }
-}
-
 /// Generated from the columns of an overload from which the engine derives the effects of a call.
 pub struct RemovableCall {
     pub builtin: BuiltinId,
@@ -299,30 +237,4 @@ pub struct RemovableCall {
     pub parameters: &'static [OperandDemand],
     /// The last of `parameters` takes every further argument.
     pub has_rest: bool,
-}
-
-impl RemovableCall {
-    /// `receiver`: `None` where the call has none or nobody knows what it is.
-    pub fn covers(&self, receiver: Option<OperandShape>, arguments: &[OperandShape]) -> bool {
-        if let Some(demand) = self.receiver
-            && (receiver.is_none() || !demand.is_met_by(receiver))
-        {
-            return false;
-        }
-        let (single, rest) = match self.parameters.split_last() {
-            Some((last, single)) if self.has_rest => (single, Some(last)),
-            _ => (self.parameters, None),
-        };
-        let further = arguments.get(single.len()..).unwrap_or_default();
-        single
-            .iter()
-            .enumerate()
-            .all(|(position, demand)| demand.is_met_by(arguments.get(position).copied()))
-            && match rest {
-                Some(demand) => further
-                    .iter()
-                    .all(|&argument| demand.is_met_by(Some(argument))),
-                None => further.is_empty(),
-            }
-    }
 }

@@ -40,29 +40,25 @@ pub use state::UnitIds;
 pub use unit::LinkUnit;
 
 use crate::builtins::RuntimeFunction;
-use crate::ir::{
-    InParallel, Program, PropertyKeyTable, StringTable, TypeTable, drop_each, for_each_mut,
-};
+use crate::ir::{InParallel, Program, drop_each, for_each_mut};
 use crate::load::{PerProject, ProgramFile, ProjectId, SourceKind, Sources};
 use crate::modules::{ModuleGraph, Shape};
 use crate::statistics::{Counters, LimitId, LimitValues, StatisticId};
-use bun_sema::atom::Interner;
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::LoadedProgram;
 use definitions::{
-    MergeInput, choose_definitions, forget_library_layouts_without_definition,
+    MergedUnits, choose_definitions, forget_library_layouts_without_definition,
     synthetic_export_keys,
 };
-use keys::{MergedKeys, merge_keys};
-use marks::{MarkInput, mark};
+use keys::merge_keys;
+use marks::mark;
 use module_records::{RecordInput, build_module_records};
 use module_table::{collect_module_origins, collect_modules};
 use move_definitions::{MoveInput, move_definitions};
-use names::NameInput;
-use numbering::{NumberingInput, number_program};
+use numbering::{ProgramDefinitions, number_program};
 use property_keys::merge_property_keys;
-use state::{Definitions, ModuleRecords, ModuleTable, ProgramTables, Retained};
+use state::{Definitions, ModuleTable, Retained};
 use step_times::StepTimes;
 use strings::merge_strings;
 use types::{
@@ -81,6 +77,8 @@ pub struct LinkProject<'a, 's> {
     /// The files that were not lowered because the program does not reach them, in ascending order.
     pub unreached_files: &'a [FileId],
 }
+
+pub(crate) type Projects<'a, 's> = PerProject<LinkProject<'a, 's>>;
 
 pub struct LinkInput<'a, 's> {
     pub units: Vec<LinkUnit>,
@@ -139,34 +137,13 @@ pub enum LinkError {
     },
 }
 
-fn key_context<'a>(
-    projects: &PerProject<LinkProject<'a, '_>>,
-    project: ProjectId,
-) -> KeyContext<'a> {
+fn key_context<'a>(projects: &Projects<'a, '_>, project: ProjectId) -> KeyContext<'a> {
     KeyContext {
         project,
         graph: projects.get(project).graph,
         runtime_sources: projects.runtime.sources,
         rehoming: None,
     }
-}
-
-struct ResolvedKeys {
-    units: Vec<LinkUnit>,
-    modules: ModuleTable,
-    functions: MergedKeys<ProgramFunctionKey>,
-    layouts: MergedKeys<ProgramLayoutKey>,
-    variables: MergedKeys<ProgramVariableKey>,
-    definitions: Definitions,
-    retained: Retained,
-}
-
-pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
-    let in_parallel = input.in_parallel;
-    let mut linked = link_while(input, &mut |_| {})?;
-    let body_remap = core::mem::take(&mut linked.body_remap);
-    linked.program.functions = body_remap.into_program_functions(in_parallel);
-    Ok(linked)
 }
 
 /// Calls `meanwhile` with the keys of the program, once, on the calling thread, unless link fails first.
@@ -183,32 +160,50 @@ pub fn link_while(
     } = input;
     let atoms = &projects.application.loaded.files().atoms;
     let mut times = StepTimes::new();
-    let ResolvedKeys {
-        mut units,
-        modules,
-        functions,
-        layouts,
-        variables,
-        definitions,
-        mut retained,
-    } = resolve_keys(units, &projects, limits, in_parallel, beside, &mut times)?;
+    let mut units = order_units(units, &projects)?;
+    check_limits(&units, &projects, limits)?;
+    let ((modules, synthetic_exports), (functions, layouts)) = run_beside(
+        beside,
+        || {
+            let modules = collect_modules(&projects, &units);
+            (modules, synthetic_export_keys(&projects))
+        },
+        || {
+            let functions = collect_key_lists(&units, |unit| &unit.functions);
+            let layouts = collect_key_lists(&units, |unit| &unit.layouts);
+            (
+                merge_keys(&functions, in_parallel),
+                merge_keys(&layouts, in_parallel),
+            )
+        },
+    );
+    forget_library_layouts_without_definition(&mut units, &layouts);
+    let mut variable_lists = collect_key_lists(&units, |unit| &unit.variables);
+    variable_lists.push(&synthetic_exports);
+    let variables = merge_keys(&variable_lists, in_parallel);
+    drop(synthetic_exports);
+    times.end_step(StatisticId::LinkMergeKeysNanoseconds);
+
+    let merged = MergedUnits {
+        units: &units,
+        modules: &modules,
+        functions: &functions,
+        layouts: &layouts,
+        variables: &variables,
+        in_parallel,
+    };
+    let mut errors = Vec::new();
+    let definitions = choose_definitions(&merged, &projects, beside, &mut errors);
+    times.end_step(StatisticId::LinkChooseDefinitionsNanoseconds);
+    let mut retained = mark(&merged, &projects, &definitions, &mut errors);
+    times.end_step(StatisticId::LinkMarkNanoseconds);
+    if !errors.is_empty() {
+        return Err(errors);
+    }
 
     let (mut numbering, (merged_strings, merged_types)) = run_beside(
         beside,
-        || {
-            number_program(NumberingInput {
-                units: &units,
-                functions: &functions,
-                layouts: &layouts,
-                variables: &variables,
-                definitions: &definitions,
-                retained: &retained,
-                modules: &modules,
-                strings: vec![Vec::new(); units.len()],
-                types: vec![Vec::new(); units.len()],
-                in_parallel,
-            })
-        },
+        || number_program(&merged, &definitions, &retained),
         || {
             run_beside(
                 beside,
@@ -217,6 +212,8 @@ pub fn link_while(
             )
         },
     );
+    debug_assert_eq!(merged_strings.local_to_program.len(), units.len());
+    debug_assert_eq!(merged_types.types.len(), units.len());
     let mut strings = merged_strings.table;
     let merged_ids = merged_strings
         .local_to_program
@@ -272,14 +269,14 @@ pub fn link_while(
         beside,
         || intern_prepared_types(prepared_types),
         || {
+            let defined =
+                ProgramDefinitions::new(&functions, &layouts, &variables, &definitions, &retained);
             move_definitions(
                 &mut units,
                 &MoveInput {
-                    functions: &functions,
+                    defined,
                     layouts: &layouts,
-                    variables: &variables,
                     definitions: &definitions,
-                    retained: &retained,
                     numbering: &numbering,
                     atoms,
                     in_parallel,
@@ -342,39 +339,11 @@ pub fn link_while(
     );
     times.end_step(StatisticId::LinkMoveDefinitionsNanoseconds);
 
-    let name_tables = (strings, merged_property_keys.table, types);
     let functions_by_unit = core::mem::take(&mut tables.functions_by_unit);
     let body_remap = BodyRemap::new(core::mem::take(&mut numbering.units), functions_by_unit);
-    let program = create_program(name_tables, tables, records);
-    let module_origins = collect_module_origins(&projects, &modules, &numbering);
-    count_definitions(&definitions, &retained, &mut times.counters);
-    count_module_forms(&projects, &modules, &mut times.counters);
-    let names = ProgramNames::new(NameInput {
-        program: &program,
-        functions: &body_remap,
-        module_origins,
-        beside,
-    });
-    times.end_step(StatisticId::LinkNameProgramNanoseconds);
-    Ok(Linked {
-        program,
-        body_remap,
-        names,
-        keys,
-        writes_preload,
-        counters: times.counters,
-        leftovers: Box::new((units, numbering, retained, functions, layouts, variables)),
-    })
-}
-
-fn create_program(
-    (strings, property_keys, types): (StringTable, PropertyKeyTable, TypeTable),
-    tables: ProgramTables,
-    records: ModuleRecords,
-) -> Program {
-    Program {
+    let program = Program {
         strings,
-        property_keys,
+        property_keys: merged_property_keys.table,
         types,
         type_sites: tables.type_sites,
         expected_results: tables.expected_results,
@@ -388,81 +357,20 @@ fn create_program(
         entries: records.entries,
         runtime_functions: records.runtime_functions,
         web_assembly_modules: records.web_assembly_modules,
-    }
-}
-
-fn resolve_keys(
-    units: Vec<LinkUnit>,
-    projects: &PerProject<LinkProject<'_, '_>>,
-    limits: &LimitValues,
-    in_parallel: InParallel<'_>,
-    beside: Beside<'_>,
-    times: &mut StepTimes,
-) -> Result<ResolvedKeys, Vec<LinkError>> {
-    let atoms: &Interner<'_> = &projects.application.loaded.files().atoms;
-    let mut units = order_units(units, projects)?;
-    check_limits(&units, projects, limits)?;
-    let ((modules, synthetic_exports), (functions, layouts)) = run_beside(
-        beside,
-        || {
-            let modules = collect_modules(projects, &units, atoms);
-            (modules, synthetic_export_keys(projects))
-        },
-        || {
-            let functions = collect_key_lists(&units, |unit| &unit.functions);
-            let layouts = collect_key_lists(&units, |unit| &unit.layouts);
-            (
-                merge_keys(&functions, in_parallel),
-                merge_keys(&layouts, in_parallel),
-            )
-        },
-    );
-    forget_library_layouts_without_definition(&mut units, &layouts);
-    let mut variable_lists = collect_key_lists(&units, |unit| &unit.variables);
-    variable_lists.push(&synthetic_exports);
-    let variables = merge_keys(&variable_lists, in_parallel);
-    times.end_step(StatisticId::LinkMergeKeysNanoseconds);
-
-    let mut errors = Vec::new();
-    let definitions = choose_definitions(
-        &MergeInput {
-            units: &units,
-            projects,
-            modules: &modules,
-            functions: &functions,
-            layouts: &layouts,
-            variables: &variables,
-            in_parallel,
-            beside,
-        },
-        &mut errors,
-    );
-    times.end_step(StatisticId::LinkChooseDefinitionsNanoseconds);
-    let retained = mark(
-        &MarkInput {
-            units: &units,
-            projects,
-            modules: &modules,
-            functions: &functions,
-            layouts: &layouts,
-            variables: &variables,
-            definitions: &definitions,
-            in_parallel,
-        },
-        &mut errors,
-    );
-    times.end_step(StatisticId::LinkMarkNanoseconds);
-    if !errors.is_empty() {
-        return Err(errors);
-    }
-    Ok(ResolvedKeys {
-        units,
-        modules,
-        functions,
-        layouts,
-        variables,
-        definitions,
-        retained,
+    };
+    let module_origins = collect_module_origins(&projects, &modules, &numbering);
+    count_definitions(&definitions, &retained, &mut times.counters);
+    count_module_forms(&projects, &modules, &mut times.counters);
+    let names = ProgramNames::new(&program, &body_remap, module_origins, beside);
+    times.end_step(StatisticId::LinkNameProgramNanoseconds);
+    Ok(Linked {
+        program,
+        body_remap,
+        names,
+        keys,
+        writes_preload,
+        counters: times.counters,
+        leftovers: Box::new((units, numbering, retained, functions, layouts, variables)),
     })
 }
 
@@ -473,7 +381,7 @@ fn collect_key_lists<K>(
     units.iter().map(key_list).collect()
 }
 
-fn compiled_files(projects: &PerProject<LinkProject<'_, '_>>) -> Vec<ProgramFile> {
+fn compiled_files(projects: &Projects<'_, '_>) -> Vec<ProgramFile> {
     let mut files = Vec::new();
     for project in ProjectId::ALL {
         let compiled = projects.get(project).loaded.files().compiled_files().iter();
@@ -485,17 +393,15 @@ fn compiled_files(projects: &PerProject<LinkProject<'_, '_>>) -> Vec<ProgramFile
 }
 
 // The lower stage leaves out a constant text that has an early error, and what the program does not reach.
-fn is_unit_optional(projects: &PerProject<LinkProject<'_, '_>>, file: ProgramFile) -> bool {
+fn is_unit_optional(projects: &Projects<'_, '_>, file: ProgramFile) -> bool {
     let project = projects.get(file.project);
-    if project.unreached_files.binary_search(&file.file).is_ok() {
-        return true;
-    }
-    matches!(project.sources.kind(file.file), SourceKind::EvaluatedText)
+    project.unreached_files.binary_search(&file.file).is_ok()
+        || matches!(project.sources.kind(file.file), SourceKind::EvaluatedText)
 }
 
 fn order_units(
     mut units: Vec<LinkUnit>,
-    projects: &PerProject<LinkProject<'_, '_>>,
+    projects: &Projects<'_, '_>,
 ) -> Result<Vec<LinkUnit>, Vec<LinkError>> {
     units.shared_sort_unstable_by_key(|unit| unit.file);
     let mut errors = Vec::new();
@@ -525,7 +431,7 @@ fn order_units(
 
 fn check_limits(
     units: &[LinkUnit],
-    projects: &PerProject<LinkProject<'_, '_>>,
+    projects: &Projects<'_, '_>,
     limits: &LimitValues,
 ) -> Result<(), Vec<LinkError>> {
     let sum = |local_count: fn(&LinkUnit) -> usize| -> u64 {
@@ -555,15 +461,11 @@ fn check_limits(
     }
 }
 
-fn count_module_forms(
-    projects: &PerProject<LinkProject<'_, '_>>,
-    modules: &ModuleTable,
-    counters: &mut Counters,
-) {
+fn count_module_forms(projects: &Projects<'_, '_>, modules: &ModuleTable, counters: &mut Counters) {
     let (mut with_names, mut with_value, mut faces) = (0, 0, 0);
     for &module in &modules.modules {
         let (project, own) = match module {
-            ProgramModule::File(_) | ProgramModule::Inner { .. } => module
+            ProgramModule::File(_) => module
                 .in_own_project()
                 .expect("the module has its text in a file"),
             ProgramModule::Face(_) => {

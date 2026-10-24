@@ -178,39 +178,30 @@ impl RecordBuilder<'_, '_, '_> {
     fn build_modules(&mut self, units: &mut [LinkUnit]) -> Vec<generated::Module> {
         let input = self.input;
         let mut records = Vec::with_capacity(input.numbering.counts.modules);
-        for (index, &module) in input.modules.modules.iter().enumerate() {
-            let Some(id) = input.numbering.modules[index] else {
+        for (index, &module) in (0..).zip(&input.modules.modules) {
+            let Some(id) = input.numbering.modules[index as usize] else {
                 continue;
             };
             debug_assert_eq!(id.index(), records.len());
-            records.push(self.build_module(units, index as u32, module));
+            records.push(match module {
+                ProgramModule::File(file) => self.build_file_record(units, index, file),
+                ProgramModule::Face(file) | ProgramModule::Check(file) => {
+                    self.build_further_record(index, module, file)
+                }
+                ProgramModule::Runtime(runtime_module) => {
+                    let path = self.strings.intern(table::specifier_of(runtime_module));
+                    let mut record = create_record(Interop::RUNTIME, path, path);
+                    record.runtime_module = Some(runtime_module);
+                    record.synthetic_exports = self.build_synthetic_exports(index);
+                    record
+                }
+                ProgramModule::External {
+                    importer,
+                    specifier,
+                } => self.build_external_record(index, importer, specifier),
+            });
         }
         records
-    }
-
-    fn build_module(
-        &mut self,
-        units: &mut [LinkUnit],
-        index: u32,
-        module: ProgramModule,
-    ) -> generated::Module {
-        match module {
-            ProgramModule::File(file) => self.build_file_record(units, index, file),
-            ProgramModule::Inner { file, .. }
-            | ProgramModule::Face(file)
-            | ProgramModule::Check(file) => self.build_further_record(index, module, file),
-            ProgramModule::Runtime(runtime_module) => {
-                let path = self.strings.intern(table::specifier_of(runtime_module));
-                let mut record = create_record(Interop::RUNTIME, path, path);
-                record.runtime_module = Some(runtime_module);
-                record.synthetic_exports = self.build_synthetic_exports(index);
-                record
-            }
-            ProgramModule::External {
-                importer,
-                specifier,
-            } => self.build_external_record(index, importer, specifier),
-        }
     }
 
     fn build_external_record(
@@ -261,7 +252,12 @@ impl RecordBuilder<'_, '_, '_> {
 
         let unit = input.modules.unit_by_module[index as usize];
         if let Some(unit) = unit {
-            take_positions(&mut units[unit as usize], &mut record);
+            let fragment = &mut units[unit as usize].module;
+            record.positions = core::mem::take(&mut fragment.positions);
+            if fragment.has_installed_positions {
+                record.flags |= ModuleFlags::HAS_INSTALLED_POSITIONS;
+            }
+            record.function_text = core::mem::take(&mut fragment.function_text);
         }
         let Some(unit) = unit.filter(|_| !graph.is_library(file.file)) else {
             record.flags = ModuleFlags::IS_LIBRARY;
@@ -308,7 +304,7 @@ impl RecordBuilder<'_, '_, '_> {
         record
     }
 
-    // A record that a file has beside its own: an inner module, the face, the check.
+    // A record that a file has beside its own: the face, the check.
     fn build_further_record(
         &mut self,
         index: u32,
@@ -341,7 +337,7 @@ impl RecordBuilder<'_, '_, '_> {
             ProgramModule::Face(_) => {
                 record.exports = self.build_exports(project, graph.exports_of(own));
             }
-            ProgramModule::Inner { .. } | ProgramModule::Check(_) => {}
+            ProgramModule::Check(_) => {}
             ProgramModule::File(_) | ProgramModule::Runtime(_) | ProgramModule::External { .. } => {
                 unreachable!("the record belongs to a file")
             }
@@ -506,29 +502,28 @@ impl RecordBuilder<'_, '_, '_> {
         project: ProjectId,
         failure: &modules::ModuleFailure,
     ) -> generated::ModuleFailure {
-        if let ModuleFailureKind::NotAProgram { .. } = failure.kind {
-            let sources = self.input.projects.get(project).sources;
-            let path = sources.module_paths(failure.importer).public_path;
-            return generated::ModuleFailure {
-                importer: self.input.id_of(project, ModuleRef::File(failure.importer)),
-                specifier: self.strings.intern(path),
-                exporter: None,
-            };
-        }
         // Where a module lacks a name, the name stands in the place of the specifier.
         let (specifier, exporter) = match failure.kind {
+            ModuleFailureKind::NotAProgram { .. } => {
+                let sources = self.input.projects.get(project).sources;
+                let path = sources.module_paths(failure.importer).public_path;
+                (self.strings.intern(path), None)
+            }
             ModuleFailureKind::Unresolved { specifier, .. }
-            | ModuleFailureKind::UnresolvedAtLoad { specifier, .. } => (specifier, None),
-            ModuleFailureKind::ExportMayBeAbsent { exporter, name } => (name, Some(exporter)),
-            ModuleFailureKind::NotAProgram { .. }
-            | ModuleFailureKind::ExportNotFound { .. }
+            | ModuleFailureKind::UnresolvedAtLoad { specifier, .. } => {
+                (self.intern_atom(specifier), None)
+            }
+            ModuleFailureKind::ExportMayBeAbsent { exporter, name } => {
+                (self.intern_atom(name), Some(exporter))
+            }
+            ModuleFailureKind::ExportNotFound { .. }
             | ModuleFailureKind::ExportAmbiguous { .. } => {
                 unreachable!("a name that cannot be bound stops the build")
             }
         };
         generated::ModuleFailure {
             importer: self.input.id_of(project, ModuleRef::File(failure.importer)),
-            specifier: self.intern_atom(specifier),
+            specifier,
             exporter: exporter.map(|exporter| self.input.id_of(project, exporter)),
         }
     }
@@ -553,14 +548,6 @@ fn is_bundler_helper(source: SourceKind, kind: ModuleKind) -> bool {
         }
         _ => false,
     }
-}
-
-fn take_positions(unit: &mut LinkUnit, record: &mut generated::Module) {
-    record.positions = core::mem::take(&mut unit.module.positions);
-    if unit.module.has_installed_positions {
-        record.flags |= ModuleFlags::HAS_INSTALLED_POSITIONS;
-    }
-    record.function_text = core::mem::take(&mut unit.module.function_text);
 }
 
 fn find_program_id<I: Id>(local: Option<I>, ids: &[Option<I>]) -> Option<I> {

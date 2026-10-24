@@ -8,14 +8,11 @@ use crate::util::FxHashMap;
 use smallvec::SmallVec;
 use std::rc::Rc;
 
-// What the declaration file of a JavaScript file says about its functions. Nobody has held the one against the other.
 pub(super) type DeclaredSignatures = FxHashMap<FnId, SmallVec<[SigId; 1]>>;
 
-// An exported class, its instances, their methods.
 const MAX_DEPTH: u32 = 3;
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
-    // Returns `any` if the declaration file says nothing.
     pub(super) fn find_declared_parameter_type(&mut self, name: PatId) -> TypeId {
         let PatParent::Param(parameter) = self.bound().pat_parent[name.idx()] else {
             return TypeId::ANY;

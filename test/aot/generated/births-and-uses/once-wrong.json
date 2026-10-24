@@ -3963,7 +3963,8 @@
     "changes-nothing-more",
     "changes-nothing-onlyB",
     "changes-nothing-ring",
-    "changes-nothing-symbolKey"
+    "changes-nothing-symbolKey",
+    "discriminants-circle-fields-1"
   ],
   "two kinds of list or collection at one use": [
     "answered-fractions-texts-find",

@@ -16,33 +16,27 @@ use crate::types::{
 use smallvec::SmallVec;
 use std::rc::Rc;
 
-// Something in the queried file that the checker types `any` because nobody annotated it.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(super) enum Subject {
     Binding(SymbolId),
-    // The value destructured by an object pattern.
     Pattern(PatId),
     This(FnId),
     Result(FnId),
     Expression(ExprId),
-    // A variable without an annotation that the checker types `number`. The question is whether it holds int32 only.
     Number(SymbolId),
 }
 
 pub(super) enum UsageState {
-    // Its depth in `Walk::subjects`.
     InProgress(usize),
     Known(Rc<Usage>),
 }
 
 #[derive(Copy, Clone)]
 pub(super) enum TypeState {
-    // Its depth in `TypesInProgress::subjects`.
     InProgress(usize),
     Known(TypeId),
 }
 
-// The subjects in progress.
 #[derive(Default)]
 struct SubjectStack {
     depth: usize,
@@ -71,7 +65,6 @@ impl SubjectStack {
         self.outermost_revisited = Some(outermost);
     }
 
-    // Returns whether the subject ran into one that is still in progress.
     #[allow(clippy::needless_pass_by_value)] // what `enter` gave is used up
     fn leave(&mut self, entered: EnteredSubject) -> bool {
         self.depth = entered.depth;
@@ -108,20 +101,14 @@ bitflags::bitflags! {
     #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
     struct Facts: u16 {
         const NUMBER = 1 << 0;
-        // Used as a bitwise operand or as an index into a list.
         const INT32 = 1 << 1;
-        // Used as a key into a value of unknown type. If the key also turns out to be a number, it is an index.
         const KEY = 1 << 2;
         const STRING = 1 << 3;
         const FUNCTION = 1 << 4;
-        // Known to be an object, with no member named.
         const OBJECT = 1 << 5;
         const STORED = 1 << 6;
-        // Some use throws if the value is `undefined`.
         const REQUIRED = 1 << 7;
-        // The walk ran out of budget before it saw every use.
         const INCOMPLETE = 1 << 8;
-        // NUMBER, from a use that every value gets to. `x === y && 1 / x === 1 / y` divides by some of its values only.
         const NUMBER_AT_EVERY_VALUE = 1 << 9 | Self::NUMBER.bits();
     }
 }
@@ -144,13 +131,10 @@ impl Member {
     }
 }
 
-// Everything the uses of one value say about it.
 #[derive(Default)]
 pub(super) struct Usage {
     facts: Facts,
-    // Checker types the value has somewhere: at a narrowed reference, as a callee's parameter, or as a stored value.
     arms: SmallVec<[TypeId; 2]>,
-    // In order of first use.
     members: Vec<Member>,
     elements: Option<Box<Usage>>,
 }
@@ -229,14 +213,11 @@ impl Walk {
     }
 }
 
-// How the syntax tree uses the value of one expression.
 #[derive(Copy, Clone)]
 enum Use {
     Nothing,
-    // The value may become the value of this enclosing expression.
     PassedOn(ExprId),
     Initializes(PatId),
-    // Assigned to this object literal, which is a destructuring pattern.
     Destructured(ExprId),
     Member {
         access: ExprId,
@@ -412,7 +393,6 @@ fn find_use_in_call(hir: &hir::File<'_>, call: ExprId, site: CallId, value: Expr
         if argument == value {
             return Use::Argument { call, index };
         }
-        // Arguments after a spread have no fixed position.
         if matches!(hir[argument].kind, ExprKind::Spread(_)) {
             break;
         }
@@ -475,7 +455,6 @@ fn find_use_in_property(
     }
 }
 
-// Only the head of a `for-in` or a `for-of` holds an expression whose use says anything.
 fn find_use_in_statement(hir: &hir::File<'_>, statement: StmtId) -> Use {
     match hir[statement].kind {
         StmtKind::ForOf {
@@ -574,7 +553,6 @@ fn is_untyped_variable(hir: &hir::File<'_>, bound: &Bound<'_>, symbol: SymbolId)
         })
 }
 
-// The operands whose value `expression` evaluates to, if it only chooses between them.
 fn find_alternatives(hir: &hir::File<'_>, expression: ExprId) -> SmallVec<[ExprId; 2]> {
     let mut alternatives = SmallVec::new();
     if let ExprKind::Cond { branches, .. } = hir[expression].kind {
@@ -590,7 +568,6 @@ fn find_alternatives(hir: &hir::File<'_>, expression: ExprId) -> SmallVec<[ExprI
     alternatives
 }
 
-// Whether the expression stands behind `&&`, `||` or `??`, or in an arm of `?:`.
 fn is_evaluated_for_some_values_only(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -622,7 +599,6 @@ fn is_int32_value(value: f64) -> bool {
         && !is_negative_zero
 }
 
-// Whether the operator gives an int32 whatever its operands are. `>>>` gives numbers up to 2 ** 32 - 1.
 fn yields_int32(op: BinOp) -> bool {
     match op {
         BinOp::Shl | BinOp::Shr | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => true,
@@ -650,7 +626,6 @@ fn yields_int32(op: BinOp) -> bool {
     }
 }
 
-// `operand + x`, `x - operand`.
 fn find_enclosing_sum(hir: &hir::File<'_>, bound: &Bound<'_>, operand: ExprId) -> Option<ExprId> {
     let Parent::Expr(parent) = bound.parent_of_expr(operand) else {
         return None;
@@ -666,7 +641,6 @@ fn find_enclosing_sum(hir: &hir::File<'_>, bound: &Bound<'_>, operand: ExprId) -
     is_sum.then_some(parent)
 }
 
-// Whether the number is a key or an operand of a bitwise operator, alone or in a sum: `list[i]`, `list[i + 1]`, `i & 7`.
 fn is_used_as_int32(hir: &hir::File<'_>, bound: &Bound<'_>, number: ExprId) -> bool {
     let mut value = number;
     loop {
@@ -696,7 +670,6 @@ fn is_used_as_int32(hir: &hir::File<'_>, bound: &Bound<'_>, number: ExprId) -> b
 
 const MAX_CALLS_READ: usize = 16;
 
-// `function f() {}` and `const f = () => {}`.
 fn find_name_of_function(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -712,7 +685,6 @@ fn find_name_of_function(
     }
 }
 
-// For the callee of a call: the argument at `index`, or none if the call has fewer.
 fn find_argument_of_call(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -746,7 +718,6 @@ fn find_parameter(parameters: &[SigParam], index: usize) -> Option<SigParam> {
         .filter(|parameter| !parameter.rest)
 }
 
-// `function.call(receiver, ..)` or `function.apply(receiver, list)`.
 #[derive(Copy, Clone)]
 struct CallWithReceiver {
     signature: SigId,
@@ -756,7 +727,6 @@ struct CallWithReceiver {
 type TypeParts = SmallVec<[TypeId; 4]>;
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
-    // The type that a checked file gives a parameter, a variable or a result is tested where a value arrives, and the code behind the test relies on it.
     fn are_positions_only_expected(&self, of: FileId) -> bool {
         match self.role(of) {
             FileRole::Inferred => true,
@@ -764,7 +734,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    // `checked` is the checker's type of the parameter.
     pub(super) fn infer_parameter_type(
         &mut self,
         of: FileId,
@@ -779,7 +748,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    // `checked` is the checker's type of what the pattern binds.
     pub(super) fn infer_binding_type(&mut self, pattern: PatId, checked: TypeId) -> TypeId {
         let (hir, bound) = (self.hir(), self.bound());
         let is_untyped_name = matches!(hir[pattern].kind, PatKind::Ident(_))
@@ -812,7 +780,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    // `checked` is the checker's type of what the function returns.
     pub(super) fn infer_result_type(
         &mut self,
         of: FileId,
@@ -826,7 +793,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    // `checked` is the checker's type of the expression.
     pub(super) fn infer_expression_type(&mut self, expression: ExprId, checked: TypeId) -> TypeId {
         if self.c.is_any(checked) {
             return self.inferred_type_or(Subject::Expression(expression), checked);
@@ -837,9 +803,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    // What is expected of an argument where the function is entered.
     fn inferred_argument_type_or(&mut self, subject: Subject, checked: TypeId) -> TypeId {
-        // `number` alone means int32 or double, which every arithmetic operator finds out by itself: a test for it at the entry buys nothing.
         match self.inferred_type_or(subject, checked) {
             TypeId::NUMBER => checked,
             inferred => inferred,
@@ -955,7 +919,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    // `checked` is the checker's type of the expression.
     fn find_number_subject(&self, expression: ExprId, checked: TypeId) -> Option<Subject> {
         if checked != TypeId::NUMBER {
             return None;
@@ -973,7 +936,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    // Returns `any` if the uses say nothing.
     fn inferred_type(&mut self, subject: Subject) -> TypeId {
         if self.infers_nothing_from_use {
             return TypeId::ANY;
@@ -992,7 +954,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             in_progress.remaining_types = max_types;
         }
         if in_progress.remaining_types == 0 {
-            // Only the outermost subject had the whole budget, so only its type is remembered.
             in_progress.subjects.revisit(0);
             return TypeId::ANY;
         }
@@ -1021,7 +982,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         inferred
     }
 
-    // The union of what the returned expressions are.
     fn compute_binding_type(&mut self, symbol: SymbolId) -> TypeId {
         let &[Decl::Param(name)] = self.bound().symbol(symbol).decls else {
             return self.compute_type_from_uses(Subject::Binding(symbol));
@@ -1037,7 +997,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    // What a function that is only ever called by its name is handed. Returns `any` if the calls say nothing.
     fn compute_type_from_arguments(&mut self, name: PatId) -> TypeId {
         let (hir, bound) = (self.hir(), self.bound());
         let PatParent::Param(parameter) = bound.pat_parent[name.idx()] else {
@@ -1060,7 +1019,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         let mut parts = TypeParts::new();
         for &(_, reference) in references {
-            // A function that is handed on is called from places that nobody sees here.
             let Some(argument) = find_argument_of_call(hir, bound, reference, index) else {
                 return TypeId::ANY;
             };
@@ -1126,7 +1084,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.add_arm(result, expected);
     }
 
-    // A variable that starts as an integer, gets only integers and values that nobody knows, and is a key or an operand of a bitwise operator somewhere is expected to hold int32.
     fn compute_number_type(&mut self, symbol: SymbolId) -> TypeId {
         let Some(int32) = self.c.p.aot_symbols().int32_alias() else {
             return TypeId::ANY;
@@ -1156,7 +1113,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let PatParent::Var(variable) = bound.pat_parent[name.idx()] else {
                 return false;
             };
-            // `var i;` beside `var i = 0;` stores nothing.
             if let Some(initializer) = hir[variable].init.some() {
                 if !self.is_integer(walk, initializer) {
                     return false;
@@ -1199,7 +1155,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             })
     }
 
-    // Whether `variable op= value` leaves an integer in a variable that holds one.
     fn stores_integer(&mut self, walk: &mut Walk, op: Option<BinOp>, value: ExprId) -> bool {
         match op {
             None | Some(BinOp::Add | BinOp::Sub | BinOp::And | BinOp::Or | BinOp::Nullish) => {
@@ -1250,7 +1205,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
-    // `i = i + 1` stores an integer if `i` holds one: a variable that is being looked at counts as an integer.
     fn is_expected_int32(&mut self, number: Subject) -> bool {
         if let Some(&TypeState::InProgress(depth)) = self.memo.inferred_types.get(&number) {
             self.memo.types_in_progress.subjects.revisit(depth);
@@ -1284,7 +1238,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.compute_type_from_uses(Subject::Expression(expression))
     }
 
-    // For `object.name` and `object[key]`: looks the member up in the type inferred for `object`.
     fn find_type_in_inferred_receiver(&mut self, access: ExprId) -> Option<TypeId> {
         let (object, key) = self.hir().member_key(access)?;
         let checked = self.expression_type(object).ok()?;
@@ -1313,7 +1266,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    // For `object.name(..)`: what the method of the type inferred for `object` returns, whatever it is given.
     fn find_result_of_inferred_method(&mut self, call: ExprId) -> Option<TypeId> {
         let hir = self.hir();
         let ExprKind::Call(site) = hir[call].kind else {
@@ -1395,7 +1347,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    // Returns `None` if the subject is already in progress or the checker gave up.
     fn usage_of(&mut self, walk: &mut Walk, subject: Subject) -> Option<Rc<Usage>> {
         match self.memo.usages.get(&subject) {
             Some(UsageState::Known(usage)) => return Some(Rc::clone(usage)),
@@ -1413,7 +1364,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let computed = self.ask(|queries| Ok(queries.compute_usage(walk, subject)));
         let ran_into_outer_subject = walk.subjects.leave(entered);
         let had_full_budget = is_outermost || !walk.is_out_of_budget();
-        // Nothing merges the usage of an expression, and its type has a memo of its own.
         let can_be_merged = match subject {
             Subject::Binding(_) | Subject::Pattern(_) | Subject::This(_) => true,
             Subject::Result(_) | Subject::Expression(_) | Subject::Number(_) => false,
@@ -1447,7 +1397,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Subject::This(function) => {
                 let references = self.reference_index().to_this;
                 for &(_, reference) in references_to(references, function) {
-                    // What the checker takes `this` to be comes from where the function is written, not from how it is called: a method of an object literal may be copied to another object.
                     let checked = self.expression_type(reference);
                     if checked.is_ok_and(|checked| self.c.is_any(checked)) {
                         self.add_evidence(walk, reference, &mut usage);
@@ -1473,13 +1422,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let Some(found) = self.usage_of(walk, subject) else {
             return;
         };
-        // Assigning to the other variable does not store into the place this value came from.
         let is_stored = usage.facts & Facts::STORED;
         usage.merge(walk, &found);
         usage.facts = (usage.facts - Facts::STORED) | is_stored;
     }
 
-    // `f.call` is a member of every function, and no property that an object of the program has.
     fn calls_its_object(&self, access: ExprId) -> bool {
         let named = self.inputs.named_values.find_named_value(self.file, access);
         matches!(
@@ -1490,7 +1437,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         )
     }
 
-    // Records the checker's type of `value` or, if that is `any`, how `value` is used.
     fn add_evidence(&mut self, walk: &mut Walk, value: ExprId, usage: &mut Usage) {
         if self.c.is_stack_low() || !walk.enter_node() {
             return;
@@ -1566,7 +1512,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     fn add_arm(&mut self, usage: &mut Usage, ty: TypeId) {
         if let Ok(ty) = self.without_nullish(ty) {
-            // `[]` is an Array of `never` for the checker: that says what it is, not what it will hold.
             let holds_nothing = self.c.array_element(ty).is_some_and(TypeId::is_never);
             let ty = match holds_nothing {
                 true => self.c.array_of(TypeId::ANY),
@@ -1715,7 +1660,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    // A variable's uses count as uses of its initializer only if nothing else is ever assigned to it.
     fn add_uses_of_name(&mut self, walk: &mut Walk, name: PatId, usage: &mut Usage) {
         let Ok(checked) = self.checked_binding_type(name) else {
             return;
@@ -1787,7 +1731,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             self.add_arm(usage, parameter.ty);
             return;
         };
-        // What the callee does with some of its arguments says nothing about this one.
         let number_facts = Facts::NUMBER | Facts::INT32;
         let known_here = usage.facts & number_facts;
         self.add_uses_of_subject(walk, subject, usage);
@@ -1838,7 +1781,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             })
     }
 
-    // Returns `any` if the uses say nothing.
     fn type_of_usage(&mut self, usage: &Usage) -> TypeId {
         if self.c.is_stack_low() {
             return TypeId::ANY;
@@ -1874,7 +1816,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     fn add_object_parts(&mut self, usage: &Usage, parts: &mut TypeParts) {
         let elements = usage.elements.as_deref();
-        // An object whose names are enumerated or computed is used as a dictionary: the names that the program spells are not all that it cares about, so they do not describe it.
         if usage.facts.contains(Facts::OBJECT) && elements.is_none() {
             parts.push(TypeId::OBJECT);
             return;
@@ -1891,13 +1832,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let can_be_string = !usage.has_stored_part()
             && (element_type == TypeId::ANY || element_type == TypeId::STRING)
             && self.has_every_member(TypeId::STRING, &usage.members);
-        // An Array of anything among the parts decides for the Array, and the uses say what it holds.
         let any_array = self.c.array_of(TypeId::ANY);
         if can_be_array && let Some(at) = parts.iter().position(|&part| part == any_array) {
             parts[at] = array;
             return;
         }
-        // An element access or an iteration proposes a list.
         let mut fitting = TypeParts::new();
         for (fits, candidate) in [(can_be_array, array), (can_be_string, TypeId::STRING)] {
             if fits && elements.is_some() {
@@ -1907,13 +1846,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let is_decided = parts
             .iter()
             .any(|&part| fitting.contains(&part) || self.c.is_array(part));
-        // Many objects have a `name` or a `length`. Few but functions have an `apply` that is called.
         let function = self.c.global_ref(known::Function, &[]);
         let can_be_function = usage.members.iter().any(Member::is_called)
             && self.has_every_member(function, &usage.members);
         let can_be_builtin = can_be_array || can_be_string || can_be_function;
         match fitting[..] {
-            // The names do not tell an Array, a string or a function from an object of the program that has them too, and a type made of them would leave out all three.
             [] if can_be_builtin => {}
             [] => {
                 let known_parts = parts.clone();
@@ -1923,13 +1860,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 }
             }
             [only] => parts.push(only),
-            // Several fit. A part that is one of them has already decided.
             _ if is_decided => {}
             _ => parts.extend_from_slice(&fitting),
         }
     }
 
-    // Whether `receiver` has every member, and exactly its methods are the ones that are called: `layer.keys.length` does not make `layer` an Array.
     fn has_every_member(&mut self, receiver: TypeId, members: &[Member]) -> bool {
         members.iter().all(|member| {
             let found = self.c.get_property_of_type(receiver, member.name);
@@ -1957,7 +1892,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 name_type: TypeId::UNRESOLVED,
             });
         }
-        // The checker orders members that have no declaration by name, so equal sets of members are one type.
         let atoms = self.c.atoms();
         props.sort_unstable_by(|a, b| atoms.bytes(a.name).cmp(atoms.bytes(b.name)));
         let arena = self.c.arena;

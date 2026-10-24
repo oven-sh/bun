@@ -46,11 +46,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.coroutine.yielded = Some(yielded);
     }
 
-    pub(crate) fn prepare_return_value(&mut self, value: ValueId) -> ValueId {
-        self.await_in_async_generator(value)
-    }
-
-    fn await_in_async_generator(&mut self, value: ValueId) -> ValueId {
+    pub(crate) fn await_in_async_generator(&mut self, value: ValueId) -> ValueId {
         match self.is_async_generator() {
             true => self.emit_await(value),
             false => value,
@@ -86,43 +82,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder
             .switch(mode, &cases, &[on_throw, on_return], on_next);
     }
-
-    fn lower_plain_yield(&mut self, expression: ExprId, operand: ExprId) -> ValueId {
-        let value = match operand.some() {
-            Some(operand) => self.lower_expression(operand),
-            None => self.builder.undefined(),
-        };
-        let position = self.file.hir[expression].pos;
-        self.set_position(position);
-        let value = self.await_in_async_generator(value);
-        let yielded = self.yielded_position();
-        let source = operand.some();
-        let source = match self.is_async_generator() {
-            true => source.and_then(|operand| self.file.find_awaited_source(operand, yielded)),
-            false => source,
-        };
-        let value = convert::convert(self, value, yielded, source);
-        let resumption = self.emit_yield(value);
-
-        let on_throw = self.create_block();
-        let on_return = self.create_block();
-        let on_next = self.create_block();
-        self.emit_resume_switch(
-            resumption.mode,
-            Edge::to(on_throw),
-            Edge::to(on_return),
-            Edge::to(on_next),
-        );
-
-        self.continue_in(on_throw);
-        self.emit_throw(resumption.sent);
-
-        self.continue_in(on_return);
-        self.emit_return(resumption.sent, None);
-
-        self.continue_in(on_next);
-        resumption.sent
-    }
 }
 
 pub(crate) fn lower_yield(
@@ -132,10 +91,42 @@ pub(crate) fn lower_yield(
     let ExprKind::Yield { value, star } = lowering.file.hir[expression].kind else {
         unreachable!("lower_yield takes a Yield expression");
     };
-    match star {
-        true => lowering.lower_yield_star(value),
-        false => lowering.lower_plain_yield(expression, value),
+    if star {
+        return lowering.lower_yield_star(value);
     }
+    let operand = value.some();
+    let value = match operand {
+        Some(operand) => lowering.lower_expression(operand),
+        None => lowering.builder.undefined(),
+    };
+    lowering.set_position(lowering.file.hir[expression].pos);
+    let value = lowering.await_in_async_generator(value);
+    let yielded = lowering.yielded_position();
+    let source = match lowering.is_async_generator() {
+        true => operand.and_then(|operand| lowering.file.find_awaited_source(operand, yielded)),
+        false => operand,
+    };
+    let value = convert::convert(lowering, value, yielded, source);
+    let resumption = lowering.emit_yield(value);
+
+    let on_throw = lowering.create_block();
+    let on_return = lowering.create_block();
+    let on_next = lowering.create_block();
+    lowering.emit_resume_switch(
+        resumption.mode,
+        Edge::to(on_throw),
+        Edge::to(on_return),
+        Edge::to(on_next),
+    );
+
+    lowering.continue_in(on_throw);
+    lowering.emit_throw(resumption.sent);
+
+    lowering.continue_in(on_return);
+    lowering.emit_return(resumption.sent, None);
+
+    lowering.continue_in(on_next);
+    resumption.sent
 }
 
 impl FileLowering<'_, '_, '_, '_> {

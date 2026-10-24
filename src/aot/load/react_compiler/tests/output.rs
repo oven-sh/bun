@@ -4,26 +4,13 @@ use bun_sema::resolve::{JsxRuntime, JsxSettings, TranspileSettings};
 
 use super::{
     CACHE_FUNCTION, CACHE_IMPORT, COMPILER_RUNTIME, DEVELOPMENT_RUNTIME, HELLO, PRODUCTION_RUNTIME,
-    RULE, with_compiled_tree, with_tree, with_tree_and_settings,
+    RULE, production_settings, settings_with_jsx, with_compiled_tree, with_tree,
+    with_tree_and_settings,
 };
-use crate::compile::testing::default_settings;
 
 const MEMO_CACHE_SENTINEL: &str = "%react:memo_cache_sentinel";
 const EARLY_RETURN_SENTINEL: &str = "%react:early_return_sentinel";
-
-fn settings_with_jsx(jsx: JsxSettings) -> TranspileSettings {
-    TranspileSettings {
-        jsx,
-        ..default_settings()
-    }
-}
-
-fn production_settings() -> TranspileSettings {
-    settings_with_jsx(JsxSettings {
-        is_development: false,
-        ..JsxSettings::default()
-    })
-}
+const JSX_DEV_IMPORT: &str = "jsxDEV as %react:jsxDEV";
 
 fn classic_settings(factory: &[&str]) -> TranspileSettings {
     settings_with_jsx(JsxSettings {
@@ -101,10 +88,7 @@ fn two_components_share_one_import() {
         assert_eq!(tree.imports_from(COMPILER_RUNTIME).len(), 1);
         assert_eq!(tree.imported_names(COMPILER_RUNTIME), [CACHE_IMPORT]);
         assert_eq!(tree.imports_from(DEVELOPMENT_RUNTIME).len(), 1);
-        assert_eq!(
-            tree.imported_names(DEVELOPMENT_RUNTIME),
-            ["jsxDEV as %react:jsxDEV"]
-        );
+        assert_eq!(tree.imported_names(DEVELOPMENT_RUNTIME), [JSX_DEV_IMPORT]);
         assert_eq!(tree.calls_of(CACHE_FUNCTION).len(), 2);
     });
 }
@@ -241,12 +225,9 @@ fn early_return_uses_the_sentinel() {
         let hir = tree.hir();
         let labels: Vec<_> = tree
             .reachable_statements()
-            .filter_map(|statement| {
-                if let StmtKind::Labeled { label, .. } = hir[statement].kind {
-                    Some(label)
-                } else {
-                    None
-                }
+            .filter_map(|statement| match hir[statement].kind {
+                StmtKind::Labeled { label, .. } => Some(label),
+                _ => None,
             })
             .collect();
         let [label] = labels[..] else {
@@ -285,10 +266,7 @@ fn module_items_follow_the_directive_prologue() {
 #[test]
 fn development_uses_jsx_dev() {
     with_compiled_tree(HELLO, |tree| {
-        assert_eq!(
-            tree.imported_names(DEVELOPMENT_RUNTIME),
-            ["jsxDEV as %react:jsxDEV"]
-        );
+        assert_eq!(tree.imported_names(DEVELOPMENT_RUNTIME), [JSX_DEV_IMPORT]);
         assert!(tree.imported_names(PRODUCTION_RUNTIME).is_empty());
         let [call] = tree.calls_of("%react:jsxDEV")[..] else {
             panic!("expected one element");
@@ -317,7 +295,7 @@ fn automatic_jsx_calls_import_the_runtime() {
 fn fragment_is_imported_only_where_used() {
     let text = "export function Pair({ a }: { a: string }) { return <>{a}</>; }\n";
     with_compiled_tree(text, |tree| {
-        let names = ["Fragment as %react:Fragment", "jsxDEV as %react:jsxDEV"];
+        let names = ["Fragment as %react:Fragment", JSX_DEV_IMPORT];
         assert_eq!(tree.imported_names(DEVELOPMENT_RUNTIME), names);
         assert_eq!(tree.count_names("%react:Fragment"), 1);
     });
@@ -335,7 +313,7 @@ fn import_source_follows_settings() {
     with_tree_and_settings(HELLO, &settings, |tree| {
         assert_eq!(
             tree.imported_names("preact/jsx-dev-runtime"),
-            ["jsxDEV as %react:jsxDEV"]
+            [JSX_DEV_IMPORT]
         );
         assert!(tree.imported_names(DEVELOPMENT_RUNTIME).is_empty());
         assert_eq!(tree.imported_names(COMPILER_RUNTIME), [CACHE_IMPORT]);
@@ -349,7 +327,7 @@ fn jsx_pragma_overrides_settings() {
         |tree| {
             assert_eq!(
                 tree.imported_names("preact/jsx-dev-runtime"),
-                ["jsxDEV as %react:jsxDEV"]
+                [JSX_DEV_IMPORT]
             );
             assert!(tree.imported_names(DEVELOPMENT_RUNTIME).is_empty());
         },

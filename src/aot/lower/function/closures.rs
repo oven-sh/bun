@@ -1,14 +1,11 @@
-use bun_sema::bind::CodeUnit;
-use bun_sema::hir::{FnId, FnKind, Func};
+use bun_sema::hir::{FnId, FnKind};
 use smallvec::SmallVec;
 
 use super::EntryArguments;
 use crate::ir::generated::{EntryParameter, FunctionFlags, MethodKind};
-use crate::ir::{DeclaredType, FunctionId, StringId, TypeTable, ValueId};
+use crate::ir::{DeclaredType, FunctionId, TypeTable, ValueId};
 use crate::lower::member::{self, PropertyName};
-use crate::lower::{FileLowering, FunctionLowering, captures, convert};
-
-type EntryOperands = SmallVec<[ValueId; 8]>;
+use crate::lower::{FunctionLowering, convert};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_function_expression(
@@ -47,7 +44,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let values = arguments.parameters;
 
         let has_rest_parameter = flags.contains(FunctionFlags::HAS_REST_PARAMETER);
-        let mut operands: EntryOperands = SmallVec::new();
+        let mut operands: SmallVec<[ValueId; 8]> = SmallVec::new();
         for kind in EntryParameter::ALL {
             if !flags.contains(kind.present_with()) {
                 continue;
@@ -68,12 +65,27 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 EntryParameter::ArgumentCount => {
                     operands.push(self.builder.integer(values.len() as i64));
                 }
-                EntryParameter::Parameter => self.add_parameter_operands(
-                    &parameters,
-                    has_rest_parameter,
-                    values,
-                    &mut operands,
-                ),
+                EntryParameter::Parameter => {
+                    debug_assert!(
+                        !has_rest_parameter || !parameters.is_empty(),
+                        "a rest parameter is a declared parameter"
+                    );
+                    let positional = parameters
+                        .len()
+                        .saturating_sub(usize::from(has_rest_parameter));
+                    for (index, &position) in parameters[..positional].iter().enumerate() {
+                        let value = match values.get(index) {
+                            Some(&value) => value,
+                            None => self.builder.undefined(),
+                        };
+                        operands.push(convert::convert(self, value, position, None));
+                    }
+                    if let Some(&position) = parameters.get(positional) {
+                        let rest = values.get(positional..).unwrap_or(&[]);
+                        let rest = self.emit_argument_list(rest);
+                        operands.push(convert::convert(self, rest, position, None));
+                    }
+                }
                 EntryParameter::HiddenRest => {
                     let rest = values.get(parameters.len()..).unwrap_or(&[]);
                     operands.push(self.emit_argument_list(rest));
@@ -83,42 +95,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.call_direct(function, &operands)
     }
 
-    fn add_parameter_operands(
-        &mut self,
-        parameters: &[DeclaredType],
-        has_rest_parameter: bool,
-        values: &[ValueId],
-        operands: &mut EntryOperands,
-    ) {
-        debug_assert!(
-            !has_rest_parameter || !parameters.is_empty(),
-            "a rest parameter is a declared parameter"
-        );
-        let positional = parameters
-            .len()
-            .saturating_sub(usize::from(has_rest_parameter));
-        for (index, &position) in parameters[..positional].iter().enumerate() {
-            let value = match values.get(index) {
-                Some(&value) => value,
-                None => self.builder.undefined(),
-            };
-            operands.push(convert::convert(self, value, position, None));
-        }
-        if let Some(&position) = parameters.get(positional) {
-            let rest = self.emit_argument_list(values.get(positional..).unwrap_or(&[]));
-            operands.push(convert::convert(self, rest, position, None));
-        }
-    }
-
-    fn create_named_closure(
+    pub(in crate::lower) fn create_named_closure(
         &mut self,
         function: FnId,
         name: Option<PropertyName>,
         home: Option<ValueId>,
     ) -> ValueId {
         let func = self.file.hir[function];
-        let inferred_name = name.filter(|_| !has_own_name(&func));
-        let header_name = inferred_name.and_then(|name| self.file.find_header_name(name));
+        let has_own_name = match func.kind {
+            FnKind::Decl | FnKind::Expr => func.name.is_some(),
+            _ => false,
+        };
+        let inferred_name = name.filter(|_| !has_own_name);
+        let header_name = match inferred_name {
+            Some(PropertyName::Constant(key)) => member::find_function_name(self.file, key),
+            Some(PropertyName::Computed(_)) | None => None,
+        };
         if let (Some(PropertyName::Constant(key)), None) = (inferred_name, header_name)
             && let Some(name) = self.file.find_name_under_symbol(key)
         {
@@ -132,7 +124,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let closure = self.emit_closure(id, home);
         if let (Some(name), None) = (inferred_name, header_name) {
             let key = self.emit_name_value(name);
-            let kind = method_kind(func.kind);
+            let kind = match func.kind {
+                FnKind::Getter => MethodKind::Getter,
+                FnKind::Setter => MethodKind::Setter,
+                _ => MethodKind::Method,
+            };
             self.builder.set_function_name(closure, key, kind);
         }
         closure
@@ -140,34 +136,5 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn emit_argument_list(&mut self, values: &[ValueId]) -> ValueId {
         self.builder.new_array(TypeTable::ANYTHING, &[], values)
-    }
-}
-
-pub(crate) fn captures_home_object(file: &FileLowering<'_, '_, '_, '_>, function: FnId) -> bool {
-    let key = file.scopes.function_key(CodeUnit::Function(function));
-    captures::captures_home_object(file, key)
-}
-
-fn has_own_name(func: &Func) -> bool {
-    match func.kind {
-        FnKind::Decl | FnKind::Expr => func.name.is_some(),
-        _ => false,
-    }
-}
-
-impl FileLowering<'_, '_, '_, '_> {
-    fn find_header_name(&self, name: PropertyName) -> Option<StringId> {
-        match name {
-            PropertyName::Constant(key) => member::find_function_name(self, key),
-            PropertyName::Computed(_) => None,
-        }
-    }
-}
-
-fn method_kind(kind: FnKind) -> MethodKind {
-    match kind {
-        FnKind::Getter => MethodKind::Getter,
-        FnKind::Setter => MethodKind::Setter,
-        _ => MethodKind::Method,
     }
 }

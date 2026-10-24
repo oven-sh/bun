@@ -1,16 +1,8 @@
-use bun_sema::check::aot::{
-    BuiltinTypeClass, SchemaConstraint, ShapeKind, TupleElement, TupleElementKind,
-};
+use bun_sema::check::aot::{SchemaConstraint, ShapeKind, TupleElementKind};
 
 use super::{EdgeKind, TypeEdge, TypeEdges};
 use crate::builtins::type_name_of;
 use crate::lower::{CheckerTypeId, FileLowering};
-
-pub(super) fn has_int32_constraint(constraints: &[SchemaConstraint]) -> bool {
-    constraints
-        .iter()
-        .any(|constraint| matches!(constraint, SchemaConstraint::Int32))
-}
 
 pub(super) fn collect_edges(
     file: &mut FileLowering<'_, '_, '_, '_>,
@@ -21,19 +13,42 @@ pub(super) fn collect_edges(
         return edges;
     };
     match shape.kind {
-        ShapeKind::Union(members) => edges.extend(members.iter().copied().map(transparent_edge)),
+        ShapeKind::Union(members) => {
+            edges.extend(
+                members
+                    .iter()
+                    .map(|&member| edge(EdgeKind::Transparent, member)),
+            );
+        }
         ShapeKind::TypeVariable {
             parameter: None,
             constraint: Some(constraint),
-        } => edges.push(transparent_edge(constraint)),
+        } => edges.push(edge(EdgeKind::Transparent, constraint)),
         ShapeKind::Constrained { base, constraints } => {
-            if !has_int32_constraint(constraints) {
-                edges.push(transparent_edge(base));
+            if !constraints.contains(&SchemaConstraint::Int32) {
+                edges.push(edge(EdgeKind::Transparent, base));
             }
         }
-        ShapeKind::Array { element, .. } => edges.push(contents_edge(element)),
-        ShapeKind::Tuple { elements, .. } => push_tuple_edges(&mut edges, elements),
-        ShapeKind::Builtin { class, arguments } => push_builtin_edges(&mut edges, class, arguments),
+        ShapeKind::Array { element, .. } => edges.push(edge(EdgeKind::Contents, element)),
+        ShapeKind::Tuple { elements, .. } => {
+            for element in elements {
+                match element.kind {
+                    TupleElementKind::Required
+                    | TupleElementKind::Optional
+                    | TupleElementKind::Rest => edges.push(edge(EdgeKind::Contents, element.ty)),
+                    TupleElementKind::Variadic => {}
+                }
+            }
+        }
+        ShapeKind::Builtin { class, arguments } => {
+            if let Some(type_name) = type_name_of(class) {
+                for (slot, &argument) in type_name.type_arguments.iter().zip(arguments) {
+                    if slot.is_some() {
+                        edges.push(edge(EdgeKind::Contents, argument));
+                    }
+                }
+            }
+        }
         // A type parameter is a layout of its own, whatever its constraint is.
         ShapeKind::Anything(_)
         | ShapeKind::TypeVariable {
@@ -66,56 +81,69 @@ pub(super) fn collect_edges(
     edges
 }
 
-fn transparent_edge(target: CheckerTypeId) -> TypeEdge {
-    TypeEdge {
-        kind: EdgeKind::Transparent,
-        target,
-    }
-}
-
-fn contents_edge(target: CheckerTypeId) -> TypeEdge {
-    TypeEdge {
-        kind: EdgeKind::Contents,
-        target,
-    }
-}
-
-fn push_tuple_edges(edges: &mut TypeEdges, elements: &[TupleElement]) {
-    for element in elements {
-        match element.kind {
-            TupleElementKind::Required | TupleElementKind::Optional | TupleElementKind::Rest => {
-                edges.push(contents_edge(element.ty));
-            }
-            TupleElementKind::Variadic => {}
-        }
-    }
-}
-
-fn push_builtin_edges(edges: &mut TypeEdges, class: BuiltinTypeClass, arguments: &[CheckerTypeId]) {
-    let Some(type_name) = type_name_of(class) else {
-        return;
-    };
-    for (slot, &argument) in type_name.type_arguments.iter().zip(arguments) {
-        if slot.is_some() {
-            edges.push(contents_edge(argument));
-        }
-    }
+fn edge(kind: EdgeKind, target: CheckerTypeId) -> TypeEdge {
+    TypeEdge { kind, target }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::compile::testing::lower_program_with_limits;
+    use crate::ir::{DeclaredType, PositionFlags, Primitives, Type};
+    use crate::statistics::LimitValues;
+
+    const DECLARATIONS: &str = "declare module \"bun\" {\n\
+        type int32 = number & { readonly \"bun.int32\"?: true };\n\
+        namespace Schema {\n\
+        type Int = { readonly \"bun.int\"?: true };\n\
+        type Min<N extends number> = { readonly \"bun.min\"?: N };\n\
+        }\n\
+        }\n";
+
+    /// The type of each parameter, and whether the build has to prove that it is an `int32`.
+    #[track_caller]
+    fn lower_parameters(types: [&str; 2]) -> Vec<(Type, bool)> {
+        let [first, second] = types;
+        let main = format!(
+            "/// <reference path=\"./bun-declarations.d.ts\" />
+import type {{ Schema, int32 }} from \"bun\";
+export function probe(first: {first}, second: {second}): void {{}}
+"
+        );
+        let files = [
+            ("main.ts", &main[..]),
+            ("bun-declarations.d.ts", DECLARATIONS),
+        ];
+        let lowered = lower_program_with_limits(&files, LimitValues::for_host());
+        let [(_, lowered)] = &lowered[..] else {
+            panic!("only the entry point has code");
+        };
+        let fragment = &lowered.fragment;
+        let mut functions = fragment.functions.iter().map(|(_, function)| function);
+        let probe = functions.find(|function| {
+            let text = function.name.map(|name| fragment.strings.get(name));
+            text == Some(&b"probe"[..])
+        });
+        let parameters = &probe.expect("the fragment defines the function").parameters;
+        let describe = |parameter: &DeclaredType| {
+            let is_promise = parameter.flags.contains(PositionFlags::IS_INT32_PROMISE);
+            (fragment.types.get(parameter.ty).clone(), is_promise)
+        };
+        parameters.iter().map(describe).collect()
+    }
 
     #[test]
     fn int32_constraint_is_found_among_others() {
-        let constraints = [SchemaConstraint::Min(0.0), SchemaConstraint::Int32];
-        assert!(has_int32_constraint(&constraints));
+        let types = lower_parameters(["Schema.Min<0> & int32", "int32 & Schema.Min<0>"]);
+        let int32 = Type::integers(i32::MIN.into(), i32::MAX.into());
+        assert_eq!(types, vec![(int32, true); 2]);
     }
 
     #[test]
     fn other_constraints_are_not_int32() {
-        let constraints = [SchemaConstraint::Int, SchemaConstraint::Min(0.0)];
-        assert!(!has_int32_constraint(&constraints));
-        assert!(!has_int32_constraint(&[]));
+        let types = lower_parameters(["number & Schema.Int & Schema.Min<0>", "number"]);
+        assert_eq!(
+            types,
+            vec![(Type::primitives(Primitives::NUMBER), false); 2]
+        );
     }
 }

@@ -2837,7 +2837,7 @@ fn add_types(
     javascript: &[u8],
     mappings: &[u8],
     sources: &[Source<'_>],
-    bundle: Option<&Bundle<'_>>,
+    bundle: &Bundle<'_>,
 ) -> Result<TypedText, String> {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
@@ -2863,7 +2863,7 @@ fn add_types(
         file: &output_file,
         text: javascript,
     };
-    let modules = bundle.map_or(&[][..], |bundle| bundle.modules);
+    let modules = bundle.modules;
     let mut texts: Vec<(&[u8], &[u8], Option<&ModuleTypes>)> = sources
         .iter()
         .map(|source| {
@@ -2876,11 +2876,10 @@ fn add_types(
             )
         })
         .collect();
-    let emitted_declarations = bundle.map_or(&[][..], |bundle| bundle.emitted_declarations);
     texts.extend(
         modules
             .iter()
-            .chain(emitted_declarations)
+            .chain(bundle.emitted_declarations)
             .filter(|module| !sources.iter().any(|source| source.path == &module.path[..]))
             .map(|module| (&module.path[..], &module.text[..], Some(module))),
     );
@@ -2978,17 +2977,14 @@ fn add_types(
             Target::Module { .. } => None,
         })
         .collect();
-    let linked = match bundle {
-        Some(bundle) => link(
-            &mut written,
-            &paths,
-            sources.len(),
-            &output,
-            &mappings,
-            bundle,
-        ),
-        None => Linked::default(),
-    };
+    let linked = link(
+        &mut written,
+        &paths,
+        sources.len(),
+        &output,
+        &mappings,
+        bundle,
+    );
     let mut transfer = Transfer {
         javascript,
         output: &output,
@@ -2996,7 +2992,6 @@ fn add_types(
         modules: &written[..sources.len()],
         linked: &linked,
         type_references,
-        is_bundle: bundle.is_some(),
         insertions: Insertions { list: Vec::new() },
         dropped_casts: 0,
         hoisted: Vec::new(),
@@ -3019,7 +3014,6 @@ struct Transfer<'t, 'a, 's> {
     modules: &'t [Option<Written<'a, 's>>],
     linked: &'t Linked,
     type_references: FxHashSet<(&'t [u8], &'t [u8])>,
-    is_bundle: bool,
     insertions: Insertions,
     dropped_casts: usize,
     hoisted: Vec<u8>,
@@ -3566,7 +3560,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                 insertions.add(output_file[obj].end, Order::Close(0), b" as any)".to_vec());
             }
         }
-        for object in output.namespace_objects().iter().filter(|_| self.is_bundle) {
+        for object in output.namespace_objects() {
             insertions.add(
                 output_file[object.variable.pat].end,
                 Order::Slot,
@@ -3599,9 +3593,6 @@ impl<'a> Transfer<'_, 'a, '_> {
             .ids(output_file.body)
             .map(|id| output_file[id].start)
             .collect();
-        let exported_names = output.exported_names();
-        let imported_names: FxHashSet<&[u8]> =
-            output.imported_names().map(|at| output.word(at)).collect();
         for (index, module) in written.iter().enumerate() {
             let Some(module) = module else { continue };
             let (syntax, file) = (&module.syntax, module.syntax.file);
@@ -3630,11 +3621,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                     let text: Vec<u8> = match statement.kind {
                         StmtKind::Import(_)
                         | StmtKind::ExportNamed(_)
-                        | StmtKind::ExportStar { .. }
-                            if self.is_bundle =>
-                        {
-                            continue;
-                        }
+                        | StmtKind::ExportStar { .. } => continue,
                         StmtKind::Enum(enum_statement)
                             if linked.ambient_enums.contains(&(index, id.0)) =>
                         {
@@ -3653,9 +3640,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                             .concat()
                         }
                         StmtKind::Var(declarations)
-                            if self.is_bundle
-                                && depth == 0
-                                && syntax.is_type_only_statement(id) =>
+                            if depth == 0 && syntax.is_type_only_statement(id) =>
                         {
                             let mut names = Vec::new();
                             declarations.iter().for_each(|declaration: VarDeclId| {
@@ -3682,7 +3667,6 @@ impl<'a> Transfer<'_, 'a, '_> {
                         _ if linked.replaced_statements.contains(&(index, id.0)) => continue,
                         StmtKind::Module(_)
                             if depth == 0
-                                && self.is_bundle
                                 && module.merged_augmentation_text(statement).is_some() =>
                         {
                             module
@@ -3690,126 +3674,14 @@ impl<'a> Transfer<'_, 'a, '_> {
                                 .unwrap_or_default()
                         }
                         StmtKind::Module(_) if depth > 0 => continue,
-                        StmtKind::Module(declared) if !syntax.is_type_only_statement(id) => {
-                            let is_exported_below = self.is_bundle
-                                || exported_names.contains(syntax.word(file[declared].name_pos));
-                            match module.types_of_namespace(
-                                id,
-                                if is_exported_below {
-                                    Flags::EXPORT
-                                } else {
-                                    Flags::empty()
-                                },
-                            ) {
+                        StmtKind::Module(_) if !syntax.is_type_only_statement(id) => {
+                            match module.types_of_namespace(id, Flags::EXPORT) {
                                 Some(types) => types,
                                 None => continue,
                             }
                         }
-                        _ if syntax.is_type_only_statement(id) => module.statement_text(
-                            id,
-                            if self.is_bundle || depth > 0 {
-                                Flags::EXPORT | Flags::DEFAULT
-                            } else {
-                                Flags::empty()
-                            },
-                        ),
-                        StmtKind::Import(import) => {
-                            let import = &file[import];
-                            let tail =
-                                &module.trimmed_text(import.clause_end, statement.loc.end)[..];
-                            let mut lines: Vec<Vec<u8>> = Vec::new();
-                            if import.default.is_some()
-                                && !imported_names.contains(syntax.word(import.default_pos))
-                            {
-                                lines.push(
-                                    [
-                                        &b"import type "[..],
-                                        syntax.word(import.default_pos),
-                                        b" ",
-                                        tail,
-                                    ]
-                                    .concat(),
-                                );
-                            }
-                            if import.namespace.is_some()
-                                && !imported_names.contains(syntax.word(import.namespace_pos))
-                            {
-                                lines.push(
-                                    [
-                                        &b"import type * as "[..],
-                                        syntax.word(import.namespace_pos),
-                                        b" ",
-                                        tail,
-                                    ]
-                                    .concat(),
-                                );
-                            }
-                            let names: Vec<&[u8]> =
-                                (import.named.iter().map(|specifier| &file[specifier]))
-                                    .filter(|specifier| {
-                                        specifier.type_only
-                                            || !imported_names.contains(syntax.word(specifier.pos))
-                                    })
-                                    .map(|specifier| {
-                                        &syntax.text[specifier.imported_pos as usize
-                                            ..specifier.end as usize]
-                                    })
-                                    .collect();
-                            if !names.is_empty() {
-                                lines.push(
-                                    [
-                                        &b"import type { "[..],
-                                        &names.join(&b", "[..])[..],
-                                        b" } ",
-                                        tail,
-                                    ]
-                                    .concat(),
-                                );
-                            }
-                            if lines.is_empty() {
-                                continue;
-                            }
-                            lines.join(&b"\n"[..])
-                        }
-                        StmtKind::ExportNamed(export) => {
-                            let export = &file[export];
-                            let names: Vec<&[u8]> =
-                                (export.items.iter().map(|specifier| &file[specifier]))
-                                    .filter(|specifier| {
-                                        specifier.type_only
-                                            || !exported_names.contains(syntax.word(specifier.pos))
-                                    })
-                                    .map(|specifier| {
-                                        &syntax.text
-                                            [specifier.local_pos as usize..specifier.end as usize]
-                                    })
-                                    .collect();
-                            if names.is_empty() {
-                                continue;
-                            }
-                            let close = export
-                                .items
-                                .iter()
-                                .next_back()
-                                .map_or(statement.start, |last| file[last].end);
-                            let mut behind = syntax.after_trivia(close);
-                            if syntax.byte(behind) == b',' {
-                                behind = syntax.after_trivia(behind + 1);
-                            }
-                            let tail = &module.trimmed_text(behind + 1, statement.loc.end)[..];
-                            let space: &[u8] = if tail.is_empty() || tail.starts_with(b";") {
-                                b""
-                            } else {
-                                b" "
-                            };
-                            [
-                                &b"export type { "[..],
-                                &names.join(&b", "[..])[..],
-                                b" }",
-                                space,
-                                tail,
-                            ]
-                            .concat()
+                        _ if syntax.is_type_only_statement(id) => {
+                            module.statement_text(id, Flags::EXPORT | Flags::DEFAULT)
                         }
                         _ => continue,
                     };
@@ -4172,7 +4044,7 @@ fn add_types_by_source_map(
     path: &[u8],
     javascript: &[u8],
     source_map: &[u8],
-    bundle: Option<&Bundle<'_>>,
+    bundle: &Bundle<'_>,
 ) -> Result<TypedText, String> {
     let source_map = crate::host::parse_json_object(&bun_sema::session::Arena::new(), source_map)
         .ok_or("the source map is not JSON")?;
@@ -4191,12 +4063,10 @@ fn add_types_by_source_map(
     }
     let directory = &path[..bun_core::strings::last_index_of_char(path, b'/').unwrap_or(0)];
     let is_known = |path: &Vec<u8>| {
-        bundle.is_some_and(|bundle| {
-            bundle
-                .modules
-                .iter()
-                .any(|module| module.path[..] == path[..])
-        })
+        bundle
+            .modules
+            .iter()
+            .any(|module| module.path[..] == path[..])
     };
     let paths: Vec<Vec<u8>> = (paths.iter())
         .map(|source| {
@@ -4644,25 +4514,21 @@ pub fn emitted_declarations_of(
 fn typed_outputs(
     outdir: &[u8],
     outputs: &[Output<'_>],
-    modules: Option<&[ModuleTypes]>,
+    modules: &[ModuleTypes],
     emitted_declarations: &[ModuleTypes],
 ) -> Result<Vec<(Vec<u8>, TypedText)>, String> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let mut found = Vec::new();
     for output in outputs {
         let shown = BStr::new(inside(outdir, output.path).unwrap_or(output.path));
-        let bundle = modules.map(|modules| Bundle {
+        let bundle = Bundle {
             modules,
             emitted_declarations,
             entry_point: output.entry_point,
-        });
-        let typed = add_types_by_source_map(
-            output.path,
-            output.javascript,
-            output.source_map,
-            bundle.as_ref(),
-        )
-        .map_err(|why| format!("{shown}: {why}"))?;
+        };
+        let typed =
+            add_types_by_source_map(output.path, output.javascript, output.source_map, &bundle)
+                .map_err(|why| format!("{shown}: {why}"))?;
         let typed_path = typed_path_beside(output.path)
             .ok_or_else(|| format!("{shown} is not named .js, .mjs or .cjs"))?;
         found.push((typed_path, typed));
@@ -4759,7 +4625,7 @@ pub fn annotate_implicit_any(
 pub fn sound_files(
     outdir: &[u8],
     outputs: &[Output<'_>],
-    modules: Option<&[ModuleTypes]>,
+    modules: &[ModuleTypes],
     emitted_declarations: &[ModuleTypes],
 ) -> Result<SoundFiles, String> {
     let outdir = outdir.strip_suffix(b"/").unwrap_or(outdir);

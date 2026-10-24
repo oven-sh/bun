@@ -114,7 +114,6 @@ pub(crate) struct Removable<'a, 's> {
     pub builtins: &'a ResolvedBuiltins,
     pub atoms: &'a Interner<'s>,
     pub options: RemovableOptions,
-    // Says which members in the text of the file are bound to variables of modules.
     modules: Option<(&'a ModuleGraph, FileId)>,
     stack: StackCheck,
     member_constants: RefCell<FxHashMap<EnumMemberId, Option<Primitive>>>,
@@ -127,14 +126,8 @@ impl<'a, 's> Removable<'a, 's> {
         file: FileId,
         options: RemovableOptions,
     ) -> Option<Removable<'a, 's>> {
-        let source = parsed_source(files, file)?;
-        Some(Removable::of_file(
-            files,
-            file,
-            files.analysis(file),
-            &source.builtins,
-            options,
-        ))
+        let (builtins, analysis) = (&parsed_source(files, file)?.builtins, files.analysis(file));
+        Some(Removable::of_file(files, file, analysis, builtins, options))
     }
 
     pub(crate) fn of_file(
@@ -186,9 +179,7 @@ impl<'a, 's> Removable<'a, 's> {
             StmtKind::Expr(expression) | StmtKind::ExportDefault(expression) => {
                 self.expression(expression)
             }
-            StmtKind::Var(declarations) => declarations
-                .iter()
-                .all(|declaration| self.declaration(declaration)),
+            StmtKind::Var(declarations) => declarations.iter().all(|it| self.declaration(it)),
             StmtKind::Class(class) => self.class(class),
             StmtKind::Enum(declaration) => self.enumeration(declaration),
             StmtKind::Module(namespace) => self.is_namespace_without_code(namespace),

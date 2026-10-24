@@ -1,22 +1,21 @@
+use super::import_graph::ImportGraph;
 use super::{Build, LoadedBuild, LoadedProject, ProgramsOfOneLoad, mentions_worker_constructor};
 use crate::builtins::{BuiltinNames, RuntimeModule};
-use crate::diagnostics::{Diagnostics, LoadMessages, ProgramView};
+use crate::diagnostics::{Diagnostics, InternalError, LoadMessages, ProgramView};
 use crate::load::fold_inputs::{
-    ApplicationFoldRequest, ProgramFacts, RuntimeFoldRequest, create_application_fold_inputs,
-    create_runtime_fold_inputs,
+    ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
 };
 use crate::load::host::{LoadHost, LoadHostInput, create_disk};
 use crate::load::named_loads::resolve_loads_through_imported_loaders;
-use crate::load::runtime_host::{RuntimeHost, RuntimeHostInput};
+use crate::load::runtime_host::RuntimeHost;
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::runtime_roots::{RuntimeRoots, collect_runtime_roots};
 use crate::load::sources::{
     FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources, parsed_source,
 };
 use crate::load::typed_packages::TypedPackages;
-use crate::load::worker_files::{WorkerFileInput, find_embedded_files_that_start_workers};
+use crate::load::worker_files::find_embedded_files_that_start_workers;
 use crate::load::{PerProject, ProjectId, SourceKind, Sources};
-use crate::options::Options;
 use crate::package_diagnostics::{PackageView, report_rejected_versions};
 use crate::statistics::{LimitId, LimitValues, Stage, StatisticId, Statistics};
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
@@ -42,7 +41,7 @@ const MAX_ASSET_READERS: usize = 64;
 
 /// What plugins make of the assets is needed when the executable is written. A plugin can take seconds for one.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum AssetReads {
+pub(super) enum AssetReads {
     FinishedByLoad,
     /// They go on while `then` runs, which calls `LoadedBuild::finish_asset_reads`.
     FinishedLater,
@@ -51,39 +50,34 @@ enum AssetReads {
 type Then<'t, 'a, R> =
     &'t mut dyn for<'b, 's> FnMut(&mut Build<'a>, LoadedBuild<'b, 's>) -> Result<R, Stage>;
 
-struct AssetReaders<'scope, 'env, 'h> {
-    scope: &'scope Scope<'scope, 'env>,
-    host: &'scope LoadHost<'h>,
+// Each reader starts the next: the calling thread pays for one thread.
+fn start_asset_readers<'scope>(
+    scope: &'scope Scope<'scope, '_>,
+    host: &'scope LoadHost<'_>,
     paths: std::sync::Arc<Guarded<Vec<Vec<u8>>>>,
-}
-
-impl<'scope> AssetReaders<'scope, '_, '_> {
-    // Each reader starts the next: the calling thread pays for one thread.
-    fn start(self, count: usize) {
-        if count == 0 {
-            return;
-        }
-        let thread = std::thread::Builder::new()
-            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize);
-        let _ = thread.spawn_scoped(self.scope, move || {
-            bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Plugin"));
-            let (host, paths) = (self.host, std::sync::Arc::clone(&self.paths));
-            self.start(count - 1);
-            loop {
-                let Some(path) = paths.lock().pop() else {
-                    return;
-                };
-                host.read_in_background(&path);
-            }
-        });
+    count: usize,
+) {
+    if count == 0 {
+        return;
     }
+    let thread = std::thread::Builder::new()
+        .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize);
+    let _ = thread.spawn_scoped(scope, move || {
+        bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Plugin"));
+        start_asset_readers(scope, host, std::sync::Arc::clone(&paths), count - 1);
+        loop {
+            let Some(path) = paths.lock().pop() else {
+                return;
+            };
+            host.read_in_background(&path);
+        }
+    });
 }
 
 fn read_assets<'scope>(scope: &'scope Scope<'scope, '_>, host: &'scope LoadHost<'_>) {
     let paths = host.background_reads();
     let count = paths.len().min(MAX_ASSET_READERS);
-    let paths = std::sync::Arc::new(Guarded::new(paths));
-    AssetReaders { scope, host, paths }.start(count);
+    start_asset_readers(scope, host, std::sync::Arc::new(Guarded::new(paths)), count);
 }
 
 struct ApplicationLoad<'l, 'scope, 'env, 'h, 's> {
@@ -123,15 +117,7 @@ impl<'a> Build<'a> {
         })
     }
 
-    /// `with_loaded_projects` that doesn't wait for the plugins' answers about assets. See `AssetReads::FinishedLater`.
-    pub(crate) fn with_loaded_projects_before_assets<R>(
-        &mut self,
-        mut then: impl for<'b, 's> FnMut(&mut Build<'a>, LoadedBuild<'b, 's>) -> Result<R, Stage>,
-    ) -> Result<R, Stage> {
-        self.load_in_new_sessions(AssetReads::FinishedLater, &mut then)
-    }
-
-    fn load_in_new_sessions<R>(
+    pub(super) fn load_in_new_sessions<R>(
         &mut self,
         asset_reads: AssetReads,
         then: Then<'_, 'a, R>,
@@ -145,9 +131,11 @@ impl<'a> Build<'a> {
         let further: Vec<Session> = (1..program_count).map(|_| Session::new()).collect();
         let all = (sessions.as_ref(), &world_sessions[..], &further[..]);
         let result = self.load_in_sessions(all, asset_reads, then);
-        self.retire_sessions(sessions);
-        self.retire_world_sessions(world_sessions);
-        self.retire_world_sessions(further);
+        self.retired_sessions
+            .extend([sessions.application, sessions.runtime]);
+        let others = world_sessions.into_iter().chain(further);
+        self.retired_sessions
+            .extend(others.filter(|session| !session.is_unused()));
         result
     }
 
@@ -178,13 +166,13 @@ impl<'a> Build<'a> {
             self.provider
                 .fold_options(application_session.arena(), &atoms, log)
         });
-        let application_fold = create_application_fold_inputs(&ApplicationFoldRequest {
-            provided,
-            arena: application_session.arena(),
-            atoms: &atoms,
-            limits: &self.limits,
-            platform: self.platform,
-        });
+        let application_fold = create_application_fold_inputs(
+            &provided,
+            application_session.arena(),
+            &atoms,
+            &self.limits,
+            self.platform,
+        );
         let shared = SharedLoadInputs {
             disk: &disk,
             sessions,
@@ -201,7 +189,7 @@ impl<'a> Build<'a> {
         };
         let result = self.load_projects(&shared, asset_reads, then);
         drop(typed_packages);
-        self.retire(Box::new(disk));
+        self.leftovers.push(Box::new(disk));
         result
     }
 
@@ -219,7 +207,10 @@ impl<'a> Build<'a> {
         then: Then<'_, 'a, R>,
     ) -> Result<R, Stage> {
         let options = self.options;
-        let code = application_code_options(options, &self.limits);
+        let code = CodeOptions {
+            max_computed_candidates: max_computed_candidates(&self.limits),
+            ..options.code.clone()
+        };
         let limits = self.limits.clone();
         let defined =
             |path: &[u8]| find_defined_string(shared.application_defines, &shared.atoms, path);
@@ -288,7 +279,7 @@ impl<'a> Build<'a> {
                     finish_asset_reads: &finish_asset_reads,
                     positions: &positions,
                 };
-                let result = self.load_projects_once(shared, project, then);
+                let result = self.load_projects_once(shared, &project, then);
                 if finish_asset_reads() {
                     if asset_reads == AssetReads::FinishedLater {
                         self.diagnostics.add_load_messages(shared.messages);
@@ -303,32 +294,33 @@ impl<'a> Build<'a> {
         })
     }
 
-    #[allow(clippy::needless_pass_by_value)] // taken apart
     fn load_projects_once<R>(
         &mut self,
         shared: &SharedLoadInputs<'_, '_>,
-        project: ApplicationLoad<'_, '_, '_, '_, '_>,
+        project: &ApplicationLoad<'_, '_, '_, '_, '_>,
         then: Then<'_, 'a, R>,
     ) -> Result<R, Stage> {
         let options = self.options;
-        let ApplicationLoad {
-            host,
-            request,
-            scope,
-            asset_reads,
-            finish_asset_reads,
-            positions,
-        } = project;
+        let (host, request, positions) = (project.host, project.request, project.positions);
         let session = shared.sessions.application;
         let mut application = self.load_application(session, host, request, shared.messages)?;
-        if asset_reads == AssetReads::FinishedLater {
-            read_assets(scope, host);
+        if project.asset_reads == AssetReads::FinishedLater {
+            read_assets(project.scope, host);
         }
-        self.keep_import_graph(application.files());
+        if options.aot.checks_only && options.entry_points.len() > 1 {
+            self.import_graph = Some(ImportGraph::of(application.files()));
+        }
         resolve_loads_through_imported_loaders(application.files());
 
         let files = application.files();
-        self.find_started_workers(files, shared);
+        self.started_workers = Default::default();
+        if !options.aot.checks_only && mentions_worker_constructor(files) {
+            self.started_workers.files =
+                find_embedded_files_that_start_workers(files, &self.limits, &options.load.loaders);
+            self.started_workers.held_texts = texts_of_program_files(files)
+                .map(|(path, size)| (path.to_vec(), size))
+                .collect();
+        }
         let view = |first: Option<FileId>| {
             // SAFETY: the load has ended, and between two programs no thread works for the build.
             unsafe { files.view_program(first) };
@@ -419,26 +411,32 @@ impl<'a> Build<'a> {
             let loads_code_by_unknown_names_alone =
                 !is_told_of_code && roots.loads_by_unknown_path && options.aot.loads_code_from_disk;
             let can_load_code_at_run_time = is_told_of_code || loads_code_by_unknown_names_alone;
-            let runtime_fold = create_runtime_fold_inputs(&RuntimeFoldRequest {
-                manifest: shared.manifest,
-                arena: session.arena(),
-                atoms: &shared.atoms,
-                messages: shared.messages,
-                limits: &self.limits,
-                platform: self.platform,
-                facts: ProgramFacts {
+            let runtime_fold = create_runtime_fold_inputs(
+                shared.manifest,
+                session.arena(),
+                &shared.atoms,
+                shared.messages,
+                &self.limits,
+                self.platform,
+                ProgramFacts {
                     can_load_code_at_run_time,
                     can_be_cluster_worker: roots.imports_cluster || can_load_code_at_run_time,
                 },
-            });
-            let runtime_code = runtime_code_options(&self.limits);
-            let runtime_host = RuntimeHost::new(RuntimeHostInput {
+            );
+            let runtime_code = CodeOptions {
+                typed_condition: None,
+                tsconfig_override: Some([VIRTUAL_ROOT, b"tsconfig.json"].concat()),
+                max_computed_candidates: max_computed_candidates(&self.limits),
+                ..CodeOptions::bun_run(VIRTUAL_ROOT.strip_suffix(b"/").unwrap_or(VIRTUAL_ROOT))
+            };
+            let runtime_host = RuntimeHost {
                 disk: shared.disk,
                 runtime_modules: shared.runtime_modules,
                 builtin_names: shared.builtin_names,
                 platform: self.platform,
                 messages: shared.messages,
-            });
+                unreadable: Default::default(),
+            };
             let runtime_request = CompileRequest {
                 entry_points: EntryPoints::Resolved(&roots.paths),
                 code: &runtime_code,
@@ -450,8 +448,8 @@ impl<'a> Build<'a> {
                 progress: None,
                 left_out_bodies: None,
             };
-            let mut runtime =
-                self.load_project(session, &runtime_host, &runtime_request, shared.messages)?;
+            let runtime = load_program(session, &runtime_host, &runtime_request);
+            let mut runtime = self.finish_load(runtime, &runtime_request, shared.messages)?;
             self.count_time(StatisticId::LoadRuntimeProjectNanoseconds, started);
 
             runtime.set_is_read_again(is_read_again);
@@ -491,28 +489,12 @@ impl<'a> Build<'a> {
                     typed_packages: shared.typed_packages,
                     can_load_code_at_run_time,
                     loads_code_by_unknown_names_alone,
-                    finish_asset_reads,
+                    finish_asset_reads: project.finish_asset_reads,
                 };
                 result = Some(then(self, loaded)?);
             }
         }
         Ok(result.expect("a build has a program"))
-    }
-
-    fn find_started_workers(&mut self, files: &Files<'_>, shared: &SharedLoadInputs<'_, '_>) {
-        self.started_workers = Default::default();
-        if self.options.aot.checks_only || !mentions_worker_constructor(files) {
-            return;
-        }
-        self.started_workers.files = find_embedded_files_that_start_workers(&WorkerFileInput {
-            files,
-            runtime_modules: shared.runtime_modules,
-            limits: &self.limits,
-            loaders: &self.options.load.loaders,
-        });
-        self.started_workers.held_texts = texts_of_program_files(files)
-            .map(|(path, size)| (path.to_vec(), size))
-            .collect();
     }
 
     /// The positions of the entry points that are loaded now. The others are left for loads of their own.
@@ -581,7 +563,7 @@ impl<'a> Build<'a> {
         kept
     }
 
-    fn load_application<'s>(
+    pub(super) fn load_application<'s>(
         &mut self,
         session: &'s Session,
         host: &LoadHost<'_>,
@@ -598,17 +580,6 @@ impl<'a> Build<'a> {
             self.provider.clear_embedded_files();
             result = load_program(session, host, request);
         }
-        self.finish_load(result, request, messages)
-    }
-
-    fn load_project<'s>(
-        &mut self,
-        session: &'s Session,
-        host: &dyn CodeHost,
-        request: &CompileRequest<'_, 's>,
-        messages: &LoadMessages,
-    ) -> Result<LoadedProgram<'s>, Stage> {
-        let result = load_program(session, host, request);
         self.finish_load(result, request, messages)
     }
 
@@ -665,11 +636,15 @@ impl<'a> Build<'a> {
         };
         let frozen = sources.as_ref();
         let frozen = frozen.map(|project, sources| (programs.get(project).files(), sources));
-        if let Err(error) = check_unique_paths_across_projects(frozen) {
-            self.diagnostics.add_internal_error(error);
-            return Err(Stage::Load);
-        }
+        self.stop_at_internal_error(check_unique_paths_across_projects(frozen))?;
         Ok(sources)
+    }
+
+    fn stop_at_internal_error<T>(&mut self, result: Result<T, InternalError>) -> Result<T, Stage> {
+        result.map_err(|error| {
+            self.diagnostics.add_internal_error(error);
+            Stage::Load
+        })
     }
 
     /// The sources of a program that checks a typed package by itself. The application reports what is wrong with them.
@@ -682,13 +657,8 @@ impl<'a> Build<'a> {
             host_loaded_modules: &[],
             is_world: true,
         };
-        match freeze_sources(&input, &self.parallel_runner()) {
-            Ok(frozen) => Ok(frozen.sources),
-            Err(error) => {
-                self.diagnostics.add_internal_error(error);
-                Err(Stage::Load)
-            }
-        }
+        let frozen = freeze_sources(&input, &self.parallel_runner());
+        Ok(self.stop_at_internal_error(frozen)?.sources)
     }
 
     fn freeze_project(
@@ -697,17 +667,12 @@ impl<'a> Build<'a> {
         input: &FreezeInput<'_, '_>,
         shared: &SharedLoadInputs<'_, '_>,
     ) -> Result<Sources, Stage> {
+        let frozen = freeze_sources(input, &self.parallel_runner());
         let FrozenSources {
             sources,
             diagnostics,
             counters,
-        } = match freeze_sources(input, &self.parallel_runner()) {
-            Ok(frozen) => frozen,
-            Err(error) => {
-                self.diagnostics.add_internal_error(error);
-                return Err(Stage::Load);
-            }
-        };
+        } = self.stop_at_internal_error(frozen)?;
         let view = ProgramView {
             loaded,
             sources: &sources,
@@ -825,7 +790,7 @@ fn dotted_path(path: DefinePath<'_>, atoms: &Interner<'_>) -> Vec<u8> {
     text
 }
 
-fn find_defined_string(
+pub(super) fn find_defined_string(
     defines: &[Define<'_>],
     atoms: &Interner<'_>,
     path: &[u8],
@@ -849,26 +814,9 @@ fn find_defined_string(
     }
 }
 
-fn max_computed_candidates(limits: &LimitValues) -> u32 {
+pub(super) fn max_computed_candidates(limits: &LimitValues) -> u32 {
     let limit = limits.get(LimitId::MaxComputedSpecifierCandidates);
     u32::try_from(limit).unwrap_or(u32::MAX)
-}
-
-fn application_code_options(options: &Options<'_>, limits: &LimitValues) -> CodeOptions {
-    CodeOptions {
-        max_computed_candidates: max_computed_candidates(limits),
-        ..options.code.clone()
-    }
-}
-
-fn runtime_code_options(limits: &LimitValues) -> CodeOptions {
-    let working_directory = VIRTUAL_ROOT.strip_suffix(b"/").unwrap_or(VIRTUAL_ROOT);
-    CodeOptions {
-        typed_condition: None,
-        tsconfig_override: Some([VIRTUAL_ROOT, b"tsconfig.json"].concat()),
-        max_computed_candidates: max_computed_candidates(limits),
-        ..CodeOptions::bun_run(working_directory)
-    }
 }
 
 #[cfg(test)]

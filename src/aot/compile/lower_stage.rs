@@ -150,7 +150,7 @@ impl Build<'_> {
         let worlds = self.lower_worlds(loaded, &bound.projects.application);
         self.checked_elsewhere.clone_from(&worlds.lowered);
         self.clock.start(Stage::Check);
-        let decided = loaded.projects.as_ref().map(|id, project| {
+        let mut decided = loaded.projects.as_ref().map(|id, project| {
             let all_compiled_files = project.loaded.files().compiled_files();
             let is_decided = |file: &FileId| {
                 id == ProjectId::Application
@@ -164,7 +164,7 @@ impl Build<'_> {
             let left_out = &bound.projects.get(id).left_out;
             let left_out_bodies = LeftOutBodies::new(left_out.functions.iter().copied())
                 .with_files(left_out.files.iter().copied());
-            let roles = match id {
+            let mut roles = match id {
                 ProjectId::Application => {
                     let request = &CompileRequest {
                         left_out_bodies: Some(&left_out_bodies),
@@ -175,7 +175,6 @@ impl Build<'_> {
                 // The test `every_module_of_bun_keeps_its_types` checks Bun's own modules when Bun is built.
                 ProjectId::Runtime => keep_verified_roles(project.loaded, compiled_files),
             };
-            let mut roles = roles;
             if id == ProjectId::Application {
                 for &demotion in &worlds.demoted {
                     roles.roles[demotion.file.idx()] = FileRole::Inferred;
@@ -187,16 +186,13 @@ impl Build<'_> {
             files_to_lower.retain(|file| {
                 id != ProjectId::Application || worlds.lowered.binary_search(file).is_err()
             });
-            let left_out_files = &bound.projects.get(id).left_out.files;
-            files_to_lower.retain(|file| left_out_files.binary_search(file).is_err());
+            files_to_lower.retain(|file| left_out.files.binary_search(file).is_err());
             DecidedProject {
                 roles,
                 files_to_lower,
                 left_out_bodies,
             }
         });
-
-        let mut decided = decided;
         let reach_input = ReachInput {
             application: loaded.project(ProjectId::Application).loaded.files(),
             application_graph: &bound.projects.application.graph,
@@ -238,22 +234,20 @@ impl Build<'_> {
         let unit_count =
             checked.application.lowered.len() + checked.runtime.lowered.len() + worlds.units.len();
         let mut units = Vec::with_capacity(unit_count);
-        self.report_project(
-            loaded,
-            ProjectId::Application,
-            &decided,
-            checked.application,
-            &mut units,
-            &worlds.demoted_directories,
-        );
-        self.report_project(
-            loaded,
-            ProjectId::Runtime,
-            &decided,
-            checked.runtime,
-            &mut units,
-            &[],
-        );
+        checked.map(|project, checked| {
+            let demoted_by_worlds: &[Vec<u8>] = match project {
+                ProjectId::Application => &worlds.demoted_directories,
+                ProjectId::Runtime => &[],
+            };
+            self.report_project(
+                loaded,
+                project,
+                &decided,
+                checked,
+                &mut units,
+                demoted_by_worlds,
+            );
+        });
         units.extend(worlds.units);
         units
     }
@@ -363,12 +357,7 @@ impl Build<'_> {
                     request: &request,
                     sources,
                 },
-                runtime: LoadedProject {
-                    loaded: runtime.loaded,
-                    host: runtime.host,
-                    request: runtime.request,
-                    sources: runtime.sources.clone(),
-                },
+                runtime: runtime.clone(),
             },
             world_sessions: &[],
             application: Some(&bound_application),
@@ -421,10 +410,7 @@ impl Build<'_> {
             .filter(|file| is_typed(file) && !own.contains(file))
             .collect();
         self.checked_elsewhere.sort_unstable();
-        let source_bytes: usize = (files_to_lower.iter())
-            .map(|&file| world_files.module(file).hir.text.len())
-            .sum();
-        let threads = self.threads_to_lower(source_bytes);
+        let threads = self.threads_to_lower(world_files, &files_to_lower);
         let decided = PerProject {
             application: DecidedProject {
                 roles,
@@ -447,14 +433,12 @@ impl Build<'_> {
             },
             canonical_symbol: &|symbol| files.canonical(symbol),
         };
-        let left_out_functions = left_out.functions.clone();
-        let roles = &decided.application.roles;
         let checked = self.with_inputs_for_reached_code(
             &world_build,
             &bound,
             id,
-            roles,
-            left_out_functions,
+            &decided.application.roles,
+            left_out.functions.clone(),
             |inputs| {
                 let mut project =
                     ProjectToLower::new(&world_build, &bound, &decided, id, inputs, threads);
@@ -489,39 +473,30 @@ impl Build<'_> {
         left_out: PerProject<FxHashSet<FunctionRef>>,
     ) -> PerProject<CheckedProgram<Option<LoweredUnit>>> {
         let (application, runtime) = (ProjectId::Application, ProjectId::Runtime);
-        let files = loaded.project(application).loaded.files();
-        let texts = decided.application.files_to_lower.iter();
-        let source_bytes: usize = texts.map(|&file| files.module(file).hir.text.len()).sum();
-        let threads = self.threads_to_lower(source_bytes);
-        let runtime_files = loaded.project(runtime).loaded.files();
-        let runtime_texts = decided.runtime.files_to_lower.iter();
-        let runtime_bytes: usize = runtime_texts
-            .map(|&file| runtime_files.module(file).hir.text.len())
-            .sum();
-        let runtime_threads = self.threads_to_lower(runtime_bytes);
+        let threads_of = |project: ProjectId| {
+            let files = loaded.project(project).loaded.files();
+            self.threads_to_lower(files, &decided.get(project).files_to_lower)
+        };
+        let (threads, runtime_threads) = (threads_of(application), threads_of(runtime));
         let has_one_thread = self.threads == NonZeroUsize::MIN;
-        let roles = &decided.application.roles;
-        let left_out_of_application = left_out.application;
         self.with_inputs_for_reached_code(
             loaded,
             bound,
             application,
-            roles,
-            left_out_of_application,
+            &decided.application.roles,
+            left_out.application,
             |inputs| {
                 let mut of_application =
                     ProjectToLower::new(loaded, bound, decided, application, inputs, threads);
                 let words = &self.options.aot.option_words;
                 of_application.panics =
                     (words.iter()).any(|it| **it == *b"sabotage=LoweringPanics");
-                let roles = &decided.runtime.roles;
-                let left_out = left_out.runtime;
                 self.with_inputs_for_reached_code(
                     loaded,
                     bound,
                     runtime,
-                    roles,
-                    left_out,
+                    &decided.runtime.roles,
+                    left_out.runtime,
                     |inputs| {
                         let of_runtime = ProjectToLower::new(
                             loaded,
@@ -612,9 +587,11 @@ impl Build<'_> {
     }
 
     /// Unless somebody chose a thread count, no more threads than there is source text for: each thread has a checker of its own, which finds out again what the others know.
-    fn threads_to_lower(&self, source_bytes: usize) -> NonZeroUsize {
+    fn threads_to_lower(&self, files: &Files<'_>, files_to_lower: &[FileId]) -> NonZeroUsize {
         const SOURCE_BYTES_PER_THREAD: usize = 256 << 10;
         const MOST_USEFUL_THREADS: usize = 16;
+        let texts = files_to_lower.iter();
+        let source_bytes: usize = texts.map(|&file| files.module(file).hir.text.len()).sum();
         let useful = source_bytes
             .div_ceil(SOURCE_BYTES_PER_THREAD)
             .min(MOST_USEFUL_THREADS);
@@ -717,12 +694,8 @@ impl Build<'_> {
                     | FileOrigin::ProjectTypedVersion
             )
         };
-        let mut files_of_dependencies: Vec<FileId> = files
-            .compiled_files()
-            .iter()
-            .copied()
-            .filter(is_in_dependency)
-            .collect();
+        let compiled = files.compiled_files().iter().copied();
+        let mut files_of_dependencies: Vec<FileId> = compiled.filter(is_in_dependency).collect();
         files_of_dependencies.sort_unstable();
         then(&LoweringInputs {
             roles: &lowering_roles,
@@ -794,10 +767,8 @@ fn drop_reports_on_unloadable_modules(
     checked: &mut CheckedProgram<Option<LoweredUnit>>,
 ) {
     let is_lowered = |file: &FileId| {
-        checked
-            .lowered
-            .iter()
-            .any(|(lowered, unit)| lowered == file && unit.is_some())
+        let mut lowered = checked.lowered.iter();
+        lowered.any(|(lowered, unit)| lowered == file && unit.is_some())
     };
     let lowered = graph.unloadable_files().filter(is_lowered);
     let paths: FxHashSet<&[u8]> = lowered.map(|file| files.module(file).file_name()).collect();

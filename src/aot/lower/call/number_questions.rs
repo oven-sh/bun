@@ -1,8 +1,6 @@
 use bun_sema::hir::{Chain, ExprId, ExprKind};
-use smallvec::SmallVec;
 
 use super::written_operands::find_locked_builtin;
-use super::{Arguments, CallSite, emit_call};
 use crate::builtins::id::BuiltinId;
 use crate::ir::ValueId;
 use crate::lower::{FileLowering, FunctionLowering};
@@ -26,12 +24,8 @@ impl FileLowering<'_, '_, '_, '_> {
                 | BuiltinId::NumberIsSafeInteger
                 | BuiltinId::NumberIsNaN
         );
-        let mut arguments = hir.ids(site.args);
-        let (Some(operand), None) = (arguments.next(), arguments.next()) else {
-            return None;
-        };
-        let is_plain = site.chain == Chain::No && !matches!(hir[operand].kind, ExprKind::Spread(_));
-        (asks_about_numbers && is_plain).then_some((question, operand))
+        let operand = self.find_only_argument(site)?;
+        (asks_about_numbers && site.chain == Chain::No).then_some((question, operand))
     }
 }
 
@@ -52,9 +46,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         question: BuiltinId,
         number: ValueId,
     ) -> ValueId {
-        let function = self.emit_locked_builtin(question);
-        let arguments = Arguments::Values(SmallVec::from_slice(&[number]));
-        let answer = emit_call(self, function, None, arguments, CallSite::default());
+        let answer = self.emit_locked_call(question, None, &[number]);
         self.claim_call_result(call, answer)
     }
 }

@@ -93,7 +93,7 @@ fn headings(causes: &[CheckCause]) -> Vec<BString> {
 
 fn json_position(position: Option<&SourcePosition>) -> BString {
     let mut json = JsonWriter::object();
-    write_json_position(&mut json, position);
+    write_position_members(&mut json, position, "col");
     BString::from(json.finish())
 }
 

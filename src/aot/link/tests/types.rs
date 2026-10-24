@@ -4,15 +4,15 @@ use crate::ir::{
 };
 use crate::link::state::{MergedTypes, UnitIds, UnitMarks};
 use crate::link::testing::{
-    Projects, application_file, forward, mark_everything, number_everything, reverse,
-    test_class_key, unit_in, with_test_files,
+    Projects, application_file, finish_unit, forward, mark_everything, number_everything, reverse,
+    test_class_key, with_test_files,
 };
 use crate::link::type_hashes::ContentHash;
 use crate::link::types::{TypeTableInput, build_type_table, merge_types, order_types_by_contents};
 use crate::link::unit::ShardIndex;
 use crate::link::{LinkError, LinkUnit};
-use crate::load::{ProgramFile, ProjectId};
-use crate::lower::{FragmentBuilder, ModuleFragment};
+use crate::load::ProgramFile;
+use crate::lower::FragmentBuilder;
 use bun_sema::program::FileId;
 
 const DOG: usize = 0;
@@ -50,11 +50,6 @@ fn literal_set(strings: [StringId; 2]) -> Type {
     }
 }
 
-fn finish(projects: &Projects<'_, '_>, fragment: FragmentBuilder) -> LinkUnit {
-    let fragment = fragment.finish(ModuleFragment::default());
-    unit_in(projects, ProjectId::Application, fragment)
-}
-
 fn set_type_hash(unit: &mut LinkUnit, id: TypeId, hash: ContentHash) {
     unit.type_hashes.types[id.index()] = hash;
     let hashes = unit.type_hashes.types.iter();
@@ -69,7 +64,7 @@ fn create_layout_unit(
     let mut fragment = FragmentBuilder::new(FileId(file));
     let layout = fragment.declare_layout(key);
     let ty = fragment.types.intern(Type::layout(layout));
-    (finish(projects, fragment), ty)
+    (finish_unit(projects, fragment), ty)
 }
 
 fn intern_types(
@@ -129,7 +124,7 @@ fn create_unit(projects: &Projects<'_, '_>, file: u32, is_reversed: bool) -> Typ
     let types = [leaves, arrays, parents].concat();
     assert_eq!(types.len(), TEST_TYPE_COUNT);
     TypedUnit {
-        unit: finish(projects, fragment),
+        unit: finish_unit(projects, fragment),
         types,
     }
 }
@@ -155,7 +150,7 @@ fn merge(
     unmarked_types: &[(usize, TypeId)],
     in_parallel: InParallel<'_>,
 ) -> Merged {
-    let mut ids = number_everything(units).units;
+    let mut ids = number_everything(units);
     let mut marks: Vec<UnitMarks> = units.iter().map(mark_everything).collect();
     for &(unit, local) in unmarked_types {
         marks[unit].types[local.index()] = false;
@@ -260,7 +255,7 @@ fn parent_names_representative_in_earlier_unit() {
         let array_type = Type::class(BuiltinClass::Array, &[second_dog]);
         let dog_array = second.types.intern(array_type);
         assert_ne!(first_dog, second_dog);
-        let merged = merge(&[first, finish(projects, second)], &[], &forward);
+        let merged = merge(&[first, finish_unit(projects, second)], &[], &forward);
 
         let representatives = &merged.type_representatives;
         let program_dog = merged.program_id(0, first_dog);
@@ -372,7 +367,7 @@ fn task_order_does_not_change_table() {
         }
         let units: Vec<LinkUnit> = fragments
             .into_iter()
-            .map(|fragment| finish(projects, fragment))
+            .map(|fragment| finish_unit(projects, fragment))
             .collect();
 
         let in_order = merge(&units, &[], &forward);
@@ -406,7 +401,7 @@ fn order_in_which_a_file_met_its_types_does_not_change_table() {
                     .types
                     .intern(Type::class(BuiltinClass::Array, &[array]));
             }
-            merge(&[finish(projects, fragment)], &[], &forward)
+            merge(&[finish_unit(projects, fragment)], &[], &forward)
         };
         let ascending = merge_met_in_order([0, 1, 2]);
         for classes in [[0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]] {

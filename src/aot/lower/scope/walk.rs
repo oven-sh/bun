@@ -10,13 +10,10 @@ mod walker;
 use bun_sema::bind::{Binding, Bound, ScopeId, SymbolId};
 use bun_sema::fold::{Decisions, TreeNode};
 use bun_sema::hir::{self, ClassId, ExprId, FnId, MemberId, StmtId};
-use bun_sema::program::{CompiledModule, FileId};
 
+pub(super) use self::walker::walk_file;
 use super::{BindingRef, ScopeInput, ScopeSlot};
-use crate::builtins::ResolvedBuiltins;
 use crate::ir::FunctionKey;
-use crate::lower::commonjs;
-use crate::modules::{ModuleGraph, ModuleKind};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub(in crate::lower) struct WalkedFunctionId(pub(in crate::lower) u32);
@@ -76,44 +73,6 @@ pub(super) struct WalkedLoop {
     pub(super) stored: Vec<BindingRef>,
 }
 
-pub(super) struct WalkInput<'x, 's> {
-    pub(super) file: FileId,
-    pub(super) hir: &'x hir::File<'s>,
-    pub(super) bound: &'x Bound<'s>,
-    pub(super) compiled: &'x CompiledModule<'s>,
-    pub(super) modules: &'x ModuleGraph,
-    pub(super) is_commonjs: bool,
-    // The text of the file is a function of `this` and the five names of a CommonJS module.
-    pub(super) has_wrapper_parameters: bool,
-    pub(super) moves_statements_to_file_start: bool,
-    pub(super) lexical_owners: &'x [ScopeId],
-    pub(super) builtins: &'x ResolvedBuiltins,
-}
-
-impl<'x, 's> WalkInput<'x, 's> {
-    pub(super) fn new(
-        input: &ScopeInput<'x, 's>,
-        lexical_owners: &'x [ScopeId],
-    ) -> WalkInput<'x, 's> {
-        let kind = input.modules.kind(input.file);
-        let is_commonjs = kind == ModuleKind::CommonJs;
-        let decisions = &input.compiled.analysis.decisions;
-        WalkInput {
-            file: input.file,
-            hir: input.hir,
-            bound: input.bound,
-            compiled: input.compiled,
-            modules: input.modules,
-            is_commonjs,
-            has_wrapper_parameters: is_commonjs
-                && commonjs::keeps_wrapper(input.bound, decisions, input.builtins),
-            moves_statements_to_file_start: kind != ModuleKind::RuntimeSource,
-            lexical_owners,
-            builtins: input.builtins,
-        }
-    }
-}
-
 #[derive(Default)]
 pub(super) struct ScopeWalk {
     pub(super) functions: Vec<WalkedFunction>,
@@ -137,6 +96,7 @@ pub(super) struct ScopeWalk {
     pub(super) is_switch_scope: Vec<bool>,
     pub(super) is_repeated_scope: Vec<bool>,
     pub(super) eval_variable_scopes: Vec<ScopeId>,
+    // The text of the file is a function of `this` and the five names of a CommonJS module.
     pub(super) has_wrapper_parameters: bool,
 }
 
@@ -145,14 +105,10 @@ enum Task {
     Statement(StmtId),
     Expression(ExprId),
     MarkCreated(WalkedFunctionId),
-    InitializeSymbol {
-        symbol: SymbolId,
-        precedes_hoisted_functions: bool,
-    },
+    InitializeSymbol(SymbolId),
+    InitializeParameter(SymbolId),
     InitializeSlot(ScopeId, ScopeSlot),
-    EndStores {
-        first_pending: u32,
-    },
+    EndStores { first_pending: u32 },
     EndLoop(u32),
 }
 
@@ -183,13 +139,13 @@ enum PatternRole {
 }
 
 struct Walker<'x, 's> {
-    input: &'x WalkInput<'x, 's>,
+    input: &'x ScopeInput<'x, 's>,
     hir: &'x hir::File<'s>,
     bound: &'x Bound<'s>,
     decisions: &'x Decisions<'s>,
+    lexical_owners: &'x [ScopeId],
+    is_commonjs: bool,
     file_scope: ScopeId,
-    // `exports` and `module` of each `__commonJS((exports, module) => { .. })` whose callback is the body of a module, in order.
-    inner_module_parameters: Vec<SymbolId>,
     jsx_uses: Vec<(ExprId, Binding)>,
     metadata_uses: Vec<(ClassId, Binding)>,
     class_decorators: Vec<(ClassId, ExprId)>,
@@ -199,8 +155,4 @@ struct Walker<'x, 's> {
     walk: ScopeWalk,
     stack: Vec<(Task, Context)>,
     children: Vec<TreeNode>,
-}
-
-pub(super) fn walk_file(input: &WalkInput<'_, '_>) -> ScopeWalk {
-    walker::run(input)
 }

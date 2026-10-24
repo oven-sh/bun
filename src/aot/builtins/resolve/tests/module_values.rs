@@ -66,11 +66,8 @@ fn members() {
         for name in ["url", "require", "resolve"] {
             let member = find_member(BuiltinId::ImportMeta, name);
             assert!(member.is_some(), "{name}");
-            assert_eq!(
-                case.builtin(&format!("import.meta.{name}")),
-                member,
-                "{name}"
-            );
+            let found = case.builtin(&format!("import.meta.{name}"));
+            assert_eq!(found, member, "{name}");
         }
     });
     with_case(SCRIPT, "require.notThere; module.notThere;", |case| {
@@ -114,11 +111,8 @@ fn commonjs_variables() {
                 id: commonjs_variable_builtin(variable).unwrap(),
                 mutability: Mutability::AlwaysLocked,
             };
-            assert_eq!(
-                case.resolved.commonjs_variable(variable),
-                Some(path),
-                "{text}"
-            );
+            let found = case.resolved.commonjs_variable(variable);
+            assert_eq!(found, Some(path), "{text}");
             assert_eq!(case.path(text), Some(path), "{text}");
         }
     });
@@ -155,11 +149,8 @@ fn es_module_variables() {
                 "{text}"
             );
             assert_eq!(case.path(text), Some(path), "{text}");
-            assert_eq!(
-                case.resolved.commonjs_variable(variable),
-                Some(path),
-                "{text}"
-            );
+            let found = case.resolved.commonjs_variable(variable);
+            assert_eq!(found, Some(path), "{text}");
         }
         for free_name in case
             .exprs("module")
@@ -168,14 +159,10 @@ fn es_module_variables() {
         {
             assert!(case.resolved_at(free_name).is_none());
         }
-        assert_eq!(
-            case.resolved.commonjs_variable(CommonJsVariable::Module),
-            None
-        );
-        assert_eq!(
-            case.resolved.commonjs_variable(CommonJsVariable::Exports),
-            None
-        );
+        let found = case.resolved.commonjs_variable(CommonJsVariable::Module);
+        assert_eq!(found, None);
+        let found = case.resolved.commonjs_variable(CommonJsVariable::Exports);
+        assert_eq!(found, None);
         assert!(!case.mentions(BuiltinId::ModuleObject));
     });
 }
@@ -204,10 +191,8 @@ fn exports_ignores_module_exports_store() {
 fn store_costs_one_variable() {
     with_case(SCRIPT, "require = f; module; require;", |case| {
         let predicted = Some(Mutability::ConstantUnlessWritten);
-        assert_eq!(
-            variable_mutability(case, CommonJsVariable::Require),
-            predicted
-        );
+        let found = variable_mutability(case, CommonJsVariable::Require);
+        assert_eq!(found, predicted);
         assert_mutability(case, "require", Mutability::ConstantUnlessWritten);
         for variable in VARIABLES {
             if variable != CommonJsVariable::Require {
@@ -234,11 +219,8 @@ fn direct_eval_weakens_all_variables() {
         with_case(SCRIPT, source, |case| {
             for variable in VARIABLES {
                 let predicted = Some(Mutability::ConstantUnlessWritten);
-                assert_eq!(
-                    variable_mutability(case, variable),
-                    predicted,
-                    "{variable:?}"
-                );
+                let found = variable_mutability(case, variable);
+                assert_eq!(found, predicted, "{variable:?}");
                 assert!(case.mentions(commonjs_variable_builtin(variable).unwrap()));
             }
             assert_builtin(case, "require", BuiltinId::ModuleRequire);
@@ -268,11 +250,8 @@ fn mapped_wrapper_arguments_weaken_all_variables() {
         with_case(SCRIPT, source, |case| {
             for variable in VARIABLES {
                 let predicted = Some(Mutability::ConstantUnlessWritten);
-                assert_eq!(
-                    variable_mutability(case, variable),
-                    predicted,
-                    "{variable:?}"
-                );
+                let found = variable_mutability(case, variable);
+                assert_eq!(found, predicted, "{variable:?}");
                 assert!(case.mentions(commonjs_variable_builtin(variable).unwrap()));
             }
             assert_builtin(case, "require", BuiltinId::ModuleRequire);
@@ -335,14 +314,11 @@ fn with_scope() {
 
 #[test]
 fn lazy_require_exposes_nothing() {
-    with_case(
-        SCRIPT,
-        "exports.load = () => require(\"./impl\");",
-        |case| {
-            assert!(case.mentions(BuiltinId::ModuleRequire));
-            assert!(case.resolved.exposed().is_empty());
-        },
-    );
+    let source = "exports.load = () => require(\"./impl\");";
+    with_case(SCRIPT, source, |case| {
+        assert!(case.mentions(BuiltinId::ModuleRequire));
+        assert!(case.resolved.exposed().is_empty());
+    });
 }
 
 #[test]

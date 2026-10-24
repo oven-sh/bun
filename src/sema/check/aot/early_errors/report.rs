@@ -36,7 +36,6 @@ impl Checker<'_, '_> {
         found
     }
 
-    // Asked behind `check_file(file)`. The language refuses such a file, and its tree can be one that no valid text has.
     pub fn found_early_error(&self, file: FileId) -> bool {
         self.file_with_early_error == Some(file)
     }

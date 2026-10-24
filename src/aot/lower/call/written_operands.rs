@@ -3,7 +3,7 @@ use bun_sema::check::aot::ObjectMemberKind;
 use bun_sema::hir::{Call, Chain, ExprId, ExprKind};
 use smallvec::SmallVec;
 
-use super::{Arguments, CallSite, emit_call};
+use super::{Arguments, Callee, emit_call_of};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{Resolved, table};
 use crate::ir::{PropertyKeyId, ValueId};
@@ -11,11 +11,6 @@ use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, object};
 
 // A call of a built-in that writes out the structure of what it takes makes what the text says.
-
-struct Entry {
-    key: PropertyName,
-    value: ValueId,
-}
 
 pub(super) fn find_locked_builtin(
     file: &FileLowering<'_, '_, '_, '_>,
@@ -134,19 +129,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if pairs.is_empty() {
             return None;
         }
-        let mut entries: SmallVec<[Entry; 8]> = SmallVec::new();
+        let mut entries: SmallVec<[(PropertyName, ValueId); 8]> = SmallVec::new();
         for pair in &pairs {
             let key = self.lower_computed_key(pair[0]);
             let value = self.lower_expression(pair[1]);
             self.lower_rest_of_pair(pair);
-            entries.push(Entry { key, value });
+            entries.push((key, value));
         }
         self.record_flow_into_argument(call, list, true);
         self.set_position(self.file.hir[call].pos);
 
         let mut names: SmallVec<[(PropertyKeyId, ObjectMemberKind); 8]> = SmallVec::new();
-        for entry in &entries {
-            if let PropertyName::Constant(key) = entry.key {
+        for &(key, _) in &entries {
+            if let PropertyName::Constant(key) = key {
                 names.push((key, ObjectMemberKind::Field));
             }
         }
@@ -156,8 +151,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         } else {
             self.begin_dictionary()
         };
-        for entry in entries {
-            self.add_property(&mut made, entry.key, entry.value);
+        for (key, value) in entries {
+            self.add_property(&mut made, key, value, None);
         }
         let made = object::finish_object(self, made);
         Some(self.claim_call_result(call, made))
@@ -188,21 +183,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let target = self.lower_expression(target);
         let source = self.lower_expression(source);
         self.set_position(self.file.last_mapped_position(description.callee));
-        let describe = self.emit_locked_builtin(BuiltinId::CompilerHelpersDescribeUnlessOrdinary);
-        let arguments = Arguments::Values(SmallVec::from_slice(&[source]));
-        let described = emit_call(self, describe, None, arguments, CallSite::default());
+        let describe = BuiltinId::CompilerHelpersDescribeUnlessOrdinary;
+        let described = self.emit_locked_call(describe, None, &[source]);
 
         let mut written = [target, described];
         self.convert_arguments(call, &mut written);
         let [target, described] = written;
         self.set_position(self.file.last_mapped_position(site.callee));
         let define = self.emit_locked_builtin(BuiltinId::CompilerHelpersDefinePropertiesFrom);
-        let define_site = CallSite {
-            callee_name: self.file.find_callee_name(site.callee),
-            ..CallSite::default()
-        };
+        let define = Callee::without_key(define, None, self.file.find_callee_name(site.callee));
         let arguments = Arguments::Values(SmallVec::from_slice(&[target, described, source]));
-        let defined = emit_call(self, define, None, arguments, define_site);
+        let defined = emit_call_of(self, define, arguments);
         self.set_position(hir[call].pos);
         Some(self.claim_call_result(call, defined))
     }
@@ -231,28 +222,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> ValueId {
         self.set_position(self.file.construct_position(expression));
         let function = self.emit_locked_builtin(constructor);
-        let construct_site = CallSite {
-            callee_name: self.file.find_callee_name(site.callee),
-            ..CallSite::default()
-        };
-        self.emit_construct(
-            function,
-            None,
-            Arguments::Values(SmallVec::new()),
-            construct_site,
-        )
-    }
-
-    fn emit_insertion(&mut self, method: BuiltinId, collection: ValueId, operands: &[ValueId]) {
-        let method = self.emit_locked_builtin(method);
-        let arguments = Arguments::Values(SmallVec::from_slice(operands));
-        emit_call(
-            self,
-            method,
-            Some(collection),
-            arguments,
-            CallSite::default(),
-        );
+        let name = self.file.find_callee_name(site.callee);
+        self.emit_construct(function, Arguments::Values(SmallVec::new()), name)
     }
 
     // `new Map([[key, value], ..])`. A list of constants stays: the whole map is laid into the image.
@@ -272,7 +243,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.record_flow_into_argument(expression, list, true);
         let map = self.emit_empty_collection(expression, site, BuiltinId::Map);
         for entry in &entries {
-            self.emit_insertion(BuiltinId::MapPrototypeSet, map, entry);
+            self.emit_locked_call(BuiltinId::MapPrototypeSet, Some(map), entry);
         }
         self.set_position(self.file.hir[expression].pos);
         Some(self.claim_call_result(expression, map))
@@ -292,7 +263,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.record_flow_into_argument(expression, list, false);
         let set = self.emit_empty_collection(expression, site, BuiltinId::Set);
         for &value in &values {
-            self.emit_insertion(BuiltinId::SetPrototypeAdd, set, &[value]);
+            self.emit_locked_call(BuiltinId::SetPrototypeAdd, Some(set), &[value]);
         }
         self.set_position(self.file.hir[expression].pos);
         Some(self.claim_call_result(expression, set))

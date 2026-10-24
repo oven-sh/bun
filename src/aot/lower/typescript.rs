@@ -3,4 +3,4 @@ mod containers;
 mod enum_values;
 mod enums;
 
-pub(crate) use self::enums::lower_enum;
+pub(in crate::lower) use self::enum_values::to_constant;

@@ -1,6 +1,6 @@
-// `JSON.parse<T>(text)` with the `JSON` of "bun" either validates or doesn't run: however the call reaches a running program, text that is no `T` never comes back as one.
+// `JSON.parse<T>(text)` with the `JSON` of "bun", and `validate<T>(value)`, either validate or don't run: however the call reaches a running program, what is no `T` never comes back as one.
 import { describe, expect, test } from "bun:test";
-import { bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "../harness/run";
 import { unsupported } from "../run-programs";
@@ -30,16 +30,16 @@ function road(name: string, plain: Outcome | Outcome[], compiled: Outcome | Outc
 }
 
 const imported = `import { JSON } from "bun";`;
-road("the import", "refused", "validated", `${imported}\n---\nshow(() => JSON.parse<User>(text));`);
-road("Bun.JSON", "refused", "validated", `\n---\nshow(() => Bun.JSON.parse<User>(text));`);
-road("globalThis.Bun.JSON", "threw", "validated", `\n---\nshow(() => globalThis.Bun.JSON.parse<User>(text));`);
-road("a string key", "refused", "validated", `${imported}\n---\nshow(() => JSON["parse"]<User>(text));`);
+road("the import", "validated", "validated", `${imported}\n---\nshow(() => JSON.parse<User>(text));`);
+road("Bun.JSON", "validated", "validated", `\n---\nshow(() => Bun.JSON.parse<User>(text));`);
+road("globalThis.Bun.JSON", "validated", "validated", `\n---\nshow(() => globalThis.Bun.JSON.parse<User>(text));`);
+road("a string key", "validated", "validated", `${imported}\n---\nshow(() => JSON["parse"]<User>(text));`);
 road("no type argument", "refused", "refused", `${imported}\n---\nshow(() => JSON.parse(text) as User);`);
 road("Bun.JSON without a type argument", "threw", "refused", `\n---\nshow(() => Bun.JSON.parse(text) as User);`);
 road(
   "require",
   ["threw", "threw"],
-  ["threw", "threw"],
+  "refused",
   `\n---\nconst { JSON: Codec } = require("bun");\nshow(() => Codec.parse<User>(text));\nshow(() => require("bun").JSON.parse<User>(text));`,
 );
 road(
@@ -103,6 +103,129 @@ road("a JavaScript file", "threw", "refused", `import { read } from "./read.js";
   "read.js": `const { JSON: Codec } = globalThis.Bun;\nexport const read = text => Codec.parse(text);`,
 });
 
+road(
+  "other names for the import",
+  ["validated", "validated", "validated"],
+  ["validated", "validated", "validated"],
+  `import { JSON as Codec } from "bun";\nimport * as all from "bun";\nimport whole from "bun";\n---
+show(() => Codec.parse<User>(text));
+show(() => all.JSON.parse<User>(text));
+show(() => whole.JSON.parse<User>(text));`,
+);
+road(
+  "a type of another file",
+  ["validated", "validated"],
+  ["validated", "validated"],
+  `${imported}\nimport type { Person } from "./person";\n---
+show(() => JSON.parse<Person>(text));
+show(() => JSON.parse<Person[]>("[" + text + "]"));`,
+  { "person.ts": `export interface Person { id: number }` },
+);
+road(
+  "blanks and comments around the type",
+  ["validated", "validated"],
+  ["validated", "validated"],
+  `${imported}\n---
+show(() => JSON.parse< /* the row */ User >(text));
+show(() => JSON.parse<
+  // the row
+  User
+>(text));`,
+);
+road(
+  "a reviver",
+  "validated",
+  "validated",
+  `${imported}\n---\nshow(() => JSON.parse<User>(text, (key, value) => value));`,
+);
+road("an optional chain", "validated", "validated", `${imported}\n---\nshow(() => JSON?.parse<User>(text));`);
+road("an optional call", "refused", "refused", `${imported}\n---\nshow(() => JSON.parse<User>?.(text));`);
+road(
+  "arguments that are spread",
+  "validated",
+  "validated",
+  `${imported}\n---\nshow(() => JSON.parse<User>(...[text]));`,
+);
+road(
+  "where a call can stand",
+  ["validated", "validated", "validated", "validated"],
+  ["validated", "validated", "validated", "validated"],
+  `${imported}\n---
+function withDefault(user = JSON.parse<User>(text)) { return user; }
+class Holder { static read = () => JSON.parse<User>(text); field = JSON.parse<User>(text); }
+namespace Inner { export const read = () => JSON.parse<User>(text); }
+show(() => withDefault());
+show(() => Holder.read());
+show(() => new Holder().field);
+show(() => Inner.read());`,
+);
+road(
+  "a signature of the program's own over the function",
+  ["threw", "threw", "validated"],
+  ["validated", "validated", "validated"],
+  `${imported}\n---
+interface Codec { parse<T>(text: string): T }
+const codec: Codec = JSON;
+const read: <T>(text: string) => T = JSON.parse;
+show(() => codec.parse<User>(text));
+show(() => read<User>(text));
+show(() => (JSON.parse as <T>(text: string) => T)<User>(text));`,
+);
+road(
+  "no signature over the function",
+  "refused",
+  "refused",
+  `${imported}\n---\nshow(() => (JSON.parse as any)<User>(text));`,
+);
+road(
+  "the function with its type as a value",
+  "refused",
+  "refused",
+  `${imported}\n---\nconst read = JSON.parse<User>;\nshow(() => read(text));`,
+);
+road("new", "refused", "refused", `${imported}\n---\nshow(() => new (JSON.parse<User> as any)(text));`);
+road(
+  "a type parameter",
+  "refused",
+  "refused",
+  `${imported}\n---\nfunction read<T>(text: string) { return JSON.parse<T>(text); }\nshow(() => read<User>(text));`,
+);
+road(
+  "a type that JSON can't hold",
+  "refused",
+  "refused",
+  `${imported}\n---\nshow(() => JSON.parse<{ id: number; at: Date }>(text));`,
+);
+
+const validates = `import { validate } from "bun:bundle";`;
+const value = `globalThis.JSON.parse(text)`;
+road("validate", "validated", "validated", `${validates}\n---\nshow(() => validate<User>(${value}));`);
+road(
+  "validate under another name",
+  "validated",
+  "validated",
+  `import { validate as check } from "bun:bundle";\n---\nshow(() => check<User>(${value}));`,
+);
+road(
+  "validate without a type argument",
+  "refused",
+  "refused",
+  `${validates}\n---\nshow(() => validate(${value}) as User);`,
+);
+road("validate as a value", "refused", "refused", `${validates}\n---\nshow(() => [${value}].map(validate<User>)[0]);`);
+road(
+  "validate under a name of its own",
+  "refused",
+  "refused",
+  `${validates}\n---\nconst check = validate;\nshow(() => check<User>(${value}));`,
+);
+road(
+  "validate with two arguments",
+  "refused",
+  "refused",
+  `${validates}\n---\nshow(() => (validate as any)<User>(${value}, 1));`,
+);
+
 const notDeclared = `${imported}\n---\nshow(() => JSON.parse<Usr>(text));`;
 road("a type that isn't declared", "refused", "refused", notDeclared);
 road(
@@ -131,6 +254,15 @@ const ways: Record<string, (folder: string) => Promise<{ stdout: string; stderr:
     const built = await run([bunExe(), "build", "./program.ts", "--target=bun", "--outfile", "out.js"], folder);
     return built.exitCode ? built : run([bunExe(), "run", "./out.js"], folder);
   },
+  "bun build --compile": async folder => {
+    const built = await run([bunExe(), "build", "--compile", "./program.ts", "--outfile", "program"], folder);
+    return built.exitCode ? built : run([join(folder, "program")], folder);
+  },
+  "bun test": async folder => {
+    await Bun.write(join(folder, "program.test.ts"), `import "./program.ts";\ntest("the program ran", () => {});`);
+    const { stdout, ...rest } = await run([bunExe(), "test", "./program.test.ts"], folder);
+    return { stdout: stdout.replace(/^bun test v.*\n/, ""), ...rest };
+  },
   "bun run --aot": folder => run([bunExe(), "run", "--aot", "./program.ts"], folder),
 };
 
@@ -157,6 +289,155 @@ describe.each(Object.keys(ways))("%s", way => {
   );
 });
 
+const call = `import { JSON } from "bun";\nconsole.log(JSON.parse<{ id: number }>('{"id":"7"}'));`;
+const needsBun = `only work in a TypeScript file that Bun runs, tests or builds with --target=bun`;
+
+test.each(["node", "browser"])("a bundle for --target=%s is refused", async target => {
+  using dir = tempDir("no-bun-to-validate-with", { "program.ts": call });
+  const { stdout, stderr, exitCode } = await run(
+    [bunExe(), "build", "./program.ts", "--target=" + target],
+    String(dir),
+  );
+  expect(stderr).toContain(needsBun);
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+});
+
+test("a bundle with bytecode validates", async () => {
+  using dir = tempDir("bundle-with-bytecode", { "program.ts": call });
+  const flags = ["--target=bun", "--bytecode", "--format=cjs", "--outdir", "out"];
+  const built = await run([bunExe(), "build", "./program.ts", ...flags], String(dir));
+  expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  const { stdout, stderr, exitCode } = await run([bunExe(), "run", "./out/program.js"], String(dir));
+  expect(stderr).toContain("TypeError: id must be number, received string");
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+});
+
+test("text that is no file is refused", () => {
+  expect(() => new Bun.Transpiler({ loader: "ts" }).transformSync(call)).toThrow(needsBun);
+});
+
+test("bun -e validates", async () => {
+  using dir = tempDir("text-on-the-command-line", { "row.ts": `export interface Row { id: number }` });
+  const text = `import { JSON } from "bun";\nimport type { Row } from "./row";\nJSON.parse<Row>('{"id":"7"}');`;
+  const { stdout, stderr, exitCode } = await run([bunExe(), "-e", text], String(dir));
+  expect(stderr).toContain("TypeError: id must be number, received string");
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+});
+
+test("a type that another file declares is read again when that file changes", async () => {
+  // The cache of transpiled files goes by the text of the file alone, and takes large files only.
+  const program = `import { JSON } from "bun";
+import type { Row } from "./row";
+try {
+  JSON.parse<Row>('{"id":7}');
+  console.log("accepted");
+} catch (error: any) {
+  console.log("refused", error.issues.length);
+}
+// ${Buffer.alloc(64 * 1024, "-").toString()}
+`;
+  using dir = tempDir("type-of-another-file", {
+    "program.ts": program,
+    "row.ts": `export interface Row { id: number }`,
+  });
+  const env = { ...bunEnv, BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(String(dir), "cache") };
+  const runs = async () => (await run([bunExe(), "run", "./program.ts"], String(dir), env)).stdout;
+  expect([await runs(), await runs()]).toEqual(["accepted\n", "accepted\n"]);
+  await Bun.write(join(String(dir), "row.ts"), `export interface Row { id: string }`);
+  expect(await runs()).toBe("refused 1\n");
+});
+
+test("names on Object.prototype change no answer", async () => {
+  using dir = tempDir("names-on-object-prototype", {
+    "program.ts": `import { JSON } from "bun";
+import { validate } from "bun:bundle";
+// As a deep merge of '{"__proto__":{..}}' leaves it.
+Object.assign(Object.prototype, globalThis.JSON.parse(process.argv[2]));
+function show(call: () => unknown) {
+  try {
+    console.log("accepted", globalThis.JSON.stringify(call()));
+  } catch (error: any) {
+    console.log("refused", error.issues.length);
+  }
+}
+show(() => validate<{ role: "user" } | { role: "admin"; key: string }>({ role: "admin" }));
+show(() => validate<{ a: number } | { a: string; u: { v: unknown } }>({ a: true }));
+show(() => JSON.parse<{ id: number; name: string }>('{"id":1}'));
+show(() => JSON.parse<{ id: number & import("bun").Schema.Min<5> }>('{"id":1}'));
+show(() => JSON.parse<{ id: number } & import("bun").Schema.Strict>('{"id":1,"more":2}'));
+show(() => JSON.parse<{ id: number }>('{"id":1}'));`,
+  });
+  const names = {
+    default: "x",
+    discriminant: { key: "k", tags: [], tagged: [], untagged: [6], expected: "x" },
+    shape: "Unknown",
+    isOptional: true,
+    mustBeOwn: false,
+    undeclared: "Allowed",
+    undeclaredValue: 0,
+    rules: [],
+    members: [],
+    arms: [],
+    element: 0,
+    elements: [],
+    remembers: true,
+    message: "m",
+    name: "x",
+    key: "x",
+    id: 9,
+  };
+  const refusedAll = "refused 1\n".repeat(5) + `accepted {"id":1}\n`;
+  for (const [name, value] of [["nothing", 0], ...Object.entries(names)]) {
+    const { stdout, stderr, exitCode } = await run(
+      [bunExe(), "run", "./program.ts", JSON.stringify({ [name]: value })],
+      String(dir),
+    );
+    expect({ name, stdout, stderr: exitCode ? stderr : "", exitCode }).toEqual({
+      name,
+      stdout: refusedAll,
+      stderr: "",
+      exitCode: 0,
+    });
+  }
+}, 240_000);
+
+test("what is validated is what the compiled program validates", async () => {
+  using dir = tempDir("the-same-answers", {
+    "program.ts": `import { JSON, type Schema } from "bun";
+import { validate } from "bun:bundle";
+interface User { id: number & Schema.Int; name: string & Schema.MinLength<1>; tags?: string[]; role: "admin" | "guest"; at: { x: number } | null }
+function show(call: () => unknown) {
+  try {
+    console.log(globalThis.JSON.stringify(call()));
+  } catch (error: any) {
+    console.log(error.name, error.message, globalThis.JSON.stringify(error.issues));
+  }
+}
+const right = '{"id":7,"name":"Ada","role":"admin","at":{"x":1},"more":true}';
+show(() => JSON.parse<User>(right));
+show(() => JSON.parse<User & Schema.Strict>(right));
+show(() => JSON.parse<User>('{"id":7.5,"name":"","tags":["a",1],"role":"owner","at":{}}'));
+show(() => JSON.parse<User>('{"id":'));
+show(() => JSON.parse<User[]>("[" + right + ",1]"));
+show(() => JSON.parse<Record<string, number>>('{"a":1,"b":"2"}'));
+show(() => JSON.parse<[number, string]>('[1,2]'));
+show(() => JSON.parse<{ n: number & Schema.Default<3> }>('{}'));
+show(() => JSON.parse<{ n: number & Schema.Default<3> }>('{}', (key, value) => value));
+const given = { id: 7, name: "Ada", role: "guest", at: null };
+show(() => validate<User>(given));
+show(() => validate<User>(given) === (given as unknown));
+show(() => validate<User>({ ...given, role: 1 }));
+show(() => validate<number>(1e999));
+show(() => validate<string | undefined>(undefined));`,
+  });
+  const plain = await ways["bun run"](String(dir));
+  expect({ stderr: plain.exitCode ? plain.stderr : "", exitCode: plain.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect(plain.stdout.split("\n").length).toBe(15);
+  for (const way of Object.keys(ways).filter(way => !(way.endsWith("--aot") && unsupported) && way !== "bun test")) {
+    expect({ way, stdout: (await ways[way](String(dir))).stdout }).toEqual({ way, stdout: plain.stdout });
+  }
+}, 240_000);
+
 test("the rest of the object is the global's", async () => {
   using dir = tempDir("json-of-bun", {
     "program.ts": `import { JSON } from "bun";
@@ -169,7 +450,7 @@ for (const change of [() => ((JSON as any).parse = global.parse), () => delete (
 }
 console.log(own.parse === global.parse, Bun.JSON === JSON);`,
   });
-  for (const way of unsupported ? ["bun run", "bun build"] : Object.keys(ways)) {
+  for (const way of Object.keys(ways).filter(way => !(way.endsWith("--aot") && unsupported) && way !== "bun test")) {
     const { stdout, stderr, exitCode } = await ways[way](String(dir));
     expect({ way, stdout, stderr: exitCode ? stderr : "", exitCode }).toEqual({
       way,

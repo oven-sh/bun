@@ -39,13 +39,10 @@ fn first_import_target(graph: &ModuleGraph, input: &BindInput<'_, '_>) -> Module
 fn first_named_import(graph: &ModuleGraph, input: &BindInput<'_, '_>) -> ImportBinding {
     let main = file_named(input, "main.js");
     let mut specifiers = input.files.hir(main)[ImportId(0)].named.iter();
-    let specifier = specifiers
-        .next()
-        .expect("the first import has no named specifier");
-    let symbol = input
-        .files
-        .bound(main)
-        .declared_symbol(Decl::ImportSpec(specifier));
+    let specifier = specifiers.next();
+    let specifier = specifier.expect("the first import has no named specifier");
+    let bound = input.files.bound(main);
+    let symbol = bound.declared_symbol(Decl::ImportSpec(specifier));
     graph.import_binding(main, symbol)
 }
 
@@ -66,21 +63,36 @@ fn only_source_text_and_data_have_export_table() {
 }
 
 #[test]
-fn declaration_file_is_empty_es_module() {
-    let files = [
-        ("main.js", "import './types.d.ts';"),
-        ("types.d.ts", "export declare const x: number;"),
+fn text_of_a_file_decides_its_interop_and_its_extension_does_not() {
+    let declaration = "export declare const x: number;";
+    let cases = [
+        ("main.js", "types.d.ts", declaration, Interop::ES_MODULE),
+        ("main.mjs", COMMONJS_FILE.0, COMMONJS_FILE.1, COMMONJS),
+        (
+            "main.js",
+            "module.mjs",
+            "globalThis.x = 1;",
+            Interop::ES_MODULE,
+        ),
+        (
+            "main.js",
+            "module.cjs",
+            "export const x = 1;",
+            Interop::ES_MODULE,
+        ),
     ];
-    check_interop(&files, "types.d.ts", Interop::ES_MODULE);
+    for (main, name, text, expected) in cases {
+        let import = format!("import './{name}';");
+        check_interop(&[(main, import.as_str()), (name, text)], name, expected);
+    }
 }
 
 #[test]
 fn library_files_are_es_modules() {
     with_runtime_graph(&[("main.js", "")], |graph, input| {
         let entry_points = input.sources.entry_points().iter();
-        let mut library_entries = entry_points
-            .filter(|entry| entry.kind == EntryPointKind::Library)
-            .peekable();
+        let library_entries = entry_points.filter(|entry| entry.kind == EntryPointKind::Library);
+        let mut library_entries = library_entries.peekable();
         assert!(library_entries.peek().is_some());
         for entry in library_entries {
             let interop = file_interop(input.files, input.sources, entry.file);
@@ -263,12 +275,6 @@ fn data_module_without_default_requires_as_namespace() {
 }
 
 #[test]
-fn commonjs_file_requires_as_module_exports() {
-    let files = [("main.mjs", "import './legacy.js';"), COMMONJS_FILE];
-    check_interop(&files, "legacy.js", COMMONJS);
-}
-
-#[test]
 fn package_type_module_ignores_es_module_annotation() {
     let files = [
         ("main.mjs", "import './legacy.js';"),
@@ -280,24 +286,6 @@ fn package_type_module_ignores_es_module_annotation() {
         ..COMMONJS
     };
     check_interop(&files, "legacy.js", expected);
-}
-
-#[test]
-fn es_module_requires_as_namespace() {
-    let files = [
-        ("main.js", "import './module.mjs';"),
-        ("module.mjs", "globalThis.x = 1;"),
-    ];
-    check_interop(&files, "module.mjs", Interop::ES_MODULE);
-}
-
-#[test]
-fn extension_does_not_decide_format() {
-    let files = [
-        ("main.js", "import './module.cjs';"),
-        ("module.cjs", "export const x = 1;"),
-    ];
-    check_interop(&files, "module.cjs", Interop::ES_MODULE);
 }
 
 #[test]

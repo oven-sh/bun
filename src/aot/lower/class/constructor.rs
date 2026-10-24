@@ -1,18 +1,16 @@
 use bun_sema::bind::{Binding, Bound, ClassOwner, CodeUnit, Decl};
-use bun_sema::check::aot::ClassRef;
-use bun_sema::hir::{self, ClassId, ExprId, ExprKind, FnId, ParamId, PatKind};
+use bun_sema::hir::{ClassId, ExprId, ExprKind, FnId, ParamId, PatKind};
 
 use super::{ClassPlan, InitializerCall, InjectionPoint, fields, is_derived_class};
 use crate::ir::generated::{
     BlockFrequency, Function, FunctionFlags, FunctionKind, HomeObjectKind, RuntimeErrorKind,
     SourceRange,
 };
-use crate::ir::{DeclaredType, FunctionId, FunctionKey, LayoutId, StringId, TypeTable, ValueId};
+use crate::ir::{DeclaredType, FunctionId, FunctionKey, StringId, TypeTable, ValueId};
 use crate::lower::call::Arguments;
-use crate::lower::function::{self, EntryArguments};
 use crate::lower::member::PropertyName;
 use crate::lower::scope::ScopeSlot;
-use crate::lower::{FileLowering, FunctionLowering, convert};
+use crate::lower::{FileLowering, FunctionLowering, convert, function};
 
 impl FileLowering<'_, '_, '_, '_> {
     pub(crate) fn finish_constructor_header(
@@ -36,10 +34,16 @@ impl FileLowering<'_, '_, '_, '_> {
                     (installed.classes.get(class.idx()).copied()).unwrap_or_default();
                 SourceRange { start, end }
             }
-            None => SourceRange {
-                start: self.type_ranges.map_offset(node.text_start),
-                end: (self.type_ranges).map_offset(compute_class_text_end(hir, self.bound, class)),
-            },
+            None => {
+                let end = match self.bound.class_owner[class.idx()] {
+                    ClassOwner::Expr(expression) => hir[expression].end,
+                    ClassOwner::Stmt(statement) => hir[statement].loc.end,
+                };
+                SourceRange {
+                    start: self.type_ranges.map_offset(node.text_start),
+                    end: self.type_ranges.map_offset(end),
+                }
+            }
         };
         header.kind = match is_derived_class(hir, class) {
             true => FunctionKind::DerivedConstructor,
@@ -59,8 +63,7 @@ impl FileLowering<'_, '_, '_, '_> {
         if is_derived {
             lowering.lower_parameters(source);
             if plan.injection_point == InjectionPoint::Start && has_injected_steps(&plan) {
-                let error = RuntimeErrorKind::UninitializedThis;
-                lowering.emit_throw_runtime_error(error, None);
+                lowering.emit_throw_runtime_error(RuntimeErrorKind::UninitializedThis, None);
             }
         } else {
             let this = lowering.emit_allocation(class);
@@ -89,24 +92,6 @@ impl FileLowering<'_, '_, '_, '_> {
         lowering.builder.return_value(Some(this));
         lowering.finish();
     }
-
-    fn create_implicit_header(
-        &mut self,
-        key: FunctionKey,
-        class: ClassId,
-        name: Option<StringId>,
-    ) -> Function {
-        let position = self.hir[class].name_pos;
-        let mut header =
-            function::create_header(self, key, FunctionKind::BaseConstructor, position);
-        if is_derived_class(self.hir, class) {
-            header.flags |= FunctionFlags::HAS_REST_PARAMETER | FunctionFlags::TAKES_CALLEE;
-            let arguments = DeclaredType::from_compiler(TypeTable::ARRAY);
-            header.parameters.push(arguments);
-        }
-        self.finish_constructor_header(class, name, &mut header);
-        header
-    }
 }
 
 pub(super) fn declare_constructor(
@@ -115,16 +100,22 @@ pub(super) fn declare_constructor(
     plan: &ClassPlan,
     name: Option<StringId>,
 ) -> FunctionId {
-    match plan.constructor {
-        Some(function) => function::declare_source_function(file, function, name),
-        None => {
-            let key = FunctionKey::ImplicitConstructor(ClassRef {
-                file: file.file,
-                class,
-            });
-            file.declare_function(key, |file| file.create_implicit_header(key, class, name))
-        }
+    if let Some(function) = plan.constructor {
+        return function::declare_source_function(file, function, name);
     }
+    let key = FunctionKey::ImplicitConstructor(file.own_class(class));
+    file.declare_function(key, |file| {
+        let position = file.hir[class].name_pos;
+        let mut header =
+            function::create_header(file, key, FunctionKind::BaseConstructor, position);
+        if is_derived_class(file.hir, class) {
+            header.flags |= FunctionFlags::HAS_REST_PARAMETER | FunctionFlags::TAKES_CALLEE;
+            let arguments = DeclaredType::from_compiler(TypeTable::ARRAY);
+            header.parameters.push(arguments);
+        }
+        file.finish_constructor_header(class, name, &mut header);
+        header
+    })
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -141,7 +132,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let class = get_constructor_class(self.file.bound, constructor);
         let plan = self.file.class_plan(class);
-        let layout = get_class_layout(self.file, class);
+        let layout = self.file.own_class_layout(class);
         let constructor_scope = self.file.bound.fns[constructor.idx()].scope;
 
         let new_target = self.get_new_target();
@@ -161,8 +152,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     .super_construct_list(layout, parent, new_target, list)
             }
         };
-        let this = self.convert_constructed_object(class, this);
-        self.bind_this(this);
+        let this = self.bind_constructed_object(class, this);
         self.emit_this_binding_steps(class, &plan, this);
         if plan.injection_point == InjectionPoint::AfterSuperCall(call) {
             self.emit_injected_steps(class, &plan, this);
@@ -208,8 +198,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             true => header.name,
             false => None,
         };
-        let error = RuntimeErrorKind::DerivedConstructorResult;
-        self.emit_throw_runtime_error(error, class_name);
+        self.emit_throw_runtime_error(RuntimeErrorKind::DerivedConstructorResult, class_name);
         self.builder.switch_to(split.taken);
     }
 
@@ -226,30 +215,27 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn emit_allocation(&mut self, class: ClassId) -> ValueId {
-        let layout = get_class_layout(self.file, class);
+        let layout = self.file.own_class_layout(class);
         self.set_position(self.file.hir[class].start);
         let new_target = self.builder.new_target();
         let new_target = new_target.expect("a constructor takes new.target");
         let prototype = self.builder.get_construct_prototype(new_target, layout);
         let this = self.builder.new_object(layout, &[], Some(prototype), &[]);
         self.file.fragment.note_allocation(layout);
-        let this = self.convert_constructed_object(class, this);
+        self.bind_constructed_object(class, this)
+    }
+
+    // The constructor of the parent can return any object, and the prototype of new.target can select the layout of another class.
+    fn bind_constructed_object(&mut self, class: ClassId, constructed: ValueId) -> ValueId {
+        let class = self.file.own_class(class);
+        let position = self.file.class_this_type(class, None);
+        let this = convert::convert(self, constructed, position, None);
         self.bind_this(this);
         this
     }
 
-    // The constructor of the parent can return any object, and the prototype of new.target can select the layout of another class.
-    fn convert_constructed_object(&mut self, class: ClassId, constructed: ValueId) -> ValueId {
-        let class = ClassRef {
-            file: self.file.file,
-            class,
-        };
-        let position = self.file.class_this_type(class, None);
-        convert::convert(self, constructed, position, None)
-    }
-
     fn emit_implicit_super_call(&mut self, class: ClassId) -> ValueId {
-        let layout = get_class_layout(self.file, class);
+        let layout = self.file.own_class_layout(class);
         let new_target = self.builder.new_target();
         let new_target = new_target.expect("a constructor takes new.target");
         let callee = self.builder.callee();
@@ -259,9 +245,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let this = self
             .builder
             .super_construct_list(layout, parent, new_target, list);
-        let this = self.convert_constructed_object(class, this);
-        self.bind_this(this);
-        this
+        self.bind_constructed_object(class, this)
     }
 
     fn emit_this_binding_steps(&mut self, class: ClassId, plan: &ClassPlan, this: ValueId) {
@@ -305,33 +289,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if plan.instance_elements.is_empty() {
             return;
         }
-        let initializer = fields::declare_instance_initializer(self.file, class);
-        let arguments = EntryArguments {
-            this: Some(this),
-            ..EntryArguments::default()
-        };
-        self.emit_direct_call(initializer, arguments);
-    }
-}
-
-fn compute_class_text_end(hir: &hir::File<'_>, bound: &Bound<'_>, class: ClassId) -> u32 {
-    match bound.class_owner[class.idx()] {
-        ClassOwner::Expr(expression) => hir[expression].end,
-        ClassOwner::Stmt(statement) => hir[statement].loc.end,
+        let initializer = fields::declare_initializer(self.file, class, false);
+        self.emit_call_on(initializer, this);
     }
 }
 
 fn get_constructor_class(bound: &Bound<'_>, constructor: FnId) -> ClassId {
     let class = bound.function_class(constructor);
     class.expect("a constructor is a class member")
-}
-
-fn get_class_layout(file: &mut FileLowering<'_, '_, '_, '_>, class: ClassId) -> LayoutId {
-    let class = ClassRef {
-        file: file.file,
-        class,
-    };
-    file.class_layout(class)
 }
 
 fn has_injected_steps(plan: &ClassPlan) -> bool {

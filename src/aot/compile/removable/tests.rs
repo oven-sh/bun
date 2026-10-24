@@ -180,11 +180,8 @@ fn every_row_answers_as_the_table_says() {
 #[test]
 fn every_configuration_of_the_table_is_run() {
     for row in parse_table() {
-        assert!(
-            matches!(row.configuration, "-" | "legacy"),
-            "line {}",
-            row.line
-        );
+        let is_run = matches!(row.configuration, "-" | "legacy");
+        assert!(is_run, "line {}", row.line);
     }
 }
 
@@ -196,18 +193,10 @@ fn every_difference_from_the_bundler_has_its_reason() {
             (true, Bundler::Keeps) => &["folded", "table", "inert"],
             (false, Bundler::Drops) => &["missed"],
         };
-        assert!(
-            expected.contains(&row.difference),
-            "line {}: {}",
-            row.line,
-            row.difference
-        );
+        let (line, difference) = (row.line, row.difference);
+        assert!(expected.contains(&difference), "line {line}: {difference}");
         let is_monotonic = row.plain != Bundler::Drops || row.minified != Bundler::Keeps;
-        assert!(
-            is_monotonic,
-            "line {}: --minify-syntax keeps more",
-            row.line
-        );
+        assert!(is_monotonic, "line {line}: --minify-syntax keeps more");
     }
 }
 
@@ -223,10 +212,8 @@ fn annotations_can_be_ignored() {
         ("const MARK = <div />;", "tsx"),
     ];
     for (source, extension) in rows {
-        assert!(
-            ask_one(source, extension, RemovableOptions::default()),
-            "{source}"
-        );
+        let plain = RemovableOptions::default();
+        assert!(ask_one(source, extension, plain), "{source}");
         assert!(!ask_one(source, extension, ignoring), "{source}");
     }
     assert!(ask_one("const MARK = [1];", "ts", ignoring));
@@ -254,10 +241,8 @@ fn minified_syntax_leaves_out_constructions_of_known_globals() {
         "class MARK { static a = new Map([[\"a\", 1]]); }",
     ];
     for source in removable {
-        assert!(
-            !ask_one(source, "ts", RemovableOptions::default()),
-            "{source}"
-        );
+        let plain = RemovableOptions::default();
+        assert!(!ask_one(source, "ts", plain), "{source}");
         assert!(ask_one(source, "ts", minifying), "{source}");
     }
     let kept = [

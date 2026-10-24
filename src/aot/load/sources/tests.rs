@@ -162,7 +162,6 @@ fn create_options<'a>(
     aot: &'a AotOptions,
     files: &[(&str, &str)],
     entry_points: &[&str],
-    entry_point_names: &[&str],
 ) -> Options<'a> {
     let mut in_memory_files: Vec<(Vec<u8>, Vec<u8>)> = files
         .iter()
@@ -183,7 +182,7 @@ fn create_options<'a>(
         paths: PathOptions {
             module_prefix: b"/$bunfs/root/".to_vec(),
             root_directory: b"/project".to_vec(),
-            entry_point_names: to_byte_strings(entry_point_names),
+            entry_point_names: to_byte_strings(entry_points),
         },
         removable: Default::default(),
         lists_modules: false,
@@ -198,7 +197,7 @@ fn with_freeze_input<R>(
 ) -> R {
     set_up_output();
     let aot = AotOptions::default();
-    let options = create_options(&aot, files, setup.entry_points, setup.entry_points);
+    let options = create_options(&aot, files, setup.entry_points);
     let disk = create_disk(&options, NonZeroUsize::MIN);
     let session = Session::new();
     let atoms = Interner::new_in(&session);
@@ -256,7 +255,7 @@ fn freeze_with_entry_point_names(
     names: &[&str],
 ) -> Result<FrozenSources, InternalError> {
     let aot = AotOptions::default();
-    let options = create_options(&aot, &[], names, names);
+    let options = create_options(&aot, &[], names);
     let input = FreezeInput {
         options: &options,
         ..*input
@@ -299,19 +298,9 @@ fn entry_point_kind(sources: &Sources, file: FileId) -> Option<EntryPointKind> {
     Some(entry_point.kind)
 }
 
-fn runtime_entry_point_kind(
-    files: &[(&str, &str)],
-    module: RuntimeModule,
-) -> Option<EntryPointKind> {
-    with_runtime_bind_input(files, |input| {
-        let file = input.sources.runtime_module_file(module)?;
-        entry_point_kind(input.sources, file)
-    })
-}
-
 fn freeze_runtime_project(files: &Files<'_>, host_loaded_modules: &[RuntimeModule]) -> Sources {
     let aot = AotOptions::default();
-    let options = create_options(&aot, &[], &["main.ts"], &["main.ts"]);
+    let options = create_options(&aot, &[], &["main.ts"]);
     let input = FreezeInput {
         project: ProjectId::Runtime,
         files,
@@ -328,17 +317,13 @@ fn collect_implied_modules(files: &Files<'_>, sources: &Sources) -> Vec<RuntimeM
     let compiled_modules = compiled_files.filter_map(|&file| files.compiled(file));
     let implied_answers = compiled_modules.flat_map(|compiled| compiled.implied_answers);
     implied_answers
-        .filter_map(|&answer| {
-            if let CodeAnswer::HostModule(id) = answer {
-                return RuntimeModule::from_registry_id(id.0);
-            }
-            let CodeAnswer::File(file) = answer else {
-                return None;
-            };
-            let SourceKind::RuntimeModule(module) = sources.kind(file) else {
-                return None;
-            };
-            Some(module)
+        .filter_map(|&answer| match answer {
+            CodeAnswer::HostModule(id) => RuntimeModule::from_registry_id(id.0),
+            CodeAnswer::File(file) => match sources.kind(file) {
+                SourceKind::RuntimeModule(module) => Some(module),
+                _ => None,
+            },
+            _ => None,
         })
         .collect()
 }
@@ -390,7 +375,8 @@ fn kinds_and_loaders_follow_payloads() {
         assert_eq!(sources.project(), ProjectId::Application);
         let describe = |name: &str| {
             let file = file_at(input.files, name);
-            assert!(!sources.is_from_plugin(file), "{name}");
+            let payload = parsed_source(input.files, file);
+            assert!(!payload.is_some_and(|it| it.is_from_plugin), "{name}");
             (
                 sources.kind(file),
                 sources.loader(file),
@@ -531,7 +517,7 @@ fn plugin_module_uses_namespace_and_path() {
     with_bind_input_and_provider(&files, &default_settings(), &provider, |input| {
         let sources = input.sources;
         let mut found: Vec<(Loader, &[u8], &[u8])> = file_ids(input.files.modules.len())
-            .filter(|&file| sources.is_from_plugin(file))
+            .filter(|&file| parsed_source(input.files, file).is_some_and(|it| it.is_from_plugin))
             .map(|file| {
                 let paths = sources.module_paths(file);
                 (sources.loader(file), paths.public_path, paths.display_path)
@@ -578,9 +564,16 @@ fn only_loader_of_path_has_no_suffix() {
 }
 
 #[test]
-fn runtime_module_uses_specifier() {
-    let main = "import fs from 'node:fs';\nconsole.log(fs);";
-    with_runtime_bind_input(&[("main.ts", main)], |input| {
+fn runtime_module_is_a_file_of_the_runtime_project_alone_and_uses_its_specifier() {
+    let files = [("main.ts", "import fs from 'node:fs';\nconsole.log(fs);")];
+    with_bind_input(&files, &default_settings(), |input| {
+        let sources = input.sources;
+        assert_eq!(sources.runtime_module_file(RuntimeModule::NodeFs), None);
+        assert!(sources.runtime_module_files().is_empty());
+        let main = input.files.entry_points()[0];
+        assert_eq!(sources.runtime_function(main, b"from"), None);
+    });
+    with_runtime_bind_input(&files, |input| {
         let sources = input.sources;
         assert_eq!(sources.project(), ProjectId::Runtime);
         let file = sources.runtime_module_file(RuntimeModule::NodeFs).unwrap();
@@ -591,18 +584,7 @@ fn runtime_module_uses_specifier() {
             sources.kind(file),
             SourceKind::RuntimeModule(RuntimeModule::NodeFs)
         );
-    });
-}
-
-#[test]
-fn application_has_no_runtime_module_files() {
-    let main = "import fs from 'node:fs';\nconsole.log(fs);";
-    with_bind_input(&[("main.ts", main)], &default_settings(), |input| {
-        assert_eq!(
-            input.sources.runtime_module_file(RuntimeModule::NodeFs),
-            None
-        );
-        assert!(input.sources.runtime_module_files().is_empty());
+        assert_eq!(sources.runtime_function(file, b"readFile"), None);
     });
 }
 
@@ -634,23 +616,11 @@ fn runtime_module_files_ascend_by_registry_id() {
 }
 
 #[test]
-fn runtime_function_needs_runtime_functions_file() {
-    let files = [("main.ts", "import fs from 'node:fs';\nconsole.log(fs);")];
-    with_bind_input(&files, &default_settings(), |input| {
-        let main = input.files.entry_points()[0];
-        assert_eq!(input.sources.runtime_function(main, b"from"), None);
-    });
-    with_runtime_bind_input(&files, |input| {
-        let module = input
-            .sources
-            .runtime_module_file(RuntimeModule::NodeFs)
-            .unwrap();
-        assert_eq!(input.sources.runtime_function(module, b"readFile"), None);
-    });
-}
-
-#[test]
-fn host_function_is_found_through_the_manifest() {
+fn runtime_functions_are_found_and_their_files_are_library_entry_points() {
+    let mut functions = table::runtime_functions().iter();
+    let decorators = functions
+        .find(|data| data.file == "prelude/decorators")
+        .unwrap();
     with_runtime_bind_input(&[("main.ts", "export {};")], |input| {
         let path = [VIRTUAL_ROOT, b"builtins/JSBufferConstructor.ts"].concat();
         let file = input.files.by_path.get(&path).unwrap();
@@ -664,16 +634,7 @@ fn host_function_is_found_through_the_manifest() {
             id.map(RuntimeFunction)
         );
         assert_eq!(input.sources.runtime_function(file, b"noSuchExport"), None);
-    });
-}
 
-#[test]
-fn compiler_function_is_found_through_the_table() {
-    let mut functions = table::runtime_functions().iter();
-    let decorators = functions
-        .find(|data| data.file == "prelude/decorators")
-        .unwrap();
-    with_runtime_bind_input(&[("main.ts", "export {};")], |input| {
         let path = [VIRTUAL_ROOT, decorators.file.as_bytes(), b".ts"].concat();
         let file = input.files.by_path.get(&path).unwrap();
         assert_eq!(input.sources.kind(file), SourceKind::RuntimeFunctions);
@@ -683,12 +644,7 @@ fn compiler_function_is_found_through_the_table() {
         let found = input.sources.runtime_function(file, export_name);
         assert_eq!(found, Some(decorators.function));
         assert_eq!(input.sources.runtime_function(file, b"noSuchExport"), None);
-    });
-}
 
-#[test]
-fn function_files_are_library_entry_points() {
-    with_runtime_bind_input(&[("main.ts", "export {};")], |input| {
         let sources = input.sources;
         let entry_points = sources.entry_points();
         assert!(entry_points.is_sorted_by_key(|entry_point| (entry_point.kind, entry_point.file)));
@@ -716,17 +672,12 @@ fn function_files_are_library_entry_points() {
 }
 
 #[test]
-fn imported_runtime_module_is_not_host_loaded() {
-    let files = [("main.ts", "import 'node:os';")];
-    let kind = runtime_entry_point_kind(&files, RuntimeModule::NodeOs);
-    assert_eq!(kind, Some(EntryPointKind::ImportedModule));
-}
-
-#[test]
 fn implied_runtime_module_is_host_loaded() {
-    let files = [("main.ts", "process.stdout.write('a');")];
-    let kind = runtime_entry_point_kind(&files, RuntimeModule::NodeTty);
-    assert_eq!(kind, Some(EntryPointKind::HostLoadedModule));
+    with_runtime_bind_input(&[("main.ts", "process.stdout.write('a');")], |input| {
+        let file = input.sources.runtime_module_file(RuntimeModule::NodeTty);
+        let kind = entry_point_kind(input.sources, file.unwrap());
+        assert_eq!(kind, Some(EntryPointKind::HostLoadedModule));
+    });
 
     let files = [
         ("main.ts", "import 'node:os';"),
@@ -762,8 +713,11 @@ fn implied_runtime_module_is_host_loaded() {
 }
 
 #[test]
-fn listed_runtime_module_is_host_loaded() {
+fn imported_runtime_module_is_host_loaded_where_it_is_listed() {
     with_runtime_bind_input(&[("main.ts", "import 'node:os';")], |input| {
+        let file = input.sources.runtime_module_file(RuntimeModule::NodeOs);
+        let kind = entry_point_kind(input.sources, file.unwrap());
+        assert_eq!(kind, Some(EntryPointKind::ImportedModule));
         let kind_with_list = |host_loaded_modules: &[RuntimeModule]| {
             let sources = freeze_runtime_project(input.files, host_loaded_modules);
             let file = sources.runtime_module_file(RuntimeModule::NodeOs)?;

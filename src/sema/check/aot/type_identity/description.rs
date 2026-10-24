@@ -91,7 +91,6 @@ impl Description {
         }
     }
 
-    // By its path, so that two programs that have the file say the same of it.
     pub(super) fn file(&mut self, queries: &Queries<'_, '_, '_>, file: FileId) {
         use std::hash::Hasher;
         let mut hasher = crate::util::FxHasher::default();

@@ -3,39 +3,22 @@ mod tests;
 
 use bun_sema::util::SharedSort;
 
-use super::keys::MergedKeys;
-use super::program_keys::{KeyContext, ProgramFunctionKey, ProgramLayoutKey, ProgramVariableKey};
-use super::state::{
-    DefinitionSite, Definitions, ModuleTable, Retained, UnitMarks, VariableDefinition,
-};
+use super::definitions::MergedUnits;
+use super::program_keys::{KeyContext, ProgramLayoutKey};
+use super::state::{DefinitionSite, Definitions, Retained, UnitMarks, VariableDefinition};
 use super::unit::{LinkUnit, LocalKind, LocalReference};
-use super::{LinkError, LinkProject, key_context};
-use crate::ir::{
-    Id, InParallel, LayoutKey, PropertyKeyId, Reference, TypeId, TypeTable, for_each_mut,
-};
+use super::unused_records::unmarked;
+use super::{LinkError, Projects, key_context};
+use crate::ir::{Id, LayoutKey, PropertyKeyId, Reference, TypeId, TypeTable, for_each_mut};
 use crate::load::{PerProject, ProgramFile};
 use core::mem::take;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-pub(super) struct MarkInput<'a, 's> {
-    pub units: &'a [LinkUnit],
-    pub projects: &'a PerProject<LinkProject<'a, 's>>,
-    pub modules: &'a ModuleTable,
-    pub functions: &'a MergedKeys<ProgramFunctionKey>,
-    pub layouts: &'a MergedKeys<ProgramLayoutKey>,
-    pub variables: &'a MergedKeys<ProgramVariableKey>,
-    pub definitions: &'a Definitions,
-    pub in_parallel: InParallel<'a>,
-}
-
 const NO_UNIT: u32 = u32::MAX;
 
 pub(super) struct MarkContext<'a> {
-    pub(super) units: &'a [LinkUnit],
+    pub(super) merged: MergedUnits<'a>,
     pub(super) keys: PerProject<KeyContext<'a>>,
-    pub(super) functions: &'a MergedKeys<ProgramFunctionKey>,
-    pub(super) layouts: &'a MergedKeys<ProgramLayoutKey>,
-    pub(super) variables: &'a MergedKeys<ProgramVariableKey>,
     pub(super) definitions: &'a Definitions,
     constructed_layouts: Vec<Option<u32>>,
     is_function_retained: Vec<AtomicBool>,
@@ -44,10 +27,6 @@ pub(super) struct MarkContext<'a> {
     pub(super) is_failure_retained: PerProject<Vec<AtomicBool>>,
     first_layout_referrer: Vec<AtomicU32>,
     first_direct_layout_use: Vec<AtomicU32>,
-}
-
-fn unmarked(count: usize) -> Vec<AtomicBool> {
-    (0..count).map(|_| AtomicBool::new(false)).collect()
 }
 
 fn no_units(count: usize) -> Vec<AtomicU32> {
@@ -68,32 +47,6 @@ fn lower_to(first_unit: &AtomicU32, unit: u32) {
     }
 }
 
-impl<'a> MarkContext<'a> {
-    fn new(input: &MarkInput<'a, '_>) -> MarkContext<'a> {
-        let layout_count = input.layouts.keys.len();
-        let projects = input.projects;
-        MarkContext {
-            units: input.units,
-            keys: projects
-                .as_ref()
-                .map(|project, _| key_context(projects, project)),
-            functions: input.functions,
-            layouts: input.layouts,
-            variables: input.variables,
-            definitions: input.definitions,
-            constructed_layouts: find_constructed_layouts(input),
-            is_function_retained: unmarked(input.functions.keys.len()),
-            is_layout_retained: unmarked(layout_count),
-            is_variable_retained: unmarked(input.variables.keys.len()),
-            is_failure_retained: projects
-                .as_ref()
-                .map(|_, project| unmarked(project.graph.failures().len())),
-            first_layout_referrer: no_units(layout_count),
-            first_direct_layout_use: no_units(layout_count),
-        }
-    }
-}
-
 #[derive(Default)]
 struct Undefined {
     functions: Vec<(u32, ProgramFile)>,
@@ -106,14 +59,44 @@ fn keep_first_referrers(undefined: &mut Vec<(u32, ProgramFile)>) {
     undefined.dedup_by_key(|&mut (index, _)| index);
 }
 
-pub(super) fn mark(input: &MarkInput<'_, '_>, errors: &mut Vec<LinkError>) -> Retained {
-    let context = MarkContext::new(input);
+pub(super) fn mark(
+    input: &MergedUnits<'_>,
+    projects: &Projects<'_, '_>,
+    definitions: &Definitions,
+    errors: &mut Vec<LinkError>,
+) -> Retained {
+    let layout_count = input.layouts.keys.len();
+    let context = MarkContext {
+        merged: *input,
+        keys: projects
+            .as_ref()
+            .map(|project, _| key_context(projects, project)),
+        definitions,
+        constructed_layouts: find_constructed_layouts(input, definitions),
+        is_function_retained: unmarked(input.functions.keys.len()),
+        is_layout_retained: unmarked(layout_count),
+        is_variable_retained: unmarked(input.variables.keys.len()),
+        is_failure_retained: projects
+            .as_ref()
+            .map(|_, project| unmarked(project.graph.failures().len())),
+        first_layout_referrer: no_units(layout_count),
+        first_direct_layout_use: no_units(layout_count),
+    };
     let unit_count = input.units.len() as u32;
+    // The last one works for what has no unit.
     let mut markers: Vec<Marker<'_>> = (0..unit_count)
-        .map(|unit| Marker::new(&context, unit))
+        .chain([NO_UNIT])
+        .map(|unit| Marker {
+            context: &context,
+            unit,
+            // The marks of a unit are seven lists, which the thread makes that first works for the unit.
+            marks: None,
+            stack: Vec::new(),
+            sent: Vec::new(),
+            undefined: Undefined::default(),
+        })
         .collect();
-    markers.push(Marker::without_unit(&context));
-    push_roots(input, &mut markers);
+    push_roots(input, definitions, &mut markers);
     loop {
         let mut busy_markers: Vec<&mut Marker<'_>> = markers
             .iter_mut()
@@ -152,14 +135,14 @@ pub(super) fn mark(input: &MarkInput<'_, '_>, errors: &mut Vec<LinkError>) -> Re
     }
 }
 
-fn push_roots(input: &MarkInput<'_, '_>, markers: &mut [Marker<'_>]) {
+fn push_roots(input: &MergedUnits<'_>, definitions: &Definitions, markers: &mut [Marker<'_>]) {
     let without_unit = markers.len() - 1;
     let modules = input.modules;
     for (&module, &unit) in modules.modules.iter().zip(&modules.unit_by_module) {
         let marker = unit.map_or(without_unit, |unit| unit as usize);
         markers[marker].stack.push(Work::Module(module));
     }
-    for root in &input.definitions.runtime_functions {
+    for root in &definitions.runtime_functions {
         markers[without_unit].mark_function(root.function, root.file);
     }
     if !input.units.is_empty() {
@@ -182,27 +165,26 @@ fn report_undefined(
     keep_first_referrers(&mut undefined.functions);
     undefined
         .functions
-        .shared_sort_unstable_by_key(|&(index, _)| context.functions.keys[index as usize]);
+        .shared_sort_unstable_by_key(|&(index, _)| context.merged.functions.keys[index as usize]);
     for (index, referenced_in) in undefined.functions {
         errors.push(LinkError::UndefinedFunction {
-            key: context.functions.keys[index as usize],
+            key: context.merged.functions.keys[index as usize],
             referenced_in,
         });
     }
     keep_first_referrers(&mut undefined.variables);
     for (index, referenced_in) in undefined.variables {
         errors.push(LinkError::UndefinedVariable {
-            key: context.variables.keys[index as usize],
+            key: context.merged.variables.keys[index as usize],
             referenced_in,
         });
     }
 }
 
-fn try_mark(is_marked: &mut bool) -> bool {
-    !core::mem::replace(is_marked, true)
-}
-
-fn find_constructed_layouts(input: &MarkInput<'_, '_>) -> Vec<Option<u32>> {
+fn find_constructed_layouts(
+    input: &MergedUnits<'_>,
+    definitions: &Definitions,
+) -> Vec<Option<u32>> {
     let mut constructed_layouts = vec![None; input.functions.keys.len()];
     for (unit_index, unit) in input.units.iter().enumerate() {
         let functions = &input.functions.local_to_merged[unit_index];
@@ -216,7 +198,7 @@ fn find_constructed_layouts(input: &MarkInput<'_, '_>) -> Vec<Option<u32>> {
                 unit: unit_index as u32,
                 index,
             };
-            if input.definitions.layouts[layout as usize] == Some(site) {
+            if definitions.layouts[layout as usize] == Some(site) {
                 constructed_layouts[functions[constructor.index()] as usize].get_or_insert(layout);
             }
         }
@@ -249,11 +231,6 @@ pub(super) enum Work {
     Local(LocalReference),
 }
 
-enum UndefinedLayout {
-    Empty,
-    Error { referrer: u32 },
-}
-
 pub(super) struct Marker<'a> {
     pub(super) context: &'a MarkContext<'a>,
     unit: u32,
@@ -264,33 +241,28 @@ pub(super) struct Marker<'a> {
 }
 
 impl<'a> Marker<'a> {
-    // The marks of a unit are seven lists, which the thread makes that first works for the unit.
-    fn new(context: &'a MarkContext<'a>, unit: u32) -> Marker<'a> {
-        Marker {
-            unit,
-            ..Marker::without_unit(context)
-        }
-    }
-
     fn take_marks(&mut self) -> Option<UnitMarks> {
-        let unit = self.context.units.get(self.unit as usize)?;
+        let unit = self.context.merged.units.get(self.unit as usize)?;
         Some(self.marks.take().unwrap_or_else(|| UnitMarks::new(unit)))
-    }
-
-    fn without_unit(context: &'a MarkContext<'a>) -> Marker<'a> {
-        Marker {
-            context,
-            unit: NO_UNIT,
-            marks: None,
-            stack: Vec::new(),
-            sent: Vec::new(),
-            undefined: Undefined::default(),
-        }
     }
 
     fn work_off(&mut self) {
         while let Some(work) = self.stack.pop() {
-            self.process(work);
+            match work {
+                Work::Module(module) => self.mark_module(module),
+                Work::Function {
+                    index,
+                    definition,
+                    from,
+                } => self.process_function(index, definition, from),
+                Work::LayoutDefinition {
+                    definition,
+                    is_chosen,
+                } => self.process_layout_definition(definition, is_chosen),
+                Work::Supertypes(index) => self.mark_supertypes(index),
+                Work::Variable { definition } => self.process_variable(definition),
+                Work::Local(reference) => self.process_local(reference),
+            }
         }
     }
 
@@ -308,19 +280,19 @@ impl<'a> Marker<'a> {
     pub(super) fn follow(&mut self, reference: LocalReference, layout_use: LayoutUse) {
         let context = self.context;
         let (unit_index, index) = (self.unit as usize, reference.index as usize);
-        let link_unit = &context.units[unit_index];
+        let link_unit = &context.merged.units[unit_index];
         let marks = self.marks.get_or_insert_with(|| UnitMarks::new(link_unit));
         let record_mark = match reference.kind {
             LocalKind::Function => {
-                let function = context.functions.local_to_merged[unit_index][index];
+                let function = context.merged.functions.local_to_merged[unit_index][index];
                 return self.mark_function(function, link_unit.file);
             }
             LocalKind::Layout => {
-                let layout = context.layouts.local_to_merged[unit_index][index];
+                let layout = context.merged.layouts.local_to_merged[unit_index][index];
                 return self.mark_layout(layout, self.unit, layout_use);
             }
             LocalKind::Variable => {
-                let variable = context.variables.local_to_merged[unit_index][index];
+                let variable = context.merged.variables.local_to_merged[unit_index][index];
                 return self.mark_variable(variable, link_unit.file);
             }
             LocalKind::ModuleTarget | LocalKind::ModuleReferrer => return,
@@ -339,7 +311,7 @@ impl<'a> Marker<'a> {
             LocalKind::EvalScope => &mut marks.eval_scopes[index],
             LocalKind::Data => &mut marks.data[index],
         };
-        if try_mark(record_mark) {
+        if !core::mem::replace(record_mark, true) {
             self.stack.push(Work::Local(reference));
         }
     }
@@ -363,15 +335,12 @@ impl<'a> Marker<'a> {
             return;
         };
         if try_mark_shared(is_retained) {
-            let definition = site.index;
-            self.send(
-                site.unit,
-                Work::Function {
-                    index,
-                    definition,
-                    from,
-                },
-            );
+            let work = Work::Function {
+                index,
+                definition: site.index,
+                from,
+            };
+            self.send(site.unit, work);
         }
     }
 
@@ -424,26 +393,8 @@ impl<'a> Marker<'a> {
         self.stack.push(Work::Supertypes(index));
     }
 
-    fn process(&mut self, work: Work) {
-        match work {
-            Work::Module(module) => self.mark_module(module),
-            Work::Function {
-                index,
-                definition,
-                from,
-            } => self.process_function(index, definition, from),
-            Work::LayoutDefinition {
-                definition,
-                is_chosen,
-            } => self.process_layout_definition(definition, is_chosen),
-            Work::Supertypes(index) => self.mark_supertypes(index),
-            Work::Variable { definition } => self.process_variable(definition),
-            Work::Local(reference) => self.process_local(reference),
-        }
-    }
-
     pub(super) fn own_unit(&self) -> Option<&'a LinkUnit> {
-        self.context.units.get(self.unit as usize)
+        self.context.merged.units.get(self.unit as usize)
     }
 
     fn link_unit(&self) -> &'a LinkUnit {
@@ -531,40 +482,38 @@ impl<'a> Marker<'a> {
 
 fn check_undefined_layouts(context: &MarkContext<'_>, errors: &mut Vec<LinkError>) {
     let mut undefined = Vec::new();
-    for (index, &key) in context.layouts.keys.iter().enumerate() {
+    for (index, &key) in context.merged.layouts.keys.iter().enumerate() {
         let is_retained = context.is_layout_retained[index].load(Ordering::Relaxed);
         if !is_retained || context.definitions.layouts[index].is_some() {
             continue;
         }
-        match resolve_undefined_layout(context, index, key) {
-            UndefinedLayout::Empty => {}
-            UndefinedLayout::Error { referrer } => undefined.push((key, referrer)),
+        if let Some(referrer) = find_referrer_to_blame(context, index, key) {
+            undefined.push((key, referrer));
         }
     }
     undefined.shared_sort_unstable_by_key(|&(key, _)| key);
     for (key, referrer) in undefined {
         errors.push(LinkError::UndefinedLayout {
             key,
-            referenced_in: context.units[referrer as usize].file,
+            referenced_in: context.merged.units[referrer as usize].file,
         });
     }
 }
 
-fn resolve_undefined_layout(
+// A layout without a definition is an error where this names a unit, and is empty elsewhere.
+fn find_referrer_to_blame(
     context: &MarkContext<'_>,
     index: usize,
     key: ProgramLayoutKey,
-) -> UndefinedLayout {
+) -> Option<u32> {
     match key.key {
         LayoutKey::Class(_) | LayoutKey::ConstructorFunction(_) | LayoutKey::Library(_) => {
-            match context.first_direct_layout_use[index].load(Ordering::Relaxed) {
-                NO_UNIT => UndefinedLayout::Empty,
-                referrer => UndefinedLayout::Error { referrer },
-            }
+            let referrer = context.first_direct_layout_use[index].load(Ordering::Relaxed);
+            (referrer != NO_UNIT).then_some(referrer)
         }
-        LayoutKey::Environment { .. } => UndefinedLayout::Error {
-            referrer: context.first_layout_referrer[index].load(Ordering::Relaxed),
-        },
-        _ => UndefinedLayout::Empty,
+        LayoutKey::Environment { .. } => {
+            Some(context.first_layout_referrer[index].load(Ordering::Relaxed))
+        }
+        _ => None,
     }
 }

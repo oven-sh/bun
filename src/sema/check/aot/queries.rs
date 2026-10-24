@@ -27,18 +27,14 @@ use crate::util::FxHashMap;
 use std::hash::Hash;
 use std::rc::Rc;
 
-// What `is_assignable` may cost.
 const MAX_RELATION_ENTRIES: i32 = 20_000;
 
 #[derive(Copy, Clone)]
 pub struct QueryInputs<'c> {
     pub roles: &'c [FileRole],
-    /// The full-types files that another program checks and lowers, in order. That program may see other globals and other
-    /// options, so what this one believes of their declarations is expected and never known.
     pub checked_elsewhere: &'c [FileId],
     pub builtin_types: &'c BuiltinTypeSymbols,
     pub named_values: &'c dyn NamedValues,
-    /// How many expressions the inference of one type from the uses of a value visits.
     pub max_inference_nodes: u64,
 }
 
@@ -180,12 +176,10 @@ impl Drop for Queries<'_, '_, '_> {
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
-    /// The checker's task is discarded: nothing that it finds out from now on is kept, and the file is visited again.
     pub fn is_discarded(&self) -> bool {
         self.c.was_discarded()
     }
 
-    /// Call where no question is in progress.
     pub fn note_idle(&mut self) {
         debug_assert!(self.depth == 0);
         self.c.idle_between_statements();
@@ -315,7 +309,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn answer_as_known<T>(&mut self, stored: Result<T, GaveUp>) -> Result<T, GaveUp> {
-        // Between two outermost questions nothing is cut short, so there is no state to set aside round an answer that is known.
         if self.depth == 0 && stored.is_ok() {
             self.statistics.asked += 1;
             return stored;
@@ -323,12 +316,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.ask(|_| stored)
     }
 
-    /// The checker infers the type of a member that nobody has annotated, and assigns it anew where two visits of the member nest and where a cycle runs through it.
     pub(super) fn note_inferred_member(&mut self) {
         self.has_met_inferred_member = true;
     }
 
-    /// And whether `compute` has met an inferred member.
     fn noting_inferred_members<T>(&mut self, compute: impl FnOnce(&mut Self) -> T) -> (T, bool) {
         let had_met = std::mem::replace(&mut self.has_met_inferred_member, false);
         let computed = compute(self);
@@ -344,7 +335,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
-    /// For a question about a type whose answer does not hang on the file that asks.
     fn kept_about_type<T: Copy>(
         &mut self,
         ty: TypeId,
@@ -370,7 +360,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         answer
     }
 
-    /// `kept_about_type` for what is only asked about a type with members.
     fn kept_about_object_type<T: Copy>(
         &mut self,
         ty: TypeId,
@@ -400,7 +389,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.kept.find_type(ty)?.identity
     }
 
-    /// `unstable_answers`: their number before the identity was computed.
     pub(super) fn remember_identity(
         &mut self,
         ty: TypeId,
@@ -422,7 +410,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         (bits & 1 != 0).then_some(bits & 2 != 0)
     }
 
-    /// `unstable_answers`: their number before the fact was worked out. It is kept if it follows from answers that hold in every file.
     pub fn keep_fact(
         &mut self,
         ty: TypeId,
@@ -501,7 +488,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     pub fn canonical_symbol(&self, file: FileId, symbol: SymbolId) -> Sym {
         let bound = self.c.bound(file);
-        // The variable that a function in a block also declares in sloppy code is a binding of its own.
         let is_variable_beside_declaration =
             bound.is_appended_symbol(symbol) && bound.binding_kind(symbol) == BindingKind::Var;
         if !is_variable_beside_declaration && let [decl] = bound.symbol(symbol).decls {
@@ -538,7 +524,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
-    /// What the checker says or, where that is `any` or the `number` of a variable without an annotation, what the uses of the value say.
     pub fn predicted_expression_type(&mut self, expression: ExprId) -> CheckedType {
         let checked = self.expression_type(expression)?;
         self.ask(|queries| Ok(queries.infer_expression_type(expression, checked)))
@@ -555,7 +540,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         )
     }
 
-    /// Whether the place of the expression asks for a type variable. `contextual_type` answers its constraint there.
     pub fn is_written_under_type_variable(&mut self, expression: ExprId) -> Result<bool, GaveUp> {
         self.ask_expression(expression, |queries| {
             let file = queries.file;
@@ -733,7 +717,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let answer =
                 checker.try_is_type_related_to(source, target, Relation::Assignable, false);
             checker.relation_entries_for_query = None;
-            // At a limit the checker goes on with the error type, to which everything is related.
             if checker.count_limits_hit() != limits_hit {
                 return Err(GaveUp::ErrorType);
             }
@@ -741,7 +724,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
-    // What the checker asks of `source as target`: one of the two is comparable to the other.
     pub fn can_be_asserted(&mut self, source: TypeId, target: TypeId) -> Result<bool, GaveUp> {
         self.ask(|queries| {
             let source = queries.resolved(source)?;
@@ -805,7 +787,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.find_written_place(self.file, node)
     }
 
-    /// At most `max_declarations` aliases and interfaces are read, each once for each list of type arguments.
     pub fn written_union_orders(
         &mut self,
         node: TypeNodeId,
@@ -817,7 +798,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         orders.unwrap_or_default()
     }
 
-    /// The text of the template literal type that `ty` is, without the brands it is intersected with.
     pub fn template_literal_text(&mut self, ty: TypeId) -> Vec<u8> {
         let template = self.find_template_literal_part(ty).unwrap_or(ty);
         self.type_text(template)
@@ -839,7 +819,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             let function = queries.bound().param_fn[parameter.idx()];
             let is_this_parameter =
                 function != FnId::NONE && queries.c.hir(file)[function].this_param == parameter;
-            // A `this` parameter is no parameter of its function for `type_of_param`, which stores "unresolved" for it.
             let ty = match is_this_parameter {
                 true => queries.c.type_of_this_parameter(file, function),
                 false => queries.c.type_of_param(file, parameter),
@@ -903,7 +882,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         )
     }
 
-    /// `signature(signature).result.checked`, for whoever asks for nothing else: the types of the parameters are not worked out.
     pub fn signature_result(&mut self, signature: SigId) -> CheckedType {
         if self.depth == 0 {
             self.statistics.asked += 1;
@@ -938,7 +916,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         result
     }
 
-    /// In the file of the function the uses of its values are read too, so what that file hears holds there alone.
     fn memoized_signature<K: Copy + Eq + Hash>(
         &mut self,
         key: K,
@@ -991,7 +968,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         )
     }
 
-    /// What the stores into `this` in `function`, into its binding and into its prototype object say.
     pub(super) fn own_constructor_function_shape(
         &mut self,
         function: FunctionRef,
@@ -1021,7 +997,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         )
     }
 
-    /// The built-in type that `ty` extends or intersects, with its type arguments as `ty` passes them.
     pub(super) fn builtin_base(&mut self, ty: TypeId) -> Result<Option<TypeShape<'c>>, GaveUp> {
         self.kept_about_object_type(
             ty,
@@ -1031,7 +1006,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         )
     }
 
-    /// The built-in classes whose instances can be of `object_type` with members that a cast has given them: the class behind a view that the type extends, and an array with a `pos` and an `end` for `{ pos: number; end: number }`, where an interface of the program extends an array type and declares both.
     pub fn accepted_builtins(&mut self, object_type: TypeId) -> Result<&'c [BuiltinShape], GaveUp> {
         self.kept_about_object_type(
             object_type,
@@ -1041,7 +1015,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         )
     }
 
-    /// The classes of the program whose static members make the class itself a value of `object_type`.
     pub fn accepted_class_constructors(
         &mut self,
         object_type: TypeId,
@@ -1054,13 +1027,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         )
     }
 
-    /// Whether `ty` has the shape of a built-in type that it extends or intersects, so it can have members of its own.
     pub fn is_builtin_subtype(&mut self, ty: TypeId) -> Result<bool, GaveUp> {
         self.ask(|queries| queries.compute_is_builtin_subtype(ty))
     }
 
-    /// Whether a value of the shape of `ty` need not be a `ty`: `Uppercase<string>` has the shape of a string, and `typeof globalThis`, the type of a module, of a namespace
-    /// or of an enum object that of any object.
     pub fn says_more_than_its_shape(&self, ty: TypeId) -> bool {
         match self.c.data(ty) {
             TypeData::StringMapping { .. } => true,
@@ -1098,7 +1068,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         answer
     }
 
-    /// `object_members` without what was written.
     pub fn checked_members(&mut self, object_type: TypeId) -> Result<&'c [CheckedMember], GaveUp> {
         let row = self.kept.object_row(object_type);
         if let Some(known) = self.kept.object_at(row).checked_members {
@@ -1121,7 +1090,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         answer
     }
 
-    /// The member that `find_member` finds, without what was written. None where it finds none, or an index signature.
     pub fn find_checked_member(
         &mut self,
         receiver: TypeId,
@@ -1227,7 +1195,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         self.compute_object_origin(object_type)
     }
 
-    /// `isDeeplyNestedType` of the last type of `path`, with the types that lead to it in front of it, where each of the last instantiations is nested more deeply than the one before.
     pub fn grows_along(&mut self, path: &[TypeId]) -> bool {
         const MAX_DEPTH: usize = 4;
         let Some(&ty) = path.last() else {
@@ -1249,12 +1216,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         neighbors.all(|(&outer, &inner)| types.nesting_order(inner, outer).is_gt())
     }
 
-    // A long text is cut at a byte, which may stand in the middle of a character.
     pub fn type_text(&mut self, ty: TypeId) -> Vec<u8> {
         to_valid_utf8(self.c.type_to_string(ty))
     }
 
-    /// `TypeDisplayName::file` and `position`.
     pub fn type_name_site(&mut self, ty: TypeId) -> Option<(FileId, u32)> {
         let ObjectOrigin::Symbol(symbol) = self.object_origin(ty) else {
             return None;

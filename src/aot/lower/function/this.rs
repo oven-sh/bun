@@ -36,7 +36,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn get_entry_this(&mut self) -> ValueId {
-        let bound_this = self.scopes.entry_this();
+        let bound_this = self.scopes.entry_this;
         match bound_this.or_else(|| self.builder.this_value()) {
             Some(this) => this,
             None => self.builder.undefined(),
@@ -84,15 +84,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.switch_to(split.taken);
         self.emit_throw_runtime_error(RuntimeErrorKind::UninitializedThis, None);
         self.builder.switch_to(split.not_taken);
-        self.rebind_this(owner, split.not_taken_value);
-        split.not_taken_value
-    }
-
-    fn rebind_this(&mut self, owner: ScopeId, value: ValueId) {
         let binding = BindingRef::Slot(owner, ScopeSlot::This);
         if let Some(local) = self.scopes.find_local(binding) {
-            self.builder.write_variable(local.variable, value);
+            self.builder
+                .write_variable(local.variable, split.not_taken_value);
         }
+        split.not_taken_value
     }
 
     pub(crate) fn bind_this(&mut self, value: ValueId) {
@@ -101,7 +98,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             | LexicalOwner::Function(scope, _)
             | LexicalOwner::FieldInitializer(scope) => scope,
             LexicalOwner::Generated => {
-                self.scopes.set_entry_this(value);
+                self.scopes.entry_this = Some(value);
                 return;
             }
         };
@@ -136,7 +133,12 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             LexicalOwner::Function(scope, function) => {
                 match self.file.bound.fns[function.idx()].owner {
                     FnOwner::Expr(_) => {
-                        let home = self.get_object_literal_home(scope, function);
+                        let home = match self.file.hir[function].kind {
+                            FnKind::Method | FnKind::Getter | FnKind::Setter => {
+                                self.get_slot(scope, ScopeSlot::HomeObject)
+                            }
+                            _ => self.builder.undefined(),
+                        };
                         (HomeObjectKind::Object, home)
                     }
                     FnOwner::Member(_) => self.get_class_home(),
@@ -149,15 +151,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             LexicalOwner::Generated | LexicalOwner::File(_) => {
                 (HomeObjectKind::Object, self.builder.undefined())
             }
-        }
-    }
-
-    fn get_object_literal_home(&mut self, owner: ScopeId, function: FnId) -> ValueId {
-        match self.file.hir[function].kind {
-            FnKind::Method | FnKind::Getter | FnKind::Setter => {
-                self.get_slot(owner, ScopeSlot::HomeObject)
-            }
-            _ => self.builder.undefined(),
         }
     }
 }

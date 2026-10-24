@@ -1623,6 +1623,8 @@ mod draft {
             libc::SIGTRAP if cfg!(target_arch = "x86_64") => pc.map(|pc| pc.wrapping_sub(1)),
             libc::SIGTRAP | libc::SIGILL => pc,
             libc::SIGSEGV if is_unmapped => pc.filter(|&pc| pc == addr),
+            // macOS raises SIGBUS where something that cannot be run is mapped in their place.
+            libc::SIGBUS if cfg!(target_os = "macos") => pc.filter(|&pc| pc == addr),
             _ => None,
         };
         if let Some(feature) = entered.and_then(crate::compiled_frames::removed_feature_entered) {

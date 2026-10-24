@@ -1,4 +1,5 @@
 use super::layout::{Source, Task};
+use super::tables::create_task;
 use crate::ir::generated::{Function, ProgramList};
 use crate::ir::{InParallel, ListCounts, SectionWriter, for_each_mut};
 use std::sync::Arc;
@@ -24,12 +25,7 @@ pub(super) fn create_function_tasks_in_parallel<'p, 'o>(
     });
     let tasks = slices
         .into_iter()
-        .map(|(_, functions)| Task {
-            source: Source::Functions(functions),
-            counts: [0; ProgramList::COUNT],
-            first_indices: [0; ProgramList::COUNT],
-            outputs: Vec::new(),
-        })
+        .map(|(_, functions)| create_task(Source::Functions(functions)))
         .collect();
     drop(functions);
     tasks
@@ -46,12 +42,7 @@ pub(super) fn create_tasks_for_shared_functions<'p, 'o>(
         if slice.is_empty() {
             return tasks;
         }
-        tasks.push(Task {
-            source: Source::SharedFunctions(slice),
-            counts: [0; ProgramList::COUNT],
-            first_indices: [0; ProgramList::COUNT],
-            outputs: Vec::new(),
-        });
+        tasks.push(create_task(Source::SharedFunctions(slice)));
     }
 }
 

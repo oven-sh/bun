@@ -1,3 +1,5 @@
+#![cfg_attr(test, feature(linkage))]
+
 #[cfg(test)]
 pub mod builtins;
 pub mod compile;
@@ -22,12 +24,16 @@ mod package_diagnostics;
 pub mod prelude;
 pub mod report;
 pub mod statistics;
+pub mod validation_library;
 
 #[cfg(not(test))]
 pub use bun_aot_builtins::builtins;
 #[cfg(not(test))]
 pub use bun_aot_interface::{diagnostic_codes, module_list, options};
 
-pub use compile::{BuildFailed, Compilation, compile, emit_program, link_program};
+pub use bun_options_types::validation_plans;
+pub use compile::{
+    BuildFailed, Compilation, compile, emit_program, link_program, plan_validated_calls,
+};
 pub use load::source_provider::{SourceProvider, WithoutServices};
 pub use options::Options;

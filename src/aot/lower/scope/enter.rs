@@ -6,6 +6,7 @@ use super::analysis::find_by_key;
 use super::state::EnteredScope;
 use super::{
     BindingRef, DeadZone, LocalBinding, ScopeSlot, Storage, bindings, dead_zone, environments,
+    find_entry,
 };
 use crate::ir::{BlockId, LocalVariable, PositionFlags, Type, TypeTable, ValueId};
 use crate::lower::captures::Capture;
@@ -18,13 +19,6 @@ struct ScopeEntry<'i> {
     absent: Option<ValueId>,
 }
 
-impl ScopeEntry<'_> {
-    fn find_initial_value(&self, binding: BindingRef) -> Option<ValueId> {
-        let entry = self.initial.iter().find(|entry| entry.0 == binding)?;
-        Some(entry.1)
-    }
-}
-
 type EntryValues = SmallVec<[(BindingRef, Option<ValueId>); 8]>;
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -34,7 +28,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(crate) fn leave_scope(&mut self, scope: ScopeId) {
-        let left = self.scopes.pop_scope();
+        let left = self.scopes.entered.pop();
         debug_assert!(
             left.is_some_and(|left| left.scope == scope),
             "scopes are left innermost first"
@@ -73,9 +67,31 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             "a scope lists its bindings in ascending order"
         );
         let environment = self.allocate_environment(&entry, &values);
-        self.scopes.push_scope(EnteredScope { scope, environment });
+        let entered = EnteredScope { scope, environment };
+        self.scopes.entered.push(entered);
         for (binding, value) in values {
-            self.declare_binding(&mut entry, binding, value);
+            let Some(placement) = self.file.scopes.placement(binding) else {
+                debug_assert!(false, "a scope lists only the bindings it stores");
+                continue;
+            };
+            if placement.has_local {
+                self.create_local(&mut entry, binding, value);
+            }
+            match placement.storage {
+                Storage::Variable(key) => {
+                    let variable = self.file.ensure_variable(key);
+                    let is_stored_at_entry = match binding {
+                        BindingRef::Symbol(_) => find_entry(entry.initial, binding).is_some(),
+                        BindingRef::Slot(..) => true,
+                    };
+                    if let Some(value) = value
+                        && is_stored_at_entry
+                    {
+                        self.builder.put_module_variable(variable, value);
+                    }
+                }
+                Storage::Field { .. } | Storage::Local => {}
+            }
         }
     }
 
@@ -147,7 +163,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 return Some(self.get_entry_absent(entry));
             }
             if self.file.hir.runtime_function_kind(function) == FnKind::Constructor {
-                return self.scopes.entry_this();
+                return self.scopes.entry_this;
             }
         }
         let this = self.get_entry_this();
@@ -167,14 +183,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         Some(convert::convert(self, this, position, None))
     }
 
-    fn create_eval_variables_object(&mut self) -> ValueId {
-        let layout = self.file.untyped_layout(&[]);
-        let head = self.builder.new_object(layout, &[], None, &[]);
-        let null = self.builder.null();
-        self.builder.set_literal_prototype(head, null);
-        self.builder.finish_object(head)
-    }
-
     fn allocate_environment(
         &mut self,
         entry: &ScopeEntry<'_>,
@@ -185,10 +193,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let layout = environments::environment_layout(self.file, entry.scope);
         let bindings = self.file.scopes.environment_fields(entry.scope);
-        let bindings: SmallVec<[BindingRef; 8]> = SmallVec::from_slice(bindings);
         let mut fields: SmallVec<[u32; 8]> = SmallVec::new();
         let mut field_values: SmallVec<[ValueId; 8]> = SmallVec::new();
-        for (field, binding) in (0..).zip(bindings) {
+        for (field, &binding) in (0..).zip(bindings) {
             // The type of the field says that it holds nothing until its first store. Listed, `Absent` would be an initial value.
             if dead_zone::has_dead_zone(self.file, binding) {
                 continue;
@@ -212,51 +219,29 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         Some(variable)
     }
 
-    fn declare_binding(
-        &mut self,
-        entry: &mut ScopeEntry<'_>,
-        binding: BindingRef,
-        value: Option<ValueId>,
-    ) {
-        let Some(placement) = self.file.scopes.placement(binding) else {
-            debug_assert!(false, "a scope lists only the bindings it stores");
-            return;
-        };
-        if placement.has_local {
-            self.create_local(entry, binding, value);
-        }
-        match placement.storage {
-            Storage::Variable(key) => {
-                let variable = self.file.ensure_variable(key);
-                let is_stored_at_entry = match binding {
-                    BindingRef::Symbol(_) => entry.find_initial_value(binding).is_some(),
-                    BindingRef::Slot(..) => true,
-                };
-                if let Some(value) = value
-                    && is_stored_at_entry
-                {
-                    self.builder.put_module_variable(variable, value);
-                }
-            }
-            Storage::Field { .. } | Storage::Local => {}
-        }
-    }
-
     fn create_local(
         &mut self,
         entry: &mut ScopeEntry<'_>,
         binding: BindingRef,
         value: Option<ValueId>,
     ) {
-        let dead_zone = self.initial_dead_zone(entry.scope, binding);
+        let (dead_zone, holds_absent) = match binding {
+            BindingRef::Slot(..) => {
+                let holds_absent = dead_zone::has_dead_zone(self.file, binding);
+                (DeadZone::Never, holds_absent)
+            }
+            BindingRef::Symbol(symbol) => match self.file.bound.initial_state(symbol) {
+                InitialState::Uninitialized if self.file.scopes.is_switch_scope(entry.scope) => {
+                    (DeadZone::DecidedAtRunTime, true)
+                }
+                InitialState::Uninitialized => (DeadZone::Uninitialized, false),
+                InitialState::Undefined | InitialState::Initialized => (DeadZone::Never, false),
+            },
+        };
         debug_assert!(
             value.is_none() || dead_zone != DeadZone::Uninitialized,
             "a binding with an entry value does not start in its dead zone"
         );
-        let holds_absent = match binding {
-            BindingRef::Symbol(_) => dead_zone == DeadZone::DecidedAtRunTime,
-            BindingRef::Slot(..) => dead_zone::has_dead_zone(self.file, binding),
-        };
         let position = self.file.stored_position(binding);
         // The type of a variable is the type of the values it joins, and nothing tests what is only expected.
         let ty = match position.is_expected() {
@@ -275,7 +260,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             variable,
             dead_zone,
         };
-        self.scopes.declare_local(binding, local);
+        self.scopes.locals.insert(binding, local);
         let value = match value {
             Some(value) => value,
             None => match dead_zone {
@@ -285,19 +270,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         self.builder.write_variable(variable, value);
     }
-
-    fn initial_dead_zone(&self, scope: ScopeId, binding: BindingRef) -> DeadZone {
-        match binding {
-            BindingRef::Slot(..) => DeadZone::Never,
-            BindingRef::Symbol(symbol) => match self.file.bound.initial_state(symbol) {
-                InitialState::Uninitialized if self.file.scopes.is_switch_scope(scope) => {
-                    DeadZone::DecidedAtRunTime
-                }
-                InitialState::Uninitialized => DeadZone::Uninitialized,
-                InitialState::Undefined | InitialState::Initialized => DeadZone::Never,
-            },
-        }
-    }
 }
 
 fn emit_entry_value(
@@ -305,7 +277,7 @@ fn emit_entry_value(
     entry: &mut ScopeEntry<'_>,
     binding: BindingRef,
 ) -> Option<ValueId> {
-    if let Some(value) = entry.find_initial_value(binding) {
+    if let Some(value) = find_entry(entry.initial, binding) {
         return Some(value);
     }
     match binding {
@@ -319,9 +291,15 @@ fn emit_entry_value(
             ScopeSlot::Callee => lowering.builder.callee(),
             ScopeSlot::HomeObject => lowering.find_captured_value(Capture::Value(binding)),
             ScopeSlot::ArgumentsBinding => {
-                entry.find_initial_value(BindingRef::Slot(scope, ScopeSlot::Arguments))
+                find_entry(entry.initial, BindingRef::Slot(scope, ScopeSlot::Arguments))
             }
-            ScopeSlot::EvalVariables => Some(lowering.create_eval_variables_object()),
+            ScopeSlot::EvalVariables => {
+                let layout = lowering.file.untyped_layout(&[]);
+                let head = lowering.builder.new_object(layout, &[], None, &[]);
+                let null = lowering.builder.null();
+                lowering.builder.set_literal_prototype(head, null);
+                Some(lowering.builder.finish_object(head))
+            }
             _ => None,
         },
     }

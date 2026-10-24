@@ -36,14 +36,13 @@ use crate::load::disk_delegation::{
     delegate_host_services_to_disk, delegate_runtime_config_parsers_to_disk,
 };
 use crate::load::evaluated_texts::EvaluatedTexts;
-use crate::load::externals::is_external;
+use crate::load::externals::{contains, is_external};
 use crate::load::is_host_path;
 use crate::load::loaders::{
-    BY_NAME, HostLoaderKind, TypeAttribute, classify_type_attribute, host_loader_kind,
-    loader_by_name, loader_by_path, loader_named_by_path, script_kind_of, script_loader,
-    to_host_loader,
+    BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path,
+    loader_named_by_path, script_kind_of, script_loader, to_host_loader,
 };
-use crate::load::macros::{self, MacroInput};
+use crate::load::macros;
 use crate::load::named_loads::find_library_modules_named_in_choices;
 use crate::load::plugin_modules::{DeferredReads, ModuleText, PluginModules, PluginResolution};
 use crate::load::react_compiler::{self, ReactCompiler};
@@ -71,12 +70,8 @@ fn describe_parse_failure(hir: &hir::File<'_>, text: &[u8]) -> Option<Vec<u8>> {
     }
     let before = &text[..text.len().min(first.start as usize)];
     let line = bun_core::strings::count_char(before, b'\n') + 1;
-    let column = before
-        .iter()
-        .rev()
-        .take_while(|&&byte| byte != b'\n')
-        .count()
-        + 1;
+    let bytes_of_line = before.iter().rev().take_while(|&&byte| byte != b'\n');
+    let column = bytes_of_line.count() + 1;
     sentence.extend_from_slice(format!(" ({line}:{column})").as_bytes());
     Some(sentence)
 }
@@ -145,20 +140,44 @@ enum ServedBy {
     Disk,
 }
 
+fn collect_entry_point_paths(disk: &Disk, options: &Options<'_>) -> Vec<Vec<u8>> {
+    let is_case_sensitive = disk.is_case_sensitive();
+    let mut paths = Vec::with_capacity(2 * options.entry_points.len());
+    for entry_point in &options.entry_points {
+        let path = from_argument(&options.code.working_directory, entry_point);
+        paths.push(to_path(&disk.realpath(&path), is_case_sensitive).into_owned());
+        paths.push(to_path(&path, is_case_sensitive).into_owned());
+    }
+    paths.shared_sort_unstable();
+    paths.dedup();
+    paths
+}
+
 impl<'a> LoadHost<'a> {
     pub(crate) fn new(input: LoadHostInput<'a>) -> LoadHost<'a> {
         let (disk, provider, messages) = (input.disk, input.provider, input.messages);
         let options = input.options;
         let load = &options.load;
         let entry_point_paths = collect_entry_point_paths(disk, options);
+        let is_binary = |path: &&Vec<u8>| {
+            loader_named_by_path(&load.loaders, path).is_none()
+                && (disk.read(path)).is_some_and(|contents| appears_to_be_binary(&contents, true))
+        };
+        let binary_entry_point_paths = entry_point_paths.iter().filter(is_binary).cloned();
+        let extra_extensions = load.loaders.iter().filter_map(|(extension, loader)| {
+            let kind = script_kind_of(*loader)?;
+            let file_name = [b"x", extension.as_slice()].concat();
+            let is_extra = ScriptKind::from_file_name(&file_name).is_none();
+            is_extra.then(|| (extension.clone(), kind))
+        });
         LoadHost {
             disk,
             plugins: PluginModules::new(provider, disk, messages, &load.in_memory_files),
             evaluated_texts: EvaluatedTexts::new(),
             react_compiler: ReactCompiler::new(load.react_compiler, messages),
-            binary_entry_point_paths: collect_binary_paths(disk, &load.loaders, &entry_point_paths),
+            binary_entry_point_paths: binary_entry_point_paths.collect(),
             entry_point_paths,
-            extra_extensions: collect_extra_extensions(&load.loaders),
+            extra_extensions: extra_extensions.collect(),
             unreadable: Guarded::new(Vec::new()),
             background_reads: Guarded::new(Vec::new()),
             background_reads_disabled: AtomicBool::new(false),
@@ -179,51 +198,7 @@ impl<'a> LoadHost<'a> {
     pub(crate) fn background_reads(&self) -> Vec<Vec<u8>> {
         self.background_reads.lock().clone()
     }
-}
 
-fn collect_entry_point_paths(disk: &Disk, options: &Options<'_>) -> Vec<Vec<u8>> {
-    let is_case_sensitive = disk.is_case_sensitive();
-    let mut paths = Vec::with_capacity(2 * options.entry_points.len());
-    for entry_point in &options.entry_points {
-        let path = from_argument(&options.code.working_directory, entry_point);
-        paths.push(to_path(&disk.realpath(&path), is_case_sensitive).into_owned());
-        paths.push(to_path(&path, is_case_sensitive).into_owned());
-    }
-    paths.shared_sort_unstable();
-    paths.dedup();
-    paths
-}
-
-fn collect_binary_paths(
-    disk: &Disk,
-    loaders: &[(Vec<u8>, Loader)],
-    sorted_paths: &[Vec<u8>],
-) -> Vec<Vec<u8>> {
-    let is_binary = |path: &&Vec<u8>| {
-        loader_named_by_path(loaders, path).is_none()
-            && (disk.read(path)).is_some_and(|contents| appears_to_be_binary(&contents, true))
-    };
-    sorted_paths.iter().filter(is_binary).cloned().collect()
-}
-
-fn collect_extra_extensions(loaders: &[(Vec<u8>, Loader)]) -> Vec<(Vec<u8>, ScriptKind)> {
-    let script_extensions = loaders.iter().filter_map(|(extension, loader)| {
-        let kind = script_kind_of(*loader)?;
-        let file_name = [b"x", extension.as_slice()].concat();
-        let is_extra = ScriptKind::from_file_name(&file_name).is_none();
-        is_extra.then(|| (extension.clone(), kind))
-    });
-    script_extensions.collect()
-}
-
-fn requested_loader(kind: HostLoaderKind, path: &[u8]) -> Loader {
-    match kind {
-        HostLoaderKind::ByName => loader_by_name(path),
-        HostLoaderKind::Loader(loader) => loader,
-    }
-}
-
-impl LoadHost<'_> {
     fn typed_version_in(
         &self,
         place: TypedPackagePlace,
@@ -232,10 +207,8 @@ impl LoadHost<'_> {
     ) -> Option<Vec<u8>> {
         // Full types whose full-types.json does not fit what is installed are not used: the build says so and goes on.
         let packages = self.input.typed_packages;
-        if packages
-            .find_manifest_mismatch(package?, self.input.defined)
-            .is_some()
-        {
+        let mismatch = packages.find_manifest_mismatch(package?, self.input.defined);
+        if mismatch.is_some() {
             return None;
         }
         packages.typed_version(place, path, package)
@@ -295,9 +268,7 @@ impl LoadHost<'_> {
     fn is_among(&self, sorted_paths: &[Vec<u8>], path: &[u8]) -> bool {
         let mut buffer = path_buffer_pool::get();
         let path = to_path_in(path, self.disk.is_case_sensitive(), &mut buffer[..]);
-        sorted_paths
-            .binary_search_by(|it| it.as_slice().cmp(&path))
-            .is_ok()
+        contains(sorted_paths, &path)
     }
 
     fn default_loader(&self, path: &[u8]) -> Loader {
@@ -337,17 +308,8 @@ impl LoadHost<'_> {
         is_untyped_for_typed.then_some(loader)
     }
 
-    fn plugin_module_name(&self, path: &[u8]) -> Option<PluginModuleName> {
-        let (namespace, plugin_path) = self.plugins.virtual_module(path)?;
-        Some(PluginModuleName {
-            namespace: namespace.into(),
-            path: plugin_path.into(),
-        })
-    }
-
     fn is_background_read(&self, path: &[u8]) -> bool {
-        let paths = self.background_reads.lock();
-        paths.binary_search_by(|it| it.as_slice().cmp(path)).is_ok()
+        contains(&self.background_reads.lock(), path)
     }
 
     /// Returns false if a plugin answered one of the background reads with something other than an asset.
@@ -364,10 +326,8 @@ impl LoadHost<'_> {
                     continue;
                 }
             };
-            if self
-                .plugin_loader(path)
-                .is_some_and(|loader| loader != Loader::File)
-            {
+            let plugin_loader = self.plugin_loader(path);
+            if plugin_loader.is_some_and(|loader| loader != Loader::File) {
                 are_assets = false;
                 continue;
             }
@@ -394,13 +354,17 @@ impl LoadHost<'_> {
         Cow::default()
     }
 
-    fn classify_host_loader(&self, loader: HostLoader, path: &[u8]) -> HostLoaderKind {
-        host_loader_kind(loader).unwrap_or_else(|| {
-            let path = BStr::new(to_native(path));
-            let message = format!("unknown host loader {} for {path}", loader.0);
-            (self.input.messages).report_internal_error(message.into_bytes());
-            HostLoaderKind::ByName
-        })
+    fn requested_loader(&self, loader: HostLoader, path: &[u8]) -> Loader {
+        match host_loader_kind(loader) {
+            Some(HostLoaderKind::Loader(loader)) => return loader,
+            Some(HostLoaderKind::ByName) => {}
+            None => {
+                let path = BStr::new(to_native(path));
+                let message = format!("unknown host loader {} for {path}", loader.0);
+                (self.input.messages).report_internal_error(message.into_bytes());
+            }
+        }
+        loader_by_name(path)
     }
 
     fn runtime_resolution(&self, specifier: &[u8]) -> Option<HostResolution> {
@@ -445,12 +409,6 @@ impl Host for LoadHost<'_> {
         }
     }
 
-    fn take_unreadable(&self) -> Vec<Vec<u8>> {
-        let mut paths = std::mem::take(&mut *self.unreadable.lock());
-        paths.extend(self.disk.take_unreadable());
-        paths
-    }
-
     fn file_stamp(&self, path: &[u8]) -> Option<FileStamp> {
         match self.served_by(path) {
             ServedBy::Declarations(_) | ServedBy::RuntimeTypes => Some(FileStamp::IMMUTABLE),
@@ -479,19 +437,6 @@ impl Host for LoadHost<'_> {
             true => runtime_types::is_dir(path),
             false => self.disk.is_dir(path),
         }
-    }
-
-    fn realpath(&self, path: &[u8]) -> Vec<u8> {
-        match is_host_path(path) {
-            true => path.to_vec(),
-            false => self.disk.realpath(path),
-        }
-    }
-
-    fn list_dir(&self, path: &[u8]) -> Vec<Vec<u8>> {
-        let (mut names, directories) = self.entries(path);
-        names.extend(directories);
-        names
     }
 
     fn entries(&self, path: &[u8]) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
@@ -581,10 +526,7 @@ impl CodeHost for LoadHost<'_> {
 
     fn directory_of<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
         let working_directory = &self.input.options.code.working_directory;
-        match self
-            .plugins
-            .directory_of_virtual_module(path, working_directory)
-        {
+        match (self.plugins).directory_of_virtual_module(path, working_directory) {
             Some(directory) => Cow::Owned(directory),
             None => Cow::Borrowed(dirname::<Posix>(path)),
         }
@@ -645,11 +587,9 @@ impl CodeHost for LoadHost<'_> {
         }
         let default_loader = self.default_loader_for(path, request.kind);
         let is_embedded = matches!(request.embed_attribute, Some(b"true"));
-        let chosen = match classify_type_attribute(request.type_attribute) {
-            TypeAttribute::Loader(Loader::Sqlite) if is_embedded => Loader::SqliteEmbedded,
-            TypeAttribute::Loader(loader) => loader,
-            TypeAttribute::Absent | TypeAttribute::Unknown => default_loader,
-            TypeAttribute::Macro => {
+        let chosen = match request.type_attribute {
+            None => default_loader,
+            Some(b"macro") => {
                 let message = [
                     &b"a macro import was followed as code: "[..],
                     to_native(path),
@@ -657,13 +597,17 @@ impl CodeHost for LoadHost<'_> {
                 (self.input.messages).report_internal_error(message.concat());
                 default_loader
             }
+            Some(name) => match Loader::from_string(name) {
+                Some(Loader::Sqlite) if is_embedded => Loader::SqliteEmbedded,
+                Some(loader) => loader,
+                None => default_loader,
+            },
         };
         to_host_loader(chosen, path)
     }
 
     fn loads_as_code(&self, path: &[u8], loader: HostLoader) -> bool {
-        let kind = self.classify_host_loader(loader, path);
-        script_kind_of(requested_loader(kind, path)).is_some()
+        script_kind_of(self.requested_loader(loader, path)).is_some()
     }
 
     fn read_code(&self, path: &[u8]) -> CodeRead {
@@ -703,7 +647,7 @@ impl CodeHost for LoadHost<'_> {
 
     fn can_read_in_background(&self, path: &[u8], loader: HostLoader) -> bool {
         !self.background_reads_disabled.load(Ordering::Acquire)
-            && requested_loader(self.classify_host_loader(loader, path), path) == Loader::File
+            && self.requested_loader(loader, path) == Loader::File
             && self.input.provider.asset_paths_ignore_contents()
     }
 
@@ -748,9 +692,8 @@ impl CodeHost for LoadHost<'_> {
     ) -> ParsedCode<'s> {
         let path = request.path;
         let served_by = self.served_by(path);
-        let kind = self.classify_host_loader(request.loader, path);
-        let is_background_read =
-            requested_loader(kind, path) == Loader::File && self.is_background_read(path);
+        let requested_loader = self.requested_loader(request.loader, path);
+        let is_background_read = requested_loader == Loader::File && self.is_background_read(path);
         let plugin_loader = match is_background_read {
             true => None,
             false => self.plugin_loader(path),
@@ -759,12 +702,14 @@ impl CodeHost for LoadHost<'_> {
             ServedBy::TypedFile(script_kind) => script_loader(script_kind),
             ServedBy::EvaluatedText => Loader::Js,
             ServedBy::Declarations(_) | ServedBy::RuntimeTypes => Loader::Ts,
-            ServedBy::PluginModule | ServedBy::Disk => {
-                plugin_loader.unwrap_or_else(|| requested_loader(kind, path))
-            }
+            ServedBy::PluginModule | ServedBy::Disk => plugin_loader.unwrap_or(requested_loader),
         };
         let is_from_plugin = plugin_loader.is_some();
-        let plugin_module = self.plugin_module_name(path);
+        let plugin_module = self.plugins.virtual_module(path);
+        let plugin_module = plugin_module.map(|(namespace, path)| PluginModuleName {
+            namespace: namespace.into(),
+            path: path.into(),
+        });
         let parse_data = |loader: Loader, plugin_module: Option<PluginModuleName>| {
             let source = SourceFile {
                 path: self.plugins.provider_path(path),
@@ -847,16 +792,18 @@ impl CodeHost for LoadHost<'_> {
         request: &MacroRequest<'_, 's>,
         payload: &mut Option<HostPayload>,
     ) -> &'s [(ExprId, HostValue<'s>)] {
-        let input = MacroInput {
-            provider: self.input.provider,
-            messages: self.input.messages,
-            runs_macros: self.input.options.load.runs_macros,
-        };
-        let diagnostics = &mut parsed_source_mut(payload).diagnostics;
         if !request.analysis.pending_macro_calls.is_empty() {
             self.has_run_macros.store(true, Ordering::Release);
         }
-        macros::run_macros(&input, arena, atoms, request, diagnostics)
+        macros::run_macros(
+            self.input.provider,
+            self.input.messages,
+            self.input.options.load.runs_macros,
+            arena,
+            atoms,
+            request,
+            &mut parsed_source_mut(payload).diagnostics,
+        )
     }
 
     fn transform_tree<'s>(
@@ -904,10 +851,8 @@ impl CodeHost for LoadHost<'_> {
             runtime_modules,
             self.input.limits,
         );
-        let modules = named
-            .modules
-            .iter()
-            .map(|it| HostModuleId(it.module.registry_id()));
+        let modules = named.modules.iter();
+        let modules = modules.map(|it| HostModuleId(it.module.registry_id()));
         answers.extend(modules.map(HostResolution::Module));
         source.modules_named_in_choices = named.modules;
         source.library_names_passed_to_imports = named.passed_to_imports;
@@ -921,4 +866,4 @@ impl CodeHost for LoadHost<'_> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

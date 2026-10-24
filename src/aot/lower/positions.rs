@@ -5,8 +5,8 @@ mod sites;
 use std::rc::Rc;
 
 use bun_sema::bind::SymbolId;
-use bun_sema::check::aot::{ClassRef, PositionTypes, ShapeKind, WrittenType};
-use bun_sema::hir::{FnId, MemberId, TypeNodeId};
+use bun_sema::check::aot::{PositionTypes, ShapeKind, WrittenType};
+use bun_sema::hir::{FnId, TypeNodeId};
 use bun_sema::program::Sym;
 use rustc_hash::FxHashMap;
 
@@ -35,7 +35,6 @@ pub(crate) struct FunctionPositions {
 #[derive(Default)]
 pub(in crate::lower) struct PositionState {
     annotations: FxHashMap<(TypeNodeId, TypeSiteKind), DeclaredType>,
-    // The variable that a symbol of the file names.
     named_variables: FxHashMap<SymbolId, Sym>,
     variables: FxHashMap<Sym, DeclaredType>,
     functions: FxHashMap<FnId, Rc<FunctionPositions>>,
@@ -53,7 +52,6 @@ const MAX_DEPTH_OF_LISTED_MEMBERS: u32 = 8;
 struct PositionSource {
     ty: CheckerTypeId,
     mapped: Mapped,
-    // What of `undefined` and `null` the checker's type lists.
     listed_nullish: Primitives,
     is_annotation: bool,
 }
@@ -82,13 +80,8 @@ impl FileLowering<'_, '_, '_, '_> {
     // Nobody asks where the position holds neither.
     fn find_listed_nullish_at(&mut self, ty: CheckerTypeId, mapped: TypeId) -> Primitives {
         let says_which = self.is_checked() && self.queries.files().options.strict_null_checks;
-        let holds_any = self
-            .fragment
-            .types
-            .get(mapped)
-            .primitives
-            .intersects(Primitives::NULLISH);
-        if !says_which || !holds_any {
+        let held = self.fragment.types.get(mapped).primitives;
+        if !says_which || !held.intersects(Primitives::NULLISH) {
             return Primitives::NULLISH;
         }
         if let Some(&listed) = self.types.positions.listed_nullish.get(&ty) {
@@ -142,17 +135,6 @@ impl FileLowering<'_, '_, '_, '_> {
         flags
     }
 
-    fn add_nullish_of(&mut self, ty: TypeId, listing: TypeId) -> TypeId {
-        let types = &mut self.fragment.types;
-        let listed = types.get(listing).primitives & Primitives::NULLISH;
-        if types.get(ty).primitives.contains(listed) {
-            return ty;
-        }
-        let listed = types.intern(Type::primitives(listed));
-        types.union(ty, listed)
-    }
-
-    // The annotation where there is one, and what the checker infers where there is none.
     fn choose_source(
         &mut self,
         types: PositionTypes,
@@ -173,7 +155,12 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         // `x?: number` is written `number`.
         if let Some(checked) = checked {
-            source.mapped.ty = self.add_nullish_of(source.mapped.ty, checked.mapped.ty);
+            let types = &mut self.fragment.types;
+            let listed = types.get(checked.mapped.ty).primitives & Primitives::NULLISH;
+            if !types.get(source.mapped.ty).primitives.contains(listed) {
+                let listed = types.intern(Type::primitives(listed));
+                source.mapped.ty = types.union(source.mapped.ty, listed);
+            }
             source.listed_nullish |= checked.listed_nullish;
         }
         Some(source)
@@ -214,19 +201,10 @@ impl FileLowering<'_, '_, '_, '_> {
         self.types.positions.has_int32_promise |= flags.contains(PositionFlags::IS_INT32_PROMISE);
         let declared = DeclaredType::new(mapped, site, flags);
         if declared.site.is_some() {
-            self.types
-                .positions
-                .sources
-                .entry(declared)
-                .or_insert(source.ty);
+            let sources = &mut self.types.positions.sources;
+            sources.entry(declared).or_insert(source.ty);
         }
         declared
-    }
-
-    fn build_position(&mut self, ty: CheckerTypeId, origin: Option<SiteOrigin>) -> DeclaredType {
-        let source = self.map_source(ty, origin, true);
-        let flags = self.find_promise(source) | self.find_omitted_nullish(source);
-        self.finish_position(source, origin, flags)
     }
 
     fn build_position_of_types(
@@ -270,11 +248,8 @@ impl FileLowering<'_, '_, '_, '_> {
             ..position
         };
         if let Some(source) = self.find_position_source(position) {
-            self.types
-                .positions
-                .sources
-                .entry(widened)
-                .or_insert(source);
+            let sources = &mut self.types.positions.sources;
+            sources.entry(widened).or_insert(source);
         }
         widened
     }
@@ -295,13 +270,15 @@ impl FileLowering<'_, '_, '_, '_> {
             position: self.hir[annotation].pos,
         };
         let position = match self.queries.written_type(annotation) {
-            WrittenType::Written(ty) => self.build_position(ty, Some(origin)),
+            WrittenType::Written(ty) => {
+                let source = self.map_source(ty, Some(origin), true);
+                let flags = self.find_promise(source) | self.find_omitted_nullish(source);
+                self.finish_position(source, Some(origin), flags)
+            }
             WrittenType::Unwritten | WrittenType::GaveUp(_) => DeclaredType::untyped(),
         };
-        self.types
-            .positions
-            .annotations
-            .insert((annotation, kind), position);
+        let memo = &mut self.types.positions.annotations;
+        memo.insert((annotation, kind), position);
         position
     }
 
@@ -313,10 +290,8 @@ impl FileLowering<'_, '_, '_, '_> {
             ImportBinding::Variable(exported) => exported,
             _ => self.queries.canonical_symbol(self.file, symbol),
         };
-        self.types
-            .positions
-            .named_variables
-            .insert(symbol, variable);
+        let memo = &mut self.types.positions.named_variables;
+        memo.insert(symbol, variable);
         self.variable_position(variable)
     }
 
@@ -334,19 +309,9 @@ impl FileLowering<'_, '_, '_, '_> {
             return Rc::clone(positions);
         }
         let positions = Rc::new(functions::compute_function_positions(self, function));
-        self.types
-            .positions
-            .functions
-            .insert(function, Rc::clone(&positions));
+        let memo = &mut self.types.positions.functions;
+        memo.insert(function, Rc::clone(&positions));
         positions
-    }
-
-    pub(crate) fn class_this_type(
-        &mut self,
-        class: ClassRef,
-        member: Option<MemberId>,
-    ) -> DeclaredType {
-        self.compute_class_this_type(class, member)
     }
 }
 

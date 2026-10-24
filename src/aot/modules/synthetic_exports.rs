@@ -1,11 +1,10 @@
 use super::bindings::{SyntheticExport, SyntheticExportId};
-use super::code_unit_order::compare_code_units;
 use super::commonjs_exports::{CommonJsTexts, collect_seen_namespaces};
 use super::exports::{ExportTables, Resolution};
 use super::imports::{FileImports, NamedMember, PendingBinding};
 use super::interop::ModuleKind;
 use super::module_set::ModuleSet;
-use super::{BindInput, ModuleRef, compare_modules};
+use super::{BindInput, ModuleRef, compare_code_units, compare_modules};
 use crate::builtins::{ModuleExport, find_module_export};
 use crate::load::SourceKind;
 use bun_sema::atom::Atom;
@@ -110,26 +109,16 @@ fn collect_synthetic_export_keys(
 ) -> SyntheticExportKeys {
     let mut keys = SyntheticExportKeys::default();
     for file_imports in imports {
-        let symbol_bindings = file_imports
-            .bindings
-            .iter()
-            .map(|&(_, binding)| (binding, true));
-        let member_bindings = file_imports
-            .members
-            .iter()
-            .map(|&(_, binding)| (binding, false));
-        let jsx_bindings = file_imports.jsx.iter().map(|&(_, binding)| (binding, true));
+        let symbols = file_imports.bindings.iter().map(|it| (it.1, true));
+        let members = file_imports.members.iter().map(|it| (it.1, false));
+        let jsx = file_imports.jsx.iter().map(|it| (it.1, true));
         // A key of `const { n } = require(K)` reads `undefined` where the module has no `n`.
-        let named_bindings = file_imports
-            .named_members
-            .iter()
-            .filter_map(|&(_, member)| match member {
-                NamedMember::Binding(binding) => Some((binding, false)),
-                NamedMember::Fixed(_) => None,
-            });
-        let bindings = symbol_bindings.chain(member_bindings).chain(jsx_bindings);
-        let bindings = bindings.chain(named_bindings);
-        for (binding, is_required) in bindings {
+        let named = file_imports.named_members.iter();
+        let named = named.filter_map(|it| match it.1 {
+            NamedMember::Binding(binding) => Some((binding, false)),
+            NamedMember::Fixed(_) => None,
+        });
+        for (binding, is_required) in symbols.chain(members).chain(jsx).chain(named) {
             match binding {
                 PendingBinding::Synthetic { module, name }
                 | PendingBinding::CapturedBuiltin { module, name, .. } => {
@@ -163,17 +152,14 @@ fn collect_synthetic_export_keys(
     // A namespace object shows every name.
     for file in collect_seen_namespaces(modules, tables, imports) {
         let module = ModuleRef::File(file);
-        for name in tables
-            .names_of_commonjs_module(module)
-            .into_iter()
-            .flatten()
-        {
+        let names = tables.commonjs.names_of(module);
+        for name in names.into_iter().flatten() {
             keys.add_name(modules, tables, module, name);
         }
     }
     if let Some(application) = input.application {
         for export in application.graph.synthetic_exports() {
-            if let ModuleRef::File(_) | ModuleRef::Inner { .. } = export.module
+            if let ModuleRef::File(_) = export.module
                 && let Some(module) = application.local_module(export.module)
             {
                 keys.add((module, export.name), false);
@@ -247,11 +233,9 @@ mod tests {
 
     #[test]
     fn ids_follow_module_and_name_order() {
+        let main = "import { b, a, Z } from './c.cjs'; import './reexport.js';";
         let files = [
-            (
-                "main.js",
-                "import { b, a, Z } from './c.cjs'; import './reexport.js';",
-            ),
+            ("main.js", main),
             ("reexport.js", "export { Buffer } from 'node:buffer';"),
             ("c.cjs", "module.exports = { a: 1, b: 2, Z: 3 };"),
         ];
@@ -307,13 +291,8 @@ mod tests {
 
     #[test]
     fn member_paths_ask_for_ids() {
-        let files = [
-            (
-                "main.js",
-                "import * as ns from './c.cjs'; export const x = ns.x;",
-            ),
-            ("c.cjs", "exports.x = 1;"),
-        ];
+        let main = "import * as ns from './c.cjs'; export const x = ns.x;";
+        let files = [("main.js", main), ("c.cjs", "exports.x = 1;")];
         with_graph(&files, |graph, input| {
             let [export] = graph.synthetic_exports() else {
                 panic!("ns.x asks for exactly one synthetic export");

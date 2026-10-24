@@ -1,8 +1,9 @@
 use super::*;
 use crate::ir::parallel::run_serially;
 use crate::modules::BindInput;
-use crate::modules::testing::{describe_requests_of, file_named, with_graph};
-use bun_sema::hir::MemberKey;
+use crate::modules::testing::{
+    describe_requests_of, file_named, member_named, symbol_named, with_graph,
+};
 
 struct Planned<'a, 'i, 's> {
     graph: &'a ModuleGraph,
@@ -20,6 +21,10 @@ impl Planned<'_, '_, '_> {
 
     fn module(&self, name: &str) -> ModuleRef {
         ModuleRef::File(self.file(name))
+    }
+
+    fn shape(&self, name: &str) -> Shape {
+        self.graph.shape(self.module(name))
     }
 
     fn atom(&self, text: &str) -> Atom {
@@ -45,10 +50,8 @@ impl Planned<'_, '_, '_> {
 
     fn sites(&self, name: &str) -> Vec<Site> {
         let file = self.file(name);
-        let calls = self.calls(name).into_iter();
-        calls
-            .map(|call| self.graph.site(file, call).expect("a site"))
-            .collect()
+        let site_at = |call| self.graph.site(file, call).expect("a site");
+        self.calls(name).into_iter().map(site_at).collect()
     }
 
     fn evaluates(&self, target: &str, is_bare: bool) -> Site {
@@ -61,26 +64,14 @@ impl Planned<'_, '_, '_> {
 
     fn holder(&self, file: &str, name: &str) -> Option<View> {
         let file = self.file(file);
-        let bound = self.input.files.bound(file);
-        let symbol = bound.lookup(bound.scopes[0].locals, self.atom(name));
-        self.graph.holder(
-            file,
-            symbol.expect("the file scope does not declare the name"),
-        )
+        self.graph
+            .holder(file, symbol_named(self.input, file, name))
     }
 
-    /// The first access under the name.
     fn member(&self, file: &str, name: &str) -> Option<Member> {
-        let (file, name) = (self.file(file), self.atom(name));
-        let hir = self.input.files.hir(file);
-        let mut exprs = (0..hir.exprs.len() as u32).map(ExprId);
-        let member = exprs.find(
-            |&expr| matches!(hir.member_key(expr), Some((_, MemberKey::Name(key))) if key == name),
-        );
-        self.graph.member(
-            file,
-            member.expect("the file has no access under this name"),
-        )
+        let file = self.file(file);
+        self.graph
+            .member(file, member_named(self.input, file, name))
     }
 
     fn variable(&self, module: &str, name: &str) -> Member {
@@ -105,10 +96,8 @@ impl Planned<'_, '_, '_> {
 
     fn reads_as_value(&self, name: &str) -> Vec<bool> {
         let file = self.file(name);
-        let calls = self.calls(name).into_iter();
-        calls
-            .map(|call| self.graph.is_site_read_as_value(file, call))
-            .collect()
+        let is_read = |call| self.graph.is_site_read_as_value(file, call);
+        self.calls(name).into_iter().map(is_read).collect()
     }
 }
 
@@ -126,25 +115,15 @@ fn require_of_an_es_module_is_an_import_at_that_point() {
     with_plan(&files, |plan| {
         assert_eq!(plan.sites("main.mjs"), [plan.evaluates("m.mjs", true)]);
         assert_eq!(plan.requests("main.mjs"), ["request m.mjs require"]);
-        assert_eq!(
-            plan.holder("main.mjs", "a"),
-            Some(View::Namespace(plan.module("m.mjs")))
-        );
-        assert_eq!(
-            plan.member("main.mjs", "c"),
-            Some(plan.exported("m.mjs", "c"))
-        );
-        assert_eq!(
-            plan.member("main.mjs", "f"),
-            Some(plan.exported("m.mjs", "f"))
-        );
-        assert_eq!(plan.member("main.mjs", "missing"), Some(Member::Undefined));
-        assert_eq!(
-            plan.member("main.mjs", "__esModule"),
-            Some(Member::Marker(true))
-        );
+        let namespace = View::Namespace(plan.module("m.mjs"));
+        assert_eq!(plan.holder("main.mjs", "a"), Some(namespace));
+        let member = |name| plan.member("main.mjs", name);
+        assert_eq!(member("c"), Some(plan.exported("m.mjs", "c")));
+        assert_eq!(member("f"), Some(plan.exported("m.mjs", "f")));
+        assert_eq!(member("missing"), Some(Member::Undefined));
+        assert_eq!(member("__esModule"), Some(Member::Marker(true)));
         assert_eq!(plan.reads_as_value("main.mjs"), [false]);
-        assert_eq!(plan.graph.shape(plan.module("m.mjs")), Shape::EsModule);
+        assert_eq!(plan.shape("m.mjs"), Shape::EsModule);
     });
 }
 
@@ -161,21 +140,15 @@ fn require_of_a_commonjs_module_binds_its_names() {
         ("m.cjs", "exports.c = 1; exports.f = (x) => x;"),
     ];
     with_plan(&files, |plan| {
-        assert_eq!(plan.graph.shape(plan.module("m.cjs")), Shape::Names);
+        assert_eq!(plan.shape("m.cjs"), Shape::Names);
         assert_eq!(plan.sites("main.cjs"), [plan.evaluates("m.cjs", true)]);
         assert_eq!(plan.requests("main.cjs"), ["request m.cjs require"]);
-        assert_eq!(
-            plan.holder("main.cjs", "a"),
-            Some(View::Exports(plan.module("m.cjs")))
-        );
-        assert_eq!(
-            plan.member("main.cjs", "d"),
-            Some(plan.variable("m.cjs", "d"))
-        );
+        let m = plan.module("m.cjs");
+        assert_eq!(plan.holder("main.cjs", "a"), Some(View::Exports(m)));
+        let d = plan.variable("m.cjs", "d");
+        assert_eq!(plan.member("main.cjs", "d"), Some(d));
         assert_eq!(plan.reads_as_value("main.cjs"), [false]);
-        let a_c = plan
-            .graph
-            .member_named(plan.module("m.cjs"), plan.atom("c"));
+        let a_c = plan.graph.member_named(m, plan.atom("c"));
         assert_eq!(a_c, Some(plan.variable("m.cjs", "c")));
     });
 }
@@ -209,14 +182,9 @@ fn a_cycle_of_requires_reads_the_variables_as_far_as_they_are_stored() {
         assert_eq!(plan.requests("b.cjs"), ["request a.cjs require"]);
         assert_eq!(plan.graph.shape(a), Shape::Names);
         assert_eq!(plan.holder("b.cjs", "a"), Some(View::Exports(a)));
-        assert_eq!(
-            plan.member("b.cjs", "first"),
-            Some(plan.variable("a.cjs", "first"))
-        );
-        assert_eq!(
-            plan.member("b.cjs", "second"),
-            Some(plan.variable("a.cjs", "second"))
-        );
+        let variable = |name| Some(plan.variable("a.cjs", name));
+        assert_eq!(plan.member("b.cjs", "first"), variable("first"));
+        assert_eq!(plan.member("b.cjs", "second"), variable("second"));
     });
 }
 
@@ -234,7 +202,7 @@ fn in_a_cycle_a_replaced_exports_object_is_held_as_it_was_read() {
         ),
     ];
     with_plan(&files, |plan| {
-        assert_eq!(plan.graph.shape(plan.module("a.cjs")), Shape::Value);
+        assert_eq!(plan.shape("a.cjs"), Shape::Value);
         assert_eq!(plan.sites("b.cjs"), [plan.evaluates("a.cjs", true)]);
         // An ordinary constant, which holds what the variable held when the call ran.
         assert_eq!(plan.holder("b.cjs", "a"), None);
@@ -270,10 +238,8 @@ fn a_site_in_a_function_is_not_bare_and_still_binds() {
     with_plan(&files, |plan| {
         assert_eq!(plan.sites("main.cjs"), [plan.evaluates("m.cjs", false)]);
         assert!(plan.graph.exposed(plan.module("m.cjs")));
-        assert_eq!(
-            plan.member("main.cjs", "c"),
-            Some(plan.variable("m.cjs", "c"))
-        );
+        let c = plan.variable("m.cjs", "c");
+        assert_eq!(plan.member("main.cjs", "c"), Some(c));
         // The module keeps its error, so that behind the site it has run to its end.
         assert_eq!(plan.requests("main.cjs"), ["request m.cjs require"]);
     });
@@ -288,22 +254,13 @@ fn what_a_call_gives_is_a_value_where_the_callee_is_tested() {
         "const a = require?.('./m.cjs'); exports.c = a.c;",
     ];
     for source in sources {
-        with_plan(
-            &[("main.cjs", source), ("m.cjs", "exports.c = 1;")],
-            |plan| {
-                assert_eq!(plan.holder("main.cjs", "a"), None, "{source}");
-                assert_eq!(
-                    plan.graph.shape(plan.module("m.cjs")),
-                    Shape::Value,
-                    "{source}"
-                );
-                assert_eq!(
-                    plan.sites("main.cjs"),
-                    [plan.evaluates("m.cjs", false)],
-                    "{source}"
-                );
-            },
-        );
+        let files = [("main.cjs", source), ("m.cjs", "exports.c = 1;")];
+        with_plan(&files, |plan| {
+            assert_eq!(plan.holder("main.cjs", "a"), None, "{source}");
+            assert_eq!(plan.shape("m.cjs"), Shape::Value, "{source}");
+            let site = plan.evaluates("m.cjs", false);
+            assert_eq!(plan.sites("main.cjs"), [site], "{source}");
+        });
     }
 }
 
@@ -330,11 +287,7 @@ fn a_use_of_the_object_costs_that_module_its_names() {
             ("n.cjs", "exports.c = 1;"),
         ];
         with_plan(&files, |plan| {
-            assert_eq!(
-                plan.graph.shape(plan.module("m.cjs")),
-                Shape::Value,
-                "{source}"
-            );
+            assert_eq!(plan.shape("m.cjs"), Shape::Value, "{source}");
             assert_eq!(plan.reads_as_value("main.cjs"), [true], "{source}");
         });
     }
@@ -355,17 +308,11 @@ fn a_use_that_only_tests_the_object_costs_nothing() {
         "exports.c = new (require('./m.cjs').c)();",
     ];
     for source in sources {
-        with_plan(
-            &[("main.cjs", source), ("m.cjs", "exports.c = 1;")],
-            |plan| {
-                assert_eq!(
-                    plan.graph.shape(plan.module("m.cjs")),
-                    Shape::Names,
-                    "{source}"
-                );
-                assert_eq!(plan.reads_as_value("main.cjs"), [false], "{source}");
-            },
-        );
+        let files = [("main.cjs", source), ("m.cjs", "exports.c = 1;")];
+        with_plan(&files, |plan| {
+            assert_eq!(plan.shape("m.cjs"), Shape::Names, "{source}");
+            assert_eq!(plan.reads_as_value("main.cjs"), [false], "{source}");
+        });
     }
 }
 
@@ -379,28 +326,16 @@ fn a_call_that_is_only_tested_is_read_where_the_module_is_one_value() {
         "exports.c = require('./m.cjs') && 1;",
     ];
     for source in sources {
-        with_plan(
-            &[("main.cjs", source), ("m.cjs", "module.exports = false;")],
-            |plan| {
-                assert_eq!(
-                    plan.graph.shape(plan.module("m.cjs")),
-                    Shape::Value,
-                    "{source}"
-                );
-                assert_eq!(plan.reads_as_value("main.cjs"), [true], "{source}");
-            },
-        );
-        with_plan(
-            &[("main.cjs", source), ("m.cjs", "exports.c = 1;")],
-            |plan| {
-                assert_eq!(
-                    plan.graph.shape(plan.module("m.cjs")),
-                    Shape::Names,
-                    "{source}"
-                );
-                assert_eq!(plan.reads_as_value("main.cjs"), [false], "{source}");
-            },
-        );
+        let files = [("main.cjs", source), ("m.cjs", "module.exports = false;")];
+        with_plan(&files, |plan| {
+            assert_eq!(plan.shape("m.cjs"), Shape::Value, "{source}");
+            assert_eq!(plan.reads_as_value("main.cjs"), [true], "{source}");
+        });
+        let files = [("main.cjs", source), ("m.cjs", "exports.c = 1;")];
+        with_plan(&files, |plan| {
+            assert_eq!(plan.shape("m.cjs"), Shape::Names, "{source}");
+            assert_eq!(plan.reads_as_value("main.cjs"), [false], "{source}");
+        });
     }
 }
 
@@ -419,17 +354,15 @@ fn an_exported_holder_holds_the_object() {
 #[test]
 fn a_require_site_of_a_namespace_that_is_looked_at_records() {
     let main = "import * as ns from './x.mjs'; require('./x.mjs'); console.log(ns);";
-    with_plan(
-        &[("main.mjs", main), ("x.mjs", "export const a = 1;")],
-        |plan| {
-            let expected = Site::Evaluate {
-                target: plan.module("x.mjs"),
-                is_bare: true,
-                records: true,
-            };
-            assert_eq!(plan.sites("main.mjs"), [expected]);
-        },
-    );
+    let files = [("main.mjs", main), ("x.mjs", "export const a = 1;")];
+    with_plan(&files, |plan| {
+        let expected = Site::Evaluate {
+            target: plan.module("x.mjs"),
+            is_bare: true,
+            records: true,
+        };
+        assert_eq!(plan.sites("main.mjs"), [expected]);
+    });
 }
 
 #[test]
@@ -440,10 +373,8 @@ fn a_default_import_of_a_module_without_the_marker_is_its_exports() {
     ];
     with_plan(&files, |plan| {
         let k = plan.module("k.cjs");
-        assert_eq!(
-            plan.member("main.mjs", "one"),
-            Some(plan.variable("k.cjs", "one"))
-        );
+        let one = plan.variable("k.cjs", "one");
+        assert_eq!(plan.member("main.mjs", "one"), Some(one));
         assert_eq!(plan.graph.variable_of(k, plan.atom("default")), None);
         assert_eq!(plan.graph.shape(k), Shape::Names);
     });
@@ -492,8 +423,6 @@ fn an_es_module_that_is_required_links_a_graph_of_its_own() {
     with_plan(&files, |plan| {
         assert_eq!(plan.graph.prefix_roots(), [plan.file("a.mjs")]);
         assert_eq!(plan.requests("a.mjs"), ["request k.cjs", "request b.mjs"]);
-        let linked = plan.graph.modules_linked_with(plan.file("a.mjs"));
-        assert_eq!(linked, [plan.file("a.mjs"), plan.file("b.mjs")]);
     });
 }
 
@@ -511,11 +440,8 @@ fn a_request_to_a_file_that_is_left_out_goes() {
         let mut graph = crate::modules::bind_modules(input).graph;
         let (main, a) = (file_named(input, "main.cjs"), file_named(input, "a.cjs"));
         graph.leave_out_files(&[a], &run_serially);
-        let targets: Vec<ModuleRef> = graph
-            .requests_of(ModuleRef::File(main))
-            .iter()
-            .map(|request| request.target)
-            .collect();
+        let requests = graph.requests_of(ModuleRef::File(main)).iter();
+        let targets: Vec<ModuleRef> = requests.map(|request| request.target).collect();
         assert_eq!(targets, [ModuleRef::File(file_named(input, "b.cjs"))]);
     });
 }
@@ -524,16 +450,7 @@ fn a_request_to_a_file_that_is_left_out_goes() {
 fn a_module_that_the_graph_has_never_heard_of_has_neutral_answers() {
     with_plan(&[("main.mjs", "export {};")], |plan| {
         let file = plan.file("main.mjs");
-        let inner = ModuleRef::Inner {
-            file,
-            callback: FnId(7),
-        };
-        assert_eq!(plan.graph.shape(inner), Shape::AsToday);
-        assert!(plan.graph.requests_of(inner).is_empty());
         assert!(plan.graph.requests_of(ModuleRef::Face(file)).is_empty());
         assert!(plan.graph.requests_of(ModuleRef::Check(file)).is_empty());
-        assert!(!plan.graph.keeps_error(inner));
-        assert!(plan.graph.exports_of(inner).is_empty());
-        assert_eq!(plan.graph.inner_module(file, FnId(7)), None);
     });
 }

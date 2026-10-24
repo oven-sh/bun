@@ -1,13 +1,14 @@
 use bun_options_types::aot_options::ExplainSet;
 use bun_sema::util::SharedSort;
 
+use super::build_report::write_position_members;
 use super::format::{write_count, write_counted};
 use super::json::JsonWriter;
 use super::positions::{PathStyle, Positions, is_listed_site, resolve_ascending};
 use super::wording::{CheckWording, check_wording, guard_cause_code};
 use super::{EntryNote, ReportEntry, ReportInput};
 use crate::diagnostics::SourcePosition;
-use crate::engine::{Position, RemainingCheckRecord, Witness, position_of, witness_of};
+use crate::engine::{Position, RemainingCheckRecord, position_of};
 use crate::ir::generated::CheckCause;
 use crate::link::ProgramNames;
 
@@ -20,7 +21,7 @@ pub(super) fn collect_text(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) 
         return;
     }
 
-    let checks = collect_checks(input);
+    let checks = listed_checks(input.engine.remaining_checks(), input.names);
     let mut headings = Vec::new();
     write_headings(&count_by_cause(&checks), &mut headings);
     out.extend(headings.into_iter().map(line_entry));
@@ -54,22 +55,17 @@ pub(super) fn collect_json(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) 
         return;
     }
 
-    let checks = collect_checks(input);
+    let checks = listed_checks(input.engine.remaining_checks(), input.names);
     let mut positions = Positions::new(input, PathStyle::Posix);
-    let type_positions = resolve_type_positions(&checks, &mut positions);
+    let wanted: Vec<Option<Position>> = checks
+        .iter()
+        .map(|check| position_of(check.origin))
+        .collect();
+    let type_positions = resolve_ascending(&wanted, |position| positions.resolve(position));
     for (record, type_position) in checks.iter().zip(&type_positions) {
-        let type_position = type_position.as_ref();
-        out.push(json_entry(
-            record,
-            type_position,
-            input.names,
-            &mut positions,
-        ));
+        let entry = json_entry(record, type_position.as_ref(), input.names, &mut positions);
+        out.push(entry);
     }
-}
-
-fn collect_checks<'r>(input: &ReportInput<'r>) -> Vec<&'r RemainingCheckRecord> {
-    listed_checks(input.engine.remaining_checks(), input.names)
 }
 
 fn listed_checks<'r>(
@@ -87,17 +83,6 @@ fn listed_checks<'r>(
         (position.is_none(), position, record.id)
     });
     checks
-}
-
-fn resolve_type_positions(
-    checks: &[&RemainingCheckRecord],
-    positions: &mut Positions<'_>,
-) -> Vec<Option<SourcePosition>> {
-    let wanted: Vec<Option<Position>> = checks
-        .iter()
-        .map(|check| position_of(check.origin))
-        .collect();
-    resolve_ascending(&wanted, |position| positions.resolve(position))
 }
 
 fn id_text(id: u64) -> Vec<u8> {
@@ -154,15 +139,14 @@ fn text_entry(
     positions: &Positions<'_>,
 ) -> ReportEntry {
     let CheckWording { headline, fix, .. } = check_wording(record.cause);
-    let Witness {
-        function, position, ..
-    } = witness_of(&record.witness);
+    let function = record.witness.function_id();
+    let position = position_of(record.witness.location);
 
-    let mut entry = line_entry(format!("{number}. {headline}").into_bytes());
-    entry.position = position;
+    let text = format!("{number}. {headline}").into_bytes();
+    let mut entry = ReportEntry::at(ExplainSet::CHECKS, text, position);
 
     let type_position = position_of(record.origin)
-        .filter(|&origin| Some(origin) != position && positions.has_text(origin.module));
+        .filter(|&origin| Some(origin) != position && positions.locator.has_text(origin.module));
     if type_position.is_some() {
         entry.notes.push(EntryNote {
             text: b"The type is declared here.".to_vec(),
@@ -179,46 +163,30 @@ fn text_entry(
     entry
 }
 
-fn write_json_position(json: &mut JsonWriter, position: Option<&SourcePosition>) {
-    let (file, line, column) = match position {
-        Some(position) => (&position.path[..], position.line, position.column),
-        None => (&[][..], 0, 0),
-    };
-    json.string("file", file);
-    json.number("line", u64::from(line));
-    json.number("col", u64::from(column));
-}
-
 fn json_entry(
     record: &RemainingCheckRecord,
     type_position: Option<&SourcePosition>,
     names: &ProgramNames,
     positions: &mut Positions<'_>,
 ) -> ReportEntry {
-    let Witness {
-        function, position, ..
-    } = witness_of(&record.witness);
+    let function = record.witness.function_id();
+    let position = position_of(record.witness.location);
     let function_name = function.map_or(&[][..], |function| names.function_name(function));
 
     let mut json = JsonWriter::object();
     json.string("aot", b"type-check");
     json.string("cause", guard_cause_code(record.cause).as_bytes());
-    write_json_position(&mut json, positions.resolve_optional(position).as_ref());
+    let shown = position.and_then(|position| positions.resolve(position));
+    write_position_members(&mut json, shown.as_ref(), "col");
     json.string("function", function_name);
     json.string("kind", record.site_kind.log_word().as_bytes());
     json.string("id", &id_text(record.id));
     if type_position.is_some() {
         json.begin_object("type");
-        write_json_position(&mut json, type_position);
+        write_position_members(&mut json, type_position, "col");
         json.end_object();
     }
-
-    ReportEntry {
-        kind: ExplainSet::CHECKS_JSON,
-        text: json.finish(),
-        position,
-        notes: Vec::new(),
-    }
+    ReportEntry::at(ExplainSet::CHECKS_JSON, json.finish(), position)
 }
 
 #[cfg(test)]

@@ -62,12 +62,11 @@ impl DeferredExports {
 impl LibraryModule<'_, '_> {
     fn find_getters(&self) -> Vec<Atom> {
         let hir = self.hir;
-        let exported = hir
-            .ids(hir.body)
-            .find_map(|statement| match hir[statement].kind {
-                StmtKind::ExportDefault(value) => Some(hir.skip_type_assertions(value)),
-                _ => None,
-            });
+        let mut statements = hir.ids(hir.body);
+        let exported = statements.find_map(|statement| match hir[statement].kind {
+            StmtKind::ExportDefault(value) => Some(hir.skip_type_assertions(value)),
+            _ => None,
+        });
         let Some(exported) = exported else {
             return Vec::new();
         };
@@ -121,9 +120,8 @@ impl LibraryModule<'_, '_> {
             return None;
         };
         let call = hir[call];
-        let callee = self
-            .builtins?
-            .builtin_of_expression(hir.skip_type_assertions(call.callee));
+        let callee = hir.skip_type_assertions(call.callee);
+        let callee = self.builtins?.builtin_of_expression(callee);
         if callee != Some(BuiltinId::ObjectDefineProperty) || call.args.len() != 3 {
             return None;
         }

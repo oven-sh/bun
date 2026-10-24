@@ -5,11 +5,9 @@ use bun_sema::node::NodeData;
 use bun_sema::program::{CodeAnswer, CompiledModule, FileId, Files};
 use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::host::to_native;
-use core::ops::Range;
 
 use super::{
-    EntryPoint, EntryPointKind, EvaluatedTextSite, ParsedSource, SourceEntry, SourceKind, Sources,
-    parsed_source,
+    EntryPoint, EntryPointKind, ParsedSource, SourceEntry, SourceKind, Sources, parsed_source,
 };
 use crate::builtins::RuntimeModule;
 use crate::diagnostics::{DiagnosticBuffer, InternalError, Span};
@@ -58,41 +56,40 @@ pub(crate) fn freeze_sources(
         maps: &maps,
     };
     let starts = (0..file_count).step_by(FILES_FROZEN_IN_A_RUN);
-    let mut runs: Vec<RunSlot> = starts
+    let mut runs: Vec<_> = starts
         .map(|start| (start..file_count.min(start + FILES_FROZEN_IN_A_RUN), None))
         .collect();
     for_each_mut(&mut runs, in_parallel, &|(file_indexes, frozen)| {
-        *frozen = Some(freeze_run(input, &context, file_indexes.clone()));
+        let mut run = FrozenRun::default();
+        let mut files = file_indexes.clone().map(|index| FileId(index as u32));
+        let result = files.try_for_each(|file| freeze_file(input, &context, file, &mut run));
+        *frozen = Some(result.map(|()| run));
     });
-    let mut entries = Vec::with_capacity(file_count);
-    let mut lists = FrozenLists::default();
+    let mut all = FrozenRun::default();
+    all.entries.reserve_exact(file_count);
     for (_, frozen) in runs {
-        let mut frozen = frozen.expect("every task ran")?;
-        entries.append(&mut frozen.entries);
-        lists.append(frozen.lists);
+        all.append(frozen.expect("every task ran")?);
     }
-    let entry_points = collect_entry_points(input, &entries);
-
-    let modules = &mut lists.runtime_module_files;
+    let modules = &mut all.runtime_module_files;
     modules.shared_sort_unstable_by_key(|entry| entry.0.registry_id());
-    let functions = &mut lists.evaluated_functions;
+    let functions = &mut all.evaluated_functions;
     functions.shared_sort_unstable_by_key(|entry| entry.0);
     let sources = Sources {
         project: input.project,
-        entries,
-        entry_points,
-        runtime_module_files: lists.runtime_module_files,
-        web_assembly_files: lists.web_assembly_files,
-        pages: lists.pages,
-        evaluated_functions: lists.evaluated_functions,
+        entry_points: collect_entry_points(input, &all.entries),
+        entries: all.entries,
+        runtime_module_files: all.runtime_module_files,
+        web_assembly_files: all.web_assembly_files,
+        pages: all.pages,
+        evaluated_functions: all.evaluated_functions,
         manifest: input.manifest,
     };
     let linkable_files = file_ids(file_count).filter(|&file| is_linkable(files, file));
     check_unique_public_paths(linkable_files.map(|file| (file, sources.module_paths(file))))?;
     Ok(FrozenSources {
         sources,
-        diagnostics: lists.diagnostics,
-        counters: lists.counters,
+        diagnostics: all.diagnostics,
+        counters: all.counters,
     })
 }
 
@@ -122,8 +119,10 @@ fn runtime_module_of(kind: SourceKind) -> Option<RuntimeModule> {
     }
 }
 
+// Consecutive files.
 #[derive(Default)]
-struct FrozenLists {
+struct FrozenRun {
+    entries: Vec<SourceEntry>,
     diagnostics: DiagnosticBuffer,
     counters: Counters,
     runtime_module_files: Vec<(RuntimeModule, FileId)>,
@@ -132,16 +131,9 @@ struct FrozenLists {
     evaluated_functions: Vec<((FileId, ExprId), FunctionRef)>,
 }
 
-// Consecutive files.
-struct FrozenRun {
-    entries: Vec<SourceEntry>,
-    lists: FrozenLists,
-}
-
-type RunSlot = (Range<usize>, Option<Result<FrozenRun, InternalError>>);
-
-impl FrozenLists {
-    fn append(&mut self, mut following: FrozenLists) {
+impl FrozenRun {
+    fn append(&mut self, mut following: FrozenRun) {
+        self.entries.append(&mut following.entries);
         self.diagnostics.append(following.diagnostics);
         self.counters.merge(following.counters);
         self.runtime_module_files
@@ -176,16 +168,6 @@ impl FrozenLists {
             let diagnostic = diagnostic.clone().into_diagnostic(file);
             self.diagnostics.push(diagnostic);
         }
-        self.count_compiled_file(files, file, compiled);
-        self.add_evaluated_functions(files, file, compiled, payload)
-    }
-
-    fn count_compiled_file(
-        &mut self,
-        files: &Files<'_>,
-        file: FileId,
-        compiled: &CompiledModule<'_>,
-    ) {
         let (hir, counters) = (files.hir(file), &mut self.counters);
         for &string in compiled.analysis.strings_over_limit {
             let span = Span::of_node(hir, file, NodeData::Expr(string));
@@ -195,17 +177,9 @@ impl FrozenLists {
         counters.count(StatisticId::TypedVersionsUsed, used);
         let rejected = u64::from(compiled.rejected_typed_version.is_some());
         counters.count(StatisticId::TypedVersionsRejected, rejected);
-    }
-
-    fn add_evaluated_functions(
-        &mut self,
-        files: &Files<'_>,
-        file: FileId,
-        compiled: &CompiledModule<'_>,
-        payload: &ParsedSource,
-    ) -> Result<(), InternalError> {
-        for &site in &payload.evaluated_text_sites {
-            let Some(text_file) = evaluated_text_file(compiled, site) else {
+        for site in &payload.evaluated_text_sites {
+            let answer = compiled.implied_answers.get(site.implied_answer as usize);
+            let Some(&CodeAnswer::File(text_file)) = answer else {
                 let file_name = files.module(file).file_name();
                 return Err(create_load_error(
                     b"no file for evaluated text in ",
@@ -225,31 +199,12 @@ impl FrozenLists {
     }
 }
 
-fn evaluated_text_file(compiled: &CompiledModule<'_>, site: EvaluatedTextSite) -> Option<FileId> {
-    match *compiled.implied_answers.get(site.implied_answer as usize)? {
-        CodeAnswer::File(file) => Some(file),
-        _ => None,
-    }
-}
-
-fn freeze_run(
-    input: &FreezeInput<'_, '_>,
-    context: &PathContext<'_>,
-    file_indexes: Range<usize>,
-) -> Result<FrozenRun, InternalError> {
-    let mut lists = FrozenLists::default();
-    let entries = file_indexes
-        .map(|index| freeze_file(input, context, FileId(index as u32), &mut lists))
-        .collect::<Result<Vec<SourceEntry>, InternalError>>()?;
-    Ok(FrozenRun { entries, lists })
-}
-
 fn freeze_file(
     input: &FreezeInput<'_, '_>,
     context: &PathContext<'_>,
     file: FileId,
-    lists: &mut FrozenLists,
-) -> Result<SourceEntry, InternalError> {
+    run: &mut FrozenRun,
+) -> Result<(), InternalError> {
     let files = input.files;
     let module = files.module(file);
     let compiled = files.compiled(file);
@@ -296,69 +251,56 @@ fn freeze_file(
         ) => (public_path.clone(), public_path.clone()),
     };
     if let (Some(compiled), Some(payload)) = (compiled, payload) {
-        lists.add_compiled_file(files, file, compiled, payload)?;
+        run.add_compiled_file(files, file, compiled, payload)?;
     }
-    Ok(SourceEntry {
+    run.entries.push(SourceEntry {
         kind,
         loader,
         byte_count: payload.map_or(0, |payload| payload.byte_count as u64),
-        is_from_plugin: payload.is_some_and(|payload| payload.is_from_plugin),
         public_path,
         display_path,
         diagnostic_path,
-    })
+    });
+    Ok(())
 }
 
 fn collect_entry_points(input: &FreezeInput<'_, '_>, entries: &[SourceEntry]) -> Vec<EntryPoint> {
+    let files = input.files;
     match input.project {
         ProjectId::Application if input.is_world => Vec::new(),
-        ProjectId::Application => collect_application_entry_points(input.files.entry_points()),
-        ProjectId::Runtime => collect_runtime_entry_points(input, entries),
-    }
-}
-
-fn collect_application_entry_points(command_line_files: &[FileId]) -> Vec<EntryPoint> {
-    let mut entry_points = Vec::with_capacity(command_line_files.len());
-    let mut named_files = FxHashSet::default();
-    for (index, &file) in command_line_files.iter().enumerate() {
-        if named_files.insert(file) {
-            let kind = match index {
-                0 => EntryPointKind::Main,
-                _ => EntryPointKind::Additional,
-            };
-            entry_points.push(EntryPoint { file, kind });
+        ProjectId::Application => {
+            let mut named_files = FxHashSet::default();
+            let command_line_files = files.entry_points().iter().enumerate();
+            command_line_files
+                .filter(|&(_, &file)| named_files.insert(file))
+                .map(|(index, &file)| {
+                    let kind = match index {
+                        0 => EntryPointKind::Main,
+                        _ => EntryPointKind::Additional,
+                    };
+                    EntryPoint { file, kind }
+                })
+                .collect()
         }
-    }
-    entry_points
-}
-
-fn collect_runtime_entry_points(
-    input: &FreezeInput<'_, '_>,
-    entries: &[SourceEntry],
-) -> Vec<EntryPoint> {
-    let host_loaded_modules = collect_host_loaded_modules(input, entries);
-    let compiled_files = input.files.compiled_files().iter();
-    let mut entry_points: Vec<EntryPoint> = compiled_files
-        .filter_map(|&file| {
-            let kind = runtime_entry_point_kind(entries[file.idx()].kind, &host_loaded_modules)?;
-            Some(EntryPoint { file, kind })
-        })
-        .collect();
-    entry_points.shared_sort_unstable_by_key(|entry| (entry.kind, entry.file));
-    entry_points
-}
-
-fn runtime_entry_point_kind(
-    kind: SourceKind,
-    host_loaded_modules: &[RuntimeModule],
-) -> Option<EntryPointKind> {
-    match kind {
-        SourceKind::RuntimeModule(module) => match host_loaded_modules.binary_search(&module) {
-            Ok(_) => Some(EntryPointKind::HostLoadedModule),
-            Err(_) => Some(EntryPointKind::ImportedModule),
-        },
-        SourceKind::RuntimeFunctions => Some(EntryPointKind::Library),
-        _ => None,
+        ProjectId::Runtime => {
+            let host_loaded_modules = collect_host_loaded_modules(input, entries);
+            let kind_of = |file: FileId| match entries[file.idx()].kind {
+                SourceKind::RuntimeModule(module) => {
+                    match host_loaded_modules.binary_search(&module) {
+                        Ok(_) => Some(EntryPointKind::HostLoadedModule),
+                        Err(_) => Some(EntryPointKind::ImportedModule),
+                    }
+                }
+                SourceKind::RuntimeFunctions => Some(EntryPointKind::Library),
+                _ => None,
+            };
+            let compiled_files = files.compiled_files().iter();
+            let mut entry_points: Vec<EntryPoint> = compiled_files
+                .filter_map(|&file| kind_of(file).map(|kind| EntryPoint { file, kind }))
+                .collect();
+            entry_points.shared_sort_unstable_by_key(|entry| (entry.kind, entry.file));
+            entry_points
+        }
     }
 }
 
@@ -367,23 +309,16 @@ fn collect_host_loaded_modules(
     entries: &[SourceEntry],
 ) -> Vec<RuntimeModule> {
     let files = input.files;
-    let compiled_modules = files
-        .compiled_files()
-        .iter()
-        .filter_map(|&file| files.compiled(file));
+    let compiled_files = files.compiled_files().iter();
+    let compiled_modules = compiled_files.filter_map(|&file| files.compiled(file));
     let implied_answers = compiled_modules.flat_map(|compiled| compiled.implied_answers);
-    let implied_modules = implied_answers.filter_map(|&answer| implied_module(entries, answer));
     let mut modules = input.host_loaded_modules.to_vec();
-    modules.extend(implied_modules);
-    modules.shared_sort_unstable();
-    modules.dedup();
-    modules
-}
-
-fn implied_module(entries: &[SourceEntry], answer: CodeAnswer<'_>) -> Option<RuntimeModule> {
-    match answer {
+    modules.extend(implied_answers.filter_map(|&answer| match answer {
         CodeAnswer::File(file) => runtime_module_of(entries[file.idx()].kind),
         CodeAnswer::HostModule(id) => RuntimeModule::from_registry_id(id.0),
         _ => None,
-    }
+    }));
+    modules.shared_sort_unstable();
+    modules.dedup();
+    modules
 }

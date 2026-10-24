@@ -2,34 +2,24 @@
 
 use super::{ExportTables, Resolution};
 use crate::modules::ModuleRef;
-use crate::modules::commonjs_exports::{ModuleEntries, NameEntry, OwnName};
+use crate::modules::commonjs_exports::{AliasTarget, ModuleEntries, NameEntry};
 use crate::modules::interop::ModuleKind;
 use crate::modules::module_set::ModuleSet;
 use bun_sema::atom::{Atom, known};
 use bun_sema::util::FxHashMap;
 
 #[derive(Default)]
-pub(super) struct CommonJsNames {
+pub(in crate::modules) struct CommonJsNames {
     index: FxHashMap<ModuleRef, usize>,
     entries: Vec<ModuleEntries>,
     /// What a name stands for that has no variable in its own module.
     targets: FxHashMap<(ModuleRef, Atom), Resolution>,
     is_refused: Vec<bool>,
-    refused: Vec<ModuleRef>,
+    /// The modules with a name that stands for something that has no variable: they keep their objects.
+    pub(in crate::modules) refused: Vec<ModuleRef>,
 }
 
 impl CommonJsNames {
-    fn find_entry(&self, index: usize, name: Atom) -> Option<&NameEntry> {
-        self.entries[index]
-            .names
-            .iter()
-            .find(|entry| entry.name == name)
-    }
-
-    pub(super) fn refused(&self) -> &[ModuleRef] {
-        &self.refused
-    }
-
     /// `None`: the name is a variable of the module itself, or the module keeps its object.
     pub(super) fn find(&self, module: ModuleRef, name: Atom) -> Option<Resolution> {
         self.targets.get(&(module, name)).copied()
@@ -40,28 +30,25 @@ impl CommonJsNames {
         let Some(&index) = self.index.get(&module) else {
             return false;
         };
-        if self.entries[index].is_half {
-            return true;
-        }
-        !self
-            .find_entry(index, name)
-            .is_some_and(|entry| entry.created_at != u32::MAX)
+        let entries = &self.entries[index];
+        let mut names = entries.names.iter();
+        let is_created = |entry: &NameEntry| entry.created_at != u32::MAX;
+        entries.is_half
+            || !names
+                .find(|entry| entry.name == name)
+                .is_some_and(is_created)
     }
 
     /// The names that a loop over the object sees once the body has run, and `default`. `None`: the text does not say.
-    pub(super) fn names_of(&self, module: ModuleRef) -> Option<Vec<Atom>> {
+    pub(in crate::modules) fn names_of(&self, module: ModuleRef) -> Option<Vec<Atom>> {
         let &index = self.index.get(&module)?;
         let entries = &self.entries[index];
         if self.is_refused[index] || !entries.has_names || !entries.knows_all_names {
             return None;
         }
-        let own = entries
-            .names
-            .iter()
-            .filter(|entry| entry.is_enumerable)
-            .map(|entry| entry.name);
-        let mut names: Vec<Atom> = own.collect();
-        names.retain(|&name| name != known::__esModule);
+        let is_shown = |entry: &&NameEntry| entry.is_enumerable && entry.name != known::__esModule;
+        let shown = entries.names.iter().filter(is_shown);
+        let mut names: Vec<Atom> = shown.map(|entry| entry.name).collect();
         if !names.contains(&known::default) {
             names.push(known::default);
         }
@@ -97,20 +84,11 @@ impl Resolver<'_> {
                 return None;
             }
             self.visit(index);
-            if self.names.is_refused[index] {
-                return None;
-            }
-            if !self.names.entries[index].has_names {
+            if self.names.is_refused[index] || !self.names.entries[index].has_names {
                 return None;
             }
             let own = Resolution::Synthetic { module, name };
-            return Some(
-                self.names
-                    .targets
-                    .get(&(module, name))
-                    .copied()
-                    .unwrap_or(own),
-            );
+            return Some(self.names.find(module, name).unwrap_or(own));
         }
         let file = self.es_module_file(module)?;
         match self.tables.resolve(self.modules, file, name).resolution {
@@ -124,13 +102,13 @@ impl Resolver<'_> {
         let module = self.names.entries[index].module;
         for position in 0..self.names.entries[index].names.len() {
             let entry = self.names.entries[index].names[position];
-            let target = match entry.kind {
-                OwnName::Stored => continue,
-                OwnName::Binding(symbol) => Some(Resolution::Variable(symbol)),
-                OwnName::Member {
+            let target = match entry.target {
+                None => continue,
+                Some(AliasTarget::Binding(symbol)) => Some(Resolution::Variable(symbol)),
+                Some(AliasTarget::Member {
                     module: other,
                     name,
-                } => self.resolve_name(other, name),
+                }) => self.resolve_name(other, name),
             };
             let Some(target) = target else {
                 return false;
@@ -160,11 +138,8 @@ pub(super) fn resolve_commonjs_names(
     entries: Vec<ModuleEntries>,
 ) -> CommonJsNames {
     let count = entries.len();
-    let index = entries
-        .iter()
-        .enumerate()
-        .map(|(index, entries)| (entries.module, index))
-        .collect();
+    let entry_modules = entries.iter().map(|entries| entries.module);
+    let index = entry_modules.zip(0..).collect();
     let mut resolver = Resolver {
         modules,
         tables,

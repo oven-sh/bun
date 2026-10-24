@@ -1,12 +1,13 @@
 use bun_sema::bind::{Bound, ClassOwner, Decl, InitialState, Parent, PatParent};
 use bun_sema::check::aot::{ClassRef, FunctionRef, GaveUp, PositionTypes, declares_type_alone};
-use bun_sema::hir::{File, Flags, FnBody, MemberKind, PatId, StmtKind, VarDeclId};
+use bun_sema::hir::{File, Flags, FnBody, PatId, StmtKind, VarDeclId};
 use bun_sema::program::{FileId, Sym};
 
 use super::SiteOrigin;
 use crate::ir::generated::TypeSiteKind;
 use crate::ir::{DeclaredType, FunctionKey, Type, TypeTable};
-use crate::lower::{FileLowering, class};
+use crate::lower::FileLowering;
+use crate::lower::function_types::find_explicit_constructor;
 
 impl FileLowering<'_, '_, '_, '_> {
     pub(super) fn compute_variable_position(&mut self, symbol: Sym) -> DeclaredType {
@@ -74,11 +75,9 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn find_defined_function(&self, function: FunctionRef) -> Option<FunctionKey> {
         let compiled = self.queries.files().compiled(function.file)?;
-        let is_defined = self.is_lowered_file(function.file)
-            && !compiled
-                .analysis
-                .decisions
-                .is_dead_function(function.function);
+        let decisions = &compiled.analysis.decisions;
+        let is_defined =
+            self.is_lowered_file(function.file) && !decisions.is_dead_function(function.function);
         is_defined.then_some(FunctionKey::Source(function))
     }
 
@@ -171,17 +170,8 @@ fn find_class_constructor(
     file: &FileLowering<'_, '_, '_, '_>,
     class: ClassRef,
 ) -> Option<FunctionKey> {
-    let hir = file.queries.files().hir(class.file);
-    let constructor = class::runtime_members(hir, class.class)
-        .find(|&member| hir.runtime_member_kind(member) == MemberKind::Constructor);
-    match constructor {
-        Some(member) => {
-            let function = FunctionRef {
-                file: class.file,
-                function: hir[member].func,
-            };
-            file.find_defined_function(function)
-        }
+    match find_explicit_constructor(file, class) {
+        Some(constructor) => file.find_defined_function(constructor),
         None => {
             let is_defined = file.is_lowered_file(class.file) && !file.is_dead_class(class);
             is_defined.then_some(FunctionKey::ImplicitConstructor(class))

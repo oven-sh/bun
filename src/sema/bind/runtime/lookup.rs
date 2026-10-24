@@ -1,6 +1,7 @@
 use super::bits::has_bit;
 use super::declaration_kinds::{DeclarationKind, declaration_kind};
 use super::namespace_exports::is_block_binding;
+use super::queries::find_symbol;
 use super::{Binding, CodeUnit, CommonJsVariable, RuntimeScopes};
 use crate::atom::{Atom, known};
 use crate::bind::{BoundBuilder, Scope, ScopeId, ScopeKind, SymFlags, SymbolId};
@@ -114,11 +115,8 @@ impl Lookup<'_, '_> {
         if is_from_parameters || !matches!(kind, ScopeKind::Fn(_)) {
             return Some(Binding::Symbol(symbol));
         }
-        let variables = &self.scopes.body_variables;
-        let variable = variables.binary_search_by_key(&symbol, |entry| entry.0);
-        Some(Binding::Symbol(
-            variable.map_or(symbol, |index| variables[index].1),
-        ))
+        let variable = find_symbol(&self.scopes.body_variables, symbol);
+        Some(Binding::Symbol(variable.unwrap_or(symbol)))
     }
 
     pub(super) fn is_var(&self, local: SymbolId) -> bool {

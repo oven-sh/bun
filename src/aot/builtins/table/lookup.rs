@@ -1,8 +1,8 @@
 use super::entries::{
     BuiltinEntry, BuiltinFlags, BuiltinKind, CallsForTexts, ClassData, Dependencies, HostRead,
     HostReadContext, HostReadUse, ModuleData, ModuleFlags, ModuleLoad, Mutability, ObjectDemand,
-    OperandDemand, OperandKinds, OperandShape, Origin, Platforms, Prototype, RemovableCall,
-    RuntimeFunctionData, RuntimeFunctionRole, Scope, StartupLoad, TypeName,
+    OperandDemand, OperandKinds, Origin, Platforms, Prototype, RemovableCall, RuntimeFunctionData,
+    RuntimeFunctionRole, Scope, StartupLoad, TypeName,
 };
 use super::ids::{BuiltinClass, BuiltinId, BuiltinName, RuntimeFunction, RuntimeModule};
 use crate::ir::{ContentsSlot, WellKnownSymbol};
@@ -25,6 +25,10 @@ pub enum ExportLookup {
 
 pub fn entry(id: BuiltinId) -> &'static BuiltinEntry {
     &ENTRIES[id.index()]
+}
+
+pub fn has_flag(id: BuiltinId, flag: BuiltinFlags) -> bool {
+    entry(id).flags.contains(flag)
 }
 
 impl BuiltinEntry {
@@ -75,7 +79,6 @@ pub fn object_replacing_namespace(module: RuntimeModule) -> Option<BuiltinId> {
     is_replaced.then_some(data.namespace)
 }
 
-/// A module of Bun's whose source is an ES module, as "bun:wrap" is.
 pub fn is_es_module(module: RuntimeModule) -> bool {
     module_data(module)
         .flags
@@ -110,9 +113,7 @@ pub fn find_export(module_object: BuiltinId, name: BuiltinName) -> ExportLookup 
     let Some(member) = own_member(canonical_id(module_object), name) else {
         return ExportLookup::Unlisted;
     };
-    let is_module_object = entry(member)
-        .flags
-        .contains(BuiltinFlags::IS_DEFAULT_EXPORT);
+    let is_module_object = has_flag(member, BuiltinFlags::IS_DEFAULT_EXPORT);
     ExportLookup::Found(if is_module_object {
         module_object
     } else {
@@ -245,9 +246,9 @@ pub fn is_symbol_name(name: BuiltinName) -> bool {
     name.0 as usize >= TEXT_NAME_COUNT
 }
 
-/// The texts of the names in `names` ascend.
-fn find_name_in(names: std::ops::Range<usize>, text: &[u8]) -> Option<BuiltinName> {
-    let (mut low, mut high) = (names.start, names.end);
+/// The texts of the names that are no symbols ascend.
+pub fn find_name(text: &[u8]) -> Option<BuiltinName> {
+    let (mut low, mut high) = (0, TEXT_NAME_COUNT);
     while low < high {
         let middle = low + (high - low) / 2;
         let name = BuiltinName(middle as u32);
@@ -258,14 +259,6 @@ fn find_name_in(names: std::ops::Range<usize>, text: &[u8]) -> Option<BuiltinNam
         }
     }
     None
-}
-
-pub fn find_name(text: &[u8]) -> Option<BuiltinName> {
-    find_name_in(0..TEXT_NAME_COUNT, text)
-}
-
-pub fn find_symbol_name(description: &[u8]) -> Option<BuiltinName> {
-    find_name_in(TEXT_NAME_COUNT..FIRST_REGISTERED_SYMBOL_NAME, description)
 }
 
 pub fn well_known_symbol(id: BuiltinId) -> Option<WellKnownSymbol> {
@@ -342,14 +335,4 @@ pub fn removable_calls(
         .iter()
         .take_while(move |call| call.builtin == builtin)
         .filter(move |call| call.is_construction == is_construction)
-}
-
-/// Whether the call or construction of `builtin`, which is a canonical id, does nothing a program can see when nobody uses its result.
-pub fn is_removable_call(
-    builtin: BuiltinId,
-    is_construction: bool,
-    receiver: Option<OperandShape>,
-    arguments: &[OperandShape],
-) -> bool {
-    removable_calls(builtin, is_construction).any(|call| call.covers(receiver, arguments))
 }

@@ -81,8 +81,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         match name {
             PropertyName::Constant(key) => {
                 if key == self.file.name_key(known::prototype) {
-                    let error = RuntimeErrorKind::StaticPrototypeKey;
-                    self.emit_throw_runtime_error(error, None);
+                    self.emit_throw_runtime_error(RuntimeErrorKind::StaticPrototypeKey, None);
                 }
             }
             PropertyName::Computed(value) => {
@@ -94,42 +93,32 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.builder
                     .branch(is_prototype, Edge::to(invalid), Edge::to(valid));
                 self.continue_in(invalid);
-                let error = RuntimeErrorKind::StaticPrototypeKey;
-                self.emit_throw_runtime_error(error, None);
+                self.emit_throw_runtime_error(RuntimeErrorKind::StaticPrototypeKey, None);
                 self.continue_in(valid);
             }
         }
     }
 
-    fn record_field_key(&mut self, class: ClassId, member: MemberId, name: PropertyName) {
-        match name {
-            PropertyName::Constant(key) => {
-                self.file.classes.constant_keys.insert(member, key);
-            }
-            PropertyName::Computed(_) => {}
-        }
-        let value = self.emit_name_value(name);
-        self.set_class_slot(class, ClassSlot::ComputedKey(member), value);
-    }
-
-    #[allow(clippy::needless_pass_by_value)] // made for this call
     fn emit_method_definition(
         &mut self,
         head: ClassHead,
-        definition: MethodDefinition,
+        side: ClassSide,
+        kind: MethodKind,
+        name: PropertyName,
+        closure: ValueId,
         next_method_index: &mut u32,
     ) {
-        let (computed, constant) = definition.name.key_operands();
+        let (computed, constant) = name.key_operands();
         if let Some(key) = constant {
             self.file.fragment.note_write(key);
         }
         self.builder.define_method(
             head.value,
-            definition.closure,
+            closure,
             computed,
             head.layout,
-            definition.side,
-            definition.kind,
+            side,
+            kind,
             *next_method_index,
             constant,
         );
@@ -155,13 +144,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         self.set_position(node.name_pos);
         let closure = self.lower_method(node.func, name, head.value);
-        let definition = MethodDefinition {
-            side: class_side(node),
-            kind,
-            name,
-            closure,
-        };
-        self.emit_method_definition(head, definition, next_method_index);
+        let side = class_side(node);
+        self.emit_method_definition(head, side, kind, name, closure, next_method_index);
     }
 
     fn define_accessor_pair(
@@ -188,31 +172,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             if let Some(key) = computed_name {
                 self.builder.set_function_name(closure, key, kind);
             }
-            let definition = MethodDefinition {
-                side: class_side(node),
-                kind,
-                name,
-                closure,
-            };
-            self.emit_method_definition(head, definition, next_method_index);
+            let side = class_side(node);
+            self.emit_method_definition(head, side, kind, name, closure, next_method_index);
         }
-    }
-
-    fn create_private_function(
-        &mut self,
-        head: ClassHead,
-        plan: &ClassPlan,
-        member: MemberId,
-        name: PropertyName,
-    ) {
-        let hir = self.file.hir;
-        let node = hir[member];
-        if plan.transform == ClassTransform::Standard && has_decorators(hir, node.modifiers) {
-            return;
-        }
-        self.set_position(node.name_pos);
-        let closure = self.lower_method(node.func, name, head.value);
-        self.set_class_slot(head.class, ClassSlot::PrivateMethod(member), closure);
     }
 }
 
@@ -237,18 +199,28 @@ fn define_member(
         }
         MemberKind::Property => {
             lowering.set_position(node.name_pos);
-            if is_static_field(node) {
+            if node.flags.contains(Flags::STATIC) {
                 lowering.check_static_field_key(name);
             }
             if matches!(key, PropKey::Computed(_)) {
-                lowering.record_field_key(head.class, member, name);
+                match name {
+                    PropertyName::Constant(key) => {
+                        lowering.file.classes.constant_keys.insert(member, key);
+                    }
+                    PropertyName::Computed(_) => {}
+                }
+                let value = lowering.emit_name_value(name);
+                lowering.set_class_slot(head.class, ClassSlot::ComputedKey(member), value);
             }
         }
         MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
-            if is_private {
-                lowering.create_private_function(head, plan, member, name);
-            } else {
+            let is_standard = plan.transform == ClassTransform::Standard;
+            if !is_private {
                 lowering.define_method(head, member, name, next_method_index);
+            } else if !(is_standard && has_decorators(hir, node.modifiers)) {
+                lowering.set_position(node.name_pos);
+                let closure = lowering.lower_method(node.func, name, head.value);
+                lowering.set_class_slot(head.class, ClassSlot::PrivateMethod(member), closure);
             }
         }
         MemberKind::Constructor
@@ -259,24 +231,10 @@ fn define_member(
     }
 }
 
-fn is_static_field(node: Member) -> bool {
-    node.kind == MemberKind::Property
-        && node.flags.contains(Flags::STATIC)
-        && !node.flags.contains(Flags::ACCESSOR)
-        && !is_declaration_only(node)
-}
-
 fn class_side(node: Member) -> ClassSide {
     if node.flags.contains(Flags::STATIC) {
         ClassSide::Static
     } else {
         ClassSide::Prototype
     }
-}
-
-struct MethodDefinition {
-    side: ClassSide,
-    kind: MethodKind,
-    name: PropertyName,
-    closure: ValueId,
 }

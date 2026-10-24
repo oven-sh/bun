@@ -8,38 +8,20 @@ use crate::ir::generated::RegExpFlags;
 use crate::ir::{TypeId, TypeTable, ValueId};
 use crate::lower::{FileLowering, FunctionLowering};
 
-enum ElementKind {
-    Hole,
-    Spread(ExprId),
-    Value,
-}
-
-fn element_kind(kind: ExprKind) -> ElementKind {
-    match kind {
-        ExprKind::Missing => ElementKind::Hole,
-        ExprKind::Spread(iterable) => ElementKind::Spread(iterable),
-        _ => ElementKind::Value,
-    }
-}
-
-fn regexp_flag(letter: u8) -> Option<RegExpFlags> {
-    match letter {
-        b'd' => Some(RegExpFlags::HAS_INDICES),
-        b'g' => Some(RegExpFlags::GLOBAL),
-        b'i' => Some(RegExpFlags::IGNORE_CASE),
-        b'm' => Some(RegExpFlags::MULTILINE),
-        b's' => Some(RegExpFlags::DOT_ALL),
-        b'u' => Some(RegExpFlags::UNICODE),
-        b'v' => Some(RegExpFlags::UNICODE_SETS),
-        b'y' => Some(RegExpFlags::STICKY),
-        _ => None,
-    }
-}
-
 fn regexp_flags(letters: &[u8]) -> Option<RegExpFlags> {
     let mut flags = RegExpFlags::default();
     for &letter in letters {
-        let flag = regexp_flag(letter)?;
+        let flag = match letter {
+            b'd' => RegExpFlags::HAS_INDICES,
+            b'g' => RegExpFlags::GLOBAL,
+            b'i' => RegExpFlags::IGNORE_CASE,
+            b'm' => RegExpFlags::MULTILINE,
+            b's' => RegExpFlags::DOT_ALL,
+            b'u' => RegExpFlags::UNICODE,
+            b'v' => RegExpFlags::UNICODE_SETS,
+            b'y' => RegExpFlags::STICKY,
+            _ => return None,
+        };
         if flags.contains(flag) {
             return None;
         }
@@ -127,10 +109,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut length = prefix.len() as u32;
         let mut remaining = elements;
         while let Some((&element, rest)) = remaining.split_first() {
-            match element_kind(hir[element].kind) {
-                ElementKind::Spread(_) => break,
-                ElementKind::Hole => holes.push(length),
-                ElementKind::Value => values.push(self.lower_expression(element)),
+            match hir[element].kind {
+                ExprKind::Spread(_) => break,
+                ExprKind::Missing => holes.push(length),
+                _ => values.push(self.lower_expression(element)),
             }
             length += 1;
             remaining = rest;
@@ -146,6 +128,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn lower_appended_spread(&mut self, array: ValueId, iterable: ExprId) {
         let hir = self.file.hir;
         if !ends_in_list_literal(self.file, iterable) {
+            // JSC reports the iteration at the end of `...`.
             let position = hir[iterable].pos;
             let iterable = self.lower_expression(iterable);
             self.set_position(position);
@@ -154,8 +137,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         match hir[iterable].kind {
             ExprKind::Array(elements) => {
-                let elements: SmallVec<[ExprId; 8]> = hir.ids(elements).collect();
-                for element in elements {
+                for element in hir.ids(elements) {
                     self.lower_appended_element(array, element);
                 }
             }
@@ -165,12 +147,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let if_false = self.create_block();
                 let join = self.create_block();
                 self.lower_condition(test, if_true, if_false);
-                self.continue_in(if_true);
-                self.lower_appended_spread(array, yes);
-                self.jump(join);
-                self.continue_in(if_false);
-                self.lower_appended_spread(array, no);
-                self.jump(join);
+                for (block, arm) in [(if_true, yes), (if_false, no)] {
+                    self.continue_in(block);
+                    self.lower_appended_spread(array, arm);
+                    self.jump(join);
+                }
                 self.continue_in(join);
             }
             _ => unreachable!("ends_in_list_literal has looked"),
@@ -180,22 +161,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn lower_appended_element(&mut self, array: ValueId, element: ExprId) {
         let hir = self.file.hir;
         let position = hir[element].pos;
-        match element_kind(hir[element].kind) {
-            ElementKind::Spread(iterable) if ends_in_list_literal(self.file, iterable) => {
-                self.lower_appended_spread(array, iterable);
-            }
-            ElementKind::Spread(iterable) => {
-                // JSC reports the iteration at the end of `...`.
-                let position = hir[iterable].pos;
-                let iterable = self.lower_expression(iterable);
-                self.set_position(position);
-                self.builder.append_spread(array, iterable);
-            }
-            ElementKind::Hole => {
+        match hir[element].kind {
+            ExprKind::Spread(iterable) => self.lower_appended_spread(array, iterable),
+            ExprKind::Missing => {
                 self.set_position(position);
                 self.builder.append_hole(array);
             }
-            ElementKind::Value => {
+            _ => {
                 let value = self.lower_expression(element);
                 self.set_position(position);
                 self.builder.append_element(array, value);
@@ -213,7 +185,7 @@ fn ends_in_list_literal(file: &FileLowering<'_, '_, '_, '_>, iterable: ExprId) -
     match hir[iterable].kind {
         ExprKind::Array(elements) => hir
             .ids(elements)
-            .all(|element| !matches!(element_kind(hir[element].kind), ElementKind::Hole)),
+            .all(|element| !matches!(hir[element].kind, ExprKind::Missing)),
         ExprKind::Cond { branches, .. } => {
             let Branches { yes, no } = hir.branches(branches);
             !is_dead(yes)

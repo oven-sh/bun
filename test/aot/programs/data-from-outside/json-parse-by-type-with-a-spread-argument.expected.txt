@@ -1,0 +1,36 @@
+JSON takes {"a":1}
+globalThis.JSON takes {"a":1}
+an optional call takes {"a":1}
+a key in brackets takes {"a":1}
+a reviver takes {"a":1}
+in tail position takes {"a":1}
+a spread of a literal takes {"a":1}
+a spread of a list that is kept takes {"a":1}
+JSON of bun takes {"a":1}
+Bun.JSON takes {"a":1}
+JSON of bun, a spread of a literal takes {"a":1}
+JSON of bun, a spread of a list that is kept takes {"a":1}
+JSON refuses with TypeError
+globalThis.JSON refuses with TypeError
+an optional call refuses with TypeError
+a key in brackets refuses with TypeError
+a reviver refuses with TypeError
+in tail position refuses with TypeError
+a spread of a literal refuses with TypeError
+a spread of a list that is kept refuses with TypeError
+JSON of bun refuses with TypeError
+Bun.JSON refuses with TypeError
+JSON of bun, a spread of a literal refuses with TypeError
+JSON of bun, a spread of a list that is kept refuses with TypeError
+JSON refuses with TypeError
+globalThis.JSON refuses with TypeError
+an optional call refuses with TypeError
+a key in brackets refuses with TypeError
+a reviver refuses with TypeError
+in tail position refuses with TypeError
+a spread of a literal refuses with TypeError
+a spread of a list that is kept refuses with TypeError
+JSON of bun refuses with TypeError
+Bun.JSON refuses with TypeError
+JSON of bun, a spread of a literal refuses with TypeError
+JSON of bun, a spread of a list that is kept refuses with TypeError

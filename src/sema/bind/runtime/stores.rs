@@ -1,4 +1,5 @@
 use super::bits::{has_bit, insert_bit};
+use super::queries::find_entry;
 use super::references::ReferencePass;
 use super::{Binding, StoreKind, SymbolStore};
 use crate::atom::known;
@@ -130,11 +131,8 @@ impl ReferencePass<'_, '_> {
     }
 
     fn evaluated_ident_binding(&self, ident: ExprId) -> Binding {
-        let bindings = &self.references.ident_bindings;
-        match bindings.binary_search_by_key(&ident, |entry| entry.0) {
-            Ok(index) => bindings[index].1,
-            Err(_) => self.lookup.bound.default_binding(ident),
-        }
+        let binding = find_entry(&self.references.ident_bindings, ident).copied();
+        binding.unwrap_or_else(|| self.lookup.bound.default_binding(ident))
     }
 }
 

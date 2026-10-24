@@ -45,28 +45,22 @@ fn function_key_of_each_unit() {
 fn arrow_inherits_lexical_owner() {
     let in_function = "export function probe() { return () => { { return this; } }; }";
     analyze_source("main.js", in_function, |probe| {
-        let top = probe.top_scope(probe.function("probe"));
-        let arrow = probe.top_scope(probe.only_function(FnKind::Arrow));
+        let top = probe.top_of("probe");
+        let arrow = probe.top_scope(probe.arrow());
         let block = probe.first_statement(|kind| matches!(kind, StmtKind::Block(_)));
-        assert_eq!(probe.analysis.lexical_owner(top), top);
-        assert_eq!(probe.analysis.lexical_owner(arrow), top);
-        assert_eq!(
-            probe.analysis.lexical_owner(probe.bound.own_scope(block)),
-            top
-        );
-        assert_eq!(
-            probe.analysis.lexical_owner(probe.file_scope()),
-            probe.file_scope()
-        );
+        assert_eq!(probe.lexical_owner(top), top);
+        assert_eq!(probe.lexical_owner(arrow), top);
+        assert_eq!(probe.lexical_owner(probe.bound.own_scope(block)), top);
+        assert_eq!(probe.lexical_owner(probe.file_scope()), probe.file_scope());
     });
 
     let in_field = "export class Box { field = () => this; }";
     analyze_source("main.ts", in_field, |probe| {
         let initializer = probe.bound.field_initializer_scope(MemberId(0));
         let initializer = initializer.expect("the field has an initializer");
-        let arrow = probe.top_scope(probe.only_function(FnKind::Arrow));
-        assert_eq!(probe.analysis.lexical_owner(initializer), initializer);
-        assert_eq!(probe.analysis.lexical_owner(arrow), initializer);
+        let arrow = probe.top_scope(probe.arrow());
+        assert_eq!(probe.lexical_owner(initializer), initializer);
+        assert_eq!(probe.lexical_owner(arrow), initializer);
     });
 }
 
@@ -75,7 +69,7 @@ fn function_expression_is_its_own_lexical_owner() {
     let source = "export function probe() { return function () { return this; }; }";
     analyze_source("main.js", source, |probe| {
         let inner = probe.top_scope(probe.only_function(FnKind::Expr));
-        assert_eq!(probe.analysis.lexical_owner(inner), inner);
+        assert_eq!(probe.lexical_owner(inner), inner);
     });
 }
 
@@ -86,10 +80,10 @@ fn lexical_owners_need_no_walk() {
         let owners = compute_lexical_owners(probe.hir, probe.bound);
         assert_eq!(owners.len(), probe.bound.scopes.len());
         for (scope, &owner) in (0..).map(ScopeId).zip(&owners) {
-            assert_eq!(probe.analysis.lexical_owner(scope), owner);
+            assert_eq!(probe.lexical_owner(scope), owner);
         }
         let block = probe.top_scope(probe.only_function(FnKind::StaticBlock));
-        let arrow = probe.top_scope(probe.only_function(FnKind::Arrow));
+        let arrow = probe.top_scope(probe.arrow());
         assert_eq!(owners[block.idx()], block);
         assert_eq!(owners[arrow.idx()], block);
     });
@@ -103,7 +97,7 @@ fn field_order_is_binding_order() {
     analyze_source("main.cjs", source, |probe| {
         let function = probe.function("probe");
         let scope = probe.top_scope(function);
-        let fields = probe.analysis.environment_fields(scope);
+        let fields = probe.environment_fields(scope);
         assert_eq!(fields.len(), 3);
         assert!(fields.is_sorted_by(|earlier, later| earlier < later));
         assert!(fields.contains(&probe.binding("first")));
@@ -123,7 +117,7 @@ fn bindings_list_symbols_before_slots() {
     let source = "export function probe() { const b = 2; const a = 1; return [this, a, b]; }";
     analyze_source("main.mjs", source, |probe| {
         let function = probe.function("probe");
-        let bindings = probe.analysis.bindings(probe.top_scope(function));
+        let bindings = probe.bindings(probe.top_scope(function));
         assert_eq!(bindings.len(), 3);
         assert!(bindings.is_sorted_by(|earlier, later| earlier < later));
         assert_eq!(bindings[2], probe.slot(function, ScopeSlot::This));
@@ -136,9 +130,7 @@ fn stored_local_slot_is_loop_carried() {
     analyze_source("main.cjs", stored, |probe| {
         let exports = BindingRef::Slot(probe.file_scope(), EXPORTS);
         assert_eq!(probe.placement(exports).storage, Storage::Local);
-        let carried = probe
-            .analysis
-            .stored_in_loop(probe.first_statement(is_loop));
+        let carried = probe.stored_in_loop(probe.first_statement(is_loop));
         assert_eq!(carried, [probe.binding("i"), exports]);
     });
 
@@ -147,17 +139,13 @@ fn stored_local_slot_is_loop_carried() {
     analyze_source("main.cjs", arguments, |probe| {
         let binding = probe.slot(probe.function("probe"), ScopeSlot::ArgumentsBinding);
         assert_eq!(probe.placement(binding).storage, Storage::Local);
-        let carried = probe
-            .analysis
-            .stored_in_loop(probe.first_statement(is_loop));
+        let carried = probe.stored_in_loop(probe.first_statement(is_loop));
         assert_eq!(carried, [probe.binding("i"), binding]);
     });
 
     let only_read = "var i = 0; while (i < 2) { console.log(exports); i++; }";
     analyze_source("main.cjs", only_read, |probe| {
-        let carried = probe
-            .analysis
-            .stored_in_loop(probe.first_statement(is_loop));
+        let carried = probe.stored_in_loop(probe.first_statement(is_loop));
         assert_eq!(carried, [probe.binding("i")]);
     });
 
@@ -166,9 +154,7 @@ fn stored_local_slot_is_loop_carried() {
     analyze_source("main.cjs", shared, |probe| {
         let exports = BindingRef::Slot(probe.file_scope(), EXPORTS);
         assert!(is_field(probe.placement(exports).storage));
-        let carried = probe
-            .analysis
-            .stored_in_loop(probe.first_statement(is_loop));
+        let carried = probe.stored_in_loop(probe.first_statement(is_loop));
         assert_eq!(carried, [probe.binding("i")]);
     });
 }
@@ -177,9 +163,7 @@ fn stored_local_slot_is_loop_carried() {
 fn binding_declared_in_loop_is_not_loop_carried() {
     let source = "export function g() { for (let i = 0; i < 3; i++) { let b = i; b = 2; } }";
     analyze_source("main.mjs", source, |probe| {
-        let carried = probe
-            .analysis
-            .stored_in_loop(probe.first_statement(is_loop));
+        let carried = probe.stored_in_loop(probe.first_statement(is_loop));
         assert_eq!(carried, [probe.binding("i")]);
     });
 }
@@ -190,7 +174,6 @@ fn binding_of_another_function_is_not_loop_carried() {
     analyze_source("main.mjs", source, |probe| {
         assert!(
             probe
-                .analysis
                 .stored_in_loop(probe.first_statement(is_loop))
                 .is_empty()
         );
@@ -203,44 +186,32 @@ fn statement_without_loop_panics() {
     let source = "let probe = 0; if (probe) { probe = 1; } export {};";
     analyze_source("main.ts", source, |probe| {
         let statement = probe.first_statement(|kind| matches!(kind, StmtKind::If { .. }));
-        probe.analysis.stored_in_loop(statement).len()
+        probe.stored_in_loop(statement).len()
     });
 }
 
 fn entry_flags_of_function(file: &str, source: &str) -> FunctionFlags {
     analyze_source(file, source, |probe| {
-        probe.analysis.entry_flags(probe.key(probe.function("f")))
+        probe.entry_flags(probe.key(probe.function("f")))
     })
 }
 
 #[test]
 fn entry_flags_of_source_functions() {
-    let arguments_flags = FunctionFlags::HAS_ARGUMENT_COUNT | FunctionFlags::HAS_HIDDEN_REST;
+    let (none, this) = (FunctionFlags::default(), FunctionFlags::HAS_THIS);
+    let (target, callee) = (FunctionFlags::HAS_NEW_TARGET, FunctionFlags::TAKES_CALLEE);
+    let count = FunctionFlags::HAS_ARGUMENT_COUNT;
+    let arguments_flags = count | FunctionFlags::HAS_HIDDEN_REST;
     let cases = [
-        (
-            "export function f() { return 1; }",
-            FunctionFlags::default(),
-        ),
-        (
-            "export function f() { return this; }",
-            FunctionFlags::HAS_THIS,
-        ),
-        (
-            "export function f() { return () => this; }",
-            FunctionFlags::HAS_THIS,
-        ),
-        (
-            "export function f() { return new.target; }",
-            FunctionFlags::HAS_NEW_TARGET,
-        ),
-        (
-            "export const g = function f() { return f; };",
-            FunctionFlags::TAKES_CALLEE,
-        ),
+        ("export function f() { return 1; }", none),
+        ("export function f() { return this; }", this),
+        ("export function f() { return () => this; }", this),
+        ("export function f() { return new.target; }", target),
+        ("export const g = function f() { return f; };", callee),
         ("export function f() { return arguments; }", arguments_flags),
         (
             "export function f(...rest) { return [arguments, rest]; }",
-            FunctionFlags::HAS_ARGUMENT_COUNT,
+            count,
         ),
     ];
     for (source, flags) in cases {
@@ -251,7 +222,7 @@ fn entry_flags_of_source_functions() {
         );
     }
     let mapped = "function f(a) { return arguments; } module.exports = f;";
-    let mapped_flags = arguments_flags | FunctionFlags::TAKES_CALLEE;
+    let mapped_flags = arguments_flags | callee;
     assert_eq!(entry_flags_of_function("main.cjs", mapped), mapped_flags);
 }
 
@@ -259,8 +230,8 @@ fn entry_flags_of_source_functions() {
 fn arrow_function_has_no_entry_this() {
     let source = "export function f() { return () => this; }";
     analyze_source("main.mjs", source, |probe| {
-        let arrow = probe.key(probe.only_function(FnKind::Arrow));
-        assert!(probe.analysis.entry_flags(arrow).is_empty());
+        let arrow = probe.key(probe.arrow());
+        assert!(probe.entry_flags(arrow).is_empty());
     });
 }
 
@@ -273,10 +244,8 @@ fn entry_flags_of_class_functions() {
         let member = members.find(|&member| probe.hir[member].flags.contains(Flags::ACCESSOR));
         let member = member.expect("the class has an accessor");
         let constructor = probe.key(probe.only_function(FnKind::Constructor));
-        assert_eq!(
-            probe.analysis.entry_flags(constructor),
-            FunctionFlags::HAS_NEW_TARGET
-        );
+        let flags = probe.entry_flags(constructor);
+        assert_eq!(flags, FunctionFlags::HAS_NEW_TARGET);
         let keys = [
             FunctionKey::InstanceInitializer(class),
             FunctionKey::StaticInitializer(class),
@@ -285,19 +254,13 @@ fn entry_flags_of_class_functions() {
             FunctionKey::PrivateNameTest { file, member },
         ];
         for key in keys {
-            assert_eq!(
-                probe.analysis.entry_flags(key),
-                FunctionFlags::HAS_THIS,
-                "{key:?}"
-            );
+            assert_eq!(probe.entry_flags(key), FunctionFlags::HAS_THIS, "{key:?}");
         }
     });
     analyze_source("main.ts", "export class D {}", |probe| {
         let constructor = FunctionKey::ImplicitConstructor(probe.class(0));
-        assert_eq!(
-            probe.analysis.entry_flags(constructor),
-            FunctionFlags::HAS_NEW_TARGET
-        );
+        let flags = probe.entry_flags(constructor);
+        assert_eq!(flags, FunctionFlags::HAS_NEW_TARGET);
     });
 }
 
@@ -305,9 +268,7 @@ fn entry_flags_of_class_functions() {
 fn entry_flags_of_module_body() {
     let flags_of = |file: &str, source: &str| {
         analyze_source(file, source, |probe| {
-            probe
-                .analysis
-                .entry_flags(FunctionKey::ModuleBody(probe.analysis.file))
+            probe.entry_flags(FunctionKey::ModuleBody(probe.analysis.file))
         })
     };
     // `this` at the top of a CommonJS file is the object that the body begins with: nobody passes it.

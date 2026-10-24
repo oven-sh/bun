@@ -1,3 +1,4 @@
+use super::finish_body;
 use crate::ir::generated::{BlockFrequency, FunctionKind};
 use crate::ir::{FunctionId, FunctionKey, TypeTable, VariableKey};
 use crate::lower::{FileLowering, FunctionLowering, function};
@@ -13,25 +14,16 @@ fn declare_body(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) {
 impl FileLowering<'_, '_, '_, '_> {
     /// The module that ES modules request in place of a CommonJS file.
     pub(super) fn declare_face_body(&mut self) {
-        if self
-            .inputs
-            .modules
-            .face(ModuleRef::File(self.file))
-            .is_some()
-        {
+        let modules = self.inputs.modules;
+        if modules.face(ModuleRef::File(self.file)).is_some() {
             declare_body(self, FunctionKey::FaceBody(self.file));
         }
     }
 
     /// The module that throws for a name that the ES graph below the file imports and no CommonJS file of it has stored.
     pub(super) fn declare_check_body(&mut self) {
-        if !self
-            .inputs
-            .modules
-            .commonjs()
-            .checked_copies(self.file)
-            .is_empty()
-        {
+        let commonjs = self.inputs.modules.commonjs();
+        if !commonjs.checked_copies(self.file).is_empty() {
             declare_body(self, FunctionKey::CheckBody(self.file));
         }
     }
@@ -41,21 +33,14 @@ impl FileLowering<'_, '_, '_, '_> {
         let modules = self.inputs.modules;
         let own_file = self.file;
         let mut lowering = FunctionLowering::begin(self, function);
-        let module = lowering
-            .file
-            .fragment
-            .declare_module(ModuleRef::File(own_file));
-        let face = lowering
-            .file
-            .fragment
-            .declare_module(ModuleRef::Face(own_file));
+        let module = lowering.file.module_id();
+        let face = ModuleRef::Face(own_file);
+        let face = lowering.file.fragment.declare_module(face);
         lowering.builder.evaluate_module(module, face, true);
         // Behind the self, so that the files run in the order of its text.
         for owner in modules.faces_behind(own_file) {
-            let owner = lowering
-                .file
-                .fragment
-                .declare_module(ModuleRef::Face(owner));
+            let owner = ModuleRef::Face(owner);
+            let owner = lowering.file.fragment.declare_module(owner);
             lowering.builder.evaluate_module(owner, face, true);
         }
         for &export in modules.commonjs().copies(own_file) {
@@ -65,14 +50,13 @@ impl FileLowering<'_, '_, '_, '_> {
             {
                 continue;
             }
-            let value = lowering.read_imported_name(copied.module, copied.name);
-            let Some(value) = value else {
+            let Some(value) = lowering.read_imported_name(copied.module, copied.name) else {
                 continue;
             };
             let copy = lowering.file.ensure_variable(VariableKey::Copy(export));
             lowering.builder.put_module_variable(copy, value);
         }
-        finish_body(lowering);
+        finish_body(lowering, None);
     }
 
     // Every CommonJS file of the graph has run by now, as under `bun run`, which reports the first missing name behind them.
@@ -91,21 +75,14 @@ impl FileLowering<'_, '_, '_, '_> {
             let copy = lowering.file.ensure_variable(VariableKey::Copy(export));
             let value = lowering.builder.get_module_variable(copy);
             let split = lowering.split_on_type(value, TypeTable::ABSENT);
-            lowering
-                .builder
-                .set_frequency(split.taken, BlockFrequency::Unlikely);
+            let unlikely = BlockFrequency::Unlikely;
+            lowering.builder.set_frequency(split.taken, unlikely);
             lowering.builder.switch_to(split.taken);
             let failure = lowering.file.fragment.declare_module_failure(failure);
             lowering.builder.throw_module_failure(failure, false);
             lowering.builder.unreachable();
             lowering.builder.switch_to(split.not_taken);
         }
-        finish_body(lowering);
+        finish_body(lowering, None);
     }
-}
-
-fn finish_body(mut lowering: FunctionLowering<'_, '_, '_, '_, '_>) {
-    let undefined = lowering.builder.undefined();
-    lowering.emit_return(undefined, None);
-    lowering.finish();
 }

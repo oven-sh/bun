@@ -1,7 +1,5 @@
-use super::check_lines::{
-    BLANKS, CheckKindError, CheckLine, MAX_CHECK_COUNT, parse_check_kind, parse_check_pattern,
-    validate_check_lines,
-};
+use super::TestFailure;
+use super::check_lines::{BLANKS, CheckKind, CheckLine, parse_check_pattern, validate_check_lines};
 use bun_aot::ir::generated::{InternalErrorKind, StatisticId, UserDiagnosticKind};
 use std::str::FromStr;
 
@@ -11,6 +9,7 @@ const RESERVED_NAMES: [&str; 6] = ["RUN", "FORM", "OPTIONS", "DIAGNOSTIC", "STAT
 const TEST_FILE_EXTENSIONS: [&str; 8] =
     [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
 const DECLARATION_FILE_EXTENSIONS: [&str; 3] = [".d.ts", ".d.mts", ".d.cts"];
+const MAX_CHECK_COUNT: u32 = 1000;
 const MAX_TYPESCRIPT_CODE_DIGITS: usize = 9;
 const DIAGNOSTIC_SYNTAX: &str = "DIAGNOSTIC is written <name> [ <count> ]";
 const STATISTIC_SYNTAX: &str = "STATISTIC is written <name> = | >= | <= <n>";
@@ -61,20 +60,14 @@ pub struct CheckGroup {
     pub lines: Vec<CheckLine>,
 }
 
-#[derive(PartialEq, Eq, Debug)]
-pub struct TestFileError {
-    pub line: u32,
-    pub message: String,
-}
-
+#[derive(Default)]
 pub struct TestFile {
-    pub text: String,
     pub runs: Vec<RunDirective>,
     pub option_words: Vec<OptionWord>,
     pub check_groups: Vec<CheckGroup>,
     pub diagnostics: Vec<ExpectedDiagnostic>,
     pub statistics: Vec<ExpectedStatistic>,
-    pub errors: Vec<TestFileError>,
+    pub errors: Vec<TestFailure>,
 }
 
 pub fn is_test_file_name(name: &str) -> bool {
@@ -82,18 +75,35 @@ pub fn is_test_file_name(name: &str) -> bool {
     ends_with_any(&TEST_FILE_EXTENSIONS) && !ends_with_any(&DECLARATION_FILE_EXTENSIONS)
 }
 
-pub fn parse_test_file(text: String) -> TestFile {
-    let mut file = TestFile {
-        text: String::new(),
-        runs: Vec::new(),
-        option_words: Vec::new(),
-        check_groups: Vec::new(),
-        diagnostics: Vec::new(),
-        statistics: Vec::new(),
-        errors: Vec::new(),
-    };
-    file.parse_directives(&text);
-    file.text = text;
+pub fn parse_test_file(text: &str) -> TestFile {
+    let mut file = TestFile::default();
+    let (runs, others): (Vec<_>, Vec<_>) = text
+        .lines()
+        .zip(1..)
+        .filter_map(|(line, number)| split_directive(line, number))
+        .partition(|directive| directive.name == "RUN");
+    if runs.is_empty() {
+        let message = "the file has no RUN line";
+        file.errors.push(TestFailure::new(1, message));
+    }
+    for directive in runs.iter().chain(&others) {
+        if let Err(message) = file.parse_directive(directive) {
+            file.errors.push(TestFailure::new(directive.line, message));
+        }
+    }
+    for group in &file.check_groups {
+        if let Err(error) = validate_check_lines(&group.lines) {
+            file.errors.push(error);
+        }
+        if group.lines.is_empty()
+            && group.prefix != DEFAULT_PREFIX
+            && let Some(run) = file.runs.iter().find(|run| run.prefix == group.prefix)
+        {
+            let message = format!("no line has the prefix {}", group.prefix);
+            file.errors.push(TestFailure::new(run.line, message));
+        }
+    }
+    file.errors.sort_by_key(|error| error.line);
     file
 }
 
@@ -187,10 +197,6 @@ fn parse_diagnostic_name(word: &str) -> Option<DiagnosticName> {
         .map(DiagnosticName::FrontEnd)
 }
 
-fn parse_statistic_name(word: &str) -> Option<StatisticId> {
-    StatisticId::from_name(word).filter(|&id| id != StatisticId::None)
-}
-
 fn find_group(groups: &[CheckGroup], prefix: &str) -> Option<usize> {
     groups.iter().position(|group| group.prefix == prefix)
 }
@@ -201,36 +207,21 @@ impl TestFile {
         &self.check_groups[group].lines
     }
 
-    fn parse_directives(&mut self, text: &str) {
-        let (runs, others): (Vec<_>, Vec<_>) = text
-            .lines()
-            .zip(1..)
-            .filter_map(|(line, number)| split_directive(line, number))
-            .partition(|directive| directive.name == "RUN");
-        if runs.is_empty() {
-            self.errors.push(TestFileError {
-                line: 1,
-                message: "the file has no RUN line".to_owned(),
-            });
-        }
-        for directive in runs.iter().chain(&others) {
-            if let Err(message) = self.parse_directive(directive) {
-                self.errors.push(TestFileError {
-                    line: directive.line,
-                    message,
-                });
-            }
-        }
-        self.validate_check_groups();
-        self.errors.sort_by_key(|error| error.line);
-    }
-
     fn parse_directive(&mut self, directive: &DirectiveLine<'_>) -> Result<(), String> {
         match (directive.name, directive.parenthesized) {
             ("RUN", _) => self.parse_run(directive),
             (name, Some(_)) => Err(format!("unknown directive {name}(..)")),
             ("FORM", None) => Err("FORM is for the engine's tests".to_owned()),
-            ("OPTIONS", None) => self.parse_options(directive),
+            ("OPTIONS", None) if directive.value.is_empty() => {
+                Err("OPTIONS needs a word".to_owned())
+            }
+            ("OPTIONS", None) => {
+                let line = directive.line;
+                let words = split_words(directive.value).map(str::to_owned);
+                self.option_words
+                    .extend(words.map(|word| OptionWord { word, line }));
+                Ok(())
+            }
             ("DIAGNOSTIC", None) => self.parse_diagnostic(directive),
             ("STATISTIC", None) => self.parse_statistic(directive),
             (_, None) => self.parse_check_line(directive),
@@ -266,13 +257,22 @@ impl TestFile {
             Some((prefix, suffix)) => (prefix, Some(suffix)),
             None => (directive.name, None),
         };
-        let Some(group) = find_group(&self.check_groups, prefix) else {
-            return Err(unknown_directive());
+        let group = find_group(&self.check_groups, prefix).ok_or_else(unknown_directive)?;
+        let (kind, count) = match suffix {
+            None => (CheckKind::Plain, 1),
+            Some("NEXT") => (CheckKind::Next, 1),
+            Some("NOT") => (CheckKind::Not, 1),
+            Some("LABEL") => (CheckKind::Label, 1),
+            Some(suffix) => {
+                let digits = suffix
+                    .strip_prefix("COUNT-")
+                    .ok_or_else(unknown_directive)?;
+                match parse_decimal::<u32>(digits) {
+                    Some(count @ 1..=MAX_CHECK_COUNT) => (CheckKind::Count, count),
+                    _ => return Err(format!("the count must be 1 to {MAX_CHECK_COUNT}")),
+                }
+            }
         };
-        let (kind, count) = parse_check_kind(suffix).map_err(|error| match error {
-            CheckKindError::UnknownSuffix => unknown_directive(),
-            CheckKindError::InvalidCount => format!("the count must be 1 to {MAX_CHECK_COUNT}"),
-        })?;
         let elements = parse_check_pattern(directive.value)?;
         self.check_groups[group].lines.push(CheckLine {
             kind,
@@ -281,19 +281,6 @@ impl TestFile {
             pattern: directive.value.to_owned(),
             elements,
         });
-        Ok(())
-    }
-
-    fn parse_options(&mut self, directive: &DirectiveLine<'_>) -> Result<(), String> {
-        if directive.value.is_empty() {
-            return Err("OPTIONS needs a word".to_owned());
-        }
-        for word in split_words(directive.value) {
-            self.option_words.push(OptionWord {
-                word: word.to_owned(),
-                line: directive.line,
-            });
-        }
         Ok(())
     }
 
@@ -328,7 +315,7 @@ impl TestFile {
         let [word, comparison, value] = words[..] else {
             return Err(STATISTIC_SYNTAX.to_owned());
         };
-        let Some(name) = parse_statistic_name(word) else {
+        let Some(name) = StatisticId::from_name(word).filter(|&id| id != StatisticId::None) else {
             return Err(format!("unknown statistic {word}"));
         };
         let comparison = match comparison {
@@ -345,52 +332,25 @@ impl TestFile {
         });
         Ok(())
     }
-
-    fn validate_check_groups(&mut self) {
-        for group in &self.check_groups {
-            if let Err(error) = validate_check_lines(&group.lines) {
-                self.errors.push(TestFileError {
-                    line: error.line,
-                    message: error.message.to_owned(),
-                });
-            }
-            if group.lines.is_empty()
-                && group.prefix != DEFAULT_PREFIX
-                && let Some(run) = self.runs.iter().find(|run| run.prefix == group.prefix)
-            {
-                self.errors.push(TestFileError {
-                    line: run.line,
-                    message: format!("no line has the prefix {}", group.prefix),
-                });
-            }
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::check_lines::CheckKind;
+    use super::CheckKind::{Count, Label, Next, Not, Plain};
     use super::StatisticComparison::{AtLeast, AtMost, Equal};
     use super::*;
 
-    fn parse(text: &str) -> TestFile {
-        parse_test_file(text.to_owned())
-    }
-
     #[track_caller]
     fn parse_without_errors(text: &str) -> TestFile {
-        let file = parse(text);
+        let file = parse_test_file(text);
         assert!(file.errors.is_empty(), "{:?}", file.errors);
         file
     }
 
     #[track_caller]
     fn expect_error(text: &str, line: u32, message: &str) {
-        let expected = TestFileError {
-            line,
-            message: message.to_owned(),
-        };
-        assert_eq!(parse(text).errors, [expected], "{text}");
+        let expected = TestFailure::new(line, message);
+        assert_eq!(parse_test_file(text).errors, [expected], "{text}");
     }
 
     #[track_caller]
@@ -398,17 +358,39 @@ mod tests {
         expect_error(&format!("// RUN: lower\n{directive}\n"), 2, message);
     }
 
+    #[track_caller]
+    fn check_kinds_of(text: &str, prefix: &str) -> Vec<(CheckKind, u32)> {
+        let file = parse_without_errors(text);
+        let checks = file.check_lines_for(prefix).iter();
+        checks.map(|check| (check.kind, check.count)).collect()
+    }
+
+    /// What `parse_check_line` reads off the part of a directive's name that follows the prefix.
+    fn parse_check_kind(suffix: Option<&str>) -> Result<(CheckKind, u32), String> {
+        let mut file = parse_without_errors("// RUN: lower\n");
+        let name = match suffix {
+            Some(suffix) => format!("CHECK-{suffix}"),
+            None => "CHECK".to_owned(),
+        };
+        file.parse_check_line(&DirectiveLine {
+            name: &name,
+            parenthesized: None,
+            value: "x",
+            line: 2,
+        })?;
+        let [check] = file.check_lines_for("CHECK") else {
+            panic!("CHECK has one line");
+        };
+        Ok((check.kind, check.count))
+    }
+
     #[test]
-    fn source_files_are_test_files() {
+    fn test_file_names() {
         for name in [
             "add.ts", "add.tsx", "add.mts", "add.cts", "add.js", "add.jsx", "add.mjs", "add.cjs",
         ] {
             assert!(is_test_file_name(name), "{name}");
         }
-    }
-
-    #[test]
-    fn other_files_are_not_test_files() {
         for name in [
             "add.d.ts",
             "add.d.mts",
@@ -437,82 +419,84 @@ mod tests {
         ]
         .join("\r\n");
         let file = parse_without_errors(&text);
-        assert_eq!(file.text, text);
 
-        let runs: Vec<_> = file
-            .runs
-            .iter()
-            .map(|run| (run.prefix.as_str(), run.command.as_str(), run.line))
+        let runs = file.runs.iter();
+        let runs: Vec<_> = runs
+            .map(|run| (&*run.prefix, &*run.command, run.line))
             .collect();
-        assert_eq!(
-            runs,
-            [
-                ("CHECK", "lower", 2),
-                ("SECOND", "link", 3),
-                ("CHECK", "link", 6),
-            ]
-        );
+        let expected = [
+            ("CHECK", "lower", 2),
+            ("SECOND", "link", 3),
+            ("CHECK", "link", 6),
+        ];
+        assert_eq!(runs, expected);
         assert_eq!(file.runs[0].arguments, ["a", "b"]);
         assert!(file.runs[1].arguments.is_empty());
 
-        let prefixes: Vec<_> = file
-            .check_groups
-            .iter()
-            .map(|group| group.prefix.as_str())
-            .collect();
+        let groups = file.check_groups.iter();
+        let prefixes: Vec<_> = groups.map(|group| group.prefix.as_str()).collect();
         assert_eq!(prefixes, ["CHECK", "SECOND"]);
-        let [add, repeated] = file.check_lines_for("CHECK") else {
+        let [add, counted] = file.check_lines_for("CHECK") else {
             panic!("CHECK has two lines");
         };
-        assert_eq!((add.kind, add.count, add.line), (CheckKind::Plain, 1, 1));
-        assert_eq!(
-            (repeated.kind, repeated.count, repeated.line),
-            (CheckKind::Count, 3, 5)
-        );
-        assert_eq!(repeated.pattern, "x  y");
-        assert_eq!(repeated.elements, parse_check_pattern("x y").unwrap());
+        assert_eq!((add.kind, add.count, add.line), (Plain, 1, 1));
+        assert_eq!((counted.kind, counted.count, counted.line), (Count, 3, 5));
+        assert_eq!(counted.pattern, "x  y");
+        assert_eq!(counted.elements, parse_check_pattern("x y").unwrap());
         let [excluded] = file.check_lines_for("SECOND") else {
             panic!("SECOND has one line");
         };
-        assert_eq!((excluded.kind, excluded.line), (CheckKind::Not, 4));
+        assert_eq!((excluded.kind, excluded.line), (Not, 4));
     }
 
     #[test]
     fn check_kinds() {
         let text = "// RUN: lower\n// CHECK-LABEL: a\n// CHECK-NEXT: b\n// CHECK-COUNT-1000: c\n";
-        let file = parse_without_errors(text);
-        let kinds: Vec<_> = file
-            .check_lines_for("CHECK")
-            .iter()
-            .map(|check| (check.kind, check.count))
-            .collect();
+        let kinds = [(Label, 1), (Next, 1), (Count, 1000)];
+        assert_eq!(check_kinds_of(text, "CHECK"), kinds);
+        assert_eq!(parse_check_kind(None), Ok((Plain, 1)));
+        assert_eq!(parse_check_kind(Some("NEXT")), Ok((Next, 1)));
+        assert_eq!(parse_check_kind(Some("NOT")), Ok((Not, 1)));
+        assert_eq!(parse_check_kind(Some("LABEL")), Ok((Label, 1)));
+        assert_eq!(parse_check_kind(Some("COUNT-1")), Ok((Count, 1)));
         assert_eq!(
-            kinds,
-            [
-                (CheckKind::Label, 1),
-                (CheckKind::Next, 1),
-                (CheckKind::Count, 1000),
-            ]
+            parse_check_kind(Some("COUNT-1000")),
+            Ok((Count, MAX_CHECK_COUNT))
         );
     }
 
     #[test]
+    fn check_kind_errors() {
+        for suffix in ["", "NXT", "next", "COUNT"] {
+            assert_eq!(
+                parse_check_kind(Some(suffix)),
+                Err(format!("unknown directive CHECK-{suffix}")),
+                "{suffix}"
+            );
+        }
+        for suffix in [
+            "COUNT-",
+            "COUNT-0",
+            "COUNT-1001",
+            "COUNT-+1",
+            "COUNT-1-2",
+            "COUNT-A",
+            "COUNT-99999999999",
+        ] {
+            assert_eq!(
+                parse_check_kind(Some(suffix)),
+                Err(format!("the count must be 1 to {MAX_CHECK_COUNT}")),
+                "{suffix}"
+            );
+        }
+    }
+
+    #[test]
     fn prefix_may_equal_check_suffix() {
-        let text = "// RUN(NEXT): lower\n// NEXT: a\n// NEXT-NEXT: b\n// NEXT-COUNT-2: c\n";
-        let file = parse_without_errors(text);
-        let kinds: Vec<_> = file
-            .check_lines_for("NEXT")
-            .iter()
-            .map(|check| (check.kind, check.count))
-            .collect();
-        assert_eq!(
-            kinds,
-            [
-                (CheckKind::Plain, 1),
-                (CheckKind::Next, 1),
-                (CheckKind::Count, 2),
-            ]
-        );
+        let text = "// RUN(NEXT): lower\n// NEXT: a\n// NEXT-NEXT: b\n// NEXT-COUNT-2: c\n\
+            // NEXT-COUNT-1: d\n";
+        let kinds = [(Plain, 1), (Next, 1), (Count, 2), (Count, 1)];
+        assert_eq!(check_kinds_of(text, "NEXT"), kinds);
     }
 
     #[test]
@@ -524,7 +508,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "every RUN has a check group")]
     fn check_lines_for_unknown_prefix() {
-        parse("// RUN: link\n").check_lines_for("OTHER");
+        parse_test_file("// RUN: link\n").check_lines_for("OTHER");
     }
 
     #[test]
@@ -551,6 +535,8 @@ mod tests {
             "// CHECK (x): y",
             "// CHECK(x: y",
             "// CHECK(x) : y",
+            "// CHECK-next: x",
+            "// CHECK-COUNT-+1: x",
             "/// CHECK: x",
             "/* CHECK: x */",
             "const sum = a + b;   // CHECK: NoSuchText",
@@ -575,29 +561,28 @@ mod tests {
             expect_error(&text, 1, &format!("{name} cannot be a prefix"));
         }
         expect_error("// RUN(ONLY): lower\n", 1, "no line has the prefix ONLY");
-        expect_error(
-            "// RUN: lower\n// RUN(ONLY): lower\n// RUN(ONLY): link\n",
-            2,
-            "no line has the prefix ONLY",
-        );
+        let text = "// RUN: lower\n// RUN(ONLY): lower\n// RUN(ONLY): link\n";
+        expect_error(text, 2, "no line has the prefix ONLY");
     }
 
     #[test]
     fn unknown_directives() {
         expect_error_after_run("// FORM(X): AsRead", "unknown directive FORM(..)");
         expect_error_after_run("// CHECK(X): x", "unknown directive CHECK(..)");
-        expect_error_after_run("// NOTE: x", "unknown directive NOTE");
-        expect_error_after_run("// L0: x", "unknown directive L0");
-        expect_error_after_run("// OTHER: x", "unknown directive OTHER");
-        expect_error_after_run("// OTHER-NOT: x", "unknown directive OTHER-NOT");
-        expect_error_after_run("// CHECK-NXT: x", "unknown directive CHECK-NXT");
-        expect_error_after_run("// CHECK-COUNT: x", "unknown directive CHECK-COUNT");
-        expect_error_after_run("// CHECK-: x", "unknown directive CHECK-");
-        expect_error(
-            "// RUN(ONLY): lower\n// ONLY: x\n// CHECK: x\n",
-            3,
-            "unknown directive CHECK",
-        );
+        for name in [
+            "NOTE",
+            "L0",
+            "OTHER",
+            "OTHER-NOT",
+            "CHECK-NXT",
+            "CHECK-COUNT",
+            "CHECK-",
+        ] {
+            let message = format!("unknown directive {name}");
+            expect_error_after_run(&format!("// {name}: x"), &message);
+        }
+        let text = "// RUN(ONLY): lower\n// ONLY: x\n// CHECK: x\n";
+        expect_error(text, 3, "unknown directive CHECK");
     }
 
     #[test]
@@ -613,16 +598,12 @@ mod tests {
             expect_error_after_run(&format!("// {name}: x"), "the count must be 1 to 1000");
         }
         expect_error_after_run("// CHECK:", "the pattern is empty");
-        expect_error_after_run(
-            "// CHECK: {{x}}",
-            "only {{*}} can be written with {{: there are no regular expressions",
-        );
+        let message = "only {{*}} can be written with {{: there are no regular expressions";
+        expect_error_after_run("// CHECK: {{x}}", message);
         expect_error_after_run("// CHECK: [[1]]", "a variable is written [[name]]");
         expect_error_after_run("// CHECK-NOT: {{*}}", "the pattern matches every line");
-        expect_error_after_run(
-            "// CHECK-NEXT: x",
-            "CHECK-NEXT needs a match directly before it",
-        );
+        let message = "CHECK-NEXT needs a match directly before it";
+        expect_error_after_run("// CHECK-NEXT: x", message);
         expect_error_after_run("// CHECK-LABEL: [[x]]", "a label cannot use a variable");
     }
 
@@ -630,11 +611,8 @@ mod tests {
     fn options() {
         let text = "// RUN: lower\n// OPTIONS: a \t b=1\n// OPTIONS: c\n";
         let file = parse_without_errors(text);
-        let words: Vec<_> = file
-            .option_words
-            .iter()
-            .map(|option| (option.word.as_str(), option.line))
-            .collect();
+        let words = file.option_words.iter();
+        let words: Vec<_> = words.map(|word| (&*word.word, word.line)).collect();
         assert_eq!(words, [("a", 2), ("b=1", 2), ("c", 3)]);
         expect_error_after_run("// OPTIONS:", "OPTIONS needs a word");
     }
@@ -649,45 +627,26 @@ mod tests {
 
     #[test]
     fn diagnostics() {
-        let text = [
-            "// RUN: link",
-            "// DIAGNOSTIC: UnprovenInt32 2",
-            "// DIAGNOSTIC: IdOutOfRange",
-            "// DIAGNOSTIC: TS2322",
-        ]
-        .join("\n");
-        let file = parse_without_errors(&text);
-        let diagnostics: Vec<_> = file
-            .diagnostics
-            .iter()
-            .map(|expected| (expected.name, expected.count, expected.line))
-            .collect();
-        assert_eq!(
-            diagnostics,
-            [
-                (
-                    DiagnosticName::User(UserDiagnosticKind::UnprovenInt32),
-                    Some(2),
-                    2
-                ),
-                (
-                    DiagnosticName::Internal(InternalErrorKind::IdOutOfRange),
-                    None,
-                    3
-                ),
-                (DiagnosticName::FrontEnd(2322), None, 4),
-            ]
-        );
-        assert_eq!(
-            parse_diagnostic_name("TS999999999"),
-            Some(DiagnosticName::FrontEnd(999_999_999))
-        );
+        let text = "// RUN: link\n// DIAGNOSTIC: UnprovenInt32 2\n\
+            // DIAGNOSTIC: IdOutOfRange\n// DIAGNOSTIC: TS2322";
+        let file = parse_without_errors(text);
+        let listed = file.diagnostics.iter();
+        let listed: Vec<_> = listed.map(|one| (one.name, one.count, one.line)).collect();
+        let unproven = DiagnosticName::User(UserDiagnosticKind::UnprovenInt32);
+        let out_of_range = DiagnosticName::Internal(InternalErrorKind::IdOutOfRange);
+        let type_error = DiagnosticName::FrontEnd(2322);
+        let expected = [
+            (unproven, Some(2), 2),
+            (out_of_range, None, 3),
+            (type_error, None, 4),
+        ];
+        assert_eq!(listed, expected);
+        let largest_code = Some(DiagnosticName::FrontEnd(999_999_999));
+        assert_eq!(parse_diagnostic_name("TS999999999"), largest_code);
         assert_eq!(parse_diagnostic_name("TS0"), None);
         assert_eq!(parse_diagnostic_name("Build"), Some(DiagnosticName::Build));
-        assert_eq!(
-            parse_diagnostic_name("Resolve"),
-            Some(DiagnosticName::Resolve)
-        );
+        let resolve = Some(DiagnosticName::Resolve);
+        assert_eq!(parse_diagnostic_name("Resolve"), resolve);
     }
 
     #[test]
@@ -729,16 +688,11 @@ mod tests {
         }
         expect_error_after_run("// DIAGNOSTIC:", DIAGNOSTIC_SYNTAX);
         expect_error_after_run("// DIAGNOSTIC: UnprovenInt32 1 2", DIAGNOSTIC_SYNTAX);
-        expect_error(
-            "// RUN: lower\n// DIAGNOSTIC: UnprovenInt32\n// DIAGNOSTIC: UnprovenInt32 2\n",
-            3,
-            "UnprovenInt32 is listed twice",
-        );
-        expect_error(
-            "// RUN: lower\n// DIAGNOSTIC: TS2322\n// DIAGNOSTIC: TS2322\n",
-            3,
-            "TS2322 is listed twice",
-        );
+        let text = "// RUN: lower\n// DIAGNOSTIC: UnprovenInt32\n\
+            // DIAGNOSTIC: UnprovenInt32 2\n";
+        expect_error(text, 3, "UnprovenInt32 is listed twice");
+        let text = "// RUN: lower\n// DIAGNOSTIC: TS2322\n// DIAGNOSTIC: TS2322\n";
+        expect_error(text, 3, "TS2322 is listed twice");
     }
 
     #[test]
@@ -752,27 +706,17 @@ mod tests {
         ]
         .join("\n");
         let file = parse_without_errors(&text);
-        let statistics: Vec<_> = file
-            .statistics
-            .iter()
-            .map(|expected| {
-                (
-                    expected.name,
-                    expected.comparison,
-                    expected.value,
-                    expected.line,
-                )
-            })
+        let listed = file.statistics.iter();
+        let listed: Vec<_> = listed
+            .map(|listed| (listed.name, listed.comparison, listed.value, listed.line))
             .collect();
-        assert_eq!(
-            statistics,
-            [
-                (StatisticId::FunctionsLowered, AtLeast, 1, 2),
-                (StatisticId::FunctionsLowered, AtMost, u64::MAX, 3),
-                (StatisticId::ProgramBytes, Equal, 64, 4),
-                (StatisticId::MaxNestingDepthHits, Equal, 0, 5),
-            ]
-        );
+        let expected = [
+            (StatisticId::FunctionsLowered, AtLeast, 1, 2),
+            (StatisticId::FunctionsLowered, AtMost, u64::MAX, 3),
+            (StatisticId::ProgramBytes, Equal, 64, 4),
+            (StatisticId::MaxNestingDepthHits, Equal, 0, 5),
+        ];
+        assert_eq!(listed, expected);
     }
 
     #[test]
@@ -804,7 +748,8 @@ mod tests {
 
     #[test]
     fn errors_are_sorted_by_line() {
-        let file = parse("// CHECK-NEXT: x\n// NOTE: y\n// RUN(lower): lower\n// RUN: lower\n");
+        let text = "// CHECK-NEXT: x\n// NOTE: y\n// RUN(lower): lower\n// RUN: lower\n";
+        let file = parse_test_file(text);
         let lines: Vec<_> = file.errors.iter().map(|error| error.line).collect();
         assert_eq!(lines, [1, 2, 3]);
     }

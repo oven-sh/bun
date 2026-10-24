@@ -412,7 +412,6 @@ impl<'c, 'p, 's> Writer<'_, 'c, 'p, 's> {
         }
     }
 
-    /// Nobody wrote the type of what a call gives, and the result's expected type is made from it.
     fn write_result_identity(&mut self, site: &Site, ty: CheckedType) {
         let Ok(ty) = ty else {
             return;

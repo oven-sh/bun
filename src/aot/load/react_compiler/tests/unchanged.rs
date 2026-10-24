@@ -48,31 +48,22 @@ fn write_messages(messages: &LoadMessages) -> (Log, bool) {
 
 #[test]
 fn applies_to_jsx_loaders_outside_node_modules() {
+    use ReactCompilerMode::{Client, Disabled, Ssr};
     let messages = LoadMessages::default();
-    let applies_to = |mode: ReactCompilerMode, path: &[u8], loader: Loader| {
-        ReactCompiler::new(mode, &messages).applies_to(path, loader)
-    };
-    let client = ReactCompilerMode::Client;
-    assert!(applies_to(client, b"/project/a.tsx", Loader::Tsx));
-    assert!(applies_to(client, b"/project/a.js", Loader::Jsx));
-    assert!(applies_to(
-        ReactCompilerMode::Ssr,
-        b"/project/a.tsx",
-        Loader::Tsx
-    ));
-    assert!(!applies_to(client, b"/project/a.ts", Loader::Ts));
-    assert!(!applies_to(client, b"/project/a.mjs", Loader::Js));
-    assert!(!applies_to(client, b"/project/a.json", Loader::Json));
-    assert!(!applies_to(
-        client,
-        b"/project/node_modules/p/a.tsx",
-        Loader::Tsx
-    ));
-    assert!(!applies_to(
-        ReactCompilerMode::Disabled,
-        b"/project/a.tsx",
-        Loader::Tsx
-    ));
+    for (mode, path, loader, expected) in [
+        (Client, "/project/a.tsx", Loader::Tsx, true),
+        (Client, "/project/a.js", Loader::Jsx, true),
+        (Ssr, "/project/a.tsx", Loader::Tsx, true),
+        (Client, "/project/a.ts", Loader::Ts, false),
+        (Client, "/project/a.mjs", Loader::Js, false),
+        (Client, "/project/a.json", Loader::Json, false),
+        (Client, "/project/node_modules/p/a.tsx", Loader::Tsx, false),
+        (Disabled, "/project/a.tsx", Loader::Tsx, false),
+    ] {
+        let compiler = ReactCompiler::new(mode, &messages);
+        let applies = compiler.applies_to(path.as_bytes(), loader);
+        assert_eq!(applies, expected, "{mode:?} {path}");
+    }
 }
 
 #[test]
@@ -98,44 +89,31 @@ fn disabled_mode_changes_nothing() {
 }
 
 #[test]
-fn file_without_candidates_is_not_copied() {
-    let text = "export const x: number = 1;\n\
-                export function double(value: number) { return value * 2; }\n";
-    with_workbench(text, |bench| {
-        let (bound, analysis) = bench.analyze(&[]);
-        let nodes = bench.tree.exprs.as_ptr();
-        let (change, source) = bench.transform(ReactCompilerMode::Client, &bound, &analysis);
-        assert_eq!(change, TreeChange::Unchanged);
-        assert!(!source.has_compiled_components);
-        assert_eq!(bench.tree.exprs.as_ptr(), nodes);
-    });
-}
-
-#[test]
-fn candidate_that_is_no_component_leaves_the_tree() {
-    with_workbench("export function Plain() { return 1; }\n", |bench| {
-        let (bound, analysis) = bench.analyze(&[]);
-        let nodes = bench.tree.exprs.as_ptr();
-        let (change, source) = bench.transform(ReactCompilerMode::Client, &bound, &analysis);
-        assert_eq!(change, TreeChange::Unchanged);
-        assert!(!source.has_compiled_components);
-        assert_eq!(bench.tree.exprs.as_ptr(), nodes);
-    });
+fn file_without_components_is_not_copied() {
+    let no_candidate = "export const x: number = 1;\n\
+                        export function double(value: number) { return value * 2; }\n";
+    let no_component = "export function Plain() { return 1; }\n";
+    for text in [no_candidate, no_component] {
+        with_workbench(text, |bench| {
+            let (bound, analysis) = bench.analyze(&[]);
+            let nodes = bench.tree.exprs.as_ptr();
+            let (change, source) = bench.transform(ReactCompilerMode::Client, &bound, &analysis);
+            assert_eq!(change, TreeChange::Unchanged, "{text}");
+            assert!(!source.has_compiled_components, "{text}");
+            assert_eq!(bench.tree.exprs.as_ptr(), nodes, "{text}");
+        });
+    }
 }
 
 #[test]
 fn node_modules_file_is_not_compiled() {
+    let main = "export { Hello as Installed } from 'widgets';\n\
+                export { Hello } from './widget.jsx';\n";
+    let manifest = r#"{"name":"widgets","version":"1.0.0","main":"index.jsx"}"#;
     let files = [
-        (
-            "main.tsx",
-            "export { Hello as Installed } from 'widgets';\n\
-             export { Hello } from './widget.jsx';\n",
-        ),
+        ("main.tsx", main),
         ("widget.jsx", UNTYPED_HELLO),
-        (
-            "node_modules/widgets/package.json",
-            r#"{"name":"widgets","version":"1.0.0","main":"index.jsx"}"#,
-        ),
+        ("node_modules/widgets/package.json", manifest),
         ("node_modules/widgets/index.jsx", UNTYPED_HELLO),
     ];
     with_project(

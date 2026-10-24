@@ -6,6 +6,7 @@ use super::ReportInput;
 use super::json::JsonWriter;
 use super::levels::compute_totals;
 use super::positions::{PathStyle, Positions};
+use super::runtime_use::record_at;
 use super::summary::{write_access_counts, write_level_counts};
 use crate::builtins::table;
 use crate::diagnostics::SourcePosition;
@@ -33,25 +34,17 @@ const PROGRAM_SIZES: [(&str, StatisticId); 4] = [
     ("functions", StatisticId::ImageFunctionsEmitted),
 ];
 
-#[derive(Copy, Clone, Default)]
-struct PassTime {
-    runs: u64,
-    nanoseconds: u64,
-}
-
 pub fn write(input: &ReportInput<'_>, detail: ReportDetail, build_id: Option<&[u8]>) -> Vec<u8> {
     let mut positions = Positions::new(input, PathStyle::Posix);
 
     let mut json = JsonWriter::object();
     json.string("schemaHash", format!("{SCHEMA_HASH:016x}").as_bytes());
-    match build_id {
-        Some(id) => json.string("buildId", id),
-        None => json.null("buildId"),
-    }
+    json.optional_string("buildId", build_id);
     write_summary(&mut json, input);
     write_statistics(&mut json, input.statistics);
-    write_limits(&mut json, input);
-    write_passes(&mut json, input);
+    let limit_value_of = |limit| input.engine.limit_value(limit);
+    write_limit_list(&mut json, &limit_value_of, input.statistics);
+    write_pass_list(&mut json, input.engine.pass_times(), input.statistics);
     write_stages(&mut json, input.statistics);
     write_retained_features(&mut json, input);
     write_unseen_code(&mut json, input, &mut positions);
@@ -101,10 +94,8 @@ fn write_summary(json: &mut JsonWriter, input: &ReportInput<'_>) {
     write_counts(json, input.statistics, &ENVIRONMENT_OUTCOMES);
     json.end_object();
     json.number("typeTests", totals.combined().type_tests);
-    json.number(
-        "sitesWithoutOrigin",
-        count_sites_without_origin(input.engine.accesses()),
-    );
+    let without_origin = count_sites_without_origin(input.engine.accesses());
+    json.number("sitesWithoutOrigin", without_origin);
     write_counts(json, input.statistics, &PROGRAM_SIZES);
     json.end_object();
 }
@@ -119,70 +110,47 @@ fn write_statistics(json: &mut JsonWriter, statistics: &Statistics) {
     json.end_object();
 }
 
-fn write_limits(json: &mut JsonWriter, input: &ReportInput<'_>) {
-    let value_of = |limit| input.engine.limit_value(limit);
-    write_limit_list(json, &value_of, input.statistics);
-}
-
 fn write_limit_list(
     json: &mut JsonWriter,
     value_of: &dyn Fn(LimitId) -> u64,
     statistics: &Statistics,
 ) {
-    json.begin_array("limits");
-    for limit in LimitId::ALL {
-        if limit == LimitId::None {
-            continue;
-        }
-        json.begin_element();
+    let listed = LimitId::ALL
+        .into_iter()
+        .filter(|&limit| limit != LimitId::None);
+    json.objects("limits", listed, |json, limit| {
         json.string("name", limit.name().as_bytes());
         json.number("value", value_of(limit));
         json.number("hits", statistics.get(limit.hits()));
-        json.end_object();
-    }
-    json.end_array();
-}
-
-fn write_passes(json: &mut JsonWriter, input: &ReportInput<'_>) {
-    write_pass_list(json, input.engine.pass_times(), input.statistics);
+    });
 }
 
 fn write_pass_list(json: &mut JsonWriter, records: &[PassTimeRecord], statistics: &Statistics) {
-    let mut times = [PassTime::default(); PassId::COUNT];
+    let mut times = [(0u64, 0u64); PassId::COUNT];
     for record in records {
-        let time = &mut times[record.pass as usize];
-        time.runs = time.runs.saturating_add(record.runs);
-        time.nanoseconds = time.nanoseconds.saturating_add(record.cpu_nanoseconds);
+        let (runs, nanoseconds) = &mut times[record.pass as usize];
+        *runs = runs.saturating_add(record.runs);
+        *nanoseconds = nanoseconds.saturating_add(record.cpu_nanoseconds);
     }
 
-    json.begin_array("passes");
-    for pass in PassId::ALL {
-        if pass == PassId::None {
-            continue;
-        }
-        let time = times[pass as usize];
-        json.begin_element();
+    let passes = PassId::ALL.into_iter().filter(|&pass| pass != PassId::None);
+    json.objects("passes", passes, |json, pass| {
+        let (runs, nanoseconds) = times[pass as usize];
         json.string("name", pass.name().as_bytes());
-        json.number("runs", time.runs);
+        json.number("runs", runs);
         json.number("changes", statistics.get(pass.changes()));
-        json.number("nanoseconds", time.nanoseconds);
-        json.end_object();
-    }
-    json.end_array();
+        json.number("nanoseconds", nanoseconds);
+    });
 }
 
 fn write_stages(json: &mut JsonWriter, statistics: &Statistics) {
-    json.begin_array("stages");
-    for stage in Stage::ALL {
-        if matches!(stage, Stage::Any | Stage::RunTime) {
-            continue;
-        }
-        json.begin_element();
+    let stages = Stage::ALL
+        .into_iter()
+        .filter(|stage| !matches!(stage, Stage::Any | Stage::RunTime));
+    json.objects("stages", stages, |json, stage| {
         json.string("name", stage.name().as_bytes());
         json.number("nanoseconds", statistics.get(stage.time()));
-        json.end_object();
-    }
-    json.end_array();
+    });
 }
 
 fn write_retained_features(json: &mut JsonWriter, input: &ReportInput<'_>) {
@@ -204,22 +172,16 @@ fn write_unseen_code(
     positions: &mut Positions<'_>,
 ) {
     let records = input.engine.unseen_code();
-    json.begin_array("unseenCode");
-    for unseen in &input.used_features.causes {
-        let record = unseen
-            .witness
-            .and_then(|witness| records.get(witness.0 as usize));
+    json.objects("unseenCode", &input.used_features.causes, |json, unseen| {
+        let record = record_at(records, unseen.witness);
         let builtin = record.and_then(|record| builtin_of(record.builtin));
         let location =
             record.and_then(|record| positions.resolve_location(record.witness.location));
-        json.begin_element();
         json.string("cause", format!("{:?}", unseen.cause).as_bytes());
         let builtin = builtin.map(table::text_of);
         json.optional_string("builtin", builtin.as_deref().map(str::as_bytes));
         write_position(json, "location", location.as_ref());
-        json.end_object();
-    }
-    json.end_array();
+    });
 }
 
 pub(super) fn write_position(json: &mut JsonWriter, key: &str, position: Option<&SourcePosition>) {
@@ -228,14 +190,22 @@ pub(super) fn write_position(json: &mut JsonWriter, key: &str, position: Option<
         return;
     };
     json.begin_object(key);
-    write_position_members(json, position);
+    write_position_members(json, Some(position), "column");
     json.end_object();
 }
 
-pub(super) fn write_position_members(json: &mut JsonWriter, position: &SourcePosition) {
-    json.string("file", &position.path);
-    json.number("line", u64::from(position.line));
-    json.number("column", u64::from(position.column));
+pub(super) fn write_position_members(
+    json: &mut JsonWriter,
+    position: Option<&SourcePosition>,
+    column_key: &str,
+) {
+    let (file, line, column) = match position {
+        Some(position) => (&position.path[..], position.line, position.column),
+        None => (&[][..], 0, 0),
+    };
+    json.string("file", file);
+    json.number("line", u64::from(line));
+    json.number(column_key, u64::from(column));
 }
 
 #[cfg(test)]

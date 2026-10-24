@@ -5,11 +5,11 @@ use super::unit::{LocalKind, LocalReference};
 use crate::ir::VariableKey;
 use crate::load::{ProgramFile, ProjectId};
 use crate::modules::{
-    ExportBinding, ModuleFailureId, ModuleGraph, ModuleKind, ModuleRef, Shape, SyntheticExportRule,
+    ExportBinding, ModuleExport, ModuleFailureId, ModuleGraph, ModuleKind, ModuleRef, Shape,
+    SyntheticExportRule,
 };
 use core::sync::atomic::Ordering;
 
-/// The variable that an export table shows.
 pub(super) fn exported_variable_key(
     graph: &ModuleGraph,
     binding: ExportBinding,
@@ -46,10 +46,6 @@ impl Marker<'_> {
     pub(super) fn mark_module(&mut self, module: ProgramModule) {
         match module {
             ProgramModule::File(file) => self.mark_file(file),
-            ProgramModule::Inner { file, .. } => {
-                self.mark_body(module, file);
-                self.mark_exports_variable(module, file);
-            }
             ProgramModule::Face(file) => {
                 self.mark_body(module, file);
                 self.mark_exports_of_face(file);
@@ -63,7 +59,7 @@ impl Marker<'_> {
         let key = module
             .body_key()
             .expect("the fragment names the body of a file");
-        match self.context.functions.find(&key) {
+        match self.context.merged.functions.find(&key) {
             Some(body) => self.mark_function(body, file),
             None => self.add_error(LinkError::UndefinedFunction {
                 key,
@@ -82,7 +78,7 @@ impl Marker<'_> {
         if !holds_exports_in_variable(self.context.keys.get(project).graph, own) {
             return;
         }
-        if let Some(variable) = self.context.variables.find(&key) {
+        if let Some(variable) = self.context.merged.variables.find(&key) {
             self.mark_variable(variable, file);
         }
     }
@@ -93,13 +89,7 @@ impl Marker<'_> {
         if is_filled_by_loader(graph, face) {
             return;
         }
-        for export in graph
-            .exports_of(face)
-            .iter()
-            .filter(|export| export.is_read_from_object)
-        {
-            self.mark_export(file, export.binding);
-        }
+        self.mark_exports_read_from_object(file, graph.exports_of(face));
     }
 
     fn mark_file(&mut self, file: ProgramFile) {
@@ -126,18 +116,18 @@ impl Marker<'_> {
             }
             ModuleKind::RuntimeSource | ModuleKind::Runtime | ModuleKind::External => return,
         }
-        for export in graph
-            .exports(file.file)
-            .iter()
-            .filter(|export| export.is_read_from_object)
-        {
-            self.mark_export(file, export.binding);
-        }
+        self.mark_exports_read_from_object(file, graph.exports(file.file));
     }
 
     pub(super) fn mark_failure(&mut self, project: ProjectId, failure: ModuleFailureId) {
         let is_retained = &self.context.is_failure_retained.get(project)[failure.0 as usize];
         is_retained.store(true, Ordering::Relaxed);
+    }
+
+    fn mark_exports_read_from_object(&mut self, file: ProgramFile, exports: &[ModuleExport]) {
+        for export in exports.iter().filter(|export| export.is_read_from_object) {
+            self.mark_export(file, export.binding);
+        }
     }
 
     fn mark_export(&mut self, file: ProgramFile, binding: ExportBinding) {
@@ -146,7 +136,7 @@ impl Marker<'_> {
             return;
         };
         let key = keys.variable_key(key);
-        match self.context.variables.find(&key) {
+        match self.context.merged.variables.find(&key) {
             Some(index) => self.mark_variable(index, file),
             None => self.add_error(LinkError::UndefinedVariable {
                 key,
@@ -224,11 +214,7 @@ mod tests {
             ("lazy.js", "export const value = 1;\n"),
             ("unnamed.js", "export const value = 2;\n"),
         ]);
-        let mut names = program
-            .functions
-            .iter()
-            .filter_map(|function| function.name);
-        assert!(!names.any(|name| program.strings.get(name) == b"dropped"));
+        assert!(!has_function_named(&program, b"dropped"));
         assert!(find_record(&program, "lazy.js").is_none());
         assert!(find_record(&program, "unnamed.js").is_none());
     }
@@ -286,5 +272,61 @@ mod tests {
         ]);
         assert_eq!(export_names(&program, "index.js"), [b"own"]);
         assert!(export_names(&program, "barrel.js").is_empty());
+    }
+
+    fn has_function_named(program: &Program, name: &[u8]) -> bool {
+        let mut names = program
+            .functions
+            .iter()
+            .filter_map(|function| function.name);
+        names.any(|id| program.strings.get(id) == name)
+    }
+
+    const LIBRARY: (&str, &str) = (
+        "library.js",
+        "export function libraryFirst() {}\nexport function librarySecond() {}\n",
+    );
+
+    #[test]
+    fn export_nobody_reads_is_no_export() {
+        let program = link_program(&[("main.js", "import './library.js';\n"), LIBRARY]);
+        assert!(export_names(&program, "library.js").is_empty());
+    }
+
+    #[test]
+    fn function_only_dropped_code_names_is_dropped() {
+        let library =
+            "export function exported() {}\nfunction internal() {\n  return internal;\n}\n";
+        let files = [
+            ("main.js", "import './library.js';\n"),
+            ("library.js", library),
+        ];
+        let program = link_program(&files);
+        assert!(has_function_named(&program, b"exported"));
+        assert!(!has_function_named(&program, b"internal"));
+    }
+
+    #[test]
+    fn namespace_object_keeps_every_export() {
+        let main = "import * as library from './library.js';\nconsole.log(library);\n";
+        let program = link_program(&[("main.js", main), LIBRARY]);
+        assert!(has_function_named(&program, b"libraryFirst"));
+        assert!(has_function_named(&program, b"librarySecond"));
+    }
+
+    const ENTRY_POINT_WITH_EXPORTS: [(&str, &str); 2] = [
+        (
+            "main.js",
+            "import './library.js';\nexport function entryUnread() {}\nexport default { port: 1 };\n",
+        ),
+        LIBRARY,
+    ];
+
+    #[test]
+    fn entry_point_export_the_host_does_not_read_is_kept() {
+        let program = link_program(&ENTRY_POINT_WITH_EXPORTS);
+        assert!(has_function_named(&program, b"entryUnread"));
+        let names: [&[u8]; 2] = [b"default", b"entryUnread"];
+        assert_eq!(export_names(&program, "main.js"), names);
     }
 }

@@ -80,13 +80,11 @@ fn class_without_test_is_view() {
         let class = builtin_class_of(path.class).unwrap();
         let data = table::class_data(class);
         let is_view = data.type_names[path.type_name as usize].is_view;
-        let is_exact = data.has_instance_test && !is_view;
-        assert_eq!(
-            path.denotation == Denotation::Exact,
-            is_exact,
-            "{:?}",
-            path.names
-        );
+        let expected = match data.has_instance_test && !is_view {
+            true => Denotation::Exact,
+            false => Denotation::View,
+        };
+        assert_eq!(path.denotation, expected, "{:?}", path.names);
     }
 }
 
@@ -102,10 +100,8 @@ fn module_path_is_split() {
     assert_eq!(split_module(no_names), (None, no_names));
     for path in builtin_type_paths() {
         if let Some(module) = path.module {
-            assert!(
-                table::module_by_specifier(module.as_bytes()).is_some(),
-                "{module}"
-            );
+            let found = table::module_by_specifier(module.as_bytes());
+            assert!(found.is_some(), "{module}");
         }
     }
 }
@@ -160,14 +156,26 @@ fn value_paths() {
         (heap_stats.unwrap(), (Some("bun:jsc"), &["heapStats"][..])),
     ];
     for (id, path) in expected {
-        assert_eq!(
-            find_value_path(&paths, id),
-            Some(path),
-            "{}",
-            table::text_of(id)
-        );
+        let found = find_value_path(&paths, id);
+        assert_eq!(found, Some(path), "{}", table::text_of(id));
     }
     assert!(paths.is_sorted_by(|left, right| left.value <= right.value));
+}
+
+#[test]
+fn member_of_object_with_second_name_has_both_paths() {
+    let values = BuiltinValuePaths::collect(Platforms::LINUX);
+    let paths = values.paths();
+    let fetch = BuiltinValueIndex(BuiltinId::Fetch.to_wire());
+    let of_fetch = paths.iter().filter(|path| path.value == fetch);
+    let of_fetch: Vec<PathParts<'_>> = of_fetch.map(|path| (path.module, path.names)).collect();
+    let own: PathParts<'_> = (None, &["fetch"]);
+    assert_eq!(of_fetch.first(), Some(&own));
+    let under_second_names: [PathParts<'_>; 2] =
+        [(None, &["global", "fetch"]), (None, &["self", "fetch"])];
+    for path in under_second_names {
+        assert!(of_fetch.contains(&path), "{path:?} in {of_fetch:?}");
+    }
 }
 
 #[test]
@@ -206,11 +214,8 @@ fn excluded_values() {
     for path in &paths {
         let id = builtin_value_of(path.value).unwrap();
         let entry = table::entry(id);
-        assert!(
-            can_have_call_signatures(entry.kind),
-            "{}",
-            table::text_of(id)
-        );
+        let is_callable = can_have_call_signatures(entry.kind);
+        assert!(is_callable, "{}", table::text_of(id));
         assert!(!table::is_symbol_name(entry.name), "{}", table::text_of(id));
         assert!(!path.names.is_empty(), "{}", table::text_of(id));
     }
@@ -218,8 +223,8 @@ fn excluded_values() {
 
 #[test]
 fn symbol_named_value_has_no_path() {
-    let species = table::find_symbol_name(b"species").unwrap();
-    let accessor = table::own_member(BuiltinId::Array, species).unwrap();
+    let accessor = BuiltinId::ArraySymbolSpecies;
+    assert!(table::is_symbol_name(table::entry(accessor).name));
     assert!(can_have_call_signatures(table::entry(accessor).kind));
     assert!(!has_value_path(Platforms::LINUX, accessor));
 }

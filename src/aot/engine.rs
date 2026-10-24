@@ -9,6 +9,7 @@ pub(crate) mod testing;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+#[path = "standalone/engine_stubs.rs"]
 mod unlinked_engine;
 
 use core::ffi::c_void;
@@ -252,6 +253,27 @@ pub fn compile(program: ProgramBytes, options: &EngineOptions) -> EngineResult {
     }
 }
 
+/// The plan of each expected result of a program that holds nothing but those, in their order. Empty: the engine cannot read the program.
+pub fn write_validation_plans(program: &ProgramBytes) -> Vec<Box<[u8]>> {
+    let bytes = BunAOTBytes::from_slice(program.as_slice());
+    // SAFETY: the engine reads the program only until it returns, and its result has no other owner.
+    let result = unsafe {
+        let result = Bun__AOT__writeValidationPlans(bytes);
+        EngineResult::new(
+            NonNull::new(result).expect("Bun__AOT__writeValidationPlans returned null"),
+        )
+    };
+    // Each text stands behind its length.
+    let mut rest = result.elements::<u8>(ResultSection::Text);
+    let mut plans = Vec::new();
+    while let Some((length, after)) = rest.split_first_chunk::<4>() {
+        let (plan, after) = after.split_at(u32::from_le_bytes(*length) as usize);
+        plans.push(Box::from(plan));
+        rest = after;
+    }
+    plans
+}
+
 struct ProgramOwner {
     program: Option<ProgramBytes>,
     frees_on_pool_thread: bool,
@@ -306,68 +328,8 @@ impl EngineResult {
             .unwrap_or(&[])
     }
 
-    pub fn user_diagnostics(&self) -> &[UserDiagnosticRecord] {
-        self.records()
-    }
-
-    pub fn internal_errors(&self) -> &[InternalErrorRecord] {
-        self.records()
-    }
-
     pub fn entry_module_ids(&self) -> &[EngineModuleId] {
         self.elements(ResultSection::EntryModuleIds)
-    }
-
-    pub fn unseen_code(&self) -> &[UnseenCodeRecord] {
-        self.records()
-    }
-
-    pub fn builtins_used(&self) -> &[BuiltinUseRecord] {
-        self.records()
-    }
-
-    pub fn features_used(&self) -> &[FeatureUseRecord] {
-        self.records()
-    }
-
-    pub fn locales_used(&self) -> &[LocaleUseRecord] {
-        self.records()
-    }
-
-    pub fn access_counts(&self) -> &[AccessCountRecord] {
-        self.records()
-    }
-
-    pub fn accesses(&self) -> &[AccessRecord] {
-        self.records()
-    }
-
-    pub fn remaining_checks(&self) -> &[RemainingCheckRecord] {
-        self.records()
-    }
-
-    pub fn type_tests(&self) -> &[TypeTestRecord] {
-        self.records()
-    }
-
-    pub fn declines(&self) -> &[DeclineRecord] {
-        self.records()
-    }
-
-    pub fn allocation_remarks(&self) -> &[AllocationRemarkRecord] {
-        self.records()
-    }
-
-    pub fn functions(&self) -> &[FunctionReportRecord] {
-        self.records()
-    }
-
-    pub fn operation_counts(&self) -> &[OperationCountRecord] {
-        self.records()
-    }
-
-    pub fn pass_times(&self) -> &[PassTimeRecord] {
-        self.records()
     }
 
     pub fn statistics(&self) -> &[u64] {
@@ -380,14 +342,6 @@ impl EngineResult {
 
     pub fn symbols(&self) -> &[u8] {
         self.elements(ResultSection::Symbols)
-    }
-
-    pub fn obfuscated_sites(&self) -> &[ObfuscatedSiteRecord] {
-        self.records()
-    }
-
-    fn records<T: ResultRecord>(&self) -> &[T] {
-        self.elements(T::SECTION)
     }
 
     fn elements<T>(&self, section: ResultSection) -> &[T] {
@@ -465,6 +419,7 @@ unsafe extern "C" {
         options: *const CompileOptions,
         thread_pool: *const HostThreadPool,
     ) -> *mut BunAOTResult;
+    fn Bun__AOT__writeValidationPlans(program: BunAOTBytes) -> *mut BunAOTResult;
     fn Bun__AOT__resultSection(result: *const BunAOTResult, section: u32) -> BunAOTBytes;
     fn Bun__AOT__freeResult(result: *mut BunAOTResult);
     safe fn Bun__AOT__operationCount() -> usize;
@@ -476,27 +431,35 @@ trait ResultRecord: Copy {
     const SECTION: ResultSection;
 }
 
-macro_rules! result_record {
-    ($record:ident, $section:ident) => {
-        impl ResultRecord for $record {
+macro_rules! result_records {
+    ($($name:ident: $record:ident = $section:ident,)*) => {
+        $(impl ResultRecord for $record {
             const SECTION: ResultSection = ResultSection::$section;
+        })*
+
+        impl EngineResult {
+            $(pub fn $name(&self) -> &[$record] {
+                self.elements($record::SECTION)
+            })*
         }
     };
 }
 
-result_record!(UserDiagnosticRecord, UserDiagnostics);
-result_record!(InternalErrorRecord, InternalErrors);
-result_record!(UnseenCodeRecord, UnseenCode);
-result_record!(BuiltinUseRecord, BuiltinsUsed);
-result_record!(FeatureUseRecord, FeaturesUsed);
-result_record!(LocaleUseRecord, LocalesUsed);
-result_record!(AccessCountRecord, AccessCounts);
-result_record!(AccessRecord, Accesses);
-result_record!(RemainingCheckRecord, RemainingChecks);
-result_record!(TypeTestRecord, TypeTests);
-result_record!(DeclineRecord, Declines);
-result_record!(AllocationRemarkRecord, AllocationRemarks);
-result_record!(FunctionReportRecord, Functions);
-result_record!(OperationCountRecord, OperationCounts);
-result_record!(PassTimeRecord, PassTimes);
-result_record!(ObfuscatedSiteRecord, ObfuscatedSites);
+result_records! {
+    user_diagnostics: UserDiagnosticRecord = UserDiagnostics,
+    internal_errors: InternalErrorRecord = InternalErrors,
+    unseen_code: UnseenCodeRecord = UnseenCode,
+    builtins_used: BuiltinUseRecord = BuiltinsUsed,
+    features_used: FeatureUseRecord = FeaturesUsed,
+    locales_used: LocaleUseRecord = LocalesUsed,
+    access_counts: AccessCountRecord = AccessCounts,
+    accesses: AccessRecord = Accesses,
+    remaining_checks: RemainingCheckRecord = RemainingChecks,
+    type_tests: TypeTestRecord = TypeTests,
+    declines: DeclineRecord = Declines,
+    allocation_remarks: AllocationRemarkRecord = AllocationRemarks,
+    functions: FunctionReportRecord = Functions,
+    operation_counts: OperationCountRecord = OperationCounts,
+    pass_times: PassTimeRecord = PassTimes,
+    obfuscated_sites: ObfuscatedSiteRecord = ObfuscatedSites,
+}

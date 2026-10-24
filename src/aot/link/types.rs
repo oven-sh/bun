@@ -1,91 +1,17 @@
 use super::LinkError;
+use super::keys::{collect_shards, number_by_unit};
 use super::state::{MergedTypes, UnitIds, UnitMarks};
 use super::type_hashes::ContentHash;
-use super::unit::{FindsByUnit, LinkUnit, SHARD_COUNT, shard_of};
+use super::unit::{LinkUnit, shard_of};
+use crate::ir::parallel::map_each;
 use crate::ir::{Id, IdMap, InParallel, PreparedType, Type, TypeId, TypeTable, for_each_mut};
-use crate::load::ProgramFile;
 use core::cmp::Ordering;
-use hashbrown::HashTable;
-use hashbrown::hash_table::Entry;
+use core::ops::Range;
 
-struct TypeShard {
-    shard: usize,
-    table: HashTable<u32>,
-    entries: Vec<(u32, TypeId)>,
-    hashes: Vec<ContentHash>,
-    program_ids: Vec<TypeId>,
-}
-
-impl TypeShard {
-    fn new(shard: usize) -> TypeShard {
-        TypeShard {
-            shard,
-            table: HashTable::new(),
-            entries: Vec::new(),
-            hashes: Vec::new(),
-            program_ids: Vec::new(),
-        }
-    }
-
-    fn find(&self, hash: ContentHash) -> Option<u32> {
-        let is_equal = |&entry: &u32| self.hashes[entry as usize] == hash;
-        self.table.find(hash.0[0], is_equal).copied()
-    }
-
-    fn add_type(&mut self, unit: u32, local: TypeId, hash: ContentHash) {
-        let hashes = &self.hashes;
-        let entry = self.table.entry(
-            hash.0[0],
-            |&other| hashes[other as usize] == hash,
-            |&other| hashes[other as usize].0[0],
-        );
-        if let Entry::Vacant(vacant) = entry {
-            vacant.insert(self.entries.len() as u32);
-            self.entries.push((unit, local));
-            self.hashes.push(hash);
-        }
-    }
-
-    fn collect_types(&mut self, units: &[LinkUnit], marks: &[UnitMarks]) {
-        for (position, (unit, unit_marks)) in units.iter().zip(marks).enumerate() {
-            for &local in unit.type_shards.shard(self.shard) {
-                let local = TypeId::new(local as usize);
-                if unit_marks.types[local.index()] {
-                    let hash = unit.type_hashes.types[local.index()];
-                    self.add_type(position as u32, local, hash);
-                }
-            }
-        }
-    }
-}
-
-fn order_in_unit(unit: &LinkUnit, local: TypeId) -> (bool, u32, ContentHash) {
-    if local.index() < TypeTable::WELL_KNOWN_COUNT {
-        return (false, 0, ContentHash([local.index() as u64, 0]));
-    }
-    let depth = unit.type_hashes.nesting_depths[local.index()];
-    (true, depth, ContentHash([local.index() as u64, 0]))
-}
-
-fn number_types(
-    shards: &mut [TypeShard],
-    units: &[LinkUnit],
-    in_parallel: InParallel<'_>,
-) -> Vec<(u32, TypeId)> {
-    let entries: Vec<&[(u32, TypeId)]> = shards.iter().map(|shard| &shard.entries[..]).collect();
-    let by_unit = FindsByUnit::new(units.len(), &entries);
-    let order = by_unit.order_rows_by(in_parallel, &|unit, local| {
-        order_in_unit(&units[unit as usize], local)
-    });
-    let program_ids = by_unit.number_in(&order);
-    let mut shards: Vec<(&mut TypeShard, &Vec<u32>)> =
-        shards.iter_mut().zip(&by_unit.places).collect();
-    for_each_mut(&mut shards, in_parallel, &|(shard, places)| {
-        let program_id = |&place: &u32| program_ids[place as usize];
-        shard.program_ids = places.iter().map(program_id).collect();
-    });
-    let representative = |&place: &u32| by_unit.finds[place as usize];
-    order.iter().map(representative).collect()
+// None: the type is well known.
+fn find_depth(units: &[LinkUnit], (unit, local): (u32, TypeId)) -> Option<u32> {
+    let is_well_known = local.index() < TypeTable::WELL_KNOWN_COUNT;
+    (!is_well_known).then(|| units[unit as usize].type_hashes.nesting_depths[local.index()])
 }
 
 pub(super) fn merge_types(
@@ -94,94 +20,82 @@ pub(super) fn merge_types(
     in_parallel: InParallel<'_>,
 ) -> MergedTypes {
     debug_assert_eq!(units.len(), marks.len());
-    let mut shards: Vec<TypeShard> = (0..SHARD_COUNT).map(TypeShard::new).collect();
-    for_each_mut(&mut shards, in_parallel, &|shard| {
-        shard.collect_types(units, marks)
+    let shards = collect_shards(in_parallel, &|number, shard| {
+        for (position, (unit, unit_marks)) in units.iter().zip(marks).enumerate() {
+            for &local in unit.type_shards.shard(number) {
+                if unit_marks.types[local as usize] {
+                    let hash = unit.type_hashes.types[local as usize];
+                    let entry = (position as u32, TypeId::new(local as usize));
+                    shard.add(hash, entry, |_, other| other == hash);
+                }
+            }
+        }
     });
-    let type_representatives = number_types(&mut shards, units, in_parallel);
+    let (program_ids, type_representatives) =
+        number_by_unit(&shards, units.len(), in_parallel, &|unit, local| {
+            (find_depth(units, (unit, local)), local)
+        });
 
-    let mut slots: Vec<(usize, Vec<Option<TypeId>>)> = (0..units.len())
-        .map(|position| (position, Vec::new()))
-        .collect();
-    for_each_mut(&mut slots, in_parallel, &|(position, program_ids)| {
+    let units_with_marks: Vec<(&LinkUnit, &UnitMarks)> = units.iter().zip(marks).collect();
+    let types = map_each(units_with_marks, in_parallel, &|(unit, marks)| {
         let program_id = |(&hash, &is_retained): (&ContentHash, &bool)| {
             if !is_retained {
                 return None;
             }
-            let shard = &shards[shard_of(hash.0[0])];
-            let entry = shard.find(hash).expect("every retained type was merged");
-            Some(shard.program_ids[entry as usize])
+            let shard = shard_of(hash.into());
+            let entry = shards[shard]
+                .find(hash, |_, other| other == hash)
+                .expect("every retained type was merged");
+            Some(program_ids[shard][entry as usize])
         };
-        let hashes = units[*position].type_hashes.types.iter();
-        let types = hashes.zip(&marks[*position].types);
-        *program_ids = types.map(program_id).collect();
+        let hashes = unit.type_hashes.types.iter();
+        hashes.zip(&marks.types).map(program_id).collect()
     });
 
     MergedTypes {
-        types: slots
-            .into_iter()
-            .map(|(_, program_ids)| program_ids)
-            .collect(),
+        types,
         type_representatives,
     }
 }
 
 fn compare_contents(a: &Type, b: &Type) -> Ordering {
     let scalars = |ty: &Type| {
+        let (primitives, flags) = (ty.primitives.to_wire(), ty.flags.to_wire());
         let opaque = ty.opaque.map(|kind| kind.to_wire());
         let range = (ty.minimum, ty.maximum);
-        (
-            ty.primitives.to_wire(),
-            ty.flags.to_wire(),
-            opaque,
-            ty.environment,
-            range,
-        )
+        (primitives, flags, opaque, ty.environment, range)
     };
-    let classes = |ty: &'_ Type| -> Vec<(u32, Vec<TypeId>)> {
+    let [builtins_of_a, builtins_of_b] = [a, b].map(|ty| ty.builtins.iter().map(|id| id.to_wire()));
+    let [classes_of_a, classes_of_b] = [a, b].map(|ty| {
         let parts = ty.classes.iter();
-        parts
-            .map(|part| (part.builtin_class.to_wire(), part.contents.clone()))
-            .collect()
-    };
-    let builtins = |ty: &Type| -> Vec<u32> { ty.builtins.iter().map(|id| id.to_wire()).collect() };
+        parts.map(|part| (part.builtin_class.to_wire(), &part.contents))
+    });
     scalars(a)
         .cmp(&scalars(b))
         .then_with(|| a.strings.cmp(&b.strings))
         .then_with(|| a.layouts.cmp(&b.layouts))
         .then_with(|| a.functions.cmp(&b.functions))
-        .then_with(|| builtins(a).cmp(&builtins(b)))
-        .then_with(|| classes(a).cmp(&classes(b)))
+        .then_with(|| builtins_of_a.cmp(builtins_of_b))
+        .then_with(|| classes_of_a.cmp(classes_of_b))
 }
 
-// The representatives of one file at one depth: they stand in a row.
-struct Run {
-    start: usize,
-    length: usize,
-    // The places that the members have had, in their new order.
-    order: Vec<u32>,
-}
-
-fn find_runs_by_depth(units: &[LinkUnit], representatives: &[(u32, TypeId)]) -> Vec<Vec<Run>> {
-    let depth_of = |&(unit, local): &(u32, TypeId)| {
-        let is_well_known = local.index() < TypeTable::WELL_KNOWN_COUNT;
-        let depths = &units[unit as usize].type_hashes.nesting_depths;
-        (!is_well_known).then(|| depths[local.index()] as usize)
-    };
-    let mut runs_by_depth: Vec<Vec<Run>> = Vec::new();
+// The representatives of one file at one depth stand in a row: the rows of more than one, by depth.
+fn find_runs_by_depth(
+    units: &[LinkUnit],
+    representatives: &[(u32, TypeId)],
+) -> Vec<Vec<Range<usize>>> {
+    let depth_of = |&representative: &(u32, TypeId)| find_depth(units, representative);
+    let mut runs_by_depth: Vec<Vec<Range<usize>>> = Vec::new();
     let mut start = 0;
     for run in representatives.chunk_by(|a, b| a.0 == b.0 && depth_of(a) == depth_of(b)) {
         if let Some(depth) = depth_of(&run[0])
             && run.len() > 1
         {
+            let depth = depth as usize;
             if runs_by_depth.len() <= depth {
                 runs_by_depth.resize_with(depth + 1, Vec::new);
             }
-            runs_by_depth[depth].push(Run {
-                start,
-                length: run.len(),
-                order: Vec::new(),
-            });
+            runs_by_depth[depth].push(start..start + run.len());
         }
         start += run.len();
     }
@@ -196,25 +110,26 @@ pub(super) fn order_types_by_contents(
     in_parallel: InParallel<'_>,
 ) {
     let mut new_ids: Vec<TypeId> = (0..representatives.len()).map(TypeId::new).collect();
-    for mut runs in find_runs_by_depth(units, representatives) {
-        for_each_mut(&mut runs, in_parallel, &|run| {
-            let members = &representatives[run.start..run.start + run.length];
-            let unit = members[0].0 as usize;
+    for runs in find_runs_by_depth(units, representatives) {
+        // The places that the members of a run have had, in their new order.
+        let orders = map_each(runs, in_parallel, &|run: Range<usize>| {
+            let unit = representatives[run.start].0 as usize;
             let map = ids[unit].as_map();
-            let mut remapped = Vec::with_capacity(run.length);
-            for (offset, &(_, local)) in members.iter().enumerate() {
-                let mut ty = remap_type(&units[unit], &map, local);
+            let mut remapped = Vec::with_capacity(run.len());
+            for place in run.clone() {
+                let mut ty = remap_type(&units[unit], &map, representatives[place].1);
                 for id in ty.classes.iter_mut().flat_map(|part| &mut part.contents) {
                     *id = new_ids[id.index()];
                 }
-                remapped.push((ty, (run.start + offset) as u32));
+                remapped.push((ty, place));
             }
             remapped.sort_unstable_by(|a, b| compare_contents(&a.0, &b.0));
-            run.order = remapped.into_iter().map(|(_, place)| place).collect();
+            let places: Vec<usize> = remapped.into_iter().map(|(_, place)| place).collect();
+            (run.start, places)
         });
-        for run in &runs {
-            for (offset, &place) in run.order.iter().enumerate() {
-                new_ids[place as usize] = TypeId::new(run.start + offset);
+        for (start, places) in orders {
+            for (offset, place) in places.into_iter().enumerate() {
+                new_ids[place] = TypeId::new(start + offset);
             }
         }
     }
@@ -273,7 +188,6 @@ pub(super) fn collision_between(
     LinkError::TypeHashCollision { files }
 }
 
-/// The table of the types that `prepare_types` has answered with.
 pub(super) fn intern_prepared_types(prepared: Vec<PreparedType>) -> Result<TypeTable, [usize; 2]> {
     let mut table = TypeTable::new();
     table.reserve(prepared.len());
@@ -286,77 +200,34 @@ pub(super) fn intern_prepared_types(prepared: Vec<PreparedType>) -> Result<TypeT
     Ok(table)
 }
 
-struct Occurrences<'a> {
-    unit: u32,
-    marks: &'a [bool],
-    program_ids: &'a [Option<TypeId>],
-    representatives: &'a [(u32, TypeId)],
-}
-
-impl Occurrences<'_> {
-    fn find_conflicting_unit(&self, is_equal: impl Fn(TypeId, TypeId) -> bool) -> Option<u32> {
-        for (local, &is_retained) in self.marks.iter().enumerate() {
-            if !is_retained {
-                continue;
-            }
-            let local = TypeId::new(local);
-            let program_id = self.program_ids[local.index()];
-            let program_id = program_id.expect("every retained occurrence has a program id");
-            let representative = self.representatives[program_id.index()];
-            if representative == (self.unit, local) {
-                continue;
-            }
-            if !is_equal(local, program_id) {
-                return Some(representative.0);
-            }
-        }
-        None
-    }
-}
-
-struct OccurrenceCheck<'a> {
-    units: &'a [LinkUnit],
-    type_representatives: &'a [(u32, TypeId)],
-    ids: &'a [UnitIds],
-    marks: &'a [UnitMarks],
-    prepared: &'a [PreparedType],
-}
-
-impl OccurrenceCheck<'_> {
-    fn find_collision(&self, position: usize) -> Option<[ProgramFile; 2]> {
-        let (unit, marks) = (&self.units[position], &self.marks[position]);
-        let map = self.ids[position].as_map();
-        let types = Occurrences {
-            unit: position as u32,
-            marks: &marks.types,
-            program_ids: map.types,
-            representatives: self.type_representatives,
-        };
-        let conflicting_unit = types.find_conflicting_unit(|local, program_id| {
-            remap_type(unit, &map, local) == *self.prepared[program_id.index()].ty()
-        })?;
-        Some([self.units[conflicting_unit as usize].file, unit.file])
-    }
-}
-
 fn check_occurrences(
     input: &TypeTableInput<'_>,
     prepared: &[PreparedType],
 ) -> Result<(), LinkError> {
-    let check = OccurrenceCheck {
-        units: input.units,
-        type_representatives: input.type_representatives,
-        ids: input.ids,
-        marks: input.marks,
-        prepared,
+    let (units, ids, marks) = (input.units, input.ids, input.marks);
+    let representatives = input.type_representatives;
+    let find_collision = |position: usize| {
+        let (unit, map) = (&units[position], ids[position].as_map());
+        for (local, &is_retained) in marks[position].types.iter().enumerate() {
+            if !is_retained {
+                continue;
+            }
+            let local = TypeId::new(local);
+            let program_id = map.types[local.index()];
+            let program_id = program_id.expect("every retained occurrence has a program id");
+            let representative = representatives[program_id.index()];
+            if representative == (position as u32, local) {
+                continue;
+            }
+            if remap_type(unit, &map, local) != *prepared[program_id.index()].ty() {
+                return Some([units[representative.0 as usize].file, unit.file]);
+            }
+        }
+        None
     };
-    let mut slots: Vec<(usize, Option<[ProgramFile; 2]>)> = (0..input.units.len())
-        .map(|position| (position, None))
-        .collect();
-    for_each_mut(&mut slots, input.in_parallel, &|(position, collision)| {
-        *collision = check.find_collision(*position);
-    });
-    match slots.into_iter().find_map(|(_, collision)| collision) {
+    let positions = (0..units.len()).collect();
+    let collisions = map_each(positions, input.in_parallel, &find_collision);
+    match collisions.into_iter().flatten().next() {
         Some(files) => Err(LinkError::TypeHashCollision { files }),
         None => Ok(()),
     }

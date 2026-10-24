@@ -1,13 +1,12 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{PrivateNameId, SymbolId};
+use bun_sema::bind::PrivateNameId;
 use bun_sema::check::aot::{ClassMemberSource, ClassRef};
 use bun_sema::hir::{ClassId, Flags, MemberId, ParamId, PatKind, PropKey};
 use smallvec::SmallVec;
 
 use super::{ClassElement, FieldValue, is_auto_accessor};
-use crate::ir::generated::{
-    Field, FieldFlags, Function, FunctionFlags, FunctionKind, TypeSiteKind,
-};
+use crate::builtins::id::BuiltinId;
+use crate::ir::generated::{Field, FieldFlags, FunctionFlags, FunctionKind, TypeSiteKind};
 use crate::ir::{ClassSlot, DeclaredType, FunctionId, FunctionKey, LayoutId, TypeTable, ValueId};
 use crate::lower::member::PropertyName;
 use crate::lower::positions::SiteOrigin;
@@ -24,10 +23,7 @@ pub(crate) fn static_field_position(
     class: ClassId,
     member: MemberId,
 ) -> DeclaredType {
-    let shape = file.queries.class_shape(ClassRef {
-        file: file.file,
-        class,
-    });
+    let shape = file.queries.class_shape(file.own_class(class));
     let source = ClassMemberSource::Member(member);
     let Some(entry) = shape.members.iter().find(|entry| entry.source == source) else {
         return file.member_annotation_position(member, TypeSiteKind::StaticField);
@@ -48,11 +44,7 @@ pub(super) fn member_field_position(
     if hir[member].flags.contains(Flags::STATIC) {
         return static_field_position(file, class, member);
     }
-    let reference = ClassRef {
-        file: file.file,
-        class,
-    };
-    let layout = file.class_layout(reference);
+    let layout = file.own_class_layout(class);
     let field = match is_auto_accessor(hir, member) {
         true => layouts::own_fields(file, layout).find_accessor_storage(member),
         false => file.find_named_field(layout, member),
@@ -108,35 +100,17 @@ impl FileLowering<'_, '_, '_, '_> {
         fields.collect()
     }
 
-    fn create_initializer_header(
-        &mut self,
-        key: FunctionKey,
-        class: ClassId,
-        this_type: DeclaredType,
-    ) -> Function {
-        let position = self.hir[class].name_pos;
-        let mut header = function::create_header(self, key, FunctionKind::Initializer, position);
-        header.flags |= FunctionFlags::HAS_THIS | FunctionFlags::IS_HIDDEN_IN_STACK_TRACES;
-        header.this_type = this_type;
-        header
-    }
-
-    pub(crate) fn lower_instance_initializer(&mut self, function: FunctionId, class: ClassId) {
-        let plan = self.class_plan(class);
-        self.lower_initializer_body(function, class, &plan.instance_elements);
-    }
-
-    pub(crate) fn lower_static_initializer(&mut self, function: FunctionId, class: ClassId) {
-        let plan = self.class_plan(class);
-        self.lower_initializer_body(function, class, &plan.static_elements);
-    }
-
-    fn lower_initializer_body(
+    pub(crate) fn lower_initializer(
         &mut self,
         function: FunctionId,
         class: ClassId,
-        elements: &[ClassElement],
+        is_static: bool,
     ) {
+        let plan = self.class_plan(class);
+        let elements = match is_static {
+            true => &plan.static_elements,
+            false => &plan.instance_elements,
+        };
         let mut lowering = FunctionLowering::begin(self, function);
         let this = lowering.builder.this_value();
         let this = this.expect("an initializer function takes this");
@@ -149,53 +123,38 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
-pub(in crate::lower) fn find_private_state_field(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    owner: ClassId,
-    state: SymbolId,
-) -> Option<(LayoutId, u32)> {
-    let reference = ClassRef {
-        file: file.file,
-        class: owner,
-    };
-    let layout = file.class_layout(reference);
-    let name = file.bound.symbol(state).name;
-    let key = layouts::private_key(file, layout, name);
-    let field = file.find_field(layout, key)?;
-    Some((layout, field))
-}
-
-pub(super) fn declare_instance_initializer(
+pub(super) fn declare_initializer(
     file: &mut FileLowering<'_, '_, '_, '_>,
     class: ClassId,
+    is_static: bool,
 ) -> FunctionId {
-    let reference = ClassRef {
-        file: file.file,
-        class,
+    let reference = file.own_class(class);
+    let key = match is_static {
+        true => FunctionKey::StaticInitializer(reference),
+        false => FunctionKey::InstanceInitializer(reference),
     };
-    let key = FunctionKey::InstanceInitializer(reference);
     file.declare_function(key, |file| {
-        let this_type = file.class_this_type(reference, None);
-        file.create_initializer_header(key, class, this_type)
-    })
-}
-
-pub(super) fn declare_static_initializer(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    class: ClassId,
-) -> FunctionId {
-    let reference = ClassRef {
-        file: file.file,
-        class,
-    };
-    let key = FunctionKey::StaticInitializer(reference);
-    file.declare_function(key, |file| {
-        let this_type = DeclaredType::from_compiler(TypeTable::FUNCTION);
-        file.create_initializer_header(key, class, this_type)
+        let this_type = match is_static {
+            true => DeclaredType::from_compiler(TypeTable::FUNCTION),
+            false => file.class_this_type(reference, None),
+        };
+        let position = file.hir[class].name_pos;
+        let mut header = function::create_header(file, key, FunctionKind::Initializer, position);
+        header.flags |= FunctionFlags::HAS_THIS | FunctionFlags::IS_HIDDEN_IN_STACK_TRACES;
+        header.this_type = this_type;
+        header
     })
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(super) fn emit_call_on(&mut self, function: FunctionId, this: ValueId) {
+        let arguments = function::EntryArguments {
+            this: Some(this),
+            ..Default::default()
+        };
+        self.emit_direct_call(function, arguments);
+    }
+
     pub(super) fn emit_class_element(
         &mut self,
         class: ClassId,
@@ -209,15 +168,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.emit_parameter_property_field(parameter, this);
             }
             ClassElement::Field { member, value } => {
-                self.lower_defined_field(class, member, value, this);
+                self.lower_field(class, member, value, true, this);
             }
             ClassElement::AssignedField { member } => {
-                self.lower_assigned_field(class, member, this);
+                self.lower_field(class, member, FieldValue::Initializer, false, this);
             }
             ClassElement::AccessorStorage { member, value } => {
                 let value = self.lower_field_value(class, member, value, None, this);
                 self.set_position(self.file.hir[member].name_pos);
-                self.emit_storage_definition(this, member, value);
+                let stored = self.file.resolve_accessor_storage(member);
+                self.emit_stored_definition(stored, this, value);
             }
             ClassElement::RunInitializers { initializers } => {
                 let list = self.get_initializer_list(class, initializers);
@@ -243,34 +203,30 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.emit_define(this, PropertyName::Constant(key), undefined);
     }
 
-    fn lower_defined_field(
+    fn lower_field(
         &mut self,
         class: ClassId,
         member: MemberId,
         value: FieldValue,
+        is_defined: bool,
         this: ValueId,
     ) {
         let target = self.find_field_target(class, member);
-        let function_name = get_field_function_name(self.file, class, target);
-        let value = self.lower_field_value(class, member, value, Some(function_name), this);
-        self.set_position(self.file.hir[member].name_pos);
-        match target {
-            FieldTarget::Property(name) => self.emit_define(this, name, value),
-            FieldTarget::Private(name) => {
-                self.emit_field_definition(this, name, value);
+        let function_name = is_defined.then(|| match target {
+            FieldTarget::Property(name) => name,
+            FieldTarget::Private(id) => {
+                let layout = self.file.own_class_layout(class);
+                let name = self.file.bound.private_name(id).name;
+                PropertyName::Constant(layouts::private_key(self.file, layout, name))
             }
-        }
-    }
-
-    fn lower_assigned_field(&mut self, class: ClassId, member: MemberId, this: ValueId) {
-        let target = self.find_field_target(class, member);
-        let value = self.lower_field_value(class, member, FieldValue::Initializer, None, this);
+        });
+        let value = self.lower_field_value(class, member, value, function_name, this);
         self.set_position(self.file.hir[member].name_pos);
-        match target {
-            FieldTarget::Property(name) => self.emit_set(this, name, value),
-            FieldTarget::Private(name) => {
-                self.emit_name_set(this, name, value, None);
-            }
+        match (target, is_defined) {
+            (FieldTarget::Property(name), true) => self.emit_define(this, name, value),
+            (FieldTarget::Property(name), false) => self.emit_set(this, name, value),
+            (FieldTarget::Private(name), true) => self.emit_field_definition(this, name, value),
+            (FieldTarget::Private(name), false) => self.emit_name_set(this, name, value, None),
         }
     }
 
@@ -322,7 +278,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     None => self.builder.undefined(),
                 };
                 let list = self.get_initializer_list(class, initializers);
-                self.emit_value_initializer_run(list, this, undecorated)
+                let arguments = [list, this, undecorated];
+                self.emit_builtin_call(BuiltinId::CompilerHelpersRunValueInitializers, &arguments)
             }
         };
         let position = member_field_position(self.file, class, member);
@@ -358,29 +315,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         }
         let block = function::declare_source_function(self.file, function, None);
-        let arguments = function::EntryArguments {
-            this: Some(this),
-            ..Default::default()
-        };
-        self.emit_direct_call(block, arguments);
-    }
-}
-
-fn get_field_function_name(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    class: ClassId,
-    target: FieldTarget,
-) -> PropertyName {
-    match target {
-        FieldTarget::Property(name) => name,
-        FieldTarget::Private(id) => {
-            let reference = ClassRef {
-                file: file.file,
-                class,
-            };
-            let layout = file.class_layout(reference);
-            let name = file.bound.private_name(id).name;
-            PropertyName::Constant(layouts::private_key(file, layout, name))
-        }
+        self.emit_call_on(block, this);
     }
 }

@@ -3,7 +3,7 @@ mod tests;
 
 use super::bindings::{AccessedModule, Holder, ImportBinding, RequiredName};
 use super::exports::{ExportTables, Resolution};
-use super::failures::{FailureOrder, ModuleFailure, ModuleFailureKind, PendingFailure, SitePart};
+use super::failures::{ModuleFailureKind, PendingFailure, SitePart, WrittenPart};
 use super::interop::{ImportPhase, ModuleKind, SyntheticExportRule};
 use super::module_set::ModuleSet;
 use super::order::{EvaluationOrder, PlannedSites};
@@ -71,25 +71,6 @@ pub(super) struct FileImports {
     pub failures: Vec<PendingFailure>,
 }
 
-#[derive(Default)]
-pub(super) struct FinishedImports {
-    pub imports: Vec<(SymbolId, ImportBinding)>,
-    pub members: Vec<(ExprId, ImportBinding)>,
-    pub accessed: Vec<(ExprId, AccessedModule)>,
-    pub fixed_members: Vec<(ExprId, (ModuleRef, Member))>,
-    pub named_members: Vec<((ModuleRef, Atom), NamedMember<ImportBinding>)>,
-    pub jsx: Vec<(JsxImport, ImportBinding)>,
-    pub namespace_values: Vec<ModuleRef>,
-    pub holders: Vec<Holder>,
-    pub unread_sites: Vec<(ExprId, bool)>,
-    pub required_names: Vec<RequiredName>,
-}
-
-pub(super) struct BoundName {
-    pub binding: PendingBinding,
-    pub required_name: Option<RequiredName>,
-}
-
 /// Whether a CommonJS module has `__esModule`, as far as its text says it.
 pub(super) type FindMarker<'a> = &'a (dyn Fn(ModuleRef) -> Option<bool> + Sync);
 
@@ -141,41 +122,24 @@ pub(super) fn find_imported_value_site(
     let analysis = files.analysis(file);
     let site = analysis.import_site_index(ImportSiteKind::Import(import))?;
     let has_value_meaning = || may_name_value(files, Sym { file, id: symbol });
-    let is_elided = analysis
-        .unused_import_symbols
-        .binary_search(&symbol)
-        .is_ok()
+    let unused = analysis.unused_import_symbols;
+    let is_elided = unused.binary_search(&symbol).is_ok()
         || !files.bound(file).has_runtime_value(symbol)
         || scan.sites[site] == ScannedSite::Erased
         || (files.role(file) == FileRole::Checked && !has_value_meaning());
     (!is_elided).then_some(site)
 }
 
-pub(super) fn finish_imports(
-    imports: FileImports,
+pub(super) fn finish_named_members(
+    members: Vec<((ModuleRef, Atom), NamedMember)>,
     synthetic: &SyntheticExports,
-) -> FinishedImports {
-    let named_members = imports.named_members.into_iter();
-    FinishedImports {
-        imports: finish_bindings(imports.bindings, synthetic),
-        members: finish_bindings(imports.members, synthetic),
-        accessed: imports.accessed,
-        fixed_members: imports.fixed_members,
-        named_members: named_members
-            .map(|(key, member)| match member {
-                NamedMember::Binding(binding) => (
-                    key,
-                    NamedMember::Binding(finish_binding(binding, synthetic)),
-                ),
-                NamedMember::Fixed(member) => (key, NamedMember::Fixed(member)),
-            })
-            .collect(),
-        jsx: finish_bindings(imports.jsx, synthetic),
-        namespace_values: imports.namespace_values,
-        holders: imports.holders,
-        unread_sites: imports.unread_sites,
-        required_names: imports.required_names,
-    }
+) -> Vec<((ModuleRef, Atom), NamedMember<ImportBinding>)> {
+    let finish = |member| match member {
+        NamedMember::Binding(binding) => NamedMember::Binding(finish_binding(binding, synthetic)),
+        NamedMember::Fixed(member) => NamedMember::Fixed(member),
+    };
+    let members = members.into_iter();
+    members.map(|(key, member)| (key, finish(member))).collect()
 }
 
 fn finish_binding(binding: PendingBinding, synthetic: &SyntheticExports) -> ImportBinding {
@@ -195,7 +159,7 @@ fn finish_binding(binding: PendingBinding, synthetic: &SyntheticExports) -> Impo
     }
 }
 
-fn finish_bindings<K>(
+pub(super) fn finish_bindings<K>(
     bindings: Vec<(K, PendingBinding)>,
     synthetic: &SyntheticExports,
 ) -> Vec<(K, ImportBinding)> {
@@ -221,7 +185,7 @@ pub(super) struct BindContext<'a, 's> {
     pub(super) marker: FindMarker<'a>,
 }
 
-enum ImportedItem {
+pub(super) enum ImportedItem {
     Namespace(ImportPhase),
     Name {
         name: Atom,
@@ -230,10 +194,37 @@ enum ImportedItem {
     },
 }
 
-struct NameLocation {
-    order: FailureOrder,
-    site: ImportSiteKind,
-    range: Range<u32>,
+/// What an import statement declares, in the order of its text.
+pub(super) fn imported_items(
+    files: &Files<'_>,
+    hir: &hir::File<'_>,
+    id: ImportId,
+) -> impl Iterator<Item = (Decl, ImportedItem)> {
+    let import = hir[id];
+    let default = import.default.is_some().then(|| {
+        let start = import.default_pos;
+        let item = ImportedItem::Name {
+            name: known::default,
+            part: SitePart::Name(0),
+            range: start..start + files.atoms.bytes(import.default).len() as u32,
+        };
+        (Decl::ImportDefault(id), item)
+    });
+    let namespace = import.namespace.is_some().then(|| {
+        let item = ImportedItem::Namespace(import_phase(hir, id));
+        (Decl::ImportNamespace(id), item)
+    });
+    let named = (1..).zip(import.named.iter());
+    let named = named.map(move |(position, specifier_id)| {
+        let specifier = hir[specifier_id];
+        let item = ImportedItem::Name {
+            name: specifier.imported,
+            part: SitePart::Name(position),
+            range: specifier.start..specifier.end,
+        };
+        (Decl::ImportSpec(specifier_id), item)
+    });
+    default.into_iter().chain(namespace).chain(named)
 }
 
 pub(super) struct FileBinder<'a, 's> {
@@ -266,8 +257,10 @@ impl<'a, 's> FileBinder<'a, 's> {
     }
 
     fn bind_file(mut self) -> FileImports {
-        for index in 0..self.hir.imports.len() as u32 {
-            self.bind_statement(ImportId(index));
+        for id in (0..self.hir.imports.len() as u32).map(ImportId) {
+            for (declaration, item) in imported_items(self.context.files, self.hir, id) {
+                self.bind_symbol(declaration, id, item);
+            }
         }
         self.bind_jsx_imports();
         self.bind_namespace_members();
@@ -278,33 +271,6 @@ impl<'a, 's> FileBinder<'a, 's> {
         let members = &mut self.imports.members;
         members.shared_sort_unstable_by_key(|&(member, _)| member);
         self.imports
-    }
-
-    fn bind_statement(&mut self, id: ImportId) {
-        let import = self.hir[id];
-        if import.default.is_some() {
-            let start = import.default_pos;
-            let length = self.context.files.atoms.bytes(import.default).len() as u32;
-            let item = ImportedItem::Name {
-                name: known::default,
-                part: SitePart::Name(0),
-                range: start..start + length,
-            };
-            self.bind_symbol(Decl::ImportDefault(id), id, item);
-        }
-        if import.namespace.is_some() {
-            let item = ImportedItem::Namespace(import_phase(self.hir, id));
-            self.bind_symbol(Decl::ImportNamespace(id), id, item);
-        }
-        for (position, specifier_id) in (1..).zip(import.named.iter()) {
-            let specifier = self.hir[specifier_id];
-            let item = ImportedItem::Name {
-                name: specifier.imported,
-                part: SitePart::Name(position),
-                range: specifier.start..specifier.end,
-            };
-            self.bind_symbol(Decl::ImportSpec(specifier_id), id, item);
-        }
     }
 
     fn bind_symbol(&mut self, declaration: Decl, import: ImportId, item: ImportedItem) {
@@ -337,15 +303,9 @@ impl<'a, 's> FileBinder<'a, 's> {
                 PendingBinding::Bound(ImportBinding::Exports { module: exporter })
             }
             (&ScannedSite::Module(exporter), ImportedItem::Name { name, part, range }) => {
-                let location = NameLocation {
-                    order: FailureOrder {
-                        site: site as u32,
-                        part,
-                    },
-                    site: self.analysis.import_sites[site].kind,
-                    range,
-                };
-                self.bind_name(exporter, name, location)
+                let kind = self.analysis.import_sites[site].kind;
+                let written = WrittenPart::new(site, part, kind, range);
+                self.bind_name(exporter, name, written)
             }
             (ScannedSite::Unresolved, _) => UNBOUND,
             (ScannedSite::AllModules | ScannedSite::Candidates(_) | ScannedSite::Erased, _) => {
@@ -366,10 +326,8 @@ impl<'a, 's> FileBinder<'a, 's> {
     }
 
     pub(super) fn is_exported(&self, symbol: SymbolId) -> bool {
-        let variable = Resolution::Variable(Sym {
-            file: self.file,
-            id: symbol,
-        });
+        let (file, id) = (self.file, symbol);
+        let variable = Resolution::Variable(Sym { file, id });
         let mut names = self.context.tables.names(self.file).iter();
         names.any(|(_, resolved)| resolved.resolution == variable)
     }
@@ -378,7 +336,7 @@ impl<'a, 's> FileBinder<'a, 's> {
         &self,
         exporter: ModuleRef,
         name: Atom,
-    ) -> Result<BoundName, ModuleFailureKind> {
+    ) -> Result<(PendingBinding, Option<RequiredName>), ModuleFailureKind> {
         let context = self.context;
         let not_found = ModuleFailureKind::ExportNotFound { exporter, name };
         let resolved = context.tables.resolve_in(context.modules, exporter, name);
@@ -405,16 +363,18 @@ impl<'a, 's> FileBinder<'a, 's> {
                 return Err(ModuleFailureKind::ExportAmbiguous { exporter, name });
             }
         };
+        let is_own_name = |module| {
+            let mut own_names = context.tables.own_names(module).iter();
+            own_names.any(|&(own_name, _)| own_name == name)
+        };
         let required_name = match self.find_deferred_export(resolved.resolution) {
             Some(deferred) if is_filled_by_loader(binding) => Some(deferred),
-            Some(_) | None => resolved.required_name.map(|resolved_name| {
-                compute_required_name(context.tables, exporter, name, resolved_name)
+            Some(_) | None => resolved.required_name.map(|resolved_name| match exporter {
+                ModuleRef::File(file) if !is_own_name(file) => RequiredName::new(exporter, name),
+                _ => resolved_name,
             }),
         };
-        Ok(BoundName {
-            binding,
-            required_name,
-        })
+        Ok((binding, required_name))
     }
 
     // The loader fills the variable of such a name when it links a module that says that it binds the name.
@@ -423,9 +383,8 @@ impl<'a, 's> FileBinder<'a, 's> {
             return None;
         };
         let context = self.context;
-        let is_deferred = context
-            .deferred_exports
-            .contains(module, context.files.atoms.bytes(name));
+        let name_bytes = context.files.atoms.bytes(name);
+        let is_deferred = context.deferred_exports.contains(module, name_bytes);
         is_deferred.then(|| RequiredName::new(ModuleRef::Runtime(module), name))
     }
 
@@ -433,37 +392,20 @@ impl<'a, 's> FileBinder<'a, 's> {
         &mut self,
         exporter: ModuleRef,
         name: Atom,
-        location: NameLocation,
+        written: WrittenPart,
     ) -> PendingBinding {
         match self.resolve_name(exporter, name) {
-            Ok(BoundName {
-                binding,
-                required_name,
-            }) => {
+            Ok((binding, required_name)) => {
                 if let Some(required_name) = required_name {
                     self.add_required_name(required_name);
                 }
                 binding
             }
             Err(kind) => {
-                self.add_failure(kind, location);
+                self.imports.failures.push(written.fail(self.file, kind));
                 UNBOUND
             }
         }
-    }
-
-    fn add_failure(&mut self, kind: ModuleFailureKind, location: NameLocation) {
-        let NameLocation { order, site, range } = location;
-        let failure = ModuleFailure {
-            kind,
-            importer: self.file,
-            site,
-            start: range.start,
-            end: range.end,
-        };
-        self.imports
-            .failures
-            .push(PendingFailure { order, failure });
     }
 
     fn add_required_name(&mut self, required_name: RequiredName) {
@@ -478,30 +420,20 @@ impl<'a, 's> FileBinder<'a, 's> {
             let site_kind = import.site_kind();
             let site = analysis.import_site_index(site_kind);
             let site = site.expect("the loader records the site of every JSX import in use");
-            let exporter = match &scan.sites[site] {
-                &ScannedSite::Module(exporter) => Some(exporter),
-                _ => None,
-            };
-            self.imports.jsx_exporters.push(exporter);
-            let binding = match &scan.sites[site] {
+            let (exporter, binding) = match &scan.sites[site] {
                 &ScannedSite::Module(exporter) => {
                     let name = self.context.files.atoms.intern(import.export_name());
-                    let location = NameLocation {
-                        order: FailureOrder {
-                            site: site as u32,
-                            part: SitePart::Name(import as u32),
-                        },
-                        site: site_kind,
-                        range: 0..0,
-                    };
-                    self.bind_name(exporter, name, location)
+                    let part = SitePart::Name(import as u32);
+                    let written = WrittenPart::new(site, part, site_kind, 0..0);
+                    (Some(exporter), self.bind_name(exporter, name, written))
                 }
-                ScannedSite::Unresolved => UNBOUND,
+                ScannedSite::Unresolved => (None, UNBOUND),
                 ScannedSite::AllModules | ScannedSite::Candidates(_) | ScannedSite::Erased => {
                     debug_assert!(false, "a JSX import in use has a module or a load failure");
-                    UNBOUND
+                    (None, UNBOUND)
                 }
             };
+            self.imports.jsx_exporters.push(exporter);
             self.imports.jsx.push((import, binding));
         }
     }
@@ -541,22 +473,6 @@ fn imported_namespace_binding(module: ModuleRef, phase: ImportPhase) -> ImportBi
     match replacement {
         Some(object) => ImportBinding::Builtin(object),
         None => ImportBinding::Namespace { module, phase },
-    }
-}
-
-fn compute_required_name(
-    tables: &ExportTables,
-    exporter: ModuleRef,
-    name: Atom,
-    resolved_name: RequiredName,
-) -> RequiredName {
-    let is_own_name = |module| {
-        let mut own_names = tables.own_names(module).iter();
-        own_names.any(|&(own_name, _)| own_name == name)
-    };
-    match exporter {
-        ModuleRef::File(module) if !is_own_name(module) => RequiredName::new(exporter, name),
-        _ => resolved_name,
     }
 }
 

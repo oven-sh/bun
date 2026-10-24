@@ -80,12 +80,16 @@ for (const [name, array, run] of [
 ] as [string, unknown[], (value: unknown) => unknown][]) {
   const [proxy, reads] = counted(array);
   let answer: string;
+  let counts: string;
   try {
-    answer = JSON.stringify(run(proxy));
+    const result = run(proxy);
+    counts = JSON.stringify(reads);
+    answer = JSON.stringify(result);
   } catch (error: any) {
+    counts = JSON.stringify(reads);
     answer = error.name + ": " + error.message;
   }
-  console.log(name + ": " + answer + " " + JSON.stringify(reads));
+  console.log(name + ": " + answer + " " + counts);
 }
 
 console.log("an iterator of its own is not asked");

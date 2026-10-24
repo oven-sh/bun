@@ -40,21 +40,18 @@ fn record_named<'p>(program: &'p Program, path_suffix: &str) -> &'p Module {
     &program.modules[module_named(program, path_suffix).index()]
 }
 
+fn runtime_module_index(program: &Program, runtime_module: RuntimeModule) -> usize {
+    let has_runtime_module = |record: &Module| record.runtime_module == Some(runtime_module);
+    let module = program.modules.iter().position(has_runtime_module);
+    module.expect("the module of Bun has no record")
+}
+
 fn runtime_record(program: &Program, runtime_module: RuntimeModule) -> &Module {
-    let mut records = program.modules.iter();
-    let record = records.find(|record| record.runtime_module == Some(runtime_module));
-    record.expect("the module of Bun has no record")
+    &program.modules[runtime_module_index(program, runtime_module)]
 }
 
 fn export_names<'p>(program: &'p Program, record: &Module) -> Vec<&'p [u8]> {
     let exports = record.exports.iter();
-    exports
-        .map(|export| program.strings.get(export.name))
-        .collect()
-}
-
-fn synthetic_names<'p>(program: &'p Program, record: &Module) -> Vec<&'p [u8]> {
-    let exports = record.synthetic_exports.iter();
     exports
         .map(|export| program.strings.get(export.name))
         .collect()
@@ -121,14 +118,6 @@ fn build_records(projects: &Projects<'_, '_>, numbered: &mut Numbered) -> Module
     build_module_records(&mut prepared.units, &input, strings)
 }
 
-fn numbered_module(numbered: &Numbered, file: ProgramFile) -> ModuleId {
-    let index = numbered
-        .prepared
-        .modules
-        .index_of(ProgramModule::File(file));
-    numbered.numbering.modules[index as usize].expect("the module has no record")
-}
-
 #[test]
 fn es_module_record_has_body_and_requests() {
     let main = "
@@ -148,10 +137,7 @@ fn es_module_record_has_body_and_requests() {
     assert_eq!(record.kind, ModuleKind::SourceText);
     assert!(record.body.is_some());
     assert!(!record.positions.line_starts.is_empty());
-    let path = program
-        .modules
-        .iter()
-        .position(|record| record.runtime_module == Some(RuntimeModule::NodePath));
+    let path = ModuleId::new(runtime_module_index(&program, RuntimeModule::NodePath));
     let request = |target, phase| ModuleRequest {
         target,
         phase,
@@ -163,10 +149,7 @@ fn es_module_record_has_body_and_requests() {
         request(module_named(&program, "second.js"), ImportPhase::Evaluation),
         request(module_named(&program, "first.js"), ImportPhase::Evaluation),
         request(module_named(&program, "later.js"), ImportPhase::Defer),
-        request(
-            ModuleId::new(path.expect("node:path has no record")),
-            ImportPhase::Evaluation,
-        ),
+        request(path, ImportPhase::Evaluation),
     ];
     assert_eq!(record.requests, expected_requests);
     let expected = Module {
@@ -321,9 +304,7 @@ fn namespace_import_of_bun_module_reads_the_namespace_of_its_record() {
     for (runtime_module, specifier, kind) in cases {
         let main = format!("import * as all from '{specifier}';\nconsole.log(all);\n");
         let program = link_program(&[("main.js", main.as_str())]);
-        let has_runtime_module = |record: &Module| record.runtime_module == Some(runtime_module);
-        let module = program.modules.iter().position(has_runtime_module);
-        let module = module.expect("the module of Bun has no record");
+        let module = runtime_module_index(&program, runtime_module);
         assert_eq!(program.modules[module].kind, kind, "{specifier}");
         assert_eq!(count_namespace_reads(&program, module), 1, "{specifier}");
     }
@@ -333,10 +314,7 @@ fn namespace_import_of_bun_module_reads_the_namespace_of_its_record() {
 fn default_import_of_bun_module_reads_no_namespace() {
     let main = "import buffer from 'node:buffer';\nconsole.log(buffer);\n";
     let program = link_program(&[("main.js", main)]);
-    let has_runtime_module =
-        |record: &Module| record.runtime_module == Some(RuntimeModule::NodeBuffer);
-    let module = program.modules.iter().position(has_runtime_module);
-    let module = module.expect("the module of Bun has no record");
+    let module = runtime_module_index(&program, RuntimeModule::NodeBuffer);
     assert_eq!(count_namespace_reads(&program, module), 0);
 }
 
@@ -500,40 +478,25 @@ fn manifest_of_s(side_effects: &str) -> String {
 }
 
 #[test]
-fn files_of_package_without_side_effects_that_nothing_uses_are_left_out() {
-    let manifest = manifest_of_s(r#", "sideEffects": false"#);
-    let left_out = files_left_out(&[("node_modules/s/package.json", &manifest)]);
-    assert_eq!(left_out, ["s/a.js", "lib/b.js", "lib/c.cjs", "esm/d.js"]);
-}
-
-#[test]
-fn files_of_package_without_the_field_stay() {
-    for side_effects in ["", r#", "sideEffects": true"#] {
+fn side_effects_field_decides_which_unused_files_are_left_out() {
+    let every_file = &["s/a.js", "lib/b.js", "lib/c.cjs", "esm/d.js"][..];
+    let cases: [(&str, &[&str]); 6] = [
+        (r#", "sideEffects": false"#, every_file),
+        ("", &[]),
+        (r#", "sideEffects": true"#, &[]),
+        (
+            r#", "sideEffects": ["./lib/b.js"]"#,
+            &["s/a.js", "lib/c.cjs", "esm/d.js"],
+        ),
+        // A list that names no file of the program speaks for every file.
+        (r#", "sideEffects": ["./other.js"]"#, every_file),
+        (r#", "sideEffects": ["./lib/*", "./a.js"]"#, &["esm/d.js"]),
+    ];
+    for (side_effects, expected) in cases {
         let manifest = manifest_of_s(side_effects);
         let left_out = files_left_out(&[("node_modules/s/package.json", &manifest)]);
-        assert!(left_out.is_empty(), "{side_effects}: {left_out:?}");
+        assert_eq!(left_out, expected, "{side_effects}");
     }
-}
-
-#[test]
-fn listed_file_keeps_its_side_effects() {
-    let manifest = manifest_of_s(r#", "sideEffects": ["./lib/b.js"]"#);
-    let left_out = files_left_out(&[("node_modules/s/package.json", &manifest)]);
-    assert_eq!(left_out, ["s/a.js", "lib/c.cjs", "esm/d.js"]);
-}
-
-#[test]
-fn list_that_names_no_file_of_the_program_speaks_for_every_file() {
-    let manifest = manifest_of_s(r#", "sideEffects": ["./other.js"]"#);
-    let left_out = files_left_out(&[("node_modules/s/package.json", &manifest)]);
-    assert_eq!(left_out, ["s/a.js", "lib/b.js", "lib/c.cjs", "esm/d.js"]);
-}
-
-#[test]
-fn file_that_a_pattern_matches_keeps_its_side_effects() {
-    let manifest = manifest_of_s(r#", "sideEffects": ["./lib/*", "./a.js"]"#);
-    let left_out = files_left_out(&[("node_modules/s/package.json", &manifest)]);
-    assert_eq!(left_out, ["esm/d.js"]);
 }
 
 #[test]
@@ -630,8 +593,10 @@ fn exports_are_sorted_by_code_units_not_by_string_id() {
 
         let records = build_records(projects, &mut numbered);
 
-        let exporter = application_file(find_file(projects, "names.js"));
-        let record = &records.modules[numbered_module(&numbered, exporter).index()];
+        let exporter = ProgramModule::File(application_file(find_file(projects, "names.js")));
+        let exporter = numbered.prepared.modules.index_of(exporter) as usize;
+        let exporter = numbered.numbering.modules[exporter].expect("the module has no record");
+        let record = &records.modules[exporter.index()];
         let ids: Vec<StringId> = record.exports.iter().map(|export| export.name).collect();
         let names: Vec<&[u8]> = ids.iter().map(|&id| numbered.strings.get(id)).collect();
         assert_eq!(names, names_in_order);
@@ -770,18 +735,11 @@ fn only_name_re_exported_by_typescript_may_be_absent() {
     }
 }
 
-fn link_legacy_importer(use_of_imports: &str) -> Program {
-    let imports = "import { a } from './legacy.cjs';\nimport * as legacy from './legacy.cjs';\n";
-    let main = [imports, use_of_imports].concat();
-    link_program_without_bun_modules(&[
-        ("main.js", main.as_str()),
-        ("legacy.cjs", "exports.a = 1;\nexports.b = 2;\n"),
-    ])
-}
-
 #[test]
 fn names_of_a_commonjs_file_are_variables_that_its_body_stores() {
-    let program = link_legacy_importer("console.log(a, legacy.b);\n");
+    let main = "import { a } from './legacy.cjs';\nimport * as legacy from './legacy.cjs';\nconsole.log(a, legacy.b);\n";
+    let legacy = ("legacy.cjs", "exports.a = 1;\nexports.b = 2;\n");
+    let program = link_program_without_bun_modules(&[("main.js", main), legacy]);
     let record = record_named(&program, "legacy.cjs");
     assert!(record.synthetic_exports.is_empty());
     assert!(record.exports.is_empty());
@@ -805,11 +763,11 @@ fn synthetic_exports_of_two_projects_are_sorted_together() {
     let program = link_program(&SHARED_NAME_IMPORTERS);
     let record = runtime_record(&program, RuntimeModule::NodePath);
     assert_eq!(record.kind, ModuleKind::RuntimeSource);
-    let names: [&[u8]; 2] = [b"own", b"shared"];
-    assert_eq!(synthetic_names(&program, record), names);
     let [own, shared] = record.synthetic_exports.as_slice() else {
         unreachable!("the record has two names");
     };
+    let names = [own, shared].map(|export| program.strings.get(export.name));
+    assert_eq!(names, [&b"own"[..], b"shared"]);
     assert!(own.variable.is_some() && shared.variable.is_some());
     assert_ne!(own.variable, shared.variable);
     assert!(!own.is_known_member && !shared.is_known_member);
@@ -934,29 +892,19 @@ fn main_entry_lists_the_default_export_for_serve() {
 }
 
 #[test]
-fn additional_entry_adds_worker_reads() {
+fn host_reads_follow_the_kind_of_entry_point() {
     let count_of = |context| host_reads(context).count();
     let entry_point_count = count_of(HostReadContext::EntryPoint);
     let worker_count = count_of(HostReadContext::Worker);
     assert!(entry_point_count > 0 && worker_count > 0);
-    assert_eq!(
-        host_reads_of(EntryPointKind::Main).count(),
-        entry_point_count
-    );
-    assert_eq!(
-        host_reads_of(EntryPointKind::Additional).count(),
-        entry_point_count + worker_count
-    );
-}
-
-#[test]
-fn host_reads_no_export_of_bun_modules() {
-    let kinds = [
-        EntryPointKind::HostLoadedModule,
-        EntryPointKind::ImportedModule,
-        EntryPointKind::Library,
+    let cases = [
+        (EntryPointKind::Main, entry_point_count),
+        (EntryPointKind::Additional, entry_point_count + worker_count),
+        (EntryPointKind::HostLoadedModule, 0),
+        (EntryPointKind::ImportedModule, 0),
+        (EntryPointKind::Library, 0),
     ];
-    for kind in kinds {
-        assert_eq!(host_reads_of(kind).count(), 0, "{kind:?}");
+    for (kind, expected) in cases {
+        assert_eq!(host_reads_of(kind).count(), expected, "{kind:?}");
     }
 }

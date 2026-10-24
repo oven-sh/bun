@@ -10,23 +10,23 @@ mod type_parameters;
 
 use std::rc::Rc;
 
-use bun_sema::check::aot::{ClassRef, ListedMember};
-use bun_sema::hir::{ClassId, ExprId};
+use bun_sema::check::aot::ClassRef;
+use bun_sema::hir::ExprId;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 use super::{CheckerTypeId, FileLowering};
 use crate::ir::generated::{FieldFlags, LimitId};
-use crate::ir::{DeclaredType, FunctionId, Id, LayoutId, LayoutKey, PropertyKeyId, TypeId};
+use crate::ir::{DeclaredType, Id, LayoutId, LayoutKey, PropertyKeyId, TypeId};
 
-pub(in crate::lower) use self::classes::private_key;
+pub(in crate::lower) use self::classes::{define_class_layout, private_key};
 #[cfg(test)]
 pub(crate) use self::defined_object_types::late_answers;
 pub use self::defined_object_types::{DefinedObjectType, DefinedObjectTypes, ObjectTypeKey};
 use self::defined_object_types::{
     HAS_PLACE, LAST_DEFINITION_LEVEL, NAMES_THE_SAME_IN_EVERY_FILE, NamesOfObjectType,
 };
-use self::object_types::{FieldName, ListedFields};
+use self::object_types::{ListedFields, SortedMember};
 pub(in crate::lower) use self::own_fields::OwnFields;
 
 #[derive(Default)]
@@ -34,29 +34,29 @@ pub(crate) struct LayoutState {
     own_fields: Vec<Option<Rc<OwnFields>>>,
     listed_fields: Vec<Option<Rc<ListedFields>>>,
     source_types: Vec<SmallVec<[CheckerTypeId; 1]>>,
-    // How many of them the file has defined the layout for, or has left to an earlier file.
     settled_type_counts: Vec<u32>,
     types_of_layouts: FxHashSet<(LayoutId, CheckerTypeId)>,
-    // The type whose members are being looked at, and for each type the one that was when it was first met.
     holder_in_progress: Option<CheckerTypeId>,
     holders: FxHashMap<CheckerTypeId, CheckerTypeId>,
     // The layouts of types that grow without end: `interface Tree<T> { left?: Tree<[T]> }`.
     growing: FxHashSet<LayoutId>,
     class_types: Vec<(ClassRef, CheckerTypeId)>,
     object_types: FxHashMap<CheckerTypeId, Option<LayoutId>>,
-    // The members of an object type that are fields, in the order of their keys.
-    sorted_members: FxHashMap<CheckerTypeId, Rc<[(FieldName, ListedMember)]>>,
-    // What the file is the first to have worked out.
+    sorted_members: FxHashMap<CheckerTypeId, Rc<[SortedMember]>>,
     described_names: Vec<(CheckerTypeId, NamesOfObjectType)>,
     dictionaries: FxHashMap<CheckerTypeId, bool>,
     literals: FxHashMap<ExprId, LayoutId>,
     literals_in_progress: SmallVec<[ExprId; 2]>,
-    // The definitions of the file that say names alone, by what they say.
     named_types: FxHashSet<(LayoutId, ObjectTypeKey)>,
-    // The layouts of the types that the code of the file converts a value to.
     conversion_targets: FxHashSet<LayoutId>,
-    // The plain layouts that the file has defined by a type with a place.
     placed_layouts: FxHashSet<LayoutId>,
+}
+
+fn slot_of<T: Default>(slots: &mut Vec<T>, layout: LayoutId) -> &mut T {
+    if slots.len() <= layout.index() {
+        slots.resize_with(layout.index() + 1, T::default);
+    }
+    &mut slots[layout.index()]
 }
 
 impl LayoutState {
@@ -65,11 +65,8 @@ impl LayoutState {
     }
 
     fn store_fields(&mut self, layout: LayoutId, fields: OwnFields) -> Rc<OwnFields> {
-        if self.own_fields.len() <= layout.index() {
-            self.own_fields.resize_with(layout.index() + 1, || None);
-        }
         let fields = Rc::new(fields);
-        self.own_fields[layout.index()] = Some(Rc::clone(&fields));
+        *slot_of(&mut self.own_fields, layout) = Some(Rc::clone(&fields));
         fields
     }
 
@@ -77,14 +74,6 @@ impl LayoutState {
         self.listed_fields.get(layout.index())?.clone()
     }
 
-    fn store_listed_fields(&mut self, layout: LayoutId, fields: Rc<ListedFields>) {
-        if self.listed_fields.len() <= layout.index() {
-            self.listed_fields.resize_with(layout.index() + 1, || None);
-        }
-        self.listed_fields[layout.index()] = Some(fields);
-    }
-
-    // The types of the file that have the layout, in the order they were met.
     fn source_types(&self, layout: LayoutId) -> &[CheckerTypeId] {
         self.source_types
             .get(layout.index())
@@ -92,17 +81,9 @@ impl LayoutState {
     }
 
     fn take_unsettled_types(&mut self, layout: LayoutId) -> SmallVec<[CheckerTypeId; 1]> {
-        if self.settled_type_counts.len() <= layout.index() {
-            self.settled_type_counts.resize(layout.index() + 1, 0);
-        }
-        let types = self
-            .source_types
-            .get(layout.index())
-            .map_or(&[][..], |types| &types[..]);
-        let settled = &mut self.settled_type_counts[layout.index()];
-        let unsettled = SmallVec::from_slice(&types[*settled as usize..]);
-        *settled = types.len() as u32;
-        unsettled
+        let count = self.source_types(layout).len() as u32;
+        let settled = core::mem::replace(slot_of(&mut self.settled_type_counts, layout), count);
+        SmallVec::from_slice(&self.source_types(layout)[settled as usize..])
     }
 
     fn is_growing(&self, layout: LayoutId) -> bool {
@@ -122,11 +103,7 @@ impl LayoutState {
         if !self.types_of_layouts.insert((layout, ty)) {
             return false;
         }
-        if self.source_types.len() <= layout.index() {
-            self.source_types
-                .resize(layout.index() + 1, SmallVec::new());
-        }
-        self.source_types[layout.index()].push(ty);
+        slot_of(&mut self.source_types, layout).push(ty);
         if let Some(fields) = self.own_fields.get_mut(layout.index()) {
             *fields = None;
         }
@@ -135,13 +112,11 @@ impl LayoutState {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    // Whatever has the one layout passes for the other from here on, and is seen, and stored into, through its types.
     pub(crate) fn add_conversion(&mut self, layout: LayoutId, target: LayoutId) {
         self.layouts.conversion_targets.insert(target);
         self.fragment.add_supertype(layout, target);
     }
 
-    // An object that nobody has followed here, or that the code stores into, is seen through the types of the layout.
     pub(crate) fn note_view(&mut self, layout: LayoutId) {
         self.layouts.conversion_targets.insert(layout);
     }
@@ -187,7 +162,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // Whoever builds a value of the type makes objects with every layout that the type leads to, and puts their names into them.
     pub(crate) fn note_what_is_built(&mut self, ty: TypeId, limit: LimitId) {
         let Some(layouts) = self.collect_reached_layouts(ty, limit) else {
             return;
@@ -203,7 +177,7 @@ impl FileLowering<'_, '_, '_, '_> {
 
     pub(crate) fn define_remaining_layouts(&mut self) {
         self.record_class_type_arguments_of_file();
-        classes::define_remaining_class_layouts(self);
+        self.define_remaining_class_layouts();
         let mentioned_count = self.fragment.end_layouts_of_code();
         for layout in (0..mentioned_count).map(LayoutId::new) {
             match self.fragment.layout_key(layout) {
@@ -233,7 +207,6 @@ impl FileLowering<'_, '_, '_, '_> {
             .hold_names_of_file(self.file, described_names);
     }
 
-    // The layouts through whose types the file may see an object that somebody makes: those with which it makes one, those that it converts a value to, and what those extend.
     fn find_layouts_of_objects(&self) -> FxHashSet<LayoutId> {
         let mut found = self.layouts.conversion_targets.clone();
         let layouts = (0..self.fragment.layout_keys().len()).map(LayoutId::new);
@@ -251,7 +224,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The types that the file has met and not settled are of this level, whichever layout they have.
     fn define_object_types(&mut self, level: u8) -> bool {
         let mut types_of_level = Vec::new();
         for layout in (0..self.fragment.layout_keys().len()).map(LayoutId::new) {
@@ -266,7 +238,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 types_of_level.push((layout, types));
             }
         }
-        // Which types a self meets behind its code hangs on what it leaves to earlier files, which differs from one build to the next.
+        // Which types a file meets behind its code hangs on what it leaves to earlier files, which differs from one build to the next.
         let layouts_of_objects = match level {
             0 => self.find_layouts_of_objects(),
             _ => FxHashSet::default(),
@@ -287,9 +259,9 @@ pub(in crate::lower) fn own_fields(
         return fields;
     }
     let fields = match file.fragment.layout_key(layout) {
-        LayoutKey::Class(class) => classes::compute_class_fields(file, layout, class),
+        LayoutKey::Class(class) => file.compute_class_fields(layout, class),
         LayoutKey::ConstructorFunction(function) => {
-            classes::compute_constructor_function_fields(file, function)
+            file.compute_constructor_function_fields(function)
         }
         LayoutKey::ObjectType { .. } => file.compute_object_type_fields(layout),
         LayoutKey::Container(symbol) => file.compute_container_fields(symbol),
@@ -297,12 +269,4 @@ pub(in crate::lower) fn own_fields(
         _ => OwnFields::default(),
     };
     file.layouts.store_fields(layout, fields)
-}
-
-pub(in crate::lower) fn define_class_layout(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    class: ClassId,
-    constructor: FunctionId,
-) -> LayoutId {
-    classes::define_class_layout(file, class, Some(constructor))
 }

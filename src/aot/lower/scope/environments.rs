@@ -11,10 +11,9 @@ use crate::builtins::{BuiltinPath, Mutability};
 use crate::ir::generated::{Field, FieldFlags, Layout, LayoutKind};
 use crate::ir::{
     ClassSlot, DeclaredType, LayoutId, LayoutKey, Mapped, OpaqueKind, PositionFlags, Primitives,
-    PropertyKey, Type, TypeTable, ValueId,
+    PropertyKey, Type, TypeTable,
 };
-use crate::lower::captures::Capture;
-use crate::lower::{FileLowering, FunctionLowering, class};
+use crate::lower::{FileLowering, class};
 
 pub(in crate::lower) fn environment_layout(
     file: &mut FileLowering<'_, '_, '_, '_>,
@@ -24,37 +23,48 @@ pub(in crate::lower) fn environment_layout(
         file: file.file,
         environment: scope.0,
     });
+    if file.fragment.is_layout_defined(layout) {
+        return layout;
+    }
+    let bindings = file.scopes.environment_fields(scope);
+    let bindings: SmallVec<[BindingRef; 8]> = SmallVec::from_slice(bindings);
+    let mut fields = Vec::with_capacity(bindings.len());
+    for (index, &binding) in bindings.iter().enumerate() {
+        fields.push(file.create_environment_field(binding, index));
+    }
     if !file.fragment.is_layout_defined(layout) {
-        file.define_environment_layout(layout, scope);
+        let definition = Layout {
+            kind: LayoutKind::Environment,
+            module: Some(file.module_id()),
+            fields,
+            ..Layout::default()
+        };
+        file.fragment.define_layout(layout, definition);
     }
     layout
 }
 
-impl FunctionLowering<'_, '_, '_, '_, '_> {
-    pub(in crate::lower) fn get_environment(&mut self, scope: ScopeId) -> ValueId {
-        match self.scopes.find_environment(scope) {
-            Some(variable) => self.builder.read_variable(variable),
-            None => self
-                .find_captured_value(Capture::Environment(scope))
-                .expect("a function captures every environment it reaches"),
-        }
-    }
-}
-
 impl FileLowering<'_, '_, '_, '_> {
     pub(in crate::lower) fn stored_position(&mut self, binding: BindingRef) -> DeclaredType {
-        match binding {
-            BindingRef::Symbol(symbol) => self.symbol_position(symbol),
-            BindingRef::Slot(scope, slot) => self.slot_position(scope, slot),
+        let symbol = match binding {
+            BindingRef::Symbol(symbol) => symbol,
+            BindingRef::Slot(scope, slot) => return self.slot_position(scope, slot),
+        };
+        // A name that stands for a module holds `true`, whatever type is written behind it.
+        if self.inputs.modules.holder(self.file, symbol).is_some() {
+            return DeclaredType::untyped();
         }
+        let position = self.binding_position(symbol);
+        let path = self.builtins.of_symbol(symbol);
+        self.expect_builtin_path(position, path)
     }
 
     pub(super) fn location_position(&mut self, binding: BindingRef) -> DeclaredType {
-        let position = self.stored_position(binding);
-        if !dead_zone::has_dead_zone(self, binding) {
-            return position;
+        let mut position = self.stored_position(binding);
+        if dead_zone::has_dead_zone(self, binding) {
+            position.ty = self.fragment.types.union(position.ty, TypeTable::ABSENT);
         }
-        self.add_absent(position)
+        position
     }
 
     pub(super) fn is_listed_at_allocation(&self, binding: BindingRef) -> bool {
@@ -82,25 +92,6 @@ impl FileLowering<'_, '_, '_, '_> {
         has_simple_parameter_list(self.hir, function)
     }
 
-    fn define_environment_layout(&mut self, layout: LayoutId, scope: ScopeId) {
-        let bindings = self.scopes.environment_fields(scope);
-        let bindings: SmallVec<[BindingRef; 8]> = SmallVec::from_slice(bindings);
-        let mut fields = Vec::with_capacity(bindings.len());
-        for (index, &binding) in bindings.iter().enumerate() {
-            fields.push(self.create_environment_field(binding, index));
-        }
-        if self.fragment.is_layout_defined(layout) {
-            return;
-        }
-        let definition = Layout {
-            kind: LayoutKind::Environment,
-            module: Some(self.module_id()),
-            fields,
-            ..Layout::default()
-        };
-        self.fragment.define_layout(layout, definition);
-    }
-
     fn create_environment_field(&mut self, binding: BindingRef, index: usize) -> Field {
         let label = format!("{}.{index}", slot_label(binding));
         let label = self.intern_bytes(label.as_bytes());
@@ -120,16 +111,6 @@ impl FileLowering<'_, '_, '_, '_> {
             flags,
             ..Field::default()
         }
-    }
-
-    fn symbol_position(&mut self, symbol: SymbolId) -> DeclaredType {
-        // A name that stands for a module holds `true`, whatever type is written behind it.
-        if self.inputs.modules.holder(self.file, symbol).is_some() {
-            return DeclaredType::untyped();
-        }
-        let position = self.binding_position(symbol);
-        let path = self.builtins.of_symbol(symbol);
-        self.expect_builtin_path(position, path)
     }
 
     fn slot_position(&mut self, scope: ScopeId, slot: ScopeSlot) -> DeclaredType {
@@ -172,20 +153,14 @@ impl FileLowering<'_, '_, '_, '_> {
 
     fn own_exports_position(&mut self) -> Option<DeclaredType> {
         let layout = self.module_exports_layout(self.file)?;
-        let exports = self.fragment.types.intern(Type::layout(layout));
-        Some(DeclaredType::new(
-            Mapped::expected(exports),
-            None,
-            PositionFlags::default(),
-        ))
+        let exports = Mapped::expected(self.fragment.types.intern(Type::layout(layout)));
+        Some(DeclaredType::new(exports, None, PositionFlags::default()))
     }
 
     // `ToThis` gives an object, so of the type of the entry value only the object part holds.
     fn converted_this_position(&mut self, entry: DeclaredType) -> DeclaredType {
-        let objects = self
-            .fragment
-            .types
-            .without_primitives(entry.ty, Primitives::ALL);
+        let types = &mut self.fragment.types;
+        let objects = types.without_primitives(entry.ty, Primitives::ALL);
         if objects == TypeTable::OBJECT || objects == TypeTable::NEVER {
             return DeclaredType::from_compiler(TypeTable::OBJECT);
         }

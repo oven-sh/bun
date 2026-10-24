@@ -1,28 +1,15 @@
-use super::graphs::{
-    assert_graph, emit_read_marker, enter_loop, increment_variable, write_integer,
-};
+use super::assert_graph;
+use super::graphs::{emit_read_marker, enter_loop, increment_variable, write_integer};
 use crate::ir::builder::{Edge, FunctionBuilder, Handler};
 use crate::ir::generated::{
     BlockFrequency, BlockRole, IteratorCompletion, IteratorKind, Opcode, ResumeMode,
 };
-use crate::ir::ids::{BlockId, TypeId, ValueId};
-use crate::ir::testing::build_function;
+use crate::ir::ids::{TypeId, ValueId};
+use crate::ir::testing::{build_function, create_catch_handler, enter_block};
 use crate::ir::types::TypeTable;
 
 pub(super) fn emit_call(builder: &mut FunctionBuilder, callee: ValueId) -> ValueId {
     builder.call(callee, None, &[], None, None, None, false, false)
-}
-
-pub(super) fn create_catch_handler(builder: &mut FunctionBuilder) -> Handler {
-    builder.create_handler(BlockRole::CatchHandler, None, None)
-}
-
-fn enter_covered_block(builder: &mut FunctionBuilder, handler: Handler) -> BlockId {
-    let covered = builder.create_block(Some(handler));
-    builder.jump(Edge::to(covered));
-    builder.seal(covered);
-    builder.switch_to(covered);
-    covered
 }
 
 fn enter_landing_block(builder: &mut FunctionBuilder, handler: Handler) {
@@ -51,7 +38,7 @@ fn throwing_operations_share_a_block() {
     assert_graph(&[TypeTable::ANYTHING], THROWING_OPERATIONS, |builder| {
         let callee = builder.parameter(0);
         let handler = create_catch_handler(builder);
-        enter_covered_block(builder, handler);
+        enter_block(builder, Some(handler));
         for _ in 0..3 {
             emit_call(builder, callee);
         }
@@ -85,7 +72,7 @@ fn fill_store_to_visible_variable(builder: &mut FunctionBuilder) {
     let x = builder.create_variable(None);
     write_integer(builder, x, 1);
     let handler = create_catch_handler(builder);
-    let covered = enter_covered_block(builder, handler);
+    let covered = enter_block(builder, Some(handler));
     emit_call(builder, callee);
     write_integer(builder, x, 2);
     assert_ne!(builder.current_block(), covered);
@@ -128,7 +115,7 @@ fn store_to_inner_variable_does_not_end_block() {
         let callee = builder.parameter(0);
         let handler = create_catch_handler(builder);
         let temporary = builder.create_variable(None);
-        let covered = enter_covered_block(builder, handler);
+        let covered = enter_block(builder, Some(handler));
         emit_call(builder, callee);
         write_integer(builder, temporary, 2);
         assert_eq!(builder.current_block(), covered);
@@ -162,7 +149,7 @@ fn fill_store_before_first_value(builder: &mut FunctionBuilder) {
     write_integer(builder, x, 1);
     let stored = builder.integer(2);
     let handler = create_catch_handler(builder);
-    let covered = enter_covered_block(builder, handler);
+    let covered = enter_block(builder, Some(handler));
     builder.write_variable(x, stored);
     assert_eq!(builder.current_block(), covered);
     emit_call(builder, callee);
@@ -209,7 +196,7 @@ fn handler_that_reads_nothing_has_no_parameter() {
             let x = builder.create_variable(None);
             write_integer(builder, x, 1);
             let handler = create_catch_handler(builder);
-            enter_covered_block(builder, handler);
+            enter_block(builder, Some(handler));
             emit_call(builder, callee);
             write_integer(builder, x, 2);
             emit_call(builder, callee);
@@ -228,7 +215,7 @@ fn single_covered_block_passes_no_argument() {
         let stored = builder.integer(1);
         builder.write_variable(x, stored);
         let handler = create_catch_handler(builder);
-        enter_covered_block(builder, handler);
+        enter_block(builder, Some(handler));
         emit_call(builder, callee);
         builder.return_value(None);
         enter_landing_block(builder, handler);
@@ -274,7 +261,7 @@ fn fill_two_visible_variables(builder: &mut FunctionBuilder) {
     write_integer(builder, x, 1);
     write_integer(builder, y, 2);
     let handler = create_catch_handler(builder);
-    enter_covered_block(builder, handler);
+    enter_block(builder, Some(handler));
     emit_call(builder, callee);
     write_integer(builder, x, 3);
     emit_call(builder, callee);
@@ -328,11 +315,11 @@ fn fill_nested_handlers(builder: &mut FunctionBuilder) {
     let x = builder.create_variable(None);
     write_integer(builder, x, 1);
     let outer = create_catch_handler(builder);
-    enter_covered_block(builder, outer);
+    enter_block(builder, Some(outer));
     emit_call(builder, callee);
     let inner = builder.create_handler(BlockRole::CatchHandler, None, Some(outer));
     assert_eq!(builder.handler_of(inner.block()), Some(outer));
-    enter_covered_block(builder, inner);
+    enter_block(builder, Some(inner));
     emit_call(builder, callee);
     write_integer(builder, x, 2);
     emit_call(builder, callee);
@@ -442,7 +429,7 @@ fn fill_dead_covered_blocks(builder: &mut FunctionBuilder) {
     let x = builder.create_variable(None);
     write_integer(builder, x, 1);
     let handler = create_catch_handler(builder);
-    enter_covered_block(builder, handler);
+    enter_block(builder, Some(handler));
     emit_call(builder, callee);
     write_integer(builder, x, 2);
     emit_call(builder, callee);
@@ -524,7 +511,7 @@ fn roles_and_subject() {
         let iterable = builder.parameter(0);
         let iterator = builder.iterator_open(iterable, IteratorKind::Sync, None, false, false);
         let cleanup = builder.create_handler(BlockRole::IterationCleanup, Some(iterator), None);
-        enter_covered_block(builder, cleanup);
+        enter_block(builder, Some(cleanup));
         let (kind, mode) = (IteratorKind::Sync, ResumeMode::Next);
         builder.iterator_resume(iterator, None, kind, mode, None, false);
         builder.return_value(None);
@@ -543,7 +530,7 @@ fn landing_block_has_handler_role() {
         let function = build_function(&[TypeTable::ANYTHING], |builder| {
             let callee = builder.parameter(0);
             let handler = builder.create_handler(role, None, None);
-            enter_covered_block(builder, handler);
+            enter_block(builder, Some(handler));
             emit_call(builder, callee);
             builder.return_value(None);
             enter_landing_block(builder, handler);
@@ -562,7 +549,7 @@ fn split_keeps_frequency() {
         let x = builder.create_variable(None);
         write_integer(builder, x, 1);
         let handler = create_catch_handler(builder);
-        let covered = enter_covered_block(builder, handler);
+        let covered = enter_block(builder, Some(handler));
         builder.set_frequency(covered, BlockFrequency::Unlikely);
         emit_call(builder, callee);
         write_integer(builder, x, 2);

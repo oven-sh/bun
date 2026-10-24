@@ -46,6 +46,7 @@
 //   makers-of-makers-each-with-a-prototype-of-its-own one function makes a prototype object and a maker of objects below it and is called one to forty times, at the top level and elsewhere; the prototypes are changed, frozen, swapped, and the program asks which of them, of the makers and of the methods are the same (makers-of-makers-each-with-a-prototype-of-its-own.ts)
 //   strangers-where-a-type-names-a-class a hot loop reads a member of a field whose type names a class; instances arrive, then records with a field of that name, classes below and beside, objects without a prototype, proxies, null, by stores under unknown keys and casts (strangers-where-a-type-names-a-class.ts)
 //   names-asked-of-full-tables-and-texts-converted-again objects that keep a table of their names, from nearly empty to full of deleted places, asked by read, in, hasOwn, store and delete while they grow and shrink; hundreds of lasting texts whose lower and upper case forms are asked for again and again (names-asked-of-full-tables-and-texts-converted-again.ts)
+//   names-given-by-key-with-something-done-in-between objects of many births are given one to eleven hundred names by key, most of them literal texts that are another one in each turn; between two such stores a name is defined anew or deleted, the object is closed or put below a String object, a typed array, a proxy; then a collection; also stores by index below those
 //   a-full-heap-is-let-go-and-built-ins-make-things objects are kept until no more fit, all or half of them are let go, and at once one built-in that makes things is called thousands of times: there is room again, so no call may fail (a-full-heap-is-let-go-and-built-ins-make-things.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
@@ -222,6 +223,15 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       const typed = seed % 2 === 1;
       const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
       return bed.accepts(program) && bed.allows(program.text) ? { source: "one-key-asked-in-every-way", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+    };
+  }
+  if (existsSync(join(import.meta.dir, "names-given-by-key-with-something-done-in-between.ts"))) {
+    const { generate } = await import("./names-given-by-key-with-something-done-in-between.ts");
+    sources["names-given-by-key-with-something-done-in-between"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const typed = seed % 3 === 1;
+      const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
+      return bed.accepts(program) && bed.allows(program.text) ? { source: "names-given-by-key-with-something-done-in-between", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
     };
   }
   if (existsSync(join(import.meta.dir, "unsound-types.ts"))) {

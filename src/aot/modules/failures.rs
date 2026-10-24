@@ -2,6 +2,7 @@
 mod tests;
 
 use super::ModuleRef;
+use super::requests::{SiteForm, site_form};
 use bun_sema::atom::Atom;
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::FileId;
@@ -60,32 +61,24 @@ pub enum ModuleFailureKind {
 impl ModuleFailure {
     pub fn effect(&self) -> FailureEffect {
         match self.kind {
-            ModuleFailureKind::Unresolved { .. } => unresolved_site_effect(self.site),
+            ModuleFailureKind::Unresolved { .. } => match site_form(self.site) {
+                SiteForm::Declaration => FailureEffect::StopsBuild,
+                SiteForm::Load | SiteForm::Resolve | SiteForm::GetBuiltinModule => {
+                    FailureEffect::ThrowsAtSite
+                }
+            },
             ModuleFailureKind::NotAProgram {
                 is_loaded_at_start: true,
-            } => FailureEffect::StopsBuild,
-            // The body of the module that stands in its place throws it.
+            }
+            | ModuleFailureKind::ExportNotFound { .. }
+            | ModuleFailureKind::ExportAmbiguous { .. } => FailureEffect::StopsBuild,
+            // What throws it: the body of the module that stands in its place, the body of each module whose load it fails, the check of the graph where the imports are linked.
             ModuleFailureKind::NotAProgram {
                 is_loaded_at_start: false,
-            } => FailureEffect::ThrowsAtSite,
-            ModuleFailureKind::ExportNotFound { .. }
-            | ModuleFailureKind::ExportAmbiguous { .. } => FailureEffect::StopsBuild,
-            // The body of each module whose load it fails throws it.
-            ModuleFailureKind::UnresolvedAtLoad { .. } => FailureEffect::ThrowsAtSite,
-            // Where the graph of imports is linked: the check of the graph throws it.
-            ModuleFailureKind::ExportMayBeAbsent { .. } => FailureEffect::ThrowsAtSite,
+            }
+            | ModuleFailureKind::UnresolvedAtLoad { .. }
+            | ModuleFailureKind::ExportMayBeAbsent { .. } => FailureEffect::ThrowsAtSite,
         }
-    }
-}
-
-fn unresolved_site_effect(site: ImportSiteKind) -> FailureEffect {
-    match site {
-        ImportSiteKind::JsxRuntime
-        | ImportSiteKind::JsxPackage
-        | ImportSiteKind::Import(_)
-        | ImportSiteKind::ExportFrom(_)
-        | ImportSiteKind::ExportStar(_) => FailureEffect::StopsBuild,
-        _ => FailureEffect::ThrowsAtSite,
     }
 }
 
@@ -107,6 +100,44 @@ pub(super) struct PendingFailure {
     pub failure: ModuleFailure,
 }
 
+/// Where a module writes a specifier, or a name of another module.
+#[derive(Copy, Clone, Debug)]
+pub(super) struct WrittenPart {
+    pub order: FailureOrder,
+    pub site: ImportSiteKind,
+    pub start: u32,
+    pub end: u32,
+}
+
+impl WrittenPart {
+    pub(super) fn new(
+        site: usize,
+        part: SitePart,
+        kind: ImportSiteKind,
+        range: Range<u32>,
+    ) -> WrittenPart {
+        let site = site as u32;
+        WrittenPart {
+            order: FailureOrder { site, part },
+            site: kind,
+            start: range.start,
+            end: range.end,
+        }
+    }
+
+    pub(super) fn fail(self, importer: FileId, kind: ModuleFailureKind) -> PendingFailure {
+        let order = self.order;
+        let failure = ModuleFailure {
+            kind,
+            importer,
+            site: self.site,
+            start: self.start,
+            end: self.end,
+        };
+        PendingFailure { order, failure }
+    }
+}
+
 pub(super) struct NumberedFailures {
     errors: Vec<ModuleFailure>,
     failures: Vec<ModuleFailure>,
@@ -116,19 +147,14 @@ pub(super) struct NumberedFailures {
 
 impl NumberedFailures {
     pub(super) fn id_of(&self, importer: FileId, order: FailureOrder) -> ModuleFailureId {
-        let range = self.failure_range(importer);
-        let position = self.orders[range.clone()].binary_search(&order);
+        let first = &self.first_failure_by_file[importer.idx()..];
+        let position = self.orders[first[0] as usize..first[1] as usize].binary_search(&order);
         let position = position.expect("no failure that throws was pushed under this order");
-        ModuleFailureId((range.start + position) as u32)
+        ModuleFailureId(first[0] + position as u32)
     }
 
     pub(super) fn into_lists(self) -> (Vec<ModuleFailure>, Vec<ModuleFailure>) {
         (self.errors, self.failures)
-    }
-
-    fn failure_range(&self, importer: FileId) -> Range<usize> {
-        let index = importer.idx();
-        self.first_failure_by_file[index] as usize..self.first_failure_by_file[index + 1] as usize
     }
 }
 
@@ -150,9 +176,8 @@ pub(super) fn number_failures(
         let has_importer = |pending: &PendingFailure| pending.failure.importer == importer;
         debug_assert!(list.iter().all(has_importer));
         let first_failure = numbered.failures.len() as u32;
-        numbered
-            .first_failure_by_file
-            .resize(importer.idx() + 1, first_failure);
+        let firsts = &mut numbered.first_failure_by_file;
+        firsts.resize(importer.idx() + 1, first_failure);
         for pending in list {
             match pending.failure.effect() {
                 FailureEffect::StopsBuild => numbered.errors.push(pending.failure),
@@ -164,8 +189,7 @@ pub(super) fn number_failures(
         }
     }
     let failure_count = numbered.failures.len() as u32;
-    numbered
-        .first_failure_by_file
-        .resize(file_count + 1, failure_count);
+    let firsts = &mut numbered.first_failure_by_file;
+    firsts.resize(file_count + 1, failure_count);
     numbered
 }

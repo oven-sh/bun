@@ -1,19 +1,14 @@
-use super::unit::LinkUnit;
 use super::unused_records::{UseInput, is_plain_record, set_mark, unmarked};
 use crate::ir::generated::{Layout, PositionFlags, Primitives, Type, TypeFlags};
 use crate::ir::{Id, TypeTable};
 use crate::load::ProjectId;
 use std::sync::atomic::AtomicBool;
 
-fn is_checked_application_file(unit: &LinkUnit) -> bool {
-    unit.is_checked && unit.file.project == ProjectId::Application
-}
-
 fn find_literal_layouts(input: &UseInput<'_>) -> Vec<AtomicBool> {
     let count = input.numbering.counts.layouts;
     let (in_checked_files, in_other_files) = (unmarked(count), unmarked(count));
     input.for_each_unit(&|unit, ids| {
-        let allocated = match is_checked_application_file(unit) {
+        let allocated = match unit.is_checked && unit.file.project == ProjectId::Application {
             true => &in_checked_files,
             false => &in_other_files,
         };
@@ -65,7 +60,7 @@ pub(super) fn widen_literal_slots(layouts: &mut [Layout], input: &UseInput<'_>, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::{Program, PropertyKeyId};
+    use crate::ir::{Program, PropertyKeyId, StringId};
     use crate::link::testing::link_sources_without_bun_modules;
 
     const MAIN: &str = r#"
@@ -75,27 +70,14 @@ export function makeItem(): Item { return { id: "a", count: 1, done: false, tags
 export const values = [makeItem(), new Point()];
 "#;
 
-    fn link() -> Program {
-        link_sources_without_bun_modules(&[("main.ts", MAIN)])
-            .expect("the program links")
-            .program
-    }
-
-    fn find_layout<'a>(program: &'a Program, name: &str) -> &'a Layout {
-        let has_name = |layout: &&Layout| {
-            layout
-                .name
-                .is_some_and(|id| program.strings.get(id) == name.as_bytes())
-        };
-        program.layouts.iter().find(has_name).expect(name)
-    }
-
     fn is_expected(program: &Program, layout: &str, name: &str) -> bool {
-        let has_name = |key: PropertyKeyId| {
-            let text = program.property_keys.get(key).text;
-            text.is_some_and(|id| program.strings.get(id) == name.as_bytes())
+        let is_text = |id: Option<StringId>, text: &str| {
+            id.is_some_and(|id| program.strings.get(id) == text.as_bytes())
         };
-        let fields = &find_layout(program, layout).fields;
+        let has_name = |key: PropertyKeyId| is_text(program.property_keys.get(key).text, name);
+        let mut layouts = program.layouts.iter();
+        let found = layouts.find(|candidate| is_text(candidate.name, layout));
+        let fields = &found.expect(layout).fields;
         let field = fields
             .iter()
             .find(|field| field.key.is_some_and(has_name))
@@ -104,24 +86,21 @@ export const values = [makeItem(), new Point()];
     }
 
     #[test]
-    fn literal_slots_hold_any_value() {
-        let program = link();
-        for name in ["id", "run"] {
-            assert!(is_expected(&program, "Item", name), "{name}");
+    fn only_literal_slots_of_strings_and_functions_hold_any_value() {
+        let linked = link_sources_without_bun_modules(&[("main.ts", MAIN)]);
+        let program = linked.expect("the program links").program;
+        let cases = [
+            ("Item", "id", true),
+            ("Item", "run", true),
+            ("Item", "count", false),
+            ("Item", "done", false),
+            ("Item", "tags", false),
+            ("Item", "owner", false),
+            ("Point", "x", false),
+        ];
+        for (layout, name, expected) in cases {
+            let is_expected = is_expected(&program, layout, name);
+            assert_eq!(is_expected, expected, "{layout}.{name}");
         }
-    }
-
-    #[test]
-    fn numbers_booleans_containers_and_objects_stay_typed() {
-        let program = link();
-        for name in ["count", "done", "tags", "owner"] {
-            assert!(!is_expected(&program, "Item", name), "{name}");
-        }
-    }
-
-    #[test]
-    fn class_fields_stay_typed() {
-        let program = link();
-        assert!(!is_expected(&program, "Point", "x"));
     }
 }

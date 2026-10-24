@@ -27,10 +27,8 @@ pub fn map_each<T: Send, R: Send>(
     for_each_mut(&mut slots, in_parallel, &|(item, result)| {
         *result = item.take().map(work);
     });
-    let results = slots.into_iter();
-    results
-        .map(|(_, result)| result.expect("every task ran"))
-        .collect()
+    let take = |(_, result): (Option<T>, Option<R>)| result.expect("every task ran");
+    slots.into_iter().map(take).collect()
 }
 
 /// Frees what the items own on all threads.

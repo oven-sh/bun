@@ -3,13 +3,13 @@
 
 use bun_aot_interface::compile::{BuildFailed, Compilation};
 use bun_aot_interface::diagnostic_codes::Code;
-use bun_aot_interface::diagnostics::InternalError;
 use bun_aot_interface::engine::{EngineModuleId, EngineResult, RejectedOptionWord};
 use bun_aot_interface::link::ProgramNames;
 use bun_aot_interface::options::Options;
 use bun_aot_interface::report::{ReportEntry, ReportInput, ReportMessage, SourceTexts};
 use bun_aot_interface::statistics::{StatisticId, Statistics};
-use bun_aot_interface::{Opaque, SourceProvider, signatures};
+use bun_aot_interface::validation_plans::ValidationPlans;
+use bun_aot_interface::{Opaque, SourceProvider};
 use bun_ast::Log;
 use bun_options_types::aot_options::{ExplainSet, ReportDetail};
 use bun_sema::atom::Interner;
@@ -19,26 +19,16 @@ use bun_sema::program::Files;
 use bun_sema::session::Arena;
 use bun_trim::UsedFeatures;
 
-macro_rules! linked_functions {
-    ($(fn $name:ident $(<$($lifetime:lifetime),*>)? ($($argument:ident: $type:ty),* $(,)?) $(-> $result:ty)? $body:block)*) => {$(
-        #[unsafe(no_mangle)]
-        #[inline(never)]
-        fn $name $(<$($lifetime),*>)? ($($argument: $type),*) $(-> $result)? $body
-
-        const _: signatures::$name = $name;
-    )*};
-}
-
 #[cold]
 #[inline(never)]
 fn absent() -> ! {
     panic!("this build of Bun has no ahead-of-time compiler")
 }
 
-linked_functions! {
+bun_aot_interface::define_linked_functions! {
     fn bun_aot_compile(_options: &Options<'_>, _provider: &dyn SourceProvider, _log: &mut Log) -> Result<Compilation, BuildFailed> { absent() }
+    fn bun_aot_plan_validated_calls(_options: &Options<'_>, _provider: &dyn SourceProvider, _log: &mut Log) -> Option<ValidationPlans> { absent() }
     fn bun_aot_log_diagnostic(_log: &mut Log, _code: Code, _arguments: &[&[u8]]) { absent() }
-    fn bun_aot_log_internal_error(_log: &mut Log, _error: InternalError) { absent() }
     fn bun_aot_parse_json<'s>(_text: &[u8], _arena: &'s Arena, _atoms: &Interner<'s>) -> Option<&'s DataValue<'s>> { absent() }
     fn bun_aot_check_option_word(_earlier_words: &[Box<[u8]>], _word: &[u8]) -> Result<(), RejectedOptionWord> { Ok(()) }
     fn bun_aot_used_features(_result: &EngineResult) -> UsedFeatures { absent() }
@@ -56,4 +46,19 @@ linked_functions! {
     fn bun_aot_write_build_report(_input: &ReportInput<'_>, _detail: ReportDetail, _build_id: Option<&[u8]>) -> Vec<u8> { absent() }
     fn bun_aot_write_registry() -> Vec<u8> { absent() }
     fn bun_aot_unlinked_named_values<'a, 's>(_files: &'a Files<'s>, _atoms: &Interner<'s>) -> Box<dyn NamedValues + 'a> { absent() }
+}
+
+#[repr(C)]
+pub struct LibraryText {
+    pointer: *const u8,
+    length: usize,
+}
+
+/// Empty: a validator is made of a plan by the compiler's own library.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__validationLibrary() -> LibraryText {
+    LibraryText {
+        pointer: core::ptr::null(),
+        length: 0,
+    }
 }

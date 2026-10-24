@@ -4,15 +4,13 @@ use bun_sema::bind::{Binding, BindingInitializer, Decl, Parent, SymbolId};
 use bun_sema::hir::{BinOp, Branches, ExprId, ExprKind, StmtKind};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{CodeAnswer, FileId, Files};
-use bun_sema::resolve::FinishedFile;
 use bun_sema_driver::host::to_native;
 
 use crate::builtins::{BuiltinId, RuntimeModule, table};
 use crate::load::SourceKind;
 use crate::load::loaders::{loader_named_by_path, script_kind_of};
 use crate::load::module_paths::with_separators_of_host;
-use crate::load::named_loads::Scan;
-use crate::load::runtime_modules::RuntimeModules;
+use crate::load::named_loads::{find_import_of, find_values_of_parameter};
 use crate::load::sources::parsed_source;
 use crate::statistics::{LimitId, LimitValues};
 
@@ -24,15 +22,10 @@ pub(crate) struct WorkerFile {
     pub embedded_path: Vec<u8>,
 }
 
-pub(crate) struct WorkerFileInput<'a, 's> {
-    pub files: &'a Files<'s>,
-    pub runtime_modules: &'a RuntimeModules,
-    pub limits: &'a LimitValues,
-    pub loaders: &'a [(Vec<u8>, Loader)],
-}
-
 struct Walk<'a, 's> {
-    input: &'a WorkerFileInput<'a, 's>,
+    files: &'a Files<'s>,
+    limits: &'a LimitValues,
+    loaders: &'a [(Vec<u8>, Loader)],
     constructor: Option<BuiltinId>,
     variables_left: u64,
     parameters_left: u64,
@@ -42,17 +35,21 @@ struct Walk<'a, 's> {
 
 // `import path from "./worker.js" with { type: "file" }; new Worker(path)`: the build has seen the code that the Worker runs. What the constructor is given is followed back through variables, parameters and exports to the import. In the order of their paths.
 pub(crate) fn find_embedded_files_that_start_workers(
-    input: &WorkerFileInput<'_, '_>,
+    files: &Files<'_>,
+    limits: &LimitValues,
+    loaders: &[(Vec<u8>, Loader)],
 ) -> Vec<WorkerFile> {
     let mut walk = Walk {
-        input,
+        files,
+        limits,
+        loaders,
         constructor: table::find_name(b"Worker").and_then(table::global),
         variables_left: 0,
         parameters_left: 0,
         pending: Vec::new(),
         copies: Vec::new(),
     };
-    for &file in input.files.compiled_files() {
+    for &file in files.compiled_files() {
         walk.visit_file(file);
     }
     let mut found: Vec<WorkerFile> = (walk.copies.iter())
@@ -65,7 +62,7 @@ pub(crate) fn find_embedded_files_that_start_workers(
 
 impl Walk<'_, '_> {
     fn visit_file(&mut self, file: FileId) {
-        let files = self.input.files;
+        let files = self.files;
         let Some(source) = parsed_source(files, file) else {
             return;
         };
@@ -94,7 +91,7 @@ impl Walk<'_, '_> {
 
     // `import { Worker } from "node:worker_threads"`
     fn is_worker_of_node(&self, file: FileId, callee: ExprId) -> bool {
-        let files = self.input.files;
+        let files = self.files;
         let (hir, bound) = (files.hir(file), files.bound(file));
         let (ExprKind::Ident(_), Binding::Symbol(symbol)) =
             (hir[callee].kind, bound.binding(callee))
@@ -117,7 +114,7 @@ impl Walk<'_, '_> {
     }
 
     fn follow(&mut self, file: FileId, argument: ExprId) {
-        let (files, limits) = (self.input.files, self.input.limits);
+        let (files, limits) = (self.files, self.limits);
         self.variables_left = limits.get(LimitId::MaxVariablesFollowedToLoader);
         self.parameters_left = limits.get(LimitId::MaxParametersFollowedToLoader);
         self.pending.push((file, argument));
@@ -153,17 +150,17 @@ impl Walk<'_, '_> {
 
     // `(await import("./worker.js", { with: { type: "file" } })).default`
     fn follow_default_of(&mut self, file: FileId, namespace: ExprId) {
-        let hir = self.input.files.hir(file);
+        let hir = self.files.hir(file);
         let ExprKind::Await(promise) = hir[hir.skip_type_assertions(namespace)].kind else {
             return;
         };
         let call = hir.skip_type_assertions(promise);
-        let site = self.input.files.analysis(file).import_site_of_call(call);
+        let site = self.files.analysis(file).import_site_of_call(call);
         self.follow_export(file, site, known::default);
     }
 
     fn follow_name(&mut self, file: FileId, mention: ExprId) {
-        let files = self.input.files;
+        let files = self.files;
         let bound = files.bound(file);
         let Binding::Symbol(symbol) = bound.binding(mention) else {
             return;
@@ -171,31 +168,18 @@ impl Walk<'_, '_> {
         if !matches!(bound.symbol(symbol).decls, [Decl::Param(_)]) {
             return self.follow_symbol(file, symbol);
         }
-        let (Some(source), Some(compiled)) = (parsed_source(files, file), files.compiled(file))
-        else {
-            return;
-        };
-        if self.parameters_left == 0 {
+        let is_loaded = parsed_source(files, file).is_some() && files.compiled(file).is_some();
+        if !is_loaded || self.parameters_left == 0 {
             return;
         }
         self.parameters_left -= 1;
-        let request = FinishedFile {
-            path: files.module(file).file_name(),
-            loader: compiled.loader,
-            hir: files.hir(file),
-            bound,
-            analysis: files.analysis(file),
-            atoms: &files.atoms,
-            resolutions: &[],
-        };
-        let (runtime_modules, limits) = (self.input.runtime_modules, self.input.limits);
-        let scan = Scan::new(&request, &source.builtins, runtime_modules, limits);
-        let values = scan.find_values_of_parameter(mention).unwrap_or_default();
+        let (hir, decisions) = (files.hir(file), &files.analysis(file).decisions);
+        let values = find_values_of_parameter(hir, bound, decisions, mention).unwrap_or_default();
         self.pending.extend(values.iter().map(|&it| (file, it)));
     }
 
     fn follow_symbol(&mut self, file: FileId, symbol: SymbolId) {
-        let files = self.input.files;
+        let files = self.files;
         let (hir, bound) = (files.hir(file), files.bound(file));
         if self.variables_left == 0 {
             return;
@@ -209,16 +193,7 @@ impl Walk<'_, '_> {
                 self.follow_default_of(file, source);
             }
             BindingInitializer::Import => {
-                let mut declarations = bound.symbol(symbol).decls.iter();
-                let import = declarations.find_map(|&declaration| match declaration {
-                    Decl::ImportSpec(specifier) => {
-                        let specifier = hir[specifier];
-                        (!specifier.type_only).then_some((specifier.import, specifier.imported))
-                    }
-                    Decl::ImportDefault(import) => Some((import, known::default)),
-                    _ => None,
-                });
-                if let Some((import, name)) = import {
+                if let Some((import, name)) = find_import_of(files, file, symbol) {
                     let kind = ImportSiteKind::Import(import);
                     let site = files.analysis(file).import_site_index(kind);
                     self.follow_export(file, site, name);
@@ -229,7 +204,7 @@ impl Walk<'_, '_> {
     }
 
     fn follow_export(&mut self, importer: FileId, site: Option<usize>, name: Atom) {
-        let files = self.input.files;
+        let files = self.files;
         let answer = site.and_then(|site| files.compiled(importer)?.code_answers.get(site));
         let Some(&CodeAnswer::File(exporter)) = answer else {
             return;
@@ -281,10 +256,10 @@ impl Walk<'_, '_> {
     }
 
     fn describe(&self, copy: FileId) -> Option<WorkerFile> {
-        let files = self.input.files;
+        let files = self.files;
         let source = parsed_source(files, copy)?;
         let path = files.module(copy).file_name();
-        let is_code = loader_named_by_path(self.input.loaders, path)
+        let is_code = loader_named_by_path(self.loaders, path)
             .is_some_and(|loader| script_kind_of(loader).is_some());
         if !is_code || source.is_from_plugin || source.plugin_module.is_some() {
             return None;

@@ -1,6 +1,6 @@
 use super::writer::{TreeWriter, UnsupportedNode, Written};
 use bun_ast::binding::Data as BindingData;
-use bun_ast::{Binding, Expr, G, Loc, LocRef, S, Stmt, StmtData};
+use bun_ast::{Expr, G, Loc, LocRef, S, Stmt, StmtData};
 use bun_lint_react_compiler::code_generation::SymbolOrigin;
 use bun_sema::atom::Atom;
 use bun_sema::hir::{
@@ -37,7 +37,12 @@ impl TreeWriter<'_, '_> {
         let kind = match &statement.data {
             StmtData::SEmpty(_) => StmtKind::Empty,
             StmtData::SDebugger(_) => StmtKind::Debugger,
-            StmtData::SDirective(directive) => self.write_directive(directive, loc),
+            StmtData::SDirective(directive) => {
+                let raw = self.atoms.intern(directive.value.slice());
+                let (start, end) = self.range_of(loc);
+                let expr = self.file.expr(ExprKind::String(raw), start, end);
+                StmtKind::Directive { expr, raw }
+            }
             StmtData::SExpr(expression) => {
                 StmtKind::Expr(self.write_expression(&expression.value)?)
             }
@@ -48,13 +53,54 @@ impl TreeWriter<'_, '_> {
                 StmtKind::Return(self.write_expression_or_none(returned.value.as_ref())?)
             }
             StmtData::SThrow(thrown) => StmtKind::Throw(self.write_expression(&thrown.value)?),
-            StmtData::SIf(if_statement) => self.write_if_statement(if_statement)?,
+            StmtData::SIf(if_statement) => {
+                let test = self.write_expression(&if_statement.test)?;
+                let yes = self.write_block_or_statement(&if_statement.yes)?;
+                let no = match &if_statement.no {
+                    Some(no) => self.write_block_or_statement(no)?,
+                    None => StmtId::NONE,
+                };
+                StmtKind::If { test, yes, no }
+            }
             StmtData::SBlock(block) => {
                 StmtKind::Block(self.write_statement_list(block.stmts.slice())?)
             }
-            StmtData::SFor(for_loop) => self.write_for_statement(for_loop)?,
-            StmtData::SForIn(for_loop) => self.write_for_in_statement(for_loop)?,
-            StmtData::SForOf(for_loop) => self.write_for_of_statement(for_loop)?,
+            StmtData::SFor(for_loop) => {
+                let init = match &for_loop.init {
+                    Some(head) => self.write_for_head(head, TypeAnnotation::Allowed)?,
+                    None => StmtId::NONE,
+                };
+                let test = self.write_expression_or_none(for_loop.test.as_ref())?;
+                let update = self.write_expression_or_none(for_loop.update.as_ref())?;
+                let body = self.write_block_or_statement(&for_loop.body)?;
+                StmtKind::For {
+                    init,
+                    test,
+                    update,
+                    body,
+                }
+            }
+            StmtData::SForIn(for_loop) => {
+                let left = self.write_for_head(&for_loop.init, TypeAnnotation::Forbidden)?;
+                let expr = self.write_expression(&for_loop.value)?;
+                let body = self.write_block_or_statement(&for_loop.body)?;
+                StmtKind::ForIn { left, expr, body }
+            }
+            StmtData::SForOf(for_loop) => {
+                let is_await = for_loop.is_await;
+                if is_await {
+                    self.file.rare_syntax |= rare::FOR_AWAIT;
+                }
+                let left = self.write_for_head(&for_loop.init, TypeAnnotation::Forbidden)?;
+                let expr = self.write_expression(&for_loop.value)?;
+                let body = self.write_block_or_statement(&for_loop.body)?;
+                StmtKind::ForOf {
+                    left,
+                    expr,
+                    body,
+                    is_await,
+                }
+            }
             StmtData::SWhile(while_loop) => {
                 let test = self.write_expression(&while_loop.test)?;
                 let body = self.write_block_or_statement(&while_loop.body)?;
@@ -65,7 +111,23 @@ impl TreeWriter<'_, '_> {
                 let test = self.write_expression(&while_loop.test)?;
                 StmtKind::DoWhile { body, test }
             }
-            StmtData::SSwitch(switch) => self.write_switch(switch)?,
+            StmtData::SSwitch(switch) => {
+                let expr = self.write_expression(&switch.test)?;
+                let mut cases = Vec::with_capacity(switch.cases.len());
+                for case in switch.cases.slice() {
+                    let test = self.write_expression_or_none(case.value.as_ref())?;
+                    let body = self.write_statement_list(case.body.slice())?;
+                    let (pos, end) = self.range_of(case.loc);
+                    cases.push(hir::Case {
+                        test,
+                        body,
+                        pos,
+                        end,
+                    });
+                }
+                let cases = self.file.add_cases(&cases);
+                StmtKind::Switch { expr, cases }
+            }
             StmtData::STry(try_statement) => self.write_try(try_statement)?,
             StmtData::SLabel(labeled) => {
                 let body = self.write_block_or_statement(&labeled.stmt)?;
@@ -104,18 +166,14 @@ impl TreeWriter<'_, '_> {
         })
     }
 
-    fn write_expression_or_none(&mut self, expression: Option<&Expr>) -> Written<ExprId> {
+    pub(super) fn write_expression_or_none(
+        &mut self,
+        expression: Option<&Expr>,
+    ) -> Written<ExprId> {
         match expression {
             Some(expression) => self.write_expression(expression),
             None => Ok(ExprId::NONE),
         }
-    }
-
-    fn write_directive(&mut self, directive: &S::Directive, loc: Loc) -> StmtKind {
-        let raw = self.atoms.intern(directive.value.slice());
-        let (start, end) = self.range_of(loc);
-        let expr = self.file.expr(ExprKind::String(raw), start, end);
-        StmtKind::Directive { expr, raw }
     }
 
     fn write_local(
@@ -162,7 +220,7 @@ impl TreeWriter<'_, '_> {
             }
             BindingData::BArray(_) | BindingData::BObject(_) | BindingData::BMissing(_) => false,
         };
-        self.settings.is_typescript && declaration.value.is_none() && declares_local
+        !self.file.is_js && declaration.value.is_none() && declares_local
     }
 
     fn write_block_or_statement(&mut self, statement: &Stmt) -> Written<StmtId> {
@@ -177,16 +235,6 @@ impl TreeWriter<'_, '_> {
         Ok(self.add_statement(StmtKind::Block(list), loc))
     }
 
-    fn write_if_statement(&mut self, if_statement: &S::If) -> Written<StmtKind> {
-        let test = self.write_expression(&if_statement.test)?;
-        let yes = self.write_block_or_statement(&if_statement.yes)?;
-        let no = match &if_statement.no {
-            Some(no) => self.write_block_or_statement(no)?,
-            None => StmtId::NONE,
-        };
-        Ok(StmtKind::If { test, yes, no })
-    }
-
     fn write_for_head(&mut self, head: &Stmt, annotation: TypeAnnotation) -> Written<StmtId> {
         if let StmtData::SLocal(local) = &head.data {
             return self.write_local(local, head.loc, annotation);
@@ -198,69 +246,24 @@ impl TreeWriter<'_, '_> {
         Ok(self.add_statement(StmtKind::Expr(expression), head.loc))
     }
 
-    fn write_for_statement(&mut self, for_loop: &S::For) -> Written<StmtKind> {
-        let init = match &for_loop.init {
-            Some(head) => self.write_for_head(head, TypeAnnotation::Allowed)?,
-            None => StmtId::NONE,
-        };
-        let test = self.write_expression_or_none(for_loop.test.as_ref())?;
-        let update = self.write_expression_or_none(for_loop.update.as_ref())?;
-        let body = self.write_block_or_statement(&for_loop.body)?;
-        Ok(StmtKind::For {
-            init,
-            test,
-            update,
-            body,
-        })
-    }
-
-    fn write_for_in_statement(&mut self, for_loop: &S::ForIn) -> Written<StmtKind> {
-        let left = self.write_for_head(&for_loop.init, TypeAnnotation::Forbidden)?;
-        let expr = self.write_expression(&for_loop.value)?;
-        let body = self.write_block_or_statement(&for_loop.body)?;
-        Ok(StmtKind::ForIn { left, expr, body })
-    }
-
-    fn write_for_of_statement(&mut self, for_loop: &S::ForOf) -> Written<StmtKind> {
-        if for_loop.is_await {
-            self.file.rare_syntax |= rare::FOR_AWAIT;
-        }
-        let left = self.write_for_head(&for_loop.init, TypeAnnotation::Forbidden)?;
-        let expr = self.write_expression(&for_loop.value)?;
-        let body = self.write_block_or_statement(&for_loop.body)?;
-        Ok(StmtKind::ForOf {
-            left,
-            expr,
-            body,
-            is_await: for_loop.is_await,
-        })
-    }
-
-    fn write_switch(&mut self, switch: &S::Switch) -> Written<StmtKind> {
-        let expr = self.write_expression(&switch.test)?;
-        let mut cases = Vec::with_capacity(switch.cases.len());
-        for case in switch.cases.slice() {
-            let test = self.write_expression_or_none(case.value.as_ref())?;
-            let body = self.write_statement_list(case.body.slice())?;
-            let (pos, end) = self.range_of(case.loc);
-            cases.push(hir::Case {
-                test,
-                body,
-                pos,
-                end,
-            });
-        }
-        let cases = self.file.add_cases(&cases);
-        Ok(StmtKind::Switch { expr, cases })
-    }
-
     fn write_try(&mut self, try_statement: &S::Try) -> Written<StmtKind> {
         let body = try_statement.body.slice();
         let block = self.write_block_statement(body, try_statement.body_loc)?;
         let (param, handler) = match &try_statement.catch {
             Some(catch) => {
                 let param = match &catch.binding {
-                    Some(binding) => self.write_catch_parameter(binding)?,
+                    Some(binding) => {
+                        let pat = self.write_binding(binding)?;
+                        let (pos, end) = self.range_of(binding.loc);
+                        self.file.add_var_decl(VarDecl {
+                            pat,
+                            ty: TypeNodeId::NONE,
+                            init: ExprId::NONE,
+                            kind: VarKind::Let,
+                            flags: Flags::empty(),
+                            loc: TextRange { pos, end },
+                        })
+                    }
                     None => VarDeclId::NONE,
                 };
                 (
@@ -280,19 +283,6 @@ impl TreeWriter<'_, '_> {
             handler,
             finalizer,
         })
-    }
-
-    fn write_catch_parameter(&mut self, binding: &Binding) -> Written<VarDeclId> {
-        let pat = self.write_binding(binding)?;
-        let (pos, end) = self.range_of(binding.loc);
-        Ok(self.file.add_var_decl(VarDecl {
-            pat,
-            ty: TypeNodeId::NONE,
-            init: ExprId::NONE,
-            kind: VarKind::Let,
-            flags: Flags::empty(),
-            loc: TextRange { pos, end },
-        }))
     }
 
     fn resolve_label(&mut self, label: LocRef) -> Atom {

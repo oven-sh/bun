@@ -83,7 +83,7 @@ impl Declarations<'_, '_> {
         let FnOwner::Stmt(statement) = self.bound.fns[f.idx()].owner else {
             return None;
         };
-        let scope = self.statement_scope(statement).some()?;
+        let scope = self.bound.scope_of_stmt(statement).some()?;
         Some((scope, function_position(self.hir, self.bound, f)))
     }
 

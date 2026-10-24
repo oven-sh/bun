@@ -102,7 +102,6 @@ impl Checker<'_, '_> {
         dead_code
     }
 
-    /// `bun check` judges the function as it is written.
     fn push_replaced_functions(&self, file: FileId, dead_code: &mut Vec<(u32, u32)>) {
         let hir = self.hir(file);
         for (index, function) in hir.fns.iter().enumerate() {
@@ -113,7 +112,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `bun run` drops such an import with the code that uses it, so the module need not export the name.
     fn push_imports_used_only_in_dead_code(&self, file: FileId, dead_code: &mut Vec<(u32, u32)>) {
         let Some(compiled) = self.files.compiled(file) else {
             return;

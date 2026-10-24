@@ -1,22 +1,15 @@
-use super::module_items::ModuleItems;
+use super::module_items::{ModuleItems, finish_file};
 use bun_ast::{Loc, Ref, S, Stmt, StmtData, StmtTag, flags};
 use bun_core::StackCheck;
 use bun_lint_react_compiler::code_generation::{GeneratedFunction, GeneratedSymbol, SymbolOrigin};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::hir::{
-    ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnId, Keyword, ListAt, StmtId, StmtKind,
-    TypeNodeId, TypeNodeKind,
+    ExprId, ExprKind, File, FileBuilder, Flags, FnBody, FnId, Keyword, ListAt, TypeNodeId,
+    TypeNodeKind,
 };
 use bun_sema::resolve::JsxSettings;
 use bun_sema::session::Arena;
 use rustc_hash::{FxHashMap, FxHashSet};
-
-const MODULE_ITEM_POSITION: u32 = 0;
-
-pub(super) struct WriterSettings<'a> {
-    pub is_typescript: bool,
-    pub jsx: &'a JsxSettings,
-}
 
 #[derive(Debug)]
 pub(super) struct UnsupportedNode(pub &'static str);
@@ -32,7 +25,7 @@ pub(super) type Written<T> = Result<T, UnsupportedNode>;
 pub(super) struct TreeWriter<'a, 's> {
     pub(super) file: FileBuilder,
     pub(super) atoms: &'a Interner<'s>,
-    pub(super) settings: WriterSettings<'a>,
+    pub(super) jsx: &'a JsxSettings,
     pub(super) items: ModuleItems,
     pub(super) function: FunctionContext,
     pub(super) stack: StackCheck,
@@ -67,13 +60,13 @@ impl<'a, 's> TreeWriter<'a, 's> {
     pub(super) fn new(
         file: FileBuilder,
         atoms: &'a Interner<'s>,
-        settings: WriterSettings<'a>,
+        jsx: &'a JsxSettings,
     ) -> TreeWriter<'a, 's> {
         TreeWriter {
             written_type_arguments: find_written_type_arguments(&file),
             file,
             atoms,
-            settings,
+            jsx,
             items: ModuleItems::default(),
             function: FunctionContext::default(),
             stack: StackCheck::init(),
@@ -112,26 +105,9 @@ impl<'a, 's> TreeWriter<'a, 's> {
         Ok(())
     }
 
-    pub(super) fn finish_module(&mut self) {
-        let (before, after) = (self.items).write(&mut self.file, self.atoms, MODULE_ITEM_POSITION);
-        let body: Vec<StmtId> = self.file.ids(self.file.body).collect();
-        let is_directive =
-            |&statement: &StmtId| matches!(self.file[statement].kind, StmtKind::Directive { .. });
-        let prologue_len = body
-            .iter()
-            .rposition(is_directive)
-            .map_or(0, |last| last + 1);
-        let (prologue, rest) = body.split_at(prologue_len);
-        let statements = [prologue, &before[..], rest, &after[..]].concat();
-        self.file.body = self.file.list(&statements);
-    }
-
     pub(super) fn into_file(mut self, arena: &'s Arena) -> File<'s> {
-        // The parser's filter covers the source text only. An empty filter answers "may mention" for every name.
-        self.file.mentioned.clear();
-        let (mut file, _) = self.file.into_arena(arena, self.atoms.session());
-        file.finish_nodes();
-        file
+        self.items.write(&mut self.file, self.atoms);
+        finish_file(self.file, arena, self.atoms)
     }
 
     /// The compiler's tree has no types.
@@ -209,7 +185,7 @@ impl<'a, 's> TreeWriter<'a, 's> {
                 ModuleItems::name_shadowing_local(self.atoms, symbol)
             }
             SymbolOrigin::Source | SymbolOrigin::Local => self.atoms.intern(&symbol.name),
-            _ => self.items.name_of(self.atoms, self.settings.jsx, symbol),
+            _ => self.items.name_of(self.atoms, self.jsx, symbol),
         }
     }
 

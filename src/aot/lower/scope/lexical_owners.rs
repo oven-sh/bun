@@ -24,19 +24,20 @@ pub(super) fn find_container_binding(
     from: ScopeId,
     container: SymbolId,
 ) -> SymbolId {
-    let mut next = from.some();
-    while let Some(scope) = next {
+    let names_container =
+        |binding: &SymbolId| bound.export_symbol_of_value_symbol_if_exported(*binding) == container;
+    let found = scope_chain(bound, from).find_map(|scope| {
         let binding = match bound.scopes[scope.idx()].kind {
             ScopeKind::Module(module) => bound.declared_symbol(Decl::Module(module)).some(),
             ScopeKind::Enum(declaration) => bound.declared_symbol(Decl::Enum(declaration)).some(),
             _ => None,
         };
-        if let Some(binding) = binding
-            && bound.export_symbol_of_value_symbol_if_exported(binding) == container
-        {
-            return binding;
-        }
-        next = bound.scopes[scope.idx()].parent.some();
-    }
-    container
+        binding.filter(names_container)
+    });
+    found.unwrap_or(container)
+}
+
+pub(super) fn scope_chain(bound: &Bound<'_>, from: ScopeId) -> impl Iterator<Item = ScopeId> {
+    let parent_of = move |scope: &ScopeId| bound.scopes[scope.idx()].parent.some();
+    std::iter::successors(from.some(), parent_of)
 }

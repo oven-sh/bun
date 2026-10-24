@@ -1,22 +1,9 @@
-use super::print_alone;
+use super::assert_graph;
 use crate::ir::builder::{Edge, FunctionBuilder, LocalVariable};
-use crate::ir::ids::{BlockId, TypeId, ValueId};
+use crate::ir::ids::{BlockId, ValueId};
 use crate::ir::ssa::MAX_SHORTCUT_DEFINITION_BLOCKS;
-use crate::ir::testing::build_function;
+use crate::ir::testing::{build_function, create_blocks};
 use crate::ir::types::TypeTable;
-
-pub(super) fn assert_graph(
-    parameters: &[TypeId],
-    expected: &str,
-    fill: impl FnOnce(&mut FunctionBuilder),
-) {
-    let printed = print_alone(&build_function(parameters, fill));
-    assert_eq!(printed, expected, "\n{printed}");
-}
-
-pub(super) fn create_blocks<const COUNT: usize>(builder: &mut FunctionBuilder) -> [BlockId; COUNT] {
-    [(); COUNT].map(|()| builder.create_block(None))
-}
 
 pub(super) fn write_integer(builder: &mut FunctionBuilder, variable: LocalVariable, constant: i64) {
     let value = builder.integer(constant);

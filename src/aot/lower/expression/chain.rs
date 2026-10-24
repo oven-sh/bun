@@ -72,13 +72,3 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.read_variable(result)
     }
 }
-
-pub(super) fn lower_whole_chain(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-    expression: ExprId,
-    tail: Tail<'_>,
-) -> ValueId {
-    lowering.lower_in_chain(ShortCircuit::Undefined, &mut |lowering, exit| {
-        lowering.lower_by_kind(expression, Evaluation::in_chain(exit, tail))
-    })
-}

@@ -2,10 +2,9 @@ use super::beside::{Beside, run_beside};
 use super::definitions::{empty_layout, synthetic_export_variable};
 use super::keys::MergedKeys;
 use super::numbering::ProgramDefinitions;
-use super::program_keys::{ProgramFunctionKey, ProgramLayoutKey, ProgramVariableKey};
+use super::program_keys::ProgramLayoutKey;
 use super::state::{
-    Definitions, ExportWriter, Numbering, ProgramTables, Retained, SupertypeEdges,
-    VariableDefinition,
+    Definitions, ExportWriter, Numbering, ProgramTables, SupertypeEdges, VariableDefinition,
 };
 use super::unit::LinkUnit;
 use crate::builtins::id::BuiltinId;
@@ -13,8 +12,8 @@ use crate::ir::generated::{
     Data, EvalScope, ExpectedResult, Function, Layout, LayoutFlags, LayoutKind, TypeSite, Variable,
 };
 use crate::ir::{
-    DataId, EvalScopeId, ExpectedResultId, FunctionId, Id, IdMap, InParallel, LayoutId,
-    StringTable, TypeSiteId, VariableId, for_each_mut,
+    DataId, EvalScopeId, ExpectedResultId, Id, IdMap, InParallel, LayoutId, StringTable,
+    TypeSiteId, VariableId, for_each_mut,
 };
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::util::SharedSort;
@@ -22,11 +21,9 @@ use core::mem::{MaybeUninit, take};
 use std::sync::Arc;
 
 pub(super) struct MoveInput<'a, 's> {
-    pub functions: &'a MergedKeys<ProgramFunctionKey>,
+    pub defined: ProgramDefinitions<'a>,
     pub layouts: &'a MergedKeys<ProgramLayoutKey>,
-    pub variables: &'a MergedKeys<ProgramVariableKey>,
     pub definitions: &'a Definitions,
-    pub retained: &'a Retained,
     pub numbering: &'a Numbering,
     pub atoms: &'a Interner<'s>,
     pub in_parallel: InParallel<'a>,
@@ -69,44 +66,27 @@ fn take_numbered<I: Id, T>(
     numbered_records.filter_map(|(record, &id)| Some((id?, record)))
 }
 
-struct DefinitionMover<'a> {
-    defined: ProgramDefinitions<'a>,
-    definitions: &'a Definitions,
-    supertypes: &'a SupertypeEdges,
-    function_types: &'a SupertypeEdges,
-    builtin_members: &'a [(u32, BuiltinId)],
-    has_members_without_layout: &'a [bool],
-    numbering: &'a Numbering,
+fn program_ids_above<I: Id>(edges: &SupertypeEdges, merged: u32, ids: &[Option<I>]) -> Vec<I> {
+    let above = edges.of(merged).iter();
+    let mut ids: Vec<I> = above.filter_map(|&above| ids[above as usize]).collect();
+    ids.sort_unstable();
+    ids
 }
 
-impl DefinitionMover<'_> {
-    fn supertypes_of(&self, layout: u32) -> Vec<LayoutId> {
-        let supertypes = self.supertypes.of(layout).iter();
-        let mut ids: Vec<LayoutId> = supertypes
-            .filter_map(|&supertype| self.numbering.layouts[supertype as usize])
-            .collect();
-        ids.sort_unstable();
-        ids
-    }
-
+impl MoveInput<'_, '_> {
     fn add_family(&self, merged: u32, layout: &mut Layout) {
-        layout.supertypes = self.supertypes_of(merged);
-        if self.has_members_without_layout[merged as usize] {
+        layout.supertypes = program_ids_above(
+            &self.definitions.supertypes,
+            merged,
+            &self.numbering.layouts,
+        );
+        if self.definitions.has_members_without_layout[merged as usize] {
             layout.flags |= LayoutFlags::HAS_MEMBERS_WITHOUT_LAYOUT;
         }
     }
 
-    fn function_types_of(&self, function: u32) -> Vec<FunctionId> {
-        let function_types = self.function_types.of(function).iter();
-        let mut ids: Vec<FunctionId> = function_types
-            .filter_map(|&function_type| self.numbering.functions[function_type as usize])
-            .collect();
-        ids.sort_unstable();
-        ids
-    }
-
     fn builtin_members_of(&self, function_type: u32) -> Vec<BuiltinId> {
-        let members = self.builtin_members;
+        let members = &self.definitions.builtin_members;
         let start = members.partition_point(|&(owner, _)| owner < function_type);
         let members = members[start..].iter();
         members
@@ -134,7 +114,11 @@ impl DefinitionMover<'_> {
             next_function = Some(id + 1);
             // The record stays where it is, with the ids of its unit. Only one that several keys share is copied.
             let record = Arc::make_mut(&mut function);
-            record.function_types = self.function_types_of(merged);
+            record.function_types = program_ids_above(
+                &self.definitions.function_types,
+                merged,
+                &numbering.functions,
+            );
             record.builtin_members = self.builtin_members_of(merged);
             output.functions.push(function);
         }
@@ -205,8 +189,8 @@ impl<T> RecordsById<T> {
         *slot = Some(record);
     }
 
-    fn insert_all(&mut self, records: Vec<(impl Id, T)>) {
-        for (id, record) in records {
+    fn insert_all(&mut self, lists: Vec<Vec<(impl Id, T)>>) {
+        for (id, record) in lists.into_iter().flatten() {
             self.insert(id, record);
         }
     }
@@ -257,36 +241,6 @@ fn join_records<I: Id + Send, T: Send>(
     records
 }
 
-struct RetainedSyntheticExport {
-    id: VariableId,
-    module: u32,
-    name: Atom,
-    writer: ExportWriter,
-}
-
-fn collect_synthetic_exports(input: &MoveInput<'_, '_>) -> Vec<RetainedSyntheticExport> {
-    let definitions = input.definitions.variables.iter();
-    let mut exports: Vec<RetainedSyntheticExport> = definitions
-        .zip(&input.numbering.variables)
-        .filter_map(|(&definition, &id)| match definition {
-            Some(VariableDefinition::SyntheticExport {
-                module,
-                name,
-                writer,
-                ..
-            }) => Some(RetainedSyntheticExport {
-                id: id?,
-                module,
-                name,
-                writer,
-            }),
-            Some(VariableDefinition::Unit(_)) | None => None,
-        })
-        .collect();
-    exports.shared_sort_unstable_by_key(|export| export.id);
-    exports
-}
-
 pub(super) fn move_definitions(
     units: &mut [LinkUnit],
     input: &MoveInput<'_, '_>,
@@ -294,27 +248,12 @@ pub(super) fn move_definitions(
 ) -> ProgramTables {
     let numbering = input.numbering;
     debug_assert_eq!(units.len(), numbering.units.len());
-    let mover = DefinitionMover {
-        defined: ProgramDefinitions::new(
-            input.functions,
-            input.layouts,
-            input.variables,
-            input.definitions,
-            input.retained,
-        ),
-        definitions: input.definitions,
-        supertypes: &input.definitions.supertypes,
-        function_types: &input.definitions.function_types,
-        builtin_members: &input.definitions.builtin_members,
-        has_members_without_layout: &input.definitions.has_members_without_layout,
-        numbering,
-    };
     let mut tasks: Vec<(u32, &mut LinkUnit, UnitOutput)> = (0..)
         .zip(units)
         .map(|(index, unit)| (index, unit, UnitOutput::default()))
         .collect();
     for_each_mut(&mut tasks, input.in_parallel, &|(index, unit, output)| {
-        *output = mover.move_unit(*index, unit);
+        *output = input.move_unit(*index, unit);
     });
 
     let counts = &numbering.counts;
@@ -340,16 +279,14 @@ pub(super) fn move_definitions(
     }
     let in_parallel = input.in_parallel;
     // A record is large to move, and each kind has a table of its own.
-    let (layouts, (variables, joined)) = run_beside(
+    let (layouts, (mut variables, joined)) = run_beside(
         input.beside,
         || {
             let mut layouts = RecordsById::new(counts.layouts);
-            for list in layout_lists {
-                layouts.insert_all(list);
-            }
-            for layout in mover.defined.layouts.without_definition() {
+            layouts.insert_all(layout_lists);
+            for layout in input.defined.layouts.without_definition() {
                 let mut record = empty_layout(&input.layouts.keys[layout as usize].key);
-                mover.add_family(layout, &mut record);
+                input.add_family(layout, &mut record);
                 layouts.insert(program_id(&numbering.layouts, layout), record);
             }
             layouts.into_records()
@@ -359,9 +296,7 @@ pub(super) fn move_definitions(
                 input.beside,
                 || {
                     let mut variables = RecordsById::new(counts.variables);
-                    for list in variable_lists {
-                        variables.insert_all(list);
-                    }
+                    variables.insert_all(variable_lists);
                     variables
                 },
                 || {
@@ -375,15 +310,25 @@ pub(super) fn move_definitions(
             )
         },
     );
-    let mut variables = variables;
-    for export in collect_synthetic_exports(input) {
-        let name = strings.intern(input.atoms.bytes(export.name));
-        let module = numbering.modules[export.module as usize]
+    let definitions = input.definitions.variables.iter();
+    let mut synthetic_exports: Vec<(VariableId, u32, Atom, ExportWriter)> = definitions
+        .zip(&numbering.variables)
+        .filter_map(|(&definition, &id)| match definition {
+            Some(VariableDefinition::SyntheticExport {
+                module,
+                name,
+                writer,
+                ..
+            }) => Some((id?, module, name, writer)),
+            Some(VariableDefinition::Unit(_)) | None => None,
+        })
+        .collect();
+    synthetic_exports.shared_sort_unstable_by_key(|&(id, ..)| id);
+    for (id, module, name, writer) in synthetic_exports {
+        let name = strings.intern(input.atoms.bytes(name));
+        let module = numbering.modules[module as usize]
             .expect("the mark keeps the module of a retained synthetic export");
-        variables.insert(
-            export.id,
-            synthetic_export_variable(name, module, export.writer),
-        );
+        variables.insert(id, synthetic_export_variable(name, module, writer));
     }
     let (type_sites, expected_results, eval_scopes, data) = joined;
     assert_eq!(

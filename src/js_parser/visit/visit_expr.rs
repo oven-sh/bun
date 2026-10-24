@@ -193,6 +193,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let result = p.find_symbol(expr.loc, name).expect("unreachable");
+        p.refuse_validate_as_a_value(result.r#ref, expr.loc);
 
         // Order matters: assigning a fresh `Ref` clears the packed user-bit
         // flags (intentional — the parse-time ref carries no flags), so set
@@ -910,7 +911,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && matches!(e_.index.data, Data::EString(key) if key.eql_comptime(b"parse"))
         {
             let member = e_.index.loc;
-            p.visit_parse_of_json(member, &mut e_.target, is_call_target);
+            if let Some(validator) = p.visit_parse_of_json(member, &mut e_.target, is_call_target) {
+                *e = validator;
+                return;
+            }
         }
 
         p.visit_expr_in_out(
@@ -1361,7 +1365,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if e_.name == b"parse" && p.may_name_json_of_bun() {
             let member = e_.name_loc;
-            p.visit_parse_of_json(member, &mut e_.target, is_call_target);
+            if let Some(validator) = p.visit_parse_of_json(member, &mut e_.target, is_call_target) {
+                *e = validator;
+                return;
+            }
         }
 
         // `p.define: &'a Define` is `Copy`; hoist so the `dots.get` borrow is
@@ -1920,13 +1927,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
-        p.visit_expr_in_out(
-            &mut e_.target,
-            ExprIn {
-                property_access_for_method_call_maybe_should_replace_with_undefined: true,
-                ..Default::default()
-            },
-        );
+        let validator = match p.is_validate_of_bundle(e_.target) {
+            true => p.visit_call_of_validate(e_.target, e_.optional_chain.is_some()),
+            false => None,
+        };
+        match validator {
+            Some(validator) => e_.target = validator,
+            None => p.visit_expr_in_out(
+                &mut e_.target,
+                ExprIn {
+                    property_access_for_method_call_maybe_should_replace_with_undefined: true,
+                    ..Default::default()
+                },
+            ),
+        }
 
         // Copy the call side effect flag over if this is a known target
         // copy the small inline payloads out first so the `match &e_.target.data`

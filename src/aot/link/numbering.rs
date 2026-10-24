@@ -1,30 +1,17 @@
 #[cfg(test)]
 mod tests;
 
+use super::definitions::MergedUnits;
 use super::keys::MergedKeys;
 use super::layout_order::order_program_layouts;
 use super::program_keys::{ProgramFunctionKey, ProgramLayoutKey, ProgramVariableKey};
 use super::state::{
-    DefinitionSite, Definitions, ModuleTable, Numbering, ProgramCounts, Retained, UnitIds,
-    UnitMarks, VariableDefinition,
+    DefinitionSite, Definitions, Numbering, ProgramCounts, Retained, UnitIds, UnitMarks,
+    VariableDefinition,
 };
-use super::unit::LinkUnit;
-use crate::ir::{Id, InParallel, ModuleId, StringId, TypeId, VariableId, for_each_mut};
+use crate::ir::{Id, ModuleId, VariableId, for_each_mut};
 use core::convert::identity;
 use core::mem::take;
-
-pub(super) struct NumberingInput<'a> {
-    pub units: &'a [LinkUnit],
-    pub functions: &'a MergedKeys<ProgramFunctionKey>,
-    pub layouts: &'a MergedKeys<ProgramLayoutKey>,
-    pub variables: &'a MergedKeys<ProgramVariableKey>,
-    pub definitions: &'a Definitions,
-    pub retained: &'a Retained,
-    pub modules: &'a ModuleTable,
-    pub strings: Vec<Vec<Option<StringId>>>,
-    pub types: Vec<Vec<Option<TypeId>>>,
-    pub in_parallel: InParallel<'a>,
-}
 
 pub(super) struct RetainedDefinitions<'a, D> {
     local_to_merged: &'a [Vec<u32>],
@@ -141,21 +128,6 @@ fn number_in_order<I: Id>(
     ids
 }
 
-fn number_synthetic_exports(
-    synthetic_exports: &[u32],
-    retained: &[bool],
-    ids: &mut [Option<VariableId>],
-    count: &mut usize,
-) {
-    for &variable in synthetic_exports {
-        let id = &mut ids[variable as usize];
-        if retained[variable as usize] && id.is_none() {
-            *id = Some(VariableId::new(*count));
-            *count += 1;
-        }
-    }
-}
-
 fn number_marked<I: Id>(marks: &[bool], count: &mut usize) -> Vec<Option<I>> {
     let number = |&is_marked: &bool| {
         let id = is_marked.then(|| I::new(*count));
@@ -172,49 +144,28 @@ fn resolve_program_ids<I: Id>(local_to_merged: &[u32], ids: &[Option<I>]) -> Vec
         .collect()
 }
 
-fn number_unit_records(
-    marks: &[UnitMarks],
-    strings: Vec<Vec<Option<StringId>>>,
-    types: Vec<Vec<Option<TypeId>>>,
-    counts: &mut ProgramCounts,
-) -> Vec<(usize, UnitIds)> {
-    debug_assert_eq!(strings.len(), marks.len());
-    debug_assert_eq!(types.len(), marks.len());
+fn number_unit_records(marks: &[UnitMarks], counts: &mut ProgramCounts) -> Vec<(usize, UnitIds)> {
     marks
         .iter()
-        .zip(strings)
-        .zip(types)
-        .map(|((marks, strings), types)| UnitIds {
-            strings,
-            property_keys: Vec::new(),
-            types,
+        .map(|marks| UnitIds {
             type_sites: number_marked(&marks.type_sites, &mut counts.type_sites),
             expected_results: number_marked(&marks.expected_results, &mut counts.expected_results),
-            layouts: Vec::new(),
-            variables: Vec::new(),
-            modules: Vec::new(),
-            module_failures: Vec::new(),
             eval_scopes: number_marked(&marks.eval_scopes, &mut counts.eval_scopes),
-            functions: Vec::new(),
             data: number_marked(&marks.data, &mut counts.data),
+            ..UnitIds::default()
         })
         .enumerate()
         .collect()
 }
 
-pub(super) fn number_program(input: NumberingInput<'_>) -> Numbering {
-    let NumberingInput {
-        units,
-        functions,
-        layouts,
-        variables,
-        definitions,
-        retained,
-        modules,
-        strings,
-        types,
-        in_parallel,
-    } = input;
+/// The strings, the property keys and the types of a unit get their ids elsewhere.
+pub(super) fn number_program(
+    input: &MergedUnits<'_>,
+    definitions: &Definitions,
+    retained: &Retained,
+) -> Numbering {
+    let (units, modules) = (input.units, input.modules);
+    let (functions, layouts, variables) = (input.functions, input.layouts, input.variables);
     let defined = ProgramDefinitions::new(functions, layouts, variables, definitions, retained);
     let mut counts = ProgramCounts::default();
 
@@ -227,12 +178,13 @@ pub(super) fn number_program(input: NumberingInput<'_>) -> Numbering {
     let mut variable_ids =
         number_in_order(variables.keys.len(), unit_variables, &mut counts.variables);
     debug_assert_eq!(variables.local_to_merged.len(), units.len() + 1);
-    number_synthetic_exports(
-        &variables.local_to_merged[units.len()],
-        &retained.variables,
-        &mut variable_ids,
-        &mut counts.variables,
-    );
+    for &synthetic_export in &variables.local_to_merged[units.len()] {
+        let id = &mut variable_ids[synthetic_export as usize];
+        if retained.variables[synthetic_export as usize] && id.is_none() {
+            *id = Some(VariableId::new(counts.variables));
+            counts.variables += 1;
+        }
+    }
 
     let layout_order = order_program_layouts(units, layouts, definitions, &defined.layouts);
     let layout_ids = number_in_order(layouts.keys.len(), layout_order, &mut counts.layouts);
@@ -246,8 +198,8 @@ pub(super) fn number_program(input: NumberingInput<'_>) -> Numbering {
         failure_marks.map(|_, marks| number_marked(marks, &mut counts.module_failures));
 
     debug_assert_eq!(retained.units.len(), units.len());
-    let mut slots = number_unit_records(&retained.units, strings, types, &mut counts);
-    for_each_mut(&mut slots, in_parallel, &|(index, ids)| {
+    let mut slots = number_unit_records(&retained.units, &mut counts);
+    for_each_mut(&mut slots, input.in_parallel, &|(index, ids)| {
         let (index, unit) = (*index, &units[*index]);
         ids.functions = resolve_program_ids(&functions.local_to_merged[index], &function_ids);
         ids.layouts = resolve_program_ids(&layouts.local_to_merged[index], &layout_ids);

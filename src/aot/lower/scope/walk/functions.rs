@@ -1,18 +1,11 @@
 use bun_sema::bind::{CodeUnit, Decl, EvalScope, FnOwner, ScopeId, ScopeKind};
 use bun_sema::check::aot::FunctionRef;
-use bun_sema::hir::{ClassId, FnBody, FnId, FnKind, StmtId};
+use bun_sema::hir::{FnBody, FnId, FnKind, StmtId};
 
 use super::{Context, EvalUse, Initialization, PatternRole, Task, WalkedFunctionId, Walker};
 use crate::ir::{ClassSlot, FunctionKey};
 use crate::lower::scope::{BindingRef, ScopeSlot};
 use crate::lower::{class, commonjs};
-
-fn find_scope_class(kind: ScopeKind) -> Option<ClassId> {
-    match kind {
-        ScopeKind::Class(class) => Some(class),
-        _ => None,
-    }
-}
 
 impl Walker<'_, '_> {
     pub(super) fn is_live_function(&self, function: FnId) -> bool {
@@ -21,8 +14,8 @@ impl Walker<'_, '_> {
             && !self.decisions.is_dead_function(function)
     }
 
-    pub(super) fn visit_function(&mut self, function: FnId, context: Context) {
-        if let Some(id) = self.declare_function(function, context.function) {
+    pub(super) fn visit_function(&mut self, function: FnId, creator: WalkedFunctionId) {
+        if let Some(id) = self.declare_function(function, creator) {
             self.push_function(function, id);
         }
     }
@@ -42,18 +35,14 @@ impl Walker<'_, '_> {
         Some(id)
     }
 
-    pub(super) fn push_function(&mut self, function: FnId, id: WalkedFunctionId) {
-        self.push_task(
-            Task::MarkCreated(id),
-            self.create_function_context(function, id),
-        );
-        self.push_function_code(function, id);
+    fn push_function(&mut self, function: FnId, id: WalkedFunctionId) {
+        let context = self.enter_unit(id, self.bound.fns[function.idx()].scope);
+        self.push_task(Task::MarkCreated(id), context);
+        self.push_function_code(function, context);
     }
 
-    pub(super) fn push_function_code(&mut self, function: FnId, id: WalkedFunctionId) {
+    pub(super) fn push_function_code(&mut self, function: FnId, context: Context) {
         let hir = self.hir;
-        let context = self.create_function_context(function, id);
-        self.enter_scope(self.bound.fns[function.idx()].scope, context);
         for parameter in hir[function].params.iter() {
             self.push_expressions([hir[parameter].default], context);
             self.visit_pattern(hir[parameter].pat, PatternRole::Parameter, context);
@@ -62,17 +51,6 @@ impl Walker<'_, '_> {
             FnBody::Block(statements) => self.push_statements(hir.ids(statements), context),
             FnBody::Expr(expression) => self.push_expressions([expression], context),
             FnBody::None => {}
-        }
-    }
-
-    fn create_function_context(&self, function: FnId, id: WalkedFunctionId) -> Context {
-        let scope = self.bound.fns[function.idx()].scope;
-        Context {
-            function: id,
-            lexical_scope: self.input.lexical_owners[scope.idx()],
-            enclosing_loop: None,
-            is_repeated: true,
-            is_conditional: false,
         }
     }
 
@@ -102,11 +80,7 @@ impl Walker<'_, '_> {
             self.record_store(context, BindingRef::Symbol(entry.var_symbol));
             self.record_symbol_use(context, entry.block_symbol);
             self.record_symbol_use(context, entry.var_symbol);
-            let task = Task::InitializeSymbol {
-                symbol: entry.var_symbol,
-                precedes_hoisted_functions: false,
-            };
-            self.push_task(task, context);
+            self.push_initialization(entry.var_symbol, context);
         }
         self.push_function(function, id);
     }
@@ -117,7 +91,7 @@ impl Walker<'_, '_> {
 
     pub(super) fn use_this(&mut self, context: Context) {
         let has_this = match self.bound.code_unit(context.lexical_scope) {
-            CodeUnit::File => self.input.is_commonjs,
+            CodeUnit::File => self.is_commonjs,
             CodeUnit::Function(_) | CodeUnit::FieldInitializer(_) => true,
         };
         if has_this {
@@ -196,7 +170,7 @@ impl Walker<'_, '_> {
         context: Context,
     ) {
         let creator = match owner {
-            CodeUnit::File if self.input.has_wrapper_parameters => {
+            CodeUnit::File if self.walk.has_wrapper_parameters => {
                 Some(WalkedFunctionId::MODULE_BODY)
             }
             CodeUnit::File | CodeUnit::FieldInitializer(_) => return,
@@ -213,7 +187,7 @@ impl Walker<'_, '_> {
     }
 
     fn record_eval_use(&mut self, context: Context, binding: BindingRef, time: u32) {
-        self.record_use(context.function, binding);
+        self.walk.uses.push((context.function, binding));
         self.walk.eval_uses.push(EvalUse {
             function: context.function,
             binding,
@@ -228,25 +202,6 @@ impl Walker<'_, '_> {
             self.record_eval_use(context, BindingRef::Symbol(symbol), time);
             self.record_store(context, BindingRef::Symbol(symbol));
         }
-        self.record_eval_lexical_slots(context, time);
-        self.record_eval_function_slots(eval, context, time);
-        if self.input.has_wrapper_parameters {
-            for variable in commonjs::undeclared_wrapper_parameters(bound) {
-                let slot = ScopeSlot::CommonJs(variable);
-                self.record_eval_use(context, BindingRef::Slot(self.file_scope, slot), time);
-                self.record_slot_store(context, self.file_scope, slot);
-            }
-        }
-        self.record_scope_chain(context.function, eval.scope, ScopeId::NONE);
-        let parent_of = |&scope: &ScopeId| bound.runtime_parent_scope(hir, scope).some();
-        for scope in std::iter::successors(eval.scope.some(), parent_of) {
-            if let Some(class) = find_scope_class(bound.scopes[scope.idx()].kind) {
-                self.record_eval_class_slots(scope, class, context, time);
-            }
-        }
-    }
-
-    fn record_eval_lexical_slots(&mut self, context: Context, time: u32) {
         let first_use = self.walk.uses.len();
         self.use_this(context);
         self.use_new_target(context);
@@ -258,6 +213,30 @@ impl Walker<'_, '_> {
                 binding,
                 time,
             });
+        }
+        self.record_eval_function_slots(eval, context, time);
+        if self.walk.has_wrapper_parameters {
+            for variable in commonjs::undeclared_wrapper_parameters(bound) {
+                let slot = ScopeSlot::CommonJs(variable);
+                self.record_eval_use(context, BindingRef::Slot(self.file_scope, slot), time);
+                self.record_slot_store(context, self.file_scope, slot);
+            }
+        }
+        self.record_scope_chain(context.function, eval.scope, ScopeId::NONE);
+        let parent_of = |&scope: &ScopeId| bound.runtime_parent_scope(hir, scope).some();
+        for scope in std::iter::successors(eval.scope.some(), parent_of) {
+            let ScopeKind::Class(class) = bound.scopes[scope.idx()].kind else {
+                continue;
+            };
+            for slot in class::class_slots(hir, bound, self.input.compiled.settings, class) {
+                match slot {
+                    ClassSlot::ComputedKey(_) | ClassSlot::DecoratorState => {}
+                    _ => {
+                        let binding = BindingRef::Slot(scope, ScopeSlot::Class(slot));
+                        self.record_eval_use(context, binding, time);
+                    }
+                }
+            }
         }
     }
 
@@ -275,7 +254,7 @@ impl Walker<'_, '_> {
         let scope = context.lexical_scope;
         let function = match self.bound.code_unit(scope) {
             CodeUnit::Function(function) => function,
-            CodeUnit::File if self.input.has_wrapper_parameters => {
+            CodeUnit::File if self.walk.has_wrapper_parameters => {
                 return self.record_eval_arguments_slots(eval, context, time);
             }
             CodeUnit::File | CodeUnit::FieldInitializer(_) => return,
@@ -287,28 +266,8 @@ impl Walker<'_, '_> {
         if kind == FnKind::Constructor {
             self.record_slot_store(context, scope, ScopeSlot::This);
             self.use_lexical_slot(context, ScopeSlot::Callee);
-            self.walk
-                .function_references
-                .push((context.function, function));
-        }
-    }
-
-    fn record_eval_class_slots(
-        &mut self,
-        scope: ScopeId,
-        class: ClassId,
-        context: Context,
-        time: u32,
-    ) {
-        let settings = self.input.compiled.settings;
-        for slot in class::class_slots(self.hir, self.bound, settings, class) {
-            match slot {
-                ClassSlot::ComputedKey(_) | ClassSlot::DecoratorState => {}
-                _ => {
-                    let binding = BindingRef::Slot(scope, ScopeSlot::Class(slot));
-                    self.record_eval_use(context, binding, time);
-                }
-            }
+            let reference = (context.function, function);
+            self.walk.function_references.push(reference);
         }
     }
 }

@@ -42,11 +42,8 @@ fn operands_are_positions_of_arguments() {
         (BuiltinId::FunctionPrototypeApply, call_function),
     ];
     for (builtin, operation) in cases {
-        assert_eq!(
-            prototype_operation_of(builtin),
-            Some(operation),
-            "{builtin:?}"
-        );
+        let found = prototype_operation_of(builtin);
+        assert_eq!(found, Some(operation), "{builtin:?}");
     }
 }
 
@@ -78,18 +75,12 @@ fn declarations_and_operations_are_named_values() {
         function: FnId(4),
     };
     let create = PrototypeOperation::CreateObject { parent: 0 };
-    assert_eq!(
-        named_value_of(Referent::Class(class)),
-        Some(NamedValue::Class(class))
-    );
-    assert_eq!(
-        named_value_of(Referent::Function(function)),
-        Some(NamedValue::Function(function))
-    );
-    assert_eq!(
-        named_value_of(Referent::Builtin(BuiltinId::ObjectCreate)),
-        Some(NamedValue::PrototypeOperation(create))
-    );
+    let found = named_value_of(Referent::Class(class));
+    assert_eq!(found, Some(NamedValue::Class(class)));
+    let found = named_value_of(Referent::Function(function));
+    assert_eq!(found, Some(NamedValue::Function(function)));
+    let found = named_value_of(Referent::Builtin(BuiltinId::ObjectCreate));
+    assert_eq!(found, Some(NamedValue::PrototypeOperation(create)));
 }
 
 #[test]

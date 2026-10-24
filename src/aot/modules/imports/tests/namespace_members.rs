@@ -1,5 +1,5 @@
 use super::*;
-use bun_sema::hir::MemberKey;
+use crate::modules::testing::member_named;
 
 const ES_MODULE: (&str, &str) = ("es.js", "export const x = 1;");
 
@@ -13,13 +13,8 @@ impl BoundProgram<'_, '_, '_> {
     }
 
     fn member_binding(&self, file: &str, name: &str) -> Option<ImportBinding> {
-        let (file, name) = (self.file(file), self.atom(name));
-        let hir = self.input.files.hir(file);
-        let mut exprs = (0..hir.exprs.len() as u32).map(ExprId);
-        let member = exprs.find(
-            |&expr| matches!(hir.member_key(expr), Some((_, MemberKey::Name(key))) if key == name),
-        );
-        let member = member.expect("the file reads no property with this name");
+        let file = self.file(file);
+        let member = member_named(self.input, file, name);
         self.graph.member_binding(file, member)
     }
 }
@@ -30,12 +25,7 @@ fn assert_no_member_is_bound(files: &[(&str, &str)]) {
         let bindings = program.member_bindings(importer);
         assert!(bindings.is_empty(), "{bindings:?}");
         assert!(program.graph.errors().is_empty());
-        assert!(
-            program
-                .graph
-                .required_names(program.file(importer))
-                .is_empty()
-        );
+        assert!(program.required_names(importer).is_empty());
     });
 }
 

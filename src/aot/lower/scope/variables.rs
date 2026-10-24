@@ -1,12 +1,11 @@
-use bun_sema::atom::known;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{InitialState, SymbolId};
 use bun_sema::check::aot::ClassRef;
 
 use super::{BindingRef, ScopeSlot};
 use crate::ir::generated::{Variable, VariableFlags, VariableInitialization};
-use crate::ir::{ClassSlot, DeclaredType, ModuleId, VariableId, VariableKey};
+use crate::ir::{ClassSlot, DeclaredType, VariableId, VariableKey};
 use crate::lower::{FileLowering, class, function};
-use crate::modules::ModuleRef;
 
 impl FileLowering<'_, '_, '_, '_> {
     pub(crate) fn ensure_variable(&mut self, key: VariableKey) -> VariableId {
@@ -14,7 +13,18 @@ impl FileLowering<'_, '_, '_, '_> {
         if key.home_file() != Some(self.file) || self.fragment.is_variable_defined(id) {
             return id;
         }
-        let variable = create_variable(self, key);
+        let variable = match key {
+            VariableKey::Symbol(symbol) => self.create_symbol_variable(symbol.id),
+            VariableKey::ClassSlot { class, slot } => self.create_class_slot_variable(class, slot),
+            VariableKey::ModulePath { variable, .. } => {
+                self.create_untyped_variable(variable.name())
+            }
+            VariableKey::PrivateState { part, .. } => self.create_private_state_variable(part),
+            VariableKey::ModuleExports(_) => self.create_untyped_variable(known::exports),
+            VariableKey::SyntheticExport(_) | VariableKey::Copy(_) => {
+                unreachable!("link defines the variable of an export")
+            }
+        };
         let is_defined_reentrantly = self.fragment.is_variable_defined(id);
         if !is_defined_reentrantly {
             self.fragment.define_variable(id, variable);
@@ -22,16 +32,14 @@ impl FileLowering<'_, '_, '_, '_> {
         id
     }
 
-    // It holds `undefined` until the body of the module stores what the module exports.
-    fn create_exports_variable(&mut self, module: ModuleId) -> Variable {
+    // It holds `undefined` until the body of the module stores into it.
+    fn create_untyped_variable(&mut self, name: Atom) -> Variable {
         Variable {
-            name: Some(self.intern_atom(known::exports)),
-            module,
+            name: Some(self.intern_atom(name)),
+            module: self.module_id(),
             declared: DeclaredType::untyped(),
             initialization: VariableInitialization::Undefined,
-            function: None,
-            owner: None,
-            flags: VariableFlags::default(),
+            ..Variable::default()
         }
     }
 
@@ -69,21 +77,19 @@ impl FileLowering<'_, '_, '_, '_> {
         let declared = self.location_position(binding);
         let owner = match slot {
             ClassSlot::StaticField(member)
-                if class::has_private_static_storage(self.hir, member) =>
+                if !class::has_private_static_storage(self.hir, member) =>
             {
-                None
+                Some(self.class_layout(class))
             }
-            ClassSlot::StaticField(_) => Some(self.class_layout(class)),
             _ => None,
         };
         Variable {
-            name: None,
             module: self.module_id(),
             declared,
             initialization: VariableInitialization::Uninitialized,
-            function: None,
             owner,
             flags: self.compute_flags(binding),
+            ..Variable::default()
         }
     }
 
@@ -91,37 +97,6 @@ impl FileLowering<'_, '_, '_, '_> {
         match self.scopes.placement(binding) {
             Some(placement) if placement.is_immutable => VariableFlags::IS_IMMUTABLE,
             Some(_) | None => VariableFlags::default(),
-        }
-    }
-}
-
-fn create_variable(file: &mut FileLowering<'_, '_, '_, '_>, key: VariableKey) -> Variable {
-    match key {
-        VariableKey::Symbol(symbol) => file.create_symbol_variable(symbol.id),
-        VariableKey::ClassSlot { class, slot } => file.create_class_slot_variable(class, slot),
-        VariableKey::ModulePath { variable, .. } => Variable {
-            name: Some(file.intern_atom(variable.name())),
-            module: file.module_id(),
-            declared: DeclaredType::untyped(),
-            initialization: VariableInitialization::Undefined,
-            function: None,
-            owner: None,
-            flags: VariableFlags::default(),
-        },
-        VariableKey::PrivateState { part, .. } => file.create_private_state_variable(part),
-        VariableKey::ModuleExports(_) => {
-            let module = file.module_id();
-            file.create_exports_variable(module)
-        }
-        VariableKey::InnerModuleExports(callback) => {
-            let module = file.fragment.declare_module(ModuleRef::Inner {
-                file: callback.file,
-                callback: callback.function,
-            });
-            file.create_exports_variable(module)
-        }
-        VariableKey::SyntheticExport(_) | VariableKey::Copy(_) => {
-            unreachable!("link defines the variable of an export")
         }
     }
 }

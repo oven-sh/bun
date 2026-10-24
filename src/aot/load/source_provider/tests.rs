@@ -103,46 +103,31 @@ fn json_loaders_parse_values() {
 }
 
 #[test]
-fn text_loader_returns_string() {
+fn text_loader_returns_string_and_replaces_ill_formed_bytes() {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
-    let file = SourceFile {
-        path: b"/project/a.txt",
-        contents: b"{\"a\":1}\n",
-        loader: Loader::Text,
-    };
-    let mut log = Log::init();
-    let module = WithoutServices
-        .parse_data(&file, session.arena(), &atoms, &mut log)
-        .unwrap();
-    let expected = DataModule::Value {
-        default: &DataValue::String(atoms.intern(b"{\"a\":1}\n")),
-        exports_keys: false,
-    };
-    assert_eq!(module, expected);
-    assert!(log.msgs.is_empty());
-}
-
-#[test]
-fn text_loader_replaces_ill_formed_bytes() {
-    let session = Session::new();
-    let atoms = Interner::new_in(&session);
-    let file = SourceFile {
-        path: b"/project/a.txt",
-        contents: b"a\xFFb\xE2\x82c\xED\xA0\x80",
-        loader: Loader::Text,
-    };
-    let mut log = Log::init();
-    let module = WithoutServices
-        .parse_data(&file, session.arena(), &atoms, &mut log)
-        .unwrap();
     let replaced = "a\u{FFFD}b\u{FFFD}c\u{FFFD}\u{FFFD}\u{FFFD}";
-    let expected = DataModule::Value {
-        default: &DataValue::String(atoms.intern(replaced.as_bytes())),
-        exports_keys: false,
-    };
-    assert_eq!(module, expected);
-    assert!(log.msgs.is_empty());
+    let texts: [(&[u8], &[u8]); 2] = [
+        (b"{\"a\":1}\n", b"{\"a\":1}\n"),
+        (b"a\xFFb\xE2\x82c\xED\xA0\x80", replaced.as_bytes()),
+    ];
+    for (contents, text) in texts {
+        let file = SourceFile {
+            path: b"/project/a.txt",
+            contents,
+            loader: Loader::Text,
+        };
+        let mut log = Log::init();
+        let module = WithoutServices
+            .parse_data(&file, session.arena(), &atoms, &mut log)
+            .unwrap();
+        let expected = DataModule::Value {
+            default: &DataValue::String(atoms.intern(text)),
+            exports_keys: false,
+        };
+        assert_eq!(module, expected);
+        assert!(log.msgs.is_empty());
+    }
 }
 
 #[test]

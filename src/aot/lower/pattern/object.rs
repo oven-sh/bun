@@ -2,7 +2,6 @@ use bun_sema::hir::PropKey;
 use smallvec::SmallVec;
 
 use super::PatternNode;
-use super::view::PatternProperty;
 use crate::ir::generated::RuntimeErrorKind;
 use crate::ir::{LayoutId, ValueId};
 use crate::lower::FunctionLowering;
@@ -21,17 +20,34 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(position) = source_position {
             self.set_position(position);
         }
-        let object = self.emit_object_coercible_check(&properties, value);
+        let error_name = self.file.nullish_error_name(&properties);
+        let error_name = error_name.map(|name| self.file.intern_atom(name));
+        let nullish = self.create_unlikely_block();
+        let object = self.branch_if_nullish(value, nullish);
+        let resume = self.builder.current_block();
+        self.continue_in(nullish);
+        self.emit_throw_runtime_error(RuntimeErrorKind::NotDestructurable, error_name);
+        self.builder.switch_to(resume);
         let has_rest = properties.iter().any(|property| property.is_rest);
         let mut read_names: SmallVec<[PropertyName; 8]> = SmallVec::new();
         for property in &properties {
             self.set_position(property.position);
             if property.is_rest {
-                self.destructure_rest(property, object, &read_names);
+                let prepared = self.prepare_target(property.target);
+                self.set_position(property.position);
+                let layout = self.find_rest_layout(property.target);
+                let copy = self.emit_object_rest(object, &read_names, layout);
+                self.finish_target(property.target, prepared, copy);
                 continue;
             }
-            let Some(name) = self.lower_pattern_key(property) else {
-                continue;
+            let name = match property.key {
+                PropKey::Computed(_) => self.lower_property_name(property.key),
+                PropKey::None | PropKey::Name(_) | PropKey::Private(_) => {
+                    let Some(name) = self.file.property_name(property) else {
+                        continue;
+                    };
+                    PropertyName::Constant(self.file.name_key(name))
+                }
             };
             let prepared = self.prepare_target(property.target);
             self.set_position(source_position.unwrap_or(property.position));
@@ -63,47 +79,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let read = super::apply_default(self, read, property.default, property.target);
             self.finish_target(property.target, prepared, read);
         }
-    }
-
-    fn emit_object_coercible_check(
-        &mut self,
-        properties: &[PatternProperty],
-        value: ValueId,
-    ) -> ValueId {
-        let error_name = self
-            .file
-            .nullish_error_name(properties)
-            .map(|name| self.file.intern_atom(name));
-        let nullish = self.create_unlikely_block();
-        let object = self.branch_if_nullish(value, nullish);
-        let resume = self.builder.current_block();
-        self.continue_in(nullish);
-        self.emit_throw_runtime_error(RuntimeErrorKind::NotDestructurable, error_name);
-        self.builder.switch_to(resume);
-        object
-    }
-
-    fn lower_pattern_key(&mut self, property: &PatternProperty) -> Option<PropertyName> {
-        match property.key {
-            PropKey::Computed(_) => Some(self.lower_property_name(property.key)),
-            PropKey::None | PropKey::Name(_) | PropKey::Private(_) => {
-                let name = self.file.property_name(property)?;
-                Some(PropertyName::Constant(self.file.name_key(name)))
-            }
-        }
-    }
-
-    fn destructure_rest(
-        &mut self,
-        property: &PatternProperty,
-        object: ValueId,
-        read_names: &[PropertyName],
-    ) {
-        let prepared = self.prepare_target(property.target);
-        self.set_position(property.position);
-        let layout = self.find_rest_layout(property.target);
-        let copy = self.emit_object_rest(object, read_names, layout);
-        self.finish_target(property.target, prepared, copy);
     }
 
     // The copy is converted to the type of the binding, which only an object with the layout of that type passes.

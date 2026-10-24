@@ -46,7 +46,8 @@ fn find_pack_layout(file: &mut FileLowering<'_, '_, '_, '_>, key: FunctionKey) -
     Some(layout)
 }
 
-pub(super) fn unpack_captures(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) {
+/// At the entry of every function.
+pub(crate) fn unpack_captures(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>) {
     let Some(layout) = find_pack_layout(lowering.file, lowering.key) else {
         return;
     };
@@ -54,12 +55,12 @@ pub(super) fn unpack_captures(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_
     let fields = 0..lowering.file.scopes.captures(lowering.key).len() as u32;
     let values = fields.map(|field| lowering.builder.get_environment_field(pack, layout, field));
     let values = values.collect();
-    lowering.scopes.set_unpacked_captures(values);
+    lowering.scopes.unpacked_captures = values;
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn get_capture(&self, index: usize) -> ValueId {
-        match self.scopes.unpacked_captures().get(index) {
+        match self.scopes.unpacked_captures.get(index) {
             Some(&value) => value,
             None => self.builder.capture(index as u32),
         }
@@ -87,7 +88,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         variable,
                         dead_zone: DeadZone::Never,
                     };
-                    self.scopes.declare_local(binding, local);
+                    self.scopes.locals.insert(binding, local);
                 }
             }
         }
@@ -183,13 +184,11 @@ pub(in crate::lower) fn captures_home_object(
     file: &FileLowering<'_, '_, '_, '_>,
     key: FunctionKey,
 ) -> bool {
-    file.scopes
-        .captures(key)
-        .iter()
-        .any(|&capture| match capture {
-            Capture::Environment(_) => false,
-            Capture::Value(binding) => file.is_entry_capture(key, binding),
-        })
+    let mut captures = file.scopes.captures(key).iter();
+    captures.any(|&capture| match capture {
+        Capture::Environment(_) => false,
+        Capture::Value(binding) => file.is_entry_capture(key, binding),
+    })
 }
 
 fn is_left_out(file: &FileLowering<'_, '_, '_, '_>, key: FunctionKey) -> bool {

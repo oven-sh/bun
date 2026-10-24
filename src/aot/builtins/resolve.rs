@@ -79,7 +79,6 @@ pub enum ModuleExport {
     Found(BuiltinId),
 }
 
-/// The file whose module object an expression stands for.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleObjectOwner {
     /// `module`.
@@ -99,7 +98,6 @@ pub enum ModuleField {
     Loaded,
 }
 
-/// What a file does with a module object that it comes to by binding.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleObjectUse {
     /// `module.id`, `require.main.filename`: a plain read off what is that object in every run.

@@ -1,4 +1,5 @@
 use super::*;
+use crate::ir::WellKnownSymbol;
 use bun_sema::session::Session;
 
 fn with_names<R>(then: impl FnOnce(&Interner<'_>, &BuiltinNames) -> R) -> R {
@@ -55,7 +56,7 @@ fn name_outside_table_has_no_atom() {
 #[test]
 fn text_name_and_symbol_name_share_text() {
     let text_name = table::find_name(b"iterator").unwrap();
-    let symbol_name = table::find_symbol_name(b"iterator").unwrap();
+    let symbol_name = table::name_of_symbol(WellKnownSymbol::Iterator);
     assert_ne!(text_name, symbol_name);
     with_names(|atoms, names| {
         assert_eq!(names.get(atoms.intern(b"iterator")), Some(text_name));

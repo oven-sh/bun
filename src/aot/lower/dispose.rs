@@ -1,14 +1,15 @@
-mod disposal;
-
 use bun_sema::hir::{self, ExprId, IdList, PatKind, Span, StmtId, StmtKind, VarDeclId, VarKind};
 use smallvec::SmallVec;
 
 use super::FunctionLowering;
-use super::control::CleanupLanding;
+use super::call::{self};
+use super::control::{CleanupLanding, CleanupPath};
 use super::member::PropertyName;
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::BlockRole;
-use crate::ir::{LocalVariable, ValueId};
+use crate::ir::{Edge, LocalVariable, ValueId};
+
+const HAS_AWAIT_STATE: &str = "a scope with an asynchronous resource has its await state";
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum DisposeHint {
@@ -33,14 +34,6 @@ struct Resource {
 struct ResourceScope {
     awaits: Option<AwaitState>,
     resources: SmallVec<[Resource; 2]>,
-}
-
-#[derive(Copy, Clone)]
-struct Disposal {
-    resource: Resource,
-    awaits: Option<AwaitState>,
-    follows_async_resource: bool,
-    is_last: bool,
 }
 
 fn get_dispose_hint(kind: VarKind) -> Option<DisposeHint> {
@@ -152,6 +145,98 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.set_position(pattern.pos);
         add_resource(self, scope, declaration, value, Some(initializer));
     }
+
+    fn emit_disposal(
+        &mut self,
+        resource: Resource,
+        awaits: Option<AwaitState>,
+        follows_async_resource: bool,
+        is_last: bool,
+        path: CleanupPath,
+    ) {
+        self.set_position(resource.position);
+        let pending = match path {
+            CleanupPath::Normal => None,
+            CleanupPath::Throw { thrown } => Some(thrown),
+            CleanupPath::Rethrow => unreachable!("a resource scope takes the thrown value"),
+        };
+        let trailing = match resource.hint {
+            DisposeHint::Async if is_last => awaits,
+            DisposeHint::Async | DisposeHint::Sync => None,
+        };
+        if resource.hint == DisposeHint::Sync && follows_async_resource {
+            self.emit_pending_await(awaits.expect(HAS_AWAIT_STATE));
+        }
+
+        let done = self.create_block();
+        let skipped = self.create_block();
+        let method = self.branch_if_undefined(resource.method, skipped);
+        let catches = pending.is_some() || trailing.is_some();
+        let handler = catches.then(|| self.begin_handler(BlockRole::CatchHandler, None));
+        let this = Some(resource.value);
+        let result = call::emit_call(self, method, this, &[]);
+        if resource.hint == DisposeHint::Async {
+            let state = awaits.expect(HAS_AWAIT_STATE);
+            let yes = self.builder.boolean(true);
+            self.builder.write_variable(state.has_awaited, yes);
+            self.emit_await(result);
+        }
+        if let Some(handler) = handler {
+            self.end_handler(handler);
+            let resume = self.create_block();
+            self.jump(resume);
+
+            self.continue_in(handler.block());
+            let error = self.builder.catch_value();
+            let error = match pending {
+                Some(suppressed) => self.builder.new_suppressed_error(error, suppressed),
+                None => error,
+            };
+            if let Some(state) = trailing {
+                self.emit_pending_await(state);
+            }
+            self.emit_throw(error);
+            self.continue_in(resume);
+        }
+        self.jump(done);
+
+        self.continue_in(skipped);
+        if resource.hint == DisposeHint::Async {
+            let state = awaits.expect(HAS_AWAIT_STATE);
+            let yes = self.builder.boolean(true);
+            self.builder.write_variable(state.needs_await, yes);
+        }
+        self.jump(done);
+
+        self.continue_in(done);
+        if let Some(state) = trailing {
+            self.emit_pending_await(state);
+        }
+    }
+
+    fn emit_pending_await(&mut self, state: AwaitState) {
+        let check = self.create_block();
+        let wait = self.create_block();
+        let done = self.create_block();
+
+        let needs_await = self.builder.read_variable(state.needs_await);
+        self.builder
+            .branch(needs_await, Edge::to(check), Edge::to(done));
+
+        self.continue_in(check);
+        let has_awaited = self.builder.read_variable(state.has_awaited);
+        self.builder
+            .branch(has_awaited, Edge::to(done), Edge::to(wait));
+
+        self.continue_in(wait);
+        let undefined = self.builder.undefined();
+        self.emit_await(undefined);
+        let no = self.builder.boolean(false);
+        self.builder.write_variable(state.needs_await, no);
+        self.jump(done);
+
+        self.continue_in(done);
+    }
 }
 
 fn add_resource(
@@ -184,15 +269,9 @@ fn add_resource(
 fn end_resource_scope(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, scope: ResourceScope) {
     let mut follows_async_resource = false;
     for (index, &resource) in scope.resources.iter().enumerate().rev() {
-        let disposal = Disposal {
-            resource,
-            awaits: scope.awaits,
-            follows_async_resource,
-            is_last: index == 0,
-        };
-        let landing = CleanupLanding::TakesValue;
-        lowering.end_cleanup_per_exit(landing, &mut |lowering, path| {
-            lowering.emit_disposal(disposal, path);
+        let (awaits, is_last) = (scope.awaits, index == 0);
+        lowering.end_cleanup_per_exit(CleanupLanding::TakesValue, &mut |lowering, path| {
+            lowering.emit_disposal(resource, awaits, follows_async_resource, is_last, path);
         });
         follows_async_resource |= resource.hint == DisposeHint::Async;
     }

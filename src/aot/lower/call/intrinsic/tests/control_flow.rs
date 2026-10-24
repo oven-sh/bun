@@ -1,7 +1,7 @@
 use super::{lower_runtime_module, terminator_operands};
 use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{BlockRole, ErrorKind, TerminatorKind};
-use crate::ir::{Opcode, Reference, TypeTable, ValueId};
+use crate::ir::{Opcode, TypeTable, ValueId};
 
 #[test]
 fn type_test_intrinsic_passes_local_on_both_edges() {
@@ -66,10 +66,8 @@ export function probeRange() { $throwRangeError(\"m\"); }
         let end = probe.block(thrown.block).terminator();
         assert_eq!(end.kind, TerminatorKind::Unreachable, "{probe}");
         assert_eq!(probe.count(Opcode::Construct), 0, "{probe}");
-        assert!(
-            probe.terminators(TerminatorKind::Return).is_empty(),
-            "{probe}"
-        );
+        let returns = probe.terminators(TerminatorKind::Return);
+        assert!(returns.is_empty(), "{probe}");
     }
 }
 
@@ -78,12 +76,7 @@ fn throw_with_computed_message() {
     let module =
         lower_runtime_module("export function probe(x: any) { $throwTypeError(\"a\" + x); }");
     let probe = module.function("probe");
-    let constructor = probe.only(Opcode::Builtin);
-    assert_eq!(
-        constructor.references(),
-        [Reference::Builtin(BuiltinId::TypeError)],
-        "{probe}"
-    );
+    let constructor = probe.only_builtin(BuiltinId::TypeError);
     let error = probe.only(Opcode::Construct);
     assert_eq!(error.operands().len(), 2, "{probe}");
     assert_eq!(error.operands()[0], constructor.id(), "{probe}");
@@ -118,11 +111,8 @@ fn if_abrupt_close_iterator() {
     assert_eq!(method.keys(), [probe.text_key("return")], "{probe}");
     let ignored = probe.block(method.block).handler();
     let ignored = ignored.expect("what closing the iterator throws is caught");
-    assert_eq!(
-        probe.block(ignored.block).role,
-        BlockRole::CatchHandler,
-        "{probe}"
-    );
+    let ignored = probe.block(ignored.block);
+    assert_eq!(ignored.role, BlockRole::CatchHandler, "{probe}");
     let close = probe.call_of(probe.value_unless_nullish(method.id()));
     assert_eq!(close.operands()[1..], [probe.parameter(0)], "{probe}");
 

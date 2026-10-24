@@ -1,5 +1,5 @@
 use super::module_objects::{find_child_module, find_module_object_in};
-use super::resolver::{ExprState, HolderKind, ResolvedValue, Resolver, weaker};
+use super::resolver::{ExprState, HolderKind, ResolvedValue, Resolver};
 use super::{BuiltinPath, SourceDialect};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinName, MemberLookup, Mutability,
@@ -7,22 +7,13 @@ use crate::builtins::table::{
 use bun_sema::atom::Atom;
 use bun_sema::hir::{ExprId, MemberKey, NodeData};
 
-fn is_default_export(member: BuiltinId) -> bool {
-    table::entry(member)
-        .flags
-        .contains(BuiltinFlags::IS_DEFAULT_EXPORT)
-}
-
 // No object holds the exports of `bun:bundle` at run time, so no store can replace one.
 fn is_erased_namespace(object: BuiltinId) -> bool {
     object == BuiltinId::BunBundle
 }
 
 fn member_holder(id: BuiltinId) -> BuiltinId {
-    if table::entry(id)
-        .flags
-        .contains(BuiltinFlags::IS_GLOBAL_OBJECT)
-    {
+    if table::has_flag(id, BuiltinFlags::IS_GLOBAL_OBJECT) {
         BuiltinId::GlobalThis
     } else {
         id
@@ -42,10 +33,10 @@ impl Resolver<'_, '_> {
         let location = table::entry(found);
         let mut mutability = match is_erased_namespace(object) {
             true => holder_mutability,
-            false => weaker(holder_mutability, location.mutability),
+            false => holder_mutability.min(location.mutability),
         };
         if location.holder != Some(object) {
-            mutability = weaker(mutability, Mutability::ConstantUnlessWritten);
+            mutability = mutability.min(Mutability::ConstantUnlessWritten);
         }
         Some(BuiltinPath {
             id: table::canonical_id(found),
@@ -73,7 +64,7 @@ impl Resolver<'_, '_> {
             MemberLookup::Found(found) => found,
             MemberLookup::Unknown | MemberLookup::Absent => return None,
         };
-        if is_default_export(found) {
+        if table::has_flag(found, BuiltinFlags::IS_DEFAULT_EXPORT) {
             return None;
         }
         self.path_of_member(object, holder.path.mutability, found)
@@ -169,7 +160,7 @@ impl Resolver<'_, '_> {
         };
         let member = ResolvedValue::object(BuiltinPath {
             id: path.id,
-            mutability: weaker(path.mutability, key_mutability),
+            mutability: path.mutability.min(key_mutability),
         });
         match is_held {
             true => ExprState::Held(member),

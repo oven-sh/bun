@@ -72,23 +72,18 @@ pub fn collect_entries(input: &ReportInput<'_>, kinds: ExplainSet) -> Vec<Report
     if kinds.contains(ExplainSet::JSON) {
         causes::collect_json(input, families, &mut entries);
     }
-    if kinds.contains(ExplainSet::CHECKS) {
-        remaining_checks::collect_text(input, &mut entries);
-    }
-    if kinds.contains(ExplainSet::CHECKS_JSON) {
-        remaining_checks::collect_json(input, &mut entries);
-    }
-    if kinds.contains(ExplainSet::RUNTIME_USE) {
-        runtime_use::collect(input, &mut entries);
-    }
-    if kinds.contains(ExplainSet::DECLINES) {
-        declines::collect(input, &mut entries);
-    }
-    if kinds.contains(ExplainSet::ALLOCATIONS) {
-        allocations::collect(input, &mut entries);
-    }
-    if kinds.contains(ExplainSet::STATISTICS) {
-        statistics::collect(input, &mut entries);
+    let collectors: [(ExplainSet, fn(&ReportInput<'_>, &mut Vec<ReportEntry>)); 6] = [
+        (ExplainSet::CHECKS, remaining_checks::collect_text),
+        (ExplainSet::CHECKS_JSON, remaining_checks::collect_json),
+        (ExplainSet::RUNTIME_USE, runtime_use::collect),
+        (ExplainSet::DECLINES, declines::collect),
+        (ExplainSet::ALLOCATIONS, allocations::collect),
+        (ExplainSet::STATISTICS, statistics::collect),
+    ];
+    for (kind, collect) in collectors {
+        if kinds.contains(kind) {
+            collect(input, &mut entries);
+        }
     }
     entries
 }

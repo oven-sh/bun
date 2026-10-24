@@ -7,9 +7,7 @@ use crate::util::SharedSort;
 
 #[derive(Default)]
 pub struct LeftOutBodies {
-    // In ascending order.
     functions: Box<[FunctionRef]>,
-    // In ascending order.
     files: Box<[FileId]>,
 }
 
@@ -58,7 +56,6 @@ impl LeftOutBodies {
 #[derive(Default)]
 pub(in crate::check) struct LeftOutOfCheck<'p> {
     bodies: Option<&'p LeftOutBodies>,
-    // Of the file that is being checked: from the type parameters to the end of each function.
     ranges: Vec<(u32, u32)>,
 }
 
@@ -75,7 +72,6 @@ impl Checker<'_, '_> {
             && !self.may_have_parameters_evaluated_with_class(file, function)
     }
 
-    // The decorators of a parameter, and the parameter types that the metadata of a decorated member or class holds.
     fn may_have_parameters_evaluated_with_class(&self, file: FileId, function: FnId) -> bool {
         !self.hir(file).decorators.is_empty()
             && matches!(
@@ -84,7 +80,6 @@ impl Checker<'_, '_> {
             )
     }
 
-    // Decorators and a computed name are evaluated with the class, so they stay outside.
     fn left_out_range(&self, file: FileId, function: FnId) -> (u32, u32) {
         let hir = self.hir(file);
         let written = &hir[function];

@@ -52,6 +52,10 @@ test.each([
   ['// @ts-ignore\nimport type { User } from "./no-such-file";\nconsole.log(JSON.parse<User[]>("[]"));', "TS100518"],
   ['// @ts-expect-error\nconsole.log(JSON.parse<Missing>("5"));', "TS100518"],
   ['import { validate } from "bun:bundle";\n// @ts-expect-error\nconsole.log(validate<Missing>(5));', "TS100518"],
+  ['import { JSON } from "bun";\nconsole.log((JSON as any).parse<{ id: number }>("{}"));', "TS100518"],
+  ['import { JSON } from "bun";\nconsole.log((JSON.parse as any)<{ id: number }>("{}"));', "TS100518"],
+  ['console.log((JSON as any).parse<{ id: number }>("{}"));', "TS100518"],
+  ['import { JSON } from "bun";\n// @ts-ignore\nconsole.log(JSON.parse<any, { id: number }>("{}"));', "TS100518"],
   [
     'import type { Schema } from "bun";\ntype Writable<T> = { -readonly [K in keyof T]: T[K] };\nconsole.log(JSON.parse<Writable<{ readonly id: number } & Schema.Strict>>("{}"));',
     "cannot validate",

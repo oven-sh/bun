@@ -1,4 +1,3 @@
-use super::graphs::create_blocks;
 use super::handlers::emit_call;
 use super::references::IdMapStorage;
 use crate::builtins::id::BuiltinId;
@@ -14,7 +13,7 @@ use crate::ir::ids::{
     ModuleFailureId, ModuleId, PropertyKeyId, StringId, TypeId, TypeSiteId, ValueId, VariableId,
 };
 use crate::ir::references::Reference;
-use crate::ir::testing::build_function;
+use crate::ir::testing::{build_function, create_blocks};
 use crate::ir::types::TypeTable;
 
 const REMAP_OFFSET: usize = 100;

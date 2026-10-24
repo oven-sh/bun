@@ -20,13 +20,6 @@ pub(super) enum EnumMemberValue {
 
 pub(super) type EnumMembers = SmallVec<[(EnumMemberId, EnumMemberValue); 8]>;
 
-#[derive(Copy, Clone)]
-enum NextNumber {
-    Known(f64),
-    PreviousPlusOne,
-    Unknown,
-}
-
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum KnownPrimitive {
     String,
@@ -46,53 +39,32 @@ impl KnownPrimitive {
             }
         }
     }
-
-    fn merge(self, other: KnownPrimitive) -> KnownPrimitive {
-        if self == other {
-            self
-        } else {
-            KnownPrimitive::Other
-        }
-    }
-
-    fn add(self, other: KnownPrimitive) -> KnownPrimitive {
-        if self == KnownPrimitive::String || other == KnownPrimitive::String {
-            KnownPrimitive::String
-        } else {
-            KnownPrimitive::Other
-        }
-    }
-
-    fn coalesce(self, other: KnownPrimitive) -> KnownPrimitive {
-        match self {
-            KnownPrimitive::Null | KnownPrimitive::Undefined => other,
-            KnownPrimitive::String | KnownPrimitive::Other => self,
-        }
-    }
 }
 
 impl FileLowering<'_, '_, '_, '_> {
     pub(super) fn compute_enum_member_values(&mut self, declaration: EnumId) -> EnumMembers {
         let hir = self.hir;
         let mut members = EnumMembers::new();
-        let mut next_number = NextNumber::Known(0.0);
         for member in hir[declaration].members.iter() {
             let data = hir[member];
             if data.computed_name.is_some() {
                 continue;
             }
-            let value = match (data.init.some(), next_number) {
-                (Some(initializer), _) => self.classify_enum_initializer(member, initializer),
-                (None, NextNumber::Known(number)) => EnumMemberValue::Number(number),
-                (None, NextNumber::PreviousPlusOne) => EnumMemberValue::PreviousPlusOne,
-                (None, NextNumber::Unknown) => EnumMemberValue::Missing,
-            };
-            next_number = match value {
-                EnumMemberValue::Number(number) => NextNumber::Known(number + 1.0),
-                EnumMemberValue::ComputedNumber(_) | EnumMemberValue::PreviousPlusOne => {
-                    NextNumber::PreviousPlusOne
-                }
-                _ => NextNumber::Unknown,
+            let value = match data.init.some() {
+                Some(initializer) => self.classify_enum_initializer(member, initializer),
+                None => match members.last().map(|previous| previous.1) {
+                    None => EnumMemberValue::Number(0.0),
+                    Some(EnumMemberValue::Number(number)) => EnumMemberValue::Number(number + 1.0),
+                    Some(EnumMemberValue::ComputedNumber(_) | EnumMemberValue::PreviousPlusOne) => {
+                        EnumMemberValue::PreviousPlusOne
+                    }
+                    Some(
+                        EnumMemberValue::String(_)
+                        | EnumMemberValue::Computed(_)
+                        | EnumMemberValue::ComputedString(_)
+                        | EnumMemberValue::Missing,
+                    ) => EnumMemberValue::Missing,
+                },
             };
             members.push((member, value));
         }
@@ -195,8 +167,11 @@ impl FileLowering<'_, '_, '_, '_> {
     fn find_binary_primitive(&mut self, op: BinOp, left: ExprId, right: ExprId) -> KnownPrimitive {
         match op {
             BinOp::Add => {
-                let left = self.find_known_primitive(left);
-                left.add(self.find_known_primitive(right))
+                let sides = [left, right].map(|side| self.find_known_primitive(side));
+                match sides.contains(&KnownPrimitive::String) {
+                    true => KnownPrimitive::String,
+                    false => KnownPrimitive::Other,
+                }
             }
             BinOp::Comma => self.find_known_primitive(right),
             BinOp::And | BinOp::Or => self.find_either_primitive(left, right),
@@ -204,8 +179,11 @@ impl FileLowering<'_, '_, '_, '_> {
                 self.find_known_primitive(left)
             }
             BinOp::Nullish => {
-                let left = self.find_known_primitive(left);
-                left.coalesce(self.find_known_primitive(right))
+                let [left, right] = [left, right].map(|side| self.find_known_primitive(side));
+                match left {
+                    KnownPrimitive::Null | KnownPrimitive::Undefined => right,
+                    KnownPrimitive::String | KnownPrimitive::Other => left,
+                }
             }
             _ => KnownPrimitive::Other,
         }
@@ -221,19 +199,18 @@ impl FileLowering<'_, '_, '_, '_> {
             (false, true) => self.find_known_primitive(first),
             (false, false) => {
                 let first = self.find_known_primitive(first);
-                first.merge(self.find_known_primitive(second))
+                match first == self.find_known_primitive(second) {
+                    true => first,
+                    false => KnownPrimitive::Other,
+                }
             }
         }
     }
 
     fn find_inlined_enum_member(&mut self, reference: ExprId) -> Option<TranspilerConstant> {
         if !matches!(self.hir[reference].kind, ExprKind::Ident(_)) {
-            let member = self
-                .queries
-                .accessed_enum_member(reference)
-                .ok()
-                .flatten()?;
-            return self.find_transpiler_constant(member);
+            let member = self.queries.accessed_enum_member(reference);
+            return self.find_transpiler_constant(member.ok().flatten()?);
         }
         let bound = self.bound;
         let symbol = match bound.binding(reference) {
@@ -247,7 +224,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
-fn to_constant(value: EnumValue) -> Constant {
+pub(in crate::lower) fn to_constant(value: EnumValue) -> Constant {
     match value {
         EnumValue::String(text) => Constant::String(text),
         EnumValue::Number(bits) => Constant::Number(f64::from_bits(bits)),

@@ -110,6 +110,10 @@ fn collected_kinds(records: &[AccessRecord], families: ExplainSet) -> Vec<Unprov
     causes.iter().map(|cause| cause.cause).collect()
 }
 
+fn is_property_access(kind: AccessKind) -> bool {
+    operation_class(kind) == Some(OperationClass::PropertyAccess)
+}
+
 fn counts(program: u64, dependencies: u64) -> OriginCounts {
     OriginCounts {
         program,

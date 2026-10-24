@@ -191,6 +191,7 @@ fn missing_entry_point_fails_at_load() {
     let failed = expect_failure(result);
     assert_eq!(failed.stage, Stage::Load);
     assert!(!failed.is_internal_error);
+    assert!(failed.compilation.is_none());
     assert!(has_code(&log, Kind::Err, Code::EntryPointNotFound.number()));
 }
 
@@ -200,6 +201,7 @@ fn unresolved_import_fails_at_bind_modules() {
     let failed = expect_failure(result);
     assert_eq!(failed.stage, Stage::BindModules);
     assert!(!failed.is_internal_error);
+    assert!(failed.compilation.is_none());
     assert!(has_code(&log, Kind::Err, Code::ModuleNotFound.number()));
 }
 
@@ -209,6 +211,7 @@ fn type_error_fails_at_check_and_lower() {
     let failed = expect_failure(result);
     assert_eq!(failed.stage, Stage::Lower);
     assert!(!failed.is_internal_error);
+    assert!(failed.compilation.is_none());
     assert!(has_code(&log, Kind::Err, TYPE_MISMATCH));
     assert_eq!(failed.statistics.get(Stage::LinkAndEmit.time()), 0);
 }
@@ -373,14 +376,9 @@ fn counts_builtin_types_degraded_to_views() {
     let without_subtype = count_builtin_types_degraded_to_views("interface Registry {}");
     let exact_base = "interface Registry extends Map<string, number> {}";
     let view_base = "interface Registry extends ReadonlyMap<string, number> {}";
-    assert_eq!(
-        count_builtin_types_degraded_to_views(exact_base),
-        without_subtype + 1
-    );
-    assert_eq!(
-        count_builtin_types_degraded_to_views(view_base),
-        without_subtype
-    );
+    let count = count_builtin_types_degraded_to_views;
+    assert_eq!(count(exact_base), without_subtype + 1);
+    assert_eq!(count(view_base), without_subtype);
 }
 
 fn link_registered_functions(omits_builtin_modules: bool) -> Vec<RuntimeFunction> {
@@ -437,10 +435,8 @@ fn counts_emitted_bytes() {
     let emitted = expect_success(result, &log);
     let size = emitted.bytes.as_slice().len() as u64;
     assert!(size > 0);
-    assert_eq!(
-        emitted.summary.statistics.get(StatisticId::ProgramBytes),
-        size
-    );
+    let counted = emitted.summary.statistics.get(StatisticId::ProgramBytes);
+    assert_eq!(counted, size);
 }
 
 fn write_program_to(path: &[u8]) -> (Result<Vec<u8>, BuildFailed>, Log) {
@@ -493,11 +489,8 @@ fn finish_marks_internal_errors() {
     let failed = expect_failure(build.finish::<()>(Err(Stage::LinkAndEmit), &mut log));
     assert_eq!(failed.stage, Stage::LinkAndEmit);
     assert!(failed.is_internal_error);
-    assert!(has_message(
-        &log,
-        Kind::Err,
-        "internal compiler error (LinkAndEmit): broken"
-    ));
+    let message = "internal compiler error (LinkAndEmit): broken";
+    assert!(has_message(&log, Kind::Err, message));
 }
 
 struct CollidingPluginModule;
@@ -580,11 +573,8 @@ fn colliding_module_paths_fail_internally() {
     let failed = expect_failure(result);
     assert_eq!(failed.stage, Stage::Load);
     assert!(failed.is_internal_error);
-    assert!(has_message(
-        &log,
-        Kind::Err,
-        "internal compiler error (Load): two modules have the path node:fs: "
-    ));
+    let message = "internal compiler error (Load): two modules have the path node:fs: ";
+    assert!(has_message(&log, Kind::Err, message));
 }
 
 fn print_runtime_functions(linked: &LinkedProgram) -> String {
@@ -727,6 +717,16 @@ fn small_program_lowers_little_of_bun() {
     );
 }
 
+fn link_with_unused_package(importer: &str, manifest: &str, package: &str) {
+    link_successfully(&[
+        ("main.js", "import \"./effects.js\";\n"),
+        ("effects.js", importer),
+        ("node_modules/tools/package.json", manifest),
+        ("node_modules/tools/index.js", package),
+        GLOBALS,
+    ]);
+}
+
 #[test]
 fn names_of_commonjs_package_that_is_left_out_are_not_looked_for() {
     let manifest =
@@ -737,14 +737,7 @@ fn names_of_commonjs_package_that_is_left_out_are_not_looked_for() {
         "for (const name of [\"first\", \"second\"]) exports[name] = 1;\n",
         "module.exports = JSON.parse(\"{}\");\n",
     ] {
-        let (result, log) = link_files(&[
-            ("main.js", "import \"./effects.js\";\n"),
-            ("effects.js", importer),
-            ("node_modules/tools/package.json", manifest),
-            ("node_modules/tools/index.js", exports),
-            GLOBALS,
-        ]);
-        expect_success(result, &log);
+        link_with_unused_package(importer, manifest, exports);
     }
 }
 
@@ -819,14 +812,7 @@ fn package_that_is_left_out_takes_along_what_the_build_does_not_compile() {
             "exports.first = new Function(\"return new Function('return 1')()\")();\n",
         ),
     ] {
-        let (result, log) = link_files(&[
-            ("main.js", "import \"./effects.js\";\n"),
-            ("effects.js", importer),
-            ("node_modules/tools/package.json", manifest),
-            ("node_modules/tools/index.js", package),
-            GLOBALS,
-        ]);
-        expect_success(result, &log);
+        link_with_unused_package(importer, manifest, package);
     }
 }
 
@@ -869,10 +855,8 @@ fn file_that_a_call_loads_evaluates_what_it_imports_from() {
     let uses_a = "import { a } from \"lib\";\nexport function page() { a(); }\n";
     let uses_nothing = "import { a } from \"lib\";\nexport function page() {}\n";
     let stars = "console.log(0);\nexport * from \"./a.js\";\nexport * from \"./b.js\";\n";
-    assert_eq!(
-        list_evaluated_files_of_package(by_statement, uses_a, stars),
-        ["a.js"]
-    );
+    let evaluated = list_evaluated_files_of_package(by_statement, uses_a, stars);
+    assert_eq!(evaluated, ["a.js"]);
     for by_call in [by_import_call, by_require] {
         let evaluated = list_evaluated_files_of_package(by_call, uses_a, stars);
         assert_eq!(evaluated, ["a.js", "b.js", "index.js"], "{by_call}");
@@ -886,10 +870,8 @@ fn file_that_exports_the_object_of_a_module_under_a_name_is_evaluated() {
     let main = "import { page } from \"./page.js\";\npage();\n";
     let page = "import { inner } from \"lib\";\nexport function page() { inner.b(); }\n";
     let index = "console.log(0);\nexport * as inner from \"./b.js\";\nexport * from \"./a.js\";\n";
-    assert_eq!(
-        list_evaluated_files_of_package(main, page, index),
-        ["b.js", "index.js"]
-    );
+    let evaluated = list_evaluated_files_of_package(main, page, index);
+    assert_eq!(evaluated, ["b.js", "index.js"]);
 }
 
 #[test]

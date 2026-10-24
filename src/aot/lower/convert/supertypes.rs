@@ -137,34 +137,26 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     // The checker's union of two functions with equal signatures keeps one of them, so each operand that can be the value flows for itself.
-    fn find_flowing_operands(&self, expression: ExprId) -> FlowingOperands {
-        let hir = self.hir;
-        match hir[expression].kind {
-            ExprKind::Cond { branches, .. } => {
-                let branches = hir.branches(branches);
-                FlowingOperands::Two(branches.yes, branches.no)
-            }
-            ExprKind::Binary { op, left, right } => match op {
-                BinOp::Or | BinOp::Nullish => FlowingOperands::Two(left, right),
-                // Of the left operand of `&&` only what is falsy is the value, and no object is.
-                BinOp::And | BinOp::Comma => FlowingOperands::One(right),
-                _ => FlowingOperands::Whole,
-            },
-            ExprKind::Satisfies { expr, .. }
-            | ExprKind::NonNull(expr)
-            | ExprKind::AsConst(expr) => FlowingOperands::One(expr),
-            _ => FlowingOperands::Whole,
-        }
-    }
-
     pub(super) fn collect_flowing_operands(&self, source: ExprId) -> SmallVec<[ExprId; 4]> {
+        let hir = self.hir;
         let mut operands = SmallVec::new();
         let mut pending: SmallVec<[ExprId; 4]> = smallvec![source];
         while let Some(expression) = pending.pop() {
-            match self.find_flowing_operands(expression) {
-                FlowingOperands::Two(first, second) => pending.extend([second, first]),
-                FlowingOperands::One(operand) => pending.push(operand),
-                FlowingOperands::Whole => operands.push(expression),
+            match hir[expression].kind {
+                ExprKind::Cond { branches, .. } => {
+                    let branches = hir.branches(branches);
+                    pending.extend([branches.no, branches.yes]);
+                }
+                ExprKind::Binary { op, left, right } => match op {
+                    BinOp::Or | BinOp::Nullish => pending.extend([right, left]),
+                    // Of the left operand of `&&` only what is falsy is the value, and no object is.
+                    BinOp::And | BinOp::Comma => pending.push(right),
+                    _ => operands.push(expression),
+                },
+                ExprKind::Satisfies { expr, .. }
+                | ExprKind::NonNull(expr)
+                | ExprKind::AsConst(expr) => pending.push(expr),
+                _ => operands.push(expression),
             }
         }
         operands
@@ -213,7 +205,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The family of the source goes into the family of the target, part by part.
     pub(super) fn record_conversion(
         &mut self,
         source: CheckerTypeId,
@@ -222,15 +213,7 @@ impl FileLowering<'_, '_, '_, '_> {
         kind: ConversionKind,
     ) {
         let mut comparison = Comparison::default();
-        comparison.pending.push(PendingPair {
-            pair: ComparedPair {
-                source,
-                target,
-                is_asserted: kind == ConversionKind::Asserted,
-            },
-            depth: 0,
-            is_accepted: false,
-        });
+        comparison.add_pair(source, target, kind == ConversionKind::Asserted, 0, false);
         self.compare_pending_pairs(comparison, position);
     }
 
@@ -271,21 +254,26 @@ impl FileLowering<'_, '_, '_, '_> {
         let sources = self.collect_object_types(source);
         let targets = self.collect_object_types(target);
         let mut comparison = Comparison::default();
+        // Every entry and every store is tested, so nothing rests on a flow against the checker's direction: it would only put the family of the wider type into the narrower one.
         for &source in &sources {
-            for &target in &targets {
-                if source != target {
-                    self.follow_copied_members(&mut comparison, source, target);
-                }
+            for &target in targets.iter().filter(|&&target| target != source) {
+                self.visit_differing_members(source, target, false, |file, _, from, to| {
+                    if let Ok(true) = file.queries.is_assignable(from, to) {
+                        comparison.add_pair(from, to, false, MAX_COMPARED_DEPTH, true);
+                    }
+                });
             }
         }
         self.compare_pending_pairs(comparison, position);
     }
 
-    fn follow_copied_members(
+    // The members that both types name and give different types. Nothing is asked about a setter that is skipped.
+    fn visit_differing_members(
         &mut self,
-        comparison: &mut Comparison,
         source: CheckerTypeId,
         target: CheckerTypeId,
+        skips_setters: bool,
+        mut visit: impl FnMut(&mut Self, ObjectMemberKind, CheckerTypeId, CheckerTypeId),
     ) {
         let Ok(members) = self.queries.checked_members(target) else {
             return;
@@ -294,13 +282,16 @@ impl FileLowering<'_, '_, '_, '_> {
             let (MemberName::String(name), Ok(target_type)) = (member.name, member.checked) else {
                 continue;
             };
+            if skips_setters && !is_read_through(member.kind) {
+                continue;
+            }
             let Ok(Some(found)) = self.queries.find_checked_member(source, name) else {
                 continue;
             };
             if let Ok(source_type) = found.checked
                 && source_type != target_type
             {
-                comparison.follow_if_assignable(self, source_type, target_type);
+                visit(self, member.kind, source_type, target_type);
             }
         }
     }
@@ -339,22 +330,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // Of `x as Type` with `x: Type | Node | Symbol`, only a Type is meant: the assertion picks among the objects that the union names, and says nothing of the others.
-    fn find_asserted_members(
-        &mut self,
-        members: &[CheckerTypeId],
-        target: CheckerTypeId,
-    ) -> SmallVec<[CheckerTypeId; 4]> {
-        let mut objects: SmallVec<[CheckerTypeId; 4]> = SmallVec::from_slice(members);
-        objects.retain(|&mut member| has_layout(self, member));
-        let mut others: SmallVec<[CheckerTypeId; 4]> = SmallVec::from_slice(members);
-        others.retain(|member| !objects.contains(member));
-        let mut picked = objects.clone();
-        picked.retain(|&mut member| self.queries.is_assignable(member, target) == Ok(true));
-        others.extend(if picked.is_empty() { objects } else { picked });
-        others
-    }
-
     fn compare_pair(&mut self, comparison: &mut Comparison, pair: ComparedPair) {
         let ComparedPair {
             source,
@@ -369,20 +344,18 @@ impl FileLowering<'_, '_, '_, '_> {
             return;
         };
         let source_kind = classify_shape(&source_shape.kind);
-        if let (ComparedShape::Transparent(types), true) = (&source_kind, is_asserted) {
-            let depth = comparison.depth;
-            let members = self.find_asserted_members(types, target);
-            comparison
-                .pending
-                .extend(members.iter().map(|&source| PendingPair {
-                    pair: ComparedPair {
-                        source,
-                        target,
-                        is_asserted,
-                    },
-                    depth,
-                    is_accepted: false,
-                }));
+        // Of `x as Type` with `x: Type | Node | Symbol`, only a Type is meant: the assertion picks among the objects that the union names, and says nothing of the others.
+        if let (ComparedShape::Transparent(members), true) = (&source_kind, is_asserted) {
+            let mut objects: SmallVec<[CheckerTypeId; 4]> = SmallVec::from_slice(members);
+            objects.retain(|&mut member| has_layout(self, member));
+            let mut others: SmallVec<[CheckerTypeId; 4]> = SmallVec::from_slice(members);
+            others.retain(|member| !objects.contains(member));
+            let mut picked = objects.clone();
+            picked.retain(|&mut member| self.queries.is_assignable(member, target) == Ok(true));
+            others.extend(if picked.is_empty() { objects } else { picked });
+            for source in others {
+                comparison.add_pair(source, target, true, comparison.depth, false);
+            }
             return;
         }
         // What nothing is known of may be an object that somebody has made.
@@ -399,7 +372,9 @@ impl FileLowering<'_, '_, '_, '_> {
         if is_asserted {
             match self.queries.is_assignable(source, target) {
                 Ok(true) => comparison.follow_accepted_value(source, target),
-                Ok(false) | Err(_) => self.admit_asserted_objects(source, target),
+                Ok(false) | Err(_) => {
+                    self.admit_asserted_objects(source, target, MAX_ASSERTED_MEMBER_DEPTH);
+                }
             }
             return;
         }
@@ -424,7 +399,19 @@ impl FileLowering<'_, '_, '_, '_> {
             (
                 ComparedShape::Class(_) | ComparedShape::ObjectType,
                 ComparedShape::Class(_) | ComparedShape::ObjectType,
-            ) => self.compare_objects(comparison, source, target),
+            ) => {
+                // Every entry and every store is tested, so nothing rests on an edge that the checker would not allow.
+                if !comparison.accepts(self, source, target) {
+                    return;
+                }
+                // A literal is allocated with the layout of the type it is written under, and each of its members is converted where the literal is built.
+                if self.add_layout_edge(source, target)
+                    && let ObjectOrigin::ObjectLiteral { .. } = self.queries.object_origin(source)
+                {
+                    return;
+                }
+                self.compare_members(comparison, source, target);
+            }
             (
                 ComparedShape::Class(_)
                 | ComparedShape::ObjectType
@@ -482,14 +469,47 @@ impl FileLowering<'_, '_, '_, '_> {
                     }
                 }
             }
+            // What is read out of a container is tested where it is read, whatever was written through another type of the container.
             (ComparedShape::Tuple(elements), ComparedShape::Container) => {
-                self.compare_tuple_contents(comparison, elements, target);
+                if comparison.follows_parts()
+                    && let Some(contents) = find_contents_type(self, target, ContentsSlot::Element)
+                {
+                    for element in elements.iter().filter(|element| has_element_type(element)) {
+                        comparison.follow(element.ty, contents);
+                    }
+                }
             }
             (ComparedShape::Container, ComparedShape::Container) => {
-                compare_contents(self, comparison, source, target);
+                for slot in ContentsSlot::ALL {
+                    if comparison.follows_parts()
+                        && let Some(source_contents) = find_contents_type(self, source, slot)
+                        && let Some(target_contents) = find_contents_type(self, target, slot)
+                    {
+                        comparison.follow(source_contents, target_contents);
+                    }
+                }
             }
             (ComparedShape::Function(signatures), ComparedShape::Function(targets)) => {
-                self.compare_functions(comparison, signatures, targets);
+                let function_types = (
+                    self.find_function_type(signatures),
+                    self.find_function_type(targets),
+                );
+                if let (Some(function), Some(function_type)) = function_types {
+                    self.fragment
+                        .add_function_type_edge(function, function_type);
+                }
+                let (&[signature], &[target]) = (signatures, targets) else {
+                    return;
+                };
+                if !comparison.follows_parts() {
+                    return;
+                }
+                let returned = self.queries.signature_result(signature);
+                let expected = self.queries.signature_result(target);
+                // What is passed to the function is tested at its entry, and passes if it has the names that the parameter's type requires.
+                if let (Ok(returned), Ok(expected)) = (returned, expected) {
+                    comparison.follow(returned, expected);
+                }
             }
             (
                 ComparedShape::ClassConstructor(class),
@@ -637,31 +657,17 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The types with a layout that a value of the type may have.
     fn collect_types_with_layout(
         &mut self,
-        ty: CheckerTypeId,
+        root: CheckerTypeId,
         side: AssertionSide,
     ) -> Rc<[CheckerTypeId]> {
-        if let Some(found) = self.types.conversions.types_with_layout.get(&(ty, side)) {
+        if let Some(found) = self.types.conversions.types_with_layout.get(&(root, side)) {
             return Rc::clone(found);
         }
-        let found: Rc<[CheckerTypeId]> = Rc::from(self.find_types_with_layout(ty, side));
-        self.types
-            .conversions
-            .types_with_layout
-            .insert((ty, side), Rc::clone(&found));
-        found
-    }
-
-    fn find_types_with_layout(
-        &mut self,
-        ty: CheckerTypeId,
-        side: AssertionSide,
-    ) -> Vec<CheckerTypeId> {
         let mut found = Vec::new();
         let mut visited = FxHashSet::default();
-        let mut pending: SmallVec<[CheckerTypeId; 4]> = smallvec![ty];
+        let mut pending: SmallVec<[CheckerTypeId; 4]> = smallvec![root];
         while let Some(ty) = pending.pop() {
             if !visited.insert(ty) {
                 continue;
@@ -688,15 +694,16 @@ impl FileLowering<'_, '_, '_, '_> {
                 | ComparedShape::Loose => {}
             }
         }
+        let found: Rc<[CheckerTypeId]> = Rc::from(found);
+        self.types
+            .conversions
+            .types_with_layout
+            .insert((root, side), Rc::clone(&found));
         found
     }
 
     // An assertion down or sideways says that objects of the one type are objects of the other, and the program goes on as if they were: `createBaseNode(kind) as Mutable<T>`, `(node as NamedDeclaration).name`.
-    fn admit_asserted_objects(&mut self, source: CheckerTypeId, target: CheckerTypeId) {
-        self.admit_asserted_objects_and_members(source, target, MAX_ASSERTED_MEMBER_DEPTH);
-    }
-
-    fn admit_asserted_objects_and_members(
+    fn admit_asserted_objects(
         &mut self,
         source: CheckerTypeId,
         target: CheckerTypeId,
@@ -712,7 +719,6 @@ impl FileLowering<'_, '_, '_, '_> {
         if sources.len() * targets.len() > MAX_ASSERTED_PAIRS {
             return;
         }
-        // Of `x as Type` with `x: Type | Node | Symbol`, only a Type is meant.
         for &source in sources.iter() {
             for &target in targets.iter() {
                 let Ok(true) = self.queries.can_be_asserted(source, target) else {
@@ -723,37 +729,13 @@ impl FileLowering<'_, '_, '_, '_> {
                 {
                     self.add_conversion(layout, supertype);
                 }
-                if member_depth > 0 {
-                    self.admit_asserted_members(source, target, member_depth - 1);
+                if member_depth == 0 {
+                    continue;
                 }
-            }
-        }
-    }
-
-    // `symbol as MappedSymbol` also says that `symbol.links`, a TransientSymbolLinks, is a MappedSymbolLinks.
-    fn admit_asserted_members(
-        &mut self,
-        source: CheckerTypeId,
-        target: CheckerTypeId,
-        member_depth: u8,
-    ) {
-        let Ok(members) = self.queries.checked_members(target) else {
-            return;
-        };
-        for member in members {
-            let (MemberName::String(name), Ok(target_type)) = (member.name, member.checked) else {
-                continue;
-            };
-            if !is_read_through(member.kind) {
-                continue;
-            }
-            let Ok(Some(found)) = self.queries.find_checked_member(source, name) else {
-                continue;
-            };
-            if let Ok(source_type) = found.checked
-                && source_type != target_type
-            {
-                self.admit_asserted_objects_and_members(source_type, target_type, member_depth);
+                // `symbol as MappedSymbol` also says that `symbol.links`, a TransientSymbolLinks, is a MappedSymbolLinks.
+                self.visit_differing_members(source, target, true, |file, _, from, to| {
+                    file.admit_asserted_objects(from, to, member_depth - 1);
+                });
             }
         }
     }
@@ -779,89 +761,20 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn add_layout_edge(&mut self, source: CheckerTypeId, target: CheckerTypeId) {
+    // Says whether the two types have one layout.
+    fn add_layout_edge(&mut self, source: CheckerTypeId, target: CheckerTypeId) -> bool {
         match (find_layout(self, source), find_layout(self, target)) {
-            (Some(layout), Some(supertype)) => self.add_conversion(layout, supertype),
-            (None, Some(supertype)) => self
-                .fragment
-                .family_facts
-                .add_member_without_layout(supertype),
-            (Some(_) | None, None) => {}
-        }
-    }
-
-    fn compare_functions(
-        &mut self,
-        comparison: &mut Comparison,
-        signatures: &[SignatureId],
-        targets: &[SignatureId],
-    ) {
-        let function_types = (
-            self.find_function_type(signatures),
-            self.find_function_type(targets),
-        );
-        if let (Some(function), Some(function_type)) = function_types {
-            self.fragment
-                .add_function_type_edge(function, function_type);
-        }
-        let (&[signature], &[target]) = (signatures, targets) else {
-            return;
-        };
-        if !comparison.follows_parts() {
-            return;
-        }
-        let returned = self.queries.signature_result(signature);
-        let expected = self.queries.signature_result(target);
-        // What is passed to the function is tested at its entry, and passes if it has the names that the parameter's type requires.
-        if let (Ok(returned), Ok(expected)) = (returned, expected) {
-            comparison.follow(returned, expected);
-        }
-    }
-
-    // What is read out of a container is tested where it is read, whatever was written through another type of the container.
-    fn compare_tuple_contents(
-        &mut self,
-        comparison: &mut Comparison,
-        elements: &[TupleElement],
-        target: CheckerTypeId,
-    ) {
-        if !comparison.follows_parts() {
-            return;
-        }
-        let Some(contents) = find_contents_type(self, target, ContentsSlot::Element) else {
-            return;
-        };
-        for element in elements.iter().filter(|element| has_element_type(element)) {
-            comparison.follow(element.ty, contents);
-        }
-    }
-
-    fn compare_objects(
-        &mut self,
-        comparison: &mut Comparison,
-        source: CheckerTypeId,
-        target: CheckerTypeId,
-    ) {
-        // Every entry and every store is tested, so nothing rests on an edge that the checker would not allow.
-        if !comparison.accepts(self, source, target) {
-            return;
-        }
-        match (find_layout(self, source), find_layout(self, target)) {
-            // A literal is allocated with the layout of the type it is written under, and each of its members is converted where the literal is built.
-            (Some(layout), Some(supertype)) if layout == supertype => {
+            (Some(layout), Some(supertype)) => {
                 self.add_conversion(layout, supertype);
-                if let ObjectOrigin::ObjectLiteral { .. } = self.queries.object_origin(source) {
-                    return;
-                }
+                return layout == supertype;
             }
-            (Some(layout), Some(supertype)) => self.add_conversion(layout, supertype),
             (None, Some(supertype)) => self
                 .fragment
                 .family_facts
                 .add_member_without_layout(supertype),
             (Some(_) | None, None) => {}
         }
-        self.compare_members(comparison, source, target);
+        false
     }
 
     fn compare_members(
@@ -873,26 +786,12 @@ impl FileLowering<'_, '_, '_, '_> {
         if !comparison.follows_parts() {
             return;
         }
-        let Ok(members) = self.queries.checked_members(target) else {
-            return;
-        };
-        for member in members {
-            let (MemberName::String(name), Ok(target_type)) = (member.name, member.checked) else {
-                continue;
-            };
-            let Ok(Some(found)) = self.queries.find_checked_member(source, name) else {
-                continue;
-            };
-            let Ok(source_type) = found.checked else {
-                continue;
-            };
-            if source_type == target_type {
-                continue;
+        // Nothing is compared below a member: those are types that nobody else asks the checker for.
+        self.visit_differing_members(source, target, false, |_, kind, from, to| {
+            if is_read_through(kind) {
+                comparison.add_pair(from, to, false, MAX_COMPARED_DEPTH, comparison.is_accepted);
             }
-            if is_read_through(member.kind) {
-                comparison.follow_member(source_type, target_type);
-            }
-        }
+        });
     }
 }
 
@@ -909,7 +808,6 @@ fn find_layout(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> Op
 }
 
 impl Comparison {
-    // Nobody has to look for the parts of a pair whose parts are not followed.
     fn follows_parts(&self) -> bool {
         self.depth < MAX_COMPARED_DEPTH
     }
@@ -917,34 +815,28 @@ impl Comparison {
     // A part of the two types: a result, an element, the contents.
     fn follow(&mut self, source: CheckerTypeId, target: CheckerTypeId) {
         if self.follows_parts() {
-            self.add_pair(source, target, self.depth + 1, self.is_accepted);
-        }
-    }
-
-    // Nothing is compared below a member: those are types that nobody else asks the checker for.
-    fn follow_member(&mut self, source: CheckerTypeId, target: CheckerTypeId) {
-        if self.follows_parts() {
-            self.add_pair(source, target, MAX_COMPARED_DEPTH, self.is_accepted);
+            self.add_pair(source, target, false, self.depth + 1, self.is_accepted);
         }
     }
 
     // The same value under another of its types: a member of a union, a constraint.
     fn follow_value(&mut self, source: CheckerTypeId, target: CheckerTypeId) {
-        self.add_pair(source, target, self.depth, self.is_accepted);
+        self.add_pair(source, target, false, self.depth, self.is_accepted);
     }
 
     fn follow_accepted_value(&mut self, source: CheckerTypeId, target: CheckerTypeId) {
-        self.add_pair(source, target, self.depth, true);
+        self.add_pair(source, target, false, self.depth, true);
     }
 
     fn follow_guessed_value(&mut self, source: CheckerTypeId, target: CheckerTypeId) {
-        self.add_pair(source, target, self.depth, false);
+        self.add_pair(source, target, false, self.depth, false);
     }
 
     fn add_pair(
         &mut self,
         source: CheckerTypeId,
         target: CheckerTypeId,
+        is_asserted: bool,
         depth: u8,
         is_accepted: bool,
     ) {
@@ -953,7 +845,7 @@ impl Comparison {
                 pair: ComparedPair {
                     source,
                     target,
-                    is_asserted: false,
+                    is_asserted,
                 },
                 depth,
                 is_accepted,
@@ -972,26 +864,6 @@ impl Comparison {
         }
         self.is_accepted
     }
-
-    // Every entry and every store is tested, so nothing rests on a flow against the checker's direction: it would only put the family of the wider type into the narrower one.
-    fn follow_if_assignable(
-        &mut self,
-        file: &mut FileLowering<'_, '_, '_, '_>,
-        source: CheckerTypeId,
-        target: CheckerTypeId,
-    ) {
-        if self.depth < MAX_COMPARED_DEPTH
-            && let Ok(true) = file.queries.is_assignable(source, target)
-        {
-            self.add_pair(source, target, MAX_COMPARED_DEPTH, true);
-        }
-    }
-}
-
-enum FlowingOperands {
-    Whole,
-    One(ExprId),
-    Two(ExprId, ExprId),
 }
 
 fn has_layout(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> bool {
@@ -1040,26 +912,6 @@ fn is_container(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> b
 pub(in crate::lower) enum AssertionSide {
     Source,
     Target,
-}
-
-fn compare_contents(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    comparison: &mut Comparison,
-    source: CheckerTypeId,
-    target: CheckerTypeId,
-) {
-    if !comparison.follows_parts() {
-        return;
-    }
-    for slot in ContentsSlot::ALL {
-        let Some(source_contents) = find_contents_type(file, source, slot) else {
-            continue;
-        };
-        let Some(target_contents) = find_contents_type(file, target, slot) else {
-            continue;
-        };
-        comparison.follow(source_contents, target_contents);
-    }
 }
 
 fn is_read_through(kind: ObjectMemberKind) -> bool {

@@ -90,7 +90,9 @@ function program(name: string, says: string, graphs: Record<string, [Modules, St
     }
   }
   files[`${name}/main.mjs`] = main.join("\n") + "\n";
-  files[`${name}.json`] = `{ "skipInShell": "it needs Bun's modules" }\n`;
+  // The reference transpiles on one thread: the texts are read in the order in which they are asked for. An executable reads nothing.
+  files[`${name}.json`] =
+    `{ "skipInShell": "it needs Bun's modules", "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" } }\n`;
   return files;
 }
 

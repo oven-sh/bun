@@ -6,13 +6,12 @@ mod tables;
 #[cfg(test)]
 mod tests;
 
-use bun_sema::bind::{CodeUnit, Decl, ScopeId, SymbolId};
-use bun_sema::fold::Decisions;
-use bun_sema::hir::ExprId;
+use bun_sema::bind::{BindingStability, CodeUnit, Decl, ScopeId, SymbolId};
+use bun_sema::hir::{ExprId, FnId};
 
-use super::analysis::{ArgumentsObjects, ScopeAnalysis, SlotKey, find_by_key};
+use super::analysis::{ArgumentsObjects, ScopeAnalysis, SlotKey, find_by_key, sort_unique};
 use super::lexical_owners::compute_lexical_owners;
-use super::walk::{EvalUse, ScopeWalk, WalkInput, walk_file};
+use super::walk::{EvalUse, ScopeWalk, walk_file};
 use super::{BindingForm, BindingRef, Placement, ScopeInput, WalkedFunctionId};
 use crate::ir::VariableKey;
 use crate::lower::captures::{CaptureInput, CapturePlan, CapturedBinding, compute_captures};
@@ -20,14 +19,11 @@ use crate::modules::ModuleKind;
 
 struct Context<'x, 's> {
     input: &'x ScopeInput<'x, 's>,
-    decisions: &'x Decisions<'s>,
     walk: &'x ScopeWalk,
     file_scope: ScopeId,
     scope_functions: Vec<Option<WalkedFunctionId>>,
     is_module_level_scope: Vec<bool>,
     loop_updates: Vec<(ScopeId, ExprId)>,
-    // For each walked function the body that it is written in: the body of the file, or the callback of an inner module.
-    module_bodies: Vec<WalkedFunctionId>,
     // The names that hold a required module of which only members are read, in order.
     holders_without_value: Vec<SymbolId>,
 }
@@ -39,6 +35,7 @@ struct NormalizedUses {
     entry_captures: Vec<(WalkedFunctionId, BindingRef)>,
 }
 
+#[derive(Default)]
 struct BindingSharing {
     captured: Vec<CapturedBinding>,
     captured_uses: Vec<(WalkedFunctionId, BindingRef)>,
@@ -52,6 +49,7 @@ struct Placements {
     symbols: Vec<Placement>,
     slots: Vec<(SlotKey, Placement)>,
     fields: Vec<(ScopeId, BindingRef)>,
+    initial_functions: Vec<(SymbolId, FnId)>,
 }
 
 struct Parts {
@@ -63,29 +61,23 @@ struct Parts {
     initialized_holders: Vec<(WalkedFunctionId, SymbolId)>,
 }
 
-fn has_module_variables(kind: ModuleKind) -> bool {
-    match kind {
-        ModuleKind::SourceText | ModuleKind::Data | ModuleKind::RuntimeSource => true,
-        ModuleKind::CommonJs | ModuleKind::Runtime | ModuleKind::External => false,
-    }
-}
-
 impl<'x, 's> Context<'x, 's> {
     fn new(input: &'x ScopeInput<'x, 's>, walk: &'x ScopeWalk) -> Context<'x, 's> {
         let bound = input.bound;
         let count = bound.scopes.len();
         let mut context = Context {
             input,
-            decisions: &input.compiled.analysis.decisions,
             walk,
             file_scope: bound.scope_of_declaration(input.hir, Decl::File),
             scope_functions: Vec::with_capacity(count),
             is_module_level_scope: Vec::with_capacity(count),
             loop_updates: loop_updates::collect_loop_updates(input.hir, bound, walk),
-            module_bodies: find_module_bodies(walk),
             holders_without_value: collect_holders_without_value(input),
         };
-        let kind = input.modules.kind(input.file);
+        let has_module_variables = match input.modules.kind(input.file) {
+            ModuleKind::SourceText | ModuleKind::Data | ModuleKind::RuntimeSource => true,
+            ModuleKind::CommonJs | ModuleKind::Runtime | ModuleKind::External => false,
+        };
         for (index, scope) in bound.scopes.iter().enumerate() {
             let unit = bound.code_unit(ScopeId(index as u32));
             context.scope_functions.push(match unit {
@@ -97,7 +89,7 @@ impl<'x, 's> Context<'x, 's> {
             debug_assert!(parent.is_none_or(|parent| parent < index));
             let is_parent_at_module_level = match parent {
                 Some(parent) => context.is_module_level_scope[parent],
-                None => has_module_variables(kind),
+                None => has_module_variables,
             };
             let is_repeated = walk.is_repeated_scope[index];
             context
@@ -123,8 +115,11 @@ impl<'x, 's> Context<'x, 's> {
         self.scope_functions[self.scope_of(binding).idx()]
     }
 
-    fn module_body_of(&self, function: WalkedFunctionId) -> WalkedFunctionId {
-        self.module_bodies[function.index()]
+    // Every store to the name is dead code or one that `is_ignored` names.
+    fn is_stable_ignoring(&self, symbol: SymbolId, is_ignored: impl Fn(ExprId) -> bool) -> bool {
+        let (bound, decisions) = (self.input.bound, &self.input.compiled.analysis.decisions);
+        let is_ignored = |target: ExprId| decisions.is_dead_expr(target) || is_ignored(target);
+        bound.binding_stability_ignoring(symbol, &is_ignored) == BindingStability::Stable
     }
 
     fn is_holder_without_value(&self, binding: BindingRef) -> bool {
@@ -135,30 +130,17 @@ impl<'x, 's> Context<'x, 's> {
     }
 }
 
-fn find_module_bodies(walk: &ScopeWalk) -> Vec<WalkedFunctionId> {
-    let mut bodies: Vec<WalkedFunctionId> = Vec::with_capacity(walk.functions.len());
-    for (id, function) in (0..).map(WalkedFunctionId).zip(&walk.functions) {
-        debug_assert!(function.creator.is_none_or(|creator| creator < id));
-        let body = function
-            .creator
-            .map_or(id, |creator| bodies[creator.index()]);
-        bodies.push(body);
-    }
-    bodies
-}
-
 fn collect_holders_without_value(input: &ScopeInput<'_, '_>) -> Vec<SymbolId> {
     let holders = input.modules.holders(input.file).iter();
     let without_value = holders.filter(|holder| !holder.is_needed_as_value);
     let mut symbols: Vec<SymbolId> = without_value.map(|holder| holder.symbol).collect();
-    symbols.sort_unstable();
-    symbols.dedup();
+    sort_unique(&mut symbols);
     symbols
 }
 
 pub(super) fn analyze(input: &ScopeInput<'_, '_>) -> ScopeAnalysis {
     let lexical_owners = compute_lexical_owners(input.hir, input.bound);
-    let walk = walk_file(&WalkInput::new(input, &lexical_owners));
+    let walk = walk_file(input, &lexical_owners);
     let context = Context::new(input, &walk);
     let arguments_objects = forms::compute_arguments_objects(&context);
     let forms = forms::compute_forms(&context, &arguments_objects);
@@ -173,15 +155,13 @@ pub(super) fn analyze(input: &ScopeInput<'_, '_>) -> ScopeAnalysis {
         max_captures: input.max_captures,
     });
     let placements = storage::place_bindings(&context, &forms, &sharing, &captures);
-    tables::build_analysis(
-        &context,
-        Parts {
-            lexical_owners,
-            arguments_objects,
-            forms,
-            placements,
-            captures,
-            initialized_holders: sharing.initialized_holders,
-        },
-    )
+    let parts = Parts {
+        lexical_owners,
+        arguments_objects,
+        forms,
+        placements,
+        captures,
+        initialized_holders: sharing.initialized_holders,
+    };
+    tables::build_analysis(&context, parts)
 }

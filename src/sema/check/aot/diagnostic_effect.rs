@@ -74,9 +74,7 @@ fn effect_of_error(origin: FileOrigin, class: DiagnosticClass) -> Effect {
             | FileOrigin::Declarations,
         ) => Effect::StopsBuild,
         (DiagnosticClass::EarlyError, FileOrigin::EvaluatedText) => Effect::WithdrawsTrust,
-        // What the program's `lib` and `types` declare does not count against the full types of a package.
         (DiagnosticClass::MissingDeclaration, FileOrigin::ProjectTypedVersion) => Effect::Dropped,
-        // Full types that do not check cost the package its types, never the build.
         (
             DiagnosticClass::TypeScriptGrammar | DiagnosticClass::Semantic,
             FileOrigin::ProjectTypedVersion,
@@ -108,13 +106,11 @@ fn effect_of_error(origin: FileOrigin, class: DiagnosticClass) -> Effect {
 
 pub fn effect_of(origin: FileOrigin, class: DiagnosticClass, category: Category) -> Effect {
     match category {
-        // ECMAScript refuses the program, whatever category TypeScript gives the sentence: 1450 is a message.
         Category::Suggestion | Category::Message if class == DiagnosticClass::EarlyError => {
             effect_of_error(origin, class)
         }
         Category::Suggestion | Category::Message => Effect::Dropped,
         Category::Error => effect_of_error(origin, class),
-        // TypeScript gives this category to nothing. The compiler's own warnings have it, under the class of early errors.
         Category::Warning => match effect_of_error(origin, class) {
             Effect::StopsBuild | Effect::Warns => Effect::Warns,
             Effect::WithdrawsTrust | Effect::Dropped | Effect::InternalError => Effect::Dropped,

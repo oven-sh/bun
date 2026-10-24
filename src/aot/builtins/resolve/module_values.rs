@@ -1,5 +1,5 @@
 use super::BuiltinPath;
-use super::resolver::{ExprState, HolderKind, Resolver, weaker};
+use super::resolver::{ExprState, HolderKind, Resolver};
 use crate::builtins::table::{self, BuiltinId, Mutability};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, CodeUnit, CommonJsVariable, Parent, has_mapped_arguments};
@@ -95,7 +95,6 @@ impl Resolver<'_, '_> {
         }
     }
 
-    // `exports = module.exports = value` as a statement of the body: from there on both name the one value.
     fn is_stored_with_module_exports(&self, target: ExprId) -> bool {
         let (hir, bound) = (self.input.hir, self.input.bound);
         let Parent::Expr(outer) = bound.parent_of_expr(target) else {
@@ -153,7 +152,7 @@ impl Resolver<'_, '_> {
             let id = id.filter(|&id| table::exists_on(id, platform));
             let path = location.zip(id).map(|(location, id)| BuiltinPath {
                 id,
-                mutability: weaker(holder_mutability, table::entry(location).mutability),
+                mutability: holder_mutability.min(table::entry(location).mutability),
             });
             self.commonjs.set(variable, path);
         }

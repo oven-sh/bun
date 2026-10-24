@@ -11,7 +11,7 @@ use super::{
     InjectionPoint,
 };
 use crate::ir::ClassSlot;
-use crate::lower::decorators;
+use crate::lower::decorators::{self, InitializerLists};
 
 pub(in crate::lower) fn runtime_members(
     hir: &hir::File<'_>,
@@ -107,18 +107,6 @@ fn has_decorated_private_name(
     name.is_some_and(|name| is_decorated_private_name(hir, transform, bound.private_name(name)))
 }
 
-fn is_moved_to_constructor_body(
-    hir: &hir::File<'_>,
-    bound: &Bound<'_>,
-    transform: ClassTransform,
-    member: MemberId,
-) -> bool {
-    match hir.runtime_member_key(member) {
-        PropKey::Private(_) => has_decorated_private_name(hir, bound, transform, member),
-        PropKey::Name(_) | PropKey::Computed(_) | PropKey::None => is_auto_accessor(hir, member),
-    }
-}
-
 fn compute_class_transform(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -151,12 +139,6 @@ fn has_computed_field_key(hir: &hir::File<'_>, member: MemberId) -> bool {
         && matches!(hir.runtime_member_key(member), PropKey::Computed(_))
 }
 
-fn has_computed_instance_field(hir: &hir::File<'_>, class: ClassId) -> bool {
-    runtime_members(hir, class).any(|member| {
-        has_computed_field_key(hir, member) && !hir[member].flags.contains(Flags::STATIC)
-    })
-}
-
 fn find_injection_point(hir: &hir::File<'_>, class: ClassId, constructor: FnId) -> InjectionPoint {
     let FnBody::Block(statements) = hir[constructor].body else {
         return InjectionPoint::Start;
@@ -175,23 +157,6 @@ fn find_injection_point(hir: &hir::File<'_>, class: ClassId, constructor: FnId) 
     InjectionPoint::Start
 }
 
-fn find_parameter_properties(hir: &hir::File<'_>, constructor: FnId) -> SmallVec<[ParamId; 4]> {
-    let is_property = |parameter: &ParamId| {
-        let node = hir[*parameter];
-        node.flags.contains(Flags::PARAMETER_PROPERTY)
-            && matches!(hir[node.pat].kind, PatKind::Ident(_))
-    };
-    hir[constructor].params.iter().filter(is_property).collect()
-}
-
-fn initial_field_value(hir: &hir::File<'_>, member: MemberId) -> FieldValue {
-    if hir[member].init.is_some() {
-        FieldValue::Initializer
-    } else {
-        FieldValue::Undefined
-    }
-}
-
 fn create_field_element(hir: &hir::File<'_>, member: MemberId, value: FieldValue) -> ClassElement {
     if is_auto_accessor(hir, member) {
         ClassElement::AccessorStorage { member, value }
@@ -200,13 +165,38 @@ fn create_field_element(hir: &hir::File<'_>, member: MemberId, value: FieldValue
     }
 }
 
-fn plan_instance_field(hir: &hir::File<'_>, member: MemberId, plan: &mut ClassPlan) {
+fn push_defined_field(
+    hir: &hir::File<'_>,
+    lists: &InitializerLists,
+    elements: &mut Vec<ClassElement>,
+    member: MemberId,
+) {
+    let initializers = lists.get(&member).copied();
+    let value = match initializers {
+        Some(initializers) => FieldValue::Decorated {
+            initializers: initializers.value,
+        },
+        None if hir[member].init.is_some() => FieldValue::Initializer,
+        None => FieldValue::Undefined,
+    };
+    elements.push(create_field_element(hir, member, value));
+    if let Some(initializers) = initializers {
+        elements.push(ClassElement::RunInitializers {
+            initializers: initializers.extra,
+        });
+    }
+}
+
+fn plan_instance_field(
+    hir: &hir::File<'_>,
+    lists: &InitializerLists,
+    member: MemberId,
+    plan: &mut ClassPlan,
+) {
     let is_private = matches!(hir.runtime_member_key(member), PropKey::Private(_));
     let is_public_accessor = is_auto_accessor(hir, member) && !is_private;
     if plan.field_semantics == FieldSemantics::Define || is_public_accessor {
-        let value = initial_field_value(hir, member);
-        plan.instance_elements
-            .push(create_field_element(hir, member, value));
+        push_defined_field(hir, lists, &mut plan.instance_elements, member);
         return;
     }
     if is_private {
@@ -220,14 +210,19 @@ fn plan_instance_field(hir: &hir::File<'_>, member: MemberId, plan: &mut ClassPl
     }
 }
 
-fn plan_default_elements(
+fn plan_elements(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     class: ClassId,
+    lists: &InitializerLists,
     plan: &mut ClassPlan,
 ) {
     if has_instance_brand(hir, bound, class) {
         plan.instance_elements.push(ClassElement::Brand);
+    }
+    if let Some(initializers) = plan.instance_method_initializers {
+        plan.instance_elements
+            .push(ClassElement::RunInitializers { initializers });
     }
     if plan.field_semantics == FieldSemantics::Define {
         let parameters = plan.parameter_properties.iter().copied();
@@ -240,11 +235,9 @@ fn plan_default_elements(
             MemberKind::StaticBlock => plan.static_elements.push(ClassElement::StaticBlock(member)),
             MemberKind::Property if is_declaration_only(node) => {}
             MemberKind::Property if node.flags.contains(Flags::STATIC) => {
-                let value = initial_field_value(hir, member);
-                plan.static_elements
-                    .push(create_field_element(hir, member, value));
+                push_defined_field(hir, lists, &mut plan.static_elements, member);
             }
-            MemberKind::Property => plan_instance_field(hir, member, plan),
+            MemberKind::Property => plan_instance_field(hir, lists, member, plan),
             MemberKind::Method
             | MemberKind::Getter
             | MemberKind::Setter
@@ -261,7 +254,13 @@ fn plan_initializer_call(hir: &hir::File<'_>, bound: &Bound<'_>, plan: &mut Clas
     let has_defined_field = plan.instance_elements.iter().any(|element| match *element {
         ClassElement::ParameterPropertyField(_) => true,
         ClassElement::Field { member, .. } | ClassElement::AccessorStorage { member, .. } => {
-            !is_moved_to_constructor_body(hir, bound, transform, member)
+            let is_moved_to_constructor_body = match hir.runtime_member_key(member) {
+                PropKey::Private(_) => has_decorated_private_name(hir, bound, transform, member),
+                PropKey::Name(_) | PropKey::Computed(_) | PropKey::None => {
+                    is_auto_accessor(hir, member)
+                }
+            };
+            !is_moved_to_constructor_body
         }
         _ => false,
     });
@@ -287,7 +286,9 @@ pub(super) fn plan_class(
     let assigns_fields = hir.has_typescript_semantics()
         && settings.use_define_for_class_fields == Some(false)
         && transform != ClassTransform::Standard
-        && !has_computed_instance_field(hir, class);
+        && !runtime_members(hir, class).any(|member| {
+            has_computed_field_key(hir, member) && !hir[member].flags.contains(Flags::STATIC)
+        });
     let field_semantics = if assigns_fields {
         FieldSemantics::Assign
     } else {
@@ -311,16 +312,24 @@ pub(super) fn plan_class(
     };
     if let Some(constructor) = plan.constructor {
         plan.injection_point = find_injection_point(hir, class, constructor);
-        plan.parameter_properties = find_parameter_properties(hir, constructor);
+        let is_property = |parameter: &ParamId| {
+            let node = hir[*parameter];
+            node.flags.contains(Flags::PARAMETER_PROPERTY)
+                && matches!(hir[node.pat].kind, PatKind::Ident(_))
+        };
+        plan.parameter_properties = hir[constructor].params.iter().filter(is_property).collect();
     }
+    let no_lists = InitializerLists::default();
     match transform {
-        ClassTransform::None => plan_default_elements(hir, bound, class, &mut plan),
+        ClassTransform::None => plan_elements(hir, bound, class, &no_lists, &mut plan),
         ClassTransform::Legacy => {
-            plan_default_elements(hir, bound, class, &mut plan);
+            plan_elements(hir, bound, class, &no_lists, &mut plan);
             decorators::move_decorated_fields(hir, &mut plan);
         }
         ClassTransform::Standard => {
-            decorators::plan_standard_elements(hir, bound, class, &mut plan);
+            debug_assert_eq!(field_semantics, FieldSemantics::Define);
+            let lists = decorators::plan_decorations(hir, class, &mut plan);
+            plan_elements(hir, bound, class, &lists, &mut plan);
         }
     }
     plan_initializer_call(hir, bound, &mut plan);

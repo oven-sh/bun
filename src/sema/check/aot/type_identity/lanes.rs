@@ -1,7 +1,6 @@
 use crate::types::fold;
 use std::hash::Hasher;
 
-// Two lanes of multiply and fold, with different constants.
 #[derive(Copy, Clone)]
 pub struct Lanes(pub [u64; 2]);
 

@@ -5,7 +5,7 @@ use crate::ir::generated::{
     BlockFrequency, BlockRole, FunctionFlags, TemplateString, TerminatorKind,
 };
 use crate::ir::ids::{ABSENT_WORD, ExpectedResultId, LayoutId, PropertyKeyId, StringId};
-use crate::ir::testing::{build_function, function_with_parameters};
+use crate::ir::testing::{build_function, create_blocks, function_with_parameters};
 use crate::ir::types::TypeTable;
 
 const DROPPED_VALUE_COUNT: usize = 3;
@@ -19,10 +19,6 @@ fn build(parameters: &[TypeId], fill: impl FnOnce(&mut FunctionBuilder)) -> Body
 fn create_builder(parameters: &[TypeId], scratch: BuilderScratch) -> FunctionBuilder {
     let function = function_with_parameters(FunctionFlags::default(), parameters);
     FunctionBuilder::new(function, scratch)
-}
-
-fn create_blocks<const COUNT: usize>(builder: &mut FunctionBuilder) -> [BlockId; COUNT] {
-    [(); COUNT].map(|()| builder.create_block(None))
 }
 
 fn emit_dropped_values(builder: &mut FunctionBuilder) {
@@ -611,8 +607,7 @@ fn measured_size_is_exact() {
     scratch.order_blocks(&blocks);
     let size = scratch.number_values(&blocks, &values);
 
-    assert_eq!(size.word_count, body.code.len());
-    assert_eq!(size.value_count, body.value_count);
+    assert_eq!(size, (body.value_count, body.code.len()));
     assert_eq!(scratch.order.len(), body.block_count as usize);
     let numbered_value_count = scratch.value_numbers.iter().flatten().count();
     assert_eq!(numbered_value_count, body.value_count as usize);

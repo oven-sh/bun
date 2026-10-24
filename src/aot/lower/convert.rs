@@ -13,7 +13,7 @@ use bun_sema::hir::{ExprId, ExprKind, TypeNodeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 
-use self::edges::{Construct, Edge};
+use self::edges::Construct;
 use self::int32_flows::FlowingValue;
 use self::supertypes::{AssertionSide, ComparedPair, ConversionKind};
 use super::positions::{self, SiteOrigin};
@@ -50,25 +50,9 @@ impl ConvertedValues {
         }
     }
 
-    fn has_type_of(
-        &mut self,
-        function: FunctionId,
-        value: ValueId,
-        position: DeclaredType,
-    ) -> bool {
+    fn get(&mut self, function: FunctionId, value: ValueId) -> Option<ConvertedValue> {
         self.enter(function);
-        match self.values.get(value.index()).copied().flatten() {
-            Some(converted) => {
-                converted.ty == position.ty && (converted.is_checked || position.is_expected())
-            }
-            None => false,
-        }
-    }
-
-    fn type_of(&mut self, function: FunctionId, value: ValueId) -> Option<TypeId> {
-        self.enter(function);
-        let converted = self.values.get(value.index()).copied().flatten()?;
-        Some(converted.ty)
+        self.values.get(value.index()).copied().flatten()
     }
 
     fn record(&mut self, function: FunctionId, value: ValueId, position: DeclaredType) {
@@ -116,7 +100,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let function = self.function;
         let values = &mut self.file.types.conversions.converted_values;
         !position.flags.contains(PositionFlags::IS_INT32_PROMISE)
-            && values.has_type_of(function, value, position)
+            && values.get(function, value).is_some_and(|converted| {
+                converted.ty == position.ty && (converted.is_checked || position.is_expected())
+            })
     }
 
     // What a type guard or an assertion claims for a value can lie outside the type of the variable that holds it.
@@ -130,9 +116,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let function = self.function;
         let values = &mut self.file.types.conversions.converted_values;
-        match values.type_of(function, value) {
+        match values.get(function, value) {
             Some(converted) => {
-                self.file.fragment.types.union(position.ty, converted) == position.ty
+                self.file.fragment.types.union(position.ty, converted.ty) == position.ty
             }
             None => false,
         }
@@ -197,7 +183,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         converted
     }
 
-    // `before` is the type of what the reference names, `narrowed` what the checker says of the reference at this place.
     pub(in crate::lower) fn convert_narrowed(
         &mut self,
         value: ValueId,
@@ -311,45 +296,6 @@ pub(in crate::lower) fn expect_type(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    fn is_non_null_assertion(&self, mut expression: ExprId) -> bool {
-        while let ExprKind::Satisfies { expr: operand, .. } = self.hir[expression].kind {
-            expression = operand;
-        }
-        matches!(self.hir[expression].kind, ExprKind::NonNull(_))
-    }
-
-    fn find_cause(
-        &mut self,
-        position: DeclaredType,
-        source: Option<ExprId>,
-        target: Option<CheckerTypeId>,
-        construct: Construct,
-    ) -> IllTypedCause {
-        if position.is_expected() {
-            return IllTypedCause::None;
-        }
-        // `x!` takes the programmer's word for what the checker could not show.
-        if source.is_some_and(|source| self.is_non_null_assertion(source)) {
-            return IllTypedCause::Assertion;
-        }
-        let source_position = source.map_or(0, |source| self.hir[source].pos);
-        let source = source.and_then(|source| self.queries.expression_type(source).ok());
-        if let (Some(source), Construct::Flow) = (source, construct)
-            && !target.is_some_and(|target| self.flows_into_container(source, target))
-        {
-            let source = self.map_type_at(source, source_position).ty;
-            self.fragment
-                .family_facts
-                .record_conversion(source, position.ty);
-        }
-        self.classify_edge(Edge {
-            source,
-            target,
-            position,
-            construct,
-        })
-    }
-
     pub(crate) fn record_type_flow(
         &mut self,
         source: CheckerTypeId,

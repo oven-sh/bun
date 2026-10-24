@@ -2,10 +2,10 @@ mod namespace_members;
 
 use super::*;
 use crate::builtins::BuiltinId;
-use crate::modules::testing::{file_named, with_graph};
+use crate::modules::testing::{file_named, symbol_named, with_graph};
 use crate::modules::{
-    ExportBinding, ExportLookup, FailureEffect, ModuleGraph, SiteAnswer, SyntheticExport,
-    SyntheticExportId,
+    ExportBinding, ExportLookup, FailureEffect, ModuleFailure, ModuleGraph, SiteAnswer,
+    SyntheticExport, SyntheticExportId,
 };
 
 const ELEMENT: &str = "export const element = <div />;";
@@ -53,9 +53,7 @@ impl BoundProgram<'_, '_, '_> {
 
     fn binding(&self, file: &str, local_name: &str) -> ImportBinding {
         let file = self.file(file);
-        let bound = self.input.files.bound(file);
-        let symbol = bound.lookup(bound.scopes[0].locals, self.atom(local_name));
-        let symbol = symbol.expect("the file scope does not declare the name");
+        let symbol = symbol_named(self.input, file, local_name);
         self.graph.import_binding(file, symbol)
     }
 
@@ -82,6 +80,10 @@ impl BoundProgram<'_, '_, '_> {
     fn synthetic_export(&self, file: &str, local_name: &str) -> &SyntheticExport {
         self.graph
             .synthetic_export(self.synthetic_id(file, local_name))
+    }
+
+    fn required_names(&self, file: &str) -> &[RequiredName] {
+        self.graph.required_names(self.file(file))
     }
 
     fn errors_of(&self, importer: &str) -> Vec<&ModuleFailure> {
@@ -146,12 +148,7 @@ fn named_import_binds_exporting_declaration() {
         }
         let namespace = program.namespace("es.js", ImportPhase::Evaluation);
         assert_eq!(program.binding("main.js", "ns"), namespace);
-        assert!(
-            program
-                .graph
-                .required_names(program.file("main.js"))
-                .is_empty()
-        );
+        assert!(program.required_names("main.js").is_empty());
     });
 }
 
@@ -251,9 +248,8 @@ fn native_module_names_are_captured_and_its_object_is_a_builtin() {
         assert_eq!(program.binding("main.js", "open"), default);
         assert_eq!(program.binding("main.js", "held"), default);
         let exports = program.graph.exports(program.file("namespace.js"));
-        let held = exports
-            .iter()
-            .find(|export| export.name == program.atom("held"));
+        let mut exports = exports.iter();
+        let held = exports.find(|export| export.name == program.atom("held"));
         let Some(ExportBinding::Synthetic(id)) = held.map(|export| export.binding) else {
             panic!("`held` is exported as {held:?}");
         };
@@ -368,10 +364,7 @@ fn name_of_external_package_is_read_through_the_namespace() {
         };
         assert_eq!(program.binding("main.js", "ns"), namespace);
         let expected = names.map(|(_, name)| RequiredName::new(module, name));
-        assert_eq!(
-            program.graph.required_names(program.file("main.js")),
-            expected
-        );
+        assert_eq!(program.required_names("main.js"), expected);
         assert!(program.graph.synthetic_exports().is_empty());
         assert!(program.graph.errors().is_empty());
     });
@@ -388,12 +381,7 @@ fn host_value_name_is_synthetic() {
             assert_eq!(export.name, name, "{local_name}");
             assert!(!export.is_known_member, "{local_name}");
         }
-        assert!(
-            program
-                .graph
-                .required_names(program.file("main.js"))
-                .is_empty()
-        );
+        assert!(program.required_names("main.js").is_empty());
         assert!(program.graph.errors().is_empty());
     });
 }
@@ -536,9 +524,8 @@ fn names_of_unresolved_module_are_unbound() {
             assert_eq!(binding, ImportBinding::Unbound, "{local_name}");
         }
         let statement = ImportSiteKind::Import(ImportId(0));
-        let answer = program
-            .graph
-            .site_answer(program.file("main.js"), statement);
+        let importer = program.file("main.js");
+        let answer = program.graph.site_answer(importer, statement);
         assert_eq!(answer, SiteAnswer::Erased);
         let unresolved_specifiers = [("main.js", "./nope.js"), ("middle.js", "./gone.js")];
         for (importer, expected_specifier) in unresolved_specifiers {
@@ -605,7 +592,7 @@ fn name_of_two_commonjs_stars_is_required_once() {
         assert_eq!(program.binding("main.js", "again"), read);
         let expected = [RequiredName::new(module, name)];
         for importer in ["main.js", "indirect.js"] {
-            let required_names = program.graph.required_names(program.file(importer));
+            let required_names = program.required_names(importer);
             assert_eq!(required_names, expected, "{importer}");
         }
     });
@@ -648,16 +635,11 @@ fn name_of_static_and_commonjs_stars_is_required() {
             ("indirect.js", vec![required_in("barrel.js")]),
         ];
         for (importer, expected) in expected_names {
-            let required_names = program.graph.required_names(program.file(importer));
+            let required_names = program.required_names(importer);
             assert_eq!(required_names, expected, "{importer}");
         }
         for exporter in ["barrel.js", "outer.js"] {
-            assert!(
-                program
-                    .graph
-                    .required_names(program.file(exporter))
-                    .is_empty()
-            );
+            assert!(program.required_names(exporter).is_empty());
             assert_eq!(program.find_export(exporter, "x"), ExportLookup::Unknown);
         }
         let own_entry = ExportLookup::Found(ExportBinding::Variable(symbol));
@@ -682,18 +664,12 @@ fn name_re_exported_by_typescript_may_be_absent() {
     ];
     with_program(&files, |program| {
         let required = RequiredName::new(program.module("barrel.js"), program.atom("x"));
-        assert_eq!(
-            program.graph.required_names(program.file("untyped.js")),
-            [required]
-        );
+        assert_eq!(program.required_names("untyped.js"), [required]);
         let may_be_absent = RequiredName {
             may_be_absent: true,
             ..required
         };
-        assert_eq!(
-            program.graph.required_names(program.file("typed.ts")),
-            [may_be_absent]
-        );
+        assert_eq!(program.required_names("typed.ts"), [may_be_absent]);
     });
 }
 
@@ -714,10 +690,7 @@ fn name_imported_by_typescript_is_required() {
     with_program(&files, |program| {
         let required = RequiredName::new(program.module("barrel.js"), program.atom("x"));
         assert!(!required.may_be_absent);
-        assert_eq!(
-            program.graph.required_names(program.file("main.ts")),
-            [required]
-        );
+        assert_eq!(program.required_names("main.ts"), [required]);
     });
 }
 
@@ -735,12 +708,7 @@ fn own_name_hides_inner_commonjs_star() {
             program.binding("main.js", "x"),
             ImportBinding::Variable(symbol)
         );
-        assert!(
-            program
-                .graph
-                .required_names(program.file("main.js"))
-                .is_empty()
-        );
+        assert!(program.required_names("main.js").is_empty());
         let star_entry = ExportLookup::Found(ExportBinding::Variable(symbol));
         assert_eq!(program.find_export("outer.js", "x"), star_entry);
     });
@@ -770,13 +738,10 @@ fn name_of_one_external_module_in_two_files_is_required() {
         let compared_name = RequiredName::new(program.module("index.js"), name);
         let existing_name = RequiredName::new(module, name);
         assert_eq!(
-            program.graph.required_names(program.file("main.js")),
+            program.required_names("main.js"),
             [compared_name, existing_name]
         );
-        assert_eq!(
-            program.graph.required_names(program.file("a.js")),
-            [existing_name]
-        );
+        assert_eq!(program.required_names("a.js"), [existing_name]);
         assert_eq!(program.find_export("index.js", "z"), ExportLookup::Unknown);
         let own_entry = ExportLookup::Found(ExportBinding::Indirect { module, name });
         assert_eq!(program.find_export("a.js", "z"), own_entry);
@@ -845,9 +810,8 @@ fn jsx_import_of_es_module_runtime_is_variable() {
         (runtime, "export const jsxDEV = () => null;"),
     ];
     with_program(&files, |program| {
-        let binding = program
-            .graph
-            .jsx_binding(program.file("main.jsx"), JsxImport::JsxDev);
+        let importer = program.file("main.jsx");
+        let binding = program.graph.jsx_binding(importer, JsxImport::JsxDev);
         assert_eq!(binding, program.exported_variable(runtime, "jsxDEV"));
     });
 }

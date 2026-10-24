@@ -1,11 +1,11 @@
 use super::graphs::{emit_read_marker, write_integer};
-use super::handlers::{create_catch_handler, emit_call};
+use super::handlers::emit_call;
 use super::{Generator, print_alone};
 use crate::ir::body::{BlockView, Body, TargetView, TerminatorView};
 use crate::ir::builder::{Edge, FunctionBuilder, Handler, LocalVariable};
 use crate::ir::generated::{Opcode, TerminatorKind};
 use crate::ir::ids::{BlockId, Id};
-use crate::ir::testing::build_function;
+use crate::ir::testing::{build_function, create_catch_handler};
 use crate::ir::types::TypeTable;
 
 const RANDOM_GRAPH_SEED: u64 = 1;

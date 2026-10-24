@@ -8,7 +8,7 @@ use bun_sema::check::aot::FunctionRef;
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::hir::{
     self, CallId, ClassId, ExprId, ExprKind, Flags, FnId, FnKind, MemberKey, MemberKind,
-    ModifierKind, PatId, PatKind, PropKey, PropKind, StmtKind, UnOp, VarDeclId,
+    ModifierKind, PatId, PatKind, PropKey, PropKind, StmtKind, VarDeclId,
 };
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::module_format::evaluates_own_this;
@@ -17,6 +17,7 @@ use bun_sema::util::SharedSort;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 
+use super::program_reach::{TOP_LEVEL, find_parent_past_casts, is_only_read};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{
     self, MODULE_LOADER_FUNCTIONS, RuntimeFunctionRole, STARTUP_FUNCTIONS, STARTUP_LOADS,
@@ -55,15 +56,12 @@ impl ReachedRuntimeCode {
     }
 }
 
-const TOP_LEVEL: u32 = 0;
-
 // A function, or the methods, the accessors and the constructor of a class.
 struct Unit {
     functions: SmallVec<[FnId; 1]>,
     id: Option<RuntimeFunction>,
 }
 
-// Where a function of a unit is written.
 struct Piece {
     written_at: Range<u32>,
     unit: u32,
@@ -117,6 +115,8 @@ struct FileScan<'a, 's> {
     classes: FxHashMap<SymbolId, SymbolClass>,
     export_object: Option<ExportObject>,
     exported_functions: Vec<(Atom, u32)>,
+    // `{ a, b: c }`: the names under which the object that is exported holds what a binding of the file holds.
+    names_of_exported_bindings: FxHashMap<ExprId, Atom>,
 }
 
 // `export default { .. }`, or `const exports = { .. }; export default exports;`
@@ -142,6 +142,7 @@ impl<'a, 's> FileScan<'a, 's> {
             classes: FxHashMap::default(),
             export_object: None,
             exported_functions: Vec::new(),
+            names_of_exported_bindings: FxHashMap::default(),
         }
     }
 
@@ -172,10 +173,9 @@ impl<'a, 's> FileScan<'a, 's> {
                 _ => false,
             };
             let has_plain_key = !matches!(member.key, PropKey::Computed(_));
-            let is_decorated = member
-                .modifiers
-                .iter()
-                .any(|modifier| matches!(hir[modifier].kind, ModifierKind::Decorator(_)));
+            let mut modifiers = member.modifiers.iter();
+            let is_decorated =
+                modifiers.any(|it| matches!(hir[it].kind, ModifierKind::Decorator(_)));
             if has_function && has_plain_key && !is_decorated {
                 functions.push(member.func);
                 let written_at = member.loc.pos..member.loc.end;
@@ -223,6 +223,12 @@ impl<'a, 's> FileScan<'a, 's> {
         }
         self.export_object = self.find_export_object();
         self.add_exported_functions();
+        let is_plain_declaration = |flags: Flags, declaration: Decl| {
+            let symbol = bound.declared_symbol(declaration);
+            !flags.intersects(Flags::AMBIENT | Flags::EXPORT | Flags::DEFAULT)
+                && !symbol.is_none()
+                && bound.is_stable_binding(symbol)
+        };
         for statement in hir.ids(hir.body) {
             if self.analysis.decisions.is_dead_stmt(statement) {
                 continue;
@@ -230,13 +236,7 @@ impl<'a, 's> FileScan<'a, 's> {
             match hir[statement].kind {
                 StmtKind::Fn(function) => {
                     let func = &hir[function];
-                    let is_plain_declaration = hir::has_body(func)
-                        && !func
-                            .flags
-                            .intersects(Flags::AMBIENT | Flags::EXPORT | Flags::DEFAULT);
-                    let symbol = bound.declared_symbol(Decl::Fn(function));
-                    let is_stable = !symbol.is_none() && bound.is_stable_binding(symbol);
-                    if is_plain_declaration && is_stable {
+                    if hir::has_body(func) && is_plain_declaration(func.flags, Decl::Fn(function)) {
                         let written_at = hir[statement].loc;
                         self.add_unit(function, written_at.pos..written_at.end, None);
                     }
@@ -247,12 +247,7 @@ impl<'a, 's> FileScan<'a, 's> {
                     }
                 }
                 StmtKind::Class(class) => {
-                    let flags = hir[class].flags;
-                    let is_plain_declaration =
-                        !flags.intersects(Flags::AMBIENT | Flags::EXPORT | Flags::DEFAULT);
-                    let symbol = bound.declared_symbol(Decl::Class(class));
-                    let is_stable = !symbol.is_none() && bound.is_stable_binding(symbol);
-                    if is_plain_declaration && is_stable {
+                    if is_plain_declaration(hir[class].flags, Decl::Class(class)) {
                         self.add_class_unit(class);
                     }
                 }
@@ -262,7 +257,6 @@ impl<'a, 's> FileScan<'a, 's> {
         self.add_statements_that_set_up_units();
     }
 
-    // `F` or `F.prototype`, where `F` is a unit.
     fn find_unit_behind(&mut self, object: ExprId) -> Option<u32> {
         let hir = self.hir;
         let mut object = hir.skip_type_assertions(object);
@@ -428,13 +422,11 @@ impl<'a, 's> FileScan<'a, 's> {
 
     fn find_export_object(&self) -> Option<ExportObject> {
         let hir = self.hir;
-        let mut exported = hir
-            .ids(hir.body)
-            .filter_map(|statement| match hir[statement].kind {
-                StmtKind::ExportDefault(exported) => Some(hir.skip_type_assertions(exported)),
-                _ => None,
-            });
-        let exported = exported.next()?;
+        let mut statements = hir.ids(hir.body);
+        let exported = statements.find_map(|statement| match hir[statement].kind {
+            StmtKind::ExportDefault(exported) => Some(hir.skip_type_assertions(exported)),
+            _ => None,
+        })?;
         if matches!(hir[exported].kind, ExprKind::Object(_)) {
             return Some(ExportObject {
                 literal: exported,
@@ -459,7 +451,6 @@ impl<'a, 's> FileScan<'a, 's> {
         })
     }
 
-    // A function, a method or an accessor that is written in the object that the module exports.
     fn add_exported_functions(&mut self) {
         let hir = self.hir;
         let Some(ExprKind::Object(properties)) = self.export_object.map(|it| hir[it.literal].kind)
@@ -472,10 +463,16 @@ impl<'a, 's> FileScan<'a, 's> {
                 continue;
             }
             let value = hir.skip_type_assertions(property.value);
-            if let (PropKey::Name(name), ExprKind::Fn(function)) = (property.key, hir[value].kind) {
-                self.exported_functions
-                    .push((name, self.units.len() as u32));
-                self.add_unit(function, hir[value].pos..hir[value].end, None);
+            match (property.key, hir[value].kind, property.kind) {
+                (PropKey::Name(name), ExprKind::Fn(function), _) => {
+                    self.exported_functions
+                        .push((name, self.units.len() as u32));
+                    self.add_unit(function, hir[value].pos..hir[value].end, None);
+                }
+                (PropKey::Name(name), ExprKind::Ident(_), PropKind::Init | PropKind::Shorthand) => {
+                    self.names_of_exported_bindings.insert(value, name);
+                }
+                _ => {}
             }
         }
     }
@@ -502,10 +499,7 @@ impl<'a, 's> FileScan<'a, 's> {
             .filter_map(|site| graph.find_site_answer(self.file, site));
         match answers.next()? {
             SiteAnswer::Module(
-                ModuleRef::File(target)
-                | ModuleRef::Inner { file: target, .. }
-                | ModuleRef::Face(target)
-                | ModuleRef::Check(target),
+                ModuleRef::File(target) | ModuleRef::Face(target) | ModuleRef::Check(target),
             ) => Some(target),
             SiteAnswer::Module(ModuleRef::Runtime(_) | ModuleRef::External { .. })
             | SiteAnswer::Computed(_)
@@ -525,10 +519,8 @@ impl<'a, 's> FileScan<'a, 's> {
 
     fn compute_symbol_class(&self, symbol: SymbolId) -> SymbolClass {
         let hir = self.hir;
-        if self
-            .export_object
-            .is_some_and(|it| it.binding.is_some_and(|it| it.0 == symbol))
-        {
+        let exported = self.export_object.and_then(|it| it.binding);
+        if exported.is_some_and(|it| it.0 == symbol) {
             return SymbolClass::ExportObject(self.file);
         }
         if !self.bound.is_stable_binding(symbol) {
@@ -565,55 +557,27 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    fn is_only_read(&self, member: ExprId) -> bool {
-        let Parent::Expr(parent) = self.bound.parent_of_expr(member) else {
-            return true;
-        };
-        match self.hir[parent].kind {
-            ExprKind::Assign { target, .. } => target != member,
-            ExprKind::Unary { op, .. } => match op {
-                UnOp::Delete | UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec => false,
-                UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::Typeof | UnOp::Void => {
-                    true
-                }
-            },
-            _ => true,
-        }
-    }
-
-    // What is done with the object that a module exports, where `holder` evaluates to it.
     fn classify_holder_use(&self, holder: ExprId) -> HolderUse {
-        let hir = self.hir;
-        let mut node = holder;
-        loop {
-            let parent = match self.bound.parent_of_expr(node) {
-                Parent::Expr(parent) => parent,
-                Parent::VarInit(declaration) => return HolderUse::Initializer(declaration),
-                Parent::Stmt(statement) if matches!(hir[statement].kind, StmtKind::Expr(_)) => {
-                    return HolderUse::NothingRead;
-                }
-                _ => return HolderUse::Other,
-            };
-            match hir[parent].kind {
-                ExprKind::As { .. }
-                | ExprKind::Satisfies { .. }
-                | ExprKind::AsConst(_)
-                | ExprKind::NonNull(_) => node = parent,
-                ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-                    return match hir.member_key(parent) {
-                        Some((object, MemberKey::Name(name)))
-                            if object == node && self.is_only_read(parent) =>
-                        {
-                            HolderUse::Member(name)
-                        }
-                        _ => HolderUse::Other,
-                    };
-                }
-                ExprKind::Call(call) if self.is_only_looked_at(call, node) => {
-                    return HolderUse::NothingRead;
-                }
-                _ => return HolderUse::Other,
+        let (hir, bound) = (self.hir, self.bound);
+        let (holder, parent) = find_parent_past_casts(hir, bound, holder);
+        let parent = match parent {
+            Parent::Expr(parent) => parent,
+            Parent::VarInit(declaration) => return HolderUse::Initializer(declaration),
+            Parent::Stmt(statement) if matches!(hir[statement].kind, StmtKind::Expr(_)) => {
+                return HolderUse::NothingRead;
             }
+            _ => return HolderUse::Other,
+        };
+        match (hir[parent].kind, hir.member_key(parent)) {
+            (_, Some((object, MemberKey::Name(name))))
+                if object == holder && is_only_read(hir, bound, parent) =>
+            {
+                HolderUse::Member(name)
+            }
+            (ExprKind::Call(call), _) if self.is_only_looked_at(call, holder) => {
+                HolderUse::NothingRead
+            }
+            _ => HolderUse::Other,
         }
     }
 
@@ -657,12 +621,10 @@ impl<'a, 's> FileScan<'a, 's> {
         let BindingInitializer::Function(function) = bound.binding_initializer(hir, called) else {
             return false;
         };
-        let uses_arguments = bound
-            .function_flags(function)
-            .contains(FunctionFlags::USES_ARGUMENTS);
-        let has_spread = hir
-            .ids(hir[call].args)
-            .any(|it| matches!(hir[it].kind, ExprKind::Spread(_)));
+        let flags = bound.function_flags(function);
+        let uses_arguments = flags.contains(FunctionFlags::USES_ARGUMENTS);
+        let mut operands = hir.ids(hir[call].args);
+        let has_spread = operands.any(|it| matches!(hir[it].kind, ExprKind::Spread(_)));
         if !bound.is_stable_binding(called) || uses_arguments || has_spread {
             return false;
         }
@@ -761,34 +723,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    // `{ a, b: c }`: the names under which the object that is exported holds what a binding of the file holds.
-    fn find_names_of_exported_bindings(&self) -> FxHashMap<ExprId, Atom> {
-        let hir = self.hir;
-        let mut names = FxHashMap::default();
-        if let Some(ExprKind::Object(properties)) =
-            self.export_object.map(|it| hir[it.literal].kind)
-        {
-            for property in properties.iter() {
-                let property = &hir[property];
-                if property.value.is_none() {
-                    continue;
-                }
-                let value = hir.skip_type_assertions(property.value);
-                match (property.kind, property.key, hir[value].kind) {
-                    (
-                        PropKind::Init | PropKind::Shorthand,
-                        PropKey::Name(name),
-                        ExprKind::Ident(_),
-                    ) => {
-                        names.insert(value, name);
-                    }
-                    _ => {}
-                }
-            }
-        }
-        names
-    }
-
     // `export { a, b as c }`: what `require` returns holds each binding under the name it is exported by.
     fn add_named_exports(&mut self, named_exports: &mut Vec<(Atom, Interest)>) {
         let (hir, bound) = (self.hir, self.bound);
@@ -846,10 +780,6 @@ impl<'a, 's> FileScan<'a, 's> {
         let mut interests: Vec<Vec<Interest>> = vec![Vec::new(); region_count];
         let mut sites: Vec<Vec<ImportSiteKind>> = vec![Vec::new(); region_count];
         let mut named_exports = Vec::new();
-        let names_of_exported_bindings = match is_library {
-            true => FxHashMap::default(),
-            false => self.find_names_of_exported_bindings(),
-        };
 
         let (hir, bound) = (self.hir, self.bound);
         for reference in (0..hir.exprs.len() as u32).map(ExprId) {
@@ -879,7 +809,7 @@ impl<'a, 's> FileScan<'a, 's> {
                     }
                 },
             };
-            match names_of_exported_bindings.get(&reference) {
+            match self.names_of_exported_bindings.get(&reference) {
                 Some(&name) => named_exports.push((name, interest)),
                 None => interests[self.region_of(hir[reference].pos) as usize].push(interest),
             }
@@ -922,7 +852,6 @@ struct Walk<'a, 's> {
     pending: Vec<(FileId, u32)>,
 }
 
-// Where a region is written, and what its import sites load.
 struct RegionText {
     file: FileId,
     ranges: Vec<Range<u32>>,
@@ -958,28 +887,6 @@ pub(crate) fn find_reached_runtime_code(
     walk.finish()
 }
 
-fn find_uses_of_builtins(
-    files: &Files<'_>,
-    names: &BuiltinNames,
-    platform: Platforms,
-    text: &RegionText,
-    facts: &OnceLock<FileFacts>,
-) -> RuntimeUses {
-    let analysis = files.analysis(text.file);
-    let input = ResolveInput {
-        hir: files.hir(text.file),
-        bound: files.bound(text.file),
-        decisions: &analysis.decisions,
-        module_format: analysis.module_format,
-        targets: &ImportTargets::new(&text.targets),
-        names,
-        platform,
-        dialect: SourceDialect::Runtime,
-    };
-    let facts = facts.get_or_init(|| FileFacts::new(&input));
-    resolve_within(&input, &text.ranges, facts).uses().clone()
-}
-
 // The compiler calls its own functions wherever it sees fit, and a model stands for native code that no source names.
 fn is_always_reached(id: RuntimeFunction) -> bool {
     match table::runtime_function(id).map(|data| data.role) {
@@ -1004,14 +911,10 @@ impl<'a, 's> Walk<'a, 's> {
             if input.sources.kind(file) != SourceKind::RuntimeFunctions {
                 continue;
             }
-            let units = &walk.units_of(file).units;
-            let ids: Vec<(RuntimeFunction, u32)> = (0u32..)
-                .zip(units)
-                .filter_map(|(index, unit)| Some((unit.id?, index)))
-                .collect();
-            for (id, index) in ids {
-                walk.function_by_id.insert(id, (file, index));
-            }
+            let units = walk.files[file.idx()].insert(Box::new(FileScan::new(input, file).scan()));
+            let numbered = (0u32..).zip(&units.units);
+            let ids = numbered.filter_map(|(index, unit)| Some((unit.id?, (file, index))));
+            walk.function_by_id.extend(ids);
         }
         walk
     }
@@ -1035,10 +938,6 @@ impl<'a, 's> Walk<'a, 's> {
         for &function in &uses.functions {
             self.reach_function(function);
         }
-    }
-
-    fn loads_modules_by_computed_names(&self) -> bool {
-        loads_modules_by_computed_names(self.input.application, self.input.application_graph)
     }
 
     // `import { a, b } from "node:x"` reads `a` and `b` off the module, and nothing else.
@@ -1086,7 +985,8 @@ impl<'a, 's> Walk<'a, 's> {
 
     fn reach_roots(&mut self) {
         let application = self.input.application;
-        self.reads_imports_by_name = !self.loads_modules_by_computed_names();
+        self.reads_imports_by_name =
+            !loads_modules_by_computed_names(application, self.input.application_graph);
         self.reach_uses(&RuntimeUses::of_language(self.input.platform));
         for load in STARTUP_LOADS {
             let module = ModuleRef::Runtime(load.module);
@@ -1103,9 +1003,8 @@ impl<'a, 's> Walk<'a, 's> {
         }
         for &file in application.compiled_files() {
             let read_by_name = self.reach_named_imports(file);
-            let answers = application
-                .compiled(file)
-                .map_or(&[][..], |it| it.code_answers);
+            let compiled = application.compiled(file);
+            let answers = compiled.map_or(&[][..], |it| it.code_answers);
             for answer in answers {
                 if let CodeAnswer::HostModule(id) = *answer
                     && let Some(module) = RuntimeModule::from_registry_id(id.0)
@@ -1128,26 +1027,18 @@ impl<'a, 's> Walk<'a, 's> {
             if self.input.sources.kind(file) != SourceKind::RuntimeFunctions {
                 continue;
             }
-            let units = &self.units_of(file).units;
+            let mut units = self.units_of(file).units.iter();
             // Only other library functions name the functions of a file without numbers, by names that are theirs alone.
-            let has_numbers = units.iter().any(|unit| unit.id.is_some());
-            let roots: Vec<u32> = (0u32..)
-                .zip(units)
-                .filter(|(_, unit)| !has_numbers || unit.id.is_some_and(is_always_reached))
-                .map(|(index, _)| index)
-                .collect();
-            for unit in roots {
-                self.reach_unit(file, unit);
-            }
+            let has_numbers = units.any(|unit| unit.id.is_some());
+            self.reach_units(file, |unit| {
+                !has_numbers || unit.id.is_some_and(is_always_reached)
+            });
         }
     }
 
     fn find_file(&self, module: ModuleRef) -> Option<FileId> {
         match module {
-            ModuleRef::File(file)
-            | ModuleRef::Inner { file, .. }
-            | ModuleRef::Face(file)
-            | ModuleRef::Check(file) => Some(file),
+            ModuleRef::File(file) | ModuleRef::Face(file) | ModuleRef::Check(file) => Some(file),
             ModuleRef::Runtime(module) => self.input.sources.runtime_module_file(module),
             ModuleRef::External { .. } => None,
         }
@@ -1175,31 +1066,28 @@ impl<'a, 's> Walk<'a, 's> {
         }
         // Code that the build does not see finds the modules of the image under their names, and may use all that they hold.
         if is_first_of_file && self.input.can_load_code_at_run_time {
-            for unit in 0..self.units_of(file).units.len() as u32 {
-                self.reach_unit(file, unit);
-            }
+            self.reach_units(file, |_| true);
         }
         is_first_of_file
     }
 
+    fn reach_units(&mut self, file: FileId, is_wanted: impl Fn(&Unit) -> bool) {
+        for unit in 0..self.units_of(file).units.len() {
+            if is_wanted(&self.units_of(file).units[unit]) {
+                self.reach_unit(file, unit as u32);
+            }
+        }
+    }
+
     fn reach_unit(&mut self, file: FileId, unit: u32) {
         let is_first_of_file = self.reach_region(file, unit + 1);
-        let units = self.units_of(file);
-        if !units.is_library {
+        if !self.units_of(file).is_library {
             self.reach_region(file, TOP_LEVEL);
             return;
         }
-        if !is_first_of_file {
-            return;
-        }
         // A library function without a number of its own is there for the others of its file.
-        let helpers: Vec<u32> = (0u32..)
-            .zip(&units.units)
-            .filter(|(_, unit)| unit.id.is_none())
-            .map(|(index, _)| index)
-            .collect();
-        for helper in helpers {
-            self.reach_unit(file, helper);
+        if is_first_of_file {
+            self.reach_units(file, |unit| unit.id.is_none());
         }
     }
 
@@ -1214,10 +1102,7 @@ impl<'a, 's> Walk<'a, 's> {
             return;
         };
         if self.units_of(file).is_library {
-            for unit in 0..self.units_of(file).units.len() as u32 {
-                self.reach_unit(file, unit);
-            }
-            return;
+            return self.reach_units(file, |_| true);
         }
         self.reach_region(file, TOP_LEVEL);
     }
@@ -1252,11 +1137,7 @@ impl<'a, 's> Walk<'a, 's> {
         };
         let input = self.input;
         let atoms = &input.runtime.atoms;
-        let is_read = |name: Atom| {
-            names
-                .iter()
-                .any(|read| atoms.bytes(name) == read.as_bytes())
-        };
+        let is_read = |name: Atom| names.iter().any(|it| atoms.bytes(name) == it.as_bytes());
         let mut read_exports: SmallVec<[Atom; 2]> = SmallVec::new();
         for &(name, _) in &self.units_of(file).named_exports {
             if is_read(name) && !read_exports.contains(&name) {
@@ -1298,10 +1179,7 @@ impl<'a, 's> Walk<'a, 's> {
     fn find_target_module(&self, file: FileId, site: ImportSiteKind) -> Option<RuntimeModule> {
         match self.input.graph.find_site_answer(file, site)? {
             SiteAnswer::Module(
-                ModuleRef::File(target)
-                | ModuleRef::Inner { file: target, .. }
-                | ModuleRef::Face(target)
-                | ModuleRef::Check(target),
+                ModuleRef::File(target) | ModuleRef::Face(target) | ModuleRef::Check(target),
             ) => self.input.graph.runtime_module(target),
             SiteAnswer::Module(ModuleRef::Runtime(module)) => Some(module),
             _ => None,
@@ -1310,20 +1188,26 @@ impl<'a, 's> Walk<'a, 's> {
 
     // What a region asks for is read off its text alone, and a region that is reached stays reached.
     fn visit_pending_regions(&mut self, in_parallel: InParallel<'_>) {
-        let mut regions: Vec<(RegionText, RuntimeUses)> = take(&mut self.pending)
-            .into_iter()
-            .filter_map(|(file, region)| self.enter_region(file, region))
-            .map(|text| (text, RuntimeUses::default()))
-            .collect();
-        let ReachInput {
-            runtime,
-            names,
-            platform,
-            ..
-        } = *self.input;
+        let pending = take(&mut self.pending).into_iter();
+        let texts = pending.filter_map(|(file, region)| self.enter_region(file, region));
+        let mut regions: Vec<_> = texts.map(|text| (text, RuntimeUses::default())).collect();
+        let input = self.input;
+        let (runtime, names, platform) = (input.runtime, input.names, input.platform);
         let facts = &self.facts;
         for_each_mut(&mut regions, in_parallel, &|(text, uses)| {
-            *uses = find_uses_of_builtins(runtime, names, platform, text, &facts[text.file.idx()]);
+            let analysis = runtime.analysis(text.file);
+            let input = ResolveInput {
+                hir: runtime.hir(text.file),
+                bound: runtime.bound(text.file),
+                decisions: &analysis.decisions,
+                module_format: analysis.module_format,
+                targets: &ImportTargets::new(&text.targets),
+                names,
+                platform,
+                dialect: SourceDialect::Runtime,
+            };
+            let facts = facts[text.file.idx()].get_or_init(|| FileFacts::new(&input));
+            *uses = resolve_within(&input, &text.ranges, facts).uses().clone();
         });
         for (_, uses) in &regions {
             self.reach_uses(uses);

@@ -9,9 +9,8 @@ mod runtime_value;
 
 use bun_sema::bind::{Decl, Parent, ScopeId, ScopeKind};
 use bun_sema::check::aot::FunctionRef;
-use bun_sema::hir::{self, FnId, StmtId};
-use bun_sema::program::{FileId, Files};
-use core::ops::Range;
+use bun_sema::hir::{self, StmtId};
+use bun_sema::program::Files;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::commonjs::CommonJsState;
@@ -19,15 +18,16 @@ use super::context::{FileInputs, SourceKind};
 use super::data::DataState;
 use super::validate::ValidationState;
 use super::{FileLowering, FunctionLowering};
-use crate::builtins::ResolvedBuiltins;
 use crate::builtins::id::{BuiltinId, RuntimeFunction};
 use crate::ir::{DataId, FunctionId, StringId, ValueId};
 use crate::load::Sources;
 use crate::modules::ImportBinding;
 
+pub(in crate::lower) use self::body::finish_body;
 pub(crate) use self::loads::lower_import_call;
 pub use left_out::LeftOutDeclarations;
-pub(in crate::lower) use library::LibraryFunctionForm;
+pub use library::collect_library_functions;
+pub(in crate::lower) use library::{LibraryFunctionForm, library_function_form};
 
 #[derive(Default)]
 pub(crate) struct ModuleState {
@@ -49,14 +49,10 @@ impl LibraryFunctions {
         file_inputs: &[Option<FileInputs<'_>>],
         sources: &Sources,
     ) -> LibraryFunctions {
+        let linked = library_functions::collect_linked_functions(files, file_inputs, sources);
         LibraryFunctions {
-            linked_functions: library_functions::collect_linked_functions(
-                files,
-                file_inputs,
-                sources,
-            ),
-            left_out_functions: FxHashSet::default(),
-            left_out_declarations: LeftOutDeclarations::default(),
+            linked_functions: linked,
+            ..LibraryFunctions::default()
         }
     }
 
@@ -89,15 +85,6 @@ pub(crate) struct ModuleRoots {
     data: Option<DataId>,
 }
 
-/// The functions at the top of a file of library functions, each with the positions it is written between.
-pub fn collect_library_functions(
-    files: &Files<'_>,
-    file: FileId,
-    builtins: &ResolvedBuiltins,
-) -> Vec<(FnId, Range<u32>)> {
-    library::collect_library_functions(files, file, builtins)
-}
-
 pub(in crate::lower) fn file_scope(file: &FileLowering<'_, '_, '_, '_>) -> ScopeId {
     let scope = file.bound.scope_of_declaration(file.hir, Decl::File);
     debug_assert!(matches!(
@@ -114,16 +101,6 @@ pub(in crate::lower) fn is_moved_to_file_start(
     file.source == SourceKind::Program
         && file.bound.parent_of_stmt(statement) == Parent::File
         && hir::is_moved_to_file_start(file.hir, statement)
-}
-
-pub(in crate::lower) fn library_function_form(
-    file: &FileLowering<'_, '_, '_, '_>,
-    function: FnId,
-) -> Option<LibraryFunctionForm> {
-    match file.source {
-        SourceKind::Program | SourceKind::RuntimeModule(_) => None,
-        SourceKind::RuntimeFunctions => library::library_function_form(file, function),
-    }
 }
 
 impl FileLowering<'_, '_, '_, '_> {

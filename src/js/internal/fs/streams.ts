@@ -616,7 +616,7 @@ let ecanceled: number | undefined;
 // Node's error for a write that uv_close() canceled.
 function newCanceledWriteError(): Error {
   const { ErrnoException } = require("internal/shared");
-  ecanceled ??= $newRustFunction("node_util_binding.rs", "ecanceledErrorCode", 0)();
+  ecanceled ??= $bindgen("node_util_binding.bind.ts", "ecanceledErrorCode");
   return new ErrnoException(ecanceled, "write");
 }
 
@@ -859,7 +859,7 @@ function thenIfPromise<T>(maybePromise: Promise<T> | T, cb: any) {
   }
 }
 
-let abortFileSink: ((sink: FileSink) => Promise<unknown> | Error | undefined) | undefined;
+let destroyFileSink: ((sink: FileSink) => Promise<unknown> | Error | undefined) | undefined;
 
 // child.stdin: destroy() closes the pipe now, as node's net.Socket does. The sink drops the bytes the pipe has not
 // taken and fails the writes that wait for it with ECANCELED.
@@ -870,8 +870,8 @@ function destroySinkStream(this: FSStream, err: Error | null, cb: (err?: Error |
     writeStreamPrototype._destroy.$call(this, err, cb);
     return;
   }
-  abortFileSink ??= $newRustFunction("runtime/webcore/FileSink.rs", "jsAbort", 1);
-  const outcome = abortFileSink!(this[kWriteStreamFastPath] as FileSink);
+  destroyFileSink ??= $bindgen("FileSink.bind.ts", "destroy");
+  const outcome = destroyFileSink!(this[kWriteStreamFastPath] as FileSink);
   // 'close' comes from here and not from destroy(): after the callbacks of the parked writes, as from node's handle.
   state.emitClose = false;
   if ($isPromise(outcome)) {

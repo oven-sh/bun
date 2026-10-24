@@ -275,10 +275,10 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
 /// the write still queued on it with ECANCELED. Returns the promise of the parked write. With no
 /// write parked it returns the error for bytes that `write()` acknowledged and the pipe did not
 /// take, or `undefined`.
-pub(crate) fn js_abort(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn destroy(cx: &mut JsScope<'_>, sink: JsLocal<'_>) -> JsResult<JSValue> {
     use bun_sys_jsc::ErrorJsc;
 
-    let Some(wrapper) = JSSink::from_js(frame.argument(0)) else {
+    let Some(wrapper) = JSSink::from_js(sink.to_js()) else {
         return Ok(JSValue::UNDEFINED);
     };
     let this = wrapper.cast::<FileSink>();
@@ -315,7 +315,7 @@ pub(crate) fn js_abort(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
             }
         }
         match lost {
-            Some(err) => err.to_js(global),
+            Some(err) => err.to_js(cx.global()),
             None => Ok(JSValue::UNDEFINED),
         }
     }

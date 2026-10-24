@@ -17002,6 +17002,85 @@ export function f(x) { return x; }
       }
     });
 
+    test("a type literal nested in one in the type arguments of an import type is only checked on demand too", async () => {
+      using dir = project({
+        "lib.ts": `export type Box<T extends Record<string, { a: unknown }>> = { t: T };
+export type Plain<T> = { t: T };
+export type Obj<T extends { k: { a: unknown } }> = { t: T };
+export type Two<T extends { k: { a: unknown; b: unknown } }> = { t: T };
+`,
+        "lib2.ts": `export type Str<T extends { k: { a: string } }> = { t: T };
+export type Rec<T extends Record<string, { a: string }>> = { t: T };
+export type Fn<T extends (x: { a: string }) => { r: string }> = { t: T };
+export type Deep<T extends { k: { a: { b: { c: string } } } }> = { t: T };
+export type Arr<T extends { a: string }[]> = { t: T };
+export type Use<T extends { k: unknown }> = T["k"];
+export type Keys<T> = keyof T;
+export interface Face<T extends { k: { a: string } }> { t: T }
+export declare class Klass<T extends { k: { a: string } }> { t: T }
+export type Wrap<T> = { w: T };
+`,
+        "a.ts": `export declare const x1: import("./lib").Box<{ k: { a: 1 } } & { k: { b: import("./m1").X } }>;
+export declare const x2: import("./lib").Box<{ k: { b: import("./m2").X } } & { k: { a: 1 } }>;
+export declare const x3: import("./lib").Plain<{ k: { a: 1 } } & { k: { b: import("./m3").X } }>;
+export declare const x4: import("./lib").Obj<{ k: { a: 1 } } & { k: { b: import("./m4").X } }>;
+export declare const x5: import("./lib").Obj<{ k: { b: import("./m5").X } } & { k: { a: 1 } }>;
+export declare const x6: import("./lib").Two<{ k: { a: 1 } } & { k: { b: import("./m6").X } }>;
+export declare const x7: import("./lib").Box<{ k: { a: 1; b: import("./m7").X } }>;
+export declare const x8: import("./lib").Obj<{ k: { a: 1; b: import("./m8").X } }>;
+export declare const x9: import("./lib").Box<{ k: { a: 1 }; j: { a: { c: import("./m9").X } } }>;
+export declare const y1: import("./lib").Box<{ k: { a: 1 } } & { j: { a: import("./n1").X } }>;
+export declare const y2: import("./lib").Box<{ k: { a: 1 } } | { k: { a: import("./n2").X } }>;
+export declare const y3: import("./lib").Box<{ k: { a: 1 } } & ({ q: import("./n3").X } | { r?: false })>;
+`,
+        "b.ts": `export declare const s1: import("./lib2").Str<{ k: { a: import("./p1").X; z: import("./p2").X } }>;
+export declare const s2: import("./lib2").Rec<{ k: { a: import("./p3").X; z: import("./p4").X }; j: { a: "s"; z: { y: import("./p5").X } } }>;
+export declare const s3: import("./lib2").Fn<(x: { a: import("./p6").X; z?: import("./p7").X }) => { r: import("./p8").X; z: import("./p9").X }>;
+export declare const s4: import("./lib2").Deep<{ k: { a: { b: { c: import("./q1").X; z: import("./q2").X }; z: import("./q3").X } } }>;
+export declare const s5: import("./lib2").Arr<{ a: import("./q4").X; z: import("./q5").X }[]>;
+export declare const s6: import("./lib2").Use<{ k: { a: import("./q6").X } }>;
+export declare const s7: import("./lib2").Keys<{ k: { a: import("./q7").X } }>;
+export declare const s8: import("./lib2").Face<{ k: { a: import("./q8").X; z: import("./q9").X } }>;
+export declare const s9: import("./lib2").Klass<{ k: { a: import("./r1").X; z: import("./r2").X } }>;
+export declare const t1: import("./lib2").Wrap<import("./lib2").Wrap<{ k: import("./r3").X }>>;
+export declare const t2: import("./lib2").Wrap<Array<{ k: import("./r4").X }>>;
+export declare const t3: import("./lib2").Wrap<[{ k: import("./r5").X }, import("./r6").X]>;
+export declare const t4: import("./lib2").Wrap<{ k: import("./r7").X }>;
+export const u4: 0 = t4.w.k;
+export declare const t5: import("./lib2").Wrap<{ k: { j: import("./r8").X; i: import("./r9").X } }>;
+export const u5: 0 = t5.w.k.j;
+export declare const t6: import("./lib2").Wrap<{ m(): import("./v1").X; get g(): import("./v2").X; [key: string]: import("./v3").X | (() => unknown); new (): import("./v4").X; (): import("./v5").X }>;
+export declare const t7: import("./lib2").Wrap<{ k: Undeclared1; j: { i: Undeclared2 } }>;
+export const u7: 0 = t7.w.j;
+export declare const t8: import("./lib2").Wrap<<T extends import("./v6").X>(x: T) => { k: import("./v7").X }>;
+`,
+      });
+      for (const threads of [1, 8]) {
+        const { stdout, exitCode } = await check(dir, [`--threads=${threads}`]);
+        expect(stdout).toMatchInlineSnapshot(`
+          "a.ts(12,46): error TS2344: Type '{ k: { a: 1; }; } & ({ q: any; } | { r?: false | undefined; })' does not satisfy the constraint 'Record<string, { a: unknown; }>'.
+            Type '{ k: { a: 1; }; } & { r?: false | undefined; }' is not assignable to type 'Record<string, { a: unknown; }>'.
+              Property 'r' is incompatible with index signature.
+                Type 'boolean' is not assignable to type '{ a: unknown; }'.
+          a.ts(12,77): error TS2307: Cannot find module './n3' or its corresponding type declarations.
+          b.ts(1,64): error TS2307: Cannot find module './p1' or its corresponding type declarations.
+          b.ts(2,64): error TS2307: Cannot find module './p3' or its corresponding type declarations.
+          b.ts(3,62): error TS2307: Cannot find module './p6' or its corresponding type declarations.
+          b.ts(3,112): error TS2307: Cannot find module './p8' or its corresponding type declarations.
+          b.ts(4,75): error TS2307: Cannot find module './q1' or its corresponding type declarations.
+          b.ts(5,59): error TS2307: Cannot find module './q4' or its corresponding type declarations.
+          b.ts(8,65): error TS2307: Cannot find module './q8' or its corresponding type declarations.
+          b.ts(9,66): error TS2307: Cannot find module './r1' or its corresponding type declarations.
+          b.ts(12,81): error TS2307: Cannot find module './r6' or its corresponding type declarations.
+          b.ts(13,60): error TS2307: Cannot find module './r7' or its corresponding type declarations.
+          b.ts(15,65): error TS2307: Cannot find module './r8' or its corresponding type declarations.
+          b.ts(18,74): error TS2304: Cannot find name 'Undeclared2'.
+          b.ts(19,14): error TS2322: Type '{ i: Undeclared2; }' is not assignable to type '0'."
+        `);
+        expect(exitCode).toBe(1);
+      }
+    });
+
     test("an import type with type arguments that's first reached from another file leaves that file's errors alone", async () => {
       using dir = project({
         // a.ts comes first in the program, and asks for the type of `x`.

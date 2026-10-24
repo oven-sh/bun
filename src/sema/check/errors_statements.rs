@@ -395,6 +395,8 @@ impl Checker<'_, '_> {
                 NodeData::Type(t)
                     if (self.p.type_node_types.get(&self.task, &(file, t))).is_some() =>
                 {
+                    // What's in a type literal or a function type below `t` is resolved on demand too.
+                    self.never_check_deferred_types(file, child);
                     Some((hir[t].pos, self.end_of_type_node(file, t)))
                 }
                 NodeData::Pat(name)

@@ -1679,11 +1679,7 @@ impl BlobExt for Blob {
             // `webcore::PathOrFileDescriptor` is not `Clone`; build user
             // options first, then move `input_path` in once.
             let mut stream_start = if options.is_object() {
-                crate::generated_bindgen::sink::FileSinkStartOptions::from_js(
-                    global_this,
-                    options,
-                    |options| Ok(streams::Start::file_sink(&options.path, options.fd)),
-                )?
+                streams::Start::file_sink_from_js(global_this, options)?
             } else {
                 streams::Start::FileSink(streams::FileSinkOptions {
                     input_path: webcore::PathOrFileDescriptor::Fd(Fd::INVALID),

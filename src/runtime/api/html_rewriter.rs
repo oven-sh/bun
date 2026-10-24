@@ -30,7 +30,7 @@ use crate::generated_bindgen::html_rewriter_internals::{
 };
 use crate::generated_bindgen::response::js_Response;
 use crate::webcore::blob::SizeType as BlobSizeType;
-use crate::webcore::sink::ReadableSinkController;
+use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
 use crate::webcore::streams::{
     self, SourceHandle, Start, StreamError, StreamResult, Writable, WritablePending,
 };
@@ -723,7 +723,7 @@ impl RewriterPipe {
 
     /// The JS-pump controller detached and can never dispatch into the pipe
     /// again: release its ref. Deferred if last: the controller keeps using
-    /// the allocation in the same frame (`finalize_sink`, `close_sink` or
+    /// the allocation in the same frame (`finalize`, `close_sink` or
     /// `end_sink` on the pointer that `take_sink` returned).
     pub(crate) fn release_pump_ref(&self) {
         if !self.pump_controller_attached.replace(false) {
@@ -1961,8 +1961,8 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
 }
 
 impl crate::webcore::sink::ControlledSink for RewriterPipe {
-    fn controller_sink(this: NonNull<Self>) -> crate::webcore::sink::AnyControlledSink {
-        crate::webcore::sink::AnyControlledSink::RewriterPipe(this)
+    fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink {
+        AnyControlledSink::RewriterPipe(this)
     }
 
     unsafe fn close_with_error(

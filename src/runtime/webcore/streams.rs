@@ -13,7 +13,7 @@ use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 
 use crate::generated_bindgen::sink::{
-    ArrayBufferSinkStartOptions, SinkPath, js_ReadableSinkController,
+    ArrayBufferSinkStartOptions, FileSinkStartOptions, SinkPath, js_ReadableSinkController,
 };
 use crate::webcore::blob::Any as AnyBlob;
 use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
@@ -47,6 +47,8 @@ const MAX_HIGH_WATER_MARK: i64 = 256 * 1024 * 1024;
 
 #[inline]
 fn high_water_mark(value: f64, min: BlobSizeType) -> BlobSizeType {
+    // `as i64` maps NaN→0 and saturates ±Infinity; clamp in i64 before the
+    // unsigned cast so Infinity/negatives/out-of-range never reach the allocator.
     (min as i64).max(value as i64).min(MAX_HIGH_WATER_MARK) as BlobSizeType
 }
 
@@ -139,6 +141,13 @@ impl Start {
         Start::FileSink(FileSinkOptions {
             input_path,
             ..Default::default()
+        })
+    }
+
+    /// `Bun.file(..).writer(options)`.
+    pub(crate) fn file_sink_from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<Start> {
+        FileSinkStartOptions::from_js(global, options, |options| {
+            Ok(Start::file_sink(&options.path, options.fd))
         })
     }
 
@@ -676,47 +685,37 @@ impl PipeCell {
         done: JSValue,
         global: &JSGlobalObject,
     ) -> PipeCell {
-        let pipe = PipeCell::root(cell, global);
-        pipe.set_slots(stream, done);
-        pipe
+        js_ReadableSinkController::set_pipe(cell, stream, done);
+        PipeCell(::bun_jsc::strong::Optional::create(cell, global))
     }
 
     pub(crate) fn cell(&self) -> Option<JSValue> {
         self.0.get()
     }
 
-    fn set_slots(&self, stream: JSValue, done: JSValue) {
-        let Some(cell) = self.0.get() else { return };
-        let global = VirtualMachine::get().global();
-        js_ReadableSinkController::pipe_stream_set_cached(cell, global, stream);
-        js_ReadableSinkController::pipe_done_set_cached(cell, global, done);
-    }
-
     /// The pipe is over: a controller the user still holds must not keep the stream or the promise alive.
     pub(crate) fn clear_slots(&self) {
-        self.set_slots(JSValue::ZERO, JSValue::ZERO);
+        if let Some(cell) = self.0.get() {
+            js_ReadableSinkController::set_pipe(cell, JSValue::UNDEFINED, JSValue::UNDEFINED);
+        }
     }
 
     pub(crate) fn has_stream(&self) -> bool {
         self.stream().is_some()
     }
 
-    /// The stream this pipe holds, else the one the controller's close handler still does: they are the same stream.
     pub(crate) fn stream(&self) -> Option<crate::webcore::ReadableStream> {
-        let cell = self.0.get()?;
-        let stream = js_ReadableSinkController::pipe_stream_get_cached(cell)
-            .or_else(|| js_ReadableSinkController::readable_stream_get_cached(cell))?;
+        let stream = js_ReadableSinkController::pipe_stream(self.0.get()?);
+        if stream.is_empty() {
+            return None;
+        }
         crate::webcore::ReadableStream::from_js_direct(stream)
     }
 
     pub(crate) fn take_stream(&self) -> Option<crate::webcore::ReadableStream> {
         let stream = self.stream();
         if let Some(cell) = self.0.get() {
-            js_ReadableSinkController::pipe_stream_set_cached(
-                cell,
-                VirtualMachine::get().global(),
-                JSValue::ZERO,
-            );
+            js_ReadableSinkController::clear_pipe_stream(cell);
         }
         stream
     }
@@ -732,32 +731,23 @@ impl PipeCell {
 
     /// The promise the sink's owner or source awaits, until it is taken to be settled.
     pub(crate) fn done(&self) -> Option<*mut JSPromise> {
-        js_ReadableSinkController::pipe_done_get_cached(self.0.get()?)?.as_promise()
+        js_ReadableSinkController::pipe_done(self.0.get()?).as_promise()
     }
 
     pub(crate) fn set_done(&self, done: JSValue) {
         debug_assert!(self.0.has(), "no controller cell to hold the promise");
         if let Some(cell) = self.0.get() {
-            js_ReadableSinkController::pipe_done_set_cached(
-                cell,
-                VirtualMachine::get().global(),
-                done,
-            );
+            js_ReadableSinkController::set_pipe_done(cell, done);
         }
     }
 
     pub(crate) fn take_done(&self) -> Option<*mut JSPromise> {
-        js_ReadableSinkController::pipe_done_take_cached(
-            self.0.get()?,
-            VirtualMachine::get().global(),
-        )?
-        .as_promise()
+        js_ReadableSinkController::take_pipe_done(self.0.get()?).as_promise()
     }
 
-    /// The pipe's failure value shares `failReason`: `close(error)` stores the same value there, and every other writer runs after `pull()` settled.
     pub(crate) fn set_error(&self, error: JSValue) {
         if let Some(cell) = self.0.get() {
-            ReadableSinkController::set_fail_reason(cell, VirtualMachine::get().global(), error);
+            js_ReadableSinkController::set_fail_reason(cell, error);
         }
     }
 
@@ -2033,7 +2023,7 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
 }
 
 impl<const SSL: bool> crate::webcore::sink::ControlledSink for HTTPServerWritable<SSL> {
-    fn controller_sink(this: NonNull<Self>) -> AnyControlledSink {
+    fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink {
         if SSL {
             AnyControlledSink::HTTPSResponseSink(this.cast())
         } else {
@@ -2049,6 +2039,9 @@ impl<const SSL: bool> crate::webcore::sink::ControlledSink for HTTPServerWritabl
         // SAFETY: caller contract; `fail` does not free the sink.
         unsafe { (*this).fail() };
         bun_sys::Result::Ok(())
+    }
+    fn controller_created(&mut self, controller: JSValue, global: &JSGlobalObject) {
+        self.pipe = PipeCell::root(controller, global);
     }
     fn source(&mut self) -> &mut SourceHandle {
         &mut self.source
@@ -2496,7 +2489,7 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
 }
 
 impl crate::webcore::sink::ControlledSink for NetworkSink {
-    fn controller_sink(this: NonNull<Self>) -> AnyControlledSink {
+    fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink {
         AnyControlledSink::NetworkSink(this)
     }
 

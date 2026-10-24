@@ -947,7 +947,7 @@ pub(crate) fn upload_stream(
     // Ownership stays with `ctx.sink` (freed in `detach_sink`); the JS
     // controller created by `assign_to_stream` detaches via
     // `controller.end()/close()` before GC so its `Drop` never calls
-    // `controller_finalize` on this allocation.
+    // `finalize` on this allocation.
     let sink: &mut NetworkSink = Box::leak(NetworkSink::new(NetworkSink {
         // SAFETY: `task_ptr` is live; the sink's ref is released in `detach_writable`.
         task: Some(unsafe { RefPtr::init_ref(task_ptr) }),

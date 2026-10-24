@@ -129,7 +129,7 @@ template<> struct ExternTraits<JSStringUTF8View> {
 template<> struct ExternTraits<JSC::GCOwnedDataScope<WTF::StringView>> {
     using ExternType = EncodedSlice;
 
-    // `cppValue` goes on holding the owner of the characters, and outlives the call this is an argument of.
+    // The caller's `cppValue` keeps the characters' owner alive for the whole call.
     static ExternType convertToExtern(JSC::GCOwnedDataScope<WTF::StringView>&& cppValue)
     {
         return Zig::toEncodedSlice(cppValue.data);

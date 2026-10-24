@@ -2258,8 +2258,8 @@ export class Signature {
   readonly requiredArguments: number;
   readonly rustPath: string | undefined;
   readonly length: number | undefined;
-  /** `hasThisValue`: the body is also handed its own JS object. `calledFromJS`: each argument is converted from a JS value. */
-  constructor(options: SignatureOptions, hasThisValue = false, calledFromJS = true) {
+  /** `hasThisValue`: the body is also handed its own JS object. `isProperty`: JS can call it, so each argument is converted from a JS value. */
+  constructor(options: SignatureOptions, hasThisValue = false, isProperty = true) {
     this.length = options.length;
     this.rejects = options.rejects ?? false;
     this.requiredArguments = options.requiredArguments ?? 0;
@@ -2294,7 +2294,7 @@ export class Signature {
         `${name}: a class with a mutates member is not an argument type: it could be the receiver`,
       );
       refuseResultType(name, type);
-      assert(!calledFromJS || !holdsByteSpan(type), `${name}: b.byteSpan is not a JS value`);
+      assert(!isProperty || !holdsByteSpan(type), `${name}: b.byteSpan is not a JS value`);
       assert(
         !type.borrowsHeap || this.capability !== "js",
         `${name}: JavaScript can detach a buffer; held: "handle" borrows the bytes each time they are read`,
@@ -2484,7 +2484,7 @@ export interface FunctionField extends Omit<SignatureOptions, "rustPath"> {
   calledFromCpp?: boolean;
 }
 
-/** A member function of the generated C++ class that is written in Rust. */
+/** A member function of the generated C++ class that is defined in Rust. */
 export interface CalledFromCppField {
   /** Each is `b.any`, `b.bool`, a number or `b.byteSpan`. */
   args?: Record<string, Type>;
@@ -2494,19 +2494,28 @@ export interface CalledFromCppField {
   capability?: Capability;
   /** It returns `b.any`, which is empty if it threw, or nothing. */
   throws?: boolean;
-  passThis?: boolean;
-  /** The Rust function. Defaults to the name in snake_case. */
-  rustName?: string;
 }
 
-/** A member function of the generated C++ class that is written in C++. */
+/** A member function of the generated C++ class that is defined in hand-written C++. */
 export interface CalledFromRustField {
   /** Each is `b.any`, `b.bool` or a number. */
   args?: Record<string, Type>;
   /** `b.any`, or nothing. */
   returns?: Type;
+  /** It runs JavaScript. With this or `throws`, `globalObject` is the first parameter, and `global` follows `this_value` in Rust. */
+  capability?: "js";
   /** The Rust function returns a `JsResult`. */
   throws?: boolean;
+}
+
+/** A C++ class of cells and the header that declares it. */
+export class CellClass {
+  constructor(
+    readonly cpp: string,
+    readonly header: string,
+  ) {
+    assert(/^([A-Za-z_]\w*::)+[A-Z]\w*$/.test(cpp), `${cpp} is not a C++ class with its namespace`);
+  }
 }
 
 export interface GetterField {
@@ -2595,18 +2604,16 @@ export interface ClassOptions {
   call?: Omit<SignatureOptions, "rustPath">;
   /**
    * JS values the object holds, empty at first. The GC visits them; `js_Name` gets `x_get_cached` / `x_set_cached` / `x_take_cached` for each.
-   * `{ done: "JSC::JSPromise" }` holds only cells of that C++ class: `m_done` is a `WriteBarrier<JSC::JSPromise>`. `"JSC::JSValue"` holds any value, as every field of a list does.
+   * A record gives each field a type. `b.any` is a field of a list. `b.cell("JSC::JSPromise", ..)` makes `m_x` a `WriteBarrier<JSC::JSPromise>` for hand-written C++, and `js_Name` gets nothing for it.
    */
-  internalFields?: readonly string[] | Readonly<Record<string, string>>;
-  /** What declares the classes of `internalFields` that are not JSC's, for the generated `.cpp` to include. */
-  headers?: readonly string[];
+  internalFields?: readonly string[] | Readonly<Record<string, AnyType | CellClass>>;
   /** Properties of the prototype. */
   proto?: Record<string, Field>;
   /** Properties of the constructor. */
   static?: Record<string, StaticField>;
   /** What C++ calls in Rust and is not a property: `thisObject->x(..)` calls `Name::x(&self, ..)`. */
   calledFromCpp?: Record<string, CalledFromCppField>;
-  /** What Rust calls in C++: `js_Name::x(this_value, global, ..)` calls `JSName::x(globalObject, ..)`, which the generated class declares and hand-written C++ defines. */
+  /** What Rust calls in C++: `js_Name::x(this_value, ..)` calls `JSName::x(..)`, which the generated class declares and hand-written C++ defines. */
   calledFromRust?: Record<string, CalledFromRustField>;
 }
 
@@ -2629,9 +2636,11 @@ function memberRustName(name: string): string {
   return rustIdent(name);
 }
 
-const refuseCppMemberFunctionName = (name: string) =>
+function refuseCppMemberFunctionName(name: string) {
   assert(/^[a-z][A-Za-z0-9]*$/.test(name), `${name}: a C++ member function is named in camelCase`);
-/** C++ and Rust have the same value for it. */
+  assert(!cppKeywords.has(name), `${name} is a C++ keyword`);
+}
+/** Passed between C++ and Rust without conversion. */
 const isPassedAsIs = (type: Type) => type instanceof AnyType || type instanceof PrimitiveType;
 
 export class Method extends Signature {
@@ -2644,7 +2653,7 @@ export class Method extends Signature {
   readonly privateSymbol: string | undefined;
   readonly functionName: string | undefined;
   readonly calledFromCpp: boolean;
-  /** Not one of the class's `calledFromCpp`. */
+  /** A property of the prototype or the constructor, so JS can call it. */
   readonly isProperty: boolean;
   constructor(name: string, options: FunctionField, isStatic = false, sharedThis = false, isProperty = true) {
     super(options, !isStatic && !!options.passThis, isProperty);
@@ -2655,8 +2664,9 @@ export class Method extends Signature {
       refuseCppMemberFunctionName(name);
       assert(
         !this.args.some(arg => arg.type instanceof VariadicType),
-        `${name}: calledFromCpp is for a function without .variadic`,
+        `${name}: a calledFromCpp function has no .variadic`,
       );
+      assert(!this.rejects, `${name}: a calledFromCpp function throws, so it has no rejects`);
     }
     if (!isProperty) {
       for (const arg of this.args)
@@ -2668,7 +2678,10 @@ export class Method extends Signature {
         this.returns instanceof UnitType || isPassedAsIs(this.returns),
         `${name}: returns b.any, b.bool, a number or nothing`,
       );
-      assert(!this.throws || !(this.returns instanceof PrimitiveType), `${name}: what throws returns b.any or nothing`);
+      assert(
+        !this.throws || !(this.returns instanceof PrimitiveType),
+        `${name}: a function that throws returns b.any or nothing`,
+      );
     }
     this.rustName = memberRustName(options.rustName ?? snakeCase(memberIdentifier(name)));
     this.hasDefaultRustName = options.rustName === undefined;
@@ -2684,11 +2697,12 @@ export class Method extends Signature {
 }
 
 /** One of a class's `calledFromRust`. */
-export class CppMemberFunction {
+export class CalledFromRustFunction {
   readonly name: string;
   readonly args: readonly { name: string; type: Type }[];
   readonly returnsValue: boolean;
   readonly throws: boolean;
+  readonly takesGlobalObject: boolean;
   constructor(name: string, options: CalledFromRustField) {
     refuseCppMemberFunctionName(name);
     this.name = name;
@@ -2697,6 +2711,7 @@ export class CppMemberFunction {
     assert(options.returns === undefined || options.returns instanceof AnyType, `${name}: returns b.any or nothing`);
     this.returnsValue = options.returns !== undefined;
     this.throws = options.throws ?? false;
+    this.takesGlobalObject = this.throws || options.capability === "js";
   }
 }
 
@@ -2844,15 +2859,14 @@ export class ClassType extends NamedType {
   readonly builtins: readonly Builtin[];
   readonly constants: readonly Constant[];
   readonly calledFromCpp: readonly Method[];
-  readonly calledFromRust: readonly CppMemberFunction[];
+  readonly calledFromRust: readonly CalledFromRustFunction[];
   /** The properties of the prototype and of the constructor, as written. */
   readonly protoMembers: readonly ClassMember[];
   readonly staticMembers: readonly ClassMember[];
   /** The schema's, then those of `cache: true` getters. */
   readonly internalFields: readonly string[];
   /** The C++ class of each internal field that holds only cells of one. */
-  readonly internalFieldClasses: ReadonlyMap<string, string>;
-  readonly headers: readonly string[];
+  readonly internalFieldClasses: ReadonlyMap<string, CellClass>;
   readonly configurable: boolean;
   readonly enumerable: boolean;
   readonly writable: boolean;
@@ -2937,7 +2951,7 @@ export class ClassType extends NamedType {
           );
         assert(
           overloads.length === 1 || !overloads.some(overload => overload.calledFromCpp),
-          `${name}: calledFromCpp is for a function without overloads`,
+          `${name}: a calledFromCpp function has no overloads`,
         );
         assert(!(isStatic && wellKnownSymbol(name)), `${name}: an @@ key is a property of the prototype`);
         const fn = new FunctionDefinition(
@@ -2954,7 +2968,7 @@ export class ClassType extends NamedType {
       ([name, field]) => new Method(name, { ...field, calledFromCpp: true }, false, this.sharedThis, false),
     );
     this.calledFromRust = Object.entries(options.calledFromRust ?? {}).map(
-      ([name, field]) => new CppMemberFunction(name, field),
+      ([name, field]) => new CalledFromRustFunction(name, field),
     );
     this.functions = this.protoMembers.filter(member => member instanceof FunctionDefinition);
     this.getters = this.protoMembers.filter(member => member instanceof Getter);
@@ -2965,17 +2979,19 @@ export class ClassType extends NamedType {
     this.staticGetters = this.staticMembers.filter(member => member instanceof Getter);
     const { getters } = this;
     assert(this.construct || this.staticMembers.length === 0, "static members need a constructor object");
-    const declaredFields: readonly (readonly [string, string])[] = Array.isArray(options.internalFields)
-      ? options.internalFields.map(field => [field, "JSC::JSValue"])
+    const declaredFields: readonly (readonly [string, AnyType | CellClass | undefined])[] = Array.isArray(
+      options.internalFields,
+    )
+      ? options.internalFields.map(field => [field, undefined])
       : Object.entries(options.internalFields ?? {});
     this.internalFields = [
       ...declaredFields.map(([field]) => field),
       ...getters.filter(getter => getter.declaresInternalField).map(getter => getter.name),
     ];
-    this.headers = options.headers ?? [];
-    this.internalFieldClasses = new Map(declaredFields.filter(([, cpp]) => cpp !== "JSC::JSValue"));
-    for (const [field, cpp] of this.internalFieldClasses)
-      assert(/^([A-Za-z_]\w*::)+[A-Z]\w*$/.test(cpp), `${field}: ${cpp} is not a C++ class with its namespace`);
+    this.internalFieldClasses = new Map(declaredFields.filter(field => field[1] instanceof CellClass)) as ReadonlyMap<
+      string,
+      CellClass
+    >;
     for (const { name, internalField } of [...getters, ...this.internalFieldAccessors]) {
       assert(
         internalField === undefined || this.internalFields.includes(internalField),
@@ -2983,7 +2999,7 @@ export class ClassType extends NamedType {
       );
       assert(
         internalField === undefined || !this.internalFieldClasses.has(internalField),
-        `${name}: ${internalField} holds only a ${this.internalFieldClasses.get(internalField!)}`,
+        `${name}: ${internalField} holds only a ${this.internalFieldClasses.get(internalField!)?.cpp}, so no property reads or writes it`,
       );
     }
     for (const field of this.internalFields)
@@ -3018,7 +3034,7 @@ export class ClassType extends NamedType {
   get nativeFunctions(): readonly FunctionDefinition[] {
     return [...this.functions, ...this.staticFunctions, ...(this.call ? [this.call] : [])];
   }
-  /** What has a Rust function and takes arguments. */
+  /** Every signature that a Rust function implements. */
   get methods(): readonly Method[] {
     return [...this.nativeFunctions.flatMap(fn => fn.signatures as readonly Method[]), ...this.calledFromCpp];
   }

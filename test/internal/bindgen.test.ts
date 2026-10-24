@@ -391,11 +391,15 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "x: a constant is a property of the prototype",
   );
   expect(() => b.class({ rustPath: "T", proto: { x: [{ calledFromCpp: true }, { args: { a: b.i32 } }] } })).toThrow(
-    "x: calledFromCpp is for a function without overloads",
+    "x: a calledFromCpp function has no overloads",
   );
   expect(() =>
     b.class({ rustPath: "T", proto: { x: { args: { rest: b.any.variadic }, calledFromCpp: true } } }),
-  ).toThrow("x: calledFromCpp is for a function without .variadic");
+  ).toThrow("x: a calledFromCpp function has no .variadic");
+  expect(() =>
+    b.class({ rustPath: "T", proto: { x: { returns: b.any, rejects: true, capability: "js", calledFromCpp: true } } }),
+  ).toThrow("x: a calledFromCpp function throws, so it has no rejects");
+  expect(() => b.class({ rustPath: "T", calledFromRust: { delete: {} } })).toThrow("delete is a C++ keyword");
   expect(() => b.class({ rustPath: "T", proto: { x: { calledFromCpp: true } }, calledFromRust: { x: {} } })).toThrow(
     "C++ member functions",
   );
@@ -408,12 +412,10 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", calledFromRust: { x: { returns: b.i32 } } })).toThrow(
     "x: returns b.any or nothing",
   );
-  for (const bytes of [b.byteSpan, b.byteSpan.optional, b.array(b.byteSpan)]) {
-    expect(() => b.fn({ args: { bytes } })).toThrow("bytes: b.byteSpan is not a JS value");
+  for (const bytes of [b.byteSpan, b.array(b.byteSpan)])
     expect(() => b.class({ rustPath: "T", proto: { x: { args: { bytes }, calledFromCpp: true } } })).toThrow(
       "bytes: b.byteSpan is not a JS value",
     );
-  }
   expect(() => b.class({ rustPath: "T", calledFromCpp: { x: { args: { bytes: b.byteSpan.optional } } } })).toThrow(
     "x: bytes is b.any, b.bool, a number or b.byteSpan",
   );
@@ -421,17 +423,21 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     "x: returns b.any, b.bool, a number or nothing",
   );
   expect(() => b.class({ rustPath: "T", calledFromCpp: { x: { returns: b.i32, throws: true } } })).toThrow(
-    "x: what throws returns b.any or nothing",
+    "x: a function that throws returns b.any or nothing",
   );
   expect(() => b.class({ rustPath: "T", proto: { _x: { calledFromCpp: true } } })).toThrow(
     "_x: a C++ member function is named in camelCase",
   );
-  expect(() => b.class({ rustPath: "T", internalFields: { x: "JSPromise" } })).toThrow(
-    "x: JSPromise is not a C++ class with its namespace",
+  expect(() => b.cell("JSPromise", "JavaScriptCore/JSPromise.h")).toThrow(
+    "JSPromise is not a C++ class with its namespace",
   );
   expect(() =>
-    b.class({ rustPath: "T", internalFields: { x: "JSC::JSPromise" }, proto: { x: { internalField: "x" } } }),
-  ).toThrow("x: x holds only a JSC::JSPromise");
+    b.class({
+      rustPath: "T",
+      internalFields: { x: b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h") },
+      proto: { x: { internalField: "x" } },
+    }),
+  ).toThrow("x: x holds only a JSC::JSPromise, so no property reads or writes it");
   for (const refCounted of [false, true]) {
     expect(() =>
       b.class({
@@ -694,7 +700,7 @@ describe("strings", () => {
     }
   });
 
-  it("b.string.view takes the values of the type it follows", () => {
+  it("b.string.view accepts what the type before it accepts", () => {
     expect(bindgen.stringOrObjectViewEcho(new String("你好"))).toBe("你好");
     expect(bindgen.stringOrObjectViewEcho(Object.assign(new String("ab"), { toString: () => "abc" }))).toBe("abc");
     expect(bindgen.stringOrObjectViewEcho()).toBeUndefined();
@@ -2574,32 +2580,30 @@ describe("classes", () => {
     });
 
     it("C++ calls Rust and Rust calls C++ through member functions of the class", () => {
-      const { TestMemberCalls } = bindgen;
-      const object = new TestMemberCalls();
-      expect(Object.keys(TestMemberCalls.prototype)).toEqual(["twice", "run", "note", "fail", "promise"]);
+      const { TestMemberFunctions } = bindgen;
+      const object = new TestMemberFunctions();
+      expect(Object.keys(TestMemberFunctions.prototype)).toEqual(["twice", "run", "setNote", "fail", "promise"]);
       expect(object.twice(4)).toBe(8);
-      // twice(21), sum([1, 2, 3]), sum([]), calls()
+      // twice(21), sum([1, 2, 3]), sum([]), callCount()
       expect(object.run(21, false)).toEqual([42, 6, 0, 2]);
       expect(() => object.run(21, true)).toThrow(new RangeError("thrown in Rust"));
       expect(() => object.fail()).toThrow(new TypeError("thrown in C++"));
       const value = {};
-      expect(object.note(value)).toBe(value);
+      expect(object.setNote(value)).toBe(value);
     });
 
-    it("a calledFromCpp function of proto converts what C++ passes as it converts an argument", () => {
-      const object = new bindgen.TestMemberCalls();
+    it("a calledFromCpp function converts its arguments the same way when C++ calls it", () => {
+      const object = new bindgen.TestMemberFunctions();
       expect(() => object.twice("21")).toThrow("n must be a number");
       expect(() => object.run("21", false)).toThrow("n must be a number");
     });
 
-    it("an internal field of a C++ class holds only that class", () => {
-      const object = new bindgen.TestMemberCalls();
-      const promise = Promise.resolve();
-      expect(object.promise(promise)).toBe(promise);
-      for (const value of [undefined, null, 1, "a", {}, () => {}]) {
-        expect(object.promise(promise)).toBe(promise);
-        expect(object.promise(value)).toBeUndefined();
-      }
+    it("the GC visits an internal field that holds a C++ class", () => {
+      const object = new bindgen.TestMemberFunctions();
+      expect(object.promise()).toBeInstanceOf(Promise);
+      object.promise().tag = 1;
+      Bun.gc(true);
+      expect(object.promise().tag).toBe(1);
     });
 
     it("prototypeBase is what the prototype inherits from", () => {

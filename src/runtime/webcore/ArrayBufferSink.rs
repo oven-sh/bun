@@ -85,7 +85,7 @@ impl ArrayBufferSink {
         streams::result::Writable::Owned(len as u64)
     }
 
-    pub(crate) fn end(&mut self, _err: Option<syscall::Error>) -> bun_sys::Result<()> {
+    pub(crate) fn end(&mut self, _: Option<syscall::Error>) -> bun_sys::Result<()> {
         Ok(())
     }
 

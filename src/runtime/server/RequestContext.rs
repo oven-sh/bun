@@ -276,7 +276,6 @@ use crate::node::types::PathLikeExt as _;
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_response_stream};
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::sink::ReadableSinkController;
-use crate::webcore::streams::PipeCell;
 use crate::webcore::{Blob, ReadableStream, body as Body};
 use bun_jsc::SysErrorJsc as _;
 
@@ -2205,12 +2204,10 @@ where
         );
 
         // We are already corked!
-        let controller = ReadableSinkController::create(global_this, response_stream_ptr);
-        response_stream.pipe = PipeCell::root(controller, global_this);
-        let assignment_result: JSValue = ReadableSinkController::assign_controller_to_stream(
-            controller,
+        let assignment_result: JSValue = ReadableSinkController::assign_to_stream(
             global_this,
             stream.value,
+            response_stream_ptr,
         );
 
         assignment_result.ensure_still_alive();

@@ -708,7 +708,7 @@ pub unsafe trait JsPayload: Sized + 'static {
         self.into_js(unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() })
     }
 
-    /// The JS object that owns `self`. In `Drop` it is dead: it only tells which object this was.
+    /// The JS object that owns `self`. In `Drop` the cell is dead: compare it by identity only.
     ///
     /// # Safety
     /// `self` was given to [`into_js`](Self::into_js).

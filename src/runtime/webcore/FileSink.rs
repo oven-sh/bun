@@ -1298,7 +1298,7 @@ impl FileSink {
         JSSink::create_object(global_this, self, None)
     }
 
-    /// As [`to_js`](Self::to_js), for the stdin of `subprocess`, which hears when the object closes or is collected.
+    /// As [`to_js`](Self::to_js), for the stdin of `subprocess`, which is told when the object closes or is collected.
     pub(crate) fn to_js_for_subprocess(
         &mut self,
         global_this: &JSGlobalObject,
@@ -1457,7 +1457,7 @@ impl crate::webcore::sink::JsSinkType for FileSink {
 }
 
 impl crate::webcore::sink::ControlledSink for FileSink {
-    fn controller_sink(this: core::ptr::NonNull<Self>) -> AnyControlledSink {
+    fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink {
         AnyControlledSink::FileSink(this)
     }
     /// The JS pump's source failed, or `controller.close(error)`: a piped stream rejects with `reason`.
@@ -1869,9 +1869,10 @@ impl FileSink {
     ) -> JsResult<JSValue> {
         // No +1 for the controller: `release_pipe` detaches it before this sink is freed.
         let promise_result = ReadableSinkController::assign_controller_to_stream(
-            controller,
             global_this,
             stream.value,
+            controller,
+            core::ptr::NonNull::from(&mut *self),
         );
 
         // What the stream's code threw, which need not be an Error.

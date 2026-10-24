@@ -909,7 +909,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
             *more = has_more;
             'write: {
                 // The sink copies what it needs before returning.
-                let handle = controller.handle();
+                let handle = controller.sink_handle();
                 if out.is_empty() || handle.is_none() {
                     break 'write JSValue::UNDEFINED;
                 }

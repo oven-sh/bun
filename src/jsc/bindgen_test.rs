@@ -12,7 +12,7 @@ use crate::generated_bindgen::bindgen_test::{
     Bun__BindgenTest__doubled, TestAbsence, TestAnything, TestBare, TestBareOptions, TestBracket,
     TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestNames,
     TestNodeOptions, TestObjectOrRest, TestOptions, TestOptionsEcho, TestOtherAsNullOptions,
-    TestOuter, TestTextOrBytes, TestValue, js_TestCounter, js_TestError, js_TestMemberCalls,
+    TestOuter, TestTextOrBytes, TestValue, js_TestCounter, js_TestError, js_TestMemberFunctions,
     js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote,
 };
 use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
@@ -1043,17 +1043,17 @@ impl TestReadOnly {
 }
 
 #[derive(Default)]
-pub(crate) struct TestMemberCalls {
-    calls: Cell<u32>,
+pub(crate) struct TestMemberFunctions {
+    call_count: Cell<u32>,
 }
 
-impl TestMemberCalls {
+impl TestMemberFunctions {
     pub(crate) fn constructor() -> Self {
         Self::default()
     }
 
     pub(crate) fn twice(&self, n: i32) -> i32 {
-        self.calls.set(self.calls.get() + 1);
+        self.call_count.set(self.call_count.get() + 1);
         n * 2
     }
 
@@ -1064,17 +1064,17 @@ impl TestMemberCalls {
         n: JsLocal<'a>,
         fail: bool,
     ) -> JsResult<JSValue> {
-        js_TestMemberCalls::run_in_cpp(this_value.to_js(), cx.global(), n.to_js(), fail)
+        js_TestMemberFunctions::run_in_cpp(this_value.to_js(), cx.global(), n.to_js(), fail)
     }
 
-    pub(crate) fn note<'a>(
+    pub(crate) fn set_note<'a>(
         &self,
         this_value: JsWrapper<'a, Self>,
-        cx: &mut JsScope<'a>,
+        _: &JsHeap<'a>,
         value: JsLocal<'a>,
     ) -> JSValue {
-        js_TestMemberCalls::note_in_cpp(this_value.to_js(), cx.global(), value.to_js());
-        js_TestMemberCalls::noted_in_cpp(this_value.to_js(), cx.global())
+        js_TestMemberFunctions::set_note_in_cpp(this_value.to_js(), value.to_js());
+        js_TestMemberFunctions::note_in_cpp(this_value.to_js())
     }
 
     pub(crate) fn fail<'a>(
@@ -1082,21 +1082,19 @@ impl TestMemberCalls {
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
     ) -> JsResult<()> {
-        js_TestMemberCalls::fail_in_cpp(this_value.to_js(), cx.global())
+        js_TestMemberFunctions::fail_in_cpp(this_value.to_js(), cx.global())
     }
 
     pub(crate) fn promise<'a>(
         &self,
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
-        value: JsLocal<'a>,
     ) -> JSValue {
-        js_TestMemberCalls::promise_set_cached(this_value.to_js(), cx.global(), value.to_js());
-        js_TestMemberCalls::promise_get_cached(this_value.to_js()).unwrap_or(JSValue::UNDEFINED)
+        js_TestMemberFunctions::promise_in_cpp(this_value.to_js(), cx.global())
     }
 
-    pub(crate) fn calls(&self) -> u32 {
-        self.calls.get()
+    pub(crate) fn call_count(&self) -> u32 {
+        self.call_count.get()
     }
 
     pub(crate) fn sum(&self, bytes: &[u8]) -> u32 {

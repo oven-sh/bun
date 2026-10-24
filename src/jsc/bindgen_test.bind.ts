@@ -343,28 +343,30 @@ export const TestReadOnly = b.class({
 });
 
 /** `calledFromCpp` and `calledFromRust`. `BindgenTest.cpp` has the C++. */
-export const TestMemberCalls = b.class({
-  rustPath: "crate::bindgen_test::TestMemberCalls",
+export const TestMemberFunctions = b.class({
+  rustPath: "crate::bindgen_test::TestMemberFunctions",
   construct: {},
-  internalFields: { note: "JSC::JSValue", promise: "JSC::JSPromise" },
+  internalFields: { note: b.any, promise: b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h") },
   proto: {
     twice: { args: { n: b.i32 }, returns: b.i32, calledFromCpp: true },
     run: { args: { n: b.any, fail: b.bool }, returns: b.any, capability: "js", throws: true, passThis: true },
-    note: { args: { value: b.any }, returns: b.any, capability: "js", passThis: true },
+    /** Returns what the field holds afterwards. */
+    setNote: { args: { value: b.any }, returns: b.any, capability: "heap", passThis: true },
     fail: { capability: "js", throws: true, passThis: true },
-    /** Stores `value` in `promise`, and returns what the field holds then. */
-    promise: { args: { value: b.any }, returns: b.any, capability: "js", passThis: true },
+    /** The same promise on every call. */
+    promise: { returns: b.any, capability: "js", passThis: true },
   },
   calledFromCpp: {
-    calls: { returns: b.u32 },
+    callCount: { returns: b.u32 },
     sum: { args: { bytes: b.byteSpan }, returns: b.u32 },
     failInRust: { capability: "heap", throws: true },
   },
   calledFromRust: {
     runInCpp: { args: { n: b.any, fail: b.bool }, returns: b.any, throws: true },
-    noteInCpp: { args: { value: b.any } },
-    notedInCpp: { returns: b.any },
+    setNoteInCpp: { args: { value: b.any } },
+    noteInCpp: { returns: b.any },
     failInCpp: { throws: true },
+    promiseInCpp: { capability: "js", returns: b.any },
   },
 });
 

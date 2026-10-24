@@ -123,7 +123,10 @@ pub(crate) trait JsSinkType: Sized + 'static {
 
 /// A sink that a stream writes to through a [`ReadableSinkController`].
 pub(crate) trait ControlledSink: JsSinkType {
-    fn controller_sink(this: NonNull<Self>) -> AnyControlledSink;
+    fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink;
+
+    /// `assign_to_stream` made `controller` for this sink: a sink that keeps JS values roots it and puts them on it.
+    fn controller_created(&mut self, _controller: JSValue, _global: &JSGlobalObject) {}
 
     /// The source failed, so the bytes written so far are a truncated body:
     /// `controller.close(error)` with a truthy argument, or the pump's close
@@ -265,7 +268,7 @@ pub(crate) struct JSSink<T: JsSinkType> {
     /// `None` once `close()` gave up the object's claim on the sink.
     sink: Cell<Option<NonNull<T>>>,
     ref_count: Cell<i32>,
-    /// Hears that its stdin is gone when the object closes or is collected.
+    /// Told that its stdin is gone when the object closes or is collected.
     subprocess: Cell<Option<NonNull<Subprocess<'static>>>>,
 }
 
@@ -278,7 +281,7 @@ impl<T: JsSinkType> JSSink<T> {
         }
     }
 
-    fn open_sink(&self, global: &JSGlobalObject) -> JsResult<NonNull<T>> {
+    fn sink_or_throw(&self, global: &JSGlobalObject) -> JsResult<NonNull<T>> {
         self.sink
             .get()
             .ok_or_else(|| throw_already_closed(global, T::NAME))
@@ -309,7 +312,7 @@ impl<T: JsSinkType> JSSink<T> {
     }
 
     pub(crate) fn flush(&self, cx: &mut JsScope<'_>, wait: Option<bool>) -> JsResult<JSValue> {
-        flush_sink(self.open_sink(cx.global())?, &cx.js_thread(), wait)
+        flush_sink(self.sink_or_throw(cx.global())?, &cx.js_thread(), wait)
     }
 
     pub(crate) fn end<'a>(
@@ -318,7 +321,7 @@ impl<T: JsSinkType> JSSink<T> {
         cx: &mut JsScope<'a>,
     ) -> JsResult<JSValue> {
         // SAFETY: the object's live sink, which `end_from_js` does not free.
-        let sink = unsafe { &mut *self.open_sink(cx.global())?.as_ptr() };
+        let sink = unsafe { &mut *self.sink_or_throw(cx.global())?.as_ptr() };
         let result = sink
             .end_from_js(&cx.js_thread())
             .map_err(|error| error.throw(cx.global()));
@@ -330,7 +333,7 @@ impl<T: JsSinkType> JSSink<T> {
     }
 
     fn start_with_config(&self, cx: &mut JsScope<'_>, config: streams::Start) -> JsResult<()> {
-        start_sink(self.open_sink(cx.global())?, &cx.js_thread(), config)
+        start_sink(self.sink_or_throw(cx.global())?, &cx.js_thread(), config)
     }
 
     pub(crate) fn write<'a>(
@@ -338,7 +341,7 @@ impl<T: JsSinkType> JSSink<T> {
         cx: &mut JsScope<'a>,
         chunk: SinkChunk<'a>,
     ) -> JsResult<JSValue> {
-        write_chunk(self.open_sink(cx.global())?, cx, chunk)
+        write_chunk(self.sink_or_throw(cx.global())?, cx, chunk)
     }
 
     pub(crate) fn r#ref(&self) {
@@ -480,12 +483,12 @@ impl AnyControlledSink {
 /// Writes to a native sink on behalf of a stream: it is the `controller` of a
 /// `type: "direct"` stream, and what the pump of any other stream writes to.
 ///
-/// The generated code calls what takes `&self`. A sink holds the JS object, as its
-/// `source()` or in its `PipeCell`, and calls what takes `controller`.
+/// Generated code calls the `&self` methods. A sink calls the functions that take
+/// `controller: JSValue`, which it keeps as its `source()` or in its `PipeCell`.
 pub(crate) struct ReadableSinkController {
-    /// Dangles once detached, which comes before the sink is freed.
+    /// Read through `sink()`: the controller detaches before the sink is freed, and then only the variant is used.
     sink: AnyControlledSink,
-    is_attached: Cell<bool>,
+    is_detached: Cell<bool>,
     /// The destination went away (peer abort, write error) before the source closed the controller.
     destination_closed: Cell<bool>,
 }
@@ -494,46 +497,46 @@ impl ReadableSinkController {
     /// A new controller attached to `sink`.
     pub(crate) fn create<T: ControlledSink>(global: &JSGlobalObject, sink: NonNull<T>) -> JSValue {
         Self {
-            sink: T::controller_sink(sink),
-            is_attached: Cell::new(true),
+            sink: T::to_any_sink(sink),
+            is_detached: Cell::new(false),
             destination_closed: Cell::new(false),
         }
         .to_js(global)
     }
 
-    /// [`assign_controller_to_stream`](Self::assign_controller_to_stream) with a new controller.
+    /// Pump `stream` into the sink through a new controller, kept as the
+    /// sink's `source()`. It is installed before the pump starts because the
+    /// pump drains whatever the stream already holds (user code included)
+    /// before returning, and a sink failing in there detaches its `source()`.
     pub(crate) fn assign_to_stream<T: ControlledSink>(
         global: &JSGlobalObject,
         stream: JSValue,
         sink: NonNull<T>,
     ) -> JSValue {
-        Self::assign_controller_to_stream(Self::create(global, sink), global, stream)
+        let controller = Self::create(global, sink);
+        Self::assign_controller_to_stream(global, stream, controller, sink)
     }
 
-    /// Pumps `stream` into the sink. Returns `undefined` (drained already), the pump's promise, or what it threw as an `Exception`.
-    pub(crate) fn assign_controller_to_stream(
-        controller: JSValue,
+    /// [`assign_to_stream`](Self::assign_to_stream) through a `controller` from [`create`](Self::create).
+    pub(crate) fn assign_controller_to_stream<T: ControlledSink>(
         global: &JSGlobalObject,
         stream: JSValue,
+        controller: JSValue,
+        mut sink: NonNull<T>,
     ) -> JSValue {
-        // Before the pump starts: it drains what the stream already holds, user code included, and a sink that fails in there detaches its `source()`.
-        // SAFETY: the caller owns the live sink for this synchronous call.
-        *unsafe { Self::from_controller(controller).sink.source() } =
-            SourceHandle::JSController(controller);
-        let result = js::assign_to_stream(controller, global, stream);
-        // Nothing will `end()` or `close()` the controller, and `Drop` would finalize a sink that its owner has freed.
-        if result.to_error().is_some() {
-            crate::dispatch::fold(Self::detach(controller, global));
-        }
-        result
+        // SAFETY: `sink` is a live sink owned by the caller for this synchronous call.
+        let sink = unsafe { sink.as_mut() };
+        sink.controller_created(controller, global);
+        *sink.source() = SourceHandle::JSController(controller);
+        start_pump(global, stream, controller)
     }
 
-    fn from_controller(controller: JSValue) -> &'static Self {
+    fn from_js(controller: JSValue) -> &'static Self {
         controller.as_class_ref().expect("a ReadableSinkController")
     }
 
     pub(crate) fn detach(controller: JSValue, global: &JSGlobalObject) -> JsResult<()> {
-        Self::from_controller(controller).detach_with_reason(global, None)
+        Self::from_js(controller).detach_with_reason(global, None)
     }
 
     /// The sink closed underneath its source.
@@ -542,31 +545,22 @@ impl ReadableSinkController {
         global: &JSGlobalObject,
         reason: JSValue,
     ) -> JsResult<()> {
-        Self::from_controller(controller)
-            .destination_closed
-            .set(true);
+        Self::from_js(controller).destination_closed.set(true);
         js::on_close(controller, global, reason, true)
     }
 
-    /// The first reason stays.
-    pub(crate) fn set_fail_reason(controller: JSValue, global: &JSGlobalObject, reason: JSValue) {
-        if js::fail_reason_get_cached(controller).is_none() {
-            js::fail_reason_set_cached(controller, global, reason);
-        }
-    }
-
-    /// The JS object that holds `self`. In `Drop` it is dead, and only compared.
+    /// In `Drop` the cell is dead: compare it by identity only.
     fn this_value(&self) -> JSValue {
         // SAFETY: `create` is the only constructor, and it gives the controller to its JS object.
         unsafe { self.wrapper_value() }
     }
 
     fn sink(&self) -> Option<AnyControlledSink> {
-        self.is_attached.get().then_some(self.sink)
+        (!self.is_detached.get()).then_some(self.sink)
     }
 
     /// For a native transform, which writes to the sink without the controller's methods.
-    pub(crate) fn handle(&self) -> SinkHandle {
+    pub(crate) fn sink_handle(&self) -> SinkHandle {
         let Some(sink) = self.sink() else {
             return SinkHandle::None;
         };
@@ -608,8 +602,8 @@ impl ReadableSinkController {
     }
 
     /// `None`: the destination went away, so `write()` and `flush()` report 0 bytes and the source can stop.
-    fn open_sink(&self, global: &JSGlobalObject) -> JsResult<Option<AnyControlledSink>> {
-        if self.is_attached.get() || self.destination_closed.get() {
+    fn sink_or_throw(&self, global: &JSGlobalObject) -> JsResult<Option<AnyControlledSink>> {
+        if !self.is_detached.get() || self.destination_closed.get() {
             return Ok(self.sink());
         }
         Err(throw_already_closed(
@@ -628,7 +622,7 @@ impl ReadableSinkController {
     /// `end()` and `close()` detach before they run any JS: the close handler can re-enter the event loop and free the sink (`handle_resolve_stream` -> `destroy_sink`).
     fn take_sink(&self) -> Option<AnyControlledSink> {
         let sink = self.sink()?;
-        self.is_attached.set(false);
+        self.is_detached.set(true);
         // `SourceHandle::JSController` does not root the controller, so from here on it must not fire. A sink that was assigned to another stream since holds the newer controller.
         // SAFETY: the sink was attached, so it is live.
         let source = unsafe { sink.source() };
@@ -645,7 +639,7 @@ impl ReadableSinkController {
     fn detach_with_reason(&self, global: &JSGlobalObject, reason: Option<JSValue>) -> JsResult<()> {
         let controller = self.this_value();
         if let Some(reason) = reason {
-            Self::set_fail_reason(controller, global, reason);
+            js::set_fail_reason(controller, reason);
         }
         self.take_sink();
         // A sink whose close re-enters here (FileSink's `on_close` runs inside `close(error)`) detaches before `close` passes the reason, which `failReason` already has.
@@ -656,31 +650,30 @@ impl ReadableSinkController {
     }
 
     /// `onClose` closes a direct stream and settles its promise, so it runs even if the sink's own `end` or `close` threw, and the sink's error wins.
-    fn detach_after<R>(
+    fn detach_and_return<R>(
         &self,
         global: &JSGlobalObject,
         reason: Option<JSValue>,
         result: JsResult<R>,
     ) -> JsResult<R> {
-        let error = match result {
-            Ok(value) => return self.detach_with_reason(global, reason).map(|()| value),
-            Err(error) => error,
+        let Err(error) = result else {
+            self.detach_with_reason(global, reason)?;
+            return result;
         };
-        if matches!(error, JsError::Terminated) || global.has_pending_termination_exception() {
+        if global.has_pending_termination_exception() {
             return Err(error);
         }
         let exception = global.take_exception(error);
-        if let Err(error) = self.detach_with_reason(global, reason) {
-            if matches!(error, JsError::Terminated) || !global.clear_exception_except_termination()
-            {
-                return Err(error);
-            }
+        if let Err(error) = self.detach_with_reason(global, reason)
+            && !global.clear_exception_except_termination()
+        {
+            return Err(error);
         }
         Err(global.throw_value(exception))
     }
 
-    pub(crate) fn is_attached(&self) -> bool {
-        self.is_attached.get()
+    pub(crate) fn is_detached(&self) -> bool {
+        self.is_detached.get()
     }
 
     /// `error` is `None` for a clean close, else why the source failed.
@@ -702,20 +695,19 @@ impl ReadableSinkController {
             AnyControlledSink::NetworkSink(sink) => close_sink(sink, global, reason),
             AnyControlledSink::FetchRequestBodySink(sink) => close_sink(sink, global, reason),
         };
-        self.detach_after(global, reason, result)
+        self.detach_and_return(global, reason, result)
     }
 
-    /// The source failed.
     pub(crate) fn close_with_error<'a>(
         &self,
         cx: &mut JsScope<'a>,
-        reason: JsLocal<'a>,
+        error: JsLocal<'a>,
     ) -> JsResult<()> {
-        self.close(cx, Some(reason))
+        self.close(cx, Some(error))
     }
 
     pub(crate) fn flush(&self, cx: &mut JsScope<'_>, wait: Option<bool>) -> JsResult<JSValue> {
-        let Some(sink) = self.open_sink(cx.global())? else {
+        let Some(sink) = self.sink_or_throw(cx.global())? else {
             return Ok(JSValue::js_number(0.0));
         };
         let cx = &cx.js_thread();
@@ -742,7 +734,7 @@ impl ReadableSinkController {
             AnyControlledSink::NetworkSink(sink) => end_sink(sink, cx),
             AnyControlledSink::FetchRequestBodySink(sink) => end_sink(sink, cx),
         };
-        self.detach_after(cx.global(), None, result)
+        self.detach_and_return(cx.global(), None, result)
     }
 
     pub(crate) fn start(
@@ -750,7 +742,7 @@ impl ReadableSinkController {
         cx: &mut JsScope<'_>,
         options: &ReadableSinkControllerStartOptions<'_>,
     ) -> JsResult<()> {
-        let Some(sink) = self.open_sink(cx.global())? else {
+        let Some(sink) = self.sink_or_throw(cx.global())? else {
             return Ok(());
         };
         let cx = &cx.js_thread();
@@ -781,7 +773,7 @@ impl ReadableSinkController {
     }
 
     pub(crate) fn write<'a>(&self, cx: &mut JsScope<'a>, data: SinkChunk<'a>) -> JsResult<JSValue> {
-        let Some(sink) = self.open_sink(cx.global())? else {
+        let Some(sink) = self.sink_or_throw(cx.global())? else {
             return Ok(JSValue::js_number(0.0));
         };
         match sink {
@@ -796,14 +788,14 @@ impl ReadableSinkController {
 
     /// `write` of bytes that are not in a JS object.
     pub(crate) fn write_bytes(&self, cx: &mut JsScope<'_>, bytes: &[u8]) -> JsResult<JSValue> {
-        if self.open_sink(cx.global())?.is_none() || bytes.is_empty() {
+        if self.sink_or_throw(cx.global())?.is_none() || bytes.is_empty() {
             return Ok(JSValue::js_number(0.0));
         }
-        let written = self.handle().write(&Temporary(RawSlice::new(bytes)));
+        let written = self.sink_handle().write(&Temporary(RawSlice::new(bytes)));
         Ok(written.to_js(&cx.js_thread()))
     }
 
-    /// The `sinkId` of a `FileSink` and a `NetworkSink` in `Sink.bind.ts` are these.
+    /// 2 and 6 must match `sinkPrototype(..)` in `Sink.bind.ts`.
     pub(crate) fn get_sink_id(&self) -> u8 {
         match self.sink {
             AnyControlledSink::FileSink(_) => 2,
@@ -814,6 +806,19 @@ impl ReadableSinkController {
             AnyControlledSink::FetchRequestBodySink(_) => 7,
         }
     }
+}
+
+/// Out of line so the `assign_controller_to_stream` instantiations share one copy.
+#[inline(never)]
+fn start_pump(global: &JSGlobalObject, stream: JSValue, controller: JSValue) -> JSValue {
+    let result = js::assign_to_stream(controller, global, stream);
+    // Setup threw (e.g. a direct stream's `pull` getter): nothing will ever
+    // end()/close() the controller, and its `Drop` would otherwise finalize
+    // the sink after its owner has freed it. Detach it while the sink is live.
+    if result.to_error().is_some() {
+        crate::dispatch::fold(ReadableSinkController::detach(controller, global));
+    }
+    result
 }
 
 impl Drop for ReadableSinkController {

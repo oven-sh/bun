@@ -8,6 +8,7 @@ import {
   type BytesOptions,
   ByteSpanType,
   BytesType,
+  CellClass,
   type ClassOptions,
   ClassType,
   type DictionaryOptions,
@@ -67,6 +68,9 @@ export const bufferSource = new BufferSourceType();
 
 /** Bytes that C++ passes to one of a class's `calledFromCpp`. */
 export const byteSpan = new ByteSpanType();
+
+/** The type of an internal field that holds only cells of one C++ class: `b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h")`. */
+export const cell = (cpp: string, header: string) => new CellClass(cpp, header);
 
 /** The bytes of a string, a buffer or a `Blob`: which of them, what becomes of anything else, and how the body holds them. */
 export const bytes = (options: BytesOptions) => new BytesType(options);

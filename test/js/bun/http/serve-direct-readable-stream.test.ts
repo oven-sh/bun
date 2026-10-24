@@ -39,7 +39,7 @@ test("HTTPResponseSink displays correct message", async () => {
   expect(() => leakedCtrl.write.call({}, "c")).toThrow(expect.objectContaining({ code: "ERR_INVALID_THIS" }));
 });
 
-test("the controller of a direct stream is of one class, whichever native sink consumes the stream", async () => {
+test("every native sink gives a direct stream the same controller class", async () => {
   const controllers: any[] = [];
   const stream = () =>
     new ReadableStream({

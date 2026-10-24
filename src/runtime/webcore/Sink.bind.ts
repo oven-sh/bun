@@ -10,13 +10,13 @@ export const SinkChunk = b.union({
   other: b.any,
 });
 
-/** What is not a string fails `start` with `EINVAL`. */
+/** `start` fails with `EINVAL` if `path` is not a string. */
 export const SinkPath = b.union({ missing: b.undefined, path: b.string.allowStringObject, other: b.any });
 
 const highWaterMark = b.f64.otherAsNull;
 const fileMembers = {
   path: SinkPath,
-  /** What `Fd::from_js` takes. */
+  /** Parsed by `Fd::from_js`. */
   fd: b.any.emptyStringAsNull,
 };
 const ignoresNonObjects = { allowArray: true, nonObjectAsEmpty: true } as const;
@@ -72,23 +72,25 @@ export const NetworkSink = b.class({
   proto: sinkPrototype(6, NetworkSinkStartOptions),
 });
 
+const JSPromise = b.cell("JSC::JSPromise", "JavaScriptCore/JSPromise.h");
+const JSReadableStream = b.cell("WebCore::JSReadableStream", "streams/JSReadableStream.h");
+
 /** What `pull(controller)` of a `type: "direct"` stream gets when a native sink consumes the stream, and what the pump of any other stream writes to. */
 export const ReadableSinkController = b.class({
   ...sinkClass,
   rustPath: "crate::webcore::sink::ReadableSinkController",
   internalFields: {
-    /** What hears the sink close: a `JSDirectStreamSource` or a `JSReadStreamIntoSinkOperation`. */
-    source: "JSC::JSCell",
-    /** Of a direct stream: settles when the controller closes. */
-    closePromise: "JSC::JSPromise",
-    /** The first `close(error)`. */
-    failReason: "JSC::JSValue",
-    readableStream: "WebCore::JSReadableStream",
-    /** A `PipeCell` keeps these two here: the stream its sink ends, and the promise its owner awaits. */
-    pipeStream: "WebCore::JSReadableStream",
-    pipeDone: "JSC::JSPromise",
+    /** Notified when the sink closes: a `JSDirectStreamSource` or a `JSReadStreamIntoSinkOperation`. */
+    source: b.cell("JSC::JSCell", "JavaScriptCore/JSCell.h"),
+    /** Direct streams only: settles when the controller closes. */
+    closePromise: JSPromise,
+    /** The `error` of the first `close(error)`. */
+    failReason: b.any,
+    readableStream: JSReadableStream,
+    /** While a native sink pipes a stream in, it roots only this cell, which holds these two for it (`PipeCell` in `streams.rs`). */
+    pipeStream: JSReadableStream,
+    pipeDone: JSPromise,
   },
-  headers: ["streams/JSReadableStream.h"],
   proto: {
     close: { ...js, args: { error: b.any.falsyAsNull }, length: 0, calledFromCpp: true },
     flush,
@@ -98,16 +100,23 @@ export const ReadableSinkController = b.class({
     sinkId: { getter: b.u8, enumerable: false, configurable: true },
   },
   calledFromCpp: {
-    isAttached: { returns: b.bool },
-    /** The source failed. `reason` can be falsy. */
-    closeWithError: { ...js, args: { reason: b.any } },
+    isDetached: { returns: b.bool },
+    /** `close(error)` for an `error` that can be falsy. */
+    closeWithError: { ...js, args: { error: b.any } },
     startWithHighWaterMark: { ...js, args: { highWaterMark: b.f64 } },
     writeBytes: { ...method, args: { bytes: b.byteSpan } },
   },
   calledFromRust: {
     /** `undefined`, a promise for the end of the stream, or the `Exception` of a failure. */
-    assignToStream: { args: { stream: b.any }, returns: b.any },
+    assignToStream: { capability: "js", args: { stream: b.any }, returns: b.any },
     onClose: { args: { reason: b.any, sinkClosed: b.bool }, throws: true },
     onReady: { throws: true },
+    setPipe: { args: { stream: b.any, done: b.any } },
+    pipeStream: { returns: b.any },
+    clearPipeStream: {},
+    setPipeDone: { args: { done: b.any } },
+    pipeDone: { returns: b.any },
+    takePipeDone: { returns: b.any },
+    setFailReason: { args: { reason: b.any } },
   },
 });

@@ -5,6 +5,7 @@ use bun_sys::Error as SysError;
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue};
+use crate::webcore::sink::AnyControlledSink;
 use crate::webcore::streams::{
     SourceHandle, Start, StreamError, StreamResult, Writable, WritablePending,
 };
@@ -282,8 +283,8 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
 }
 
 impl crate::webcore::sink::ControlledSink for FetchRequestBodySink {
-    fn controller_sink(this: core::ptr::NonNull<Self>) -> crate::webcore::sink::AnyControlledSink {
-        crate::webcore::sink::AnyControlledSink::FetchRequestBodySink(this)
+    fn to_any_sink(this: core::ptr::NonNull<Self>) -> AnyControlledSink {
+        AnyControlledSink::FetchRequestBodySink(this)
     }
 
     fn source(&mut self) -> &mut SourceHandle {

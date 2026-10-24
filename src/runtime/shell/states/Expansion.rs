@@ -553,6 +553,16 @@ impl Expansion {
         me.meta_offsets.clear();
     }
 
+    /// POSIX 2.6.3: a command substitution ends before its trailing newlines.
+    fn strip_trailing_line_ends(stdout: &mut Vec<u8>) {
+        if stdout.last() == Some(&b'\n') {
+            // bash keeps a CR before a trailing LF. It goes here so CRLF output gives a clean word.
+            while matches!(stdout.last(), Some(b'\n' | b'\r')) {
+                stdout.pop();
+            }
+        }
+    }
+
     /// Newlines→spaces, trim, then split on whitespace runs into separate
     /// argv words.
     fn post_subshell_expansion(me: &mut Expansion, mut stdout: Vec<u8>) {
@@ -654,11 +664,17 @@ impl Expansion {
                 me.out_exit_code = exit_code;
             }
             if no_split {
-                let mut hi = stdout.len();
-                while hi > 0 && matches!(stdout[hi - 1], b' ' | b'\n' | b'\r' | b'\t') {
-                    hi -= 1;
+                if me.assign_ctx {
+                    // `$X` is never field split, so a value still loses these trailing bytes.
+                    let mut hi = stdout.len();
+                    while hi > 0 && matches!(stdout[hi - 1], b' ' | b'\n' | b'\r' | b'\t') {
+                        hi -= 1;
+                    }
+                    stdout.truncate(hi);
+                } else {
+                    Self::strip_trailing_line_ends(&mut stdout);
                 }
-                me.current_out.extend_from_slice(&stdout[..hi]);
+                me.current_out.extend_from_slice(&stdout);
                 // A quoted substitution that printed only NUL bytes expands to one empty word.
                 if had_nul && me.cmd_subst_quoted {
                     me.has_quoted_empty = true;

@@ -1829,6 +1829,31 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       await waitFor(/\n\s*2\b/);
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/5267
+  // The REPL keeps the terminal in raw mode while it evaluates, where Enter is a lone CR.
+  test("prompt(), confirm() and alert() take a typed line", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send("'got ' + prompt('name?')\n");
+      await waitFor("name? ");
+      send("Alice\r");
+      await waitFor("got Alice");
+
+      send("'sure ' + confirm('sure?')\n");
+      await waitFor("sure? [y/N] ");
+      send("y\r");
+      await waitFor("sure true");
+
+      send("alert('hi')\n");
+      await waitFor("hi [Enter] ");
+      send("\r");
+      await waitFor("undefined");
+
+      // The line editor has the terminal in raw mode again.
+      send("6 * 7\n");
+      await waitFor("42");
+    });
+  });
 });
 
 // History file written on REPL exit must be owner-only (0600), since it can

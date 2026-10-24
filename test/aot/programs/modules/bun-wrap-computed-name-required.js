@@ -1,4 +1,4 @@
-// require() of "bun:wrap" by a name computed at run time, in a CommonJS file that never names the module: it is not in the executable. require() finds it all the same, as it finds any other module of Bun's that was left out, and Bun interprets it.
+// require() of "bun:wrap" by a name computed at run time, in a CommonJS file that never names the module: it is not in the executable, and require() refuses it as it refuses any other module of Bun's that was left out. Nothing is interpreted.
 const name = "bun:" + ["wr", "ap"].join("");
 for (let round = 0; round < 2; round++) {
   try {

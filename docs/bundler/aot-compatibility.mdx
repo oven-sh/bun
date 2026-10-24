@@ -49,7 +49,7 @@ Some of these take a slow path: a `Proxy` used as an array, and an array with ho
 | [Seven Bun classes](#request-response-and-five-other-classes)                      | Their prototypes can be changed                                  | Their prototypes are read-only. Subclasses work                                                |
 | [Code from strings](#code-from-strings)                                            | The JIT compiles it                                              | Bun interprets it                                                                              |
 | [WebAssembly](#webassembly)                                                        | The JIT compiles it                                              | A `.wasm` file that you import is compiled. Bun interprets any other module                    |
-| [Dynamic imports](#dynamic-imports)                                                | Loaded from disk                                                 | Entry points are found in the executable. Other files load from disk, and Bun interprets them  |
+| [Dynamic imports](#dynamic-imports)                                                | Loaded from disk                                                 | Entry points are found in the executable. Other code throws. Data files load                   |
 | Exports of compiled modules                                                        | `spyOn(namespace, "f")` from `bun:test` replaces the export      | Throws a `TypeError`. An export of a module loaded from disk at run time can still be spied on |
 | [The module cache](#the-module-cache)                                              | Lists every module that has run. `delete` makes one run again    | Doesn't list the modules of the executable. Each runs at most once                             |
 | [A CommonJS module that threw](#the-module-cache)                                  | The next `require()` runs it again                               | The next `require()` throws the same error                                                     |
@@ -540,7 +540,7 @@ A name doesn't have to stand in the call. If your program or a package loads a m
 A string doesn't count if it's only compared (`name === "fs"`, `case "fs":`), used as a property key (`table["fs"]`), or kept in an array or a `Set` that the program only searches (`names.includes(name)`, `names.has(name)`). No string counts in a program where every import has a constant name. A dynamic path that can't be the name of a built-in module, like `require("./locales/" + name)`, doesn't make strings count either.
 
 If a function passes its parameter to `require()`, `import()` or `process.getBuiltinModule()` and the program only ever calls that function directly, as with `tryRequire` above, the compiler takes the names from the calls. Such a function doesn't make other strings count.
-A `require(name)` doesn't add the rest, so one such call in a package doesn't put `node:repl` and `node:dgram` into your server. A name that comes from outside of the program, or that's put together from parts, still finds every built-in module. One that isn't in the executable isn't compiled: Bun interprets it, like a [file from disk](#code-that-isnt-in-the-executable).
+A `require(name)` doesn't add the rest, so one such call in a package doesn't put `node:repl` and `node:dgram` into your server. A name that comes from outside of the program, or that's put together from parts, only finds a module that's in the executable for another reason.
 
 ```ts load.ts icon="/icons/typescript.svg"
 import "node:path";
@@ -555,18 +555,12 @@ bun compile ./load.ts && ./load node:path && ./load node:dgram
 
 ```txt
 true
-true
+error: Cannot load 'node:dgram': it isn't in this executable. Import it by name somewhere in your program to keep it. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
 ```
 
 A built-in module that a dynamic name finds works like one that you import, even if it's only in the executable because another built-in module imports it.
 
-To compile a built-in module whose name isn't written anywhere in your program, import it once by its name. The import costs nothing until the module is used.
-
-`process.getBuiltinModule(name)` is the exception. It never loads a file, so it doesn't make the executable ready for code that wasn't compiled. In a program that has no other dynamic import, it only finds a module that's in the executable.
-
-```txt
-error: Cannot load 'node:dgram': it isn't in this executable. Import it by name somewhere in your program to keep it. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
-```
+To keep a built-in module whose name isn't written anywhere in your program, import it once by its name. The import costs nothing until the module is used.
 
 ```ts load.ts icon="/icons/typescript.svg"
 import "node:dgram";
@@ -582,7 +576,33 @@ The code behind the IPC channel is kept for `process.on("message", ...)` only wh
 
 ### Code that isn't in the executable
 
-A plugin, a config file, a tool that your user wrote: the build never sees them, because their paths are only known when the program runs. A dynamic `import()` or `require()` loads such a file from disk, as in an executable built without `--aot`. It isn't compiled. Bun transpiles it and interprets it, without a JIT, like [code from a string](#code-from-strings).
+A dynamic `import()` or `require()` can only load code that's in the executable. Anything else throws: JavaScript, TypeScript, WebAssembly or a native addon. So does everything that Bun would read as JavaScript or turn into it: a file with no extension, a file with an extension that Bun doesn't know, a Markdown file, and a `data:` or `blob:` URL.
+
+```txt
+error: Cannot load '/home/me/plugins/late.ts': it isn't in this executable, which only runs code that was compiled into it. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk.
+```
+
+The error has the code `MODULE_NOT_FOUND` from `require()` and `ERR_MODULE_NOT_FOUND` from `import()`, like a file that doesn't exist. The build warns at each import where this can happen.
+
+```txt
+warn: TS100064: this import path isn't a constant. If it resolves to code that isn't in the executable, the import throws at run time (data files still load). Add the file as an entry point, or build with --aot-allow-code-from-disk
+```
+
+| You want                     | Do this                                                                                                                           |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| The file compiled            | Pass it as an additional entry point                                                                                              |
+| One package loaded from disk | `--external <package>`. Bun interprets it, and everything it loads                                                                |
+| Any file loaded from disk    | [`--aot-allow-code-from-disk`](#load-code-from-disk)                                                                              |
+| Data                         | Nothing. JSON, JSON5, TOML, YAML, XML, text and CSS files run no code, so they load from disk as usual                            |
+| A database or an HTML page   | Import it by a constant path. `import(name, { with: { type: "sqlite" } })` and `require(name)` of an `.html` file throw like code |
+
+An `--external` package has `require`, `module`, `require.cache` and every built-in module, whole: the compiler can't see what the package calls, so a build with `--external` compiles every function of the built-in modules in the executable, not only the ones that your program calls. That makes the executable a few megabytes larger. The package doesn't see the modules of your program, as in an executable built without `--aot`: its `module.parent` has the path of the file that required it and empty `exports`, and `require.cache` lists the files that were loaded from disk. If a file of your program [names a way between module objects](#module-objects), the package finds your modules through `process.mainModule` too. [Built-in objects are read-only](#built-in-objects-are-read-only) for it too: it can add a global or a property, and it can't replace one that your compiled code uses. `globalThis.fetch = polyfill` in such a package throws a `TypeError` if your program calls `fetch`.
+
+`createRequire()`, `import.meta.require()` and `module.require()` follow the same rules. So does a [macro](/bundler/macros) in text that you hand to `new Bun.Transpiler()` at run time: the file of the macro has to be in the executable.
+
+### Load code from disk
+
+A plugin, a config file, a tool that your user wrote: the build never sees them, because their paths are only known when the program runs. With `--aot-allow-code-from-disk`, a dynamic `import()` or `require()` loads such a file from disk, as in an executable built without `--aot`. It isn't compiled. Bun transpiles it and interprets it, without a JIT, like [code from a string](#code-from-strings).
 
 ```ts host.ts icon="/icons/typescript.svg"
 const plugin = await import(Bun.pathToFileURL(process.argv[2]).href);
@@ -596,7 +616,7 @@ export default (n: number) => n * 2 + Math.sign(cpus().length);
 ```
 
 ```bash terminal icon="terminal"
-bun compile ./host.ts && ./host ./plugin.ts
+bun compile --aot-allow-code-from-disk ./host.ts && ./host ./plugin.ts
 ```
 
 ```txt
@@ -610,16 +630,22 @@ bun compile ./host.ts && ./host ./plugin.ts
 - **It doesn't get the files of your program by path.** An entry point is found, and it's the compiled module, which runs once. Any other file of the executable isn't, as described [above](#dynamic-imports).
 - **[Built-in objects are read-only](#built-in-objects-are-read-only)** for it too.
 
-It has a price, and only a program that can reach such an import pays it. The compiler can't see what the file does with what it's handed, so it proves less about the objects and functions that the file can get hold of. It also compiles every function of the built-in modules in the executable, not only the ones that your program calls, which makes the executable a few megabytes larger. [`--trim`](/bundler/aot-size) keeps the transpiler and the interpreter.
+The option has a price, and only a program that can reach such an import pays it:
 
-| You want                     | Do this                                                            |
-| ---------------------------- | ------------------------------------------------------------------ |
-| The file compiled            | Pass it as an additional entry point                               |
-| One package loaded from disk | `--external <package>`. Bun interprets it, and everything it loads |
+- **The executable is larger.** It keeps Bun's transpiler and the source code of Bun's built-in modules. It also holds every function of the built-in modules that are compiled into it, not only the ones that your program calls. That's a few megabytes, and [`--trim`](/bundler/aot-size) can't remove the transpiler or the interpreter.
+- **The program can run slower.** The compiler can't see what the file does with what it's handed, so it proves less about the objects and functions that the file can get hold of. Those include everything that the built-in modules export. A server on `node:http` can need up to a third more CPU time for a request.
 
-An `--external` package has `require`, `module`, `require.cache` and every built-in module, whole: the compiler can't see what the package calls, so a build with `--external` compiles every function of the built-in modules in the executable, not only the ones that your program calls. That makes the executable a few megabytes larger. The package doesn't see the modules of your program, as in an executable built without `--aot`: its `module.parent` has the path of the file that required it and empty `exports`, and `require.cache` lists the files that were loaded from disk. If a file of your program [names a way between module objects](#module-objects), the package finds your modules through `process.mainModule` too. [Built-in objects are read-only](#built-in-objects-are-read-only) for it too: it can add a global or a property, and it can't replace one that your compiled code uses. `globalThis.fetch = polyfill` in such a package throws a `TypeError` if your program calls `fetch`.
+A program without a dynamic `import()` or `require()` is the same executable with and without the option.
 
-`createRequire()`, `import.meta.require()` and `module.require()` follow the same rules.
+With the option, a name that comes from outside of the program finds every [built-in module](#built-in-modules). One that isn't in the executable isn't compiled: Bun interprets it, like a file from disk.
+
+`process.getBuiltinModule(name)` is the exception. It never loads a file, so it doesn't make the executable ready for code that wasn't compiled. In a program that has no other dynamic import, it only finds a module that's in the executable, with the option too.
+
+```txt
+error: Cannot load 'node:dgram': it isn't in this executable. Import it by name somewhere in your program to keep it. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+```
+
+In `Bun.build`, the option is `compile: { allowCodeFromDisk: true }`.
 
 The compiler also follows `require` under another name, as long as it can see that the name holds `require`. Where it can't, every path is a dynamic path, a string literal too.
 
@@ -681,7 +707,7 @@ Without the entry points, the first request fails with the error above.
 
 ## Options that load code
 
-`--preload` and a few other options make an executable load code that its program never asked for. The compiler allows for [files that your program loads](#code-that-isnt-in-the-executable) where it can see the `import()` or `require()`. It can't see these options, so an executable rejects them.
+`--preload` and a few other options load code that the compiler never saw. What the compiler proved about your program only holds while nothing else runs, so an executable rejects them. The exception is an executable that's built with [`--aot-allow-code-from-disk`](#load-code-from-disk) and whose program has a dynamic `import()` or `require()`: it's ready for such code, so it takes `--preload`, `-r` and `--import`.
 
 ```ts greeting.ts icon="/icons/typescript.svg"
 console.log("hello");
@@ -718,12 +744,13 @@ warn: --trace-exit is ignored by this executable because it only runs code that 
 
 In `--compile-exec-argv`, the options of the first and the third row fail the build.
 
-Two build flags change that.
+Three build flags change that.
 
-| Flag                           | In `Bun.build`                       | The executable                                                                            |
-| ------------------------------ | ------------------------------------ | ----------------------------------------------------------------------------------------- |
-| `--compile-inspector`          | `compile: { inspector: true }`       | Accepts all of the above, so that a debugger can attach. Bun interprets the code it loads |
-| `--no-compile-function-source` | `compile: { functionSource: false }` | Rejects the options in the first row, with `--compile-inspector` too                      |
+| Flag                           | In `Bun.build`                         | The executable                                                                                  |
+| ------------------------------ | -------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `--compile-inspector`          | `compile: { inspector: true }`         | Accepts all of the above, so that a debugger can attach. Bun interprets the code it loads       |
+| `--aot-allow-code-from-disk`   | `compile: { allowCodeFromDisk: true }` | Accepts `--preload`, `-r` and `--import` if its program has a dynamic `import()` or `require()` |
+| `--no-compile-function-source` | `compile: { functionSource: false }`   | Rejects the options in the first row, with `--compile-inspector` too                            |
 
 - **`--compile-inspector` has a price.** A debugger can run any code in any scope, so the compiler can prove less about the program. The executable is larger and slower, and [`--trim`](/bundler/aot-size) removes no features.
 - **An option in `--compile-exec-argv` is part of the build.** `--inspect` there needs no `--compile-inspector`.
@@ -853,7 +880,7 @@ const worker = new Worker(path);
 
 A file that you embed for another use, like a script that a server sends to browsers, stays a file.
 
-A Worker that you create from a file on disk or from a `blob:` or `data:` URL runs [code that isn't in the executable](#code-that-isnt-in-the-executable). It loads in a program that also has a dynamic `import()` or `require()`. In any other program it fails to load: put the code in a file and pass it as an entry point.
+A Worker that you create from a file on disk or from a `blob:` or `data:` URL runs [code that isn't in the executable](#code-that-isnt-in-the-executable), so it fails to load. Put the code in a file and pass it as an entry point. With [`--aot-allow-code-from-disk`](#load-code-from-disk) it loads, in a program that also has a dynamic `import()` or `require()`.
 
 A file can start itself as a Worker. To tell the two threads apart, use `Bun.isMainThread`, not `import.meta.main`. In an executable with a single entry point, `import.meta.main` is decided at build time, like in any executable: it's `true` in that file on every thread. Under `bun run` it's `false` in the Worker. With more than one entry point it's `false` in a Worker here too.
 
@@ -861,7 +888,7 @@ Everything is one program when entry points can meet in one global object: when 
 
 ## Native addons
 
-`require("./addon.node")` embeds the addon in the executable, like in [any executable](/bundler/executables#embed-n-api-addons). `process.dlopen(module, path)` loads one from disk, and its path can be computed. So does a `require()` with a computed path. Calls into all of them work the same.
+`require("./addon.node")` embeds the addon in the executable, like in [any executable](/bundler/executables#embed-n-api-addons). `process.dlopen(module, path)` loads one from disk, and its path can be computed. Calls into either work the same. A `require()` with a computed path doesn't load an addon, because it [only finds code that's in the executable](#code-that-isnt-in-the-executable).
 
 An addon is native code. It can keep, call and change whatever your program hands it, right away or later, and it can read, call and change globals by name. [Built-in objects are read-only](#built-in-objects-are-read-only) for it too. `napi_run_script` runs [code from a string](#code-from-strings), so it throws the same `EvalError` as `eval` unless the compiler found a call to `eval` or `Function` in your program.
 
@@ -947,7 +974,7 @@ The executable is the same with and without a metafile.
 
 The executable includes the source code of your functions, with the types removed, and `toString()` returns it. It's the text of your file. `bun run` returns what its transpiler printed, so line breaks, indentation and quotes can differ.
 
-`--no-compile-function-source` removes the text. The executable is smaller and doesn't contain your source code. It still loads [files from disk](#code-that-isnt-in-the-executable) and runs [code from strings](#code-from-strings). In `Bun.build`, the option is `compile: { functionSource: false }`.
+`--no-compile-function-source` removes the text. The executable is smaller and doesn't contain your source code. It still runs [code from strings](#code-from-strings). In `Bun.build`, the option is `compile: { functionSource: false }`.
 
 ```ts text.ts icon="/icons/typescript.svg"
 function add(a: number, b: number): number {

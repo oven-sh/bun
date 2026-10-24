@@ -16,6 +16,8 @@ import { asBunInitWritesIt, typeChecker, typingsOfBun, type Checker } from "./ty
 export interface Program {
   text: string;
   extension: "js" | "ts";
+  /** More flags for every build of it. */
+  flags?: string[];
 }
 
 export interface Run {
@@ -280,7 +282,8 @@ export class ProductBed implements Bed {
     const size = sizes[Math.floor(Math.random() * sizes.length)];
     const beside = (this.options.projects ?? []).filter(name => !projects[name].hasTypings || typingsOfBun());
     const project = beside.length ? [besideTheProgram + beside[Math.floor(Math.random() * beside.length)]] : [];
-    return this.#modes(program).map(mode => ({ ...mode, flags: [...mode.flags, ...stress, ...project, ...(size ? [inTheCompanyOf + size] : []), ...(mode.flags.some(flag => flag.startsWith("--aot-limit=")) ? [] : limit)] }));
+    const own = program.flags ?? [];
+    return this.#modes(program).map(mode => ({ name: [mode.name, ...own].join(" "), flags: [...mode.flags, ...own, ...stress, ...project, ...(size ? [inTheCompanyOf + size] : []), ...(mode.flags.some(flag => flag.startsWith("--aot-limit=")) ? [] : limit)] }));
   }
 
   #modes(program: Program): Mode[] {

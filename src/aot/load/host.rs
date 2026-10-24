@@ -69,7 +69,7 @@ fn describe_parse_failure(hir: &hir::File<'_>, text: &[u8]) -> Option<Vec<u8>> {
         bun_sema::messages::format(&mut sentence, template, &first.args);
     }
     let before = &text[..text.len().min(first.start as usize)];
-    let line = before.iter().filter(|&&byte| byte == b'\n').count() + 1;
+    let line = bun_core::strings::count_char(before, b'\n') + 1;
     let column = before
         .iter()
         .rev()

@@ -231,7 +231,7 @@ describe.concurrent("what is only named alike is read", () => {
             name.includes("eval"),
           );
           expect({ built, said: built ? "" : said }).toEqual({ built: true, said: "" });
-          expect(plain).toMatchObject({ exitCode: 0, stdout: expect.stringMatching(/\S/) });
+          expect({ exitCode: plain.exitCode, prints: /\S/.test(plain.stdout) }).toEqual({ exitCode: 0, prints: true });
           expect({ stdout: compiled!.stdout, exitCode: compiled!.exitCode }).toEqual({
             stdout: plain.stdout,
             exitCode: 0,

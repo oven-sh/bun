@@ -176,12 +176,17 @@ describe("at run time", () => {
       try { const late = await import(process.cwd() + process.env.LATE); console.log(late.twice(JSON.parse('"4"'))); } catch (e: any) { console.log(e.code + ": " + e.message); }`,
     "late.ts": `export function twice(n: number): number { return n * 2; }`,
   };
-  test("a module that only a dynamic path leads to is loaded from disk, and no type of it is checked", async () => {
+  test("the import of a module that only a dynamic path leads to throws, and the build warns", async () => {
     const { stdout, stderr, exitCode } = await ran(importsDynamicPath, ["run", ...flags, "main.ts"], {
       LATE: "/late.ts",
     });
-    expect(stderr).not.toContain("TS100064");
-    expect({ stdout, exitCode }).toEqual({ stdout: "8\n", exitCode: 0 });
+    expect(stderr).toContain(
+      "warn: TS100064: this import path isn't a constant. If it resolves to code that isn't in the executable, the import throws at run time",
+    );
+    expect(stdout).toMatch(
+      /^ERR_MODULE_NOT_FOUND: Cannot load '[^']*late\.ts': it isn't in this executable, which only runs code that was compiled into it\. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk\.\n$/,
+    );
+    expect(exitCode).toBe(0);
   });
   test("an executable built with --compile-inspector loads such a module from disk", async () => {
     using dir = tempDir("run-aot", { "tsconfig.json": tsconfig, ...importsDynamicPath });

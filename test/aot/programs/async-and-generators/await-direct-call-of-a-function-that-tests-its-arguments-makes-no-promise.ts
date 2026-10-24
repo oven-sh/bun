@@ -26,7 +26,8 @@ const results: Promise<number>[] = [];
 for (const pair of pairs) results.push(doubleOfFirst(pair));
 const suspended = livePromises() - before;
 console.log(suspended < 2500 ? "a call holds the gate's promise and its own" : "too many promises: " + suspended);
-console.log(suspended >= 2000 ? "the promises that are kept are there" : "too few promises: " + suspended);
+// The collector takes every word of the stack for a reference: a promise from before the calls that such a word held at the first count may be gone at the second.
+console.log(suspended >= 1990 ? "the promises that are kept are there" : "too few promises: " + suspended);
 for (const resume of waiting) resume();
 const values = await Promise.all(results);
 console.log(values.length, values[0], values[999], values.reduce((a, b) => a + b, 0));

@@ -1,7 +1,8 @@
 use super::support::{
-    ClaimsNodeFs, DEPENDENCY_MANIFEST, GLOBAL_TYPES, HostScript, PROJECT, ScriptedHost, codes,
-    from_bun_check, from_bun_check_without_configuration, load, load_with_host,
-    load_with_tsconfig_override, project_disk, with_host, with_program, with_runtime_project,
+    ClaimsNodeFs, DEPENDENCY_MANIFEST, GLOBAL_TYPES, HostScript, PROJECT, ScriptedHost,
+    SlowToQueueAgain, codes, from_bun_check, from_bun_check_without_configuration, load,
+    load_with_host, load_with_tsconfig_override, project_disk, with_host, with_program,
+    with_runtime_project,
 };
 use crate::{EntryPointFailure, Locator, global};
 use bun_sema::atom::{Atom, Interner};
@@ -585,8 +586,10 @@ fn libraries_match_bun_check() {
             libraries_of(program.files().options)
         });
         let checked = from_bun_check(&files, |files| libraries_of(files.options));
-        assert_eq!(configured, checked);
-        assert_eq!(configured.1, None);
+        assert_eq!(configured.0, checked.0);
+        assert_eq!(checked.1, None);
+        // The run time provides what they declare, whatever `types` lists, so a build reads them where they are installed.
+        assert_eq!(configured.1, has_bun_types.then(|| vec![b"bun".to_vec()]));
 
         let tool = "node_modules/tool/main.ts";
         let unconfigured = with_program(&files, &["./node_modules/tool/main.ts"], 1, |program| {
@@ -621,4 +624,30 @@ fn locator_names_file() {
             assert_eq!((located.end_line, located.end_column), (1, column + 1));
         }
     });
+}
+
+#[test]
+fn file_queued_again_is_read_and_parsed_again() {
+    const FILES: [(&str, &str); 2] = [
+        (
+            "main.ts",
+            "import \"./first\";\nvar flag = true;\nexport function which() { return flag ? 1 : 2; }\n",
+        ),
+        ("first.ts", "import { which } from \"./main\";\nwhich();\n"),
+    ];
+    for reads_on_other_threads in [false, true] {
+        let (ended, has_ended) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let disk = match reads_on_other_threads {
+                true => project_disk(&FILES, 4).reading_on_threads_of_their_own(),
+                false => project_disk(&FILES, 4),
+            };
+            let host = SlowToQueueAgain(&disk, Default::default());
+            let is_loaded = load_with_host(&host, &["./main.ts"]).is_ok();
+            let times_queued = ["main.ts", "first.ts"].map(|path| host.times_queued(path));
+            let _ = ended.send((is_loaded, times_queued));
+        });
+        let outcome = has_ended.recv_timeout(std::time::Duration::from_secs(120));
+        assert_eq!(outcome, Ok((true, [2, 1])), "{reads_on_other_threads}");
+    }
 }

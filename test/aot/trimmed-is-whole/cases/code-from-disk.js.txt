@@ -1,4 +1,5 @@
 // Loads files with code that the build has not seen. A trimmed executable transpiles and interprets them too.
+//@ build --aot-allow-code-from-disk
 const folder = process.cwd();
 //// require-commonjs
 //@ file cwd/plugin.cjs "module.exports = { answer: 6 * 7 };"

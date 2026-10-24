@@ -1,4 +1,5 @@
-// What the build does not follow to a file finds the entry points and no other file of the executable: `require` in a parameter, in a property or bound, whatever the path, and a path with no constant part, whoever is called.
+// What the build does not follow to a file finds the entry points and no other file of the executable: `require` in a property or bound, whatever the path, and a path with no constant part, whoever is called.
+// `require` as the argument of a function that is called where it is written is followed: that one finds the file.
 const other = require("./other.cjs");
 const load = require;
 function attempt(title, action) {

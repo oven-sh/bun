@@ -94,7 +94,10 @@ async function countAllocations(folder: string, flags: string[]) {
   const counts = join(folder, "counts.txt");
   built(await spawned([bunExe(), ...compileCommand, ...flags, "main.ts", "--outfile", executable], folder, env));
   const plain = await spawned([bunExe(), "main.ts"], folder, env);
-  expect(plain).toMatchObject({ stdout: expect.stringMatching(/^\d+\n$/), exitCode: 0 });
+  expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({
+    stdout: expect.stringMatching(/^\d+\n$/),
+    exitCode: 0,
+  });
   const ran = await spawned([executable], folder, { ...env, [runtimeEnvironment.countsPath]: counts });
   expect(ran).toEqual({ stdout: plain.stdout, stderr: "", exitCode: 0, signal: null });
   return readFileSync(counts, "utf8");

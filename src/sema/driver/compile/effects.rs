@@ -365,7 +365,7 @@ mod tests {
             id: SymbolId(id),
         };
         let [bun_module, import_meta, own_type] = [symbol(0), symbol(1), symbol(2)];
-        let incomplete_containers = [Some(bun_module), Some(import_meta)];
+        let incomplete_containers = [Some(bun_module), Some(import_meta), None];
         let without_configuration_file = WithoutBunTypes {
             has_configuration_file: false,
             incomplete_containers,

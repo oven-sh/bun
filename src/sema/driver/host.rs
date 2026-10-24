@@ -543,6 +543,15 @@ impl Disk {
         }
     }
 
+    /// As on a system where the threads that read files are not the threads that parse them.
+    #[cfg(test)]
+    pub(crate) fn reading_on_threads_of_their_own(mut self) -> Self {
+        if self.io_pool.is_none() {
+            self.io_pool = Some(bun_threading::io_thread_pool::acquire().into());
+        }
+        self
+    }
+
     /// Returns the name of the file at `path` in `bundled_libs`, if it's there.
     fn bundled<'a>(&self, path: &'a [u8]) -> Option<(BundledLibs, &'a [u8])> {
         let name = path.strip_prefix(BUNDLED_LIBS)?.strip_prefix(b"/")?;

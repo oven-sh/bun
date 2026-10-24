@@ -49,6 +49,8 @@ const idioms = readdirSync(root, { recursive: true })
 const forms = ["typed", "untyped"] as const;
 const isWorse = (now: number, pin: number) =>
   (now > pin * 1.1 && now > pin + 20) || (now > pin * 1.25 && now > pin + 4);
+// The count of one executable moves by a sixth from run to run: these are held within 15%.
+const wavering = ["built-in/stringify-a-message-of-code-with-one-wide-character"];
 
 function withBest(now: Forms, before: Forms | undefined): Forms {
   const best = {
@@ -130,6 +132,8 @@ describe.skipIf(!!skipped)("compile/aot/perf/idioms", () => {
         test.todo(`${name}, ${form}: ${pin} instructions an iteration; it was ${best[form]}`);
     }
   }
+  for (const name of idioms.filter(name => wavering.includes(name)))
+    test.todo(`${name}: takes as many instructions an iteration in every run`);
   for (const name of idioms) {
     test.concurrent(
       name,
@@ -161,7 +165,9 @@ describe.skipIf(!!skipped)("compile/aot/perf/idioms", () => {
               { ...pin, typed: Math.min(pin.typed, now.typed), untyped: Math.min(pin.untyped, now.untyped) },
               pin,
             );
-          const worse = forms.filter(form => isWorse(now[form], pin[form]));
+          const worse = forms.filter(form =>
+            wavering.includes(name) ? now[form] > pin[form] * 1.15 : isWorse(now[form], pin[form]),
+          );
           expect({ worse, now, pin: { typed: pin.typed, untyped: pin.untyped } }).toEqual({
             worse: [],
             now,

@@ -22,8 +22,8 @@ impl DiagnosticSubject {
     }
 }
 
-/// The module "bun" and the type of `import.meta`. Without `@types/bun` both are declared with only a few of their members.
-pub fn containers_completed_by_bun_types(files: &Files<'_>) -> [Option<Sym>; 2] {
+/// The module "bun", the type of `import.meta` and the type of `Error`. Without `@types/bun` they are declared with only a few of their members.
+pub fn containers_completed_by_bun_types(files: &Files<'_>) -> [Option<Sym>; 3] {
     let bun_module = files
         .atoms
         .lookup(b"bun")
@@ -31,7 +31,12 @@ pub fn containers_completed_by_bun_types(files: &Files<'_>) -> [Option<Sym>; 2] 
     let import_meta = files
         .global_type_symbol(known::ImportMeta)
         .map(|symbol| files.canonical(symbol));
-    [bun_module, import_meta]
+    let error_constructor = files
+        .atoms
+        .lookup(b"ErrorConstructor")
+        .and_then(|name| files.global_type_symbol(name))
+        .map(|symbol| files.canonical(symbol));
+    [bun_module, import_meta, error_constructor]
 }
 
 impl Checker<'_, '_> {

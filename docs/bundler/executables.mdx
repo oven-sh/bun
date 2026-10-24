@@ -1411,6 +1411,7 @@ interface CompileBuildOptions {
   aotLogTypeMismatches?: boolean; // With aot: log every value that doesn't match its declared type (default: false)
   aotExplain?: AotReport | AotReport[]; // With aot: reports to add to BuildOutput.logs, such as "guards" or "trim"
   functionSource?: boolean; // With aot: embed function source code, so that fn.toString() returns it (default: true)
+  allowCodeFromDisk?: boolean; // With aot: let import() and require() load code that isn't in the executable from disk (default: false)
   inspector?: boolean; // With aot: let a debugger attach to the executable (default: false)
   obfuscate?: boolean; // With aot: strip function names and file names, and write a source map next to the executable (default: false)
   trim?:

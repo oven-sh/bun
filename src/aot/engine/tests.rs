@@ -44,6 +44,7 @@ fn expected_record(change: impl FnOnce(&mut CompileOptions)) -> CompileOptions {
         executable_identity: IDENTITY.0,
         mismatch_policy: MismatchPolicy::Silent,
         thread_count: 7,
+        excluded_code: ExcludedCode::CODE_OUTSIDE_IMAGE,
         ..zeroed()
     };
     record.target.reference_width = ReferenceWidth::Narrow;
@@ -100,11 +101,15 @@ fn options_fill_record() {
     );
     assert_eq!(
         filled_record(|options| options.forbids_text_evaluation = true),
-        expected_record(|record| record.excluded_code = ExcludedCode::EVALUATED_TEXT)
+        expected_record(|record| record.excluded_code |= ExcludedCode::EVALUATED_TEXT)
+    );
+    assert_eq!(
+        filled_record(|options| options.loads_code_from_disk = true),
+        expected_record(|record| record.excluded_code = ExcludedCode::default())
     );
     assert_eq!(
         filled_record(|options| options.embeds_function_source = false),
-        expected_record(|record| record.excluded_code = ExcludedCode::FUNCTION_SOURCE)
+        expected_record(|record| record.excluded_code |= ExcludedCode::FUNCTION_SOURCE)
     );
     assert_eq!(
         filled_record(|options| options.obfuscates = true),
@@ -145,7 +150,7 @@ fn each_option_fills_one_member() {
         record.mismatch_policy = MismatchPolicy::Report;
         record.reports = ReportSet::SYMBOLS | ReportSet::ALLOCATIONS;
         record.admitted_code = AdmittedCode::INSPECTOR;
-        record.excluded_code = ExcludedCode::EVALUATED_TEXT | ExcludedCode::FUNCTION_SOURCE;
+        record.excluded_code |= ExcludedCode::EVALUATED_TEXT | ExcludedCode::FUNCTION_SOURCE;
         record.output = OutputOptions::OBFUSCATE;
     });
     assert_eq!(filled, expected);

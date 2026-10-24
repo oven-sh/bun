@@ -33,7 +33,8 @@ const reads: Promise<number>[] = [];
 for (const name of names) reads.push(readGuarded(name));
 const suspended = livePromises() - before;
 console.log(suspended < 2500 ? "a read holds the gate's promise and its own" : "too many promises: " + suspended);
-console.log(suspended >= 2000 ? "the promises that are kept are there" : "too few promises: " + suspended);
+// The collector takes every word of the stack for a reference: a promise from before the calls that such a word held at the first count may be gone at the second.
+console.log(suspended >= 1990 ? "the promises that are kept are there" : "too few promises: " + suspended);
 console.log(open);
 for (const resume of waiting) resume();
 const sizes = await Promise.all(reads);

@@ -580,6 +580,35 @@ impl CodeHost for ClaimsNodeFs<'_> {
     }
 }
 
+/// Takes its time over a file that is queued a second time, so that every other thread of the load looks for work meanwhile.
+pub(super) struct SlowToQueueAgain<'a>(pub &'a host::Disk, pub Guarded<Vec<Vec<u8>>>);
+
+impl SlowToQueueAgain<'_> {
+    pub(super) fn times_queued(&self, path: &str) -> usize {
+        let path = inside(PROJECT, path.as_bytes());
+        self.1.lock().iter().filter(|&it| *it == path).count()
+    }
+}
+
+impl Host for SlowToQueueAgain<'_> {
+    delegate_host_to_disk!();
+}
+
+impl CodeHost for SlowToQueueAgain<'_> {
+    delegate_parsers_to_disk!();
+
+    fn is_read_by_plugin(&self, path: &[u8]) -> bool {
+        let mut queued = self.1.lock();
+        let is_queued_again = queued.iter().any(|it| it == path);
+        queued.push(path.to_vec());
+        drop(queued);
+        if is_queued_again {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        false
+    }
+}
+
 #[derive(Default)]
 pub(super) struct HostScript<'a> {
     pub typed_versions: &'a [(&'a str, &'a str)],

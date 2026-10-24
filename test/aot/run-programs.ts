@@ -304,8 +304,9 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
   const behindTheFlag = cmd.indexOf("--aot") + 1 || (cmd[1] === "compile" && !cmd.includes("--library") ? 2 : 0);
   if (moreBuildFlags.length && behindTheFlag) cmd = cmd.toSpliced(behindTheFlag, 0, ...moreBuildFlags);
   // A child that hangs is killed here, and the signal fails the test. A test that merely timed out would leave it running.
-  // A build that verifies the IR after every pass takes sixteen times as long as one that does not.
-  const timeout = cmd.includes("--aot-check=verify-each-pass") || moreBuildFlags.length || isASAN ? 240_000 : collectsAtEveryAllocation(env) ? 120_000 : 90_000;
+  // A build that verifies the IR after every pass takes sixteen times as long as one that does not. One that may load code from disk holds every built-in module, and --aot-validate checks each.
+  const isLong = cmd.includes("--aot-check=verify-each-pass") || (cmd.includes("--aot-validate") && cmd.includes("--aot-allow-code-from-disk"));
+  const timeout = isLong || moreBuildFlags.length || isASAN ? 240_000 : collectsAtEveryAllocation(env) ? 120_000 : 90_000;
   const start = performance.now();
   await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout, killSignal: "SIGKILL" });
   // A build that is asked to end says what each of its threads is still compiling. One that is killed says nothing.
@@ -653,14 +654,15 @@ export function programs(topic: string, part = 1, parts = 1) {
   );
 }
 
+/** What compares times says so where it leaves the sanitizer out: "skipWithASAN": "a clock". */
+const isJudgedByClock = (path: string) => existsSync(besideOf(path) + ".json") && /\bclock\b|\bcompares two times\b/.test(JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")).skipWithASAN ?? "");
+
 /**
  * The programs that every run takes, whatever its share and whatever the build of Bun: all of ./programs/counterexamples, and those that ./programs-in-every-run.txt lists, one a line,
  * as a path below ./programs without its extension. Each is judged as programs() judges it. A line that names no program fails.
  */
 export function programsInEveryRun(part = 1, parts = 1) {
-  // A machine that runs other tests beside this one moves a ratio of two times. What compares times says so where it leaves the sanitizer out ("skipWithASAN": "a clock"), and is taken by
-  // the step of CI that holds up nothing.
-  const isJudgedByClock = (path: string) => existsSync(besideOf(path) + ".json") && /\bclock\b|\bcompares two times\b/.test(JSON.parse(readFileSync(besideOf(path) + ".json", "utf8")).skipWithASAN ?? "");
+  // A machine that runs other tests beside this one moves a ratio of two times. What compares times is taken by the step of CI that holds up nothing.
   const listed = readFileSync(join(import.meta.dir, "programs-in-every-run.txt"), "utf8").split(/\r?\n/).filter(line => line !== "");
   const nameOf = (path: string) => besideOf(inPrograms(path)).replaceAll("\\", "/");
   const all = [...new Set(["counterexamples", ...listed.map(name => name.slice(0, name.indexOf("/")))])].flatMap(find).filter(path => !groups.has(path));
@@ -691,12 +693,12 @@ function markOfFailure(path: string): string | undefined {
 /**
  * A mark that outlives its cure hides the next fault. The programs that are left out because they fail (`<name>.todo.txt`, "todoOn" for this platform, and with AddressSanitizer a
  * "skipWithASAN" that begins with TODO) are run as programs() runs the others, and one that does what is expected is red: its mark goes out. What fails on one run and not on the
- * next is not asked: a `<name>.todo.txt` that begins with "Not every time:", and ./programs/untyped-speed, where a clock decides.
+ * next is not asked: a `<name>.todo.txt` that begins with "Not every time:", and what compares two times, where the machine decides.
  */
 export function programsMarkedAsFailing() {
   const folder = String(tempDir("aot-programs", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
-  const isAsked = (path: string) => takes !== "fixed" && !inPrograms(path).startsWith("untyped-speed") && (wanted === "" || wanted === "quick" || isWanted(path));
+  const isAsked = (path: string) => takes !== "fixed" && !inPrograms(path).startsWith("untyped-speed") && !isJudgedByClock(path) && (wanted === "" || wanted === "quick" || isWanted(path));
   const chosen = taken(
     find().filter(path => !groups.has(path)),
     path => isAsked(path) && markOfFailure(path) !== undefined,

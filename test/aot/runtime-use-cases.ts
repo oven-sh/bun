@@ -45,6 +45,15 @@ group("built-ins that a program names", () => {
     expect({ first: use.lines[0], named: use.lines.includes("global HTMLRewriter") }).toEqual({ first: closed.first, named: false });
   });
 
+  test.each([
+    ["the constructor of its prototype object", "Cookie", `const Class = Bun.CookieMap.prototype.constructor; console.log(new Class("a=1").size);`],
+    ["the same through Reflect", "Cookie", `const Class = Reflect.get(Bun.CookieMap, "prototype").constructor; console.log(Reflect.construct(Class, ["a=1"]));`],
+    ["the same under a computed key", "Cookie", `const Class = Bun.CookieMap[process.argv[2]].constructor; console.log(new Class("a=1").size);`],
+    ["the same of a global", "UrlPattern", `declare const URLPattern: any; const Class = URLPattern.prototype.constructor; console.log(new Class("http://a/b").pathname);`],
+  ])("a class of the host is made as %s", async (_, feature, text) => {
+    expect(retainsFeature((await of(text)).lines, feature)).toBe(true);
+  });
+
   test("members of Bun and process are listed by name", async () => {
     const use = await runtimeUse({
       "main.ts": `import { file } from "bun";\ndeclare const Bun: any, process: any, console: any;\nconst { write } = Bun;\nconsole.log(Bun.nanoseconds, file, write, process.env.HOME, process["argv"]);`,

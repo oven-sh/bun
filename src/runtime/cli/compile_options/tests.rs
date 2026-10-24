@@ -486,8 +486,7 @@ fn assert_flag_message(group: &FlagGroup, name: &'static [u8], expected: &str) {
 
 #[test]
 fn build_unknown_flags() {
-    let all =
-        "The --aot flags for this command are --aot, --aot-huge-heap, --aot-log-type-mismatches";
+    let all = "The --aot flags for this command are --aot, --aot-allow-code-from-disk, --aot-huge-heap, --aot-log-type-mismatches";
     assert_flag_message(
         &BUILD_FLAGS,
         b"aot-log-type-mismatch",
@@ -781,6 +780,40 @@ fn inspector_requires_aot() {
         "--compile-inspector requires --aot",
         "compile.inspector requires compile.aot: true",
     );
+}
+
+#[test]
+fn code_from_disk_requires_aot() {
+    assert_messages(
+        CompileFlags {
+            allows_code_from_disk: true,
+            ..executable()
+        },
+        "--aot-allow-code-from-disk requires --aot",
+        "compile.allowCodeFromDisk requires compile.aot: true",
+    );
+}
+
+#[test]
+fn code_from_disk_is_loaded_only_where_it_is_asked_for() {
+    let loads = |allows_code_from_disk, developer_words| {
+        let flags = CompileFlags {
+            aot: true,
+            allows_code_from_disk,
+            developer_words,
+            ..executable()
+        };
+        let Ok(settings) = resolve(&flags) else {
+            panic!("the flags are valid");
+        };
+        settings.aot.unwrap().loads_code_from_disk
+    };
+    assert!(!loads(false, vec![]));
+    assert!(!loads(false, vec![("refuse-code-from-disk", None)]));
+    if !cfg!(bun_hardened) {
+        assert!(loads(true, vec![]));
+        assert!(!loads(true, vec![("refuse-code-from-disk", None)]));
+    }
 }
 
 #[test]

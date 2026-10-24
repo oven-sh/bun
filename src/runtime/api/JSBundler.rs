@@ -424,6 +424,7 @@ pub(crate) mod js_bundler {
         omits_function_source: bool,
         obfuscates: bool,
         admits_inspector: bool,
+        allows_code_from_disk: bool,
         removes_unused: bool,
         allow: Vec<Vec<u8>>,
         remove: Vec<Vec<u8>>,
@@ -447,6 +448,9 @@ pub(crate) mod js_bundler {
                     .unwrap_or(false),
                 admits_inspector: compile
                     .get_boolean_loose(global_this, "inspector")?
+                    .unwrap_or(false),
+                allows_code_from_disk: compile
+                    .get_boolean_loose(global_this, "allowCodeFromDisk")?
                     .unwrap_or(false),
                 ..Default::default()
             };
@@ -511,6 +515,7 @@ pub(crate) mod js_bundler {
                 omits_function_source: self.omits_function_source,
                 obfuscates: self.obfuscates,
                 admits_inspector: self.admits_inspector,
+                allows_code_from_disk: self.allows_code_from_disk,
                 trim: TrimFlags {
                     removes_unused: self.removes_unused,
                     allow: self.allow.iter().map(Vec::as_slice).collect(),

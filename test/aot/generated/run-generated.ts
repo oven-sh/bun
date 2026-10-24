@@ -80,7 +80,7 @@ export function generated(title: string, programs: Generated[]) {
   const chosen = programs
     .filter(program => (wanted === "all" ? true : wanted ? program.name.includes(wanted) : isMeantForEveryRun(program) || inShareOfTheRest(`${title} ${program.name}`, 400)))
     // A debug or ASAN build of Bun is many times slower.
-    .filter((program, index) => wanted || programsWanted !== "quick" || inShareOfList(`${title} ${program.name}`, index))
+    .filter((program, index) => wanted || programsWanted !== "quick" || !isMeantForEveryRun(program) || inShareOfList(`${title} ${program.name}`, index))
     .filter(program => wanted || (program.wasOnceWrong && takesWhatIsFixed) || !isMeantForEveryRun(program) || inShare(`${title} ${program.name}`, 4));
 
   describe.concurrent(`compile/aot/generated/${title}`, () => {

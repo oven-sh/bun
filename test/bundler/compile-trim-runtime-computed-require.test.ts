@@ -22,8 +22,7 @@ const programs = {
   `,
 };
 
-// The name may be the path of a file with code, so the transpiler stays, and what any code can reach without a name.
-const behindTheTestRunner = ["Test"].map(featureNamed);
+const behindTheTestRunner = ["Test", "RuntimeTranspiler", "DeepEquals"].map(featureNamed);
 
 async function build(folder: string, entry: string) {
   const executable = join(folder, entry.replace(".cjs", isWindows ? ".exe" : ""));

@@ -716,7 +716,7 @@ fn small_program_lowers_little_of_bun() {
     let computed = "export const loaded = require(process.argv[2]);\n";
     let of_computed_name = count_lowered_files_of_bun(computed);
     assert!(
-        of_computed_name < 130,
+        of_computed_name < 90,
         "{of_computed_name} files of Bun are lowered for a computed name"
     );
     let listeners = "process.on('exit', () => {});\nprocess.once('SIGINT', () => {});\n";

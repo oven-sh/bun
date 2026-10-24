@@ -95,7 +95,12 @@ const RUN_FLAGS: FlagGroup = FlagGroup {
 };
 
 const BUILD_FLAGS: FlagGroup = FlagGroup {
-    flags: &["--aot", "--aot-huge-heap", "--aot-log-type-mismatches"],
+    flags: &[
+        "--aot",
+        "--aot-allow-code-from-disk",
+        "--aot-huge-heap",
+        "--aot-log-type-mismatches",
+    ],
     other_commands: "bun run and bun test",
     other_params: AUTO_PARAMS,
 };
@@ -111,6 +116,7 @@ pub(crate) enum OptionName {
     FunctionSource,
     Obfuscate,
     Inspector,
+    CodeFromDisk,
     ExecArgv,
     Trim,
     TrimWithout,
@@ -148,6 +154,7 @@ pub(crate) struct CompileFlags<'a> {
     pub omits_function_source: bool,
     pub obfuscates: bool,
     pub admits_inspector: bool,
+    pub allows_code_from_disk: bool,
     pub trim: TrimFlags<'a>,
     pub developer_words: Vec<(&'static str, Option<&'a [u8]>)>,
     pub is_cross_compile: bool,
@@ -170,6 +177,7 @@ pub(crate) enum OptionError<'a> {
     },
     BothAotAndNoAot,
     CrossCompile,
+    HardenedBunRunsOnlyCompiledCode,
     InvalidValue {
         option: OptionName,
         value: &'a [u8],
@@ -211,6 +219,8 @@ fn write_spelling(option: OptionName, origin: RequestOrigin, out: &mut Vec<u8>) 
         (Name::FunctionSource, BuildApi) => "compile.functionSource: false",
         (Name::Inspector, BuildFlag | CompileCommand) => "--compile-inspector",
         (Name::Inspector, BuildApi) => "compile.inspector",
+        (Name::CodeFromDisk, BuildFlag | CompileCommand) => "--aot-allow-code-from-disk",
+        (Name::CodeFromDisk, BuildApi) => "compile.allowCodeFromDisk",
         (Name::ExecArgv, BuildFlag | CompileCommand) => "--compile-exec-argv",
         (Name::ExecArgv, BuildApi) => "compile.execArgv",
         (Name::CodeGenerationFromStrings, BuildFlag | CompileCommand) => {
@@ -270,6 +280,12 @@ impl OptionError<'_> {
                 &CompileTarget::default(),
                 out,
             ),
+            OptionError::HardenedBunRunsOnlyCompiledCode => {
+                write_spelling(OptionName::CodeFromDisk, origin, out);
+                out.extend_from_slice(
+                    b" is not available in this build of Bun. Its executables only run code that was compiled into them",
+                );
+            }
             OptionError::InvalidValue {
                 option,
                 value,
@@ -355,6 +371,7 @@ pub(crate) fn resolve<'a>(flags: &CompileFlags<'a>) -> Result<CompileSettings, O
         obfuscates: flags.obfuscates,
         forbids_text_evaluation: embedded.forbids_text_evaluation,
         admits_inspector,
+        loads_code_from_disk: flags.allows_code_from_disk,
         runs_in_place: flags.is_in_place,
         ..Default::default()
     };
@@ -418,6 +435,8 @@ fn check_requires_aot<'a>(flags: &CompileFlags<'a>) -> Result<(), OptionError<'a
         OptionName::Obfuscate
     } else if flags.admits_inspector {
         OptionName::Inspector
+    } else if flags.allows_code_from_disk {
+        OptionName::CodeFromDisk
     } else if let Some(&(key, _)) = flags.developer_words.first() {
         OptionName::Developer(key)
     } else {
@@ -432,6 +451,9 @@ fn check_requires_aot<'a>(flags: &CompileFlags<'a>) -> Result<(), OptionError<'a
 fn check_aot_combination<'a>(flags: &CompileFlags<'a>) -> Result<(), OptionError<'a>> {
     if flags.is_cross_compile {
         return Err(OptionError::CrossCompile);
+    }
+    if flags.allows_code_from_disk && cfg!(bun_hardened) {
+        return Err(OptionError::HardenedBunRunsOnlyCompiledCode);
     }
     Ok(())
 }
@@ -769,6 +791,7 @@ fn read_build_flags<'c>(
         omits_function_source: args.flag(b"--no-compile-function-source"),
         obfuscates: args.flag(b"--obfuscate"),
         admits_inspector: args.flag(b"--compile-inspector"),
+        allows_code_from_disk: args.flag(b"--aot-allow-code-from-disk"),
         trim: TrimFlags {
             removes_unused: args.flag(b"--trim"),
             remove_internal: split_at_commas(args.options(b"--trim-without"))

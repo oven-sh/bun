@@ -16,7 +16,7 @@ async function bun(cwd: string | { cwd: string; BUN_OPTIONS: string }, ...args: 
   return { stdout, stderr, exitCode };
 }
 
-const ofBuild = "--aot, --aot-huge-heap, --aot-log-type-mismatches";
+const ofBuild = "--aot, --aot-allow-code-from-disk, --aot-huge-heap, --aot-log-type-mismatches";
 const ofRun = "--aot, --aot-log-type-mismatches";
 
 describe.concurrent("an unknown flag that starts with --aot is an error", () => {

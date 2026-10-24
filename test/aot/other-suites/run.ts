@@ -180,7 +180,7 @@ function buildHostOfTexts() {
   })());
 }
 
-const saysTheFileIsOutside = /Cannot load '[^']+': it isn't in this executable\. Pass it to bun compile as another entry point/;
+const saysTheFileIsOutside = /Cannot load '[^']+': it isn't in this executable, which only runs code that was compiled into it/;
 
 async function judgeByTheLock(name: string, path: string, why: string, compiled: { said: string; code: number | string }) {
   if (path.endsWith(".mjs")) return `LOCK ${name}: unread, a module: ${why}`;

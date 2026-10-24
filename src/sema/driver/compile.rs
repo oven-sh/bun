@@ -67,7 +67,7 @@ pub struct LoadedProgram<'s> {
 /// A program for which the declarations of Bun's own globals and modules (`@types/bun`) are not installed.
 pub(crate) struct WithoutBunTypes {
     pub has_configuration_file: bool,
-    pub incomplete_containers: [Option<Sym>; 2],
+    pub incomplete_containers: [Option<Sym>; 3],
 }
 
 impl<'s> LoadedProgram<'s> {

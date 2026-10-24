@@ -692,6 +692,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-inspector              With --aot: let a debugger attach to the executable (BUN_INSPECT, --inspect). Makes it larger and slower"
         ),
         parse_param!(
+            "--aot-allow-code-from-disk       With --aot: let import() and require() load code that isn't in the executable from disk at run time. Makes it larger and slower"
+        ),
+        parse_param!(
             "--disallow-code-generation-from-strings <STR>?  In the executable, eval() and new Function() throw an EvalError. \"strict\" also blocks every other way to run code from a string. Requires --compile"
         ),
         parse_param!("--aot-validate"),

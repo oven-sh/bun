@@ -417,7 +417,7 @@ JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code,
     // --disallow-code-generation-from-strings=strict refuses code from the disk in an executable built without --aot too. Whoever set the flag expects its error.
     if (what == NotInExecutable::Code && isCodeGenerationFromStringsStrictByFlags())
         return createCodeGenerationFromStringsError(globalObject);
-    return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable, which only runs code that was compiled into it. Pass the file to bun compile as another entry point."_s));
+    return createError(globalObject, code, makeString("Cannot load '"_s, path, "': it isn't in this executable, which only runs code that was compiled into it. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk."_s));
 }
 
 JSValue errorIfCodeOutsideImageIsRefused(JSGlobalObject* globalObject, ErrorCode code, const String& path)

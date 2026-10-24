@@ -3971,15 +3971,28 @@ declare module "bun" {
      * With `aot`: embed each function's source code in the executable.
      *
      * With `false`, `fn.toString()` returns `function name() { [native code] }` and the executable
-     * is smaller. It still loads files from disk by a dynamic `import()` or `require()`.
-     * `--preload` in `BUN_OPTIONS` is an error at startup, with `inspector` too. `obfuscate`
-     * implies `false`.
+     * is smaller. `--preload` in `BUN_OPTIONS` is an error at startup, with `inspector` too.
+     * `obfuscate` implies `false`.
      *
      * Equivalent CLI flag: `--no-compile-function-source`
      *
      * @default true
      */
     functionSource?: boolean;
+    /**
+     * With `aot`: let a dynamic `import()` or `require()` load code that isn't in the executable
+     * from disk when the program runs, such as a plugin or a config file. Bun interprets that code.
+     *
+     * Without it, the executable only runs code that was compiled into it, and such a load throws.
+     * The option keeps Bun's transpiler and the source code of Bun's built-in modules in the
+     * executable, and the compiler can prove less about the program, so the executable is larger
+     * and can run slower.
+     *
+     * Equivalent CLI flag: `--aot-allow-code-from-disk`
+     *
+     * @default false
+     */
+    allowCodeFromDisk?: boolean;
     /**
      * Whether the standalone executable loads .env files when it runs
      *

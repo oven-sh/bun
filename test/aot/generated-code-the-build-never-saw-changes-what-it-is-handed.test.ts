@@ -12,7 +12,10 @@ generated(
     name: `seed ${seed}.`,
     isAlwaysRun: index < 12,
     isOnlyCompiled: true as const,
-    flags: index % 3 === 1 ? ["--aot-heat=everything-is-hot"] : index % 3 === 2 ? ["--aot-erase-types"] : [],
+    flags: [
+      "--aot-allow-code-from-disk",
+      ...(index % 3 === 1 ? ["--aot-heat=everything-is-hot"] : index % 3 === 2 ? ["--aot-erase-types"] : []),
+    ],
     alsoUnder: [{ BUN_JSC_slowPathAllocsBetweenGCs: "7", BUN_JSC_scribbleFreeCells: "1", BUN_JSC_useZombieMode: "1" }],
     make: () => ({
       file: "main.ts",

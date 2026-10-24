@@ -1113,6 +1113,22 @@
     "asan": 4604,
     "windows": 193869
   },
+  "aot/builtins/native-contract-in-parts-1.test.ts": {
+    "default": 300,
+    "asan": 250000
+  },
+  "aot/builtins/native-contract-in-parts-2.test.ts": {
+    "default": 300,
+    "asan": 250000
+  },
+  "aot/builtins/native-contract-in-parts-3.test.ts": {
+    "default": 300,
+    "asan": 250000
+  },
+  "aot/builtins/native-contract-in-parts-4.test.ts": {
+    "default": 300,
+    "asan": 250000
+  },
   "aot/builtins/native-contract/noticed-changes.test.ts": {
     "default": 635,
     "asan": 2007,
@@ -2658,11 +2674,23 @@
     "default": 24545,
     "windows": 43731
   },
-  "aot/generated-births-and-uses-of-objects-held-as-a-kind-that-never-comes-and-read-through-any.test.ts": {
-    "default": 300
+  "aot/generated-births-and-uses-of-objects-held-as-a-kind-that-never-comes-and-read-through-any-1.test.ts": {
+    "default": 77400
   },
-  "aot/generated-births-and-uses-of-objects-held-as-a-kind-that-never-comes.test.ts": {
-    "default": 300
+  "aot/generated-births-and-uses-of-objects-held-as-a-kind-that-never-comes-and-read-through-any-2.test.ts": {
+    "default": 77400
+  },
+  "aot/generated-births-and-uses-of-objects-held-as-a-kind-that-never-comes-and-read-through-any-3.test.ts": {
+    "default": 77400
+  },
+  "aot/generated-births-and-uses-of-objects-held-as-a-kind-that-never-comes-1.test.ts": {
+    "default": 66600
+  },
+  "aot/generated-births-and-uses-of-objects-held-as-a-kind-that-never-comes-2.test.ts": {
+    "default": 66600
+  },
+  "aot/generated-births-and-uses-of-objects-held-as-a-kind-that-never-comes-3.test.ts": {
+    "default": 66600
   },
   "aot/generated-births-and-uses-of-objects-held-in-a-variable-that-no-instance-reaches.test.ts": {
     "default": 14359
@@ -2792,21 +2820,38 @@
   "aot/generated-births-and-uses-of-two-kinds-of-list-or-collection-at-one-use-4.test.ts": {
     "default": 11539
   },
-  "aot/generated-births-and-uses-of-two-kinds-of-object-at-one-place.test.ts": {
-    "default": 44143,
-    "windows": 54693
+  "aot/generated-births-and-uses-of-two-kinds-of-object-at-one-place-1.test.ts": {
+    "default": 74600
   },
-  "aot/generated-births-and-uses-of-two-kinds-of-object-held-as-the-first-and-read-through-any.test.ts": {
-    "default": 38207
+  "aot/generated-births-and-uses-of-two-kinds-of-object-at-one-place-2.test.ts": {
+    "default": 74600
   },
-  "aot/generated-births-and-uses-of-two-kinds-of-object-held-as-the-first.test.ts": {
-    "default": 21467,
-    "asan": 22982,
-    "musl": 21611,
-    "windows": 23851
+  "aot/generated-births-and-uses-of-two-kinds-of-object-held-as-the-first-and-read-through-any-1.test.ts": {
+    "default": 86600
   },
-  "aot/generated-births-and-uses-of-two-kinds-of-object-read-through-any.test.ts": {
-    "default": 300
+  "aot/generated-births-and-uses-of-two-kinds-of-object-held-as-the-first-and-read-through-any-2.test.ts": {
+    "default": 86600
+  },
+  "aot/generated-births-and-uses-of-two-kinds-of-object-held-as-the-first-and-read-through-any-3.test.ts": {
+    "default": 86600
+  },
+  "aot/generated-births-and-uses-of-two-kinds-of-object-held-as-the-first-1.test.ts": {
+    "default": 75700
+  },
+  "aot/generated-births-and-uses-of-two-kinds-of-object-held-as-the-first-2.test.ts": {
+    "default": 75700
+  },
+  "aot/generated-births-and-uses-of-two-kinds-of-object-held-as-the-first-3.test.ts": {
+    "default": 75700
+  },
+  "aot/generated-births-and-uses-of-two-kinds-of-object-read-through-any-1.test.ts": {
+    "default": 79600
+  },
+  "aot/generated-births-and-uses-of-two-kinds-of-object-read-through-any-2.test.ts": {
+    "default": 79600
+  },
+  "aot/generated-births-and-uses-of-two-kinds-of-object-read-through-any-3.test.ts": {
+    "default": 79600
   },
   "aot/generated-births-and-uses-of-two-kinds-of-value-at-one-operator.test.ts": {
     "default": 300
@@ -2915,9 +2960,14 @@
   "aot/generated-births-and-uses-of-typed-two-kinds-of-list-or-collection-at-one-use-4.test.ts": {
     "default": 3077
   },
-  "aot/generated-births-and-uses-of-typed-two-kinds-of-object-at-one-place.test.ts": {
-    "default": 22623,
-    "windows": 29014
+  "aot/generated-births-and-uses-of-typed-two-kinds-of-object-at-one-place-1.test.ts": {
+    "default": 58400
+  },
+  "aot/generated-births-and-uses-of-typed-two-kinds-of-object-at-one-place-2.test.ts": {
+    "default": 58400
+  },
+  "aot/generated-births-and-uses-of-typed-two-kinds-of-object-at-one-place-3.test.ts": {
+    "default": 58400
   },
   "aot/generated-births-and-uses-of-typed-two-kinds-of-value-at-one-operator.test.ts": {
     "default": 300

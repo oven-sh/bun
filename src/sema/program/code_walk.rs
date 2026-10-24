@@ -483,11 +483,14 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     continue;
                 }
                 if state.deferred.is_empty() && forget_files_called_before_they_run(&mut state) {
+                    // Until the files are queued, the walk is not over for the other threads either.
+                    state.in_progress += 1;
                     drop(state);
                     self.queue_found_files(start.plugin_reader);
+                    state = self.state.lock();
+                    state.in_progress -= 1;
                     self.has_to_read.notify_all();
                     self.has_changed.notify_all();
-                    state = self.state.lock();
                     continue;
                 }
                 if state.deferred.is_empty() {

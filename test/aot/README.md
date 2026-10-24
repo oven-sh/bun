@@ -139,13 +139,14 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   run by every commit too, in the step that holds up nothing: a machine that runs other tests beside it moves the ratio.
 - **A mark that outlives its cure hides the next fault.** `programs-marked-as-failing` runs the programs that are left out because they fail (`<name>.todo.txt`, `"todoOn"` for the
   platform, and with AddressSanitizer a `"skipWithASAN"` that begins with `TODO`), and one that does what is expected is red: its mark goes out. A `.todo.txt` that begins with
-  `Not every time:` is not asked. It is in the step that holds up nothing,
+  `Not every time:` is not asked, nor is a program that compares two times. It is in the step that holds up nothing,
   on every lane whatever the lane draws (`getAotAlwaysInDrawnStep()` in `.buildkite/ci.ts`). A `test.todo` with a body is asked the same by `bun test --todo <file>`.
 - **The engine's tests with a sanitizer and assertions.** `engine-tests-in-parts-<part>` on the ASAN lane, where `engine-tests.test.ts` leaves its three long tests out: every twelfth IR text
   test and every twelfth native test. In the step that holds up nothing until CI has shown them green.
 - **Speed is pinned in instructions**, which are the same at any load: `perf/pins.<os>-<arch>.json` (`perf/idioms.test.ts`), `perf/everyday-pins.<os>-<arch>.json`
   (`perf/pinned-everyday-idioms-<part>`) and `perf/application-pins.<os>-<arch>.json` (`perf/pinned-applications`: zod, the checker of TypeScript). A pin only goes down:
   `AOT_PERF=lower`. A platform without a file prints what it measures and judges nothing; `perf/pins-from-a-log.ts <os>-<arch> <logs>` writes its files from the log.
+  That one loop takes no more than a few times what another takes is asked in instructions too: `perf/one-loop-against-another.test.ts`, which also holds what a row over its bound takes today.
 - **What a script writes is not kept.** Some folders of `programs/` are written by a script, whole or in part: `generate.ts` lists
   them. What is kept under the name of such a program takes its place, and what somebody has decided about one (`<name>.expected.txt`, `<name>.json` ..) is kept under its name. A test file writes the programs that it runs into a temporary folder when it starts, under the names they would have in
   `programs/`, and treats them like any other program. `bun test/aot/generate.ts <folder> <where>` writes a folder out to be read. The programs of

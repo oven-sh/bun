@@ -34,6 +34,7 @@ function notAsync() {
   for (let i = 0; i < 5; i++) registry.register(make(i), i);
   Bun.gc(true);
 }
+// Nothing holds these registries once `register` has returned. A collection may take them together with their objects, so whether a callback runs is left open.
 function neverStored() {
   for (let i = 0; i < 5; i++) {
     new FinalizationRegistry(() => {
@@ -42,9 +43,12 @@ function neverStored() {
   }
   Bun.gc(true);
 }
-for (const f of [usedByANestedFunction, usedByTheFunctionItself, notAsync, neverStored]) {
+for (const f of [usedByANestedFunction, usedByTheFunctionItself, notAsync]) {
   called = 0;
   await f();
   await Bun.sleep(1);
   console.log(f.name + ":", called > 0);
 }
+neverStored();
+await Bun.sleep(1);
+console.log("neverStored: done");

@@ -1,9 +1,9 @@
 // A program loads files that the build never saw: a plugin, a config file, a tool that its user wrote. Their paths are known only when the program runs.
-// An executable built with --aot loads them as one built without it does, and Bun interprets them. Each case is built three ways and run in the same folder:
+// An executable built with --aot --aot-allow-code-from-disk loads them as one built without --aot does, and Bun interprets them. Each case is built three ways and run in the same folder:
 //
 //   bun build --compile                         says what is right
-//   bun build --compile --aot                   prints the same and exits alike
-//   bun build --compile --aot --aot-validate    the same once more, and every claim of the compiler about the program is checked while it runs
+//   bun build --compile --aot --aot-allow-code-from-disk                   prints the same and exits alike
+//   bun build --compile --aot --aot-allow-code-from-disk --aot-validate    the same once more, and every claim of the compiler about the program is checked while it runs
 //
 //   program   the files that are compiled. "main.ts" is the entry point
 //   disk      the files that lie beside the executable when it runs, in a folder that the build is not told of. It is the working directory and process.argv[2]
@@ -505,6 +505,23 @@ const cases: Record<string, Case> = {
   },
 };
 
+const allowed = ["--aot", "--aot-allow-code-from-disk"];
+
+const closedWorld: Record<string, string> = {
+  "program/tsconfig.json": tsconfig,
+  "program/main.ts":
+    prelude +
+    `await shown("import", () => import(at("typed.ts")));
+    await shown("require", () => require(at("common.cjs")));
+    await shown("data", () => import(at("data.json")));
+    await import(at("typed.ts")).catch((error: Error) => console.log("the error names the option:", error.message.includes("--aot-allow-code-from-disk")));`,
+  ...Object.fromEntries(Object.entries(kinds).map(([file, text]) => ["disk/" + file, text])),
+};
+
+function foldersOf(dir: { toString(): string }) {
+  return { folder: String(dir), disk: join(String(dir), "disk").replaceAll("\\", "/") };
+}
+
 async function build(folder: string, name: string, it: Case, flags: string[]) {
   const executable = join(folder, name + (isWindows ? ".exe" : ""));
   const entryPoints = ["main.ts", ...(it.entryPoints ?? [])];
@@ -518,68 +535,108 @@ async function build(folder: string, name: string, it: Case, flags: string[]) {
   return executable;
 }
 
-describe.concurrent("code from disk", () => {
-  for (const [name, it] of Object.entries(cases)) {
-    // A hardened Bun builds executables that run only what was compiled into them.
-    test.skipIf(isHardened)(
-      name,
+// A case is three builds, and the two with --aot hold every built-in module. The cases of a part are built at once.
+export function codeFromDisk(part: number, parts: number) {
+  describe.concurrent("code from disk", () => {
+    for (const [name, it] of Object.entries(cases).filter((_, index) => index % parts === part - 1)) {
+      // A hardened Bun builds executables that run only what was compiled into them.
+      test.skipIf(isHardened)(
+        name,
+        () =>
+          slot(async () => {
+            const files: Record<string, string> = { "program/tsconfig.json": tsconfig };
+            for (const [file, text] of Object.entries(it.program)) files["program/" + file] = text;
+            for (const [file, text] of Object.entries(it.disk)) files["disk/" + file] = text;
+            using dir = tempDir("aot-code-from-disk", files);
+            const folder = String(dir);
+            const disk = join(folder, "disk");
+            mkdirSync(dirname(join(disk, "x")), { recursive: true });
+            const run = async (executable: string) => {
+              const { stdout, stderr, exitCode, signal } = await spawned(
+                [executable, disk.replaceAll("\\", "/")],
+                disk,
+                {
+                  ...bunEnv,
+                  ...it.env,
+                },
+              );
+              return { stdout, stderr: exitCode === 0 ? "" : stderr, exitCode, signal };
+            };
+            const plain = await run(await build(folder, "plain", it, []));
+            expect(plain).toEqual({ stdout: it.prints || expect.any(String), stderr: "", exitCode: 0, signal: null });
+            const expected = it.differs === undefined ? plain : { ...plain, stdout: it.differs };
+            expect(await run(await build(folder, "compiled", it, [...allowed, ...(it.aotFlags ?? [])]))).toEqual(
+              expected,
+            );
+            expect(
+              await run(await build(folder, "validating", it, [...allowed, "--aot-validate", ...(it.aotFlags ?? [])])),
+            ).toEqual(expected);
+          }),
+        timeout,
+      );
+    }
+
+    if (part !== parts) return;
+
+    test(
+      "without the option an executable refuses the code and loads the data, and the build and the error name the option",
       () =>
         slot(async () => {
-          const files: Record<string, string> = { "program/tsconfig.json": tsconfig };
-          for (const [file, text] of Object.entries(it.program)) files["program/" + file] = text;
-          for (const [file, text] of Object.entries(it.disk)) files["disk/" + file] = text;
-          using dir = tempDir("aot-code-from-disk", files);
-          const folder = String(dir);
-          const disk = join(folder, "disk");
-          mkdirSync(dirname(join(disk, "x")), { recursive: true });
-          const run = async (executable: string) => {
-            const { stdout, stderr, exitCode, signal } = await spawned([executable, disk.replaceAll("\\", "/")], disk, {
-              ...bunEnv,
-              ...it.env,
-            });
-            return { stdout, stderr: exitCode === 0 ? "" : stderr, exitCode, signal };
-          };
-          const plain = await run(await build(folder, "plain", it, []));
-          expect(plain).toEqual({ stdout: it.prints || expect.any(String), stderr: "", exitCode: 0, signal: null });
-          const expected = it.differs === undefined ? plain : { ...plain, stdout: it.differs };
-          expect(await run(await build(folder, "compiled", it, ["--aot", ...(it.aotFlags ?? [])]))).toEqual(expected);
-          expect(
-            await run(await build(folder, "validating", it, ["--aot", "--aot-validate", ...(it.aotFlags ?? [])])),
-          ).toEqual(expected);
+          using dir = tempDir("aot-code-from-disk", closedWorld);
+          const { folder, disk } = foldersOf(dir);
+          const executable = join(folder, "closed" + (isWindows ? ".exe" : ""));
+          const build = await spawned(
+            [bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable],
+            join(folder, "program"),
+            bunEnv,
+          );
+          built(build);
+          expect(build.stderr).toMatch(/^warn: TS100064: .* or build with --aot-allow-code-from-disk$/m);
+          const { stdout, exitCode } = await spawned([executable, disk], disk, bunEnv);
+          expect({ stdout, exitCode }).toEqual({
+            stdout: `import: threw Error ERR_MODULE_NOT_FOUND\nrequire: threw Error MODULE_NOT_FOUND\ndata: {"kind":"json","named":"json"} json\nthe error names the option: true\n`,
+            exitCode: 0,
+          });
         }),
       timeout,
     );
-  }
 
-  test(
-    "an executable that runs only what was compiled into it refuses the code and loads the data",
-    () =>
-      slot(async () => {
-        const it: Case = {
-          program: {
-            "main.ts":
-              prelude +
-              `await shown("import", () => import(at("typed.ts")));
-              await shown("require", () => require(at("common.cjs")));
-              await shown("data", () => import(at("data.json")));`,
-          },
-          disk: kinds,
-          prints: `import: threw Error ERR_MODULE_NOT_FOUND\nrequire: threw Error MODULE_NOT_FOUND\ndata: {"kind":"json","named":"json"} json\n`,
-        };
-        const files: Record<string, string> = {
-          "program/tsconfig.json": tsconfig,
-          "program/main.ts": it.program["main.ts"],
-        };
-        for (const [file, text] of Object.entries(it.disk)) files["disk/" + file] = text;
-        using dir = tempDir("aot-code-from-disk", files);
-        const disk = join(String(dir), "disk");
-        const executable = await build(String(dir), "closed", it, [
-          "--aot",
-          ...(isHardened ? [] : ["--aot-refuse-code-from-disk"]),
-        ]);
-        const { stdout, exitCode } = await spawned([executable, disk.replaceAll("\\", "/")], disk, bunEnv);
-        expect({ stdout, exitCode }).toEqual({ stdout: it.prints, exitCode: 0 });
-      }),
-    timeout,
-  );
-});
+    test.skipIf(isHardened)(
+      "Bun.build() takes the option as compile.allowCodeFromDisk",
+      () =>
+        slot(async () => {
+          using dir = tempDir("aot-code-from-disk", {
+            ...closedWorld,
+            "program/build.ts": `const result = await Bun.build({
+            entrypoints: ["./main.ts"],
+            compile: { aot: true, allowCodeFromDisk: true, outfile: process.argv[2] },
+          });
+          console.log(result.success, result.logs.filter(log => log.message.includes("TS100064")).length);`,
+          });
+          const { folder, disk } = foldersOf(dir);
+          const executable = join(folder, "open" + (isWindows ? ".exe" : ""));
+          const build = await spawned([bunExe(), "build.ts", executable], join(folder, "program"), bunEnv);
+          expect({ stdout: build.stdout, exitCode: build.exitCode }).toEqual({ stdout: "true 0\n", exitCode: 0 });
+          const { stdout, exitCode } = await spawned([executable, disk], disk, bunEnv);
+          expect({ stdout, exitCode }).toEqual({
+            stdout: `import: {"kind":"ts"} ts\nrequire: {"kind":"cjs","named":"cjs"} cjs\ndata: {"kind":"json","named":"json"} json\n`,
+            exitCode: 0,
+          });
+        }),
+      timeout,
+    );
+
+    test("the option requires --aot", async () => {
+      using dir = tempDir("aot-code-from-disk", { "main.ts": "console.log(1);" });
+      const { stderr, exitCode } = await spawned(
+        [bunExe(), "build", "--compile", "--aot-allow-code-from-disk", "main.ts", "--outfile", "main"],
+        String(dir),
+        bunEnv,
+      );
+      expect({ stderr: stderr.trim(), exitCode }).toEqual({
+        stderr: "error: --aot-allow-code-from-disk requires --aot",
+        exitCode: 1,
+      });
+    });
+  });
+}

@@ -744,6 +744,7 @@ const datagramSocketHandlerNames = ["data", "drain", "error"];
 
 const bundlerOptionNames = [
   "admit",
+  "allowCodeFromDisk",
   "allowUnresolved",
   "aot",
   "aotExplain",

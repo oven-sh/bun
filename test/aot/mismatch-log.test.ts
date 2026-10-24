@@ -219,7 +219,7 @@ test.concurrent(
     expect(records.length).toBeGreaterThan(0);
     for (const record of records) {
       expect(Object.keys(record).slice(0, membersInOrder.length)).toEqual(membersInOrder);
-      expect(record).toMatchObject({
+      expect({ ...record }).toMatchObject({
         aot: "type-mismatch",
         id: expect.stringMatching(/^[0-9a-f]{12}$/),
         file: "app.ts",

@@ -55,6 +55,11 @@ If `package.json` has a `"compile"` script, `bun compile` runs that script.
   Let a debugger attach to the executable. Makes it larger and slower
 </ParamField>
 
+<ParamField path="--aot-allow-code-from-disk" type="boolean">
+  Let <code>import()</code> and <code>require()</code> load code that isn't in the executable from disk at run time.
+  Makes it larger and slower
+</ParamField>
+
 ### Size
 
 <ParamField path="--trim" type="boolean">

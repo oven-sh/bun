@@ -800,6 +800,8 @@ export function programs(isTyped?: boolean, choice: Choice = {}): Program[] {
   }
   for (const name of alone) {
     const [r, a, b, u] = name.split("-");
+    // Without a use it names the program of a road and a pair, which is made above: what showed there did not show in the site alone.
+    if (u === undefined) continue;
     made.push({ name, file: fileOf(a, b, r), get text() { return textOf(r, a, b, [u], 0, isTyped); } });
   }
   return made;

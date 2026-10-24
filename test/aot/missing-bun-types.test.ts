@@ -232,6 +232,18 @@ console.write("written\\n");
     checkSays: [],
     prints: "1 1 x\nwritten\n",
   },
+  "what Bun adds to the constructor of errors": {
+    files: {
+      "main.ts": `Error.stackTraceLimit = 5;
+Error.prepareStackTrace = (error, frames) => error.message + " " + (frames.length >= 0);
+const holder: { stack?: string } = {};
+Error.captureStackTrace(holder);
+console.log(Error.stackTraceLimit, new Error("x").stack, typeof holder.stack);
+`,
+    },
+    checkSays: [],
+    prints: "5 x true string\n",
+  },
   "what TypeScript's own libraries declare, with its types": {
     files: {
       "main.ts": `function shout(word: string | undefined): string { if (word === undefined) return "none"; return word.toUpperCase(); }
@@ -580,6 +592,11 @@ const stillErrors: [string, string, string[]][] = [
     "a missing member of the program's own type named Blob",
     `interface Blob { own: number }\nconst blob: Blob = { own: 1 };\nconsole.log(blob.json);\nexport {};\n`,
     ["TS2339"],
+  ],
+  [
+    "a missing member of an error, and of the program's own type named ErrorConstructor",
+    `interface ErrorConstructor { own: number }\nconst made: ErrorConstructor = { own: 1 };\nconsole.log(made.stackTraceLimit, new Error("x").notThere);\nexport {};\n`,
+    ["TS2339", "TS2339"],
   ],
   [
     "a global that is no class, used as a type",

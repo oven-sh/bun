@@ -4317,7 +4317,8 @@
     "valuesOfMember-set-integers-spread",
     "valuesOfMember-set-map-fillByForOf",
     "valuesOfMember-set-map-spread",
-    "valuesOfMember-set-params-fillByForOf"
+    "valuesOfMember-set-params-fillByForOf",
+    "held-records-map"
   ],
   "stores behind every way to wait": [
     "generator-byHand-lateOverOne",

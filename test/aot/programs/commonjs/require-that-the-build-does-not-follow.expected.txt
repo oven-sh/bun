@@ -1,4 +1,4 @@
-a parameter: threw Error: Cannot load
+a parameter: true
 a property: threw Error: Cannot load
 bound: threw Error: Cannot load
 bound, under a name: threw Error: Cannot load

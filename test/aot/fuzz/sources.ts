@@ -184,13 +184,14 @@ const generated =
 
 // A program that starts itself again as a Worker names its own file. One that loads code which the build never saw changes what the compiler may take for granted about everything built beside it.
 const standAlone = new Set(["workers-ended-in-the-middle", "code-the-build-never-saw-changes-what-it-is-handed", "lists-of-numbers-through-one-map-or-filter", "loops-whose-tests-are-settled-on-the-first-turn"]);
+const flagsOfSource: Record<string, string[]> = { "code-the-build-never-saw-changes-what-it-is-handed": ["--aot-allow-code-from-disk"] };
 
 /** A source that writes TypeScript, for the product alone. */
 const typedForTheProduct =
   (source: string, generate: Generator): Source =>
   (seed, bed) => {
     if (bed.name !== "product") return;
-    const program: Program = { text: generate(new Random(seed), true, { library: true }), extension: "ts" };
+    const program: Program = { text: generate(new Random(seed), true, { library: true }), extension: "ts", ...(flagsOfSource[source] ? { flags: flagsOfSource[source] } : {}) };
     return bed.accepts(program) && bed.allows(program.text) ? { source, seed, ...program, notes: "typed", ...(standAlone.has(source) ? { standsAlone: true as const } : {}) } : undefined;
   };
 

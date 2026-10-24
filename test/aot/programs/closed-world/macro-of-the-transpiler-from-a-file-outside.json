@@ -1,5 +1,1 @@
-{
-  "skipInShell": "it uses Bun.Transpiler, which the jsc shell does not have",
-  "skipInVariants": "its output is what the executable refuses, and a variant that runs the files from disk runs the macro",
-  "alone": "what it prints hangs on what else the executable holds: which modules and members were compiled in, and whether anything evaluates text"
-}
+{"skipInShell": "it uses Bun.Transpiler, which the jsc shell does not have", "skipInVariants": "its output is what the executable refuses, and a variant that runs the files from disk runs the macro"}

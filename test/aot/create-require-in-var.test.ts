@@ -84,22 +84,24 @@ console.log(made("./lib/local.cjs"));
 `,
 };
 
-// A variable that is stored to again names no files of the program: what it loads is not compiled. It is loaded from disk and interpreted.
-const interpreted: Record<string, string> = {
+// A variable that is stored to again names no files of the program: what it loads is not compiled, and code that is not compiled is not loaded.
+const refused: Record<string, string> = {
   "stored-to-again.mjs": `import { createRequire } from "node:module";
 var made = createRequire(import.meta.url);
-try { console.log(typeof made("./lib/local.cjs")); } catch (error) { console.log(error.code); }
+try { made("./lib/local.cjs"); } catch (error) { console.log(error.code, error.message.includes("it isn't in this executable")); }
 made = name => "another function got " + name;
 console.log(made("./lib/local.cjs"));
 `,
 };
 
-describe.concurrent.each(Object.keys(interpreted))("%s", entry => {
-  test("bun run --aot prints what bun run prints", async () => {
-    using dir = tempDir("create-require-in-a-var", { ...files, [entry]: interpreted[entry] });
-    const plain = await runCommand([bunExe(), "run", entry], String(dir));
+describe.concurrent.each(Object.keys(refused))("%s", entry => {
+  test("bun run --aot does not load the file", async () => {
+    using dir = tempDir("create-require-in-a-var", { ...files, [entry]: refused[entry] });
     const { stdout, exitCode } = await runCommand([bunExe(), "run", "--debug-aot", entry], String(dir));
-    expect({ stdout, exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+    expect({ stdout, exitCode }).toEqual({
+      stdout: "MODULE_NOT_FOUND true\nanother function got ./lib/local.cjs\n",
+      exitCode: 0,
+    });
   });
 });
 

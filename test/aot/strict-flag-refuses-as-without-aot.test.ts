@@ -109,17 +109,19 @@ describe.each([
   });
 });
 
-test("without the flag an executable built with --aot loads code from the disk, and the file of --preload too", async () => {
+test("without the flag an executable built with --aot says what to do about it", async () => {
   using dir = tempDir("aot-strict-flag", files);
   const cwd = String(dir);
   const built = await run([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", named("app")], cwd);
   expect(built.exitCode).toBe(0);
   const app = join(cwd, named("app"));
-  const alone = await run([app], cwd);
-  expect(alone.stdout).toMatch(/^require of code on the disk => 5$/m);
+  expect((await run([app], cwd)).stdout).toMatch(
+    /^require of code on the disk => Error: Cannot load '.*disk\.js': it isn't in this executable, which only runs code that was compiled into it\. Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk\. MODULE_NOT_FOUND$/m,
+  );
   expect(await run([app], cwd, { BUN_OPTIONS: "--preload ./before.js" })).toEqual({
-    stdout: "before.js ran\n" + alone.stdout,
-    stderr: "",
-    exitCode: 0,
+    stdout: "",
+    stderr:
+      "error: --preload can't be used with this executable because it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code\n",
+    exitCode: 1,
   });
 });

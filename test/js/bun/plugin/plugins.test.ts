@@ -341,34 +341,38 @@ describe("module", () => {
     expect(require("bun:my-resolved-module").hello).toBe("my-resolved-module");
   });
 
+  // Takes the module out of require.cache when the test ends, also when an assertion fails.
+  const uncache = (name: string) => ({ [Symbol.dispose]: () => void delete require.cache[name] });
+
   it("sync module() returning CommonJS source works with import()", async () => {
+    using _ = uncache("my-virtual-module-cjs-sync");
     globalThis.__cjsSyncSideEffect = 0;
     // @ts-expect-error
     const mod = await import("my-virtual-module-cjs-sync");
     expect({ ...mod }).toEqual({ default: { hello: "cjs-sync", named: 1 }, hello: "cjs-sync", named: 1 });
     expect(globalThis.__cjsSyncSideEffect).toBe(42);
-    delete require.cache["my-virtual-module-cjs-sync"];
   });
 
   it("sync module() returning CommonJS source works with require()", () => {
+    using _ = uncache("my-virtual-module-cjs-sync");
     globalThis.__cjsSyncSideEffect = 0;
     const mod = require("my-virtual-module-cjs-sync");
     expect(mod).toEqual({ hello: "cjs-sync", named: 1 });
     expect(globalThis.__cjsSyncSideEffect).toBe(42);
-    delete require.cache["my-virtual-module-cjs-sync"];
   });
 
   it("async module() returning CommonJS source works with import()", async () => {
+    using _ = uncache("my-virtual-module-cjs-async");
     globalThis.__cjsAsyncSideEffect = 0;
     // @ts-expect-error
     const mod = await import("my-virtual-module-cjs-async");
     expect(mod.default).toEqual({ hello: "cjs-async" });
     expect(mod.hello).toBe("cjs-async");
     expect(globalThis.__cjsAsyncSideEffect).toBe(99);
-    delete require.cache["my-virtual-module-cjs-async"];
   });
 
   it("require() of an async module() returning CommonJS throws, and import() still loads it afterwards", async () => {
+    using _ = uncache("cjs-async-require-ghost");
     let factoryDone!: Promise<void>;
     Bun.plugin({
       name: "cjs-async-require-ghost",
@@ -397,10 +401,10 @@ describe("module", () => {
     // @ts-expect-error
     expect((await import("cjs-async-require-ghost")).default).toBe(1);
     expect(globalThis.__cjsGhostRan).toBe(true);
-    delete require.cache["cjs-async-require-ghost"];
   });
 
   it("require() of an async module() that awaits nothing loads its CommonJS source at once", () => {
+    using _ = uncache("cjs-fulfilled-require");
     let calls = 0;
     Bun.plugin({
       name: "cjs-fulfilled-require",
@@ -415,21 +419,20 @@ describe("module", () => {
     expect(require("cjs-fulfilled-require")).toEqual({ loaded: true });
     expect(require("cjs-fulfilled-require")).toEqual({ loaded: true });
     expect(calls).toBe(1);
-    delete require.cache["cjs-fulfilled-require"];
   });
 
   it("module() returning `exports.x = ...` works", async () => {
+    using _ = uncache("my-virtual-module-cjs-exports-dot");
     // @ts-expect-error
     const mod = await import("my-virtual-module-cjs-exports-dot");
     expect(mod.foo).toBe("F");
     expect(mod.bar).toBe("B");
-    delete require.cache["my-virtual-module-cjs-exports-dot"];
   });
 
   it("module() returning CommonJS source propagates errors from the body", async () => {
+    using _ = uncache("my-virtual-module-cjs-throws");
     // @ts-expect-error
     await expect(import("my-virtual-module-cjs-throws")).rejects.toThrow("cjs body threw");
-    delete require.cache["my-virtual-module-cjs-throws"];
   });
 
   it("onLoad returning CommonJS source works with import()", async () => {

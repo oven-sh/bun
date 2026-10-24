@@ -1167,8 +1167,10 @@ impl BackgroundHandler {
         arena: &Bump,
         context: &PropertyHandlerContext,
     ) {
-        let is_shorthand = self.open.longhands().union(longhand) == BackgroundProperty::BACKGROUND;
-        if is_shorthand && self.open_is_partial(arena, context) {
+        if self.reach != Reach::Every
+            && self.open.longhands().union(longhand) == BackgroundProperty::BACKGROUND
+            && self.open_is_partial(arena, context)
+        {
             self.close(false);
         }
     }
@@ -1282,22 +1284,24 @@ impl BackgroundHandler {
 
         // A resumable state without an image is no manual fallback of the shorthand after it.
         let mut shorthand_fallbacks = self.flushed_properties.is_empty();
-        let mut pending = core::mem::take(&mut self.pending);
-        for entry in pending.drain(..) {
-            match entry {
-                Pending::State { state, resumable } => {
-                    let is_manual_fallback = !resumable || state.images.is_some();
-                    self.write_state(*state, shorthand_fallbacks, dest, context);
-                    shorthand_fallbacks &= !is_manual_fallback;
-                }
-                Pending::Unparsed(unparsed) => {
-                    self.write_unparsed(unparsed, dest, context);
-                    shorthand_fallbacks = false;
+        if !self.pending.is_empty() {
+            let mut pending = core::mem::take(&mut self.pending);
+            for entry in pending.drain(..) {
+                match entry {
+                    Pending::State { state, resumable } => {
+                        let is_manual_fallback = !resumable || state.images.is_some();
+                        self.write_state(*state, shorthand_fallbacks, dest, context);
+                        shorthand_fallbacks &= !is_manual_fallback;
+                    }
+                    Pending::Unparsed(unparsed) => {
+                        self.write_unparsed(unparsed, dest, context);
+                        shorthand_fallbacks = false;
+                    }
                 }
             }
+            self.pending = pending;
+            self.first_resumable = 0;
         }
-        self.pending = pending;
-        self.first_resumable = 0;
         self.reach = Reach::Every;
         let open = core::mem::take(&mut self.open);
         self.write_state(open, shorthand_fallbacks, dest, context);

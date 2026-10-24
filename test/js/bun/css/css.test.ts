@@ -5537,8 +5537,11 @@ describe("css tests", () => {
       });
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout.trim()).toBe(':lang(""){color:red}:lang("",en){color:#00f}');
-      expect(exitCode).toBe(0);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: ':lang(""){color:red}:lang("",en){color:#00f}',
+        stderr: "",
+        exitCode: 0,
+      });
     });
 
     minify_test("a:-webkit-any(.foo, .bar) {color:red}", "a:-webkit-any(.foo,.bar){color:red}");

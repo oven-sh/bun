@@ -1927,8 +1927,7 @@ pub mod bv2_impl {
     enum ResolveFailure {
         /// An error: the build fails.
         Fatal,
-        /// A warning: the `require.resolve()` call stays in the output as written. Only for a
-        /// package name, which the call looks up the same way when it runs.
+        /// A warning: the `require.resolve()` of a package name stays in the output as written.
         Kept,
         /// Nothing: the code around the import handles the failure.
         Tolerated,

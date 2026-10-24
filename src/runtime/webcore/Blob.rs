@@ -5110,20 +5110,20 @@ fn write_file_after_would_block(
         PathOrBlob::Path(path) => Blob::find_or_create_file_from_path(path, cx.global(), false),
         PathOrBlob::Blob(blob) => blob.dupe(),
     };
-    let mut write_file = write_file_mod::WriteFile::create(
+    let mut job = write_file::WriteFile::create(
         destination_blob,
         Blob::init(resume.tail, cx.global()),
         options.mkdirp_if_not_exists.unwrap_or(true),
     )
     .expect("unreachable");
-    write_file.resume_from(resume.written, resume.fd);
+    job.resume_from(resume.written, resume.fd);
     let promise = Box::new(WriteFilePromise {
         promise: jsc::JSPromiseStrong::init(cx.global()),
         global_this: cx.global(),
     });
     let promise_value = promise.promise.value();
     promise_value.ensure_still_alive();
-    write_file_mod::WriteFile::schedule(write_file, promise, cx);
+    write_file::WriteFile::schedule(job, promise, cx);
     Ok(promise_value)
 }
 

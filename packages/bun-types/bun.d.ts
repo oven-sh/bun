@@ -3766,7 +3766,8 @@ declare module "bun" {
     /**
      * Whether the standalone executable loads tsconfig.json when it runs
      *
-     * A build that the executable runs, such as `Bun.build()`, reads tsconfig.json whatever this option is.
+     * This option does not apply to a build that the executable runs, such as `Bun.build()`.
+     * A build reads tsconfig.json.
      *
      * Equivalent CLI flags: `--compile-autoload-tsconfig`, `--no-compile-autoload-tsconfig`
      *
@@ -3776,7 +3777,8 @@ declare module "bun" {
     /**
      * Whether the standalone executable loads package.json when it runs
      *
-     * A build that the executable runs, such as `Bun.build()`, reads package.json whatever this option is.
+     * This option does not apply to a build that the executable runs, such as `Bun.build()`.
+     * A build reads package.json.
      *
      * Equivalent CLI flags: `--compile-autoload-package-json`, `--no-compile-autoload-package-json`
      *

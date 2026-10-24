@@ -666,8 +666,9 @@ console.log("PRELOAD");
           "require-missing": () => {
             try {
               return require(join(cwd, "node_modules/dual-pkg/missing.js"));
-            } catch {
-              return "not found";
+            } catch (error) {
+              if (error.code === "MODULE_NOT_FOUND") return "not found";
+              throw error;
             }
           },
           // It returns when the debugger's VM runs.

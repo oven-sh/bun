@@ -4683,7 +4683,7 @@ impl<'a> Resolver<'a> {
             // A resolver of another mode can have listed this directory long ago. Read it again,
             // through the descriptor just opened for it, so that this fill records the
             // package.json and tsconfig.json that are there now.
-            let relist = another_mode_exists && !queue_top.fd.is_valid();
+            let relist = another_mode_exists && !queue_top.fd.is_valid() && open_dir.is_valid();
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
                 if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {

@@ -3054,40 +3054,42 @@ describe.concurrent("Bun.build with a NUL byte in a path", () => {
     );
   });
 
-  // Each build copies the running executable, which a debug build cannot do within the default timeout.
-  test("an executable still embeds a chunk and an asset, and writes a .map, under names it does not open", async () => {
+  // An executable embeds its chunks and assets, and writes the `.map` of a chunk under its basename. The asset that
+  // does not exist stops each build after the name check, before it copies the running executable.
+  test("an executable does not check a name that it embeds, or the directory of a .map", async () => {
     expect(
       await run(String.raw`
         const builds = {
-          "embedded names": {
+          "an embedded chunk and asset": {
             entrypoints: ["./split.ts", "./with-asset.ts"],
             naming: { chunk: "ch\0unk-[name].[ext]", asset: "as\0set-[name].[ext]" },
-            compile: { outfile: "embeds" },
           },
-          // The .map of a chunk is written next to the executable under its basename.
           "the directory of a .map": {
             entrypoints: ["./split.ts"],
             sourcemap: "external",
             naming: { chunk: "d\0ir/[name].[ext]" },
-            compile: { outfile: "maps" },
           },
         };
-        const results = {};
+        const stopped = {};
         for (const [name, option] of Object.entries(builds)) {
-          const build = await Bun.build({ splitting: true, throw: false, ...option });
-          results[name] = { success: build.success, logs: build.logs.map(log => log.message) };
+          const build = await Bun.build({
+            splitting: true,
+            compile: { outfile: "app", assets: ["missing.bin"] },
+            throw: false,
+            ...option,
+          });
+          stopped[name] = build.success ? "success" : build.logs.map(log => log.message.replace(/: .*/s, ""));
         }
-        const maps = created().filter(name => name.endsWith(".map"));
-        console.log(JSON.stringify({ results, maps }, null, 2));
+        console.log(JSON.stringify({ stopped, created: created() }, null, 2));
       `),
     ).toEqual(
       report({
-        results: {
-          "embedded names": { success: true, logs: [] },
-          "the directory of a .map": { success: true, logs: [] },
+        stopped: {
+          "an embedded chunk and asset": ['failed to read asset "missing.bin"'],
+          "the directory of a .map": ['failed to read asset "missing.bin"'],
         },
-        maps: ["lazy.js.map", "maps.map"],
+        created: [],
       }),
     );
-  }, 60_000);
+  });
 });

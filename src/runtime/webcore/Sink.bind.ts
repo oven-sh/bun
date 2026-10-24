@@ -1,15 +1,15 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-/** `write` looks at whether the sink is closed before it reports an `invalid` chunk. */
+/** `write` looks at whether the sink is closed before it throws for any `other` chunk. */
 export const SinkChunk = b.union({
   text: b.string.allowStringObject,
   bytes: b.bufferSource.allowShared,
-  invalid: b.any,
+  other: b.any,
 });
 
-export const SinkPath = b.union({ absent: b.undefined, path: b.string.utf8.owned, invalid: b.any });
+export const SinkPath = b.union({ missing: b.undefined, path: b.string.utf8.owned, other: b.any });
 
-/** An `ArrayBufferSink` reads the first three, a `FileSink` `path` and `fd`, and every other sink `highWaterMark`. */
+/** An `ArrayBufferSink` uses the first three members, a `FileSink` uses `path` and `fd`, and every other sink uses `highWaterMark`. */
 export const SinkStartOptions = b.dictionary(
   {
     asUint8Array: b.bool.otherAsNull,
@@ -25,22 +25,22 @@ export const SinkStartOptions = b.dictionary(
 /** `undefined` once the sink is closed, and `null` for a sink that has none. */
 export const SinkFd = b.union({ closed: b.undefined, none: b.null, fd: b.i32 });
 
-const method = { returns: b.any, capability: "js", throws: true } as const;
+const js = { capability: "js", throws: true } as const;
+const method = { returns: b.any, ...js } as const;
 
 const flush = { ...method, args: { wait: b.bool.otherAsNull }, length: 1 } as const;
-const start = { capability: "js", throws: true, args: { options: SinkStartOptions }, length: 1 } as const;
-const write = { ...method, args: { chunk: SinkChunk.ifPassed }, length: 1 } as const;
+const start = { ...js, args: { options: SinkStartOptions }, length: 1 } as const;
 
 /** `SinkId` in `Sink.rs`. */
 const sinkId = (constant: number) => ({ constant, enumerable: false, configurable: true }) as const;
 
 const sinkPrototype = (id: number) =>
   ({
-    close: { capability: "js", throws: true },
+    close: js,
     flush,
     end: { ...method, passThis: true },
     start,
-    write,
+    write: { ...method, args: { chunk: SinkChunk.ifPassed }, length: 1 },
     ref: { invalidThis: "undefined" },
     unref: { invalidThis: "undefined" },
     _getFd: { returns: SinkFd },
@@ -76,14 +76,14 @@ export const NetworkSink = b.class({
 export const ReadableSinkController = b.class({
   rustPath: "crate::webcore::sink::ReadableSinkController",
   writable: false,
-  /** `BunStreamSource.cpp` has `source`, `closePromise`, `failReason` and `readableStream`; the sink's `PipeCell` has the others. */
+  /** `BunStreamSource.cpp` sets `source`, `closePromise` and `readableStream`, and Rust sets the others. */
   internalFields: ["source", "closePromise", "failReason", "readableStream", "pipeStream", "pipeDone"],
   proto: {
-    close: { capability: "js", throws: true, passThis: true, args: { error: b.any }, length: 0 },
+    close: { ...js, passThis: true, args: { error: b.any }, length: 0 },
     flush,
     end: { ...method, passThis: true },
     start,
-    write,
+    write: { ...method, args: { data: SinkChunk.ifPassed }, length: 1 },
     sinkId: { getter: b.u8, enumerable: false, configurable: true },
   },
 });

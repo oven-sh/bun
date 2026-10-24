@@ -501,7 +501,7 @@ impl FetchTasklet {
             // FetchTasklet ref — `write_end_request` is the canonical release.
             sink.task = None;
             // `detach` may fire the controller's onClose; every terminal path
-            // here has already cleared it, so this just nulls m_sinkPtr.
+            // here has already cleared it, so this just detaches the controller.
             sink.source.detach(&self.global_this);
         }
         if let Some(buffer) = self.request_body_streaming_buffer.take() {

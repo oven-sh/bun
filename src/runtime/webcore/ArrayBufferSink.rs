@@ -100,8 +100,8 @@ impl ArrayBufferSink {
     }
 
     /// # Safety
-    /// `this` is the allocation `js_construct` leaked into the JS wrapper, whose
-    /// `__finalize` (the sole caller) frees it exactly once, here.
+    /// `this` is the allocation `JSSink::constructor` made for the JS wrapper, whose
+    /// `finalize` (the sole caller) frees it exactly once, here.
     pub(crate) unsafe fn destroy(this: *mut Self) {
         // SAFETY: reclaiming ownership drops `bytes` (Vec<u8> impls Drop) and
         // frees the box.
@@ -141,9 +141,6 @@ impl ArrayBufferSink {
     }
 }
 
-// `JsSinkType` impl: routes the codegen `ArrayBufferSink__*` thunks (via
-// `JSSink::<Self>::js_*`) into the inherent streaming methods above. Mirrors
-// `Sink.JSSink(@This(), "ArrayBufferSink")`.
 impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     const NAME: &'static str = "ArrayBufferSink";
     const ID: crate::webcore::sink::SinkId = crate::webcore::sink::SinkId::ArrayBuffer;
@@ -152,7 +149,7 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
 
     unsafe fn finalize(this: *mut Self) {
         // SAFETY: trait contract — `this` is the wrapper's live sink, which
-        // `js_construct` allocated for it alone; nothing uses it afterwards.
+        // `JSSink::constructor` allocated for it alone; nothing uses it afterwards.
         unsafe { Self::destroy(this) };
     }
     fn start_config(

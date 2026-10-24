@@ -190,9 +190,8 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableStream__error(JSC::EncodedJSV
     Bun::WebStreams::webStreamControllerError(globalObject, stream, JSValue::decode(reason));
 }
 
-// Closed with nothing ever read or attached: the queue was empty at close, so no byte can come out.
 // Returns undefined, a promise for the end of the stream, or a failure as its Exception cell, never left pending on the VM.
-extern "C" JSC::EncodedJSValue ReadableSinkController__assignToStream(Zig::GlobalObject* globalObject, JSC::EncodedJSValue possibleReadableStream, JSC::EncodedJSValue controller)
+extern "C" JSC::EncodedJSValue ReadableSinkController__assignToStream(JSC::EncodedJSValue controller, Zig::GlobalObject* globalObject, JSC::EncodedJSValue possibleReadableStream)
 {
     auto& vm = getVM(globalObject);
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
@@ -219,6 +218,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void ReadableSinkController__onReady(JSC::
     sinkControllerOnReady(globalObject, uncheckedDowncast<JSReadableSinkController>(JSValue::decode(controller)));
 }
 
+// Closed with nothing ever read or attached: the queue was empty at close, so no byte can come out.
 extern "C" bool ReadableStream__isClosedUnread(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));

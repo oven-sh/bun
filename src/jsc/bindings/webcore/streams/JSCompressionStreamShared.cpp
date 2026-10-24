@@ -3,6 +3,7 @@
 #include "BunClientData.h"
 
 #include "ErrorCode.h"
+#include "GeneratedSink.h"
 #include "JSCompressionStream.h"
 #include "JSDecompressionStream.h"
 #include "JSStreamsRuntime.h"
@@ -190,8 +191,8 @@ static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStre
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     CodecStepResult step;
-    if (void* sinkPtr = stream->m_nativeSinkPtr) {
-        JSValue wrote = JSValue::decode(CompressionStreamCoder__transformInto(coder, globalObject, input, inputLen, finish, sinkPtr, &step.more));
+    if (auto* sinkController = stream->m_nativeSinkController.get()) {
+        JSValue wrote = JSValue::decode(CompressionStreamCoder__transformInto(coder, globalObject, input, inputLen, finish, sinkController->payload(), &step.more));
         RETURN_IF_EXCEPTION(scope, step);
         step.sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
         return step;
@@ -218,7 +219,7 @@ enum class CodecOutcome : uint8_t {
 
 static bool consumerFull(JSTransformStream* stream, const CodecStepResult& step)
 {
-    return stream->m_nativeSinkPtr ? step.sinkBackpressure : stream->m_backpressure;
+    return stream->m_nativeSinkController ? step.sinkBackpressure : stream->m_backpressure;
 }
 
 // Steps on this thread until the chunk completes, fails (throws), or its consumer is full. `input`
@@ -237,7 +238,7 @@ static CodecOutcome stepChunkHere(JSGlobalObject* globalObject, JSTransformStrea
             return CodecOutcome::Pending;
         bool full = consumerFull(stream, step);
         if (!step.more)
-            return full && stream->m_nativeSinkPtr ? CodecOutcome::DoneSinkFull : CodecOutcome::Done;
+            return full && stream->m_nativeSinkController ? CodecOutcome::DoneSinkFull : CodecOutcome::Done;
         if (full)
             return CodecOutcome::Pending;
         input = nullptr;
@@ -414,8 +415,8 @@ static CodecStepResult deliverAsyncOutput(JSGlobalObject* globalObject, JSTransf
     auto scope = DECLARE_THROW_SCOPE(vm);
     CodecStepResult step;
     step.more = more;
-    if (void* sinkPtr = stream->m_nativeSinkPtr) {
-        JSValue wrote = JSValue::decode(ReadableSinkController__writeBytes(sinkPtr, globalObject, out, outLen));
+    if (auto* sinkController = stream->m_nativeSinkController.get()) {
+        JSValue wrote = JSValue::decode(ReadableSinkController__writeBytes(sinkController->payload(), globalObject, out, outLen));
         RETURN_IF_EXCEPTION(scope, step);
         step.sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);
         return step;
@@ -470,7 +471,7 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
     if (thrown)
         settleCodecChunk(globalObject, stream, thrown);
     else if (!step.more)
-        settlePendingChunk(globalObject, stream, consumerFull(stream, step) && stream->m_nativeSinkPtr ? CodecOutcome::DoneSinkFull : CodecOutcome::Done);
+        settlePendingChunk(globalObject, stream, consumerFull(stream, step) && stream->m_nativeSinkController ? CodecOutcome::DoneSinkFull : CodecOutcome::Done);
     else if (!consumerFull(stream, step)) {
         if (void* coder = coderOf(stream)) [[likely]]
             dispatchStepOffThread(globalObject, stream, coder, jsUndefined(), nullptr, 0, false);

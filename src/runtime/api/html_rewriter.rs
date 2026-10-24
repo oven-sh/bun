@@ -685,7 +685,7 @@ pub struct RewriterPipe {
     // ── allocation lifetime ──────────────────────────────────────────────
     /// Owners that may still dispatch into this allocation: the Transform
     /// cell (releases in [`Self::finalize`]), the JS-pump controller's raw
-    /// `m_sinkPtr` (releases via `__controllerDetached`), and a parked
+    /// `sink` (releases via `controller_detached`), and a parked
     /// suspension's reaction/abandon task. GC sweeps cells in unspecified
     /// order within a cycle, so whichever owner releases last frees the Box.
     ref_count: Cell<u32>,
@@ -722,10 +722,10 @@ impl RewriterPipe {
     }
 
     /// The JS-pump controller detached and can never dispatch into the pipe
-    /// again: release its ref. Deferred if last: the C++ caller keeps using
-    /// the allocation in the same frame (the destructor's trailing
-    /// `__finalize`, the close/end host fns' `__close`/`__endWithSink` on the
-    /// saved pointer).
+    /// again: release its ref. Deferred if last: the controller keeps using
+    /// the allocation in the same frame (its `Drop`'s trailing
+    /// `controller_finalize`, `close_sink`/`end_sink` on the pointer that
+    /// `take_sink` returned).
     fn release_pump_ref(&self) {
         if !self.pump_controller_attached.replace(false) {
             return;
@@ -1155,9 +1155,9 @@ impl RewriterPipe {
 
         // JS-pump fallback: `assign_to_stream` installs a JS sink wrapper that
         // forwards to `JsSinkType for RewriterPipe`. The controller cell it
-        // creates holds `pipe` raw as `m_sinkPtr` and dispatches
-        // `__controllerDetached` from wherever it detaches (including its
-        // GC destructor), so it owns a ref until `release_pump_ref`.
+        // creates holds `pipe` raw as its `sink` and calls
+        // `controller_detached` from wherever it detaches (including its
+        // `Drop`), so it owns a ref until `release_pump_ref`.
         this.pump_controller_attached.set(true);
         this.ref_();
         let assignment_result =
@@ -1388,9 +1388,9 @@ impl RewriterPipe {
     pub fn end_from_stream(&self, err: Option<StreamError>) {
         let _pin = self.pin();
         // Detach via `detach_input_source` (not a bare `.set(None)`) so a
-        // `JSController`'s `m_sinkPtr` is nulled before any path can free the
-        // pipe; otherwise the controller's destructor would later dispatch
-        // `__controllerDetached`/`__finalize` on freed memory. The upstream
+        // `JSController`'s `sink` is cleared before any path can free the
+        // pipe; otherwise the controller's `Drop` would later call
+        // `controller_detached`/`controller_finalize` on freed memory. The upstream
         // already ended, so there is nothing to cancel.
         let src = self.detach_input_source(None);
 
@@ -3220,7 +3220,7 @@ impl WrapperLike for Element {
 }
 
 // ───────────────── input-stream JS-pump .then() reactions ────────────────
-// `JSSink::<RewriterPipe>::assign_to_stream` returns a promise on the
+// `ReadableSinkController::assign_to_stream` returns a promise on the
 // JS-readable fallback path (no native ByteStream/FileReader). These are its
 // resolve/reject reactions, mirroring `Bun__FetchTasklet__on*RequestStream`
 // (src/runtime/webcore/fetch/FetchTasklet.rs) and `Bun__FileSink__on*Stream`.

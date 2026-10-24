@@ -459,7 +459,7 @@ describe("CompressionStream and DecompressionStream", () => {
       await drained;
     });
 
-    // Async-codec × native-sink: deliverAsync's m_nativeSinkPtr arm. The other
+    // Async-codec × native-sink: deliverAsync's m_nativeSinkController arm. The other
     // >128KB tests drain via Response().arrayBuffer() (no native sink); the
     // other Bun.serve tests enqueue ≤64KB (below the async threshold).
     test("CompressionStream('gzip') -> native HTTP response sink handles a single >128KB chunk", async () => {

@@ -297,7 +297,7 @@ impl CompressionStreamCoder {
             high_water_mark,
             pending: None,
             context: bun_jsc::virtual_machine::VirtualMachine::get()
-                .context_of_caller_no_frame()
+                .context_of_caller()
                 .id(),
         }))
     }
@@ -883,7 +883,7 @@ fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
 }
 
 /// [`CompressionStreamCoder__transform`], but the output is written to the
-/// native sink of `sink`: returns the sink's `write` result (see
+/// native sink of `controller`: returns the sink's `write` result (see
 /// nativeSinkWriteIsBackpressure), `undefined` when there was no output.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
@@ -892,7 +892,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
     input: *const u8,
     input_len: usize,
     finish: bool,
-    sink: &crate::webcore::sink::ReadableSinkController,
+    controller: &crate::webcore::sink::ReadableSinkController,
     more: &mut bool,
 ) -> JSValue {
     let slice = if input.is_null() {
@@ -909,7 +909,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
             *more = has_more;
             'write: {
                 // The sink copies what it needs before returning.
-                let handle = sink.handle();
+                let handle = controller.handle();
                 if out.is_empty() || handle.is_none() {
                     break 'write JSValue::UNDEFINED;
                 }
@@ -917,7 +917,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
                     .write(&crate::webcore::streams::Result::Temporary(
                         bun_ptr::RawSlice::new(&out),
                     ))
-                    .to_js(&global.js_thread_of_caller_no_frame())
+                    .to_js(&global.js_thread_of_caller())
             }
         }
         Err(e) => {
@@ -1044,7 +1044,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
     };
     let cx = global.js_thread(match &entered {
         Some(scope) => scope.context(),
-        None => vm.context_of_caller_no_frame(),
+        None => vm.context_of_caller(),
     });
     bun_jsc::Job::<CompressionAsyncCtx>::schedule(
         &cx,

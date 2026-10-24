@@ -530,16 +530,16 @@ void nativeTransformReleaseState(JSTransformStream*); // userJS: no — JSTransf
 // Performs a release ClearAlgorithms deferred, once nothing holds the native state any more.
 void nativeTransformReleaseStateIfIdle(JSTransformStream*); // userJS: no — JSTransformStreamDefaultController.cpp
 
-// A JSReadableSinkController (GeneratedSink.h) without its JS methods. `payload` is its payload().
-extern "C" bool ReadableSinkController__isAttached(const void* payload); // userJS: no — Sink.rs
-extern "C" JSC::EncodedJSValue ReadableSinkController__end(JSC::JSGlobalObject*, JSC::EncodedJSValue controller); // userJS: yes — Sink.rs
+// What C++ does to a JSReadableSinkController (GeneratedSink.h). `sinkController` is its payload().
+extern "C" bool ReadableSinkController__isAttached(const void* sinkController); // userJS: no — Sink.rs
+extern "C" JSC::EncodedJSValue ReadableSinkController__end(JSC::EncodedJSValue controller, JSC::JSGlobalObject*); // userJS: yes — Sink.rs
 // An empty `reason` is a clean close. Any other, undefined too, tells the sink that its source failed.
-extern "C" JSC::EncodedJSValue ReadableSinkController__close(JSC::JSGlobalObject*, JSC::EncodedJSValue controller, JSC::EncodedJSValue reason); // userJS: yes — Sink.rs
+extern "C" JSC::EncodedJSValue ReadableSinkController__close(JSC::EncodedJSValue controller, JSC::JSGlobalObject*, JSC::EncodedJSValue reason); // userJS: yes — Sink.rs
 // The native-transform → native sink byte write, routed through SinkHandle::write. Returns a
 // negative number for native ByteStream/FileReader sources under backpressure, but a pending
 // JSPromise for the JSController-sourced sinks that readStreamIntoSink attaches
 // (HTTPResponseSink/FileSink). Both mean "suspend" — nativeSinkWriteIsBackpressure below reads either shape.
-extern "C" JSC::EncodedJSValue ReadableSinkController__writeBytes(const void* payload, JSC::JSGlobalObject*, const uint8_t* ptr, size_t len); // userJS: no — Sink.rs
+extern "C" JSC::EncodedJSValue ReadableSinkController__writeBytes(const void* sinkController, JSC::JSGlobalObject*, const uint8_t* ptr, size_t len); // userJS: no — Sink.rs
 bool nativeSinkWriteIsBackpressure(JSC::VM&, JSC::JSValue wrote); // userJS: no — WebStreamsMisc.cpp
 
 // Brackets a native transform/flush arm so a re-entrant ClearAlgorithms (reached via a

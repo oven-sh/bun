@@ -932,15 +932,15 @@ where
         // whose reactions consume the sink (`handleResolveStream` / `handleRejectStream`),
         // so a client abort in that state reaches deinit with the sink still owned here.
         // This is the owner's last exit: release it exactly like the settle paths do.
-        if let Some(wrapper_ptr) = self.sink.take() {
+        if let Some(sink_ptr) = self.sink.take() {
             // SAFETY: deinit runs once, after `detach_response()` removed the uWS callbacks;
             // the context is the sink's sole owner (see the `sink` field's doc comment).
-            let wrapper = unsafe { &mut *wrapper_ptr.as_ptr() };
-            wrapper.finalize();
-            if let Some(sink_global) = wrapper.global_this {
-                wrapper.source.detach(&sink_global);
+            let sink = unsafe { &mut *sink_ptr.as_ptr() };
+            sink.finalize();
+            if let Some(sink_global) = sink.global_this {
+                sink.source.detach(&sink_global);
             }
-            Self::destroy_sink(wrapper_ptr);
+            Self::destroy_sink(sink_ptr);
         }
 
         self.request_body_buf.set(Vec::new());
@@ -1529,8 +1529,8 @@ where
             // SAFETY: FFI handle
             if resp.has_responded() {
                 // The sink can outlive this call; `resp` dies with the stream.
-                if let Some(wrapper) = this.sink_mut() {
-                    wrapper.res = None;
+                if let Some(sink) = this.sink_mut() {
+                    sink.res = None;
                 }
                 // Releases the base ref itself, so no `_ref` adoption here.
                 this.end_already_responded_stream();
@@ -1728,8 +1728,8 @@ where
         ctx_log!("onWritableResponseStream({})", write_offset);
         let pinned = RequestContextRef::pin(this);
         let this = pinned.ctx();
-        if let Some(wrapper) = this.sink_mut() {
-            return wrapper.on_writable(write_offset, _resp);
+        if let Some(sink) = this.sink_mut() {
+            return sink.on_writable(write_offset, _resp);
         }
         true
     }
@@ -2142,16 +2142,16 @@ where
         let mut readable_ref = self
             .response_body_readable_stream_ref
             .replace(readable_stream::Strong::default());
-        if let Some(wrapper_ptr) = self.sink.take() {
+        if let Some(sink_ptr) = self.sink.take() {
             // SAFETY: this context is the sink's sole owner until `destroy_sink`
             // below (see the `sink` field); `on_abort` leaves it allocated.
-            let wrapper = unsafe { &mut *wrapper_ptr.as_ptr() };
-            wrapper.source.detach(global_this);
+            let sink = unsafe { &mut *sink_ptr.as_ptr() };
+            sink.source.detach(global_this);
             crate::dispatch::fold(stream.cancel(global_this));
-            wrapper.mark_done();
-            wrapper.on_first_write = None;
-            wrapper.finalize();
-            Self::destroy_sink(wrapper_ptr);
+            sink.mark_done();
+            sink.on_first_write = None;
+            sink.finalize();
+            Self::destroy_sink(sink_ptr);
         }
         readable_ref.deinit();
     }
@@ -2509,8 +2509,8 @@ where
 
         if let Some(resp) = self.resp.take() {
             // The sink writes through its own handle to the response.
-            if let Some(wrapper) = self.sink_mut() {
-                wrapper.revoke_response();
+            if let Some(sink) = self.sink_mut() {
+                sink.revoke_response();
             }
             if self.flags.request_body_paused() {
                 self.flags.set_request_body_paused(false);
@@ -2848,14 +2848,14 @@ where
         // the flush to settle and re-enter. On abort, flushPromise() has
         // already settled pending_flush, so this never waits on a dead
         // socket.
-        if let Some(wrapper) = self.sink_mut() {
-            if !self.flags.aborted() && !wrapper.is_aborted() {
+        if let Some(sink) = self.sink_mut() {
+            if !self.flags.aborted() && !sink.is_aborted() {
                 // Only defer when there is still a live response to drain the
                 // flush through: on_writable (which resolves the flush via
                 // flush_promise) is armed on `resp`. With no response the flush
                 // can never settle, so taking a ref and attaching here would
                 // leak the ref and hang the request; fall through to teardown.
-                if let Some(flush) = wrapper.pending_flush()
+                if let Some(flush) = sink.pending_flush()
                     && self.resp.get().is_some()
                 {
                     stream_log!("handleResolveStream: waiting for pending flush");
@@ -2876,15 +2876,15 @@ where
 
         let mut wrote_anything = false;
         let mut ended_response = false;
-        if let Some(wrapper) = self.sink_mut() {
-            let wrapper_ptr = self
+        if let Some(sink) = self.sink_mut() {
+            let sink_ptr = self
                 .sink
                 .take()
                 .expect("infallible: sink_mut returned Some");
-            let aborted = self.flags.aborted() || wrapper.is_aborted();
+            let aborted = self.flags.aborted() || sink.is_aborted();
             self.flags.set_aborted(aborted);
-            wrote_anything = wrapper.wrote > 0;
-            ended_response = wrapper.ended_response;
+            wrote_anything = sink.wrote > 0;
+            ended_response = sink.ended_response;
             if ended_response {
                 // `resp` may be freed; the sink already resumed it. Clear these
                 // before `detach()` below re-enters JS so any drain callback /
@@ -2893,12 +2893,12 @@ where
                 self.detach_request_body_producer();
             }
 
-            wrapper.finalize();
-            let sink_global = wrapper
+            sink.finalize();
+            let sink_global = sink
                 .global_this
                 .expect("sink.global_this set in do_render_stream");
-            wrapper.source.detach(&sink_global);
-            Self::destroy_sink(wrapper_ptr);
+            sink.source.detach(&sink_global);
+            Self::destroy_sink(sink_ptr);
         }
 
         debug_assert!(self.server.get().is_some());
@@ -2967,28 +2967,28 @@ where
         stream_log!("handleRejectStream");
 
         let mut ended_response = false;
-        if let Some(wrapper) = self.sink_mut() {
-            let wrapper_ptr = self
+        if let Some(sink) = self.sink_mut() {
+            let sink_ptr = self
                 .sink
                 .take()
                 .expect("infallible: sink_mut returned Some");
-            ended_response = wrapper.ended_response;
+            ended_response = sink.ended_response;
             if ended_response {
                 // `resp` may be freed; the sink already resumed it. Clear before JS below.
                 self.flags.set_request_body_paused(false);
                 self.detach_request_body_producer();
             }
             // The body failed: a parked flush()/end() promise is abandoned, not resolved by the teardown below.
-            let _ = wrapper.take_pending_flush();
-            wrapper.set_done();
-            let aborted = self.flags.aborted() || wrapper.is_aborted();
+            let _ = sink.take_pending_flush();
+            sink.set_done();
+            let aborted = self.flags.aborted() || sink.is_aborted();
             self.flags.set_aborted(aborted);
-            wrapper.finalize();
-            let sink_global = wrapper
+            sink.finalize();
+            let sink_global = sink
                 .global_this
                 .expect("sink.global_this set in do_render_stream");
-            wrapper.source.detach(&sink_global);
-            Self::destroy_sink(wrapper_ptr);
+            sink.source.detach(&sink_global);
+            Self::destroy_sink(sink_ptr);
         }
 
         if let Some(resp) = self.response_mut() {

@@ -243,7 +243,7 @@ impl<'a> JsScope<'a> {
     /// For the APIs that take the tree's own proof of being on the JS thread.
     #[inline]
     pub fn js_thread(&mut self) -> JsThread<'_> {
-        self.heap.global_object().js_thread_of_caller_no_frame()
+        self.heap.global_object().js_thread_of_caller()
     }
 }
 

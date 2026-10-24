@@ -597,7 +597,7 @@ impl FileSink {
                 self.source.set(streams::SourceHandle::None);
             }
         }
-        crate::dispatch::fold(ReadableSinkController::detach_value(global, cell));
+        crate::dispatch::fold(ReadableSinkController::detach_value(cell, global));
     }
 
     fn has_stream_error(&self) -> bool {
@@ -993,10 +993,6 @@ impl FileSink {
         }
     }
 
-    pub fn flush(&self) -> sys::Result<()> {
-        sys::Result::Ok(())
-    }
-
     pub(crate) fn flush_from_js(
         &self,
         cx: &bun_jsc::JsThread<'_>,
@@ -1261,7 +1257,7 @@ impl FileSink {
         // A backpressured `write()` may have left its promise in `self.pending`;
         // `writer.end()` only re-enters `on_close`, which never touches it, so
         // every synchronous arm that tears the writer down here must settle it
-        // (mirrors `on_auto_flush`). `js_close` can't hand the promise back, so
+        // (mirrors `on_auto_flush`). `close()` can't hand the promise back, so
         // the outcome is delivered via `run_pending` and the call returns `Ok`.
         let has_pending = self.pending.get().state == streams::PendingState::Pending;
 
@@ -1722,7 +1718,7 @@ impl FileSink {
     fn detach_js_controller(&self, global_this: &JSGlobalObject) {
         if let streams::SourceHandle::JSController(cell) = *self.source.get() {
             self.source.set(streams::SourceHandle::None);
-            crate::dispatch::fold(ReadableSinkController::detach_value(global_this, cell));
+            crate::dispatch::fold(ReadableSinkController::detach_value(cell, global_this));
         }
     }
 }

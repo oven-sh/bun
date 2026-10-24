@@ -164,10 +164,6 @@ impl FetchRequestBodySink {
         self.write_chunk(RequestBodyChunk::Utf16(bytemuck::cast_slice(data.slice())))
     }
 
-    pub fn flush(&mut self) -> bun_sys::Result<()> {
-        bun_sys::Result::Ok(())
-    }
-
     pub fn flush_from_js(
         &mut self,
         cx: &bun_jsc::JsThread<'_>,

@@ -2004,9 +2004,12 @@ ${indent(
 // ───────────────────────────── TypeScript ─────────────────────────────
 
 export function dts(files: readonly SchemaFile[]): string {
+  /** `undefined` converts, so the argument can be left out. */
+  const convertsUndefined = (type: Type) =>
+    type.takesUndefined || (type instanceof DictionaryType && !!type.nonObjectAsEmpty);
   const parameters = (signature: Signature) => {
     const lastRequired = Math.max(
-      signature.args.findLastIndex(arg => !arg.type.takesUndefined),
+      signature.args.findLastIndex(arg => !convertsUndefined(arg.type)),
       signature.requiredArguments - 1,
     );
     return signature.args

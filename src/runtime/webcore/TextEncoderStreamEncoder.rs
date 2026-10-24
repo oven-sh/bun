@@ -284,7 +284,7 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
     chunk: JSValue,
-    sink: &ReadableSinkController,
+    controller: &ReadableSinkController,
 ) -> JSValue {
     let Ok(str) = chunk.to_js_string_view(global) else {
         return JSValue::ZERO;
@@ -309,14 +309,14 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
         return JSValue::UNDEFINED;
     }
     // The sink copies what it needs.
-    let handle = sink.handle();
+    let handle = controller.handle();
     if handle.is_none() {
         this.scratch.replace(buf);
         return JSValue::UNDEFINED;
     }
     let wrote = handle
         .write(&streams::Result::Temporary(RawSlice::new(&buf)))
-        .to_js(&global.js_thread_of_caller_no_frame());
+        .to_js(&global.js_thread_of_caller());
     if buf.capacity() <= SCRATCH_CAP {
         this.scratch.replace(buf);
     }
@@ -328,7 +328,7 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
 pub(crate) extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
     this: *mut TextEncoderStreamEncoder,
     global: &JSGlobalObject,
-    sink: &ReadableSinkController,
+    controller: &ReadableSinkController,
 ) -> JSValue {
     // SAFETY: as in `TextEncoderStreamEncoder__encodeForStream`.
     let this = unsafe { &*this };
@@ -336,11 +336,11 @@ pub(crate) extern "C" fn TextEncoderStreamEncoder__flushIntoSink(
         return JSValue::UNDEFINED;
     }
     const REPLACEMENT: [u8; 3] = [0xef, 0xbf, 0xbd];
-    let handle = sink.handle();
+    let handle = controller.handle();
     if handle.is_none() {
         return JSValue::UNDEFINED;
     }
     handle
         .write(&streams::Result::Temporary(RawSlice::new(&REPLACEMENT)))
-        .to_js(&global.js_thread_of_caller_no_frame())
+        .to_js(&global.js_thread_of_caller())
 }

@@ -127,7 +127,7 @@ enum class SourceKind : uint8_t {
 };
 
 // Which arm runs a writable controller's write/close/abort algorithms.
-// Bun's native sinks never use a WritableStream, so it adds no arm.
+// Bun's native sinks never use a WritableStream, so they add no arm.
 enum class SinkKind : uint8_t {
     JavaScript, // user underlyingSink
     Nothing, // new WritableStream() with no sink

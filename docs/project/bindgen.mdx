@@ -600,7 +600,7 @@ is collected, make the class [`refCounted`](#refcounted).
 | `prototypeBase`  | `"Error"`: the prototype inherits from `Error.prototype`, and its `name` is the class's        |
 | `configurable`   | `true` makes the native properties configurable                                                |
 | `enumerable`     | `false` makes the native properties non-enumerable                                             |
-| `writable`       | `false` makes the native functions read-only                                                   |
+| `writable`       | `false` makes the native functions read-only. It is not the `writable` of a cached getter      |
 | `memoryCost`     | [`fn memory_cost(&self) -> usize`](#memory), for a heap snapshot                               |
 | `estimatedSize`  | [`fn estimated_size(&self) -> usize`](#memory), for the GC                                     |
 | `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. |
@@ -681,7 +681,7 @@ Every member takes `&self`, a setter too, and mutable state is in `Cell` and `Js
 `bun_jsc::JsClass`, so `value.as_class_ref::<Glob>()` works, and `js_Glob::from_js(value)` is the struct if `value`
 is an instance. `js_Glob::from_js_direct(value)` returns `None` for an instance of a subclass or one with own
 properties, either of which may override a member. `wrapper.payload_ptr()` is the address of the struct, which
-never changes.
+never changes, and `payload.wrapper_value()` is the way back: the object that owns the struct.
 
 A member with `mutates: true` takes `&mut self`, and so does every setter of its class. JavaScript that ran
 during another member could call it on the same object, so no member of that class has `capability: "js"`. The class

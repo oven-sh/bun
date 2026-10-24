@@ -12,9 +12,7 @@ use bun_core::{FeatureFlags, strings};
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 
-use crate::generated_bindgen::sink::{
-    SinkPath, SinkStartOptions, js_ReadableSinkController as js_controller,
-};
+use crate::generated_bindgen::sink::{SinkPath, SinkStartOptions, js_ReadableSinkController};
 use crate::webcore::blob::Any as AnyBlob;
 use crate::webcore::sink::{ReadableSinkController, SinkId};
 use crate::webcore::{AutoFlusher, ByteListPool};
@@ -124,9 +122,9 @@ impl Start {
         };
         let input_path = match (&options.path, options.fd) {
             (SinkPath::Path(path), _) => crate::webcore::PathOrFileDescriptor::Path(path.clone()),
-            (SinkPath::Invalid(_), _) => return error(sys::SystemErrno::EINVAL),
-            (SinkPath::Absent, None) => crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
-            (SinkPath::Absent, Some(fd)) => match Fd::from_js(fd.to_js()) {
+            (SinkPath::Other(_), _) => return error(sys::SystemErrno::EINVAL),
+            (SinkPath::Missing, None) => crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
+            (SinkPath::Missing, Some(fd)) => match Fd::from_js(fd.to_js()) {
                 Some(fd) => crate::webcore::PathOrFileDescriptor::Fd(fd),
                 None => return error(sys::SystemErrno::EBADF),
             },
@@ -689,7 +687,7 @@ impl PipeCell {
         } else {
             JSValue::ZERO
         };
-        js_controller::pipe_stream_set_cached(cell, global, stream);
+        js_ReadableSinkController::pipe_stream_set_cached(cell, global, stream);
         self.set_done(done);
     }
 
@@ -705,15 +703,15 @@ impl PipeCell {
     /// The stream this pipe holds, else the one the controller's close handler still does: they are the same stream.
     pub(crate) fn stream(&self) -> Option<crate::webcore::ReadableStream> {
         let cell = self.0.get()?;
-        let stream = js_controller::pipe_stream_get_cached(cell)
-            .or_else(|| js_controller::readable_stream_get_cached(cell))?;
+        let stream = js_ReadableSinkController::pipe_stream_get_cached(cell)
+            .or_else(|| js_ReadableSinkController::readable_stream_get_cached(cell))?;
         crate::webcore::ReadableStream::from_js_direct(stream)
     }
 
     pub(crate) fn take_stream(&self) -> Option<crate::webcore::ReadableStream> {
         let stream = self.stream();
         if let Some(cell) = self.0.get() {
-            js_controller::pipe_stream_set_cached(
+            js_ReadableSinkController::pipe_stream_set_cached(
                 cell,
                 VirtualMachine::get().global(),
                 JSValue::ZERO,
@@ -733,7 +731,7 @@ impl PipeCell {
 
     /// The promise the sink's owner or source awaits, until it is taken to be settled.
     pub(crate) fn done(&self) -> Option<*mut JSPromise> {
-        js_controller::pipe_done_get_cached(self.0.get()?)?.as_promise()
+        js_ReadableSinkController::pipe_done_get_cached(self.0.get()?)?.as_promise()
     }
 
     pub(crate) fn set_done(&self, done: JSValue) {
@@ -744,26 +742,37 @@ impl PipeCell {
             } else {
                 JSValue::ZERO
             };
-            js_controller::pipe_done_set_cached(cell, VirtualMachine::get().global(), done);
+            js_ReadableSinkController::pipe_done_set_cached(
+                cell,
+                VirtualMachine::get().global(),
+                done,
+            );
         }
     }
 
     pub(crate) fn take_done(&self) -> Option<*mut JSPromise> {
-        js_controller::pipe_done_take_cached(self.0.get()?, VirtualMachine::get().global())?
-            .as_promise()
+        js_ReadableSinkController::pipe_done_take_cached(
+            self.0.get()?,
+            VirtualMachine::get().global(),
+        )?
+        .as_promise()
     }
 
     /// The pipe's failure value shares `failReason`: `close(error)` stores the same value there, and every other writer runs after `pull()` settled.
     pub(crate) fn set_error(&self, error: JSValue) {
         if let Some(cell) = self.0.get() {
-            if js_controller::fail_reason_get_cached(cell).is_none() {
-                js_controller::fail_reason_set_cached(cell, VirtualMachine::get().global(), error);
+            if js_ReadableSinkController::fail_reason_get_cached(cell).is_none() {
+                js_ReadableSinkController::fail_reason_set_cached(
+                    cell,
+                    VirtualMachine::get().global(),
+                    error,
+                );
             }
         }
     }
 
     pub(crate) fn error(&self) -> Option<JSValue> {
-        js_controller::fail_reason_get_cached(self.0.get()?)
+        js_ReadableSinkController::fail_reason_get_cached(self.0.get()?)
     }
 }
 
@@ -838,7 +847,7 @@ pub enum SourceHandle {
     /// No source attached.
     #[default]
     None,
-    /// The C++ controller cell of a JS-stream pump (`JSSink::assign_to_stream`).
+    /// The C++ controller cell of a JS-stream pump (`ReadableSinkController::assign_to_stream`).
     JSController(JSValue),
     ByteStream(BackRef<crate::webcore::ByteStream>),
     FileReader(BackRef<crate::webcore::FileReader>),
@@ -927,7 +936,7 @@ impl SourceHandle {
     }
 
     fn close_js_controller(global: &JSGlobalObject, cpp: JSValue, reason: JSValue) {
-        crate::dispatch::fold(ReadableSinkController::on_close(global, cpp, reason));
+        crate::dispatch::fold(ReadableSinkController::on_close(cpp, global, reason));
     }
 
     pub fn ready(&mut self, _amount: Option<BlobSizeType>, _offset: Option<BlobSizeType>) {
@@ -938,7 +947,7 @@ impl SourceHandle {
                 if global.has_exception() {
                     return;
                 }
-                crate::dispatch::fold(ReadableSinkController::on_ready(global, cpp));
+                crate::dispatch::fold(ReadableSinkController::on_ready(cpp, global));
             }
             SourceHandle::ByteStream(p) => p.on_ready(),
             SourceHandle::FileReader(p) => p.on_ready(),
@@ -1570,22 +1579,6 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         bun_sys::Result::Ok(self.park_pending_flush(cx.global()))
     }
 
-    pub fn flush(&mut self) -> bun_sys::Result<()> {
-        bun_core::scoped_log!(HTTPServerWritableLog, "flush()");
-        self.unregister_auto_flusher();
-
-        if !self.has_backpressure() || self.is_done() {
-            return bun_sys::Result::Ok(());
-        }
-
-        if self.res.is_none() || self.any_res().unwrap().has_responded() {
-            self.mark_done();
-            self.source.close(None);
-        }
-
-        bun_sys::Result::Ok(())
-    }
-
     pub fn write(&mut self, data: &StreamResult) -> Writable {
         if self.is_done() || self.requested_end {
             return Writable::Owned(0);
@@ -2204,10 +2197,6 @@ impl NetworkSink {
         // Wake the upstream source (JS controller onPull or native ByteStream
         // resume). No-op when `source` is `None` (the `writer()` path).
         source.ready(None, None);
-    }
-
-    pub fn flush(&mut self) -> bun_sys::Result<()> {
-        bun_sys::Result::Ok(())
     }
 
     pub(crate) fn flush_from_js(

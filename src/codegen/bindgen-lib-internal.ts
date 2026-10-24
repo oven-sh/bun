@@ -2439,9 +2439,9 @@ export interface BuiltinField {
 export interface ConstantField {
   constant: number;
   /** Defaults to the class's. */
-  enumerable?: boolean;
-  /** Defaults to the class's. */
   configurable?: boolean;
+  /** Defaults to the class's. */
+  enumerable?: boolean;
 }
 
 /** Several functions are the overloads of one. `rustName` tells their Rust functions apart. A key that starts with `@@` is a well-known symbol: `@@iterator` is `Symbol.iterator`. */
@@ -2623,14 +2623,14 @@ export class Builtin {
 export class Constant {
   readonly name: string;
   readonly value: number;
-  readonly enumerable: boolean | undefined;
   readonly configurable: boolean | undefined;
+  readonly enumerable: boolean | undefined;
   constructor(name: string, options: ConstantField) {
     assert(Number.isSafeInteger(options.constant), `${name}: a constant is an integer`);
     this.name = name;
     this.value = options.constant;
-    this.enumerable = options.enumerable;
     this.configurable = options.configurable;
+    this.enumerable = options.enumerable;
   }
 }
 

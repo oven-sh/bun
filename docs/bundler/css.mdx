@@ -652,7 +652,7 @@ Media query range syntax expresses breakpoints with comparison operators (`<`, `
 }
 ```
 
-When a target browser has no range syntax (before Chrome 104 and Safari 16.4), Bun's CSS bundler converts range queries to traditional media query syntax:
+When a target browser has no range syntax (Chrome before 104, Safari before 16.4), Bun's CSS bundler converts range queries to traditional media query syntax:
 
 ```css title="styles.css" icon="file-code"
 /* Converted to traditional min/max syntax */
@@ -678,13 +678,20 @@ When a target browser has no range syntax (before Chrome 104 and Safari 16.4), B
 }
 ```
 
-The `min-` and `max-` prefixes are inclusive. Bun writes an exclusive bound (`<` or `>`) as the negation of the opposite inclusive bound, so the bound stays exclusive and nothing is added to its value. A query with an exclusive bound and other conditions becomes nested `@media` rules, and a `not` query becomes a comma-separated list. An integer feature has an exact inclusive neighbor: `(color > 2)` becomes `(min-color: 3)`.
+The `min-` and `max-` prefixes are inclusive. Bun writes an exclusive bound (`<` or `>`) as the negation of the opposite inclusive bound: `(width < 768px)` becomes `not all and (min-width: 768px)`. The bound stays exclusive, and Bun adds nothing to its value.
+
+Browsers without range syntax negate only a whole query. Bun rewrites a query that has an exclusive bound and other conditions:
+
+- The query becomes nested `@media` rules: one for each exclusive bound, and one for the other conditions.
+- A `not` query becomes a comma-separated list: `not print and (width < 768px)` becomes `not print, (min-width: 768px)`.
+- When two or more queries of one list need nested rules, Bun writes the block once for each of them.
+- An integer feature has an exact inclusive neighbor: `(color > 2)` becomes `(min-color: 3)`.
+- A `resolution` bound also gets the condition `(resolution)`. Safari before 16 matches no `resolution` feature, so the negation alone always matches there.
 
 Bun keeps an exclusive bound as written in these cases. Browsers without range syntax then skip the rule:
 
 - The bound is under `or`, or under a `not` together with other conditions.
-- An `@import` query has other conditions beside the bound.
-- The query list needs more than 8 nested rules.
+- An `@import` query needs more than one rule, because an `@import` has no block for a nested rule.
 - The query is a `@custom-media` definition.
 
 ### Shorthands

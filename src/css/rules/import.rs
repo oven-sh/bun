@@ -76,7 +76,7 @@ impl ImportConditions {
 
         if !self.media.media_queries.is_empty() {
             dest.write_char(b' ')?;
-            self.media.to_css(dest)?;
+            self.media.to_css_after_import(dest)?;
         }
         Ok(())
     }
@@ -234,7 +234,7 @@ impl ImportRule {
 
         if !self.media.media_queries.is_empty() {
             dest.write_char(b' ')?;
-            self.media.to_css(dest)?;
+            self.media.to_css_after_import(dest)?;
         }
         dest.write_str(";")
     }

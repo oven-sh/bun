@@ -102,6 +102,25 @@ impl<'a> ImportInfo<'a> {
     }
 }
 
+/// Maximum number of bytes that duplicate passes may emit across a whole
+/// stylesheet (see `Printer::duplicate_pass_bytes`).
+///
+/// When a style rule's selector list carries more than one vendor prefix (e.g.
+/// a list mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a
+/// single pseudo downleveled to several prefixes), `StyleRule::to_css`
+/// serializes the rule once per prefix, and every pass after the first
+/// re-serializes the rule's whole body — declarations, nested rules, and
+/// everything under them. Nesting such rules repeats that body once per prefix
+/// at every level, so the output grows by (prefix count)^depth. The bytes
+/// emitted by each duplicate pass are measured and bounded, so a few kilobytes
+/// of deeply nested input cannot expand into gigabytes — whatever the
+/// duplicated payload is (nested rules, a large declaration block, etc.). Real
+/// stylesheets repeat only a little output across prefixes; anything past this
+/// limit is a runaway expansion, so bail out with an error instead of
+/// allocating gigabytes. Complements `MAX_NESTING_EXPANSIONS`
+/// (`selectors/selector.rs`) and `MAX_SELECTOR_EXPANSION` (`rules/mod.rs`).
+const MAX_DUPLICATE_PASS_BYTES: usize = 64 << 20;
+
 /// A `Printer` represents a destination to output serialized CSS, as used in
 /// the [ToCss](super::traits::ToCss) trait. It can wrap any destination that
 /// implements [std::fmt::Write](std::fmt::Write), such as a [String](String).
@@ -121,6 +140,9 @@ pub struct Printer<'a> {
     pub(crate) col: u32,
     pub(crate) minify: bool,
     pub(crate) targets: Targets,
+    /// `targets.should_compile_same(Feature::MediaRangeSyntax)`, read once: every
+    /// `@media` rule and `@import` prelude tests it before it prints.
+    pub(crate) lower_media_ranges: bool,
     pub(crate) vendor_prefix: css::VendorPrefix,
     /// True while nested rules are being re-serialized for a non-final vendor
     /// prefix pass of an ancestor style rule (when nesting is compiled away).
@@ -163,7 +185,10 @@ pub struct Printer<'a> {
     /// has no passes after the first), emit nothing here. A flat multi-prefix
     /// rule's later passes do count, but without nesting to compound them that
     /// stays linear in the input.
-    pub(crate) prefix_expansion_bytes: usize,
+    ///
+    /// `MediaRule::to_css` charges the same budget: a query list that lowers to
+    /// several chains of nested rules holds one copy of its block per chain.
+    pub(crate) duplicate_pass_bytes: usize,
     pub(crate) scratchbuf: BumpVec<'a, u8>,
     pub(crate) error_kind: Option<css::PrinterError>,
     pub(crate) import_info: Option<ImportInfo<'a>>,
@@ -205,11 +230,25 @@ impl<'a> Printer<'a> {
     }
 
     /// Total number of bytes written to the destination so far. Used to measure
-    /// how much output a duplicate vendor-prefix pass emits (see
-    /// `prefix_expansion_bytes`).
+    /// how much output a duplicate pass emits (see `duplicate_pass_bytes`).
     #[inline]
     pub(crate) fn bytes_written(&self) -> usize {
         Self::get_written_amt(self.dest)
+    }
+
+    /// Charges the bytes written since `bytes_before` to `duplicate_pass_bytes`, and
+    /// fails with `exceeded` once more than `MAX_DUPLICATE_PASS_BYTES` are charged.
+    pub(crate) fn charge_duplicate_pass(
+        &mut self,
+        bytes_before: usize,
+        exceeded: css::PrinterErrorKind,
+    ) -> PrintResult<()> {
+        let emitted = self.bytes_written().saturating_sub(bytes_before);
+        self.duplicate_pass_bytes = self.duplicate_pass_bytes.saturating_add(emitted);
+        if self.duplicate_pass_bytes > MAX_DUPLICATE_PASS_BYTES {
+            return self.new_error(exceeded, None);
+        }
+        Ok(())
     }
 
     /// Returns the current source filename that is being printed.
@@ -280,6 +319,10 @@ impl<'a> Printer<'a> {
             dest,
             minify: options.minify,
             targets: options.targets,
+            lower_media_ranges: options.targets.should_compile(
+                css::compat::Feature::MediaRangeSyntax,
+                css::targets::Features::MEDIA_RANGE_SYNTAX,
+            ),
             dependencies: if options.analyze_dependencies.is_some() {
                 Some(BumpVec::new_in(arena))
             } else {
@@ -310,7 +353,7 @@ impl<'a> Printer<'a> {
             css_module: None,
             ctx: None,
             nesting_expansions: 0,
-            prefix_expansion_bytes: 0,
+            duplicate_pass_bytes: 0,
             error_kind: None,
         }
     }

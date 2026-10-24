@@ -2144,58 +2144,111 @@ c {
     outfile: "/out.css",
   });
 
-  // A default build keeps a strict bound strict: `(width < 1024px)` and
-  // `(width >= 1024px)` never both match at 1024px. Default targets without range
-  // syntax get the bound as a negation with the value as written. Default targets with
-  // range syntax get the query as written.
-  itBundled("css/MediaRangeStrictBoundDefaultTarget", {
-    files: {
-      "/entry.css": /* css */ `
-        @import "https://example.com/narrow.css" (width < 1024px);
-        @import "./tablet.css" screen and (640px <= width < 1024px);
-        @media (width < 1024px) { .nav { display: none } }
-        @media (width >= 1024px) { .burger { display: none } }
-        @media (width > 1280px) { .wide { color: red } }
-        @media (width < 64rem) { .rem { color: red } }
-      `,
-      "/tablet.css": /* css */ `.tablet { color: red }`,
-    },
-    outfile: "/out.css",
-    onAfterBundle(api) {
-      const rule = (prelude: string, selector: string, declaration: string) =>
-        [`@media ${prelude} {`, `  ${selector} {`, `    ${declaration};`, "  }", "}", ""].join("\n");
-      const lowered = [
-        '@import "https://example.com/narrow.css" not all and (min-width: 1024px);',
-        "",
-        "/* tablet.css */",
-        "@media screen and (min-width: 640px) {",
-        "  @media not all and (min-width: 1024px) {",
-        "    .tablet {",
-        "      color: red;",
-        "    }",
-        "  }",
-        "}",
-        "",
-        "/* entry.css */",
-        rule("not all and (min-width: 1024px)", ".nav", "display: none"),
-        rule("(min-width: 1024px)", ".burger", "display: none"),
-        rule("not all and (max-width: 1280px)", ".wide", "color: red"),
-        rule("not all and (min-width: 64rem)", ".rem", "color: red"),
-      ].join("\n");
-      const asWritten = [
-        '@import "https://example.com/narrow.css" (width < 1024px);',
-        "",
-        "/* tablet.css */",
-        rule("screen and (640px <= width < 1024px)", ".tablet", "color: red"),
-        "/* entry.css */",
-        rule("(width < 1024px)", ".nav", "display: none"),
-        rule("(width >= 1024px)", ".burger", "display: none"),
-        rule("(width > 1280px)", ".wide", "color: red"),
-        rule("(width < 64rem)", ".rem", "color: red"),
-      ].join("\n");
-      expect([lowered, asWritten]).toContain(api.readFile("/out.css"));
-    },
-  });
+  // The default browser targets have no range syntax (Chrome 87, Safari 14). A default
+  // build keeps a strict bound strict: `(width < 1024px)` and `(width >= 1024px)` never
+  // both match at 1024px. The bound is a negation, with the value as written.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`css/MediaRangeStrictBound/${backend}`, {
+      backend,
+      files: {
+        "/entry.css": /* css */ `
+          @import "https://example.com/narrow.css" (width < 1024px);
+          @import "https://example.com/screen.css" screen and (width < 1024px);
+          @import "./tablet.css" screen and (640px <= width < 1024px);
+          @import "./chain.css" (width < 1024px);
+          @media (width < 1024px) { .nav { display: none } }
+          @media (width >= 1024px) { .burger { display: none } }
+          @media (width > 1280px) { .wide { color: red } }
+          @media (width < 64rem) { .rem { color: red } }
+          .card { color: blue; @media screen and (width < 768px) { color: red } }
+          @supports (display: grid) { @media (width < 768px) { .grid { display: grid } } }
+          @layer base { @media (hover) and (width > 1280px) { .hover { color: red } } }
+        `,
+        "/tablet.css": /* css */ `.tablet { color: red }`,
+        "/chain.css": /* css */ `@import "https://example.com/short.css" (height < 500px);`,
+      },
+      outfile: "/out.css",
+      onAfterBundle(api) {
+        expect(api.readFile("/out.css")).toBe(
+          [
+            // An `@import` has no block to nest rules in. It is lowered when one rule
+            // states its whole list.
+            '@import "https://example.com/narrow.css" not all and (min-width: 1024px);',
+            '@import "https://example.com/screen.css" screen and (width < 1024px);',
+            '@import "data:text/css,@import \\"https://example.com/short.css\\" not all and (min-height: 500px);" not all and (min-width: 1024px);',
+            "",
+            "/* tablet.css */",
+            "@media screen and (min-width: 640px) {",
+            "  @media not all and (min-width: 1024px) {",
+            "    .tablet {",
+            "      color: red;",
+            "    }",
+            "  }",
+            "}",
+            "",
+            "/* chain.css */",
+            "",
+            "",
+            "/* entry.css */",
+            "@media not all and (min-width: 1024px) {",
+            "  .nav {",
+            "    display: none;",
+            "  }",
+            "}",
+            "",
+            "@media (min-width: 1024px) {",
+            "  .burger {",
+            "    display: none;",
+            "  }",
+            "}",
+            "",
+            "@media not all and (max-width: 1280px) {",
+            "  .wide {",
+            "    color: red;",
+            "  }",
+            "}",
+            "",
+            "@media not all and (min-width: 64rem) {",
+            "  .rem {",
+            "    color: red;",
+            "  }",
+            "}",
+            "",
+            ".card {",
+            "  color: #00f;",
+            "}",
+            "",
+            "@media screen {",
+            "  @media not all and (min-width: 768px) {",
+            "    .card {",
+            "      color: red;",
+            "    }",
+            "  }",
+            "}",
+            "",
+            "@supports (display: grid) {",
+            "  @media not all and (min-width: 768px) {",
+            "    .grid {",
+            "      display: grid;",
+            "    }",
+            "  }",
+            "}",
+            "",
+            "@layer base {",
+            "  @media (hover) {",
+            "    @media not all and (max-width: 1280px) {",
+            "      .hover {",
+            "        color: red;",
+            "      }",
+            "    }",
+            "  }",
+            "}",
+            "",
+          ].join("\n"),
+        );
+      },
+    });
+  }
 
   // This test mainly just makes sure that this scenario doesn't crash
   itBundled("css/CSSAndJavaScriptCodeSplittingESBuildIssue1064", {

@@ -1,5 +1,7 @@
+use crate::css_parser::MAX_NESTING_DEPTH;
 use crate::css_rules::{CssRuleList, Location};
-use crate::media_query::{LoweredClauses, MediaList};
+use crate::error::PrinterErrorKind;
+use crate::media_query::{LoweredList, MediaList};
 use crate::{PrintErr, Printer};
 
 /// A `@media` rule.
@@ -24,33 +26,67 @@ impl<R> MediaRule<R> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
-        if let Some(clauses) = self.query.lowered_clauses(&dest.targets) {
-            return self.write_clauses(&clauses, 0, dest);
+        if let Some(lowered) = self.query.lowered(dest) {
+            return self.to_css_lowered(&lowered, dest);
         }
 
         dest.write_str("@media ")?;
-        self.query.to_css_as_written(dest)?;
+        self.query.to_css(dest)?;
         dest.block(|d| {
             d.newline()?;
             self.rules.to_css(d)
         })
     }
 
-    /// Writes one `@media` per clause from `clause` on, each nested in the one before,
-    /// around the rules: nesting is how CSS says "and" between query lists.
+    /// Writes the rules once for each chain of `lowered`, inside the nested `@media`
+    /// rules of that chain.
     #[cold]
-    fn write_clauses(
+    fn to_css_lowered(
         &self,
-        clauses: &LoweredClauses<'_>,
+        lowered: &LoweredList<'_>,
+        dest: &mut Printer,
+    ) -> Result<(), PrintErr> {
+        for chain in 0..lowered.chains() {
+            let depth = lowered.depth(chain);
+            // The parser reads no stylesheet that nests deeper, so a block in the
+            // source cannot get here. A query with that many strict bounds can.
+            if dest.indent_amt / 2 + depth > MAX_NESTING_DEPTH {
+                return dest.new_error(PrinterErrorKind::maximum_media_query_expansion, None);
+            }
+            if chain == 0 {
+                self.write_chain(lowered, chain, 0, depth, dest)?;
+                continue;
+            }
+            if !dest.minify {
+                dest.write_char(b'\n')?;
+            }
+            dest.newline()?;
+            let bytes_before = dest.bytes_written();
+            self.write_chain(lowered, chain, 0, depth, dest)?;
+            dest.charge_duplicate_pass(
+                bytes_before,
+                PrinterErrorKind::maximum_media_query_expansion,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Writes rule number `clause` of the chain, around the rules after it and the
+    /// block: nesting is how CSS says "and" between query lists.
+    fn write_chain(
+        &self,
+        lowered: &LoweredList<'_>,
+        chain: u32,
         clause: u32,
+        depth: u32,
         dest: &mut Printer,
     ) -> Result<(), PrintErr> {
         dest.write_str("@media ")?;
-        clauses.write(clause, dest)?;
+        lowered.write(chain, clause, dest)?;
         dest.block(|d| {
             d.newline()?;
-            if clause + 1 < clauses.count() {
-                self.write_clauses(clauses, clause + 1, d)
+            if clause + 1 < depth {
+                self.write_chain(lowered, chain, clause + 1, depth, d)
             } else {
                 self.rules.to_css(d)
             }

@@ -72,25 +72,6 @@ impl<R> StyleRule<R> {
 
 // ─── to_css ───────────────────────────────────────────────────────────────
 
-/// Maximum number of bytes the per-vendor-prefix serialization may emit from
-/// duplicate passes across a whole stylesheet.
-///
-/// When a style rule's selector list carries more than one vendor prefix (e.g.
-/// a list mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a
-/// single pseudo downleveled to several prefixes), `StyleRule::to_css`
-/// serializes the rule once per prefix, and every pass after the first
-/// re-serializes the rule's whole body — declarations, nested rules, and
-/// everything under them. Nesting such rules repeats that body once per prefix
-/// at every level, so the output grows by (prefix count)^depth. The bytes
-/// emitted by each duplicate pass are measured and bounded, so a few kilobytes
-/// of deeply nested input cannot expand into gigabytes — whatever the
-/// duplicated payload is (nested rules, a large declaration block, etc.). Real
-/// stylesheets repeat only a little output across prefixes; anything past this
-/// limit is a runaway expansion, so bail out with an error instead of
-/// allocating gigabytes. Complements `MAX_NESTING_EXPANSIONS`
-/// (`selectors/selector.rs`) and `MAX_SELECTOR_EXPANSION` (`rules/mod.rs`).
-const MAX_PREFIX_EXPANSION_BYTES: usize = 64 << 20;
-
 impl<R> StyleRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.vendor_prefix.is_empty() {
@@ -131,15 +112,10 @@ impl<R> StyleRule<R> {
                     };
                     self.to_css_base(dest, remaining_prefixes.is_empty())?;
                     if is_duplicate_pass {
-                        let emitted = dest.bytes_written().saturating_sub(bytes_before);
-                        dest.prefix_expansion_bytes =
-                            dest.prefix_expansion_bytes.saturating_add(emitted);
-                        if dest.prefix_expansion_bytes > MAX_PREFIX_EXPANSION_BYTES {
-                            return dest.new_error(
-                                css::error::PrinterErrorKind::maximum_vendor_prefix_expansion,
-                                None,
-                            );
-                        }
+                        dest.charge_duplicate_pass(
+                            bytes_before,
+                            css::error::PrinterErrorKind::maximum_vendor_prefix_expansion,
+                        )?;
                     }
                     // A non-final pass emits nothing when the rule has no
                     // declarations of its own and all of its nested rules are

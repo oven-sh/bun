@@ -218,6 +218,11 @@ pub enum PrinterErrorKind {
     invalid_composes_selector,
     /// The CSS modules pattern must end with `[local]` for use in CSS grid.
     invalid_css_modules_pattern_in_grid,
+    /// A strict media query range bound is lowered to nested `@media` rules, and a
+    /// list with several such queries repeats its block once per query. The rules
+    /// nested deeper than the parser reads, or the repeated bytes exceeded the
+    /// expansion limit.
+    maximum_media_query_expansion,
     /// Substituting parent selectors for `&` while compiling CSS nesting for
     /// the configured targets exceeded the expansion limit.
     maximum_nesting_expansion,
@@ -247,6 +252,9 @@ impl fmt::Display for PrinterErrorKind {
             Self::invalid_css_modules_pattern_in_grid => {
                 f.write_str("CSS modules pattern must end with '[local]' when used in CSS grid")
             }
+            Self::maximum_media_query_expansion => f.write_str(
+                "Maximum media query expansion exceeded when compiling range syntax for the configured targets",
+            ),
             Self::maximum_nesting_expansion => f.write_str(
                 "Maximum nesting expansion exceeded when compiling CSS nesting for the configured targets",
             ),

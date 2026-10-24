@@ -493,7 +493,7 @@ pub(crate) fn parse_until_after<T, C>(
     result
 }
 
-const MAX_NESTING_DEPTH: u32 = 512;
+pub(crate) const MAX_NESTING_DEPTH: u32 = 512;
 
 /// Records that the block whose content starts at `start_position` failed to
 /// parse and turned out to be unclosed: the end of input was reached without

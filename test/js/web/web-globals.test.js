@@ -1,5 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it, test } from "bun:test";
+import { closeSync, existsSync, openSync, readSync } from "fs";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import { join } from "path";
 
@@ -448,12 +449,13 @@ test.concurrent.each([
 /**
  * Runs `script` with `input` as its stdin and returns what it wrote to stderr.
  * "pipe" holds the whole input after one write. "file" is a regular file at offset 0.
+ * "buffer" is what `stdin: Buffer` gives a child: a memfd on Linux, a pipe elsewhere.
  */
 async function runWithStdin(kind, script, input) {
   using dir = kind === "file" ? tempDir("web-globals-stdin", { "stdin.txt": input }) : undefined;
   await using proc = spawn({
     cmd: [bunExe(), "-e", script],
-    stdin: kind === "file" ? Bun.file(join(String(dir), "stdin.txt")) : "pipe",
+    stdin: kind === "file" ? Bun.file(join(String(dir), "stdin.txt")) : kind === "buffer" ? Buffer.from(input) : "pipe",
     stderr: "pipe",
     stdout: "ignore",
     env: bunEnv,
@@ -466,185 +468,257 @@ async function runWithStdin(kind, script, input) {
   return { stderr, exitCode };
 }
 
-const stdinKinds = ["pipe", "file"];
+/** What a script that ends with `console.error(JSON.stringify(value))` gives. */
+const printed = value => ({ stderr: JSON.stringify(value) + "\n", exitCode: 0 });
 
-test.concurrent.each([
-  ["LF", "hello\nrest-of-stdin\nmore\n", "hello"],
-  ["CRLF", "hello\r\nrest-of-stdin\nmore\n", "hello"],
-  ["empty LF", "\nrest-of-stdin\nmore\n", null],
-  ["empty CRLF", "\r\nrest-of-stdin\nmore\n", null],
-])("prompt() does not consume stdin past the newline (Bun.stdin, %s)", async (_, input, answer) => {
-  const { stderr, exitCode } = await runWithStdin(
-    "pipe",
-    `const r = prompt("Q?");
-     const rest = await Bun.stdin.text();
-     console.error(JSON.stringify({ r, rest }));`,
-    input,
-  );
-  expect(JSON.parse(stderr)).toEqual({ r: answer, rest: "rest-of-stdin\nmore\n" });
-  expect(exitCode).toBe(0);
+const promptLines = {
+  script: `const answers = [prompt("a?"), prompt("b?"), prompt("c?", "C"), prompt("d?", "D"), prompt("e?")];
+           console.error(JSON.stringify({ answers, rest: await Bun.stdin.text() }));`,
+  input: "hello\nworld\r\n\n\r\n\nrest-of-stdin\nmore\n",
+  printed: printed({ answers: ["hello", "world", "C", "D", null], rest: "rest-of-stdin\nmore\n" }),
+};
+
+test.concurrent("prompt() takes one line of a Buffer stdin", async () => {
+  expect(await runWithStdin("buffer", promptLines.script, promptLines.input)).toEqual(promptLines.printed);
 });
 
-test.concurrent("prompt() does not consume stdin past the newline (console async iterator)", async () => {
-  const { stderr, exitCode } = await runWithStdin(
-    "pipe",
-    `const r = prompt("Q?");
-     const lines = [];
-     for await (const line of console) lines.push(line);
-     console.error(JSON.stringify({ r, lines }));`,
-    "p\nx\ny",
-  );
-  expect(JSON.parse(stderr)).toEqual({ r: "p", lines: ["x", "y"] });
-  expect(exitCode).toBe(0);
-});
+describe.concurrent.each(["pipe", "file"])("a dialog takes one line of stdin (%s)", kind => {
+  test("prompt(): LF, CRLF and empty lines, then Bun.stdin.text()", async () => {
+    expect(await runWithStdin(kind, promptLines.script, promptLines.input)).toEqual(promptLines.printed);
+  });
 
-test.concurrent.each(stdinKinds)(
-  "prompt() does not consume stdin past the newline (fs.readFileSync(0), %s)",
-  async kind => {
-    const { stderr, exitCode } = await runWithStdin(
-      kind,
-      `import { readFileSync } from "node:fs";
-       const r = prompt("Q?");
-       const rest = readFileSync(0, "utf8");
-       console.error(JSON.stringify({ r, rest }));`,
-      "alice\nline2\nline3\n",
+  test("prompt(): lines around the size of one read, then fs.readFileSync(0)", async () => {
+    const lines = [10, 4095, 4096, 5000].map((length, i) => Buffer.alloc(length, String(i)).toString());
+    expect(
+      await runWithStdin(
+        kind,
+        `import { readFileSync } from "node:fs";
+         const lines = [10, 4095, 4096, 5000].map((length, i) => Buffer.alloc(length, String(i)).toString());
+         const answers = lines.map(() => prompt("?"));
+         const rest = readFileSync(0, "utf8");
+         console.error(JSON.stringify({
+           lengths: answers.map(answer => answer?.length),
+           same: answers.map((answer, i) => answer === lines[i]),
+           restLength: rest.length,
+           restSame: rest === Buffer.alloc(20000, "r").toString(),
+         }));`,
+        lines.join("\n") + "\n" + Buffer.alloc(20000, "r").toString(),
+      ),
+    ).toEqual(
+      printed({
+        lengths: [10, 4095, 4096, 5000],
+        same: [true, true, true, true],
+        restLength: 20000,
+        restSame: true,
+      }),
     );
-    expect(JSON.parse(stderr)).toEqual({ r: "alice", rest: "line2\nline3\n" });
-    expect(exitCode).toBe(0);
-  },
-);
+  });
 
-test.concurrent.each(stdinKinds)(
-  "prompt() does not consume stdin past the newline (stdin:'inherit' child, %s)",
-  async kind => {
-    const { stderr, exitCode } = await runWithStdin(
-      kind,
-      `const r = prompt("parent?");
-       const child = Bun.spawnSync({
-         cmd: [process.execPath, "-e", 'console.error(JSON.stringify({ c: prompt("child?") }))'],
-         stdin: "inherit",
-         stderr: "pipe",
-       });
-       console.error(JSON.stringify({ r, child: JSON.parse(child.stderr.toString()) }));`,
-      "PARENT\nCHILD\n",
-    );
-    expect(JSON.parse(stderr)).toEqual({ r: "PARENT", child: { c: "CHILD" } });
-    expect(exitCode).toBe(0);
-  },
-);
+  test("prompt(): text without a line end is not an answer", async () => {
+    expect(
+      await runWithStdin(
+        kind,
+        `const r = prompt("?"); console.error(JSON.stringify({ r, rest: await Bun.stdin.text() }));`,
+        "abc",
+      ),
+    ).toEqual(printed({ r: null, rest: "" }));
+  });
 
-test.concurrent("prompt() called twice leaves remaining stdin intact", async () => {
-  const { stderr, exitCode } = await runWithStdin(
-    "pipe",
-    `const a = prompt("A?");
-     const b = prompt("B?");
-     const rest = await Bun.stdin.text();
-     console.error(JSON.stringify({ a, b, rest }));`,
-    "first\nsecond\nleftover\n",
-  );
-  expect(JSON.parse(stderr)).toEqual({ a: "first", b: "second", rest: "leftover\n" });
-  expect(exitCode).toBe(0);
-});
+  test("a child that inherits stdin gets the line after prompt()", async () => {
+    expect(
+      await runWithStdin(
+        kind,
+        `const r = prompt("parent?");
+         const child = Bun.spawnSync({
+           cmd: [process.execPath, "-e", 'console.error(JSON.stringify(prompt("child?")))'],
+           stdin: "inherit",
+           stderr: "pipe",
+         });
+         console.error(JSON.stringify({ r, child: child.stderr.toString() }));`,
+        "PARENT\nCHILD\n",
+      ),
+    ).toEqual(printed({ r: "PARENT", child: '"CHILD"\n' }));
+  });
 
-test.concurrent.each([
-  ["a short line before 20000 bytes", 10, 20000],
-  ["a line longer than 4096 bytes", 5000, 5],
-])("prompt() takes one line of any length (%s)", async (_, lineLength, restLength) => {
-  const line = Buffer.alloc(lineLength, "a").toString();
-  const { stderr, exitCode } = await runWithStdin(
-    "pipe",
-    `const r = prompt("Q?");
-     const rest = await Bun.stdin.text();
-     console.error(JSON.stringify({ same: r === ${JSON.stringify(line)}, restLength: rest.length }));`,
-    line + "\n" + Buffer.alloc(restLength, "b").toString(),
-  );
-  expect(JSON.parse(stderr)).toEqual({ same: true, restLength });
-  expect(exitCode).toBe(0);
-});
-
-describe.each(stdinKinds)("prompt(), confirm() and alert() each consume exactly one line of stdin (%s)", kind => {
-  test.concurrent.each([
+  test.each([
     ["LF", "\n"],
     ["CRLF", "\r\n"],
-  ])("%s", async (_, eol) => {
-    const { stderr, exitCode } = await runWithStdin(
-      kind,
-      `const name = prompt("name?");
-       const yes = confirm("sure?");
-       const no = confirm("really?");
-       alert("hi");
-       const dflt = prompt("dflt?", "D");
-       const last = prompt("last?");
-       console.error(JSON.stringify({ name, yes, no, dflt, last }));`,
-      ["Alice", "y", "n", "", "", "last", ""].join(eol),
-    );
-    expect(JSON.parse(stderr)).toEqual({ name: "Alice", yes: true, no: false, dflt: "D", last: "last" });
-    expect(exitCode).toBe(0);
+  ])("prompt(), confirm() and alert() in turn (%s)", async (_, eol) => {
+    expect(
+      await runWithStdin(
+        kind,
+        `const name = prompt("name?");
+         const yes = confirm("yes?");
+         const no = confirm("no?");
+         const empty = confirm("empty?");
+         alert("hi");
+         const dflt = prompt("dflt?", "D");
+         const last = prompt("last?");
+         console.error(JSON.stringify({ name, yes, no, empty, dflt, last }));`,
+        ["Alice", "y", "n", "", "", "", "last", ""].join(eol),
+      ),
+    ).toEqual(printed({ name: "Alice", yes: true, no: false, empty: false, dflt: "D", last: "last" }));
+  });
+
+  // A rejected answer is followed by an accepted one, so an answer that leaves a byte behind shows.
+  test("confirm(): one line per answer", async () => {
+    const answers = [
+      ["y", true],
+      ["Y", true],
+      ["y\r", true],
+      ["Y\r", true],
+      ["", false],
+      ["\r", false],
+      ["n", false],
+      ["y", true],
+      ["n\r", false],
+      ["y", true],
+      ["yes", false],
+      ["y", true],
+      ["yes\r", false],
+      ["y", true],
+      ["y ", false],
+      [" y", false],
+      ["\rfoo", false],
+      ["y", true],
+      ["\ry", false],
+      ["y", true],
+      ["no\rway", false],
+      ["y", true],
+      ["y\rx", false],
+      ["y", true],
+    ];
+    expect(
+      await runWithStdin(
+        kind,
+        `const answers = [];
+         for (let i = 0; i < ${answers.length}; i++) answers.push(confirm("?"));
+         console.error(JSON.stringify({ answers, rest: await Bun.stdin.text() }));`,
+        answers.map(([line]) => line + "\n").join("") + "rest\n",
+      ),
+    ).toEqual(printed({ answers: answers.map(([, yes]) => yes), rest: "rest\n" }));
   });
 });
 
-test.concurrent.each([
-  ["LF", "n\nrest\n"],
-  ["CRLF", "n\r\nrest\n"],
-  ["word that starts with y, CRLF", "yes\r\nrest\n"],
-  ["CR inside the line", "no\rway\nrest\n"],
-  ["y, CR, then more", "y\rx\nrest\n"],
-])("confirm() consumes the whole line of a rejected answer (%s)", async (_, input) => {
-  const { stderr, exitCode } = await runWithStdin(
-    "pipe",
-    `const c = confirm("sure?");
-     const rest = await Bun.stdin.text();
-     console.error(JSON.stringify({ c, rest }));`,
-    input,
-  );
-  expect(JSON.parse(stderr)).toEqual({ c: false, rest: "rest\n" });
-  expect(exitCode).toBe(0);
+test.concurrent.each(["", "\r", "y", "y\r"])("confirm() is false when stdin ends after %j", async input => {
+  expect(
+    await runWithStdin(
+      "pipe",
+      `const c = confirm("?"); console.error(JSON.stringify({ c, rest: await Bun.stdin.text() }));`,
+      input,
+    ),
+  ).toEqual(printed({ c: false, rest: "" }));
 });
+
+// A stream of a regular-file stdin starts at byte 0, so this is a pipe.
+test.concurrent("the console async iterator gets what prompt() left", async () => {
+  expect(
+    await runWithStdin(
+      "pipe",
+      `const r = prompt("Q?");
+       const lines = [];
+       for await (const line of console) lines.push(line);
+       console.error(JSON.stringify({ r, lines }));`,
+      "p\nx\ny",
+    ),
+  ).toEqual(printed({ r: "p", lines: ["x", "y"] }));
+});
+
+test.concurrent("prompt() on a file stdin takes one line from the position that it inherits", async () => {
+  const header = "SECRET-HEADER\n";
+  using dir = tempDir("web-globals-stdin-offset", { "stdin.txt": header + "body1\nbody2\nbody3\n" });
+  // The child reads through the offset of this descriptor. This process takes the first line.
+  const stdin = openSync(join(String(dir), "stdin.txt"), "r");
+  try {
+    readSync(stdin, Buffer.alloc(header.length));
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { readSync } from "node:fs";
+         const answer = prompt("name?");
+         const next = Buffer.alloc(6);
+         console.error(JSON.stringify({ answer, next: next.toString("utf8", 0, readSync(0, next)) }));`,
+      ],
+      stdin,
+      stdout: "ignore",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const left = Buffer.alloc(64);
+    expect({ stderr, exitCode, left: left.toString("utf8", 0, readSync(stdin, left)) }).toEqual({
+      ...printed({ answer: "body1", next: "body2\n" }),
+      left: "body3\n",
+    });
+  } finally {
+    closeSync(stdin);
+  }
+});
+
+// `syscr` of /proc/thread-self/io counts the read calls of the thread. One sample costs `sample` of them.
+test.concurrent.skipIf(!existsSync("/proc/thread-self/io"))(
+  "prompt() takes a line of a regular-file stdin with one read",
+  async () => {
+    expect(
+      await runWithStdin(
+        "file",
+        `import { readFileSync } from "node:fs";
+         const syscr = () => Number(/syscr: (\\d+)/.exec(readFileSync("/proc/thread-self/io", "utf8"))[1]);
+         syscr();
+         const sample = -syscr() + syscr();
+         const before = syscr();
+         const length = prompt("?").length;
+         console.error(JSON.stringify({ length, reads: syscr() - before - sample }));`,
+        Buffer.alloc(3000, "a").toString() + "\nrest\n",
+      ),
+    ).toEqual(printed({ length: 3000, reads: 1 }));
+  },
+);
 
 const workerUrl = source => `URL.createObjectURL(new Blob([${JSON.stringify(source)}]))`;
 
 test.concurrent("prompt() in a Worker takes one line and the main thread takes the next", async () => {
-  const { stderr, exitCode } = await runWithStdin(
-    "pipe",
-    `const worker = new Worker(${workerUrl(`postMessage(prompt("worker?"));`)});
-     const { promise, resolve, reject } = Promise.withResolvers();
-     worker.onmessage = event => resolve(event.data);
-     worker.onerror = reject;
-     const fromWorker = await promise;
-     const fromMain = prompt("main?");
-     const rest = await Bun.stdin.text();
-     worker.terminate();
-     console.error(JSON.stringify({ fromWorker, fromMain, rest }));`,
-    "w\nm\nrest\n",
-  );
-  expect(JSON.parse(stderr)).toEqual({ fromWorker: "w", fromMain: "m", rest: "rest\n" });
-  expect(exitCode).toBe(0);
+  expect(
+    await runWithStdin(
+      "pipe",
+      `const worker = new Worker(${workerUrl(`postMessage(prompt("worker?"));`)});
+       const { promise, resolve, reject } = Promise.withResolvers();
+       worker.onmessage = event => resolve(event.data);
+       worker.onerror = reject;
+       const fromWorker = await promise;
+       const fromMain = prompt("main?");
+       const rest = await Bun.stdin.text();
+       worker.terminate();
+       console.error(JSON.stringify({ fromWorker, fromMain, rest }));`,
+      "w\nm\nrest\n",
+    ),
+  ).toEqual(printed({ fromWorker: "w", fromMain: "m", rest: "rest\n" }));
 });
 
-test.concurrent("prompt() on the main thread and in a Worker at the same time each take whole lines", async () => {
-  const lines = Array.from({ length: 200 }, (_, i) => `line ${i}`);
-  const readAll = `const got = []; for (let line; (line = prompt("")) !== null; ) got.push(line);`;
+/**
+ * Runs `script`, which starts a Worker with `workerSource` and then prints "ready", and gives it `input`
+ * after that line. The Worker posts "ready" before it reads, so both threads are about to read by then.
+ */
+async function runWithWorker(workerSource, script, input) {
   await using proc = spawn({
     cmd: [
       bunExe(),
       "-e",
-      `const worker = new Worker(${workerUrl(`postMessage("ready"); ${readAll} postMessage(got);`)});
+      `const worker = new Worker(${workerUrl(`postMessage("ready"); ${workerSource}`)});
        let message = Promise.withResolvers();
        worker.onmessage = event => message.resolve(event.data);
        worker.onerror = event => message.reject(event);
        await message.promise;
        message = Promise.withResolvers();
        console.error("ready");
-       ${readAll}
-       got.push(...(await message.promise));
-       console.error(JSON.stringify(got.sort()));`,
+       ${script}`,
     ],
     stdin: "pipe",
     stdout: "ignore",
     stderr: "pipe",
     env: bunEnv,
   });
-  // The input arrives when both threads are about to read, so they compete for the lines.
   let stderr = "";
   const ready = Promise.withResolvers();
   const stderrEnded = (async () => {
@@ -655,16 +729,55 @@ test.concurrent("prompt() on the main thread and in a Worker at the same time ea
     ready.reject(new Error(`exited before it was ready:\n${stderr}`));
   })();
   await ready.promise;
-  proc.stdin.write(lines.join("\n") + "\n");
+  proc.stdin.write(input);
   await proc.stdin.end();
   const [exitCode] = await Promise.all([proc.exited, stderrEnded]);
-  expect(JSON.parse(stderr.slice(stderr.indexOf("\n") + 1))).toEqual(lines.toSorted());
-  expect(exitCode).toBe(0);
+  return { stderr: stderr.slice(stderr.indexOf("\n") + 1), exitCode };
+}
+
+test.concurrent("a Worker and the main thread that wait in prompt() each get a line", async () => {
+  const lines = [Buffer.alloc(300, "a").toString(), Buffer.alloc(300, "b").toString()];
+  expect(
+    await runWithWorker(
+      `postMessage(prompt(""));`,
+      `const answers = [prompt(""), await message.promise];
+       console.error(JSON.stringify(answers.map(answer => answer?.length + " " + answer?.[0]).sort()));`,
+      lines.join("\n") + "\n",
+    ),
+  ).toEqual(printed(["300 a", "300 b"]));
+});
+
+test.concurrent("dialogs on the main thread and in a Worker at the same time take whole lines", async () => {
+  const count = 2000;
+  expect(
+    await runWithWorker(
+      `const got = [];
+       let yes = 0;
+       for (let line; (line = prompt("", "EMPTY")) !== null; ) {
+         got.push(line);
+         if (confirm("")) yes++;
+         alert("");
+       }
+       postMessage({ got, yes });`,
+      `const got = [];
+       for (let line; (line = prompt("", "EMPTY")) !== null; ) got.push(line);
+       const fromWorker = await message.promise;
+       const all = [...got, ...fromWorker.got];
+       const taken = got.length + 3 * fromWorker.got.length;
+       console.error(JSON.stringify({
+         notLines: all.filter(line => !/^line \\d+$/.test(line)),
+         duplicates: all.length - new Set(all).size,
+         yes: fromWorker.yes,
+         allTaken: taken >= ${count} && taken <= ${count} + 2,
+       }));`,
+      Array.from({ length: count }, (_, i) => `line ${i}\n`).join(""),
+    ),
+  ).toEqual(printed({ notLines: [], duplicates: 0, yes: 0, allTaken: true }));
 });
 
 /**
- * Runs `script` on a pseudo-terminal and returns the object that it prints after "RESULT:".
- * `steps` is a list of [text to wait for, keys to type once it shows].
+ * Runs `script` on a pseudo-terminal. `steps` is a list of [text to wait for, keys to type when it shows].
+ * The script prints its result with `printResult`.
  */
 async function runOnTerminal(script, steps) {
   let output = "";
@@ -697,41 +810,83 @@ async function runOnTerminal(script, steps) {
     proc.terminal.write(keys);
   }
   await waitFor("DONE");
-  const result = JSON.parse(Bun.stripANSI(output).match(/RESULT:(\{.*?\})DONE/)[1]);
+  const result = Bun.stripANSI(output).match(/RESULT:(.*?)DONE/)?.[1];
   proc.terminal.write("\r");
   return { result, exitCode: await exited };
 }
 
-// The script waits for one more line after "DONE", so the terminal is still open when the result is read.
+// The script waits for one more line after it, so the terminal is still open when the result is read.
 const printResult = object => `console.log("RESULT:" + JSON.stringify(${object}) + "DONE"); alert("");`;
+const onTerminal = value => ({ result: JSON.stringify(value), exitCode: 0 });
 
-test.concurrent("on a terminal, a rejected confirm() leaves nothing for the next prompt()", async () => {
+test.concurrent("on a terminal, each dialog takes the line that was typed for it", async () => {
   const long = Buffer.alloc(300, "abcdefghij").toString();
-  const { result, exitCode } = await runOnTerminal(
-    `const no = confirm("sure?");
-     const name = prompt("name?");
-     const long = prompt("long?");
-     ${printResult(`{ no, name, longLength: long.length, longSame: long === ${JSON.stringify(long)} }`)}`,
-    [
-      ["sure?", "n\r"],
-      ["name?", "Alice\r"],
-      ["long?", long + "\r"],
-    ],
+  expect(
+    await runOnTerminal(
+      `const no = confirm("no?");
+       const yes = confirm("yes?");
+       const enter = confirm("enter?");
+       alert("alert!");
+       const dflt = prompt("dflt?", "D");
+       const name = prompt("name?");
+       const long = prompt("long?");
+       ${printResult(`{ no, yes, enter, dflt, name, longLength: long.length, longSame: long === ${JSON.stringify(long)} }`)}`,
+      [
+        ["no?", "n\r"],
+        ["yes?", "y\r"],
+        ["enter?", "\r"],
+        ["alert!", "\r"],
+        ["dflt?", "\r"],
+        ["name?", "Alice\r"],
+        ["long?", long + "\r"],
+      ],
+    ),
+  ).toEqual(
+    onTerminal({ no: false, yes: true, enter: false, dflt: "D", name: "Alice", longLength: 300, longSame: true }),
   );
-  expect(result).toEqual({ no: false, name: "Alice", longLength: 300, longSame: true });
-  expect(exitCode).toBe(0);
 });
 
 test.concurrent("on a terminal in raw mode, Enter ends a rejected confirm()", async () => {
-  const { result, exitCode } = await runOnTerminal(
-    `process.stdin.setRawMode(true);
-     const no = confirm("sure?");
-     process.stdin.setRawMode(false);
-     ${printResult(`{ no }`)}`,
-    [["sure?", "n\r"]],
-  );
-  expect(result).toEqual({ no: false });
-  expect(exitCode).toBe(0);
+  expect(
+    await runOnTerminal(
+      `process.stdin.setRawMode(true);
+       const no = confirm("sure?");
+       process.stdin.setRawMode(false);
+       const next = prompt("next?");
+       ${printResult(`{ no, next }`)}`,
+      [
+        ["sure?", "n\r"],
+        ["next?", "x\r"],
+      ],
+    ),
+  ).toEqual(onTerminal({ no: false, next: "x" }));
+});
+
+// Ctrl-D is not a key of the Windows console.
+test.concurrent.skipIf(isWindows)("on a terminal, Ctrl-D after text does not end prompt()", async () => {
+  expect(
+    await runOnTerminal(`const a = prompt("A?"); ${printResult(`{ a }`)}`, [
+      ["A?", "abc\x04"],
+      ["A?", "def\r"],
+    ]),
+  ).toEqual(onTerminal({ a: "abcdef" }));
+});
+
+// The script reads "!" in raw mode, so both lines are in the terminal before it leaves raw mode.
+test.concurrent.skipIf(isWindows)("on a terminal, lines typed in raw mode are taken one at a time", async () => {
+  expect(
+    await runOnTerminal(
+      `import { readSync } from "node:fs";
+       process.stdin.setRawMode(true);
+       console.log("raw");
+       readSync(0, Buffer.alloc(1));
+       process.stdin.setRawMode(false);
+       const one = prompt("one?");
+       const two = prompt("two?");
+       ${printResult(`{ one, two }`)}`,
+      [["raw", "!one\ntwo\n"]],
+    ),
+  ).toEqual(onTerminal({ one: "one", two: "two" }));
 });
 
 test("globalThis.self = 123 works", () => {

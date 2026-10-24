@@ -492,25 +492,16 @@ pub mod windows_stdio {
     static CONSOLE_OUTPUT_CODEPAGE: core::sync::atomic::AtomicU32 =
         core::sync::atomic::AtomicU32::new(0);
 
-    /// How the console delivers stdin, when stdin is a console.
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub(super) enum ConsoleInput {
-        NotConsole,
-        /// `ENABLE_LINE_INPUT`: a read returns on Enter, with the line and its CR LF.
-        Line,
-        /// A read returns keys as they are typed, and Enter is a lone CR.
-        Raw,
-    }
-
-    pub(super) fn console_input(fd: Fd) -> ConsoleInput {
+    pub(super) fn line_source(fd: Fd) -> LineSource {
         let mut mode: w::DWORD = 0;
         if GetConsoleMode(fd.native(), &mut mode) == 0 {
-            return ConsoleInput::NotConsole;
+            return LineSource::Bytes;
         }
+        // Console hosts before Windows Terminal 1.19 cut a typed line to the size of the read.
         if mode & w::ENABLE_LINE_INPUT != 0 {
-            ConsoleInput::Line
+            LineSource::TerminalLine
         } else {
-            ConsoleInput::Raw
+            LineSource::RawTerminal
         }
     }
 
@@ -2648,7 +2639,7 @@ pub fn err_fmt(formatter: impl fmt::Display) {
 // `prompt`/`init`/`publish` callers can read stdin without naming bun_sys.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Synchronous reader of the process stdin. It keeps no bytes, so the next reader of fd 0 finds them.
+/// Synchronous reader of the process stdin. It keeps no bytes between calls.
 pub struct StdinReader {
     fd: Fd,
 }
@@ -2724,67 +2715,91 @@ fn read_stdin_byte(fd: Fd) -> crate::CrateResult<u8> {
     }
 }
 
-/// Keeps two threads that wait for an answer (the main thread and a Worker) from sharing one typed line.
+/// Keeps two threads in a dialog from sharing one line. No JS and no other wait may run under it.
 static STDIN_LINE_LOCK: crate::Mutex<()> = crate::Mutex::new(());
+
+/// How one line is taken from stdin without a byte of the next one.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LineSource {
+    /// One byte per read. A pipe or a socket cannot give bytes back.
+    Bytes,
+    /// One byte per read, on a terminal in raw mode, where Enter is a lone CR.
+    RawTerminal,
+    /// A terminal in line mode gives one typed line to one read.
+    TerminalLine,
+    /// A regular file is read at its offset, and the offset then moves past the line.
+    #[cfg(unix)]
+    File,
+}
 
 /// One line of stdin, from its first byte through its LF.
 struct StdinLine {
     fd: Fd,
-    _lock: crate::MutexGuard<'static, ()>,
-    #[cfg(windows)]
-    console: windows_stdio::ConsoleInput,
-    #[cfg(windows)]
+    source: LineSource,
+    _lock: Option<crate::MutexGuard<'static, ()>>,
     chunk: [u8; 4096],
-    #[cfg(windows)]
     chunk_pos: usize,
-    #[cfg(windows)]
     chunk_len: usize,
+    #[cfg(unix)]
+    chunk_offset: libc::off_t,
 }
 
 impl StdinLine {
     fn begin(fd: Fd) -> Self {
+        let lock = STDIN_LINE_LOCK.lock();
+        #[cfg(unix)]
+        let (source, chunk_offset) = stdin_unix::line_source(fd.native());
+        #[cfg(windows)]
+        let source = windows_stdio::line_source(fd);
         Self {
             fd,
-            _lock: STDIN_LINE_LOCK.lock(),
-            #[cfg(windows)]
-            console: windows_stdio::console_input(fd),
-            #[cfg(windows)]
+            source,
+            // The terminal gives a whole line to one reader, so no thread has to wait behind this one.
+            _lock: (source != LineSource::TerminalLine).then_some(lock),
             chunk: [0; 4096],
-            #[cfg(windows)]
             chunk_pos: 0,
-            #[cfg(windows)]
             chunk_len: 0,
+            #[cfg(unix)]
+            chunk_offset,
         }
     }
 
     fn next_byte(&mut self) -> crate::CrateResult<u8> {
-        // A line-input console returns one line per `ReadFile`, and old hosts cut it to the request size.
-        #[cfg(windows)]
-        if self.console == windows_stdio::ConsoleInput::Line {
-            if self.chunk_pos == self.chunk_len {
-                self.chunk_len = output_sink().read(self.fd, &mut self.chunk)?;
-                self.chunk_pos = 0;
-                if self.chunk_len == 0 {
-                    return Err(crate::CrateError::EndOfStream);
-                }
-            }
-            let byte = self.chunk[self.chunk_pos];
-            self.chunk_pos += 1;
-            return Ok(byte);
+        if matches!(self.source, LineSource::Bytes | LineSource::RawTerminal) {
+            return read_stdin_byte(self.fd);
         }
-        read_stdin_byte(self.fd)
+        if self.chunk_pos == self.chunk_len {
+            let filled = self.fill_chunk()?;
+            #[cfg(unix)]
+            {
+                self.chunk_offset += self.chunk_len as libc::off_t;
+            }
+            self.chunk_len = filled;
+            self.chunk_pos = 0;
+            if filled == 0 {
+                return Err(crate::CrateError::EndOfStream);
+            }
+        }
+        let byte = self.chunk[self.chunk_pos];
+        self.chunk_pos += 1;
+        Ok(byte)
+    }
+
+    fn fill_chunk(&mut self) -> crate::CrateResult<usize> {
+        #[cfg(unix)]
+        if self.source == LineSource::File {
+            let offset = self.chunk_offset + self.chunk_len as libc::off_t;
+            return stdin_unix::pread(self.fd.native(), &mut self.chunk, offset);
+        }
+        output_sink().read(self.fd, &mut self.chunk)
     }
 
     fn skip_rest(&mut self) {
         while !matches!(self.next_byte(), Err(_) | Ok(b'\n')) {}
     }
 
-    /// Raw mode sends a lone CR for Enter, so on a terminal a CR ends the answer too.
     fn skip_rejected_answer(&mut self) {
-        #[cfg(windows)]
-        let cr_ends_answer = self.console == windows_stdio::ConsoleInput::Raw;
-        #[cfg(not(windows))]
-        let cr_ends_answer = is_stdin_tty();
+        let cr_ends_answer = self.source == LineSource::RawTerminal;
         loop {
             match self.next_byte() {
                 Err(_) | Ok(b'\n') => return,
@@ -2795,7 +2810,99 @@ impl StdinLine {
     }
 }
 
-/// The reader of stdin for the dialogs, `bun init`, `bun publish` and the key-driven menus.
+#[cfg(unix)]
+impl Drop for StdinLine {
+    fn drop(&mut self) {
+        if self.source == LineSource::File {
+            stdin_unix::seek(
+                self.fd.native(),
+                self.chunk_offset + self.chunk_pos as libc::off_t,
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+mod stdin_unix {
+    use super::LineSource;
+    use core::ffi::c_int;
+    use core::mem::MaybeUninit;
+
+    pub(super) fn line_source(fd: c_int) -> (LineSource, libc::off_t) {
+        if super::is_stdin_tty() {
+            let source = match is_canonical(fd) {
+                // Linux gives every line that was typed in raw mode to the first read in line mode.
+                Some(true) if !has_input(fd) => LineSource::TerminalLine,
+                Some(false) => LineSource::RawTerminal,
+                _ => LineSource::Bytes,
+            };
+            return (source, 0);
+        }
+        match regular_file_offset(fd) {
+            Some(offset) => (LineSource::File, offset),
+            None => (LineSource::Bytes, 0),
+        }
+    }
+
+    fn is_canonical(fd: c_int) -> Option<bool> {
+        let mut termios = MaybeUninit::<libc::termios>::zeroed();
+        // SAFETY: `termios` is valid for one `termios`, and all-zero is a valid one.
+        let termios = unsafe {
+            if libc::tcgetattr(fd, termios.as_mut_ptr()) != 0 {
+                return None;
+            }
+            termios.assume_init()
+        };
+        Some(termios.c_lflag & libc::ICANON != 0)
+    }
+
+    fn has_input(fd: c_int) -> bool {
+        let mut queued: c_int = 0;
+        // SAFETY: FIONREAD writes one `int` through the pointer.
+        unsafe { libc::ioctl(fd, libc::FIONREAD as _, &raw mut queued) != 0 || queued != 0 }
+    }
+
+    fn regular_file_offset(fd: c_int) -> Option<libc::off_t> {
+        let mut stat = MaybeUninit::<libc::stat>::zeroed();
+        // SAFETY: `stat` is valid for one `stat`, and all-zero is a valid one.
+        let stat = unsafe {
+            if libc::fstat(fd, stat.as_mut_ptr()) != 0 {
+                return None;
+            }
+            stat.assume_init()
+        };
+        if !crate::S::ISREG(stat.st_mode as u32) {
+            return None;
+        }
+        // SAFETY: no pointer arguments.
+        let offset = unsafe { libc::lseek(fd, 0, libc::SEEK_CUR) };
+        (offset >= 0).then_some(offset)
+    }
+
+    pub(super) fn pread(
+        fd: c_int,
+        buf: &mut [u8],
+        offset: libc::off_t,
+    ) -> crate::CrateResult<usize> {
+        loop {
+            // SAFETY: `buf` is valid for `buf.len()` bytes.
+            let read = unsafe { libc::pread(fd, buf.as_mut_ptr().cast(), buf.len(), offset) };
+            if read >= 0 {
+                return Ok(read as usize);
+            }
+            if crate::ffi::errno() != libc::EINTR {
+                return Err(crate::CrateError::Unexpected);
+            }
+        }
+    }
+
+    pub(super) fn seek(fd: c_int, offset: libc::off_t) {
+        // SAFETY: no pointer arguments.
+        unsafe { libc::lseek(fd, offset, libc::SEEK_SET) };
+    }
+}
+
+/// The reader of stdin for the dialogs, `bun init`, the `bun publish` OTP question and the key-driven menus.
 #[inline]
 pub fn stdin_reader() -> StdinReader {
     StdinReader { fd: Fd::stdin() }

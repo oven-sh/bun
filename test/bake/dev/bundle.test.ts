@@ -6,6 +6,53 @@ import net from "node:net";
 import path from "node:path";
 import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
+for (const editedFile of ["client.ts", "message.ts"]) {
+  devTest(`invalidates a framework's cached client bundle after editing ${editedFile}`, {
+    framework: {
+      fileSystemRouterTypes: [
+        {
+          root: "routes",
+          style: "nextjs-pages",
+          serverEntryPoint: "./render.ts",
+          clientEntryPoint: "./client.ts",
+        },
+      ],
+    },
+    files: {
+      "routes/index.ts": `export default null;`,
+      "render.ts": `
+        export function render(request, meta) {
+          const scripts = meta.modules.map(url => '<script type="module" src="' + url + '"></script>').join('');
+          return new Response('<!DOCTYPE html><html><body><h1></h1>' + scripts + '</body></html>', {
+            headers: { 'content-type': 'text/html' },
+          });
+        }
+      `,
+      "message.ts": `export const message = 'BEFORE';`,
+      "client.ts": `import { message } from './message.ts'; document.querySelector('h1').textContent = message;`,
+    },
+    async test(dev) {
+      await using client = await dev.client("/", { allowUnlimitedReloads: true });
+      await client.expectElemText("h1", "BEFORE");
+      const initialHtml = await dev.fetch("/").text();
+      const initialScript = initialHtml.match(/<script type="module" src="([^"]+)"/)![1];
+      expect(await dev.fetch(initialScript).text()).toContain("BEFORE");
+
+      await dev.write(
+        editedFile,
+        editedFile === "client.ts"
+          ? `import { message } from './message.ts'; document.querySelector('h1').textContent = 'AFTER:' + message;`
+          : `export const message = 'AFTER';`,
+      );
+      await client.expectElemText("h1", editedFile === "client.ts" ? "AFTER:BEFORE" : "AFTER");
+      const updatedHtml = await dev.fetch("/").text();
+      const updatedScript = updatedHtml.match(/<script type="module" src="([^"]+)"/)![1];
+      expect(await dev.fetch(updatedScript).text()).toContain("AFTER");
+      expect(updatedScript).not.toBe(initialScript);
+    },
+  });
+}
+
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
   files: {

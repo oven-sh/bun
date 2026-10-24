@@ -1023,7 +1023,7 @@ pub(crate) fn may_refresh_in_place(dependency: &Dependency) -> bool {
     dependency.behavior.is_optional()
         && matches!(
             dependency.version.tag,
-            Tag::Git | Tag::Github | Tag::Tarball
+            Tag::Npm | Tag::DistTag | Tag::Git | Tag::Github | Tag::Tarball
         )
 }
 
@@ -1045,6 +1045,19 @@ pub(crate) fn refreshes_in_place(
     let buf = lockfile.buffers.string_bytes.as_slice();
     // An older bun.lock binds a dependency that never resolved to any package of its name.
     let is_from_source = match dependency.version.tag {
+        Tag::Npm => {
+            let asks = dependency.version.npm();
+            let literal = dependency.version.literal.slice(buf);
+            locked_res.tag == ResolutionTag::Npm
+                && (asks.name).eql(lockfile.packages.items_name()[locked as usize], buf, buf)
+                && Npm::accepts_locked(&asks.version, literal, locked_res.npm().version, buf)
+        }
+        // Like a ref of a repository, a tag can point to any version of the package.
+        Tag::DistTag => {
+            let asks = dependency.version.dist_tag().name;
+            locked_res.tag == ResolutionTag::Npm
+                && asks.eql(lockfile.packages.items_name()[locked as usize], buf, buf)
+        }
         Tag::Github => {
             let asks = dependency.version.github();
             locked_res.tag == ResolutionTag::Github
@@ -1058,7 +1071,7 @@ pub(crate) fn refreshes_in_place(
             locked_res.tag == ResolutionTag::Git
                 && locked_res.git().repo.slice(buf) == recorded.as_deref().unwrap_or(asks)
         }
-        _ => match &dependency.version.tarball().uri {
+        Tag::Tarball => match &dependency.version.tarball().uri {
             dependency::tarball::Uri::Remote(url) => {
                 locked_res.tag == ResolutionTag::RemoteTarball
                     && locked_res.remote_tarball().eql(*url, buf, buf)
@@ -1069,6 +1082,7 @@ pub(crate) fn refreshes_in_place(
                     && may_name_local_tarball(lockfile, declarer, dependency)
             }
         },
+        Tag::Uninitialized | Tag::Folder | Tag::Symlink | Tag::Workspace | Tag::Catalog => false,
     };
     let has_rule = |name_hash: PackageNameHash| {
         lockfile.overrides.has_rule_for_name(name_hash)
@@ -2021,6 +2035,7 @@ pub(crate) fn bind_row(
                     let resolve_result = match resolve_result_ {
                         Ok(v) => v,
                         Err(err) => {
+                            unbind_refreshing_without_version(this, id, err);
                             let log_mark = this.log_mut().msgs.len();
                             report_resolve_error(
                                 this, id, dependency, name, version, err, is_root,
@@ -2599,6 +2614,24 @@ fn report_manifest_failure(
         }
     }
     run_tasks::fail_update_requests(this, task_id, name, None, is_unanswered);
+}
+
+/// The manifest has no version for a dependency that is refreshed in place, so its bun.lock package goes. Under `--offline` the manifest is a cached copy that cannot be read again, and the package stays.
+#[cold]
+fn unbind_refreshing_without_version(
+    this: &mut PackageManager,
+    id: DependencyID,
+    err: crate::Error,
+) {
+    use crate::Error as E;
+    if this.options.offline != OfflineMode::Offline
+        && matches!(
+            err,
+            E::NoMatchingVersion | E::DistTagNotFound | E::TooRecentVersion
+        )
+    {
+        this.lockfile.unbind_refreshing(id);
+    }
 }
 
 /// Logs why `get_or_put_resolved_package` failed. The caller has to report an `Err` itself.
@@ -3539,7 +3572,10 @@ fn settle_without_manifest(
         }
     }
 
-    if (resolution as usize) < this.lockfile.packages.len() {
+    // A dependency that is refreshed in place is resolved like one that has no package.
+    if (resolution as usize) < this.lockfile.packages.len()
+        && !this.lockfile.is_refreshing(dependency_id)
+    {
         return Some(Settled::Resolved);
     }
 

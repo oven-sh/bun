@@ -18,7 +18,7 @@ use super::add_remove_with_filter::{
     WorkspaceTarget, fetch_entry, fetch_entry_root, store_entry, write_target,
 };
 use super::options::Do;
-use super::package_json_editor::{self as PackageJSONEditor, Declared, EditOptions};
+use super::package_json_editor::{self as PackageJSONEditor, Declared, EditOptions, KeptEntries};
 use super::workspace_manifests::same_row;
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, WorkspacePackageJSONCache};
 use super::{PackageManager, Subcommand, UpdateRequest};
@@ -233,7 +233,10 @@ pub(crate) struct Synced {
 /// Phase 1, before bun.lock is saved: puts the resolved versions into the in-memory copies of the
 /// edited package.json files, which `flush` writes later, and into the lockfile.
 #[inline]
-pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<Synced> {
+pub(crate) fn edit_after_resolve(
+    manager: &mut PackageManager,
+    kept: KeptEntries<'_>,
+) -> crate::Result<Synced> {
     if manager.pending_filtered_write.is_none()
         && manager.update_target_workspaces.is_none()
         && !manager
@@ -243,26 +246,29 @@ pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<
     {
         return Ok(Synced::default());
     }
-    edit_after_resolve_slow(manager)
+    edit_after_resolve_slow(manager, kept)
 }
 
 #[inline(never)]
-fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<Synced> {
+fn edit_after_resolve_slow(
+    manager: &mut PackageManager,
+    kept: KeptEntries<'_>,
+) -> crate::Result<Synced> {
     let mut edited: Vec<EditedPackageJson> = core::mem::take(&mut manager.edited_package_jsons);
     let mut updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
     let exact = manager.options.enable.exact_versions();
     let cwd = edited.iter().position(|e| e.received_requests);
 
     let result = if let Some(mut pending) = manager.pending_filtered_write.take() {
-        let result = pending.edit_entries(manager, &mut updates);
+        let result = pending.edit_entries(manager, &mut updates, kept);
         manager.pending_filtered_write = Some(pending);
         result
     } else if let Some(targets) = manager.update_target_workspaces.take() {
-        let result = edit_update_targets(manager, &targets, &mut edited, exact);
+        let result = edit_update_targets(manager, &targets, &mut edited, exact, kept);
         manager.update_target_workspaces = Some(targets);
         result
     } else if let Some(i) = cwd {
-        edit_cwd(manager, &mut edited, i, &mut updates, exact)
+        edit_cwd(manager, &mut edited, i, &mut updates, exact, kept)
     } else {
         Ok(())
     }
@@ -286,6 +292,7 @@ fn edit_update_targets(
     targets: &[super::UpdateTargetWorkspace],
     edited: &mut Vec<EditedPackageJson>,
     exact: bool,
+    kept: KeptEntries<'_>,
 ) -> crate::Result<()> {
     let top_level = FileSystem::instance().top_level_dir();
     let mut selected: Vec<WorkspaceTarget> = Vec::new();
@@ -331,9 +338,11 @@ fn edit_update_targets(
             EditOptions {
                 exact_versions: true,
                 before_install: true,
+                ..Default::default()
             },
             EditOptions {
                 exact_versions: exact,
+                kept,
                 ..Default::default()
             },
         ] {
@@ -370,11 +379,13 @@ fn edit_cwd(
     cwd_index: usize,
     updates: &mut [UpdateRequest],
     exact: bool,
+    kept: KeptEntries<'_>,
 ) -> crate::Result<()> {
     let cwd_target = edited[cwd_index].target.clone();
     let in_root = cwd_target.name_hash.is_none();
     let options = EditOptions {
         exact_versions: exact,
+        kept,
         ..Default::default()
     };
     let mut ast = fetch_entry_root(manager, &cwd_target);

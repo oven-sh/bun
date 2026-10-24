@@ -704,8 +704,8 @@ pub(crate) fn print_kept_patched(manager: &mut PackageManager) {
     manager.kept_patched_text = render_kept_rows(&rows);
 }
 
-/// `bun update`, once everything is resolved: a dependency whose source could not be read kept the package of bun.lock (`Scratch::refreshing`), which the warning about the failed read does not say. Each such package gets the line that `warn_unchecked` prints for a package whose manifest could not be fetched. A command that has failed by now saves nothing, and gets no such line.
-pub(crate) fn warn_unchecked_sources(manager: &PackageManager) {
+/// `bun update`, once everything is resolved: a dependency whose source could not be read kept the package of bun.lock (`Scratch::refreshing`), which the warning about the failed read does not say. Each such package gets the line that `warn_unchecked` prints for a package whose manifest could not be fetched. A registry package gets it from `warn_unchecked`. A command that has failed by now saves nothing, and gets no such line.
+pub(crate) fn warn_unchecked_sources(manager: &mut PackageManager) {
     if manager.subcommand != crate::Subcommand::Update
         || manager.log_mut().has_errors()
         || manager.update_requests.iter().any(|request| request.failed)
@@ -714,15 +714,18 @@ pub(crate) fn warn_unchecked_sources(manager: &PackageManager) {
     }
     let lockfile = &*manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let mut kept: Vec<(&[u8], Box<[u8]>)> = (lockfile.kept_without_refresh().iter())
-        .map(|&id| {
-            let resolution = &lockfile.packages.items_resolution()[id as usize];
-            (
-                lockfile.packages.items_name()[id as usize].slice(buf),
-                text(resolution.fmt(buf, bun_core::fmt::PathSep::Posix)),
-            )
-        })
-        .collect();
+    let mut registry: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::new();
+    let mut kept: Vec<(&[u8], Box<[u8]>)> = Vec::new();
+    for &id in lockfile.kept_without_refresh().iter() {
+        let resolution = &lockfile.packages.items_resolution()[id as usize];
+        let name = lockfile.packages.items_name()[id as usize].slice(buf);
+        let version = text(resolution.fmt(buf, bun_core::fmt::PathSep::Posix));
+        if resolution.tag == ResolutionTag::Npm {
+            registry.push((Box::from(name), version));
+        } else {
+            kept.push((name, version));
+        }
+    }
     index_sort::sort_vec_unstable_by(&mut kept, |a, b| a.cmp(b));
     let log = manager.log_mut();
     for (name, resolution) in kept {
@@ -736,6 +739,14 @@ pub(crate) fn warn_unchecked_sources(manager: &PackageManager) {
             ),
         );
     }
+    index_sort::sort_vec_unstable_by(&mut registry, |a, b| a.cmp(b));
+    // A warning that only mentions the name can be about another package, so the failure is one of the messages of the manifest request.
+    warn_unchecked(manager, &registry, |manager, _, msg, name| {
+        let task_id = crate::package_manager_task::Id::for_manifest(name);
+        (manager.manifest_failures.get(&task_id)).is_some_and(|failure| {
+            (failure.msgs.iter()).any(|logged| logged.data.text == msg.data.text)
+        })
+    });
 }
 
 /// Returns the source of the root package.json and its `patchedDependencies` object.
@@ -953,11 +964,11 @@ fn newest_allowed(manager: &mut PackageManager, pkg_id: PackageID) -> Option<Box
         .then(|| text(best.fmt(manifest_buf)))
 }
 
-/// Pairs each unchecked `(name, version)` with the fetch failure the manifest task logged for it and reports both as one warning; nothing under `--silent`.
+/// Pairs each unchecked `(name, version)` with the fetch failure the manifest task logged for it and reports both as one warning, once per run; nothing under `--silent`. `is_failure(manager, index, message, name)` picks that failure from the warnings in the log.
 fn warn_unchecked(
-    manager: &PackageManager,
-    msgs_before: usize,
+    manager: &mut PackageManager,
     unchecked: &[(Box<[u8]>, Box<[u8]>)],
+    is_failure: impl Fn(&PackageManager, usize, &bun_ast::Msg, &[u8]) -> bool,
 ) {
     if unchecked.is_empty() {
         return;
@@ -965,21 +976,23 @@ fn warn_unchecked(
     let log = manager.log_mut();
     let silent = manager.options.log_level == LogLevel::Silent;
     let mut used = DynamicBitSet::init_empty(log.msgs.len()).unwrap_or_oom();
-    for (name, version) in unchecked {
-        let reason = log
-            .msgs
-            .iter()
-            .enumerate()
-            .skip(msgs_before)
-            .find(|(_, msg)| msg.kind == bun_ast::Kind::Warn && mentions(&msg.data.text, name));
+    for pair in unchecked {
+        let (name, version) = pair;
+        let reason = (log.msgs.iter().enumerate())
+            .find(|&(i, msg)| msg.kind == bun_ast::Kind::Warn && is_failure(manager, i, msg, name));
         if let Some((i, _)) = reason {
             used.set(i);
         }
-        if silent {
+        // A plan and `warn_unchecked_sources` can both report the package.
+        if silent || manager.warned_unchecked.contains(pair) {
             continue;
         }
-        match reason {
-            Some((_, msg)) => bun_core::warn!(
+        manager.warned_unchecked.push(pair.clone());
+        // An earlier report can have taken the failure out of the log.
+        let task_id = crate::package_manager_task::Id::for_manifest(name);
+        let recorded = || manager.manifest_failures.get(&task_id)?.msgs.first();
+        match reason.map(|(_, msg)| msg).or_else(recorded) {
+            Some(msg) => bun_core::warn!(
                 "{}@{} was not checked for updates: {}",
                 BStr::new(name),
                 BStr::new(version),
@@ -1150,7 +1163,11 @@ fn plan_edges(
                 continue;
             };
             let dep = &deps[dep_id];
-            if slot == SKIP || dep.behavior.is_bundled() {
+            // A dependency that is refreshed in place is queued, like one that has no package.
+            if slot == SKIP
+                || dep.behavior.is_bundled()
+                || lockfile.is_refreshing(dep_id as DependencyID)
+            {
                 continue;
             }
             if dep.behavior.is_peer()
@@ -1309,7 +1326,9 @@ fn plan_edges(
         }
     }
     index_sort::sort_vec_unstable_by(&mut unchecked, |a, b| a.cmp(b));
-    warn_unchecked(manager, msgs_before, &unchecked);
+    warn_unchecked(manager, &unchecked, |_, i, msg, name| {
+        i >= msgs_before && mentions(&msg.data.text, name)
+    });
     print_log(manager)?;
 
     for (range, hash, pre) in pre_strings {

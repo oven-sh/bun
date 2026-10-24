@@ -616,6 +616,9 @@ pub struct PackageManager {
     pub(crate) kept_patched: Vec<PackageID>,
     pub kept_patched_text: Vec<u8>,
 
+    // bun update: the `(name, version)` pairs that update_transitive::warn_unchecked has reported.
+    pub(crate) warned_unchecked: Vec<(Box<[u8]>, Box<[u8]>)>,
+
     // `Some` while `bun install` resolves. A "no such package" or "no such version" message about a
     // dependency that dedupe may still drop is kept here until `log_held` decides whether to log
     // it.
@@ -1726,6 +1729,7 @@ fn allocate_package_manager(
         wr!(named_update_reachable, None);
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
+        wr!(warned_unchecked, Vec::new());
         wr!(held_messages, None);
         wr!(manifest_failures, HashMap::default());
         wr!(look_ahead, LookAhead::default());

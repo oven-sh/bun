@@ -28,10 +28,14 @@ const DEPENDENCY_GROUPS: [DependencyGroup; 4] = [
     DependencyGroup::PEER,
 ];
 
+/// `Lockfile::entries_kept_without_refresh`: package.json entries that stay as written.
+pub(crate) type KeptEntries<'a> = &'a [(Option<PackageNameHash>, PackageNameHash)];
+
 #[derive(Default, Clone, Copy)]
-pub(crate) struct EditOptions {
+pub(crate) struct EditOptions<'a> {
     pub exact_versions: bool,
     pub before_install: bool,
+    pub kept: KeptEntries<'a>,
 }
 
 #[inline]
@@ -322,7 +326,7 @@ pub fn edit_trusted_dependencies(
 pub(crate) fn edit_update_no_args(
     manager: &mut PackageManager,
     current_package_json: &mut Expr,
-    options: EditOptions,
+    options: EditOptions<'_>,
 ) -> Result<bool, bun_alloc::AllocError> {
     edit_update_entries(
         &manager.lockfile,
@@ -341,7 +345,7 @@ fn edit_update_aliases_of_requests(
     manager: &mut PackageManager,
     updates: &[UpdateRequest],
     current_package_json: &mut Expr,
-    options: EditOptions,
+    options: EditOptions<'_>,
 ) -> Result<bool, bun_alloc::AllocError> {
     let is_request = |name: &[u8]| updates.iter().any(|r| r.is_aliased && r.name == name);
     let is_alias_of_request = |key: &[u8], literal: &[u8]| {
@@ -386,7 +390,7 @@ pub(crate) fn edit_update_entries(
     workspace_name_hash: Option<PackageNameHash>,
     update_to_latest: bool,
     current_package_json: &mut Expr,
-    options: EditOptions,
+    options: EditOptions<'_>,
     selected: &dyn Fn(&[u8], &[u8]) -> bool,
 ) -> Result<bool, bun_alloc::AllocError> {
     // using data store is going to result in undefined memory issues as
@@ -473,6 +477,10 @@ pub(crate) fn edit_update_entries(
             else {
                 continue;
             };
+            let entry_key = (workspace_name_hash, workspace_dep.name_hash);
+            if options.kept.contains(&entry_key) {
+                continue;
+            }
 
             // an exact pin is not moved by a plain `bun update`
             if !update_to_latest
@@ -976,7 +984,7 @@ pub(crate) fn edit(
     updates: &mut &mut [UpdateRequest],
     current_package_json: &mut Expr,
     dependency_list: &[u8],
-    options: EditOptions,
+    options: EditOptions<'_>,
 ) -> Result<bool, bun_alloc::AllocError> {
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
@@ -1461,6 +1469,10 @@ pub(crate) fn edit(
             if manager.subcommand == Subcommand::Update
                 && !literal_tag(e_string.data.slice()).is_npm()
             {
+                continue;
+            }
+            let entry_key = (manager.workspace_name_hash, request.name_hash);
+            if options.kept.contains(&entry_key) {
                 continue;
             }
             if request.package_id as usize >= resolutions.len()

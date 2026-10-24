@@ -1942,8 +1942,10 @@ impl Diff {
             {
                 continue;
             }
+            // A range only has to accept the version of bun.lock, as the differ lets it on `bun install`.
+            let pairs_by_range = to_dep.version.tag == dependency::version::Tag::Npm;
             let kept = Self::locked_for(lockfile, from, to_dep, |from_dep, locked| {
-                Dependency::eql(to_dep, from_dep, buf, buf)
+                (pairs_by_range || Dependency::eql(to_dep, from_dep, buf, buf))
                     && enqueue::refreshes_in_place(pm, declarer, to_dep, locked)
             });
             if let Some(locked) = kept {

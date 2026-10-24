@@ -1079,8 +1079,8 @@
     "jit": 797.2
   },
   "spread/object-of-unknown-layout-and-two-members": {
-    "typed": 219.3,
-    "untyped": 217.2,
+    "typed": 241.4,
+    "untyped": 236.7,
     "jit": 275.9,
     "best": {
       "typed": 214,
@@ -1408,8 +1408,12 @@
     "jit": 12
   },
   "function/makers-made-by-one-function-each-with-its-own-prototype": {
-    "typed": 132.9,
-    "untyped": 132.8,
-    "jit": 268.4
+    "typed": 378,
+    "untyped": 376.3,
+    "jit": 268.4,
+    "best": {
+      "typed": 132.9,
+      "untyped": 132.8
+    }
   }
 }

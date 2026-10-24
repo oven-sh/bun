@@ -504,8 +504,7 @@ pub(crate) struct DevServer {
     pub(crate) graph_safety_lock: ThreadLock,
     pub(crate) client_graph: IncrementalGraph<{ bake::Side::Client }>,
     pub(crate) server_graph: IncrementalGraph<{ bake::Side::Server }>,
-    /// The barrels that have deferred a record, with what every build requested from
-    /// them. Written by the barrel optimization of the bundler.
+    /// What every build requested from each barrel that has deferred a record.
     pub(crate) tracked_barrels: bun_bundler::barrel_imports::TrackedBarrels,
     /// State populated during bundling and hot updates. Often cleared
     pub(crate) incremental_result: IncrementalResult,

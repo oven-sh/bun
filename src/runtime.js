@@ -24,28 +24,10 @@ function __accessProp(key) {
 // current module is an entry point and the target format is CommonJS, we
 // also copy the properties to "module.exports" in addition to our module's
 // internal ESM export object.
-export var __reExport = (target, mod, secondTarget) => {
-  // An external CommonJS re-export target may set "module.exports" to null,
-  // undefined, or a primitive; only objects and functions have named exports.
-  var keys = (mod && typeof mod === "object") || typeof mod === "function" ? __getOwnPropNames(mod) : [];
-  for (let key of keys)
-    if (!__hasOwnProp.call(target, key) && key !== "default")
-      __defProp(target, key, {
-        get: __accessProp.bind(mod, key),
-        enumerable: true,
-      });
-
-  if (secondTarget) {
-    for (let key of keys)
-      if (!__hasOwnProp.call(secondTarget, key) && key !== "default")
-        __defProp(secondTarget, key, {
-          get: __accessProp.bind(mod, key),
-          enumerable: true,
-        });
-
-    return secondTarget;
-  }
-};
+export var __reExport = (target, mod, secondTarget) => (
+  __copyProps(target, mod, "default", secondTarget),
+  secondTarget
+);
 
 /*__PURE__*/
 var __toESMCache_node;
@@ -63,21 +45,12 @@ export var __toESM = (mod, isNodeMode, target) => {
     if (cached) return cached;
   }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
-  const to =
+  const to = __copyProps(
     isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default")
       ? __defProp(target, "default", { value: mod, enumerable: true })
-      : target;
-
-  // A CommonJS module may legitimately set "module.exports" to null,
-  // undefined, or a primitive; only objects and functions have named exports.
-  if ((mod && typeof mod === "object") || typeof mod === "function")
-    for (let key of __getOwnPropNames(mod))
-      if (!__hasOwnProp.call(to, key))
-        __defProp(to, key, {
-          get: __accessProp.bind(mod, key),
-          enumerable: true,
-        });
-
+      : target,
+    mod,
+  );
   if (canCache) cache.set(mod, to);
   return to;
 };
@@ -86,17 +59,9 @@ export var __toESM = (mod, isNodeMode, target) => {
 // object with the addition of a non-enumerable "__esModule" property set
 // to "true", which overwrites any existing export named "__esModule".
 export var __toCommonJS = from => {
-  var entry = (__moduleCache ??= new WeakMap()).get(from),
-    desc;
+  var entry = (__moduleCache ??= new WeakMap()).get(from);
   if (entry) return entry;
-  entry = __defProp({}, "__esModule", { value: true });
-  if ((from && typeof from === "object") || typeof from === "function")
-    for (var key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(entry, key))
-        __defProp(entry, key, {
-          get: __accessProp.bind(from, key),
-          enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
-        });
+  entry = __copyProps(__defProp({}, "__esModule", { value: true }), from);
   __moduleCache.set(from, entry);
   return entry;
 };
@@ -359,4 +324,39 @@ export var __exportCjs = /* @__PURE__ */ (target, getters, setters) => {
       enumerable: true,
       configurable: true,
     });
+};
+
+// A getter on `to` (and `second`) for each own property name of `from`. Only a non-enumerable getter is hidden (#4432).
+var __copyProps = (to, from, except, second, names, enumerableKeys, i, desc) => {
+  // "module.exports" may be null, undefined, or a primitive.
+  if ((from && typeof from === "object") || typeof from === "function") {
+    names = __getOwnPropNames(from);
+    try {
+      // In the order of `names`. A descriptor read for each name builds lazy host properties (`process.stdout`).
+      enumerableKeys = Object.keys(from);
+    } catch {
+      // A module namespace object throws while a binding is uninitialized. All of its names are enumerable.
+      enumerableKeys = names;
+    }
+    i = 0;
+    for (let key of names) {
+      let enumerable = key === enumerableKeys[i];
+      if (enumerable) {
+        i++;
+      } else {
+        // __lookupGetter__() can return an inherited getter for an own data property (`arguments` in Node 22).
+        enumerable =
+          !Object.prototype.__lookupGetter__?.call(from, key) ||
+          !(desc = __getOwnPropDesc(from, key)) ||
+          desc.enumerable ||
+          "value" in desc;
+      }
+      if (key !== except) {
+        if (!__hasOwnProp.call(to, key)) __defProp(to, key, { get: __accessProp.bind(from, key), enumerable });
+        if (second && !__hasOwnProp.call(second, key))
+          __defProp(second, key, { get: __accessProp.bind(from, key), enumerable });
+      }
+    }
+  }
+  return to;
 };

@@ -1,4 +1,5 @@
 import { describe } from "bun:test";
+import { isWindows } from "harness";
 import { itBundled } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
@@ -1233,6 +1234,399 @@ describe("bundler", () => {
     },
     run: {
       stdout: "function/undefined",
+    },
+  });
+
+  // ============================================================================
+  // Non-enumerable properties of module.exports. The namespace has a getter for
+  // each one, so a read by name works. The getter of a non-enumerable getter is
+  // non-enumerable: nothing that enumerates the namespace calls it, as in
+  // `bun run`, Node and esbuild. A non-enumerable data property stays listed,
+  // as in `bun run`.
+  // ============================================================================
+
+  const hiddenDep = /* js */ `
+    exports.shown = 1;
+    Object.defineProperty(exports, "hidden", { value: 2 });
+    Object.defineProperty(exports, "legacy", {
+      get() {
+        globalThis.legacyCalls = (globalThis.legacyCalls || 0) + 1;
+        return 3;
+      },
+    });
+  `;
+  // Each statement between `keys` and `afterEnumeration` reads every listed
+  // name. No statement names "legacy" before `byName`.
+  const describeNamespace = /* js */ `
+    const legacyCalls = () => globalThis.legacyCalls || 0;
+    export function describeNamespace(ns) {
+      const keys = Object.keys(ns).join();
+      ({ ...ns });
+      Object.assign({}, ns);
+      Object.values(ns);
+      Object.entries(ns);
+      JSON.stringify(ns);
+      for (const key in ns) ns[key];
+      const afterEnumeration = legacyCalls();
+      const byName = [ns.hidden, "legacy" in ns, ns.legacy, ns.legacy].join();
+      return JSON.stringify({ keys, afterEnumeration, byName, afterTwoReads: legacyCalls() });
+    }
+  `;
+  const describeStarImport = /* js */ `
+    import * as ns from "./dep.cjs";
+    import { describeNamespace } from "./describe.mjs";
+    console.log(describeNamespace(ns));
+  `;
+  const starImportDescription =
+    '{"keys":"default,shown,hidden","afterEnumeration":0,"byName":"2,true,3,3","afterTwoReads":2}';
+  const reExportDescription = '{"keys":"shown,hidden","afterEnumeration":0,"byName":"2,true,3,3","afterTwoReads":2}';
+
+  // Test 63: `import *` of a wrapped CommonJS module, `.mjs` importer
+  itBundled("cjs/__toESM_non_enumerable_getter_import_star", {
+    files: {
+      "/entry.mjs": describeStarImport,
+      "/describe.mjs": describeNamespace,
+      "/dep.cjs": hiddenDep,
+    },
+    run: {
+      stdout: starImportDescription,
+    },
+  });
+
+  // Test 64: the same through the CLI, in minified CommonJS output
+  itBundled("cjs/__toESM_non_enumerable_getter_import_star_minified_cjs", {
+    files: {
+      "/entry.js": describeStarImport,
+      "/describe.mjs": describeNamespace,
+      "/dep.cjs": hiddenDep,
+    },
+    backend: "cli",
+    format: "cjs",
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    run: {
+      stdout: starImportDescription,
+    },
+  });
+
+  // Test 65: import() of a wrapped CommonJS module in the same chunk
+  itBundled("cjs/__toESM_non_enumerable_getter_dynamic_import", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { describeNamespace } from "./describe.mjs";
+        console.log(describeNamespace(await import("./dep.cjs")));
+      `,
+      "/describe.mjs": describeNamespace,
+      "/dep.cjs": hiddenDep,
+    },
+    run: {
+      stdout: starImportDescription,
+    },
+  });
+
+  // Test 66: import() of a wrapped CommonJS module in its own chunk
+  itBundled("cjs/__toESM_non_enumerable_getter_split_dynamic_import", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import { describeNamespace } from "./describe.mjs";
+        console.log(describeNamespace(await import("./dep.cjs")));
+      `,
+      "/describe.mjs": describeNamespace,
+      "/dep.cjs": hiddenDep,
+    },
+    splitting: true,
+    outdir: "/out",
+    outputPaths: ["/out/entry.js"],
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toContain("__toESM(m.default,1))");
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: starImportDescription,
+    },
+  });
+
+  // Test 67: `export * from` a wrapped CommonJS module goes through
+  // __reExport. A named import through it still reads the non-enumerable names.
+  itBundled("cjs/__reExport_non_enumerable_getter", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as re from "./re.mjs";
+        import { hidden, legacy } from "./re.mjs";
+        import { describeNamespace } from "./describe.mjs";
+        console.log(describeNamespace(re), hidden, legacy);
+      `,
+      "/re.mjs": /* js */ `export * from "./dep.cjs";`,
+      "/describe.mjs": describeNamespace,
+      "/dep.cjs": hiddenDep,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__reExport(exports_re, ");
+    },
+    run: {
+      stdout: reExportDescription + " 2 3",
+    },
+  });
+
+  // Test 68: a CommonJS entry point copies the names of `export *` to
+  // module.exports too (the third argument of __reExport). `bun run` exports a
+  // non-enumerable data property of that bundle by name. It does not export
+  // the non-enumerable getter, and does not call it, as for dep.cjs itself.
+  itBundled("cjs/__reExport_non_enumerable_getter_cjs_entry_point", {
+    files: {
+      "/entry.mjs": /* js */ `export * from "./dep.cjs";`,
+      "/dep.cjs": hiddenDep,
+    },
+    runtimeFiles: {
+      "/describe.mjs": describeNamespace,
+      "/legacy-from-bundle.mjs": /* js */ `import { legacy } from "./out.cjs";`,
+      "/legacy-from-source.mjs": /* js */ `import { legacy } from "./dep.cjs";`,
+      "/run.mjs": /* js */ `
+        import { hidden } from "./out.cjs";
+        import { createRequire } from "node:module";
+        import { describeNamespace } from "./describe.mjs";
+        const callsAtImport = globalThis.legacyCalls || 0;
+        const linkResult = specifier => import(specifier).then(() => "links", error => error.name);
+        console.log(
+          hidden,
+          callsAtImport,
+          await linkResult("./legacy-from-bundle.mjs"),
+          await linkResult("./legacy-from-source.mjs"),
+          describeNamespace(createRequire(import.meta.url)("./out.cjs")),
+        );
+      `,
+    },
+    format: "cjs",
+    outfile: "/out.cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.cjs").toContain(", module.exports);");
+    },
+    run: {
+      file: "/run.mjs",
+      stdout: "2 0 SyntaxError SyntaxError " + reExportDescription,
+    },
+  });
+
+  // Test 69: an external package in CommonJS output. `import *` prints
+  // __toESM(require("ext"), 1) and `export *` prints
+  // __reExport(exports, require("ext"), module.exports).
+  itBundled("cjs/__toESM_and___reExport_non_enumerable_getter_external", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from "ext";
+        import { describeNamespace } from "./describe.mjs";
+        export * from "ext";
+        console.log(describeNamespace(ns));
+        globalThis.legacyCalls = 0;
+      `,
+      "/describe.mjs": describeNamespace,
+    },
+    runtimeFiles: {
+      "/node_modules/ext/index.js": hiddenDep,
+      "/run.cjs": /* js */ `
+        const bundle = require("./out.cjs");
+        console.log(require("./describe.cjs").describeNamespace(bundle));
+      `,
+      "/describe.cjs": describeNamespace.replace("export function", "exports.describeNamespace = function"),
+    },
+    external: ["ext"],
+    target: "node",
+    format: "cjs",
+    outfile: "/out.cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.cjs").toContain('__toESM(require("ext"), 1)');
+      api.expectFile("/out.cjs").toContain('require("ext"), module.exports);');
+    },
+    run: {
+      file: "/run.cjs",
+      stdout: starImportDescription + "\n" + reExportDescription,
+    },
+  });
+
+  // Test 70: require() of an ES module that has `export *` of a CommonJS
+  // module. __toCommonJS keeps the flags that __reExport wrote.
+  itBundled("cjs/__toCommonJS_non_enumerable_getter_through_reExport", {
+    files: {
+      "/entry.cjs": /* js */ `
+        const { describeNamespace } = require("./describe.mjs");
+        console.log(describeNamespace(require("./re.mjs")));
+      `,
+      "/re.mjs": /* js */ `export * from "./dep.cjs";`,
+      "/describe.mjs": describeNamespace,
+      "/dep.cjs": hiddenDep,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toCommonJS(exports_re)");
+    },
+    run: {
+      stdout: reExportDescription,
+    },
+  });
+
+  // Test 71: "module.exports" can be a module namespace object. Object.keys()
+  // of one throws while a binding is uninitialized, and the conversion must
+  // not. `host.mjs` imports the bundle first, so the bundle runs before
+  // `late` has a value.
+  itBundled("cjs/__toESM_module_namespace_with_uninitialized_binding", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import "./share.mjs";
+        import * as ns from "./dep.cjs";
+        export const describe = () => Object.keys(ns).join() + " " + ns.late;
+      `,
+      "/share.mjs": /* js */ `
+        import * as host from "./host.mjs";
+        globalThis.hostNamespace = host;
+      `,
+      "/dep.cjs": /* js */ `module.exports = globalThis.hostNamespace;`,
+    },
+    runtimeFiles: {
+      "/host.mjs": /* js */ `
+        import { describe } from "./out.mjs";
+        export const late = 1;
+        console.log(describe());
+      `,
+    },
+    external: ["./host.mjs"],
+    target: "node",
+    outfile: "/out.mjs",
+    run: {
+      file: "/host.mjs",
+      stdout: "default,late 1",
+    },
+  });
+
+  // Test 72: an export that is a function, the shape of express. Its
+  // `length`, `name` and `prototype` are non-enumerable data properties.
+  itBundled("cjs/__toESM_non_enumerable_getter_function_export", {
+    files: {
+      "/entry.mjs": describeStarImport,
+      "/describe.mjs": describeNamespace,
+      "/dep.cjs": /* js */ `
+        function app() {}
+        app.shown = 1;
+        Object.defineProperty(app, "hidden", { value: 2 });
+        Object.defineProperty(app, "legacy", {
+          get() {
+            globalThis.legacyCalls = (globalThis.legacyCalls || 0) + 1;
+            return 3;
+          },
+        });
+        module.exports = app;
+      `,
+    },
+    run: {
+      stdout:
+        '{"keys":"default,length,name,prototype,shown,hidden","afterEnumeration":0,"byName":"2,true,3,3","afterTwoReads":2}',
+    },
+  });
+
+  // Test 73: "module.exports" can be a Proxy. Its two lists of names can
+  // disagree, and a name can have no descriptor. The conversion asks the Proxy
+  // for a descriptor 12 times: Object.keys() once for each of the 5 names, then
+  // once for each of the 4 names that the list of enumerable names does not
+  // have next, and once more for each of the 3 that a getter answers for.
+  itBundled("cjs/__toESM_proxy_module_exports", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ns from "./dep.cjs";
+        const descriptorReads = globalThis.descriptorReads;
+        const flags = Object.getOwnPropertyNames(ns).map(name => name + ":" + Object.getOwnPropertyDescriptor(ns, name).enumerable);
+        console.log(flags.join(), ns.late, ns.shown, ns.hidden, ns.legacy, ns.ghost, descriptorReads);
+      `,
+      "/dep.cjs": /* js */ `
+        // "ghost" is a getter of the prototype. The Proxy lists it as an own name with no descriptor.
+        const target = Object.create({ get ghost() { return 5; } });
+        Object.defineProperty(target, "late", { enumerable: true, get() { return 1; } });
+        target.shown = 2;
+        Object.defineProperty(target, "hidden", { value: 3 });
+        Object.defineProperty(target, "legacy", { get() { return 4; } });
+        let ownKeysCalls = 0;
+        globalThis.descriptorReads = 0;
+        module.exports = new Proxy(target, {
+          // The first call is getOwnPropertyNames(). The second is Object.keys(), with another order.
+          ownKeys: () => (ownKeysCalls++ ? ["shown", "late", "hidden", "legacy", "ghost"] : ["late", "shown", "hidden", "legacy", "ghost"]),
+          getOwnPropertyDescriptor(target, name) {
+            globalThis.descriptorReads++;
+            return Reflect.getOwnPropertyDescriptor(target, name);
+          },
+        });
+      `,
+    },
+    run: {
+      stdout: "default:true,late:true,shown:true,hidden:true,legacy:false,ghost:true 1 2 3 4 5 12",
+    },
+  });
+
+  // Tests 74 and 75: the conversion must not read a data property of
+  // "module.exports" by name, its descriptor included. The read builds a lazy
+  // property of a host object: `process.stdout`, also through the
+  // non-enumerable `console._stdout`, makes a pipe on fd 1 non-blocking.
+  // CommonJS output for Bun (the default of `--bytecode`) converts the module
+  // of a builtin for an import. The test runs the bundle with a blocking pipe
+  // on fd 1, so the first value is false.
+  const lazyHostPropertyFiles = {
+    "/entry.mjs": /* js */ `
+      import "./before.cjs";
+      import process from "node:process";
+      import console1 from "node:console";
+      import * as console2 from "node:console";
+      import * as barrel from "./barrel.mjs";
+      import "./after.cjs";
+      const [before, after] = globalThis.fd1IsNonBlocking;
+      console.log(
+        typeof process.pid,
+        typeof console1.log,
+        typeof console2.log,
+        typeof barrel.log,
+        "fd 1 is non-blocking:",
+        before,
+        after,
+      );
+    `,
+    "/barrel.mjs": /* js */ `export * from "node:console";`,
+    "/before.cjs": /* js */ `globalThis.fd1IsNonBlocking = [require("./probe.cjs")()];`,
+    "/after.cjs": /* js */ `globalThis.fd1IsNonBlocking.push(require("./probe.cjs")());`,
+    // The probe of test/js/bun/spawn/fixtures/fd-nonblock-probe.js.
+    "/probe.cjs": /* js */ `
+      const { existsSync, readFileSync } = require("fs");
+      if (existsSync("/proc/self/fdinfo")) {
+        module.exports = () => (parseInt(/^flags:\\s*([0-7]+)/m.exec(readFileSync("/proc/self/fdinfo/1", "utf8"))[1], 8) & 0o4000) !== 0;
+      } else {
+        // F_GETFL is 3. O_NONBLOCK is 4 on macOS and the BSDs.
+        const libc = { darwin: "libSystem.B.dylib", freebsd: "libc.so.7" }[process.platform] ?? "libc.so.6";
+        const { fcntl } = require("bun:ffi").dlopen(libc, { fcntl: { args: ["i32", "i32", "i32"], returns: "i32" } }).symbols;
+        module.exports = () => (fcntl(1, 3, 0) & 4) !== 0;
+      }
+    `,
+  };
+  // A pipe handle on Windows has no O_NONBLOCK flag to read.
+  const itBundledPosix = isWindows ? itBundled.skip : itBundled;
+
+  // Test 74
+  itBundledPosix("cjs/__toESM_does_not_build_lazy_host_properties", {
+    files: lazyHostPropertyFiles,
+    target: "bun",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__toESM(require("process"), 1)');
+      api.expectFile("/out.js").toContain('__toESM(require("console"), 1)');
+    },
+    run: {
+      stdout: "number function function function fd 1 is non-blocking: false false",
+    },
+  });
+
+  // Test 75
+  itBundledPosix("cjs/__toESM_does_not_build_lazy_host_properties_bytecode", {
+    files: lazyHostPropertyFiles,
+    bytecode: true,
+    outdir: "/out",
+    outputPaths: ["/out/entry.js"],
+    run: {
+      file: "/out/entry.js",
+      stdout: "number function function function fd 1 is non-blocking: false false",
     },
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, getMacOSVersion, isMacOS, isWindows, tempDir } from "harness";
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { basename, join } from "node:path";
@@ -127,6 +127,11 @@ const programs: [entry: string, kept: string[]][] = [
   ["names-none-of-them.js", []],
 ];
 
+// The ICU of macOS 26.4 cannot format a range of hours with a day period in "ak": there
+// `new Intl.DateTimeFormat("ak", { hour: "numeric", dayPeriod: "short" }).formatRange(a, b)` ends any program, compiled or not, inside
+// icu::DateIntervalFormat::formatImpl. The ICU of 14.8, 15.7 and 26.6 formats it.
+const cannotRunHere = getMacOSVersion()?.startsWith("26.4") ? ["intl-date-time-format.js"] : [];
+
 export function testDeal() {
   test("every program is in the table", () => {
     const entries = Object.keys(files).filter(name => name !== "lists.js" && name !== "date.js");
@@ -138,7 +143,9 @@ export function testPrograms(part: number, parts: number) {
   describe.skipIf(!canTrim || !!unsupported)(
     "a method keeps all that it can open of ICU's data, in every locale",
     () => {
-      test.concurrent.each(programs.filter((_, index) => index % parts === part - 1))(
+      test.concurrent.each(
+        programs.filter(([entry], index) => index % parts === part - 1 && !cannotRunHere.includes(entry)),
+      )(
         "%s prints the same with only %j kept",
         (entry, kept) =>
           withSlot(async () => {

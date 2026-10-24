@@ -61,7 +61,7 @@ TanStack Start has two extra routes, the pages / ("static") and /items ("list").
 returned, with timestamps removed; under load only the length of a page is compared.
 `tanstack-typed` is the same program with `.sound/` beside it: the typed versions from packages/bun-sound of the packages it has
 installed (react, react-dom, seroval). Only an --aot build reads them. As a column it is held to the same pages as the plain one:
-`koa-typed`, `express-typed` and `fastify-typed` are those servers with the typed versions installed as packages, `node_modules/@sound/<name>`, as `bun add -d` would.
+`koa-typed`, `express-typed` and `fastify-typed` are those servers with the typed versions installed as packages, `node_modules/@oven/sound-<name>`, as `bun add -d` would.
 
     python3 measure.py --servers tanstack --column aot=/path/to/bun:--aot --column typed=/path/to/bun:--aot@tanstack-typed --out rows.jsonl
 
@@ -667,14 +667,14 @@ def run_checked(command, **more):
 
 
 def add_typed_versions(folder, installed_as_packages=False):
-    """Copies the typed versions under packages/bun-sound that are for the installed versions to <folder>/.sound, or to <folder>/node_modules/@sound as npm would install them. An --aot build finds them in both."""
+    """Copies the typed versions under packages/bun-sound that are for the installed versions to <folder>/.sound, or to <folder>/node_modules/@oven/sound-<name> as npm would install them. An --aot build finds them in both."""
     typed_versions = os.path.join(HERE, "..", "..", "..", "..", "packages", "bun-sound")
     added = []
     for described in sorted(glob.glob(os.path.join(typed_versions, "*", "*", "sound.json")) + glob.glob(os.path.join(typed_versions, "@*", "*", "*", "sound.json"))):
         name, version = os.path.split(os.path.relpath(os.path.dirname(described), typed_versions))
         installed = os.path.join(folder, "node_modules", name, "package.json")
         if os.path.exists(installed) and json.load(open(installed))["version"] == version:
-            target = os.path.join(folder, "node_modules", "@sound", name.lstrip("@").replace("/", "__")) if installed_as_packages else os.path.join(folder, ".sound", name)
+            target = os.path.join(folder, "node_modules", "@oven", "sound-" + name.lstrip("@").replace("/", "__")) if installed_as_packages else os.path.join(folder, ".sound", name)
             shutil.copytree(os.path.join(os.path.dirname(described), "lay"), os.path.join(target, "lay"))
             shutil.copy(described, target)
             if installed_as_packages:

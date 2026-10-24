@@ -8,6 +8,7 @@
 // A bed answers with what the program printed or with how the build or the run failed; compare() turns the two into a verdict.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
+import { limitsLowered } from "../harness/limits";
 import { laterProbes, probeProgram, probes } from "./engine-probes";
 
 export interface Program {
@@ -168,6 +169,7 @@ export class ProductBed implements Bed {
   readonly batch = 64;
   withoutFlowResults = ["--aot-disable=flow-results"];
   #switches?: { flowResults: string[]; passes: string[] };
+  #limits?: { name: string; flags: string[] }[];
 
   constructor(
     readonly bun: string,
@@ -189,6 +191,7 @@ export class ProductBed implements Bed {
       isFenced?: boolean;
       /** One time in n, n drawn from these, compiled code takes the general road behind a test though the value would have passed. */
       failPredictions?: number[];
+      lowersLimits?: boolean;
       /** So many workers run the program at once, each for itself, in place of the main thread. */
       workers?: number;
     },
@@ -230,9 +233,17 @@ export class ProductBed implements Bed {
     return [...set.map(each => inTheRun + each), ...(failing.length ? [`--aot-testing=FailPredictions:${failing[below(failing.length)]}:${below(65536)}`] : [])];
   }
 
+  // Only a large program meets most limits. With one of them at 0, 1 or 2 a small one runs what lies beyond it. A build takes one.
+  #drawnLimit(): string[] {
+    if (!this.options.lowersLimits) return [];
+    this.#limits ??= limitsLowered(this.bun);
+    return this.#limits[Math.floor(Math.random() * this.#limits.length)].flags;
+  }
+
   modes(program: Program): Mode[] {
     const stress = this.#drawnStress();
-    return this.#modes(program).map(mode => ({ ...mode, flags: [...mode.flags, ...stress] }));
+    const limit = this.#drawnLimit();
+    return this.#modes(program).map(mode => ({ ...mode, flags: [...mode.flags, ...stress, ...(mode.flags.some(flag => flag.startsWith("--aot-limit=")) ? [] : limit)] }));
   }
 
   #modes(program: Program): Mode[] {

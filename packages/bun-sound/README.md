@@ -38,8 +38,11 @@ One of these; the first that is there wins.
    your own tsconfig.
 2. **In the package itself:** nothing to do. A package can ship its own typed version: `index.aot.ts` beside
    `index.js`, named by the `"bun-aot"` condition of its `exports`. It has no `sound.json`.
+3. **As a package of its own:** `node_modules/@oven/sound-<name>/`, with the same `sound.json` and `lay/`. For `@scope/name`
+   that is `@oven/sound-scope__name`. This is what `publish.py` packs. Bun looks in the `node_modules` of the project root,
+   then in that of each folder above it.
 
-Bun looks nowhere else. It never takes a typed version of one package from another package in `node_modules`.
+Bun looks nowhere else.
 
 Nothing on disk is modified. During an `--aot` build Bun reads each file under `lay/` instead of the installed
 file at the same path. Without `--aot`, `bun run`, `bun test` and `bun build` never see them.
@@ -246,6 +249,35 @@ python3 ../tools/piecework.py split            # pieces of about 480 lines, cut 
    and input that came through `JSON.parse`. Print results without using the package.
 4. **Add the package to `check.py`'s table**, run the gates, run the tree. For a file in `PLACED` and a package with
    `form='placed'`, `check.py` writes `sound.json` and `lay/` in format `2` to `<out>/sound/<name>/`. `pack.py` writes format `2` too.
+
+### A package of many small files
+
+koa, @koa/router, delegates, on-finished, ee-first, parseurl, express, router, finalhandler, body-parser and fastify have no `src/`: each file
+under `lay/` is the installed file, edited in place. They are not in `check.py`'s table. `pack.py` pins their sums, and every build proves that
+they are the installed code and that they type check: `AOT_SERVERS=koa-typed,express-typed,fastify-typed bun test test/aot/servers`.
+
+```sh
+mkdir -p .sound/koa/lay/lib && cp node_modules/koa/lib/request.js .sound/koa/lay/lib/
+cp .sound/koa/lay/lib/request.js work/request.ts                        # the build names only the first error: check a copy by itself
+bun check --aot --all --no-pretty work/request.ts | python3 tools/implicit_any.py .sound/koa/lay/lib/request.js
+```
+
+- `require` returns `any`, so the types of a package are declared again at the end of each file (`declare namespace KT { .. }`), and what
+  another file exports gets its type where it is required: `const Layer: RT.LayerConstructor = require('./layer')`.
+- An accessor can't declare `this`. `module.exports = { get url () { .. } } satisfies ThisType<KT.Request>` types it for a whole literal.
+- A function that is called with `new` declares `this`, and `new F()` inside the file is `new (F as unknown as Constructor)()`.
+- Symbols as keys: `declare const FS: { readonly kReply: unique symbol }`, `const { kReply }: typeof FS = require('./symbols')`,
+  `interface Reply { [FS.kReply]: .. }`.
+- In a file without semicolons, a cast at the start of a line continues the line above. `;(error as any).status = 400` is the same code behind
+  an expression. Behind a block it is one empty statement more, and the file no longer matches.
+- A function that reads `arguments` gets an overload signature. A rest parameter changes the code.
+- An ES module needs `// @ts-ignore` above an `import` of a package without types.
+- Never write `: any` where the file's JSDoc says more. The compiler reads `@param {number} status` in a plain `.js` file as the type to expect, and
+  an annotation replaces it: `status: any` is less than the untyped file had.
+
+What these buy is in `test/aot/servers/measure` (`koa-typed`, `express-typed`, `fastify-typed`). A type helps where the file itself creates the
+object with `new`, a class or a literal. It doesn't where the object comes from `Object.create(prototype)`, is one of node's own with names added
+or its prototype replaced, or is a function with members.
 
 ### The rules that matter
 

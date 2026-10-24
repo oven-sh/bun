@@ -4662,6 +4662,13 @@
           "multiple": false
         },
         {
+          "name": "dts",
+          "description": "Write declaration files (.d.ts), and each output file with its types kept (.aot.ts), to --outdir. Implies --check",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "aot",
           "description": "Compile JavaScript and TypeScript to machine code at build time. Requires --compile",
           "hasValue": false,

@@ -90,6 +90,19 @@ fn typed_version_comes_from_host_then_condition() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn installed_typed_version_comes_after_condition() {
+    let installed_typed = "/p/node_modules/@oven/sound-pkg/lay/index.js";
+    let host = typed_package().installed_typed(INSTALLED, installed_typed);
+    assert_eq!(typed_version(&host, INSTALLED), by(FromPackage, TYPED));
+
+    let other = "/p/node_modules/pkg/other.js";
+    let other_typed = "/p/node_modules/@oven/sound-pkg/lay/other.js";
+    let host = typed_package().installed_typed(other, other_typed);
+    assert_eq!(typed_version(&host, other), by(FromHost, other_typed));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn typed_condition_needs_package_exports() {
     assert_eq!(typed_version(&typed_package(), "/p/local.js"), None);
 
@@ -201,7 +214,6 @@ fn manifest_must_export_file_and_other_typed_file() {
         r#"{"name": "dist"}"#,
         r#"{"exports": {".": "./index.js"}}"#,
         r#"{"exports": {".": {"bun-aot": "./index.aot.ts", "default": "./other.js"}}}"#,
-        r#"{"exports": {".": {"bun-aot": "./missing.aot.ts", "default": "./index.js"}}}"#,
         r#"{"exports": {".": {"bun-aot": "./index.js", "default": "./index.js"}}}"#,
         r#"{"exports": {".": {"bun-aot": null, "default": "./index.js"}}}"#,
         r#"{"exports": {"./bun-aot": "./index.aot.ts", ".": {"default": "./index.js"}}}"#,
@@ -210,6 +222,24 @@ fn manifest_must_export_file_and_other_typed_file() {
         let found = dist_typed_version(MAIN_IN_DIST, dist_manifest);
         assert_eq!(found, None, "{dist_manifest}");
     }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn typed_file_that_condition_names_can_be_missing() {
+    let dist_manifest =
+        r#"{"exports": {".": {"bun-aot": "./missing.aot.ts", "default": "./index.js"}}}"#;
+    let host = package_with_dist(MAIN_IN_DIST, dist_manifest);
+    with_resolver(&host, &bun_run(), |resolver| {
+        let typed = resolver.typed_version_of(DIST_FILE.as_bytes()).unwrap();
+        assert_eq!(text(typed.path), "/p/node_modules/pkg/dist/missing.aot.ts");
+        assert!(typed.is_missing);
+    });
+    let host = package_with_dist(MAIN_IN_DIST, DIST_TYPED_EXPORTS);
+    with_resolver(&host, &bun_run(), |resolver| {
+        let typed = resolver.typed_version_of(DIST_FILE.as_bytes()).unwrap();
+        assert!(!typed.is_missing);
+    });
 }
 
 #[test]

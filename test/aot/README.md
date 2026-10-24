@@ -13,6 +13,7 @@ groups of tests, the one command that runs each, what CI has to know, and where 
 | **Slow**: everything | `AOT_PROGRAMS= AOT_GENERATED=all AOT_REPEATED_BUILDS=300 bun test test/aot` | All importers of `packages/`, every generated program, the long form of `repeated-builds` | The same, and hours |
 | **All of Bun's tests under `--aot`** | `bun test/aot/whole-suite.ts` | Every test file of the repository twice with `scripts/runner.node.ts`: as it is, and with `--aot` added to each `bun test` and `bun run`. It lists the files that pass only as they are | What the whole suite needs, twice the time |
 | **Needs `perf`** | `AOT_PERF=1 bun test test/aot/perf` | Instructions per iteration of everyday idioms against the pinned numbers in `perf/pins.<os>-<arch>.json` | Linux, `perf stat` with user-mode counters |
+| **Against the JIT** | `bun test/aot/perf/idioms-against-the-jit.ts` | Every idiom of `perf/idioms` and `perf/everyday`, compiled as TypeScript and as JavaScript, against the same binary's JIT: instructions per iteration, collections, peak memory; the losses first. `perf/idioms-against-the-jit.test.ts` lists each loss as a todo | Linux, user-mode counters |
 | **Needs installed packages** | `AOT_TYPED_PACKAGES=<node_modules> SEMA=<bun-sema> bun test test/aot/typed-packages-wide-trees` | `packages/bun-sound/run.py`: the typed versions of react-dom, react-reconciler, seroval, fuse.js .. compiled into large programs: the answers of the untouched packages, and that each is still compiled as typed | A `node_modules` with the packages as npm installs them, `bun-sema` (the checker's CLI), python3, and a front end and `testaot`, found as for the scripts of `shell/` |
 | **Needs the network** | `AOT_SERVERS=1 bun test test/aot/servers` | Six HTTP servers, compiled, asked for every route | npm, or `AOT_SERVERS_MODULES=<a node_modules folder>` |
 | **Needs the compiler's own tools** | `JSC=<jsc> FRONT_END=<bun> TESTAOT=<testaot> PLAIN=<any bun> test/aot/shell/quick.py all` | The programs again without building Bun: front end, `testaot compile` with B3 and Air validated after every phase, `jsc` | `jsc` and `testaot`; the top of `shell/toolchain.py` says how to build them. `FRONT_END`: `bun-aot` (`cargo build --release -p bun_aot_standalone`), or a Bun, which is its own front end (`bun compile --aot-out=<file>`). python3 |
@@ -45,8 +46,9 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 - **Nothing has to be registered.** `scripts/runner.node.ts` runs every file under `test/` whose name contains `.test.` or `spec.`.
   For the same reason no program or helper below this folder may have such a name.
 - **This folder has steps of its own**, `<platform>-test-aot` (`getAotTests()` in `.buildkite/ci.ts`), and the `test-bun` shards leave
-  it out: it costs twice the rest of `test/`. With it go the tests of `--aot` and `--trim` that lie elsewhere (`aotTests` there:
-  `bundler/bundler_compile_aot`, `bundler/compile-aot*`, `bundler/compile-trim*`, `bundler/trim-runtime-icu`, `cli/aot-*`): on macOS,
+  it out: it costs twice the rest of `test/`. With it go the tests of `--aot`, `--trim`, `--library` and `--dts` that lie elsewhere
+  (`aotTests` there: `bundler/bun-build-api-dts`, `bundler/bun-build-dts`, `bundler/bundler_compile_aot`, `bundler/compile-aot*`,
+  `bundler/compile-trim*`, `bundler/trim-runtime-icu`, `cli/aot-*`, `cli/compile/compile-library*`): on macOS,
   where `test-bun` has two shards, they took as long as everything else in them. What follows holds for them too. A pull request that touches a path in `aotSources` of `.buildkite/ci.ts` (`src/aot`,
   `src/sema`, `src/builtin_sources`, `src/bundler/aot`, `src/trim`, `src/exe_format`, `src/codegen/aot-schema`, `src/codegen/builtins`,
   `src/options_types/aot_options.rs`, `scripts/build/aot*`, `scripts/build/trim`, `packages/bun-sound`, this folder, the pinned WebKit,

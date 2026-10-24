@@ -1,4 +1,4 @@
-@sound/anthropic-ai__sdk 0.128.0
+@oven/sound-anthropic-ai__sdk 0.128.0
 
 This package holds files of @anthropic-ai/sdk 0.128.0 (https://www.npmjs.com/package/@anthropic-ai/sdk/v/0.128.0).
 Copyright 2023 Anthropic, PBC.

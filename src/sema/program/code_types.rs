@@ -19,7 +19,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             mut code,
             payload,
         } = parsed;
-        let loaded = Files::load_parsed(
+        let mut loaded = Files::load_parsed(
             arena,
             self.host,
             self.resolver,
@@ -35,7 +35,36 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             }),
             &|_| (),
         );
+        if let Some(declaration) = self.find_own_declaration(key, &loaded, &code) {
+            loaded.imports.push(declaration);
+        }
         (Box::new(loaded), code, payload)
+    }
+
+    // What a package declares about its JavaScript is what the compiler expects of it.
+    fn find_own_declaration(
+        &self,
+        key: LoadKey<'r>,
+        loaded: &Loaded<'s, 'r>,
+        code: &LoadedCode<'s, 'r>,
+    ) -> Option<Resolution<'r>> {
+        let is_untyped = loaded.module.role == FileRole::Inferred
+            && key.loader == HostLoader::default()
+            && code.analyzed.typed_source_path.is_none();
+        if !is_untyped {
+            return None;
+        }
+        Some(Resolution {
+            spec: known::own_declaration,
+            mode: ResolutionMode::None,
+            path: self.resolver.declaration_file_of(key.path)?,
+            number: NOT_NUMBERED,
+            should_add_file: true,
+            increases_depth: false,
+            package_id: None,
+            is_importable: true,
+            unsupported_extension: None,
+        })
     }
 
     pub(super) fn types_file_parse_options(&self, path: &[u8]) -> ParseOptions {

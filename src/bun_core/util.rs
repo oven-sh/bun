@@ -318,10 +318,7 @@ impl core::ops::Deref for ZStr {
 /// An executable compiled ahead of time does not start where the environment sets one.
 #[cfg(bun_locked_environment)]
 pub fn is_never_read(key: &[u8]) -> bool {
-    const WORDS: [&[u8]; 25] = [
-        b"BUN_AOT_TYPE_MISMATCH_LOG",
-        b"BUN_AOT_TYPE_MISMATCH_LOG_FORMAT",
-        b"BUN_AOT_VERBOSE",
+    const WORDS: [&[u8]; 22] = [
         b"BUN_BE_BUN",
         b"BUN_BYTECODE_DIGEST_OUT",
         b"BUN_BYTECODE_ORDER_NAMES_OUT",
@@ -345,7 +342,7 @@ pub fn is_never_read(key: &[u8]) -> bool {
         b"BUN_WATCHER_TRACE",
         b"MI_VERBOSE",
     ];
-    key.starts_with(b"BUN_DEBUG") || WORDS.contains(&key)
+    key.starts_with(b"BUN_AOT_") || key.starts_with(b"BUN_DEBUG") || WORDS.contains(&key)
 }
 
 /// `bun.getenvZ` — read an environment variable. Returns the value as borrowed

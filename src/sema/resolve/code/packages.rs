@@ -164,6 +164,23 @@ impl<'h> Resolver<'h> {
         SearchResult::NotFound(failure)
     }
 
+    pub(super) fn exact_exports_target(
+        &self,
+        manifest: &CodeManifest<'h>,
+        exports: &ExportsEntry<'h>,
+        subpath: &[u8],
+        search: CodeSearch<'_>,
+    ) -> Option<Vec<u8>> {
+        let options = self.code_options();
+        let matches = |condition: &[u8]| options.matches_condition(condition, search);
+        let resolution = resolve_exports(exports, subpath, &matches);
+        if resolution.status != ExportsStatus::Exact {
+            return None;
+        }
+        let relative = resolution.path.strip_prefix(b"/")?;
+        Some(join_unrooted(manifest.directory, relative))
+    }
+
     fn load_package_imports(
         &self,
         specifier: &[u8],

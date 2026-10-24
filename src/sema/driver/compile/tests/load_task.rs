@@ -49,20 +49,12 @@ const ROLES: [(&str, FileRole); 5] = [
     ("size.d.ts", FileRole::TypesOnly),
 ];
 
-const MAIN_WITHOUT_DATA: &str = r#"import "./a.js";
-    import "./b.mjs";
-    import type { Size } from "./size";
-    export const size: Size = 1;"#;
-
 #[test]
 fn role_follows_tree() {
-    let mut sources = FILES_OF_EVERY_ROLE;
-    sources[1].1 = MAIN_WITHOUT_DATA;
-    with_program(&sources, &["./main.ts"], 1, |program| {
+    with_program(&FILES_OF_EVERY_ROLE, &["./main.ts"], 1, |program| {
         let files = program.files();
         assert!(files.is_compile_build());
-        assert!(files.by_path.get(b"/project/data.json").is_none());
-        for (path, role) in ROLES.into_iter().filter(|&(path, _)| path != "data.json") {
+        for (path, role) in ROLES {
             let file = file_at(files, path);
             assert_eq!(files.role(file), role, "{path}");
             let has_code = role != FileRole::TypesOnly;

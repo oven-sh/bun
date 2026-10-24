@@ -7,9 +7,19 @@ const list = (count: number, each: (at: number) => string, between = ", ") => up
 
 const valueOf = (at: number, seed = "s") => [`${seed} + ${at}`, `(${seed} + ${at}) / 4`, `"t${at}" + ${seed}`, `{ n: ${seed} + ${at} }`, `[${seed}, ${at}]`, `${seed} % 2 === ${at % 2}`, `BigInt(${seed} + ${at})`, `null`][at % 8];
 
+/** The `at`-th order of the names. */
+function orderOf(names: string[], at: number): string[] {
+  const left = [...names];
+  const order: string[] = [];
+  for (let size = left.length; size > 0; at = Math.floor(at / size), size--) order.push(...left.splice(at % size, 1));
+  return order;
+}
+
 interface Thing {
   name: string;
   largest: number;
+  /** From this count on the program departs from plain Bun today. */
+  failsTodayFrom?: number;
   /** Declares `run<id>(s)`, which answers with something that `show` prints. */
   text(count: number, id: number): string;
   isAsync?: boolean;
@@ -25,6 +35,7 @@ const things: Thing[] = [
   { name: "a-spread-call", largest: 65537, text: (n, id) => `function taking${id}(...all) {\n  return all.length + all[all.length - 1];\n}\nfunction run${id}(s) {\n  const given = Array.from({ length: ${n} }, (_, at) => s + at);\n  try {\n    return [taking${id}(...given), Math.max(...given), taking${id}.apply(null, given)];\n  } catch (error) {\n    return error instanceof RangeError ? "fine" : String(error);\n  }\n}` },
   { name: "arguments-of-built-ins", largest: 2049, text: (n, id) => `function run${id}(s) {\n  const grown = [];\n  grown.push(${list(n, at => `s + ${at}`)});\n  return [Math.max(${list(n, at => `s + ${at}`)}), String.fromCharCode(${list(n, at => `65 + ((s + ${at}) % 26)`)}).length, grown.length, [].concat(${list(n, at => (at % 2 ? `[s, ${at}]` : `${at}`))}).length, new Array(${list(n, at => `${at}`)}).length];\n}` },
   { name: "members-of-a-literal", largest: 4097, text: (n, id) => `function run${id}(s) {\n  const made = { ${list(n, at => `m${at}: ${valueOf(at)}`)} };\n  touch();\n  return [Object.keys(made).length, made.m0, made.m${n - 1}, made.m${n >> 1}, made];\n}` },
+  { name: "orders-of-the-same-members", largest: 4097, failsTodayFrom: 4097, text: (n, id) => `function run${id}(s) {\n  const made = [\n    ${list(n, at => `{ ${orderOf(["a", "b", "c", "d", "e", "f", "g"], at).map((name, place) => `${name}: s + ${at + place}`).join(", ")} }`, ",\n    ")},\n  ];\n  let sum = 0;\n  for (const each of made) sum += each.a * 2 + each.g + Object.keys(each)[3].charCodeAt(0);\n  return [made.length, sum, Object.keys(made[${n - 1}]).join(""), made[${n >> 1}]];\n}` },
   { name: "elements-of-a-literal", largest: 16385, text: (n, id) => `function run${id}(s) {\n  const whole = [${list(n, at => `s + ${at}`)}];\n  const parts = [${list(n, at => `(s + ${at}) / 4`)}];\n  const mixed = [${list(Math.min(n, 2049), at => (at % 9 === 8 ? "" : valueOf(at)))}];\n  touch();\n  return [whole.length, whole[${n - 1}], parts[${n - 1}], mixed.length, mixed[${Math.min(n, 2049) - 1}], whole.reduce((sum, each) => sum + each, 0)];\n}` },
   { name: "constant-elements", largest: 65537, text: (n, id) => `function run${id}(s) {\n  const table = [${list(n, at => `${(at * 7919) % 65521}`)}];\n  return [table.length, table[s % ${n}], table[${n - 1}]];\n}` },
   { name: "entries-of-a-map", largest: 4097, text: (n, id) => `function run${id}(s) {\n  const map = new Map([${list(n, at => `["k${at}", ${at}]`)}]);\n  const set = new Set([${list(n, at => `${at % 2 ? `"e${at}"` : at}`)}]);\n  return [map.size, map.get("k" + (s % ${n})), set.size, set.has(${n - (n % 2 ? 1 : 2)})];\n}` },
@@ -78,7 +89,7 @@ export interface Combination {
 
 export function pickCombination(pick: <T>(items: readonly T[]) => T): Combination {
   const thing = pick(things);
-  return { thing, count: pick(counts.filter(count => count <= thing.largest)) };
+  return { thing, count: pick(counts.filter(count => count <= thing.largest && count < (thing.failsTodayFrom ?? Infinity))) };
 }
 
 export const nameOf = ({ thing, count }: Combination) => `${count}-${thing.name}`;
@@ -116,8 +127,15 @@ export function testPrograms() {
   return things.map((thing, at) => {
     const fitting = counts.filter(count => count <= Math.min(thing.largest, 1025));
     const combination = { thing, count: fitting[fitting.length - 1 - (at % 3)] };
-    return { name: nameOf(combination), text: programOf([combination]) };
-  });
+    return { name: nameOf(combination), text: programOf([combination]), failsToday: undefined as string | undefined };
+  }).concat(
+    things
+      .filter(thing => thing.failsTodayFrom !== undefined)
+      .flatMap(thing => [
+        { name: nameOf({ thing, count: thing.failsTodayFrom! - 1 }), text: programOf([{ thing, count: thing.failsTodayFrom! - 1 }]), failsToday: undefined },
+        { name: nameOf({ thing, count: thing.failsTodayFrom! }), text: programOf([{ thing, count: thing.failsTodayFrom! }]), failsToday: "the build refuses it" },
+      ]),
+  );
 }
 
 if (import.meta.main) {

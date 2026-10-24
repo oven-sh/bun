@@ -290,7 +290,9 @@ fn add_target<'r>(
     let can_have_typed_version =
         loader == HostLoader::default() && is_javascript_file(host, file.path);
     let typed_path = match can_have_typed_version {
-        true => resolver.typed_version_of(file.path).map(|typed| typed.path),
+        true => (resolver.typed_version_of(file.path))
+            .filter(|typed| !typed.is_missing)
+            .map(|typed| typed.path),
         false => None,
     };
     let index = targets.len() as u32;

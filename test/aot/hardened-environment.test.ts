@@ -110,7 +110,7 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
       "mimalloc_allow_thp",
       "mimalloc_scavenger",
     ]);
-    expect([namesNeverRead[0], namesNeverRead.at(-1)]).toEqual(["BUN_AOT_TYPE_MISMATCH_LOG", "MI_VERBOSE"]);
+    expect([namesNeverRead[0], namesNeverRead.at(-1)]).toEqual(["BUN_BE_BUN", "MI_VERBOSE"]);
   });
 
   test.each([
@@ -131,6 +131,13 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
     ["BUN_DEBUG_QUIET_LOGS", "1"],
     ["BUN_DEBUG_ALL", "1"],
     ["BUN_DEBUGGER", "1"],
+    ["BUN_AOT_CHECKED_NATIVE_CALLS", "checked.txt"],
+    ["BUN_AOT_TYPE_MISMATCH_LOG", "stderr"],
+    ["BUN_AOT_TYPE_MISMATCH_LOG_FORMAT", "json"],
+    ["BUN_AOT_VERBOSE", "1"],
+    ["BUN_AOT_THERE_IS_NO_SUCH_VARIABLE", "1"],
+    ["BUN_AOT_", "1"],
+    ["BUN_AOT_VERBOSE", ""],
     ["BUN_JSC_logGC", ""],
     ["MIMALLOC_VERBOSE", ""],
     ["BUN_TRACE", ""],
@@ -175,6 +182,9 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
       BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: "1",
       BUN_GC_TIMER_INTERVAL: "1000",
       BUN_THERE_IS_NO_SUCH_VARIABLE: "1",
+      BUN_AOT: "1",
+      bun_aot_verbose: "1",
+      NOT_BUN_AOT_VERBOSE: "1",
       bun_jsc_logGC: "1",
       JSC_logGC: "1",
       NOT_BUN_JSC_logGC: "1",
@@ -205,6 +215,7 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
     const path = (name: string) => join(String(directory), name);
     const before = readdirSync(String(directory)).sort();
     const words = {
+      BUN_AOT_CHECKED_NATIVE_CALLS: path("checked.txt"),
       BUN_AOT_TYPE_MISMATCH_LOG: path("mismatches.jsonl"),
       BUN_BYTECODE_DIGEST_OUT: path("digest.txt"),
       BUN_BYTECODE_ORDER_OUT: path("order.txt"),
@@ -224,7 +235,14 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
     const withEntries = (...entries: string[]) =>
       start(mark => ["python3", "-c", startWithRawEnvironment, "3", executable, "--version", mark, ...entries], bunEnv);
     expect(await withEntries("HOME=/", "ALONE")).toMatchObject(asAlways);
-    for (const name of ["BUN_JSC_useWasm", "BUN_JSC_logGC", "MIMALLOC_VERBOSE", "BUN_TRACE", "BUN_DEBUG_ALL"])
+    for (const name of [
+      "BUN_JSC_useWasm",
+      "BUN_JSC_logGC",
+      "MIMALLOC_VERBOSE",
+      "BUN_TRACE",
+      "BUN_DEBUG_ALL",
+      "BUN_AOT_VERBOSE",
+    ])
       expect(await withEntries("HOME=/", name, "ALONE")).toMatchObject(refusalThatNames(name));
     // The allocator finds its word only in front of a "=", and takes nothing from this one.
     expect(await withEntries("HOME=/", "MIMALLOC_PURGE_DELAY")).toMatchObject(asAlways);
@@ -272,11 +290,19 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
     expect(existsSync(`${mark}-of-child`)).toBe(ran);
   });
 
+  test.each(["BUN_AOT_CHECKED_NATIVE_CALLS", "BUN_AOT_TYPE_MISMATCH_LOG", "BUN_AOT_VERBOSE"])(
+    "has no code that asks for %s",
+    name => {
+      expect(Bun.spawnSync(["grep", "-q", "-a", name, bunExe()]).exitCode).toBe(1);
+    },
+  );
+
   test("is the only thing that does not start: bun itself does", async () => {
     const words = {
       BUN_JSC_logGC: "0",
       MIMALLOC_VERBOSE: "1",
       BUN_DEBUG_QUIET_LOGS: "1",
+      BUN_AOT_VERBOSE: "1",
       BUN_BE_BUN: "1",
       BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
       MI_VERBOSE: "1",
@@ -297,6 +323,7 @@ describe.skipIf(locksEnvironment)("an executable of any other build", () => {
       MIMALLOC_SHOW_ERRORS: "0",
       BUN_DEBUG_QUIET_LOGS: "1",
       BUN_DESTRUCT_VM_ON_EXIT: "0",
+      BUN_AOT_THERE_IS_NO_SUCH_VARIABLE: "1",
     };
     expect(await runWith(words)).toMatchObject(asAlways);
   });

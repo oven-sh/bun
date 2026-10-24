@@ -1,5 +1,5 @@
 {
-  "name": "@sound/react",
+  "name": "@oven/sound-react",
   "version": "19.2.8",
   "description": "Sound TypeScript types for react 19.2.8: npm's own code with types added and nothing else changed, for `bun build --compile --aot`.",
   "license": "MIT",

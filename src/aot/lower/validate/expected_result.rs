@@ -2,13 +2,14 @@ use bun_sema::bind::Binding;
 use bun_sema::check::aot::{
     AnythingReason, CallTarget, FunctionRef, GaveUp, ShapeKind, WrittenType,
 };
-use bun_sema::hir::{Call, Chain, ExprId, ExprKind, FnBody, NodeData};
+use bun_sema::hir::{Call, Chain, ExprId, ExprKind, FnBody, MemberKey, NodeData};
 use bun_sema::util::SharedSort;
 
 use super::ValidationError;
 use super::nodes::validation_nodes;
-use crate::builtins::builtin_value_of;
 use crate::builtins::id::BuiltinId;
+use crate::builtins::table::{self, BuiltinName, MemberLookup};
+use crate::builtins::{builtin_class_of, builtin_value_of};
 use crate::diagnostic_codes::Code;
 use crate::ir::generated::{
     ExpectedResult, LimitId, TypeSiteKind, ValidationNode, ValidationShape,
@@ -33,14 +34,66 @@ pub(super) fn find_validating_function(builtin: BuiltinId) -> Option<ValidatingF
 }
 
 // `const config: Config = JSON.parse(text)`, `JSON.parse(text) as Order`: the parse may build its answer with the layouts of the type that it is written under.
-fn note_what_a_parse_may_build(file: &mut FileLowering<'_, '_, '_, '_>, call: ExprId) {
-    let Ok(Some(written)) = file.queries.contextual_type(call) else {
+fn note_what_a_parse_may_build(file: &mut FileLowering<'_, '_, '_, '_>, answer: ExprId) {
+    let Ok(Some(written)) = file.queries.contextual_type(answer) else {
         return;
     };
-    let position = file.hir[call].pos;
+    let position = file.hir[answer].pos;
     let ty = result_type(file, written, position);
     if ty != TypeTable::ANYTHING {
         layouts::note_what_is_built(file, ty, LimitId::MaxExpectedResultLayouts);
+    }
+}
+
+fn has_parser_under(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    receiver: CheckerTypeId,
+    name: BuiltinName,
+) -> bool {
+    let class = match file.queries.type_shape(receiver).map(|shape| shape.kind) {
+        Ok(ShapeKind::Builtin { class, .. }) => class,
+        Ok(ShapeKind::Union(members)) => {
+            return members
+                .iter()
+                .any(|&member| has_parser_under(file, member, name));
+        }
+        Ok(_) | Err(_) => return false,
+    };
+    let prototype =
+        builtin_class_of(class.class).and_then(|class| table::class_data(class).prototype);
+    prototype.is_some_and(|prototype| match table::member(prototype, name) {
+        MemberLookup::Found(method) => table::is_parser(table::canonical_id(method)),
+        MemberLookup::Unknown | MemberLookup::Absent => false,
+    })
+}
+
+// The type of the receiver says which class it is of, and the table what the prototype of the class holds under the name.
+fn calls_parser_of_receiver(file: &mut FileLowering<'_, '_, '_, '_>, callee: ExprId) -> bool {
+    let Some((receiver, MemberKey::Name(name))) = file.hir.member_key(callee) else {
+        return false;
+    };
+    let Some(name) = file.inputs.builtin_names.get(name) else {
+        return false;
+    };
+    match file.queries.expression_type(receiver) {
+        Ok(receiver) => has_parser_under(file, receiver, name),
+        Err(_) => false,
+    }
+}
+
+// `(await request.json()) as Order`, `const order: Order = await response.json()`: the type is written over the await.
+pub(super) fn note_what_an_awaited_parse_may_build(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    awaiting: ExprId,
+    operand: ExprId,
+) {
+    let hir = file.hir;
+    let ExprKind::Call(id) = hir[expression::skip_type_syntax(file, operand)].kind else {
+        return;
+    };
+    let callee = expression::skip_type_syntax(file, hir[id].callee);
+    if hir.list_at(hir[id].type_args).is_empty() && calls_parser_of_receiver(file, callee) {
+        note_what_a_parse_may_build(file, awaiting);
     }
 }
 

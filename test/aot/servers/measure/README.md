@@ -5,6 +5,7 @@ node:http, Koa, TanStack Start, Express, Fastify, and Fastify with a schema for 
 fast-json-stringify generate code from the schemas at run time, which a compiled server interprets). `measure.py` builds each of them with every Bun it is given, loads them side by side and writes
 one line of JSON for each server, route and build. Every response is compared with the expected one, byte for byte.
 `tanstack-typed` is TanStack Start once more, with the typed versions of react, react-dom and seroval from `packages/bun-sound` in `.sound/`.
+`koa-typed`, `express-typed` and `fastify-typed` are those servers once more, with the typed versions of their packages installed as `node_modules/@oven/sound-<name>`.
 
 ## Compiled ahead of time against the JIT, in one command
 

@@ -1,0 +1,11 @@
+{
+  "sound": 2,
+  "name": "finalhandler",
+  "version": "2.1.1",
+  "when": {},
+  "basis": {},
+  "lay": {
+    "index.js": "33fa315d18529f1269034af21470ca384b4278330aff6f6f64ea06dbcbaf3e15"
+  },
+  "needs": []
+}

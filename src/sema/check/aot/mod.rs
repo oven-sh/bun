@@ -9,6 +9,7 @@ mod constructor_evidence;
 mod constructor_function_parents;
 pub(in crate::check) mod constructor_functions;
 mod dead_code;
+mod declared_signatures;
 pub mod diagnostic_class;
 pub mod diagnostic_effect;
 mod diagnostic_location;

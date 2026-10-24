@@ -1,0 +1,13 @@
+@oven/sound-on-finished 2.4.1
+
+This package holds files of on-finished 2.4.1 (https://www.npmjs.com/package/on-finished/v/2.4.1).
+Copyright (c) 2013 Jonathan Ong <me@jongleberry.com>
+Licensed under MIT: see LICENSE, which is that package's own.
+
+What was changed:
+  lay/index.js
+  TypeScript type annotations, type declarations, `declare`d fields and type-only casts were added to the
+  package's own JavaScript. No statement and no expression was changed: with the types erased, each file
+  prints as the file it was made from. Each takes the place of the package's file of the same name.
+
+The additions are offered under the same licence as the package.

@@ -1,1 +1,1 @@
-{ "skipInShell": "it needs Bun's modules", "todoOn": { "win32": "require(path.join(__dirname) + \"/a.js\") throws MODULE_NOT_FOUND in the executable: the folder is spelled with \\ and the text with /" } }
+{ "skipInShell": "it needs Bun's modules" }

@@ -91,9 +91,12 @@ fn inferred_file_imports_code_targets() {
             assert_eq!(files.role(main), FileRole::Inferred);
             assert_eq!(files.code_answers(main), [CodeAnswer::File(code)]);
             assert_eq!(imported_files(files, main), [code]);
-            assert_eq!(files.by_path.get(b"/node_modules/pkg/index.d.ts"), None);
-            assert_eq!(files.modules.len(), 2);
-            for file in all_files(files) {
+            // What the package declares of its code is what the compiler expects of it.
+            let declarations = file_at(files, "/node_modules/pkg/index.d.ts");
+            assert_eq!(imported_files(files, code), [declarations]);
+            assert_eq!(files.role(declarations), FileRole::TypesOnly);
+            assert_eq!(files.modules.len(), 3);
+            for file in [main, code] {
                 assert!(!files.module(file).is_in_types_program);
             }
         },

@@ -170,11 +170,20 @@ fn accept_tree<'s, 'r>(
         true => resolver.typed_version_of(path),
         false => None,
     };
+    let (missing, typed_version) = match typed_version {
+        Some(typed) if typed.is_missing => (Some(typed), None),
+        typed_version => (None, typed_version),
+    };
     let typed = typed_version.and_then(|typed| match host.read_code(typed.path) {
         CodeRead::Text(typed_text) => Some((typed, typed_text)),
         CodeRead::Deferred => None,
     });
-    let (mut rejected_typed_version, mut typed_version_origin) = (None, None);
+    let mut rejected_typed_version = missing.map(|typed| RejectedTypedVersion {
+        path: typed.path,
+        kind: ErasureMismatchKind::Missing,
+        installed_range: (0, 0),
+    });
+    let mut typed_version_origin = None;
     if let Some((typed, typed_text)) = typed {
         typed_version_origin = Some(typed.origin);
         let typed_request = CodeParseRequest {

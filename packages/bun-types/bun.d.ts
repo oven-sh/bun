@@ -3650,6 +3650,34 @@ declare module "bun" {
     check?: boolean;
 
     /**
+     * Write a TypeScript declaration file (`.d.ts`) for each source file, and each
+     * JavaScript output file once more with its types kept (`index.js` and `index.aot.ts`).
+     * The entrypoints and everything they import are type checked first, as with `check`.
+     * Equivalent to `--dts` in the CLI.
+     *
+     * `bun compile` compiles a package from its `.aot.ts` files where the `"bun-aot"`
+     * condition in the `"exports"` of its `package.json` names them. Every other tool reads
+     * `index.js` and `index.d.ts`. A `tsconfig.json` beside the `.aot.ts` files says how strict
+     * they are.
+     *
+     * The files are in `outputs` with `kind: "asset"`. They are written to `outdir` if there is one.
+     * Can't be used with `compile`.
+     *
+     * @default false
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   dts: true,
+     * });
+     * // dist/index.js, dist/index.d.ts, dist/index.aot.ts, dist/tsconfig.json
+     * ```
+     */
+    dts?: boolean;
+
+    /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
      * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
      *

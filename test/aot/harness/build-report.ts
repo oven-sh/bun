@@ -28,6 +28,11 @@ export interface AccessSite extends SourcePosition {
   level: Level;
   cost: AccessCost;
   function: number | null;
+  /** Why the access is not free, where that begins, and the type the compiler takes the receiver for. */
+  cause: string | null;
+  limit: string | null;
+  layout: string | null;
+  witness: SourcePosition | null;
 }
 
 export interface TypeTestSite extends SourcePosition {

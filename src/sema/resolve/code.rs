@@ -4,6 +4,7 @@ use crate::program::HostModuleId;
 
 mod computed;
 mod config;
+mod declarations;
 mod exports;
 mod files;
 mod manifest;
@@ -112,6 +113,7 @@ pub enum TypedVersionOrigin {
 pub struct TypedVersionFile<'h> {
     pub path: &'h [u8],
     pub origin: TypedVersionOrigin,
+    pub is_missing: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

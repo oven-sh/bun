@@ -21,6 +21,7 @@
 //                         n and whether the collections are full or young are drawn anew for every batch and stand among the flags of a finding as --in-the-run=<variable>
 //                         (0 among them: no collections but the program's own); --fenced: half of the batches with every write barrier on its fenced road
 //   --fail-predictions 1,2,7   one time in n compiled code takes the general road behind a test though the value would have passed; n and the seed are drawn anew for every batch
+//   --lowered-limits      each batch is built with one limit of the compiler or of its run time at 0, 1 or 2 (--aot-limit), drawn anew for every batch: a small program then runs what only a large one meets
 //   --workers <n>         n workers run each program at once, each for itself, in place of the main thread; lines are compared in any order
 //   --as-a-user           the compiler's verifiers stay off, as in a user's build: what they would refuse is built and run
 //   --environment "A=1 B=2"      set for every process ("A=" takes A out); --run-environment the same for the run of the executable alone (the collector's options, say)
@@ -60,7 +61,7 @@ const beds: { bed: Bed; jobs: number }[] = [];
 const productJobs = Number(option("jobs") ?? Math.max(1, availableParallelism() >> 2));
 const engineJobs = Number(option("engine-jobs") ?? 0);
 if (replay ? option("bed") !== "engine" : productJobs > 0)
-  beds.push({ jobs: productJobs, bed: new ProductBed(option("bun") ?? process.execPath, { baseFlags: words(option("flags")), validate: has("validate"), threads: Number(option("threads") ?? 4), buildSeconds: Number(option("build-seconds") ?? 300), runSeconds: Number(option("run-seconds") ?? 20), compiledRunSeconds: option("compiled-run-seconds") ? Number(option("compiled-run-seconds")) : undefined, runEnvironment: pairs(option("run-environment")), modes: option("modes")?.split(","), workers: Number(option("workers") ?? 0), collectorStress: option("collector-stress")?.split(",").map(Number), isFenced: has("fenced"), failPredictions: option("fail-predictions")?.split(",").map(Number) }) }); // prettier-ignore
+  beds.push({ jobs: productJobs, bed: new ProductBed(option("bun") ?? process.execPath, { baseFlags: words(option("flags")), validate: has("validate"), threads: Number(option("threads") ?? 4), buildSeconds: Number(option("build-seconds") ?? 300), runSeconds: Number(option("run-seconds") ?? 20), compiledRunSeconds: option("compiled-run-seconds") ? Number(option("compiled-run-seconds")) : undefined, runEnvironment: pairs(option("run-environment")), modes: option("modes")?.split(","), workers: Number(option("workers") ?? 0), collectorStress: option("collector-stress")?.split(",").map(Number), isFenced: has("fenced"), failPredictions: option("fail-predictions")?.split(",").map(Number), lowersLimits: has("lowered-limits") }) }); // prettier-ignore
 if (option("engine") && (replay ? option("bed") === "engine" : engineJobs > 0))
   beds.push({ jobs: engineJobs, bed: new EngineBed(option("engine")!, { baseFlags: words(option("engine-flags")), validate: has("validate"), buildSeconds: 60, runSeconds: 10 }) });
 

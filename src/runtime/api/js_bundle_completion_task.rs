@@ -103,6 +103,14 @@ pub(crate) struct JSBundleCompletionTask {
     pub(crate) abort_handle: jsc::AbortHandle,
     /// Armed in the context that called `Bun.build`, when that is a `Bun.ModuleGraph`'s.
     pub(crate) caller: CallerOfTheBuild,
+    pub(crate) declarations: Option<DeclarationOutputs>,
+}
+
+pub(crate) struct DeclarationOutputs {
+    loaders: bun_ast::LoaderHashTable,
+    typed_files_skipped_for: Option<&'static str>,
+    writes_typed_files: bool,
+    drops_source_maps: bool,
 }
 
 /// The build's tie to the script that called `Bun.build`. When that script's context stops (its
@@ -201,6 +209,7 @@ impl JSBundleCompletionTask {
             transpiler: ptr::null_mut(),
             plugins,
             started_at_ns: 0,
+            declarations: None,
         }
     }
 
@@ -286,7 +295,95 @@ fn check_types(checked: options::TypeChecked<'_, '_>, log: &mut bun_ast::Log) ->
     })
 }
 
+fn check_types_and_emit_declarations(
+    checked: options::TypeChecked<'_, '_>,
+    log: &mut bun_ast::Log,
+) -> bool {
+    bun_removable_features::removable_body!(Check, Abort, {
+        crate::cli::check_command::check_and_emit_declarations(checked, log)
+    })
+}
+
+fn write_declarations(outdir: &[u8], output_files: &mut [OutputFile]) -> bun_bundler::Result<()> {
+    let directory = Dir::cwd().make_open_path(outdir, bun_sys::OpenDirOptions::default())?;
+    for file in output_files.iter_mut() {
+        if matches!(file.value, OutputFileValue::Buffer { .. }) {
+            file.write_to_disk(directory.fd)?;
+            file.value = OutputFileValue::Saved(bun_bundler::output_file::SavedFile {});
+        }
+    }
+    Ok(())
+}
+
 impl JSBundleCompletionTask {
+    fn add_declarations(&mut self, declarations: DeclarationOutputs) {
+        bun_removable_features::removable_body!(Check, Abort, {
+            use crate::cli::{check_command, compile_command};
+            let emitted = check_command::take_declaration_files();
+            let BundleV2Result::Value(build) = &mut self.result else {
+                drop(check_command::take_module_types());
+                return;
+            };
+            let output_files = &mut build.output_files;
+            let config = &self.config;
+            if let Err(error) = compile_command::add_declaration_files(
+                emitted,
+                &config.rootdir.list,
+                true,
+                output_files,
+            ) {
+                drop(check_command::take_module_types());
+                let mut message = Vec::new();
+                error.write_message(&mut message);
+                self.log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("{}", bstr::BStr::new(&message)),
+                );
+                self.result = BundleV2Result::Err(bun_bundler::Error::BuildFailed);
+                return;
+            }
+            if let Some(option) = declarations.typed_files_skipped_for {
+                check_command::warn_about_skipped_typed_files(option, &mut self.log);
+            }
+            let working_directory = bun_resolver::fs::FileSystem::get().top_level_dir();
+            let outdir = join_abs_string::<platform::Auto>(
+                working_directory,
+                &[&config.dir.list, &config.outdir.list],
+            )
+            .to_vec();
+            if declarations.writes_typed_files {
+                let tsconfig = &config.tsconfig_override.list;
+                let request = compile_command::TypedOutputs {
+                    working_directory,
+                    outdir: &outdir,
+                    tsconfig: (!tsconfig.is_empty()).then_some(&tsconfig[..]),
+                    conditions: config.conditions.keys(),
+                    loaders: &declarations.loaders,
+                    drops_source_maps: declarations.drops_source_maps,
+                };
+                compile_command::add_typed_files(&request, &mut self.log, output_files);
+            } else {
+                drop(check_command::take_module_types());
+            }
+            if config.outdir.is_empty() {
+                return;
+            }
+            if let Err(error) = write_declarations(&outdir, output_files) {
+                self.log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "{} writing declaration files to {}",
+                        bstr::BStr::new(error.name()),
+                        bstr::BStr::new(&outdir)
+                    ),
+                );
+                self.result = BundleV2Result::Err(bun_bundler::Error::BuildFailed);
+            }
+        })
+    }
+
     /// Returns true if the promises were handled and resolved from
     /// BundlePlugin.ts; false means the caller should resolve immediately.
     fn run_on_end_callbacks(
@@ -1130,7 +1227,45 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.min_chunk_size = config.min_chunk_size;
         transpiler.options.fold_chunks = config.fold_chunks;
         transpiler.options.module_preload = config.module_preload;
-        transpiler.options.type_check = config.check.then_some(check_types as options::TypeCheck);
+        transpiler.options.type_check = match config.dts {
+            true => Some(check_types_and_emit_declarations as options::TypeCheck),
+            false => config.check.then_some(check_types as options::TypeCheck),
+        };
+        if config.dts {
+            let is_minified =
+                config.minify.syntax || config.minify.whitespace || config.minify.identifiers;
+            let unsupported = [
+                (is_minified, "minify"),
+                (config.code_splitting, "splitting"),
+                (
+                    config.format != options::Format::Esm,
+                    "a format other than esm",
+                ),
+                (
+                    config.source_map == options::SourceMapOption::Inline,
+                    "an inline source map",
+                ),
+            ];
+            let has_typescript_entry_point = (config.entry_points.keys().iter()).any(|path| {
+                !matches!(paths::extension(path), b".js" | b".mjs" | b".cjs" | b".jsx")
+            });
+            let typed_files_skipped_for = (unsupported.iter())
+                .find(|it| it.0 && has_typescript_entry_point)
+                .map(|it| it.1);
+            let writes_typed_files =
+                has_typescript_entry_point && typed_files_skipped_for.is_none();
+            let drops_source_maps =
+                writes_typed_files && config.source_map == options::SourceMapOption::None;
+            if drops_source_maps {
+                transpiler.options.source_map = options::SourceMapOption::External;
+            }
+            self.declarations = Some(DeclarationOutputs {
+                loaders: bun_core::UnwrapOrOom::unwrap_or_oom(transpiler.options.loaders.clone()),
+                typed_files_skipped_for,
+                writes_typed_files,
+                drops_source_maps,
+            });
+        }
         let compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;
@@ -1234,6 +1369,9 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
 
     fn complete_on_bundle_thread(&mut self) {
+        if let Some(declarations) = self.declarations.take() {
+            self.add_declarations(declarations);
+        }
         // The bundle thread's last touch of this task and of the VM's memory:
         // move the ticket out (the JS thread may free `self` once queued),
         // hand it back, drop the ticket.

@@ -79,6 +79,61 @@ const licences: Record<string, { licence: string; holder: RegExp; says: RegExp }
     holder: /Copyright \(c\) 2023 Kiro Risk/,
     says: /Apache License\s+Version 2\.0, January 2004/,
   },
+  "koa": {
+    licence: "MIT",
+    holder: /Copyright \(c\) 2019 Koa contributors/,
+    says: /Permission is hereby granted, free of charge/,
+  },
+  "@koa/router": {
+    licence: "MIT",
+    holder: /Copyright \(c\) 2015 @koajs maintainers and contributors/,
+    says: /Permission is hereby granted, free of charge/,
+  },
+  "delegates": {
+    licence: "MIT",
+    holder: /Copyright \(c\) 2015 TJ Holowaychuk/,
+    says: /Permission is hereby granted, free of charge/,
+  },
+  "on-finished": {
+    licence: "MIT",
+    holder: /Copyright \(c\) 2013 Jonathan Ong/,
+    says: /Permission is hereby granted, free of charge/,
+  },
+  "ee-first": {
+    licence: "MIT",
+    holder: /Copyright \(c\) 2014 Jonathan Ong/,
+    says: /Permission is hereby granted, free of charge/,
+  },
+  "parseurl": {
+    licence: "MIT",
+    holder: /Copyright \(c\) 2014 Jonathan Ong/,
+    says: /Permission is hereby granted, free of charge/,
+  },
+  "express": {
+    licence: "MIT",
+    holder: /Copyright \(c\) 2009-2014 TJ Holowaychuk/,
+    says: /Permission is hereby granted, free of charge/,
+  },
+  "router": {
+    licence: "MIT",
+    holder: /Copyright \(c\) 2013 Roman Shtylman/,
+    says: /Permission is hereby granted, free of charge/,
+  },
+  "finalhandler": {
+    licence: "MIT",
+    holder: /Copyright \(c\) 2014-2022 Douglas Christopher Wilson/,
+    says: /Permission is hereby granted, free of charge/,
+  },
+  "body-parser": {
+    licence: "MIT",
+    holder: /Copyright \(c\) 2014 Jonathan Ong/,
+    says: /Permission is hereby granted, free of charge/,
+  },
+  "fastify": {
+    licence: "MIT",
+    holder: /Copyright \(c\) 2016-2025 The Fastify Team/,
+    says: /Permission is hereby granted, free of charge/,
+  },
 };
 
 const folders = typedVersions();
@@ -202,7 +257,7 @@ describe.each(folders.map(folder => [relative(home, folder).replaceAll("\\", "/"
   test("package.json is the companion's", () => {
     const companion = json(join(folder, "package.json"));
     expect(licences).toHaveProperty([name]);
-    expect(companion.name).toBe("@sound/" + name.replace(/^@/, "").replaceAll("/", "__"));
+    expect(companion.name).toBe("@oven/sound-" + name.replace(/^@/, "").replaceAll("/", "__"));
     expect(companion.version).toBe(version);
     expect(companion.peerDependencies).toEqual({ [name]: version });
     expect(companion.files).toEqual(["sound.json", "lay", "LICENSE", "NOTICE"]);

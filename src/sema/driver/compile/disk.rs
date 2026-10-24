@@ -1,12 +1,20 @@
 use super::runtime_json::{parse_runtime_package_json, parse_runtime_tsconfig};
 use crate::host::Disk;
 use bun_sema::atom::Interner;
+use bun_sema::hir::FileKind;
+use bun_sema::hir_from_data::{DataModule, DataModuleTree, DataValue, module_from_data};
 use bun_sema::json::Json;
 use bun_sema::resolve::{
     CodeHost, CodeParseRequest, Host, ModuleDetection, ParsedCode, ScriptKind,
 };
 use bun_sema::session::Arena;
 use bun_sema_parser::{CompileParseOptions, parse_for_compile};
+
+/// A JSON file that runs is a module made from data, as in a build. Nothing reads the data through this host.
+const MODULE_WITHOUT_DATA: DataModule<'static> = DataModule::Value {
+    default: &DataValue::Null,
+    exports_keys: false,
+};
 
 impl Disk {
     pub fn parse_code_as<'s>(
@@ -25,9 +33,17 @@ impl Disk {
             reads_jsdoc: request.reads_jsdoc,
             keeps_function_directives: false,
         };
+        let file = parse_for_compile(arena, &options, text, atoms);
+        let DataModuleTree { file, host_values } = match file.kind {
+            FileKind::Json => module_from_data(&MODULE_WITHOUT_DATA, atoms, arena),
+            _ => DataModuleTree {
+                file,
+                host_values: &[],
+            },
+        };
         ParsedCode {
-            hir: parse_for_compile(arena, &options, text, atoms),
-            host_values: &[],
+            hir: file,
+            host_values,
             payload: None,
         }
     }

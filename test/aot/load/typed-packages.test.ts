@@ -287,6 +287,182 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
     600_000,
   );
 
+  const INSTALLED_FOLDER = "node_modules/@oven/sound-shapes";
+  const USED_INSTALLED = `"shapes" 1.2.3 is compiled from its typed version in ${INSTALLED_FOLDER}`;
+  const installedTypedVersion = (sound: object = manifest()): Files => ({
+    [`${INSTALLED_FOLDER}/package.json`]: JSON.stringify({
+      name: "@oven/sound-shapes",
+      version: "1.2.3",
+      peerDependencies: { shapes: "1.2.3" },
+      files: ["sound.json", "lay"],
+    }),
+    [`${INSTALLED_FOLDER}/sound.json`]: JSON.stringify(sound),
+    ...prefixPaths(`${INSTALLED_FOLDER}/lay`, typed),
+  });
+
+  test(
+    "a typed version that is installed as a package of its own is used",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-typed-packages", { ...project(null), ...installedTypedVersion() });
+        const folder = String(dir);
+        expect(await runProject(folder)).toMatchObject({ ...usesTypedVersion, notes: [USED_INSTALLED] });
+        expect(await spawned([bunExe(), "run", "main.ts", "6"], folder, bunEnv)).toMatchObject({
+          stdout: PRINTED,
+          exitCode: 0,
+        });
+      }),
+    600_000,
+  );
+
+  test(
+    "an installed typed version is found from a folder below the one that has node_modules",
+    () =>
+      slot(async () => {
+        const { "main.ts": main, "tsconfig.json": config, ...rest } = project(null);
+        using dir = tempDir("aot-typed-packages", {
+          ...rest,
+          ...installedTypedVersion(),
+          "packages/app/main.ts": main,
+          "packages/app/tsconfig.json": config,
+          "packages/app/package.json": JSON.stringify({ name: "inner" }),
+        });
+        const result = await runProject(join(String(dir), "packages", "app"));
+        expect(result).toMatchObject({ errors: [], warnings: [], exitCode: 0, stdout: PRINTED });
+        expect(result.notes).toEqual([
+          expect.stringMatching(/^"shapes" 1\.2\.3 is compiled from its typed version in .*@oven.sound-shapes$/),
+        ]);
+      }),
+    600_000,
+  );
+
+  test(
+    "the installed typed version of a scoped package",
+    () =>
+      slot(async () => {
+        const text = "export function twice(n) {\n  return n * 2;\n}\n";
+        using dir = tempDir("aot-typed-packages", {
+          "tsconfig.json": tsconfig(),
+          "package.json": JSON.stringify({ name: "app" }),
+          "main.ts": probe('import { twice } from "@forms/double";\n', ["twice(input)"]),
+          "node_modules/@forms/double/package.json": JSON.stringify({
+            name: "@forms/double",
+            version: "2.0.0",
+            type: "module",
+            main: "index.js",
+            types: "index.d.ts",
+          }),
+          "node_modules/@forms/double/index.js": text,
+          "node_modules/@forms/double/index.d.ts": "export declare function twice(n: number): number;\n",
+          "node_modules/@oven/sound-forms__double/sound.json": JSON.stringify({
+            sound: 2,
+            name: "@forms/double",
+            version: "2.0.0",
+            lay: { "index.js": sha256(text) },
+          }),
+          "node_modules/@oven/sound-forms__double/lay/index.js": text.replace("(n)", "(n: number): number"),
+        });
+        expect(await runProject(String(dir))).toMatchObject({
+          errors: [],
+          warnings: [],
+          notes: ['"@forms/double" 2.0.0 is compiled from its typed version in node_modules/@oven/sound-forms__double'],
+          exitCode: 0,
+          stdout: "12\n",
+        });
+      }),
+    600_000,
+  );
+
+  const unusedInstalled = (reason: string) =>
+    `TS100056: The typed version of "shapes" in ${INSTALLED_FOLDER} can't be used: ${reason}`;
+
+  test(
+    "an installed typed version for another version of the package is not used",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-typed-packages", {
+          ...project(null),
+          ...installedTypedVersion(manifest({ version: "1.2.2" })),
+        });
+        const reason =
+          "it is for version 1.2.2, but 1.2.3 is installed. Replace it with the typed version for 1.2.3, or remove it";
+        expect(await runProject(String(dir))).toMatchObject({
+          ...compilesAsInstalled,
+          warnings: [unusedInstalled(reason)],
+        });
+      }),
+    600_000,
+  );
+
+  test.each(rejectedFiles)(
+    "erasure rejects one file of an installed typed version: %s",
+    (_, text, reason) =>
+      slot(async () => {
+        using dir = tempDir("aot-typed-packages", {
+          ...project(null),
+          ...installedTypedVersion(),
+          [`${INSTALLED_FOLDER}/lay/perimeter.js`]: text,
+        });
+        expect(await runProject(String(dir))).toMatchObject({
+          ...compilesAsInstalled,
+          warnings: [unusedInstalled(reason)],
+        });
+      }),
+    600_000,
+  );
+
+  test(
+    "an installed typed version with a type error costs the package its types, not the build",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-typed-packages", {
+          ...project(null),
+          ...installedTypedVersion(),
+          [`${INSTALLED_FOLDER}/lay/perimeter.js`]: typed["perimeter.js"].replace("): number", "): string"),
+        });
+        const result = await runProject(String(dir));
+        expect(result.warnings).toEqual([expect.stringMatching(/^TS100009: 'shapes' has 1 type error/)]);
+        expect(result).toMatchObject({ errors: [], exitCode: 0, stdout: PRINTED });
+      }),
+    600_000,
+  );
+
+  test(
+    "the project's typed version counts before an installed one",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-typed-packages", { ...project(), ...installedTypedVersion({}) });
+        expect(await runProject(String(dir))).toMatchObject(usesTypedVersion);
+      }),
+    600_000,
+  );
+
+  test(
+    "the typed file that a package ships counts before an installed typed version",
+    () =>
+      slot(async () => {
+        const shipped = JSON.stringify({
+          ...JSON.parse(installed["package.json"]),
+          exports: {
+            ".": { types: "./index.d.ts", default: "./index.js" },
+            "./area.js": { "bun-aot": "./area.aot.ts", default: "./area.js" },
+          },
+        });
+        using dir = tempDir("aot-typed-packages", {
+          ...project(null),
+          ...installedTypedVersion(),
+          "node_modules/shapes/package.json": shipped,
+          "node_modules/shapes/area.aot.ts": typed["area.js"],
+          [`${INSTALLED_FOLDER}/lay/area.js`]: "enum Kind { A }\n",
+        });
+        expect(await runProject(String(dir))).toMatchObject({
+          ...usesTypedVersion,
+          notes: [USED_INSTALLED, '"shapes" 1.2.3 is compiled from its typed version in node_modules/shapes'],
+        });
+      }),
+    600_000,
+  );
+
   test(
     "erasure accepts different types over the same code",
     () =>

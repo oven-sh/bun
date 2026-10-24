@@ -18,6 +18,7 @@ pub(crate) struct MemoryHost {
     runtime_modules: Vec<(Vec<u8>, HostResolution)>,
     claims: Vec<Claim>,
     typed: Vec<(Vec<u8>, Vec<u8>)>,
+    installed_typed: Vec<(Vec<u8>, Vec<u8>)>,
     typed_version_calls: AtomicUsize,
     reads: bun_threading::Guarded<FxHashMap<Vec<u8>, usize>>,
 }
@@ -76,6 +77,11 @@ impl MemoryHost {
 
     pub(crate) fn typed(mut self, path: &str, typed: &str) -> MemoryHost {
         self.typed.push((path.into(), typed.into()));
+        self
+    }
+
+    pub(crate) fn installed_typed(mut self, path: &str, typed: &str) -> MemoryHost {
+        self.installed_typed.push((path.into(), typed.into()));
         self
     }
 
@@ -239,6 +245,16 @@ impl CodeHost for MemoryHost {
         let path = self.follow_links(path);
         let mut versions = self.typed.iter();
         let (_, typed) = versions.find(|(installed, _)| self.follow_links(installed) == path)?;
+        Some(typed.clone())
+    }
+
+    fn installed_typed_version(
+        &self,
+        path: &[u8],
+        _package: Option<EnclosingPackage<'_>>,
+    ) -> Option<Vec<u8>> {
+        let mut versions = self.installed_typed.iter();
+        let (_, typed) = versions.find(|(installed, _)| installed == path)?;
         Some(typed.clone())
     }
 }

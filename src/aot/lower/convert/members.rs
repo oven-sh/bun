@@ -1,12 +1,13 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::Binding;
 use bun_sema::check::aot::{
-    GaveUp, MemberLookup, ObjectMemberKind, PositionTypes, ShapeKind, TupleElementKind, WrittenType,
+    GaveUp, MemberLookup, ObjectMemberKind, PositionTypes, ShapeKind, WrittenType,
 };
 use bun_sema::hir::{ExprId, ExprKind, MemberKey};
 use smallvec::{SmallVec, smallvec};
 
 use super::edges::Construct;
+use super::patterns::{collect_element_types_from, find_tuple_elements};
 use crate::ir::generated::TypeSiteKind;
 use crate::ir::{LayoutId, ValueId};
 use crate::lower::positions::{self, SiteOrigin};
@@ -147,21 +148,12 @@ fn find_tuple_contents_type(
     file: &mut FileLowering<'_, '_, '_, '_>,
     container: CheckerTypeId,
 ) -> Option<CheckerTypeId> {
-    let container = file.queries.without_nullish(container).ok()?;
-    let elements = match file.queries.type_shape(container).ok()?.kind {
-        ShapeKind::Tuple { elements, .. } => elements,
-        ShapeKind::Constrained { base, .. } => return find_tuple_contents_type(file, base),
-        _ => return None,
-    };
-    if elements.is_empty()
-        || elements
-            .iter()
-            .any(|element| element.kind == TupleElementKind::Variadic)
-    {
-        return None;
+    find_tuple_elements(file, container)?;
+    let held = collect_element_types_from(file, container, 0);
+    match held.is_empty() {
+        true => None,
+        false => file.queries.union_of(&held).ok(),
     }
-    let held: SmallVec<[CheckerTypeId; 4]> = elements.iter().map(|element| element.ty).collect();
-    file.queries.union_of(&held).ok()
 }
 
 fn has_number_type(file: &mut FileLowering<'_, '_, '_, '_>, expression: ExprId) -> bool {

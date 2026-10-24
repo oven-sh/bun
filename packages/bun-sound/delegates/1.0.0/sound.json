@@ -1,0 +1,11 @@
+{
+  "sound": 2,
+  "name": "delegates",
+  "version": "1.0.0",
+  "when": {},
+  "basis": {},
+  "lay": {
+    "index.js": "db3ee6ab2fdabdffc19d5df0cf9461488329379cbb0640eb73203a35197960aa"
+  },
+  "needs": []
+}

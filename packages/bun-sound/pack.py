@@ -11,7 +11,7 @@ Writes the folder that this repository has for a typed version and that publish.
 The folder has:
   sound.json    the manifest, in format 2. README.md describes its members.
   lay/<path>    each typed file, at the path of the installed file that it replaces
-  package.json  what npm needs to publish the folder: @sound/<name>, the version and the license of the package, and a peer
+  package.json  what npm needs to publish the folder: @oven/sound-<name>, the version and the license of the package, and a peer
                 dependency on exactly that version
   LICENSE       the package's own, as installed: lay/ is a copy of its code
   NOTICE        whose code it is, under which license, and which files were changed and how
@@ -43,7 +43,7 @@ if os.path.exists(OUT):
     sys.exit('pack.py: %s exists already: name a new folder' % OUT)
 FORMAT = 2
 MEMBERS = ('sound', 'name', 'version', 'when', 'basis', 'lay', 'needs')
-LICENSE_FILES = ('LICENSE', 'LICENSE.md', 'LICENSE.txt', 'license')
+LICENSE_FILES = ('LICENSE', 'LICENSE.md', 'LICENSE.txt', 'License', 'license')
 CHANGED = '// CHANGED: '
 DESCRIPTION = (
     "Sound TypeScript types for %s %s: npm's own code with types added and nothing else changed, "
@@ -196,7 +196,7 @@ def check(name):
     when, basis, lay, needs = check_manifest(manifest, name, version, stop)
     check_files(installed, typed, basis, lay, stop)
     license_file, copyright_line = check_license(installed, typed, license_name, lay, stop)
-    companion = '@sound/' + name.lstrip('@').replace('/', '__')
+    companion = '@oven/sound-' + name.lstrip('@').replace('/', '__')
     sorted_digests = lambda digests: {path: digest.lower() for path, digest in sorted(digests.items())}
     return dict(
         folder='%s/%s/%s' % (OUT, name, version),

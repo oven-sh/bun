@@ -113,7 +113,12 @@ export const generators: Record<string, () => Generator> = {
   "builtin-modules": () => require("./generate/builtin-modules"),
   "calls": () => require("./generate/calls"),
   "classes": () => require("./generate/classes"),
-  "classes-and-closures": () => require("./generate/classes-and-closures"),
+  "classes-and-closures": () => ({
+    programs: () =>
+      ["classes-and-closures", "closures-made-at-the-first-read", "definitions-made-at-the-first-use"].flatMap(
+        part => (require(`./generate/${part}`) as Generator).programs(),
+      ),
+  }),
   "classes-below-built-in-classes": () => require("./generate/classes-below-built-in-classes"),
   "closed-world": () => require("./generate/closed-world"),
   "copies-born-in-their-holders": () => require("./programs/generate-copies-born-in-their-holders"),
@@ -125,11 +130,22 @@ export const generators: Record<string, () => Generator> = {
   "function-prototypes": () => require("./generate/function-prototypes"),
   "host-classes": () => require("./generate/host-classes"),
   "impostors": () => require("./generate/impostors"),
-  "impostors-typed": () => require("./generate/impostors-typed"),
+  "impostors-typed": () => ({
+    programs: () =>
+      ["impostors-typed", "strangers-by-roads-that-are-no-calls"].flatMap(
+        part => (require(`./generate/${part}`) as Generator).programs(),
+      ),
+  }),
   "initializers-run-at-the-first-read": () => require("./generate/initializers-run-at-the-first-read"),
   "inner-objects": () => require("./generate/inner-objects"),
+  "json-text-of-records": () => require("./generate/json-text-of-records"),
   "kept-attacks": () => require("./generate/kept-attacks"),
-  "language": () => require("./generate/language"),
+  "language": () => ({
+    programs: () =>
+      ["language", "planned-ahead-of-loops"].flatMap(
+        part => (require(`./generate/${part}`) as Generator).programs(),
+      ),
+  }),
   "method-table": () => require("./generate/method-table"),
   "modules": () => require("./generate/modules"),
   "native-callbacks": () => ({

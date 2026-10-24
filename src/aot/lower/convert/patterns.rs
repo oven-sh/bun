@@ -75,7 +75,7 @@ fn find_member_type(
     }
 }
 
-fn find_tuple_elements<'c>(
+pub(super) fn find_tuple_elements<'c>(
     file: &mut FileLowering<'_, 'c, '_, '_>,
     list: CheckerTypeId,
 ) -> Option<&'c [TupleElement]> {

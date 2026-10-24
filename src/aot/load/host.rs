@@ -27,6 +27,7 @@ use bun_threading::Guarded;
 use crate::builtins::{BuiltinNames, Platforms};
 use crate::diagnostics::LoadMessages;
 use crate::load::builtin_uses::{self, BuiltinUseInput};
+use crate::load::bundled_commonjs::without_commonjs_wrapper;
 use crate::load::compiler_declarations;
 use crate::load::data_modules::parse_data_module;
 use crate::load::disk_delegation::{
@@ -49,7 +50,7 @@ use crate::load::runtime_modules::{RuntimeModules, RuntimeResolution};
 use crate::load::source_provider::{SourceFile, SourceProvider};
 use crate::load::sources::{ParsedSource, PluginModuleName, SourceKind, parsed_source_mut};
 use crate::load::test_runner_names;
-use crate::load::typed_packages::TypedPackages;
+use crate::load::typed_packages::{TypedPackagePlace, TypedPackages};
 use crate::options::Options;
 
 const BUNDLE_MODULE: &[u8] = b"bun:bundle";
@@ -195,6 +196,23 @@ fn requested_loader(kind: HostLoaderKind, path: &[u8]) -> Loader {
 }
 
 impl LoadHost<'_> {
+    fn typed_version_in(
+        &self,
+        place: TypedPackagePlace,
+        path: &[u8],
+        package: Option<EnclosingPackage<'_>>,
+    ) -> Option<Vec<u8>> {
+        // A typed version whose sound.json does not fit what is installed is not used: the build says so and goes on.
+        let packages = self.input.typed_packages;
+        if packages
+            .find_manifest_mismatch(package?, self.input.defined)
+            .is_some()
+        {
+            return None;
+        }
+        packages.typed_version(place, path, package)
+    }
+
     fn served_by(&self, path: &[u8]) -> ServedBy {
         if !is_host_path(path) {
             let script_kind = self.input.typed_packages.script_kind(path);
@@ -364,7 +382,7 @@ impl Host for LoadHost<'_> {
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
         let is_on_disk = matches!(self.served_by(path), ServedBy::Disk);
         if is_on_disk && !self.plugins.was_read(path) && !self.is_background_read(path) {
-            return self.disk.read_source(path);
+            return without_commonjs_wrapper(self.disk.read_source(path));
         }
         match self.read_code(path) {
             CodeRead::Text(text) => text,
@@ -515,15 +533,15 @@ impl CodeHost for LoadHost<'_> {
     }
 
     fn typed_version(&self, path: &[u8], package: Option<EnclosingPackage<'_>>) -> Option<Vec<u8>> {
-        // A typed version whose sound.json does not fit what is installed is not used: the build says so and goes on.
-        let packages = self.input.typed_packages;
-        if packages
-            .find_manifest_mismatch(package?, self.input.defined)
-            .is_some()
-        {
-            return None;
-        }
-        packages.typed_version(path, package)
+        self.typed_version_in(TypedPackagePlace::Project, path, package)
+    }
+
+    fn installed_typed_version(
+        &self,
+        path: &[u8],
+        package: Option<EnclosingPackage<'_>>,
+    ) -> Option<Vec<u8>> {
+        self.typed_version_in(TypedPackagePlace::Installed, path, package)
     }
 
     fn typed_version_manifest(&self, typed_path: &[u8]) -> Option<Vec<u8>> {
@@ -580,10 +598,10 @@ impl CodeHost for LoadHost<'_> {
             ServedBy::PluginModule | ServedBy::TypedFile(_) | ServedBy::Disk => {}
         }
         if !self.should_ask_plugins(served_by, path) {
-            return CodeRead::Text(self.disk.read_source(path));
+            return CodeRead::Text(without_commonjs_wrapper(self.disk.read_source(path)));
         }
         match self.plugins.read(path, self.default_loader(path)) {
-            ModuleText::Text(text) => CodeRead::Text(text),
+            ModuleText::Text(text) => CodeRead::Text(without_commonjs_wrapper(text)),
             ModuleText::Deferred => CodeRead::Deferred,
             ModuleText::Missing => CodeRead::Text(self.record_unreadable(path)),
             ModuleText::Failed => CodeRead::Text(Cow::default()),

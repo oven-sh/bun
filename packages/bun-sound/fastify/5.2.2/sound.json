@@ -1,0 +1,17 @@
+{
+  "sound": 2,
+  "name": "fastify",
+  "version": "5.2.2",
+  "when": {},
+  "basis": {},
+  "lay": {
+    "lib/context.js": "b8b64e2e2f921109dca72403a349eae8263859bf9bd0fbce42e841eebf596477",
+    "lib/handleRequest.js": "5e3dd4c9e9cb9bb3efc0c98756a0b8789a77c7dcefb04150febcc5ce2da287b9",
+    "lib/hooks.js": "3d1470797f26b2beb1dcffdcb86cf92780d8811e53d8ce2007fb90d8d8434c1b",
+    "lib/reply.js": "a57b838d1393c3c4b0ae2bb02a08575209bfc16823dbbe0893e2625bbf7c5110",
+    "lib/request.js": "a4501920630b34b5cee81bee33f00e9ef439a9694602b9de6a216f554ef317c3",
+    "lib/route.js": "cd57303481e7adc2c8284dc17a67d83dc87c25120f237124cb053f35642f66de",
+    "lib/wrapThenable.js": "87940d62d12b369612f1adc481de3b89d8a013a943f56cb137be4bb1af0a5671"
+  },
+  "needs": []
+}

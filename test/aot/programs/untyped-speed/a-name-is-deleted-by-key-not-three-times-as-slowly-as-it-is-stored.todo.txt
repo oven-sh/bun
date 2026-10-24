@@ -1,0 +1,1 @@
+A deletion has no cache: every one goes through the general operation, about 500 instructions for a name that is there and 250 for one that is not.

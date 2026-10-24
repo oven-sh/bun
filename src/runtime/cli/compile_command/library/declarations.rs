@@ -1,8 +1,12 @@
+use std::collections::HashSet;
+
 use bun_ast::Loader;
 use bun_bundler::options::{OutputFile, OutputFileValue, OutputKind};
 use bun_paths::platform::Auto;
 use bun_paths::resolve_path::{platform_to_posix_in_place, relative_platform};
+use bun_sema_driver::declaration_imports::name_imported_files;
 
+use super::typed_files::is_typed_file;
 use crate::cli::check_command::DeclarationFile;
 
 const DECLARATION_EXTENSIONS: [(&[u8], &[u8]); 8] = [
@@ -36,7 +40,7 @@ impl OutsideRootDirectory {
 }
 
 pub(crate) fn is_declaration_file(file: &OutputFile) -> bool {
-    file.output_kind == OutputKind::Asset && file.loader == Loader::Ts
+    file.output_kind == OutputKind::Asset && file.loader == Loader::Ts && !is_typed_file(file)
 }
 
 pub(crate) fn add_declaration_files(
@@ -48,7 +52,7 @@ pub(crate) fn add_declaration_files(
     // Without bundling, only the entry points are written.
     let has_javascript =
         |source: &[u8]| is_bundled || output_files.iter().any(|file| file.src_path.text == source);
-    let mut added = Vec::new();
+    let mut placed: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     for declaration in declarations {
         if !has_javascript(&declaration.source) {
             continue;
@@ -59,8 +63,15 @@ pub(crate) fn add_declaration_files(
                 root_directory: root_directory.to_vec(),
             });
         };
-        added.push(declaration_output_file(path, declaration.text));
+        placed.push((path, declaration.text));
     }
+    let written: HashSet<&[u8]> = placed.iter().map(|(path, _)| &path[..]).collect();
+    let is_written = |path: &[u8]| written.contains(path);
+    let mut added: Vec<OutputFile> = (placed.iter())
+        .map(|(path, text)| {
+            declaration_output_file(path.clone(), name_imported_files(path, text, &is_written))
+        })
+        .collect();
     output_files.append(&mut added);
     Ok(())
 }

@@ -4,6 +4,7 @@ use super::answers::{
     QueryStatistics, SignatureShape, TypeDisplayName, WrittenType,
 };
 use super::builtin_types::BuiltinTypeSymbols;
+use super::declared_signatures::DeclaredSignatures;
 use super::enum_constants::ConstantInputs;
 use super::inferred_from_use::{ReferenceIndex, Subject, TypeState, TypesInProgress, UsageState};
 use super::kept_answers::{
@@ -25,6 +26,7 @@ use crate::session::Arena;
 use crate::types::{EnumValue, SigId, TypeData, TypeId, tf};
 use crate::util::FxHashMap;
 use std::hash::Hash;
+use std::rc::Rc;
 
 // What `is_assignable` may cost.
 const MAX_RELATION_ENTRIES: i32 = 20_000;
@@ -76,6 +78,7 @@ pub(super) struct Memo<'c> {
     pub(super) usages: FxHashMap<Subject, UsageState>,
     pub(super) inferred_types: FxHashMap<Subject, TypeState>,
     pub(super) types_in_progress: TypesInProgress,
+    pub(super) declared_signatures: Option<Rc<DeclaredSignatures>>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

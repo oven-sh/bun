@@ -9,12 +9,14 @@ test("the table of flags for shell completions lists every --aot flag of bun bui
     ...new Set(
       [
         ...(help + errors).matchAll(
-          /^\s+--(aot[a-z-]*|explain|no-compile-function-source|compile-in-place|compile-inspector|obfuscate|trim(?:-locales)?)(?![a-z-])/gm,
+          /^\s+--(aot[a-z-]*|dts|explain|no-compile-function-source|compile-in-place|compile-inspector|obfuscate|trim(?:-locales)?)(?![a-z-])/gm,
         ),
       ].map(match => match[1]),
     ),
   ];
-  expect(inHelp).toEqual(expect.arrayContaining(["aot", "aot-log-type-mismatches", "explain", "compile-inspector"]));
+  expect(inHelp).toEqual(
+    expect.arrayContaining(["aot", "aot-log-type-mismatches", "dts", "explain", "compile-inspector"]),
+  );
   const table = await Bun.file(join(import.meta.dir, "..", "..", "completions", "bun-cli.json")).json();
   const inTable: string[] = table.commands.build.flags.map((flag: { name: string }) => flag.name);
   expect(inHelp.filter(name => !inTable.includes(name))).toEqual([]);

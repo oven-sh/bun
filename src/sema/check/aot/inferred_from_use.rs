@@ -2,7 +2,7 @@ use super::answers::{CheckedType, MemberLookup};
 use super::prototype_links::{NamedValue, PrototypeOperation};
 use super::queries::Queries;
 use crate::atom::{Atom, known};
-use crate::bind::{Binding, Bound, Decl, Parent, PatParent, StoreKind, SymbolId};
+use crate::bind::{Binding, Bound, Decl, FnOwner, Parent, PatParent, StoreKind, SymbolId};
 use crate::check::root_declaration;
 use crate::hir::{
     self, BinOp, CallId, Chain, ExprFlags, ExprId, ExprKind, ExprTag, Flags, FnBody, FnId, FnKind,
@@ -694,6 +694,51 @@ fn is_used_as_int32(hir: &hir::File<'_>, bound: &Bound<'_>, number: ExprId) -> b
     }
 }
 
+const MAX_CALLS_READ: usize = 16;
+
+// `function f() {}` and `const f = () => {}`.
+fn find_name_of_function(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    function: FnId,
+) -> Option<SymbolId> {
+    match bound.fns[function.idx()].owner {
+        FnOwner::Stmt(_) => bound.fn_symbol[function.idx()].some(),
+        FnOwner::Expr(expression) => match bound.parent_of_expr(expression) {
+            Parent::VarInit(declaration) => find_initialized_symbol(bound, hir[declaration].pat),
+            _ => None,
+        },
+        FnOwner::None | FnOwner::Member(_) | FnOwner::Type(_) => None,
+    }
+}
+
+// For the callee of a call: the argument at `index`, or none if the call has fewer.
+fn find_argument_of_call(
+    hir: &hir::File<'_>,
+    bound: &Bound<'_>,
+    callee: ExprId,
+    index: usize,
+) -> Option<ExprId> {
+    let Parent::Expr(call) = bound.parent_of_expr(callee) else {
+        return None;
+    };
+    let ExprKind::Call(site) = hir[call.some()?].kind else {
+        return None;
+    };
+    let node = hir[site];
+    if node.callee != callee {
+        return None;
+    }
+    let mut arguments = hir.ids(node.args).take(index + 1);
+    if arguments
+        .clone()
+        .any(|it| matches!(hir[it].kind, ExprKind::Spread(_)))
+    {
+        return None;
+    }
+    Some(arguments.nth(index).unwrap_or(ExprId::NONE))
+}
+
 fn find_parameter(parameters: &[SigParam], index: usize) -> Option<SigParam> {
     parameters
         .get(index)
@@ -958,9 +1003,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 Subject::Expression(expression) => queries.compute_expression_type(expression),
                 Subject::Result(function) => queries.compute_result_type(function),
                 Subject::Number(symbol) => queries.compute_number_type(symbol),
-                Subject::Binding(_) | Subject::Pattern(_) | Subject::This(_) => {
-                    queries.compute_type_from_uses(subject)
-                }
+                Subject::Binding(symbol) => queries.compute_binding_type(symbol),
+                Subject::Pattern(_) | Subject::This(_) => queries.compute_type_from_uses(subject),
             })
         });
         let inferred = inferred.unwrap_or(TypeId::ANY);
@@ -975,6 +1019,72 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     // The union of what the returned expressions are.
+    fn compute_binding_type(&mut self, symbol: SymbolId) -> TypeId {
+        let &[Decl::Param(name)] = self.bound().symbol(symbol).decls else {
+            return self.compute_type_from_uses(Subject::Binding(symbol));
+        };
+        let declared = self.find_declared_parameter_type(name);
+        if !self.c.is_any(declared) {
+            return declared;
+        }
+        let used_as = self.compute_type_from_uses(Subject::Binding(symbol));
+        match self.c.is_any(used_as) {
+            true => self.compute_type_from_arguments(name),
+            false => used_as,
+        }
+    }
+
+    // What a function that is only ever called by its name is handed. Returns `any` if the calls say nothing.
+    fn compute_type_from_arguments(&mut self, name: PatId) -> TypeId {
+        let (hir, bound) = (self.hir(), self.bound());
+        let PatParent::Param(parameter) = bound.pat_parent[name.idx()] else {
+            return TypeId::ANY;
+        };
+        let function = bound.param_fn[parameter.idx()];
+        if function == FnId::NONE || hir[parameter].flags.contains(Flags::REST) {
+            return TypeId::ANY;
+        }
+        let mut parameters = hir[function].params.iter();
+        let Some(index) = parameters.position(|other| other == parameter) else {
+            return TypeId::ANY;
+        };
+        let Some(callee) = find_name_of_function(hir, bound, function) else {
+            return TypeId::ANY;
+        };
+        let references = references_to(self.reference_index().to_bindings, callee);
+        if references.len() > MAX_CALLS_READ || self.is_exported(callee) {
+            return TypeId::ANY;
+        }
+        let mut parts = TypeParts::new();
+        for &(_, reference) in references {
+            // A function that is handed on is called from places that nobody sees here.
+            let Some(argument) = find_argument_of_call(hir, bound, reference, index) else {
+                return TypeId::ANY;
+            };
+            let given = match argument.some() {
+                Some(argument) => self.predicted_expression_type(argument),
+                None => Ok(TypeId::UNDEFINED),
+            };
+            match given {
+                Ok(given) if !self.c.is_any(given) => parts.push(self.c.base_of_literal(given)),
+                Ok(_) | Err(_) => return TypeId::ANY,
+            }
+        }
+        match parts[..] {
+            [] | [TypeId::UNDEFINED] => TypeId::ANY,
+            _ => self.c.union(&parts),
+        }
+    }
+
+    fn is_exported(&self, symbol: SymbolId) -> bool {
+        let files = self.files();
+        let symbol = files.sym(self.file, symbol);
+        let exports = files.exports_of_module(files.file_symbol(self.file));
+        exports
+            .iter()
+            .any(|&(_, export)| files.resolve_alias_if_needed(export) == Some(symbol))
+    }
+
     fn compute_result_type(&mut self, function: FnId) -> TypeId {
         let (hir, bound) = (self.hir(), self.bound());
         let mut result = Usage::default();
@@ -1159,6 +1269,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         {
             return found;
         }
+        if let Some(result) = self.find_result_of_inferred_method(expression) {
+            return result;
+        }
         if let Some(subject) = self.find_result_subject_of_call(expression) {
             let result = self.inferred_type(subject);
             if !self.c.is_any(result) {
@@ -1195,6 +1308,25 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             MemberLookup::Index(signature) => signature.types.checked.ok(),
             MemberLookup::Absent => None,
         }
+    }
+
+    // For `object.name(..)`: what the method of the type inferred for `object` returns, whatever it is given.
+    fn find_result_of_inferred_method(&mut self, call: ExprId) -> Option<TypeId> {
+        let hir = self.hir();
+        let ExprKind::Call(site) = hir[call].kind else {
+            return None;
+        };
+        let callee = hir[site].callee;
+        hir.member_key(callee)?;
+        let method = self.find_type_in_inferred_receiver(callee)?;
+        let signatures = self.c.signatures(method, false);
+        let (&first, others) = signatures.split_first()?;
+        let result = self.c.sig_return(first);
+        let is_one_result = others
+            .iter()
+            .all(|&other| self.c.sig_return(other) == result);
+        let says_something = !self.c.is_any(result) && !self.c.has_type_variables(result);
+        (is_one_result && says_something).then_some(result)
     }
 
     fn find_element_type(&mut self, list: TypeId) -> Option<TypeId> {

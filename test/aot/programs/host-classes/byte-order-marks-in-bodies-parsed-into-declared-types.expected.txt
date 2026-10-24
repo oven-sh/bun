@@ -1,0 +1,24 @@
+request, a UTF-8 mark alone: threw SyntaxError: JSON Parse error: Unexpected EOF
+request, a UTF-8 mark and an object: {}
+request, a UTF-16 mark and half a unit: threw SyntaxError: JSON Parse error: Unexpected EOF
+request, a UTF-16 mark and an object: {}
+request, a string of a mark alone: threw SyntaxError: JSON Parse error: Unexpected EOF
+request, a string of a mark and an object: {}
+response, a UTF-8 mark alone: threw SyntaxError: JSON Parse error: Unexpected EOF
+response, a UTF-8 mark and an object: {}
+response, a UTF-16 mark and half a unit: threw SyntaxError: JSON Parse error: Unexpected EOF
+response, a UTF-16 mark and an object: {}
+response, a string of a mark alone: threw SyntaxError: JSON Parse error: Unexpected EOF
+response, a string of a mark and an object: {}
+response over a blob, a UTF-8 mark alone: threw SyntaxError: JSON Parse error: Unexpected EOF
+response over a blob, a UTF-8 mark and an object: {}
+response over a blob, a UTF-16 mark and half a unit: threw SyntaxError: JSON Parse error: Unexpected EOF
+response over a blob, a UTF-16 mark and an object: {}
+response over a blob, a string of a mark alone: threw SyntaxError: JSON Parse error: Unexpected EOF
+response over a blob, a string of a mark and an object: {}
+blob, a UTF-8 mark alone: threw SyntaxError: JSON Parse error: Unexpected EOF
+blob, a UTF-8 mark and an object: {}
+blob, a UTF-16 mark and half a unit: threw SyntaxError: JSON Parse error: Unexpected EOF
+blob, a UTF-16 mark and an object: {}
+blob, a string of a mark alone: threw SyntaxError: JSON Parse error: Unexpected EOF
+blob, a string of a mark and an object: {}

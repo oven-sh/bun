@@ -137,11 +137,35 @@ describe("compile/aot/TypedPackages", () => {
     expect(bundle).not.toContain(".sound");
   });
 
-  test("a package under node_modules/@sound is never read, whether the project lists it or not", async () => {
+  test("a package named @oven/sound-<name> is read, whether the project lists it or not", async () => {
     const folder = project("aot-typed-scope");
-    typedVersion(join(folder, "node_modules", "@sound", "shapes"));
-    expect(await built(folder)).toEqual({ said: [], stdout: output, exitCode: 0 });
-    write(folder, { "package.json": JSON.stringify({ name: "app", devDependencies: { "@sound/shapes": "1.2.3" } }) });
+    typedVersion(join(folder, "node_modules", "@oven", "sound-shapes"));
+    const usesInstalled = { said: used("node_modules/@oven/sound-shapes"), stdout: output, exitCode: 0 };
+    expect(await built(folder)).toEqual(usesInstalled);
+    write(folder, {
+      "package.json": JSON.stringify({ name: "app", devDependencies: { "@oven/sound-shapes": "1.2.3" } }),
+    });
+    expect(await built(folder)).toEqual(usesInstalled);
+    expect(await Bun.file(join(folder, "node_modules", "shapes", "index.js")).text()).toBe(installed["index.js"]);
+  });
+
+  test("builds without --aot ignore a package named @oven/sound-<name>", async () => {
+    const folder = project("aot-typed-scope-no-aot");
+    typedVersion(join(folder, "node_modules", "@oven", "sound-shapes"));
+    expect(await spawned([bunExe(), "build", "app.ts", "--target=bun", "--outfile", "app.js"], folder)).toMatchObject({
+      stderr: "",
+      exitCode: 0,
+    });
+    const bundle = await Bun.file(join(folder, "app.js")).text();
+    expect(bundle).toContain("node_modules/shapes/index.js");
+    expect(bundle).not.toContain("sound-shapes");
+  });
+
+  test("a package under another scope of node_modules is never read", async () => {
+    const folder = project("aot-typed-other-scope");
+    typedVersion(join(folder, "node_modules", "@types", "shapes"));
+    typedVersion(join(folder, "node_modules", "sound", "shapes"));
+    typedVersion(join(folder, "node_modules", "@oven", "shapes"));
     expect(await built(folder)).toEqual({ said: [], stdout: output, exitCode: 0 });
   });
 
@@ -258,7 +282,6 @@ describe("compile/aot/TypedPackages", () => {
   const unnamedTypedFiles: [string, (folder: string) => void][] = [
     ["no package.json has the condition", folder => shipped(folder, installed["package.json"])],
     ["the condition is null", folder => shipped(folder, withCondition(null))],
-    ["the file that the condition names is missing", folder => shipped(folder, withCondition("./other.aot.ts"))],
   ];
   test.each(unnamedTypedFiles)(
     "no shipped version: %s: no message, and the package is compiled as installed",
@@ -299,6 +322,11 @@ describe("compile/aot/TypedPackages", () => {
       "the typed file has syntax that emits code",
       folder => write(join(folder, "node_modules", "shapes"), { "index.aot.ts": typed + "enum Kind { A }\n" }),
       "in index.aot.ts, TypeScript syntax that emits code can't be erased",
+    ],
+    [
+      "the file that the condition names is missing",
+      folder => shipped(folder, withCondition("./other.aot.ts")),
+      "other.aot.ts is missing",
     ],
   ];
   test.each(shippedMismatches)(

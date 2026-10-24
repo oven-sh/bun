@@ -24,6 +24,7 @@ pub enum ErasureMismatchKind {
     Flags,
     ChildCount,
     EmitsCode,
+    Missing,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

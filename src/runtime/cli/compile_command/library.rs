@@ -1,6 +1,7 @@
 mod declarations;
 mod entry_points;
 mod package_files;
+mod typed_files;
 
 #[cfg(test)]
 mod tests;
@@ -15,6 +16,7 @@ use bun_paths::resolve_path::join_abs_string;
 
 pub(crate) use self::declarations::{add_declaration_files, is_declaration_file};
 pub(crate) use self::package_files::add_package_files;
+pub(crate) use self::typed_files::{TypedOutputs, add_typed_files, is_typed_file};
 use super::configuration::exit_without_entry_point;
 use crate::cli::script_or_command::nearest_package_json;
 

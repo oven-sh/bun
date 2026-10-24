@@ -1,0 +1,1 @@
+The interpreter keeps a place in its site for a field that holds any value or a narrow reference. A field that holds a number or nothing goes through the slow path at every read: about 530 instructions against 28.

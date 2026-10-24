@@ -43,9 +43,12 @@ const servers = filterRequested([
   "fastify",
   "fastify-schemas",
   "tanstack",
+  "koa-typed",
+  "express-typed",
+  "fastify-typed",
 ]);
 
-const generatesHandlersFromStrings = ["elysia", "koa", "fastify", "fastify-schemas"];
+const generatesHandlersFromStrings = ["elysia", "koa", "fastify", "fastify-schemas", "koa-typed", "fastify-typed"];
 
 const json = { "Content-Type": "application/json" };
 const order = routes.find(route => route.name === "post")!.request!;
@@ -142,6 +145,22 @@ if (!requestedServers)
 describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers", () => {
   const app = String(tempDir("aot-servers", {}));
   const tanstack = String(tempDir("aot-servers-tanstack", {}));
+  // The typed versions are installed as packages of their own. The packages themselves are found in the folder above.
+  const typedApp = join(app, "with-typed-versions");
+  const typedVersions = join(import.meta.dir, "..", "..", "..", "packages", "bun-sound");
+  const typedPackages = [
+    "koa",
+    "@koa/router",
+    "delegates",
+    "on-finished",
+    "ee-first",
+    "parseurl",
+    "express",
+    "router",
+    "finalhandler",
+    "body-parser",
+    "fastify",
+  ];
   // Each executable is as large as Bun itself.
   afterAll(() => [app, tanstack].forEach(folder => rmSync(folder, { recursive: true, force: true })));
 
@@ -149,6 +168,15 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers", () =>
     if (servers.some(name => name !== "tanstack")) {
       cpSync(join(import.meta.dir, "app"), app, { recursive: true });
       await installPackages(app);
+    }
+    if (servers.some(name => name.endsWith("-typed"))) {
+      cpSync(join(import.meta.dir, "app"), typedApp, { recursive: true });
+      for (const name of typedPackages) {
+        const { version } = JSON.parse(readFileSync(join(app, "node_modules", name, "package.json"), "utf8"));
+        const companion = "sound-" + name.replace(/^@/, "").replace("/", "__");
+        const installed = join(typedApp, "node_modules", "@oven", companion);
+        cpSync(join(typedVersions, name, version), installed, { recursive: true });
+      }
     }
     if (servers.includes("tanstack")) {
       cpSync(join(import.meta.dir, "tanstack"), tanstack, { recursive: true });
@@ -163,8 +191,8 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers", () =>
   }, 300_000);
 
   describe.each(servers)("%s", name => {
-    const folder = name === "tanstack" ? tanstack : app;
-    const entry = name === "tanstack" ? "./serve.ts" : `./${name}.ts`;
+    const folder = name === "tanstack" ? tanstack : name.endsWith("-typed") ? typedApp : app;
+    const entry = name === "tanstack" ? "./serve.ts" : `./${name.replace(/-typed$/, "")}.ts`;
     // The bundler inlines process.env.NODE_ENV and defaults it to "development", which would select React's development build and
     // make Express include stack traces in error responses.
     const flags = ["--define", 'process.env.NODE_ENV="production"'];
@@ -172,15 +200,24 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers", () =>
     const startCompiled = (env: Record<string, string> = {}) =>
       startServer([executable], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", ...env });
 
+    let buildOutput = "";
     beforeAll(async () => {
-      built(
-        await spawned(
-          [bunExe(), "build", "--compile", "--aot", ...flags, "--target=bun", entry, "--outfile", executable],
-          folder,
-          bunEnv,
-        ),
+      const build = await spawned(
+        [bunExe(), "build", "--compile", "--aot", ...flags, "--target=bun", entry, "--outfile", executable],
+        folder,
+        bunEnv,
       );
+      buildOutput = build.stderr;
+      built(build);
     }, 120_000);
+
+    test.skipIf(!name.endsWith("-typed"))("is compiled from the typed versions of its packages", () => {
+      expect(buildOutput).not.toMatch(/can't be used|type errors?\b/);
+      expect(buildOutput).toMatch(
+        /^note: "[^"]+" \S+ is compiled from its typed version in node_modules\/@oven\/sound-/m,
+      );
+      expect(buildOutput).toContain(`note: "${name.replace(/-typed$/, "")}" `);
+    });
 
     test("serves every route", async () => {
       using server = await startCompiled();

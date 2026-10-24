@@ -148,8 +148,8 @@ test("one file reached by two names", () => {
 
 test("an inferred file sees what runs", () => {
   using graph = describeTree({ "main.js": 'import { value } from "typed";', ...typedPackage }, ["main.js"]);
-  expect(graph.file("main.js").codeEdges).toEqual(["node_modules/typed/index.js"]);
-  expect(graph.has("node_modules/typed/index.d.ts")).toBe(false);
+  expect(graph.file("main.js")).toMatchObject({ codeEdges: ["node_modules/typed/index.js"], typeEdges: [] });
+  expect(graph.file("node_modules/typed/index.js").typeEdges).toEqual(["node_modules/typed/index.d.ts"]);
 });
 
 const answersWithoutFile: [specifier: string, answer: string][] = [

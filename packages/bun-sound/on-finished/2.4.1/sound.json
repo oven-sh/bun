@@ -1,0 +1,11 @@
+{
+  "sound": 2,
+  "name": "on-finished",
+  "version": "2.4.1",
+  "when": {},
+  "basis": {},
+  "lay": {
+    "index.js": "8e16bae14ec63bac9cdbb50572a7b53061fee914712f5e803ff03c44e8845276"
+  },
+  "needs": []
+}

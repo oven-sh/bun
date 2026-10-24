@@ -887,15 +887,18 @@ interface TestOptions {
 // test/aot costs several times the rest of test/, so it has steps of its own: test/aot/README.md, "What CI has to know".
 type AotTests = "all" | "a tenth";
 
-// With test/aot go the tests of --aot and --trim that lie beside the bundler's and the command line's. Each of them builds
-// executables: on macOS, where test-bun has two shards, they took as long as everything else in those shards.
+// With test/aot go the tests of --aot, --trim, --library and --dts that lie beside the bundler's and the command line's. Each
+// of them builds executables: on macOS, where test-bun has two shards, they took as long as everything else in those shards.
 const aotTests = [
   "aot/",
+  "bundler/bun-build-api-dts",
+  "bundler/bun-build-dts",
   "bundler/bundler_compile_aot",
   "bundler/compile-aot",
   "bundler/compile-trim",
   "bundler/trim-runtime-icu/",
   "cli/aot-",
+  "cli/compile/compile-library",
   "internal/trim/features",
 ];
 
@@ -1045,6 +1048,14 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
       "--always-draw=aot/compiled-code-mapping",
       "--always-draw=aot/inserted-library",
       "--always-draw=aot/ways-to-start-an-executable",
+    );
+    // It lists what once went wrong on one platform alone, so that no draw passes it over there.
+    args.push("--always-draw=aot/programs-that-differed-on-one-platform");
+    // A library is files in folders, and every platform spells a path its own way.
+    args.push(
+      "--always-draw=bundler/bun-build-api-dts",
+      "--always-draw=bundler/bun-build-dts",
+      "--always-draw=cli/compile/compile-library",
     );
     args.push(...getAotExcludes(platform, aot).map(group => `--exclude=${group}`));
   } else if (testFiles?.length) {

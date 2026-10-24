@@ -450,8 +450,10 @@ fn list_open_extra_descriptors(block: &[u8]) -> Vec<bool> {
     let count = (u32::from_ne_bytes(*count) as usize)
         .min(rest.len() / (1 + size_of::<usize>()))
         .min(MOST_THAT_LIBUV_HANDS_ON);
-    let flags = rest[..count].iter().skip(3);
-    flags.map(|flags| flags & IS_OPEN != 0).collect()
+    let flags_from_3_up = rest[..count].iter().skip(3);
+    flags_from_3_up
+        .map(|flags| (flags & IS_OPEN) != 0)
+        .collect()
 }
 
 #[cfg(windows)]
@@ -471,10 +473,7 @@ fn list_inherited_extra_descriptors() -> Box<[bool]> {
             usize::from(startup_info.cbReserved2),
         )
     };
-    let is_still_open = |index: usize| {
-        let handle = Fd::from_uv(3 + index as i32).native() as isize;
-        handle != -1 && handle != -2
-    };
+    let is_still_open = |index: usize| Fd::from_uv(3 + index as i32).native() as isize > 0;
     list_open_extra_descriptors(block)
         .into_iter()
         .enumerate()

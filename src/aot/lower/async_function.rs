@@ -1,6 +1,6 @@
 use bun_sema::hir::{ExprId, ExprKind};
 
-use super::{FunctionLowering, call, convert, expression};
+use super::{FunctionLowering, call, convert, expression, validate};
 use crate::ir::ValueId;
 use crate::ir::generated::{FunctionFlags, TypeSiteKind};
 
@@ -12,6 +12,7 @@ pub(crate) fn lower_await(
     let ExprKind::Await(operand) = hir[expression].kind else {
         unreachable!("lower_await takes an Await expression");
     };
+    validate::note_what_an_awaited_parse_may_build(lowering, expression, operand);
     let awaited = expression::lower_expression(lowering, operand);
     // JSC records no position for an await, so a suspended function is shown where its operand ends.
     lowering.set_position(call::last_reported_position(lowering.file, operand));

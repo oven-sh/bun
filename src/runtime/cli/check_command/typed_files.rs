@@ -1,0 +1,341 @@
+use bstr::BStr;
+use bun_ast::LoaderHashTable;
+use bun_paths::platform::Auto;
+use bun_paths::resolve_path::join_abs_string;
+use bun_sema::check::Checker;
+use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
+use bun_sema::config::load_options_for_build;
+use bun_sema::program::FileId;
+use bun_sema::session::Session;
+use bun_sema_driver::host::{Disk, Provided, from_native};
+use bun_sema_driver::sound_files::{
+    ModuleTypes, Output, annotate_implicit_any, emitted_declarations_of, module_types, sound_files,
+    tsconfig_of_sources, typed_path_beside,
+};
+use bun_sema_driver::{Diagnostic, Report, Request};
+use bun_threading::Guarded;
+
+use super::declarations::bundler_path;
+use super::{Entries, Paths, already_read, request, script_kinds_by_extension, with_pages};
+
+const SKIPPED_TYPED_FILES: &str =
+    "the typed JavaScript that bun compile compiles a package from is left out";
+
+pub(crate) struct WrittenJavaScript<'a> {
+    pub(crate) path: &'a [u8],
+    pub(crate) text: &'a [u8],
+    pub(crate) source_map: &'a [u8],
+    pub(crate) entry_point: Option<&'a [u8]>,
+}
+
+pub(crate) struct TypedFilesRequest<'a> {
+    pub(crate) cwd: &'a [u8],
+    pub(crate) tsconfig: Option<&'a [u8]>,
+    pub(crate) conditions: &'a [Box<[u8]>],
+    pub(crate) loaders: &'a LoaderHashTable,
+    pub(crate) outdir: &'a [u8],
+    pub(crate) written: &'a [WrittenJavaScript<'a>],
+    pub(crate) modules: &'a [ModuleTypes],
+}
+
+pub(crate) struct TypedFile {
+    pub(crate) path: Vec<u8>,
+    pub(crate) text: Vec<u8>,
+}
+
+pub(crate) fn warn_about_skipped_typed_files(option: &str, log: &mut bun_ast::Log) {
+    log.add_warning_fmt(
+        None,
+        bun_ast::Loc::EMPTY,
+        format_args!("{SKIPPED_TYPED_FILES}: it does not support {option} yet"),
+    );
+}
+
+/// What the checker knows about each module, by file. A task of the checker can run again: the last time counts.
+#[derive(Default)]
+pub(super) struct NotedModuleTypes(Guarded<Vec<(u32, ModuleTypes)>>);
+
+impl NotedModuleTypes {
+    pub(super) fn note(&self, checker: &mut Checker<'_, '_>, file: FileId) {
+        self.note_if(checker, file, |_| true);
+    }
+
+    fn note_if(
+        &self,
+        checker: &mut Checker<'_, '_>,
+        file: FileId,
+        is_wanted: impl Fn(&ModuleTypes) -> bool,
+    ) {
+        if let Some(found) = module_types(checker, file).filter(is_wanted) {
+            let mut noted = self.0.lock();
+            noted.retain(|known| known.0 != file.0);
+            noted.push((file.0, found));
+        }
+    }
+
+    pub(super) fn take(&self) -> Vec<ModuleTypes> {
+        let mut noted = std::mem::take(&mut *self.0.lock());
+        noted.sort_by_key(|module| module.0);
+        noted.into_iter().map(|module| module.1).collect()
+    }
+}
+
+// What costs a package its types in the build of a program that installs it.
+fn first_error(report: &Report) -> Option<&Diagnostic> {
+    report.diagnostics.iter().find(|reported| {
+        let effect = effect_of(
+            FileOrigin::DependencySource,
+            reported.class,
+            reported.category,
+        );
+        effect != Effect::Dropped
+    })
+}
+
+type Texts = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// The options of the sources' project that decide which errors a type checker reports, as lines of a tsconfig.json.
+fn strictness_of(cwd: &[u8], tsconfig: Option<&[u8]>) -> String {
+    let session = Session::new();
+    let options = tsconfig.and_then(|tsconfig| {
+        let path = from_native(&join_abs_string::<Auto>(cwd, &[tsconfig]));
+        let disk = Disk::with_already_read(1, Default::default(), &path);
+        Some(load_options_for_build(&disk, &session, &path).ok()?.options)
+    });
+    let Some(options) = options else {
+        return "    \"strict\": true\n".to_owned();
+    };
+    let stated = [
+        ("strictNullChecks", options.strict_null_checks),
+        ("noImplicitAny", options.no_implicit_any),
+        ("noImplicitThis", options.no_implicit_this),
+        ("strictFunctionTypes", options.strict_function_types),
+        ("strictBindCallApply", options.strict_bind_call_apply),
+        (
+            "strictBuiltinIteratorReturn",
+            options.strict_builtin_iterator_return,
+        ),
+        (
+            "strictPropertyInitialization",
+            options.strict_property_initialization,
+        ),
+        (
+            "useUnknownInCatchVariables",
+            options.use_unknown_in_catch_variables,
+        ),
+        (
+            "exactOptionalPropertyTypes",
+            options.exact_optional_property_types,
+        ),
+        (
+            "noUncheckedIndexedAccess",
+            options.no_unchecked_indexed_access,
+        ),
+        (
+            "noPropertyAccessFromIndexSignature",
+            options.no_property_access_from_index_signature,
+        ),
+        ("noImplicitReturns", options.no_implicit_returns),
+        ("noImplicitOverride", options.no_implicit_override),
+        (
+            "noFallthroughCasesInSwitch",
+            options.no_fallthrough_cases_in_switch,
+        ),
+    ];
+    let lines = stated.map(|(name, is_on)| format!("    \"{name}\": {is_on}"));
+    // Without `lib`, a target has a library of its own, which no `lib` can name.
+    let is_default = options.libs.iter().any(|lib| lib.ends_with(b".full"));
+    let libs = options
+        .libs
+        .iter()
+        .map(|lib| format!("{:?}", BStr::new(lib).to_string()));
+    let libs = libs.collect::<Vec<String>>().join(", ");
+    let lib_line = match is_default || options.libs.is_empty() {
+        true => String::new(),
+        false => format!("    \"lib\": [{libs}],\n"),
+    };
+    lib_line + &lines.join(",\n") + "\n"
+}
+
+pub(crate) fn typed_files_for_build(
+    asked: &TypedFilesRequest<'_>,
+    log: &mut bun_ast::Log,
+) -> Vec<TypedFile> {
+    let &TypedFilesRequest {
+        cwd,
+        tsconfig,
+        conditions,
+        loaders,
+        outdir,
+        written,
+        modules,
+    } = asked;
+    let (bundler_outdir, outdir) = (outdir, &from_native(outdir)[..]);
+    let paths: Vec<(Vec<u8>, Option<Vec<u8>>)> = written
+        .iter()
+        .map(|file| (from_native(file.path), file.entry_point.map(from_native)))
+        .collect();
+    let outputs: Vec<Output<'_>> = (written.iter().zip(&paths))
+        .map(|(file, (path, entry_point))| Output {
+            path,
+            javascript: file.text,
+            source_map: file.source_map,
+            entry_point: entry_point.as_deref(),
+        })
+        .collect();
+    let by_extension = script_kinds_by_extension(loaders);
+    let tsconfig_of_sources = match tsconfig {
+        Some(_) => None,
+        None => tsconfig_of_sources(&outputs, modules),
+    };
+    let tsconfig = tsconfig.or(tsconfig_of_sources.as_deref());
+    let newest_lib: Texts = vec![(
+        [
+            outdir.strip_suffix(b"/").unwrap_or(outdir),
+            b"/newest-lib.d.ts",
+        ]
+        .concat(),
+        b"/// <reference lib=\"esnext\" />\n".to_vec(),
+    )];
+    // The typed files are judged as a project that installs the package judges them: without the sources, under the
+    // tsconfig.json that is written beside them. It states how strict the sources are, so what the application's own
+    // tsconfig.json asks for does not count.
+    let typed_names = paths.iter().filter_map(|(path, _)| {
+        let typed = typed_path_beside(path)?;
+        let inside = typed.strip_prefix(outdir.strip_suffix(b"/").unwrap_or(outdir))?;
+        Some(format!("{:?}", format!(".{}", BStr::new(inside))))
+    });
+    let typed_names = typed_names.collect::<Vec<String>>().join(", ");
+    let config_text = format!(
+        "{{\n  \"compilerOptions\": {{\n    \"target\": \"esnext\",\n    \"module\": \"preserve\",\n    \"moduleResolution\": \"bundler\",\n    \"noEmit\": true,\n    \"skipLibCheck\": true,\n{}  }},\n  \"files\": [{typed_names}]\n}}\n",
+        strictness_of(cwd, tsconfig),
+    );
+    let config_path = [
+        outdir.strip_suffix(b"/").unwrap_or(outdir),
+        b"/tsconfig.json",
+    ]
+    .concat();
+    let without_sources = Some((config_path, config_text.into_bytes()));
+    let sources_tsconfig = tsconfig;
+    let tsconfig_path = without_sources.as_ref().map(|file| bundler_path(&file.0));
+    let tsconfig = tsconfig_path.as_deref();
+    let check = |typed: &mut Texts, declarations: &Texts, libs: &Texts| {
+        let paths: Vec<Vec<u8>> = (typed.iter().chain(libs))
+            .map(|file| file.0.clone())
+            .collect();
+        let entries = Paths::EntryPoints(Entries {
+            paths: &paths,
+            script_kinds: &[],
+            script_kinds_by_extension: &by_extension,
+            conditions,
+        });
+        let request = request(cwd, tsconfig, &entries, &[], 0, None);
+        let mut rounds = 0;
+        loop {
+            let texts = typed.iter().chain(declarations).chain(libs);
+            let texts = texts.chain(&without_sources);
+            let provided = Provided {
+                already_read: already_read(cwd, &mut texts.map(|file| (&file.0[..], &file.1[..]))),
+                ..Default::default()
+            };
+            let provided = with_pages(cwd, provided);
+            let report = bun_sema_driver::check_provided_then(&request, provided, |report| report);
+            rounds += 1;
+            if rounds == 3 || !annotate_implicit_any(typed, &report.diagnostics) {
+                return report;
+            }
+        }
+    };
+    let without_emitted_declarations = sound_files(outdir, &outputs, Some(modules), &[], false);
+    let untyped_modules = without_emitted_declarations
+        .as_ref()
+        .map_or(&[][..], |found| &found.modules_of_untyped_values[..]);
+    let emitted = emitted_declarations_of(modules, untyped_modules);
+    let emitted_modules = NotedModuleTypes::default();
+    if !emitted.is_empty() {
+        let note = |checker: &mut Checker<'_, '_>, file: FileId| {
+            emitted_modules.note_if(checker, file, |found| {
+                emitted.iter().any(|file| file.0[..] == found.path[..])
+            });
+        };
+        let paths: Vec<Vec<u8>> = emitted.iter().map(|file| file.0.clone()).collect();
+        let entries = Paths::EntryPoints(Entries {
+            paths: &paths,
+            script_kinds: &[],
+            script_kinds_by_extension: &by_extension,
+            conditions,
+        });
+        let request = Request {
+            after_file: Some(&note),
+            ..request(cwd, sources_tsconfig, &entries, &[], 0, None)
+        };
+        let mut texts = emitted.iter().map(|file| (&file.0[..], &file.1[..]));
+        let provided = Provided {
+            already_read: already_read(cwd, &mut texts),
+            ..Default::default()
+        };
+        bun_sema_driver::check_provided_then(&request, with_pages(cwd, provided), |_| ());
+    }
+    let emitted_modules = emitted_modules.take();
+    let found = match emitted_modules.is_empty() {
+        true => without_emitted_declarations,
+        false => sound_files(outdir, &outputs, Some(modules), &emitted_modules, false),
+    };
+    let mut warn = |why: core::fmt::Arguments<'_>| {
+        log.add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!("{SKIPPED_TYPED_FILES}: {why}"),
+        );
+        Vec::new()
+    };
+    let mut found = match found {
+        Ok(found) => found,
+        Err(why) => return warn(format_args!("{why}")),
+    };
+    let report = check(
+        &mut found.typed,
+        &found.declarations_while_checked,
+        &newest_lib,
+    );
+    if let Some(first) = first_error(&report) {
+        let path = bundler_path(&first.path);
+        let separator = std::path::MAIN_SEPARATOR_STR.as_bytes();
+        let shown = path
+            .strip_prefix(bundler_outdir)
+            .map_or(&path[..], |inside| {
+                inside.strip_prefix(separator).unwrap_or(inside)
+            });
+        let text = bun_core::strings::split(&first.text[..], b"\n").next();
+        let without_newest_lib = check(
+            &mut found.typed,
+            &found.declarations_while_checked,
+            &Vec::new(),
+        );
+        let under = match first_error(&without_newest_lib) {
+            None => {
+                " under \"lib\": [\"esnext\"], which a project that installs the package may have"
+            }
+            Some(_) => "",
+        };
+        return warn(format_args!(
+            "with its types put back it has type errors{under}, the first at {}:{}:{}: TS{}: {}",
+            BStr::new(shown),
+            first.line,
+            first.column,
+            first.code,
+            BStr::new(text.unwrap_or_default()),
+        ));
+    }
+    if !report.incomplete.is_empty() {
+        return warn(format_args!(
+            "with its types put back it could not be type checked"
+        ));
+    }
+    let typed_files = found.typed.into_iter().chain(without_sources);
+    let typed_files = typed_files.map(|(path, text)| TypedFile {
+        path: bundler_path(&path),
+        text,
+    });
+    typed_files.collect()
+}

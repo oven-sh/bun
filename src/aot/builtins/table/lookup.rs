@@ -327,6 +327,11 @@ pub fn host_reads(context: HostReadContext) -> impl Iterator<Item = &'static Hos
         .filter(move |read| read.context == context)
 }
 
+/// Whether `builtin`, which is a canonical id, makes its answer out of text or bytes, and may make it with the layouts of the type that the answer is written under.
+pub fn is_parser(builtin: BuiltinId) -> bool {
+    PARSERS.binary_search(&builtin).is_ok()
+}
+
 /// The ways to call or construct `builtin`, which is a canonical id, so that nothing a program can see happens when nobody uses the result.
 pub fn removable_calls(
     builtin: BuiltinId,

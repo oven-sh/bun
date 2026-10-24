@@ -32,12 +32,12 @@ Sound TypeScript types for [%(name)s](https://www.npmjs.com/package/%(name)s/v/%
 bun add -d %(flat)s@%(version)s
 ```
 
-That is all. When `bun build --compile --aot` compiles %(name)s %(version)s and finds this package among the project's
-dependencies, it compiles the files under `lay/` in place of the package's own. They are the package's own code with types
+That is all. When `bun build --compile --aot` compiles %(name)s %(version)s and finds this package in the project's
+`node_modules`, it compiles the files under `lay/` in place of the package's own. They are the package's own code with types
 added; no statement was changed. Nothing in `node_modules/%(name)s` is touched, and a build without `--aot` does not look here.
 
-The version must be exactly the installed one, and every file it stands on must have the bytes it was typed on
-(`sound.json` holds their sha256). Otherwise Bun says so in one warning and compiles the package as it always did.%(when)s
+The version must be exactly the installed one, and every file under `lay/`, without its types, must be the same code as the
+installed file. Otherwise Bun says so in a warning and compiles the package as it always did.%(when)s
 
 Licence: %(license)s, the package's own. See `LICENSE` and `NOTICE`.
 '''
@@ -47,7 +47,7 @@ for d, ds, fs in sorted(os.walk(H)):
     if 'sound.json' not in fs: continue
     S = json.loads(read(d + '/sound.json')); P = json.loads(read(d + '/package.json')); name, v = S['name'], S['version']; who = '%s@%s' % (name, v)
     if only and who not in only: continue
-    stop = lambda why: sys.exit('publish.py: %s: %s' % (who, why)); flat = '@sound/' + name.lstrip('@').replace('/', '__')
+    stop = lambda why: sys.exit('publish.py: %s: %s' % (who, why)); flat = '@oven/sound-' + name.lstrip('@').replace('/', '__')
     if os.path.relpath(d, H) != name + '/' + v: stop('it lies in %s' % os.path.relpath(d, H))
     if S.get('sound') not in (1, 2) or set(S) != {'sound', 'name', 'version', 'when', 'basis', 'lay', 'needs'}: stop('sound.json has other members than the format\'s')
     if (P['name'], P['version'], P.get('peerDependencies')) != (flat, v, {name: v}): stop('package.json: name, version or the peer dependency are not the manifest\'s')

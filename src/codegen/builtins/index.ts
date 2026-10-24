@@ -27,6 +27,7 @@ import type { TableDump } from "./dump.ts";
 import { emitHostBindings } from "./emit-cpp-bindings.ts";
 import { dumpOf } from "./emit-dump.ts";
 import { emitRustIds } from "./emit-rust-ids.ts";
+import { emitRustParsers } from "./emit-rust-parsers.ts";
 import { emitRustSyntax } from "./emit-rust-syntax.ts";
 import { emitRustTable } from "./emit-rust-table.ts";
 import { builtinUsesOf } from "./emit-uses.ts";
@@ -211,7 +212,7 @@ function emitCode({ model, schema, features, nativeCallListStamp }: EmitterInput
       ],
       ["aot_builtin_ids.rs", emitRustIds(model, schema)],
       ["aot_builtin_syntax.rs", emitRustSyntax(model)],
-      ["aot_builtin_table.rs", emitRustTable(model)],
+      ["aot_builtin_table.rs", emitRustTable(model) + emitRustParsers(model)],
     ]),
   };
 }

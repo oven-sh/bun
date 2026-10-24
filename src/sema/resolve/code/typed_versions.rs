@@ -9,26 +9,35 @@ impl<'h> Resolver<'h> {
             return known;
         }
         let package = self.enclosing_package(path);
-        let found = match self.code_host().typed_version(path, package) {
-            Some(typed) => Some((typed, TypedVersionOrigin::Host)),
-            None => self
-                .find_typed_export(path, condition)
-                .map(|typed| (typed, TypedVersionOrigin::Package)),
+        let host = self.code_host();
+        let from_host = |typed| (typed, TypedVersionOrigin::Host, false);
+        let found = match host.typed_version(path, package) {
+            Some(typed) => Some(from_host(typed)),
+            None => match self.find_typed_export(path, condition) {
+                Some(TypedExport::File(typed)) => Some((typed, TypedVersionOrigin::Package, false)),
+                Some(TypedExport::Missing(typed)) => Some(
+                    (host.installed_typed_version(path, package))
+                        .map_or((typed, TypedVersionOrigin::Package, true), from_host),
+                ),
+                None => host.installed_typed_version(path, package).map(from_host),
+            },
         };
-        let typed_version = found.map(|(typed, origin)| TypedVersionFile {
+        let typed_version = found.map(|(typed, origin, is_missing)| TypedVersionFile {
             path: self.keep(&typed),
             origin,
+            is_missing,
         });
         *typed_versions.insert_ref(self.keep(path), typed_version)
     }
 
-    fn find_typed_export(&self, path: &[u8], condition: &[u8]) -> Option<Vec<u8>> {
+    fn find_typed_export(&self, path: &[u8], condition: &[u8]) -> Option<TypedExport> {
         let (manifest, exports) = self.find_package_exports(path)?;
         if !has_condition(exports, condition) {
             return None;
         }
         let orders = &self.code_options().extension_orders;
         let subpaths = candidate_subpaths(manifest, exports, path);
+        let mut missing = None;
         for kind in [CodeImportKind::Import, CodeImportKind::Require] {
             let search = CodeSearch {
                 kind,
@@ -49,12 +58,17 @@ impl<'h> Resolver<'h> {
                     continue;
                 }
                 let typed = self.load_package_exports(manifest, exports, subpath, typed_search);
+                if matches!(typed, SearchResult::NotFound(CodeFailure::ModuleNotFound)) {
+                    missing = missing.or_else(|| {
+                        self.exact_exports_target(manifest, exports, subpath, typed_search)
+                    });
+                }
                 if let Some(typed) = self.find_other_file(typed, path) {
-                    return Some(typed);
+                    return Some(TypedExport::File(typed));
                 }
             }
         }
-        None
+        missing.map(TypedExport::Missing)
     }
 
     fn find_package_exports(
@@ -71,6 +85,12 @@ impl<'h> Resolver<'h> {
                 Some((manifest, manifest.exports.as_ref()?))
             })
     }
+}
+
+#[derive(PartialEq, Eq, Debug)]
+enum TypedExport {
+    File(Vec<u8>),
+    Missing(Vec<u8>),
 }
 
 fn has_condition(entry: &ExportsEntry<'_>, condition: &[u8]) -> bool {

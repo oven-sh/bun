@@ -240,6 +240,8 @@ complete -c bun -n "__fish_seen_subcommand_from compile" -l "no-compile-function
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "no-aot" -d "Bundle the JavaScript into the executable instead of compiling it to machine code"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "trim" -d "Remove the Bun and Node.js APIs your code never calls from the executable"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "trim-locales" -r -d "With --trim: keep only these locales, such as en,de-AT"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "library" -d "Build a package to publish instead of an executable"
+complete -c bun -n "__fish_seen_subcommand_from compile" -l "outdir" -r -F -d "With --library: the folder the package is written to"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "no-script" -d "Run this command even if the project has a compile script"
 complete -c bun -n "__fish_seen_subcommand_from compile" -l "cwd" -r -F -d "Set the working directory"
 complete -c bun -n "__fish_seen_subcommand_from compile" -s "h" -l "help" -d "Print this help menu"

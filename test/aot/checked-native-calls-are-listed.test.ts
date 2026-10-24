@@ -2,6 +2,7 @@ import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isHardened } from "./hardened";
 import { run as runProcess } from "./harness/run";
 import { withoutCoreDump } from "./run-programs";
 import { beforeAll, describe, test } from "./supported";
@@ -9,7 +10,7 @@ import { beforeAll, describe, test } from "./supported";
 // An executable built with --aot-validate compares what each native function does with what the table of built-ins says of it. An entry of the table
 // is checked only as far as the calls go that a test makes: a call that the function refuses shows nothing of what it writes. So where
 // BUN_AOT_CHECKED_NATIVE_CALLS names a file, the executable appends a line for each entry that its checks met: the entry, and how many of its calls
-// returned, threw, changed an operand, and came with what the compiler believed about the call.
+// returned, threw, changed an operand, and came with what the compiler believed about the call. A hardened build has no code for it.
 const program = `const bytes = new Uint8Array(8);
 crypto.getRandomValues(bytes);
 console.log(structuredClone({ a: 1 }).a, btoa("ab"));
@@ -23,7 +24,7 @@ for (const text of ["YWI=", "*", "**"]) {
 if (process.argv[2] === "collect") Bun.gc(true);
 `;
 
-describe("the native calls that a validating executable checked", () => {
+describe.skipIf(isHardened)("the native calls that a validating executable checked", () => {
   const dir = tempDir("checked-native-calls", { "main.ts": program });
   const executable = join(String(dir), "program");
   const list = join(String(dir), "checked.txt");

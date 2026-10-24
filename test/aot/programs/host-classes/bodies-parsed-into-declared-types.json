@@ -1,3 +1,4 @@
 {
-  "skipInShell": "it uses what Bun provides and the jsc shell does not: Request, Response, Blob, TextEncoder"
+  "skipInShell": "it uses what Bun provides and the jsc shell does not: Request, Response, Blob, TextEncoder",
+  "erased": "as plain Bun"
 }

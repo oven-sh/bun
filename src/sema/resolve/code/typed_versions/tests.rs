@@ -179,7 +179,8 @@ fn typed_export_is_other_file_of_same_subpath() {
     with_resolver(&host, |resolver| {
         let find = |path: &[u8]| resolver.find_typed_export(path, b"bun-aot");
         let index: &[u8] = b"/p/node_modules/pkg/index.js";
-        assert_eq!(find(index), Some(b"/p/node_modules/pkg/typed.ts".to_vec()));
+        let typed = TypedExport::File(b"/p/node_modules/pkg/typed.ts".to_vec());
+        assert_eq!(find(index), Some(typed));
         assert_eq!(find(b"/p/node_modules/pkg/same.js"), None);
         assert_eq!(find(b"/p/node_modules/pkg/untyped.js"), None);
         assert_eq!(find(b"/p/node_modules/pkg/typed.ts"), None);

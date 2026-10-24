@@ -52,6 +52,15 @@ pub trait CodeHost: Host {
         None
     }
 
+    /// A typed version that counts only if the package ships none.
+    fn installed_typed_version(
+        &self,
+        _path: &[u8],
+        _package: Option<EnclosingPackage<'_>>,
+    ) -> Option<Vec<u8>> {
+        None
+    }
+
     fn typed_version_manifest(&self, _typed_path: &[u8]) -> Option<Vec<u8>> {
         None
     }

@@ -1,0 +1,15 @@
+{
+  "sound": 2,
+  "name": "express",
+  "version": "5.3.0",
+  "when": {},
+  "basis": {},
+  "lay": {
+    "lib/application.js": "6d7e08355025786982d17042fc0355b6a5e9339545dc27e2782b3aaa28a7bc04",
+    "lib/express.js": "4f35e8273a5e78c35e778d14e4a8c80a81ca3e1fc8047dc87d2077b860404572",
+    "lib/request.js": "a9fda39c4472aeaa4d696f4324f58cc1d036f84ed04145d6d56a12a59578e751",
+    "lib/response.js": "efe24afe2978d0bf2ad52d5b163a7af0d25d965e5dfc75979c4fcc883c60a510",
+    "lib/utils.js": "4bd3bf9c911e086d1911954708de7a6c384ed924360e3fd1d4a43c98bd68b112"
+  },
+  "needs": []
+}

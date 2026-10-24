@@ -1,0 +1,13 @@
+{
+  "sound": 2,
+  "name": "body-parser",
+  "version": "2.3.0",
+  "when": {},
+  "basis": {},
+  "lay": {
+    "lib/read.js": "7c5d356030c78f124a0e1b4b848f4e3845f69def18e61f14b62bba0f359c71b1",
+    "lib/types/json.js": "88badae0fd93e54c8ea69985cc608ed8e4ecff54d5f7c415da40c3bda0d38e90",
+    "lib/utils.js": "23eb2475b6cfd11fca8a5b157f8bf19416c1885dbd5d3c62b6f9193800c18fa3"
+  },
+  "needs": []
+}

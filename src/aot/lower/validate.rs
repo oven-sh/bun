@@ -34,3 +34,11 @@ pub(crate) fn find_expected_result(
 ) -> Option<ExpectedResultId> {
     expected_result::find_expected_result(lowering.file, call)
 }
+
+pub(crate) fn note_what_an_awaited_parse_may_build(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    awaiting: ExprId,
+    operand: ExprId,
+) {
+    expected_result::note_what_an_awaited_parse_may_build(lowering.file, awaiting, operand);
+}

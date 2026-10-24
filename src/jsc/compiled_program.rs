@@ -2,17 +2,15 @@ use core::sync::atomic::Ordering;
 use std::collections::BTreeSet;
 
 use bun_aot::ir::generated::{AdmittedCode, ImageVerdict};
-use bun_core::{Fd, ZBox};
+#[cfg(bun_locked_environment)]
+use bun_core::ZBox;
 use bun_exe_format::identity::{HostDescription, IdentityError, find_process_identity};
 use bun_options_types::standalone_path::is_bun_standalone_file_path;
 use bun_resolver::StandaloneModuleGraph;
 use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram};
-use bun_sys::O;
 
 use crate::virtual_machine::standalone_module_graph;
 use crate::{JSGlobalObject, JSValue};
-
-const NO_LOG_DESCRIPTOR: isize = -1;
 
 #[used]
 #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__TEXT,__bun_aot"))]
@@ -45,9 +43,6 @@ unsafe extern "C" {
     fn Bun__AOT__admitsUnknownJavaScript(image: Bytes) -> bool;
     fn Bun__AOT__omitsFunctionSource(image: Bytes) -> bool;
     safe fn Bun__AOT__imageCode() -> Bytes;
-    safe fn Bun__AOT__setMismatchLog(descriptor: isize, is_json: bool);
-    safe fn Bun__AOT__setMismatchLogFormat(is_json: bool);
-    safe fn Bun__AOT__setVerbose(is_verbose: bool);
     safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
     safe fn Bun__AOT__entryPointIsCommonJS(global: &JSGlobalObject) -> bool;
     safe fn Bun__AOT__errorIfCodeOutsideImageIsRefused(
@@ -524,9 +519,10 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         #[cfg(bun_locked_environment)]
         refuse_variables_that_are_never_read();
         bun_resolve_builtins::seal_internals();
-        set_mismatch_log();
-        let is_verbose = bun_core::env_var::BUN_AOT_VERBOSE.get().unwrap_or(false);
-        Bun__AOT__setVerbose(is_verbose);
+        #[cfg(not(bun_locked_environment))]
+        settings_for_debugging::set_mismatch_log();
+        #[cfg(not(bun_locked_environment))]
+        let is_verbose = settings_for_debugging::set_verbose();
         let identity = match find_process_identity() {
             Ok(identity) => identity,
             Err(error) => exit_with(identity_error_sentence(error)),
@@ -560,77 +556,105 @@ pub(crate) fn use_image(graph: &'static dyn StandaloneModuleGraph) {
         }
         program.set_module_lookup(find_module_path);
         bun_crash_handler::report_aborts();
+        #[cfg(not(bun_locked_environment))]
         if is_verbose {
-            print_image_summary(program.image.len());
+            settings_for_debugging::print_image_summary(program.image.len());
         }
         bun_analytics::features::aot.fetch_add(1, Ordering::Relaxed);
     });
 }
 
-fn image_summary(image_size: usize, code_size: usize, code_address: usize) -> String {
-    format!("[aot] image: {image_size} bytes, {code_size} of code at {code_address:#x}")
-}
+/// What the BUN_AOT_ variables ask for.
+#[cfg(not(bun_locked_environment))]
+mod settings_for_debugging {
+    use bun_core::{Fd, ZBox};
+    use bun_sys::O;
 
-fn print_image_summary(image_size: usize) {
-    let code = Bun__AOT__imageCode();
-    bun_core::Output::print_errorln(image_summary(image_size, code.len, code.ptr as usize));
-    bun_core::Output::flush();
-}
+    use super::Bun__AOT__imageCode;
 
-#[derive(Debug, PartialEq, Eq)]
-enum LogRequest<'a> {
-    Off,
-    FormatOnly { is_json: bool },
-    StandardError { is_json: bool },
-    File { path: &'a [u8], is_json: bool },
-}
+    const NO_LOG_DESCRIPTOR: isize = -1;
 
-fn is_json_format(format: Option<&[u8]>) -> bool {
-    matches!(format, Some(b"json"))
-}
-
-fn mismatch_log_request<'a>(
-    destination: Option<&'a [u8]>,
-    format: Option<&[u8]>,
-) -> Option<LogRequest<'a>> {
-    match destination {
-        None => format.map(|_| LogRequest::FormatOnly {
-            is_json: is_json_format(format),
-        }),
-        Some(b"off") => Some(LogRequest::Off),
-        Some(b"stderr") => Some(LogRequest::StandardError {
-            is_json: is_json_format(format),
-        }),
-        Some(path) => Some(LogRequest::File {
-            path,
-            is_json: format.is_none() || is_json_format(format),
-        }),
+    unsafe extern "C" {
+        safe fn Bun__AOT__setMismatchLog(descriptor: isize, is_json: bool);
+        safe fn Bun__AOT__setMismatchLogFormat(is_json: bool);
+        safe fn Bun__AOT__setVerbose(is_verbose: bool);
     }
-}
 
-fn native_descriptor(fd: Fd) -> isize {
-    fd.native() as isize
-}
+    pub(super) fn image_summary(
+        image_size: usize,
+        code_size: usize,
+        code_address: usize,
+    ) -> String {
+        format!("[aot] image: {image_size} bytes, {code_size} of code at {code_address:#x}")
+    }
 
-fn set_mismatch_log() {
-    let destination = bun_core::env_var::BUN_AOT_TYPE_MISMATCH_LOG.get_not_empty();
-    let format = bun_core::env_var::BUN_AOT_TYPE_MISMATCH_LOG_FORMAT.get_not_empty();
-    let Some(request) = mismatch_log_request(destination, format) else {
-        return;
-    };
-    let (descriptor, is_json) = match request {
-        LogRequest::FormatOnly { is_json } => return Bun__AOT__setMismatchLogFormat(is_json),
-        LogRequest::Off => (NO_LOG_DESCRIPTOR, false),
-        LogRequest::StandardError { is_json } => (native_descriptor(Fd::stderr()), is_json),
-        LogRequest::File { path, is_json } => {
-            let flags = O::WRONLY | O::CREAT | O::APPEND | O::CLOEXEC;
-            match bun_sys::open(&ZBox::from_bytes(path), flags, 0o644) {
-                Ok(file) => (native_descriptor(file), is_json),
-                Err(_) => (native_descriptor(Fd::stderr()), is_json_format(format)),
-            }
+    pub(super) fn print_image_summary(image_size: usize) {
+        let code = Bun__AOT__imageCode();
+        bun_core::Output::print_errorln(image_summary(image_size, code.len, code.ptr as usize));
+        bun_core::Output::flush();
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) enum LogRequest<'a> {
+        Off,
+        FormatOnly { is_json: bool },
+        StandardError { is_json: bool },
+        File { path: &'a [u8], is_json: bool },
+    }
+
+    fn is_json_format(format: Option<&[u8]>) -> bool {
+        matches!(format, Some(b"json"))
+    }
+
+    pub(super) fn mismatch_log_request<'a>(
+        destination: Option<&'a [u8]>,
+        format: Option<&[u8]>,
+    ) -> Option<LogRequest<'a>> {
+        match destination {
+            None => format.map(|_| LogRequest::FormatOnly {
+                is_json: is_json_format(format),
+            }),
+            Some(b"off") => Some(LogRequest::Off),
+            Some(b"stderr") => Some(LogRequest::StandardError {
+                is_json: is_json_format(format),
+            }),
+            Some(path) => Some(LogRequest::File {
+                path,
+                is_json: format.is_none() || is_json_format(format),
+            }),
         }
-    };
-    Bun__AOT__setMismatchLog(descriptor, is_json);
+    }
+
+    fn native_descriptor(fd: Fd) -> isize {
+        fd.native() as isize
+    }
+
+    pub(super) fn set_verbose() -> bool {
+        let is_verbose = bun_core::env_var::BUN_AOT_VERBOSE.get().unwrap_or(false);
+        Bun__AOT__setVerbose(is_verbose);
+        is_verbose
+    }
+
+    pub(super) fn set_mismatch_log() {
+        let destination = bun_core::env_var::BUN_AOT_TYPE_MISMATCH_LOG.get_not_empty();
+        let format = bun_core::env_var::BUN_AOT_TYPE_MISMATCH_LOG_FORMAT.get_not_empty();
+        let Some(request) = mismatch_log_request(destination, format) else {
+            return;
+        };
+        let (descriptor, is_json) = match request {
+            LogRequest::FormatOnly { is_json } => return Bun__AOT__setMismatchLogFormat(is_json),
+            LogRequest::Off => (NO_LOG_DESCRIPTOR, false),
+            LogRequest::StandardError { is_json } => (native_descriptor(Fd::stderr()), is_json),
+            LogRequest::File { path, is_json } => {
+                let flags = O::WRONLY | O::CREAT | O::APPEND | O::CLOEXEC;
+                match bun_sys::open(&ZBox::from_bytes(path), flags, 0o644) {
+                    Ok(file) => (native_descriptor(file), is_json),
+                    Err(_) => (native_descriptor(Fd::stderr()), is_json_format(format)),
+                }
+            }
+        };
+        Bun__AOT__setMismatchLog(descriptor, is_json);
+    }
 }
 
 fn identity_error_sentence(error: IdentityError) -> &'static str {
@@ -686,7 +710,9 @@ fn exit_with(sentence: &str) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::mismatch_log_request as request;
+    use super::settings_for_debugging::{
+        LogRequest, image_summary, mismatch_log_request as request,
+    };
     use super::*;
 
     const PATH: &[u8] = b"/tmp/mismatches.jsonl";

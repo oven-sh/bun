@@ -803,6 +803,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--check                          Type check the entry points and what they import. Nothing is bundled if there are type errors"
         ),
         parse_param!(
+            "--dts                            Write declaration files (.d.ts), and each output file with its types kept (.aot.ts), to --outdir. Implies --check"
+        ),
+        parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
         ),
         parse_param!(
@@ -2386,7 +2389,7 @@ fn parse_build_command_options(
         opts.target = Some(api::Target::Node);
     }
     ctx.bundler_options.library = library;
-    ctx.bundler_options.dts = library;
+    ctx.bundler_options.dts = library || args.flag(b"--dts");
     ctx.bundler_options.bytecode = args.flag(b"--bytecode");
     if let Some(depth) = args.option(b"--bytecode-depth") {
         ctx.bundler_options.bytecode_depth = match strings::parse_int::<u32>(depth, 10) {

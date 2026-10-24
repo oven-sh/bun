@@ -92,7 +92,7 @@ describe("WebKit prebuilt URL", () => {
       mockToolchain(),
     );
     expect(prebuiltUrlOf(cfg)).toBe(
-      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-debug.tar.gz`,
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-debug-aot.tar.gz`,
     );
   });
 
@@ -101,13 +101,13 @@ describe("WebKit prebuilt URL", () => {
       `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-lto.tar.gz`,
     );
     expect(prebuiltUrlOf(resolveLinuxRelease({ asan: true, baseline: true }))).toBe(
-      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-asan.tar.gz`,
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-asan-aot.tar.gz`,
     );
   });
 
   test("--hardened=on takes the hardened prebuilt where one is published", () => {
     expect(prebuiltUrlOf(resolveLinuxRelease({ hardened: true }))).toBe(
-      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-hardened.tar.gz`,
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-hardened-aot.tar.gz`,
     );
     expect(prebuiltUrlOf(resolveLinuxRelease({ hardened: true, lto: true, aot: false }))).toBe(
       `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-lto-hardened.tar.gz`,
@@ -126,7 +126,7 @@ describe("WebKit prebuilt URL", () => {
     expect(() => resolveLinuxRelease({ hardened: true, abi: "musl" })).toThrow("or webkit=local");
   });
 
-  test("what ships comes with the ahead-of-time compiler under -aot, and everything else only with it", () => {
+  test("a build with the ahead-of-time compiler is called -aot, and only what ships comes without it", () => {
     const name = (partial: PartialConfig) => prebuiltUrlOf(resolveLinuxRelease(partial)).split("/").pop();
     expect(name({})).toBe("bun-webkit-linux-amd64-aot.tar.gz");
     expect(name({ lto: true })).toBe("bun-webkit-linux-amd64-lto-aot.tar.gz");
@@ -137,7 +137,7 @@ describe("WebKit prebuilt URL", () => {
       { fuzzilli: true },
       { hardened: true },
     ] as PartialConfig[]) {
-      expect(name(other)).not.toContain("-aot");
+      expect(name(other)).toEndWith("-aot.tar.gz");
       expect(() => name({ ...other, aot: false })).toThrow("without the ahead-of-time compiler");
     }
   });

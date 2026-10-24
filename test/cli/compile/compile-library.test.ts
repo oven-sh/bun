@@ -91,7 +91,14 @@ const packageJson = {
   publishConfig: { access: "public" },
 };
 
-const conditions = (stem: string) => ({ types: `./${stem}.d.ts`, default: `./${stem}.js` });
+const conditions = (stem: string) => ({
+  types: `./${stem}.d.ts`,
+  "bun-aot": `./${stem}.aot.ts`,
+  default: `./${stem}.js`,
+});
+const untypedConditions = (stem: string) => ({ types: `./${stem}.d.ts`, default: `./${stem}.js` });
+const NO_TYPED_FILES_WITHOUT_BUNDLING =
+  "warn: the typed JavaScript that bun compile compiles a package from is left out: it does not support --no-bundle yet\n";
 
 describe.concurrent("bun compile --library", () => {
   test("writes JavaScript, declaration files and a package.json into dist", async () => {
@@ -106,7 +113,16 @@ describe.concurrent("bun compile --library", () => {
     expect(built.stderr).toBe("");
     expect(built.exitCode).toBe(0);
     const dist = join(String(dir), "dist");
-    expect(filesIn(dist)).toEqual(["LICENSE", "README.md", "area.d.ts", "index.d.ts", "index.js", "package.json"]);
+    expect(filesIn(dist)).toEqual([
+      "LICENSE",
+      "README.md",
+      "area.d.ts",
+      "index.aot.ts",
+      "index.d.ts",
+      "index.js",
+      "package.json",
+      "tsconfig.json",
+    ]);
     const table = built.stdout.split("\n").filter(line => / \(.+\)$/.test(line));
     expect(table.map(line => line.trim().split(" ")[0]).sort()).toEqual(filesIn(dist));
     expect([...new Set(table.map(line => line.search(/\d/)))]).toHaveLength(1);
@@ -127,7 +143,7 @@ describe.concurrent("bun compile --library", () => {
       module: "./index.js",
       types: "./index.d.ts",
       exports: { ".": conditions("index"), "./package.json": "./package.json" },
-      files: ["LICENSE", "README.md", "area.d.ts", "index.d.ts", "index.js"],
+      files: ["LICENSE", "README.md", "area.d.ts", "index.aot.ts", "index.d.ts", "index.js", "tsconfig.json"],
       sideEffects: false,
       engines: { node: ">=18" },
       dependencies: { "left-pad": "^1.3.0" },
@@ -135,7 +151,7 @@ describe.concurrent("bun compile --library", () => {
       peerDependenciesMeta: { react: { optional: true } },
       publishConfig: { access: "public" },
     });
-    expect(Object.keys(json(join(dist, "package.json")).exports["."])).toEqual(["types", "default"]);
+    expect(Object.keys(json(join(dist, "package.json")).exports["."])).toEqual(["types", "bun-aot", "default"]);
     expect(json(join(String(dir), "package.json"))).toEqual(packageJson);
     expect(readFileSync(join(dist, "package.json"), "utf8")).toStartWith('{\n  "name": "@acme/shapes",\n');
     expect(readFileSync(join(dist, "package.json"), "utf8")).toEndWith("}\n");
@@ -158,7 +174,7 @@ describe.concurrent("bun compile --library", () => {
       module: "./index.js",
       types: "./index.d.ts",
       exports: { ".": conditions("index"), "./package.json": "./package.json" },
-      files: ["area.d.ts", "index.d.ts", "index.js"],
+      files: ["area.d.ts", "index.aot.ts", "index.d.ts", "index.js", "tsconfig.json"],
     });
     expect(existsSync(join(project, "package.json"))).toBe(false);
   });
@@ -273,11 +289,11 @@ describe.concurrent("bun compile --library", () => {
       "app/app.mjs": `import { place } from "shapes";\nconsole.log(place);\n`,
     });
     const built = await bun(String(dir), "compile", "--library", "--no-bundle");
-    expect(built.stderr).toBe("");
+    expect(built.stderr).toBe(NO_TYPED_FILES_WITHOUT_BUNDLING);
     expect(built.exitCode).toBe(0);
     expect(json(join(String(dir), "dist/package.json")).exports).toEqual({
-      ".": conditions("index"),
-      "./where": { browser: conditions("where/browser"), default: conditions("where/server") },
+      ".": untypedConditions("index"),
+      "./where": { browser: untypedConditions("where/browser"), default: untypedConditions("where/server") },
       "./package.json": "./package.json",
     });
     cpSync(join(String(dir), "dist"), join(String(dir), "app/node_modules/shapes"), { recursive: true });
@@ -307,7 +323,7 @@ describe.concurrent("bun compile --library", () => {
       "src/area.ts",
       "src/extra.ts",
     );
-    expect(built.stderr).toBe("");
+    expect(built.stderr).toBe(NO_TYPED_FILES_WITHOUT_BUNDLING);
     expect(built.exitCode).toBe(0);
     expect(filesIn(join(String(dir), "dist"))).toEqual([
       "area.d.ts",
@@ -320,9 +336,9 @@ describe.concurrent("bun compile --library", () => {
     ]);
     const written = json(join(String(dir), "dist/package.json"));
     expect(written.exports).toEqual({
-      ".": conditions("index"),
-      "./area": conditions("area"),
-      "./extra": conditions("extra"),
+      ".": untypedConditions("index"),
+      "./area": untypedConditions("area"),
+      "./extra": untypedConditions("extra"),
       "./package.json": "./package.json",
     });
     expect(written.main).toBe("./index.js");
@@ -559,6 +575,131 @@ describe.concurrent("bun compile --library", () => {
     expect(built.stderr).toContain("TS4094");
     expect(built.exitCode).toBe(1);
     expect(existsSync(join(String(dir), "dist"))).toBe(false);
+  });
+});
+
+describe.concurrent("the typed file that bun compile --library writes", () => {
+  const library = (files: Record<string, string>) => ({
+    "tsconfig.json": tsconfig,
+    "package.json": JSON.stringify({ name: "shapes", version: "1.0.0" }),
+    ...files,
+  });
+  const typedFile = (dir: unknown) => readFileSync(join(String(dir), "dist/index.aot.ts"), "utf8");
+
+  test("is the bundle with the types of its sources", async () => {
+    using dir = tempDir("library-typed-file", library(sources));
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(built.stdout).toMatch(/index\.aot\.ts .*\(typed\)/);
+    const typed = typedFile(dir);
+    expect(typed).toContain("function area(shape: Shape): number {");
+    expect(typed).toContain("interface Shape {");
+    expect(typed).toContain("#shapes: Shape[] = [];");
+    const javascript = readFileSync(join(String(dir), "dist/index.js"), "utf8");
+    expect(javascript).not.toContain("debugId");
+    expect(typed).not.toContain("debugId");
+    expect(filesIn(join(String(dir), "dist")).filter(path => path.endsWith(".map"))).toEqual([]);
+    const transpiled = new Bun.Transpiler({ loader: "ts", target: "node" }).transformSync(typed);
+    const code = (text: string) => text.replace(/\/\/.*$/gm, "").replace(/\s+/g, "");
+    expect(code(transpiled)).toBe(code(new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(javascript)));
+  });
+
+  test("a tsconfig.json beside it states how strict the sources are", async () => {
+    using dir = tempDir("library-typed-file-options", {
+      ...library(sources),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, strict: true, noUncheckedIndexedAccess: true },
+      }),
+    });
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "src/extra.ts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    const written = json(join(String(dir), "dist/tsconfig.json"));
+    expect(written.files).toEqual(["./index.aot.ts", "./extra.aot.ts"]);
+    expect(written.compilerOptions).toMatchObject({
+      lib: ["esnext"],
+      strictNullChecks: true,
+      noImplicitAny: true,
+      noUncheckedIndexedAccess: true,
+      exactOptionalPropertyTypes: false,
+    });
+  });
+
+  test("keeps the source maps that the build asks for", async () => {
+    using dir = tempDir("library-typed-file-maps", library(sources));
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--sourcemap=external");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(filesIn(join(String(dir), "dist"))).toContain("index.js.map");
+    expect(filesIn(join(String(dir), "dist"))).toContain("index.aot.ts");
+  });
+
+  test("a constant that is a unique symbol keeps its type", async () => {
+    using dir = tempDir(
+      "library-typed-file-symbols",
+      library({
+        "src/index.ts": `export const written: unique symbol = Symbol();
+export const inferred = Symbol("inferred");
+export interface Keyed {
+  [written]: number;
+  [inferred]: string;
+}
+export function read(keyed: Keyed): string {
+  return keyed[inferred] + keyed[written];
+}
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir)).toContain("declare const written_unique: unique symbol;");
+    expect(typedFile(dir)).toContain("var written: typeof written_unique = Symbol() as any;");
+    expect(typedFile(dir)).toContain('var inferred: typeof inferred_unique = Symbol("inferred") as any;');
+  });
+
+  test("a constant keeps the literal type that was inferred for it", async () => {
+    using dir = tempDir(
+      "library-typed-file-literals",
+      library({
+        "src/index.ts": `export const kind = "circle";
+export const sides = 0;
+export function same(value: typeof kind): "circle" {
+  return value;
+}
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir)).toContain('var kind: "circle" = "circle";');
+    expect(typedFile(dir)).toContain("var sides: 0 = 0;");
+  });
+
+  test("an entry point that is a script is not met twice when the typed files are judged", async () => {
+    using dir = tempDir(
+      "library-typed-file-script",
+      library({
+        ...sources,
+        "src/cli.ts": `declare const console: { log(...values: unknown[]): void };\nconsole.log("cli");\n`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "src/cli.ts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(filesIn(join(String(dir), "dist"))).toContain("cli.aot.ts");
+  });
+
+  test.each([
+    ["--minify", "--minify"],
+    ["--splitting", "--splitting"],
+    ["--format=cjs", "--format other than esm"],
+    ["--no-bundle", "--no-bundle"],
+  ])("%s: a warning, and a package without it", async (flag, named) => {
+    using dir = tempDir("library-typed-file-skipped", library(sources));
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", flag);
+    expect(built.stderr).toBe(
+      `warn: the typed JavaScript that bun compile compiles a package from is left out: it does not support ${named} yet\n`,
+    );
+    expect(built.exitCode).toBe(0);
+    expect(filesIn(join(String(dir), "dist")).filter(path => /\.aot\.|tsconfig/.test(path))).toEqual([]);
+    expect(JSON.stringify(json(join(String(dir), "dist/package.json")))).not.toContain("bun-aot");
   });
 });
 

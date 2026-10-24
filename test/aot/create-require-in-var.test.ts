@@ -12,6 +12,10 @@ const files = {
   "node_modules/optional-peer/index.js": `exports.name = "the optional peer"; exports.inner = require("./inner.js");`,
   "node_modules/optional-peer/inner.js": `module.exports = "inner";`,
   "lib/local.cjs": `exports.name = "local";`,
+  "lib/statement.cjs": `console.log("the statement runs"); exports.name = "statement";`,
+  "lib/held.cjs": `exports.name = "held";`,
+  "lib/pattern.cjs": `exports.taken = "taken";`,
+  "lib/tested.cjs": `exports.name = "tested";`,
 };
 
 const compiled: Record<string, string> = {
@@ -43,6 +47,25 @@ var __require = createRequire(import.meta.url);
 let peer = null;
 try { peer = __require("not-installed"); } catch (error) { console.log(error.code); }
 console.log(peer, __require("./lib/local.cjs").name);
+`,
+  // None of these looks at the object that the call answers, so the modules have none.
+  "nobody-looks-at-the-object.mjs": `import { createRequire } from "node:module";
+var made = createRequire(import.meta.url);
+made("./lib/statement.cjs");
+const held = made("./lib/held.cjs");
+const { taken } = made("./lib/pattern.cjs");
+console.log(made("./lib/tested.cjs") ? "yes" : "no", held.name, taken, made("./lib/local.cjs").name);
+`,
+  "import-meta-require.mjs": `var __require = import.meta.require;
+function load() { return __require("./lib/local.cjs").name; }
+console.log(load(), __require("./lib/held.cjs").name);
+`,
+  "called-above-its-statement.mjs": `import { createRequire } from "node:module";
+try { made("./lib/statement.cjs"); } catch (error) { console.log(error.name); }
+try { console.log(made("./lib/local.cjs").name); } catch (error) { console.log(error.name); }
+var made = createRequire(import.meta.url);
+made("./lib/statement.cjs");
+console.log(made("./lib/local.cjs").name);
 `,
 };
 

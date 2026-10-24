@@ -1,4 +1,5 @@
 pub(crate) mod builtin_uses;
+mod bundled_commonjs;
 pub(crate) mod compiler_declarations;
 pub(crate) mod data_modules;
 pub(crate) mod disk_delegation;

@@ -487,6 +487,10 @@ fn is_directory(directory: Fd, path: &[u8]) -> Option<bool> {
     }
 }
 
+pub(crate) fn is_regular_file(native_path: &[u8]) -> bool {
+    is_directory(Fd::cwd(), native_path) == Some(false)
+}
+
 impl Disk {
     /// The paths of `Provided::already_read`, each a `tspath.Path`.
     pub fn provided_paths(&self) -> impl Iterator<Item = &Vec<u8>> {
@@ -1245,6 +1249,27 @@ fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
     };
     // The only warning is about a duplicate key.
     unmarshal_fields(root.get(), log.warnings > 0)
+}
+
+/// Every member of a JSON object, such as a source map.
+pub(crate) fn parse_json_object(arena: &Arena, text: &[u8]) -> Option<Json> {
+    use bun_parsers::json::ParsedJson;
+    if !is_valid(text) {
+        return None;
+    }
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    let source = bun_ast::Source::init_path_string(b"object.json".as_slice(), text);
+    let mut log = bun_ast::Log::init();
+    let parsed = ParsedJson::parse_json(&source, &mut log).ok()?;
+    let bun_ast::expr::Data::EObjectJSON(root) = parsed.root.data else {
+        return None;
+    };
+    let members = root.get().properties().iter().map(|property| {
+        let value = unmarshal_json_value(&property.value, log.warnings > 0)?;
+        Some((property.key.slice().to_vec(), value))
+    });
+    Some(Json::Object(members.collect::<Option<_>>()?))
 }
 
 /// The disk, for a few queries across many directories. Each query is a system call, and no directory is listed or

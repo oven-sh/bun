@@ -5,7 +5,7 @@ use crate::diagnostics::SourcePosition;
 use crate::engine::{
     FunctionReportRecord, OperationCountRecord, Position, SourceLocation, position_of,
 };
-use crate::ir::generated::TypeTestFailure;
+use crate::ir::generated::{AccessCost, KnowledgeLevel, TypeTestFailure};
 use crate::ir::ids::FunctionId;
 use crate::link::{ModuleOrigin, ProgramNames};
 use crate::report::ReportInput;
@@ -14,7 +14,8 @@ use crate::report::json::JsonWriter;
 use crate::report::levels::{CostCounts, LevelCounts, SiteTotals};
 use crate::report::positions::{Positions, is_listed_site, resolve_ascending};
 use crate::report::summary::{write_access_counts, write_level_counts};
-use crate::report::wording::level_label;
+use crate::report::wording::{cause_code, level_label};
+use crate::statistics::LimitId;
 
 pub(super) struct FunctionIndex {
     // Sorted by function, each with the index of the first record that has it as its source.
@@ -79,6 +80,23 @@ pub(super) fn write_access_sites(
         json.string("level", level_label(record.level).as_bytes());
         json.string("cost", &lower_camel_case(record.cost.name()));
         json.optional_number("function", functions.get(record.function_id()));
+        let is_free = record.cost == AccessCost::Free && record.level == KnowledgeLevel::Proven;
+        let cause = (!is_free).then(|| cause_code(record.cause).as_bytes());
+        json.optional_string("cause", cause);
+        let limit = (record.limit != LimitId::None).then(|| record.limit.name().as_bytes());
+        json.optional_string("limit", limit);
+        let layout = record
+            .layout_id()
+            .map(|layout| input.names.layout_name(layout));
+        json.optional_string("layout", layout);
+        match positions.resolve_location(record.witness.location) {
+            Some(witness) => {
+                json.begin_object("witness");
+                write_position_members(json, &witness);
+                json.end_object();
+            }
+            None => json.null("witness"),
+        }
         json.end_object();
     }
     json.end_array();

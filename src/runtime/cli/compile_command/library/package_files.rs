@@ -8,8 +8,10 @@ use bun_core::{Global, Output, UnwrapOrOom};
 use bun_options_types::Format;
 use bun_options_types::context::ContextData;
 use bun_paths::resolve_path::platform_to_posix_in_place;
+use bun_sema_driver::sound_files::typed_path_beside;
 
 use super::declarations::{declaration_path, is_declaration_file};
+use super::typed_files::is_typed_file;
 use super::{Project, absolute_path};
 use crate::cli::compile_command::build::asset_output_file;
 
@@ -38,6 +40,7 @@ const FIELDS_COPIED_LAST: [&[u8]; 8] = [
 ];
 const DOCUMENT_NAMES: [&[u8]; 3] = [b"README", b"LICENSE", b"LICENCE"];
 const MAX_PACKAGE_NAME_LENGTH: usize = 214;
+const TYPED_CONDITION: &[u8] = b"bun-aot";
 
 pub(super) struct PackageRequest<'a> {
     pub(super) project: &'a Project,
@@ -114,6 +117,7 @@ struct ExportedFile {
     source: Vec<u8>,
     javascript: Vec<u8>,
     declarations: Option<Vec<u8>>,
+    typed: Option<Vec<u8>>,
 }
 
 fn posix_dest_path(file: &OutputFile) -> Vec<u8> {
@@ -137,6 +141,8 @@ fn find_exported_files(
 ) -> Vec<ExportedFile> {
     let declarations = output_files.iter().filter(|file| is_declaration_file(file));
     let declarations: Vec<Vec<u8>> = declarations.map(posix_dest_path).collect();
+    let typed_files = output_files.iter().filter(|file| is_typed_file(file));
+    let typed_files: Vec<Vec<u8>> = typed_files.map(posix_dest_path).collect();
     let entry_points = output_files.iter().filter(|file| {
         file.output_kind == request.entry_point_kind && file.loader.is_javascript_like()
     });
@@ -148,6 +154,7 @@ fn find_exported_files(
                 source: source.to_vec(),
                 declarations: declaration_path(request.root_directory, source)
                     .filter(|path| declarations.contains(path)),
+                typed: typed_path_beside(&javascript).filter(|path| typed_files.contains(path)),
                 javascript,
             }
         })
@@ -278,6 +285,10 @@ impl WrittenFiles<'_> {
         if let Some(declarations) = &file.declarations {
             let declarations = self.json.relative_path(declarations);
             self.json.put(&mut conditions, b"types", declarations);
+        }
+        if let Some(typed) = &file.typed {
+            let typed = self.json.relative_path(typed);
+            self.json.put(&mut conditions, TYPED_CONDITION, typed);
         }
         let javascript = self.json.relative_path(&file.javascript);
         self.json.put(&mut conditions, b"default", javascript);

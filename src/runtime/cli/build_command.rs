@@ -171,6 +171,38 @@ impl BuildCommand {
             );
             Global::exit(1);
         }
+        // The typed file is the bundle with the types of its sources put back, by way of its source map.
+        let has_typescript_entry_point =
+            (this_transpiler.options.entry_points.iter()).any(|path| {
+                !matches!(
+                    bun_paths::extension(path),
+                    b".js" | b".mjs" | b".cjs" | b".jsx"
+                )
+            });
+        let skips_typed_files_for = {
+            let options = &ctx.bundler_options;
+            let is_minified =
+                options.minify_syntax || options.minify_whitespace || options.minify_identifiers;
+            let unsupported = [
+                (is_minified, "--minify"),
+                (options.code_splitting, "--splitting"),
+                (
+                    options.output_format != options::Format::Esm,
+                    "--format other than esm",
+                ),
+                (options.transform_only, "--no-bundle"),
+                (
+                    ctx.args.source_map == Some(api::SourceMapMode::Inline),
+                    "--sourcemap=inline",
+                ),
+            ];
+            let is_asked_for = options.dts && has_typescript_entry_point;
+            let mut unsupported = unsupported.iter().filter(|it| it.0 && is_asked_for);
+            unsupported.next().map(|it| it.1)
+        };
+        let writes_typed_files = ctx.bundler_options.dts
+            && has_typescript_entry_point
+            && skips_typed_files_for.is_none();
         let type_check: Option<options::TypeCheck> = if ctx.bundler_options.dts {
             Some(crate::cli::check_command::check_and_emit_declarations)
         } else if ctx.bundler_options.check {
@@ -205,6 +237,11 @@ impl BuildCommand {
 
         this_transpiler.options.source_map =
             options::SourceMapOption::from_api(ctx.args.source_map);
+        let drops_source_maps = writes_typed_files
+            && this_transpiler.options.source_map == options::SourceMapOption::None;
+        if drops_source_maps {
+            this_transpiler.options.source_map = options::SourceMapOption::External;
+        }
 
         this_transpiler.options.compile_mode = if ctx.bundler_options.compile {
             options::CompileMode::Executable
@@ -594,6 +631,8 @@ impl BuildCommand {
         // `this_transpiler` for the rest of its life. Snapshot every options
         // field read after that point so the borrow checker is satisfied.
         let opt_output_dir: Box<[u8]> = this_transpiler.options.output_dir.clone();
+        let opt_loaders =
+            bun_core::UnwrapOrOom::unwrap_or_oom(this_transpiler.options.loaders.clone());
         let opt_minify_identifiers = this_transpiler.options.minify_identifiers;
         let opt_minify_whitespace = this_transpiler.options.minify_whitespace;
         let opt_minify_syntax = this_transpiler.options.minify_syntax;
@@ -778,6 +817,21 @@ impl BuildCommand {
                 Output::err_generic("{}", (bstr::BStr::new(&message),));
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
+            if let Some(option) = skips_typed_files_for {
+                crate::cli::check_command::warn_about_skipped_typed_files(option, log_ref);
+            }
+        }
+
+        if writes_typed_files {
+            let request = super::compile_command::TypedOutputs {
+                working_directory: bun_resolver::fs::FileSystem::instance().top_level_dir(),
+                outdir: &ctx.bundler_options.outdir,
+                tsconfig: ctx.args.tsconfig_override.as_deref(),
+                conditions: &ctx.args.conditions,
+                loaders: &opt_loaders,
+                drops_source_maps,
+            };
+            super::compile_command::add_typed_files(&request, log_ref, &mut output_files);
         }
 
         if ctx.bundler_options.library {
@@ -1159,6 +1213,9 @@ impl BuildCommand {
                         {
                             "<d>"
                         }
+                        options::OutputKind::Asset if super::compile_command::is_typed_file(f) => {
+                            "<d>"
+                        }
                         options::OutputKind::Asset => "<magenta>",
                         options::OutputKind::Sourcemap => "<d>",
                         options::OutputKind::Bytecode => "<d>",
@@ -1213,6 +1270,9 @@ impl BuildCommand {
                             if super::compile_command::is_declaration_file(f) =>
                         {
                             "declaration"
+                        }
+                        options::OutputKind::Asset if super::compile_command::is_typed_file(f) => {
+                            "typed"
                         }
                         options::OutputKind::Asset => "asset",
                         options::OutputKind::Sourcemap => "source map",

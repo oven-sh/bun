@@ -596,6 +596,7 @@ _bun_build_completion() {
         '--target[The intended execution environment for the bundle. "browser", "bun" or "node"]: :->target' \
         '--splitting[Whether to enable code splitting (requires --outdir)]' \
         '--compile[generating a standalone binary from a TypeScript or JavaScript file]' \
+        '--dts[Write declaration files (.d.ts), and each output file with its types kept (.aot.ts), to --outdir]' \
         '--format[Specifies the module format to be used in the generated bundles]: :->format' &&
         ret=0
 
@@ -810,6 +811,8 @@ _bun_compile_completion() {
         '--no-aot[Bundle the JavaScript into the executable instead of compiling it to machine code]' \
         '--trim[Remove the Bun and Node.js APIs your code never calls from the executable]' \
         '--trim-locales[With --trim\: keep only these locales, such as en,de-AT]:trim-locales' \
+        '--library[Build a package to publish instead of an executable]' \
+        '--outdir[With --library\: the folder the package is written to]:outdir:_files -/' \
         '--no-script[Run this command even if the project has a compile script]' \
         '--cwd[Set the working directory]:cwd:_files -/' \
         '--help[Print this help menu]' \

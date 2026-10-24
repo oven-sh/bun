@@ -19,19 +19,30 @@ const SOUND_DIRECTORY: &[u8] = b".sound";
 const SOUND_MANIFEST: &[u8] = b"sound.json";
 const PACKAGE_MANIFEST: &[u8] = b"package.json";
 const NODE_MODULES: &[u8] = b"node_modules";
+/// What the name of a package that holds the typed version of another package starts with.
+const INSTALLED_PREFIX: (&[u8], &[u8]) = (b"@oven", b"sound-");
+/// `@oven/sound-scope__name` is for `@scope/name`.
+const SCOPE_SEPARATOR: &[u8] = b"__";
 const LAY_SUFFIX: &[u8] = b"/lay";
 const ADDED_FILE: &[u8] = b"new";
 
 pub(crate) struct TypedPackages<'a> {
     disk: &'a Disk,
     project_root: Vec<u8>,
-    sound_directory: Vec<u8>,
     packages: Vec<TypedPackage>,
+}
+
+/// Where a typed version lies. One in the project counts before the one that the package ships, an installed one after it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum TypedPackagePlace {
+    Project,
+    Installed,
 }
 
 struct TypedPackage {
     name: Vec<u8>,
     directory: Vec<u8>,
+    place: TypedPackagePlace,
 }
 
 struct SoundManifest {
@@ -63,23 +74,24 @@ enum ManifestMismatch {
 
 impl<'a> TypedPackages<'a> {
     pub(crate) fn new(disk: &'a Disk, project_root: &[u8]) -> TypedPackages<'a> {
-        let sound_directory = inside(project_root, SOUND_DIRECTORY);
-        let packages = find_typed_packages(disk, &sound_directory);
         TypedPackages {
             disk,
             project_root: project_root.to_vec(),
-            sound_directory,
-            packages,
+            packages: find_typed_packages(disk, project_root),
         }
     }
 
     pub(crate) fn typed_version(
         &self,
+        place: TypedPackagePlace,
         path: &[u8],
         package: Option<EnclosingPackage<'_>>,
     ) -> Option<Vec<u8>> {
         let package = package?;
         let typed = self.find_package(package.name)?;
+        if typed.place != place {
+            return None;
+        }
         let relative = package.relative_path(path);
         if !is_valid_path(relative) {
             return None;
@@ -115,18 +127,24 @@ impl<'a> TypedPackages<'a> {
     }
 
     pub(crate) fn display_directory(&self, typed_path: &[u8]) -> Vec<u8> {
-        if let Some(package) = self.package_of(typed_path) {
-            return self.display_directory_of_package(&package.name);
+        match self.package_of(typed_path) {
+            Some(package) => self.display_path(&package.directory),
+            None => self.display_path(dirname::<Posix>(typed_path)),
         }
-        let directory = dirname::<Posix>(typed_path);
+    }
+
+    pub(crate) fn display_directory_of_package(&self, name: &[u8]) -> Vec<u8> {
+        match self.find_package(name) {
+            Some(package) => self.display_path(&package.directory),
+            None => inside(SOUND_DIRECTORY, name),
+        }
+    }
+
+    fn display_path(&self, directory: &[u8]) -> Vec<u8> {
         let in_project = directory
             .strip_prefix(self.project_root.as_slice())
             .and_then(|rest| rest.strip_prefix(b"/"));
         in_project.unwrap_or_else(|| to_native(directory)).to_vec()
-    }
-
-    pub(crate) fn display_directory_of_package(&self, name: &[u8]) -> Vec<u8> {
-        inside(SOUND_DIRECTORY, name)
     }
 
     pub(crate) fn display_relative_path<'p>(&self, typed_path: &'p [u8]) -> &'p [u8] {
@@ -147,16 +165,13 @@ impl<'a> TypedPackages<'a> {
     }
 
     fn package_of(&self, typed_path: &[u8]) -> Option<&TypedPackage> {
-        if !typed_path.starts_with(&self.sound_directory) {
+        if self.packages.is_empty() {
             return None;
         }
         ancestors(dirname::<Posix>(typed_path)).find_map(|ancestor| {
             let directory = ancestor.strip_suffix(LAY_SUFFIX)?;
-            let index = self
-                .packages
-                .binary_search_by(|typed| typed.directory.as_slice().cmp(directory))
-                .ok()?;
-            Some(&self.packages[index])
+            let mut packages = self.packages.iter();
+            packages.find(|typed| typed.directory == directory)
         })
     }
 
@@ -293,25 +308,69 @@ fn format_sentence(template: &str, arguments: &[&[u8]]) -> Vec<u8> {
     sentence
 }
 
-fn find_typed_packages(disk: &Disk, sound_directory: &[u8]) -> Vec<TypedPackage> {
+/// One typed version for each name: the project's, else the one in the nearest `node_modules`.
+fn find_typed_packages(disk: &Disk, project_root: &[u8]) -> Vec<TypedPackage> {
     let has_manifest = |directory: &[u8]| disk.is_file(&inside(directory, SOUND_MANIFEST));
+    let mut candidates = find_project_packages(disk, &inside(project_root, SOUND_DIRECTORY));
+    let scope_path = inside(NODE_MODULES, INSTALLED_PREFIX.0);
+    for ancestor in ancestors(project_root) {
+        let scope_directory = inside(ancestor, &scope_path);
+        candidates.extend(find_installed_packages(disk, &scope_directory));
+    }
+    let mut names = BTreeSet::new();
+    let mut found = Vec::new();
+    for typed in candidates {
+        let is_typed_version = is_valid_package_name(&typed.name) && has_manifest(&typed.directory);
+        if is_typed_version && names.insert(typed.name.clone()) {
+            found.push(typed);
+        }
+    }
+    found.shared_sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    found
+}
+
+fn find_project_packages(disk: &Disk, sound_directory: &[u8]) -> Vec<TypedPackage> {
+    let has_manifest = |directory: &[u8]| disk.is_file(&inside(directory, SOUND_MANIFEST));
+    let place = TypedPackagePlace::Project;
     let mut found = Vec::new();
     for name in disk.entries(sound_directory).1 {
         let directory = inside(sound_directory, &name);
         if has_manifest(&directory) {
-            found.push(TypedPackage { name, directory });
+            found.push(TypedPackage {
+                name,
+                directory,
+                place,
+            });
             continue;
         }
         for member in disk.entries(&directory).1 {
             found.push(TypedPackage {
                 name: inside(&name, &member),
                 directory: inside(&directory, &member),
+                place,
             });
         }
     }
-    found.retain(|typed| is_valid_package_name(&typed.name) && has_manifest(&typed.directory));
-    found.shared_sort_unstable_by(|a, b| a.name.cmp(&b.name));
     found
+}
+
+fn find_installed_packages(disk: &Disk, scope_directory: &[u8]) -> Vec<TypedPackage> {
+    let folders = disk.entries(scope_directory).1.into_iter();
+    let packages = folders.filter_map(|folder| {
+        Some(TypedPackage {
+            name: typed_package_name(folder.strip_prefix(INSTALLED_PREFIX.1)?),
+            directory: inside(scope_directory, &folder),
+            place: TypedPackagePlace::Installed,
+        })
+    });
+    packages.collect()
+}
+
+fn typed_package_name(folder: &[u8]) -> Vec<u8> {
+    match strings::split_once(folder, SCOPE_SEPARATOR) {
+        Some((scope, name)) => [b"@", scope, b"/", name].concat(),
+        None => folder.to_vec(),
+    }
 }
 
 fn parse_manifest(json: &Json, package_name: &[u8]) -> Result<SoundManifest, ManifestMismatch> {

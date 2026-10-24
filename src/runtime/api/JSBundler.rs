@@ -159,6 +159,7 @@ pub(crate) mod js_bundler {
         pub(crate) module_preload: bool,
         /// `check`: see `BundleOptions::type_check`.
         pub(crate) check: bool,
+        pub(crate) dts: bool,
         pub(crate) drop: StringSet,
         pub(crate) features: StringSet,
         pub(crate) throw_on_error: bool,
@@ -228,6 +229,7 @@ pub(crate) mod js_bundler {
                 fold_chunks: true,
                 module_preload: true,
                 check: false,
+                dts: false,
                 drop: StringSet::default(),
                 features: StringSet::default(),
                 throw_on_error: true,
@@ -331,13 +333,13 @@ pub(crate) mod js_bundler {
         Ok(())
     }
 
-    fn ensure_type_checker(global_this: &JSGlobalObject) -> JsResult<()> {
+    fn ensure_type_checker(global_this: &JSGlobalObject, option: &str) -> JsResult<()> {
         use bun_removable_features::{Feature, Removal, removal_of};
         if removal_of(Feature::Check) == Removal::Present {
             return Ok(());
         }
         Err(global_this.throw_invalid_arguments(format_args!(
-            "check: this executable doesn't include the type checker"
+            "{option}: this executable doesn't include the type checker"
         )))
     }
 
@@ -1154,9 +1156,15 @@ pub(crate) mod js_bundler {
             }
             if let Some(check) = config.get_boolean_loose(global_this, "check")? {
                 if check {
-                    ensure_type_checker(global_this)?;
+                    ensure_type_checker(global_this, "check")?;
                 }
                 this.check = check;
+            }
+            if let Some(dts) = config.get_boolean_loose(global_this, "dts")? {
+                if dts {
+                    ensure_type_checker(global_this, "dts")?;
+                }
+                this.dts = dts;
             }
             if bun_jsc::module_loader::is_allowed_to_use_internal_testing_apis()
                 && let Some(fold_chunks) =
@@ -1693,6 +1701,11 @@ pub(crate) mod js_bundler {
                 this.rootdir = OwnedString::default();
             } else if let Some(message) = derived_root_error {
                 return Err(global_this.throw(format_args!("{message}")));
+            }
+
+            if this.dts && this.compile.is_some() {
+                return Err(global_this
+                    .throw_invalid_arguments(format_args!("dts cannot be used with compile")));
             }
 
             // ESM bytecode requires compile because module_info (import/export metadata)

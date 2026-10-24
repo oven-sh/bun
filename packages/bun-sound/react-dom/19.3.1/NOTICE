@@ -1,4 +1,4 @@
-@sound/react-dom 19.3.1
+@oven/sound-react-dom 19.3.1
 
 This package holds files of react-dom 19.3.1 (https://www.npmjs.com/package/react-dom/v/19.3.1).
 Copyright (c) Meta Platforms, Inc. and affiliates.

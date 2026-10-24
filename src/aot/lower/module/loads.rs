@@ -16,7 +16,7 @@ use crate::builtins::id::{BuiltinId, RuntimeModule};
 use crate::builtins::table::{self, Platforms, Scope};
 use crate::builtins::{Mutability, Resolved};
 use crate::ir::generated::{BlockRole, ModuleRequestKind};
-use crate::ir::{BlockId, Edge, StringId, Type, ValueId};
+use crate::ir::{BlockId, Edge, StringId, Type, TypeTable, ValueId};
 use crate::load::loader_aliases::resolve_loader_alias;
 use crate::load::named_loads::modules_named_in;
 use crate::load::sources::parsed_source;
@@ -71,6 +71,15 @@ impl AnsweredSite<'_> {
         let plan = self.plan.map(|plan| PlannedSite {
             is_bare: false,
             yields_value: true,
+            ..plan
+        });
+        AnsweredSite { plan, ..self }
+    }
+
+    // The arm in which the binding is filled. Not every run passes it. The other arm calls `undefined` and throws, so whoever gets an answer gets the module, and looks at it no more than the plan says.
+    fn where_binding_is_filled(self) -> Self {
+        let plan = self.plan.map(|plan| PlannedSite {
+            is_bare: false,
             ..plan
         });
         AnsweredSite { plan, ..self }
@@ -652,7 +661,7 @@ fn lower_call_of_filled_binding(
     let loaded = emit_operation(
         lowering,
         operation,
-        site.under_test(),
+        site.where_binding_is_filled(),
         values.first().copied(),
     );
     lowering.builder.write_variable(result, loaded);
@@ -1088,9 +1097,47 @@ fn branch_on_path_made_by_call(
     let is_as_written = lowering.builder.strict_eq(text, expected);
     let as_written = lowering.create_block();
     let other = lowering.create_unlikely_block();
-    lowering
-        .builder
-        .branch(is_as_written, Edge::to(as_written), Edge::to(other));
+    if is_windows {
+        // `path.join(__dirname) + "/a.js"` is `B:\~BUN\root/a.js` there, which names the same file.
+        let spelled_otherwise = lowering.create_unlikely_block();
+        let spelled_as_text = lowering.create_unlikely_block();
+        lowering.builder.branch(
+            is_as_written,
+            Edge::to(as_written),
+            Edge::to(spelled_otherwise),
+        );
+
+        lowering.continue_in(spelled_otherwise);
+        let is_text = lowering.builder.type_test(text, TypeTable::STRING);
+        lowering
+            .builder
+            .branch(is_text, Edge::to(spelled_as_text), Edge::to(other));
+
+        lowering.continue_in(spelled_as_text);
+        let replace_all = lowering
+            .builder
+            .builtin(BuiltinId::StringPrototypeReplaceAll);
+        let separators = [&b"/"[..], b"\\"].map(|separator| {
+            let separator = lowering.file.intern_bytes(separator);
+            lowering.builder.string(separator)
+        });
+        let arguments = Arguments::Values(smallvec![separators[0], separators[1]]);
+        let with_one_separator = call::emit_call(
+            lowering,
+            replace_all,
+            Some(text),
+            arguments,
+            CallSite::default(),
+        );
+        let is_same_file = lowering.builder.strict_eq(with_one_separator, expected);
+        lowering
+            .builder
+            .branch(is_same_file, Edge::to(as_written), Edge::to(other));
+    } else {
+        lowering
+            .builder
+            .branch(is_as_written, Edge::to(as_written), Edge::to(other));
+    }
     let written = lowering.file.intern_atom(written);
     Some(PathTest {
         as_written,

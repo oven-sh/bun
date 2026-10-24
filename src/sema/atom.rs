@@ -288,6 +288,7 @@ known_atoms! {
     default = "default",
     export_equals = "export=",
     returned = "return=",
+    own_declaration = "declaration=",
     this = "this",
     undefined = "undefined",
     // `Atom::is_keyword_identifier` covers the range from here to `arguments`.

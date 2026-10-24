@@ -48,7 +48,7 @@ pub(super) struct PlannedSite {
     pub referrer: ModuleRef,
     pub target: ModuleRef,
     pub position: SitePosition,
-    /// The callee is the loader's function by binding, so that the lowering tests nothing and what comes out is the module.
+    /// The callee is the loader's function by binding, so that what comes out is the module. The lowering tests at most whether a `var` is filled yet: a call of one that is not throws.
     pub is_proven: bool,
     /// `false`: the run time's loader takes the site, as it always did.
     pub evaluates: bool,
@@ -519,7 +519,7 @@ impl<'a, 's> FileText<'a, 's> {
             && self.bound.binding(expression) == Binding::CommonJs(variable)
     }
 
-    // The forms that the lowering turns into the operation without a test of the callee.
+    // The forms that the lowering turns into the operation without a test of the callee against the loader's function.
     fn is_proven_call(&self, site: ImportSiteKind, call: ExprId, kind: ModuleKind) -> bool {
         let (hir, bound) = (self.hir, self.bound);
         let ExprKind::Call(id) = hir[call].kind else {

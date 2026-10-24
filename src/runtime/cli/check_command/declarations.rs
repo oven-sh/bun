@@ -5,9 +5,11 @@ use bun_bundler::options::TypeChecked;
 use bun_sema::check::Checker;
 use bun_sema::program::FileId;
 use bun_sema_driver::host::{Provided, to_native};
+use bun_sema_driver::sound_files::ModuleTypes;
 use bun_sema_driver::{Category, PlanOptions, Report, Request, ScriptKind, format};
 use bun_threading::Guarded;
 
+use super::typed_files::NotedModuleTypes;
 use super::{
     Entries, Paths, already_read, has_types_with, log_data_of, request, script_kind_of,
     script_kinds_by_extension, with_pages,
@@ -21,8 +23,14 @@ pub(crate) struct DeclarationFile {
 // `BundleOptions::type_check` only answers whether the build goes on, so what it emits waits here.
 static EMITTED_FILES: Guarded<Vec<DeclarationFile>> = Guarded::new(Vec::new());
 
+static MODULE_TYPES: Guarded<Vec<ModuleTypes>> = Guarded::new(Vec::new());
+
 pub(crate) fn take_declaration_files() -> Vec<DeclarationFile> {
     std::mem::take(&mut *EMITTED_FILES.lock())
+}
+
+pub(crate) fn take_module_types() -> Vec<ModuleTypes> {
+    std::mem::take(&mut *MODULE_TYPES.lock())
 }
 
 pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
@@ -65,7 +73,9 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
 
     let emitted: Guarded<BTreeMap<Vec<u8>, Vec<u8>>> = Guarded::new(BTreeMap::new());
     // A task of the checker can run again: the last time counts.
+    let module_types = NotedModuleTypes::default();
     let emit = |checker: &mut Checker<'_, '_>, file: FileId| {
+        module_types.note(checker, file);
         let text = checker.emit_declaration_file(file);
         let source = checker.p.files.module(file).file_name();
         let mut emitted = emitted.lock();
@@ -98,6 +108,13 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
         return false;
     }
     let emitted = std::mem::take(&mut *emitted.lock());
+    let mut module_types = module_types.take();
+    for module in &mut module_types {
+        if let Some(text) = emitted.get(&module.path[..]) {
+            module.emitted_declarations = text[..].into();
+        }
+    }
+    *MODULE_TYPES.lock() = module_types;
     *EMITTED_FILES.lock() = emitted
         .into_iter()
         .map(|(source, text)| DeclarationFile {
@@ -108,7 +125,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
     true
 }
 
-fn bundler_path(path: &[u8]) -> Vec<u8> {
+pub(super) fn bundler_path(path: &[u8]) -> Vec<u8> {
     let mut path = to_native(path).to_vec();
     bun_paths::resolve_path::posix_to_platform_in_place::<u8>(&mut path);
     path

@@ -1,142 +1,16 @@
 ---
 title: "Publish a library for bun compile"
 sidebarTitle: "Libraries"
-description: "Ship a package that keeps its types for bun compile, with the bun-aot export condition, or add types to a package you don't maintain"
+description: "Build a package with bun compile --library and publish it to npm. It's an ordinary package that also keeps its types for bun compile"
 ---
 
 <Warning>Ahead-of-time compilation is experimental.</Warning>
 
-[`bun compile`](/bundler/aot) compiles a program, and the packages it imports, to machine code.
+`bun compile --library` turns your TypeScript into a package that's ready for npm. Node.js, Bun, `tsc` and bundlers see an ordinary package. A program that's built with [`bun compile`](/bundler/aot) also gets the types inside it, with no setup.
 
-Most packages on npm ship JavaScript and a `.d.ts` file. The `.d.ts` file describes the exports, not the code inside, so `bun compile` compiles the JavaScript without types. That alone doesn't make the package slow: the compiler tracks its objects from the code that creates them to the code that uses them, as it tracks yours.
+## From source to npm
 
-[Type annotations matter](/bundler/aot-types#what-types-get-you) where the compiler can't track a value on its own, such as the result of `JSON.parse` or the argument of a callback that Bun calls. With a declared type there, a guard checks the value once, and the code after it stays on the fast path. A JavaScript package has no type there, so nothing is known about the value from then on.
-
-A typed version puts the types there. It's the package's own JavaScript with types added and nothing else changed. `bun compile` compiles it in place of the JavaScript. Nothing else reads it: `bun run`, `bun test`, other builds and other tools see an ordinary package.
-
-| Who writes it                              | Where it goes                                                                                  |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| The author of the package                  | [In the package](#ship-a-typed-file-with-your-package), under the `"bun-aot"` export condition |
-| You, for a package that you don't maintain | [In your project](#add-types-to-a-package-you-dont-maintain), under `.sound/`                  |
-
-## Ship a typed file with your package
-
-Add the typed file to the package, and point the `"bun-aot"` condition at it in the `"exports"` of `package.json`. Here is such a package, the way a project has it in `node_modules`.
-
-```json node_modules/greeter/package.json icon="file-json"
-{
-  "name": "greeter",
-  "version": "1.0.0",
-  "type": "module",
-  "exports": {
-    ".": {
-      "types": "./index.d.ts",
-      "bun-aot": "./index.aot.ts",
-      "default": "./index.js"
-    }
-  }
-}
-```
-
-```js node_modules/greeter/index.js icon="/icons/javascript.svg"
-export function greet(options) {
-  return ("hello " + options.name + " ").repeat(options.times).trim();
-}
-```
-
-```ts node_modules/greeter/index.d.ts icon="/icons/typescript.svg"
-export interface Options {
-  name: string;
-  times: number;
-}
-
-export declare function greet(options: Options): string;
-```
-
-```ts node_modules/greeter/index.aot.ts icon="/icons/typescript.svg"
-export interface Options {
-  name: string;
-  times: number;
-}
-
-export function greet(options: Options): string {
-  return ("hello " + options.name + " ").repeat(options.times).trim();
-}
-```
-
-| File           | Contains                                              | Read by                     |
-| -------------- | ----------------------------------------------------- | --------------------------- |
-| `index.js`     | The code                                              | Every runtime and bundler   |
-| `index.d.ts`   | Types for everything that `index.js` exports          | Editors, `tsc`, `bun check` |
-| `index.aot.ts` | `index.js` with types added, and nothing else changed | `bun compile`               |
-
-A program that imports the package needs no setup. The build says that it uses the typed file.
-
-```ts app.ts icon="/icons/typescript.svg"
-import { greet } from "greeter";
-
-console.log(greet({ name: "Ada", times: 2 }));
-```
-
-```bash terminal icon="terminal"
-bun compile ./app.ts && ./app
-```
-
-```txt
-note: "greeter" 1.0.0 is compiled from its typed version in node_modules/greeter
-hello Ada hello Ada
-```
-
-### Where the condition goes
-
-- **Put `"bun-aot"` before the condition for the JavaScript,** such as `"import"`, `"require"` or `"default"`. Bun takes the first condition that matches, in the order in which you wrote them. Other tools don't know the condition and skip it.
-- **Each entry of `"exports"` has its own typed file.** With `"."` and `"./version"`, that's two.
-- **The condition counts where a program imports the package by name,** as in `"greeter"` or `"greeter/version"`. A file that `index.js` imports by a relative path is compiled without types.
-- **The typed file can have any name, in any folder of the package.** Bun resolves its `import type` statements from the folder of the typed file, and its other imports from the folder of `index.js`.
-- **The condition can be in a second `package.json`.** If `index.js` is in a folder that has one of its own, such as `dist/package.json`, Bun reads the `"exports"` of that file too.
-- **Publish the file.** If your `package.json` has `"files"`, list the typed file there. If the file that the condition points to is missing, Bun compiles `index.js` without types and prints nothing.
-
-### What a typed file can contain
-
-When Bun compiles a program, it compares the code of `index.aot.ts`, without its types, with the code of the installed `index.js`. White space and comments don't count. If the two differ, Bun prints a warning and compiles `index.js` without types.
-
-```txt
-warn: "greeter" is compiled without types, because its typed version in node_modules/greeter can't be used: index.aot.ts without its types doesn't match index.js. Was the package patched?
-```
-
-So a typed file can only add what TypeScript removes without a trace.
-
-| Allowed                                                               | Not allowed, because it changes the code                        |
-| --------------------------------------------------------------------- | --------------------------------------------------------------- |
-| Type annotations and type parameters                                  | `enum`, `namespace`                                             |
-| `interface`, `type`, `declare`, overload signatures                   | `import fs = require("fs")`, `export =`                         |
-| `import type`, `export type`, `import { type Options }`               | A parameter property: `constructor(public id: number)`          |
-| `as`, `satisfies`, `!`                                                | A decorator, an `accessor` field, JSX                           |
-| In a class: `declare count: number`, `abstract` members, `implements` | A field that the JavaScript class doesn't have: `count: number` |
-
-In a CommonJS file, `export interface` and `export type` aren't allowed either, because an `export` turns the file into an ES module. Declare the type without `export`.
-
-### Get the typed file from your build
-
-If your build only removes the types from your TypeScript files, each source file is the typed file of the JavaScript that comes out of it. `tsc` works that way with `"target": "esnext"`, `"verbatimModuleSyntax": true` and `"erasableSyntaxOnly": true`. Publish the source file, and point the condition at it.
-
-```json title="package.json" icon="file-json"
-{
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "bun-aot": "./src/index.ts",
-      "default": "./dist/index.js"
-    }
-  }
-}
-```
-
-A bundler or a minifier rewrites the code, so its input no longer matches its output.
-
-## Build the package
-
-`bun compile --library` builds a package to publish instead of an executable.
+### 1. Write the library
 
 ```ts src/index.ts icon="/icons/typescript.svg"
 export interface Options {
@@ -159,29 +33,31 @@ export function greet(options: Options): string {
 }
 ```
 
+### 2. Build it
+
 ```bash terminal icon="terminal"
 bun compile --library
 ```
 
-Bun type checks the package, then writes a `dist` folder that's ready to publish. A type error fails the build.
-
 ```txt
-  index.js      135 bytes  (entry point)
-  index.d.ts    123 bytes  (declaration)
-  package.json  352 bytes  (asset)
+  index.js       135 bytes  (entry point)
+  index.d.ts     123 bytes  (declaration)
+  index.aot.ts   232 bytes  (typed)
+  tsconfig.json  212 bytes  (asset)
+  package.json   428 bytes  (asset)
 ```
 
-| File           | Holds                                              | Read by                     |
-| -------------- | -------------------------------------------------- | --------------------------- |
-| `index.js`     | The bundle, as ES modules                          | Every runtime and bundler   |
-| `index.d.ts`   | Types for everything `index.js` exports            | Editors, `tsc`, `bun check` |
-| `package.json` | Your `package.json`, rewritten for the files above | npm and whoever installs it |
+Bun type checks the package, then writes a `dist` folder. A type error fails the build.
 
-The files are named after the entry point. There is one `.d.ts` file for each source file. Bun also copies your `README` and `LICENSE` files.
+| File            | Holds                                              | Read by                     |
+| --------------- | -------------------------------------------------- | --------------------------- |
+| `index.js`      | The bundle, as ES modules                          | Every runtime and bundler   |
+| `index.d.ts`    | Types for everything `index.js` exports            | Editors, `tsc`, `bun check` |
+| `index.aot.ts`  | `index.js` with the types of your sources put back | `bun compile`               |
+| `tsconfig.json` | How strict your sources are, and your `lib`        | `bun compile`               |
+| `package.json`  | Your `package.json`, rewritten for the files above | npm and whoever installs it |
 
-`--library` bundles, so it writes no typed file and no `"bun-aot"` condition. A program built with `bun compile` compiles the package as JavaScript.
-
-### The package.json that Bun writes
+The files are named after the entry point. There is one `.d.ts` file for each source file, and one typed file for each entry point. Bun also copies your `README` and `LICENSE` files.
 
 ```json title="dist/package.json" icon="file-json"
 {
@@ -195,13 +71,174 @@ The files are named after the entry point. There is one `.d.ts` file for each so
   "exports": {
     ".": {
       "types": "./index.d.ts",
+      "bun-aot": "./index.aot.ts",
       "default": "./index.js"
     },
     "./package.json": "./package.json"
   },
-  "files": ["index.d.ts", "index.js"]
+  "files": ["index.aot.ts", "index.d.ts", "index.js", "tsconfig.json"]
 }
 ```
+
+```ts dist/index.aot.ts icon="/icons/typescript.svg"
+// src/index.ts
+interface Options {
+  name: string;
+  times: number;
+}
+export type { Options };
+function greet(options: Options): string {
+  return ("hello " + options.name + " ").repeat(options.times).trim();
+}
+export { greet };
+```
+
+`bun compile` type checks the typed files under the `tsconfig.json` beside them, so the `tsconfig.json` of the program that installs your package doesn't count. It states how strict your sources are, such as `strictNullChecks` and `noUncheckedIndexedAccess`, and your `lib`.
+
+```json title="dist/tsconfig.json" icon="file-json"
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true
+  },
+  "files": ["./index.aot.ts"]
+}
+```
+
+### 3. Try the tarball
+
+Pack `dist`, and install the tarball in a project outside your repository. That's what your users get.
+
+```bash terminal icon="terminal"
+cd dist
+bun pm pack
+```
+
+```txt
+packed 428B package.json
+packed 232B index.aot.ts
+packed 123B index.d.ts
+packed 135B index.js
+packed 212B tsconfig.json
+
+greeter-1.0.0.tgz
+```
+
+```bash terminal icon="terminal"
+mkdir ../../try && cd ../../try
+bun add ../greeter/dist/greeter-1.0.0.tgz
+```
+
+```ts app.ts icon="/icons/typescript.svg"
+import { greet } from "greeter";
+
+console.log(greet({ name: "Ada", times: 2 }));
+```
+
+```bash terminal icon="terminal"
+bun compile ./app.ts && ./app
+```
+
+```txt
+note: "greeter" 1.0.0 is compiled from its typed version in node_modules/greeter
+hello Ada hello Ada
+```
+
+The note says that `bun compile` found the typed file. `bun ./app.ts` and Node.js print the same line from `index.js`.
+
+### 4. Publish
+
+Publish the `dist` folder, not the project. `bun publish` and `npm publish` publish the folder that you run them in.
+
+```bash terminal icon="terminal"
+cd dist
+bun publish
+```
+
+Read `dist/package.json` before you publish for the first time.
+
+## What everyone else sees
+
+Only `bun compile` knows the `"bun-aot"` condition. Everything else skips it and takes the next condition that matches.
+
+| Tool                                                                             | Reads                                                           |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Node.js: `import`, and `require()` where it can load ES modules                  | `index.js`                                                      |
+| `bun run`, `bun test`, `bun build`, `bun build --compile`                        | `index.js`                                                      |
+| esbuild, webpack, Vite                                                           | `index.js`                                                      |
+| `tsc` and `bun check`, with `moduleResolution` `node16`, `nodenext` or `bundler` | `index.d.ts`                                                    |
+| `bun compile`                                                                    | `index.aot.ts`, and `index.d.ts` to type check your user's code |
+| `bun pm pack`, `npm pack`                                                        | `"files"`, which lists every file that Bun wrote                |
+
+- **Your package behaves the same.** If a compiled program passes your function a value that doesn't match the declared parameter, the call takes the function's slow version. The result is what it is without the typed file.
+- **The `.d.ts` files import each other by file name.** Your `import { area } from "./area"` is `"./area.js"` in `index.d.ts`, and `"./tools"` is `"./tools/index.js"`. With `node16` and `nodenext`, TypeScript doesn't find `area.d.ts` under the shorter name.
+- **The package is bigger.** The typed file holds the bundle and every type that it uses. For Hono 4.13.13 it's 169 KB beside 45 KB of JavaScript.
+- **It works from a link too.** `bun link`, `bun add ../greeter/dist`, the isolated linker and a workspace all lead to the same files. In a workspace, your own `package.json` can point at `./dist/index.js`: Bun also reads the `"exports"` of the `dist/package.json` beside that file.
+
+### When the typed file can't be used
+
+The typed file never fails your user's build. Bun warns, and compiles `index.js` without types.
+
+| What happened                                               | What the build prints                                                                              |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `index.js` was patched, by hand or with `bun patch`         | `index.aot.ts without its types doesn't match index.js. Was the package patched?`                  |
+| `index.aot.ts` belongs to another version, or doesn't parse | The same                                                                                           |
+| `index.aot.ts` isn't in the package                         | `index.aot.ts is missing`                                                                          |
+| `index.aot.ts` has a type error in your user's project      | [`TS100009`](/bundler/aot-troubleshooting#a-package-has-type-errors-so-its-compiled-without-types) |
+
+```txt
+warn: "greeter" is compiled without types, because its typed version in node_modules/greeter can't be used: index.aot.ts is missing
+```
+
+## Test before you publish
+
+Wrong types only cost speed: a value that doesn't match its declared type [falls back to the slow path](/bundler/aot-types#when-a-value-doesnt-match-its-type) and behaves as it does in `bun run` or Node.js. Find them before your users do. Run your package's tests under the compiler's rules, then compiled and with the log.
+
+```bash terminal icon="terminal"
+bun test --aot
+bun test --aot-log-type-mismatches
+```
+
+The second command [logs every value that doesn't match its declared type](/bundler/aot-debugging#log-them-at-run-time). Code that gets by on `any` or `as` shows up there.
+
+## What --library builds
+
+### Entry points, dependencies and flags
+
+- Without an entry point, Bun builds every TypeScript file that `"exports"` in `package.json` points at. If there is none, it builds the file that `"module"` or `"main"` points to, if it's a TypeScript file. Otherwise it looks for `index.ts`, then `src/index.ts`.
+- With several entry points, each gets its own files and its own entry in `exports`: `./src/index.ts ./src/version.ts` gives `"."` and `"./version"`.
+- Bun leaves `dependencies`, `peerDependencies` and `optionalDependencies` as imports. It bundles the `devDependencies` that your code imports.
+- `--outdir` sets the output folder. The default is `dist`.
+- `--target` is `node` by default. `browser` and `bun` work too.
+- `--format` is `esm` by default. [`cjs`](#commonjs) works too.
+- An entry point inside `--outdir` is an error, because the build would overwrite it.
+- `--library` also takes a JavaScript entry point. Bun infers the `.d.ts` file from the code and its JSDoc comments, and writes no typed file.
+
+`--library` writes a package into a folder, so it rejects `--outfile` and [`--trim`](/bundler/aot-size).
+
+```bash terminal icon="terminal"
+bun compile --library --outfile greeter
+```
+
+```txt
+error: --library writes a folder. Use --outdir instead of --outfile
+```
+
+### What has no typed file yet
+
+With `--minify`, `--splitting`, `--no-bundle`, `--format=cjs` or `--sourcemap=inline`, Bun writes the JavaScript, the `.d.ts` files and the `package.json`, and warns that it left out the typed file, its `tsconfig.json` and the `"bun-aot"` condition. `bun compile` then compiles the package as JavaScript.
+
+```txt
+warn: the typed JavaScript that bun compile compiles a package from is left out: it does not support --minify yet
+```
+
+Bun also type checks the typed file before it writes it. If the file has a type error, the build warns you and leaves it out in the same way.
+
+### The package.json that Bun writes
 
 Bun keeps the fields that describe the package, such as `name`, `version`, `license` and `dependencies`. It leaves out `scripts`, `devDependencies`, `private` and `workspaces`. It writes its own `type`, `main`, `module`, `types`, `exports` and `files`.
 
@@ -214,49 +251,166 @@ warn: dist/package.json has no "./style.css" export, because no entry point buil
 warn: dist/package.json has no "rich" bin, because ./src/cli.ts is not an entry point
 ```
 
-Read `dist/package.json` before you publish.
+### CommonJS
 
-### Entry points, dependencies and flags
+`--format=cjs` writes CommonJS, with `"type": "commonjs"` in `dist/package.json`. `require()` works in Node.js and in Bun, and so does `import` in Bun. In Node.js, an ES module imports the package as a default export, because Node.js can't see the names of the exports in the bundle.
 
-- Without an entry point, Bun builds every TypeScript file that `"exports"` in `package.json` points at. If there is none, it builds the file that `"module"` or `"main"` points to, if it's a TypeScript file. Otherwise it looks for `index.ts`, then `src/index.ts`.
-- With several entry points, each gets its own files and its own entry in `exports`: `./src/index.ts ./src/version.ts` gives `"."` and `"./version"`.
-- Bun leaves `dependencies`, `peerDependencies` and `optionalDependencies` as imports. It bundles the `devDependencies` that your code imports.
-- `--outdir` sets the output folder. The default is `dist`.
-- `--target` is `node` by default. `browser` and `bun` work too.
-- `--format` is `esm` by default. `cjs` works too, for sources that use `require()` and `module.exports`.
-- An entry point inside `--outdir` is an error, because the build would overwrite it.
-- `--library` also takes a JavaScript entry point. Bun infers the `.d.ts` file from the code and its JSDoc comments.
+```js icon="/icons/javascript.svg"
+import greeter from "greeter";
 
-`--library` writes a package into a folder, so it rejects `--outfile` and [`--trim`](/bundler/aot-size).
+greeter.greet({ name: "Ada", times: 2 });
+```
+
+## Keep your own package.json
+
+[`bun build --dts`](/bundler#dts) is an ordinary build that also writes the `.d.ts` files and the typed file to `--outdir`. It type checks first, like `--library`, and it leaves your `package.json` alone.
 
 ```bash terminal icon="terminal"
-bun compile --library --outfile greeter
+bun build ./src/index.ts --outdir ./dist --dts
 ```
 
 ```txt
-error: --library writes a folder. Use --outdir instead of --outfile
+  index.js       135 bytes  (entry point)
+  index.d.ts     123 bytes  (declaration)
+  index.aot.ts   232 bytes  (typed)
+  tsconfig.json  212 bytes  (asset)
 ```
 
-## Test before you publish
+Add the condition yourself, and publish the project folder.
 
-A typed file doesn't change what your package does. A value that doesn't match its declared type [falls back to the slow path](/bundler/aot-types#when-a-value-doesnt-match-its-type) and behaves as it does in `bun run` or Node.js. Wrong types only cost speed, so find them before your users do. Run your package's tests under the compiler's rules, then compiled and with the log.
+```json package.json icon="file-json"
+{
+  "name": "greeter",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bun-aot": "./dist/index.aot.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"]
+}
+```
+
+```txt
+note: "greeter" 1.0.0 is compiled from its typed version in node_modules/greeter/dist
+```
+
+### Where the condition goes
+
+- **Put `"types"` first, then `"bun-aot"`, then the condition for the JavaScript,** such as `"import"`, `"require"` or `"default"`. Every tool takes the first condition that it knows, in the order in which they appear.
+- **Each entry of `"exports"` has its own typed file.** With `"."` and `"./version"`, that's two. A pattern such as `"./*"` can have the condition too, and doesn't need a typed file for every file that it matches.
+- **The condition counts where a program imports the package by name,** as in `"greeter"` or `"greeter/version"`. A file that `index.js` imports by a relative path is compiled without types.
+- **The typed file can have any name, in any folder of the package.** Bun resolves its `import type` statements from the folder of the typed file, and its other imports from the folder of `index.js`.
+- **The condition can be in a second `package.json`.** If `index.js` is in a folder that has one of its own, such as `dist/package.json`, Bun reads the `"exports"` of that file too.
+- **Publish the file, and the `tsconfig.json` beside it.** If your `package.json` has `"files"`, both have to be in it.
+
+### ES modules and CommonJS in one package
+
+Build twice, and put the condition inside `"import"`. The CommonJS half has no typed file yet, so a compiled program that calls `require("greeter")` compiles it as JavaScript.
 
 ```bash terminal icon="terminal"
-bun test --aot
-bun test --aot-log-type-mismatches
+bun build ./src/index.ts --outdir ./dist/esm --dts
+bun build ./src/index.ts --outdir ./dist/cjs --dts --format=cjs
+echo '{ "type": "commonjs" }' > ./dist/cjs/package.json
 ```
 
-The second command [logs every value that doesn't match its declared type](/bundler/aot-debugging#log-them-at-run-time). Code that gets by on `any` or `as` shows up there.
+```json package.json icon="file-json"
+{
+  "name": "greeter",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/cjs/index.js",
+  "types": "./dist/cjs/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "bun-aot": "./dist/esm/index.aot.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      }
+    }
+  },
+  "files": ["dist"]
+}
+```
 
-Then install the package in a small program, build it with `bun compile`, and look for the note.
+## Write the typed file with another build
 
-## What changes for your users
+A typed file is the package's own JavaScript with types added and nothing else changed. Any tool can write it, or you can.
 
-Your users don't have to set anything up.
+```js node_modules/greeter/index.js icon="/icons/javascript.svg"
+export function greet(options) {
+  return ("hello " + options.name + " ").repeat(options.times).trim();
+}
+```
 
-- **Your package behaves the same.** If a compiled program passes your function a value that doesn't match the declared parameter, the call takes the function's slow version. The result is what it is without the typed file.
-- **Only `bun compile` reads `index.aot.ts`.** For everyone else it's one more file in the package. Editors, `tsc` and `bun check` still take the types of your exports from `index.d.ts`, and so does `bun compile` when it type checks your user's code.
-- **The typed file never fails a build.** If it doesn't match `index.js`, Bun prints the warning above. If it has a type error in your user's project, Bun prints [another warning](/bundler/aot-troubleshooting#a-package-has-type-errors-so-its-compiled-without-types). Either way it compiles `index.js` without types.
+```ts node_modules/greeter/index.aot.ts icon="/icons/typescript.svg"
+export interface Options {
+  name: string;
+  times: number;
+}
+
+export function greet(options: Options): string {
+  return ("hello " + options.name + " ").repeat(options.times).trim();
+}
+```
+
+If your build only removes the types from your TypeScript files, each source file is the typed file of the JavaScript that comes out of it. `tsc` works that way with `"target": "esnext"`, `"verbatimModuleSyntax": true` and `"erasableSyntaxOnly": true`. Publish the source file, and point the condition at it.
+
+```json title="package.json" icon="file-json"
+{
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bun-aot": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  }
+}
+```
+
+A bundler or a minifier rewrites the code, so its input no longer matches its output. `bun compile --library` and `bun build --dts` bundle, and write the typed file of the bundle.
+
+### What a typed file can contain
+
+When Bun compiles a program, it compares the code of `index.aot.ts`, without its types, with the code of the installed `index.js`. White space and comments don't count. If the two differ, Bun prints a warning and compiles `index.js` without types.
+
+```txt
+warn: "greeter" is compiled without types, because its typed version in node_modules/greeter can't be used: index.aot.ts without its types doesn't match index.js. Was the package patched?
+```
+
+So a typed file can only add what TypeScript removes without a trace.
+
+| Allowed                                                               | Not allowed, because it changes the code                        |
+| --------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Type annotations and type parameters                                  | `enum`, `namespace`                                             |
+| `interface`, `type`, `declare`, overload signatures                   | `import fs = require("fs")`, `export =`                         |
+| `import type`, `export type`, `import { type Options }`               | A parameter property: `constructor(public id: number)`          |
+| `as`, `satisfies`, `!`                                                | A decorator, an `accessor` field, JSX                           |
+| In a class: `declare count: number`, `abstract` members, `implements` | A field that the JavaScript class doesn't have: `count: number` |
+
+In a CommonJS file, `export interface` and `export type` aren't allowed either, because an `export` turns the file into an ES module. Declare the type without `export`.
+
+## Why a package needs its types
+
+Most packages on npm ship JavaScript and a `.d.ts` file. The `.d.ts` file describes the exports, not the code inside, so `bun compile` compiles the JavaScript without types. That alone doesn't make the package slow: the compiler tracks its objects from the code that creates them to the code that uses them, as it tracks yours.
+
+[Type annotations matter](/bundler/aot-types#what-types-get-you) where the compiler can't track a value on its own, such as the result of `JSON.parse` or the argument of a callback that Bun calls. With a declared type there, a guard checks the value once, and the code after it stays on the fast path. A JavaScript package has no type there, so nothing is known about the value from then on.
+
+A typed version puts the types there. There are three places for one.
+
+| Who writes it                              | Where it goes                                                                          |
+| ------------------------------------------ | -------------------------------------------------------------------------------------- |
+| The author of the package                  | [In the package](#from-source-to-npm), under the `"bun-aot"` export condition          |
+| You, for a package that you don't maintain | [In your project](#add-types-to-a-package-you-dont-maintain), under `.sound/`          |
+| Someone else, for everyone                 | [In a package of its own](#install-a-typed-version), installed as `@oven/sound-<name>` |
 
 ## Add types to a package you don't maintain
 
@@ -339,4 +493,42 @@ An [`int32`](/bundler/aot-types#32-bit-integers) in your own code stops the buil
 warn: TS100066: The compiler can't prove every 'int32' that ".sound/each-row/lay/index.js" declares, so it tests them when the program runs. The file still works, but runs slower.
 ```
 
-Bun looks for typed versions in `.sound/` and nowhere else. It never takes one from `node_modules`, unless the package [ships its own](#ship-a-typed-file-with-your-package). If a package ships a typed file and your project has a typed version of that package, yours wins.
+## Install a typed version
+
+A typed version can also be a package of its own, the way `@types/each-row` holds the `.d.ts` files of `each-row`. It's the same folder as above, with a `package.json` beside `sound.json`.
+
+```json node_modules/@oven/sound-each-row/package.json icon="file-json"
+{
+  "name": "@oven/sound-each-row",
+  "version": "1.0.0",
+  "peerDependencies": { "each-row": "1.0.0" },
+  "files": ["sound.json", "lay"]
+}
+```
+
+```txt
+node_modules/@oven/sound-each-row/sound.json
+node_modules/@oven/sound-each-row/lay/index.js
+```
+
+The typed version of a scoped package, `@scope/name`, is `@oven/sound-scope__name`.
+
+A project that has it in `node_modules` needs no other setup.
+
+```txt
+note: "each-row" 1.0.0 is compiled from its typed version in node_modules/@oven/sound-each-row
+```
+
+Bun looks in the `node_modules` of the directory that you run the build from, then in that of each directory above it, and takes the first `@oven/sound-each-row` that it finds.
+
+An installed typed version passes the same checks as one in `.sound/`. Its `sound.json` has to match what's installed, each file under `lay` without its types has to be the same code as the file that it replaces, and Bun type checks it. If one of them fails, Bun warns you and compiles the installed JavaScript.
+
+## Which typed version Bun uses
+
+For each file of a package, Bun takes the first of these that has one.
+
+1. The typed version in your project, `.sound/<name>/`
+2. The typed file that the package [ships](#write-the-typed-file-with-another-build)
+3. The typed version that's installed as `@oven/sound-<name>`
+
+If `.sound/` has a typed version of a package, Bun doesn't look at `@oven/sound-<name>`, even if yours can't be used.

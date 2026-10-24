@@ -54,7 +54,6 @@ test/js/bun/http/serve.test.ts  # 4 of 80 builds; mac
 test/js/bun/io/bun-write.test.js  # 1 of 80 builds; parallel batch; Bun.write() without uv_fs_copyfile: test timed out
 test/js/bun/net/socket.test.ts  # 1 of 80 builds; mac
 test/js/bun/resolve/bun-main-entry-point.test.ts  # 5 of 80 builds; windows
-test/js/bun/s3/s3.leak.test.ts  # 1 of 80 builds; windows
 test/js/bun/s3/s3.test.ts  # 10 of 80 builds
 test/js/bun/shell/leak.test.ts  # 1 of 80 builds; ubuntu
 test/js/bun/spawn/spawn-maxbuf.test.ts  # 2 of 80 builds; windows, debian

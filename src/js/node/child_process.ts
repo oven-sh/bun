@@ -563,8 +563,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
   const stdio = options.stdio || "pipe";
   const bunStdio = getBunStdioFromOptions(stdio, true);
   const stdioLength = bunStdio.length;
-  // One entry for each stdio slot above stderr. Bun.spawnSync puts what the child wrote to a pipe at the
-  // pipe's index, and every other slot stays null.
+  // Bun.spawnSync puts what the child wrote to each pipe above stderr at the pipe's index. Other slots stay null.
   let extraOutput: (Buffer | null)[] | undefined;
   if (stdioLength > 3) {
     extraOutput = [];
@@ -653,9 +652,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 
   const output = result.output;
   if (output) {
-    // node: one entry for each stdio slot, which is null unless the slot is a pipe that the child writes.
-    // https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L765-L786
-    // A call that lost its output to a read error has none for these slots either, as for stdout and stderr.
+    // node: an entry for each stdio slot, https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L765-L786
     for (let i = 3; i < stdioLength; i++) {
       $putByValDirect(output, i, error === undefined ? extraOutput![i] : null);
     }
@@ -1423,9 +1420,10 @@ class ChildProcess extends EventEmitter {
     // #getBunSpawnIo, which hands the fd to usockets (usockets closes it on
     // socket close). Use Bun.spawn's "socket-fd" so the parent end is stored
     // as UnownedFd from the start and Subprocess.finalize_streams never
-    // double-closes it. Async path only: Bun.spawnSync reads extra "pipe"
-    // slots itself and closes them. On Windows extra stdio is a libuv pipe
-    // handle with no raw-fd handoff, so leave as "pipe".
+    // double-closes it. Async path only: spawnSync never wraps extra fds in
+    // net.Socket (no .stdio on Bun.spawnSync's result yet) and must keep
+    // them OwnedFd so that Bun.spawnSync reads and closes them. On Windows extra
+    // stdio is a libuv pipe handle with no raw-fd handoff, so leave as "pipe".
     if (process.platform !== "win32") {
       for (let i = 3; i < bunStdio.length; i++) {
         if (bunStdio[i] === "pipe") bunStdio[i] = "socket-fd";

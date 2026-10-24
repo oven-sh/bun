@@ -191,8 +191,7 @@ impl Stdio {
         if i == 0 && matches!(self, Self::Pipe) {
             *self = Self::Ignore;
         }
-        // A sync spawn has no IPC channel, so the slot is a pipe like any other
-        // (on Windows an IPC pipe has its own framing).
+        // A sync spawn has no IPC channel: the slot is a plain pipe (a Windows IPC pipe has its own framing).
         if i >= 3 && matches!(self, Self::Ipc) {
             *self = Self::Pipe;
         }

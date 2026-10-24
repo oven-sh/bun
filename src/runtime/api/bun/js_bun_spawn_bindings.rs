@@ -399,8 +399,7 @@ fn spawn_maybe_sync(
     let mut maybe_ipc_mode: Option<IPC::Mode> = None;
     let mut ipc_callback: JSValue = JSValue::ZERO;
     let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
-    // From `node:child_process`: the array that gets what the child writes to
-    // each stdio pipe at index >= 3, at that index.
+    // From `node:child_process`: the array that gets what each stdio pipe at index >= 3 read, at that index.
     let mut extra_output_array: Option<JSValue> = None;
     #[cfg(not(windows))]
     let mut socket_fd_indices: Vec<usize> = Vec::new();
@@ -677,8 +676,7 @@ fn spawn_maybe_sync(
                 }
             }
 
-            // Looked up only when a pipe at index >= 3 is there to read: every other
-            // call keeps the `maxBuffer` accounting it has.
+            // Only a call that reads a pipe at index >= 3 looks it up: any other keeps its `maxBuffer` accounting.
             if is_sync
                 && extra_fds
                     .iter()
@@ -1342,6 +1340,7 @@ fn spawn_maybe_sync(
     }));
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };
+    // A sync spawn puts a reader in front of each of these pipes, and the reader owns it.
     #[cfg(windows)]
     if !is_sync {
         SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);

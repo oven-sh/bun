@@ -1,9 +1,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-/// Tracks remaining byte budget for the output pipes of a subprocess.
-/// Owned by the `Subprocess` and by each pipe reader that charges it; freed
-/// when all of them disown it.
+/// Tracks remaining byte budget for the output pipes of a subprocess. Owned by the `Subprocess` and its pipe readers; freed when all disown it.
 ///
 /// All mutable state is `Cell<T>` so the struct is only ever accessed via
 /// `&MaxBuf` (shared, `SharedReadOnly` provenance). This is required because
@@ -17,11 +15,9 @@ pub struct MaxBuf {
     /// once the `.stdout`/`.stderr` stream getter is touched). `None` after
     /// subprocess finalize or once the overflow callback has fired.
     pub(crate) owned_by_subprocess: Cell<Option<Owner>>,
-    /// How many pipe readers charge this budget. More than one only for a
-    /// sync spawn whose output pipes all count against one `maxBuffer`.
+    /// Pipe readers that charge this budget: several when a sync spawn has one `maxBuffer` for all its pipes.
     pub(crate) readers: Cell<u32>,
-    /// The overflow callback has run: the readers that share the budget stop
-    /// too, not only the one that crossed the limit.
+    /// The overflow callback has run: every reader of the budget stops before its next read.
     pub(crate) exhausted: Cell<bool>,
     /// If this goes negative, `on_max_buffer` is called on the subprocess.
     pub(crate) remaining_bytes: Cell<i64>,
@@ -146,8 +142,9 @@ impl MaxBuf {
     /// `owned_by_subprocess` through a sibling pointer to this same
     /// allocation. With `Cell` fields a shared `&MaxBuf` is sufficient and the
     /// re-entrancy is sound; the single `unsafe` is the `NonNull → &MaxBuf`
-    /// projection (the back-ref invariant: `this` is live while a reader
-    /// holds it, which every caller has just checked via `Some(maxbuf)`).
+    /// projection (the back-ref invariant: `this` is live while
+    /// `readers` is not zero, which every caller has just checked via
+    /// `Some(maxbuf)`).
     pub(crate) fn on_read_bytes(this: NonNull<MaxBuf>, bytes: u64) -> bool {
         let mb = Self::live(&this);
         let delta = i64::try_from(bytes).unwrap_or(0);
@@ -164,14 +161,12 @@ impl MaxBuf {
         // `create_for_subprocess`; it stays live while `owned_by_subprocess`
         // is `Some` (cleared in `remove_from_subprocess`, called from
         // `Subprocess::finalize` and from the callback itself). The callback
-        // never frees `this` — the calling reader holds it on every caller path.
+        // never frees `this` — `readers` is not zero on every caller path.
         unsafe { (owner.on_overflow)(owner.ptr, this) };
         true
     }
 
-    /// `true` once the overflow callback has run. A reader that shares the
-    /// budget asks before it reads, so that only the read that crossed the
-    /// limit goes over it.
+    /// Whether the overflow callback has run. A reader asks before each read, so only one read goes over the limit.
     pub(crate) fn is_exhausted(this: Option<NonNull<MaxBuf>>) -> bool {
         this.is_some_and(|this| Self::live(&this).exhausted.get())
     }

@@ -114,8 +114,7 @@ impl PipeReader {
         )
     }
 
-    /// As `create`, for a pipe that is read so that its writer does not block, and whose bytes
-    /// nobody gets: see [`PipeDrain`].
+    /// As `create`, with a [`PipeDrain`] parent: for a pipe whose bytes nobody gets.
     pub(crate) fn create_drain(
         event_loop: NonNull<EventLoop>,
         process: NonNull<Subprocess<'static>>,
@@ -403,17 +402,14 @@ impl Drop for PipeReader {
     }
 }
 
-/// The reader's parent in a [`PipeReader`] from `create_drain`: it takes each chunk as it is
-/// read and keeps none of the bytes, so the reader holds one read buffer at most.
+/// Parent of a `create_drain` reader: takes each chunk as it is read and keeps none of the bytes.
 #[repr(transparent)]
 pub(crate) struct PipeDrain(PipeReader);
 
 bun_io::impl_buffered_reader_parent! {
     SubprocessPipeDrain for PipeDrain;
     has_on_read_chunk = true;
-    // `false` ends a POSIX read after this chunk (a Windows read has no use for the value). The
-    // wait loop of the sync spawn asks for the next chunk, so a child that floods the pipe cannot
-    // keep that loop from its timeout.
+    // `false`: a POSIX read ends after this chunk, so a child that floods the pipe cannot keep the wait loop from its timeout.
     on_read_chunk   = |this, chunk, has_more| {
         let _ = (this, chunk, has_more);
         false

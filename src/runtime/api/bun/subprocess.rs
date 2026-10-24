@@ -67,22 +67,13 @@ pub(crate) type StdioPipeEnd = StdioResult;
 #[cfg(not(windows))]
 pub(crate) type StdioPipeEnd = ExtraPipe;
 
-/// The stdio slots at index >= 3.
+/// The stdio slots at index >= 3. A sync spawn reads the pipes it made: a child that fills a pipe nobody reads never exits.
 pub(crate) enum StdioPipes {
     /// `Bun.spawn` hands each end to the caller through `.stdio[i]`.
     Ends(Vec<StdioPipeEnd>),
-    /// A sync spawn has no caller to hand a pipe to, and a child that fills a
-    /// pipe nobody reads never exits. So the call reads each pipe it made, as
-    /// it reads stdout and stderr. A slot that is not such a pipe is
-    /// `Readable::Ignore`.
-    ///
-    /// `node:child_process` returns the bytes in `output[i]`. As in Node.js,
-    /// the call waits for the end of each pipe and the bytes count against
-    /// `maxBuffer`.
+    /// Sync spawn from `node:child_process`: the bytes go to `output[i]`, count against `maxBuffer`, and the call waits for the end of each pipe.
     Returned(Box<[JsCell<Readable>]>),
-    /// As `Returned`, for `Bun.spawnSync`: its result has no place for the
-    /// bytes, so the readers keep none, and the call does not wait for the
-    /// end of a pipe.
+    /// `Bun.spawnSync`: its result has no place for the bytes, so the readers keep none and the call does not wait for the end of a pipe.
     Dropped(Box<[JsCell<Readable>]>),
 }
 
@@ -107,8 +98,7 @@ impl StdioPipes {
         }
     }
 
-    /// As `ends`. What indexes it (the IPC channel, a `socket-fd` slot) is
-    /// set up by `Bun.spawn` alone.
+    /// As `ends`: only `Bun.spawn` sets up what indexes it (the IPC channel, a `socket-fd` slot).
     pub(crate) fn ends_mut(&mut self) -> &mut [StdioPipeEnd] {
         match self {
             Self::Ends(ends) => ends,
@@ -492,8 +482,7 @@ impl Subprocess<'_> {
         }
     }
 
-    /// For a sync spawn: reads every stdio pipe at index >= 3 that
-    /// `spawn_process` made, see [`StdioPipes::Returned`].
+    /// For a sync spawn: puts a reader on every stdio pipe at index >= 3 that `spawn_process` made.
     pub(crate) fn read_stdio_pipes(
         &self,
         this: NonNull<Subprocess<'static>>,
@@ -529,8 +518,7 @@ impl Subprocess<'_> {
                     | StdioResult::Unavailable => return JsCell::new(Readable::Ignore),
                 };
                 JsCell::new(Readable::Pipe(match bytes {
-                    // Node.js counts every output pipe of a sync spawn against one `maxBuffer`:
-                    // https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L648-L655
+                    // One `maxBuffer` for every pipe: https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L648-L655
                     ExtraOutput::Returned => PipeReader::PipeReader::create(
                         event_loop,
                         this,
@@ -568,8 +556,7 @@ impl Subprocess<'_> {
     /// The reader of `out` reached its end: `out` takes what it read.
     fn take_pipe_output(out: &JsCell<Readable>) {
         if matches!(out.get(), Readable::Pipe(_)) {
-            // Move the Rc<PipeReader> out of `*out` first so
-            // reassigning doesn't drop it while still borrowed.
+            // Move the Rc<PipeReader> out of `*out` first so reassigning doesn't drop it while still borrowed.
             let Readable::Pipe(pipe) = out.replace(Readable::Ignore) else {
                 unreachable!()
             };
@@ -801,8 +788,7 @@ impl Subprocess<'_> {
         }
     }
 
-    /// The read error that a [`StdioPipes::Returned`] pipe ended with, as
-    /// [`Readable::take_read_error`].
+    /// The read error that a [`StdioPipes::Returned`] pipe ended with, as [`Readable::take_read_error`].
     pub(crate) fn take_stdio_pipe_read_error(&self) -> Option<bun_sys::Error> {
         let StdioPipes::Returned(outputs) = self.stdio_pipes.get() else {
             return None;
@@ -812,8 +798,7 @@ impl Subprocess<'_> {
             .find_map(|output| output.with_mut(|output| output.take_read_error()))
     }
 
-    /// Puts what each [`StdioPipes::Returned`] pipe read into `array`, at the
-    /// index of its stdio slot.
+    /// Puts what each [`StdioPipes::Returned`] pipe read into `array`, at the index of its stdio slot.
     pub(crate) fn stdio_pipes_to_buffered_values(
         &self,
         global: &JSGlobalObject,
@@ -1625,11 +1610,10 @@ pub(crate) fn source_from_blob(b: webcore::AnyBlob) -> Source {
     Source::Any(Box::new(b))
 }
 
-/// Windows: the extra stdio pipes of `Bun.spawn` (`StdioPipes::Ends`) are uv
-/// handles this Subprocess owns without a reader/writer in front of them;
-/// record that so a thread teardown closes them through us (and
-/// `finalize_streams` then finds the slots empty) instead of anyone closing
-/// them twice. A sync spawn puts a reader in front of each, which owns it.
+/// Windows: the extra stdio pipes (`stdio_pipes`) are uv handles this
+/// Subprocess owns without a reader/writer in front of them; record that so a
+/// thread teardown closes them through us (and `finalize_streams` then finds
+/// the slots empty) instead of anyone closing them twice.
 #[cfg(windows)]
 impl Subprocess<'_> {
     pub(crate) fn record_stdio_pipe_ownership(this: *mut Self) {

@@ -3847,9 +3847,7 @@ pub struct ParserInput<'a> {
     /// alternative is guaranteed to fail again, so they propagate the error
     /// instead of retrying (which is exponential in the nesting depth).
     token_list_parse_failures: u64,
-    /// Monotonic count of the blocks that `media_query::parse_general_enclosed`
-    /// took for `<general-enclosed>`. A caller samples it around a parse to
-    /// learn whether the condition it got can hold one.
+    /// Count of the blocks that became `<general-enclosed>` conditions.
     general_enclosed_blocks: u64,
 }
 

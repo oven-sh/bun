@@ -79,12 +79,7 @@ pub trait QueryCondition: Sized + ToCss {
         targets: &css::targets::Targets,
     ) -> bool;
 
-    /// [`<general-enclosed>`](https://drafts.csswg.org/mediaqueries-4/#typedef-general-enclosed):
-    /// a balanced `( .. )` or `name( .. )` block that is none of the forms
-    /// this grammar knows. It evaluates to unknown, it is not a parse error.
-    /// The function makes the condition from the source text of the block.
-    /// `StyleQuery` has no variant for it: the `style( .. )` around the block
-    /// is kept instead.
+    /// Makes a `<general-enclosed>` condition from its source text. `None`: no such variant.
     const GENERAL_ENCLOSED: Option<fn(&'static [u8]) -> Self> = None;
 
     // ─── variant-walk accessors (drive `condition_to_css`) ───
@@ -1582,16 +1577,14 @@ pub(crate) fn parse_query_condition_with_options<C: QueryCondition>(
     }
 }
 
-/// The error for the operand after `and` / `or`. `kept` are the operands
-/// before it.
+/// The error for a missing operand. `kept` holds the operands before it.
 #[cold]
 fn operand_error<C: QueryCondition>(
     input: &Parser,
     kept: &[C],
     error: css::error::ParseError<css::ParserError>,
 ) -> css::error::ParseError<css::ParserError> {
-    // `MediaList::parse` takes `end_of_input` for the end of the list and
-    // drops the query, so `(min-width: 0\0) and {` would apply to everything.
+    // `MediaList::parse` drops a query that fails with `end_of_input`.
     if matches!(
         error.kind,
         css::error::ParserErrorKind::basic(css::BasicParseErrorKind::end_of_input)
@@ -1604,8 +1597,7 @@ fn operand_error<C: QueryCondition>(
     error
 }
 
-/// Whether the text of `condition` starts with the name of a function: its
-/// first operand is a `<general-enclosed>` with no parenthesis in front.
+/// Whether the text of `condition` starts with a function name, not with `(`.
 fn starts_with_function<C: QueryCondition>(condition: &C) -> bool {
     if let Some((_, operands)) = condition.as_operation() {
         return operands.first().is_some_and(starts_with_function);
@@ -1626,9 +1618,7 @@ fn first_general_enclosed<C: QueryCondition>(condition: &C) -> Option<&'static [
     condition.as_general_enclosed()
 }
 
-/// Reports a `<general-enclosed>` that `condition` holds. It is valid, but a
-/// browser reads it as unknown: it is a hack for an old browser, a feature
-/// this parser does not know, or a typo.
+/// Reports the first `<general-enclosed>` that `condition` holds, if any.
 #[cold]
 pub(crate) fn warn_general_enclosed<C: QueryCondition>(
     input: &Parser,
@@ -1649,8 +1639,7 @@ pub(crate) fn warn_general_enclosed<C: QueryCondition>(
     );
 }
 
-/// Parse a media condition in parentheses, a style() function, or
-/// `<general-enclosed>`.
+/// Parse a media condition in parentheses, or a style() function.
 pub(crate) fn parse_parens_or_function<C: QueryCondition>(
     input: &mut Parser,
     flags: QueryConditionFlags,
@@ -1667,8 +1656,7 @@ pub(crate) fn parse_parens_or_function<C: QueryCondition>(
     }
 }
 
-/// Parse a style() function, or a function that is `<general-enclosed>`.
-/// `token` is the function token, already consumed. It starts at `start`.
+/// Parse the block of the function `token`, which starts at `start`.
 fn parse_function<C: QueryCondition>(
     input: &mut Parser,
     location: css::SourceLocation,
@@ -1703,9 +1691,7 @@ fn parse_paren_block<C: QueryCondition>(
     // One capture for the closure, not one for each field.
     let block_start = &block;
     let result = input.parse_nested_block(|i| {
-        // A group that starts with a function is a range, such as
-        // `(calc(1px + 2px) <= width)`, or it is kept whole. Without its
-        // parentheses `(layer(x))` would be a layer after an `@import` URL.
+        // `(calc(1px) < width)` is a range. A bare `layer(x)` is an `@import` layer.
         if let Ok(inner) = parse_query_condition_with_options::<C>(i, flags, options)
             && !starts_with_function(&inner)
         {
@@ -1725,11 +1711,7 @@ fn parse_paren_block<C: QueryCondition>(
     }
 }
 
-/// `<general-enclosed>`, the last alternative for the block that `error` is
-/// for. `block` is the state right after its `(` or `name(`, which starts at
-/// `start`. lightningcss returns `error` here. Media Queries 4 and browsers
-/// take any closed block that holds no error token for a condition that
-/// evaluates to unknown.
+/// Keeps the block at `block`, which starts at `start`, as `<general-enclosed>`, or returns `error`.
 #[cold]
 fn parse_general_enclosed<C: QueryCondition>(
     input: &mut Parser,

@@ -51,6 +51,7 @@ const {
   kDestroyOnRead,
   kForeignListener,
   kHandleClosed,
+  kLastBytesSent,
   kPreHandshakeWrite,
   kReadStop,
   kSecureConnectDone,
@@ -58,6 +59,7 @@ const {
   kStandaloneWrap,
   kUpgradeClientTLS,
   kVerifyError,
+  kWriteQueueSize,
 } = require("internal/net/symbols");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
 const AsyncContextFrame = require("internal/async_context_frame");
@@ -300,7 +302,6 @@ const { owner_symbol } = require("internal/async_hooks").symbols;
 // native Listener reachable via accepted socket handles (see a93d2fa48e).
 const kBytesRead = Symbol("kBytesRead");
 const kBytesWritten = Symbol("kBytesWritten");
-const kLastWriteQueueSize = Symbol("kLastWriteQueueSize");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 // tls.Server exposes its native SecureContext constructor through this key so
 // the SNI dispatch (below) can recognize a raw native context the way Node's
@@ -377,7 +378,7 @@ function onWriteComplete(self, handle, status) {
     err = new ErrnoException(status, "write", reason);
   } else if (!self.destroyed) {
     self._unrefTimer();
-    self[kLastWriteQueueSize] = 0;
+    self[kLastBytesSent] = 0;
     unrefAfterDrain(self, handle);
   }
   // Node's WriteWrap is an AsyncResource that write() creates.
@@ -1604,7 +1605,7 @@ function Socket(options?): void {
   this[kDestroyOnRead] = false;
   this[kBytesRead] = 0;
   this[kBytesWritten] = undefined;
-  this[kLastWriteQueueSize] = 0;
+  this[kLastBytesSent] = 0;
   this[kclosed] = false;
   this[kended] = false;
   this.connecting = false;
@@ -1811,6 +1812,10 @@ Socket.prototype.address = function address() {
   };
 };
 
+Socket.prototype[kWriteQueueSize] = function () {
+  return getBufferedAmount(this._handle);
+};
+
 Socket.prototype._onTimeout = function () {
   // if there is pending data, write is in progress
   // so we suppress the timeout
@@ -1821,10 +1826,11 @@ Socket.prototype._onTimeout = function () {
 
   const handle = this._handle;
   if (handle) {
-    // A write queue that moved since the last tick is still draining, so wait another period. A stalled one times out.
-    const writeQueueSize = getBufferedAmount(handle);
-    if (writeQueueSize !== this[kLastWriteQueueSize]) {
-      this[kLastWriteQueueSize] = writeQueueSize;
+    // A write queue that the kernel took bytes of since the last look is still draining, so wait another period. Its size doesn't tell: a node:http response can add to it.
+    const writeQueueSize = this[kWriteQueueSize]();
+    const sent = handle.bytesWritten - writeQueueSize;
+    if (writeQueueSize !== 0 && sent > this[kLastBytesSent]) {
+      this[kLastBytesSent] = sent;
       this._unrefTimer();
       return;
     }

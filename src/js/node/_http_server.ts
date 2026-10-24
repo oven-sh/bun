@@ -43,7 +43,13 @@ const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
-const { kForeignListener, kHandleClosed, kSNIContexts } = require("internal/net/symbols");
+const {
+  kForeignListener,
+  kHandleClosed,
+  kLastBytesSent,
+  kSNIContexts,
+  kWriteQueueSize,
+} = require("internal/net/symbols");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const {
   kInternalSocketData,
@@ -144,7 +150,7 @@ const ObjectKeys = Object.keys;
 const ArrayBufferIsView = ArrayBuffer.isView;
 const MathMin = Math.min;
 const MathFloor = Math.floor;
-const monotonicNowMs = $bindgen("Timer.bind.ts", "monotonicNowMs");
+const timerClockMs = $bindgen("Timer.bind.ts", "timerClockMs");
 
 let cluster;
 
@@ -1541,6 +1547,7 @@ function detachFromHttp(socket, req) {
   socket.removeListener("resume", nativeSocketOnResume);
   socket.removeListener("data", noopOnData);
   delete socket._onTimeout;
+  delete socket[kWriteQueueSize];
   // Only that function ignores the keep-alive timer, which stays armed while a request is in flight.
   if (socket.timeout === 0) socket.setTimeout(0);
   delete socket._final;
@@ -1634,7 +1641,7 @@ const scratchResponseOptions = {
 // Per-socket cached bound abort handler (the socket outlives its requests).
 const kBoundOnAbort = Symbol("kBoundOnAbort");
 const kKeepAliveTimeoutSet = Symbol("keepAliveTimeoutSet");
-// monotonicNowMs() at the last response write or finish. Rescheduling the socket timer each time is slow, so onSocketTimeoutTimerExpired moves the deadline instead.
+// The timers' clock at the last response write or finish. Rescheduling the socket timer each time is slow, so onSocketTimeoutTimerExpired moves the deadline instead.
 const kLastResponseWrite = Symbol("lastResponseWrite");
 const kStopParsingOnCloseListener = Symbol("kStopParsingOnCloseListener");
 // The socket the dispatcher already detached a synchronously-finished response from,
@@ -2212,17 +2219,23 @@ function onSocketTimeoutTimerExpired(this: any) {
   const lastWrite = socket[kLastResponseWrite];
   if (lastWrite !== undefined) {
     socket[kLastResponseWrite] = undefined;
-    const sinceWrite = monotonicNowMs() - lastWrite;
+    // bytesWritten starts again with each response.
+    socket[kLastBytesSent] = 0;
     const timer = socket[kTimeout];
-    if (sinceWrite < socket.timeout && timer != null) {
+    if (timer != null && lastWrite > timer._idleStart) {
       timer.refresh();
-      timer._idleStart -= sinceWrite;
+      timer._idleStart = lastWrite;
       return;
     }
   }
   // A fired keep-alive timer is dead: the next response finish arms a new one.
   if (socket[kKeepAliveTimeoutSet]) socket[kTimeout] = null;
   NetSocket.prototype._onTimeout.$call(socket);
+}
+
+// uWS holds what the kernel didn't take, and the handle of the response that has the connection counts it.
+function responseWriteQueueSize(this: any) {
+  return this[kHandle]?.response?.bufferedAmount ?? 0;
 }
 
 let NetSocket;
@@ -2285,6 +2298,7 @@ function nativeConnectionListener(server: Server, socket) {
   socket.prependListener = socketPrependListener;
   socket.setEncoding = socketSetEncoding;
   socket._onTimeout = onSocketTimeoutTimerExpired;
+  socket[kWriteQueueSize] = responseWriteQueueSize;
   socket._final = nativeSocketFinal;
   socket._destroy = nativeSocketDestroy;
   socket._paused = false;
@@ -2924,7 +2938,7 @@ function onResponseFinishHandleSocket(server, socket, res) {
     // idle period started; onSocketTimeoutTimerExpired grants the remaining
     // budget if the timer fires early, so the socket still closes after
     // exactly `total` ms of idle.
-    socket[kLastResponseWrite] = monotonicNowMs();
+    socket[kLastResponseWrite] = timerClockMs();
     const timer = socket[kTimeout];
     if (timer != null && !timer._destroyed && timer._idleTimeout === total) {
       socket.timeout = total;
@@ -3332,6 +3346,7 @@ function flushPendingFinish(this: any) {
   const callback = this[kPendingFinish];
   if (callback === undefined) return;
   this[kPendingFinish] = undefined;
+  noteResponseWrite(this);
   queueResponseFinished(this, callback);
 }
 
@@ -3748,7 +3763,7 @@ function noteResponseWrite(res) {
   if (!socket?.timeout) return;
   // The timer may have fired and a 'timeout' listener kept the socket. refresh() arms it again, like in Node.
   if (socket[kLastResponseWrite] === undefined) socket._unrefTimer();
-  socket[kLastResponseWrite] = monotonicNowMs();
+  socket[kLastResponseWrite] = timerClockMs();
 }
 
 function allowWritesToContinue() {

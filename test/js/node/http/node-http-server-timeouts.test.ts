@@ -1,5 +1,6 @@
+import { setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, jest, setSystemTime, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import http from "node:http";
@@ -535,6 +536,24 @@ describe("node:http server timeout enforcement", () => {
     }
   });
 
+  test("keepAliveTimeout closes an idle connection after useFakeTimers()", async () => {
+    const server = http.createServer({ keepAliveTimeout: 200, keepAliveTimeoutBuffer: 0 }, (req, res) => res.end("ok"));
+    const port = await listen(server);
+    const socket = net.connect(port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      socket.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+      await once(socket, "data");
+      jest.useFakeTimers();
+      await once(socket, "close");
+    } finally {
+      jest.useRealTimers();
+      socket.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
   // Timers fire in deadline order, so a slow machine can't reorder these. The check is due after the timeout's first
   // deadline and before the one the write moved it to.
   test.each(["server.timeout", "req.setTimeout()", "res.setTimeout()"])(
@@ -600,7 +619,7 @@ describe("node:http server timeout enforcement", () => {
         const [req, res] = await dispatched;
         await run(req, res, client);
         await closed;
-        return received.match(/HTTP\/1\.1 \d+|tick;|END/g);
+        return received;
       } finally {
         jest.useRealTimers();
         client.destroy();
@@ -615,7 +634,19 @@ describe("node:http server timeout enforcement", () => {
         emitter.once(event, () => resolve());
         client.once("close", () => resolve());
       });
+    const pieces = (received: string) => received.match(/HTTP\/1\.1 \d+|tick;|END/g);
+    // Whether the timer cuts the connection in the last of these milliseconds. The connection is gone afterwards either way.
+    function cutAfter(ms: number, socket: net.Socket) {
+      jest.advanceTimersByTime(ms - 1);
+      const early = socket.destroyed;
+      jest.advanceTimersByTime(1);
+      const onTime = socket.destroyed;
+      socket.destroy();
+      return { early, onTime };
+    }
+    const turnOfTheLoop = () => new Promise(resolve => setImmediate(resolve));
     const get = "GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n";
+    const getKeepAlive = "GET / HTTP/1.1\r\nHost: a\r\n\r\n";
 
     test.each([
       "server.timeout",
@@ -633,7 +664,7 @@ describe("node:http server timeout enforcement", () => {
         }
         res.end("END");
       });
-      expect(received).toEqual(["HTTP/1.1 200", "tick;", "tick;", "tick;", "tick;", "END"]);
+      expect(pieces(received)).toEqual(["HTTP/1.1 200", "tick;", "tick;", "tick;", "tick;", "END"]);
     });
 
     test("server.timeout doesn't cut a response that sends 102 Processing every 40 s", async () => {
@@ -645,7 +676,7 @@ describe("node:http server timeout enforcement", () => {
         }
         res.end("END");
       });
-      expect(received).toEqual([...Array(4).fill("HTTP/1.1 102"), "HTTP/1.1 200", "END"]);
+      expect(pieces(received)).toEqual([...Array(4).fill("HTTP/1.1 102"), "HTTP/1.1 200", "END"]);
     });
 
     test("server.timeout doesn't cut an upload that sends every 40 s", async () => {
@@ -662,12 +693,12 @@ describe("node:http server timeout enforcement", () => {
           await next(req, "data", client);
         }
       });
-      expect(received).toEqual(["HTTP/1.1 200", "END"]);
+      expect(pieces(received)).toEqual(["HTTP/1.1 200", "END"]);
     });
 
     test("a connection that leaves HTTP at its second request gets no 'timeout' from the keep-alive timer", async () => {
       let timeouts = 0;
-      const received = await exchange("", "GET / HTTP/1.1\r\nHost: a\r\n\r\n", async (req, res, client) => {
+      const received = await exchange("", getKeepAlive, async (req, res, client) => {
         const upgraded = once((req.socket as any).server, "upgrade");
         res.end("END");
         await next(client, "data", client);
@@ -677,17 +708,151 @@ describe("node:http server timeout enforcement", () => {
         jest.advanceTimersByTime(60_000);
         socket.end("HTTP/1.1 101 Switching Protocols\r\n\r\n");
       });
-      expect({ timeouts, received }).toEqual({ timeouts: 0, received: ["HTTP/1.1 200", "END", "HTTP/1.1 101"] });
+      expect({ timeouts, received: pieces(received) }).toEqual({
+        timeouts: 0,
+        received: ["HTTP/1.1 200", "END", "HTTP/1.1 101"],
+      });
     });
 
     test("server.timeout cuts a request that gets no answer, and not before the 60 s are over", async () => {
-      let openBefore: boolean | undefined;
-      const received = await exchange("server.timeout", get, async (req, res) => {
-        jest.advanceTimersByTime(59_999);
-        openBefore = !req.socket.destroyed;
-        jest.advanceTimersByTime(1);
+      let cut;
+      const received = await exchange("server.timeout", get, async req => {
+        cut = cutAfter(60_000, req.socket);
       });
-      expect({ openBefore, received }).toEqual({ openBefore: true, received: null });
+      expect({ cut, received }).toEqual({ cut: { early: false, onTime: true }, received: "" });
+    });
+
+    test("server.timeout cuts a response 60 s after its last write", async () => {
+      let cut;
+      const received = await exchange("server.timeout", get, async (req, res, client) => {
+        res.write("tick;");
+        await next(client, "data", client);
+        jest.advanceTimersByTime(30_000);
+        res.write("tick;");
+        await next(client, "data", client);
+        cut = cutAfter(60_000, req.socket);
+      });
+      expect({ cut, received: pieces(received) }).toEqual({
+        cut: { early: false, onTime: true },
+        received: ["HTTP/1.1 200", "tick;", "tick;"],
+      });
+    });
+
+    test("keepAliveTimeout closes an idle connection after its 5 s and the 1 s of keepAliveTimeoutBuffer", async () => {
+      let cut;
+      await exchange("", getKeepAlive, async (req, res, client) => {
+        res.end("END");
+        await next(client, "data", client);
+        cut = cutAfter(6_000, req.socket);
+      });
+      expect(cut).toEqual({ early: false, onTime: true });
+    });
+
+    test("keepAliveTimeout counts from the last response of the connection", async () => {
+      let cut;
+      await exchange("", getKeepAlive, async (req, res, client) => {
+        const again = once((req.socket as any).server, "request");
+        res.end("END");
+        await next(client, "data", client);
+        jest.advanceTimersByTime(3_000);
+        client.write(getKeepAlive);
+        (await again)[1].end("END");
+        await next(client, "data", client);
+        cut = cutAfter(6_000, req.socket);
+      });
+      expect(cut).toEqual({ early: false, onTime: true });
+    });
+
+    // Windows takes a first send of any size whole, so nothing is queued there.
+    describe.skipIf(isWindows)("and a write queue", () => {
+      // With these buffers the kernel takes a fraction of the body, and the rest waits in the server's write queue.
+      const big = Buffer.alloc(2 << 20, "x");
+      function sendBig(how: string, req: http.IncomingMessage, res: http.ServerResponse, client: net.Socket) {
+        client.pause();
+        setSocketOptions(client, 2, 65536);
+        setSocketOptions(req.socket, 1, 65536);
+        res.writeHead(200, { "Content-Length": big.length });
+        if (how === "res.end(big)") return void res.end(big);
+        res.write(big);
+        if (how === "res.write(big) and res.end()") res.end();
+      }
+
+      async function readALittleEvery60s(res: http.ServerResponse, client: net.Socket) {
+        for (let i = 0; i < 4; i++) {
+          const queued = res.writableLength;
+          client.resume();
+          while (queued > 0 && res.writableLength >= queued && !client.closed) await turnOfTheLoop();
+          client.pause();
+          jest.advanceTimersByTime(60_000);
+        }
+        client.resume();
+      }
+      const bodyLengths = (received: string) =>
+        received
+          .split(/HTTP\/1\.1 200 OK\r\n(?:.+\r\n)+\r\n/)
+          .slice(1)
+          .map(body => body.length);
+
+      test.each(["res.end(big)", "res.write(big) and res.end()"])(
+        "server.timeout doesn't cut %s while the peer reads a little every 60 s",
+        async how => {
+          const received = await exchange("server.timeout", get, async (req, res, client) => {
+            sendBig(how, req, res, client);
+            await readALittleEvery60s(res, client);
+          });
+          expect(bodyLengths(received)).toEqual([big.length]);
+        },
+      );
+
+      test("server.timeout doesn't cut the second big response of a connection either", async () => {
+        let second: http.ServerResponse | undefined;
+        const received = await exchange("server.timeout", getKeepAlive, async (req, res, client) => {
+          const server: http.Server = (req.socket as any).server;
+          sendBig("res.end(big)", req, res, client);
+          await readALittleEvery60s(res, client);
+          await next(res, "finish", client);
+          server.once("request", (req, res) => {
+            sendBig("res.end(big)", req, res, client);
+            second = res;
+          });
+          client.write(get);
+          await next(server, "request", client);
+          if (second) await readALittleEvery60s(second, client);
+        });
+        expect(bodyLengths(received)).toEqual([big.length, big.length]);
+      });
+
+      test("server.timeout cuts an idle connection 60 s after the last byte of a big response went out", async () => {
+        let cut;
+        await exchange("server.timeout", getKeepAlive, async (req, res, client) => {
+          (req.socket as any).server.keepAliveTimeout = 0;
+          sendBig("res.end(big)", req, res, client);
+          jest.advanceTimersByTime(90_000);
+          client.resume();
+          await next(res, "finish", client);
+          cut = cutAfter(60_000, req.socket);
+        });
+        expect(cut).toEqual({ early: false, onTime: true });
+      });
+
+      // An added chunk can push a few more bytes into the kernel's buffers, and each time that earns the peer another 60 s.
+      test.each([
+        ["res.end(big)", 2],
+        ["res.write(big), and more every 60 s", 9],
+      ] as const)("server.timeout cuts %s when the peer reads nothing", async (how, atMost) => {
+        let periods = 0;
+        await exchange("server.timeout", get, async (req, res, client) => {
+          sendBig(how, req, res, client);
+          while (!req.socket.destroyed && periods <= atMost) {
+            jest.advanceTimersByTime(60_000);
+            periods++;
+            if (how !== "res.end(big)") res.write("more");
+          }
+          req.socket.destroy();
+          client.resume();
+        });
+        expect(periods).toBeLessThanOrEqual(atMost);
+      });
     });
   });
 

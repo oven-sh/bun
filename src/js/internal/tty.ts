@@ -71,8 +71,12 @@ function warnOnDeactivatedColors(env) {
   }
 
   if (name !== "") {
-    process.emitWarning(`The '${name}' env is ignored due to the 'FORCE_COLOR' env being set.`, "Warning");
     warned = true;
+    // A log through a `Console` gets here, also in a program that has replaced `process`.
+    globalThis.process?.emitWarning?.(
+      `The '${name}' env is ignored due to the 'FORCE_COLOR' env being set.`,
+      "Warning",
+    );
   }
 }
 

@@ -21,7 +21,7 @@
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 
-use bun_core::strings;
+use bun_core::{UnwrapOrOom, strings};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, Strong, virtual_machine::VirtualMachine};
 use bun_lint_driver::js_plugin::{Demand, Engine, HEAVY, Serve, Vm, Work, program};
 use bun_threading::{Condition, Guarded};
@@ -421,8 +421,8 @@ impl Start {
         *self.memory.get_or_init(memory_for_engines)
     }
 
-    /// Creates a VM for this thread.
-    fn start_vm(&self) -> Result<(), Vec<u8>> {
+    /// Creates a VM for this thread. `variables` is what [`Engine::set_variables`] has.
+    fn start_vm(&self, variables: &[(&[u8], &[u8])]) -> Result<(), Vec<u8>> {
         let mut first = None;
         self.initialize.call_once(|| {
             // A no-op if a regular expression in a config has already started JSC (`bun_yarr`).
@@ -434,6 +434,11 @@ impl Start {
             // several threads at once. So the others wait here until it's up.
             first = Some(start_vm().and_then(|()| {
                 let vm = VirtualMachine::get();
+                // All VMs of the run share this env loader, and the others wait for this one: the only write.
+                let env = &mut vm.transpiler.env_mut().map;
+                for (name, value) in variables {
+                    env.put(name, value).unwrap_or_oom();
+                }
                 vm.run_with_api_lock(|| program_of(vm).map(|_| ()))
             }));
         });
@@ -687,6 +692,8 @@ enum Next {
 #[derive(Default)]
 struct Crew {
     start: Start,
+    /// [`Engine::set_variables`]
+    variables: std::sync::OnceLock<&'static [(&'static [u8], &'static [u8])]>,
     demand: Demand,
     state: Guarded<CrewState>,
     /// A copy of `CrewState::pending` that can be read without the lock.
@@ -814,7 +821,8 @@ impl Crew {
     fn run_member(crew: &Arc<Crew>, at: usize) -> ! {
         name_this_thread(at);
         bun_sema_driver::run_regions_inline_on_this_thread();
-        let failure = crew.start.start_vm().err();
+        let variables = crew.variables.get().copied().unwrap_or_default();
+        let failure = crew.start.start_vm(variables).err();
         {
             let mut state = crew.state.lock();
             state.all[at].thread = Some(std::thread::current().id());
@@ -1044,6 +1052,10 @@ impl Engine for Engines {
 
     fn expect(&self, _files: usize, size: u64, most: usize) {
         self.0.start.expect(&self.0.demand, size, most);
+    }
+
+    fn set_variables(&self, variables: &'static [(&'static [u8], &'static [u8])]) {
+        let _ = self.0.variables.set(variables);
     }
 }
 

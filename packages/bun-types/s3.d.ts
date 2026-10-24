@@ -475,12 +475,13 @@ declare module "bun" {
    *
    * Bun downloads the object only when you read it. A `FormData` body is
    * built at once, so a `FormData` body with an `S3File` entry throws a
-   * `TypeError`. Read the bytes first and append a `File`.
+   * `TypeError`. Read the bytes first and append a `File`. An empty slice
+   * (`file.slice(0, 0)`) has no bytes to download and stays an empty part.
    *
    * @example
    * ```ts
    * const formData = new FormData();
-   * formData.append("report", new File([await file.bytes()], file.name, { type: file.type }));
+   * formData.append("report", new File([await file.bytes()], "report.csv", { type: file.type }));
    * ```
    *
    * @category Cloud Storage

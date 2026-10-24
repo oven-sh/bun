@@ -607,10 +607,12 @@ A `FormData` body is the exception. Bun builds that body at once, and it downloa
 
 ```ts s3.ts icon="/icons/typescript.svg"
 const formData = new FormData();
-formData.append("report", new File([await s3file.bytes()], s3file.name, { type: s3file.type }));
+formData.append("file", new File([await s3file.bytes()], "123.json", { type: s3file.type }));
 
 await fetch("https://example.com/upload", { method: "POST", body: formData });
 ```
+
+An empty slice, such as `s3file.slice(0, 0)`, has no bytes to download. Bun sends that entry as an empty part.
 
 ### Partial reads with `slice`
 

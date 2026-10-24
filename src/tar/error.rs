@@ -52,6 +52,8 @@ pub enum Error {
     SparseMapTooLarge,
     #[error("Oversized AppleDouble extension")]
     OversizedMacMetadata,
+    #[error("Input requires too many filters for decoding")]
+    TooManyLayers,
     #[error("truncated gzip input")]
     TruncatedGzip,
     #[error("gzip decompression failed")]

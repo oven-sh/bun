@@ -3,11 +3,9 @@
 import { describe, expect, test } from "bun:test";
 import { isLinux, isMacOS, isPosix, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { observeExtract, observeFiles, observeTar, type Case } from "./observe";
+import { loadCases, observeExtract, observeFiles, observeTar, tarHeader, tarPadded, type Case } from "./observe";
 
-const all: Case[] = JSON.parse(
-  Buffer.from(Bun.gunzipSync(await Bun.file(join(import.meta.dir, "cases.json.gz")).bytes())).toString(),
-);
+const all = await loadCases<Case>(join(import.meta.dir, "cases.json.gz"));
 const cases = all
   .map((c, index) => ({ ...c, index, archive: Buffer.from(c.data, "base64") }))
   // Recorded on Linux. Names outside ASCII are decoded differently on Windows, and macOS file
@@ -37,6 +35,7 @@ describe("Bun.Archive reads archives the way it was recorded to", () => {
     expect(differences(results)).toBe("");
   });
 
+  // The recorded trees have permission bits, links and names that Windows does not.
   test.skipIf(!isPosix)("extract()", async () => {
     using dir = tempDir("archive-golden", {});
     const umask = process.umask(0o022);
@@ -55,29 +54,8 @@ describe("Bun.Archive reads archives the way it was recorded to", () => {
   });
 });
 
-function header(name: Buffer, size: number, type = "0") {
-  const h = Buffer.alloc(512);
-  name.copy(h, 0, 0, Math.min(100, name.length));
-  h.write("0000644\0", 100);
-  h.write("0000000\0", 108);
-  h.write("0000000\0", 116);
-  h.write(size.toString(8).padStart(11, "0") + "\0", 124);
-  h.write("00000000000\0", 136);
-  h.fill(" ", 148, 156);
-  h.write(type, 156);
-  h.write("ustar\0" + "00", 257);
-  h.write(
-    h
-      .reduce((a, b) => a + b, 0)
-      .toString(8)
-      .padStart(6, "0") + "\0 ",
-    148,
-  );
-  return h;
-}
-const padded = (body: Buffer) => Buffer.concat([body, Buffer.alloc((512 - (body.length % 512)) % 512)]);
 const file = (name: Buffer | string, body = "x") =>
-  Buffer.concat([header(Buffer.from(name), body.length), padded(Buffer.from(body))]);
+  Buffer.concat([tarHeader(name, body.length), tarPadded(Buffer.from(body))]);
 function record(key: string, value: Buffer) {
   const rest = Buffer.concat([Buffer.from(` ${key}=`), value, Buffer.from("\n")]);
   let length = rest.length + 1;
@@ -86,11 +64,11 @@ function record(key: string, value: Buffer) {
 }
 function pax(path: Buffer, before: Buffer[] = []) {
   const body = Buffer.concat([...before, record("path", path)]);
-  return Buffer.concat([header(Buffer.from("PaxHeader/x"), body.length, "x"), padded(body), file("short")]);
+  return Buffer.concat([tarHeader("PaxHeader/x", body.length, "x"), tarPadded(body), file("short")]);
 }
 function gnuLongName(path: Buffer) {
   const body = Buffer.concat([path, Buffer.from([0])]);
-  return Buffer.concat([header(Buffer.from("././@LongLink"), body.length, "L"), padded(body), file("short")]);
+  return Buffer.concat([tarHeader("././@LongLink", body.length, "L"), tarPadded(body), file("short")]);
 }
 const end = Buffer.alloc(1024);
 const units = (s: string) =>
@@ -212,5 +190,50 @@ describe("Bun.Archive writes archives the way it was recorded to", () => {
     expect((await write({ "d\\e": "x" })).split("\n")[1]).toBe(
       `type=0 name=${isWindows ? "642f65" : "645c65"} prefix= mode=000644  size=1 checksum=ok mtime=now`,
     );
+  });
+});
+
+// Measured with Bun 1.4.4.
+describe("gzip inside gzip", () => {
+  function gzip(data: Uint8Array, { name = 0, badCrc = false } = {}) {
+    const trailer = Buffer.alloc(8);
+    trailer.writeUInt32LE((Bun.hash.crc32(data) ^ Number(badCrc)) >>> 0, 0);
+    trailer.writeUInt32LE(data.length >>> 0, 4);
+    return Buffer.concat([
+      Buffer.from([0x1f, 0x8b, 8, name ? 8 : 0, 0, 0, 0, 0, 0, 255]),
+      name ? Buffer.alloc(name + 1, "n").fill(0, name) : Buffer.alloc(0),
+      Bun.deflateSync(data),
+      trailer,
+    ]);
+  }
+  const tar = Buffer.concat([file("a"), end]);
+  const incompressible = (length: number) => {
+    let state = 1;
+    return Buffer.from(Array.from({ length }, () => (state = (state * 48271) % 2147483647) & 0xff));
+  };
+
+  test("is unwrapped 24 times and no more", async () => {
+    let wrapped = tar;
+    for (let i = 0; i < 24; i++) wrapped = gzip(wrapped);
+    expect(await names(wrapped)).toEqual(["a"]);
+    await expect(names(gzip(wrapped))).rejects.toThrow("Input requires too many filters for decoding");
+  });
+
+  // Each leaves less than a tar header, or less than the inner gzip header, in the outer layer's first 64 KiB.
+  test.each([65225, 65485, 66000, 140000])("is recognized behind an inner header of %d bytes", async name => {
+    expect(await names(gzip(gzip(tar, { name })))).toEqual(["a"]);
+  });
+
+  test("an inner name has to end within 1 MiB", async () => {
+    expect(await names(gzip(gzip(tar, { name: 1048576 - 10 })))).toEqual(["a"]);
+    await expect(names(gzip(gzip(tar, { name: 1048576 - 9 })))).rejects.toThrow("Unrecognized archive format");
+    expect(await names(gzip(tar, { name: 1048576 + 100 }))).toEqual(["a"]);
+  });
+
+  test("the outer layer is read no further than the inner one needs", async () => {
+    const inner = Buffer.concat([gzip(tar), incompressible(200_000)]);
+    expect(await names(gzip(inner, { badCrc: true }))).toEqual(["a"]);
+    expect(await names(gzip(inner).subarray(0, 150_000))).toEqual(["a"]);
+    await expect(names(gzip(gzip(tar), { badCrc: true }))).rejects.toThrow("gzip trailer mismatch");
   });
 });

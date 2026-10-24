@@ -126,7 +126,7 @@ test.concurrent("the archive is not padded to a full tar record", async () => {
 
 // A package packed twice must give the same tarball, whichever version of bun packs it. What the
 // compressor makes of the archive depends on the CPU, so that part is compared decompressed.
-// The hashes are from Bun 1.4.4.
+// The hashes are from Bun 1.4.4. Not on Windows, where files have no permission bits to record.
 test.concurrent.skipIf(isWindows).each([
   [[], "1f8b08000000000002ff"],
   [["--gzip-level", "0"], "1f8b08000000000000ff"],

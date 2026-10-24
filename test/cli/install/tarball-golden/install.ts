@@ -1,10 +1,10 @@
 // Installs many tarballs at once with `bun install` and says what became of each.
 import { bunEnv, tempDir } from "harness";
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 import { once } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { tree } from "../../../js/bun/archive-golden/observe";
+import { tarHeader, tarPadded, tree } from "../../../js/bun/archive-golden/observe";
 
 export type Case = {
   /** What follows `package/package.json` in the tarball, base64. */
@@ -16,31 +16,11 @@ export type Case = {
   tree: string | null;
 };
 
-function header(name: string, size: number) {
-  const h = Buffer.alloc(512);
-  h.write(name, 0);
-  h.write("0000644\0", 100);
-  h.write("0000000\0", 108);
-  h.write("0000000\0", 116);
-  h.write(size.toString(8).padStart(11, "0") + "\0", 124);
-  h.write("00000000000\0", 136);
-  h.fill(" ", 148, 156);
-  h.write("0", 156);
-  h.write("ustar\0" + "00", 257);
-  h.write(
-    h
-      .reduce((a, b) => a + b, 0)
-      .toString(8)
-      .padStart(6, "0") + "\0 ",
-    148,
-  );
-  return h;
-}
-
 function tarball(name: string, rest: Buffer) {
   const json = Buffer.from(JSON.stringify({ name, version: "1.0.0" }));
-  const padding = Buffer.alloc((512 - (json.length % 512)) % 512);
-  return Buffer.from(Bun.gzipSync(Buffer.concat([header("package/package.json", json.length), json, padding, rest])));
+  return Buffer.from(
+    Bun.gzipSync(Buffer.concat([tarHeader("package/package.json", json.length), tarPadded(json), rest])),
+  );
 }
 
 /**
@@ -49,6 +29,24 @@ function tarball(name: string, rest: Buffer) {
  */
 export async function install(exe: string, cases: { id: number; data: string }[], streaming: boolean) {
   const tarballs = new Map(cases.map(c => [`/c${c.id}.tgz`, tarball(`c${c.id}`, Buffer.from(c.data, "base64"))]));
+  // A tarball is streamed only if its body arrives in more than one piece. The extractor makes its
+  // directory when it gets the first one, so the rest waits until that exists or bun has hung up.
+  let tmp = "";
+  const waiting = new Map<string, () => void>();
+  async function extractorStarted(name: string, res: ServerResponse) {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    res.once("close", resolve);
+    waiting.set(name, resolve);
+    if (waiting.size === 1) {
+      (async () => {
+        for (; waiting.size > 0; await Bun.sleep(1)) {
+          for (const dir of readdirSync(tmp)) waiting.get(dir.slice(dir.lastIndexOf(".") + 1))?.();
+        }
+      })();
+    }
+    await promise;
+    waiting.delete(name);
+  }
   const server = createServer((req, res) => {
     const body = tarballs.get(req.url!)!;
     res.writeHead(200, { "content-length": body.length, "content-type": "application/octet-stream" });
@@ -56,7 +54,11 @@ export async function install(exe: string, cases: { id: number; data: string }[]
     let at = 0;
     (function send() {
       if (at >= body.length) return void res.end();
-      res.write(body.subarray(at, (at += step)), () => setImmediate(send));
+      const first = at === 0;
+      res.write(body.subarray(at, (at += step)), async () => {
+        if (first && streaming) await extractorStarted(req.url!.slice(1, -".tgz".length), res);
+        send();
+      });
     })();
   }).listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -68,13 +70,16 @@ export async function install(exe: string, cases: { id: number; data: string }[]
       name: "root",
       dependencies: Object.fromEntries(cases.map(c => [`c${c.id}`, `http://127.0.0.1:${port}/c${c.id}.tgz`])),
     }),
+    "tmp/.keep": "",
   });
+  tmp = join(String(dir), "tmp");
   await using proc = Bun.spawn({
     cmd: [exe, "install", "--ignore-scripts"],
     cwd: String(dir),
     env: {
       ...bunEnv,
       BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+      BUN_TMPDIR: tmp,
       ...(streaming
         ? { BUN_INSTALL_STREAMING_MIN_SIZE: "0", BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: "1" }
         : { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }),

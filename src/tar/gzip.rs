@@ -20,36 +20,15 @@ fn fixed_header_flags(fixed: &[u8; 10]) -> Option<u8> {
     (fixed.starts_with(&[0x1f, 0x8b, 8]) && flags & flag::RESERVED == 0).then_some(flags)
 }
 
-/// Whether `data`, which is all there is, starts with a whole gzip header.
-pub fn starts_with_header(data: &[u8]) -> bool {
-    let Some((fixed, mut rest)) = data.split_first_chunk::<10>() else {
-        return false;
-    };
-    let Some(flags) = fixed_header_flags(fixed) else {
-        return false;
-    };
-    if flags & flag::EXTRA != 0 {
-        let Some((len, tail)) = rest.split_first_chunk::<2>() else {
-            return false;
-        };
-        // That the field itself is all there only matters if something is read behind it.
-        rest = tail
-            .get(usize::from(u16::from_le_bytes(*len))..)
-            .unwrap_or_default();
-        if rest.is_empty() && flags & (flag::NAME | flag::COMMENT | flag::HEADER_CRC) == 0 {
-            return true;
-        }
-    }
-    for text in [flag::NAME, flag::COMMENT] {
-        if flags & text != 0 {
-            let Some(end) = strings::index_of_char_usize(rest, 0) else {
-                return false;
-            };
-            rest = rest.get(end.saturating_add(1)..).unwrap_or_default();
-        }
-    }
-    flags & flag::HEADER_CRC == 0 || rest.len() >= 2
+/// Whether `data` starts like a gzip header. The optional fields are not looked at.
+pub(crate) fn starts_like_header(data: &[u8]) -> bool {
+    data.first_chunk::<10>()
+        .is_some_and(|fixed| fixed_header_flags(fixed).is_some())
 }
+
+/// A name or a comment has to end within this much of a header, unless the header is all in the
+/// piece of input that it starts in.
+const SPILLED_HEADER_LIMIT: usize = 1024 * 1024;
 
 /// In the order they appear in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -92,6 +71,10 @@ pub struct Decoder {
     flags: u8,
     small: [u8; 10],
     small_len: usize,
+    /// How much of the current header is behind us.
+    header_len: usize,
+    /// The current header started in an earlier piece of input.
+    header_spilled: bool,
     crc: u32,
     /// Modulo 2^32, like the field it is compared with.
     size: u32,
@@ -105,6 +88,8 @@ impl Decoder {
             flags: 0,
             small: [0; 10],
             small_len: 0,
+            header_len: 0,
+            header_spilled: false,
             crc: 0,
             size: 0,
         })
@@ -162,8 +147,15 @@ impl Decoder {
         loop {
             let rest = input.get(pos..).unwrap_or_default();
             let mut used = 0usize;
+            let in_header = !matches!(self.state, State::Body | State::Trailer);
             let step = self.step(rest, eof, out, limit, &mut used);
             pos = pos.saturating_add(used);
+            if in_header {
+                self.header_len = self.header_len.saturating_add(used);
+                if matches!(step, Ok(Some(Progress::NeedInput))) {
+                    self.header_spilled = self.header_len > 0;
+                }
+            }
             match step {
                 Ok(None) => {}
                 Ok(Some(progress)) => return Ok((pos, progress)),
@@ -232,8 +224,23 @@ impl Decoder {
                 Ok(None)
             }
             State::Name | State::Comment => {
-                let Some(end) = strings::index_of_char_usize(input, 0) else {
-                    *used = input.len();
+                let not_a_header = |this: &mut Self| {
+                    this.state = State::Done;
+                    Ok(Some(Progress::Done))
+                };
+                let looked_at = if self.header_spilled {
+                    let room = (SPILLED_HEADER_LIMIT + 1).saturating_sub(self.header_len);
+                    input.get(..room.min(input.len())).unwrap_or_default()
+                } else {
+                    input
+                };
+                let Some(end) = strings::index_of_char_usize(looked_at, 0) else {
+                    *used = looked_at.len();
+                    if looked_at.len() < input.len()
+                        || self.header_len.saturating_add(input.len()) > SPILLED_HEADER_LIMIT
+                    {
+                        return not_a_header(self);
+                    }
                     return Ok(starved(self));
                 };
                 *used = end.saturating_add(1);
@@ -296,6 +303,8 @@ impl Decoder {
                     return Err(Error::GzipTrailerMismatch);
                 }
                 self.state = State::Fixed;
+                self.header_len = 0;
+                self.header_spilled = false;
                 Ok(None)
             }
         }

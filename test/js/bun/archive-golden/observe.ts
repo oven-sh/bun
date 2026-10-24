@@ -11,6 +11,34 @@ export type Case = {
   extract: string;
 };
 
+export async function loadCases<T>(path: string): Promise<T[]> {
+  return JSON.parse(Buffer.from(Bun.gunzipSync(await Bun.file(path).bytes())).toString());
+}
+
+/** A ustar header with mode 644 and everything else zero. */
+export function tarHeader(name: Buffer | string, size: number, type = "0") {
+  const h = Buffer.alloc(512);
+  Buffer.from(name).copy(h, 0, 0, 100);
+  h.write("0000644\0", 100);
+  h.write("0000000\0", 108);
+  h.write("0000000\0", 116);
+  h.write(size.toString(8).padStart(11, "0") + "\0", 124);
+  h.write("00000000000\0", 136);
+  h.fill(" ", 148, 156);
+  h.write(type, 156);
+  h.write("ustar\0" + "00", 257);
+  h.write(
+    h
+      .reduce((a, b) => a + b, 0)
+      .toString(8)
+      .padStart(6, "0") + "\0 ",
+    148,
+  );
+  return h;
+}
+
+export const tarPadded = (body: Buffer) => Buffer.concat([body, Buffer.alloc((512 - (body.length % 512)) % 512)]);
+
 const crc = (bytes: Uint8Array) => Bun.hash.crc32(bytes).toString(16).padStart(8, "0");
 
 export async function observeFiles(archive: Uint8Array): Promise<string> {

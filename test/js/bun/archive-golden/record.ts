@@ -5,12 +5,10 @@
 // The results in the repository come from the last Bun that read archives with libarchive (1.4.4).
 import { tempDir } from "harness";
 import { join } from "node:path";
-import { observeExtract, observeFiles, type Case } from "./observe";
+import { loadCases, observeExtract, observeFiles, type Case } from "./observe";
 
 const fixture = join(import.meta.dir, "cases.json.gz");
-const cases: Case[] = process.argv[2]
-  ? await Bun.file(process.argv[2]).json()
-  : JSON.parse(Buffer.from(Bun.gunzipSync(await Bun.file(fixture).bytes())).toString());
+const cases: Case[] = process.argv[2] ? await Bun.file(process.argv[2]).json() : await loadCases<Case>(fixture);
 
 process.umask(0o022);
 using dir = tempDir("archive-golden", {});

@@ -6,8 +6,7 @@ use crate::reader::{Entry, Event, Options, Poll, Reader};
 use bun_alloc::AllocError;
 
 const BLOCK: usize = 64 * 1024;
-/// More wrappings than this are not looked for.
-const MAX_LAYERS: usize = 25;
+const MAX_LAYERS: usize = 24;
 
 struct Layer {
     gzip: gzip::Decoder,
@@ -64,65 +63,123 @@ impl Decoder {
         self.tar.skip_entry();
     }
 
-    /// Refills layer `index`, whose output has all been read. Returns how much of `input` was
-    /// consumed, and whether the layer now has output or has ended. Otherwise it needs input.
-    fn refill(&mut self, index: usize, input: &[u8], eof: bool) -> Result<(usize, bool)> {
+    /// Gives layer `index` its next block, in place of what it holds or, with `keep`, behind it.
+    /// A block is as full as the layers below can make it, and one that fails is dropped whole.
+    /// Returns how much of `input` was consumed, and `false` if there is no output for want of it.
+    fn refill(
+        &mut self,
+        index: usize,
+        input: &[u8],
+        eof: bool,
+        keep: bool,
+    ) -> Result<(usize, bool)> {
         let mut used_total = 0usize;
+        let Some(layer) = self.layers.get_mut(index) else {
+            return Ok((0, true));
+        };
+        if !keep {
+            layer.out.clear();
+            layer.pos = 0;
+        }
+        let start = layer.out.len();
         loop {
             let (below, rest) = self.layers.split_at_mut(index);
             let Some(layer) = rest.first_mut() else {
                 return Ok((used_total, true));
             };
-            layer.out.clear();
-            layer.pos = 0;
             let (source, source_eof) = match below.last() {
                 Some(lower) => (lower.unread(), lower.done),
                 None => (input.get(used_total..).unwrap_or_default(), eof),
             };
-            let (used, progress) = layer
-                .gzip
-                .decode(source, source_eof, &mut layer.out, BLOCK)?;
-            layer.done = progress == Progress::Done;
-            let ready = layer.done || !layer.out.is_empty();
+            let decoded = layer.gzip.decode(
+                source,
+                source_eof,
+                &mut layer.out,
+                start.saturating_add(BLOCK),
+            );
+            let (used, progress) = match decoded {
+                Ok(decoded) => decoded,
+                Err(error) => {
+                    layer.out.truncate(start);
+                    return Err(error);
+                }
+            };
             match below.last_mut() {
                 Some(lower) => lower.pos = lower.pos.saturating_add(used),
                 None => used_total = used_total.saturating_add(used),
             }
-            if ready {
-                return Ok((used_total, true));
+            match progress {
+                Progress::Done => {
+                    layer.done = true;
+                    return Ok((used_total, true));
+                }
+                Progress::OutputFull => return Ok((used_total, true)),
+                Progress::NeedInput => {}
             }
-            // The layer wants more than its source has.
-            if index == 0 {
-                return Ok((used_total, false));
-            }
-            let (used, ready) = self.refill(
-                index.saturating_sub(1),
-                input.get(used_total..).unwrap_or_default(),
-                eof,
-            )?;
-            used_total = used_total.saturating_add(used);
-            if !ready {
-                return Ok((used_total, false));
+            let has_output = layer.out.len() > start;
+            let Some(lower) = index.checked_sub(1) else {
+                return Ok((used_total, has_output));
+            };
+            let rest = input.get(used_total..).unwrap_or_default();
+            used_total = used_total.saturating_add(self.refill_source(lower, rest, eof, false)?);
+        }
+    }
+
+    /// [`Self::refill`] for a layer that another one reads. To its reader, a layer that fails has
+    /// ended: that is an error in the middle of a member, and nothing between two of them.
+    fn refill_source(
+        &mut self,
+        index: usize,
+        input: &[u8],
+        eof: bool,
+        keep: bool,
+    ) -> Result<usize> {
+        match self.refill(index, input, eof, keep) {
+            Ok((used, _)) => Ok(used),
+            Err(error @ Error::Alloc(_)) => Err(error),
+            Err(_) => {
+                if let Some(layer) = self.layers.get_mut(index) {
+                    layer.done = true;
+                }
+                Ok(0)
             }
         }
     }
 
-    /// Runs every layer to its end, so that each one gets to check all of its input. An inner
-    /// layer stops at whatever follows its last member, which leaves the ones around it unfinished.
-    /// Returns how much of `input` was consumed, and `false` if more is needed.
-    fn drain(&mut self, input: &[u8], eof: bool) -> Result<(usize, bool)> {
+    /// Reads the first header of layer `index`, which is new. If what is there is not one, nothing
+    /// of the layer's source counts as read. Returns how much of `input` was consumed.
+    fn read_first_header(&mut self, index: usize, input: &[u8]) -> Result<(usize, bool)> {
         let mut used_total = 0usize;
-        for index in (0..self.layers.len()).rev() {
-            while self.layers.get(index).is_some_and(|layer| !layer.done) {
-                let (used, ready) =
-                    self.refill(index, input.get(used_total..).unwrap_or_default(), eof)?;
-                used_total = used_total.saturating_add(used);
-                if !ready {
-                    return Ok((used_total, false));
+        let mut header_len = 0usize;
+        loop {
+            let (below, rest) = self.layers.split_at_mut(index);
+            let Some(layer) = rest.first_mut() else {
+                return Ok((used_total, false));
+            };
+            let (source, source_eof) = match below.last() {
+                Some(lower) => (lower.unread(), lower.done),
+                None => (input, true),
+            };
+            let source = source.get(header_len..).unwrap_or_default();
+            let (used, progress) = layer.gzip.decode(source, source_eof, &mut layer.out, 0)?;
+            header_len = header_len.saturating_add(used);
+            match progress {
+                Progress::Done => return Ok((used_total, false)),
+                Progress::OutputFull => {
+                    match below.last_mut() {
+                        Some(lower) => lower.pos = lower.pos.saturating_add(header_len),
+                        None => used_total = header_len,
+                    }
+                    return Ok((used_total, true));
                 }
+                Progress::NeedInput => {}
             }
+            let Some(lower) = index.checked_sub(1) else {
+                return Ok((used_total, false));
+            };
+            let rest = input.get(used_total..).unwrap_or_default();
+            used_total = used_total.saturating_add(self.refill_source(lower, rest, true, true)?);
         }
-        Ok((used_total, true))
     }
 
     /// Like [`Reader::next`], with `input` being what the outermost layer reads.
@@ -140,16 +197,6 @@ impl Decoder {
             layer.pos = layer.pos.saturating_add(used);
             match poll {
                 Poll::NeedInput => {}
-                Poll::EndOfArchive => {
-                    let (used, finished) =
-                        self.drain(input.get(used_total..).unwrap_or_default(), eof)?;
-                    used_total = used_total.saturating_add(used);
-                    break if finished {
-                        Poll::EndOfArchive
-                    } else {
-                        Poll::NeedInput
-                    };
-                }
                 Poll::Data { offset, start, len } => {
                     break Poll::Data {
                         offset,
@@ -160,7 +207,7 @@ impl Decoder {
                 other => break other,
             }
             let (used, ready) =
-                self.refill(top, input.get(used_total..).unwrap_or_default(), eof)?;
+                self.refill(top, input.get(used_total..).unwrap_or_default(), eof, false)?;
             used_total = used_total.saturating_add(used);
             if !ready {
                 break Poll::NeedInput;
@@ -200,21 +247,25 @@ impl<'a> MemoryDecoder<'a> {
             pos: 0,
             decoder: Decoder::new(options, false)?,
         };
-        while this.decoder.layers.len() < MAX_LAYERS {
-            let is_gzip = match this.decoder.layers.last() {
-                None => gzip::starts_with_header(data),
-                // One block is all that is looked at, which a header only outgrows with a name or
-                // a comment of that size.
-                Some(layer) => gzip::starts_with_header(layer.unread()),
-            };
-            if !is_gzip {
+        loop {
+            let rest = data.get(this.pos..).unwrap_or_default();
+            let layers = &mut this.decoder.layers;
+            if !gzip::starts_like_header(layers.last().map_or(rest, Layer::unread)) {
                 break;
             }
-            this.decoder.layers.push(Layer::new()?);
-            let top = this.decoder.layers.len().saturating_sub(1);
-            let (used, _) =
-                this.decoder
-                    .refill(top, data.get(this.pos..).unwrap_or_default(), true)?;
+            layers.push(Layer::new()?);
+            let top = layers.len().saturating_sub(1);
+            let (used, is_gzip) = this.decoder.read_first_header(top, rest)?;
+            this.pos = this.pos.saturating_add(used);
+            if !is_gzip {
+                this.decoder.layers.pop();
+                break;
+            }
+            if top >= MAX_LAYERS {
+                return Err(Error::TooManyLayers);
+            }
+            let rest = data.get(this.pos..).unwrap_or_default();
+            let (used, _) = this.decoder.refill(top, rest, true, false)?;
             this.pos = this.pos.saturating_add(used);
         }
         match this.decoder.layers.last_mut() {

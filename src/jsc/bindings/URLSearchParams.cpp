@@ -170,8 +170,7 @@ bool URLSearchParams::entriesEqual(const URLSearchParams& other) const
     if (sameNames == size)
         return true;
 
-    // The names are in another order. The two are then equal only if they hold the same entries
-    // and no name holds two different values.
+    // In another order, the two are equal only with the same entries and one value for each name.
     auto sorted = m_pairs;
     auto otherSorted = other.m_pairs;
     stableSortByName(sorted);

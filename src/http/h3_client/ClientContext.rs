@@ -16,6 +16,7 @@ use super::pending_connect::PendingConnect;
 use super::stream::Stream;
 use crate::HTTPClient;
 use crate::h3_client as H3;
+use crate::http_thread::WriteMessageType;
 
 use crate::h3_client::h3_client;
 
@@ -104,6 +105,7 @@ impl ClientContext {
     }
 
     /// Find or open a connection to `hostname:port` and queue `client` on it.
+    /// `false` leaves `client` on no session, for the caller to fail.
     pub(crate) fn connect(&mut self, client: &mut HTTPClient, hostname: &[u8], port: u16) -> bool {
         let reject = client.flags.reject_unauthorized;
         for &s in self.sessions.iter() {
@@ -175,6 +177,11 @@ impl ClientContext {
                     bstr::BStr::new(hostname),
                     port,
                 );
+                // `fail_session` fails what is queued, and that dispatch frees
+                // the `AsyncHTTP` the caller still holds. Queue nothing.
+                if let Some(stream) = client.h3 {
+                    session_mut(session).detach(stream.as_ptr());
+                }
                 self.unregister(session_mut(session));
                 PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
                 return false;
@@ -226,7 +233,7 @@ impl ClientContext {
         }
     }
 
-    pub(crate) fn stream_body_by_http_id(async_http_id: u32, ended: bool) {
+    pub(crate) fn stream_body_by_http_id(async_http_id: u32, message: WriteMessageType) {
         let Some(this) = Self::get() else {
             return;
         };
@@ -234,7 +241,7 @@ impl ClientContext {
         let ctx = bun_ptr::BackRef::from(this);
         for &s in ctx.sessions.iter() {
             // Registry only holds live sessions — `session_mut` upgrade.
-            if session_mut(s).stream_body_by_http_id(async_http_id, ended) {
+            if session_mut(s).stream_body_by_http_id(async_http_id, message) {
                 return;
             }
         }

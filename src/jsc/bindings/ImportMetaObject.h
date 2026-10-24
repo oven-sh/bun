@@ -16,6 +16,10 @@ extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSourceIfExists(JSC::JSGlobalO
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithStrings(JSC::JSGlobalObject* global, BunString* specifier, BunString* from, bool is_esm);
 extern "C" BunString Bun__importMetaResolveRealPath(JSC::JSGlobalObject* global, const BunString* path);
 
+namespace Bun {
+class JSModuleGraph;
+}
+
 namespace Zig {
 
 using namespace JSC;
@@ -79,8 +83,15 @@ public:
     LazyProperty<JSObject, JSString> fileProperty;
     LazyProperty<JSObject, JSString> pathProperty;
 
+    // The Bun.ModuleGraph the module belongs to: import.meta.main is whether it is the
+    // graph's first import, and import.meta.require requires into the graph. Null otherwise.
+    Bun::JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
+    void setModuleGraph(JSC::VM&, Bun::JSModuleGraph*);
+
 private:
     static ImportMetaObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url);
+
+    JSC::WriteBarrier<Bun::JSModuleGraph> m_moduleGraph;
 
     ImportMetaObject(JSC::VM& vm, JSC::Structure* structure, const WTF::String& url)
         : Base(vm, structure)

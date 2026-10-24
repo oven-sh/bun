@@ -1000,6 +1000,8 @@ pub fn install_with_manager(
         removes_collapsed_copies = summary.fail == 0
             && (workspace_filters.is_empty() || manager.filtered_link_targets.is_some())
             && (had_any_diffs
+                // `skipped > 0` means part of an earlier install is still on disk.
+                || (needs_new_lockfile && summary.skipped > 0)
                 || matches!(
                     manager.subcommand,
                     Subcommand::Dedupe | Subcommand::Audit | Subcommand::Update
@@ -1084,7 +1086,7 @@ pub fn install_with_manager(
     if removes_collapsed_copies && isolated {
         crate::prune::unlink_dropped_dependencies(manager, &lockfile_before_clean);
     } else if removes_collapsed_copies {
-        crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
+        crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean, needs_new_lockfile);
     }
     let runs_root_scripts =
         manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global;

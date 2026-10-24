@@ -155,6 +155,19 @@ async function spawnBun(cwd: string, ...cmd: string[]) {
   return { cmd, stdout, stderr, signalCode: proc.signalCode, exitCode };
 }
 
+/** Makes `dir` a git repository with one commit of everything in it, `node_modules` too. */
+async function commitAll(dir: string) {
+  for (const args of [
+    ["init", "-q"],
+    ["add", "--force", "."],
+    ["commit", "-q", "-m", "n"],
+  ]) {
+    const identity = ["-c", "user.name=n", "-c", "user.email=n@example.com"];
+    await using git = Bun.spawn({ cmd: ["git", ...identity, ...args], cwd: dir });
+    expect(await git.exited).toBe(0);
+  }
+}
+
 async function run(cwd: string, ...cmd: string[]) {
   const result = await spawnBun(cwd, ...cmd);
   expect(result).toMatchObject({
@@ -1996,17 +2009,7 @@ test.concurrent.each(["file: folder", "git repository", "github repository", "gi
 
     const n = githubFiles;
     using repository = tempDir("hoist-older-owner-repository", n);
-    if (kind === "git repository") {
-      for (const args of [
-        ["init", "-q"],
-        ["add", "."],
-        ["commit", "-q", "-m", "n"],
-      ]) {
-        const identity = ["-c", "user.name=n", "-c", "user.email=n@example.com"];
-        await using git = Bun.spawn({ cmd: ["git", ...identity, ...args], cwd: String(repository) });
-        expect(await git.exited).toBe(0);
-      }
-    }
+    if (kind === "git repository") await commitAll(String(repository));
     const files = (root: object) => ({
       "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
       "vendor/n/package.json": n["package.json"],
@@ -2169,7 +2172,7 @@ describe.concurrent("packages nested in a workspace's node_modules", () => {
   });
 });
 
-// An install removes a folder only if the bun.lock it started from placed a package there.
+// An install that starts from a bun.lock removes a folder only if that bun.lock placed a package there.
 describe.concurrent("a folder that no bun.lock placed is kept", () => {
   const bunfig = (server: { url: URL }) => `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`;
 
@@ -2189,6 +2192,8 @@ describe.concurrent("a folder that no bun.lock placed is kept", () => {
     [[["update"]]],
     [[["update"], ["install"]]],
     [[["dedupe"]]],
+    [[["rm bun.lock"], ["install"]]],
+    [[["rm bun.lock"], ["update"]]],
   ])("below a package, from its tarball or its script: bun %j", async commands => {
     const own = (from: string) => JSON.stringify({ name: "dep", version: "1.0.0", from });
     const dependencies = { dep: "^1.0.0" };
@@ -2233,7 +2238,8 @@ describe.concurrent("a folder that no bun.lock placed is kept", () => {
     ]);
 
     for (const command of commands) {
-      await run(dir, ...command);
+      if (command[0] === "rm bun.lock") rmSync(join(dir, "bun.lock"));
+      else await run(dir, ...command);
       expect(seen()).toEqual(first);
     }
   });
@@ -2335,6 +2341,375 @@ describe.concurrent("a folder that no bun.lock placed is kept", () => {
     await run(dir, "install");
     expect(layout(dir, "pk/w1")).toEqual(all);
     expect(existsSync(join(dir, "pk", "w1", "node_modules", ".cache", "d"))).toBeTrue();
+  });
+});
+
+// Nothing says what the earlier install placed. A folder that the new tree doesn't place is removed if it is in front of
+// a package that the tree places further up.
+describe.concurrent("an install without bun.lock over the node_modules of an earlier install", () => {
+  const json = (name: string, dependencies: object, more: object = {}) =>
+    JSON.stringify({ name, dependencies, ...more });
+  const hoisted = `linker = "hoisted"\n`;
+  const bunfig = (server: { url: URL }, linker = hoisted) => `[install]\nregistry = "${server.url}"\n${linker}`;
+
+  // h1 keeps its locked i0@2.0.0 when h0 puts i0@1.1.0 at the root. Resolved anew, both use i0@1.1.0, and l1 is 1.1.0.
+  // An i0@2.0.0 that stays below h1 needs l1@1.0.0.
+  const graph = {
+    l1: { "1.0.0": {}, "1.1.0": {} },
+    i0: { "1.1.0": { dependencies: { l1: "^1.0.0" } }, "2.0.0": { dependencies: { l1: "1.0.0" } } },
+    h0: { "1.1.0": { dependencies: { i0: "^1.0.0" } } },
+    h1: { "1.0.0": { dependencies: { i0: "*" } }, "2.0.0": {} },
+    top: { "1.0.0": { dependencies: { h1: "1.0.0" } } },
+    other: { "1.0.0": {} },
+  };
+  const nested = ["h0@1.1.0", "h1@1.0.0", "h1/i0@2.0.0", "i0@1.1.0", "l1@1.0.0"];
+  /** Leaves `nested` in the node_modules of `dir`, and no bun.lock. */
+  async function installNested(dir: string, root: (dependencies: object) => string) {
+    await write(join(dir, "package.json"), root({ h1: "1.0.0" }));
+    await run(dir, "install");
+    await write(join(dir, "package.json"), root({ h0: "1.1.0", h1: "1.0.0" }));
+    await run(dir, "install");
+    expect(layout(dir)).toEqual(nested);
+    rmSync(join(dir, "bun.lock"));
+  }
+
+  test.each([
+    ["install", hoisted],
+    ["install", ""],
+    ["update", hoisted],
+  ])("removes the copy below a package: bun %s, %j", async (command, linker) => {
+    using server = await serveGraph(graph);
+    using tmp = tempDir("hoist-no-lockfile", { "bunfig.toml": bunfig(server, linker) });
+    const dir = String(tmp);
+    await installNested(dir, dependencies => json("root", dependencies));
+
+    await run(dir, command);
+    expect(await lockfileTree(dir)).toEqual({ h0: "h0@1.1.0", h1: "h1@1.0.0", i0: "i0@1.1.0", l1: "l1@1.1.0" });
+    expect(layout(dir)).toEqual(["h0@1.1.0", "h1@1.0.0", "i0@1.1.0", "l1@1.1.0"]);
+    expect(await run(dir, "install")).toContain("(no changes)");
+  });
+
+  // hoist-lockfile-3 accepts the hoist-lockfile-shared@1.0.2 of hoist-lockfile-2, which is already at the root.
+  test("removes it when the run installs nothing, but not a folder that hides nothing", async () => {
+    const dir = await createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: { "package.json": json("root", { "hoist-lockfile-3": "1.0.0" }) },
+    });
+    await run(dir, "install");
+    await write(join(dir, "package.json"), json("root", { "hoist-lockfile-2": "1.0.0", "hoist-lockfile-3": "1.0.0" }));
+    await run(dir, "install");
+    const placed = ["hoist-lockfile-2@1.0.0", "hoist-lockfile-3@1.0.0", "hoist-lockfile-shared@1.0.2"];
+    expect(layout(dir)).toEqual([...placed.slice(0, 2), "hoist-lockfile-3/hoist-lockfile-shared@2.0.2", placed[2]]);
+    const byHand = join(dir, "node_modules", "hoist-lockfile-3", "node_modules", "by-hand", "package.json");
+    await write(byHand, JSON.stringify({ name: "by-hand", version: "0.0.0" }));
+
+    rmSync(join(dir, "bun.lock"));
+    await run(dir, "install");
+    expect(layout(dir)).toEqual([...placed.slice(0, 2), "hoist-lockfile-3/by-hand@0.0.0", placed[2]]);
+  });
+
+  // The h1@2.0.0 of the root keeps the h1@1.0.0 of `top`, or of the workspace, below its dependent.
+  test.each(["a package", "a workspace"])("removes the copy below a package in the node_modules of %s", async owner => {
+    const member = owner === "a workspace";
+    using server = await serveGraph(graph);
+    using tmp = tempDir("hoist-no-lockfile-deeper", {
+      "bunfig.toml": bunfig(server),
+      ...(member && { "pk/w/package.json": json("w", { h1: "1.0.0" }) }),
+    });
+    const dir = String(tmp);
+    const root = (more: object) =>
+      member
+        ? json("root", { h1: "2.0.0", ...more }, { workspaces: ["pk/*"] })
+        : json("root", { h1: "2.0.0", top: "1.0.0", ...more });
+    const placed = (l1: string) => [
+      ...["h0@1.1.0", "h1@2.0.0", "i0@1.1.0", `l1@${l1}`],
+      ...(member ? ["pk/w/h1@1.0.0"] : ["top@1.0.0", "top/h1@1.0.0"]),
+    ];
+    await write(join(dir, "package.json"), root({}));
+    await run(dir, "install");
+    await write(join(dir, "package.json"), root({ h0: "1.1.0" }));
+    await run(dir, "install");
+    expect(layout(dir, "pk/w")).toEqual([...placed("1.0.0"), `${member ? "pk/w" : "top"}/h1/i0@2.0.0`]);
+
+    rmSync(join(dir, "bun.lock"));
+    await run(dir, "install");
+    expect(layout(dir, "pk/w")).toEqual(placed("1.1.0"));
+  });
+
+  // two-range-deps accepts the @types/is-number@1.0.0 of the root.
+  test("removes the copy of a scoped package, and its scope", async () => {
+    const dir = await createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: { "package.json": json("root", { "two-range-deps": "1.0.0" }) },
+    });
+    const versions = () =>
+      [[], ["two-range-deps", "node_modules"]].map(above => {
+        const scope = join(dir, "node_modules", ...above, "@types");
+        return existsSync(scope)
+          ? readdirSync(scope).map(name => JSON.parse(readFileSync(join(scope, name, "package.json"), "utf8")).version)
+          : null;
+      });
+    await run(dir, "install");
+    await write(join(dir, "package.json"), json("root", { "@types/is-number": "1.0.0", "two-range-deps": "1.0.0" }));
+    await run(dir, "install");
+    expect(versions()).toEqual([["1.0.0"], ["2.0.0"]]);
+
+    rmSync(join(dir, "bun.lock"));
+    await run(dir, "install");
+    expect(versions()).toEqual([["1.0.0"], null]);
+  });
+
+  test("removes the copy in the node_modules of a workspace", async () => {
+    const dir = await createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": json("root", { "no-deps": "1.1.0" }, { workspaces: ["pk/*"] }),
+        "pk/w/package.json": json("w", { "no-deps": "1.0.0" }),
+      },
+    });
+    await run(dir, "install");
+    expect(layout(dir, "pk/w")).toEqual(["no-deps@1.1.0", "pk/w/no-deps@1.0.0"]);
+
+    await write(join(dir, "pk", "w", "package.json"), json("w", { "no-deps": "^1.0.0" }));
+    rmSync(join(dir, "bun.lock"));
+    await run(dir, "install");
+    expect(layout(dir, "pk/w")).toEqual(["no-deps@1.1.0"]);
+  });
+
+  test("keeps the copy that the new tree places", async () => {
+    using server = await serveGraph(graph);
+    using tmp = tempDir("hoist-no-lockfile-placed", {
+      "bunfig.toml": bunfig(server),
+      "package.json": json("root", { h0: "1.1.0", i0: "2.0.0" }),
+    });
+    const dir = String(tmp);
+    const placed = ["h0@1.1.0", "h0/i0@1.1.0", "i0@2.0.0", "l1@1.0.0"];
+    await run(dir, "install");
+    expect(layout(dir)).toEqual(placed);
+    rmSync(join(dir, "bun.lock"));
+    await run(dir, "install");
+    expect(layout(dir)).toEqual(placed);
+  });
+
+  // The a@1.1.0 that isn't installed would have an f below it, in the folder where a@2.0.0 has its e.
+  test("keeps the copy that the new tree places below a name with a version per dependency group", async () => {
+    using server = await serveGraph({
+      a: { "1.1.0": { dependencies: { f: "1.0.0" } }, "2.0.0": { dependencies: { e: "2.0.0" } } },
+      e: { "1.1.0": {}, "2.0.0": {} },
+      f: { "1.0.0": {}, "1.1.0": {} },
+      z: { "1.0.0": {} },
+    });
+    using tmp = tempDir("hoist-no-lockfile-contested", {
+      "bunfig.toml": bunfig(server),
+      "package.json": json("root", { z: "1.0.0" }),
+    });
+    const dir = String(tmp);
+    await run(dir, "install");
+    rmSync(join(dir, "bun.lock"));
+    const devDependencies = { a: "^2.0.0", f: "1.1.0" };
+    await write(join(dir, "package.json"), json("root", { a: "1.1.0", e: "^1.0.0", z: "1.0.0" }, { devDependencies }));
+    await run(dir, "install");
+    expect(layout(dir)).toEqual(["a@2.0.0", "a/e@2.0.0", "e@1.1.0", "f@1.1.0", "z@1.0.0"]);
+  });
+
+  // --production doesn't download `ships` again, so nothing says that its tarball has a `dep`.
+  test("keeps what is below a package that isn't in the cache", async () => {
+    const own = JSON.stringify({ name: "dep", version: "1.0.0", from: "the tarball" });
+    using server = await serveGraph(
+      { dep: { "1.0.0": {}, "1.0.5": {} }, ships: { "1.0.0": { dependencies: { dep: "^1.0.0" } } } },
+      { "ships-1.0.0": { "node_modules/dep/package.json": own } },
+    );
+    using tmp = tempDir("hoist-no-lockfile-not-cached", {
+      "bunfig.toml": bunfig(server),
+      "package.json": json("root", { dep: "1.0.5" }, { devDependencies: { ships: "1.0.0" } }),
+    });
+    const dir = String(tmp);
+    await run(dir, "install");
+    rmSync(join(dir, "bun.lock"));
+    rmSync(join(dir, ".bun-cache"), { recursive: true });
+    await run(dir, "install", "--production");
+    expect(await file(join(dir, "node_modules", "ships", "node_modules", "dep", "package.json")).text()).toBe(own);
+  });
+
+  // The root has other versions of q and r, so the tree places q@1.0.0 and r@3.0.0 below `owner`, and the r@1.0.0 of q
+  // below q. The x below that r is from neither of their tarballs. The registry lists neither the scripts of `owner` nor
+  // what it ships.
+  test.each([
+    "the tarball of a package",
+    "the tarball of a tarball dependency",
+    "the script of a trusted package",
+    "the script of a workspace",
+  ])("keeps what %s put further down", async from => {
+    const builds = from.startsWith("the script");
+    const member = from.endsWith("workspace");
+    const dependencies = { q: "1.0.0", r: "3.0.0" };
+    const r = "node_modules/q/node_modules/r";
+    const x = JSON.stringify({ name: "x", version: "1.0.0" });
+    const files: Record<string, string> = {
+      "package.json": json("owner", dependencies, {
+        version: "1.0.0",
+        ...(builds && { scripts: { postinstall: `${bunExe()} build.js` } }),
+      }),
+      ...(builds
+        ? {
+            "build.js": `require("fs").mkdirSync("${r}/node_modules/x", { recursive: true });
+              require("fs").writeFileSync("${r}/node_modules/x/package.json", ${JSON.stringify(x)});`,
+          }
+        : {
+            "node_modules/q/package.json": json("q", { r: "1.0.0" }, { version: "1.0.0" }),
+            [`${r}/package.json`]: JSON.stringify({ name: "r", version: "1.0.0" }),
+            [`${r}/node_modules/x/package.json`]: x,
+          }),
+    };
+    using server = await serveGraph(
+      {
+        q: { "1.0.0": { dependencies: { r: "1.0.0" } }, "2.0.0": {} },
+        r: { "1.0.0": {}, "2.0.0": {}, "3.0.0": {} },
+        x: { "1.0.0": {}, "2.0.0": {} },
+        owner: { "1.0.0": { dependencies } },
+      },
+      { "owner-1.0.0": files },
+    );
+    const owner = from.endsWith("tarball dependency") ? `${server.url}owner-1.0.0.tgz` : "1.0.0";
+    using tmp = tempDir("hoist-no-lockfile-further-down", {
+      "bunfig.toml": bunfig(server),
+      "package.json": json(
+        "root",
+        { q: "2.0.0", r: "2.0.0", x: "2.0.0", ...(!member && { owner }) },
+        member ? { workspaces: ["pk/*"] } : builds ? { trustedDependencies: ["owner"] } : {},
+      ),
+      ...(member && Object.fromEntries(Object.entries(files).map(([path, text]) => [`pk/owner/${path}`, text]))),
+    });
+    const dir = String(tmp);
+    const below = ["q@1.0.0", "q/r@1.0.0", "q/r/x@1.0.0", "r@3.0.0"];
+    const all = member
+      ? ["q@2.0.0", "r@2.0.0", "x@2.0.0", ...below.map(path => `pk/owner/${path}`)]
+      : ["owner@1.0.0", ...below.map(path => `owner/${path}`), "q@2.0.0", "r@2.0.0", "x@2.0.0"];
+    await run(dir, "install");
+    expect(layout(dir, "pk/owner")).toEqual(all);
+    rmSync(join(dir, "bun.lock"));
+    await run(dir, "install");
+    expect(layout(dir, "pk/owner")).toEqual(all);
+  });
+
+  test("keeps a link, and what a script made, in the node_modules of a workspace", async () => {
+    const own = JSON.stringify({ name: "no-deps", version: "0.0.0" });
+    const build = `require("fs").mkdirSync("node_modules/no-deps", { recursive: true });
+      require("fs").writeFileSync("node_modules/no-deps/package.json", ${JSON.stringify(own)});`;
+    const dir = await createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": json("root", { "no-deps": "1.1.0" }, { workspaces: ["pk/*"] }),
+        "pk/links/package.json": json("links", { "no-deps": "^1.0.0" }),
+        "pk/builds/package.json": json(
+          "builds",
+          { "no-deps": "^1.0.0" },
+          { scripts: { postinstall: `${bunExe()} build.js` } },
+        ),
+        "pk/builds/build.js": build,
+        "mine/package.json": own,
+      },
+    });
+    await run(dir, "install");
+    const link = join(dir, "pk", "links", "node_modules", "no-deps");
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(join(dir, "mine"), link, "junction");
+    expect(layout(dir, "pk/builds")).toEqual(["no-deps@1.1.0", "pk/builds/no-deps@0.0.0"]);
+
+    rmSync(join(dir, "bun.lock"));
+    await run(dir, "install");
+    expect(layout(dir, "pk/builds")).toEqual(["no-deps@1.1.0", "pk/builds/no-deps@0.0.0"]);
+    expect(realpathSync(link)).toBe(realpathSync(join(dir, "mine")));
+  });
+
+  // The root isn't one of the workspaces that the command selects.
+  test("keeps the copy in a node_modules that --filter leaves out", async () => {
+    using server = await serveGraph(graph);
+    using tmp = tempDir("hoist-no-lockfile-filter", {
+      "bunfig.toml": bunfig(server),
+      "pk/w/package.json": json("w", {}),
+    });
+    const dir = String(tmp);
+    await installNested(dir, dependencies => json("root", dependencies, { workspaces: ["pk/*"] }));
+
+    await run(dir, "add", "other", "--filter", "w");
+    expect(layout(dir)).toEqual([...nested, "other@1.0.0"]);
+  });
+
+  // --production leaves the a@1.0.0 of the earlier install where the tree has a@2.0.0. What is below it belongs to
+  // a@1.0.0: its p loads x@2.0.0 only as long as that is in front of a's own x@1.0.0.
+  test("keeps what is below a package that the run leaves at another version", async () => {
+    using server = await serveGraph({
+      x: { "1.0.0": {}, "2.0.0": {} },
+      p: { "1.0.0": { dependencies: { x: "2.0.0" } }, "2.0.0": {} },
+      a: { "1.0.0": { dependencies: { p: "1.0.0", x: "1.0.0" } }, "2.0.0": { dependencies: { p: "1.0.0" } } },
+    });
+    const root = (a: string) => json("root", { p: "2.0.0", x: "2.0.0" }, { devDependencies: { a } });
+    using tmp = tempDir("hoist-no-lockfile-stale-owner", {
+      "bunfig.toml": bunfig(server),
+      "package.json": root("2.0.0"),
+    });
+    const dir = String(tmp);
+    // Puts a@2.0.0 in the cache, which shows that its tarball has no node_modules.
+    await run(dir, "install");
+    await write(join(dir, "package.json"), root("1.0.0"));
+    await run(dir, "install");
+    const all = ["a@1.0.0", "a/p@1.0.0", "a/p/x@2.0.0", "a/x@1.0.0", "p@2.0.0", "x@2.0.0"];
+    expect(layout(dir)).toEqual(all);
+
+    await write(join(dir, "package.json"), root("2.0.0"));
+    rmSync(join(dir, "bun.lock"));
+    await run(dir, "install", "--production");
+    expect(layout(dir)).toEqual(all);
+  });
+
+  // `n` bundles b. Its repository also has an x below the q that the tree places under `n`. bun.lock only marks a
+  // bundled package that is a dependency too.
+  test.each([
+    ["is", { b: "^1.0.0" }],
+    ["isn't", {}],
+  ])("keeps the node_modules of a git repository that bundles what %s its dependency", async (_, bundled) => {
+    using server = await serveGraph({
+      b: { "1.0.0": {} },
+      q: { "1.0.0": {}, "2.0.0": {} },
+      x: { "1.0.0": {}, "2.0.0": {} },
+    });
+    using repository = tempDir("hoist-no-lockfile-repository", {
+      "package.json": json("n", { ...bundled, q: "1.0.0" }, { version: "1.0.0", bundledDependencies: ["b"] }),
+      "node_modules/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+      "node_modules/q/package.json": JSON.stringify({ name: "q", version: "1.0.0" }),
+      "node_modules/q/node_modules/x/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+    });
+    await commitAll(String(repository));
+    const n = `git+${pathToFileURL(String(repository))}`;
+    using tmp = tempDir("hoist-no-lockfile-bundled", {
+      "bunfig.toml": bunfig(server),
+      "package.json": json("root", { n, b: "1.0.0", q: "2.0.0", x: "2.0.0" }),
+    });
+    const dir = String(tmp);
+    await run(dir, "install");
+    const all = ["b@1.0.0", "n@1.0.0", "n/b@1.0.0", "n/q@1.0.0", "n/q/x@1.0.0", "q@2.0.0", "x@2.0.0"];
+    expect(layout(dir)).toEqual(all);
+    rmSync(join(dir, "bun.lock"));
+    await run(dir, "install");
+    expect(layout(dir)).toEqual(all);
+  });
+
+  test("keeps a link", async () => {
+    using server = await serveGraph(graph);
+    using tmp = tempDir("hoist-no-lockfile-link", {
+      "bunfig.toml": bunfig(server),
+      "package.json": json("root", { h0: "1.1.0" }),
+      "mine/package.json": JSON.stringify({ name: "i0", version: "0.0.0" }),
+    });
+    const dir = String(tmp);
+    await run(dir, "install");
+    const link = join(dir, "node_modules", "h0", "node_modules", "i0");
+    mkdirSync(dirname(link));
+    symlinkSync(join(dir, "mine"), link, "junction");
+    rmSync(join(dir, "bun.lock"));
+    await run(dir, "install");
+    expect(realpathSync(link)).toBe(realpathSync(join(dir, "mine")));
   });
 });
 

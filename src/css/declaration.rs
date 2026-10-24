@@ -191,10 +191,7 @@ impl DeclarationBlock<'static> {
     }
 }
 
-/// Makes the keyframes names in the `animation` and `animation-name`
-/// declarations of a finished list symbols of the CSS module. A name is final
-/// only here: the value parsers run speculatively, and a list that fails is
-/// dropped.
+/// Runs on a finished list: the value parsers are speculative, and a list that fails is dropped.
 #[cold]
 pub(crate) fn make_animation_names_local(
     declarations: &mut DeclarationList<'_>,

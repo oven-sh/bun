@@ -546,10 +546,8 @@ impl<'a> Printer<'a> {
         self.serialize_identifier(str_)
     }
 
-    /// Writes the name of a CSS module local symbol. The link step gives it in
-    /// `local_names`. `bun build --no-bundle` has no link step, so there the
-    /// printer hashes the original name.
     pub(crate) fn write_local_symbol(&mut self, ref_: bun_ast::Ref) -> PrintResult<()> {
+        // `bun build --no-bundle` has no link step, so the printer hashes the original name.
         if self.local_names.is_none() {
             let ref_ = self.symbols.follow(ref_);
             let Some(symbol) = self.symbols.get_const(ref_) else {

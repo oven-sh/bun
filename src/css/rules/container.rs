@@ -308,9 +308,7 @@ impl QueryCondition for ContainerCondition {
 }
 
 impl ContainerCondition {
-    /// Makes the keyframes names in the `style()` queries symbols of the CSS
-    /// module. Call it when the rule is accepted: the condition is parsed
-    /// speculatively.
+    /// Call it when the rule is accepted: the condition is parsed speculatively.
     #[cold]
     pub(crate) fn make_animation_names_local(&mut self, input: &mut css::Parser) {
         match self {

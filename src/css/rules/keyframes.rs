@@ -23,8 +23,7 @@ pub enum KeyframesName {
     Local(bun_ast::Ref),
 }
 
-/// `none` and the CSS-wide keywords are not a `<keyframes-name>` as an ident.
-/// A `<string>` that spells one of them has to keep its quotes.
+/// `none` or a CSS-wide keyword. As a `<string>`, such a name has to keep its quotes.
 pub(crate) fn is_reserved_keyframes_name(name: &[u8]) -> bool {
     bun_core::strings::eql_case_insensitive_ascii_check_length(name, b"none")
         || is_reserved_custom_ident(name)
@@ -45,8 +44,6 @@ impl KeyframesName {
         }
     }
 
-    /// Makes the name a symbol of the CSS module. A `<string>` that has to
-    /// keep its quotes stays global.
     pub(crate) fn make_local(&mut self, input: &mut css::Parser) {
         let name: &[u8] = match self {
             KeyframesName::Ident(ident) => ident.v(),

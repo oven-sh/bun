@@ -137,13 +137,13 @@ impl Animation {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // Extract the inner string slice up front so both the ident and
-        // string variants share one code path. The keyword checks below read
-        // the name as written, so a local name comes from its symbol.
+        // string variants share one code path.
         let name_str: Option<&[u8]> = match &self.name {
             AnimationName::None => None,
             AnimationName::Ident(ident) => Some(ident.v()),
             // SAFETY: arena-owned slice lives for the parse session.
             AnimationName::String(s) => Some(unsafe { crate::arena_str(*s) }),
+            // The keyword checks below read the name as written.
             AnimationName::Local { ref_, .. } => match dest.symbols.get_const(*ref_) {
                 Some(symbol) => Some(symbol.original_name.slice()),
                 None => return Err(dest.add_fmt_error()),
@@ -268,9 +268,7 @@ pub enum AnimationName {
     Ident(CustomIdent),
     /// A `<string>` name of a `@keyframes` rule.
     String(CSSString),
-    /// A name that is local to a CSS module: a symbol in `local_scope`.
-    /// `quoted` keeps a `<string>` apart from the same name as an ident, as
-    /// `eql` does for the two plain forms.
+    /// A symbol in `local_scope`. `quoted` keeps a `<string>` unequal to the ident of that name.
     Local { ref_: bun_ast::Ref, quoted: bool },
 }
 
@@ -370,8 +368,6 @@ impl AnimationName {
         }
     }
 
-    /// Makes the name a symbol of the CSS module. `none` and a `<string>`
-    /// that has to keep its quotes stay global.
     pub(crate) fn make_local(&mut self, input: &mut Parser) {
         let (name, quoted): (&[u8], bool) = match self {
             AnimationName::Ident(ident) => (ident.v(), false),
@@ -387,8 +383,6 @@ impl AnimationName {
     }
 }
 
-/// Makes the keyframes names of an `animation` or `animation-name`
-/// declaration symbols of the CSS module.
 pub(crate) fn make_names_local(property: &mut Property, input: &mut Parser) {
     match property {
         Property::Animation((animations, _)) => {

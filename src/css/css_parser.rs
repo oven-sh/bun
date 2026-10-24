@@ -3097,8 +3097,7 @@ impl<'a> Parser<'a> {
         entry.ref_.to_real_ref(source_index)
     }
 
-    /// Adds the symbol of a keyframes name. It is not a class, so `composes`
-    /// cannot take it.
+    /// The tag is empty: a keyframes name is not a class, so `composes` cannot take it.
     pub(crate) fn add_symbol_for_keyframes_name(&mut self, name: &[u8]) -> bun_ast::Ref {
         // A name with an escape is a copy in the arena, not a slice of the source.
         let start = match bun_alloc::range_of_slice_in_buffer(name, self.input.tokenizer.src) {

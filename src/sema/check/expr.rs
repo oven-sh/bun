@@ -628,7 +628,7 @@ impl<'p, 's> Checker<'p, 's> {
         let q = Query::Expr(file, e);
         // FOR SPEED, as in `enter`: search the stack only if a query on it shares this one's hash
         // bucket.
-        if self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize] == 0 {
+        if !self.may_be_in_flight(q) {
             return None;
         }
         let first = self.stack.iter().rposition(|&it| it == q)?;

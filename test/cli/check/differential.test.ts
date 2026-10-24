@@ -133,6 +133,62 @@ test.concurrent.skipIf(!tsc || !hasRunner)("reports the same whichever files sha
   expect(exitCode).toBe(0);
 });
 
+// tsc gets to a limit once. It stores the error type, and the files that use the type later find it.
+test.concurrent.skipIf(!tsc || !hasRunner)("gets to an instantiation limit once, not once per file", async () => {
+  const files: Record<string, string> = {
+    "tsconfig.json": tsconfig,
+    "lib.ts": `
+      export type Wrap<N extends number, T, A extends 1[] = []> = A["length"] extends N ? T : Wrap<N, { v: T }, [...A, 1]>;
+      export type Leaves<T> = T extends object ? { [K in keyof T]: Leaves<T[K]> }[keyof T] : T;
+    `,
+    "hub.ts": `
+      import type { Leaves, Wrap } from "./lib";
+      declare function deep<T>(t: T): Leaves<Wrap<60, T>>;
+      export const hub = { a: 1, z: deep(1) };
+    `,
+  };
+  for (let i = 0; i < 12; i++)
+    files[`use${i}.ts`] = `import { hub } from "./hub";\nexport const a${i}: string = hub.a;\n`;
+  // The runner checks a program in the first two ways, and in one of the other four by its position.
+  const copies = ["p0", "p1", "p2", "p3"];
+  using dir = tempDir(
+    "bun-check-limit",
+    Object.fromEntries(copies.flatMap(copy => Object.entries(files).map(([name, text]) => [`${copy}/${name}`, text]))),
+  );
+  const root = String(dir);
+  const cwd = join(root, "p0");
+  await using proc = spawn({
+    timeout: longLimit,
+    cmd: [
+      bunExe(),
+      "check",
+      "--run-typescript-tests",
+      "--task-groupings",
+      `--lib=${dirname(tsc!)}`,
+      `--root=${root}`,
+      ...copies,
+    ],
+    env,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [theirs, stdout, exitCode, ...ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false"], cwd, cwd),
+    proc.stdout.text(),
+    proc.exited,
+    ...[1, 2, 8].map(threads => linesOf([bunExe(), "check", `--threads=${threads}`], cwd, cwd)),
+  ]);
+  expect(theirs.filter(line => line.includes("TS5114"))).toHaveLength(1);
+  expect(theirs).toHaveLength(13);
+  for (const lines of ours) expect(lines).toEqual(theirs);
+  const lines = stdout.split(/\r?\n/).filter(line => line);
+  const counts = lines.splice(-6);
+  expect(lines).toEqual([]);
+  // In program order the first task that gets there is trusted, so none is discarded.
+  expect(counts.slice(0, 2)).toEqual(["by cost: 56 tasks, 56 files", "one task: 4 tasks, 56 files"]);
+  expect(exitCode).toBe(0);
+});
+
 /**
  * Each group contains a cycle. The property `span` has no annotation. The call in its initializer needs `K`'s
  * constraint, which needs the members of `Tags`. One of them has a name of type `string`, so they get an index

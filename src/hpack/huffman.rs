@@ -1,5 +1,7 @@
 //! The Huffman code for string literals (§5.2, Appendix B).
 
+use crate::{Error, Result};
+
 const EOS: usize = 256;
 
 /// `(code, length in bits)` of each byte, then of EOS.
@@ -195,12 +197,6 @@ const fn build_prefixes() -> [Prefix; 1 << PREFIX_BITS] {
     prefixes
 }
 
-pub(crate) enum DecodeError {
-    Invalid,
-    /// More than `max_len` bytes came out.
-    TooLong,
-}
-
 struct Decoder<'a> {
     /// The low `pending` bits are input that is not decoded yet.
     bits: u64,
@@ -213,7 +209,7 @@ struct Decoder<'a> {
 impl Decoder<'_> {
     /// `Ok(false)` if no whole symbol is pending. `whole_prefix`: the longest code (30 bits) fits.
     #[inline(always)]
-    fn step(&mut self, whole_prefix: bool) -> Result<bool, DecodeError> {
+    fn step(&mut self, whole_prefix: bool) -> Result<bool> {
         let next = if whole_prefix || self.pending >= PREFIX_BITS {
             self.bits >> (self.pending - PREFIX_BITS)
         } else {
@@ -222,7 +218,7 @@ impl Decoder<'_> {
             (self.bits << missing) | ((1 << missing) - 1)
         };
         let Some(&prefix) = PREFIXES.get(next as usize & (PREFIXES.len() - 1)) else {
-            return Err(DecodeError::Invalid);
+            return Err(Error::Invalid);
         };
         let [first, second] = prefix.bits.map(u32::from);
         if first == 0 {
@@ -237,7 +233,7 @@ impl Decoder<'_> {
         };
         self.out
             .get_mut(self.written..self.written + 2)
-            .ok_or(DecodeError::TooLong)?
+            .ok_or(Error::TooLarge)?
             .copy_from_slice(&prefix.symbols);
         self.written += count;
         self.pending -= used;
@@ -246,12 +242,11 @@ impl Decoder<'_> {
 
     /// A symbol whose code is longer than [`PREFIX_BITS`], the first of which lead to `node`.
     #[cold]
-    fn long_symbol(&mut self, node: u8) -> Result<bool, DecodeError> {
+    fn long_symbol(&mut self, node: u8) -> Result<bool> {
         let mut node = u16::from(node);
-        let mut left = self.pending.saturating_sub(PREFIX_BITS);
-        if self.pending < PREFIX_BITS {
+        let Some(mut left) = self.pending.checked_sub(PREFIX_BITS) else {
             return Ok(false);
-        }
+        };
         while left > 0 {
             left -= 1;
             let side = usize::from(self.bits >> left & 1 != 0);
@@ -259,11 +254,11 @@ impl Decoder<'_> {
                 .get(usize::from(node))
                 .and_then(|children| children.get(side))
                 .copied()
-                .ok_or(DecodeError::Invalid)?;
+                .ok_or(Error::Invalid)?;
             if node >= LEAF {
                 // EOS does not fit a `u8`. It is a decoding error to find it in the input.
-                let symbol = u8::try_from(node - LEAF).map_err(|_| DecodeError::Invalid)?;
-                *self.out.get_mut(self.written).ok_or(DecodeError::TooLong)? = symbol;
+                let symbol = u8::try_from(node - LEAF).map_err(|_| Error::Invalid)?;
+                *self.out.get_mut(self.written).ok_or(Error::TooLarge)? = symbol;
                 self.written += 1;
                 self.pending = left;
                 return Ok(true);
@@ -273,8 +268,8 @@ impl Decoder<'_> {
     }
 }
 
-/// Appends what `src` decodes to.
-pub(crate) fn decode(src: &[u8], out: &mut Vec<u8>, max_len: usize) -> Result<(), DecodeError> {
+/// Appends what `src` decodes to, at most `max_len` bytes.
+pub(crate) fn decode(src: &[u8], out: &mut Vec<u8>, max_len: usize) -> Result<()> {
     let start = out.len();
     // The shortest code has 5 bits.
     let most = (src.len().saturating_mul(8) / 5).min(max_len.saturating_add(1));
@@ -294,7 +289,7 @@ pub(crate) fn decode(src: &[u8], out: &mut Vec<u8>, max_len: usize) -> Result<()
         rest = tail;
         while decoder.pending > 32 {
             if !decoder.step(true)? {
-                return Err(DecodeError::Invalid);
+                return Err(Error::Invalid);
             }
         }
     }
@@ -305,17 +300,12 @@ pub(crate) fn decode(src: &[u8], out: &mut Vec<u8>, max_len: usize) -> Result<()
     while decoder.step(false)? {}
 
     // What is left is padding: under 8 bits, all ones (the start of EOS).
-    let Decoder {
-        bits,
-        pending,
-        written,
-        ..
-    } = decoder;
+    let (bits, pending, written) = (decoder.bits, decoder.pending, decoder.written);
     if pending > 7 || bits & ((1 << pending) - 1) != (1 << pending) - 1 {
-        return Err(DecodeError::Invalid);
+        return Err(Error::Invalid);
     }
     if written > max_len {
-        return Err(DecodeError::TooLong);
+        return Err(Error::TooLarge);
     }
     out.truncate(start + written);
     Ok(())

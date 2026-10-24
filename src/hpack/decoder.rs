@@ -1,34 +1,10 @@
-use core::ops::Range;
 use std::collections::VecDeque;
 
 use crate::storage::{Position, Storage};
 use crate::{
-    DEFAULT_TABLE_CAPACITY, ENTRY_OVERHEAD, Error, MAX_FIELD_LEN, Result, huffman, integer,
-    static_table,
+    DEFAULT_TABLE_CAPACITY, ENTRY_OVERHEAD, Error, Indexing, MAX_FIELD_LEN, Result, huffman,
+    integer, static_table,
 };
-
-/// A header block and how far it has been decoded.
-pub struct Block<'s> {
-    src: &'s [u8],
-    pos: usize,
-}
-
-impl<'s> Block<'s> {
-    /// `src` is the whole block, CONTINUATION frames included.
-    pub fn new(src: &'s [u8]) -> Self {
-        Self { src, pos: 0 }
-    }
-
-    /// Picks up a block again at an earlier [`Self::position`].
-    pub fn resume(src: &'s [u8], position: usize) -> Self {
-        Self { src, pos: position }
-    }
-
-    /// How many bytes of the block have been decoded.
-    pub fn position(&self) -> usize {
-        self.pos
-    }
-}
 
 pub struct Field<'a> {
     pub name: &'a [u8],
@@ -52,29 +28,6 @@ impl Entry {
     }
 }
 
-/// Where the bytes of a name or value are once the field is decoded.
-enum Bytes {
-    Static(&'static [u8]),
-    Source(Range<usize>),
-    Stored(Range<usize>),
-}
-
-impl Bytes {
-    fn len(&self) -> usize {
-        match self {
-            Bytes::Static(bytes) => bytes.len(),
-            Bytes::Source(range) | Bytes::Stored(range) => range.len(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Literal {
-    Indexed,
-    NotIndexed,
-    NeverIndexed,
-}
-
 pub struct Decoder {
     /// Oldest first.
     entries: VecDeque<Entry>,
@@ -84,12 +37,6 @@ pub struct Decoder {
     /// What `size` may reach. The peer picks it, up to `max_capacity`.
     capacity: u32,
     max_capacity: u32,
-}
-
-impl Default for Decoder {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl Decoder {
@@ -117,25 +64,24 @@ impl Decoder {
         self.size
     }
 
-    /// The next field of `block`, `None` at its end. An error is fatal to the connection (RFC 9113 §4.3).
-    pub fn next<'a, 's: 'a>(&'a mut self, block: &mut Block<'s>) -> Option<Result<Field<'a>>> {
-        if block.pos >= block.src.len() {
+    /// The field at `*pos`, 0 at first, of a whole header block. `None` at its end. An error is fatal to the connection.
+    pub fn next(&mut self, block: &[u8], pos: &mut usize) -> Option<Result<Field<'_>>> {
+        if *pos >= block.len() {
             return None;
         }
-        Some(self.decode_field(block))
+        Some(self.decode_field(block, pos))
     }
 
-    fn decode_field<'a, 's: 'a>(&'a mut self, block: &mut Block<'s>) -> Result<Field<'a>> {
+    fn decode_field(&mut self, src: &[u8], field_pos: &mut usize) -> Result<Field<'_>> {
         use Error::Invalid;
 
         self.storage.clear_scratch();
-        let src = block.src;
-        let mut pos = block.pos;
+        let mut pos = *field_pos;
         let mut first = *src.get(pos).ok_or(Invalid)?;
 
         while first & 0xe0 == 0x20 {
             // §4.2: only at the beginning of a block.
-            if block.pos != 0 {
+            if *field_pos != 0 {
                 return Err(Invalid);
             }
             let capacity = integer::decode(src, &mut pos, 5).ok_or(Invalid)?;
@@ -148,55 +94,46 @@ impl Decoder {
 
         if first & 0x80 != 0 {
             let index = integer::decode(src, &mut pos, 7).ok_or(Invalid)?;
-            block.pos = pos;
+            *field_pos = pos;
             return self.indexed_field(index);
         }
 
-        let (kind, prefix_bits) = match first {
-            0x40.. => (Literal::Indexed, 6),
-            0x10.. => (Literal::NeverIndexed, 4),
-            _ => (Literal::NotIndexed, 4),
+        let (indexing, prefix_bits) = match first {
+            0x40.. => (Indexing::Add, 6),
+            0x10.. => (Indexing::Never, 4),
+            _ => (Indexing::Skip, 4),
         };
         let index = integer::decode(src, &mut pos, prefix_bits).ok_or(Invalid)?;
 
-        // An entry's name and value are adjacent in `storage`, so both are copied there.
-        let keep = kind == Literal::Indexed;
+        // The name and then the value go to the scratch space, which is how an entry has them.
+        let start = self.storage.len();
         let mut static_index = 0;
-        let name = if index == 0 {
-            let name = self.string(src, &mut pos, MAX_FIELD_LEN, keep)?;
-            if name.len() == 0 {
+        if index == 0 {
+            self.string(src, &mut pos, MAX_FIELD_LEN)?;
+            if self.storage.len() == start {
                 return Err(Invalid);
             }
-            name
         } else if let Some((name, _)) = static_table::get(index) {
             static_index = index as u8;
-            if keep {
-                self.store(name)
-            } else {
-                Bytes::Static(name)
-            }
+            self.storage.bytes_mut().extend_from_slice(name);
         } else {
             let entry = self.entry(index).ok_or(Invalid)?;
             static_index = entry.static_index;
-            let range = self.storage.range(entry.position, entry.name_len);
-            if keep {
-                let start = self.storage.len();
-                self.storage.append_copy_of(range);
-                Bytes::Stored(start..self.storage.len())
-            } else {
-                Bytes::Stored(range)
-            }
-        };
+            let name = self.storage.range(entry.position, entry.name_len);
+            self.storage.append_copy_of(name);
+        }
+        let value_start = self.storage.len();
         let room = MAX_FIELD_LEN
-            .checked_sub(name.len())
+            .checked_sub(value_start - start)
             .ok_or(Error::TooLarge)?;
-        let value = self.string(src, &mut pos, room, keep)?;
+        self.string(src, &mut pos, room)?;
+        let end = self.storage.len();
 
-        if keep {
+        if indexing == Indexing::Add {
             let entry = Entry {
                 position: self.storage.keep_scratch(),
-                name_len: name.len(),
-                value_len: value.len(),
+                name_len: value_start - start,
+                value_len: end - value_start,
                 static_index,
             };
             self.size += entry.size();
@@ -205,11 +142,11 @@ impl Decoder {
             self.evict();
         }
 
-        block.pos = pos;
+        *field_pos = pos;
         Ok(Field {
-            name: self.bytes(src, name),
-            value: self.bytes(src, value),
-            never_index: kind == Literal::NeverIndexed,
+            name: self.storage.get(start..value_start),
+            value: self.storage.get(value_start..end),
+            never_index: indexing == Indexing::Never,
             static_index,
         })
     }
@@ -234,45 +171,21 @@ impl Decoder {
         })
     }
 
-    /// A string literal (§5.2) of at most `max_len` bytes.
-    fn string(&mut self, src: &[u8], pos: &mut usize, max_len: usize, keep: bool) -> Result<Bytes> {
+    /// Appends a string literal (§5.2) of at most `max_len` bytes to the scratch space.
+    fn string(&mut self, src: &[u8], pos: &mut usize, max_len: usize) -> Result<()> {
         let huffman = *src.get(*pos).ok_or(Error::Invalid)? & 0x80 != 0;
         let len = integer::decode(src, pos, 7).ok_or(Error::Invalid)? as usize;
-        let range = *pos..pos.checked_add(len).ok_or(Error::Invalid)?;
-        let encoded = src.get(range.clone()).ok_or(Error::Invalid)?;
-        *pos = range.end;
+        let end = pos.checked_add(len).ok_or(Error::Invalid)?;
+        let encoded = src.get(*pos..end).ok_or(Error::Invalid)?;
+        *pos = end;
         if huffman {
-            let start = self.storage.len();
-            huffman::decode(encoded, self.storage.bytes_mut(), max_len).map_err(
-                |error| match error {
-                    huffman::DecodeError::Invalid => Error::Invalid,
-                    huffman::DecodeError::TooLong => Error::TooLarge,
-                },
-            )?;
-            return Ok(Bytes::Stored(start..self.storage.len()));
+            return huffman::decode(encoded, self.storage.bytes_mut(), max_len);
         }
         if len > max_len {
             return Err(Error::TooLarge);
         }
-        Ok(if keep {
-            self.store(encoded)
-        } else {
-            Bytes::Source(range)
-        })
-    }
-
-    fn store(&mut self, bytes: &[u8]) -> Bytes {
-        let start = self.storage.len();
-        self.storage.bytes_mut().extend_from_slice(bytes);
-        Bytes::Stored(start..self.storage.len())
-    }
-
-    fn bytes<'a>(&'a self, src: &'a [u8], bytes: Bytes) -> &'a [u8] {
-        match bytes {
-            Bytes::Static(bytes) => bytes,
-            Bytes::Source(range) => src.get(range).unwrap_or_default(),
-            Bytes::Stored(range) => self.storage.get(range),
-        }
+        self.storage.bytes_mut().extend_from_slice(encoded);
+        Ok(())
     }
 
     /// `index` is past the static table. The newest entry comes first (§2.3.3).

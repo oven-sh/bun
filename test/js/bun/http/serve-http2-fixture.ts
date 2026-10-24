@@ -173,8 +173,8 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
       );
     }
     case "/big-headers": {
-      const n = Number(url.searchParams.get("kb") ?? "12");
-      return new Response("x", { headers: { "x-pad": Buffer.alloc(n * 1024, "p").toString() } });
+      const n = Number(url.searchParams.get("bytes") ?? Number(url.searchParams.get("kb") ?? "12") * 1024);
+      return new Response("x", { headers: { "x-pad": Buffer.alloc(n, "p").toString() } });
     }
     case "/small":
       return Response.json({ ok: true });

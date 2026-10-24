@@ -10,6 +10,7 @@ use crate::h2_frame_parser as wire;
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
 use bun_core::strings;
+use bun_hpack::Indexing;
 use bun_picohttp as picohttp;
 
 pub(crate) fn write_preface(session: &mut ClientSession) {
@@ -119,9 +120,21 @@ pub(crate) fn write_request(
         }
     }
 
-    encode_header(session, &mut encoded, b":method", request.method, false)?;
-    encode_header(session, &mut encoded, b":scheme", b"https", false)?;
-    encode_header(session, &mut encoded, b":authority", authority, false)?;
+    encode_header(
+        session,
+        &mut encoded,
+        b":method",
+        request.method,
+        Indexing::Add,
+    )?;
+    encode_header(session, &mut encoded, b":scheme", b"https", Indexing::Add)?;
+    encode_header(
+        session,
+        &mut encoded,
+        b":authority",
+        authority,
+        Indexing::Add,
+    )?;
     encode_header(
         session,
         &mut encoded,
@@ -131,7 +144,7 @@ pub(crate) fn write_request(
         } else {
             b"/"
         },
-        false,
+        Indexing::Add,
     )?;
 
     for h in request.headers {
@@ -147,7 +160,7 @@ pub(crate) fn write_request(
             heap = vec![0u8; h.name().len()];
             strings::copy_lowercase_if_needed(h.name(), &mut heap)
         };
-        let mut never_index = false;
+        let mut indexing = Indexing::Add;
         if let Some(kind) = classify_request_header(name) {
             match kind {
                 RequestHeader::Drop | RequestHeader::Host => continue,
@@ -164,11 +177,11 @@ pub(crate) fn write_request(
                         continue;
                     }
                 }
-                RequestHeader::Sensitive => never_index = true,
+                RequestHeader::Sensitive => indexing = Indexing::Never,
                 RequestHeader::Expect => {}
             }
         }
-        encode_header(session, &mut encoded, name, h.value(), never_index)?;
+        encode_header(session, &mut encoded, name, h.value(), indexing)?;
     }
 
     // request_body points into original_request_body.bytes (lives in client.state).
@@ -398,13 +411,8 @@ fn encode_header(
     encoded: &mut Vec<u8>,
     name: &[u8],
     value: &[u8],
-    never_index: bool,
+    indexing: Indexing,
 ) -> crate::Result<()> {
-    let indexing = if never_index {
-        bun_hpack::Indexing::Never
-    } else {
-        bun_hpack::Indexing::Add
-    };
     session
         .hpack_encoder
         .encode(encoded, name, value, indexing)

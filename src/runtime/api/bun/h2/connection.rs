@@ -1241,7 +1241,7 @@ impl Connection {
             sink.on_push_promise(parent.get(), target);
         }
         let block = std::mem::take(&mut self.header_block);
-        let mut fields = bun_hpack::Block::new(&block);
+        let mut block_pos = 0;
         let mut fatal = false;
         // RFC 9113 §10.5.1: enforce SETTINGS_MAX_HEADER_LIST_SIZE (uncompressed size: name + value
         // + 32 per field). The whole block is still decoded so the HPACK table stays in sync; the
@@ -1274,7 +1274,7 @@ impl Connection {
         let mut asterisk_form = false;
         let mut informational = false;
         let mut content_length: Option<u64> = None;
-        while let Some(field) = self.hpack_decoder.next(&mut fields) {
+        while let Some(field) = self.hpack_decoder.next(&block, &mut block_pos) {
             match field {
                 Ok(h) => {
                     list_size += h.name.len() + h.value.len() + 32;
@@ -2023,15 +2023,9 @@ impl Connection {
         encoder: &mut bun_hpack::Encoder,
         name: &[u8],
         value: &[u8],
-        never_index: bool,
     ) -> bool {
-        let indexing = if never_index {
-            bun_hpack::Indexing::Never
-        } else {
-            bun_hpack::Indexing::Add
-        };
         encoder
-            .encode(&mut self.enc_buf, name, value, indexing)
+            .encode(&mut self.enc_buf, name, value, bun_hpack::Indexing::Add)
             .is_ok()
     }
 
@@ -2296,7 +2290,7 @@ mod tests {
 
     /// Encode a header block with a standalone coder (mirrors a real peer's encoder).
     fn encode_block(pairs: &[(&[u8], &[u8])]) -> Vec<u8> {
-        let mut encoder = bun_hpack::Encoder::new(false);
+        let mut encoder = bun_hpack::Encoder::new();
         let mut buf = Vec::new();
         for (name, value) in pairs {
             encoder
@@ -2450,12 +2444,12 @@ mod tests {
         // Client engine encodes + emits a HEADERS frame...
         let csink = CaptureSink::default();
         let mut client = Connection::new(false, Settings::default());
-        let mut encoder = bun_hpack::Encoder::new(false);
+        let mut encoder = bun_hpack::Encoder::new();
         client.begin_header_block();
-        assert!(client.encode_header(&mut encoder, b":method", b"GET", false));
-        assert!(client.encode_header(&mut encoder, b":scheme", b"http", false));
-        assert!(client.encode_header(&mut encoder, b":path", b"/x", false));
-        assert!(client.encode_header(&mut encoder, b":authority", b"localhost", false));
+        assert!(client.encode_header(&mut encoder, b":method", b"GET"));
+        assert!(client.encode_header(&mut encoder, b":scheme", b"http"));
+        assert!(client.encode_header(&mut encoder, b":path", b"/x"));
+        assert!(client.encode_header(&mut encoder, b":authority", b"localhost"));
         client.send_header_block(&csink, 1, true);
         let wire_bytes = csink.out.borrow().clone();
         assert_eq!(
@@ -2492,12 +2486,12 @@ mod tests {
         // Server stages the promised request headers and emits PUSH_PROMISE on parent stream 1.
         let ssink = CaptureSink::default();
         let mut server = Connection::new(true, Settings::default());
-        let mut encoder = bun_hpack::Encoder::new(false);
+        let mut encoder = bun_hpack::Encoder::new();
         server.begin_header_block();
-        assert!(server.encode_header(&mut encoder, b":method", b"GET", false));
-        assert!(server.encode_header(&mut encoder, b":scheme", b"http", false));
-        assert!(server.encode_header(&mut encoder, b":path", b"/pushed", false));
-        assert!(server.encode_header(&mut encoder, b":authority", b"localhost", false));
+        assert!(server.encode_header(&mut encoder, b":method", b"GET"));
+        assert!(server.encode_header(&mut encoder, b":scheme", b"http"));
+        assert!(server.encode_header(&mut encoder, b":path", b"/pushed"));
+        assert!(server.encode_header(&mut encoder, b":authority", b"localhost"));
         server.send_push_promise(&ssink, 1, 2);
         let bytes = ssink.out.borrow().clone();
         assert_eq!(
@@ -2548,9 +2542,9 @@ mod tests {
         let sink = CaptureSink::default();
         let mut c = Connection::new(false, Settings::default());
         // Open a stream (send side) with a tiny peer window.
-        let mut encoder = bun_hpack::Encoder::new(false);
+        let mut encoder = bun_hpack::Encoder::new();
         c.begin_header_block();
-        assert!(c.encode_header(&mut encoder, b":method", b"POST", false));
+        assert!(c.encode_header(&mut encoder, b":method", b"POST"));
         c.send_header_block(&sink, 1, false);
         sink.out.borrow_mut().clear();
         if let Some(s) = c.streams.get_mut(&1) {

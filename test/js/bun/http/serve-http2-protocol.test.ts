@@ -1089,6 +1089,29 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     await raw.body(3);
     raw.close();
   });
+  test.each([
+    // With "x-pad", 65536 bytes. "p" is 101011, so four of them are ae ba eb. Three and the padding follow.
+    {
+      bytes: 65531,
+      huffman: true,
+      sent: Buffer.concat([Buffer.alloc(49146, "aebaeb", "hex"), Buffer.from("aebaff", "hex")]),
+    },
+    { bytes: 65532, huffman: false, sent: Buffer.alloc(65532, "p") },
+  ])("a response header value of $bytes bytes is sent with huffman: $huffman", async ({ bytes, huffman, sent }) => {
+    const raw = await RawH2.connect(fx.port, secure, { settings: setting(5, (1 << 24) - 1) });
+    try {
+      await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
+      raw.headers(1, baseHeaders(`/big-headers?bytes=${bytes}`));
+      const { payload } = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+      const [pad, ...others] = hpackFields(payload).filter(f => f.value && f.value.bytes.length > 1024);
+      expect(others).toEqual([]);
+      expect(pad.value!.huffman).toBe(huffman);
+      expect(pad.value!.bytes.equals(sent)).toBe(true);
+      await raw.body(1);
+    } finally {
+      raw.close();
+    }
+  });
 
   test("HPACK request encodings: indexed, incremental, never-indexed, huffman, size updates are all accepted", async () => {
     const raw = await RawH2.connect(fx.port, secure);

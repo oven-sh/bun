@@ -7421,7 +7421,7 @@ impl H2FrameParser {
             write_buffer_offset: Cell::new(0),
             outbound_queue_size: Cell::new(0),
             streams: JsCell::new(BunHashMap::default()),
-            hpack_encoder: JsCell::new(None),
+            hpack_encoder: JsCell::new(Some(bun_hpack::Encoder::new())),
             inflate_table_size: Cell::new(0),
             has_nonnative_backpressure: Cell::new(false),
             js_socket_flushing: Cell::new(false),
@@ -7622,9 +7622,6 @@ impl H2FrameParser {
             unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
         }
 
-        this_ref
-            .hpack_encoder
-            .set(Some(bun_hpack::Encoder::new(false)));
         if is_server {
             let _ = this_ref.set_settings(this_ref.local_settings.get());
         } else {

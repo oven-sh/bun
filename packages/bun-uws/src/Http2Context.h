@@ -107,7 +107,7 @@ static constexpr uint32_t LOCAL_MAX_CONCURRENT_STREAMS = 256;
 /* Same cap as the HTTP/1 parser (UWS_HTTP_MAX_HEADERS_COUNT). */
 static constexpr size_t MAX_HEADER_FIELDS = 200;
 static constexpr unsigned MAX_SETTINGS_PER_FRAME = 32;
-/* What a decoded field counts towards the header list limits beside its name and value. */
+/* What a decoded field counts towards the header list limits beside its name and value: the ": " and CRLF of HTTP/1. */
 static constexpr size_t DECODED_FIELD_OVERHEAD = 4;
 /* A header block may span this many CONTINUATION frames (the byte cap alone
  * doesn't bound a flood of empty ones). */
@@ -1072,7 +1072,7 @@ inline void Http2Connection::writeHeaderBlock(Http2Response *stream, bool endStr
     wroteStreamBytes = true;
     Http2ResponseData *d = &stream->data;
     const char *base = d->hdrBuf.span().data();
-    for (auto &h : d->hdrs) Bun__Hpack__encode(hpack, base + h.nameOff, h.nameLen, base + h.valueOff, h.valueLen, true);
+    for (auto &h : d->hdrs) Bun__Hpack__encode(hpack, base + h.nameOff, h.nameLen, base + h.valueOff, h.valueLen, /* addToTable */ true);
     d->hdrBuf.shrink(0);
     d->hdrs.shrink(0);
 
@@ -1097,7 +1097,7 @@ inline void Http2Connection::writeHeaderBlock(Http2Response *stream, bool endStr
 inline void Http2Connection::writeInformational(Http2Response *stream, std::string_view status) {
     char code[3] = {'1', '0', '0'};
     memcpy(code, status.data(), std::min<size_t>(status.size(), 3));
-    Bun__Hpack__encode(hpack, ":status", 7, code, 3, false);
+    Bun__Hpack__encode(hpack, ":status", 7, code, 3, /* addToTable */ false);
     size_t length = 0;
     const char *block = Bun__Hpack__block(hpack, &length);
     writeFrame(http2::HEADERS, http2::END_HEADERS, stream->id, block, (uint32_t) length);
@@ -1512,9 +1512,9 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     list.clear();
     size_t used = 0, decoded = 0, fields = 0, position = 0;
     while (position < length) {
-        BunHpackField x = {};
-        if (int error = Bun__Hpack__decode(hpack, block, length, &position, &x)) return connectionError((http2::ErrorCode) error);
-        size_t size = (size_t) x.nameLength + x.valueLength + http2::DECODED_FIELD_OVERHEAD;
+        BunHpackField field = {};
+        if (int error = Bun__Hpack__decode(hpack, block, length, &position, &field)) return connectionError((http2::ErrorCode) error);
+        size_t size = (size_t) field.nameLength + field.valueLength + http2::DECODED_FIELD_OVERHEAD;
         decoded += size;
         fields++;
         /* Past the 431 thresholds we keep decoding only to keep HPACK state in
@@ -1523,11 +1523,11 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
         if (list.size() > http2::MAX_HEADER_FIELDS) continue;
         /* used + size <= decoded <= hardCap */
         if (buf.size() - used < size) buf.resize(std::min(hardCap, std::max(buf.size() * 2, used + size)));
-        memcpy(buf.data() + used, x.name, x.nameLength);
-        memcpy(buf.data() + used + x.nameLength, x.value, x.valueLength);
+        memcpy(buf.data() + used, field.name, field.nameLength);
+        memcpy(buf.data() + used + field.nameLength, field.value, field.valueLength);
         /* Offsets for now; buf may still grow. */
-        list.push_back({(const char *) (uintptr_t) used, x.nameLength,
-                        (const char *) (uintptr_t) (used + x.nameLength), x.valueLength, x.staticIndex});
+        list.push_back({(const char *) (uintptr_t) used, field.nameLength,
+                        (const char *) (uintptr_t) (used + field.nameLength), field.valueLength, field.staticIndex});
         used += size;
     }
     for (us_quic_header_t &h : list) {

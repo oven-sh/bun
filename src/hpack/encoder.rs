@@ -28,7 +28,6 @@ struct Entry {
     /// The next entry in the same bucket's `by_field` and `by_name` chains.
     next_by_field: Option<Id>,
     next_by_name: Option<Id>,
-    in_by_name: bool,
 }
 
 impl Entry {
@@ -50,63 +49,47 @@ struct Chain {
 #[derive(Clone, Copy, Default)]
 struct Bucket {
     by_field: Chain,
-    /// Without the entries whose name is in the static table: that one is found first.
     by_name: Chain,
 }
 
-/// The hashes of the fields sent last. Once full, only a field found here enters the table.
+/// The hashes of the `len` fields sent last. Once full, only a field found here enters the table.
 struct History {
     hashes: Vec<u32>,
-    /// Where the next hash goes.
-    next: usize,
-    full: bool,
+    len: usize,
+    /// Where the oldest hash is.
+    oldest: usize,
 }
 
 impl History {
-    /// A third of the entries the table has room for if they are all empty.
-    fn len_for(capacity: u32) -> usize {
-        capacity as usize / ENTRY_OVERHEAD / 3
+    fn new(capacity: u32) -> Self {
+        let mut history = Self {
+            hashes: Vec::new(),
+            len: 0,
+            oldest: 0,
+        };
+        history.resize(capacity);
+        history
     }
 
-    fn new(len: usize) -> Self {
-        Self {
-            hashes: vec![0; len],
-            next: 0,
-            full: false,
-        }
+    fn resize(&mut self, capacity: u32) {
+        // A third of the entries the table has room for if they are all empty.
+        self.len = capacity as usize / ENTRY_OVERHEAD / 3;
+        self.hashes.rotate_left(self.oldest);
+        self.oldest = 0;
+        self.hashes
+            .drain(..self.hashes.len().saturating_sub(self.len));
     }
 
-    /// Whether `hash` was there already.
+    /// Takes note of a field. Returns whether it may enter the table.
     fn add(&mut self, hash: u32) -> bool {
-        let used = if self.full {
-            self.hashes.as_slice()
-        } else {
-            self.hashes.get(..self.next).unwrap_or_default()
-        };
-        let seen = used.contains(&hash);
-        if let Some(slot) = self.hashes.get_mut(self.next) {
-            *slot = hash;
+        let seen = self.hashes.contains(&hash);
+        if self.hashes.len() < self.len {
+            self.hashes.push(hash);
+        } else if let Some(oldest) = self.hashes.get_mut(self.oldest) {
+            *oldest = hash;
+            self.oldest = (self.oldest + 1) % self.hashes.len();
         }
-        self.next = (self.next + 1) % self.hashes.len().max(1);
-        self.full |= self.next == 0;
-        seen
-    }
-
-    fn resized(&self, len: usize) -> Self {
-        let old_len = self.hashes.len().max(1);
-        let (first, count) = if self.full {
-            ((self.next + 1) % old_len, old_len)
-        } else {
-            (0, self.next)
-        };
-        let mut resized = Self::new(len);
-        let kept = count.min(len);
-        for (i, slot) in resized.hashes.iter_mut().take(kept).enumerate() {
-            *slot = self.hashes.get((first + i) % old_len).copied().unwrap_or(0);
-        }
-        resized.next = kept % len.max(1);
-        resized.full = kept == len;
-        resized
+        seen || self.hashes.len() < self.len || self.len == 0
     }
 }
 
@@ -123,14 +106,11 @@ pub struct Encoder {
     capacity: u32,
     /// The capacity changed since the last field. Holds the lowest it has been since.
     unannounced_capacity: Option<u32>,
-    use_history: bool,
-    /// `None` also while the capacity is too low for one.
     history: Option<History>,
 }
 
 impl Encoder {
-    /// With `use_history`, one-off fields stay out of the dynamic table. See [`History`].
-    pub fn new(use_history: bool) -> Self {
+    pub fn new() -> Self {
         Self {
             entries: VecDeque::new(),
             storage: Storage::default(),
@@ -139,8 +119,15 @@ impl Encoder {
             size: 0,
             capacity: DEFAULT_TABLE_CAPACITY,
             unannounced_capacity: None,
-            use_history,
-            history: use_history.then(|| History::new(History::len_for(DEFAULT_TABLE_CAPACITY))),
+            history: None,
+        }
+    }
+
+    /// One-off fields stay out of the dynamic table. See [`History`].
+    pub fn with_history() -> Self {
+        Self {
+            history: Some(History::new(DEFAULT_TABLE_CAPACITY)),
+            ..Self::new()
         }
     }
 
@@ -159,9 +146,10 @@ impl Encoder {
             Some(lowest) => lowest.min(capacity),
         };
         self.unannounced_capacity = Some(lowest);
-        self.apply_capacity(lowest);
-        if capacity != lowest {
-            self.apply_capacity(capacity);
+        self.capacity = capacity;
+        self.evict();
+        if let Some(history) = &mut self.history {
+            history.resize(capacity);
         }
     }
 
@@ -172,21 +160,6 @@ impl Encoder {
         self.evict();
         self.capacity = capacity;
         self.unannounced_capacity = Some(0);
-    }
-
-    fn apply_capacity(&mut self, capacity: u32) {
-        self.capacity = capacity;
-        self.evict();
-        if !self.use_history {
-            return;
-        }
-        let len = History::len_for(capacity);
-        self.history = match self.history.take() {
-            _ if len == 0 => None,
-            None => Some(History::new(len)),
-            Some(history) if history.hashes.len() == len => Some(history),
-            Some(history) => Some(history.resized(len)),
-        };
     }
 
     /// §4.2: the decoder has to hear of the low point too, since that is what evicted entries.
@@ -205,7 +178,7 @@ impl Encoder {
         out: &mut Vec<u8>,
         name: &[u8],
         value: &[u8],
-        indexing: Indexing,
+        mut indexing: Indexing,
     ) -> Result<()> {
         let len = name.len().saturating_add(value.len());
         if len > MAX_FIELD_LEN {
@@ -223,14 +196,13 @@ impl Encoder {
             static_table::find(name, value, field_hash)
                 .or_else(|| self.find(name, value, field_hash))
         };
-        let mut indexing = indexing;
         // Adding it would only empty the table (§4.4).
         if indexing == Indexing::Add && len + ENTRY_OVERHEAD > self.capacity as usize {
             indexing = Indexing::Skip;
         }
         if let Some(history) = &mut self.history {
-            let seen = history.add(field_hash);
-            if !seen && history.full && indexing == Indexing::Add {
+            let admitted = history.add(field_hash);
+            if !admitted && indexing == Indexing::Add {
                 indexing = Indexing::Skip;
             }
         }
@@ -244,8 +216,7 @@ impl Encoder {
             Indexing::Skip => (0x00, 4),
             Indexing::Never => (0x10, 4),
         };
-        let static_name = static_table::find_name(name, name_hash);
-        match static_name.or_else(|| self.find_name(name, name_hash)) {
+        match static_table::find_name(name, name_hash).or_else(|| self.find_name(name, name_hash)) {
             Some(index) => integer::encode(out, flags, prefix_bits, index),
             None => {
                 out.push(flags);
@@ -255,7 +226,7 @@ impl Encoder {
         string(out, value);
 
         if indexing == Indexing::Add {
-            self.add(name, value, name_hash, field_hash, static_name.is_none());
+            self.add(name, value, name_hash, field_hash);
         }
         Ok(())
     }
@@ -327,14 +298,7 @@ impl Encoder {
         None
     }
 
-    fn add(
-        &mut self,
-        name: &[u8],
-        value: &[u8],
-        name_hash: u32,
-        field_hash: u32,
-        find_by_name: bool,
-    ) {
+    fn add(&mut self, name: &[u8], value: &[u8], name_hash: u32, field_hash: u32) {
         if self.entries.len() >= self.buckets.len() / 2 {
             self.grow_buckets();
         }
@@ -349,16 +313,13 @@ impl Encoder {
             field_hash,
             next_by_field: None,
             next_by_name: None,
-            in_by_name: find_by_name,
         };
         self.size += entry.size();
         self.entries.push_back(entry);
         let id = self.next_id;
         self.next_id = id.wrapping_add(1);
         self.link(id, field_hash, false);
-        if find_by_name {
-            self.link(id, name_hash, true);
-        }
+        self.link(id, name_hash, true);
         self.evict();
     }
 
@@ -399,19 +360,15 @@ impl Encoder {
             };
             entry.next_by_field = None;
             entry.next_by_name = None;
-            let (field_hash, name_hash, in_by_name) =
-                (entry.field_hash, entry.name_hash, entry.in_by_name);
+            let (field_hash, name_hash) = (entry.field_hash, entry.name_hash);
             let id = oldest.wrapping_add(i as u32);
             self.link(id, field_hash, false);
-            if in_by_name {
-                self.link(id, name_hash, true);
-            }
+            self.link(id, name_hash, true);
         }
     }
 
     fn evict(&mut self) {
         while self.size > self.capacity as usize {
-            let id = self.next_id.wrapping_sub(self.entries.len() as u32);
             let Some(entry) = self.entries.pop_front() else {
                 return;
             };
@@ -422,21 +379,19 @@ impl Encoder {
                 self.bucket_of(entry.name_hash),
             );
             if let Some(bucket) = self.buckets.get_mut(field_bucket) {
-                unlink_first(&mut bucket.by_field, id, entry.next_by_field);
+                unlink_first(&mut bucket.by_field, entry.next_by_field);
             }
             if let Some(bucket) = self.buckets.get_mut(name_bucket) {
-                unlink_first(&mut bucket.by_name, id, entry.next_by_name);
+                unlink_first(&mut bucket.by_name, entry.next_by_name);
             }
         }
     }
 }
 
-fn unlink_first(chain: &mut Chain, id: Id, next: Option<Id>) {
-    if chain.first == Some(id) {
-        chain.first = next;
-        if next.is_none() {
-            chain.last = None;
-        }
+fn unlink_first(chain: &mut Chain, next: Option<Id>) {
+    chain.first = next;
+    if next.is_none() {
+        chain.last = None;
     }
 }
 

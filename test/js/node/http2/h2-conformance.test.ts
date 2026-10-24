@@ -4,8 +4,8 @@
 // assert spec-mandated behavior at the wire level — the cases Node's own suite under-covers.
 // Item numbers reference docs/http2-rewrite/03-spec-conformance-checklist.md.
 //
-// Connection-level cases only here (no HPACK required): preface, SETTINGS handshake/ack, PING,
-// WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
+// Connection-level cases (preface, SETTINGS handshake/ack, PING, WINDOW_UPDATE, frame-size and
+// stream-id rules), HEADERS cases and HPACK (RFC 7541).
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, normalizeBunSnapshot, tls as tlsCert } from "harness";
@@ -411,14 +411,14 @@ describe("CONTINUATION (checklist §3,§7)", () => {
   });
 });
 
-describe("SETTINGS value ranges (checklist §6.5.2)", () => {
-  function settingsPayload(id: number, value: number): Buffer {
-    const b = Buffer.alloc(6);
-    b.writeUInt16BE(id, 0);
-    b.writeUInt32BE(value >>> 0, 2);
-    return b;
-  }
+function settingsPayload(id: number, value: number): Buffer {
+  const b = Buffer.alloc(6);
+  b.writeUInt16BE(id, 0);
+  b.writeUInt32BE(value >>> 0, 2);
+  return b;
+}
 
+describe("SETTINGS value ranges (checklist §6.5.2)", () => {
   test("ENABLE_PUSH with a value other than 0/1 is a PROTOCOL_ERROR", async () => {
     const c = await RawH2.connect(port);
     c.sendPreface();
@@ -2790,12 +2790,6 @@ describe("DATA on a closed stream (RFC 9113 §5.1)", () => {
 });
 
 describe("HPACK (RFC 7541)", () => {
-  const setting = (id: number, value: number) => {
-    const b = Buffer.alloc(6);
-    b.writeUInt16BE(id, 0);
-    b.writeUInt32BE(value, 2);
-    return b;
-  };
   const HEADER_TABLE_SIZE = 0x1;
   const isSettingsAck = (f: Frame) => f.type === FrameType.SETTINGS && (f.flags & 0x1) !== 0;
   const isSettings = (f: Frame) => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0;
@@ -2809,7 +2803,7 @@ describe("HPACK (RFC 7541)", () => {
     const seen: http2.IncomingHttpHeaders[] = [];
     srv.on("stream", (stream, headers) => {
       seen.push(headers);
-      stream.respond({ ":status": 200, "x-reply": "same every time" });
+      stream.respond({ ":status": 200, "x-reply": "same every time" }, { sendDate: false });
       stream.end();
     });
     srv.on("sessionError", () => {});
@@ -2819,18 +2813,18 @@ describe("HPACK (RFC 7541)", () => {
   }
 
   function get(client: http2.ClientHttp2Session, headers: http2.OutgoingHttpHeaders) {
-    return new Promise<http2.IncomingHttpHeaders>((resolve, reject) => {
-      const req = client.request(headers);
-      let response: http2.IncomingHttpHeaders;
-      req.on("response", h => (response = h));
-      req.on("error", reject);
-      req.on("close", () => resolve(response));
-      req.resume();
-      req.end();
-    });
+    const { promise, resolve, reject } = Promise.withResolvers<http2.IncomingHttpHeaders>();
+    const req = client.request(headers);
+    let response: http2.IncomingHttpHeaders | undefined;
+    req.on("response", h => (response = h));
+    req.on("error", reject);
+    req.on("close", () => (response ? resolve(response) : reject(new Error("closed without a response"))));
+    req.resume();
+    req.end();
+    return promise;
   }
 
-  for (const [name, tail] of [
+  test.each([
     ["a literal that ends after its name", Buffer.concat([Buffer.from([0x00]), hpackLiteral("x-a")])],
     ["a literal that ends after its name index", Buffer.from([0x0f, 0x2b])], // user-agent
     ["a table size update between two fields", Buffer.concat([Buffer.from([0x21]), literal("x-a", "1")])],
@@ -2843,28 +2837,26 @@ describe("HPACK (RFC 7541)", () => {
         Buffer.from([0x89, 0x64, 0x2e, 0x09, 0x97, 0xd9, 0x65, 0xa7, 0x43, 0xff]),
       ]),
     ],
-  ] as const) {
-    test(`${name} is a COMPRESSION_ERROR`, async () => {
-      const c = await RawH2.connect(port);
-      try {
-        c.sendPreface();
-        c.sendEmptySettings();
-        c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET", tail));
-        const answer = await c.waitFor(headersOrGoaway(1));
-        expect(answer.type).toBe(FrameType.GOAWAY);
-        expect(goawayErrorCode(answer)).toBe(ErrorCode.COMPRESSION_ERROR);
-      } finally {
-        c.destroy();
-      }
-    });
-  }
+  ] as const)("%s is a COMPRESSION_ERROR", async (_, tail) => {
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET", tail));
+      const answer = await c.waitFor(headersOrGoaway(1));
+      expect(answer.type).toBe(FrameType.GOAWAY);
+      expect(goawayErrorCode(answer)).toBe(ErrorCode.COMPRESSION_ERROR);
+    } finally {
+      c.destroy();
+    }
+  });
 
   test("a server's encoder follows the client's SETTINGS_HEADER_TABLE_SIZE", async () => {
     const { srv, port } = await listen();
     const c = await RawH2.connect(port);
     try {
       c.sendPreface();
-      c.sendFrame(FrameType.SETTINGS, 0, 0, setting(HEADER_TABLE_SIZE, 0));
+      c.sendFrame(FrameType.SETTINGS, 0, 0, settingsPayload(HEADER_TABLE_SIZE, 0));
       await c.waitFor(isSettingsAck);
       c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
       const first = await c.waitFor(headersOrGoaway(1));
@@ -2889,7 +2881,7 @@ describe("HPACK (RFC 7541)", () => {
         FrameType.SETTINGS,
         0,
         0,
-        Buffer.concat([setting(HEADER_TABLE_SIZE, 0), setting(HEADER_TABLE_SIZE, 4096)]),
+        Buffer.concat([settingsPayload(HEADER_TABLE_SIZE, 0), settingsPayload(HEADER_TABLE_SIZE, 4096)]),
       );
       await c.waitFor(isSettingsAck);
       c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
@@ -2907,7 +2899,7 @@ describe("HPACK (RFC 7541)", () => {
     client.on("error", () => {});
     try {
       await raw.waitFor(isSettings);
-      raw.sendFrame(FrameType.SETTINGS, 0, 0, setting(HEADER_TABLE_SIZE, 0));
+      raw.sendFrame(FrameType.SETTINGS, 0, 0, settingsPayload(HEADER_TABLE_SIZE, 0));
       raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
       await once(client, "remoteSettings");
       for (const id of [1, 3]) {
@@ -2979,7 +2971,7 @@ describe("HPACK (RFC 7541)", () => {
       c.sendPreface();
       c.sendEmptySettings();
       c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
-      await c.waitFor(f => isSettings(f) && f.payload.includes(setting(HEADER_TABLE_SIZE, 8192)));
+      await c.waitFor(f => isSettings(f) && f.payload.includes(settingsPayload(HEADER_TABLE_SIZE, 8192)));
       for (const _ of c.frames.filter(isSettings)) c.sendSettingsAck();
       const update = Buffer.from([0x3f, 0xe1, 0x3f]); // to 8192
       c.sendFrame(FrameType.HEADERS, 0x5, 3, Buffer.concat([update, requestHeaderBlock("GET")]));
@@ -3190,7 +3182,7 @@ describe("HPACK (RFC 7541)", () => {
     }
   });
 
-  test("the encoder's bytes stay what they were", async () => {
+  test("encoded request blocks", async () => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
     client.on("error", () => {});
@@ -3232,7 +3224,7 @@ describe("HPACK (RFC 7541)", () => {
           ":method": ["GET", "POST", "PUT"][next(3)],
         };
         for (let j = next(8); j > 0; j--) headers[names[next(names.length)]] = value();
-        // Sent as never indexed, which used to get lost when the value was the static table's.
+        // ls-hpack, which the snapshot is from, refers to the static table here and so drops "never indexed".
         for (const name of ["cookie", "authorization"]) if (headers[name] === "") delete headers[name];
         const req = client.request(headers);
         req.on("error", () => {});
@@ -3262,7 +3254,7 @@ describe("HPACK (RFC 7541)", () => {
       const request = ":authority".length + `127.0.0.1:${port}`.length + 32 + "x-a".length + "1".length + 32;
       expect(client.state.deflateDynamicTableSize).toBe(request);
       expect(sessions[0].state.inflateDynamicTableSize).toBe(request);
-      expect(client.state.inflateDynamicTableSize).toBeGreaterThan("x-reply".length + "same every time".length + 32);
+      expect(client.state.inflateDynamicTableSize).toBe("x-reply".length + "same every time".length + 32);
       expect(client.state.inflateDynamicTableSize).toBe(sessions[0].state.deflateDynamicTableSize!);
     } finally {
       client.destroy();

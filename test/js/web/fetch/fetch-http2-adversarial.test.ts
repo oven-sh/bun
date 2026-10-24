@@ -857,8 +857,8 @@ describe.concurrent("an HTTP/2 response header block is refused when it has", ()
 
 describe.concurrent("SETTINGS_HEADER_TABLE_SIZE from an HTTP/2 server", () => {
   test.each([
-    ["is not followed above 4096", Buffer.concat([setting(1, 65536)]), ""],
-    ["is followed below 4096", Buffer.concat([setting(1, 100)]), "3f45"],
+    ["is not followed above 4096", setting(1, 65536), ""],
+    ["is followed below 4096", setting(1, 100), "3f45"],
     ["is answered with the low point too", Buffer.concat([setting(1, 0), setting(1, 4096)]), "203fe11f"],
   ])("%s", async (_, settingsPayload, sizeUpdates) => {
     const blocks: Buffer[] = [];
@@ -878,8 +878,10 @@ describe.concurrent("SETTINGS_HEADER_TABLE_SIZE from an HTTP/2 server", () => {
         // Whichever request was the first to be sent after the SETTINGS frame was read.
         const updates = blocks.map(block => {
           let end = 0;
-          while ((block[end] & 0xe0) === 0x20)
-            for (end += (block[end] & 0x1f) === 0x1f ? 2 : 1; block[end - 1] & 0x80; end++);
+          while ((block[end] & 0xe0) === 0x20) {
+            const continues = (block[end++] & 0x1f) === 0x1f;
+            if (continues) while (block[end++] & 0x80);
+          }
           return block.subarray(0, end).toString("hex");
         });
         expect(updates.filter(Boolean)).toEqual(sizeUpdates ? [sizeUpdates] : []);

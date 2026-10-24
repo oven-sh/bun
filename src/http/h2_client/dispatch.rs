@@ -550,8 +550,11 @@ fn dispatch_frame(
 /// Feed an orphaned (untracked-stream) header block through the HPACK
 /// decoder purely to keep the dynamic table in sync, then discard.
 pub(crate) fn decode_discard_orphan(session: &mut ClientSession) {
-    let mut block = bun_hpack::Block::new(&session.orphan_header_block);
-    while let Some(result) = session.hpack_decoder.next(&mut block) {
+    let mut pos = 0;
+    while let Some(result) = session
+        .hpack_decoder
+        .next(&session.orphan_header_block, &mut pos)
+    {
         if result.is_err() {
             session.fatal_error = Some(crate::Error::HTTP2CompressionError);
             break;
@@ -579,8 +582,8 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
     // applied once decoding completes.
     let mut malformed = false;
 
-    let mut block = bun_hpack::Block::new(&stream.header_block);
-    while let Some(result) = session.hpack_decoder.next(&mut block) {
+    let mut pos = 0;
+    while let Some(result) = session.hpack_decoder.next(&stream.header_block, &mut pos) {
         let result = match result {
             Ok(r) => r,
             Err(_) => {

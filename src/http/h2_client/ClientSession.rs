@@ -370,7 +370,7 @@ impl ClientSession {
         let this = bun_core::heap::into_raw(Box::new(ClientSession {
             ref_count: Cell::new(1),
             socket_ref_owed: Cell::new(false),
-            hpack_encoder: bun_hpack::Encoder::new(false),
+            hpack_encoder: bun_hpack::Encoder::new(),
             hpack_decoder: bun_hpack::Decoder::new(),
             socket,
             ctx,

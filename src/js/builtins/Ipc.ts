@@ -55,7 +55,7 @@ export function serialize(message, handle: IpcHandle, options) {
  */
 export function parseHandle(target, serialized, fd) {
   // Returns false when the listener for the message left while the handle was made. Nobody has the handle then.
-  const emit = $newRustFunction("ipc.rs", "emitHandleIPCMessage", 3);
+  const emit = $bindgen("ipc_host.bind.ts", "emitHandleIPCMessage");
   const net = require("node:net");
   // const dgram = require("node:dgram");
   switch (serialized.type) {

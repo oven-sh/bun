@@ -6,10 +6,8 @@ use std::sync::Arc;
 use bstr::BStr;
 
 use bun_core::{self as bstring, strings};
-use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _, bun_string_jsc,
-};
+use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsStructure, JsWrapper};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap, mapping};
 
 use crate::generated_bindgen::sourcemap::js_SourceMap as js;
@@ -24,20 +22,23 @@ pub(crate) struct JSSourceMap {
 // Mutable global; AtomicBool for safe mutation.
 static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
 
-#[bun_jsc::host_fn(export = "Bun__JSSourceMap__find")]
-fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn find_source_map<'a>(
+    cx: &mut JsScope<'a>,
+    path: JsLocal<'a>,
+) -> JsResult<Option<JsWrapper<'a, JSSourceMap>>> {
     // Node.js doesn't enable source maps by default.
     // In Bun, we do use them for almost all files since we transpile almost all files
     // If we enable this by default, we don't have a `payload` object since we don't internally create one.
     // This causes Next.js to emit errors like the below on start:
     //       .next/server/chunks/ssr/[root-of-the-server]__012ba519._.js: Invalid source map. Only conformant source maps can be used to filter stack frames. Cause: TypeError: payload is not an Object. (evaluating '"sections" in payload')
     if !ENABLE_SOURCE_MAPS.load(Ordering::Relaxed) {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(None);
     }
 
-    let source_url_value = frame.argument(0);
+    let global = cx.global();
+    let source_url_value = path.to_js();
     if !source_url_value.is_string() {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(None);
     }
 
     let mut source_url_string = bun_core::String::from_js(source_url_value, global)?;
@@ -49,7 +50,7 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
             || source_url.starts_with(b"bun:")
             || source_url.starts_with(b"data:")
         {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(None);
         }
     }
 
@@ -76,7 +77,7 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     // SAFETY: `bun_vm()` returns the live per-thread VM for a Bun-owned global.
     let vm = global.bun_vm().as_mut();
     let Some(source_map) = vm.source_mappings().get(source_url) else {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(None);
     };
     drop(source_url_slice);
     let fake_sources_array: Box<[bstring::String]> = Box::new([source_url_string]);
@@ -88,7 +89,7 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
         sources: fake_sources_array,
         names: Box::default(),
     };
-    Ok(this.to_js(global))
+    Ok(Some(this.into_js(&cx.heap)))
 }
 
 impl JSSourceMap {

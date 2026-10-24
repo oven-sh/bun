@@ -684,8 +684,8 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode = $bindgen("node_util_binding.bind.ts", "etimedoutErrorCode");
 const enobufsErrorCode = $bindgen("node_util_binding.bind.ts", "enobufsErrorCode");
-const gateSubprocessIpc = $newRustFunction("ipc.rs", "gateSubprocessIpc", 1);
-const requestSubprocessIpcDrain = $newRustFunction("ipc.rs", "requestSubprocessIpcDrain", 1);
+const gateSubprocessIpc = $bindgen("ipc_host.bind.ts", "gateSubprocessIpc");
+const requestSubprocessIpcDrain = $bindgen("ipc_host.bind.ts", "requestSubprocessIpcDrain");
 
 /**
  * Spawns a file as a shell synchronously.

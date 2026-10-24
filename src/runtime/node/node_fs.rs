@@ -4168,7 +4168,9 @@ pub(crate) mod args {
             };
 
             if let ReadBuffer::PinnedBuffer(pinned) = &mut buffer
-                && pinned.write_to_scratch_if_wasm(offset as usize, length as usize)
+                && pinned
+                    .hold_wasm_block(offset as usize, length as usize, None)
+                    .map_err(|_| ctx.throw_out_of_memory())?
             {
                 offset = 0;
             }

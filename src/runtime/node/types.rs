@@ -1309,7 +1309,7 @@ struct WasmElement {
     /// Its position in `buffers`.
     index: usize,
     view: JSValue,
-    /// The native bytes its iovec points to.
+    /// What keeps its iovec's bytes valid: a copy for a write, a held block or scratch space for a read.
     native: Option<PinnedArrayBuffer>,
 }
 
@@ -1421,13 +1421,16 @@ impl VectorArrayBuffer {
         }
         match status {
             0 => {
+                let mut memory = JSValue::ZERO;
                 for element in &mut out.wasm {
                     let pinned = if read {
-                        PinnedArrayBuffer::root(global_object, element.view).map(|mut pinned| {
-                            let len = pinned.byte_len;
-                            pinned.write_to_scratch_if_wasm(0, len);
-                            pinned
-                        })
+                        PinnedArrayBuffer::root(global_object, element.view).and_then(
+                            |mut pinned| {
+                                let len = pinned.byte_len;
+                                pinned.hold_wasm_block(0, len, Some(&mut memory)).ok()?;
+                                Some(pinned)
+                            },
+                        )
                     } else {
                         PinnedArrayBuffer::root_read_only(global_object, element.view)
                     };

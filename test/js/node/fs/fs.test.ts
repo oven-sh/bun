@@ -4,6 +4,7 @@ import {
   bunExe,
   gc,
   getMaxFD,
+  isASAN,
   isBroken,
   isDebug,
   isGlibc,
@@ -7933,6 +7934,134 @@ describe.if(isPosix)("fs.read into a view over a WebAssembly.Memory that grows d
       exitCode: 0,
     });
   });
+});
+
+// The job reads into the memory's own block. A copy of the read's length would have to be allocated
+// for every read, and the read would fail where that allocation fails.
+describe("async reads into a view over a WebAssembly.Memory make no copy the size of the read", () => {
+  // Every read asks for the whole view. The file has 100 bytes.
+  const files = {
+    "file.bin": Buffer.alloc(100, 0x41),
+    "reads.mjs": `
+      import fs from "node:fs";
+      import { promisify } from "node:util";
+      export const fd = fs.openSync("file.bin", "r");
+      const handle = await fs.promises.open("file.bin", "r");
+      const call = (fn, ...args) =>
+        new Promise((resolve, reject) => fn(...args, (err, bytesRead) => (err ? reject(err) : resolve(bytesRead))));
+      const reads = {
+        "fs.read": view => call(fs.read, fd, view, 0, view.length, 0),
+        "fs.read(fd, options)": view => call(fs.read, fd, { buffer: view, position: 0 }),
+        "fs.readv": view => call(fs.readv, fd, [view], 0),
+        "promisify(fs.read)": async view => (await promisify(fs.read)(fd, view, 0, view.length, 0)).bytesRead,
+        "promisify(fs.readv)": async view => (await promisify(fs.readv)(fd, [view], 0)).bytesRead,
+        "FileHandle.read": async view => (await handle.read(view, 0, view.length, 0)).bytesRead,
+        "FileHandle.readv": async view => (await handle.readv([view], 0)).bytesRead,
+      };
+      // Reports the bytes each entry point read and how many of them are in the view, or its error.
+      export async function readAll(view) {
+        const results = {};
+        for (const [name, read] of Object.entries(reads)) {
+          view.fill(0, 0, 200);
+          try {
+            const bytesRead = await read(view);
+            results[name] = [bytesRead, view.subarray(0, 200).filter(byte => byte === 0x41).length];
+          } catch (e) {
+            results[name] = e.name + ": " + e.message;
+          }
+        }
+        return results;
+      }
+    `,
+    "live.mjs": `
+      import fs from "node:fs";
+      import { readAll } from "./reads.mjs";
+      // Under an address-space limit, the memory takes 60% of what is left. A copy can't fit in the rest.
+      const limit = Number(process.env.ADDRESS_SPACE_LIMIT_KIB ?? 0);
+      const megabytes = limit
+        ? Math.floor(((limit - Number(/VmSize:\\s+(\\d+)/.exec(fs.readFileSync("/proc/self/status", "utf8"))[1])) * 0.6) / 1024)
+        : 64;
+      const mem = new WebAssembly.Memory({ initial: megabytes * 16 });
+      const results = await readAll(new Uint8Array(mem.buffer));
+      console.log(JSON.stringify({ results, memoryIsLive: mem.buffer.byteLength === megabytes * 1024 * 1024 }));
+    `,
+    "collected.mjs": `
+      import fs from "node:fs";
+      import { fd, readAll } from "./reads.mjs";
+      const memories = [];
+      // Only the views stay reachable.
+      const views = Array.from({ length: 4 }, () => {
+        const mem = new WebAssembly.Memory({ initial: 64 * 16 });
+        memories.push(new WeakRef(mem));
+        return new Uint8Array(mem.buffer);
+      });
+      for (let i = 0; i < 10 && memories.every(mem => mem.deref()); i++) {
+        Bun.gc(true);
+        await Bun.sleep(0);
+      }
+      const view = views[memories.findIndex(mem => mem.deref() === undefined)];
+      if (!view) throw new Error("no WebAssembly.Memory was collected");
+      const results = await readAll(view);
+      console.log(JSON.stringify({ results, readSync: fs.readSync(fd, view, 0, view.length, 0) }));
+    `,
+  };
+  const everyEntryPoint = (result: unknown) => ({
+    "fs.read": result,
+    "fs.read(fd, options)": result,
+    "fs.readv": result,
+    "promisify(fs.read)": result,
+    "promisify(fs.readv)": result,
+    "FileHandle.read": result,
+    "FileHandle.readv": result,
+  });
+  // An allocation of more than 32 MiB fails. The memories are 64 MiB.
+  const allocationCap = {
+    ...bunEnv,
+    ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1", "max_allocation_size_mb=32"]
+      .filter(Boolean)
+      .join(":"),
+  };
+
+  async function run(cmd: string[], env: Record<string, string | undefined>) {
+    using dir = tempDir("fs-read-wasm-no-copy", files);
+    await using proc = Bun.spawn({ cmd, env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim() ? JSON.parse(stdout) : stderr, exitCode };
+  }
+
+  it.skipIf(!isASAN).concurrent(
+    "every entry point reads where a copy can't be allocated (ASAN allocation cap)",
+    async () => {
+      expect(await run([bunExe(), "live.mjs"], allocationCap)).toEqual({
+        stdout: { results: everyEntryPoint([100, 100]), memoryIsLive: true },
+        exitCode: 0,
+      });
+    },
+  );
+
+  // ASAN builds can't start under an address-space limit.
+  it.skipIf(isASAN || !isLinux).concurrent(
+    "every entry point reads where a copy can't be allocated (address-space limit)",
+    async () => {
+      const limit = 6 * 1024 * 1024; // in KiB, the unit of ulimit -v
+      const cmd = ["/bin/sh", "-c", `ulimit -v ${limit} && exec "$0" "$@"`, bunExe(), "live.mjs"];
+      expect(await run(cmd, { ...bunEnv, ADDRESS_SPACE_LIMIT_KIB: String(limit) })).toEqual({
+        stdout: { results: everyEntryPoint([100, 100]), memoryIsLive: true },
+        exitCode: 0,
+      });
+    },
+  );
+
+  // With no live memory there is no block to keep mapped, so the job gets scratch space.
+  it.skipIf(!isASAN).concurrent(
+    "a view of a collected memory throws when its scratch space can't be allocated",
+    async () => {
+      expect(await run([bunExe(), "collected.mjs"], allocationCap)).toEqual({
+        stdout: { results: everyEntryPoint("RangeError: Out of memory"), readSync: 100 },
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 describe("module init", () => {

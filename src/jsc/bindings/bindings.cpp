@@ -3586,9 +3586,25 @@ CPP_DECL bool JSC__JSValue__canBeFreedWhilePinned(JSC::EncodedJSValue v)
     return buf && !buf->isShared() && (buf->isResizableOrGrowableShared() || buf->isWasmMemory());
 }
 
+// Returns the live WebAssembly.Memory that `buf` is a buffer of, or null if that memory was collected.
+// A fixed-length buffer doesn't point to its memory, so this checks every live one.
+static JSC::JSWebAssemblyMemory* findLiveWasmMemory(JSC::VM& vm, JSC::ArrayBuffer& buf)
+{
+    auto* space = vm.heap.webAssemblyMemorySpace<JSC::SubspaceAccess::OnMainThread>();
+    JSC::JSWebAssemblyMemory* found = nullptr;
+    // HeapIterationScope stops every allocator in the heap, which costs more than a read. Only this subspace's have to stop.
+    space->forEachDirectory([](JSC::BlockDirectory& directory) { directory.stopAllocating(); });
+    space->forEachLiveCell([&](JSC::HeapCell* cell, JSC::HeapCell::Kind) {
+        auto* memory = static_cast<JSC::JSWebAssemblyMemory*>(static_cast<JSC::JSCell*>(cell));
+        if (memory->basePointer() == buf.data())
+            found = memory;
+    });
+    space->forEachDirectory([](JSC::BlockDirectory& directory) { directory.resumeAllocating(); });
+    return found;
+}
+
 // Returns the WebAssembly.Memory that `v` is a view of and sets `out_offset` to where `v` starts in it.
 // Returns empty if `v` isn't a view of a non-shared memory or that memory was collected.
-// A fixed-length buffer doesn't point to its memory, so this checks every live one.
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__findWasmMemory(JSC::EncodedJSValue v, size_t* out_offset)
 {
     auto value = JSC::JSValue::decode(v);
@@ -3597,18 +3613,42 @@ CPP_DECL JSC::EncodedJSValue JSC__JSValue__findWasmMemory(JSC::EncodedJSValue v,
         return {};
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value);
     *out_offset = view ? view->byteOffset() : 0;
+    return JSC::JSValue::encode(findLiveWasmMemory(value.asCell()->vm(), *buf));
+}
 
-    auto* space = value.asCell()->vm().heap.webAssemblyMemorySpace<JSC::SubspaceAccess::OnMainThread>();
-    JSC::JSWebAssemblyMemory* found = nullptr;
-    // HeapIterationScope stops every allocator in the heap, which costs more than a read. Only this subspace's have to stop.
-    space->forEachDirectory([](JSC::BlockDirectory& directory) { directory.stopAllocating(); });
-    space->forEachLiveCell([&](JSC::HeapCell* cell, JSC::HeapCell::Kind) {
-        auto* memory = static_cast<JSC::JSWebAssemblyMemory*>(static_cast<JSC::JSCell*>(cell));
-        if (memory->basePointer() == buf->data())
-            found = memory;
-    });
-    space->forEachDirectory([](JSC::BlockDirectory& directory) { directory.resumeAllocating(); });
-    return JSC::JSValue::encode(found);
+// Takes a ref on the block of the WebAssembly.Memory that `v` is a view of, and returns that memory.
+// `grow()` can give the memory another block, but it can't free this one before
+// `JSC__BufferMemoryHandle__deref`. `hint` is a memory to try before the heap is searched.
+// Sets `out_at` to the offset of `ptr` in the memory, which `grow()` keeps valid.
+// Returns empty, with no ref taken, if the memory was collected or `ptr[0..len]` isn't in its block.
+CPP_DECL JSC::EncodedJSValue JSC__JSValue__holdWasmMemoryBlock(JSC::EncodedJSValue v, JSC::EncodedJSValue hint, const uint8_t* ptr, size_t len, size_t* out_at, JSC::BufferMemoryHandle** out_block)
+{
+    *out_block = nullptr;
+    auto value = JSC::JSValue::decode(v);
+    auto* buf = existingArrayBuffer(value);
+    if (!buf || !buf->isWasmMemory() || buf->isShared() || buf->isDetached())
+        return {};
+    auto hintValue = JSC::JSValue::decode(hint);
+    auto* memory = hintValue ? dynamicDowncast<JSC::JSWebAssemblyMemory>(hintValue) : nullptr;
+    if (!memory || memory->basePointer() != buf->data())
+        memory = findLiveWasmMemory(value.asCell()->vm(), *buf);
+    if (!memory)
+        return {};
+
+    auto& block = memory->memory().handle();
+    auto* base = static_cast<const uint8_t*>(block.memory());
+    size_t size = block.size();
+    if (ptr < base || len > size || static_cast<size_t>(ptr - base) > size - len)
+        return {};
+    block.ref();
+    *out_block = &block;
+    *out_at = ptr - base;
+    return JSC::JSValue::encode(memory);
+}
+
+CPP_DECL void JSC__BufferMemoryHandle__deref(JSC::BufferMemoryHandle* block)
+{
+    block->deref();
 }
 
 // Returns the current byte range of `v`, a buffer, a view or a WebAssembly.Memory. Returns null and 0 if it's detached or out of bounds.

@@ -385,7 +385,7 @@ impl Execution {
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
                     let _ = unsafe { entry.as_ref() }.evaluate_timeout(sequence, &arrived_at, true);
                 }
-                Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr);
+                Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr, Some(arrived_at));
 
                 // A stale `now` is safe: nothing below compares it before `run_test_callback` refreshes it.
                 let mut now = arrived_at;
@@ -514,10 +514,12 @@ impl Execution {
 
     /// `sequence` / `group` are carried as `NonNull` (raw-pointer semantics) because they point into
     /// `buntest.execution.{sequences,groups}` and would otherwise alias any live `&mut Execution`.
+    /// `ended_at`: when the active entry finished, if the caller has that time. `None` reads the clock.
     fn advance_sequence(
         buntest: NonNull<BunTest>,
         sequence_ptr: NonNull<ExecutionSequence>,
         group_ptr: NonNull<ConcurrentGroup>,
+        ended_at: Option<Timespec>,
     ) {
         let _g = group_begin!();
 
@@ -567,7 +569,7 @@ impl Execution {
             }
 
             // Only report the final result after all retries/repeats are done
-            Execution::on_sequence_completed(buntest, sequence);
+            Execution::on_sequence_completed(buntest, sequence, ended_at);
 
             // No more retries or repeats; mark sequence as complete
             // SAFETY: group_ptr points into `buntest.execution.groups`, disjoint from `sequence`.
@@ -642,11 +644,20 @@ impl Execution {
         }
     }
 
-    fn on_sequence_completed(buntest: NonNull<BunTest>, sequence: &mut ExecutionSequence) {
+    fn on_sequence_completed(
+        buntest: NonNull<BunTest>,
+        sequence: &mut ExecutionSequence,
+        ended_at: Option<Timespec>,
+    ) {
         let elapsed_ns: u64 = if sequence.started_at.eql(&Timespec::EPOCH) {
             0
         } else {
-            sequence.started_at.since_now_force_real_time()
+            let ended_at = ended_at.unwrap_or_else(Timespec::now_force_real_time);
+            if ended_at.greater(&sequence.started_at) {
+                ended_at.duration(&sequence.started_at).ns()
+            } else {
+                0
+            }
         };
         match sequence.expect_assertions {
             ExpectAssertions::NotSet => {}
@@ -993,7 +1004,7 @@ fn step_sequence_one(
         // SAFETY: arena-owned entry
         let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
         if active_entry.evaluate_timeout(sequence, now, false) {
-            Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
+            Execution::advance_sequence(buntest_ptr, sequence_ptr, group, None);
             return Ok(None); // run again
         }
         group_log::log(format_args!("runOne: can't advance; already executing"));
@@ -1059,7 +1070,7 @@ fn step_sequence_one(
             let _ = next_item.evaluate_timeout(sequence, now, true);
 
             // the result is available immediately; advance the sequence and run again.
-            Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
+            Execution::advance_sequence(buntest_ptr, sequence_ptr, group, Some(*now));
             return Ok(None); // run again
         }
         return Ok(Some(AdvanceSequenceStatus::Execute {
@@ -1093,7 +1104,7 @@ fn step_sequence_one(
                 debug_assert!(false);
             }
         }
-        Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
+        Execution::advance_sequence(buntest_ptr, sequence_ptr, group, None);
         return Ok(None); // run again
     }
 }

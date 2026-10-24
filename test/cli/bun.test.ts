@@ -585,6 +585,153 @@ describe("bun", () => {
       expect(stdout.trim()).toBe(printed);
       expect(exitCode).toBe(0);
     });
+
+    // The language server is `bun lint --lsp` in a canary build and `bun fmt --no-script --lsp` in every build. Its
+    // stdin is closed here, which ends it before `initialize` with nothing on stdout: as a release build's `bun lint`
+    // ends without a script.
+    test("elsewhere bun lint --lsp is refused like bun lint", async () => {
+      using dir = tempDir("bun-lint-lsp-canary-only", { "package.json": "{}" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "lint", "--lsp"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      if (!isCanary) expect(stderr).toBe('error: Script not found "lint"\n');
+      expect(exitCode).toBe(1);
+    });
+
+    // `--lsp` is not a flag that asks the command about itself, so without `--no-script` it goes to the script.
+    test.each([
+      ["lint", `{ "scripts": { "lint": "echo the script" } }`],
+      ["fmt", `{ "scripts": { "fmt": "echo the script" } }`],
+    ])("everywhere bun %s --lsp runs a script of the project", async (command, packageJson) => {
+      using dir = tempDir("bun-lsp-of-the-project", { "package.json": packageJson });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), command, "--lsp"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe("the script --lsp");
+      expect(exitCode).toBe(0);
+    });
+
+    test("everywhere bun fmt --no-script --lsp formats and does not lint", async () => {
+      using dir = tempDir("bun-fmt-lsp-everywhere", {
+        "bunfig.toml": `[lint.rules]\n"no-var" = "error"\n`,
+        "a.js": "",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fmt", "--no-script", "--lsp"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // Stdout carries nothing but frames: a header, an empty line and as many bytes of JSON as the header says.
+      const messages: any[] = [];
+      const waiters: { matches: (message: any) => boolean; resolve: (message: any) => void }[] = [];
+      const reading = (async () => {
+        let buffer = Buffer.alloc(0);
+        for await (const chunk of proc.stdout) {
+          buffer = Buffer.concat([buffer, chunk]);
+          while (true) {
+            const end = buffer.indexOf("\r\n\r\n");
+            if (end === -1) break;
+            const header = buffer.subarray(0, end).toString();
+            const length = /^Content-Length: (\d+)$/.exec(header)?.[1];
+            if (length === undefined) throw new Error(`Not a frame on stdout: ${JSON.stringify(header)}`);
+            const next = end + 4 + Number(length);
+            if (buffer.length < next) break;
+            const message = JSON.parse(buffer.subarray(end + 4, next).toString());
+            buffer = buffer.subarray(next);
+            messages.push(message);
+            for (const waiter of waiters.splice(0)) {
+              if (waiter.matches(message)) waiter.resolve(message);
+              else waiters.push(waiter);
+            }
+          }
+        }
+        if (buffer.length !== 0) throw new Error(`Not a frame on stdout: ${JSON.stringify(buffer.toString())}`);
+      })();
+      const send = (message: object) => {
+        const body = JSON.stringify({ jsonrpc: "2.0", ...message });
+        proc.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+        proc.stdin.flush();
+      };
+      const answer = (id: number) => {
+        const found = messages.find(message => message.id === id);
+        if (found) return Promise.resolve(found);
+        return new Promise<any>(resolve => waiters.push({ matches: message => message.id === id, resolve }));
+      };
+      const uri = Bun.pathToFileURL(join(String(dir), "a.js")).href;
+      const text = "var a=1";
+      send({
+        id: 1,
+        method: "initialize",
+        params: { processId: null, rootUri: Bun.pathToFileURL(String(dir)).href, capabilities: {} },
+      });
+      const initialized = await answer(1);
+      expect(initialized.result.serverInfo.name).toBe("bun");
+      // Formatting is on and linting is off, in a release build as in a canary one.
+      expect(initialized.result.capabilities).toMatchObject({
+        documentFormattingProvider: true,
+        documentRangeFormattingProvider: true,
+        codeActionProvider: false,
+      });
+      send({ method: "initialized", params: {} });
+      send({
+        method: "textDocument/didOpen",
+        params: { textDocument: { uri, languageId: "javascript", version: 1, text } },
+      });
+      send({
+        id: 2,
+        method: "textDocument/formatting",
+        params: { textDocument: { uri }, options: { tabSize: 2, insertSpaces: true } },
+      });
+      const formatted = await answer(2);
+      expect(formatted.error).toBeUndefined();
+      // The document is one line of ASCII, so a character is a code unit in either encoding.
+      const edits: {
+        range: { start: { line: number; character: number }; end: { line: number; character: number } };
+        newText: string;
+      }[] = formatted.result;
+      const offset = (place: { line: number; character: number }) =>
+        text
+          .split("\n")
+          .slice(0, place.line)
+          .reduce((sum, line) => sum + line.length + 1, 0) + place.character;
+      let applied = text;
+      for (const edit of [...edits].sort((a, b) => offset(b.range.start) - offset(a.range.start))) {
+        applied = applied.slice(0, offset(edit.range.start)) + edit.newText + applied.slice(offset(edit.range.end));
+      }
+      expect(applied).toBe("var a = 1;\n");
+      // `bunfig.toml` turns `no-var` on, and lint is off in this server: there is no fix to offer.
+      const range = { start: { line: 0, character: 0 }, end: { line: 0, character: text.length } };
+      send({
+        id: 3,
+        method: "textDocument/codeAction",
+        params: { textDocument: { uri }, range, context: { diagnostics: [] } },
+      });
+      expect((await answer(3)).result).toEqual([]);
+      send({ id: 4, method: "shutdown" });
+      expect((await answer(4)).result).toBeNull();
+      send({ method: "exit" });
+      const exitCode = await proc.exited;
+      await reading;
+      const published = messages.filter(message => message.method === "textDocument/publishDiagnostics");
+      expect(published.flatMap(message => message.params.diagnostics)).toEqual([]);
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("test command line arguments", () => {

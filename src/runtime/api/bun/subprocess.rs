@@ -61,10 +61,77 @@ pub(crate) use crate::generated_bindgen::subprocess::js_Subprocess as js;
 /// Platform-dependent stdio result type.
 pub(crate) use bun_spawn::subprocess::StdioResult;
 
+/// The parent's end of a stdio slot at index >= 3, as `spawn_process` returns it.
 #[cfg(windows)]
-type StdioPipeItem = StdioResult;
+pub(crate) type StdioPipeEnd = StdioResult;
 #[cfg(not(windows))]
-type StdioPipeItem = ExtraPipe;
+pub(crate) type StdioPipeEnd = ExtraPipe;
+
+/// The stdio slots at index >= 3.
+pub(crate) enum StdioPipes {
+    /// `Bun.spawn` hands each end to the caller through `.stdio[i]`.
+    Ends(Vec<StdioPipeEnd>),
+    /// A sync spawn has no caller to hand a pipe to, and a child that fills a
+    /// pipe nobody reads never exits. So the call reads each pipe it made, as
+    /// it reads stdout and stderr. A slot that is not such a pipe is
+    /// `Readable::Ignore`.
+    ///
+    /// `node:child_process` returns the bytes in `output[i]`. As in Node.js,
+    /// the call waits for the end of each pipe and the bytes count against
+    /// `maxBuffer`.
+    Returned(Box<[JsCell<Readable>]>),
+    /// As `Returned`, for `Bun.spawnSync`: its result has no place for the
+    /// bytes, so the readers keep none, and the call does not wait for the
+    /// end of a pipe.
+    Dropped(Box<[JsCell<Readable>]>),
+}
+
+/// What a sync spawn does with what it reads from the stdio pipes at index >= 3.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExtraOutput {
+    /// [`StdioPipes::Returned`]
+    Returned,
+    /// [`StdioPipes::Dropped`]
+    Dropped,
+}
+
+// `Subprocess` does not grow: the boxed variants fit beside the niche of the `Vec`.
+const _: () = assert!(size_of::<StdioPipes>() == size_of::<Vec<StdioPipeEnd>>());
+
+impl StdioPipes {
+    /// The ends that `.stdio` exposes. A sync spawn that reads its pipes has none.
+    pub(crate) fn ends(&self) -> &[StdioPipeEnd] {
+        match self {
+            Self::Ends(ends) => ends,
+            Self::Returned(_) | Self::Dropped(_) => &[],
+        }
+    }
+
+    /// As `ends`. What indexes it (the IPC channel, a `socket-fd` slot) is
+    /// set up by `Bun.spawn` alone.
+    pub(crate) fn ends_mut(&mut self) -> &mut [StdioPipeEnd] {
+        match self {
+            Self::Ends(ends) => ends,
+            Self::Returned(_) | Self::Dropped(_) => &mut [],
+        }
+    }
+
+    fn outputs(&self) -> &[JsCell<Readable>] {
+        match self {
+            Self::Ends(_) => &[],
+            Self::Returned(outputs) | Self::Dropped(outputs) => outputs,
+        }
+    }
+}
+
+/// A stream that the child writes and its `Subprocess` reads.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OutputSlot {
+    Stdout,
+    Stderr,
+    /// An entry of [`StdioPipes::Returned`] or [`StdioPipes::Dropped`].
+    Extra(usize),
+}
 
 pub(crate) type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
 
@@ -102,7 +169,7 @@ pub struct Subprocess<'a> {
     pub(crate) stdin: JsCell<Writable<'a>>,
     pub(crate) stdout: JsCell<Readable>,
     pub(crate) stderr: JsCell<Readable>,
-    pub(crate) stdio_pipes: JsCell<Vec<StdioPipeItem>>,
+    pub(crate) stdio_pipes: JsCell<StdioPipes>,
     pub(crate) pid_rusage: Cell<Option<Rusage>>,
 
     /// Terminal attached to this subprocess (if spawned with terminal option)
@@ -394,7 +461,138 @@ impl Subprocess<'_> {
             return true;
         }
 
-        false
+        match self.stdio_pipes.get() {
+            StdioPipes::Returned(outputs) => outputs
+                .iter()
+                .any(|output| output.get().has_pending_activity()),
+            StdioPipes::Ends(_) | StdioPipes::Dropped(_) => false,
+        }
+    }
+
+    /// Every slot that can hold a pipe reader.
+    pub(crate) fn output_slots(&self) -> impl Iterator<Item = OutputSlot> + use<> {
+        [OutputSlot::Stdout, OutputSlot::Stderr]
+            .into_iter()
+            .chain((0..self.stdio_pipes.get().outputs().len()).map(OutputSlot::Extra))
+    }
+
+    fn output(&self, slot: OutputSlot) -> Option<&JsCell<Readable>> {
+        match slot {
+            OutputSlot::Stdout => Some(&self.stdout),
+            OutputSlot::Stderr => Some(&self.stderr),
+            OutputSlot::Extra(index) => self.stdio_pipes.get().outputs().get(index),
+        }
+    }
+
+    /// The reader of `slot`, until it has reached its end.
+    pub(crate) fn pipe_reader(&self, slot: OutputSlot) -> Option<&RefPtr<PipeReader::PipeReader>> {
+        match self.output(slot)?.get() {
+            Readable::Pipe(pipe) => Some(pipe),
+            _ => None,
+        }
+    }
+
+    /// For a sync spawn: reads every stdio pipe at index >= 3 that
+    /// `spawn_process` made, see [`StdioPipes::Returned`].
+    pub(crate) fn read_stdio_pipes(
+        &self,
+        this: NonNull<Subprocess<'static>>,
+        event_loop: NonNull<jsc::event_loop::EventLoop>,
+        bytes: ExtraOutput,
+    ) {
+        debug_assert!(self.flags.get().contains(Flags::IS_SYNC));
+        #[cfg(not(windows))]
+        let is_pipe = |end: &StdioPipeEnd| matches!(end, ExtraPipe::OwnedFd(_));
+        #[cfg(windows)]
+        let is_pipe = |end: &StdioPipeEnd| matches!(end, StdioResult::Buffer(_));
+        if !self.stdio_pipes.get().ends().iter().any(is_pipe) {
+            return;
+        }
+        let StdioPipes::Ends(ends) = self.stdio_pipes.replace(StdioPipes::Ends(Vec::new())) else {
+            return;
+        };
+        let outputs = ends
+            .into_iter()
+            .map(|end| {
+                #[cfg(not(windows))]
+                let result: StdioResult = match end {
+                    ExtraPipe::OwnedFd(fd) => Some(fd),
+                    ExtraPipe::UnownedFd(_) | ExtraPipe::Unavailable => {
+                        return JsCell::new(Readable::Ignore);
+                    }
+                };
+                #[cfg(windows)]
+                let result: StdioResult = match end {
+                    StdioResult::Buffer(_) => end,
+                    StdioResult::BufferFd(_)
+                    | StdioResult::UnownedFd(_)
+                    | StdioResult::Unavailable => return JsCell::new(Readable::Ignore),
+                };
+                JsCell::new(Readable::Pipe(match bytes {
+                    // Node.js counts every output pipe of a sync spawn against one `maxBuffer`:
+                    // https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L648-L655
+                    ExtraOutput::Returned => PipeReader::PipeReader::create(
+                        event_loop,
+                        this,
+                        result,
+                        self.stdout_maxbuf.get(),
+                    ),
+                    ExtraOutput::Dropped => {
+                        PipeReader::PipeReader::create_drain(event_loop, this, result)
+                    }
+                }))
+            })
+            .collect();
+        self.stdio_pipes.set(match bytes {
+            ExtraOutput::Returned => StdioPipes::Returned(outputs),
+            ExtraOutput::Dropped => StdioPipes::Dropped(outputs),
+        });
+    }
+
+    /// `reader` reached its end: EOF, a read error, or `close()`.
+    pub(crate) fn on_close_reader(&self, reader: *const PipeReader::PipeReader) {
+        let reads = |slot: &OutputSlot| {
+            self.pipe_reader(*slot)
+                .is_some_and(|pipe| core::ptr::eq(pipe.as_ptr(), reader))
+        };
+        match self.output_slots().find(reads) {
+            Some(OutputSlot::Stdout) => self.on_close_io(StdioKind::Stdout),
+            Some(OutputSlot::Stderr) => self.on_close_io(StdioKind::Stderr),
+            Some(OutputSlot::Extra(index)) => {
+                Self::take_pipe_output(&self.stdio_pipes.get().outputs()[index]);
+            }
+            None => unreachable!("a PipeReader that has its Subprocess fills one of its outputs"),
+        }
+    }
+
+    /// The reader of `out` reached its end: `out` takes what it read.
+    fn take_pipe_output(out: &JsCell<Readable>) {
+        if matches!(out.get(), Readable::Pipe(_)) {
+            // Move the Rc<PipeReader> out of `*out` first so
+            // reassigning doesn't drop it while still borrowed.
+            let Readable::Pipe(pipe) = out.replace(Readable::Ignore) else {
+                unreachable!()
+            };
+            let pipe_state = &mut Readable::pipe_reader_mut(&pipe).state;
+            match pipe_state {
+                PipeReader::State::Done(done) => {
+                    let taken = core::mem::take(done);
+                    out.set(Readable::Buffer(readable::CowString::init_owned(
+                        taken.into_boxed_slice(),
+                    )));
+                    // pipe.state was emptied via take()
+                }
+                PipeReader::State::Err(bytes, err) => {
+                    let taken = core::mem::take(bytes);
+                    out.set(Readable::Errored(
+                        readable::CowString::init_owned(taken.into_boxed_slice()),
+                        err.clone(),
+                    ));
+                }
+                // *out stays Readable::Ignore (set by replace above).
+                PipeReader::State::Pending => {}
+            }
+        }
     }
 
     pub(crate) fn on_close_io(&self, kind: StdioKind) {
@@ -415,39 +613,8 @@ impl Subprocess<'_> {
                 }
                 _ => {}
             }),
-            StdioKind::Stdout | StdioKind::Stderr => {
-                let out: &JsCell<Readable> = if kind == StdioKind::Stdout {
-                    &self.stdout
-                } else {
-                    &self.stderr
-                };
-                if matches!(out.get(), Readable::Pipe(_)) {
-                    // Move the Rc<PipeReader> out of `*out` first so
-                    // reassigning doesn't drop it while still borrowed.
-                    let Readable::Pipe(pipe) = out.replace(Readable::Ignore) else {
-                        unreachable!()
-                    };
-                    let pipe_state = &mut Readable::pipe_reader_mut(&pipe).state;
-                    match pipe_state {
-                        PipeReader::State::Done(done) => {
-                            let taken = core::mem::take(done);
-                            out.set(Readable::Buffer(readable::CowString::init_owned(
-                                taken.into_boxed_slice(),
-                            )));
-                            // pipe.state was emptied via take()
-                        }
-                        PipeReader::State::Err(bytes, err) => {
-                            let taken = core::mem::take(bytes);
-                            out.set(Readable::Errored(
-                                readable::CowString::init_owned(taken.into_boxed_slice()),
-                                err.clone(),
-                            ));
-                        }
-                        // *out stays Readable::Ignore (set by replace above).
-                        PipeReader::State::Pending => {}
-                    }
-                }
-            }
+            StdioKind::Stdout => Self::take_pipe_output(&self.stdout),
+            StdioKind::Stderr => Self::take_pipe_output(&self.stderr),
         }
 
         // When the process exits before its stdout/stderr pipes have finished
@@ -623,16 +790,45 @@ impl Subprocess<'_> {
         sp.on_max_buffer(kind);
     }
 
-    /// Close still-open stdout/stderr pipe readers after a timeout/maxBuffer
+    /// Close still-open pipe readers after a timeout/maxBuffer
     /// kill; a grandchild may still hold the write end (Node.js
     /// `SyncProcessRunner::Kill()`). Called outside any reader callback.
     pub(crate) fn close_readable_pipes(&self) {
-        if matches!(self.stdout.get(), Readable::Pipe(_)) {
-            self.stdout.with_mut(|s| s.close());
+        for slot in self.output_slots() {
+            if let Some(pipe) = self.pipe_reader(slot) {
+                Readable::pipe_reader_mut(pipe).close();
+            }
         }
-        if matches!(self.stderr.get(), Readable::Pipe(_)) {
-            self.stderr.with_mut(|s| s.close());
+    }
+
+    /// The read error that a [`StdioPipes::Returned`] pipe ended with, as
+    /// [`Readable::take_read_error`].
+    pub(crate) fn take_stdio_pipe_read_error(&self) -> Option<bun_sys::Error> {
+        let StdioPipes::Returned(outputs) = self.stdio_pipes.get() else {
+            return None;
+        };
+        outputs
+            .iter()
+            .find_map(|output| output.with_mut(|output| output.take_read_error()))
+    }
+
+    /// Puts what each [`StdioPipes::Returned`] pipe read into `array`, at the
+    /// index of its stdio slot.
+    pub(crate) fn stdio_pipes_to_buffered_values(
+        &self,
+        global: &JSGlobalObject,
+        array: JSValue,
+    ) -> JsResult<()> {
+        let StdioPipes::Returned(outputs) = self.stdio_pipes.get() else {
+            return Ok(());
+        };
+        for (index, output) in outputs.iter().enumerate() {
+            let value = output.with_mut(|output| output.to_buffered_value(global))?;
+            if !value.is_undefined() {
+                array.put_index(global, u32::try_from(3 + index).expect("int cast"), value)?;
+            }
         }
+        Ok(())
     }
 
     pub(crate) fn kill(
@@ -780,7 +976,7 @@ impl Subprocess<'_> {
         // kept so later reads return the same value.
         #[cfg(windows)]
         self.stdio_pipes.with_mut(|pipes| {
-            for slot in pipes.iter_mut() {
+            for slot in pipes.ends_mut() {
                 let buffer = match core::mem::take(slot) {
                     StdioResult::Buffer(buffer) => buffer,
                     other => {
@@ -802,7 +998,7 @@ impl Subprocess<'_> {
             }
         });
 
-        for item in self.stdio_pipes.get().iter() {
+        for item in self.stdio_pipes.get().ends() {
             #[cfg(windows)]
             {
                 if let StdioResult::UnownedFd(fd) = item {
@@ -830,7 +1026,7 @@ impl Subprocess<'_> {
         // already closed (whose value the kernel may have since recycled).
         #[cfg(not(windows))]
         self.stdio_pipes.with_mut(|pipes| {
-            for slot in pipes.iter_mut() {
+            for slot in pipes.ends_mut() {
                 if let ExtraPipe::OwnedFd(fd) = *slot {
                     *slot = ExtraPipe::UnownedFd(fd);
                 }
@@ -943,25 +1139,16 @@ impl Subprocess<'_> {
         // resume reads here; timeout/maxBuffer bound the sync wait. A lazy
         // reader is paused until JS pulls, so unpause it first; backpressure
         // is moot once the direct child has exited.
-        if let Readable::Pipe(pipe) = self.stdout.get() {
-            if !pipe.reader.is_done() {
-                let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
-                // SAFETY: live pipe reader; `read` is the raw re-entrancy-safe
-                // entry (its dispatch runs user JS).
-                unsafe {
-                    (*reader).unpause();
-                    bun_io::BufferedReader::read(reader);
-                }
-            }
-        }
-
-        if let Readable::Pipe(pipe) = self.stderr.get() {
-            if !pipe.reader.is_done() {
-                let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
-                // SAFETY: as the stdout arm above.
-                unsafe {
-                    (*reader).unpause();
-                    bun_io::BufferedReader::read(reader);
+        for slot in self.output_slots() {
+            if let Some(pipe) = self.pipe_reader(slot) {
+                if !pipe.reader.is_done() {
+                    let reader = &raw mut Readable::pipe_reader_mut(pipe).reader;
+                    // SAFETY: live pipe reader; `read` is the raw re-entrancy-safe
+                    // entry (its dispatch runs user JS).
+                    unsafe {
+                        (*reader).unpause();
+                        bun_io::BufferedReader::read(reader);
+                    }
                 }
             }
         }
@@ -1178,27 +1365,31 @@ impl Subprocess<'_> {
         self.close_io(StdioKind::Stdout);
         self.close_io(StdioKind::Stderr);
 
-        #[cfg(windows)]
-        for item in self.stdio_pipes.replace(Vec::new()) {
-            if let StdioResult::Buffer(buffer) = item {
-                // `uv_close` is async — the pipe must outlive this scope until the
-                // close callback reclaims the allocation; `close_and_destroy` also
-                // copes with a pipe that never got `uv_pipe_init`'d.
-                // SAFETY: Box-allocated uv::Pipe owned by this slot until now.
-                unsafe { bun_sys::windows::libuv::Pipe::close_and_destroy(Box::into_raw(buffer)) };
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            for item in self.stdio_pipes.get().iter() {
-                match item {
-                    ExtraPipe::OwnedFd(fd) => fd.close(),
-                    ExtraPipe::UnownedFd(_) | ExtraPipe::Unavailable => {}
+        match self.stdio_pipes.replace(StdioPipes::Ends(Vec::new())) {
+            StdioPipes::Ends(ends) => {
+                for item in ends {
+                    #[cfg(windows)]
+                    if let StdioResult::Buffer(buffer) = item {
+                        // `uv_close` is async — the pipe must outlive this scope until the
+                        // close callback reclaims the allocation; `close_and_destroy` also
+                        // copes with a pipe that never got `uv_pipe_init`'d.
+                        // SAFETY: Box-allocated uv::Pipe owned by this slot until now.
+                        unsafe {
+                            bun_sys::windows::libuv::Pipe::close_and_destroy(Box::into_raw(buffer))
+                        };
+                    }
+                    #[cfg(not(windows))]
+                    if let ExtraPipe::OwnedFd(fd) = item {
+                        fd.close();
+                    }
                 }
             }
-            self.stdio_pipes.with_mut(|v| v.clear());
+            StdioPipes::Returned(outputs) | StdioPipes::Dropped(outputs) => {
+                for output in outputs {
+                    output.with_mut(|output| output.finalize());
+                }
+            }
         }
-        self.stdio_pipes.with_mut(|v| v.shrink_to_fit());
     }
 
     fn clear_abort_signal(&self) {
@@ -1434,16 +1625,17 @@ pub(crate) fn source_from_blob(b: webcore::AnyBlob) -> Source {
     Source::Any(Box::new(b))
 }
 
-/// Windows: the extra stdio pipes (`stdio_pipes`) are uv handles this
-/// Subprocess owns without a reader/writer in front of them; record that so a
-/// thread teardown closes them through us (and `finalize_streams` then finds
-/// the slots empty) instead of anyone closing them twice.
+/// Windows: the extra stdio pipes of `Bun.spawn` (`StdioPipes::Ends`) are uv
+/// handles this Subprocess owns without a reader/writer in front of them;
+/// record that so a thread teardown closes them through us (and
+/// `finalize_streams` then finds the slots empty) instead of anyone closing
+/// them twice. A sync spawn puts a reader in front of each, which owns it.
 #[cfg(windows)]
 impl Subprocess<'_> {
     pub(crate) fn record_stdio_pipe_ownership(this: *mut Self) {
         // SAFETY: `this` is the live boxed Subprocess (stable address).
         let me = unsafe { &*this };
-        for item in me.stdio_pipes.get().iter() {
+        for item in me.stdio_pipes.get().ends() {
             if let StdioResult::Buffer(buffer) = item {
                 bun_sys::windows::libuv::open_handles::set_owner(
                     core::ptr::from_ref::<bun_sys::windows::libuv::Pipe>(&**buffer)
@@ -1461,7 +1653,11 @@ impl Subprocess<'_> {
         // SAFETY: recorded by `record_stdio_pipe_ownership` for this live
         // Subprocess; each pipe leaves the list as its uv_close is issued.
         let me = unsafe { &*this.cast::<Self>() };
-        for item in me.stdio_pipes.replace(Vec::new()) {
+        let ends = me.stdio_pipes.with_mut(|pipes| match pipes {
+            StdioPipes::Ends(ends) => core::mem::take(ends),
+            StdioPipes::Returned(_) | StdioPipes::Dropped(_) => Vec::new(),
+        });
+        for item in ends {
             if let StdioResult::Buffer(buffer) = item {
                 // SAFETY: Box-allocated uv::Pipe owned by this slot until now.
                 unsafe { bun_sys::windows::libuv::Pipe::close_and_destroy(Box::into_raw(buffer)) };

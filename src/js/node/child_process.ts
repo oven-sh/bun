@@ -562,6 +562,14 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 
   const stdio = options.stdio || "pipe";
   const bunStdio = getBunStdioFromOptions(stdio);
+  const stdioLength = bunStdio.length;
+  // One entry for each stdio slot above stderr. Bun.spawnSync puts what the child wrote to a pipe at the
+  // pipe's index, and every other slot stays null.
+  let extraOutput: (Buffer | null)[] | undefined;
+  if (stdioLength > 3) {
+    extraOutput = [];
+    for (let i = 3; i < stdioLength; i++) $putByValDirect(extraOutput, i, null);
+  }
 
   var { input } = options;
   if (input) {
@@ -576,19 +584,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 
   var error;
   try {
-    var {
-      stdout = null,
-      stderr = null,
-      exitCode,
-      signalCode,
-      exitedDueToTimeout,
-      exitedDueToMaxBuffer,
-      pid,
-    }: Omit<Bun.SyncSubprocess, "exitCode" | "stdout" | "stderr"> & {
-      exitCode: number | null;
-      stdout?: Buffer | number | null;
-      stderr?: Buffer | number | null;
-    } = Bun.spawnSync({
+    const spawnOptions: Bun.Spawn.NodeSpawnSyncOptions = {
       // normalizeSpawnargs has already prepended argv0 to the spawnargs array
       // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
       // so we have to set argv0 to spawnargs[0] and cmd[0] to file
@@ -609,7 +605,22 @@ function spawnSync(file, args, options?): SpawnSyncResult {
       timeout: options.timeout,
       killSignal: options.killSignal,
       maxBuffer: options.maxBuffer,
-    });
+    };
+    // A private name: only this module can ask Bun.spawnSync for these bytes.
+    if (extraOutput) $putByIdDirectPrivate(spawnOptions as any, "spawnSyncOutput", extraOutput);
+    var {
+      stdout = null,
+      stderr = null,
+      exitCode,
+      signalCode,
+      exitedDueToTimeout,
+      exitedDueToMaxBuffer,
+      pid,
+    }: Omit<Bun.SyncSubprocess, "exitCode" | "stdout" | "stderr"> & {
+      exitCode: number | null;
+      stdout?: Buffer | number | null;
+      stderr?: Buffer | number | null;
+    } = Bun.spawnSync(spawnOptions);
   } catch (err: any) {
     error = err;
     stdout = null;
@@ -631,7 +642,6 @@ function spawnSync(file, args, options?): SpawnSyncResult {
     // A signal with no name (a number from Bun.spawn) is "" in node: https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L732
     signal: typeof signalCode === "number" ? "" : (signalCode ?? null),
     status: exitCode,
-    // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
     // node: `output` is null when the process never ran.
     output: error !== undefined && error?.pid === undefined ? null : [null, outputStdout, outputStderr],
     pid,
@@ -643,12 +653,17 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 
   const output = result.output;
   if (output) {
-    if (outputStdout && encoding && encoding !== "buffer") {
-      output[1] = output[1]?.toString(encoding);
+    // node: one entry for each stdio slot, which is null unless the slot is a pipe that the child writes.
+    // https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L765-L786
+    // A call that lost its output to a read error has none for these slots either, as for stdout and stderr.
+    for (let i = 3; i < stdioLength; i++) {
+      $putByValDirect(output, i, error === undefined ? extraOutput![i] : null);
     }
 
-    if (outputStderr && encoding && encoding !== "buffer") {
-      output[2] = output[2]?.toString(encoding);
+    if (encoding && encoding !== "buffer") {
+      for (let i = 1; i < output.length; i++) {
+        if (output[i]) output[i] = output[i]!.toString(encoding);
+      }
     }
   }
 
@@ -1408,10 +1423,9 @@ class ChildProcess extends EventEmitter {
     // #getBunSpawnIo, which hands the fd to usockets (usockets closes it on
     // socket close). Use Bun.spawn's "socket-fd" so the parent end is stored
     // as UnownedFd from the start and Subprocess.finalize_streams never
-    // double-closes it. Async path only: spawnSync never wraps extra fds in
-    // net.Socket (no .stdio on Bun.spawnSync's result yet) and must keep
-    // them OwnedFd so finalize_streams still closes them. On Windows extra
-    // stdio is a libuv pipe handle with no raw-fd handoff, so leave as "pipe".
+    // double-closes it. Async path only: Bun.spawnSync reads extra "pipe"
+    // slots itself and closes them. On Windows extra stdio is a libuv pipe
+    // handle with no raw-fd handoff, so leave as "pipe".
     if (process.platform !== "win32") {
       for (let i = 3; i < bunStdio.length; i++) {
         if (bunStdio[i] === "pipe") bunStdio[i] = "socket-fd";

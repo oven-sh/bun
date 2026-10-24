@@ -30,7 +30,7 @@ use crate::api::bun_process::{self as spawn, CStrPtr, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
 use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::{
-    self as Subprocess, Readable, Subprocess as SubprocessT, Writable,
+    self as Subprocess, ExtraOutput, Readable, StdioPipes, Subprocess as SubprocessT, Writable,
 };
 use crate::api::bun_terminal_body::{
     self as terminal_body, InitError as TerminalInitError, Options as TerminalOptions, Terminal,
@@ -399,6 +399,9 @@ fn spawn_maybe_sync(
     let mut maybe_ipc_mode: Option<IPC::Mode> = None;
     let mut ipc_callback: JSValue = JSValue::ZERO;
     let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
+    // From `node:child_process`: the array that gets what the child writes to
+    // each stdio pipe at index >= 3, at that index.
+    let mut extra_output_array: Option<JSValue> = None;
     #[cfg(not(windows))]
     let mut socket_fd_indices: Vec<usize> = Vec::new();
     let mut argv0: Option<*const c_char> = None;
@@ -634,6 +637,9 @@ fn spawn_maybe_sync(
                             // must be initialized to a sane default instead of `undefined`.
                             let mut new_item: Stdio = Stdio::Ignore;
                             Stdio::extract(&mut new_item, cx, i, value, is_sync)?;
+                            if is_sync {
+                                new_item.to_sync(u32::try_from(i).expect("int cast"));
+                            }
 
                             let opt = match new_item.as_spawn_option(i) {
                                 stdio::ResultT::Result(opt) => opt,
@@ -669,6 +675,17 @@ fn spawn_maybe_sync(
                 if let Some(value) = args.get(cx.global(), "stdout")? {
                     Stdio::extract(&mut stdio[1], cx, 1, value, is_sync)?;
                 }
+            }
+
+            // Looked up only when a pipe at index >= 3 is there to read: every other
+            // call keeps the `maxBuffer` accounting it has.
+            if is_sync
+                && extra_fds
+                    .iter()
+                    .any(|e| matches!(e, SpawnOptionsStdio::Buffer { .. }))
+            {
+                extra_output_array =
+                    args.fast_get(cx.global(), jsc::BuiltinName::spawnSyncOutput)?;
             }
 
             if !is_sync {
@@ -801,7 +818,10 @@ fn spawn_maybe_sync(
                     // 'Infinity' does not set maxBuffer
                     let value = val.coerce_to_int64(cx.global())?;
                     if value > 0
-                        && (stdio[0].is_piped() || stdio[1].is_piped() || stdio[2].is_piped())
+                        && (stdio[0].is_piped()
+                            || stdio[1].is_piped()
+                            || stdio[2].is_piped()
+                            || extra_output_array.is_some())
                     {
                         max_buffer = Some(value);
                     }
@@ -1292,7 +1312,7 @@ fn spawn_maybe_sync(
         // 1=JS (released in Subprocess::finalize), 2=Process exit handler
         // (released in Subprocess::on_process_exit; stranded if child outlives VM teardown).
         ref_count: bun_ptr::RefCount::init_exact_refs(2),
-        stdio_pipes: JsCell::new(core::mem::take(&mut spawned_extra_pipes)),
+        stdio_pipes: JsCell::new(StdioPipes::Ends(core::mem::take(&mut spawned_extra_pipes))),
         ipc_data: JsCell::new(None),
         flags: Cell::new(if is_sync {
             Subprocess::Flags::IS_SYNC
@@ -1323,7 +1343,9 @@ fn spawn_maybe_sync(
     // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
     let subprocess = unsafe { &mut *subprocess_ptr };
     #[cfg(windows)]
-    SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);
+    if !is_sync {
+        SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);
+    }
     // Erase the borrow lifetime to 'static for the intrusive back-pointer
     // (PipeReader stores it as raw NonNull). subprocess_ptr is non-null (just boxed).
     let subprocess_nn: NonNull<SubprocessT<'static>> =
@@ -1337,10 +1359,13 @@ fn spawn_maybe_sync(
         };
         let mut mb = None;
         MaxBuf::create_for_subprocess(&mut mb, max_buffer, owner);
-        subprocess.stderr_maxbuf.set(mb);
-        let mut mb = None;
-        MaxBuf::create_for_subprocess(&mut mb, max_buffer, owner);
         subprocess.stdout_maxbuf.set(mb);
+        // With `extra_output_array`, stderr charges the stdout budget: see `read_stdio_pipes`.
+        if extra_output_array.is_none() {
+            let mut mb = None;
+            MaxBuf::create_for_subprocess(&mut mb, max_buffer, owner);
+            subprocess.stderr_maxbuf.set(mb);
+        }
     }
 
     #[cfg(windows)]
@@ -1444,9 +1469,22 @@ fn spawn_maybe_sync(
         event_loop_nn,
         subprocess_nn,
         spawned_stderr,
-        subprocess.stderr_maxbuf.get(),
+        match extra_output_array {
+            Some(_) => subprocess.stdout_maxbuf.get(),
+            None => subprocess.stderr_maxbuf.get(),
+        },
         is_sync,
     ));
+    if is_sync {
+        subprocess.read_stdio_pipes(
+            subprocess_nn,
+            event_loop_nn,
+            match extra_output_array {
+                Some(_) => ExtraOutput::Returned,
+                None => ExtraOutput::Dropped,
+            },
+        );
+    }
 
     // Inline terminals keep slave_fd until on_process_exit (BSD kernels flush
     // pty output on last slave close; see Terminal::drain_and_close_slave_fd).
@@ -1527,7 +1565,8 @@ fn spawn_maybe_sync(
             }
             // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.
             subprocess.stdio_pipes.with_mut(|v| {
-                v[usize::try_from(ipc_channel).expect("int cast")] = ExtraPipe::Unavailable;
+                v.ends_mut()[usize::try_from(ipc_channel).expect("int cast")] =
+                    ExtraPipe::Unavailable;
             });
         }
         #[cfg(not(unix))]
@@ -1538,6 +1577,7 @@ fn spawn_maybe_sync(
             // neutralize the slot up front so `finalizeStreams` can't
             // double-close it (the Box would otherwise drop on reassignment).
             let ipc_pipe: *mut bun_libuv_sys::Pipe = subprocess.stdio_pipes.with_mut(|pipes| {
+                let pipes = pipes.ends_mut();
                 match core::mem::take(&mut pipes[idx]) {
                     spawn::WindowsStdioResult::Buffer(pipe) => bun_core::heap::into_raw(pipe),
                     other => {
@@ -1664,26 +1704,19 @@ fn spawn_maybe_sync(
         send_exit_notification.then(|| ReportUnwatchedExit(bun_ptr::BackRef::from(subprocess_nn)));
 
     // Start the readers before the Writable::Buffer stdin writer so that if
-    // the writer's start() throws below, both PipeReaders have taken their
+    // the writer's start() throws below, every PipeReader has taken its
     // start() ref and on_process_exit's later drain is refcount-balanced.
-    if let Readable::Pipe(pipe) = subprocess.stdout.get() {
+    for slot in subprocess.output_slots() {
+        let Some(pipe) = subprocess.pipe_reader(slot) else {
+            continue;
+        };
         // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
-        // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
+        // alias with the borrow of the slot held by `pipe`.
         Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !is_sync && lazy);
-        if (is_sync || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
-            if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-                Readable::pipe_reader_mut(pipe).read_all();
-            }
-        }
-    }
-
-    if let Readable::Pipe(pipe) = subprocess.stderr.get() {
-        // Note: see stdout arm above — avoid aliased &mut.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !is_sync && lazy);
-
-        if (is_sync || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
-            if let Readable::Pipe(pipe) = subprocess.stderr.get() {
+        if is_sync || !lazy {
+            // A failed start has ended the reader and emptied its slot.
+            if let Some(pipe) = subprocess.pipe_reader(slot) {
                 Readable::pipe_reader_mut(pipe).read_all();
             }
         }
@@ -1719,7 +1752,7 @@ fn spawn_maybe_sync(
     if !socket_fd_indices.is_empty() {
         subprocess.stdio_pipes.with_mut(|pipes| {
             for j in &socket_fd_indices {
-                if let Some(slot @ ExtraPipe::OwnedFd(_)) = pipes.get_mut(*j) {
+                if let Some(slot @ ExtraPipe::OwnedFd(_)) = pipes.ends_mut().get_mut(*j) {
                     let ExtraPipe::OwnedFd(fd) = *slot else {
                         unreachable!()
                     };
@@ -1875,12 +1908,10 @@ fn spawn_maybe_sync(
                 Writable::buffer_writer_mut(buffer).watch();
             }
 
-            if let Readable::Pipe(pipe) = subprocess.stderr.get() {
-                Readable::pipe_reader_mut(pipe).watch();
-            }
-
-            if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-                Readable::pipe_reader_mut(pipe).watch();
+            for slot in subprocess.output_slots() {
+                if let Some(pipe) = subprocess.pipe_reader(slot) {
+                    Readable::pipe_reader_mut(pipe).watch();
+                }
             }
 
             // Tick the isolated event loop without passing timeout to avoid blocking
@@ -1935,6 +1966,8 @@ fn spawn_maybe_sync(
             }
         }
     }
+    // What is still open is a `StdioPipes::Dropped` pipe: the call does not wait for its end.
+    subprocess.close_readable_pipes();
     if cx.global().has_exception() {
         // e.g. a termination exception.
         // SAFETY: same as below; `subprocess` is not used after this line.
@@ -1951,7 +1984,8 @@ fn spawn_maybe_sync(
     let read_error = subprocess
         .stdout
         .with_mut(|s| s.take_read_error())
-        .or_else(|| subprocess.stderr.with_mut(|s| s.take_read_error()));
+        .or_else(|| subprocess.stderr.with_mut(|s| s.take_read_error()))
+        .or_else(|| subprocess.take_stdio_pipe_read_error());
     // Propagated after `finalize`, which must run even when building the output throws.
     let output = subprocess
         .stdout
@@ -1960,6 +1994,9 @@ fn spawn_maybe_sync(
             let stderr = subprocess
                 .stderr
                 .with_mut(|s| s.to_buffered_value(cx.global()))?;
+            if let Some(array) = extra_output_array {
+                subprocess.stdio_pipes_to_buffered_values(cx.global(), array)?;
+            }
             let resource_usage = subprocess.create_resource_usage_object(cx.global())?;
             Ok((stdout, stderr, resource_usage))
         });

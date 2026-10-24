@@ -12,8 +12,7 @@ use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_ptr::{ParentRef, RefCount, RefPtr};
 
-use super::readable::Readable;
-use super::{StdioKind, StdioResult, Subprocess};
+use super::{StdioResult, Subprocess};
 
 pub(crate) type IOReader = BufferedReader;
 
@@ -106,10 +105,42 @@ impl PipeReader {
         result: StdioResult,
         limit: Option<NonNull<MaxBuf>>,
     ) -> RefPtr<PipeReader> {
+        Self::create_with(
+            IOReader::init::<PipeReader>(),
+            event_loop,
+            process,
+            result,
+            limit,
+        )
+    }
+
+    /// As `create`, for a pipe that is read so that its writer does not block, and whose bytes
+    /// nobody gets: see [`PipeDrain`].
+    pub(crate) fn create_drain(
+        event_loop: NonNull<EventLoop>,
+        process: NonNull<Subprocess<'static>>,
+        result: StdioResult,
+    ) -> RefPtr<PipeReader> {
+        Self::create_with(
+            IOReader::init::<PipeDrain>(),
+            event_loop,
+            process,
+            result,
+            None,
+        )
+    }
+
+    fn create_with(
+        reader: IOReader,
+        event_loop: NonNull<EventLoop>,
+        process: NonNull<Subprocess<'static>>,
+        result: StdioResult,
+        limit: Option<NonNull<MaxBuf>>,
+    ) -> RefPtr<PipeReader> {
         let mut this = Box::new(PipeReader {
             ref_count: RefCount::init(),
             process: Some(ParentRef::from(process)),
-            reader: IOReader::init::<PipeReader>(),
+            reader,
             event_loop: event_loop.into(),
             event_loop_handle: bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()),
             stdio_result: result,
@@ -234,28 +265,11 @@ impl PipeReader {
         self.state = State::Done(owned);
         if let Some(process) = self.process.take() {
             // `process` backref is valid while set; cleared before deref.
-            let kind = self.kind(process.get());
-            process.on_close_io(kind);
+            process.on_close_reader(self);
         }
         // SAFETY: last use of `self`; caller holds only a raw parent pointer,
         // so freeing here does not invalidate any live `&mut`.
         unsafe { PipeReader::deref(self) };
-    }
-
-    fn kind(&self, process: &Subprocess<'_>) -> StdioKind {
-        if let Readable::Pipe(pipe) = process.stdout.get() {
-            if core::ptr::eq(pipe.as_ptr(), self) {
-                return StdioKind::Stdout;
-            }
-        }
-
-        if let Readable::Pipe(pipe) = process.stderr.get() {
-            if core::ptr::eq(pipe.as_ptr(), self) {
-                return StdioKind::Stderr;
-            }
-        }
-
-        unreachable!("We should be either stdout or stderr");
     }
 
     fn to_owned_slice(&mut self) -> Vec<u8> {
@@ -345,8 +359,7 @@ impl PipeReader {
         self.state = State::Err(owned, err);
         if let Some(process) = self.process.take() {
             // `process` backref is valid while set; cleared before deref.
-            let kind = self.kind(process.get());
-            process.on_close_io(kind);
+            process.on_close_reader(self);
         }
         // SAFETY: last use of `self`; see `on_reader_done`.
         unsafe { PipeReader::deref(self) };
@@ -388,6 +401,27 @@ impl Drop for PipeReader {
         #[cfg(unix)]
         debug_assert!(self.reader.is_done() || matches!(self.state, State::Err(..)));
     }
+}
+
+/// The reader's parent in a [`PipeReader`] from `create_drain`: it takes each chunk as it is
+/// read and keeps none of the bytes, so the reader holds one read buffer at most.
+#[repr(transparent)]
+pub(crate) struct PipeDrain(PipeReader);
+
+bun_io::impl_buffered_reader_parent! {
+    SubprocessPipeDrain for PipeDrain;
+    has_on_read_chunk = true;
+    // `false` ends a POSIX read after this chunk (a Windows read has no use for the value). The
+    // wait loop of the sync spawn asks for the next chunk, so a child that floods the pipe cannot
+    // keep that loop from its timeout.
+    on_read_chunk   = |this, chunk, has_more| {
+        let _ = (this, chunk, has_more);
+        false
+    };
+    on_reader_done  = |this| (*this).0.on_reader_done();
+    on_reader_error = |this, err| (*this).0.on_reader_error(err);
+    loop_           = |this| (*this).0.loop_().cast();
+    event_loop      = |this| (*this).0.event_loop_handle.as_event_loop_ctx();
 }
 
 // BufferedReader vtable parent: `onReaderDone`/`onReaderError`/`loop`/

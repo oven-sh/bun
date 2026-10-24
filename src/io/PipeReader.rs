@@ -193,7 +193,7 @@ pub struct PosixBufferedReader {
     limit: ReadLimit,
     pub(crate) vtable: BufferedReaderVTable,
     pub flags: PosixFlags,
-    // MaxBuf uses hand-rolled dual-ownership (Subprocess + reader) via
+    // MaxBuf uses hand-rolled shared ownership (Subprocess + its readers) via
     // `add_to_pipereader`/`remove_from_pipereader`, not Arc — see MaxBuf.rs.
     pub maxbuf: Option<NonNull<MaxBuf>>,
 }
@@ -710,6 +710,9 @@ impl PosixBufferedReader {
     fn read_once(&mut self, file_type: FileType, fd: Fd, buf: &mut [u8]) -> ReadOnce {
         if self.limit.reached() {
             return ReadOnce::Stop(Stop::Eof);
+        }
+        if MaxBuf::is_exhausted(self.maxbuf) {
+            return ReadOnce::Stop(Stop::OverBudget);
         }
         let buf = MaxBuf::clamp_read_buf(self.maxbuf, self.limit.clamp(buf));
         match self.sys_read(file_type, fd, buf) {
@@ -1883,6 +1886,12 @@ impl WindowsBufferedReader {
         let amount_result = match amount {
             sys::Result::Ok(n) => n,
             sys::Result::Err(_) => unreachable!(),
+        };
+        // A reader that shares a `maxBuffer` budget another reader used up keeps nothing more.
+        let amount_result = if MaxBuf::is_exhausted(self.maxbuf) {
+            0
+        } else {
+            amount_result
         };
 
         // Address arithmetic: `slice` covers spare (uninit) capacity, so no `&[u8]` over the Vec may be formed for the check.

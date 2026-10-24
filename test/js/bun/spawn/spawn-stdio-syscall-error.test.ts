@@ -22,6 +22,8 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 // With SPAWN_FAULT_RECV_AT, two more settings shape the reads before the failing one:
 // SPAWN_FAULT_RECV_EAGAIN_AT=N  the Nth recv() reads nothing and fails with EAGAIN.
 // SPAWN_FAULT_RECV_CAP=N  every recv() returns at most N bytes, as when the reader outpaces the writer.
+// SPAWN_FAULT_RECV_WAIT=path  no fault: every recv() on an AF_UNIX socket waits until this file exists, and writes
+//   to SPAWN_FAULT_REPORT how many of them there were so far.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -46,6 +48,8 @@ static int fail_recv_mid_fill = -1;
 static int fail_send_at = -1;
 static int eagain_recv_at = -1;
 static long recv_cap = -1;
+static const char *recv_wait;
+static unsigned long recv_waits;
 static unsigned int recv_count[MAX_FD];
 static unsigned int send_count[MAX_FD];
 static unsigned long recv_bytes[MAX_FD];
@@ -75,6 +79,7 @@ static void init_modes(void) {
     s = getenv("SPAWN_FAULT_RECV_CAP");
     recv_cap = s ? atol(s) : 0;
   }
+  recv_wait = getenv("SPAWN_FAULT_RECV_WAIT");
 }
 
 static int is_unix_sock(int fd) {
@@ -99,6 +104,11 @@ ssize_t recv(int fd, void *buf, size_t len, int flags) {
   if (!real_recv) {
     real_recv = (ssize_t (*)(int, void *, size_t, int))dlsym(RTLD_NEXT, "recv");
     init_modes();
+  }
+  if (recv_wait && is_unix_sock(fd)) {
+    // Ten seconds at most, so that a writer that never makes the file does not leave the reader behind.
+    for (int i = 0; i < 10000 && access(recv_wait, F_OK) != 0; i++) usleep(1000);
+    write_number("SPAWN_FAULT_REPORT", ++recv_waits);
   }
   if ((fail_recv_at > 0 || fail_recv_mid_fill > 0) && is_unix_sock(fd)) {
     if (recv_failed[fd]) {
@@ -373,6 +383,59 @@ try {
 console.log(JSON.stringify(out));
 `;
 
+// A sync spawn reads a stdio pipe above stderr too. Here that pipe is the only socket in the parent, so it is the one
+// whose read fails. Bun.spawnSync keeps nothing of what it reads from that pipe, so a failed read is nothing to
+// report. child_process.spawnSync returns the bytes in `output`, so their loss is an error, as it is for stdout.
+const SPAWN_SYNC_PIPE_FIXTURE = /* js */ `
+import { spawnSync } from "node:child_process";
+const cmd = ["sh", "-c", "head -c 8000000 /dev/zero >&3"];
+const stdio = ["ignore", "ignore", "inherit", "pipe"];
+// A call that does not read the pipe never returns. The timeout is there so that such a call does not leave this
+// process behind.
+const timeout = 10_000;
+const out = {};
+{
+  const r = Bun.spawnSync(cmd, { stdio, timeout });
+  out.bun = { timedOut: r.exitedDueToTimeout, exited: r.exitCode !== null || typeof r.signalCode === "string" };
+}
+{
+  const r = spawnSync(cmd[0], cmd.slice(1), { stdio, timeout, maxBuffer: 64 << 20 });
+  out.spawnSync = { error: r.error?.code, pid: r.pid > 0, output: r.output, exited: r.status !== null || typeof r.signal === "string" };
+}
+console.log(JSON.stringify(out));
+`;
+
+// Seven pipes above stderr, and no other socket in the parent. The child puts 60000 bytes in each pipe and then makes
+// the file that the parent's first recv() waits for. That recv() goes over maxBuffer, and every other pipe has bytes
+// for a reader that must not take them.
+const SPAWN_SYNC_PIPES_MAX_BUFFER_FIXTURE = /* js */ `
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+const r = spawnSync(
+  "sh",
+  ["-c", 'for fd in 3 4 5 6 7 8 9; do head -c 60000 /dev/zero >&$fd; done; : >"$1"', "sh", process.env.SPAWN_FAULT_RECV_WAIT],
+  { stdio: ["ignore", "ignore", "inherit", "pipe", "pipe", "pipe", "pipe", "pipe", "pipe", "pipe"], maxBuffer: 1000 },
+);
+console.log(
+  JSON.stringify({
+    error: r.error?.code,
+    kept: r.output.slice(3).map(entry => entry.length),
+    recvCalls: Number(readFileSync(process.env.SPAWN_FAULT_REPORT, "utf8")),
+  }),
+);
+`;
+
+// The child closes the pipe above stderr after a few bytes and then fills stdout, so only the stdout socket gets as
+// far as the failing recv().
+const SPAWN_SYNC_PIPE_LOST_STDOUT_FIXTURE = /* js */ `
+import { spawnSync } from "node:child_process";
+const r = spawnSync("sh", ["-c", "printf three >&3; exec 3>&-; head -c 8000000 /dev/zero"], {
+  stdio: ["ignore", "pipe", "inherit", "pipe"],
+  maxBuffer: 64 << 20,
+});
+console.log(JSON.stringify({ error: r.error?.code, pid: r.pid > 0, output: r.output }));
+`;
+
 let shimPath: string;
 let dir: ReturnType<typeof tempDir> | undefined;
 
@@ -390,6 +453,9 @@ beforeAll(async () => {
     "child-process-readable.mjs": CHILD_PROCESS_READABLE_FIXTURE,
     "stdout-stream-mid-fill.mjs": STDOUT_STREAM_MID_FILL_FIXTURE,
     "spawn-sync.mjs": SPAWN_SYNC_FIXTURE,
+    "spawn-sync-pipe.mjs": SPAWN_SYNC_PIPE_FIXTURE,
+    "spawn-sync-pipe-lost-stdout.mjs": SPAWN_SYNC_PIPE_LOST_STDOUT_FIXTURE,
+    "spawn-sync-pipes-max-buffer.mjs": SPAWN_SYNC_PIPES_MAX_BUFFER_FIXTURE,
   });
   shimPath = join(String(dir), "shim.so");
   await using ccProc = Bun.spawn({
@@ -419,6 +485,7 @@ async function runWithFault(fixture: string, fault: Record<string, string>) {
     SPAWN_FAULT_READS_AFTER: undefined,
     SPAWN_FAULT_RECV_EAGAIN_AT: undefined,
     SPAWN_FAULT_RECV_CAP: undefined,
+    SPAWN_FAULT_RECV_WAIT: undefined,
     ...fault,
   };
   await using proc = Bun.spawn({
@@ -580,6 +647,47 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
         stderr: "",
         exitCode: 0,
       });
+    });
+  });
+
+  describe.each([
+    ["the first read", "1"],
+    ["a later read", "3"],
+  ])("spawnSync: read error on a pipe above stderr, on %s", (_label, at) => {
+    test.concurrent("Bun.spawnSync returns, and child_process.spawnSync reports the lost output", async () => {
+      expect(await runWithFault("spawn-sync-pipe.mjs", { SPAWN_FAULT_RECV_AT: at })).toEqual({
+        parsed: {
+          bun: { timedOut: false, exited: true },
+          spawnSync: { error: "EIO", pid: true, output: [null, null, null, null], exited: true },
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // The call fails as a whole, as it does without a pipe above stderr: `output` has nothing of that pipe either,
+  // which was read to its end. Node.js returns what each pipe read next to the error.
+  test.concurrent("spawnSync: a stdout read error leaves no entry of output", async () => {
+    expect(await runWithFault("spawn-sync-pipe-lost-stdout.mjs", { SPAWN_FAULT_RECV_AT: "12" })).toEqual({
+      parsed: { error: "EIO", pid: true, output: [null, null, null, null] },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The pipes of a node:child_process sync call count against one maxBuffer. Once a read is over it, no other
+  // reader takes what its pipe holds.
+  test.concurrent("spawnSync: the read that goes over maxBuffer is the last read of the call", async () => {
+    expect(
+      await runWithFault("spawn-sync-pipes-max-buffer.mjs", {
+        SPAWN_FAULT_RECV_WAIT: join(String(dir), "recv-wait-pipes-full"),
+        SPAWN_FAULT_REPORT: join(String(dir), "recv-wait-report.txt"),
+      }),
+    ).toEqual({
+      parsed: { error: "ENOBUFS", kept: [60000, 0, 0, 0, 0, 0, 0], recvCalls: 1 },
+      stderr: "",
+      exitCode: 0,
     });
   });
 

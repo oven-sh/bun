@@ -1,8 +1,9 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-/// Tracks remaining byte budget for a subprocess stdout/stderr pipe.
-/// Dual-owned by the `Subprocess` and the pipe reader; freed when both disown it.
+/// Tracks remaining byte budget for the output pipes of a subprocess.
+/// Owned by the `Subprocess` and by each pipe reader that charges it; freed
+/// when all of them disown it.
 ///
 /// All mutable state is `Cell<T>` so the struct is only ever accessed via
 /// `&MaxBuf` (shared, `SharedReadOnly` provenance). This is required because
@@ -16,11 +17,15 @@ pub struct MaxBuf {
     /// once the `.stdout`/`.stderr` stream getter is touched). `None` after
     /// subprocess finalize or once the overflow callback has fired.
     pub(crate) owned_by_subprocess: Cell<Option<Owner>>,
-    /// `false` after pipereader finalize.
-    pub(crate) owned_by_reader: Cell<bool>,
+    /// How many pipe readers charge this budget. More than one only for a
+    /// sync spawn whose output pipes all count against one `maxBuffer`.
+    pub(crate) readers: Cell<u32>,
+    /// The overflow callback has run: the readers that share the budget stop
+    /// too, not only the one that crossed the limit.
+    pub(crate) exhausted: Cell<bool>,
     /// If this goes negative, `on_max_buffer` is called on the subprocess.
     pub(crate) remaining_bytes: Cell<i64>,
-    // (once both are cleared, it is freed)
+    // (once the subprocess and every reader have let go, it is freed)
 }
 
 /// Erased back-pointer to the owning `Subprocess` plus its overflow handler.
@@ -43,11 +48,11 @@ const OVERREAD_ALLOWANCE: u64 = 64 * 1024;
 // heap::alloc/disowned()/destroy() refcount will not typecheck against those field types —
 // reconcile by retyping to Option<Arc<MaxBuf>> and dropping destroy()/disowned().
 impl MaxBuf {
-    /// Single nonnull-asref projection for the dual-owner back-pointer.
+    /// Single nonnull-asref projection for the shared back-pointer.
     ///
     /// Type invariant: every `NonNull<MaxBuf>` reachable from a subprocess or
     /// pipe-reader slot was created by `create_for_subprocess` and stays live
-    /// until both owners have disowned it and `destroy` runs. All fields are
+    /// until every owner has disowned it and `destroy` runs. All fields are
     /// `Cell<_>`, so the shared `&MaxBuf` returned here is sufficient for every
     /// mutation path and re-entrancy through the overflow callback is sound.
     #[inline]
@@ -67,13 +72,14 @@ impl MaxBuf {
         };
         *ptr = Some(bun_core::heap::into_raw_nn(Box::new(MaxBuf {
             owned_by_subprocess: Cell::new(Some(owner)),
-            owned_by_reader: Cell::new(false),
+            readers: Cell::new(0),
+            exhausted: Cell::new(false),
             remaining_bytes: Cell::new(initial),
         })));
     }
 
     fn disowned(&self) -> bool {
-        self.owned_by_subprocess.get().is_none() && !self.owned_by_reader.get()
+        self.owned_by_subprocess.get().is_none() && self.readers.get() == 0
     }
 
     /// Module-private teardown. Safe `fn` because the precondition is the
@@ -86,7 +92,7 @@ impl MaxBuf {
         debug_assert!(Self::live(&this).disowned());
         // SAFETY: type invariant — `this` was produced by
         // `bun_core::heap::into_raw_nn` in `create_for_subprocess` and is
-        // freed exactly once (both owner flags now `false`).
+        // freed exactly once (no owner is left).
         drop(unsafe { bun_core::heap::take(this.as_ptr()) });
     }
 
@@ -106,15 +112,14 @@ impl MaxBuf {
         debug_assert!(ptr.is_none());
         *ptr = Some(value_nn);
         let v = Self::live(&value_nn);
-        debug_assert!(!v.owned_by_reader.get());
-        v.owned_by_reader.set(true);
+        v.readers.set(v.readers.get() + 1);
     }
 
     pub(crate) fn remove_from_pipereader(ptr: &mut Option<NonNull<MaxBuf>>) {
         let Some(this_nn) = *ptr else { return };
         let this = Self::live(&this_nn);
-        debug_assert!(this.owned_by_reader.get());
-        this.owned_by_reader.set(false);
+        debug_assert!(this.readers.get() > 0);
+        this.readers.set(this.readers.get() - 1);
         *ptr = None;
         if this.disowned() {
             MaxBuf::destroy(this_nn);
@@ -141,9 +146,8 @@ impl MaxBuf {
     /// `owned_by_subprocess` through a sibling pointer to this same
     /// allocation. With `Cell` fields a shared `&MaxBuf` is sufficient and the
     /// re-entrancy is sound; the single `unsafe` is the `NonNull → &MaxBuf`
-    /// projection (the back-ref invariant: `this` is live while
-    /// `owned_by_reader` is set, which every caller has just checked via
-    /// `Some(maxbuf)`).
+    /// projection (the back-ref invariant: `this` is live while a reader
+    /// holds it, which every caller has just checked via `Some(maxbuf)`).
     pub(crate) fn on_read_bytes(this: NonNull<MaxBuf>, bytes: u64) -> bool {
         let mb = Self::live(&this);
         let delta = i64::try_from(bytes).unwrap_or(0);
@@ -155,13 +159,21 @@ impl MaxBuf {
         let Some(owner) = mb.owned_by_subprocess.get() else {
             return false;
         };
+        mb.exhausted.set(true);
         // SAFETY: `owner.ptr` is the `Subprocess` that called
         // `create_for_subprocess`; it stays live while `owned_by_subprocess`
         // is `Some` (cleared in `remove_from_subprocess`, called from
         // `Subprocess::finalize` and from the callback itself). The callback
-        // never frees `this` — `owned_by_reader` is set on every caller path.
+        // never frees `this` — the calling reader holds it on every caller path.
         unsafe { (owner.on_overflow)(owner.ptr, this) };
         true
+    }
+
+    /// `true` once the overflow callback has run. A reader that shares the
+    /// budget asks before it reads, so that only the read that crossed the
+    /// limit goes over it.
+    pub(crate) fn is_exhausted(this: Option<NonNull<MaxBuf>>) -> bool {
+        this.is_some_and(|this| Self::live(&this).exhausted.get())
     }
 
     /// Trims `buf` to the remaining budget plus `OVERREAD_ALLOWANCE`: unclamped,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isRoot, isWindows, tempDir } from "harness";
+import { existsSync } from "fs";
 import { totalmem } from "os";
 import { join } from "path";
 describe("spawnSync", () => {
@@ -115,6 +116,192 @@ describe("spawnSync", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+});
+
+// The result of Bun.spawnSync has no place for what a child writes to a stdio pipe above stderr, and a child that
+// fills a pipe nobody reads never exits. So the call reads the pipe for as long as it waits for the child, and keeps
+// none of the bytes.
+describe("a pipe at stdio index >= 3", () => {
+  // Writes more to fd 3 than a pipe holds on any platform, then "done" to stdout.
+  const writer = `
+    const fs = require("node:fs");
+    const chunk = Buffer.alloc(1_000_000, 97);
+    for (let written = 0; written < chunk.length; ) written += fs.writeSync(3, chunk, written);
+    fs.writeSync(1, "done");
+  `;
+  const cmd = [bunExe(), "-e", writer];
+  const summary = (r: Bun.SyncSubprocess<"pipe", "pipe">) => ({
+    exitCode: r.exitCode,
+    signalCode: r.signalCode,
+    stdout: r.stdout.toString(),
+    stderr: r.stderr.toString(),
+  });
+  const done = { exitCode: 0, signalCode: undefined, stdout: "done", stderr: "" };
+
+  it("the call returns when the child writes more than the pipe holds", () => {
+    expect(summary(Bun.spawnSync({ cmd, stdio: ["ignore", "pipe", "pipe", "pipe"], env: bunEnv }))).toEqual(done);
+    expect(summary(Bun.spawnSync(cmd, { stdio: ["ignore", "pipe", "pipe", "pipe"], env: bunEnv }))).toEqual(done);
+  });
+
+  it("an 'ipc' entry is a pipe like any other", () => {
+    const stdio = ["ignore", "pipe", "pipe", "ipc"] as any;
+    expect(summary(Bun.spawnSync({ cmd, stdio, env: bunEnv }))).toEqual(done);
+  });
+
+  it("maxBuffer does not count the pipe", () => {
+    const result = Bun.spawnSync({ cmd, stdio: ["ignore", "pipe", "pipe", "pipe"], env: bunEnv, maxBuffer: 1000 });
+    expect({ ...summary(result), exitedDueToMaxBuffer: result.exitedDueToMaxBuffer }).toEqual({
+      ...done,
+      exitedDueToMaxBuffer: false,
+    });
+  });
+
+  it("the call does not wait for a descendant that keeps the pipe open", async () => {
+    using dir = tempDir("spawn-sync-pipe-descendant", {});
+    const broken = join(String(dir), "broken");
+    // The descendant writes to the pipe until the call has closed its end of it, and then says so.
+    const descendant = `
+      const fs = require("node:fs");
+      try {
+        for (;;) fs.writeSync(3, "late");
+      } catch {}
+      fs.writeFileSync(process.env.BROKEN, "");
+    `;
+    const child = `
+      Bun.spawn({
+        cmd: [process.execPath, "-e", process.env.DESCENDANT],
+        stdio: ["ignore", "ignore", "ignore", 3],
+        detached: true,
+      }).unref();
+      ${writer}
+      process.exit(0);
+    `;
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "-e", child],
+      stdio: ["ignore", "pipe", "pipe", "pipe"],
+      // The CI runner sets BUN_FEATURE_FLAG_NO_ORPHANS on ASAN lanes, which makes the child kill the descendant
+      // when it exits. This test needs the descendant to outlive the child and hold the pipe open.
+      env: { ...bunEnv, DESCENDANT: descendant, BROKEN: broken, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+    });
+    expect(summary(result)).toEqual(done);
+    // The call has closed its end: the next write of the descendant fails.
+    while (!existsSync(broken)) await Bun.sleep(1);
+  });
+
+  // A Buffer at stdin is a memfd on Linux, which the child reads with no writer in the parent. Without memfd the
+  // call writes stdin through a pipe, as on macOS and Windows, while it reads the pipe above stderr.
+  it.skipIf(!isLinux)("the call writes stdin through a pipe while it reads the pipe above stderr", async () => {
+    const fixture = `
+      const { spawnSync } = require("node:child_process");
+      const input = Buffer.alloc(2_000_000, "i");
+      // Copies stdin to fd 3, then writes how many bytes that was to stdout.
+      const copy = \`
+        const fs = require("node:fs");
+        const chunk = Buffer.alloc(65536);
+        let total = 0;
+        for (let n; (n = fs.readSync(0, chunk)) > 0; total += n) {
+          for (let at = 0; at < n; ) at += fs.writeSync(3, chunk, at, n - at);
+        }
+        fs.writeSync(1, String(total));
+      \`;
+      const cmd = [process.execPath, "-e", copy];
+      const dropped = Bun.spawnSync({ cmd, stdio: [input, "pipe", "inherit", "pipe"] });
+      const returned = spawnSync(cmd[0], cmd.slice(1), {
+        input,
+        stdio: ["pipe", "pipe", "inherit", "pipe"],
+        maxBuffer: 2 * input.length,
+      });
+      console.log(
+        JSON.stringify({
+          dropped: { exitCode: dropped.exitCode, copied: dropped.stdout.toString() },
+          returned: {
+            status: returned.status,
+            error: returned.error?.code,
+            copied: returned.output[1].toString(),
+            intact: input.equals(returned.output[3]),
+          },
+        }),
+      );
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(JSON.parse(stdout)).toEqual({
+      dropped: { exitCode: 0, copied: "2000000" },
+      returned: { status: 0, copied: "2000000", intact: true },
+    });
+  });
+
+  // A reader that takes all there is before it lets go of the bytes holds most of what this child writes: the
+  // child refills the pipe faster than the reader empties it.
+  const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+  it.skipIf(!isLinux || !cc)("the call keeps none of what a child floods the pipe with", async () => {
+    const megabytes = 256;
+    using dir = tempDir("spawn-sync-pipe-flood", {
+      // Writes argv[1] MiB to fd 3 and never blocks: a write that finds the pipe full is tried again at once.
+      "flood.c": `
+        #include <errno.h>
+        #include <fcntl.h>
+        #include <stdlib.h>
+        #include <unistd.h>
+
+        int main(int argc, char **argv) {
+          static char chunk[1 << 20];
+          long left = atol(argv[1]) << 20;
+          // With nobody to read the pipe this loop has no end.
+          alarm(60);
+          fcntl(3, F_SETFL, fcntl(3, F_GETFL) | O_NONBLOCK);
+          while (left > 0) {
+            ssize_t n = write(3, chunk, left < (long)sizeof chunk ? (size_t)left : sizeof chunk);
+            if (n > 0) left -= n;
+            else if (errno != EAGAIN && errno != EINTR) return 1;
+          }
+          return 0;
+        }
+      `,
+      "flood-fixture.js": `
+        const fs = require("node:fs");
+        // The peak resident set of this process. ru_maxrss is no use here: it survives exec, so it starts at
+        // the peak of the test runner.
+        const peak = () => Number(/VmHWM:\\s+(\\d+) kB/.exec(fs.readFileSync("/proc/self/status", "utf8"))[1]);
+        const flood = megabytes =>
+          Bun.spawnSync({ cmd: ["./flood", String(megabytes)], stdio: ["ignore", "ignore", "inherit", "pipe"] });
+        // The first call pays for what every call after it uses again.
+        flood(1);
+        const before = peak();
+        const { exitCode } = flood(${megabytes});
+        console.log(JSON.stringify({ exitCode, grewMiB: Math.round((peak() - before) / 1024) }));
+      `,
+    });
+    await using compile = Bun.spawn({
+      cmd: [cc!, "-O2", "-o", "flood", "flood.c"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [compileErrors, compiled] = await Promise.all([compile.stderr.text(), compile.exited]);
+    if (compiled !== 0) throw new Error(`flood.c does not compile: ${compileErrors}`);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "flood-fixture.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const result = JSON.parse(stdout);
+    expect(result.exitCode).toBe(0);
+    // The call keeps none of the bytes: it holds one read buffer of 256 KiB at most.
+    expect(result.grewMiB).toBeLessThan(32);
   });
 });
 

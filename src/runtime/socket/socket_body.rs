@@ -4438,7 +4438,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
     jsc::mark_binding!();
     let global = cx.global();
     // The upgraded socket is the calling script's.
-    let context = global.bun_vm().context_of_caller_no_frame();
+    let context = global.bun_vm().context_of_caller();
 
     let duplex = duplex.to_js();
     // TODO: do better type checking

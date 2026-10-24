@@ -24,7 +24,6 @@ const on_path_update_fn: fn(Option<*mut c_void>, Event, bool) = FSWatcher::ON_PA
 #[allow(non_upper_case_globals)]
 const on_update_end_fn: fn(Option<*mut c_void>) = FSWatcher::on_update_end;
 
-bun_output::declare_scope!(PathWatcherManager, visible);
 // Rust identifiers cannot contain '.', so
 // the static is declared by hand (instead of via `declare_scope!`) with the
 // tag string, keeping `BUN_DEBUG_fs.watch` env matching and the

@@ -1653,7 +1653,6 @@ export function bunExeName(cfg: Config): string {
   if (cfg.debug) return "bun-debug";
   // Release variants — suffix encodes which features differ from plain release.
   // First match wins.
-  if (cfg.asan && cfg.valgrind) return "bun-asan-valgrind";
   if (cfg.asan) return "bun-asan";
   if (cfg.valgrind) return "bun-valgrind";
   if (cfg.assertions) return "bun-assertions";

@@ -468,7 +468,6 @@ dependencies = [
 name = "bun_css_jsc"
 version = "0.0.0"
 dependencies = [
- "bstr",
  "bun_alloc",
  "bun_ast",
  "bun_core",
@@ -1768,7 +1767,6 @@ dependencies = [
  "bun_alloc",
  "bun_analytics",
  "bun_core",
- "bun_crash_handler",
  "bun_dispatch",
  "bun_errno",
  "bun_event_loop",

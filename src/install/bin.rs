@@ -870,11 +870,9 @@ static EXEC_MODE: bun_core::Once<Mode> = bun_core::Once::new();
 #[cfg(any(target_os = "linux", target_os = "android"))]
 enum Beneath {
     Opened(Fd),
-    /// The path, or a symlink on the way, leads out of the package directory. Also a path that
-    /// does not exist.
+    /// The path or a symlink on it leaves the package directory, or it does not exist.
     Escapes,
-    /// `openat2` is not available: a seccomp filter or an old kernel. The caller checks the real
-    /// path instead.
+    /// `openat2` is unavailable (seccomp, old kernel): the caller checks the real path instead.
     Unavailable,
 }
 
@@ -1062,8 +1060,7 @@ impl<'a> Linker<'a> {
     fn set_exec_mode(&self, abs_target: &ZStr, target_stat: &sys::Stat) {
         let mode = exec_mode();
         if (target_stat.st_mode as Mode) & 0o777 != mode {
-            // A package can ship a bin target that is a symlink. The file it points to gets the
-            // mode only if it is inside the package.
+            // The file behind a symlink gets the mode only if it is inside the package.
             let is_symlink = sys::lstat(abs_target).is_ok_and(|link_stat| {
                 sys::kind_from_mode(link_stat.st_mode as Mode) == sys::FileKind::SymLink
             });
@@ -1075,9 +1072,7 @@ impl<'a> Linker<'a> {
         }
     }
 
-    /// Sets the mode of the file behind the symlink `abs_target`, if the link stays inside the
-    /// package directory. The file is opened first, and the open file is checked and chmodded, so
-    /// the link cannot be changed in between.
+    /// Sets the mode of the file behind the symlink `abs_target` if it is inside the package.
     #[cfg(not(windows))]
     fn chmod_symlinked_target(&self, abs_target: &ZStr, mode: Mode) {
         let mut package_dir_buf = path::path_buffer_pool::get();
@@ -1112,8 +1107,7 @@ impl<'a> Linker<'a> {
         let Ok(fd) = sys::open(abs_target, flags, 0) else {
             return;
         };
-        // Both paths come from the kernel, so the comparison is exact, also on a case-insensitive
-        // platform.
+        // Exact, not case-insensitive: both paths come from the kernel.
         let mut fd_path_buf = path::path_buffer_pool::get();
         let is_inside = sys::get_fd_path(fd, &mut fd_path_buf).is_ok_and(|fd_path| {
             fd_path.len() > real_package_dir.len()
@@ -1142,8 +1136,7 @@ impl<'a> Linker<'a> {
         (rel.len() < MAX_PATH_BYTES).then_some(rel)
     }
 
-    /// Opens `rel` with `openat2(RESOLVE_BENEATH)` from `package_dir`, so that no symlink on the
-    /// way leads out of the package.
+    /// Opens `rel` below `package_dir` with `openat2(RESOLVE_BENEATH)`: no symlink may leave it.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn open_beneath_package_dir(package_dir: &ZStr, rel: &[u8], flags: i32) -> Beneath {
         let Ok(package_dir_fd) = sys::open_dir_absolute(package_dir.as_bytes()) else {
@@ -1678,8 +1671,7 @@ impl<'a> Linker<'a> {
         bin_name: &[u8],
         buf: &'b mut [u8],
     ) -> Option<&'b ZStr> {
-        // A trailing separator would make `lstat` and `lchmod` follow a symlinked target; npm
-        // drops it too.
+        // A trailing separator would make the stat and chmod follow a symlinked target.
         let target = strings::without_trailing_slash(target);
 
         if !is_native_binlink_redirect {

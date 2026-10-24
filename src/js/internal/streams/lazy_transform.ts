@@ -23,8 +23,7 @@ function toLazyTransformClass(constructor, name) {
 
 function makeGetter(name) {
   return function () {
-    // Node (lib/internal/streams/lazy_transform.js) builds the Transform on any receiver. A class prototype gets none:
-    // each later stream of the class would share it. bluebird reads these keys on the prototypes in bun (#14251).
+    // Unlike Node: a Transform built on a class prototype is shared by every stream of the class (#29533, #14251).
     if (classPrototypes.$has(this)) return undefined;
     Transform.$call(this, this._options);
     this._writableState.decodeStrings = false;

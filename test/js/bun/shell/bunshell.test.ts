@@ -410,6 +410,42 @@ describe("bunshell", () => {
         .ensureTempDir()
         .runAsTest("make sure its two separate arguments");
     });
+
+    // POSIX 2.6.3: only the newlines at the end of the output are removed.
+    describe("quoted substitution keeps trailing whitespace", () => {
+      TestBuilder.command`echo "[$(echo 'a ')]"`.stdout("[a ]\n").runAsTest("space");
+      TestBuilder.command`echo "[$(echo -e 'a\t')]"`.stdout("[a\t]\n").runAsTest("tab");
+      TestBuilder.command`echo "[$(echo -n -e 'a\r')]"`.stdout("[a\r]\n").runAsTest("CR with no LF after it");
+      TestBuilder.command`echo "a$(echo -n '  ')b"`.stdout("a  b\n").runAsTest("only spaces");
+      TestBuilder.command`echo "[$(echo a; echo ' ')]"`.stdout("[a\n ]\n").runAsTest("space on the last line");
+      TestBuilder.command`echo "$(echo 'a ')$(echo 'b ')c"`
+        .stdout("a b c\n")
+        .runAsTest("two substitutions in one word");
+      TestBuilder.command`echo "[$(echo "$(echo 'a ')b")]"`.stdout("[a b]\n").runAsTest("nested substitution");
+      TestBuilder.command`[[ -n "$(echo -n ' ')" ]] && echo yes`.stdout("yes\n").runAsTest("[[ -n ]] operand");
+
+      TestBuilder.command`${BUN} run ./code.ts a "$(echo -n ' ')" b`
+        .ensureTempDir()
+        .file("code.ts", `console.log(JSON.stringify(process.argv.slice(2)))`)
+        .stdout('["a"," ","b"]\n')
+        .runAsTest("output of one space is one argument");
+
+      // Windows removes a trailing space from a file name.
+      test.skipIf(isWindows)("redirect target", async () => {
+        await TestBuilder.command`echo hi > "$(echo 'out ')"`.ensureTempDir().fileEquals("out ", "hi\n").run();
+      });
+    });
+
+    // A CR directly before a trailing LF goes with it on every platform. bash keeps that CR.
+    describe("quoted substitution removes trailing line ends", () => {
+      TestBuilder.command`echo "[$(echo a; echo; echo)]"`.stdout("[a]\n").runAsTest("every LF");
+      TestBuilder.command`echo "[$(echo -n -e 'a\r\n\r\n')]"`.stdout("[a]\n").runAsTest("every CRLF");
+      TestBuilder.command`echo "[$(echo -n -e 'a\r\r\n')]"`.stdout("[a]\n").runAsTest("every CR before the LF");
+      TestBuilder.command`echo "[$(echo -n -e 'a \r\n')]"`.stdout("[a ]\n").runAsTest("CRLF after a space");
+      TestBuilder.command`echo "[$(echo -n -e 'a \r\r\n\r\r\n')]"`
+        .stdout("[a ]\n")
+        .runAsTest("two line ends after a space");
+    });
   });
 
   describe("unicode", () => {
@@ -1645,6 +1681,19 @@ describe("deno_task", () => {
     TestBuilder.command`VAR=$(echo a && echo b) && echo "$VAR"`
       .stdout("a\nb\n")
       .runAsTest("assignment keeps command substitution newlines");
+
+    // An unquoted $VAR is not split into fields, so an assignment value drops the trailing whitespace.
+    TestBuilder.command`A=$(echo 'f '); B="$(echo 'g ')"; export C="$(echo 'h ')"; ${BUN} run ./code.ts $A $B $C`
+      .ensureTempDir()
+      .file("code.ts", `console.log(JSON.stringify(process.argv.slice(2)))`)
+      .stdout('["f","g","h"]\n')
+      .runAsTest("unquoted variable assigned a command substitution with a trailing space");
+
+    // bash keeps the space in the value and drops it when it splits an unquoted $VAR.
+    TestBuilder.command`VAR="$(echo 'a ')" && echo "[$VAR]"`
+      .stdout("[a ]\n")
+      .todo("an unquoted variable is not split into fields")
+      .runAsTest("assignment keeps the trailing space of a command substitution");
   });
 
   describe("env variables", async () => {

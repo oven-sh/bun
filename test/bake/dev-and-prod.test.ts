@@ -1,13 +1,6 @@
 // Tests which apply to both dev and prod. They are run twice.
 import { writeFileSync } from "node:fs";
-import {
-  devAndProductionTest,
-  devTest,
-  emptyHtmlFile,
-  prodTest,
-  WAIT_MULTIPLIER,
-  type DevServerTest,
-} from "./bake-harness";
+import { devAndProductionTest, devTest, emptyHtmlFile, WAIT_MULTIPLIER } from "./bake-harness";
 
 const hmrSelfAcceptingModule = (label: string) => `
   console.log(${JSON.stringify(label)});
@@ -150,37 +143,31 @@ devAndProductionTest("require() and import() of a stylesheet", {
     await c.style("body").backgroundColor.expect.toBe("red");
   },
 });
-// The page above also calls `import()`, which puts `__commonJS` in the production bundle.
-// Without it, the production bundle of an ES module throws "ReferenceError: __commonJS is not defined".
-{
-  const requireOnly: DevServerTest = {
-    files: {
-      "index.html": emptyHtmlFile({
-        styles: [],
-        scripts: ["index.ts"],
-      }),
-      "index.ts": `
-        const required = require("./styles.css");
-        console.log(typeof required + " " + JSON.stringify(required));
-        export {};
-      `,
-      "styles.css": `
-        body {
-          background-color: red;
-        }
-      `,
-    },
-    async test(dev) {
-      await using c = await dev.client("/");
-      await c.expectMessage("object {}");
-    },
-  };
-  devTest("require() of a stylesheet in a module that has no other use of the runtime", requireOnly);
-  prodTest("require() of a stylesheet in a module that has no other use of the runtime", {
-    ...requireOnly,
-    skip: ["linux", "darwin", "win32"],
-  });
-}
+// The page above also calls `import()`, which puts `__commonJS` in the production bundle. Without it, the
+// production bundle of an ES module throws "ReferenceError: __commonJS is not defined", so this case runs
+// under the dev server only.
+devTest("require() of a stylesheet in a module that has no other use of the runtime", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      const required = require("./styles.css");
+      console.log(typeof required + " " + JSON.stringify(required));
+      export {};
+    `,
+    "styles.css": `
+      body {
+        background-color: red;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("object {}");
+  },
+});
 devAndProductionTest("inline script and styles appear", {
   files: {
     "public/index.html": `

@@ -4,6 +4,7 @@ import { mkdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
+import { pathToFileURL } from "url";
 const preloadModule = `
 import {plugin} from 'bun';
 
@@ -38,6 +39,36 @@ process.exit(0);
 const bunfig = `preload = ["./preload.js"]`;
 
 describe("preload", () => {
+  test("--import file URLs preserve query and fragment identity", async () => {
+    using dir = tempDir("preload-file-url-query", {
+      "preload.mjs": `(globalThis.preloadURLs ??= []).push(import.meta.url);`,
+      "main.mjs": `console.log(JSON.stringify(globalThis.preloadURLs));`,
+    });
+    const base = pathToFileURL(join(String(dir), "preload.mjs"));
+    const query = new URL(base);
+    query.searchParams.set("fixture", "http://127.0.0.1:43210");
+    query.searchParams.set("clock", join(String(dir), "clock offset"));
+    const fragment = new URL(base);
+    fragment.hash = "generation-1";
+    const queryFragment = new URL(query);
+    queryFragment.hash = "generation-2";
+    const preloads = [query.href, query.href, fragment.href, queryFragment.href];
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...preloads.flatMap(preload => ["--import", preload]), "main.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: `${JSON.stringify([query.href, fragment.href, queryFragment.href])}\n`,
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test.todo("works", async () => {
     const preloadDir = join(realpathSync(tmpdir()), "bun-preload-test");
     mkdirSync(preloadDir, { recursive: true });

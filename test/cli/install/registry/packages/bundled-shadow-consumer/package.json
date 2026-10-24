@@ -1,0 +1,32 @@
+{
+  "_id": "bundled-shadow-consumer",
+  "name": "bundled-shadow-consumer",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-shadow-consumer",
+      "version": "1.0.0",
+      "dependencies": {
+        "bundled-shadow-mid": "1.0.0"
+      },
+      "_id": "bundled-shadow-consumer@1.0.0",
+      "dist": {
+        "integrity": "sha512-bYPAnSxRZS5jNQuvfR+PV/RC9MhWSCW0C+aB2GZi0xEQ9jmhUO+HAgK18dvtgF7IaXTqXM3F2ToI1eH5nsVLTA==",
+        "shasum": "825e428cd7ddc7af4be726cc1728ab0c735385da",
+        "tarball": "http://localhost:4873/bundled-shadow-consumer/-/bundled-shadow-consumer-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "bundled-shadow-consumer",
+      "version": "2.0.0",
+      "_id": "bundled-shadow-consumer@2.0.0",
+      "dist": {
+        "integrity": "sha512-5rOVsz3v9j2P1FaFAxsgnp50QmpGwjlPs3KO29gvUoO3RWlmYS5WQDJStSGMO8lzyWW+UCoR08IW3/WodfMjSg==",
+        "shasum": "79c93410f8ab5a6135323994a946978174e46dca",
+        "tarball": "http://localhost:4873/bundled-shadow-consumer/-/bundled-shadow-consumer-2.0.0.tgz"
+      }
+    }
+  }
+}

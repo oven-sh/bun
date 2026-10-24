@@ -1,0 +1,25 @@
+------------------
+{ printWidth: 80 }
+------------------
+foo(
+  /* HTML */ `---
+    layout: foo
+    ---
+
+    Test <a href="https://example.com">abc</a>.`,
+  b,
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+foo(
+  /* HTML */ `---
+    layout: foo
+    ---
+
+    Test <a href="https://example.com">abc</a>.`,
+  b,
+);
+
+===================== End =====================

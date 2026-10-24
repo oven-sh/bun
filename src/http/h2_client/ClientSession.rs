@@ -4,6 +4,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 
 use crate::Error;
 use bun_collections::{ArrayHashMap, VecExt};
@@ -15,6 +16,7 @@ use super::{dispatch, encode};
 use crate::h2_frame_parser as wire;
 use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::http_request_body::HTTPRequestBody;
+use crate::http_thread::WriteMessageType;
 use crate::internal_state::HTTPStage;
 use crate::lshpack;
 use crate::signals;
@@ -25,6 +27,12 @@ use crate::{HTTPClient, HTTPVerboseLevel, HeaderResult, NewHTTPContext, Protocol
 pub type Socket = HTTPSocket<true>;
 
 const LOCAL_INITIAL_WINDOW_SIZE: u32 = super::LOCAL_INITIAL_WINDOW_SIZE;
+
+/// An abort sends a liveness PING only if its request waited this long with no bytes read.
+const LIVENESS_GRACE: Duration = Duration::from_secs(1);
+/// Cap on the idle timer while a liveness PING is unanswered, unless
+/// `BUN_CONFIG_HTTP_IDLE_TIMEOUT` is shorter. Go's default `PingTimeout`.
+const PING_ACK_TIMEOUT_SECONDS: u64 = 15;
 
 // 31-/24-bit wire fields stored as u32; range asserts at use sites.
 #[allow(non_camel_case_types)]
@@ -62,6 +70,8 @@ pub struct ClientSession {
     /// checked by the coalescing path so a caller only multiplexes onto a
     /// session verified the way it would verify a fresh one.
     pub(crate) verification: PeerVerification,
+    /// The fetch session whose requests may multiplex onto this connection.
+    pub(crate) pool: crate::PoolOptions,
 
     /// Queued bytes for the socket; whole frames are written here and
     /// `flush()` drains as much as the socket accepts.
@@ -106,6 +116,17 @@ pub struct ClientSession {
     /// `onData` only re-arms the idle timer when this is true so a server
     /// can't keep a stalled upload alive forever with bare PINGs.
     pub(crate) stream_progressed: bool,
+    /// When the socket last delivered bytes.
+    last_read: Instant,
+    /// A liveness PING is unanswered: the session takes no new stream and is
+    /// not pooled, and `rearm_timeout` bounds the wait for the ACK.
+    pub(crate) awaiting_ping_ack: bool,
+    /// The idle timer is armed for that wait, not for a request's own shorter timeout.
+    ping_cap_armed: bool,
+    /// A liveness PING went out since the last HEADERS or DATA. gRPC servers
+    /// close a connection that sends several PINGs with neither in between:
+    /// https://github.com/golang/go/issues/70575
+    pub(crate) liveness_ping_spent: bool,
     pub(crate) goaway_last_stream_id: u31,
     pub(crate) fatal_error: Option<Error>,
     /// HEADERS/CONTINUATION fragments for a stream we no longer track (e.g.
@@ -258,11 +279,24 @@ impl ClientSession {
         Self::enter(this, |s| s.handle_writable());
     }
 
-    /// Socket onClose / onTimeout entry point. The socket is already gone, so
+    /// Socket onClose entry point. The socket is already gone, so
     /// every stream fails and the socket ext's ref is released; unless a
     /// caller holds its own guard, the session is freed before this returns.
     pub(crate) fn on_close(this: SessionPtr, err: Error) {
         Self::enter(this, |s| s.fail_streams(err));
+    }
+
+    /// Socket onTimeout entry point; see [`Self::on_close`]. When the wait for
+    /// the ACK of a liveness PING ran out, the connection is lost.
+    pub(crate) fn on_timeout(this: SessionPtr) {
+        Self::on_close(
+            this,
+            if this.ping_cap_armed {
+                Error::ConnectionClosed
+            } else {
+                Error::Timeout
+            },
+        );
     }
 
     /// Multiplex `client` onto an established (registered or pool-resumed)
@@ -286,8 +320,12 @@ impl ClientSession {
 
     /// HTTP-thread wake-up from `scheduleRequestWrite`; see
     /// [`Self::stream_request_body`].
-    pub(crate) fn stream_body_by_http_id(this: SessionPtr, async_http_id: u32, ended: bool) {
-        Self::enter(this, |s| s.stream_request_body(async_http_id, ended));
+    pub(crate) fn stream_body_by_http_id(
+        this: SessionPtr,
+        async_http_id: u32,
+        message: WriteMessageType,
+    ) {
+        Self::enter(this, |s| s.stream_request_body(async_http_id, message));
     }
 
     /// HTTP-thread wake-up from `resumeReceive`; see [`Self::resume_receive`].
@@ -345,6 +383,7 @@ impl ClientSession {
             ssl_config: client.tls_props.clone(),
             did_have_handshaking_error: client.flags.did_have_handshaking_error,
             verification: client.socket_verification(),
+            pool: client.pool,
             write_buffer: bun_io::StreamBuffer::default(),
             read_buffer: Vec::new(),
             streams: ArrayHashMap::default(),
@@ -359,6 +398,10 @@ impl ClientSession {
             encoder_poisoned: false,
             delivering: false,
             stream_progressed: false,
+            last_read: Instant::now(),
+            awaiting_ping_ack: false,
+            ping_cap_armed: false,
+            liveness_ping_spent: false,
             goaway_last_stream_id: 0,
             fatal_error: None,
             orphan_header_block: Vec::new(),
@@ -382,6 +425,7 @@ impl ClientSession {
     pub(crate) fn has_headroom(&self) -> bool {
         !self.goaway_received
             && !self.encoder_poisoned
+            && !self.awaiting_ping_ack
             && self.fatal_error.is_none()
             && self.streams.count() < self.remote_max_concurrent_streams as usize
             && self.next_stream_id < wire::MAX_STREAM_ID
@@ -392,12 +436,16 @@ impl ClientSession {
         hostname: &[u8],
         port: u16,
         ssl_config: Option<*const ssl_config::SSLConfig>,
+        pool_id: u64,
     ) -> bool {
         let mine: Option<*const ssl_config::SSLConfig> = self
             .ssl_config
             .as_ref()
             .map(|p| std::ptr::from_ref(p.get()));
-        self.port == port && mine == ssl_config && strings::eql_long(&self.hostname, hostname, true)
+        self.port == port
+            && self.pool.id == pool_id
+            && mine == ssl_config
+            && strings::eql_long(&self.hostname, hostname, true)
     }
 
     fn adopt_client(&mut self, client: &mut HTTPClient) {
@@ -477,6 +525,19 @@ impl ClientSession {
             && self.write_buffer.is_empty()
             && self.remote_max_concurrent_streams > 0
             && self.next_stream_id < wire::MAX_STREAM_ID
+    }
+
+    /// No request is left: the connection only waits for the ACK of its liveness PING.
+    pub(crate) fn is_idle_in_pool(&self, pool_id: u64) -> bool {
+        self.pool.id == pool_id && self.streams.count() == 0 && self.pending_attach.is_empty()
+    }
+
+    /// Close such a connection, which the ACK would otherwise park.
+    pub(crate) fn close_idle(this: SessionPtr) {
+        Self::enter(this, |s| {
+            s.goaway_received = true;
+            s.maybe_release();
+        });
     }
 
     #[inline]
@@ -667,6 +728,18 @@ impl ClientSession {
             let global = crate::idle_timeout_seconds();
             want = if global == 0 { 0 } else { want.max(global) };
         }
+        self.ping_cap_armed = false;
+        if self.awaiting_ping_ack {
+            let mut cap = crate::normalize_idle_timeout_seconds(PING_ACK_TIMEOUT_SECONDS);
+            let global = crate::idle_timeout_seconds();
+            if global != 0 {
+                cap = cap.min(global);
+            }
+            if want == 0 || cap < want {
+                want = cap;
+                self.ping_cap_armed = true;
+            }
+        }
         self.socket.set_timeout(want);
     }
 
@@ -703,7 +776,7 @@ impl ClientSession {
 
     /// New request body bytes (or end-of-body) are available in the request's
     /// ThreadSafeStreamBuffer.
-    fn stream_request_body(&mut self, async_http_id: u32, ended: bool) {
+    fn stream_request_body(&mut self, async_http_id: u32, message: WriteMessageType) {
         let Some(stream) = self.stream_for_http_id(async_http_id) else {
             return;
         };
@@ -714,7 +787,13 @@ impl ClientSession {
             let HTTPRequestBody::Stream(ref mut st) = client.state.original_request_body else {
                 return;
             };
-            st.ended = ended;
+            st.ended = message == WriteMessageType::End;
+        }
+        if message == WriteMessageType::LengthMismatch {
+            self.detach_with_failure(stream, Error::RequestBodyLengthMismatch);
+            self.rearm_timeout();
+            self.maybe_release();
+            return;
         }
         self.rearm_timeout();
         encode::drain_send_body(self, stream_mut(stream), usize::MAX);
@@ -794,6 +873,8 @@ impl ClientSession {
     /// client, then pool or close if no streams remain. Structured "parse all
     /// → deliver all" because delivering may free the client.
     fn handle_data(&mut self, incoming: &[u8]) {
+        self.last_read = Instant::now();
+        let was_awaiting_ping_ack = self.awaiting_ping_ack;
         self.stream_progressed = false;
         if self.read_buffer.is_empty() {
             let consumed = dispatch::parse_frames(self, incoming);
@@ -860,8 +941,9 @@ impl ClientSession {
             let _ = self.flush();
         }
         // PING/SETTINGS-ACK alone don't reset the idle timer; only frames that
-        // moved a stream (HEADERS/DATA/WINDOW_UPDATE on an active id) do.
-        if self.stream_progressed {
+        // moved a stream (HEADERS/DATA/WINDOW_UPDATE on an active id) do. The
+        // ACK of a liveness PING lifts that PING's cap.
+        if self.stream_progressed || was_awaiting_ping_ack != self.awaiting_ping_ack {
             self.rearm_timeout();
         }
 
@@ -982,7 +1064,7 @@ impl ClientSession {
     }
 
     /// RST_STREAMs (or unparks and fails) the one aborted request; siblings
-    /// continue.
+    /// continue. See [`Self::probe_liveness`].
     fn abort_request(&mut self, async_http_id: u32) {
         // Find the index via a raw-ptr field read first, then swap_remove, so
         // no `&mut HTTPClient` is held across the Vec mutation and no `&mut`
@@ -991,18 +1073,34 @@ impl ClientSession {
             .pending_attach
             .iter()
             .position(|&c| pending_client_mut(c).async_http_id == async_http_id);
+        let mut silent_since = self.last_read;
         if let Some(i) = found {
             let client = self.pending_attach.swap_remove(i);
             pending_client_mut(client).h2_fail(crate::Error::Aborted);
-            self.rearm_timeout();
-            self.maybe_release();
-            return;
-        }
-        if let Some(stream) = self.stream_for_http_id(async_http_id) {
+        } else if let Some(stream) = self.stream_for_http_id(async_http_id) {
+            silent_since = silent_since.max(stream_ref(stream).opened_at);
             self.detach_with_failure(stream, crate::Error::Aborted);
         }
+        self.probe_liveness(silent_since);
         self.rearm_timeout();
         self.maybe_release();
+    }
+
+    /// Send a PING after an abort on a silent connection: the caller may have
+    /// given up on one that died with no FIN or RST to say so, which later
+    /// requests would otherwise keep joining.
+    fn probe_liveness(&mut self, silent_since: Instant) {
+        if self.awaiting_ping_ack || silent_since.elapsed() < LIVENESS_GRACE {
+            return;
+        }
+        if self.liveness_ping_spent {
+            // Another PING could trip that limit: take no new stream, as after a GOAWAY.
+            self.goaway_received = true;
+            return;
+        }
+        self.liveness_ping_spent = true;
+        self.write_frame(wire::FrameType::HTTP_FRAME_PING, 0, 0, &[0; 8]);
+        self.awaiting_ping_ack = self.flush().is_ok();
     }
 
     fn reap_aborted(&mut self) {
@@ -1026,9 +1124,13 @@ impl ClientSession {
 
     /// Once the last request is gone, leave the registry and either park the
     /// connection in the keep-alive pool (which takes over the socket-ext ref)
-    /// or close it and give that ref up.
+    /// or close it and give that ref up. A connection that could be parked
+    /// first waits for the ACK of its liveness PING.
     fn maybe_release(&mut self) {
         if self.streams.count() > 0 || !self.pending_attach.is_empty() {
+            return;
+        }
+        if self.awaiting_ping_ack && self.can_pool() {
             return;
         }
         // Idempotent: a session is released exactly once. The registry index is
@@ -1054,7 +1156,7 @@ impl ClientSession {
             // `unregister_h2_raw` above, this branch is *not* reachable on the
             // re-entrant `connect()` → `adopt()` path: every adopt-side entry
             // into `maybe_release` has `encoder_poisoned`, `!has_headroom()`
-            // (goaway/fatal/stream-id-exhausted), or `streams.count() > 0` —
+            // (goaway/fatal/stream-id-exhausted/unanswered PING), or `streams.count() > 0` —
             // all of which short-circuit before reaching `can_pool()`. So no
             // ancestor frame holds `&mut NewHTTPContext` here and forming one
             // from the backref is sound — route through the centralised
@@ -1072,6 +1174,7 @@ impl ClientSession {
                 0,
                 Some(self_ref),
                 b"",
+                self.pool,
             );
         } else {
             NewHTTPContext::<true>::close_socket(self.socket);

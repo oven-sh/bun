@@ -1,0 +1,21 @@
+function f() {
+  {
+    {
+      {
+        const path = arc<PieArcDatum<(typeof chartData)[number]>>().innerRadius(INNER_RADIUS).outerRadius(OUTER_RADIUS).cornerRadius(1)(slice);
+        const pat2 = arc().innerRadius(INNER_RADIUS).outerRadius(OUTER_RADIUS).cornerRadius(1).aaaaaaaaaaaaaaaaaaaaaa(1)(slice);
+        const pat3 = arc<PieArcDatum<(typeof chartData)[number]>>().innerRadius(INNER_RADIUS).outerRadius(OUTER_RADIUS).cornerRadius(1);
+      }
+    }
+  }
+}
+class A {
+  async m() {
+    {
+      {
+              await actor.#connect_to_uri(uri, true).then((a) => aaaaaaaaaaaaaaaaaaaaaaaa).catch((e) => bbbbbbbbbbbbbb);
+              await actor.connect_to_uri(uri, true).then((a) => aaaaaaaaaaaaaaaaaaaaaaaaa).catch((e) => bbbbbbbbbbbbbb);
+      }
+    }
+  }
+}

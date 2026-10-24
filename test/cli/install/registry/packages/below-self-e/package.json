@@ -1,0 +1,39 @@
+{
+  "_id": "below-self-e",
+  "name": "below-self-e",
+  "dist-tags": {
+    "latest": "3.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "below-self-e",
+      "version": "1.0.0",
+      "_id": "below-self-e@1.0.0",
+      "dist": {
+        "integrity": "sha512-oySPHgycmEHZLEjzeSdHnPPCYW3erU+2zxozvGDwW70o9O8X8jJdLh5HTOWkjzZedFyH1SMREkOi6PrvvqA0gA==",
+        "shasum": "13f79e262404d04f50813092640a8d71d5bdf3b4",
+        "tarball": "http://localhost:4873/below-self-e/-/below-self-e-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "below-self-e",
+      "version": "2.0.0",
+      "_id": "below-self-e@2.0.0",
+      "dist": {
+        "integrity": "sha512-/jaDnBMU+aq9DjAmgNgK5bgZ5dZTgZ3rqwLIuJkHfG5v+h9+BooXUEKiiWyOaf7doBADFXXr1MjBWTEStgh6rg==",
+        "shasum": "f29272c652be9142b12ece13ac170a2cd8664073",
+        "tarball": "http://localhost:4873/below-self-e/-/below-self-e-2.0.0.tgz"
+      }
+    },
+    "3.0.0": {
+      "name": "below-self-e",
+      "version": "3.0.0",
+      "_id": "below-self-e@3.0.0",
+      "dist": {
+        "integrity": "sha512-GLU5ttZb7pV46rZUc7nBjrm9lJLsdfMi18eaejJBJCEG8iXpHwbwUGx25eYkWUL7Pj5WfPAd/a+NxRG3aEVDYg==",
+        "shasum": "dfaf4423a9e3342542fa1cbc35631329b529e836",
+        "tarball": "http://localhost:4873/below-self-e/-/below-self-e-3.0.0.tgz"
+      }
+    }
+  }
+}

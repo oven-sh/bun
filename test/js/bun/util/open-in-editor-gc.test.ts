@@ -49,6 +49,90 @@ test.skipIf(!isLinux)("Bun.openInEditor finds the editor's binary on PATH", asyn
   expect(await proc.exited).toBe(0);
 });
 
+// The fake editor appends to a file, which the child waits on, so what each call spawned is known before the next.
+test.skipIf(!isLinux)("Bun.openInEditor converts its arguments to strings", async () => {
+  using dir = tempDir("open-in-editor-arguments", {
+    "bin/code": `#!/bin/sh\necho "$*" >> "$EDITOR_LOG"\n`,
+    "run.js": `
+      const { readFileSync } = require("node:fs");
+      const lines = () => { try { return readFileSync(process.env.EDITOR_LOG, "utf8").split("\\n").filter(Boolean); } catch { return []; } };
+      const results = [];
+      for (const args of [
+        ["a.ts"],
+        [1],
+        [new String("b.ts")],
+        ["a.ts", { line: 3, column: 7 }],
+        ["a.ts", { line: "3" }],
+        ["a.ts", { line: 0 }],
+        ["a.ts", { line: "" }],
+        ["a.ts", { line: null, column: undefined, editor: "" }],
+        ["a.ts", Object.create({ line: 9 })],
+        ["a.ts", Object.assign([], { line: 9 })],
+        ["a.ts", Object.assign(() => {}, { line: 9 })],
+        ["a.ts", null],
+        ["a.ts", 5],
+        ["a.ts", "line"],
+        [],
+        [undefined],
+        [null],
+        [""],
+        [Symbol()],
+        ["a.ts", { line: Symbol() }],
+      ]) {
+        const before = lines().length;
+        try {
+          Bun.openInEditor(...args);
+          for (const deadline = Date.now() + 10_000; lines().length === before && Date.now() < deadline; ) await Bun.sleep(1);
+          results.push(lines()[before] ?? "<nothing was spawned>");
+        } catch (e) {
+          results.push(e.name + ": " + e.message);
+        }
+      }
+      console.log(JSON.stringify(results));
+    `,
+  });
+  chmodSync(join(String(dir), "bin/code"), 0o755);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.js"],
+    env: {
+      ...bunEnv,
+      PATH: join(String(dir), "bin"),
+      EDITOR: "code",
+      EDITOR_LOG: join(String(dir), "log"),
+    },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual([
+    "a.ts",
+    "1",
+    "b.ts",
+    "--goto a.ts:3:7",
+    "--goto a.ts:3",
+    "--goto a.ts:0",
+    "a.ts",
+    "a.ts",
+    "--goto a.ts:9",
+    "--goto a.ts:9",
+    "--goto a.ts:9",
+    "a.ts",
+    "a.ts",
+    "a.ts",
+    "Error: No file path specified",
+    "Error: No file path specified",
+    "Error: No file path specified",
+    "Error: No file path specified",
+    "TypeError: Cannot convert a symbol to a string",
+    "TypeError: Cannot convert a symbol to a string",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 // Option getters and toString run user JS that may call Bun.openInEditor
 // again. The editor slot used to stay mutably borrowed across those
 // callbacks, so re-entry aborted with "panic: RefCell already borrowed".
@@ -151,4 +235,45 @@ test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", asyn
   });
 
   await Promise.all(runs);
+});
+
+test.skipIf(!isLinux)("signal handlers installed before a burst of Bun.openInEditor calls still work", async () => {
+  const sleep = ["/usr/bin/sleep", "/bin/sleep"].find(p => existsSync(p));
+  expect(sleep).toBeDefined();
+
+  using dir = tempDir("open-in-editor-signal-table", {
+    "run.js": `
+      let fired = false;
+      process.on("SIGUSR2", () => { fired = true; });
+
+      let spawned = 0;
+      for (let i = 0; i < 64; i++) {
+        try { Bun.openInEditor("0.1", { editor: ${JSON.stringify(sleep)} }); spawned++; } catch {}
+      }
+      if (spawned === 0) { console.log("no editor threads spawned"); process.exit(2); }
+
+      // The listener's handler is restored once the last editor thread unregisters.
+      const deadline = Date.now() + 3000;
+      while (!fired && Date.now() < deadline) {
+        await Bun.sleep(20);
+        process.kill(process.pid, "SIGUSR2");
+      }
+      console.log(fired ? "ok" : "handler lost");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("ok");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
 });

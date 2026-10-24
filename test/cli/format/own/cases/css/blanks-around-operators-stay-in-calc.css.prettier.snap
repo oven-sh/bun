@@ -1,0 +1,44 @@
+------------------
+{ printWidth: 80 }
+------------------
+a {
+  height: calc((var(--h) / 2));
+  font-size: calc(var(--s) * 0.75);
+  width: calc(1px+2px);
+  width: calc(var(--a) * 2);
+  width: calc(1px + 2px);
+  width: calc(var(--a) * 2 + var(--b) / 3);
+  mask:
+    50% calc(-1 * var(--w)) / var(--_g) exclude,
+    50% / var(--_g) a;
+  padding: 0 calc(var(--c) / 4);
+  font: 12px/1.5 a;
+  grid-area: 1 / 2 / 3 / 4;
+  width: calc(
+    var(--a-variable-with-a-long-name) *
+      var(--another-variable-with-a-long-name) + var(--c)
+  );
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+a {
+  height: calc((var(--h) / 2));
+  font-size: calc(var(--s) * 0.75);
+  width: calc(1px+2px);
+  width: calc(var(--a) * 2);
+  width: calc(1px + 2px);
+  width: calc(var(--a) * 2 + var(--b) / 3);
+  mask:
+    50% calc(-1 * var(--w)) / var(--_g) exclude,
+    50% / var(--_g) a;
+  padding: 0 calc(var(--c) / 4);
+  font: 12px/1.5 a;
+  grid-area: 1 / 2 / 3 / 4;
+  width: calc(
+    var(--a-variable-with-a-long-name) * var(--another-variable-with-a-long-name) + var(--c)
+  );
+}
+
+===================== End =====================

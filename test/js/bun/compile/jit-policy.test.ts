@@ -132,9 +132,19 @@ describe("compile jitPolicy", () => {
   test("Bun.unsafe.setJITPolicy validates its argument", () => {
     // Outside a compiled executable the policy is already 1: a harmless no-op.
     expect(Bun.unsafe.setJITPolicy(1)).toBeUndefined();
-    expect(() => Bun.unsafe.setJITPolicy("x" as unknown as number)).toThrow(TypeError);
-    expect(() => Bun.unsafe.setJITPolicy(0.5)).toThrow(RangeError);
-    expect(() => Bun.unsafe.setJITPolicy(NaN)).toThrow(RangeError);
-    expect(() => Bun.unsafe.setJITPolicy(Infinity)).toThrow(RangeError);
+    for (const scale of [undefined, null, "2", 2n, {}, { valueOf: () => 2 }] as unknown as number[]) {
+      expect(() => Bun.unsafe.setJITPolicy(scale)).toThrow(
+        expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "scale must be a number" }),
+      );
+    }
+    for (const scale of [0, 0.5, 0.999, -1, NaN, Infinity]) {
+      expect(() => Bun.unsafe.setJITPolicy(scale)).toThrow(
+        expect.objectContaining({
+          name: "RangeError",
+          code: "ERR_OUT_OF_RANGE",
+          message: `The value of "scale" is out of range. It must be a finite number >= 1. Received ${scale}`,
+        }),
+      );
+    }
   });
 });

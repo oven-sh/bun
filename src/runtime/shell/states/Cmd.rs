@@ -17,7 +17,7 @@ use crate::shell::util::{OutKind, Stdio};
 use crate::shell::yield_::Yield;
 use bun_collections::VecExt;
 
-pub struct Cmd {
+pub(crate) struct Cmd {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Cmd>,
     pub(crate) io: IO,
@@ -46,7 +46,7 @@ pub enum CmdState {
 }
 
 #[derive(Default)]
-pub enum Exec {
+pub(crate) enum Exec {
     #[default]
     None,
     Builtin(Box<Builtin>),
@@ -65,7 +65,7 @@ impl Cmd {
     }
 }
 
-pub struct SubprocExec {
+pub(crate) struct SubprocExec {
     pub(crate) child: *mut ShellSubprocess,
     pub(crate) buffered_closed: BufferedIoClosed,
     /// NodeId-arena backrefs so the legacy `&mut self` subprocess callbacks
@@ -83,14 +83,14 @@ pub struct SubprocExec {
 /// completion. `Some(state)` means it was piped and must reach `Closed` before
 /// [`Cmd::has_finished`] returns true.
 #[derive(Default)]
-pub struct BufferedIoClosed {
+pub(crate) struct BufferedIoClosed {
     pub(crate) stdin: Option<bool>,
     pub(crate) stdout: Option<BufferedIoState>,
     pub(crate) stderr: Option<BufferedIoState>,
 }
 
 #[derive(Default)]
-pub enum BufferedIoState {
+pub(crate) enum BufferedIoState {
     #[default]
     Open,
     Closed(Vec<u8>),
@@ -725,11 +725,7 @@ impl Cmd {
                 let global = interp
                     .global_this_ref()
                     .expect("JS values not allowed in this context");
-                let idx = val.idx as usize;
-                if idx >= interp.jsobjs.len() {
-                    return Err(global.throw(format_args!("Invalid JS object reference in shell")));
-                }
-                let jsval = interp.jsobjs[idx];
+                let jsval = interp.jsobj(global, val.idx)?;
 
                 if let Some(buf) = jsval.as_array_buffer(global) {
                     if flags.stdin() {
@@ -779,8 +775,6 @@ impl Cmd {
                             STDERR_NO as i32,
                         )?;
                     }
-                } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
-                    panic!("TODO SHELL READABLE STREAM");
                 } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
                     // SAFETY: `as_` returns a live JSC-owned `*mut Response`;
                     // `get_body_value` is `&self`.
@@ -1033,7 +1027,7 @@ impl Cmd {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stdout");
         if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+            self.exit_code = Some(e.get_errno() as ExitCode);
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {
@@ -1069,7 +1063,7 @@ impl Cmd {
         debug_assert!(matches!(self.exec, Exec::Subproc(_)));
         log!("cmd close buffered stderr");
         if let Some(e) = err {
-            self.exit_code = Some(e.errno.unsigned_abs() as ExitCode);
+            self.exit_code = Some(e.get_errno() as ExitCode);
         }
         let redirect = self.ast_node().redirect;
         let Exec::Subproc(sub) = &mut self.exec else {

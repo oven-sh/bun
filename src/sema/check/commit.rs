@@ -27,8 +27,8 @@
 //!   the commits. An invalid commit discards what the task has done since its last commit. The task ends, and the
 //!   driver rechecks the file it was visiting right away, on any thread. The new task starts after the commit that the
 //!   old one conflicted with, so it finds those variances.
-//! - **A task that gives up at a limit isn't trusted** (`Checker::note_gave_up`). How far from a limit a computation
-//!   starts depends on what was computed before, which for a task includes the entries it found. It's discarded like an
+//! - **A task that gives up isn't trusted** (`Checker::note_gave_up`). How far from a limit a computation starts
+//!   depends on what was computed before, which for a task includes the entries it found. It's discarded like an
 //!   invalid one, but its file waits for the last round.
 //! - **A cycle is entered from the first file that leads to it.** What a query gets when it comes back around to
 //!   itself, or to a partial result it already has in place, depends on where the checker entered the cycle
@@ -42,6 +42,14 @@
 //!     (`Program::is_cycle_resolved`), on any thread. The recheck can be discarded at the file's next unresolved cycle.
 //!   - Once a file is discarded, one worker switches from the heavy files to the first unchecked files of the program, so
 //!     cycles that everything uses are resolved early.
+//! - **A limit on depth or size is reached from the first file that leads to it** (`Checker::note_reached_limit`). tsc
+//!   reports the error where it is at that moment and stores the error type, so later files find it and don't repeat
+//!   the work. So the limit counts as a cycle whose members are all the queries in progress. The same task is trusted,
+//!   its commit follows the same rules, and the files of the discarded tasks are rechecked once it's stored. The limit
+//!   of 5,000,000 instantiations per statement isn't one of these: there the task gives up.
+//!   - The work that leads to a limit can take seconds, and every file that uses the type would repeat it. So a
+//!     discarded task publishes the queries through which other files get there (`WaysToLimit`). A task that's about to
+//!     begin one of them has got to the limit too: it's discarded right away, unless it's trusted.
 //! - **A cycle is seen whole or not at all.** A task has a snapshot per file but none for the record-keyed entries. So
 //!   it could miss one member of a cycle and hit the next, which doesn't close a cycle and isn't what any entry point
 //!   produces. The commit of a task that was trusted about a cycle follows a file, so none of it is withheld, and it
@@ -113,6 +121,16 @@ pub(super) struct Commits<'s> {
     with_errors: &'s [AtomicU32],
     /// `tables_written_immediately`
     immediate_tables: u128,
+    ways_to_limits: Guarded<Vec<WaysToLimit>>,
+}
+
+/// What a task that was discarded at a limit on depth or size publishes, until a commit resolves one of the queries
+/// `in_progress`.
+struct WaysToLimit {
+    /// Hashes of the queries in progress that other files make too, except for those that were already published.
+    ways: Vec<u64>,
+    /// Hashes of all queries in progress, sorted.
+    in_progress: Vec<u64>,
 }
 
 /// Allocated in an arena so that tasks can refer to it.
@@ -123,6 +141,8 @@ struct Numbers {
     stored: AtomicU32,
     /// The number of the newest commit by a task that `Task::close_cycle` trusted.
     with_a_cycle: AtomicU32,
+    /// How many times `Commits::ways_to_limits` has changed.
+    changes_of_ways_to_limits: AtomicU32,
     /// Indexed by commit number: the highest `Files::rank_of_file` among the files the commit's task was checking. [0]
     /// is unused. `Commits` frees it, because arena contents are never dropped.
     ranks: Guarded<Vec<u32>>,
@@ -153,6 +173,7 @@ impl<'s> Commits<'s> {
                 begun: AtomicU32::new(0),
                 stored: AtomicU32::new(0),
                 with_a_cycle: AtomicU32::new(0),
+                changes_of_ways_to_limits: AtomicU32::new(0),
                 ranks: Guarded::new(vec![0]),
             }),
             claims: Claims {
@@ -163,6 +184,7 @@ impl<'s> Commits<'s> {
             ranks_of_files: &[],
             with_errors: &[],
             immediate_tables: tables_written_immediately(),
+            ways_to_limits: Guarded::default(),
         }
     }
 
@@ -170,6 +192,7 @@ impl<'s> Commits<'s> {
     pub(super) fn release(&mut self) {
         *self.claims.table.get_mut() = FxHashMap::default();
         *self.cycle_commits.get_mut() = Vec::new();
+        *self.ways_to_limits.get_mut() = Vec::new();
         *self.numbers.ranks.lock() = Vec::new();
     }
 
@@ -215,6 +238,7 @@ impl<'s> Commits<'s> {
         let mut stored = 0;
         self.numbers.begun.store(number, Ordering::Release);
         // This comes before the first entry, so a task that finds an entry also sees this.
+        let resolves_a_cycle = ring.is_some();
         if let Some(ring) = ring {
             self.cycle_commits
                 .lock()
@@ -232,7 +256,56 @@ impl<'s> Commits<'s> {
             }
         }
         self.numbers.stored.store(number, Ordering::Release);
+        if resolves_a_cycle && let Some(ring) = self.cycle_commits.lock().last() {
+            self.resolve_ways_to_limits(&ring.members);
+        }
         stored
+    }
+
+    fn change_ways_to_limits(&self, change: impl FnOnce(&mut Vec<WaysToLimit>)) {
+        let mut all = self.ways_to_limits.lock();
+        let before = all.len();
+        change(&mut all);
+        if all.len() != before {
+            let changes = &self.numbers.changes_of_ways_to_limits;
+            changes.fetch_add(1, Ordering::Release);
+        }
+    }
+
+    /// See `WaysToLimit`.
+    pub(super) fn publish_ways_to_limit(&self, mut ways: Vec<u64>, in_progress: Vec<u64>) {
+        self.change_ways_to_limits(|all| {
+            ways.retain(|way| !all.iter().any(|it| it.ways.contains(way)));
+            if !ways.is_empty() {
+                all.push(WaysToLimit { ways, in_progress });
+            }
+        });
+    }
+
+    /// `members`: `CycleCommit::members` of a commit that has stored everything.
+    pub(super) fn resolve_ways_to_limits(&self, members: &[u64]) {
+        let is_resolved = |member: &u64| members.binary_search(member).is_ok();
+        self.change_ways_to_limits(|all| all.retain(|it| !it.in_progress.iter().any(is_resolved)));
+    }
+
+    /// Returns `WaysToLimit::in_progress` for `way`, or `None` if a commit has resolved it.
+    pub(super) fn queries_beyond_way_to_limit(&self, way: u64) -> Option<Vec<u64>> {
+        let all = self.ways_to_limits.lock();
+        let found = all.iter().find(|it| it.ways.contains(&way))?;
+        Some(found.in_progress.clone())
+    }
+
+    /// Returns another number than last time if `copy_ways_to_limits` would give another result.
+    #[inline]
+    pub(super) fn changes_of_ways_to_limits(&self) -> u32 {
+        let changes = &self.numbers.changes_of_ways_to_limits;
+        changes.load(Ordering::Acquire)
+    }
+
+    /// Appends every `WaysToLimit::ways`.
+    pub(super) fn copy_ways_to_limits(&self, to: &mut Vec<u64>) {
+        let all = self.ways_to_limits.lock();
+        to.extend(all.iter().flat_map(|it| &it.ways));
     }
 }
 
@@ -625,6 +698,7 @@ impl<'s> Checker<'_, 's> {
 
     /// Call when nothing in progress has looked at a table or is about to store in one.
     fn on_idle(&mut self) {
+        self.learn_ways_to_limits();
         self.discard_if_missed_cycle_member();
         // A commit here would store the members of a cycle that are in other files, and withhold those in this one.
         if self.is_commit_due() && !self.task.was_discarded() && !self.task.has_resolved_a_cycle() {
@@ -693,13 +767,14 @@ impl<'s> Checker<'_, 's> {
         self.task.was_discarded()
     }
 
-    /// True if the task was discarded because of a cycle or an invalid commit, not a limit. Its files can be rechecked
-    /// before the last round.
+    /// True if the task was discarded because of a cycle, a limit on depth or size or an invalid commit, not because it
+    /// gave up. Its files can be rechecked before the last round.
     pub fn can_recheck_early(&self) -> bool {
         self.task.can_recheck_early()
     }
 
-    /// Returns hashes of the queries in the cycle that got this task discarded. Empty if that cycle is already committed.
+    /// Returns hashes of the queries in the cycle, or in progress at the limit, that got this task discarded. Empty if
+    /// that cycle is already committed.
     pub fn take_unresolved_cycle(&self) -> Vec<u64> {
         self.task.take_cycle_members()
     }

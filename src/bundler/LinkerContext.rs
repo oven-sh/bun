@@ -3760,8 +3760,8 @@ impl<'a> LinkerContext<'a> {
             };
         }
         let other_kind = exports_kind[other_id as usize];
-        // Is this a CommonJS file? A named import of a CommonJS file that has
-        // no exports is matched below, where it finds no export.
+        // Is this a CommonJS file?
+        // A named import of a CommonJS file without exports is matched below, and finds none.
         if other_kind == ExportsKind::Cjs
             && (alias_is_star
                 || !flags.contains(AstFlags::COMMONJS_WITHOUT_EXPORTS)

@@ -1979,13 +1979,10 @@ impl<'a> Parser<'a> {
                             || p.unwrap_all_requires
                             || p.has_import_meta
                         {
-                            // The dev server's module format is made at parse time. A
-                            // package that is converted to ESM stays converted. And
-                            // `import.meta` is module syntax.
+                            // The dev server needs the kind now, a converted package stays ESM, `import.meta` is ESM.
                             js_ast::ExportsKind::Esm
                         } else {
-                            // The linker decides from how the file is imported:
-                            // `scan_imports_and_exports`, steps 1 and 3.
+                            // The linker decides from the importers: `scan_imports_and_exports`, steps 1 and 3.
                             js_ast::ExportsKind::None
                         };
                     } else {

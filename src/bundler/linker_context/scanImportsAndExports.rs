@@ -305,19 +305,7 @@ pub(crate) fn scan_imports_and_exports(
 
                 match record.kind {
                     ImportKind::Stmt => {
-                        // The parser leaves the kind of a file undecided when the file
-                        // starts with "use strict" and has no module syntax. A star or
-                        // default import of that file needs its `module.exports`, so the
-                        // file becomes CommonJS:
-                        //
-                        //   import * as ns from './script'
-                        //   import defVal from './script'
-                        //   console.log(ns, defVal)
-                        //
-                        // A named import does not make the file CommonJS, and it matches
-                        // no export of the file, whatever the other importers need
-                        // (`COMMONJS_WITHOUT_EXPORTS`). A lazy-export file is undecided
-                        // too, and it is not decided here.
+                        // A star or default import of a file of undecided kind needs its `module.exports`.
                         if (record
                             .flags
                             .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
@@ -327,9 +315,7 @@ pub(crate) fn scan_imports_and_exports(
                             && !other_flags.contains(AstFlags::HAS_LAZY_EXPORT)
                             && !other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
                             && col_ref!(exports_kind)[other_file] == ExportsKind::None
-                            // Nothing calls the wrapper of an iife entry point (#37843)
-                            // or of an HTML file's script (#42026). Until then, those
-                            // files stay unwrapped.
+                            // Nothing calls the wrapper of an iife entry point (#37843) or an HTML script (#42026).
                             && !(output_format == Format::Iife
                                 && col_ref!(entry_point_kinds)[other_file].is_entry_point())
                             && !is_html_script(
@@ -530,8 +516,7 @@ pub(crate) fn scan_imports_and_exports(
                 if col_ref!(ast_flags_list)[id].contains(AstFlags::HAS_LAZY_EXPORT) {
                     this.generate_code_for_lazy_export(id as u32)?;
                 } else if col_ref!(exports_kind)[id] == ExportsKind::None {
-                    // The parser left the kind to the importers, and none of them
-                    // needed a CommonJS module in step 1.
+                    // No importer needed this undecided file to be CommonJS in step 1.
                     col!(exports_kind)[id] = ExportsKind::Esm;
                 }
 
@@ -652,8 +637,7 @@ pub(crate) fn scan_imports_and_exports(
                     );
                 }
 
-                // The parser makes no wrapper symbol for a file it does not know to
-                // be CommonJS when every statement can be hoisted out of a wrapper.
+                // The parser makes no wrapper symbol for an undecided file whose statements all hoist.
                 if flag.wrap == WrapKind::Cjs && col_ref!(wrapper_refs)[source_index].is_empty() {
                     use core::fmt::Write as _;
                     let arena = this.graph.bump;

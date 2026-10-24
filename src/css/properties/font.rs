@@ -322,9 +322,8 @@ pub enum FontFamily {
     /// A custom family name.
     // Arena-backed slice: the pointer targets bytes owned by the parser arena and is
     // only valid while that arena is alive (becomes `&'bump [u8]` once the 'bump
-    // lifetime is threaded through these types). With `*const [u8]`, a derived
-    // PartialEq would compare by pointer; the manual impl below compares by
-    // content.
+    // lifetime is threaded through these types). With `*const [u8]`, derived
+    // PartialEq would compare by pointer, so the manual impl below compares by content.
     FamilyName(*const [u8]),
 }
 
@@ -415,12 +414,11 @@ impl FontFamily {
         }
     }
 
-    // eql / deepClone — `PartialEq`/`Clone` hand-impls below; bridged to
+    // eql / deepClone: `PartialEq`/`Clone` hand-impls below, bridged to
     // `CssEql`/`DeepClone` via `bridge_clone_partialeq!` in `generics.rs`.
 }
 
-// With `*const [u8]`, a derived `PartialEq` would compare pointers;
-// hand-roll to compare the bytes by *content*.
+// A derived `PartialEq` would compare the `*const [u8]` pointers, so this compares the bytes.
 impl PartialEq for FontFamily {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -1077,8 +1075,7 @@ fn compatible_font_family(
         return Some(families);
     };
 
-    // Unlike lightningcss, only a later copy of an inserted name is dropped. Dropping any other
-    // repeat can change rendering: https://github.com/parcel-bundler/lightningcss/issues/1221
+    // Unlike lightningcss, keep every other repeat: https://github.com/parcel-bundler/lightningcss/issues/1221
     let mut inserted = [true; DEFAULT_SYSTEM_FONTS.len()];
     let mut expanded = Vec::with_capacity(families.len() + DEFAULT_SYSTEM_FONTS.len());
     for (i, entry) in families.into_iter().enumerate() {

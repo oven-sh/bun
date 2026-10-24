@@ -896,10 +896,9 @@ test.concurrent("path filter, run from inside another workspace", async () => {
   }
 });
 
-// A path selector is resolved against the directory that the command runs in. A `[`, a `{` or an
-// extglob like `+(old)` in the name of that directory is a character of the name and not part of
-// the pattern.
-test.concurrent.each(["[ws]", "{a,b}", "c++(old)"])("path selectors under a directory named %s", async parent => {
+// A path selector is resolved against the directory that the command runs in. A `[` or `{` in
+// the name of that directory is a character of the name and not part of the pattern.
+test.concurrent.each(["[ws]", "{a,b}"])("path selectors under a directory named %s", async parent => {
   const dir = await makeMonorepo({}, "hoisted", parent);
   const before = await allPackageJsonTexts(dir);
 

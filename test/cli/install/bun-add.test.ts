@@ -466,19 +466,21 @@ describe("--analyze and a URL in CSS or HTML", () => {
     ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
   });
 
-  it("bun add --analyze adds the package that an @import, a scoped url(), a <link> or a <script> names", async () => {
+  // These name a package when no file is beside the importer. `<link rel="stylesheet" href="tailwindcss">` is how
+  // the docs load Tailwind in a page.
+  it("bun add --analyze adds the package that an @import, a scoped url(), a stylesheet <link> or a <script> names", async () => {
     expect(
       await analyze("add", `import "./styles.css"; import * as page from "./page.html"; console.log(page);`, {
         files: {
-          "styles.css": `@import "tailwindcss"; @import "sheets/dist/x.css";
+          "styles.css": `@import "normalize.css"; @import "sheets/dist/x.css";
             a { background: url(@scope/icons/check.svg); }`,
           "page.html": `<!doctype html>
-            <link rel="stylesheet" href="page-styles/main.css">
+            <link rel="stylesheet" href="tailwindcss">
             <script type="module" src="from-a-page"></script>`,
         },
       }),
     ).toEqual({
-      added: ["@scope/icons", "from-a-page", "page-styles", "sheets", "tailwindcss"],
+      added: ["@scope/icons", "from-a-page", "normalize.css", "sheets", "tailwindcss"],
       errors: [],
       exitCode: 0,
     });
@@ -513,11 +515,13 @@ describe("--analyze and a URL in CSS or HTML", () => {
       "images/bg.png": "png",
       "icon.svg": "<svg/>",
     });
+    // The registry has no packages, so the install fails at its first request.
+    using registry = Bun.serve({ port: 0, fetch: () => new Response(null, { status: 404 }) });
     await using proc = spawn({
       cmd: [bunExe(), "create", "./App.tsx"],
       cwd: String(dir),
-      // Nothing listens on port 1, so the install fails at once.
-      env: { ...env, BUN_CONFIG_REGISTRY: "http://localhost:1/" },
+      // `bun create` prints a CA store flag of BUN_OPTIONS in the install line.
+      env: { ...env, BUN_CONFIG_REGISTRY: registry.url.href, BUN_OPTIONS: undefined },
       stdout: "pipe",
       stderr: "pipe",
       stdin: "ignore",

@@ -261,8 +261,8 @@ pub(crate) struct Connection {
     /// Frames and header blocks dropped without a reply (nghttp2's glitch_ratelim).
     glitch_limit: Cell<RateLimit>,
 
-    /// Scratch for `replenish_windows`: (stream id, increment).
-    replenish_buf: JsCell<Vec<(u32, u32)>>,
+    /// The streams whose receive window got half used since `replenish_windows` last ran, so it doesn't have to walk the table.
+    half_used_windows: JsCell<Vec<u32>>,
 
     preface_received: Cell<usize>,
     /// The id the next stream we open follows: the highest we have opened, or that a server has accepted.
@@ -305,7 +305,7 @@ impl Default for Connection {
             sent_reset_limit: Cell::new(reset_limit),
             reset_flood: Cell::new(false),
             glitch_limit: Cell::new(RateLimit::new(GLITCH_BURST, GLITCH_RATE)),
-            replenish_buf: JsCell::new(Vec::new()),
+            half_used_windows: JsCell::new(Vec::new()),
             preface_received: Cell::new(0),
             last_stream_id: Cell::new(0),
             last_peer_id: Cell::new(0),
@@ -588,20 +588,30 @@ impl Connection {
                 self.send_window_update(sink, 0, inc);
             }
         }
-        let mut buf = self.replenish_buf.take();
-        buf.clear();
-        self.streams.for_each(|s| {
-            if !s.is_closed() && !s.reading_paused.get() && s.recv_window.get().needs_update() {
-                let inc = update(&s.recv_window, RecvWindow::take_update);
-                if inc > 0 {
-                    buf.push((s.id, inc));
-                }
+        let mut ids = self.half_used_windows.take();
+        for id in ids.drain(..) {
+            let Some(s) = self.streams.get(id) else {
+                continue;
+            };
+            s.replenish_queued.set(false);
+            // A paused stream's window reopens when its reader resumes.
+            if !s.reading_paused.get() {
+                self.replenish_stream(sink, &s);
+            }
+        }
+        // Keeps the capacity, unless a write above queued something.
+        self.half_used_windows.with_mut(|queued| {
+            if queued.is_empty() {
+                *queued = ids;
             }
         });
-        for (id, inc) in buf.iter() {
-            self.send_window_update(sink, *id, *inc);
+    }
+
+    /// Call it after anything that uses up or shrinks the receive window of `s`.
+    fn queue_replenish(&self, s: &Stream) {
+        if s.recv_window.get().needs_update() && !s.replenish_queued.replace(true) {
+            self.half_used_windows.with_mut(|queued| queued.push(s.id));
         }
-        self.replenish_buf.set(buf);
     }
 
     /// Dispatch one fully-buffered frame. Returns true if the connection is now fatally closing.
@@ -678,8 +688,10 @@ impl Connection {
         // §6.9.2: the peer shifted its send window for every stream by this delta.
         let delta = acked.initial_window_size as i64 - self.acked_local_initial_window.get() as i64;
         if delta != 0 {
-            self.streams
-                .for_each(|s| update(&s.recv_window, |w| w.grow(delta)));
+            self.streams.for_each(|s| {
+                update(&s.recv_window, |w| w.grow(delta));
+                self.queue_replenish(s);
+            });
         }
         self.acked_local_initial_window
             .set(acked.initial_window_size);
@@ -1207,6 +1219,7 @@ impl Connection {
                     Verdict::Reset(code)
                 } else {
                     update(&s.recv_window, |w| w.on_data(frame_len));
+                    self.queue_replenish(&s);
                     // §6.9.1: an empty frame takes no window, even one a SETTINGS change left negative.
                     if frame_len > 0 && s.recv_window.get().is_overflowed(recv_floor) {
                         Verdict::WindowExceeded

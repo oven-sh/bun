@@ -23,6 +23,7 @@ use bun_http::lshpack;
 use bun_http_types::h2::flow_control::DEFAULT_WINDOW_SIZE;
 use bun_http_types::h2::frame::{
     CONNECTION_PREFACE, ErrorCode, FRAME_HEADER_SIZE, FrameHeader, FrameType, MAX_STREAM_ID, flags,
+    unparsed_rest,
 };
 use bun_http_types::h2::settings::{self, SettingId, Settings};
 use bun_http_types::h2::stream::{Event as StreamEvent, State};
@@ -2325,9 +2326,12 @@ impl H2FrameParser {
             }
             let stopped = self.left_exception.get() || self.draining.get() != Draining::No;
             if feed.end == FeedEnd::Drained || stopped {
-                // The engine parsed every complete frame or has to stop. Keep the rest for the next read, and none of this read's capacity.
-                let rest = if direct { &bytes[pos..] } else { &owned[pos..] };
-                self.inbound_tail.set(rest.to_vec());
+                // The engine parsed every complete frame or has to stop. Keep the rest for the next read.
+                self.inbound_tail.set(if direct {
+                    bytes[pos..].to_vec()
+                } else {
+                    unparsed_rest(owned, pos)
+                });
                 self.run_deferred();
                 break;
             }
@@ -3069,11 +3073,20 @@ impl H2FrameParser {
 
     pub(crate) fn get_stream_state(&self, cx: &mut JsScope<'_>, stream_id: u32) -> JSValue {
         let global_object = cx.global();
-        // Like node, which reports an idle stream once nghttp2 has dropped the id.
-        let Some(stream) = self.open_stream(stream_id) else {
+        // A closed stream keeps its entry until its `Http2Stream` is destroyed.
+        let Some(stream) = self.engine.streams.get(stream_id) else {
             return JSValue::UNDEFINED;
         };
         let stream_state = stream.state();
+        // A reserved stream only has the half that carries the pushed response.
+        let local_close = matches!(
+            stream_state,
+            State::HalfClosedLocal | State::ReservedRemote | State::Closed
+        );
+        let remote_close = matches!(
+            stream_state,
+            State::HalfClosedRemote | State::ReservedLocal | State::Closed
+        );
         let state = JSValue::create_empty_object(global_object, 6);
 
         state.put(
@@ -3089,12 +3102,12 @@ impl H2FrameParser {
         state.put(
             global_object,
             b"localClose",
-            JSValue::js_number(if stream_state.can_send() { 0.0 } else { 1.0 }),
+            JSValue::js_number(f64::from(u8::from(local_close))),
         );
         state.put(
             global_object,
             b"remoteClose",
-            JSValue::js_number(if stream_state.can_receive() { 0.0 } else { 1.0 }),
+            JSValue::js_number(f64::from(u8::from(remote_close))),
         );
         // TODO: sumDependencyWeight
         state.put(

@@ -273,6 +273,29 @@ describe("PING (checklist §3.7)", () => {
 });
 
 describe("WINDOW_UPDATE (checklist §6)", () => {
+  test("the streams' WINDOW_UPDATE frames come in the order in which their windows were used up", async () => {
+    const server = http2.createServer({ settings: { initialWindowSize: 100 } });
+    server.on("stream", stream => stream.resume());
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0, 20_000);
+      c.sendSettingsAck();
+      const ids = Array.from({ length: 64 }, (_, i) => 2 * i + 1);
+      c.send(Buffer.concat(ids.map(id => encodeFrame(FrameType.HEADERS, 0x4, id, requestHeaderBlock("POST")))));
+      const order = ids.toReversed();
+      c.send(Buffer.concat(order.map(id => encodeFrame(FrameType.DATA, 0, id, Buffer.alloc(60)))));
+      const updated = () => c.frames.filter(f => f.type === FrameType.WINDOW_UPDATE && f.streamId !== 0);
+      await c.waitFor(() => updated().length === order.length, 20_000);
+      expect(updated().map(f => f.streamId)).toEqual(order);
+    } finally {
+      c.socket.end();
+      server.close();
+    }
+  });
+
   test("a connection-level WINDOW_UPDATE with a 0 increment is a PROTOCOL_ERROR", async () => {
     const c = await RawH2.connect(port);
     c.sendPreface();

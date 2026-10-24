@@ -1,3 +1,4 @@
+import { setSocketOptions } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { afterEach, describe, expect, it, jest } from "bun:test";
 import { once } from "events";
@@ -4627,7 +4628,29 @@ describe.each([
   });
 });
 
-// The peer stops reading before the server writes, so most of the 16 MB is still unsent when the server leaves.
+// The send buffer of a server's socket and the receive buffer of the relay's, so that little data fills them. More than
+// the TLS layer hands to the kernel in one write, which has to fit once the peer has read.
+const kernelBuffer = 256 << 10;
+
+// Names the step in place of the test's own timeout.
+async function step<T>(name: string, promise: Promise<T>) {
+  const late = Promise.withResolvers<never>();
+  const timer = setTimeout(() => late.reject(new Error(`still waiting for ${name}`)), 60_000);
+  try {
+    return await Promise.race([promise, late.promise]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// macOS 26 can lose a reset that is sent while data is on its way, from Node.js too. One that arrived shows within a few
+// turns of the loop. Otherwise a byte to the port, which is closed by now, draws another.
+async function pokeUnlessReset(socket: net.Socket) {
+  for (let turns = 0; turns < 1000 && !socket.destroyed; turns++) await new Promise(resolve => setImmediate(resolve));
+  if (!socket.destroyed) socket.write("?");
+}
+
+// The peer stops reading before the server writes, so most of the 4 MB is still unsent when the server leaves.
 // The relay sees how the TCP connection to the server ends.
 describe("a Bun.listen() TLS connection with unsent data", () => {
   it.concurrent.each([
@@ -4636,6 +4659,7 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
   ])("$name", async ({ leaves, events: expected }) => {
     using dir = tempDir("leaves-with-unsent-data", {
       "server.mjs": `
+        import { setSocketOptions } from "bun:internal-for-testing";
         import { isMainThread, parentPort } from "node:worker_threads";
         const say = line => (isMainThread ? console.log(line) : parentPort.postMessage(line));
         export const listener = Bun.listen({
@@ -4644,7 +4668,8 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
           tls: ${JSON.stringify(COMMON_CERT_)},
           socket: {
             data(socket) {
-              socket.write(Buffer.alloc(16 << 20, "b"));
+              setSocketOptions(socket, 1, ${kernelBuffer});
+              socket.write(Buffer.alloc(4 << 20, "b"));
               say("written");
             },
           },
@@ -4694,7 +4719,7 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
       return text;
     })();
 
-    const port = Number(await said.port.promise);
+    const port = Number(await step("the port", said.port.promise));
     const upstream = Promise.withResolvers<net.Socket>();
     const closed = Promise.withResolvers<string[]>();
     await using relay = net.createServer(client => {
@@ -4710,6 +4735,7 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
         client.destroy();
         closed.resolve(events);
       });
+      server.once("connect", () => setSocketOptions(server, 2, kernelBuffer));
       upstream.resolve(server);
     });
     await once(relay.listen(0, "127.0.0.1"), "listening");
@@ -4721,16 +4747,24 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
       ca: COMMON_CERT_.cert,
     });
     client.on("error", () => {});
-    await once(client, "secureConnect");
+    // Ahead of the relay's close(), which waits for its connections: a step that fails reports itself.
+    using connections = {
+      [Symbol.dispose]() {
+        client.destroy();
+        upstream.promise.then(server => server.destroy());
+      },
+    };
+    await step("the handshake", once(client, "secureConnect"));
     const server = await upstream.promise;
     server.pause();
     client.write("go");
-    await said.written.promise;
+    await step("the server to write", said.written.promise);
     proc.stdin.write("leave\n");
-    await said.left.promise;
+    await step("the server to leave", said.left.promise);
     server.resume();
+    if (leaves === "stop(true)") await pokeUnlessReset(server);
 
-    expect(await closed.promise).toEqual(expected);
+    expect(await step("the connection to close", closed.promise)).toEqual(expected);
     proc.stdin.end();
     const [, stderr, exitCode] = await Promise.all([stdout, proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
@@ -4738,9 +4772,9 @@ describe("a Bun.listen() TLS connection with unsent data", () => {
   });
 });
 
-// A close_notify says that the stream is whole. The server queues 24 MB for a peer that isn't reading, then its thread
-// stands still while the peer reads some, so the kernel has room again when the connection is closed. A TLS 1.2 record
-// shows its type to the relay: 23 is data, 21 is an alert.
+// A close_notify says that the stream is whole. The server queues megabytes for a peer that isn't reading, then its thread
+// stands still while the peer reads what the kernel holds, so the kernel has room again when the connection is closed. A
+// TLS 1.2 record shows its type to the relay: 23 is data, 21 is an alert.
 describe("a TLS connection with queued data gets no close_notify", () => {
   const threadEnds = { leaves: "process.exit(0)", events: ["end", "close false"], lastRecord: 23 };
   // A reset drops what the kernel hasn't sent yet, so only a peer that reads on would get an alert ahead of it.
@@ -4759,21 +4793,24 @@ describe("a TLS connection with queued data gets no close_notify", () => {
     { server: "https.createServer()", call: "end(data)", ...threadEnds },
     { server: "Bun.listen()", call: "end(data)", ...threadEnds },
     { server: "Bun.serve()", call: "Response(data)", ...threadEnds },
+    { server: "Bun.serve() WebSocket", call: "send(data)", ...threadEnds },
     { server: "Bun.listen()", call: "end(data)", ...stopped },
     { server: "Bun.serve()", call: "Response(data)", ...stopped },
     { server: "Bun.serve()", call: "Response(data)", ...timedOut },
     // Nothing is queued here: the rest of the body doesn't exist yet.
     { server: "Bun.serve()", call: "Response(unfinished)", ...timedOut },
+    { server: "Bun.serve()", call: "Response(unfinished)", ...stopped },
     { server: "Bun.listen()", call: "end(data)", ...timedOut },
     // Few enough sweeps that the close which follows isn't cut short by its own timeout.
     { server: "Bun.listen()", call: "write(data)", ...timedOut, leaves: "endInTimeout(socket); sweepSocketTimers(3)" },
     { server: "Bun.listen()", call: "write(data)", ...ended },
   ])("$server, $call, then $leaves in its Worker", async row => {
     const { server: kind, call, leaves, events, lastRecord } = row;
-    const size = 24 << 20;
+    // A plain Bun.serve() response has no socket whose send buffer could be made small.
+    const size = kind === "Bun.serve()" ? 16 << 20 : 4 << 20;
     using dir = tempDir("closes-with-queued-data", {
       "server.mjs": `
-        import { sweepSocketTimers } from "bun:internal-for-testing";
+        import { setSocketOptions, sweepSocketTimers } from "bun:internal-for-testing";
         import https from "node:https";
         import tls from "node:tls";
         import { parentPort, workerData } from "node:worker_threads";
@@ -4796,12 +4833,14 @@ describe("a TLS connection with queued data gets no close_notify", () => {
           "tls.createServer()": () =>
             tls.createServer(options, socket =>
               socket.on("error", () => {}).once("data", () => {
+                setSocketOptions(socket, 1, ${kernelBuffer});
                 socket.${call};
                 leave(socket);
               }),
             ),
           "https.createServer()": () =>
             https.createServer(options, (req, res) => {
+              setSocketOptions(req.socket, 1, ${kernelBuffer});
               res.${call};
               // The response is written from a tick.
               setImmediate(leave);
@@ -4811,6 +4850,7 @@ describe("a TLS connection with queued data gets no close_notify", () => {
               ...at,
               socket: {
                 data(socket) {
+                  setSocketOptions(socket, 1, ${kernelBuffer});
                   socket.${call};
                   leave(socket);
                 },
@@ -4837,6 +4877,21 @@ describe("a TLS connection with queued data gets no close_notify", () => {
                 // The response is written once this returns.
                 if (${JSON.stringify(call)} === "Response(data)") setImmediate(leave);
                 return new ${call};
+              },
+            }),
+          "Bun.serve() WebSocket": () =>
+            Bun.serve({
+              ...at,
+              fetch: (request, server) => void server.upgrade(request),
+              websocket: {
+                backpressureLimit: 2 * data.length,
+                message() {},
+                open(socket) {
+                  setSocketOptions(socket, 1, ${kernelBuffer});
+                  socket.${call};
+                  // The message is written once this returns.
+                  setImmediate(leave);
+                },
               },
             }),
         };
@@ -4882,17 +4937,6 @@ describe("a TLS connection with queued data gets no close_notify", () => {
       return text;
     })();
 
-    // Names the step in place of the test's own timeout.
-    async function step<T>(name: string, promise: Promise<T>) {
-      const late = Promise.withResolvers<never>();
-      const timer = setTimeout(() => late.reject(new Error(`still waiting for ${name}`)), 60_000);
-      try {
-        return await Promise.race([promise, late.promise]);
-      } finally {
-        clearTimeout(timer);
-      }
-    }
-
     const port = Number(await step("the port", said.port.promise));
     const upstream = Promise.withResolvers<net.Socket>();
     const closed = Promise.withResolvers<{ events: string[]; lastRecord: number }>();
@@ -4918,6 +4962,7 @@ describe("a TLS connection with queued data gets no close_notify", () => {
         for (let at = 0; at + 5 <= bytes.length; at += 5 + bytes.readUInt16BE(at + 3)) lastRecord = bytes[at];
         closed.resolve({ events, lastRecord });
       });
+      server.once("connect", () => setSocketOptions(server, 2, kernelBuffer));
       upstream.resolve(server);
     });
     await once(relay.listen(0, "127.0.0.1"), "listening");
@@ -4941,13 +4986,15 @@ describe("a TLS connection with queued data gets no close_notify", () => {
     await step("the handshake", once(client, "secureConnect"));
     const server = await upstream.promise;
     server.pause();
-    client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    const upgrade =
+      "Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n";
+    client.write(`GET / HTTP/1.1\r\nHost: localhost\r\n${kind.endsWith("WebSocket") ? upgrade : ""}\r\n`);
     await step("the server to queue the data", said.queued.promise);
     server.resume();
-    // 1 MB, or all that the kernel holds where that is less: nothing more comes while the server's thread stands still.
+    // All that the kernel holds: nothing more comes while the server's thread stands still.
     const paused = length;
     const deadline = Date.now() + 60_000;
-    for (let quietTurns = 0, before = length; length <= 1 << 20 && quietTurns < 1000; before = length) {
+    for (let quietTurns = 0, before = length; quietTurns < 1000; before = length) {
       if (Date.now() > deadline) throw new Error("still waiting for the first data");
       await new Promise(resolve => setImmediate(resolve));
       quietTurns = length === before && length > paused ? quietTurns + 1 : 0;
@@ -4957,6 +5004,7 @@ describe("a TLS connection with queued data gets no close_notify", () => {
     proc.stdin.write("leave\n");
     await step("the server to leave", said.left.promise);
     server.resume();
+    if ("readsOn" in row) await pokeUnlessReset(server);
 
     expect(await step("the connection to close", closed.promise)).toEqual({ events, lastRecord });
     if (!client.closed) await step("the client to close", once(client, "close"));

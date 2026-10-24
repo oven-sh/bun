@@ -7800,14 +7800,17 @@ it("a listener that throws behind an owed response leaves that response its turn
     })();
   `;
   await using child = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
-  expect(JSON.parse(stdout)).toEqual([
-    ["nothing", true],
-    ["res.detachSocket(res.socket)", true],
-    ["res.socket = null", true],
-    ["res.connection = null", true],
-    ["res.socket = {}", true],
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  expect({ stderr, seen: JSON.parse(stdout) }).toEqual({
+    stderr: "",
+    seen: [
+      ["nothing", true],
+      ["res.detachSocket(res.socket)", true],
+      ["res.socket = null", true],
+      ["res.connection = null", true],
+      ["res.socket = {}", true],
+    ],
+  });
   expect(exitCode).toBe(0);
 });
 

@@ -187,6 +187,15 @@ pub fn next_frame(input: &[u8], max_frame_size: u32) -> Result<NextFrame<'_>, Fr
     })
 }
 
+/// What a connection keeps of its read buffer after the first `parsed` bytes. A mostly spent buffer is dropped for a copy of the rest. A mostly unparsed one is kept, so a frame that comes in many reads isn't copied at each.
+pub fn unparsed_rest(mut buffer: Vec<u8>, parsed: usize) -> Vec<u8> {
+    if (buffer.len() - parsed) * 2 < buffer.capacity() {
+        return buffer[parsed..].to_vec();
+    }
+    buffer.drain(..parsed);
+    buffer
+}
+
 /// The payload range between the Pad Length octet and the padding (§6.1). `pad_length` is the payload's first octet.
 pub fn unpadded_range(
     header: &FrameHeader,
@@ -391,6 +400,28 @@ mod tests {
 
     fn code_of(result: Result<Frame<'_>, FrameError>) -> Option<(ErrorCode, u32)> {
         result.err().map(|e| (e.code, e.stream_id))
+    }
+
+    #[test]
+    fn a_spent_read_buffer_is_dropped() {
+        let rest = unparsed_rest(vec![7; 1000], 995);
+        assert_eq!(rest, [7; 5]);
+        assert!(rest.capacity() < 1000);
+        assert_eq!(unparsed_rest(vec![7; 1000], 1000).capacity(), 0);
+    }
+
+    #[test]
+    fn a_frame_in_many_reads_is_copied_a_few_times() {
+        let mut buffer = Vec::new();
+        let mut reallocations = 0;
+        for _ in 0..1000 {
+            let capacity = buffer.capacity();
+            buffer.extend_from_slice(&[7; 100]);
+            buffer = unparsed_rest(buffer, 0);
+            reallocations += usize::from(buffer.capacity() != capacity);
+        }
+        assert_eq!(buffer.len(), 100_000);
+        assert!(reallocations < 20, "{reallocations}");
     }
 
     #[test]

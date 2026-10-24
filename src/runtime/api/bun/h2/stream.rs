@@ -88,6 +88,8 @@ pub(crate) struct Stream {
     closed_in_read: Cell<u32>,
 
     pub recv_window: Cell<RecvWindow>,
+    /// The id is in `Connection::half_used_windows`.
+    pub replenish_queued: Cell<bool>,
     /// The JS readable is paused, so the receive window isn't replenished.
     pub reading_paused: Cell<bool>,
     /// A final header block arrived, so the next inbound HEADERS is a trailer section (RFC 9113 §8.1).
@@ -127,6 +129,7 @@ impl Stream {
             released: Cell::new(false),
             close_delivered: Cell::new(false),
             closed_in_read: Cell::new(0),
+            replenish_queued: Cell::new(false),
             recv_window: Cell::new(RecvWindow::new(initial_recv)),
             reading_paused: Cell::new(false),
             recv_final_headers: Cell::new(false),

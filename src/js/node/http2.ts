@@ -2218,18 +2218,19 @@ function emitHttp2SessionPerf(session, parser, socket) {
   );
 }
 
-function markStreamClosed(stream: Http2Stream) {
+// Returns false if the stream was closed already.
+function closeStreamOnce(stream: Http2Stream) {
   const status = stream[bunHTTP2StreamStatus];
-
-  if ((status & StreamState.Closed) === 0) {
-    stream[bunHTTP2StreamStatus] = status | StreamState.Closed;
-    if (stream[kTimeout]) clearTimeout(stream[kTimeout]);
-    stream[kTimeout] = null;
-    stream.removeAllListeners("timeout");
-    publishStreamCloseChannel(stream);
-
-    markWritableDone(stream);
-  }
+  if ((status & StreamState.Closed) !== 0) return false;
+  stream[bunHTTP2StreamStatus] = status | StreamState.Closed;
+  if (stream[kTimeout]) clearTimeout(stream[kTimeout]);
+  stream[kTimeout] = null;
+  stream.removeAllListeners("timeout");
+  publishStreamCloseChannel(stream);
+  return true;
+}
+function markStreamClosed(stream: Http2Stream) {
+  if (closeStreamOnce(stream)) markWritableDone(stream);
 }
 // Like node's closeStream(), which runs once per stream. Returns true if the caller still has to end() the writable side.
 function abortIfWritableOpen(stream: Http2Stream) {
@@ -2541,9 +2542,10 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     if (session && !this.destroyed && typeof this.#id === "number") {
       const native = session[bunHTTP2Native];
       if (!native) return {};
-      // Node's Http2Stream::RefreshState reports an idle stream once nghttp2 has dropped the id.
+      // Like Node, where nghttp2 has dropped the id of a stream that only lives on for its unread data, and Http2Stream::RefreshState then reports an idle stream.
+      const awaitsReader = (this[bunHTTP2StreamStatus] & StreamState.AwaitsReader) !== 0;
       return (
-        native.getStreamState(this.#id) ?? {
+        (awaitsReader ? undefined : native.getStreamState(this.#id)) ?? {
           state: constants.NGHTTP2_STREAM_STATE_IDLE,
           weight: 0,
           sumDependencyWeight: 0,
@@ -2687,10 +2689,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     }
     this.rstCode = rstCode;
     emitHttp2StreamPerf(this);
-    // node closes the stream from inside _destroy, so the close-channel publish observes
-    // closed === true and destroyed === true with the final rstCode. The non-error close path
-    // (streamEnd state=7) calls markStreamClosed BEFORE destroy(), where the channel observes
-    // destroyed === false instead.
+    // Like Node, a local destroy() closes the stream here, so its close channel sees `destroyed` and the final rstCode. A close on the wire has published already.
     markStreamClosed(this);
     // RST code 8 not emitted as an error as its used by clients to signify
     // abort and is already covered by aborted event, also allows more
@@ -3872,9 +3871,14 @@ function emitStreamErrorNT(self, stream, error, destroy_self) {
     if (error === NGHTTP2_NO_ERROR && !self.destroyed && (stream.readable || !stream._writableState.ending)) {
       closeStreamResetWithNoError(self, stream);
     } else {
-      // node marks the stream closed (and publishes the close diagnostics channel) from inside
-      // _destroy, so the publish observes destroyed === true; don't pre-mark it here.
+      // Like Node's onStreamClose, a reset on the wire closes the stream and publishes its close channel before destroy(). Only a local destroy() publishes from _destroy.
+      let closedHere = false;
+      if (typeof error !== "object" && !stream.destroyed) {
+        abortIfWritableOpen(stream);
+        closedHere = closeStreamOnce(stream);
+      }
       stream.destroy(error_instance, stream.rstCode);
+      if (closedHere) markWritableDone(stream);
     }
 
     if (destroy_self) destroySessionInternally(self);

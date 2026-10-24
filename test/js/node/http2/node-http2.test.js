@@ -2413,6 +2413,111 @@ describe("Http2Stream#state", () => {
     }
   });
 
+  const closed = {
+    state: http2.constants.NGHTTP2_STREAM_STATE_CLOSED,
+    weight: 16,
+    sumDependencyWeight: 0,
+    localClose: 1,
+    remoteClose: 1,
+    localWindowSize: 65535,
+  };
+
+  // What `state` reads at each moment between the close on the wire and destroy(), on both sides. `respond` answers the request.
+  async function statesWhileClosing(respond) {
+    const seen = {};
+    const note = (moment, stream) => {
+      if (stream.closed && !stream.destroyed) seen[moment] = stream.state;
+    };
+    const onClientClose = ({ stream }) => note("client close channel", stream);
+    const onServerClose = ({ stream }) => note("server close channel", stream);
+    dc.subscribe("http2.client.stream.close", onClientClose);
+    dc.subscribe("http2.server.stream.close", onServerClose);
+    const server = http2.createServer();
+    const serverClosed = Promise.withResolvers();
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.on("finish", () => note("server 'finish'", stream));
+      stream.on("close", serverClosed.resolve);
+      stream.resume().on("end", () => respond(stream, () => note("server end() callback", stream)));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const req = client.request({ ":path": "/", ":method": "POST" });
+      req.on("error", () => {});
+      req.on("end", () => note("client 'end'", req));
+      req.resume().end("request");
+      // Not once(), which rejects on 'error'.
+      await Promise.all([new Promise(resolve => req.on("close", resolve)), serverClosed.promise]);
+      return seen;
+    } finally {
+      dc.unsubscribe("http2.client.stream.close", onClientClose);
+      dc.unsubscribe("http2.server.stream.close", onServerClose);
+      client.destroy();
+      server.close();
+    }
+  }
+
+  it("reports a closed stream from the close on the wire until destroy()", async () => {
+    const seen = await statesWhileClosing((stream, callback) => {
+      stream.respond({ ":status": 200 });
+      stream.end("response", callback);
+    });
+    expect(seen).toEqual({
+      "client close channel": closed,
+      "client 'end'": closed,
+      "server close channel": closed,
+      "server end() callback": closed,
+      "server 'finish'": closed,
+    });
+  });
+
+  it("reports a closed stream to the side whose peer destroyed it", async () => {
+    expect(await statesWhileClosing(stream => stream.destroy())).toEqual({
+      "client close channel": closed,
+      "client 'end'": closed,
+    });
+  });
+
+  it.each([http2.constants.NGHTTP2_CANCEL, http2.constants.NGHTTP2_INTERNAL_ERROR])(
+    "reports a closed stream to the close channel of the side whose peer reset it with code %d",
+    async code => {
+      const seen = await statesWhileClosing(stream => stream.close(code));
+      expect(seen["client close channel"]).toEqual(closed);
+    },
+  );
+
+  it("reports the one half that a reserved stream has", async () => {
+    const halves = ({ state, localClose, remoteClose }) => ({ state, localClose, remoteClose });
+    const atServer = Promise.withResolvers();
+    const atClient = Promise.withResolvers();
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.pushStream({ ":path": "/pushed" }, (err, pushed) => {
+        if (err) return atServer.reject(err);
+        atServer.resolve(halves(pushed.state));
+        pushed.respond({ ":status": 200 });
+        pushed.end("pushed");
+        stream.respond({ ":status": 200 });
+        stream.end("main");
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      client.on("error", atClient.reject);
+      client.on("stream", pushed => atClient.resolve(halves(pushed.resume().state)));
+      client.request({ ":path": "/" }).resume();
+      expect({ server: await atServer.promise, client: await atClient.promise }).toEqual({
+        server: { state: http2.constants.NGHTTP2_STREAM_STATE_RESERVED_LOCAL, localClose: 0, remoteClose: 1 },
+        client: { state: http2.constants.NGHTTP2_STREAM_STATE_RESERVED_REMOTE, localClose: 1, remoteClose: 0 },
+      });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
   it("doesn't throw on a pushed stream", async () => {
     const server = http2.createServer();
     server.on("stream", stream => {
@@ -5595,6 +5700,49 @@ it("http2 hands out the cached name strings for pseudo-headers and known header 
   }
 });
 
+it("http2 joins the values of fields with the same name, without a copy for each", async () => {
+  const repeated = {
+    "x-a": ["1", "2", "3"],
+    "cookie": ["a=1", "b=2", "c=3"],
+    "x-empty": ["", "v", ""],
+    "x-l": ["\xe9", "z"],
+  };
+  const joined = { "x-a": "1, 2, 3", "cookie": "a=1; b=2; c=3", "x-empty": ", v, ", "x-l": "\xe9, z" };
+  // Described before the values are read, which flattens a rope.
+  const look = (headers, rawHeaders) => ({
+    ropes: Object.keys(joined).filter(name => jscDescribe(headers[name]).includes("rope")),
+    values: Object.fromEntries(Object.keys(joined).map(name => [name, headers[name]])),
+    setCookie: headers["set-cookie"],
+    fields: rawHeaders.filter((_, index) => index % 2 === 0 && rawHeaders[index] === "x-a").length,
+  });
+  const expected = setCookie => ({ ropes: Object.keys(joined), values: joined, setCookie, fields: 3 });
+
+  const seen = {};
+  const server = http2.createServer();
+  server.on("stream", (stream, headers, _flags, rawHeaders) => {
+    seen.request = look(headers, rawHeaders);
+    stream.respond({ ...repeated, "set-cookie": ["s=1", "s=2"] }, { waitForTrailers: true });
+    stream.on("wantTrailers", () => stream.sendTrailers(repeated));
+    stream.end("x");
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    const req = client.request({ ":path": "/", ...repeated });
+    req.on("response", (headers, _flags, rawHeaders) => (seen.response = look(headers, rawHeaders)));
+    req.on("trailers", (headers, _flags, rawHeaders) => (seen.trailers = look(headers, rawHeaders)));
+    await once(req.resume(), "close");
+    expect(seen).toEqual({
+      request: expected(undefined),
+      response: expected(["s=1", "s=2"]),
+      trailers: expected(undefined),
+    });
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
 it("http2 option range error messages use the options. prefix", () => {
   for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
     let error;
@@ -6015,6 +6163,33 @@ describe("the memory that a session's own buffers hold", () => {
       );
       expect(held(session) - before).toBeLessThan(small);
     });
+  });
+
+  it("a frame that comes in many reads isn't copied at each of them", async () => {
+    // Each write on this transport is one read of the session.
+    const [clientSide, serverSide] = duplexPair();
+    const server = http2.createServer();
+    const session = once(server, "session");
+    server.emit("connection", serverSide);
+    clientSide.resume();
+    try {
+      clientSide.write(Buffer.concat([Buffer.from(http2utils.kClientMagic), frame(SETTINGS, 0, 0)]));
+      const bytes = frames(UNKNOWN, 0, 16384);
+      let reallocations = 0;
+      let last = held((await session)[0]);
+      for (let sent = 0; sent < 15000; sent += 250) {
+        clientSide.write(bytes.subarray(sent, sent + 250));
+        await new Promise(setImmediate);
+        const now = held((await session)[0]);
+        if (now !== last) reallocations++;
+        last = now;
+      }
+      expect(reallocations).toBeLessThan(12);
+    } finally {
+      clientSide.destroy();
+      serverSide.destroy();
+      server.close();
+    }
   });
 
   // A literal field with a one-letter name. `kind` 0x40 puts it into the table, 0x00 doesn't.

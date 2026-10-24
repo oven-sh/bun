@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstat, readdir, rm } from "fs/promises";
 import { symlinkSync } from "fs";
+import { lstat, readdir, rm } from "fs/promises";
 import {
   bunEnv,
   bunExe,

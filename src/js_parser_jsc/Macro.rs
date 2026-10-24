@@ -1145,6 +1145,8 @@ fn expr_from_blob(
     let is_json = essence.ends_with(b"/json") || essence.ends_with(b"+json");
 
     if is_json {
+        // The parsed strings borrow the source bytes; keep them in `bump`.
+        let bytes: &[u8] = bump.alloc_slice_copy(bytes);
         let source = &Source::init_path_string(b"fetch.json", bytes);
         let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(source, log, bump) {
             Ok(e) => e,

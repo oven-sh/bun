@@ -400,6 +400,24 @@ describe("module", () => {
     delete require.cache["cjs-async-require-ghost"];
   });
 
+  it("require() of an async module() that awaits nothing loads its CommonJS source at once", () => {
+    let calls = 0;
+    Bun.plugin({
+      name: "cjs-fulfilled-require",
+      setup(b) {
+        // The promise of this callback is already fulfilled when require() gets it.
+        b.module("cjs-fulfilled-require", async () => {
+          calls++;
+          return { contents: "module.exports = { loaded: true };", loader: "js" as const };
+        });
+      },
+    });
+    expect(require("cjs-fulfilled-require")).toEqual({ loaded: true });
+    expect(require("cjs-fulfilled-require")).toEqual({ loaded: true });
+    expect(calls).toBe(1);
+    delete require.cache["cjs-fulfilled-require"];
+  });
+
   it("module() returning `exports.x = ...` works", async () => {
     // @ts-expect-error
     const mod = await import("my-virtual-module-cjs-exports-dot");
@@ -454,6 +472,13 @@ describe.concurrent("CommonJS `contents` from a plugin", () => {
   const json = ({ stdout, stderr, exitCode }: Awaited<ReturnType<typeof run>>) => ({
     printed: JSON.parse(stdout || "null"),
     stderr,
+    exitCode,
+  });
+  // What `bun test` reports: each (pass) or (fail) line without its duration, and the counts. All of stderr if it has neither.
+  const report = ({ stdout, stderr, exitCode }: Awaited<ReturnType<typeof run>>) => ({
+    stdout: stdout.replace(/^bun test v[^\n]*\n/, ""),
+    tests: stderr.match(/^\((?:pass|fail)\) .*$/gm)?.map(line => line.replace(/ \[[\d.]+m?s\]$/, "")) ?? stderr,
+    counts: stderr.match(/^ \d+ pass\n \d+ fail$/m)?.[0] ?? stderr,
     exitCode,
   });
   // Serves each matching file's own text, as a plugin that transforms source does.
@@ -678,10 +703,12 @@ describe.concurrent("CommonJS `contents` from a plugin", () => {
         test("fails", () => { expect(1).toBe(2); });
       `,
     };
-    const { stderr, exitCode } = await run(files, ["test", "--preload", "./plugin.mjs", "./fails.test.js"]);
-    expect(stderr).toContain("(fail) fails");
-    expect(stderr).toContain(" 0 pass\n 1 fail\n");
-    expect(exitCode).toBe(1);
+    expect(report(await run(files, ["test", "--preload", "./plugin.mjs", "./fails.test.js"]))).toEqual({
+      stdout: "",
+      tests: ["(fail) fails"],
+      counts: " 0 pass\n 1 fail",
+      exitCode: 1,
+    });
   });
 
   it("loads in every test file under --isolate", async () => {
@@ -705,16 +732,14 @@ describe.concurrent("CommonJS `contents` from a plugin", () => {
       "a.test.ts": test,
       "b.test.ts": test,
     };
-    const { stderr, exitCode } = await run(files, [
-      "test",
-      "--isolate",
-      "--preload",
-      "./plugin.ts",
-      "./a.test.ts",
-      "./b.test.ts",
-    ]);
-    expect(stderr).toContain(" 6 pass\n 0 fail\n");
-    expect(exitCode).toBe(0);
+    const args = ["test", "--isolate", "--preload", "./plugin.ts", "./a.test.ts", "./b.test.ts"];
+    const passed = ["(pass) require()", "(pass) import()", "(pass) import() with a promise that is pending"];
+    expect(report(await run(files, args))).toEqual({
+      stdout: "",
+      tests: [...passed, ...passed],
+      counts: " 6 pass\n 0 fail",
+      exitCode: 0,
+    });
   });
 
   // --isolate keeps each file's transpiled source, by path, for the test files after it.
@@ -743,16 +768,13 @@ describe.concurrent("CommonJS `contents` from a plugin", () => {
       "a.test.ts": test("from the plugin"),
       "b.test.ts": test("from the file"),
     };
-    const { stderr, exitCode } = await run(files, [
-      "test",
-      "--isolate",
-      "--preload",
-      "./plugin.ts",
-      "./a.test.ts",
-      "./b.test.ts",
-    ]);
-    expect(stderr).toContain(" 2 pass\n 0 fail\n");
-    expect(exitCode).toBe(0);
+    const args = ["test", "--isolate", "--preload", "./plugin.ts", "./a.test.ts", "./b.test.ts"];
+    expect(report(await run(files, args))).toEqual({
+      stdout: "",
+      tests: ["(pass) from the plugin", "(pass) from the file"],
+      counts: " 2 pass\n 0 fail",
+      exitCode: 0,
+    });
   });
 
   it("is a module of the Bun.ModuleGraph that loads it", async () => {
@@ -940,6 +962,7 @@ describe.concurrent("CommonJS `contents` from a plugin", () => {
 
   // A pass-through onLoad must not change how the file's own source is
   // interpreted: foo.cts keeps its CommonJS exports, foo.mts stays ESM.
+  // The callback is async and awaits nothing, so its promise is already fulfilled.
   const passThroughPlugin = `
     import { readFileSync } from "node:fs";
     Bun.plugin({
@@ -956,7 +979,7 @@ describe.concurrent("CommonJS `contents` from a plugin", () => {
   it.each(["cts", "mts"])(
     "pass-through onLoad of a file-namespace .%s module keeps its named exports when imported as ESM",
     async ext => {
-      using dir = tempDir(`plugin-onload-passthrough-${ext}`, {
+      const files = {
         "preload.ts": passThroughPlugin,
         "foo.cts": `exports.foo = () => "foo";`,
         "foo.mts": `export const foo = () => "foo";`,
@@ -965,41 +988,29 @@ describe.concurrent("CommonJS `contents` from a plugin", () => {
           import { foo } from "./foo.${ext}";
           console.log(JSON.stringify({ hasFoo: Object.keys(ns).includes("foo"), foo: foo(), nsFoo: ns.foo() }));
         `,
+      };
+      expect(json(await run(files, ["--preload", "./preload.ts", "entry.ts"]))).toEqual({
+        printed: { hasFoo: true, foo: "foo", nsFoo: "foo" },
+        stderr: "",
+        exitCode: 0,
       });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "--preload", "./preload.ts", "entry.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
-        hasFoo: true,
-        foo: "foo",
-        nsFoo: "foo",
-      });
-      expect(exitCode).toBe(0);
     },
   );
 
   it("pass-through onLoad of a file-namespace .cts module works with require()", async () => {
-    using dir = tempDir("plugin-onload-passthrough-cts-require", {
+    const files = {
       "preload.ts": passThroughPlugin,
       "foo.cts": `exports.foo = () => "foo";`,
       "entry.ts": `
         const mod = require("./foo.cts");
         console.log(JSON.stringify({ keys: Object.keys(mod), foo: mod.foo() }));
       `,
+    };
+    expect(json(await run(files, ["--preload", "./preload.ts", "entry.ts"]))).toEqual({
+      printed: { keys: ["foo"], foo: "foo" },
+      stderr: "",
+      exitCode: 0,
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--preload", "./preload.ts", "entry.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({ keys: ["foo"], foo: "foo" });
-    expect(exitCode).toBe(0);
   });
 });
 

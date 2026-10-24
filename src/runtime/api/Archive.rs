@@ -1300,7 +1300,7 @@ pub(crate) mod testing {
     use bun_archive::tar::output::Output;
     use bun_archive::tar::writer::{File, Names, Writer};
     use bun_archive::tar::{self, Event};
-    use bun_core::S;
+    use bun_core::{S, strings};
     use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal};
     use core::fmt::Write as _;
 
@@ -1319,6 +1319,23 @@ pub(crate) mod testing {
             S::IFIFO => "fifo",
             _ => return None,
         })
+    }
+
+    /// A long name is cut short, with what tells it from another.
+    fn write_name(log: &mut String, name: &[u8]) {
+        const LONGEST: usize = 300;
+        const SHOWN: usize = 32;
+        if name.len() <= LONGEST {
+            _ = write!(log, "\"{}\"", name.escape_ascii());
+        } else {
+            _ = write!(
+                log,
+                "\"{}\"... {} bytes crc32={:08x}",
+                name[..SHOWN].escape_ascii(),
+                name.len(),
+                bun_zlib::crc32_bytes(0, name),
+            );
+        }
     }
 
     /// Contents that follow each other, however many pieces they came in.
@@ -1400,24 +1417,30 @@ pub(crate) mod testing {
                     }
                     _ = write!(
                         log,
-                        " perm={:o} size={} mtime={} path=\"",
+                        " perm={:o} size={} mtime={} path=",
                         entry.perm(),
                         entry.size(),
                         entry.mtime(),
                     );
-                    if entry.path_is_utf8()
-                        && let Ok(Some(composed)) = tar::compose::compose(entry.path())
+                    let mut wide = Vec::new();
+                    if options.windows
+                        && tar::compose::to_utf16(entry.path(), entry.path_is_utf8(), &mut wide)
+                            .is_ok()
                     {
-                        let name: String =
-                            composed.into_iter().filter_map(char::from_u32).collect();
-                        _ = write!(log, "{}", name.as_bytes().escape_ascii());
+                        // A name that is not UTF-8 has one unit for each byte.
+                        let name = if entry.path_is_utf8() {
+                            String::from_utf16_lossy(&wide).into_bytes()
+                        } else {
+                            wide.into_iter().map(|unit| unit as u8).collect()
+                        };
+                        write_name(&mut log, &name);
                     } else {
-                        _ = write!(log, "{}", entry.path().escape_ascii());
+                        write_name(&mut log, entry.path());
                     }
-                    log.push('"');
                     // Nothing reads a link's target on Windows.
                     if let Some(target) = entry.symlink().filter(|_| !options.windows) {
-                        _ = write!(log, " -> \"{}\"", target.escape_ascii());
+                        log.push_str(" -> ");
+                        write_name(&mut log, target);
                     }
                     log.push('\n');
                     skip = match options.skip {
@@ -1473,7 +1496,7 @@ pub(crate) mod testing {
                 Names::Binary
             },
         );
-        for (file, path) in files.into_iter().zip(names.split(|&byte| byte == 0)) {
+        for (file, path) in files.into_iter().zip(strings::split(names, b"\0")) {
             writer.header(&File {
                 path,
                 size: file.size as u64,

@@ -1,5 +1,5 @@
 // Fills reader.json.gz with what the tar reader of the Bun that runs this script reports about the
-// archives of cases.json.gz, in every mode:
+// archives of `readerArchives()`, in every mode:
 //
 //   bun record-reader.ts --accept
 //
@@ -8,17 +8,16 @@
 // behind `error:` and `refused:` is Bun's own.
 import { readTar } from "bun:internal-for-testing";
 import { join } from "node:path";
-import { loadCases, readerModes, type Case, type ReaderFixture } from "./observe";
+import { readerArchives, readerModes, type ReaderFixture } from "./observe";
 
 if (!process.argv.includes("--accept")) {
   throw new Error("This records the code under test. Pass --accept after a change that is meant.");
 }
 
-const cases = await loadCases<Case>(join(import.meta.dir, "cases.json.gz"));
+const cases = await readerArchives();
 const indexes = new Map<string, number>();
 const fixture: ReaderFixture = { modes: readerModes, logs: [], cases: [] };
-for (const { data } of cases) {
-  const archive = Buffer.from(data, "base64");
+for (const { archive } of cases) {
   fixture.cases.push(
     readerModes.map(mode => {
       const log = readTar(archive, mode);

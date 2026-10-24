@@ -8,9 +8,9 @@ import {
   contents,
   differences,
   loadCases,
+  readerArchives,
   tarHeader,
   tarPadded,
-  type Case,
   type ReaderFixture,
   type WriterCase,
 } from "./observe";
@@ -18,14 +18,13 @@ import {
 // See record-reader.ts.
 describe("the tar reader reports what libarchive did", async () => {
   const [fixture] = await loadCases<ReaderFixture>(join(import.meta.dir, "reader.json.gz"));
-  const cases = await loadCases<Case>(join(import.meta.dir, "cases.json.gz"));
-  const archives = cases.map(c => Buffer.from(c.data, "base64"));
+  const archives = await readerArchives();
   const modes = fixture.modes.map((mode, column) => [JSON.stringify(mode), mode, column] as const);
   const recorded = (index: number, column: number) => fixture.logs[fixture.cases[index][column]];
 
   test.each(modes)("%s", (_, mode, column) => {
-    const results = archives.map((archive, index) => ({
-      index,
+    const results = archives.map(({ name, archive }, index) => ({
+      index: name,
       expected: recorded(index, column),
       actual: readTar(archive, mode),
     }));
@@ -34,12 +33,12 @@ describe("the tar reader reports what libarchive did", async () => {
 
   const cut = modes.filter(([, mode]) => mode.stream && (mode.skip === "none" || mode.skip === "odd"));
   test.each(cut)("however the input is cut into pieces: %s", (_, mode, column) => {
-    const results = archives.map((archive, index) => {
+    const results = archives.map(({ name, archive }, index) => {
       // How much of a damaged gzip stream is seen before it fails depends on where the pieces end.
       const comparable = (log: string) => (archive[0] === 0x1f && !/^end$/m.test(log) ? "fails\n" : log);
-      const pieceSize = [1, 7, 511, 512, 513][index % 5];
+      const pieceSize = archive.length > 20_000 ? [4093, 65536][index % 2] : [1, 7, 511, 512, 513][index % 5];
       return {
-        index,
+        index: name,
         expected: comparable(recorded(index, column)),
         actual: comparable(readTar(archive, { ...mode, pieceSize, lateEnd: index % 2 === 1 })),
       };
@@ -136,6 +135,19 @@ describe("the tar reader", () => {
       `file perm=644 size=1 mtime=0 path="a"\n${x}file perm=644 size=1000 mtime=0 path="b"\n  data 0+100\n` +
         "error: Truncated tar archive detected while reading data\n",
     );
+  });
+
+  // libarchive let them change the permissions.
+  test("passes over ACLs", () => {
+    const script = 'file perm=755 size=0 mtime=0 path="run.sh"\n  end 0 crc32=00000000\nend\n';
+    const entry = tarHeader("run.sh", 0, "0", "", header => void header.write("0000755\0", 100));
+    const solaris = Buffer.concat([tarHeader("run.sh", 20, "A"), tarPadded(Buffer.from("1000003\0user::rw-,x\0"))]);
+    expect(readTar(Buffer.concat([solaris, entry, end]))).toBe(script);
+    expect(readTar(Buffer.concat([pax({ "SCHILY.acl.access": "user::rw-,group::r--,other::r--" }, entry), end]))).toBe(
+      script,
+    );
+    expect(readTar(Buffer.concat([pax({ "SCHILY.acl.default": "not an ACL" }, entry), end]))).toBe(script);
+    expect(readTar(Buffer.concat([solaris, solaris, entry, end]))).toStartWith("error: Redundant 'A' header");
   });
 
   test("refuses what is not an archive, unless it is told that it is one", () => {

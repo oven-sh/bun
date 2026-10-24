@@ -115,6 +115,8 @@ describe("process.env.TZ = value", () => {
       ["XYZ+0", [0, 0, "UTC"]],
       ["XYZ-0:00:00", [0, 0, "UTC"]],
       ["<-03>3", [180, 180, "Etc/GMT+3"]],
+      // glibc reads a POSIX value after ":" when no tzfile has that name.
+      [":MSK-3", [-180, -180, "Etc/GMT-3"]],
       // "GMT" in any case is a name as any other here. ICU reads the sign after it the other way.
       ["gmt+3", [180, 180, "Etc/GMT+3"]],
       ["GMT-3", [-180, -180, "Etc/GMT-3"]],

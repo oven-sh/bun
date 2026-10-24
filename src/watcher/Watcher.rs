@@ -256,10 +256,7 @@ impl Watcher {
             let sizes = self.watchlist.items_mut::<"size", u64>();
             if sizes[index] != size {
                 sizes[index] = size;
-                // 0 is the `open(O_TRUNC)` of a save: its `write()` follows and is reported.
-                if size != 0 {
-                    event.op |= Op::WRITE;
-                }
+                event.op |= Op::WRITE;
             }
         }
     }

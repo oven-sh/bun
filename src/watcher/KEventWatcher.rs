@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use bun_core::output as Output;
 use bun_sys::Fd;
 
@@ -10,6 +12,9 @@ pub struct KEventWatcher {
 }
 
 const CHANGELIST_COUNT: usize = 128;
+
+/// A save in place is `open(O_TRUNC)`, then `write()`. The watch loop waits this long for the write.
+const SAVE_IN_PLACE_WAIT: Duration = Duration::from_millis(10);
 
 impl KEventWatcher {
     pub(crate) fn new(_root: &[u8]) -> crate::Result<Self> {
@@ -50,6 +55,14 @@ fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     }
 }
 
+/// kqueue reports a truncation as `NOTE_ATTRIB` alone: true when the file of such an event is empty now.
+fn is_emptied(kevent: &libc::kevent) -> bool {
+    const CHANGES: u32 =
+        libc::NOTE_ATTRIB | libc::NOTE_WRITE | libc::NOTE_DELETE | libc::NOTE_RENAME;
+    kevent.fflags & CHANGES == libc::NOTE_ATTRIB
+        && bun_sys::fstat(Fd::from_native(kevent.ident as i32)).is_ok_and(|stat| stat.st_size == 0)
+}
+
 pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let _flush = Output::flush_guard();
     let fd = this.platform.fd;
@@ -65,6 +78,21 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             tv_nsec: 100_000,
         }; // 0.0001 seconds
         count += bun_sys::kevent(fd, &[], &mut changelist[count..], Some(&ts))?;
+    }
+
+    // The write of a save in place comes after its truncation: wait for it, so that no reload reads the empty file.
+    let mut deadline = None;
+    while count < CHANGELIST_COUNT && changelist[..count].iter().any(is_emptied) {
+        let deadline = *deadline.get_or_insert_with(|| Instant::now() + SAVE_IN_PLACE_WAIT);
+        let timeout = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: deadline.saturating_duration_since(Instant::now()).subsec_nanos() as _,
+        };
+        let more = bun_sys::kevent(fd, &[], &mut changelist[count..], Some(&timeout))?;
+        if more == 0 {
+            break;
+        }
+        count += more;
     }
 
     let changes = &changelist[..count];

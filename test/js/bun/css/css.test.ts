@@ -3492,7 +3492,7 @@ describe("css tests", () => {
         stays(`.a { background-color: red; background: conic-gradient(red, green); }`, defaults);
         stays(`.a { background: conic-gradient(red, green); background-color: red; }`, defaults);
         stays(
-          `.a { background-image: ${moz}; background-color: red; background-color: lab(50% 10 10); background-image: url("b.png"); }`,
+          `.a { background-color: red; background-image: ${moz}; background-color: lab(50% 10 10); background-image: url("b.png"); }`,
           defaults,
         );
         prefix_test(
@@ -3516,7 +3516,7 @@ describe("css tests", () => {
       });
 
       describe("keeps a prefixed background-clip", () => {
-        stays(`.a { -webkit-background-clip: text; background-image: ${moz}; background: url("x.png"); }`, defaults);
+        stays(`.a { background-image: ${moz}; -webkit-background-clip: text; background: url("x.png"); }`, defaults);
         stays(`.a { background: ${webkit}; -webkit-background-clip: text; }`, defaults);
         prefix_test(
           `.a { background: url("a.png"); background-image: ${moz}; -webkit-background-clip: text; background-image: ${std}; }`,

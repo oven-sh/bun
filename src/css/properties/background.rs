@@ -595,23 +595,34 @@ struct BackgroundState {
 }
 
 impl BackgroundState {
+    fn image_only(images: SmallList<Image, 1>) -> BackgroundState {
+        BackgroundState {
+            images: Some(images),
+            ..Default::default()
+        }
+    }
+
+    /// The longhands that the state sets. `flush` writes one `background` when it sets them all.
+    fn longhands(&self) -> BackgroundProperty {
+        let mut set = BackgroundProperty::empty();
+        set.set(BackgroundProperty::COLOR, self.color.is_some());
+        set.set(BackgroundProperty::IMAGE, self.images.is_some());
+        set.set(BackgroundProperty::POSITION_X, self.x_positions.is_some());
+        set.set(BackgroundProperty::POSITION_Y, self.y_positions.is_some());
+        set.set(BackgroundProperty::REPEAT, self.repeats.is_some());
+        set.set(BackgroundProperty::SIZE, self.sizes.is_some());
+        set.set(BackgroundProperty::ATTACHMENT, self.attachments.is_some());
+        set.set(BackgroundProperty::ORIGIN, self.origins.is_some());
+        set.set(BackgroundProperty::CLIP, self.clips.is_some());
+        set
+    }
+
     fn is_empty(&self) -> bool {
-        self.images.is_none() && self.sets_nothing_else()
+        self.longhands().is_empty()
     }
 
     fn is_image_only(&self) -> bool {
-        self.images.is_some() && self.sets_nothing_else()
-    }
-
-    fn sets_nothing_else(&self) -> bool {
-        self.color.is_none()
-            && self.x_positions.is_none()
-            && self.y_positions.is_none()
-            && self.repeats.is_none()
-            && self.sizes.is_none()
-            && self.attachments.is_none()
-            && self.origins.is_none()
-            && self.clips.is_none()
+        self.longhands() == BackgroundProperty::IMAGE
     }
 
     /// `background` does not reset a prefixed `background-clip`.
@@ -780,20 +791,18 @@ impl BackgroundHandler {
         let arena = dest.bump();
         match property {
             Property::BackgroundColor(val) => {
-                let is_fallback = self.open_color_is_fallback_of(val, context);
-                let partial = self.open_is_partial(arena, context);
-                if partial || !self.pending.is_empty() {
-                    if partial || is_fallback {
-                        self.close(false);
-                    }
-                } else if is_fallback {
+                if !self.open_color_is_fallback_of(val, context) {
+                    self.before_longhand(BackgroundProperty::COLOR, arena, context);
+                } else if !self.pending.is_empty() || self.open_is_partial(arena, context) {
+                    self.close(false);
+                } else {
                     self.flush(dest, context);
                 }
                 self.open.color = Some(val.deep_clone(arena));
             }
             Property::BackgroundImage(val) => self.image_longhand(val, dest, context),
             Property::BackgroundPosition(val) => {
-                self.close_partial(arena, context);
+                self.before_longhand(BackgroundProperty::BACKGROUND_POSITION, arena, context);
                 let len = val.len();
                 {
                     let x_positions = init_small_list_helper!(self, x_positions, len);
@@ -809,27 +818,27 @@ impl BackgroundHandler {
                 }
             }
             Property::BackgroundPositionX(val) => {
-                self.close_partial(arena, context);
+                self.before_longhand(BackgroundProperty::POSITION_X, arena, context);
                 self.open.x_positions = Some(val.deep_clone(arena));
             }
             Property::BackgroundPositionY(val) => {
-                self.close_partial(arena, context);
+                self.before_longhand(BackgroundProperty::POSITION_Y, arena, context);
                 self.open.y_positions = Some(val.deep_clone(arena));
             }
             Property::BackgroundRepeat(val) => {
-                self.close_partial(arena, context);
+                self.before_longhand(BackgroundProperty::REPEAT, arena, context);
                 self.open.repeats = Some(val.deep_clone(arena));
             }
             Property::BackgroundSize(val) => {
-                self.close_partial(arena, context);
+                self.before_longhand(BackgroundProperty::SIZE, arena, context);
                 self.open.sizes = Some(val.deep_clone(arena));
             }
             Property::BackgroundAttachment(val) => {
-                self.close_partial(arena, context);
+                self.before_longhand(BackgroundProperty::ATTACHMENT, arena, context);
                 self.open.attachments = Some(val.deep_clone(arena));
             }
             Property::BackgroundOrigin(val) => {
-                self.close_partial(arena, context);
+                self.before_longhand(BackgroundProperty::ORIGIN, arena, context);
                 self.open.origins = Some(val.deep_clone(arena));
             }
             Property::BackgroundClip(x) => {
@@ -842,7 +851,7 @@ impl BackgroundHandler {
                 if conflicts {
                     self.flush(dest, context);
                 } else {
-                    self.close_partial(arena, context);
+                    self.before_longhand(BackgroundProperty::CLIP, arena, context);
                 }
                 if let Some((clips, vp)) = &mut self.open.clips {
                     if !SmallList::eql(val, clips) {
@@ -911,12 +920,17 @@ impl BackgroundHandler {
                 }
             };
 
+        let is_shorthand = self.open.longhands().union(BackgroundProperty::IMAGE)
+            == BackgroundProperty::BACKGROUND;
         if !every_target_reads {
             if !held && !prefixed && self.open.images.is_some() {
                 // The image before it is its manual fallback.
                 self.flush(dest, context);
-            } else {
+            } else if is_shorthand {
                 self.close(!partial);
+            } else if let Some(images) = self.open.images.take() {
+                // Only the image is held. The other longhands are declarations of their own and keep folding.
+                self.push_state(BackgroundState::image_only(images), !partial);
             }
             self.open.images = Some(val.deep_clone(arena));
             self.reach = Reach::Partial;
@@ -924,11 +938,14 @@ impl BackgroundHandler {
         }
 
         if partial {
-            if self.open.is_image_only() && context.targets.browsers.is_some() {
-                self.open.images = None;
-            } else {
-                // No fold into a declaration that a target ignores. Without targets it stays as written.
+            if is_shorthand {
+                // No fold into a `background` that a target ignores.
                 self.close(false);
+            } else if let Some(images) = self.open.images.take() {
+                // Every target reads the new image. Without targets the image before it stays as written.
+                if context.targets.browsers.is_none() {
+                    self.push_state(BackgroundState::image_only(images), false);
+                }
             }
         }
         if self.open.images.is_none() {
@@ -1143,9 +1160,15 @@ impl BackgroundHandler {
         self.reach == Reach::Partial
     }
 
-    /// A state that a target cannot read takes in no later longhand.
-    fn close_partial(&mut self, arena: &Bump, context: &PropertyHandlerContext) {
-        if self.open_is_partial(arena, context) {
+    /// One `background` that a target cannot read takes in no longhand. Separate longhands keep folding.
+    fn before_longhand(
+        &mut self,
+        longhand: BackgroundProperty,
+        arena: &Bump,
+        context: &PropertyHandlerContext,
+    ) {
+        let is_shorthand = self.open.longhands().union(longhand) == BackgroundProperty::BACKGROUND;
+        if is_shorthand && self.open_is_partial(arena, context) {
             self.close(false);
         }
     }
@@ -1153,10 +1176,14 @@ impl BackgroundHandler {
     /// Moves the open state to the end of `pending`.
     fn close(&mut self, resumable: bool) {
         self.reach = Reach::Every;
-        if self.open.is_empty() {
-            return;
+        if !self.open.is_empty() {
+            let state = core::mem::take(&mut self.open);
+            self.push_state(state, resumable);
         }
-        let state = Box::new(core::mem::take(&mut self.open));
+    }
+
+    fn push_state(&mut self, state: BackgroundState, resumable: bool) {
+        let state = Box::new(state);
         self.pending.push(Pending::State { state, resumable });
         if resumable && self.first_resumable == 0 {
             self.first_resumable = self.pending.len() as u32;

@@ -164,10 +164,18 @@ impl<R> StyleRule<R> {
         // If supported, or there are no targets, preserve nesting. Otherwise, write nested rules after parent.
         let supports_nesting = self.rules.v.len() == 0
             || !css::targets::Targets::should_compile_same(&dest.targets, css::Feature::Nesting);
+        // An unknown at-rule has no selector to carry this rule, so it stays in the block (lightningcss 729e03e2).
+        let has_preserved_rules = !supports_nesting
+            && self
+                .rules
+                .v
+                .iter()
+                .any(|rule| matches!(rule, CssRule::Unknown(_)));
 
         let len =
             self.declarations.declarations.len() + self.declarations.important_declarations.len();
-        let has_declarations = supports_nesting || len > 0 || self.rules.v.len() == 0;
+        let has_declarations =
+            supports_nesting || len > 0 || self.rules.v.len() == 0 || has_preserved_rules;
 
         if has_declarations {
             //   #[cfg(feature = "sourcemap")]
@@ -236,7 +244,9 @@ impl<R> StyleRule<R> {
 
                     dest.newline()?;
                     decl.to_css(dest, important)?;
-                    if i != len - 1 || !dest.minify || (supports_nesting && self.rules.v.len() > 0)
+                    if i != len - 1
+                        || !dest.minify
+                        || (self.rules.v.len() > 0 && (supports_nesting || has_preserved_rules))
                     {
                         dest.write_char(b';')?;
                     }
@@ -250,10 +260,10 @@ impl<R> StyleRule<R> {
             self_: &StyleRule<R>,
             d: &mut Printer,
             supports_nesting2: bool,
-            len1: usize,
+            has_block_items: bool,
         ) -> Result<(), PrintErr> {
-            if !d.minify && (supports_nesting2 || len1 > 0) && self_.rules.v.len() > 0 {
-                if len1 > 0 {
+            if !d.minify && (supports_nesting2 || has_block_items) && self_.rules.v.len() > 0 {
+                if has_block_items {
                     d.write_char(b'\n')?;
                 }
                 d.newline()?;
@@ -272,7 +282,7 @@ impl<R> StyleRule<R> {
 
         // Write nested rules after the parent.
         if supports_nesting {
-            helpers_newline(self, dest, supports_nesting, len)?;
+            helpers_newline(self, dest, supports_nesting, len > 0)?;
             self.rules.to_css(dest)?;
             helpers_end(dest, has_declarations)?;
         } else {
@@ -288,20 +298,35 @@ impl<R> StyleRule<R> {
             // Whether any nested rule is emitted in this pass; if not, don't
             // write the separator between the declarations and the nested
             // rules (nothing would follow it).
-            let has_nested_output = !skip_prefixed_nested
+            let has_nested_output = (!skip_prefixed_nested && !has_preserved_rules)
                 || self.rules.v.iter().any(|rule| {
-                    !matches!(rule, CssRule::Ignored) && !rule.is_deferred_to_final_prefix_pass()
+                    !matches!(rule, CssRule::Ignored)
+                        && !(has_preserved_rules && matches!(rule, CssRule::Unknown(_)))
+                        && !(skip_prefixed_nested && rule.is_deferred_to_final_prefix_pass())
                 });
 
+            if has_preserved_rules {
+                for rule in self.rules.v.iter() {
+                    if let CssRule::Unknown(unknown) = rule {
+                        dest.newline()?;
+                        unknown.to_css(dest)?;
+                    }
+                }
+            }
             helpers_end(dest, has_declarations)?;
             if has_nested_output {
-                helpers_newline(self, dest, supports_nesting, len)?;
+                helpers_newline(self, dest, supports_nesting, len > 0 || has_preserved_rules)?;
             }
             dest.skip_prefixed_nested_rules = skip_prefixed_nested;
             // `with_context` keeps the (closure-data, fn) split so the
             // `Printer` reborrow lives only inside `func`.
-            let result =
-                dest.with_context(&self.selectors, &self.rules, |rules, d| rules.to_css(d));
+            let result = dest.with_context(&self.selectors, &self.rules, |rules, d| {
+                if has_preserved_rules {
+                    rules.to_css_hoisted(d)
+                } else {
+                    rules.to_css(d)
+                }
+            });
             dest.skip_prefixed_nested_rules = saved_skip;
             result?;
         }

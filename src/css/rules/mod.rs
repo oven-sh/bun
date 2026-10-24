@@ -420,12 +420,30 @@ impl<R> CssRule<R> {
 
 impl<R> CssRuleList<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        self.to_css_impl(dest, false)
+    }
+
+    /// The nested rules of a style rule that printed its unknown at-rules inside its own block.
+    pub(crate) fn to_css_hoisted(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        self.to_css_impl(dest, true)
+    }
+
+    fn to_css_impl(&self, dest: &mut Printer, skip_unknown: bool) -> Result<(), PrintErr> {
         let mut first = true;
         let mut last_without_block = false;
 
         for rule in self.v.iter() {
-            if matches!(rule, CssRule::Ignored) {
-                continue;
+            // One range test on the last three variants keeps `skip_unknown` off the path of every other rule.
+            if matches!(
+                rule,
+                CssRule::Ignored | CssRule::Unknown(_) | CssRule::Custom(_)
+            ) {
+                core::hint::cold_path();
+                if matches!(rule, CssRule::Ignored)
+                    || (skip_unknown && matches!(rule, CssRule::Unknown(_)))
+                {
+                    continue;
+                }
             }
 
             // While re-serializing nested rules for a non-final vendor prefix

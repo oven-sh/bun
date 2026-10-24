@@ -809,6 +809,27 @@ impl DevServer {
             )?;
         }
 
+        // The dev server reads the exports of these files itself, and the browser those of a client page.
+        let keys = self.server_graph.bundled_files.keys();
+        let path = |id: OpaqueFileId| -> &[u8] {
+            &keys[from_opaque_file_id::<{ bake::Side::Server }>(id).get() as usize]
+        };
+        for router_type in self.router.types.iter() {
+            self.tracked_barrels
+                .keep_all(bake::Side::Server, path(router_type.server_file))?;
+        }
+        for route in self.router.routes.iter() {
+            let client_pages = self.router.type_ptr_const(route.r#type).client_pages;
+            for file in [route.file_page, route.file_layout].into_iter().flatten() {
+                self.tracked_barrels
+                    .keep_all(bake::Side::Server, path(file))?;
+                if client_pages {
+                    self.tracked_barrels
+                        .keep_all(bake::Side::Client, path(file))?;
+                }
+            }
+        }
+
         self.server_graph.ensure_stale_bit_capacity(true)?;
         self.client_graph.ensure_stale_bit_capacity(true)?;
         Ok(())

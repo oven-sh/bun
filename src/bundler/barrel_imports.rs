@@ -15,6 +15,7 @@ use bun_collections::{ArrayHashMap, ArrayIdentityContextU64, AutoBitSet, StringA
 
 use crate::Graph::InputFileFlags;
 use crate::Index;
+use crate::UseDirective;
 use crate::bake_types;
 use crate::bundle_v2::BundleV2;
 use crate::bundle_v2::bv2_impl::{PatchImportRecordsCtx, ResolveImportRecordCtx};
@@ -34,11 +35,14 @@ impl Default for RequestedExports {
     }
 }
 
-/// Dev server: what every build requested from each barrel that has deferred a record.
+/// Dev server: the requests of earlier builds that a later parse of a barrel has to count.
 #[derive(Default)]
 pub struct TrackedBarrels {
     /// By `bake_types::Side`: the server and SSR copies of a file share one graph record.
     by_side: [StringArrayHashMap<RequestedExports>; 2],
+    /// By side, the requests of a file that no later build repeats: what a build requested from a copy
+    /// that it did not bundle, and every export of a file that the router reads. It forces no parse.
+    kept: [StringArrayHashMap<RequestedExports>; 2],
 }
 
 impl TrackedBarrels {
@@ -50,6 +54,34 @@ impl TrackedBarrels {
             return None;
         }
         barrels.get(path)
+    }
+
+    /// False in a session that keeps no record: that session looks up no kept request.
+    #[inline]
+    fn any_kept(&self) -> bool {
+        !self.kept[0].is_empty() || !self.kept[1].is_empty()
+    }
+
+    /// The kept records that a copy of this file on `side` reads.
+    fn kept_for<'a>(
+        &'a self,
+        side: bake_types::Side,
+        path: &'a [u8],
+        use_directive: UseDirective,
+    ) -> impl Iterator<Item = &'a RequestedExports> {
+        // The record of a "use client" file is for the graph of its importer, which can be server code.
+        let importer = (side == bake_types::Side::Client && use_directive == UseDirective::Client)
+            .then_some(bake_types::Side::Server);
+        [Some(side), importer]
+            .into_iter()
+            .flatten()
+            .filter_map(move |kept_side| self.kept[kept_side as usize].get(path))
+    }
+
+    /// The router reads every export of this file itself, and no build records that request.
+    pub fn keep_all(&mut self, side: bake_types::Side, path: &[u8]) -> Result<(), AllocError> {
+        *self.kept[side as usize].get_or_put(path)?.value_ptr = RequestedExports::All;
+        Ok(())
     }
 
     /// True if the copy of this file on `side` has an entry.
@@ -66,7 +98,7 @@ impl TrackedBarrels {
 
     pub fn memory_cost(&self) -> usize {
         let mut cost = 0;
-        for barrels in &self.by_side {
+        for barrels in self.by_side.iter().chain(&self.kept) {
             cost += barrels.capacity()
                 * (size_of::<Box<[u8]>>() + size_of::<RequestedExports>() + size_of::<u32>());
             for (path, requested) in barrels.iter() {
@@ -245,7 +277,21 @@ fn apply_barrel_optimization_impl(
         .iter()
         .any(|ep| ep.get() == source_index)
     {
-        return Ok(());
+        // Dev server: a saved file is an entry point too. A kept record tells what its importers request.
+        let Some(dev) = this.dev_server_handle() else {
+            return Ok(());
+        };
+        // SAFETY: see the read of `tracked_barrels` below.
+        let tracked = unsafe { &*dev.tracked_barrels() };
+        let side = result.ast.target.bake_graph().side();
+        if !tracked.any_kept()
+            || tracked
+                .kept_for(side, result.source.path.text, result.use_directive)
+                .next()
+                .is_none()
+        {
+            return Ok(());
+        }
     }
 
     let ast = &mut result.ast;
@@ -336,21 +382,49 @@ fn apply_barrel_optimization_impl(
 
         // SAFETY: the DevServer owns `tracked_barrels` and outlives the bundle. Only the JS thread
         // writes it, and no reference from this pointer is held across a call into the DevServer.
-        let is_tracked = match unsafe { &*dev.tracked_barrels() }.get(side, result.source.path.text)
-        {
-            Some(RequestedExports::All) => return Ok(()),
-            Some(RequestedExports::Partial(persisted)) => {
-                for alias in persisted.keys() {
-                    if let Some(resolution) =
-                        resolve_barrel_export(alias, &ast.named_exports, &ast.named_imports)
-                    {
-                        needed_records.put(resolution.import_record_index, ())?;
-                    }
+        let tracked = unsafe { &*dev.tracked_barrels() };
+        let path = result.source.path.text;
+        // False: the record requests every export.
+        let mut count = |persisted: &RequestedExports| -> Result<bool, AllocError> {
+            let RequestedExports::Partial(names) = persisted else {
+                return Ok(false);
+            };
+            for alias in names.keys() {
+                if let Some(resolution) =
+                    resolve_barrel_export(alias, &ast.named_exports, &ast.named_imports)
+                {
+                    needed_records.put(resolution.import_record_index, ())?;
                 }
-                true
             }
-            None => false,
+            Ok(true)
         };
+        let entry = tracked.get(side, path);
+        if let Some(entry) = entry
+            && !count(entry)?
+        {
+            return Ok(());
+        }
+        let is_tracked = entry.is_some();
+        let mut every_export = false;
+        if tracked.any_kept() {
+            for kept in tracked.kept_for(side, path, result.use_directive) {
+                if !count(kept)? {
+                    every_export = true;
+                    break;
+                }
+            }
+        }
+        if every_export {
+            // With an entry, each later build parses this path. The server and the SSR copy share one
+            // graph record, and it can call a copy bundled that no build made.
+            if side == bake_types::Side::Server && this.has_ssr_graph() {
+                // SAFETY: see above. No reference from the read above is used after this write.
+                *unsafe { &mut *dev.tracked_barrels() }.by_side[side as usize]
+                    .get_or_put(path)?
+                    .value_ptr = RequestedExports::All;
+            }
+            return Ok(());
+        }
         // Bundled and not tracked: no copy deferred a record, and no build recorded a request.
         if !is_tracked && dev.has_file(result.source.path.key_for_incremental_graph(), side) {
             return Ok(());
@@ -448,7 +522,7 @@ fn apply_barrel_optimization_impl(
 }
 
 /// Dev server: the side of the copy with this source index. `None`: the file was not there to read.
-fn copy_side(this: &BundleV2, source_index: u32) -> Option<bake_types::Side> {
+pub(crate) fn copy_side(this: &BundleV2, source_index: u32) -> Option<bake_types::Side> {
     let index = source_index as usize;
     if this.graph.ast.items_parts()[index].len() != 0 {
         return Some(this.graph.ast.items_target()[index].bake_graph().side());
@@ -464,13 +538,74 @@ fn copy_side(this: &BundleV2, source_index: u32) -> Option<bake_types::Side> {
         })
 }
 
-/// Dev server, once per build: adds the requests of this build to the entries of `TrackedBarrels`.
+/// Dev server: keeps what this build requested from a copy that it did not bundle. The importers of the
+/// copy are bundled, so no later build repeats these requests.
+fn keep_requests_of_copy(
+    this: &BundleV2,
+    tracked: &mut TrackedBarrels,
+    index: u32,
+    side: bake_types::Side,
+) -> Result<(), AllocError> {
+    let requested = RequestedExports::lookup(&this.requested_exports, index);
+    // A saved file that no file of this build imports has no new importer.
+    if requested.is_none() && this.graph.entry_points.iter().any(|ep| ep.get() == index) {
+        return Ok(());
+    }
+    // Also with no name requested: a saved barrel defers only if it has a record.
+    let path = this.graph.input_files.items_source()[index as usize]
+        .path
+        .text;
+    let kept = tracked.kept[side as usize].get_or_put(path)?.value_ptr;
+    if let Some(requested) = requested {
+        kept.add(requested)?;
+    }
+    Ok(())
+}
+
+/// Dev server: a copy that has parts failed to print, after the build kept the requests of its other
+/// failed copies.
+pub fn keep_requests_of_unprinted_copy(
+    this: &BundleV2,
+    tracked: &mut TrackedBarrels,
+    index: u32,
+) -> Result<(), AllocError> {
+    let side = this.graph.ast.items_target()[index as usize]
+        .bake_graph()
+        .side();
+    keep_requests_of_copy(this, tracked, index, side)?;
+    // A request under the generated copy of a client component boundary is for the original file.
+    let boundaries = this.graph.server_component_boundaries.slice();
+    for (&original, &generated) in boundaries
+        .list
+        .items_source_index()
+        .iter()
+        .zip(boundaries.list.items_reference_source_index())
+    {
+        if original == index
+            && let Some(requested) = RequestedExports::lookup(&this.requested_exports, generated)
+        {
+            let path = this.graph.input_files.items_source()[index as usize]
+                .path
+                .text;
+            tracked.kept[side as usize]
+                .get_or_put(path)?
+                .value_ptr
+                .add(requested)?;
+        }
+    }
+    Ok(())
+}
+
+/// Dev server, once per build: adds the requests of this build to `TrackedBarrels`.
 pub(crate) fn persist_requests_of_tracked_barrels(
     this: &BundleV2,
     dev: &crate::dispatch::DevServerHandle,
 ) -> Result<(), AllocError> {
     // SAFETY: see the read of `tracked_barrels` in `apply_barrel_optimization_impl`.
     let tracked = unsafe { &mut *dev.tracked_barrels() };
+    for &(index, side) in &this.unbundled_copies {
+        keep_requests_of_copy(this, tracked, index, side)?;
+    }
     if tracked.by_side.iter().all(|barrels| barrels.is_empty()) {
         return Ok(());
     }
@@ -1219,7 +1354,88 @@ pub(crate) fn schedule_barrel_deferred_imports(
 
 #[cfg(test)]
 mod tests {
-    use super::SourcesByPath;
+    use super::{RequestedExports, SourcesByPath, TrackedBarrels};
+    use crate::UseDirective;
+    use crate::bake_types::Side;
+    use bun_collections::StringArrayHashMap;
+
+    const BARREL: &[u8] = b"/node_modules/lib/index.js";
+
+    fn names(requested: &[&[u8]]) -> RequestedExports {
+        let mut map = StringArrayHashMap::default();
+        for name in requested {
+            map.put(name, ()).unwrap();
+        }
+        RequestedExports::Partial(map)
+    }
+
+    /// The names of each record that a copy reads. `None`: a record for every export.
+    fn kept(
+        tracked: &TrackedBarrels,
+        side: Side,
+        use_directive: UseDirective,
+    ) -> Vec<Option<Vec<&[u8]>>> {
+        tracked
+            .kept_for(side, BARREL, use_directive)
+            .map(|requested| match requested {
+                RequestedExports::All => None,
+                RequestedExports::Partial(map) => {
+                    Some(map.keys().iter().map(|name| &**name).collect())
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn only_a_use_client_copy_in_the_client_graph_reads_the_record_of_the_other_side() {
+        let mut tracked = TrackedBarrels::default();
+        assert!(!tracked.any_kept());
+        *tracked.kept[Side::Client as usize]
+            .get_or_put(BARREL)
+            .unwrap()
+            .value_ptr = names(&[b"c"]);
+        *tracked.kept[Side::Server as usize]
+            .get_or_put(BARREL)
+            .unwrap()
+            .value_ptr = names(&[b"s"]);
+        assert!(tracked.any_kept());
+
+        let client: Vec<&[u8]> = vec![b"c"];
+        let server: Vec<&[u8]> = vec![b"s"];
+        for use_directive in [UseDirective::None, UseDirective::Server] {
+            assert_eq!(
+                kept(&tracked, Side::Client, use_directive),
+                [Some(client.clone())]
+            );
+        }
+        assert_eq!(
+            kept(&tracked, Side::Client, UseDirective::Client),
+            [Some(client), Some(server.clone())]
+        );
+        for use_directive in [
+            UseDirective::None,
+            UseDirective::Client,
+            UseDirective::Server,
+        ] {
+            assert_eq!(
+                kept(&tracked, Side::Server, use_directive),
+                [Some(server.clone())]
+            );
+        }
+    }
+
+    #[test]
+    fn keep_all_is_for_one_side_and_replaces_the_names_of_its_record() {
+        let mut tracked = TrackedBarrels::default();
+        *tracked.kept[Side::Server as usize]
+            .get_or_put(BARREL)
+            .unwrap()
+            .value_ptr = names(&[b"s"]);
+        tracked.keep_all(Side::Server, BARREL).unwrap();
+        assert_eq!(kept(&tracked, Side::Server, UseDirective::None), [None]);
+        assert_eq!(kept(&tracked, Side::Client, UseDirective::None), []);
+        assert!(!tracked.must_reparse(BARREL));
+    }
 
     fn sources(paths: &[&'static [u8]]) -> Vec<bun_ast::Source> {
         paths

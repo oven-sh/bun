@@ -124,19 +124,15 @@ impl DevServer {
         }
     }
 
-    /// True if an earlier build can have bundled a copy of this file for `side`, stale or not.
+    /// True if a build has bundled a copy of this file for `side`.
     pub(crate) fn has_file(&self, path: &[u8], side: bake::Side) -> bool {
         let _g = self.graph_safety_lock.guard();
-        match side {
-            // A failure resets the kind of a client record, so every record counts.
-            bake::Side::Client => self.client_graph.bundled_files.contains_key(path),
-            // Only a bundled copy gives a server record this kind, and a failure keeps it.
-            bake::Side::Server => self
-                .server_graph
-                .bundled_files
-                .get(path)
-                .is_some_and(|file| file.file_kind() == FileKind::Js),
-        }
+        let file = match side {
+            bake::Side::Client => self.client_graph.bundled_files.get(path),
+            bake::Side::Server => self.server_graph.bundled_files.get(path),
+        };
+        // Only a bundled copy gives a record a kind, and a failure keeps the kind `Js`.
+        file.is_some_and(|file| file.file_kind() != FileKind::Unknown)
     }
 
     fn append_opaque_entry_point<const SIDE: bake::Side>(

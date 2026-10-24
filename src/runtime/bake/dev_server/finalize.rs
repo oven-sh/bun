@@ -326,6 +326,11 @@ pub(super) fn finalize_bundle(
                     dev.server_graph.insert_failure(key, &log)?
                 }
             }
+            bundler::barrel_imports::keep_requests_of_unprinted_copy(
+                bv2,
+                &mut dev.tracked_barrels,
+                index.get(),
+            )?;
             continue;
         }
         // Only an entry makes a later build parse this barrel and keep its importers' requests.

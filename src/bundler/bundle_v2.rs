@@ -145,6 +145,8 @@ pub struct BundleV2<'a> {
     pub(crate) requested_exports: Vec<Option<RequestedExports>>,
     /// Dev server: lets a barrel find the requests under another source index of its path.
     pub(crate) sources_by_path: crate::barrel_imports::SourcesByPath,
+    /// Dev server: each copy that failed before it had parts, with the side of its importer.
+    pub(crate) unbundled_copies: Vec<(IndexInt, crate::bake_types::Side)>,
 }
 
 bun_core::declare_scope!(Bundle, visible);
@@ -189,6 +191,15 @@ impl<'a> BundleV2<'a> {
     #[inline]
     pub(crate) fn dev_server_handle(&self) -> Option<&dispatch::DevServerHandle> {
         self.dev_server.as_ref()
+    }
+
+    /// True if server code has a second graph for SSR: a file can then have a copy in each.
+    #[inline]
+    pub(crate) fn has_ssr_graph(&self) -> bool {
+        self.framework
+            .as_ref()
+            .and_then(|framework| framework.server_components.as_ref())
+            .is_some_and(|server_components| server_components.separate_ssr_graph)
     }
 
     /// Safe projection of the `client_transpiler` backref. Set once in `init`
@@ -3327,6 +3338,7 @@ pub mod bv2_impl {
                 has_any_top_level_await_modules: false,
                 requested_exports: Vec::new(),
                 sources_by_path: Default::default(),
+                unbundled_copies: Vec::new(),
             });
             if let Some(bo) = bake_options {
                 // SAFETY: `bo.client_transpiler` is the caller's live, write-capable
@@ -5183,6 +5195,8 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::LoadValue::Err(msg) => {
                     if let Some(dev) = this.dev_server {
+                        this.unbundled_copies
+                            .push((load.source_index.get(), load.bake_graph().side()));
                         let source = &this.graph.input_files.items_source()
                             [load.source_index.get() as usize];
                         // A stack-allocated Log object containing the singular message
@@ -8098,6 +8112,14 @@ pub mod bv2_impl {
                     }
                 }
                 parse_task::ResultValue::Err(err) => {
+                    if this.dev_server.is_some() {
+                        let index = err.source_index.get();
+                        // A "use client" file changes its target when it parses: the path map still
+                        // has the graph of its importer.
+                        let side = barrel_imports::copy_side(this, index)
+                            .unwrap_or_else(|| err.target.bake_graph().side());
+                        this.unbundled_copies.push((index, side));
+                    }
                     if process_log {
                         if let Some(dev_server) = this.dev_server {
                             // Copy out the `'static` path slice so the `input_files`

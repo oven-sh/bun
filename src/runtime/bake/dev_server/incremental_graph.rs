@@ -114,7 +114,7 @@ impl Content {
 /// unused on the other side (costs ~24 bytes/file on the server graph versus
 /// a per-side layout).
 pub(crate) struct File {
-    /// Server-side `kind`. For client side this mirrors `content.kind()`.
+    /// Client: the kind of `content`. A failure keeps `Js` on both sides: a build bundled the file.
     pub(crate) kind: FileKind,
     /// If the file has an error, the failure can be looked up in `dev.bundling_failures`.
     pub(crate) failed: bool,
@@ -1393,7 +1393,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     if let Some(id) = prior_css_root {
                         existing.kind = FileKind::Css;
                         existing.content = Content::CssRoot(id);
-                    } else {
+                    } else if existing.kind != FileKind::Js {
                         existing.kind = FileKind::Unknown;
                     }
                     self.bundled_files.values_mut()[idx] = existing;
@@ -1541,7 +1541,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         // Keep it a css root so a trace still finds the stylesheet.
                         existing.kind = FileKind::Css;
                         existing.content = Content::CssRoot(id);
-                    } else {
+                    } else if existing.kind != FileKind::Js {
                         existing.kind = FileKind::Unknown;
                     }
                     self.bundled_files.values_mut()[idx] = existing;

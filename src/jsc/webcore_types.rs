@@ -558,8 +558,9 @@ pub mod store {
                 v => Some(v == 2),
             }
         }
+        /// Not `pub`: a writer has to say which bytes it scanned, see [`Store::record_ascii_scan`].
         #[inline]
-        pub fn set(&self, is_all_ascii: bool) {
+        fn set(&self, is_all_ascii: bool) {
             self.0.store(
                 1 + u8::from(is_all_ascii),
                 core::sync::atomic::Ordering::Relaxed,
@@ -954,6 +955,20 @@ pub mod store {
                 return bytes.slice();
             }
             &[]
+        }
+
+        /// Whether a Blob's window (`offset`, `size`) spans all the bytes of this in-memory store.
+        #[inline]
+        pub fn is_whole_view(&self, offset: SizeType, size: SizeType) -> bool {
+            matches!(&self.data, Data::Bytes(bytes) if offset == 0 && size >= bytes.len())
+        }
+
+        /// Every Blob on this store trusts `is_all_ascii`, so only the scan of a whole view is cached.
+        #[inline]
+        pub fn record_ascii_scan(&self, offset: SizeType, size: SizeType, is_all_ascii: bool) {
+            if self.is_whole_view(offset, size) {
+                self.is_all_ascii.set(is_all_ascii);
+            }
         }
 
         #[inline]

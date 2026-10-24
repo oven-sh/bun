@@ -439,7 +439,7 @@ pub(crate) struct EncodeOptions {
     pub(crate) quality: u8,
     /// WebP only: emit lossless VP8L instead of lossy VP8.
     pub(crate) lossless: bool,
-    /// PNG only: zlib level 0–9. -1 = libspng default.
+    /// PNG only: zlib level 0–9. -1 = default (6).
     pub(crate) compression_level: i8,
     /// PNG only: quantize to ≤ `colors` and emit an indexed PNG.
     pub(crate) palette: bool,
@@ -518,7 +518,6 @@ macro_rules! encoded_wrap_free {
 }
 
 impl Encoded {
-    #[cfg(any(target_os = "macos", windows))]
     pub(crate) fn from_owned(bytes: Vec<u8>) -> Encoded {
         let mut bytes = core::mem::ManuallyDrop::new(bytes);
         // SAFETY: Vec data ptr is non-null; len is valid.

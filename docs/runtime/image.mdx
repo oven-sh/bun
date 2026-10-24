@@ -3,7 +3,7 @@ title: Image
 description: Decode, transform, and encode images with a fast native pipeline
 ---
 
-`Bun.Image` is a chainable image pipeline for decoding, resizing, rotating, and re-encoding JPEG, PNG, WebP, HEIC, and AVIF. It is built on libjpeg-turbo, spng, libwebp, and SIMD geometry kernels, with zero npm dependencies and no native addon build step.
+`Bun.Image` is a chainable image pipeline for decoding, resizing, rotating, and re-encoding JPEG, PNG, WebP, HEIC, and AVIF. It is built on libjpeg-turbo, the `png` crate, libwebp, and SIMD geometry kernels, with zero npm dependencies and no native addon build step.
 
 ```ts
 await Bun.file("photo.jpg").image().resize(400, 400, { fit: "inside" }).webp({ quality: 80 }).write("thumb.webp");
@@ -184,12 +184,14 @@ For a passive "image in clipboard, press ⌘V" hint, poll `clipboardChangeCount(
 
 |                        | Linux                             | macOS               | Windows      |
 | ---------------------- | --------------------------------- | ------------------- | ------------ |
-| JPEG / PNG / WebP      | libjpeg-turbo · spng · libwebp    | same                | same         |
+| JPEG / PNG / WebP      | libjpeg-turbo · png · libwebp     | same                | same         |
 | BMP / GIF (decode)     | built-in                          | ImageIO             | WIC          |
 | TIFF (decode)          | ❌                                | ImageIO             | WIC          |
 | Resize / rotate / flip | Highway SIMD                      | Accelerate vImage ³ | Highway SIMD |
 | HEIC / AVIF            | ❌ `ERR_IMAGE_FORMAT_UNSUPPORTED` | ImageIO ²           | WIC ¹        |
 | Clipboard              | ❌ returns `null`                 | NSPasteboard        | Win32        |
+
+PNG decode and truecolour encode use the Rust [`png`](https://crates.io/crates/png) crate (image-png, Chromium's PNG codec); `png({ palette: true })` output still goes through libspng.
 
 ¹ Windows requires the **HEIF Image Extensions** / **AV1 Video Extension** from the Microsoft Store.
 ² AVIF _encode_ needs an OS AV1 encoder — Apple Silicon M3+ only. Intel Mac and M1/M2 reject with `ERR_IMAGE_FORMAT_UNSUPPORTED`; AVIF _decode_ works everywhere ImageIO does (macOS 13+).

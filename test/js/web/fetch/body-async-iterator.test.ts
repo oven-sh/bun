@@ -309,3 +309,31 @@ describe.each(handWrittenBodyShapes)("%s is closed with return() before its firs
     expect(await settled(shape)).toEqual(shape.expected);
   });
 });
+
+// The consumer refused a chunk, so it failed and not the iterator. A Request body tells it at
+// once, like a Response body: return() is called, and nothing waits for what it gives back.
+// Only cancel() waits for the cleanup (the rows above).
+test.concurrent.each([
+  ["text()", (request: Request) => request.text()],
+  ["arrayBuffer()", (request: Request) => request.arrayBuffer()],
+  ["reader.read()", (request: Request) => request.body!.getReader().read()],
+] as const)("a Request body whose return() never settles does not hold back the error of %s", async (_, consume) => {
+  const macrotask = () => new Promise<void>(resolve => setImmediate(resolve));
+  let calls = 0;
+  const body = {
+    [Symbol.asyncIterator]: () => ({
+      next: async () => ({ done: false, value: Symbol("not a chunk") }),
+      return: () => (calls++, new Promise(() => {})),
+    }),
+  };
+  const request = new Request("http://localhost/", { method: "POST", body, duplex: "half" } as any);
+  // Nothing here waits on I/O, so a consumer that heard nothing after these macrotasks waits
+  // on the cleanup.
+  let heard = "nothing";
+  consume(request).then(
+    () => (heard = "a result"),
+    error => (heard = `a ${error?.constructor?.name}`),
+  );
+  for (let turn = 0; turn < 50 && heard === "nothing"; turn++) await macrotask();
+  expect({ heard, calls }).toEqual({ heard: "a TypeError", calls: 1 });
+});

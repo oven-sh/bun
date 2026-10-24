@@ -1550,6 +1550,45 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       },
     );
 
+    // The write error does not wait for what return() gives back. The iterator of a tee() branch
+    // is the built-in case: its return() settles only once the other branch is cancelled too.
+    it.skipIf(process.platform !== "linux").each([
+      [
+        "the iterator of a tee() branch whose other branch is unread",
+        () => {
+          let given = 0;
+          const source = new ReadableStream({
+            pull(controller) {
+              if (given++ < 8) controller.enqueue(Buffer.alloc(64 * 1024, "x"));
+              else controller.close();
+            },
+          });
+          const [unread, written] = source.tee();
+          return { body: written.values(), release: () => void unread.cancel().catch(() => {}) };
+        },
+      ],
+      [
+        "an iterator whose return() never settles",
+        () => ({
+          body: {
+            [Symbol.asyncIterator]: () => ({
+              next: async () => ({ done: false, value: Buffer.alloc(64 * 1024, "x") }),
+              return: () => new Promise(() => {}),
+            }),
+          },
+          release: () => {},
+        }),
+      ],
+    ])("a write that fails with ENOSPC rejects while the cleanup of %s is pending", async (_, make) => {
+      const { body, release } = make();
+      const error = await Bun.write("/dev/full", new Response(body)).then(
+        () => undefined,
+        error => error,
+      );
+      release();
+      expect(error?.code).toBe("ENOSPC");
+    });
+
     // https://github.com/oven-sh/bun/issues/31681: these wrote "[object ReadableStream]".
     it("a bare ReadableStream: res.body, a JS stream, file.write(stream)", async () => {
       using dir = tempDir("bun-write-readable-stream", {});

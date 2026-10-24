@@ -353,7 +353,7 @@ impl<'s> Checker<'_, 's> {
     /// `checkDecorators` returns before it checks the decorators of a node that can't be decorated.
     fn check_decorator_expression(&mut self, file: FileId, e: ExprId) {
         if self.bound(file).rejected_decorators.contains(&e) {
-            self.never_check(self.start_of(file, e), self.end_of_expr(file, e));
+            self.never_check(file, self.start_of(file, e), self.end_of_expr(file, e));
         } else {
             self.check_expression(file, e);
         }
@@ -653,9 +653,14 @@ impl<'s> Checker<'_, 's> {
             && hir.is_in_ambient_or_type_node(hir.node(name))
     }
 
+    /// Whether the walk records for the end of `checkSourceFile`. A query that runs it for another file doesn't.
+    fn records_for_end_of_check(&self, file: FileId) -> bool {
+        self.task.file == Some(file) && !self.is_type_checked && !self.is_checking_in_flow_loop
+    }
+
     /// Records that the check of `e`'s parent returns before it checks `e`.
     pub(super) fn leave_unvisited(&mut self, file: FileId, e: ExprId) {
-        if e.is_some() && !self.is_checking_in_flow_loop {
+        if e.is_some() && self.records_for_end_of_check(file) {
             let start = self.start_of(file, e);
             self.unvisited_exprs.push((start, e));
         }
@@ -694,7 +699,7 @@ impl<'s> Checker<'_, 's> {
                     }
                     let (name, prop) = (hir[p].value, &hir[p]);
                     if is_bodiless && self.is_renamed_binding_element(file, p) {
-                        if !self.is_checking_in_flow_loop {
+                        if self.records_for_end_of_check(file) {
                             self.renamed_binding_elements_in_types.push(p);
                             if let PropKey::Computed(key) = prop.key {
                                 self.unvisited_exprs.push((prop.key_pos, key));
@@ -1399,7 +1404,7 @@ impl<'s> Checker<'_, 's> {
                         self.check_grammar_export_equals(file, s);
                     }
                 } else if e.is_some() {
-                    self.never_check(self.start_of(file, e), hir[s].loc.end);
+                    self.never_check(file, self.start_of(file, e), hir[s].loc.end);
                 }
                 if matches!(hir[s].kind, StmtKind::ExportAssign(_))
                     && matches!(bound.parent_of_stmt(s), Parent::File | Parent::Module(_))
@@ -1552,7 +1557,7 @@ impl<'s> Checker<'_, 's> {
                     // `parseVariableDeclarationList` leaves the list empty only before `of Identifier )`.
                     StmtKind::Var(decls) if decls.is_empty() => {
                         let start = self.start_of(file, expr);
-                        self.never_check(start, start + 1);
+                        self.never_check(file, start, start + 1);
                     }
                     StmtKind::Var(_) => {
                         self.check_for_initializer(file, left, Kind::ForOfStatement);
@@ -2021,7 +2026,8 @@ impl<'s> Checker<'_, 's> {
             let value = hir[p].value;
             if is_never_checked {
                 if value.is_some() {
-                    self.never_check(self.start_of(file, value), self.end_of_expr(file, value));
+                    let (start, end) = (self.start_of(file, value), self.end_of_expr(file, value));
+                    self.never_check(file, start, end);
                 }
                 continue;
             }

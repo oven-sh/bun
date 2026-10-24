@@ -1326,9 +1326,9 @@ devTest("barrel optimization: a save of one importer of a barrel evaluates its o
     await c.expectMessage("helper ran", "other ran", "app v3 ALPHA other(BETA) helper(BETA) call 1");
   },
 });
-// The same known cost on the server, with no save. The first request for /other makes a build that
-// has the barrel again. That update reaches counter.ts, which imports the barrel, so counter.ts runs
-// again and its count starts over. Tracked separately, with the client case above.
+// Pins a known cost. The first request for /other makes a build in which the barrel has one more
+// re-export, so its code changed. That update reaches counter.ts, which imports the barrel, so
+// counter.ts runs again at that request, which imports it, and its count starts over.
 devTest("barrel optimization: server: the first request for a route evaluates the importers of its barrel again", {
   framework: minimalFramework,
   files: {

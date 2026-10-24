@@ -164,7 +164,7 @@ In production, Bun inlines `data` as `{}`, so you cannot use it as a state holde
 
 Attaches an on-dispose callback. Bun calls it:
 
-- Just before the module is replaced with another copy (before the next is loaded). This includes a module that Bun re-evaluates because a file that it imports was saved. A module that only an earlier `import()` call reached gets its next copy at the next `import()`.
+- Just before the module is replaced with another copy (before the next is loaded). This includes a module that Bun re-evaluates because a file that it imports was saved. A module that only an earlier `import()` call reached gets its next copy at the next `import()`, unless it accepts itself or the update calls an `import.meta.hot.accept("./dep", cb)` callback for it.
 - After the module is detached (removing all imports to this module, see `import.meta.hot.prune()`)
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
@@ -178,6 +178,8 @@ import.meta.hot.dispose(() => {
 <Warning>Bun does not call this callback on route navigation or when the browser tab closes.</Warning>
 
 If a callback returns a promise, the update waits for it before it evaluates the new modules. A module that a later `import()` evaluates does not wait. Bun calls all dispose callbacks in parallel.
+
+A copy of a module that an update replaced while it waited on a top-level `await` can still register callbacks. Bun calls each of them once: when that copy ends, or at the next update that reaches the module if that comes first.
 
 ## import.meta.hot.prune()
 
@@ -219,7 +221,7 @@ When a file is replaced, Bun automatically removes all of its event listeners.
 | Event                  | Emitted when                                                                                    |
 | ---------------------- | ----------------------------------------------------------------------------------------------- |
 | `bun:beforeUpdate`     | before a hot update is applied.                                                                 |
-| `bun:afterUpdate`      | after a hot update is applied. Bun does not emit it when no module accepts the update.          |
+| `bun:afterUpdate`      | after a hot update is applied. Bun does not emit it when the update reloads the page.           |
 | `bun:beforeFullReload` | before a full page reload happens.                                                              |
 | `bun:beforePrune`      | before prune callbacks are called.                                                              |
 | `bun:invalidate`       | when a module is invalidated with `import.meta.hot.invalidate()`.                               |

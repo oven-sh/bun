@@ -141,7 +141,8 @@ interface ImportMeta {
      * Attach a callback that Bun calls:
      * - Just before the module is replaced with another copy (before the next is loaded).
      *   This includes a module that Bun re-evaluates because a file that it imports was saved.
-     *   A module that only an earlier `import()` call reached gets its next copy at the next import.
+     *   A module that only an earlier `import()` call reached gets its next copy at the next import,
+     *   unless it accepts itself or the update calls an `accept("./dep", cb)` callback for it.
      * - After the module is detached (removing all imports to this module)
      *
      * The callback is not called on route navigation or when the browser tab closes.
@@ -149,6 +150,11 @@ interface ImportMeta {
      * If a callback returns a promise, the update waits for it before it
      * evaluates the new modules. A module that a later `import()` evaluates
      * does not wait. All dispose callbacks are called in parallel.
+     *
+     * A copy of a module that an update replaced while it waited on a
+     * top-level `await` can still register callbacks. Bun calls each of them
+     * once: when that copy ends, or at the next update that reaches the
+     * module if that comes first.
      */
     dispose(cb: (data: any) => void | Promise<void>): void;
 

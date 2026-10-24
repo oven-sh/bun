@@ -2571,7 +2571,7 @@ void GlobalObject::finishCreation(VM& vm)
                  JSFunction::create(
                      init.vm,
                      init.owner,
-                     commonJSRequireCodeGenerator(init.vm),
+                     commonJSRequireFunctionCodeGenerator(init.vm),
                      init.owner->globalScope(),
                      JSFunction::createStructure(init.vm, init.owner, RequireFunctionPrototype::create(init.owner))));
          } },

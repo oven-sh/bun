@@ -138,6 +138,10 @@ If the project also has an ESLint config, Bun uses the oxlint config. Pick the o
 
 ---
 
+Your editor's oxc extension can use Bun too: set its server command to `bun lint --lsp`. For formatting alone, `bun fmt --no-script --lsp` works in every build of Bun, not only canary.
+
+---
+
 ## Differences from oxlint
 
 If `bun lint` and oxlint 1.87 disagree about a rule, that's a bug. [Open an issue](https://github.com/oven-sh/bun/issues). These differences are intentional:
@@ -152,7 +156,6 @@ If `bun lint` and oxlint 1.87 disagree about a rule, that's a bug. [Open an issu
 - **Control flow rules follow ESLint** where oxlint differs: `no-unreachable`, `no-fallthrough`, `getter-return`, `array-callback-return`, `constructor-super`, `no-this-before-super`, `no-useless-assignment`.
 - **`--fix` never writes a file that no longer parses.** Bun leaves the file alone and warns.
 - **`--init` adds `[lint]` to `bunfig.toml`**, not an `.oxlintrc.json`. If you already have an oxlint config, it does nothing.
-- **No language server.** `--lsp` is an error. Keep `oxlint` if your editor's oxc extension uses it.
 
 ---
 

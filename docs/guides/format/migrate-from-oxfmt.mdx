@@ -80,7 +80,7 @@ Bun reads everything oxfmt reads:
 - The `fmt` key of `vite.config.ts`, if you use vite-plus
 - Every option, including `sortImports`, `sortPackageJson`, `sortTailwindcss`, `jsdoc`, and `svelte`
 - `// oxfmt-ignore` and `// prettier-ignore` comments
-- Every flag of oxfmt 0.72 except `--lsp` and `--migrate`
+- Every flag of oxfmt 0.72 except `--migrate`
 
 It also follows oxfmt's defaults: lines wrap at 100 columns, every `.gitignore` in the repository counts, TOML files are formatted, and `.prettierrc` is ignored.
 
@@ -94,7 +94,7 @@ note: Using .oxfmtrc.json. .prettierrc is ignored. Use --config to pick it.
 
 ---
 
-Keep `oxfmt` if your editor's oxc extension uses it. `bun fmt` has no language server.
+Your editor's oxc extension can use Bun too: set its server command to `bun fmt --no-script --lsp`. `--no-script` keeps a `fmt` script in `package.json` from running instead. In a [canary build](/installation#canary-builds), `bun lint --lsp` serves linting as well.
 
 ---
 
@@ -103,7 +103,7 @@ Keep `oxfmt` if your editor's oxc extension uses it. `bun fmt` has no language s
 If `bun fmt` and oxfmt 0.72 print different code, that's a bug. [Open an issue](https://github.com/oven-sh/bun/issues). These differences are intentional:
 
 - **The output is oxfmt 0.72's**, whatever version you had installed.
-- **No `--lsp` or `--migrate`.**
+- **No `--migrate`.**
 - **Errors and warnings are worded differently.**
 - **`sortTailwindcss` uses your project's `tailwindcss`.** If it isn't installed, Bun leaves the classes as they are. oxfmt sorts them with a Tailwind CSS of its own.
 - **A `stylesheet` or `config` that doesn't exist is an error**, and the files with classes aren't formatted. oxfmt leaves the classes unsorted and exits with code `0`.

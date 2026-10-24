@@ -2649,7 +2649,12 @@ where
                     blob.shared_view().len() as BlobSizeType
                 } else {
                     blob.resolve_size();
-                    blob.size.get()
+                    // A slice of a file that could not be stat'd keeps its window. That window is not a length.
+                    if blob.file_has_no_stat() {
+                        crate::webcore::blob::MAX_SIZE
+                    } else {
+                        blob.size.get()
+                    }
                 };
                 this.render_metadata();
 

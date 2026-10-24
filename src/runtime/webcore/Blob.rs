@@ -247,6 +247,7 @@ pub(crate) trait BlobExt {
     fn get_last_modified(&self) -> f64;
     fn get_size_for_bindings(&self) -> u64;
     fn stat(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
+    fn file_has_no_stat(&self) -> bool;
     fn get_size(&self) -> f64;
     fn resolve_size(&self);
     fn resolved_size(&self) -> (SizeType, SizeType);
@@ -1927,10 +1928,6 @@ impl BlobExt for Blob {
                     .or_else(|| mode_seen_by_clone.map(bun_sys::S::ISREG))
                     .unwrap_or(false)
                 {
-                    // Printing is not to leave the 0 of a failed stat behind: the body would read as empty.
-                    if !has_size && file.seekable.is_none() {
-                        self.size.set(MAX_SIZE);
-                    }
                     return u64::MAX;
                 }
             }
@@ -1995,22 +1992,27 @@ impl BlobExt for Blob {
         }
     }
 
+    /// A file store that no stat has described. Right after `resolve_size()`, the stat failed.
+    fn file_has_no_stat(&self) -> bool {
+        matches!(
+            self.store.get().as_deref().map(|store| &store.data),
+            Some(store::Data::File(file)) if file.seekable.is_none()
+        )
+    }
+
     fn get_size(&self) -> f64 {
         if self.size.get() == MAX_SIZE {
             if self.is_s3() {
                 return f64::NAN;
             }
             self.resolve_size();
-            if self.size.get() == MAX_SIZE && self.store.get().is_some() {
-                return f64::INFINITY;
-            } else if self.size.get() == 0 && self.store.get().is_some() {
-                if let store::Data::File(file) =
-                    &self.store().expect("infallible: store present").data
-                {
-                    if !file.seekable.unwrap_or(true) && file.max_size == MAX_SIZE {
-                        return f64::INFINITY;
-                    }
-                }
+            if self.size.get() == MAX_SIZE {
+                // A file that could not be stat'd reads as empty. A pipe has no size.
+                return if self.file_has_no_stat() {
+                    0.0
+                } else {
+                    f64::INFINITY
+                };
             }
         }
         self.size.get() as f64
@@ -2027,9 +2029,9 @@ impl BlobExt for Blob {
         // borrow is live across the arm body where `resolve_file_stat`
         // materializes `&mut File` on the same memory via the raw
         // `heap::alloc` pointer — Stacked Borrows UB, and under noalias the
-        // optimizer may legally cache the pre-call `seekable: None` and fall
-        // through to `self.size.get() = 0`. `Store::data_mut` centralises
-        // the raw-ptr deref so each read here is a fresh, safe borrow.
+        // optimizer may legally cache the pre-call `seekable: None` and skip
+        // the freshly resolved size. `Store::data_mut` centralises the
+        // raw-ptr deref so each read here is a fresh, safe borrow.
         match Store::data_mut(store).tag() {
             store::DataTag::Bytes => {
                 let offset = self.offset.get();
@@ -2053,16 +2055,8 @@ impl BlobExt for Blob {
                     self.offset.set(store_size.min(offset));
                     let available = store_size - self.offset.get();
                     self.size.set(window_size(self.size.get(), available));
-                    return;
                 }
-
-                // For non-seekable files (pipes, FIFOs), the size is genuinely
-                // unknown — leave it as max_size so that stream readers don't
-                // treat it as an empty file.
-                if file.seekable == Some(false) {
-                    return;
-                }
-                self.size.set(0);
+                // A pipe has no size. A failed stat is tried again on the next call.
             }
             store::DataTag::S3 => self.size.set(0),
         }
@@ -2102,10 +2096,7 @@ impl BlobExt for Blob {
                     let available = store_size - offset;
                     return (offset, window_size(self.size.get(), available));
                 }
-                if file.seekable == Some(false) {
-                    return (self.offset.get(), self.size.get());
-                }
-                (self.offset.get(), 0)
+                (self.offset.get(), self.size.get())
             }
             store::DataTag::S3 => (self.offset.get(), 0),
         }

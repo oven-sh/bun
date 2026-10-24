@@ -193,8 +193,7 @@ pub struct Options<'a> {
     /// Lower `toml_datetime`-tagged strings in a lazy-export AST to `Temporal.*.from` calls.
     pub lower_toml_datetimes: bool,
 
-    /// A bundle entry point: its own output is needed, so a `module.exports = require(...)`-only file stays a real
-    /// module rather than becoming a redirect to what it re-exports.
+    /// A bundle entry point: a file that is only `module.exports = require(x)` is then no redirect to `x`.
     pub is_entry_point: bool,
 }
 
@@ -1610,7 +1609,13 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if parts.len() < 4 && parts.len() > 0 && p.options.features.unwrap_commonjs_to_esm {
+        // The `x` of a file that is only `module.exports = require(x)`: see `RedirectEnd` in the bundler.
+        let mut redirect_import_record_index: Option<u32> = None;
+        if parts.len() < 4
+            && parts.len() > 0
+            && p.options.features.unwrap_commonjs_to_esm
+            && !p.options.is_entry_point
+        {
             // Specially handle modules shaped like this:
             //
             //   CommonJS:
@@ -1633,13 +1638,9 @@ impl<'a> Parser<'a> {
             //
             // When tree-shaking is enabled, each statement becomes its own part, so we need
             // to look across all parts to find the single meaningful statement.
-            struct StmtAndPart {
-                stmt: Stmt,
-                part_idx: usize,
-            }
-            let stmt_and_part: Option<StmtAndPart> = 'brk: {
-                let mut found: Option<StmtAndPart> = None;
-                for (part_idx, part) in parts.iter().enumerate() {
+            let only_stmt: Option<Stmt> = 'brk: {
+                let mut found: Option<Stmt> = None;
+                for part in parts.iter() {
                     // `Part.stmts` is a `StoreSlice<Stmt>` (arena-owned). It is
                     // only ever populated from bump-allocated slices in this fn.
                     for s in part.stmts.iter() {
@@ -1652,16 +1653,14 @@ impl<'a> Parser<'a> {
                                 if found.is_some() {
                                     break 'brk None;
                                 }
-                                found = Some(StmtAndPart { stmt: *s, part_idx });
+                                found = Some(*s);
                             }
                         }
                     }
                 }
                 found
             };
-            if let Some(found) = stmt_and_part {
-                let stmt = found.stmt;
-                let part = &mut parts[found.part_idx];
+            if let Some(stmt) = only_stmt {
                 if p.symbols.as_slice()[p.module_ref.inner_index() as usize].use_count_estimate == 1
                 {
                     if let js_ast::StmtData::SExpr(s_expr) = &stmt.data {
@@ -1676,7 +1675,7 @@ impl<'a> Parser<'a> {
                                         && matches!(&d.target.data, js_ast::ExprData::EIdentifier(id)
                                             if id.ref_.eql(p.module_ref)))
                             {
-                                let redirect_import_record_index: Option<u32> = 'inner_brk: {
+                                redirect_import_record_index = 'inner_brk: {
                                     // general case:
                                     //
                                     //      module.exports = require("foo");
@@ -1710,18 +1709,6 @@ impl<'a> Parser<'a> {
 
                                     None
                                 };
-                                if let Some(id) = redirect_import_record_index
-                                    && !p.options.is_entry_point
-                                {
-                                    part.symbol_uses = Default::default();
-                                    return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
-                                        import_records: p.import_records.move_to_baby_list(p.arena),
-                                        redirect_import_record_index: Some(id),
-                                        named_imports: core::mem::take(&mut *p.named_imports),
-                                        named_exports: core::mem::take(&mut p.named_exports),
-                                        ..js_ast::Ast::empty_in(p.arena)
-                                    })));
-                                }
                             }
                         }
                     }
@@ -1735,6 +1722,7 @@ impl<'a> Parser<'a> {
         if p.options.features.unwrap_commonjs_to_esm
             && p.unwrap_all_requires
             && !p.options.is_entry_point
+            && redirect_import_record_index.is_none()
             && !p.has_es_module_syntax
             && p.commonjs_named_exports.count() == 0
             && !p.has_top_level_return
@@ -2488,7 +2476,8 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+        let mut ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+        ast.redirect_import_record_index = redirect_import_record_index;
 
         if reject_import_statements {
             // An empty range marks a parser-generated record, like the JSX runtime import.

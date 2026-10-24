@@ -410,6 +410,56 @@ describe.concurrent("redirect to a Bun.file(fd)", () => {
     });
   });
 
+  // The write is larger than the pipe, and the reader is on the same thread.
+  async function writeMoreThanThePipeHolds(openFlags: string) {
+    using dir = tempDir("shell-fd-redirect", {
+      "fixture.ts": /* ts */ `
+        import { $ } from "bun";
+        import * as fs from "node:fs";
+        const rfd = fs.openSync("fifo", fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+        const wfd = fs.openSync("fifo", ${openFlags});
+        const big = Buffer.alloc(200_000, "z").toString();
+
+        let bytes = 0;
+        let last = "";
+        const buf = Buffer.alloc(65536);
+        const drain = () => {
+          let n = 0;
+          try { n = fs.readSync(rfd, buf); } catch (e: any) { if (e.code !== "EAGAIN") throw e; }
+          if (n > 0) last = String.fromCharCode(buf[n - 1]);
+          bytes += n;
+          return n;
+        };
+        let result: { exitCode: number } | undefined;
+        const pending = $\`echo \${big} > \${Bun.file(wfd)}\`.quiet().nothrow().then(r => (result = r));
+        while (!result) {
+          drain();
+          await new Promise<void>(r => setImmediate(r));
+        }
+        await pending;
+        while (drain() > 0) {}
+        console.log(JSON.stringify({ exitCode: result.exitCode, bytes, last }));
+      `,
+    });
+    await using mkfifo = Bun.spawn({ cmd: [Bun.which("mkfifo")!, join(String(dir), "fifo")], env: bunEnv });
+    expect(await mkfifo.exited).toBe(0);
+    expect(await runFixture(String(dir))).toEqual({
+      printed: { exitCode: 0, bytes: 200_001, last: "\n" },
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  }
+
+  test.skipIf(!isPosix)("builtin command: a write larger than the pipe arrives on a nonblocking descriptor", () =>
+    writeMoreThanThePipeHolds("fs.constants.O_WRONLY | fs.constants.O_NONBLOCK"),
+  );
+
+  // Linux: the shell does not make the descriptor nonblocking, so this write waits
+  // in write(2) and the reader never runs. The one-slot write of #46307 ends the wait.
+  test.todo("builtin command: a write larger than the pipe arrives on a blocking descriptor", () =>
+    writeMoreThanThePipeHolds("fs.constants.O_WRONLY"),
+  );
+
   test.skipIf(!isPosix)("builtin command: no descriptor leaks, and each descriptor keeps its flags", async () => {
     using dir = tempDir("shell-fd-redirect", {
       "out.txt": "",

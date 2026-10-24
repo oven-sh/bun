@@ -277,29 +277,7 @@ impl QuicStream {
         if (urgency, incremental) != DEFAULT_PRIORITY {
             let _ = s.set_http_prio(urgency, incremental);
         }
-        // lsquic_stream_send_headers only buffers the block; the flush in
-        // drain_outbound needs a write event, which nothing else requests
-        // unless the JS side already started the writer.
-        let mut want_write = false;
-        for (bytes, count, eos, frameless) in self.pending_headers.with_mut(core::mem::take) {
-            self.wrote_to_lsquic.set(true);
-            if self.put_header_block(s, &bytes, count, eos, frameless) {
-                if eos {
-                    self.with_state(|st| {
-                        st.fin_sent = 1;
-                        st.write_ended = 1;
-                    });
-                    s.shutdown(1);
-                } else {
-                    want_write = true;
-                }
-            } else {
-                // sendHeaders() returned true when it queued this block, so
-                // `closed` is what reports the failure.
-                self.fail_message(s);
-                break;
-            }
-        }
+        let want_write = self.send_pending_headers(s);
         if uni {
             if self.is_receive_only() {
                 self.with_state(|s| s.write_ended = 1);
@@ -356,6 +334,40 @@ impl QuicStream {
             self.headers_sent.set(true);
         }
         accepted
+    }
+
+    /// lsquic can only queue a HEADERS frame behind sent data if the stream has flow-control credit for the frame's own header.
+    fn must_wait_for_credit(&self, s: lsquic::Stream, frameless: bool) -> bool {
+        !frameless && self.headers_sent.get() && s.write_avail() == 0
+    }
+
+    /// Sends the queued header blocks in order. Returns true if the stream needs a write event, to flush a block or to get credit for the next one.
+    fn send_pending_headers(&self, s: lsquic::Stream) -> bool {
+        let mut want_write = false;
+        while let Some(&(_, _, _, frameless)) = self.pending_headers.get().first() {
+            if self.must_wait_for_credit(s, frameless) {
+                return true;
+            }
+            let (bytes, count, eos, _) = self.pending_headers.with_mut(|q| q.remove(0));
+            self.wrote_to_lsquic.set(true);
+            if self.put_header_block(s, &bytes, count, eos, frameless) {
+                if eos {
+                    self.with_state(|st| {
+                        st.fin_sent = 1;
+                        st.write_ended = 1;
+                    });
+                    s.shutdown(1);
+                } else {
+                    // lsquic only buffers the block, and the flush in drain_outbound needs a write event.
+                    want_write = true;
+                }
+            } else {
+                // sendHeaders() returned true when it queued this block, so `closed` reports the failure.
+                self.fail_message(s);
+                self.pending_headers.with_mut(Vec::clear);
+            }
+        }
+        want_write
     }
 
     fn state_mut(&self) -> *mut StreamState {
@@ -440,7 +452,10 @@ impl QuicStream {
     }
     pub(super) fn has_undelivered_outbound(&self) -> bool {
         let out = self.outbound.get();
-        if !out.data.is_empty() || out.end == PendingEnd::Fin {
+        if !out.data.is_empty()
+            || out.end == PendingEnd::Fin
+            || !self.pending_headers.get().is_empty()
+        {
             return true;
         }
         self.ls().is_some_and(|s| s.has_unacked_data())
@@ -645,6 +660,13 @@ impl QuicStream {
             self.fail_message(s);
             return;
         }
+        if self.with_state(|st| st.write_ended != 0) {
+            self.pending_headers.with_mut(Vec::clear);
+        }
+        self.send_pending_headers(s);
+        if !self.pending_headers.get().is_empty() {
+            return;
+        }
         while !self.outbound.get().data.is_empty() {
             // lsquic copies what it accepts. Move the queue out of the cell so no borrow spans the call.
             let mut data = self.outbound.with_mut(|o| core::mem::take(&mut o.data));
@@ -776,6 +798,7 @@ impl QuicStream {
             unsafe { (*session).remove_stream(self.key) };
         }
         self.outbound.with_mut(Outbound::free);
+        self.pending_headers.set(Vec::new());
         // Received bytes stay readable, as in Node. Only a peer's reset discards them.
         self.inbound.with_mut(|i| i.ended = true);
         self.with_state(|s| s.read_ended = 1);
@@ -1155,10 +1178,17 @@ impl QuicStream {
             || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
         // Node sends no HEADERS frame for hints or trailers without fields, and an ls-qpack peer closes the connection on one.
         let frameless = header_count == 0 && kind != QUIC_STREAM_HEADERS_KIND_INITIAL;
-        let Some(s) = self.ls() else {
+        let ready = self.ls().filter(|&s| {
+            self.pending_headers.get().is_empty() && !self.must_wait_for_credit(s, frameless)
+        });
+        let Some(s) = ready else {
             self.pending_headers
                 .with_mut(|q| q.push((bytes, header_count, eos, frameless)));
             self.with_state(|s| s.has_outbound = 1);
+            if let Some(s) = self.ls() {
+                self.note_write_blocked();
+                s.want_write(true);
+            }
             return Ok(JSValue::js_boolean(true));
         };
         if self.put_header_block(s, &bytes, header_count, eos, frameless) {

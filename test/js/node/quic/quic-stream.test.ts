@@ -1328,6 +1328,47 @@ describe("stream flow control", () => {
       }
     });
   });
+
+  test("trailers wait for the stream's flow-control credit", async () => {
+    async function* lines(stream: ReadableStream<Uint8Array>) {
+      const decoder = new TextDecoder();
+      let text = "";
+      for await (const chunk of stream) {
+        const complete = (text += decoder.decode(chunk, { stream: true })).split("\n");
+        text = complete.pop()!;
+        yield* complete;
+      }
+    }
+    const spawn = (...args: (string | number)[]) =>
+      Bun.spawn({
+        cmd: [bunExe(), "--no-warnings", join(import.meta.dir, "quic-trailers-credit-fixture.ts"), ...args.map(String)],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+    const bodySize = 5000;
+    // One connection per window, from too small for the response's body to large enough for some of its trailers.
+    const windows = Array.from({ length: 12 }, (_, i) => bodySize + 6 + i);
+
+    await using server = spawn("server", join(keysDir, "agent1-key.pem"), join(keysDir, "agent1-cert.pem"), bodySize);
+    const serverLines = lines(server.stdout);
+    await using client = spawn("client", (await serverLines.next()).value!, ...windows);
+    const clientLines = lines(client.stdout);
+    const ranInto: (string | void)[] = [];
+    const rows: { error?: string }[] = [];
+    // The client stops at the first error.
+    while (rows.length < windows.length && !rows.at(-1)?.error) {
+      // The client returns no credit until the server has either run out of it or sent its trailers.
+      ranInto.push((await serverLines.next()).value);
+      client.stdin.write("x");
+      client.stdin.flush();
+      rows.push(JSON.parse((await clientLines.next()).value!));
+    }
+    expect(rows).toEqual(windows.map(() => ({ bytes: bodySize, trailers: "abc123", again: "204" })));
+    // The windows have to include the one that the body uses up exactly, and the two after it.
+    expect(ranInto.indexOf("trailers")).toBeWithin(1, windows.length - 2);
+  }, 30_000);
 });
 
 describe("a client's limit for the streams its server opens", () => {

@@ -3795,6 +3795,73 @@ describe("expect()", () => {
       expect(a1).not.toMatchObject({ 1: 1 });
       expect(a1).toMatchObject(a1);
     });
+
+    // A Date and an Error have no enumerable properties. Jest and Vitest compare an expected
+    // Date by its time value and an expected Error by its message.
+    test("an expected Date is compared by its time value", () => {
+      expect({ d: new Date(5) }).toMatchObject({ d: new Date(5) });
+      expect({ d: new Date(5) }).not.toMatchObject({ d: new Date(6) });
+      expect({ a: { d: new Date(5) } }).not.toMatchObject({ a: { d: new Date(6) } });
+      expect({ a: [new Date(5)] }).toMatchObject({ a: [new Date(5)] });
+      expect({ a: [new Date(5)] }).not.toMatchObject({ a: [new Date(6)] });
+      expect({ d: {} }).not.toMatchObject({ d: new Date(5) });
+      expect({ d: { x: 1 } }).not.toMatchObject({ d: new Date(5) });
+      expect({ d: 5 }).not.toMatchObject({ d: new Date(5) });
+      expect(new Date(5)).toMatchObject(new Date(5));
+      expect(new Date(5)).not.toMatchObject(new Date(6));
+      // a plain expected object still matches the properties of a Date
+      expect({ d: new Date(5) }).toMatchObject({ d: {} });
+    });
+
+    test("an expected Error is compared by its message", () => {
+      expect({ e: new Error("x") }).toMatchObject({ e: new Error("x") });
+      expect({ e: new Error("x") }).not.toMatchObject({ e: new Error("y") });
+      expect({ a: [new Error("x")] }).not.toMatchObject({ a: [new Error("y")] });
+      expect({ e: {} }).not.toMatchObject({ e: new Error("x") });
+      expect({ e: { message: "x" } }).not.toMatchObject({ e: new Error("x") });
+      expect({ e: "x" }).not.toMatchObject({ e: new Error("x") });
+      expect(new Error("x")).toMatchObject(new Error("x"));
+      expect(new Error("x")).not.toMatchObject(new Error("y"));
+      // a plain expected object still matches the properties of an Error
+      expect({ e: new Error("x") }).toMatchObject({ e: { message: "x" } });
+      expect({ e: new Error("x") }).not.toMatchObject({ e: { message: "y" } });
+    });
+
+    test("an expected Date under a received object that refers to itself", () => {
+      /** @type {any} */
+      const received = { at: new Date(5) };
+      received.self = received;
+      expect(received).toMatchObject({ self: { at: new Date(5) } });
+      expect(received).not.toMatchObject({ self: { at: new Date(6) } });
+    });
+
+    if (isBun) {
+      test("Bun.deepMatch compares an expected Date and Error", () => {
+        expect(Bun.deepMatch(new Date(1), new Date(2))).toBe(false);
+        expect(Bun.deepMatch({ d: new Date(2) }, { d: new Date(1) })).toBe(false);
+        expect(Bun.deepMatch({ d: new Date(1) }, { d: new Date(1) })).toBe(true);
+        expect(Bun.deepMatch(new Error("b"), new Error("a"))).toBe(false);
+        expect(Bun.deepMatch({ e: new Error("x") }, { e: new Error("x") })).toBe(true);
+        expect(Bun.deepMatch({ d: new Date() }, { d: {} })).toBe(false);
+        expect(Bun.deepMatch({ d: {} }, { d: new Date() })).toBe(true);
+      });
+
+      test("details of the Date and Error comparison", () => {
+        // an invalid Date equals no Date, as in toEqual and in Jest
+        expect({ d: new Date(NaN) }).not.toMatchObject({ d: new Date(NaN) });
+        // as in Jest, the class, the name and the cause of an Error are not compared
+        expect({ e: new TypeError("x") }).toMatchObject({ e: new Error("x") });
+        expect({ e: new Error("x", { cause: 1 }) }).toMatchObject({ e: new Error("x", { cause: 2 }) });
+        // a DOMException is an Error
+        expect({ e: new DOMException("x") }).toMatchObject({ e: new Error("x") });
+        expect({ e: new DOMException("x") }).not.toMatchObject({ e: new Error("y") });
+        // the enumerable properties of the expected Date or Error are matched, as before
+        const withCode = () => Object.assign(new Error("x"), { code: 1 });
+        expect({ e: Object.assign(withCode(), { extra: 2 }) }).toMatchObject({ e: withCode() });
+        expect({ e: new Error("x") }).not.toMatchObject({ e: withCode() });
+        expect({ d: new Date(5) }).not.toMatchObject({ d: Object.assign(new Date(5), { x: 1 }) });
+      });
+    }
   });
 
   describe("toMatch()", () => {

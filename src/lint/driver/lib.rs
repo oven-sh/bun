@@ -47,6 +47,7 @@ pub(crate) type Linter = bun_lint::linter::Linter<rules::Rules>;
 
 pub use args::Param;
 pub use bun_lint::js_plugin;
+pub use bun_lint::json;
 pub(crate) use bun_lint::paths;
 pub use bun_lint::paths::from_native as from_native_path;
 pub use run::{Environment, Outcome, Script, Stream, reject_command_line, run};

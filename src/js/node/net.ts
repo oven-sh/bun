@@ -1369,8 +1369,8 @@ function onconnection(err, clientHandle) {
   }
   if (self.keepAlive && clientHandle.setKeepAlive) {
     _socket[kSetKeepAlive] = true;
-    _socket[kSetKeepAliveInitialDelay] = self.keepAliveInitialDelay * 1000;
-    clientHandle.setKeepAlive(true, self.keepAliveInitialDelay * 1000);
+    _socket[kSetKeepAliveInitialDelay] = keepAliveDelayOf(self);
+    clientHandle.setKeepAlive(true, _socket[kSetKeepAliveInitialDelay]);
   }
 
   self._connections++;
@@ -2373,6 +2373,12 @@ Socket.prototype.resetAndDestroy = function resetAndDestroy() {
   }
   return this;
 };
+
+// The handle takes milliseconds that fit an int32. Past that the system's own delay applies.
+function keepAliveDelayOf(server) {
+  const delay = server.keepAliveInitialDelay * 1000;
+  return delay > 0 && delay <= 2147483647 ? delay : 0;
+}
 
 Socket.prototype.setKeepAlive = function setKeepAlive(enable = false, initialDelayMsecs = 0) {
   enable = Boolean(enable);
@@ -3817,7 +3823,7 @@ function onClusterConnection(err, clientHandle) {
   if (self.noDelay) socket[kSetNoDelay] = true;
   if (self.keepAlive) {
     socket[kSetKeepAlive] = true;
-    socket[kSetKeepAliveInitialDelay] = self.keepAliveInitialDelay * 1000;
+    socket[kSetKeepAliveInitialDelay] = keepAliveDelayOf(self);
   }
   socket.connect({ fd: clientHandle.fd, fdIsRawSocket: true, pauseOnConnect: self.pauseOnConnect });
   const blockList = self.blockList;

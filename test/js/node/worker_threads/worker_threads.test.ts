@@ -2558,11 +2558,14 @@ describe("'online' precedes the worker's first message", () => {
 // refusal / wait paths of VM teardown; a broken build crashes or trips ASAN
 // rather than failing an assertion.
 describe("terminate with work in flight", () => {
+  // Ref'd timer: the worker can only exit through terminate(), so its exit code is always 1.
+  const keepAlive = `setInterval(() => {}, 1e6);`;
+
   test("a transpile queued on the thread pool that starts after terminate()", async () => {
     using dir = tempDir("worker-terminate-transpile", {
       // large enough that the pool job is still queued/running at terminate
       "big.ts": Array.from({ length: 4000 }, (_, i) => `export const v${i}: number = ${i};`).join("\n"),
-      "w.js": `require("worker_threads").parentPort.postMessage("go"); import("./big.ts").then(() => {});`,
+      "w.js": `${keepAlive} require("worker_threads").parentPort.postMessage("go"); import("./big.ts").then(() => {});`,
     });
     for (let i = 0; i < 8; i++) {
       const w = new Worker(join(String(dir), "w.js"));
@@ -2575,6 +2578,7 @@ describe("terminate with work in flight", () => {
     for (let i = 0; i < 4; i++) {
       const w = new Worker(
         `const { parentPort } = require("worker_threads");
+         ${keepAlive}
          crypto.subtle.digest("SHA-256", new Uint8Array(64 << 20)).then(() => {});
          parentPort.postMessage("go");`,
         { eval: true },
@@ -2589,6 +2593,7 @@ describe("terminate with work in flight", () => {
       const w = new Worker(
         `const { parentPort } = require("worker_threads");
          const zlib = require("zlib");
+         ${keepAlive}
          const buf = Buffer.alloc(32 << 20, "a");
          zlib.deflate(buf, () => {});
          zlib.brotliCompress(buf.subarray(0, 4 << 20), () => {});

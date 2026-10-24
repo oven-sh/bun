@@ -437,6 +437,465 @@ devTest("import.meta.hot.dispose cleanup", {
     await c.expectMessage("Cleaning up", "Third setup");
   },
 });
+devTest("a hot update evaluates the modules between the saved file and the module that accepts it", {
+  // One server. Each case has a page and a module graph of its own, in a directory of the same name.
+  files: {
+    // chain: app -> mid -> leaf. `app` self-accepts. `mid` made its export from `leaf`, so `mid` has to run again.
+    "chain.html": emptyHtmlFile({ scripts: ["chain/app.ts"] }),
+    "chain/app.ts": `
+      import { mid } from "./mid";
+      import.meta.hot.accept();
+      console.log("app ran " + mid);
+    `,
+    "chain/mid.ts": `
+      import { leaf } from "./leaf";
+      console.log("mid ran");
+      export const mid = "mid(" + leaf + ")";
+    `,
+    "chain/leaf.ts": `
+      console.log("leaf ran");
+      export const leaf = "v1";
+    `,
+    // callback: the same chain. `app` accepts with a callback, which gets the new `app`. The callback
+    // belongs to the body that is replaced, and that body keeps the imports that it has.
+    "callback.html": emptyHtmlFile({ scripts: ["callback/app.ts"] }),
+    "callback/app.ts": `
+      import { mid } from "./mid";
+      export const seen = mid;
+      import.meta.hot.accept(newModule => console.log("app accepted " + newModule.seen + ", imports " + mid));
+    `,
+    "callback/mid.ts": `
+      import { leaf } from "./leaf";
+      export const mid = "mid(" + leaf + ")";
+    `,
+    "callback/leaf.ts": `
+      export const leaf = "v1";
+    `,
+    // order: index -> b -> d and b -> a -> d. The walk up from `d` finds `b` before `a`. `b` imports `a`, so `a` has to run first.
+    "order.html": emptyHtmlFile({ scripts: ["order/index.ts"] }),
+    "order/index.ts": `
+      import { b } from "./b";
+      console.log("index " + b);
+      import.meta.hot.accept();
+    `,
+    "order/b.ts": `
+      import { d } from "./d";
+      import { a } from "./a";
+      export const b = "b(" + d + "," + a + ")";
+      console.log("b ran");
+    `,
+    "order/a.ts": `
+      import { d } from "./d";
+      export const a = "a(" + d + ")";
+      console.log("a ran");
+    `,
+    "order/d.ts": `
+      export const d = "d1";
+    `,
+    // dependency: index -> b -> c. `index` accepts `b`. A save of `c` evaluates `b` again and calls the callback with it. `index` does not run again.
+    "dependency.html": emptyHtmlFile({ scripts: ["dependency/index.ts"] }),
+    "dependency/index.ts": `
+      import { b } from "./b";
+      console.log("index ran " + b);
+      import.meta.hot.accept("./b", newModule => console.log("index accepted " + newModule.b + ", imports " + b));
+    `,
+    "dependency/b.ts": `
+      import { c } from "./c";
+      export const b = "b(" + c + ")";
+    `,
+    "dependency/c.ts": `
+      export const c = "c1";
+    `,
+    // dropped: index -> a -> b and index -> b. `a` runs again for a save of `b` only while its body imports `b`.
+    "dropped.html": emptyHtmlFile({ scripts: ["dropped/index.ts"] }),
+    "dropped/index.ts": `
+      import { a } from "./a";
+      import { b } from "./b";
+      console.log("index " + a + " " + b);
+      import.meta.hot.accept();
+    `,
+    "dropped/a.ts": `
+      import { b } from "./b";
+      export const a = "a(" + b + ")";
+      console.log("a ran");
+    `,
+    "dropped/b.ts": `
+      export const b = "b1";
+    `,
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/chain");
+      await c.expectMessage("leaf ran", "mid ran", "app ran mid(v1)");
+      await dev.write("chain/leaf.ts", `console.log("leaf ran"); export const leaf = "v2";`);
+      await c.expectMessage("leaf ran", "mid ran", "app ran mid(v2)");
+      // The new `mid` takes part in the next update like the first `mid` did.
+      await dev.write("chain/leaf.ts", `console.log("leaf ran"); export const leaf = "v3";`);
+      await c.expectMessage("leaf ran", "mid ran", "app ran mid(v3)");
+    }
+    {
+      await using c = await dev.client("/callback");
+      await dev.write("callback/leaf.ts", `export const leaf = "v2";`);
+      // `newModule` has the new value. The import that the callback reads has the value from before the save.
+      await c.expectMessage("app accepted mid(v2), imports mid(v1)");
+      // The callback of the second body runs now. Its import is the `mid` that the first save made.
+      await dev.write("callback/leaf.ts", `export const leaf = "v3";`);
+      await c.expectMessage("app accepted mid(v3), imports mid(v2)");
+    }
+    {
+      await using c = await dev.client("/order");
+      await c.expectMessage("a ran", "b ran", "index b(d1,a(d1))");
+      await dev.write("order/d.ts", `export const d = "d2";`);
+      await c.expectMessage("a ran", "b ran", "index b(d2,a(d2))");
+    }
+    {
+      await using c = await dev.client("/dependency");
+      await c.expectMessage("index ran b(c1)");
+      await dev.write("dependency/c.ts", `export const c = "c2";`);
+      await c.expectMessage("index accepted b(c2), imports b(c2)");
+      await dev.write("dependency/c.ts", `export const c = "c3";`);
+      await c.expectMessage("index accepted b(c3), imports b(c3)");
+    }
+    {
+      await using c = await dev.client("/dropped");
+      await c.expectMessage("a ran", "index a(b1) b1");
+      await dev.write("dropped/b.ts", `export const b = "b2";`);
+      await c.expectMessage("a ran", "index a(b2) b2");
+      // `a` no longer imports `b`, so a save of `b` does not evaluate `a` again.
+      await dev.write("dropped/a.ts", `export const a = "a()"; console.log("a ran");`);
+      await c.expectMessage("a ran", "index a() b2");
+      await dev.write("dropped/b.ts", `export const b = "b3";`);
+      await c.expectMessage("index a() b3");
+      // The same for an import that require() made.
+      await dev.write("dropped/a.ts", `export const a = "a(" + require("./b").b + ")"; console.log("a ran");`);
+      await c.expectMessage("a ran", "index a(b3) b3");
+      await dev.write("dropped/b.ts", `export const b = "b4";`);
+      await c.expectMessage("a ran", "index a(b4) b4");
+      await dev.write("dropped/a.ts", `export const a = "a()"; console.log("a ran");`);
+      await c.expectMessage("a ran", "index a() b4");
+      await dev.write("dropped/b.ts", `export const b = "b5";`);
+      await c.expectMessage("index a() b5");
+    }
+  },
+});
+devTest("a hot update disposes of each module that it evaluates again, once", {
+  files: {
+    // between: index -> mid -> d. A save of `d` evaluates `mid` again. Its dispose callback runs first and removes its listener.
+    "between.html": emptyHtmlFile({ scripts: ["between/index.ts"] }),
+    "between/index.ts": `
+      import { mid } from "./mid";
+      console.log("index " + mid);
+      import.meta.hot.accept();
+    `,
+    "between/mid.ts": `
+      import { d } from "./d";
+      export const mid = "mid(" + d + ")";
+      import.meta.hot.dispose(() => console.log("mid disposed " + mid));
+      import.meta.hot.on("bun:afterUpdate", () => console.log("afterUpdate seen by " + mid));
+    `,
+    "between/d.ts": `
+      export const d = "d1";
+    `,
+    // data: the dispose callback of `mid` writes to import.meta.hot.data. The body of `mid` does not use it,
+    // so `mid` does not take the second save itself: `index` still runs again.
+    "data.html": emptyHtmlFile({ scripts: ["data/index.ts"] }),
+    "data/index.ts": `
+      import { mid } from "./mid";
+      console.log("index " + mid);
+      import.meta.hot.accept();
+    `,
+    "data/mid.ts": `
+      import { d } from "./d";
+      export const mid = "mid(" + d + ")";
+      import.meta.hot.dispose(data => {
+        data.previous = mid;
+      });
+    `,
+    "data/d.ts": `
+      export const d = "d1";
+    `,
+    // several: both saved files lead to `index`. It is disposed of once and evaluated once.
+    "several.html": emptyHtmlFile({ scripts: ["several/index.ts"] }),
+    "several/index.ts": `
+      import { d } from "./d";
+      import { e } from "./e";
+      console.log("index " + d + " " + e);
+      import.meta.hot.dispose(() => console.log("index disposed"));
+      import.meta.hot.accept();
+    `,
+    "several/d.ts": `
+      export const d = "d1";
+    `,
+    "several/e.ts": `
+      export const e = "e1";
+    `,
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/between");
+      await c.expectMessage("index mid(d1)");
+      await dev.write("between/d.ts", `export const d = "d2";`);
+      await c.expectMessage("mid disposed mid(d1)", "index mid(d2)", "afterUpdate seen by mid(d2)");
+      await dev.write("between/d.ts", `export const d = "d3";`);
+      await c.expectMessage("mid disposed mid(d2)", "index mid(d3)", "afterUpdate seen by mid(d3)");
+    }
+    {
+      await using c = await dev.client("/data");
+      await c.expectMessage("index mid(d1)");
+      await dev.write("data/d.ts", `export const d = "d2";`);
+      await c.expectMessage("index mid(d2)");
+      await dev.write("data/d.ts", `export const d = "d3";`);
+      await c.expectMessage("index mid(d3)");
+    }
+    {
+      await using c = await dev.client("/several");
+      await c.expectMessage("index d1 e1");
+      {
+        await using batch = await dev.batchChanges();
+        await dev.write("several/d.ts", `export const d = "d2";`);
+        await dev.write("several/e.ts", `export const e = "e2";`);
+      }
+      await c.expectMessage("index disposed", "index d2 e2");
+    }
+  },
+});
+devTest("import.meta.hot.accept of a dependency is called once for each accepted module that is replaced", {
+  files: {
+    // paths: index -> d, index -> a -> d, other -> d, other -> a. `index` and `other` accept both `d` and `a`.
+    // A save of `d` replaces `d` and `a`. Each callback gets each of them once, one module for each call.
+    "paths.html": emptyHtmlFile({ scripts: ["paths/index.ts"] }),
+    "paths/index.ts": `
+      import { d } from "./d";
+      import { a } from "./a";
+      import "./other";
+      console.log("index " + d + " " + a);
+      import.meta.hot.accept(["./d", "./a"], newModules => {
+        console.log("index accepted " + newModules[0]?.d + " " + newModules[1]?.a);
+      });
+    `,
+    "paths/other.ts": `
+      import "./d";
+      import "./a";
+      import.meta.hot.accept(["./d", "./a"], newModules => {
+        console.log("other accepted " + newModules[0]?.d + " " + newModules[1]?.a);
+      });
+    `,
+    "paths/a.ts": `
+      import { d } from "./d";
+      export const a = "a(" + d + ")";
+    `,
+    "paths/d.ts": `
+      export const d = "d1";
+    `,
+    // replaced: index -> mid -> d. `mid` accepts `d`, and one update replaces both.
+    // Only the new body of `mid` runs. The callback of the old body does not.
+    "replaced.html": emptyHtmlFile({ scripts: ["replaced/index.ts"] }),
+    "replaced/index.ts": `
+      import "./mid";
+      import.meta.hot.accept();
+    `,
+    "replaced/mid.ts": `
+      import { d } from "./d";
+      console.log("mid v1 " + d);
+      import.meta.hot.accept("./d", newModule => console.log("mid v1 accepted " + newModule.d));
+    `,
+    "replaced/d.ts": `
+      export const d = "d1";
+    `,
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/paths");
+      await c.expectMessage("index d1 a(d1)");
+      await dev.write("paths/d.ts", `export const d = "d2";`);
+      await c.expectMessage(
+        "index accepted d2 undefined",
+        "index accepted undefined a(d2)",
+        "other accepted d2 undefined",
+        "other accepted undefined a(d2)",
+      );
+      // Only `a` is replaced.
+      await dev.write("paths/a.ts", `import { d } from "./d"; export const a = "A(" + d + ")";`);
+      await c.expectMessage("index accepted undefined A(d2)", "other accepted undefined A(d2)");
+    }
+    {
+      await using c = await dev.client("/replaced");
+      await c.expectMessage("mid v1 d1");
+      {
+        await using batch = await dev.batchChanges();
+        await dev.write("replaced/d.ts", `export const d = "d2";`);
+        await dev.write(
+          "replaced/mid.ts",
+          `
+            import { d } from "./d";
+            console.log("mid v2 " + d);
+            import.meta.hot.accept("./d", newModule => console.log("mid v2 accepted " + newModule.d));
+          `,
+        );
+      }
+      await c.expectMessage("mid v2 d2");
+      await dev.write("replaced/d.ts", `export const d = "d3";`);
+      await c.expectMessage("mid v2 accepted d3");
+    }
+  },
+});
+devTest("a hot update that nothing accepts only reloads the page", {
+  files: {
+    // left: `b` accepts `d`, `c` self-accepts, and `index` imports `d` and accepts nothing, so the page reloads.
+    // Every module logs through a console.log that the first load captured. The test client does not silence
+    // that one on a reload, so what the runtime still does in the page that is left shows up as messages.
+    "left.html": emptyHtmlFile({ scripts: ["left/index.ts"] }),
+    "left/index.ts": `
+      import "./b";
+      import "./c";
+      import "./d";
+      import.meta.hot.on("bun:beforeFullReload", () => globalThis.log("full reload"));
+      globalThis.log("index evaluated");
+    `,
+    "left/b.ts": `
+      import { d } from "./d";
+      globalThis.log("b evaluated " + d);
+      import.meta.hot.accept("./d", newModule => globalThis.log("b accepted " + newModule.d));
+    `,
+    "left/c.ts": `
+      import { d } from "./d";
+      globalThis.log("c evaluated " + d);
+      import.meta.hot.dispose(() => globalThis.log("c disposed " + d));
+      import.meta.hot.accept();
+    `,
+    "left/d.ts": `
+      globalThis.log ??= console.log;
+      export const d = "d1";
+      globalThis.log("d evaluated " + d);
+    `,
+    // path: index -> d and index -> a -> d. `index` accepts `d` but not `a`, so the update that
+    // reaches `index` through `a` is not accepted.
+    "path.html": emptyHtmlFile({ scripts: ["path/index.ts"] }),
+    "path/index.ts": `
+      import { d } from "./d";
+      import { a } from "./a";
+      console.log("index " + d + " " + a);
+      import.meta.hot.accept("./d", newModule => console.log("index accepted " + newModule.d + " " + a));
+    `,
+    "path/a.ts": `
+      import { d } from "./d";
+      export const a = "a(" + d + ")";
+    `,
+    "path/d.ts": `
+      export const d = "d1";
+    `,
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/left");
+      await c.expectMessage("d evaluated d1", "b evaluated d1", "c evaluated d1", "index evaluated");
+      await c.expectReload(async () => {
+        await dev.write(
+          "left/d.ts",
+          `
+            globalThis.log ??= console.log;
+            export const d = "d2";
+            globalThis.log("d evaluated " + d);
+          `,
+        );
+      });
+      await c.expectMessage("full reload", "d evaluated d2", "b evaluated d2", "c evaluated d2", "index evaluated");
+    }
+    {
+      await using c = await dev.client("/path");
+      await c.expectMessage("index d1 a(d1)");
+      await c.expectReload(async () => {
+        await dev.write("path/d.ts", `export const d = "d2";`);
+      });
+      await c.expectMessage("index d2 a(d2)");
+    }
+  },
+});
+devTest("a module that only import() reaches takes each save, and the page does not reload", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import.meta.hot.accept();
+      console.log("index ran");
+      globalThis.open = () => import("./page").then(page => console.log("opened " + page.name));
+    `,
+    "page.ts": `
+      export const name = "page v1";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index ran");
+    await c.js`globalThis.open()`;
+    await c.expectMessage("opened page v1");
+    // Each save evaluates `index` again, which holds the import(). `page` runs at the next import().
+    await dev.write("page.ts", `export const name = "page v2";`);
+    await c.expectMessage("index ran");
+    await dev.write("page.ts", `export const name = "page v3";`);
+    await c.expectMessage("index ran");
+    await c.js`globalThis.open()`;
+    await c.expectMessage("opened page v3");
+  },
+});
+const store = (value: string) => `
+  export const value = "${value}";
+  console.log("store ran " + value);
+  import.meta.hot.accept();
+`;
+const lazy = `
+  import { value } from "./store";
+  if (value === "bad") throw new Error("store is " + value);
+  console.log("lazy ran with " + value);
+`;
+devTest("a save of a self-accepting module does not reload the page when a module that imports it failed to load", {
+  // index -> import() of lazy -> store. `store` self-accepts. `lazy` throws while `store` is bad.
+  files: {
+    // root: `index` accepts nothing. An update that gets to it reloads the page.
+    "root.html": emptyHtmlFile({ scripts: ["root/index.ts"] }),
+    "root/index.ts": `
+      console.log("index ran");
+      globalThis.open = async () => {
+        try {
+          await import("./lazy");
+        } catch (e) {
+          console.log("lazy failed: " + e.message);
+        }
+      };
+    `,
+    "root/lazy.ts": lazy,
+    "root/store.ts": store("bad"),
+    // boundary: `index` self-accepts. An update that gets to it evaluates it again.
+    "boundary.html": emptyHtmlFile({ scripts: ["boundary/index.ts"] }),
+    "boundary/index.ts": `
+      import.meta.hot.accept();
+      console.log("index ran");
+      globalThis.open = async () => {
+        try {
+          await import("./lazy");
+        } catch (e) {
+          console.log("lazy failed: " + e.message);
+        }
+      };
+    `,
+    "boundary/lazy.ts": lazy,
+    "boundary/store.ts": store("bad"),
+  },
+  async test(dev) {
+    for (const page of ["root", "boundary"]) {
+      await using c = await dev.client("/" + page);
+      await c.expectMessage("index ran");
+      await c.js`globalThis.open()`;
+      await c.expectMessage("store ran bad", "lazy failed: store is bad");
+      // `store` takes the save itself, so the update stops there. dev.write() throws when the page
+      // reloads, and a message shows when `index` runs again.
+      await dev.write(page + "/store.ts", store("good"));
+      await c.expectMessage("store ran good");
+      // The next import() evaluates `lazy` again, with the new `store`.
+      await c.js`globalThis.open()`;
+      await c.expectMessage("lazy ran with good");
+    }
+  },
+});
 devTest("import.meta.hot invalid usage", {
   files: {
     "index.html": emptyHtmlFile({

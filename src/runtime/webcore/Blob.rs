@@ -803,6 +803,7 @@ impl BlobExt for Blob {
             joiner: bun_core::string_joiner::StringJoiner::default(),
             boundary,
             failed: false,
+            s3_entry: false,
             global_this,
         };
         // Size the node list up front: a file entry pushes at most 13 slices, a
@@ -868,6 +869,44 @@ impl BlobExt for Blob {
                 ),
             );
         }
+        /// Throws the `TypeError` for the first entry that is an S3 object.
+        /// This is a second walk: the serializing walk only records that it
+        /// met one, so the entries it can serialize carry nothing for this
+        /// refusal.
+        #[cold]
+        fn throw_for_s3_entry(global_this: &JSGlobalObject, form_data: *mut jsc::DOMFormData) {
+            extern "C" fn find_thunk(
+                ctx_ptr: *mut c_void,
+                name: *mut EncodedSlice,
+                value_ptr: *mut c_void,
+                _filename: *mut EncodedSlice,
+                is_blob: u8,
+            ) {
+                // SAFETY: `ctx_ptr` is the `&JSGlobalObject` passed below.
+                let global_this = unsafe { &*ctx_ptr.cast::<JSGlobalObject>() };
+                if is_blob == 0 || global_this.has_exception() {
+                    return;
+                }
+                // SAFETY: when `is_blob != 0`, `value_ptr` is the C++
+                // `JSBlob::m_ctx` (`*mut Blob`), valid for this callback.
+                let blob = unsafe { &*value_ptr.cast::<Blob>() };
+                if !blob.is_s3() || blob.size.get() == 0 {
+                    return;
+                }
+                // SAFETY: `name` is always a valid non-null `*EncodedSlice` for this callback.
+                let entry_name = unsafe { *name }.to_utf8();
+                let _ = global_this.throw_type_error(format_args!(
+                    "FormData entry {} is an S3 file, which cannot be read while the body is serialized. Pass its bytes instead: new File([await s3file.bytes()], s3file.name, {{ type: s3file.type }})",
+                    bun_core::fmt::quote(entry_name.slice()),
+                ));
+            }
+            DOMFormData__forEach(
+                form_data,
+                std::ptr::from_ref(global_this).cast_mut().cast::<c_void>(),
+                find_thunk,
+            );
+        }
+
         // C++ invokes the callback synchronously and does not retain `ctx`/`cb`
         // past this call.
         DOMFormData__forEach(
@@ -876,6 +915,9 @@ impl BlobExt for Blob {
             for_each_thunk,
         );
         if context.failed {
+            if context.s3_entry {
+                throw_for_s3_entry(global_this, form_data);
+            }
             // Drop the joiner (Drop runs StringJoiner::deinit) so every
             // heap-owned slice already pushed — escaped names, non-ASCII
             // conversions, NodeFS read_file result buffers — is freed.
@@ -3452,6 +3494,9 @@ struct FormDataContext<'a> {
     joiner: StringJoiner<'a>,
     boundary: &'a [u8], // borrowed; outlives the joiner
     failed: bool,
+    /// The failure is an entry that is an S3 object. `from_dom_form_data`
+    /// throws for it after the walk.
+    s3_entry: bool,
     global_this: &'a JSGlobalObject,
 }
 
@@ -3585,8 +3630,7 @@ impl FormDataContext<'_> {
                 joiner.push_static(b"\r\n\r\n");
 
                 if blob.store.get().is_some() {
-                    // `resolve_size` would zero an S3 entry, which is rejected below.
-                    if blob.size.get() == MAX_SIZE && !blob.is_s3() {
+                    if blob.size.get() == MAX_SIZE {
                         blob.resolve_size();
                     }
                     let store = blob
@@ -3596,12 +3640,13 @@ impl FormDataContext<'_> {
                         .expect("infallible: store present");
                     match &store.data {
                         store::Data::S3(_) => {
-                            self.failed = true;
-                            let entry_name = name.to_utf8();
-                            let _ = global_this.throw_type_error(format_args!(
-                                "FormData entry {} is an S3 file, which cannot be read while serializing the body. Read it first: formData.append(name, new Blob([await s3file.bytes()]), filename)",
-                                bun_core::fmt::quote(entry_name.slice()),
-                            ));
+                            // An S3 object can only be read asynchronously. An
+                            // empty window of one (`slice(n, n)`) has no bytes
+                            // to read, so its part is empty.
+                            if blob.size.get() != 0 {
+                                self.failed = true;
+                                self.s3_entry = true;
+                            }
                         }
                         store::Data::File(file) => {
                             // TODO: make this async + lazy

@@ -866,6 +866,18 @@ pub struct Linker<'a> {
 #[cfg(not(windows))]
 static EXEC_MODE: bun_core::Once<Mode> = bun_core::Once::new();
 
+/// The result of `Linker::open_beneath_package_dir`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+enum Beneath {
+    Opened(Fd),
+    /// The path, or a symlink on the way, leads out of the package directory. Also a path that
+    /// does not exist.
+    Escapes,
+    /// `openat2` is not available: a seccomp filter or an old kernel. The caller checks the real
+    /// path instead.
+    Unavailable,
+}
+
 /// The mode of a bin target, `0o777 & !umask`.
 #[cfg(not(windows))]
 fn exec_mode() -> Mode {
@@ -980,7 +992,7 @@ impl<'a> Linker<'a> {
 
         if self.chmod_only {
             #[cfg(not(windows))]
-            Self::set_exec_mode(abs_target, &target_stat);
+            self.set_exec_mode(abs_target, &target_stat);
             return;
         }
 
@@ -990,7 +1002,7 @@ impl<'a> Linker<'a> {
             if seen.contains_key(abs_dest.as_bytes()) {
                 // The name is taken, and `bunx <this package>` starts the file itself.
                 #[cfg(not(windows))]
-                Self::make_executable(abs_target, &target_stat);
+                self.make_executable(abs_target, &target_stat);
                 return;
             }
         }
@@ -1036,20 +1048,120 @@ impl<'a> Linker<'a> {
         }
 
         #[cfg(not(windows))]
-        Self::make_executable(abs_target, &target_stat);
+        self.make_executable(abs_target, &target_stat);
     }
 
     #[cfg(not(windows))]
-    fn make_executable(abs_target: &ZStr, target_stat: &sys::Stat) {
-        Self::set_exec_mode(abs_target, target_stat);
+    fn make_executable(&self, abs_target: &ZStr, target_stat: &sys::Stat) {
+        self.set_exec_mode(abs_target, target_stat);
         Self::try_normalize_shebang(abs_target, target_stat.st_size as u64);
     }
 
+    /// `target_stat` follows a symlink, so the mode compared is the one of the file that runs.
     #[cfg(not(windows))]
-    fn set_exec_mode(abs_target: &ZStr, target_stat: &sys::Stat) {
+    fn set_exec_mode(&self, abs_target: &ZStr, target_stat: &sys::Stat) {
         let mode = exec_mode();
         if (target_stat.st_mode as Mode) & 0o777 != mode {
-            let _ = sys::lchmod(abs_target, mode);
+            // A package can ship a bin target that is a symlink. The file it points to gets the
+            // mode only if it is inside the package.
+            let is_symlink = sys::lstat(abs_target).is_ok_and(|link_stat| {
+                sys::kind_from_mode(link_stat.st_mode as Mode) == sys::FileKind::SymLink
+            });
+            if is_symlink {
+                self.chmod_symlinked_target(abs_target, mode);
+            } else {
+                let _ = sys::lchmod(abs_target, mode);
+            }
+        }
+    }
+
+    /// Sets the mode of the file behind the symlink `abs_target`, if the link stays inside the
+    /// package directory. The file is opened first, and the open file is checked and chmodded, so
+    /// the link cannot be changed in between.
+    #[cfg(not(windows))]
+    fn chmod_symlinked_target(&self, abs_target: &ZStr, mode: Mode) {
+        let mut package_dir_buf = path::path_buffer_pool::get();
+        let Some(package_dir) = self.target_package_dir(package_dir_buf.as_mut_slice()) else {
+            return;
+        };
+        let fchmod_regular_file = |fd: Fd| {
+            let _close = sys::CloseOnDrop::new(fd);
+            let Ok(stat) = sys::fstat(fd) else {
+                return;
+            };
+            if sys::kind_from_mode(stat.st_mode as Mode) != sys::FileKind::File {
+                return;
+            }
+            let _ = sys::fchmod(fd, mode);
+        };
+        let flags = sys::O::RDONLY | sys::O::CLOEXEC | sys::O::NONBLOCK | sys::O::NOCTTY;
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if let Some(rel) = Self::target_rel_to_package_dir(package_dir, abs_target) {
+            match Self::open_beneath_package_dir(package_dir, rel, flags) {
+                Beneath::Opened(fd) => return fchmod_regular_file(fd),
+                Beneath::Escapes => return,
+                Beneath::Unavailable => {}
+            }
+        }
+
+        let mut real_package_dir_buf = path::path_buffer_pool::get();
+        let Ok(real_package_dir) = sys::realpath(package_dir, &mut *real_package_dir_buf) else {
+            return;
+        };
+        let Ok(fd) = sys::open(abs_target, flags, 0) else {
+            return;
+        };
+        // Both paths come from the kernel, so the comparison is exact, also on a case-insensitive
+        // platform.
+        let mut fd_path_buf = path::path_buffer_pool::get();
+        let is_inside = sys::get_fd_path(fd, &mut fd_path_buf).is_ok_and(|fd_path| {
+            fd_path.len() > real_package_dir.len()
+                && strings::starts_with(fd_path, real_package_dir)
+                && fd_path[real_package_dir.len()] == SEP
+        });
+        if is_inside {
+            fchmod_regular_file(fd);
+        } else {
+            let _ = sys::close(fd);
+        }
+    }
+
+    /// `abs_target` relative to `package_dir`, `None` if `abs_target` is not below it.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn target_rel_to_package_dir<'b>(package_dir: &ZStr, abs_target: &'b ZStr) -> Option<&'b [u8]> {
+        let package_dir_bytes = package_dir.as_bytes();
+        let abs_target_bytes = abs_target.as_bytes();
+        if abs_target_bytes.len() <= package_dir_bytes.len() + 1
+            || !strings::starts_with(abs_target_bytes, package_dir_bytes)
+            || abs_target_bytes[package_dir_bytes.len()] != SEP
+        {
+            return None;
+        }
+        let rel = &abs_target_bytes[package_dir_bytes.len() + 1..];
+        (rel.len() < MAX_PATH_BYTES).then_some(rel)
+    }
+
+    /// Opens `rel` with `openat2(RESOLVE_BENEATH)` from `package_dir`, so that no symlink on the
+    /// way leads out of the package.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn open_beneath_package_dir(package_dir: &ZStr, rel: &[u8], flags: i32) -> Beneath {
+        let Ok(package_dir_fd) = sys::open_dir_absolute(package_dir.as_bytes()) else {
+            return Beneath::Escapes;
+        };
+        let mut rel_buf = path::path_buffer_pool::get();
+        let rel_z = resolve_path::z(rel, &mut *rel_buf);
+        let opened = sys::openat2_beneath(package_dir_fd, rel_z, flags, 0);
+        let _ = sys::close(package_dir_fd);
+        match opened {
+            Ok(fd) => Beneath::Opened(fd),
+            Err(err) => match err.get_errno() {
+                sys::Errno::ENOSYS
+                | sys::Errno::EPERM
+                | sys::Errno::EAGAIN
+                | sys::Errno::EINVAL => Beneath::Unavailable,
+                _ => Beneath::Escapes,
+            },
         }
     }
 
@@ -1438,8 +1550,9 @@ impl<'a> Linker<'a> {
         Ok(sys::symlink_running_executable(rel_target, abs_dest)?)
     }
 
+    /// `<node_modules>/<package>` without a trailing separator, `None` if it does not fit `buf`.
     #[cfg(not(windows))]
-    fn resolved_target_parent_escapes_package_dir(&self, abs_target: &ZStr) -> bool {
+    fn target_package_dir<'b>(&self, buf: &'b mut [u8]) -> Option<&'b ZStr> {
         // SAFETY: `target_node_modules_path` is set at construction to either
         // a caller-owned `AbsPath` or the same buffer as `node_modules_path`;
         // both outlive `self` and are not mutated for the duration of this
@@ -1448,10 +1561,8 @@ impl<'a> Linker<'a> {
             strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
         let package_name = self.target_package_name.slice();
 
-        let mut package_dir_buf = path::path_buffer_pool::get();
-        let buf = package_dir_buf.as_mut_slice();
         if dest_dir_without_trailing_slash.len() + package_name.len() + 2 > buf.len() {
-            return true;
+            return None;
         }
         let mut off: usize = 0;
         buf[off..off + dest_dir_without_trailing_slash.len()]
@@ -1462,7 +1573,15 @@ impl<'a> Linker<'a> {
         buf[off..off + package_name.len()].copy_from_slice(package_name);
         off += package_name.len();
         buf[off] = 0;
-        let package_dir = ZStr::from_buf(&buf[..], off);
+        Some(ZStr::from_buf(&buf[..], off))
+    }
+
+    #[cfg(not(windows))]
+    fn resolved_target_parent_escapes_package_dir(&self, abs_target: &ZStr) -> bool {
+        let mut package_dir_buf = path::path_buffer_pool::get();
+        let Some(package_dir) = self.target_package_dir(package_dir_buf.as_mut_slice()) else {
+            return true;
+        };
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
@@ -1498,42 +1617,22 @@ impl<'a> Linker<'a> {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn target_escapes_beneath_package_dir(package_dir: &ZStr, abs_target: &ZStr) -> Option<bool> {
-        let package_dir_bytes = package_dir.as_bytes();
-        let abs_target_bytes = abs_target.as_bytes();
-        if abs_target_bytes.len() <= package_dir_bytes.len() + 1
-            || !strings::starts_with(abs_target_bytes, package_dir_bytes)
-            || abs_target_bytes[package_dir_bytes.len()] != SEP
-        {
-            return None;
-        }
-        let rel = &abs_target_bytes[package_dir_bytes.len() + 1..];
-        if rel.len() >= MAX_PATH_BYTES {
-            return None;
-        }
+        let rel = Self::target_rel_to_package_dir(package_dir, abs_target)?;
         let rel_parent = resolve_path::dirname::<PlatformAuto>(rel);
         if rel_parent.is_empty() {
             return Some(false);
         }
-        let package_dir_fd = match sys::open_dir_absolute(package_dir_bytes) {
-            Ok(fd) => fd,
-            Err(_) => return Some(true),
-        };
-        let mut rel_buf = path::path_buffer_pool::get();
-        let rel_z = resolve_path::z(rel_parent, &mut *rel_buf);
-        let opened = sys::openat2_beneath(package_dir_fd, rel_z, sys::O::PATH | sys::O::CLOEXEC, 0);
-        let _ = sys::close(package_dir_fd);
-        match opened {
-            Ok(fd) => {
+        match Self::open_beneath_package_dir(
+            package_dir,
+            rel_parent,
+            sys::O::PATH | sys::O::CLOEXEC,
+        ) {
+            Beneath::Opened(fd) => {
                 let _ = sys::close(fd);
                 Some(false)
             }
-            Err(err) => match err.get_errno() {
-                sys::Errno::ENOSYS
-                | sys::Errno::EPERM
-                | sys::Errno::EAGAIN
-                | sys::Errno::EINVAL => None,
-                _ => Some(true),
-            },
+            Beneath::Escapes => Some(true),
+            Beneath::Unavailable => None,
         }
     }
 
@@ -1579,7 +1678,8 @@ impl<'a> Linker<'a> {
         bin_name: &[u8],
         buf: &'b mut [u8],
     ) -> Option<&'b ZStr> {
-        // A trailing separator would make `lchmod` follow a symlinked target; npm drops it too.
+        // A trailing separator would make `lstat` and `lchmod` follow a symlinked target; npm
+        // drops it too.
         let target = strings::without_trailing_slash(target);
 
         if !is_native_binlink_redirect {

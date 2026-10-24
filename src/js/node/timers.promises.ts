@@ -4,36 +4,12 @@
 const { validateBoolean, validateAbortSignal, validateObject, validateNumber } = require("internal/validators");
 const { resistStopPropagation } = require("internal/shared");
 
-const symbolAsyncIterator = Symbol.asyncIterator;
 const setImmediateGlobal = globalThis.setImmediate;
 const setTimeoutGlobal = globalThis.setTimeout;
 const setIntervalGlobal = globalThis.setInterval;
+const clearIntervalGlobal = globalThis.clearInterval;
 
 type TimerOptions = import("node:timers").TimerOptions;
-
-interface TimerAsyncIteratorMethods {
-  next?: () => unknown;
-  return?: () => unknown;
-}
-
-interface TimerAsyncIterator extends TimerAsyncIteratorMethods {
-  [Symbol.asyncIterator]?(): this;
-}
-
-function asyncIterator({ next: nextFunction, return: returnFunction }: TimerAsyncIteratorMethods) {
-  const result: TimerAsyncIterator = {};
-  if (typeof nextFunction === "function") {
-    result.next = nextFunction;
-  }
-  if (typeof returnFunction === "function") {
-    result.return = returnFunction;
-  }
-  result[symbolAsyncIterator] = function () {
-    return this;
-  };
-
-  return result;
-}
 
 function setTimeout(after = 1, value?, options: TimerOptions = {}) {
   const arguments_ = [].concat(value ?? []);
@@ -124,68 +100,32 @@ function setImmediate(value?, options: TimerOptions = {}) {
     : returnValue;
 }
 
-function setInterval(after = 1, value?, options: TimerOptions = {}) {
-  /* eslint-disable no-undefined, no-unreachable-loop, no-loop-func */
-  try {
-    // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
-    // warning, not throw an error. So we can't call validateNumber as that will throw if the number
-    // is outside of a given range.
-    if (typeof after != "number") {
-      validateNumber(after, "delay");
-    }
-  } catch (error) {
-    return asyncIterator({
-      next: function () {
-        return Promise.$reject(error);
-      },
-    });
+// https://github.com/nodejs/node/blob/v26.3.0/lib/timers/promises.js#L132-L193
+async function* setInterval(after?, value?, options: TimerOptions = {}) {
+  if (after !== undefined && typeof after !== "number") {
+    validateNumber(after, "delay");
   }
-  try {
-    validateObject(options, "options");
-  } catch (error) {
-    return asyncIterator({
-      next: function () {
-        return Promise.$reject(error);
-      },
-    });
-  }
+  validateObject(options, "options");
   const { signal, ref: reference = true } = options;
-  try {
-    validateAbortSignal(signal, "options.signal");
-  } catch (error) {
-    return asyncIterator({
-      next: function () {
-        return Promise.$reject(error);
-      },
-    });
-  }
-  try {
-    validateBoolean(reference, "options.ref");
-  } catch (error) {
-    return asyncIterator({
-      next: function () {
-        return Promise.$reject(error);
-      },
-    });
-  }
+  validateAbortSignal(signal, "options.signal");
+  validateBoolean(reference, "options.ref");
+
   if (signal?.aborted) {
-    return asyncIterator({
-      next: function () {
-        return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
-      },
-    });
+    throw $makeAbortError(undefined, { cause: signal.reason });
   }
 
-  let onCancel, interval;
-
+  let onCancel;
+  let interval;
   try {
     let notYielded = 0;
-    let callback;
+    // Node's `callback` is the resolve function of a `new Promise()`. This is that promise itself.
+    let wake: Promise<unknown> | undefined;
     interval = setIntervalGlobal(() => {
       notYielded++;
-      if (callback) {
-        callback();
-        callback = undefined;
+      if (wake) {
+        const promise = wake;
+        wake = undefined;
+        $resolvePromise(promise, undefined);
       }
     }, after);
     if (!reference) {
@@ -193,52 +133,29 @@ function setInterval(after = 1, value?, options: TimerOptions = {}) {
     }
     if (signal) {
       onCancel = () => {
-        clearInterval(interval);
-        if (callback) {
-          callback();
-          callback = undefined;
+        clearIntervalGlobal(interval);
+        if (wake) {
+          const promise = wake;
+          wake = undefined;
+          // Resolved with a rejected promise, as in node: next() then rejects 4 ticks after the abort.
+          $resolvePromise(promise, Promise.$reject($makeAbortError(undefined, { cause: signal.reason })));
         }
       };
       signal.addEventListener("abort", onCancel, resistStopPropagation({ __proto__: null, once: true }));
     }
 
-    return asyncIterator({
-      next: function () {
-        return new Promise<void>((resolve, reject) => {
-          if (!signal?.aborted) {
-            if (notYielded === 0) {
-              callback = resolve;
-            } else {
-              resolve();
-            }
-          } else if (notYielded === 0) {
-            reject($makeAbortError(undefined, { cause: signal.reason }));
-          } else {
-            resolve();
-          }
-        }).then(() => {
-          if (notYielded > 0) {
-            notYielded = notYielded - 1;
-            return { done: false, value: value };
-          } else if (signal?.aborted) {
-            throw $makeAbortError(undefined, { cause: signal.reason });
-          }
-          return { done: true };
-        });
-      },
-      return: function () {
-        clearInterval(interval);
-        signal?.removeEventListener("abort", onCancel);
-        return Promise.$resolve({});
-      },
-    });
-  } catch {
-    return asyncIterator({
-      next: function () {
-        clearInterval(interval);
-        signal?.removeEventListener("abort", onCancel);
-      },
-    });
+    while (!signal?.aborted) {
+      if (notYielded === 0) {
+        await (wake = $newPromise());
+      }
+      for (; notYielded > 0; notYielded--) {
+        yield value;
+      }
+    }
+    throw $makeAbortError(undefined, { cause: signal?.reason });
+  } finally {
+    clearIntervalGlobal(interval);
+    signal?.removeEventListener("abort", onCancel);
   }
 }
 

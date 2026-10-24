@@ -541,13 +541,10 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
     };
     let mut reader = bun_archive::open_memory(bytes, tar::Dialect::General)
         .map_err(|err| fail(err, "failed to read tarball"))?;
-    loop {
-        let Some(entry) = reader
-            .next_entry()
-            .map_err(|err| fail(err, "failed to read archive header"))?
-        else {
-            break;
-        };
+    while let Some(entry) = reader
+        .next_entry()
+        .map_err(|err| fail(err, "failed to read archive header"))?
+    {
         if entry.kind() != bun_sys::FileKind::File {
             continue;
         }

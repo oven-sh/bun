@@ -3,6 +3,7 @@
 use crate::error::{Error, Result};
 use crate::gzip::{self, Progress};
 use crate::reader::{Entry, Event, Options, Poll, Reader};
+use crate::writer::Output as _;
 
 // https://github.com/libarchive/libarchive/blob/27cbc7827172698143e440801fc0ba39ccb4f1f5/libarchive/archive_read_support_filter_gzip.c#L306
 const BLOCK: usize = 64 * 1024;
@@ -229,21 +230,8 @@ impl Decoder {
                 break Poll::NeedInput;
             }
         };
-        let event = match poll {
-            Poll::NeedInput => Event::NeedInput,
-            Poll::Entry => Event::Entry(self.tar.entry()),
-            Poll::Data { offset, start, len } => Event::Data {
-                offset,
-                bytes: self
-                    .layers
-                    .get(top)
-                    .and_then(|layer| layer.out.get(start..start.saturating_add(len)))
-                    .unwrap_or_default(),
-            },
-            Poll::EndOfEntry { size } => Event::EndOfEntry { size },
-            Poll::EndOfArchive => Event::EndOfArchive,
-        };
-        Ok((used_total, event))
+        let decoded = self.layers.get(top).map_or(&[][..], |layer| &layer.out);
+        Ok((used_total, poll.event(self.tar.entry(), decoded)))
     }
 }
 
@@ -333,8 +321,7 @@ impl<'a> MemoryDecoder<'a> {
                     zeros_up_to(out, offset)?;
                     let room = size.saturating_sub(out.len().saturating_sub(start));
                     let bytes = bytes.get(..room.min(bytes.len())).unwrap_or_default();
-                    out.try_reserve(bytes.len())?;
-                    out.extend_from_slice(bytes);
+                    out.write(bytes)?;
                 }
                 Event::EndOfEntry { size: end } => {
                     zeros_up_to(out, end)?;

@@ -244,8 +244,8 @@ pub fn compose(name: &[u8]) -> Result<Option<Vec<u32>>> {
 }
 
 /// Whether [`compose`] would return something.
-pub fn converts(name: &[u8]) -> bool {
-    name.is_ascii() || matches!(compose(name), Ok(Some(_)))
+pub(crate) fn converts(name: &[u8]) -> Result<bool> {
+    Ok(name.is_ascii() || compose(name)?.is_some())
 }
 
 fn push_utf8(out: &mut Vec<u8>, c: u32) {

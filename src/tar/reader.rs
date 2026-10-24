@@ -1,6 +1,7 @@
 use crate::error::{Error, Result};
 use crate::header::{self, Block, gnu};
 use crate::num::{parse_decimal, parse_field, parse_pax_time};
+use crate::writer::Output as _;
 use bun_core::{FileKind, S, kind_from_mode, slice_to_nul, strings};
 
 /// Whose answer to give where tar readers disagree.
@@ -113,6 +114,12 @@ enum Status {
     Ok,
 }
 
+impl Status {
+    fn warn_unless(ok: bool) -> Self {
+        if ok { Self::Ok } else { Self::Warn }
+    }
+}
+
 /// Sticks across entries. It decides whether the size of a hardlink entry is believed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Format {
@@ -164,13 +171,7 @@ fn padding_for(size: i64) -> i64 {
 
 fn assign(dest: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
     dest.clear();
-    append(dest, bytes)
-}
-
-fn append(dest: &mut Vec<u8>, bytes: &[u8]) -> Result<()> {
-    dest.try_reserve(bytes.len())?;
-    dest.extend_from_slice(bytes);
-    Ok(())
+    dest.write(bytes)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -270,6 +271,23 @@ pub(crate) enum Poll {
         size: i64,
     },
     EndOfArchive,
+}
+
+impl Poll {
+    pub(crate) fn event<'a>(self, entry: &'a Entry, input: &'a [u8]) -> Event<'a> {
+        match self {
+            Poll::NeedInput => Event::NeedInput,
+            Poll::Entry => Event::Entry(entry),
+            Poll::Data { offset, start, len } => Event::Data {
+                offset,
+                bytes: input
+                    .get(start..start.saturating_add(len))
+                    .unwrap_or_default(),
+            },
+            Poll::EndOfEntry { size } => Event::EndOfEntry { size },
+            Poll::EndOfArchive => Event::EndOfArchive,
+        }
+    }
 }
 
 pub struct Reader {
@@ -398,19 +416,7 @@ impl Reader {
     /// Returns how much of `input` was consumed. `eof`: nothing follows it. An error is final.
     pub fn next<'a>(&'a mut self, input: &'a [u8], eof: bool) -> Result<(usize, Event<'a>)> {
         let (used, poll) = self.poll(input, eof)?;
-        let event = match poll {
-            Poll::NeedInput => Event::NeedInput,
-            Poll::Entry => Event::Entry(&self.entry),
-            Poll::Data { offset, start, len } => Event::Data {
-                offset,
-                bytes: input
-                    .get(start..start.saturating_add(len))
-                    .unwrap_or_default(),
-            },
-            Poll::EndOfEntry { size } => Event::EndOfEntry { size },
-            Poll::EndOfArchive => Event::EndOfArchive,
-        };
-        Ok((used, event))
+        Ok((used, poll.event(&self.entry, input)))
     }
 
     /// The entry of the last [`Event::Entry`].
@@ -538,7 +544,8 @@ impl Reader {
 
             State::Collect(left, what) => {
                 let take = left.min(input.len());
-                append(&mut self.collected, input.get(..take).unwrap_or_default())?;
+                self.collected
+                    .write(input.get(..take).unwrap_or_default())?;
                 *used = take;
                 let left = left.saturating_sub(take);
                 if left > 0 {
@@ -989,7 +996,7 @@ impl Reader {
             }
             Ok(Take(Collect::Time(is_mtime)))
         };
-        let warn_unless = |ok: bool| Skip(if ok { Status::Ok } else { Status::Warn });
+        let warn_unless = |ok: bool| Skip(Status::warn_unless(ok));
 
         let stored = self.pax_key_len.min(KEY_CAPACITY);
         let key_buf = self.pax_key;
@@ -1104,15 +1111,10 @@ impl Reader {
         Ok(())
     }
 
-    /// `status` is what the value's own parser made of it.
-    fn pax_value_done(&mut self, status: Status) {
-        self.state = State::PaxNewline(status);
-    }
-
-    fn converts(&self, text: &[u8]) -> bool {
+    fn converts(&self, text: &[u8]) -> Result<bool> {
         let text = slice_to_nul(text);
         match self.options.charset {
-            Charset::Ascii => text.is_ascii(),
+            Charset::Ascii => Ok(text.is_ascii()),
             Charset::Utf8 => crate::compose::converts(text),
         }
     }
@@ -1127,7 +1129,7 @@ impl Reader {
             &self.pax_path_override
         };
         if !path.is_empty() {
-            let converts = !utf8 || self.converts(path);
+            let converts = !utf8 || self.converts(path)?;
             assign(&mut self.entry.path, slice_to_nul(path))?;
             self.entry.path_is_utf8 = utf8 && converts;
             if !converts {
@@ -1138,7 +1140,7 @@ impl Reader {
             status = Status::Warn;
         }
         if !self.pax_link.is_empty() {
-            let converts = !utf8 || self.converts(&self.pax_link);
+            let converts = !utf8 || self.converts(&self.pax_link)?;
             assign(&mut self.entry.link, slice_to_nul(&self.pax_link))?;
             if !converts {
                 status = Status::Warn;
@@ -1159,86 +1161,59 @@ impl Reader {
     }
 
     fn use_collected(&mut self, what: Collect, value: &[u8]) -> Result<()> {
-        let body_padding = padding_for(i64::try_from(value.len()).unwrap_or(0));
-        match what {
-            Collect::LongName => {
-                assign(&mut self.entry.path, slice_to_nul(value))?;
-                self.entry.path_is_utf8 = false;
-                self.state = State::Skip(body_padding, AfterSkip::BetweenHeaders(Status::Ok));
-            }
-            Collect::LongLink => {
-                assign(&mut self.entry.link, slice_to_nul(value))?;
-                self.state = State::Skip(body_padding, AfterSkip::BetweenHeaders(Status::Ok));
+        let status = match what {
+            Collect::LongName | Collect::LongLink => {
+                if matches!(what, Collect::LongName) {
+                    assign(&mut self.entry.path, slice_to_nul(value))?;
+                    self.entry.path_is_utf8 = false;
+                } else {
+                    assign(&mut self.entry.link, slice_to_nul(value))?;
+                }
+                let padding = padding_for(i64::try_from(value.len()).unwrap_or(0));
+                self.state = State::Skip(padding, AfterSkip::BetweenHeaders(Status::Ok));
+                return Ok(());
             }
             Collect::Number(which) => {
                 let parsed = parse_decimal(value);
-                if parsed < 0 || parsed == i64::MAX {
-                    if matches!(which, Number::Size) {
-                        return Err(Error::PaxSizeOverflow);
-                    }
-                    self.pax_value_done(Status::Warn);
-                    return Ok(());
+                let valid = parsed >= 0 && parsed != i64::MAX;
+                if valid {
+                    self.on_pax_number(which, parsed)?;
+                } else if matches!(which, Number::Size) {
+                    return Err(Error::PaxSizeOverflow);
                 }
-                self.on_pax_number(which, parsed)?;
-                self.pax_value_done(Status::Ok);
+                Status::warn_unless(valid)
             }
-            Collect::Time(is_mtime) => match parse_pax_time(value) {
-                Some(seconds) => {
-                    if is_mtime {
-                        self.entry.mtime = Some(seconds);
-                    }
-                    self.pax_value_done(Status::Ok);
+            Collect::Time(is_mtime) => {
+                let seconds = parse_pax_time(value);
+                if is_mtime && seconds.is_some() {
+                    self.entry.mtime = seconds;
                 }
-                None => self.pax_value_done(Status::Warn),
-            },
+                Status::warn_unless(seconds.is_some())
+            }
             Collect::Text(which) => {
                 match which {
                     Text::Path => assign(&mut self.pax_path, value)?,
                     Text::PathOverride => assign(&mut self.pax_path_override, value)?,
                     Text::LinkPath => assign(&mut self.pax_link, value)?,
-                    Text::UserName => self.user_name_converts = self.converts(value),
-                    Text::GroupName => self.group_name_converts = self.converts(value),
+                    Text::UserName => self.user_name_converts = self.converts(value)?,
+                    Text::GroupName => self.group_name_converts = self.converts(value)?,
                 }
-                self.pax_value_done(Status::Ok);
+                Status::Ok
             }
             Collect::HeaderCharset => {
-                let status = match value {
-                    b"BINARY" => {
-                        self.pax_is_utf8 = false;
-                        Status::Ok
-                    }
-                    b"ISO-IR 10646 2000 UTF-8" => {
-                        self.pax_is_utf8 = true;
-                        Status::Ok
-                    }
-                    _ => Status::Warn,
+                let utf8 = match value {
+                    b"BINARY" => Some(false),
+                    b"ISO-IR 10646 2000 UTF-8" => Some(true),
+                    _ => None,
                 };
-                self.pax_value_done(status);
+                self.pax_is_utf8 = utf8.unwrap_or(self.pax_is_utf8);
+                Status::warn_unless(utf8.is_some())
             }
-            Collect::SymlinkType => {
-                self.pax_value_done(if matches!(value, b"file" | b"dir") {
-                    Status::Ok
-                } else {
-                    Status::Warn
-                });
-            }
-            Collect::SparseMap => {
-                let status = if self.parse_sparse_map_0_1(value)? {
-                    Status::Ok
-                } else {
-                    Status::Warn
-                };
-                self.pax_value_done(status);
-            }
-            Collect::HolesData => {
-                let status = if self.parse_holes_data(value)? {
-                    Status::Ok
-                } else {
-                    Status::Warn
-                };
-                self.pax_value_done(status);
-            }
-        }
+            Collect::SymlinkType => Status::warn_unless(matches!(value, b"file" | b"dir")),
+            Collect::SparseMap => Status::warn_unless(self.parse_sparse_map_0_1(value)?),
+            Collect::HolesData => Status::warn_unless(self.parse_holes_data(value)?),
+        };
+        self.state = State::PaxNewline(status);
         Ok(())
     }
 
@@ -1401,9 +1376,9 @@ impl Reader {
                 let prefix = slice_to_nul(header::prefix(&h));
                 assign(&mut self.entry.path, prefix)?;
                 if !prefix.is_empty() && prefix.last() != Some(&b'/') {
-                    append(&mut self.entry.path, b"/")?;
+                    self.entry.path.write(b"/")?;
                 }
-                append(&mut self.entry.path, slice_to_nul(header::name(&h)))?;
+                self.entry.path.write(slice_to_nul(header::name(&h)))?;
             }
         } else {
             self.format = Format::Old;

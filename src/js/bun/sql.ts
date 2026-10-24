@@ -542,8 +542,9 @@ function refuseStart(this: Scope, error: unknown) {
 
 /// Nothing is sent: the server refused the start, so there is no transaction to end.
 async function leaveRefused(scope: Scope) {
-  if (scope.finishing !== null) {
-    return scope.finishing.$then(undefined, noop);
+  const { finishing } = scope;
+  if (finishing !== null) {
+    return finishing.$then(undefined, noop);
   }
   const idle = untilIdle(scope);
   if (idle !== undefined) {

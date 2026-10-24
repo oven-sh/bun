@@ -1,6 +1,5 @@
-import { S3Client } from "bun";
+import { randomUUIDv7, S3Client } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { randomUUIDv7 } from "bun";
 import { serve, type S3Server, type Tag } from "s3-server";
 
 // The S3 server of test/packages/s3-server verifies the SigV4 signature of

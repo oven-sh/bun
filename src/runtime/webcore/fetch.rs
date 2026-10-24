@@ -140,8 +140,9 @@ fn s3_put_headers<'a>(
     let mut put_headers = credentials_with_options.put_headers(None);
     if let Some(h) = headers {
         put_headers.content_type = h.get_content_type().or(put_headers.content_type);
-        put_headers.content_disposition =
-            h.get_content_disposition().or(put_headers.content_disposition);
+        put_headers.content_disposition = h
+            .get_content_disposition()
+            .or(put_headers.content_disposition);
         put_headers.content_encoding = h.get_content_encoding().or(put_headers.content_encoding);
     }
     put_headers

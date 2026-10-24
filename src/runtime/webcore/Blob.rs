@@ -4752,7 +4752,8 @@ pub(crate) fn write_file_internal(
                                 readable,
                                 cx,
                                 aws_options.options,
-                                aws_options.put_headers(destination_blob.content_type_or_mime_type()),
+                                aws_options
+                                    .put_headers(destination_blob.content_type_or_mime_type()),
                                 None,
                                 None,
                                 core::ptr::null_mut(),

@@ -323,10 +323,8 @@ fn get_tagging(opts: JSValue, global: &JSGlobalObject) -> JsResult<Option<Option
     let mut encoded: Vec<u8> = Vec::new();
     while let Some((key, tag_value)) = iter.next()? {
         if !tag_value.is_string() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "tagging[\"{}\"] must be a string",
-                key
-            )));
+            return Err(global
+                .throw_invalid_arguments(format_args!("tagging[\"{}\"] must be a string", key)));
         }
         let key = key.to_utf8();
         let tag_value = tag_value.to_utf8(global)?;
@@ -337,7 +335,9 @@ fn get_tagging(opts: JSValue, global: &JSGlobalObject) -> JsResult<Option<Option
         encoded.push(b'=');
         push_uri_encoded(&mut encoded, tag_value.slice());
     }
-    Ok(Some((!encoded.is_empty()).then(|| encoded.into_boxed_slice())))
+    Ok(Some(
+        (!encoded.is_empty()).then(|| encoded.into_boxed_slice()),
+    ))
 }
 
 fn push_uri_encoded(out: &mut Vec<u8>, input: &[u8]) {

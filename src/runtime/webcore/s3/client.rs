@@ -31,8 +31,8 @@ pub(crate) use error_jsc::throw_sign_error;
 
 pub(crate) use bun_s3_signing::credentials::S3Credentials;
 pub(crate) use bun_s3_signing::credentials::S3CredentialsWithOptions;
-pub(crate) use bun_s3_signing::credentials::{PutHeaders, PutHeadersOwned};
 use bun_s3_signing::credentials::encode_uri_component;
+pub(crate) use bun_s3_signing::credentials::{PutHeaders, PutHeadersOwned};
 
 pub(crate) use crate::webcore::s3::list_objects::S3ListObjectsOptions;
 pub(crate) use crate::webcore::s3::list_objects::get_list_objects_options_from_js;

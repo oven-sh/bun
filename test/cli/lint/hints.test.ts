@@ -19,8 +19,8 @@ async function hints(code: string, file = "a.js", others: Record<string, string>
   return Array.from(reports, ([, rule, line, hint]) => `${rule} ${line}${hint === undefined ? "" : ": " + hint}`);
 }
 
-describe.concurrent("no-useless-assignment", () => {
-  test("every branch assigns again", async () => {
+describe.concurrent("the no-useless-assignment hint", () => {
+  test("lists both lines when both branches overwrite the value", async () => {
     const code = `
 export function rename(kind) {
   let name = "honeypot";
@@ -37,13 +37,13 @@ export function rename(kind) {
     ]);
   });
 
-  test("the next statement assigns again", async () => {
+  test("has the line of the next statement when it overwrites the value", async () => {
     expect(await hints(`export function f(a) {\n  let b = a;\n  b = 2;\n  return b;\n}\n`)).toEqual([
       "no-useless-assignment 2: It is overwritten on line 3 before it is read.",
     ]);
   });
 
-  test("three or more branches assign again", async () => {
+  test("lists at most three lines when more branches overwrite the value", async () => {
     const cases = (count: number) => Array.from({ length: count }, (_, i) => `    case ${i}: b = ${i}; break;\n`);
     const code = (count: number) =>
       `export function f(a) {\n  let b = -1;\n  switch (a) {\n${cases(count).join("")}    default: b = 9;\n  }\n  return b;\n}\n`;
@@ -53,10 +53,18 @@ export function rename(kind) {
     ]);
   });
 
-  test("the variable is never read again", async () => {
+  test("is different when the variable is never read again", async () => {
     expect(await hints(`export function f(a) {\n  let b = a;\n  use(b);\n  b = 2;\n}\n`, "a.ts")).toEqual([
       "no-useless-assignment 4: Nothing reads it after this.",
     ]);
+  });
+
+  test("an assignment in parentheses is not a pattern", async () => {
+    const f = `export function f(a: number, b: number) {\n  (a = b) = a;\n}\n`;
+    const g = `export function g(a: number, b: number) {\n  (a = b) += a;\n}\n`;
+    const { stdout, exitCode } = await lint({ "a.ts": f + g }, "-f", "unix");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -237,11 +245,11 @@ const cases: [code: string, ...reports: string[]][] = [
 
 const globals = { "bunfig.toml": `[lint.globals]\nf = "readonly"\ng = "readonly"\nh = "readonly"\nuse = "readonly"\n` };
 
-test.concurrent.each(cases)("%s", async (code, ...reports) => {
+test.concurrent.each(cases)("hints for %s", async (code, ...reports) => {
   expect(await hints(code + "\n", "a.js", globals)).toEqual(reports);
 });
 
-test.concurrent("@typescript-eslint/no-unused-vars", async () => {
+test.concurrent("hints for @typescript-eslint/no-unused-vars", async () => {
   const code = `try {\n  f();\n} catch (e) {\n  f();\n}\nconst { a, ...others } = f();\nconst b = f(others);\ndeclare function f(a?: unknown): any;\n`;
   expect(await hints(code, "a.ts")).toEqual([
     "@typescript-eslint/no-unused-vars 3: A catch needs no parameter. Remove it and its parentheses.",
@@ -250,17 +258,20 @@ test.concurrent("@typescript-eslint/no-unused-vars", async () => {
   ]);
 });
 
-test.concurrent.each(["a.js", "a.ts"])("no-unused-vars with options from bunfig.toml, in %s", async file => {
-  const rule = file === "a.js" ? "no-unused-vars" : "@typescript-eslint/no-unused-vars";
-  const bunfig = `[lint.rules]\n"${rule}" = ["warn", { ignoreRestSiblings = false, varsIgnorePattern = "^x" }]\n`;
-  const code = `const { a, ...others } = Bun;\nconsole.log(others);\nconst _b = 1;\n`;
-  expect(await hints(code, file, { "bunfig.toml": bunfig })).toEqual([
-    `${rule} 1: To leave a property out this way, turn on the option ignoreRestSiblings.`,
-    `${rule} 3`,
-  ]);
-});
+test.concurrent.each(["a.js", "a.ts"])(
+  "the no-unused-vars hints respect options from bunfig.toml, in %s",
+  async file => {
+    const rule = file === "a.js" ? "no-unused-vars" : "@typescript-eslint/no-unused-vars";
+    const bunfig = `[lint.rules]\n"${rule}" = ["warn", { ignoreRestSiblings = false, varsIgnorePattern = "^x" }]\n`;
+    const code = `const { a, ...others } = Bun;\nconsole.log(others);\nconst _b = 1;\n`;
+    expect(await hints(code, file, { "bunfig.toml": bunfig })).toEqual([
+      `${rule} 1: To leave a property out this way, turn on the option ignoreRestSiblings.`,
+      `${rule} 3`,
+    ]);
+  },
+);
 
-test.concurrent("typescript-eslint rules", async () => {
+test.concurrent("hints for other typescript-eslint rules", async () => {
   const code = `
 declare const list: number[];
 list.pop;
@@ -293,7 +304,7 @@ export { path };
   ]);
 });
 
-test.concurrent("react-hooks/rules-of-hooks", async () => {
+test.concurrent("hints for react-hooks/rules-of-hooks", async () => {
   const code = `
 import { useEffect, useState } from "react";
 
@@ -317,39 +328,42 @@ export function List({ items, open }) {
   ]);
 });
 
-test.concurrent("bun:test/valid-expect", async () => {
+test.concurrent("hints for bun:test/valid-expect", async () => {
   const code = `import { expect, test } from "bun:test";\ntest("a", async () => {\n  expect(Promise.resolve(1)).resolves.toBe(1);\n});\n`;
   expect(await hints(code, "a.test.ts")).toEqual(["bun:test/valid-expect 3: Add await, or return the promise."]);
 });
 
-test.concurrent("no-octal", async () => {
+test.concurrent("hints for no-octal", async () => {
   expect(await hints(`module.exports = [071, 09];\n`, "a.cjs")).toEqual([
     "no-octal 1: The leading 0 makes it octal, so 071 is 57. Write 0o71 to make that clear.",
     "no-octal 1: The leading zero does nothing here. Remove it.",
   ]);
 });
 
-describe.concurrent("formats that show a hint", () => {
+describe.concurrent("which formats print hints", () => {
   const files = { "a.js": `export function f(a) {\n  let b = a;\n  b = 2;\n  return b;\n}\n` };
   const hint = "It is overwritten on line 3 before it is read.";
 
-  test("agent", async () => {
+  test("-f agent prints the hint", async () => {
     const { stdout } = await lint(files, "-f", "agent");
     expect(stdout).toContain(`<help>${hint}</help>`);
   });
 
-  test("pretty with --all", async () => {
+  test("-f pretty --all prints the hint", async () => {
     const { stdout } = await lint(files, "-f", "pretty", "--all");
     expect(stdout).toContain(`note: ${hint}`);
   });
 
-  test.each(["stylish", "json", "unix", "github", "junit", "checkstyle", "gitlab", "sarif"])("not %s", async format => {
-    const { stdout } = await lint(files, "-f", format);
-    expect(stdout).toContain("is not used in subsequent statements");
-    expect(stdout).not.toContain("overwritten");
-  });
+  test.each(["stylish", "json", "unix", "github", "junit", "checkstyle", "gitlab", "sarif"])(
+    "-f %s doesn't print the hint",
+    async format => {
+      const { stdout } = await lint(files, "-f", format);
+      expect(stdout).toContain("is not used in subsequent statements");
+      expect(stdout).not.toContain("overwritten");
+    },
+  );
 
-  test("not with an oxlint config", async () => {
+  test("nothing prints the hint with an oxlint config", async () => {
     const config = JSON.stringify({ rules: { "no-useless-assignment": "error" } });
     const { stdout } = await lint({ ...files, ".oxlintrc.json": config }, "-f", "default");
     expect(stdout).toContain("no-useless-assignment");

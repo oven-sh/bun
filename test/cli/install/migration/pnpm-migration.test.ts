@@ -326,7 +326,7 @@ snapshots:
     expect(exitCode).toBe(code);
   });
 
-  // What has to fit the buffer is the resolved path, not the link as written. The unchecked join did the same.
+  // The resolved path has to fit in the buffer, not the link as written. The unchecked join did the same.
   test("link: that only fits the path buffer once resolved still names its workspace", async () => {
     const linkToB = "../b" + Buffer.alloc(100_000, "/../b").toString();
     const { stderr, bunLock, exitCode } = await migrate({

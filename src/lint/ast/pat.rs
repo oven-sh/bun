@@ -1,7 +1,8 @@
-//! Binding patterns: what `var`, `let`, `const`, a parameter or a `catch` clause declares.
+//! Binding patterns: the things that `var`, `let`, `const`, a parameter or a `catch` clause
+//! declare.
 //!
-//! The target of a destructuring *assignment* is not a pattern. It is an array or an object
-//! literal, as it is parsed.
+//! The target of a destructuring *assignment* isn't a pattern. It's an array or object literal,
+//! which is how it's parsed.
 
 use super::stmt::tags;
 use super::{Expr, Key, List, Name, Node, handle};
@@ -25,7 +26,7 @@ pub enum PatKind<'a> {
 }
 
 tags! {
-    /// The kind of a pattern without what it holds.
+    /// The kind of a pattern without its payload.
     PatTag of PatKind {
         Missing unit,
         Ident tuple,
@@ -50,7 +51,8 @@ impl<'a> Pat<'a> {
         (self.try_raw()).map_or(PatTag::Missing, |raw| PatTag::of(&raw.kind))
     }
 
-    /// Without a type annotation or a default value, which belong to what contains the pattern.
+    /// Excludes a type annotation or default value, which belong to the node that contains the
+    /// pattern.
     #[inline]
     pub fn span(self) -> Span {
         match self.try_raw() {
@@ -72,9 +74,9 @@ impl<'a> Pat<'a> {
         }
     }
 
-    /// The pattern that `inner` is the value of a property of, or an element.
+    /// The pattern that contains `inner` as a property value or an element.
     #[inline]
-    fn around(file: &'a super::File<'a>, inner: hir::PatId) -> Node<'a> {
+    fn enclosing_pattern(file: &'a super::File<'a>, inner: hir::PatId) -> Node<'a> {
         match file.bound.pat_parent.get(inner.idx()) {
             Some(&(PatParent::Prop(owner, _) | PatParent::Elem(owner, _))) => {
                 Node::Pat(Pat::new(file, owner))
@@ -92,7 +94,7 @@ impl<'a> Pat<'a> {
             Some(&PatParent::Param(p)) => Node::Param(super::Param::new(file, p)),
             Some(&PatParent::Prop(_, prop)) => Node::PatProp(PatProp::new(file, prop)),
             Some(&PatParent::Elem(_, elem)) => Node::PatElem(PatElem::new(file, elem)),
-            Some(PatParent::None) | None => Node::Pat(self).parent_of_neither_expr_nor_stmt(),
+            Some(PatParent::None) | None => Node::Pat(self).parent_of_other_node(),
         }
     }
 
@@ -101,7 +103,7 @@ impl<'a> Pat<'a> {
         if self.tag() == PatTag::Ident {
             return visit(self);
         }
-        // The next is the last. Not by recursion, which a pattern can be too deep for.
+        // An explicit stack, popped from the end. A pattern can be too deep for recursion.
         let mut pending: SmallVec<[Pat<'a>; 8]> = smallvec![self];
         while let Some(pat) = pending.pop() {
             match pat.kind() {
@@ -127,7 +129,7 @@ impl<'a> PatProp<'a> {
         &self.file.hir.pat_props[self.id.idx()]
     }
 
-    /// `None` for `...rest`. For the shorthand `{ a }` it is the `a`.
+    /// `None` for `...rest`. For the shorthand `{ a }` it's the `a`.
     pub fn key(self) -> Option<Key<'a>> {
         let raw = self.raw();
         if raw.is_rest {
@@ -136,14 +138,14 @@ impl<'a> PatProp<'a> {
         Key::new(self.file, raw.key, raw.name_kind, raw.key_pos)
     }
 
-    /// The key is written in brackets: [`Key::is_computed`].
+    /// Same as [`Key::is_computed`] on its key.
     #[inline]
     pub fn has_computed_key(self) -> bool {
         let raw = self.raw();
         !raw.is_rest && super::decl::is_computed(raw.key, raw.name_kind)
     }
 
-    /// The `e` of a key that is a [`KeyKind::Computed`](super::KeyKind::Computed).
+    /// The `e` of a [`KeyKind::Computed`](super::KeyKind::Computed) key.
     #[inline]
     pub fn computed_key(self) -> Option<Expr<'a>> {
         match self.raw() {
@@ -156,7 +158,7 @@ impl<'a> PatProp<'a> {
         }
     }
 
-    /// `{ a }`, `{ a = 1 }`: the name is both the key and what is bound.
+    /// `{ a }`, `{ a = 1 }`: the name is both the key and the binding.
     pub fn is_shorthand(self) -> bool {
         let raw = self.raw();
         !raw.is_rest && raw.key_pos == self.value().span().start
@@ -179,14 +181,14 @@ impl<'a> PatProp<'a> {
 
     #[inline]
     pub fn span(self) -> Span {
-        // The HIR has the end of a name that is written with an escape too early.
+        // The HIR's end is too early for a name written with an escape.
         Span::new(self.raw().pos, self.raw().end.max(self.value().span().end))
     }
 
     /// The object pattern.
     #[inline]
     pub fn parent(self) -> Node<'a> {
-        Pat::around(self.file, self.value().id())
+        Pat::enclosing_pattern(self.file, self.value().id())
     }
 }
 
@@ -225,7 +227,7 @@ impl<'a> PatElem<'a> {
     /// The array pattern.
     #[inline]
     pub fn parent(self) -> Node<'a> {
-        Pat::around(
+        Pat::enclosing_pattern(
             self.file,
             self.file
                 .hir

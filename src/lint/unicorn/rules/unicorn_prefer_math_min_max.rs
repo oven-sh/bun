@@ -22,7 +22,7 @@ fn is_identifier(e: Expr) -> bool {
     get_inner_expression(e).tag() == ExprTag::Ident
 }
 
-/// For oxlint what is in parentheses is the same as nothing.
+/// oxlint never treats a parenthesized expression as the same as anything.
 fn is_same<'a>(operand: Expr<'a>, branch: Expr<'a>) -> bool {
     !operand.is_parenthesized() && !branch.is_parenthesized() && is_same_expression(operand, branch)
 }

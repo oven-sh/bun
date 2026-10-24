@@ -880,7 +880,7 @@ describe.concurrent("bun pm version", () => {
       ["1.0.0", "prerelease --preid 01a", "1.0.1-01a.0"],
       ["1.0.0", "prerelease --preid 0-1", "1.0.1-0-1.0"],
       ["1.2.3", "prerelease --preid a.b", "1.2.4-a.b.0"],
-      // The last number is the one that counts, wherever it is, and the other fields stay.
+      // The last number is the one that's incremented, wherever it is, and the other fields are kept.
       ["1.0.0-x.7.z.92", "prerelease", "1.0.0-x.7.z.93"],
       ["1.0.0-alpha.1.beta", "prerelease", "1.0.0-alpha.2.beta"],
       ["1.0.0-alpha.beta", "prerelease", "1.0.0-alpha.beta.0"],

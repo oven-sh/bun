@@ -22,7 +22,7 @@ use crate::migration::{
 use crate::npm;
 use crate::package_manager_real::add_remove_with_filter::WorkspaceTarget;
 use crate::package_manager_real::package_json_write_back;
-use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
+use crate::package_manager_real::update_package_json_and_install::save_entry;
 use crate::pnpm::e_object_mut;
 use crate::repository::Repository;
 use crate::resolution::{Resolution, Tag as ResolutionTag, TaggedValue};
@@ -51,7 +51,8 @@ fn shown(text: &[u8]) -> impl core::fmt::Display + '_ {
     bun_core::fmt::for_terminal(bstr::BStr::new(text))
 }
 
-/// Yarn reads every scalar as a string; bun's parser types plain ones (`2.10` -> the number 2.1).
+/// Yarn reads every scalar as a string, but Bun's parser gives plain scalars a type (`2.10` becomes
+/// the number 2.1). This returns the original text.
 pub(crate) fn scalar_text(source: &[u8], expr: &Expr) -> Option<&'static [u8]> {
     if let Some(s) = as_str(expr) {
         return Some(s);
@@ -72,7 +73,8 @@ pub(crate) fn scalar_text(source: &[u8], expr: &Expr) -> Option<&'static [u8]> {
     plain.then(|| bun_ast::data_store_dupe_str(text))
 }
 
-/// A key that a mapping holds twice: yarn keeps the last value, `Expr::get` the first.
+/// Returns a key that appears twice in a mapping. Yarn keeps the last value, and `Expr::get`
+/// returns the first.
 fn duplicate_key(
     source: &[u8],
     expr: &Expr,
@@ -94,7 +96,8 @@ fn duplicate_key(
     Ok(None)
 }
 
-/// Bun's YAML parser expands `<<` merge keys; yarn reads them as ordinary keys and writes none.
+/// Bun's YAML parser expands `<<` merge keys. Yarn reads them as ordinary keys and never writes
+/// them.
 fn may_hold_merge_key(data: &[u8]) -> bool {
     if strings::contains(data, b"<<") {
         return true;
@@ -122,7 +125,7 @@ fn may_hold_merge_key(data: &[u8]) -> bool {
     false
 }
 
-/// Text with a malformed escape stays as written: it then names nothing in the lockfile.
+/// Text with a malformed escape is returned as written. It won't match anything in the lockfile.
 fn decoded_or_as_written(s: &[u8]) -> Vec<u8> {
     bun_url::PercentEncoding::decode_alloc(s).map_or_else(|_| s.to_vec(), Vec::from)
 }
@@ -169,7 +172,8 @@ fn has_protocol(spec: &[u8]) -> bool {
     }
 }
 
-/// `npm:^1.2.3` -> `^1.2.3`; the alias `npm:other@^1` is kept whole. A range never contains `@`.
+/// Turns `npm:^1.2.3` into `^1.2.3`. The alias `npm:other@^1` is returned unchanged. A range never
+/// contains `@`.
 fn strip_npm_protocol(spec: &[u8]) -> &[u8] {
     let Some(rest) = spec.strip_prefix(b"npm:") else {
         return spec;
@@ -197,7 +201,8 @@ fn parse_conditions(cond: &[u8]) -> (npm::OperatingSystem, npm::Architecture, np
     (os.combine(), cpu.combine(), libc)
 }
 
-/// `name@<resolution>`. `None` for what bun installs from a project folder and does not patch.
+/// Returns `name@<resolution>`, or `None` for a package that Bun installs from a project folder and
+/// can't patch.
 fn patched_dependency_key(
     lockfile: &Lockfile,
     name: &[u8],
@@ -227,7 +232,8 @@ struct YarnRc {
     scope_registries: StringArrayHashMap<Box<[u8]>>,
     /// yarn.lock has entries for what `packageExtensions` name, but not the edges.
     extensions: Vec<PackageExtension>,
-    /// `enableTransparentWorkspaces`: unless false, a range that a workspace's version satisfies is that workspace.
+    /// `enableTransparentWorkspaces`. Unless it's false, a range that a workspace's version
+    /// satisfies resolves to that workspace.
     transparent_workspaces: Option<bool>,
 }
 
@@ -245,11 +251,12 @@ struct PackageExtension {
     key: Box<[u8]>,
     dependencies: Ranges,
     peer_dependencies: Ranges,
-    /// names with `peerDependenciesMeta.<name>.optional: true`
+    /// The names with `peerDependenciesMeta.<name>.optional: true`.
     optional_peers: Vec<Box<[u8]>>,
 }
 
-/// First wins: `YARN_*` variables, then the rc file of the project, each parent, the home folder.
+/// The first value found wins: `YARN_*` variables, then the rc file of the project, of each parent
+/// folder, and of the home folder.
 fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnRc, Error> {
     let env = |key: &[u8]| -> Option<&[u8]> {
         manager
@@ -367,7 +374,7 @@ fn read_yarnrc_file(
             let map = &mut *entry.value_ptr;
             obj.try_for_each_property(|name, _, value| -> Result<(), AllocError> {
                 if let Some(range) = scalar_text(&data, &value) {
-                    // yarn allows `npm:^1.0.0` here; in a bun catalog that is an alias
+                    // Yarn allows `npm:^1.0.0` here. In a Bun catalog that would be an alias.
                     map.put(name, Box::from(strip_npm_protocol(range)))?;
                 }
                 Ok(())
@@ -432,7 +439,8 @@ fn read_yarnrc_file(
     Ok(())
 }
 
-/// `source`: `&`-separated `~/x.patch` (project) or `./x.patch` (`locator`'s); builtins skipped.
+/// `source` is a `&`-separated list of `~/x.patch` (relative to the project) and `./x.patch`
+/// (relative to `locator`). Builtin patches are skipped.
 fn project_patch_paths(source: &[u8], params: &Params<'_>) -> Option<Vec<Vec<u8>>> {
     let mut paths = Vec::new();
     for one in strings::split(source, b"&") {
@@ -451,7 +459,8 @@ fn project_patch_paths(source: &[u8], params: &Params<'_>) -> Option<Vec<Vec<u8>
     Some(paths)
 }
 
-/// `<percent-encoded locator>#<source>::params` -> (locator, source, both decoded; params)
+/// Splits `<percent-encoded locator>#<source>::params` into the decoded locator, the decoded
+/// source, and the params.
 fn decode_patch_spec(rest: &[u8]) -> (Vec<u8>, Vec<u8>, Vec<(&[u8], Vec<u8>)>) {
     let (spec, params) = split_reference_params(rest);
     let (inner, source) = strings::split_once_char(spec, b'#').unwrap_or((spec, &b""[..]));
@@ -462,7 +471,8 @@ fn decode_patch_spec(rest: &[u8]) -> (Vec<u8>, Vec<u8>, Vec<(&[u8], Vec<u8>)>) {
     )
 }
 
-/// The key of `locator_to_entry`: no `::params`, percent-decoded (a nested `patch:` encodes twice).
+/// Returns the key for `locator_to_entry`: the locator without `::params`, percent-decoded. A
+/// nested `patch:` is encoded twice.
 fn locator_key(name: &[u8], reference: &[u8]) -> Vec<u8> {
     let (head, _) = split_reference_params(reference);
     [name, b"@", &decoded_or_as_written(head)].concat()
@@ -479,7 +489,8 @@ fn split_folder_protocol(head: &[u8]) -> Option<(&'static [u8], &[u8])> {
     ))
 }
 
-/// `name@workspace:path` -> `path`; `name@portal:./p::locator=<owner>` -> `<owner dir>/p`. Of a `::locator=` value, which is decoded.
+/// Returns the folder of a decoded `::locator=` value. `name@workspace:path` gives `path`, and
+/// `name@portal:./p::locator=<owner>` gives `<owner dir>/p`.
 fn locator_dir(locator: &[u8], depth: u8) -> Option<Vec<u8>> {
     let (_, reference) = split_locator(locator)?;
     if let Some(path) = reference.strip_prefix(b"workspace:") {
@@ -498,12 +509,14 @@ fn locator_dir(locator: &[u8], depth: u8) -> Option<Vec<u8>> {
     Some(join_folder(&base, path))
 }
 
-/// Where a reference's relative paths start: its `::locator=` package, else the project root.
+/// Returns the folder that a reference's relative paths start from: its `::locator=` package, or
+/// else the project root.
 fn owner_dir(params: &Params<'_>) -> Option<Vec<u8>> {
     param(params, b"locator").map_or(Some(Vec::new()), |owner| locator_dir(owner, 0))
 }
 
-/// As the folder resolver stores it: `.` / `..` resolved, `/` separators on every platform.
+/// Joins the paths the way the folder resolver stores them: `.` and `..` resolved, with `/`
+/// separators on every platform.
 fn join_folder(base: &[u8], path: &[u8]) -> Vec<u8> {
     use bun_paths::resolve_path::{join_string_buf, platform};
     if bun_paths::is_absolute(path) {
@@ -511,7 +524,8 @@ fn join_folder(base: &[u8], path: &[u8]) -> Vec<u8> {
     }
     let mut buf = bun_paths::path_buffer_pool::get();
     if base.len() + path.len() + 2 > buf.len() {
-        // longer than a path can be; the install reports the folder as missing
+        // The result is longer than any valid path, so the install will report the folder as
+        // missing.
         return [base, b"/", path].concat();
     }
     let mut joined = join_string_buf::<platform::Auto>(&mut buf[..], &[base, path]).to_vec();
@@ -525,7 +539,7 @@ fn join_folder(base: &[u8], path: &[u8]) -> Vec<u8> {
 enum EntryKind {
     Workspace,
     Package,
-    /// `patch:` locator: shares the package id of the locator it patches
+    /// A `patch:` locator. It shares the package id of the locator that it patches.
     Patch,
 }
 
@@ -553,7 +567,8 @@ fn add_rewrite(rewrites: &mut Rewrites, name: &[u8], spec: &[u8], new_spec: &[u8
 #[derive(Default)]
 struct OriginalSpecs {
     by_dependency: bun_collections::HashMap<DependencyID, Box<[u8]>>,
-    /// In several groups with different ranges: yarn installs one of them for the name, bun reads each.
+    /// Dependencies that are in several groups with different ranges. Yarn installs one range for
+    /// the name, and Bun reads each group.
     in_several_groups: Vec<DependencyID>,
 }
 
@@ -596,7 +611,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             "yarn.lock has a \"<<\" merge key, which yarn and bun read differently"
         );
     }
-    // Nodes go to `arena`: later package.json reads reset the thread-local `Store`.
+    // The nodes are allocated in `arena`, because later package.json reads reset the thread-local
+    // `Store`.
     let source = bun_ast::Source::init_path_string(b"yarn.lock", data);
     let arena = bun_alloc::Arena::new();
     let mut allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
@@ -720,7 +736,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             reference,
             package_id: INVALID_PACKAGE_ID,
         });
-        // Yarn splits on `,` and the spaces around it: a space at the end of the key stays.
+        // Yarn splits on `,` and the spaces around it, so a space at the end of the key is kept.
         let descriptors: Vec<&[u8]> = strings::split(key, b",").collect();
         for (n, desc) in descriptors.iter().enumerate() {
             let mut desc: &[u8] = desc;
@@ -789,7 +805,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         }
     }
 
-    // In file order: (parent, `name[@range]`, target). Yarn skips what it cannot parse.
+    // The rules in file order, as (parent, `name[@range]`, target). Yarn skips the ones it can't
+    // parse.
     let mut resolutions: Vec<(Option<Parent>, &[u8], &[u8])> = Vec::new();
     for (k, v) in props(&root_manifest.get(b"resolutions").unwrap_or_default()) {
         if let (Some(k), Some(v)) = (as_str(k), as_str(v))
@@ -799,7 +816,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         }
     }
 
-    // package.json already holds what `bun add` / `bun update` asks for: left out, it is resolved.
+    // package.json already has what `bun add` or `bun update` asks for. These are skipped here so
+    // that they get resolved.
     let requested: Vec<(&[u8], Vec<u8>)> = manager
         .update_requests
         .iter()
@@ -895,7 +913,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         let (head, params) = split_reference_params(reference);
 
         let resolution: Resolution = if let Some(version) = head.strip_prefix(b"npm:") {
-            // aliases never appear in `resolution`; it always names the real package
+            // `resolution` always has the real package's name, never an alias.
             let version_str = sbuf!(this).append(version)?;
             let parsed = semver::Version::parse(version_str.sliced(string_bytes!(this)));
             if !parsed.valid || parsed.wildcard != semver::query::token::Wildcard::None {
@@ -910,7 +928,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 Some(url) => {
                     let configured =
                         registry_without_auth(manager.scope_for_package_name(name).url.href());
-                    // The integrity comes from bun's registry: where yarn names another one, that is what to say.
+                    // The integrity comes from the registry Bun is configured with. If Yarn uses a
+                    // different one, report that.
                     if !lockfile::bun_lock::url_is_under_registry(url, &configured) {
                         registry_for(manager, log, &yarnrc, name)?;
                     }
@@ -994,7 +1013,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         entry_of_package[pid as usize] = Some(i);
     }
 
-    // A patch can wrap another patch: repeated until every chain reached a package.
+    // A patch can wrap another patch, so repeat until every chain has reached a package.
     let mut patched: Vec<(Vec<u8>, Vec<u8>)> = Vec::new(); // ("name@version", patch path)
     let mut stacked: Vec<(Vec<u8>, usize, Vec<u8>)> = Vec::new(); // ("name@version", files, the first)
     let mut patched_packages: bun_collections::HashMap<PackageID, ()> = Default::default();
@@ -1185,7 +1204,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
 
             let lookup = |key: &[u8]| -> Option<usize> { descriptor_to_entry.get(key).copied() };
 
-            // As yarn: the first rule in file order wins, before any descriptor lookup.
+            // Like in Yarn, the first matching rule in file order wins, before any descriptor
+            // lookup.
             let rule = if dep.behavior.is_peer() || dep.behavior.is_workspace() {
                 None
             } else {
@@ -1412,7 +1432,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         this.patched_dependencies
             .put(string_hash(key), lockfile::PatchedDep::with_path(path))?;
     }
-    // The edits go to the cached package.json trees, root first: the order they are written in.
+    // The edits are made to the cached package.json trees, root first, which is also the order
+    // they're written in.
     let mut edited: Vec<(WorkspaceTarget, Vec<&'static str>)> = Vec::new();
     if let Some(changed) = edit_package_json(
         manager,
@@ -1438,7 +1459,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             edited.push((target, changed));
         }
     }
-    // After the `patch:` values were rewritten: the next install must not see them as changed.
+    // This comes after the `patch:` values are rewritten, so that the next install doesn't see them
+    // as changed.
     let keep_store = GetJsonOptions {
         init_reset_store: false,
         ..Default::default()
@@ -1512,7 +1534,8 @@ fn registry_for(
     )
 }
 
-/// Without `user:password@`: the tarball URLs built on it are written to bun.lock.
+/// Returns the URL without `user:password@`, because the tarball URLs built from it are written to
+/// bun.lock.
 pub(crate) fn registry_without_auth(href: &[u8]) -> Vec<u8> {
     let url = bun_url::URL::parse(href);
     if url.username.is_empty() && url.password.is_empty() {
@@ -1522,7 +1545,7 @@ pub(crate) fn registry_without_auth(href: &[u8]) -> Vec<u8> {
     }
 }
 
-/// yarn always locks git dependencies with `#commit=<sha>`; the prefixes cover hand-edited files.
+/// Yarn always locks git dependencies with `#commit=<sha>`. The prefixes cover hand-edited files.
 fn is_git_reference(head: &[u8]) -> bool {
     let url = strings::split_once_char(head, b'#').map_or(head, |(url, _)| url);
     strings::contains(head, b"#commit=")
@@ -1538,7 +1561,8 @@ fn is_git_reference(head: &[u8]) -> bool {
         || ((url.starts_with(b"https://") || url.starts_with(b"http://")) && url.ends_with(b".git"))
 }
 
-/// `github:o/r#commit=sha`, `[git+]<url>#commit=sha`: pinned to the commit yarn locked.
+/// Handles `github:o/r#commit=sha` and `[git+]<url>#commit=sha`, pinned to the commit that Yarn
+/// locked.
 fn git_resolution(
     this: &mut Lockfile,
     log: &mut bun_ast::Log,
@@ -1563,7 +1587,7 @@ fn git_resolution(
         Some(gh) => sbuf!(this).append(&[b"https://github.com/", gh, b".git"].concat())?,
         None => sbuf!(this).append(url.strip_prefix(b"git+").unwrap_or(url))?,
     };
-    // `resolved` is the checked-out commit; a branch or tag is left for the install to resolve.
+    // `resolved` is the checked-out commit. A branch or tag is left for the install to resolve.
     let is_sha = commit.len() == 40 && commit.iter().all(u8::is_ascii_hexdigit);
     Ok(Resolution::init(TaggedValue::Git(Repository {
         owner: String::default(),
@@ -1583,7 +1607,8 @@ struct Parent<'a> {
     range: &'a [u8],
 }
 
-/// `[parent[@range]/]name[@range]`. `None` for what yarn ignores: globs, more than one parent.
+/// Parses `[parent[@range]/]name[@range]`. Returns `None` for keys that Yarn ignores: globs, and
+/// keys with more than one parent.
 fn resolution_key_parts(key: &[u8]) -> Option<(Option<Parent<'_>>, &[u8])> {
     fn next_segment(rest: &[u8]) -> (&[u8], &[u8]) {
         let scope = match rest.first() {
@@ -1610,7 +1635,8 @@ fn resolution_key_parts(key: &[u8]) -> Option<(Option<Parent<'_>>, &[u8])> {
     Some((Some(Parent { name, range }), descriptor))
 }
 
-/// `name`, `name@<literal>`, `name@npm:<literal>`; the literal as written or its catalog's range.
+/// Matches `name`, `name@<literal>` and `name@npm:<literal>`. The literal is compared as written
+/// and as its catalog's range.
 fn resolution_pattern_matches(
     pattern: &[u8],
     name: &[u8],
@@ -1626,14 +1652,16 @@ fn resolution_pattern_matches(
     let Some(range) = rest.strip_prefix(b"@") else {
         return false;
     };
-    // `name@npm:other@^1` names an alias as written; `name@npm:^1` and `name@^1` are one range
+    // `name@npm:other@^1` refers to an alias as written. `name@npm:^1` and `name@^1` are the same
+    // range.
     let plain = range.strip_prefix(b"npm:").unwrap_or(range);
     [original_literal, literal]
         .iter()
         .any(|literal| range == *literal || plain == strip_npm_protocol(literal))
 }
 
-/// Yarn normalizes a rule's value and binds it to the root workspace: that descriptor is a key.
+/// Yarn normalizes a rule's value and binds it to the root workspace. The resulting descriptor is a
+/// key in yarn.lock.
 fn resolution_target_entry(
     name: &[u8],
     target: &[u8],
@@ -1658,7 +1686,7 @@ fn resolution_target_entry(
     })
 }
 
-/// Names under `dependenciesMeta` / `peerDependenciesMeta` with `optional: true`.
+/// Returns the names under `dependenciesMeta` or `peerDependenciesMeta` that have `optional: true`.
 pub(crate) fn optional_names(source: &[u8], entry: &Expr, meta_key: &[u8]) -> Vec<&'static [u8]> {
     props(&entry.get(meta_key).unwrap_or_default())
         .filter(|(_, v)| v.get(b"optional").and_then(|e| e.as_bool()) == Some(true))
@@ -1666,18 +1694,19 @@ pub(crate) fn optional_names(source: &[u8], entry: &Expr, meta_key: &[u8]) -> Ve
         .collect()
 }
 
-/// What `packageExtensions` add to one entry.
+/// The dependencies that `packageExtensions` add to one entry.
 #[derive(Default)]
 struct Extended<'a> {
     dependencies: Vec<(&'a [u8], &'a [u8])>,
     peer_dependencies: Vec<(&'a [u8], &'a [u8])>,
     optional_peers: Vec<&'a [u8]>,
-    /// From yarn's own list. Nothing in package.json stands for these: they are kept as the package's own.
+    /// From Yarn's builtin list. Nothing in package.json corresponds to these, so they're kept as
+    /// the package's own dependencies.
     builtin_dependencies: Vec<(&'a [u8], &'a [u8])>,
     builtin_optional_peers: Vec<&'a [u8]>,
 }
 
-/// Returns the rows that are there because of `extended`.
+/// Returns the dependencies that were added because of `extended`.
 fn append_entry_dependencies(
     this: &mut Lockfile,
     log: &mut bun_ast::Log,
@@ -1738,7 +1767,7 @@ fn append_entry_dependencies(
             .get(group)
             .is_some_and(|deps| deps.get(name).is_some())
     };
-    // an extension adds what the package does not declare itself
+    // An extension only adds what the package doesn't declare itself.
     for &(name, range) in &extended.dependencies {
         if !declares(b"dependencies", name) {
             append_dependency(this, log, name, range, Behavior::PROD)?;
@@ -1775,7 +1804,8 @@ fn append_entry_dependencies(
     Ok(added)
 }
 
-/// Of every `name@range` that holds the entry's version, prereleases included, as in yarn.
+/// Returns the extensions of every `name@range` that matches the entry's version. Prereleases match
+/// too, like in Yarn.
 fn extensions_of<'a>(
     yarnrc: &'a YarnRc,
     descriptor_to_entry: &StringArrayHashMap<usize>,
@@ -1859,7 +1889,8 @@ fn append_manifest_dependencies(
     let mut seen: StringArrayHashMap<usize> = StringArrayHashMap::new();
     // `Package::parse` merges a name that several groups list only for the root package.json.
     let is_root = root_workspaces.is_some();
-    // name -> the range yarn installs for it, as yarn spells it: devDependencies', else optionalDependencies', else dependencies'
+    // Maps each name to the range that Yarn installs for it, as Yarn writes it: the one in
+    // devDependencies, or else optionalDependencies, or else dependencies.
     let mut yarn_ranges: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::new();
     let mut in_dev: StringArrayHashMap<()> = StringArrayHashMap::new();
     // name -> its range in the first group that lists it
@@ -1887,7 +1918,8 @@ fn append_manifest_dependencies(
             } else {
                 let e = seen.get_or_put(name)?;
                 if e.found_existing {
-                    // As in `Package::parse`: in the root, optional replaces the first; any other is its own edge.
+                    // As in `Package::parse`: in the root, an optional dependency replaces the
+                    // first entry. In any other package it's a separate dependency.
                     if is_root && behavior.is_optional() {
                         replaces = Some(*e.value_ptr);
                     }
@@ -1908,7 +1940,7 @@ fn append_manifest_dependencies(
             // package.json is rewritten to match after migration.
             if let Some(new_spec) = yarn_only_range_for_bun(name, spec) {
                 add_rewrite(rewrites, name, spec, &new_spec);
-                // interned: the dependency literal points at it
+                // Interned, because the dependency's literal points at it.
                 spec = bun_ast::data_store_dupe_str(&new_spec);
             }
             append_dependency(this, log, name, spec, behavior)?;
@@ -1985,7 +2017,8 @@ fn yarn_only_range_for_bun(name: &[u8], spec: &[u8]) -> Option<Vec<u8>> {
         })
 }
 
-/// package.json is written before bun.lock is saved: the migration can meet its own spelling.
+/// package.json is written before bun.lock is saved, so a migration that's run again can find
+/// ranges that it already rewrote.
 fn range_before_rewrite(range: &[u8]) -> Option<Vec<u8>> {
     if let Some(path) = range.strip_prefix(b"file:") {
         return Some([b"portal:".as_slice(), path].concat());
@@ -2090,7 +2123,7 @@ fn extensions_object(extensions: &[PackageExtension]) -> Expr {
     }))
 }
 
-/// Existing keys are left alone. Edits the cached tree and returns what changed.
+/// Leaves existing keys alone. Edits the cached tree and returns what changed.
 fn edit_package_json(
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
@@ -2159,7 +2192,7 @@ fn edit_package_json(
     }
 
     if !patched.is_empty() {
-        // keep what the user already declared for bun; add yarn's on top
+        // Keep what the user already declared for Bun, and add Yarn's entries to it.
         let existing = json.get(b"patchedDependencies");
         let mut patches = existing.unwrap_or_else(|| object_expr([]));
         if patches.is_object() {
@@ -2197,7 +2230,7 @@ fn edit_package_json(
         let want_default = default.is_some() && !has_key(&json, b"catalog");
         let want_named = !named.is_empty() && !has_key(&json, b"catalogs");
         if want_default || want_named {
-            // bun reads catalogs from the `workspaces` object: an array becomes `{ packages }`.
+            // Bun reads catalogs from the `workspaces` object, so an array becomes `{ packages }`.
             let mut workspaces = match json.get(b"workspaces") {
                 Some(existing) if existing.is_object() => existing,
                 existing => object_expr(
@@ -2230,10 +2263,7 @@ fn edit_package_json(
     if changed.is_empty() {
         return Ok(None);
     }
-    print_package_json_into_cache_entry(entry, json);
-    // the edits spliced Store-allocated nodes into the cached tree: the entry must own its tree
-    if entry.reparse_root(log).is_err() {
-        return Err(Error::InvalidPackageJSON);
-    }
+    // The spliced-in nodes live in `bump` and the AST store: the cache entry must own its tree.
+    save_entry(entry, json, log);
     Ok(Some(changed))
 }

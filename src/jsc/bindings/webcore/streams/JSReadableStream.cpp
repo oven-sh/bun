@@ -392,7 +392,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototype_inspectCustom, (JSGlobalObjec
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisValue = callFrame->thisValue();
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
     auto* thisObject = dynamicDowncast<JSReadableStream>(thisValue);
     if (!thisObject) [[unlikely]]
         return JSValue::encode(thisValue);
@@ -525,6 +525,10 @@ void JSReadableStream::materializeIfNeeded(JSGlobalObject* globalObject)
 {
     const auto mode = m_bunMode;
     if (mode == BunStreamMode::Default) [[likely]]
+        return;
+    // A native sink locked this stream without a reader (ReadableStream__lockNative) and didn't start it.
+    // Don't start its source here. The caller's acquire will fail on the lock.
+    if (m_lockedWithoutReader)
         return;
     // Clear the mode BEFORE running the thunk so re-entrant consumers see it done.
     m_bunMode = BunStreamMode::Default;

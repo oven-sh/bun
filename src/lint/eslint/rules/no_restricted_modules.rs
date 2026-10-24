@@ -4,7 +4,7 @@ use bun_lint::prelude::*;
 
 /// Disallow specified modules when loaded by `require`.
 pub struct NoRestrictedModules {
-    /// Each with its custom message. Of two with the same name, the last counts.
+    /// Each path with its custom message. If two have the same name, the last one wins.
     paths: Vec<(Vec<u8>, Option<Vec<u8>>)>,
     patterns: Option<IgnoreRules>,
 }

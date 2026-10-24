@@ -65,7 +65,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStartOfFixedExecutableMemoryPool,
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<uint64_t>(JSC::startOfFixedExecutableMemoryPool<uintptr_t>()))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, static_cast<uint64_t>(JSC::startOfFixedExecutableMemoryPool<uintptr_t>()))));
 }
 #endif
 
@@ -77,7 +77,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRawCellAddress, (JSGlobalObject * globalObjec
     JSValue value = callframe->argument(0);
     if (!value.isCell())
         return JSValue::encode(jsUndefined());
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<uint64_t>(JSValue::encode(value)))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBigInt::createFrom(globalObject, static_cast<uint64_t>(JSValue::encode(value)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsLiveCellAtRawAddress, (JSGlobalObject * globalObject, CallFrame* callframe))

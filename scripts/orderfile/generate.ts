@@ -1059,6 +1059,16 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
     // on a terminal.
     copyFileSync(join(here, "cli-fixture.js"), join(fixtures, "cli.js"));
 
+    // `bun check`, `bun lint` and `bun fmt` share no code with the runtime's startup, so nothing above reaches them.
+    const project = join(fixtures, "project");
+    mkdirSync(project);
+    copyFileSync(join(here, "check-fixture.ts"), join(project, "index.ts"));
+    writeFileSync(
+      join(project, "tsconfig.json"),
+      `{ "compilerOptions": { "strict": true, "noEmit": true, "target": "esnext", "module": "esnext", ` +
+        `"lib": ["esnext", "dom"], "types": [] } }\n`,
+    );
+
     // `bun install`, offline: the one dependency is a tarball packed by the binary
     // we are about to trace, so a slow registry cannot cost a release its order
     // file. The rest is the real path — lockfile, extraction, node_modules.
@@ -1083,6 +1093,10 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
     );
     const installEnv = { BUN_INSTALL_CACHE_DIR: join(scratch, "install-cache") };
 
+    // `bun lint` is a command in canary builds only. A release build would look for a script of that name.
+    const revision = runCommand([bunProfile, "--revision"], { label: "bun --revision" });
+    const hasLint = revision.stdout.includes("canary");
+
     await checkpoint(interrupted);
     const steps: (Workload | WorkloadGroup)[] = [
       { name: "bun -e", args: ["-e", "console.log(1)"] },
@@ -1100,6 +1114,9 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
         tty: true,
         env: { TERM: "xterm-256color" },
       },
+      { name: "bun check", args: ["check"], cwd: project },
+      ...(hasLint ? [{ name: "bun lint", args: ["lint"], cwd: project }] : []),
+      { name: "bun fmt", args: ["fmt"], cwd: project },
     ];
 
     // ── Hints first ───────────────────────────────────────────────────────────

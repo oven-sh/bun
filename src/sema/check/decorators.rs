@@ -1,9 +1,8 @@
-//! Decorators: the arguments a decorator is called with, and whether that call is valid: 1497,
-//! 1329, 1238 1239 1240 1241, 1270 1271.
+//! Decorators: builds the signature a decorator is called with and checks that call. Reports 1497, 1329, 1238, 1239,
+//! 1240, 1241, 1270, 1271.
 //!
-//! Follows `getLegacyDecoratorCallSignature`, `getESDecoratorCallSignature`, `resolveDecorator`,
-//! `checkDecorator` and `checkGrammarDecorator`, of TypeScript 7.0.2's checker.go and
-//! grammarchecks.go.
+//! Mirrors `getLegacyDecoratorCallSignature`, `getESDecoratorCallSignature`, `resolveDecorator`, `checkDecorator` and
+//! `checkGrammarDecorator` in TypeScript 7.0.2's checker.go and grammarchecks.go.
 
 use super::call::{CallLike, ExpectsReturn};
 use super::errors_statements::is_binder_diagnostic;
@@ -12,10 +11,10 @@ use crate::bind::MemberOwner;
 
 /// The source span of a decorator.
 #[derive(Copy, Clone)]
-pub(super) struct Written {
+pub(super) struct DecoratorSpan {
     /// Its `@`.
     pub(super) at_sign: u32,
-    /// Start of its expression, including the opening parenthesis if it is parenthesized.
+    /// Start of its expression, including the opening parenthesis if it's parenthesized.
     pub(super) start: u32,
     /// End of the expression, which is also the end of the decorator.
     pub(super) end: u32,
@@ -29,15 +28,15 @@ impl<'p, 's> Checker<'p, 's> {
         owner: DecoratorOwner,
     ) -> Option<(ClassId, Option<MemberId>)> {
         let bound = self.bound(file);
-        let of_member = |m: MemberId| match bound.member_owner[m.idx()] {
+        let class_of_member = |m: MemberId| match bound.member_owner[m.idx()] {
             MemberOwner::Class(c) => Some((c, Some(m))),
             _ => None,
         };
         match owner {
             DecoratorOwner::Class(c) => Some((c, None)),
-            DecoratorOwner::Member(m) => of_member(m),
+            DecoratorOwner::Member(m) => class_of_member(m),
             DecoratorOwner::Param(p) => match bound.fns[bound.param_fn[p.idx()].idx()].owner {
-                crate::bind::FnOwner::Member(m) => of_member(m),
+                crate::bind::FnOwner::Member(m) => class_of_member(m),
                 _ => None,
             },
         }
@@ -82,7 +81,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `tryCreateTypeReference` for the global type `name`, whose resolver has `reportErrors`.
     fn try_create_type_reference(&mut self, name: &[u8], type_arguments: &[TypeId]) -> TypeId {
         let name = self.atoms().intern(name);
-        match self.get_global_type(name, type_arguments.len(), true) {
+        match self.get_global_type(name, type_arguments.len()) {
             Some(target) => self.intern_key(TypeKey::Ref {
                 target,
                 args: type_arguments,
@@ -112,13 +111,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getTypeOfNode(node)`, which is `getTypeOfSymbol(getSymbolOfDeclaration(node))`: the function
-    /// type of a method, the value type of a property or an accessor. Nothing substitutes for
-    /// `this`.
+    /// `getTypeOfNode(node)`, i.e. `getTypeOfSymbol(getSymbolOfDeclaration(node))`. Returns a method's function type,
+    /// or a property's or accessor's value type. `this` isn't substituted.
     fn type_of_decorated_member(&mut self, file: FileId, class: ClassId, m: MemberId) -> TypeId {
         let holder = self.get_parent_type_of_class_element(file, class, m);
-        // `declareSymbolEx`: a declaration that the symbol of its name refused has its own symbol.
-        let name = if self.bound(file).is_member_in_no_table(m) {
+        // `declareSymbolEx`: a declaration rejected by the symbol that already has its name gets its own symbol.
+        let name = if self.bound(file).is_member_not_in_table(m) {
             None
         } else {
             let key = self.hir(file)[m].key;
@@ -130,20 +128,20 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The function type of this single declaration of a method, ignoring its other declarations:
+    /// The function type of just this method declaration, ignoring the method's other declarations:
     /// `getOrCreateTypeFromSignature(getSignatureFromDeclaration(node))`.
     fn type_of_method_declaration(&mut self, file: FileId, m: MemberId) -> TypeId {
         let bound = self.bound(file);
         let func = self.hir(file)[m].func;
-        let around = bound.scopes[bound.fns[func.idx()].scope.idx()].parent;
-        let mapper = self.identity_mapper_for_fns(file, around, &[(file, func)]);
+        let parent_scope = bound.scopes[bound.fns[func.idx()].scope.idx()].parent;
+        let mapper = self.identity_mapper_for_fns(file, parent_scope, &[(file, func)]);
         self.intern_key(TypeKey::Fns {
             decls: &[(file, func)],
             mapper,
         })
     }
 
-    /// `getDecoratorCallSignature`. `None`: the target cannot be decorated.
+    /// `getDecoratorCallSignature`. Returns `None` if the target can't be decorated.
     pub(super) fn decorator_call_signature(
         &mut self,
         file: FileId,
@@ -177,7 +175,7 @@ impl<'p, 's> Checker<'p, 's> {
                     MemberKind::Constructor | MemberKind::Method | MemberKind::Setter
                 ) =>
             {
-                // A `this` parameter is not among `params`.
+                // `params` doesn't include a `this` parameter.
                 let index = p.0 - hir[hir[parent].func].params.start;
                 let (target_type, key_type) = if hir[parent].kind == MemberKind::Constructor {
                     let class_symbol = self.class_sym(file, class);
@@ -381,8 +379,7 @@ impl<'p, 's> Checker<'p, 's> {
         let (key, name_kind) = hir.key_of(hir.node(node));
         let is_private = matches!(key, PropKey::Private(_));
         let name_type = match key {
-            // `#x` as in the source, without the part that distinguishes it from the `#x` of other
-            // classes.
+            // `#x` as written in the source, without the part that distinguishes it from other classes' `#x`.
             PropKey::Private(name) => {
                 let text = self.atoms().intern(self.written_name(name));
                 self.string_literal(text, false)
@@ -450,11 +447,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The span of the decorator with the expression `e`.
-    pub(super) fn decorator_position(&self, file: FileId, e: ExprId) -> Written {
+    /// The span of the decorator whose expression is `e`.
+    pub(super) fn decorator_position(&self, file: FileId, e: ExprId) -> DecoratorSpan {
         let start = self.start_of(file, e);
         let at_sign = start_of_token_before(&self.hir(file).text, start, b"@");
-        Written {
+        DecoratorSpan {
             at_sign: at_sign.unwrap_or(start),
             start,
             end: self.end_of_expr(file, e),
@@ -464,8 +461,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub(super) fn report_decorators(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // Decorators of a missing declaration or of a `this` parameter: `checkDecorators` never
-        // visits them.
+        // `checkDecorators` never visits decorators on a missing declaration or on a `this` parameter.
         for &(start, end) in &hir.stray_decorators {
             self.never_checked.borrow_mut().push((start, end));
             self.reported.retain(|d| {
@@ -477,11 +473,11 @@ impl<'p, 's> Checker<'p, 's> {
             if bound.is_unchecked(e.idx()) {
                 continue;
             }
-            let written = self.decorator_position(file, e);
-            let at_sign = written.at_sign;
-            // A decorator in an invalid position, which `checkGrammarModifiers` reports: no other
-            // diagnostic is reported between it and the declaration.
-            if bound.refused_decorators.contains(&e) {
+            let decorator_span = self.decorator_position(file, e);
+            let at_sign = decorator_span.at_sign;
+            // `checkGrammarModifiers` reports a decorator in an invalid position, and then nothing else is reported
+            // between it and the declaration.
+            if bound.rejected_decorators.contains(&e) {
                 let end = match owner {
                     DecoratorOwner::Class(c) => hir[c].name_pos,
                     DecoratorOwner::Member(m) => hir[m].name_pos,
@@ -510,28 +506,28 @@ impl<'p, 's> Checker<'p, 's> {
                         && matches!(hir[m].key, PropKey::Private(_))
                 })
             {
-                self.error_at((file, at_sign, written.end), 18036, &[]);
+                self.error_at((file, at_sign, decorator_span.end), 18036, &[]);
             }
             if !hir.has_parse_diagnostics
-                && !written.is_parenthesized
+                && !decorator_span.is_parenthesized
                 && let Some((from, to)) = self.invalid_syntax_in_decorator(file, e)
             {
-                self.error_at((file, written.start, written.end), 1497, &[])
+                self.error_at((file, decorator_span.start, decorator_span.end), 1497, &[])
                     .add_related_info(Reported::bare((file, from, to), 1498));
             }
-            self.check_decorator(file, owner, e, written);
+            self.check_decorator(file, owner, e, decorator_span);
         }
     }
 
-    /// `checkGrammarDecorator`: the span of its `errorNode`. The first part of `e` that is not a
-    /// name, `a.b.c`, or a call of either, and a `?.` token rather than the node that contains it.
+    /// Returns the span of `checkGrammarDecorator`'s `errorNode`: the first part of `e` that isn't a name, `a.b.c`, or
+    /// a call of either. For a `?.` it's the token, not the node containing it.
     fn invalid_syntax_in_decorator(&self, file: FileId, e: ExprId) -> Option<(u32, u32)> {
         let hir = self.hir(file);
         let question_dot_after = |before: ExprId| {
             let at = self.skip_trivia_from(file, self.end_of_expr(file, before));
             (at, at + 2)
         };
-        // Computed only for the reported node: it reads the source text.
+        // Reads the source text, so it's only computed for the reported node.
         let whole = |node: ExprId| (self.start_of(file, node), self.end_of_expr(file, node));
         let (mut node, mut can_have_call, mut found) = (e, true, None);
         loop {
@@ -569,15 +565,15 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         owner: DecoratorOwner,
         e: ExprId,
-        written: Written,
+        decorator_span: DecoratorSpan,
     ) {
         let hir = self.hir(file);
-        let Written {
+        let DecoratorSpan {
             at_sign,
             start,
             end,
             is_parenthesized,
-        } = written;
+        } = decorator_span;
         let function = self.type_of_expr(file, e);
         let apparent = self.apparent_type(function);
         // `resolveErrorCall`
@@ -596,8 +592,8 @@ impl<'p, 's> Checker<'p, 's> {
             DecoratorOwner::Member(_) => 1241,
         };
         let lists: Vec<List<'p, SigParam>> = sigs.iter().map(|&s| self.sig_params(s)).collect();
-        // `isPotentiallyUncalledDecorator`, which uses the declared parameters: a parameter of type
-        // `void` counts as required.
+        // `isPotentiallyUncalledDecorator` uses the declared parameters, so a parameter of type `void` counts as
+        // required.
         if !sigs.is_empty()
             && !is_parenthesized
             && lists.iter().all(|params| {

@@ -65,7 +65,7 @@ Defining `trustedDependencies` in `package.json` **replaces** the default list r
 
 Set `trustedDependencies: []` when you want to opt out of the default allow list entirely without passing `--ignore-scripts` on every install. If you define `trustedDependencies` with an explicit list, include any packages from the [default list](https://github.com/oven-sh/bun/blob/main/src/install/default-trusted-dependencies.txt) whose lifecycle scripts you still need (for example, `sharp` or `esbuild`). Bun no longer trusts those packages implicitly.
 
-The lockfile records the list, also an empty one. In a checkout that leaves out the workspace that declares it (a Docker layer, for example), `bun install --frozen-lockfile` keeps the default list off: of its packages, only those the lockfile records run their scripts.
+The lockfile records the list, even if it's empty. In a checkout without the workspace that declares it (a Docker layer, for example), `bun install --frozen-lockfile` still ignores the default list, and only the packages that the lockfile records run their scripts.
 
 ---
 

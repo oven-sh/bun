@@ -592,3 +592,22 @@ mod _impl {
         }
     }
 } // mod _impl
+
+/// Return zero or the negative POSIX errno, like Node's stdio handle.
+pub(crate) fn set_stdio_blocking(fd: i32, blocking: bool) -> i32 {
+    #[cfg(windows)]
+    {
+        let _ = (fd, blocking);
+        -1
+    }
+    #[cfg(not(windows))]
+    {
+        if fd < 0 {
+            return -(bun_sys::E::EBADF as i32);
+        }
+        match bun_sys::update_nonblocking(bun_sys::Fd::from_native(fd), !blocking) {
+            Ok(()) => 0,
+            Err(err) => -(err.errno as i32),
+        }
+    }
+}

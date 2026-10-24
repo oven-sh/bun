@@ -129,15 +129,33 @@ impl WatcherAtomics {
         // SAFETY: caller contract — `this` is live; every `(*this)` / `(*ev)`
         // below is a field access on the heap `WatcherAtomics` allocation.
         unsafe {
-            let mut available = [true; 3];
-            if let Some(i) = (*this).current_event {
-                available[i as usize] = false;
-            }
-            if let Some(i) = (*this).pending_event {
-                available[i as usize] = false;
-            }
-
             let index = 'find: {
+                if let Some(pending) = (*this).pending_event {
+                    // Reclaim unconsumed changes before appending new paths.
+                    // Mutating the slot after publication would race the server.
+                    if (*this)
+                        .next_event
+                        .compare_exchange(
+                            pending,
+                            NextEvent::WAITING.0,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        (*this).pending_event = None;
+                        break 'find pending as usize;
+                    }
+                }
+
+                let mut available = [true; 3];
+                if let Some(i) = (*this).current_event {
+                    available[i as usize] = false;
+                }
+                if let Some(i) = (*this).pending_event {
+                    available[i as usize] = false;
+                }
+
                 for (i, &is_available) in available.iter().enumerate() {
                     if is_available {
                         break 'find i;
@@ -268,18 +286,7 @@ impl WatcherAtomics {
                     (*this).pending_event = Some(ev_index);
                 }
 
-                _ => {
-                    // This is an index into the `events` array.
-                    let old_index: u8 = old_next.0;
-                    debug_assert!(
-                        (*this).pending_event == Some(old_index),
-                        "watcher_release_and_submit_event: expected `pending_event` to be {}; got {:?}",
-                        old_index,
-                        (*this).pending_event,
-                    );
-                    // The old pending event hadn't been run yet, so we can replace it with `ev`.
-                    (*this).pending_event = Some(ev_index);
-                }
+                _ => unreachable!("pending changes must be reclaimed before collecting events"),
             }
         }
     }

@@ -306,30 +306,29 @@ test("inspector.close() followed by inspector.open() starts a new server", async
 // https://github.com/nodejs/node/blob/v26.3.0/src/inspector_socket.cc#L642-L646
 // A Host that Bun.serve could not build request.url from is answered 400.
 test("inspector.open() answers a request without a Host header and refuses an unusable Host", async () => {
+  // The child prints the inspector URL and then waits. The end of this scope stops it.
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", `require("node:inspector").open(0, "127.0.0.1", false); setInterval(() => {}, 1 << 30);`],
+    cmd: [
+      bunExe(),
+      "-e",
+      `const inspector = require("node:inspector");
+       inspector.open(0, "127.0.0.1", false);
+       console.log(inspector.url());
+       setInterval(() => {}, 1 << 30);`,
+    ],
     env: bunEnv,
-    stdout: "ignore",
-    stderr: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
   });
 
   const decoder = new TextDecoder();
-  const stderrReader = proc.stderr.getReader();
-  let stderrText = "";
-  let url: string | undefined;
-  while (!url) {
-    const { value, done } = await stderrReader.read();
-    if (done) throw new Error(`stderr closed before listening line: ${stderrText}`);
-    stderrText += decoder.decode(value);
-    url = stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
+  let url = "";
+  for await (const chunk of proc.stdout) {
+    url += decoder.decode(chunk);
+    if (url.includes("\n")) break;
   }
-  // Keep draining stderr so the child cannot block on a full pipe.
-  const stderrDrained = (async () => {
-    for (;;) {
-      const { done } = await stderrReader.read();
-      if (done) break;
-    }
-  })();
+  url = url.trim();
+  expect(url).toMatch(/^ws:\/\/127\.0\.0\.1:\d+\/[0-9a-f-]{36}$/);
 
   const { host, port, pathname } = new URL(url);
   const address = { port: Number(port), host: "127.0.0.1" };
@@ -390,10 +389,6 @@ test("inspector.open() answers a request without a Host header and refuses an un
   expect(await rawRequest(address, `GET ${pathname} HTTP/1.1`, ["Host: ", ...upgradeHeaders])).toEqual(
     switchingProtocols,
   );
-
-  proc.kill();
-  await proc.exited;
-  await stderrDrained;
 });
 
 // A failed inspector.open() (port already in use) must print Node's diagnostic

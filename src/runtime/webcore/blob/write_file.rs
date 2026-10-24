@@ -1266,8 +1266,7 @@ impl WriteFilePromise {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `Bun.write(destination, archive)` for a `Bun.Archive` whose bytes the work pool has to make
-/// first: it is gzipped, or it has `Bun.file()` input that no method has read.
+/// `Bun.write(destination, archive)` when the work pool has to gzip or read the archive first.
 pub(crate) struct WriteArchive;
 
 pub(crate) struct WriteArchiveBytes {
@@ -1286,8 +1285,7 @@ pub(crate) struct WriteArchiveDestination {
     s3_options: Option<S3CredentialsWithOptions>,
 }
 
-// SAFETY: a promise handle, a Blob and S3 options: used and dropped on the JS thread only (a
-// job's `Js` half).
+// SAFETY: a job's `Js` half, which is used and dropped on the JS thread only.
 unsafe impl bun_jsc::job::JsAffine for WriteArchiveDestination {}
 
 impl WriteArchive {

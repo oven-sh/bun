@@ -1538,8 +1538,7 @@ impl PipelineTask {
             //   • st_size cap → file-based decompression-bomb fails up
             //     front with a clear error instead of materialising a
             //     multi-GB encoded buffer before `maxPixels` even runs.
-            // The open can't block on a FIFO; the !S_ISREG check below still
-            // rejects pipes/devices. `sys::File` closes on Drop.
+            // The open can't block on a FIFO, and the !S_ISREG check below rejects one.
             let (file, st) = match sys::File::open_for_read(sys::Fd::cwd(), p) {
                 sys::Result::Ok(opened) => opened,
                 sys::Result::Err(e) => {

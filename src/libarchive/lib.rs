@@ -416,14 +416,12 @@ pub mod lib {
             // SAFETY: self valid.
             unsafe { archive_write_close(self.as_mut_ptr()) }
         }
-        /// Abandon the archive. Freeing it then skips the close, which would pad an entry that
-        /// is open with zeros up to the size in its header.
+        /// Abandon the archive: freeing it then skips the close, which zero-pads an open entry.
         pub fn write_fail(&self) {
             // SAFETY: self valid.
             unsafe { archive_write_fail(self.as_mut_ptr()) };
         }
-        /// The bytes given to filter `n` so far. Filter 0 of a writer takes what the format
-        /// writes: the entries, before the end marker and the padding that the close adds.
+        /// The bytes given to filter `n` so far. Filter 0 of a writer takes the format's output.
         pub fn filter_bytes(&self, n: c_int) -> i64 {
             // SAFETY: self valid.
             unsafe { archive_filter_bytes(self.as_mut_ptr(), n) }

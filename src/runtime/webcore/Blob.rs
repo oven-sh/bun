@@ -4268,9 +4268,7 @@ pub(crate) fn write_file_with_source_destination(
     write_file_with_s3_options(cx, source_blob, destination_blob, options, None)
 }
 
-/// `write_file_with_source_destination` for a write that starts after the call that asked for
-/// it returned. `s3_options` is what `get_credentials_with_options` gave during that call, for
-/// an S3 destination: script can change the options object before the write starts.
+/// `write_file_with_source_destination` with the S3 options that an earlier call already read.
 pub(crate) fn write_file_with_s3_options(
     cx: &bun_jsc::JsThread<'_>,
     source_blob: &mut Blob,

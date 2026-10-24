@@ -29,8 +29,7 @@ const FILETYPE_REGULAR: u32 = 0o100000;
 const TAR_END_MARKER: usize = 2 * 512;
 /// libarchive's default block. It pads the last one of an archive with zeros.
 const TAR_BLOCK: usize = 10240;
-/// How much of a file entry is read and given to libarchive at a time. A file of at most this
-/// many bytes is read whole before its entry begins.
+/// The read size for a file entry. A file of at most this size is read before its header.
 const FILE_CHUNK: usize = 256 * 1024;
 
 /// Compression options for the archive
@@ -56,8 +55,7 @@ pub(crate) struct Archive {
 /// Where the bytes of an archive are.
 #[derive(Clone)]
 enum Source {
-    /// A tar built from values in memory, or a Blob given as the archive. Uses Blob.Store for
-    /// thread-safe ref counting.
+    /// A tar built from values in memory, or the store of a Blob given as the archive.
     Store(RefPtr<Store>),
     /// `Bun.file()` input. The work pool reads it for the first method that needs the bytes.
     Pending(Arc<Pending>),
@@ -88,8 +86,7 @@ impl Source {
     }
 }
 
-/// The bytes of a store that holds them. A `Bun.file()` with a path never gets here:
-/// `Source::of_blob` makes it `Source::Pending`.
+/// A file store here has no path: `Source::of_blob` makes one with a path `Source::Pending`.
 fn in_memory(store: &Store) -> Result<&[u8], SourceError> {
     match &store.data {
         StoreData::Bytes(bytes) => Ok(bytes.slice()),
@@ -138,8 +135,7 @@ impl SourceError {
 }
 
 impl Archive {
-    /// `Bun.write(destination, archive)`: the archive as the Blob to write, when its bytes are
-    /// in memory as they are.
+    /// For `Bun.write`: the archive as a Blob, when its store already is what `bytes()` gives.
     pub(crate) fn to_blob(&self, global: &JSGlobalObject) -> Option<Blob> {
         match (&self.source, &self.compress) {
             (Source::Store(store), Compression::None) => {
@@ -149,8 +145,7 @@ impl Archive {
         }
     }
 
-    /// `Bun.write(destination, archive)` when `to_blob` gives nothing: what makes the bytes on
-    /// the work pool.
+    /// For `Bun.write` when `to_blob` gives nothing: what makes the bytes on the work pool.
     pub(crate) fn output(&self) -> ArchiveOutput {
         ArchiveOutput {
             source: self.source.clone(),
@@ -429,8 +424,7 @@ enum ObjectForm {
     Pending(Arc<Pending>),
 }
 
-/// Make `archive` a tar writer that gives its output to `buffer`. libarchive keeps `buffer`:
-/// it has to stay where it is until `archive` is closed.
+/// Make `archive` a tar writer into `buffer`, which must not move until `archive` is closed.
 fn open_tar_writer(
     archive: &libarchive::lib::Archive,
     buffer: *mut libarchive::lib::GrowingBuffer<'_>,
@@ -462,9 +456,7 @@ fn write_entry_header(
     mtime: isize,
 ) -> Result<(), &'static str> {
     let _ = entry.clear();
-    // Same platform split as `pack_command::add_archive_entry`: the process
-    // locale is always "C", so libarchive's locale-keyed pax writer is only
-    // lossless with raw bytes on POSIX and with the UTF-8 form on Windows.
+    // As in `pack_command::add_archive_entry`: under the "C" locale only these forms are lossless.
     #[cfg(windows)]
     entry.set_pathname_utf8(name);
     #[cfg(not(windows))]
@@ -474,9 +466,7 @@ fn write_entry_header(
     entry.set_perm(0o644);
     entry.set_mtime(mtime, 0);
 
-    // `Warn` means the header was still written (libarchive fell back to a
-    // per-entry binary hdrcharset for a name its locale machinery could not
-    // convert); only `Failed`/`Fatal` mean no header was produced.
+    // `Warn` still wrote the header (binary hdrcharset fallback). `Failed`/`Fatal` wrote none.
     if !archive.write_header(entry).succeeded() {
         return Err("ArchiveHeaderError");
     }
@@ -521,8 +511,7 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
         global.throw_invalid_arguments(format_args!("Failed to create tarball: {what}"))
     };
 
-    // Set up archive first. `growing_buffer` is stack-local and outlives all callback
-    // invocations (the archive is closed before this fn returns).
+    // `growing_buffer` outlives all callback invocations: the archive is closed before return.
     let mut growing_buffer = lib::GrowingBuffer::init();
     let archive = lib::WriteArchive::new();
     let archive_ref: &lib::Archive = &archive;
@@ -533,8 +522,7 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
 
     let now_secs: isize = isize::try_from(bun_core::time::milli_timestamp() / 1000).unwrap_or(0);
 
-    // The JS thread does not read files. From the first `Bun.file()` on it records the
-    // entries, and the work pool writes them.
+    // Set at the first `Bun.file()`: the entries from there on, for the work pool to write.
     let mut draft: Option<Box<Draft>> = None;
 
     // Iterate over object properties and write directly to archive
@@ -743,8 +731,7 @@ impl TarOut {
         out.extend_from_slice(bytes);
     }
 
-    /// Make room for an entry of `size` bytes at once. Without it the buffer grows step by
-    /// step while the entry is written.
+    /// Make room for an entry of `size` bytes at once, not step by step during its write.
     fn reserve(&self, size: u64) -> Result<(), SourceError> {
         let size = usize::try_from(size).unwrap_or(usize::MAX);
         match self
@@ -808,8 +795,7 @@ impl Draft {
         }
     }
 
-    /// Append the entries to `tar` through a second tar writer. Gives `tar` back, and how many
-    /// bytes the entries are: the writer puts an end marker and padding after them.
+    /// Append the entries to `tar`. Gives `tar` back, and the length of the entries in it.
     fn write_entries(&self, tar: Vec<u8>) -> (Vec<u8>, Result<usize, SourceError>) {
         use libarchive::lib;
 
@@ -818,13 +804,12 @@ impl Draft {
             out_of_memory: Cell::new(false),
         };
         let mut append = |bytes: &[u8]| out.append(bytes);
-        // `buffer` is stack-local and outlives all callback invocations: `archive` is dropped first.
+        // `buffer` outlives all callback invocations: `archive` is dropped first.
         let mut buffer = lib::GrowingBuffer::forward_to(&mut append);
         let archive = lib::WriteArchive::new();
         let written = self.write_entries_to(&archive, &raw mut buffer, &out);
         if written.is_err() {
-            // Without this, the drop closes the writer, and the close pads an entry that is
-            // open with zeros up to the size in its header.
+            // Or the drop closes the writer, which pads the open entry with zeros to its size.
             archive.write_fail();
         }
         drop(archive);
@@ -898,8 +883,7 @@ impl FileWindow {
         SourceError::Sys(err.with_path(&self.path))
     }
 
-    /// Work pool: open the file and give its size. Only a regular file is read: its size is
-    /// what bounds the read.
+    /// Work pool: open the file and give its size. Only a regular file has a size to rely on.
     fn open(&self) -> Result<(bun_sys::File, u64), SourceError> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         // The path that `Bun.file(path).bytes()` opens.
@@ -917,9 +901,7 @@ impl FileWindow {
         Err(self.sys_error(&bun_sys::Error::from_code(not_a_file, bun_sys::Tag::read)))
     }
 
-    /// Work pool: a file that states at most `FILE_CHUNK` bytes, read to its end. The size of
-    /// such a file is not relied on: procfs states 0 and sysfs one page for a file of any
-    /// length.
+    /// Work pool: read a small file to its end. procfs states 0 bytes and sysfs states a page.
     fn read_small<'a>(
         &self,
         file: &bun_sys::File,
@@ -995,8 +977,7 @@ impl FileWindow {
         Ok(bytes)
     }
 
-    /// Work pool: write the entry `name` with the bytes of the window. `scratch` is space that
-    /// the entries of one tar share.
+    /// Work pool: write the entry `name` from the window. The entries of a tar share `scratch`.
     fn write_entry(
         &self,
         archive: &libarchive::lib::Archive,
@@ -1023,13 +1004,11 @@ impl FileWindow {
     }
 }
 
-/// `Bun.file()` input of an archive. The work pool reads it once, for the first method that
-/// needs the bytes of the archive.
+/// `Bun.file()` input of an archive, which the work pool reads once, at the first use.
 pub(crate) struct Pending {
     /// A read holds this from its start to its end. Only pool threads take it.
     state: Guarded<PendingState>,
-    /// How many entries an object form has. `console.log` prints it: the tar that tells is not
-    /// built when it asks.
+    /// The entry count of an object form, for `console.log` before the tar exists.
     files: Option<u32>,
 }
 
@@ -1052,8 +1031,7 @@ impl Pending {
         })
     }
 
-    /// Work pool: the archive. The first call reads the files. A call that comes while it
-    /// reads waits on its own thread. After a failed read the next call reads again.
+    /// Work pool: reads at the first call and after a failed one. A call during a read waits.
     fn get_or_build(&self) -> Result<RefPtr<Store>, SourceError> {
         let mut state = self.state.lock();
         let input = match &mut *state {
@@ -1524,8 +1502,7 @@ impl TaskContext for BlobContext {
                 };
                 Ok(match self.output_type {
                     BlobOutputType::Blob => {
-                        // The clone bumps the refcount; ownership of
-                        // the new ref transfers into the Blob via init_with_store.
+                        // `init_with_store` takes the ref that the clone made.
                         let store = store.clone();
                         let blob_ptr = Blob::new(Blob::init_with_store(store, global));
                         // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
@@ -1598,8 +1575,7 @@ impl TaskContext for WriteContext {
     fn run(&mut self) {
         self.result = match &self.data {
             WriteData::Owned(data) => self.do_run(data),
-            // The destination is opened after the bytes exist: a `Bun.file()` that cannot be
-            // read leaves it as it is.
+            // The read comes before the open, so a failed read leaves the destination as it is.
             WriteData::Archive(archive) => match archive.with_bytes(|data| self.do_run(data)) {
                 Ok(result) => result,
                 Err(err) => WriteResult::Source(Box::new(err)),

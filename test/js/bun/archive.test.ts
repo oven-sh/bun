@@ -2644,8 +2644,7 @@ describe("Bun.Archive", () => {
       },
     );
 
-    // Makes the same archive from `Bun.file()` values and from their bytes. Every entry has the
-    // time of the call to `new`: both calls have to be in one second.
+    // Every entry has the time of the call to `new`, so both calls have to be in one second.
     function twins(lazy: Record<string, any>, inMemory: Record<string, any>): [Bun.Archive, Bun.Archive] {
       for (;;) {
         const second = Math.floor(Date.now() / 1000);
@@ -2654,8 +2653,7 @@ describe("Bun.Archive", () => {
       }
     }
 
-    // Sizes on both sides of the 512-byte record, of the 10240-byte block that ends a tar, and
-    // of the 256 KiB that one read takes.
+    // Sizes on both sides of the 512-byte record, the 10240-byte block and the 256 KiB read.
     const headSizes = [null, 1, 511, 512, 9215, 9216, 9217, 30_000];
     const fileSizes = [0, 1, 511, 512, 513, 8_704, 262_143, 262_144, 262_145, 300_000];
     test.each(headSizes)("has the bytes of the archive of the same values in memory, head of %p bytes", async head => {
@@ -2888,8 +2886,7 @@ describe("Bun.Archive", () => {
       expect(["ENXIO", "EOPNOTSUPP"]).toContain(error.code);
     });
 
-    // The size in the header of an entry is the size that the file had when its read began.
-    // /proc counts the bytes that the other process has read.
+    // /proc counts the bytes that the child has read, so the file gets smaller during the read.
     test.skipIf(!isLinux)("a file that gets smaller while it is read rejects the use", async () => {
       using dir = tempDir("archive-file-smaller", {});
       const path = join(String(dir), "big.bin");

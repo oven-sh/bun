@@ -11,6 +11,11 @@ struct Label {
     is_loop: bool,
 }
 
+impl Label {
+    /// A label with fewer antecedents is searched linearly.
+    const FEW: usize = 16;
+}
+
 /// A scope's names, or a symbol's exports or members, while the file is being bound. Most tables
 /// have only a few names, which are stored inline and searched linearly.
 #[derive(Default)]
@@ -168,6 +173,9 @@ pub(super) struct Binder<'f, 's> {
     is_unchecked: bool,
     /// Until the file is finished, `start` of a label's flow node identifies its entry here.
     label_edges: Vec<Label>,
+    /// The antecedents of the labels that have at least `Label::FEW`, each with the label's index
+    /// in `label_edges`.
+    edges_of_large_labels: crate::util::FxHashSet<(usize, FlowId)>,
     /// `FlowFlagsReferenced`, one bit per flow node.
     referenced: Vec<u64>,
     /// The start flow node for functions without a body, where no outer narrowing applies.
@@ -348,6 +356,7 @@ impl<'f, 's> Binder<'f, 's> {
             is_reached: false,
             is_unchecked: false,
             label_edges: Vec::new(),
+            edges_of_large_labels: Default::default(),
             referenced: Vec::new(),
 
             start_of_signatures: FlowId::NONE,
@@ -1023,7 +1032,17 @@ impl<'f, 's> Binder<'f, 's> {
         }
         let at = self.edges_of(label);
         let edges = &mut self.label_edges[at].edges;
-        if !edges.contains(&from) {
+        let is_new = if edges.len() < Label::FEW {
+            !edges.contains(&from)
+        } else {
+            cold_path();
+            if edges.len() == Label::FEW {
+                let known = edges.iter().map(|&edge| (at, edge));
+                self.edges_of_large_labels.extend(known);
+            }
+            self.edges_of_large_labels.insert((at, from))
+        };
+        if is_new {
             edges.push(from);
             self.set_flow_node_referenced(from);
         }

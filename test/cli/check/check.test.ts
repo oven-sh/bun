@@ -7606,6 +7606,21 @@ export const alsoWrong = wrong.nope;
       expect(exitCode).toBe(1);
     });
 
+    // Every operand leads to the label after the chain, and the binder adds an antecedent to a label only once. A search
+    // through the label's antecedents for each operand needs minutes. The file is only bound.
+    test.each(["||", "&&"])("binds a long chain of `%s` in a JavaScript file that isn't checked", async operator => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, allowJs: true, checkJs: false },
+        }),
+        "a.js": `var a;\nvar r = a${repeat(` ${operator} a`, isDebug || isASAN ? 200_000 : 800_000)};\n`,
+        "b.ts": `export const wrong: number = "";\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(`b.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+      expect(exitCode).toBe(1);
+    });
+
     // A query about an argument first resolves the enclosing calls, and walks out to the outermost one call by call.
     test("doesn't crash on 5,500 generic calls nested as each other's argument", async () => {
       using dir = project({

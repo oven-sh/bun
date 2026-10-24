@@ -11,7 +11,7 @@ use crate::bundled_ast as JSAst;
 use crate::mal_prelude::*;
 use bun_alloc::AllocError;
 use bun_ast::{ImportKind, import_record};
-use bun_collections::{ArrayHashMap, AutoBitSet, StringArrayHashMap};
+use bun_collections::{ArrayHashMap, ArrayIdentityContextU64, AutoBitSet, StringArrayHashMap};
 
 use crate::Graph::InputFileFlags;
 use crate::Index;
@@ -78,6 +78,55 @@ impl TrackedBarrels {
             }
         }
         cost
+    }
+}
+
+/// Dev server: the source indices of a build by the hash of their path.
+#[derive(Default)]
+pub struct SourcesByPath {
+    newest: ArrayHashMap<u64, u32, ArrayIdentityContextU64>,
+    /// For each indexed source, the next older source with the same hash, or `u32::MAX`.
+    older: Vec<u32>,
+}
+
+impl SourcesByPath {
+    fn index_new_sources(&mut self, sources: &[bun_ast::Source]) -> Result<(), AllocError> {
+        for index in self.older.len()..sources.len() {
+            let gop = self
+                .newest
+                .get_or_put(bun_wyhash::hash(sources[index].path.text))?;
+            self.older.push(if gop.found_existing {
+                *gop.value_ptr
+            } else {
+                u32::MAX
+            });
+            *gop.value_ptr = index as u32;
+        }
+        Ok(())
+    }
+
+    /// The other indexed sources that have the path of `source_index`.
+    fn others_with_path<'a>(
+        &'a self,
+        sources: &'a [bun_ast::Source],
+        path: &'a [u8],
+        source_index: u32,
+    ) -> impl Iterator<Item = u32> + 'a {
+        let mut next = self
+            .newest
+            .get(&bun_wyhash::hash(path))
+            .copied()
+            .unwrap_or(u32::MAX);
+        core::iter::from_fn(move || {
+            while next != u32::MAX {
+                let index = next;
+                next = self.older[index as usize];
+                if index != source_index && sources[index as usize].path.text == path {
+                    return Some(index);
+                }
+            }
+            None
+        })
     }
 }
 
@@ -260,14 +309,15 @@ fn apply_barrel_optimization_impl(
     if let Some(dev) = dev_handle {
         // A file that was not there to read has a second index: count the requests under the first.
         let sources = this.graph.input_files.items_source();
-        for (other, requested) in this.requested_exports.iter().enumerate() {
-            let Some(requested) = requested else {
+        this.sources_by_path.index_new_sources(sources)?;
+        for other in
+            this.sources_by_path
+                .others_with_path(sources, result.source.path.text, source_index)
+        {
+            let Some(requested) = RequestedExports::lookup(&this.requested_exports, other) else {
                 continue;
             };
-            if other == source_index as usize
-                || sources[other].path.text != result.source.path.text
-                || copy_side(this, other as u32).is_some_and(|other_side| other_side != side)
-            {
+            if copy_side(this, other).is_some_and(|other_side| other_side != side) {
                 continue;
             }
             match requested {

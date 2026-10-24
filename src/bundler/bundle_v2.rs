@@ -143,6 +143,8 @@ pub struct BundleV2<'a> {
     /// dense and this is probed once per import in `on_parse_task_complete`
     /// (the main-thread parse-phase throughput limiter).
     pub(crate) requested_exports: Vec<Option<RequestedExports>>,
+    /// Dev server: lets a barrel find the requests under another source index of its path.
+    pub(crate) sources_by_path: crate::barrel_imports::SourcesByPath,
 }
 
 bun_core::declare_scope!(Bundle, visible);
@@ -3324,6 +3326,7 @@ pub mod bv2_impl {
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
                 requested_exports: Vec::new(),
+                sources_by_path: Default::default(),
             });
             if let Some(bo) = bake_options {
                 // SAFETY: `bo.client_transpiler` is the caller's live, write-capable

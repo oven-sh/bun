@@ -260,6 +260,8 @@ devTest("watchDirs discovers nested additions and deletions", {
 });
 
 devTest("watchDirs follows a deleted or renamed directory when its path is recreated", {
+  // Windows rejects renaming ancestors of directories with open watch handles.
+  skip: ["win32"],
   framework: minimalFramework,
   pluginFile: `
     import { join } from 'node:path';
@@ -330,6 +332,54 @@ devTest("watchDirs follows a deleted or renamed directory when its path is recre
     await dev.fetch("/").equals("(missing)");
     await dev.write("data/replacement/e.txt", "e");
     await dev.fetch("/").equals("replacement/e.txt");
+  },
+});
+
+devTest("watchDirs follows a renamed leaf directory when its path is recreated", {
+  framework: minimalFramework,
+  pluginFile: `
+    import { join } from 'node:path';
+    import { readdir } from 'node:fs/promises';
+    const root = join(import.meta.dirname, 'data');
+    export default [{
+      name: 'leaf-manifest',
+      setup(build) {
+        build.onResolve({ filter: /^leaf-manifest$/ }, () => ({ path: 'manifest', namespace: 'leaf-manifest' }));
+        build.onLoad({ filter: /.*/, namespace: 'leaf-manifest' }, async () => {
+          let files = [];
+          try {
+            files = await readdir(root);
+          } catch (error) {
+            if (error.code !== 'ENOENT') {
+              throw error;
+            }
+          }
+          return { contents: 'export default ' + JSON.stringify(files.sort().join(',') || '(missing)'), loader: 'js', watchDirs: [root] };
+        });
+      },
+    }];
+  `,
+  files: {
+    "data/a.txt": "a",
+    "routes/index.ts": `import manifest from 'leaf-manifest'; export default () => new Response(manifest);`,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("a.txt");
+    {
+      await using batch = await dev.batchChanges();
+      renameSync(dev.join("data"), dev.join("moved-data"));
+    }
+    await dev.fetch("/").equals("(missing)");
+    {
+      await using batch = await dev.batchChanges();
+      dev.mkdir("data");
+      await dev.write("data/b.txt", "b");
+    }
+    await dev.fetch("/").equals("b.txt");
+    await dev.write("data/c.txt", "c");
+    await dev.fetch("/").equals("b.txt,c.txt");
+    await dev.delete("data/b.txt");
+    await dev.fetch("/").equals("c.txt");
   },
 });
 

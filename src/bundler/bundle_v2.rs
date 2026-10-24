@@ -1927,7 +1927,8 @@ pub mod bv2_impl {
     enum ResolveFailure {
         /// An error: the build fails.
         Fatal,
-        /// A warning: the `require.resolve()` call stays in the output as written.
+        /// A warning: the `require.resolve()` call stays in the output as written. Only for a
+        /// package name, which the call looks up the same way when it runs.
         Kept,
         /// Nothing: the code around the import handles the failure.
         Tolerated,
@@ -2117,23 +2118,19 @@ pub mod bv2_impl {
             specifier: &[u8],
             target: options::Target,
         ) -> ResolveFailure {
+            let opts = &self.transpiler.options;
             if flags.contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
-                || self.transpiler.options.ignore_module_resolution_errors
+                || opts.ignore_module_resolution_errors
             {
                 return ResolveFailure::Tolerated;
             }
-            // The output needs only the specifier of a `require.resolve()`, and the kept call must
-            // do at run time the lookup that failed here. A relative path would be looked up beside
-            // the output file, a browser build has no `require`, and `hmr.requireResolve(id)` of the
-            // dev format returns `id`. An `allowUnresolved` list asks for the failure at build time.
+            // A browser build has no `require`. `hmr.requireResolve(id)` of the dev format returns `id`.
+            let output_can_resolve =
+                target.is_server_side() && opts.output_format != options::Format::InternalBakeDev;
             if kind == ImportKind::RequireResolve
                 && is_package_path(specifier)
-                && target.is_server_side()
-                && self.transpiler.options.output_format != options::Format::InternalBakeDev
-                && matches!(
-                    self.transpiler.options.allow_unresolved,
-                    options::AllowUnresolved::All
-                )
+                && output_can_resolve
+                && matches!(opts.allow_unresolved, options::AllowUnresolved::All)
             {
                 return ResolveFailure::Kept;
             }

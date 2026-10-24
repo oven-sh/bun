@@ -1730,6 +1730,10 @@ where
         let pinned = RequestContextRef::pin(this);
         let this = pinned.ctx();
         if let Some(sink) = this.sink_mut() {
+            // The drain wakes parked script. Its jobs run when the scope ends, inside the pin.
+            let _entered = sink
+                .on_writable_reaches_script()
+                .then(|| this.server().vm().enter_event_loop_scope());
             return sink.on_writable(write_offset, _resp);
         }
         true
@@ -3401,7 +3405,12 @@ where
             return false;
         }
         if let Some(bs) = this.byte_stream.get() {
-            bun_ptr::BackRef::from(bs).resume();
+            let bs = bun_ptr::BackRef::from(bs);
+            // An `HTMLRewriter` runs content handlers in `resume()`. The scope's exit runs their jobs.
+            let _entered = bs
+                .producer_runs_script()
+                .then(|| this.server().vm().enter_event_loop_scope());
+            bs.resume();
         }
         true
     }

@@ -10,6 +10,7 @@ import {
   observe as directObserve,
   shapes as directShapes,
 } from "../../web/streams/direct-stream-contract";
+import { serveBodyJobs } from "./serve-body-jobs";
 import { baseHeaders, frame, RawH2, T } from "./serve-http2-helpers";
 
 test("HTTPResponseSink displays correct message", async () => {
@@ -1191,6 +1192,41 @@ test("sync pull() that writes nothing and ends later still responds", async () =
   const response = await responsePromise;
   expect(await response.text()).toBe("LATER");
   expect(response.status).toBe(200);
+});
+
+// Once the socket has been full, Bun.serve runs a stream's script from the socket's
+// writable callback: the callback resumes the pump, which calls pull(), and it settles
+// what the script awaits. The nextTick callbacks and promise jobs of that script belong to
+// the callback: they run when it returns, and not in the middle of the script. See
+// serve-body-jobs-fixture.ts for the probes.
+describe("jobs of the script that the socket's writable callback runs for a stream body", () => {
+  async function expectOrder(body: string, probe: Parameters<typeof serveBodyJobs>[0]["probe"], order: string[]) {
+    expect(await serveBodyJobs({ body, probe })).toEqual({ order, response: "complete", stderr: "", exitCode: 0 });
+  }
+
+  test.concurrent("do not run inside a call that pull() makes", async () => {
+    await expectOrder("stream", "statement", ["script", "close", "rest of script", "nextTick", "microtask"]);
+  });
+
+  // On Windows, libuv runs the timers of a turn before it polls: a timer that comes due in
+  // a callback is not the next callback of the loop there.
+  describe.skipIf(isWindows)("run before the next callback of the loop", () => {
+    test.concurrent("after pull()", async () => {
+      await expectOrder("stream", "timer", ["nextTick", "microtask", "timer"]);
+    });
+
+    test.concurrent("and a store that pull() enters is not the store of that callback", async () => {
+      await expectOrder("stream", "store", ["timer sees undefined", "immediate sees undefined"]);
+    });
+
+    // The writable callback settles the promise, and the code after the await is its job.
+    test.concurrent.each(["write()", "flush(true)", "end()"])(
+      "for the code after an awaited %s that found the socket full",
+      async awaited => {
+        await expectOrder(`direct stream that awaits ${awaited}`, "turn", ["before the timer of its turn"]);
+      },
+    );
+  });
 });
 
 test("cancel() fires when the client disconnects while waiting for end()", async () => {

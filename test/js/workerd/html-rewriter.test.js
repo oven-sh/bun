@@ -16,6 +16,7 @@ import {
 import { createConnection, createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
+import { serveBodyJobs } from "../bun/http/serve-body-jobs";
 import { asyncIterableBodyShapes, settled as settledBody } from "../web/streams/async-iterable-body-shapes";
 var setTimeoutAsync = (fn, delay) => {
   return new Promise((resolve, reject) => {
@@ -2373,6 +2374,53 @@ describe("output ByteStream backpressured when a native sink is wired", () => {
       chunks.push(value);
     }
     expect(Buffer.concat(chunks).toString()).toBe(out);
+  });
+});
+
+// When the client of Bun.serve has read, the socket's writable callback resumes the rewrite
+// of a streamed body, and the content handlers run inside that callback. The jobs that a
+// handler queues belong to the callback: they run when it returns, and not in the middle
+// of the handler. See serve-body-jobs-fixture.ts for the probes.
+//
+// On Windows the event loop reads the file, so a chunk reaches the handlers from the
+// file's read callback and not from the writable callback.
+describe.skipIf(isWindows)("jobs of content handlers that the socket's writable callback runs for Bun.serve", () => {
+  // One <b> in each 256 KiB that the file is read in. 16 MiB is more than a socket takes
+  // from a server whose client reads nothing.
+  const block = "<p>" + Buffer.alloc(256 * 1024 - 15, "a").toString() + "</p><b></b>\n";
+  let dir;
+  beforeAll(() => {
+    dir = tempDir("html-rewriter-serve-jobs", { "page.html": Buffer.alloc(64 * block.length, block) });
+  });
+  afterAll(() => dir[Symbol.dispose]());
+
+  const serve = probe => serveBodyJobs({ body: "rewriter", probe, page: join(String(dir), "page.html") });
+
+  it.concurrent("run before the next callback of the loop", async () => {
+    expect(await serve("timer")).toEqual({
+      order: ["nextTick", "microtask", "timer"],
+      response: "complete",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("do not run inside a call that a handler makes", async () => {
+    expect(await serve("statement")).toEqual({
+      order: ["script", "close", "rest of script", "nextTick", "microtask"],
+      response: "complete",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("a store that a handler enters is not the store of the loop's next callbacks", async () => {
+    expect(await serve("store")).toEqual({
+      order: ["timer sees undefined", "immediate sees undefined"],
+      response: "complete",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

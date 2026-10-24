@@ -1343,6 +1343,11 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         &self.buffer[self.offset as usize..]
     }
 
+    /// Whether script waits for the drain: the pump or an awaited `write()`, `flush(true)`, `end()`.
+    pub(crate) fn on_writable_reaches_script(&self) -> bool {
+        self.source_pending_pull || self.pending_flush().is_some()
+    }
+
     pub(crate) fn on_writable(&mut self, write_offset: u64, _res: uws::AnyResponse) -> bool {
         // write_offset is the amount of data that was written not how much we need to write
         bun_core::scoped_log!(HTTPServerWritableLog, "onWritable ({})", write_offset);

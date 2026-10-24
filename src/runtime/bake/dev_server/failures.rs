@@ -286,11 +286,7 @@ impl DevServer {
         Ok(())
     }
 
-    /// The traces of a bundle list routes above the files that it stored and above the failures that
-    /// it added. A listed route can now be above a recorded failure if the bundle added a failure, or
-    /// if it changed an import while a failure is on record. The next request for the route decides
-    /// it again (`check_route_failures`). The traces don't list a route for a file that it reaches
-    /// only through the client entry point of its router type.
+    /// A listed route can now reach a recorded failure: the bundle added one, or changed an import while one is on record.
     pub(super) fn fail_loaded_routes_above_bundled_files(&mut self) {
         if self.incremental_result.failures_added.is_empty()
             && (self.bundling_failures.is_empty() || !self.incremental_result.had_adjusted_edges)
@@ -298,9 +294,7 @@ impl DevServer {
             return;
         }
 
-        // Note: iterate by index — the loop bodies need
-        // `&mut self.route_bundles` / `&mut self.router`, which conflicts
-        // with the `&self.incremental_result` iterator borrow.
+        // By index: the loop bodies need `&mut self`, which an iterator over `self.incremental_result` conflicts with.
         for i in 0..self.incremental_result.framework_routes_affected.len() {
             let entry = self.incremental_result.framework_routes_affected[i];
             if let Some(index) = self.router.route_ptr(entry.route_index()).bundle {
@@ -322,9 +316,7 @@ impl DevServer {
         }
     }
 
-    /// Only a loaded route: `check_route_failures` loads a route when it finds no failure, and it
-    /// finds none for a route that was never bundled. A route that waits for a bundle gets its
-    /// state when that bundle ends.
+    /// Only a loaded route: `check_route_failures` finds no failure for a route that was never bundled, and loads it.
     fn fail_loaded_route(&mut self, index: route_bundle::Index) {
         let route_bundle = self.route_bundle_ptr(index);
         if route_bundle.server_state == route_bundle::State::Loaded {

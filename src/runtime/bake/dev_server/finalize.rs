@@ -1236,8 +1236,7 @@ pub(super) fn finalize_bundle(
         }
     }
 
-    // This bundle added no failure, but it doesn't parse a module that is already bundled. So each
-    // waiting route is decided by the recorded failures that it reaches.
+    // A bundle doesn't parse an already bundled module, so a waiting route can reach a failure that this bundle didn't add.
     let mut failed_routes: Vec<(route_bundle::Index, Vec<SerializedFailure>)> = Vec::new();
     if !dev.bundling_failures.is_empty() {
         let mut checked: Vec<route_bundle::Index> = Vec::new();

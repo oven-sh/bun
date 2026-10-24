@@ -73,9 +73,7 @@ impl DeferredRequest {
         self.deref_();
     }
 
-    /// The response that gets the build failure page, or `None` when the client is gone. A
-    /// framework request doesn't run its handler, so this releases
-    /// `prepare_and_save_js_request_context`'s ref. `deref_` releases `defer_request`'s.
+    /// Releases `prepare_and_save_js_request_context`'s ref of a framework request. `deref_` releases `defer_request`'s.
     pub(super) fn response_for_failure_page(&mut self) -> Option<AnyResponse> {
         match &mut self.handler {
             Handler::Aborted => None,

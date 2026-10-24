@@ -21,9 +21,7 @@ impl DevServer {
 }
 
 impl DevServer {
-    /// Leaves the recorded failures that the route reaches in `gts.failures`. Below a failed client
-    /// file the trace doesn't continue, so a failure under it isn't listed. The caller holds
-    /// `graph_safety_lock`.
+    /// Leaves the recorded failures that the route reaches in `gts.failures`. The caller holds `graph_safety_lock`.
     pub(super) fn trace_route_failures(
         &mut self,
         route_bundle_index: route_bundle::Index,

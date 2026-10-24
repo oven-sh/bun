@@ -5,12 +5,14 @@ use crate::Printer;
 
 use crate::css_values::image::Image;
 use crate::css_values::length::LengthOrNumber;
+use crate::css_values::percentage::NumberOrPercentage;
 use crate::css_values::position::Position;
 use crate::css_values::rect::Rect;
 
 use crate::css_properties::background::BackgroundRepeat;
 use crate::css_properties::background::BackgroundSize;
 use crate::css_properties::border_image::BorderImage;
+use crate::css_properties::border_image::BorderImageComponents;
 use crate::css_properties::border_image::BorderImageRepeat;
 use crate::css_properties::border_image::BorderImageSideWidth;
 use crate::css_properties::border_image::BorderImageSlice;
@@ -284,16 +286,8 @@ pub enum MaskBorderMode {
 #[cfg_attr(any(), derive(Debug, Clone, PartialEq))]
 #[derive(DeepClone, CssEql)]
 pub struct MaskBorder {
-    /// The mask image.
-    pub(crate) source: Image,
-    /// The offsets that define where the image is sliced.
-    pub(crate) slice: BorderImageSlice,
-    /// The width of the mask image.
-    pub(crate) width: Rect<BorderImageSideWidth>,
-    /// The amount that the image extends beyond the border box.
-    pub(crate) outset: Rect<LengthOrNumber>,
-    /// How the mask image is scaled and tiled.
-    pub(crate) repeat: BorderImageRepeat,
+    /// The mask image with its slice, width, outset and repeat.
+    pub(crate) image: MaskBoxImage,
     /// How the mask image is interpreted.
     pub(crate) mode: MaskBorderMode,
 }
@@ -303,25 +297,21 @@ impl MaskBorder {
 
     pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
         let mut mode: Option<MaskBorderMode> = None;
-        let border_image = BorderImage::parse_with_callback(input, |p: &mut css::Parser| -> bool {
+        let mut components = BorderImageComponents::default();
+        loop {
+            BorderImage::parse_components(input, &mut components);
             if mode.is_none() {
-                if let Ok(value) = p.try_parse(MaskBorderMode::parse) {
+                if let Ok(value) = input.try_parse(MaskBorderMode::parse) {
                     mode = Some(value);
-                    return true;
+                    continue;
                 }
             }
-            false
-        });
+            break;
+        }
 
-        if border_image.is_ok() || mode.is_some() {
-            // PERF: could const-eval the default
-            let bi = border_image.unwrap_or_else(|_| BorderImage::default());
+        if !components.is_empty() || mode.is_some() {
             Ok(MaskBorder {
-                source: bi.source,
-                slice: bi.slice,
-                width: bi.width,
-                outset: bi.outset,
-                repeat: bi.repeat,
+                image: MaskBoxImage::from_components(components),
                 mode: mode.unwrap_or_default(),
             })
         } else {
@@ -330,14 +320,7 @@ impl MaskBorder {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        BorderImage::to_css_internal(
-            &self.source,
-            &self.slice,
-            &self.width,
-            &self.outset,
-            &self.repeat,
-            dest,
-        )?;
+        self.image.to_css(dest)?;
         if self.mode != MaskBorderMode::default() {
             dest.write_char(b' ')?;
             self.mode.to_css(dest)?;
@@ -347,6 +330,70 @@ impl MaskBorder {
 
     // eql → #[derive(PartialEq)]
     // deepClone → #[derive(Clone)]
+}
+
+/// A value for the `-webkit-mask-box-image` shorthand property, the legacy name of `mask-border`.
+#[derive(DeepClone, CssEql)]
+pub struct MaskBoxImage {
+    /// The mask image.
+    pub(crate) source: Image,
+    /// The offsets that define where the image is sliced. `None` when omitted.
+    pub(crate) slice: Option<BorderImageSlice>,
+    /// The width of the mask image. `None` when omitted.
+    pub(crate) width: Option<Rect<BorderImageSideWidth>>,
+    /// The amount that the image extends beyond the border box.
+    pub(crate) outset: Rect<LengthOrNumber>,
+    /// How the mask image is scaled and tiled.
+    pub(crate) repeat: BorderImageRepeat,
+}
+
+// `Property` does not grow while `None` fits in a niche of each payload.
+const _: () = assert!(size_of::<Option<BorderImageSlice>>() == size_of::<BorderImageSlice>());
+const _: () = assert!(
+    size_of::<Option<Rect<BorderImageSideWidth>>>() == size_of::<Rect<BorderImageSideWidth>>()
+);
+
+impl MaskBoxImage {
+    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
+        let mut components = BorderImageComponents::default();
+        BorderImage::parse_components(input, &mut components);
+        if components.is_empty() {
+            return Err(input.new_custom_error(css::ParserError::invalid_declaration));
+        }
+        Ok(Self::from_components(components))
+    }
+
+    /// Unlike lightningcss, an omitted slice or width stays `None`. It is not `100%` or `1` here.
+    fn from_components(components: BorderImageComponents) -> Self {
+        MaskBoxImage {
+            source: components.source.unwrap_or_default(),
+            slice: components.slice,
+            width: components.width,
+            outset: components
+                .outset
+                .unwrap_or_else(|| Rect::all(LengthOrNumber::default())),
+            repeat: components.repeat.unwrap_or_else(BorderImageRepeat::default),
+        }
+    }
+
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        // The printer gets the css-masking-1 initial values in place of `None`.
+        let initial_slice = BorderImageSlice {
+            offsets: Rect::all(NumberOrPercentage::Number(0.0)),
+            fill: false,
+        };
+        let initial_width = Rect::all(BorderImageSideWidth::Auto);
+        BorderImage::to_css_internal(
+            &self.source,
+            self.slice.as_ref().unwrap_or(&initial_slice),
+            self.width.as_ref().unwrap_or(&initial_width),
+            &self.outset,
+            &self.repeat,
+            self.slice.is_some(),
+            self.width.is_some(),
+            dest,
+        )
+    }
 }
 
 /// A value for the [-webkit-mask-composite](https://developer.mozilla.org/en-US/docs/Web/CSS/-webkit-mask-composite)

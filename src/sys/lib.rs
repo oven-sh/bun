@@ -1672,6 +1672,15 @@ mod nocancel {
         ) -> isize;
         #[link_name = "poll$NOCANCEL"]
         pub(crate) fn poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int) -> c_int;
+        // The `DARWIN_EXTSN` variant has no `FD_SETSIZE` limit: a set is `nfds` bits, in 32-bit words.
+        #[link_name = "select$DARWIN_EXTSN$NOCANCEL"]
+        pub(crate) fn select(
+            nfds: c_int,
+            readfds: *mut u32,
+            writefds: *mut u32,
+            errorfds: *mut u32,
+            timeout: *mut libc::timeval,
+        ) -> c_int;
         // Remaining `$NOCANCEL` variants Bun links against.
         // safe: by-value `c_int` fd; bad fd → -1/EBADF, no UB.
         #[link_name = "close$NOCANCEL"]
@@ -9312,22 +9321,85 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
     }
 }
 
+/// Blocks the thread until a `read` of `fd` no longer fails with EAGAIN: there is data, end of file, or an error that the `read` then reports.
+#[cfg(unix)]
+#[cold]
+pub fn wait_until_readable(fd: Fd) -> Maybe<()> {
+    wait_until(fd, posix::POLL_IN)
+}
+
+/// Blocks the thread until a `write` to `fd` no longer fails with EAGAIN: there is room, or an error (EPIPE) that the `write` then reports.
+#[cfg(unix)]
+#[cold]
+pub fn wait_until_writable(fd: Fd) -> Maybe<()> {
+    wait_until(fd, posix::POLL_OUT)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn wait_until(fd: Fd, events: i16) -> Maybe<()> {
+    let mut pfd = [posix::PollFd {
+        fd: fd.native(),
+        events,
+        revents: 0,
+    }];
+    posix::poll(&mut pfd, -1)?;
+    Ok(())
+}
+
+/// `select`, because `poll` and kqueue on macOS do not wake when the other end of a named pipe closes.
+#[cfg(target_os = "macos")]
+fn wait_until(fd: Fd, events: i16) -> Maybe<()> {
+    const WORD_BITS: usize = u32::BITS as usize;
+    let Ok(bit) = usize::try_from(fd.native()) else {
+        return Err(Error::from_code(E::EBADF, Tag::poll));
+    };
+    let word = bit / WORD_BITS;
+    // Stdout and stderr are waited for on the crash path, so the usual fds do not allocate.
+    let mut inline_set = [0u32; libc::FD_SETSIZE / WORD_BITS];
+    let mut heap_set;
+    let set: &mut [u32] = if word < inline_set.len() {
+        &mut inline_set
+    } else {
+        heap_set = vec![0u32; word + 1];
+        &mut heap_set
+    };
+    loop {
+        set[word] = 1 << (bit % WORD_BITS);
+        let bits = set.as_mut_ptr();
+        let (readfds, writefds) = if events == posix::POLL_IN {
+            (bits, core::ptr::null_mut())
+        } else {
+            (core::ptr::null_mut(), bits)
+        };
+        // SAFETY: `set` holds the `nfds` bits, rounded up to a word, that the kernel reads and writes back. The other sets and the timeout (none: wait) can be null.
+        let rc = unsafe {
+            nocancel::select(
+                fd.native() + 1,
+                readfds,
+                writefds,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            )
+        };
+        if rc >= 0 {
+            return Ok(());
+        }
+        let errno = last_errno();
+        if errno != libc::EINTR {
+            return Err(Error::from_code_int(errno, Tag::poll));
+        }
+    }
+}
+
 /// Writes all of `bytes` to stdout or stderr, for a caller that has to know whether they got there. `Output` doesn't say.
 pub fn write_all_to_stdio(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
     while !bytes.is_empty() {
         match write(fd, bytes) {
             Ok(0) => return Err(Error::from_code(E::EIO, Tag::write)),
             Ok(n) => bytes = &bytes[n..],
+            // fd 1/2 are O_NONBLOCK once process.stdout/stderr exist (as in Node); wait instead of dropping output.
             #[cfg(unix)]
-            Err(e) if e.get_errno() == E::EAGAIN => {
-                // fd 1/2 are O_NONBLOCK once process.stdout/stderr exist (as in Node); wait instead of dropping output.
-                let mut pfd = [posix::PollFd {
-                    fd: fd.native(),
-                    events: posix::POLL_OUT,
-                    revents: 0,
-                }];
-                posix::poll(&mut pfd, -1)?;
-            }
+            Err(e) if e.get_errno() == E::EAGAIN => wait_until_writable(fd)?,
             Err(e) => return Err(e),
         }
     }

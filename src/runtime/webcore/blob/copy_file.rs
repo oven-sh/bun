@@ -368,6 +368,7 @@ impl CopyFile {
         }
 
         let mut has_unset_append = false;
+        let mut retried_for_dest_error = false;
 
         // If they can't use copy_file_range, they probably also can't
         // use sendfile() or splice()
@@ -473,6 +474,13 @@ impl CopyFile {
                         .to_system_error(),
                     );
                     return Err(bun_errno::from_errno(bun_sys::E::EINVAL as i32).into());
+                }
+                // EAGAIN: a pipe or socket end is non-blocking and not ready. Two regular files never are, so copy_file_range does not wait.
+                bun_sys::E::EAGAIN
+                    if !matches!(USE, TryWith::CopyFileRange)
+                        && wait_for_kernel_copy(src_fd, dest_fd, &mut retried_for_dest_error) =>
+                {
+                    continue;
                 }
                 errno => {
                     self.system_error = Some(
@@ -948,6 +956,48 @@ impl CopyFile {
     }
 }
 
+/// After EAGAIN from sendfile or splice, waits for the end that is not ready. The errno does not say which end. `false` if poll fails.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+#[cold]
+fn wait_for_kernel_copy(src_fd: Fd, dest_fd: Fd, retried_for_dest_error: &mut bool) -> bool {
+    use bun_sys::posix::{POLL_IN, POLL_OUT, PollFd, poll};
+    let mut ends = [
+        PollFd {
+            fd: dest_fd.native(),
+            events: POLL_OUT,
+            revents: 0,
+        },
+        PollFd {
+            fd: src_fd.native(),
+            events: POLL_IN,
+            revents: 0,
+        },
+    ];
+    if core::mem::take(retried_for_dest_error) {
+        // The retry did not report the destination's error: splice looks at the source first. poll skips a negative fd, so only the source ends this wait.
+        ends[0].fd = -1;
+        return poll(&mut ends, -1).is_ok();
+    }
+    if poll(&mut ends, -1).is_err() {
+        return false;
+    }
+    let [dest, src] = &mut ends;
+    if dest.revents & (libc::POLLERR | libc::POLLHUP | libc::POLLNVAL) != 0 {
+        // One retry lets a syscall that looks at the destination first (sendfile) report the error.
+        *retried_for_dest_error = true;
+        return true;
+    }
+    if dest.revents == 0 {
+        src.fd = -1;
+    } else if src.revents == 0 {
+        // With no events, poll still reports a destination that closes or fails.
+        dest.events = 0;
+    } else {
+        return true;
+    }
+    poll(&mut ends, -1).is_ok()
+}
+
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn read_write_fallback(
     src_fd: Fd,
@@ -973,6 +1023,21 @@ fn read_write_fallback(
     }
 }
 
+/// After EAGAIN, waits until `fd` is ready. Any other error, or a wait that fails, ends the copy with `err`.
+#[cfg(not(windows))]
+#[cold]
+fn wait_if_would_block(
+    err: bun_sys::Error,
+    wait: fn(Fd) -> bun_sys::Result<()>,
+    fd: Fd,
+) -> bun_sys::Result<()> {
+    if err.is_retry() && wait(fd).is_ok() {
+        Ok(())
+    } else {
+        Err(err)
+    }
+}
+
 #[inline(never)] // 64 KB stack buffer
 #[cfg(not(windows))]
 fn read_write_loop_capped(
@@ -987,19 +1052,26 @@ fn read_write_loop_capped(
     let mut remaining = cap;
     while remaining > 0 {
         let want = (buf.len() as SizeType).min(remaining) as usize;
-        let amt = bun_sys::read(src_fd, &mut buf[..want])?;
+        let amt = match bun_sys::read(src_fd, &mut buf[..want]) {
+            Ok(amt) => amt,
+            Err(err) => {
+                wait_if_would_block(err, bun_sys::wait_until_readable, src_fd)?;
+                continue;
+            }
+        };
         if amt == 0 {
             break;
         }
         remaining -= amt as SizeType;
         let mut slice = &buf[..amt];
         while !slice.is_empty() {
-            match bun_sys::write(dest_fd, slice)? {
-                0 => return Ok(()),
-                n => {
+            match bun_sys::write(dest_fd, slice) {
+                Ok(0) => return Ok(()),
+                Ok(n) => {
                     *total += n as u64;
                     slice = &slice[n..];
                 }
+                Err(err) => wait_if_would_block(err, bun_sys::wait_until_writable, dest_fd)?,
             }
         }
     }

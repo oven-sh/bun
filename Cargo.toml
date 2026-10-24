@@ -133,6 +133,7 @@ exclude = ["vendor"]
 [workspace.package]
 version = "0.0.0"
 edition = "2024"
+publish = false
 
 # ─── Release optimization ───────────────────────────────────────────────────
 # Zig's release build is one compilation unit with whole-program optimization.

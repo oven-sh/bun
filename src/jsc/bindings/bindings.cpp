@@ -4036,10 +4036,6 @@ bool JSC__JSValue__isException(JSC::EncodedJSValue JSValue0, JSC::VM* arg1)
 {
     return JSC::JSValue::decode(JSValue0).isBigInt();
 }
-[[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isBigInt32(JSC::EncodedJSValue JSValue0)
-{
-    return JSC::JSValue::decode(JSValue0).isBigInt32();
-}
 
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isLiveCell(JSC::EncodedJSValue JSValue0)
 {
@@ -4192,44 +4188,17 @@ __attribute__((__always_inline__)) JSC::EncodedJSValue JSC__JSValue__jsNumberFro
     return static_cast<int64_t>(value.asDouble());
 }
 
-uint8_t JSC__JSValue__asBigIntCompare(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue JSValue1)
+uint8_t JSC__JSValue__asBigIntCompare(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1)
 {
     JSValue v1 = JSValue::decode(JSValue0);
     JSValue v2 = JSValue::decode(JSValue1);
-    ASSERT(v1.isHeapBigInt() || v1.isBigInt32());
-
-#if USE(BIGINT32)
-    if (v1.isBigInt32()) {
-        int32_t v1Int = v1.bigInt32AsInt32();
-        if (v2.isHeapBigInt()) {
-            return static_cast<uint8_t>(JSBigInt::compare(v1Int, v2.asHeapBigInt()));
-        } else if (v2.isBigInt32()) {
-            return static_cast<uint8_t>(JSBigInt::compare(v1Int, v2.bigInt32AsInt32()));
-        }
-
-        double v2Double = v2.asNumber();
-        if (v1Int == v2Double) {
-            return static_cast<uint8_t>(JSBigInt::ComparisonResult::Equal);
-        }
-        if (v1Int < v2Double) {
-            return static_cast<uint8_t>(JSBigInt::ComparisonResult::LessThan);
-        }
-
-        return static_cast<uint8_t>(JSBigInt::ComparisonResult::GreaterThan);
-    }
-#endif
+    ASSERT(v1.isHeapBigInt());
 
     if (v1.isHeapBigInt()) {
         JSBigInt* v1BigInt = v1.asHeapBigInt();
         if (v2.isHeapBigInt()) {
             return static_cast<uint8_t>(JSBigInt::compare(v1BigInt, v2.asHeapBigInt()));
         }
-
-#if USE(BIGINT32)
-        if (v2.isBigInt32()) {
-            return static_cast<uint8_t>(JSBigInt::compare(v1BigInt, v2.toInt32(globalObject)));
-        }
-#endif
 
         return static_cast<uint8_t>(JSBigInt::compareToDouble(v1BigInt, v2.asNumber()));
     }
@@ -4985,9 +4954,6 @@ enum class BuiltinNamesMap : uint8_t {
     toString,
     redirect,
     inspectCustom,
-    highWaterMark,
-    path,
-    stream,
     asyncIterator,
     name,
     message,
@@ -5003,6 +4969,7 @@ enum class BuiltinNamesMap : uint8_t {
     // Private names below: set by builtins via $putByIdDirectPrivate, unreachable from user code.
     internal,
     sharedFd,
+    defaultTimeout,
 };
 
 static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char name)
@@ -5039,15 +5006,6 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::inspectCustom: {
         return clientData->builtinNames().inspectCustomPublicName();
-    }
-    case BuiltinNamesMap::highWaterMark: {
-        return clientData->builtinNames().highWaterMarkPublicName();
-    }
-    case BuiltinNamesMap::path: {
-        return clientData->builtinNames().pathPublicName();
-    }
-    case BuiltinNamesMap::stream: {
-        return clientData->builtinNames().streamPublicName();
     }
     case BuiltinNamesMap::asyncIterator: {
         return vm.propertyNames->asyncIteratorSymbol;
@@ -5090,6 +5048,9 @@ static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char n
     }
     case BuiltinNamesMap::sharedFd: {
         return clientData->builtinNames().sharedFdPrivateName();
+    }
+    case BuiltinNamesMap::defaultTimeout: {
+        return clientData->builtinNames().defaultTimeoutPrivateName();
     }
     default: {
         ASSERT_NOT_REACHED();

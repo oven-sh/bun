@@ -7346,6 +7346,121 @@ describe("HTTP server transport shutdown", () => {
     }
   });
 
+  describe("socket.connect() on a connection of the server", () => {
+    // Runs in a child process. One line of JSON per stage: the errors of the socket, the connections that reached the
+    // other listener, and the status lines the client received.
+    const fixture = /* js */ `
+      const http = require("node:http"), https = require("node:https"), net = require("node:net"), tls = require("node:tls");
+      const { once } = require("node:events");
+      const { secure, target, key, cert } = JSON.parse(process.env.CONNECT_FIXTURE);
+      const post = extra => "POST / HTTP/1.1\\r\\nHost: localhost\\r\\n" + extra + "Content-Length: 3\\r\\n\\r\\nabc";
+      const stages = {
+        "'connection'": { server: (server, dial) => server.on(secure ? "secureConnection" : "connection", dial) },
+        "'request'": { request: (req, res, dial) => dial(req.socket) },
+        "a tick after 'request'": { request: (req, res, dial) => process.nextTick(dial, req.socket) },
+        "a microtask after 'request'": { request: (req, res, dial) => void Promise.resolve().then(() => dial(req.socket)) },
+        "'data'": { request: (req, res, dial) => req.once("data", () => dial(req.socket)) },
+        "'end'": { request: (req, res, dial) => req.resume().once("end", () => dial(req.socket)) },
+        "after writeHead()": { request: (req, res, dial) => (res.writeHead(200), dial(req.socket)) },
+        "'checkContinue'": {
+          server: (server, dial) => server.on("checkContinue", (req, res) => (dial(req.socket), setTimeout(() => res.end("x"), 30))),
+          send: post("Connection: close\\r\\nExpect: 100-continue\\r\\n"),
+        },
+        "'clientError'": { server: (server, dial) => server.on("clientError", (error, socket) => dial(socket)), send: "BAD\\r\\n\\r\\n" },
+        "the second request": { request: (req, res, dial, count) => (req.resume(), count === 2 && dial(req.socket)), send: post(""), again: post("") },
+        "a WebSocket of the ws package": {
+          server: (server, dial) => new (require("ws").WebSocketServer)({ server }).on("connection", ws => (ws.on("error", () => {}), dial(ws._socket))),
+          send: "GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\nSec-WebSocket-Version: 13\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\n\\r\\n",
+        },
+      };
+      async function run(stage) {
+        const { server: onServer, request: onRequest, send = post("Connection: close\\r\\n"), again } = stages[stage];
+        const seen = { stage, errors: [], dialed: 0, statuses: [] };
+        const other = net.createServer(socket => (seen.dialed++, socket.destroy()));
+        await once(other.listen(0, "127.0.0.1"), "listening");
+        const dial = socket => {
+          socket.on("error", error => seen.errors.push(error.code));
+          if (target === "path") socket.connect("no-such.sock");
+          else socket.connect(other.address().port, "127.0.0.1");
+        };
+        let count = 0;
+        const listener = (req, res) => {
+          req.on("error", () => {});
+          onRequest?.(req, res, dial, ++count);
+          setTimeout(() => res.end("x"), 30);
+        };
+        const server = secure ? https.createServer({ key, cert }, listener) : http.createServer(listener);
+        onServer?.(server, dial);
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const to = { port: server.address().port, host: "127.0.0.1" };
+        const client = secure ? tls.connect({ ...to, ca: cert, servername: "localhost" }) : net.connect(to);
+        let wire = "", sentAgain = false;
+        client.on("error", () => {});
+        client.on("data", chunk => {
+          wire += chunk.toString("latin1");
+          if (again && !sentAgain && wire.endsWith("x")) (sentAgain = true), client.write(again);
+        });
+        client.write(send);
+        await new Promise(resolve => client.on("close", resolve));
+        seen.statuses = wire.match(/HTTP\\/1\\.1 \\d+/g) ?? [];
+        server.close();
+        server.closeAllConnections();
+        other.close();
+        console.log(JSON.stringify(seen));
+      }
+      (async () => {
+        for (const stage of Object.keys(stages)) await run(stage);
+        globalThis.Bun?.gc(true);
+        await run("'request'");
+        console.log("done");
+      })();
+    `;
+    const stages = [
+      "'connection'",
+      "'request'",
+      "a tick after 'request'",
+      "a microtask after 'request'",
+      "'data'",
+      "'end'",
+      "after writeHead()",
+      "'checkContinue'",
+      "'clientError'",
+      "the second request",
+      "a WebSocket of the ws package",
+      "'request'",
+    ];
+
+    it.each([
+      ["a port that listens", "http", "port", false],
+      ["a port that listens", "https", "port", true],
+      ["a path nobody listens on", "http", "path", false],
+      ["a path nobody listens on", "https", "path", true],
+    ])("to %s fails, destroys the socket and dials nothing (%s)", async (_name, _protocol, target, secure) => {
+      await using child = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, CONNECT_FIXTURE: JSON.stringify({ secure, target, key: tlsCert.key, cert: tlsCert.cert }) },
+        cwd: import.meta.dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      const lines = stdout.trim().split("\n");
+      expect({ stderr, done: lines.pop(), seen: lines.map(line => JSON.parse(line)) }).toEqual({
+        stderr: "",
+        done: "done",
+        seen: stages.map(stage => ({
+          stage,
+          // Node reports EINVAL for a path on a TCP handle.
+          errors: [target === "path" ? expect.stringMatching(/^E(ISCONN|INVAL)$/) : "EISCONN"],
+          dialed: 0,
+          statuses:
+            stage === "the second request" ? ["HTTP/1.1 200"] : stage.startsWith("a WebSocket") ? ["HTTP/1.1 101"] : [],
+        })),
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("a response given up in the tick in which it began", () => {
     type Listener = (req: IncomingMessage, res: ServerResponse) => void;
 
@@ -7641,6 +7756,59 @@ it("connectionListener queues pipelined responses like Node", async () => {
     expect(out.indexOf("r:/2;")).toBeLessThan(out.indexOf("r:/3;"));
     expect(out.match(/HTTP\/1\.1 200/g)).toHaveLength(3);
   }
+});
+
+it("a listener that throws behind an owed response leaves that response its turn, whatever it stored in res.socket", async () => {
+  // Runs in a child process: the listener's exception is uncaught.
+  const fixture = /* js */ `
+    const http = require("node:http"), net = require("node:net");
+    process.on("uncaughtException", () => {});
+    const before = {
+      "nothing": () => {},
+      "res.detachSocket(res.socket)": res => res.detachSocket(res.socket),
+      "res.socket = null": res => void (res.socket = null),
+      "res.connection = null": res => void (res.connection = null),
+      "res.socket = {}": res => void (res.socket = {}),
+    };
+    const run = name => new Promise(done => {
+      let first;
+      const server = http.createServer((req, res) => {
+        if (req.url === "/first") return void (first = res);
+        setImmediate(() => first.end("first body"));
+        before[name](res);
+        throw new Error("thrown by the listener");
+      });
+      server.listen(0, "127.0.0.1", () => {
+        let wire = "";
+        const client = net.connect(server.address().port, "127.0.0.1");
+        const finish = () => {
+          client.destroy();
+          server.close();
+          server.closeAllConnections();
+          done([name, wire.includes("first body")]);
+        };
+        client.on("error", () => {});
+        client.on("close", finish);
+        client.on("data", chunk => (wire += chunk).includes("first body") && finish());
+        client.write("GET /first HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\nGET /second HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n");
+      });
+    });
+    (async () => {
+      const seen = [];
+      for (const name of Object.keys(before)) seen.push(await run(name));
+      console.log(JSON.stringify(seen));
+    })();
+  `;
+  await using child = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+  expect(JSON.parse(stdout)).toEqual([
+    ["nothing", true],
+    ["res.detachSocket(res.socket)", true],
+    ["res.socket = null", true],
+    ["res.connection = null", true],
+    ["res.socket = {}", true],
+  ]);
+  expect(exitCode).toBe(0);
 });
 
 describe("a pipelined request whose body continues after the previous response ends", () => {

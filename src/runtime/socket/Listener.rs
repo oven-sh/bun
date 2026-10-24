@@ -99,9 +99,9 @@ bun_jsc::impl_abort_handle_owner!(Listener, abort_handle, |this, cause| {
     Listener::do_stop(unsafe { &*this }, connections)
 });
 
-/// What stopping a listener does to the connections it accepted.
+/// What stopping a listener or a server does to the connections it accepted.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Connections {
+pub(crate) enum Connections {
     Keep,
     Close,
     CloseAsThreadEnds,
@@ -324,7 +324,10 @@ impl Listener {
         let secure_ctx = match (prebuilt_ctx, socket_config.ssl.as_ref()) {
             (None, Some(ssl_cfg)) => {
                 let mut create_err = uws::create_bun_socket_error_t::none;
-                let ctx = SSLContextCache::get_or_create(ssl_cfg, &mut create_err);
+                let ctx = SSLContextCache::get_or_create_for_server(
+                    &ssl_cfg.as_usockets(),
+                    &mut create_err,
+                );
                 if ctx.is_none() {
                     return Err(cx.global().throw_value(
                         crate::socket::uws_jsc::create_bun_socket_error_to_js(
@@ -1040,7 +1043,9 @@ fn connect_finish<const IS_SSL: bool>(
         // still-connecting socket. Close the previous native socket before
         // reusing this wrapper so `do_connect` does not alias two native
         // sockets onto one ext slot.
-        prev.detach_for_reconnect();
+        if !prev.detach_for_reconnect() {
+            return Ok(JSValue::UNDEFINED);
+        }
         // Dropping the previous `Rc` here is safe even mid-callback: a `Scope`
         // from a `data`/`close` handler that synchronously re-entered `connect`
         // still holds its own reference.

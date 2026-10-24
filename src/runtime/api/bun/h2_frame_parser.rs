@@ -2255,6 +2255,17 @@ impl H2FrameParser {
             .map_or(JSValue::UNDEFINED, |stream| stream.context())
     }
 
+    /// Empties the scratch of decoded fields. A large block doesn't keep its size for the life of the session.
+    fn reset_header_scratch(&self) {
+        self.hdr_block.with_mut(|block| {
+            if block.capacity() > MAX_BUFFER_SIZE as usize {
+                *block = Vec::new();
+            }
+            block.clear();
+        });
+        self.hdr_meta.with_mut(|meta| meta.clear());
+    }
+
     /// Runs at the start of a read, before any frame of it is parsed.
     fn begin_batch(&self) {
         // Only a drained transport resets the count.
@@ -2314,13 +2325,9 @@ impl H2FrameParser {
             }
             let stopped = self.left_exception.get() || self.draining.get() != Draining::No;
             if feed.end == FeedEnd::Drained || stopped {
-                // The engine parsed every complete frame or has to stop. Keep the rest for the next read.
-                if direct {
-                    owned.extend_from_slice(&bytes[pos..]);
-                } else {
-                    owned.drain(..pos);
-                }
-                self.inbound_tail.set(owned);
+                // The engine parsed every complete frame or has to stop. Keep the rest for the next read, and none of this read's capacity.
+                let rest = if direct { &bytes[pos..] } else { &owned[pos..] };
+                self.inbound_tail.set(rest.to_vec());
                 self.run_deferred();
                 break;
             }
@@ -2596,8 +2603,7 @@ impl Sink for H2FrameParser {
     }
 
     fn on_headers_refused(&self) {
-        self.hdr_block.with_mut(|b| b.clear());
-        self.hdr_meta.with_mut(|m| m.clear());
+        self.reset_header_scratch();
         // The next HEADERS must not be taken for this block's PUSH_PROMISE.
         self.pending_push.set(0);
     }
@@ -2632,14 +2638,12 @@ impl Sink for H2FrameParser {
                 // SAFETY: block/meta are live Vec borrows for the call duration; the
                 // returned tuple is rooted by the conservative stack scan until
                 // dispatched below.
-                let v = bun_jsc::call_zero_is_throw(&g, || unsafe {
+                bun_jsc::call_zero_is_throw(&g, || unsafe {
                     Bun__h2__materializeHeaders(&g, block.as_ptr(), meta.as_ptr(), field_count)
-                });
-                block.clear();
-                meta.clear();
-                v
+                })
             })
         });
+        self.reset_header_scratch();
         let Some(tuple) = self.or_stop(tuple) else {
             return;
         };
@@ -4266,7 +4270,7 @@ impl H2FrameParser {
             .strong_this
             .with_mut(|s| s.set_strong(js_value, global_object));
         let vm = global_object.bun_vm();
-        if let Some(context) = vm.as_graph_context(vm.context_of_caller_no_frame()) {
+        if let Some(context) = vm.as_graph_context(vm.context_of_caller()) {
             // SAFETY: `this` is heap-pinned (pool slot or Box); it leaves its context in
             // `release_from_js` or when it drops.
             unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };
@@ -4365,6 +4369,15 @@ impl Drop for H2FrameParser {
 }
 
 impl H2FrameParser {
+    /// What the session's own buffers hold, used or not.
+    pub(crate) fn memory_cost(&self) -> usize {
+        self.write_buffer.get().capacity()
+            + self.inbound_tail.get().capacity()
+            + self.hdr_block.get().capacity()
+            + self.hdr_meta.get().capacity() * core::mem::size_of::<u32>()
+            + self.engine.header_block_capacity()
+    }
+
     pub(crate) fn finalize(&self) {
         bun_output::scoped_log!(H2FrameParser, "finalize");
         self.strong_this.set(JsRef::empty());

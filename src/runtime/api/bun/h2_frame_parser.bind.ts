@@ -40,6 +40,7 @@ export const H2FrameParser = b.class({
   rustPath: "crate::api::H2FrameParser",
   refCounted: true,
   finalize: true,
+  memoryCost: true,
   construct: {
     passStructure: true,
     args: { options: H2FrameParserOptions },

@@ -1328,7 +1328,7 @@ fn body_mixin_get_blob(
     global: &JSGlobalObject,
 ) -> bun_jsc::JsResult<Option<JSValue>> {
     use crate::webcore::body::{Action, BodyMixin as _};
-    let cx = global.js_thread_of_caller_no_frame();
+    let cx = global.js_thread_of_caller();
     if let Some(resp) = value.as_class_ref::<crate::webcore::Response>() {
         return Ok(Some(resp.read_body(&cx, Action::GetBlob)?));
     }

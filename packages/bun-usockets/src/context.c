@@ -114,8 +114,8 @@ void us_socket_group_close_all_ex(struct us_socket_group_t *group, int also_list
     while (group->iterator) {
         struct us_socket_t *s = group->iterator;
         group->iterator = s->next;
-        /* A thread that ends sends no close_notify: only the owner knows whether the stream is whole, and nothing would read the answer. */
-        us_socket_close(s, thread_ends ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        /* No close_notify from a thread that ends, whose answer nothing would read, nor after a write that fell short: the owner may hold the rest. */
+        us_socket_close(s, thread_ends ? LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN : s->ssl && s->flags.last_write_failed ? LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         /* A TLS socket may have *deferred* that: us_internal_ssl_close with
          * code==0 sends close_notify and, on WANT_READ, waits for the peer's
          * reply. Callers (e.g. Listener.deinit) free the embedding storage

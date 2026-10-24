@@ -1,4 +1,4 @@
-import { jscDescribe } from "bun:jsc";
+import { estimateShallowMemoryUsageOf, jscDescribe } from "bun:jsc";
 import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, isWindows, nodeExe, nodeExeAtLeast, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -5904,6 +5904,178 @@ it("http2 respondWithFile/respondWithFD send an empty range and reset the stream
   });
   expect(exitCode).toBe(0);
 }, 15_000);
+describe("the memory that a session's own buffers hold", () => {
+  const [DATA, HEADERS, RST_STREAM, SETTINGS, PING, CONTINUATION, UNKNOWN] = [0, 1, 3, 4, 6, 9, 0xfa];
+  const [END_STREAM, ACK, END_HEADERS] = [0x1, 0x1, 0x4];
+  const frame = (type, flags, streamId, payload = Buffer.alloc(0)) => {
+    const header = Buffer.alloc(9);
+    header.writeUIntBE(payload.length, 0, 3);
+    header[3] = type;
+    header[4] = flags;
+    header.writeUInt32BE(streamId, 5);
+    return Buffer.concat([header, payload]);
+  };
+  // `length` bytes of payload in frames of the default maximum size. The last one has `lastFlags`.
+  const frames = (type, streamId, length, lastFlags = 0) => {
+    const list = [];
+    for (let sent = 0; sent < length; sent += 16384) {
+      const size = Math.min(16384, length - sent);
+      list.push(frame(type, sent + size === length ? lastFlags : 0, streamId, Buffer.alloc(size, "a")));
+    }
+    return Buffer.concat(list);
+  };
+  // :method, :scheme http, :path /, :authority x
+  const requestFields = method => Buffer.from([method === "POST" ? 0x83 : 0x82, 0x86, 0x84, 0x01, 0x01, 0x78]);
+  const held = session => estimateShallowMemoryUsageOf(session[Symbol.for("::bunhttp2native::")]);
+  // Far below any of the reads here, and above what a small request leaves.
+  const small = 16 * 1024;
+
+  // Calls `onFrame(type, flags, streamId, payload)` for each frame that follows the first `skip` bytes.
+  function readFrames(socket, skip, onFrame) {
+    let buffered = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      buffered = Buffer.concat([buffered, chunk]);
+      if (skip > 0) {
+        if (buffered.length < skip) return;
+        buffered = buffered.subarray(skip);
+        skip = 0;
+      }
+      while (buffered.length >= 9 && buffered.length >= 9 + buffered.readUIntBE(0, 3)) {
+        const end = 9 + buffered.readUIntBE(0, 3);
+        onFrame(buffered[3], buffered[4], buffered.readUInt32BE(5), buffered.subarray(9, end));
+        buffered = buffered.subarray(end);
+      }
+    });
+  }
+
+  // Gives `run` a server session and `exchange(bytes, rest)`. That sends `bytes`, a PING and `rest` in one write,
+  // and resolves once the PING and every request in `bytes` are answered or reset.
+  async function withServerSession(run) {
+    const server = http2.createServer((req, res) => req.resume().on("end", () => res.end("ok")));
+    const session = once(server, "session");
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = net.connect(server.address().port, "127.0.0.1");
+    try {
+      let waiting = 0;
+      let done;
+      const got = () => --waiting === 0 && done();
+      readFrames(socket, 0, (type, flags) => {
+        if (type === SETTINGS && !(flags & ACK)) socket.write(frame(SETTINGS, ACK, 0));
+        if (type === PING && flags & ACK) got();
+        if (((type === DATA || type === HEADERS) && flags & END_STREAM) || type === RST_STREAM) got();
+      });
+      const exchange = (bytes, requests, rest = Buffer.alloc(0)) => {
+        const answered = new Promise(resolve => (done = resolve));
+        waiting = requests + 1;
+        socket.write(Buffer.concat([bytes, frame(PING, 0, 0, Buffer.alloc(8)), rest]));
+        return answered;
+      };
+      await once(socket, "connect");
+      socket.write(Buffer.concat([Buffer.from(http2utils.kClientMagic), frame(SETTINGS, 0, 0)]));
+      // The first PING comes alone, after the SETTINGS of both sides.
+      await once(socket, "data");
+      await exchange(Buffer.alloc(0), 0);
+      await run((await session)[0], exchange);
+    } finally {
+      socket.end();
+      server.close();
+    }
+  }
+
+  it("counts the start of a frame that isn't complete yet", async () => {
+    await withServerSession(async (session, exchange) => {
+      const before = held(session);
+      await exchange(Buffer.alloc(0), 0, frames(UNKNOWN, 0, 16384).subarray(0, 12000));
+      // Nothing that follows half a frame gets an answer, and its bytes can come in several reads.
+      const deadline = Date.now() + 10_000;
+      while (held(session) - before < 10000 && Date.now() < deadline) await new Promise(setImmediate);
+      expect(held(session) - before).toBeGreaterThanOrEqual(10000);
+    });
+  });
+
+  it.each([
+    ["frames behind a request", frame(HEADERS, END_HEADERS | END_STREAM, 1, requestFields("GET")), UNKNOWN, 0, 0],
+    ["a request body", frame(HEADERS, END_HEADERS, 1, requestFields("POST")), DATA, 1, END_STREAM],
+  ])("a server session frees its read buffer once it has parsed %s", async (_, request, type, streamId, lastFlags) => {
+    await withServerSession(async (session, exchange) => {
+      const before = held(session);
+      await exchange(Buffer.concat([request, frames(type, streamId, 60000, lastFlags)]), 1);
+      expect(held(session) - before).toBeLessThan(small);
+    });
+  });
+
+  it("a server session that waits for the rest of a frame only holds the start of it", async () => {
+    await withServerSession(async (session, exchange) => {
+      const before = held(session);
+      const request = frame(HEADERS, END_HEADERS | END_STREAM, 1, requestFields("GET"));
+      await exchange(
+        Buffer.concat([request, frames(UNKNOWN, 0, 60000)]),
+        1,
+        frame(PING, 0, 0, Buffer.alloc(8)).subarray(0, 5),
+      );
+      expect(held(session) - before).toBeLessThan(small);
+    });
+  });
+
+  // A literal field with a one-letter name. `kind` 0x40 puts it into the table, 0x00 doesn't.
+  const literal = (kind, name, length) =>
+    Buffer.from([
+      kind,
+      1,
+      name,
+      0x7f,
+      ((length - 127) & 0x7f) | 0x80,
+      (length - 127) >> 7,
+      ...Buffer.alloc(length, "a"),
+    ]);
+
+  it.each([
+    ["is large", index => literal(0x00, 0x61 + index, 4000)],
+    ["is small and decodes to a large list", index => (index ? Buffer.from([0xbe]) : literal(0x40, 0x61, 4000))],
+    ["it refuses", index => literal(0x00, 0x61 + index, 4060)],
+  ])("a server session frees its header buffers after a block that %s", async (_, field) => {
+    await withServerSession(async (session, exchange) => {
+      const before = held(session);
+      const block = Buffer.concat([requestFields("GET"), ...Array.from({ length: 16 }, (_, index) => field(index))]);
+      const list = [];
+      for (let sent = 0; sent < block.length; sent += 16384) {
+        const flags = (sent ? 0 : END_STREAM) | (sent + 16384 >= block.length ? END_HEADERS : 0);
+        list.push(frame(sent ? CONTINUATION : HEADERS, flags, 1, block.subarray(sent, sent + 16384)));
+      }
+      await exchange(Buffer.concat(list), 1);
+      expect(held(session) - before).toBeLessThan(small);
+    });
+  });
+
+  it("a client session frees its read buffer once it has parsed frames behind a response", async () => {
+    const server = net.createServer(socket => {
+      socket.on("end", () => socket.end());
+      socket.write(frame(SETTINGS, 0, 0));
+      readFrames(socket, http2utils.kClientMagic.length, (type, flags, streamId, payload) => {
+        if (type === SETTINGS && !(flags & ACK)) socket.write(frame(SETTINGS, ACK, 0));
+        if (type === PING && !(flags & ACK)) socket.write(frame(PING, ACK, 0, payload));
+        if (type !== HEADERS) return;
+        const response = frame(HEADERS, END_HEADERS, streamId, Buffer.from([0x88]));
+        socket.write(Buffer.concat([response, frames(UNKNOWN, 0, 60000), frame(DATA, END_STREAM, streamId)]));
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    try {
+      const ping = () => new Promise((resolve, reject) => client.ping(error => (error ? reject(error) : resolve())));
+      await once(client, "remoteSettings");
+      await ping();
+      const before = held(client);
+      await once(client.request({ ":path": "/" }).resume(), "close");
+      await ping();
+      expect(held(client) - before).toBeLessThan(small);
+    } finally {
+      client.close();
+      server.close();
+    }
+  });
+});
+
 it("http2 native pushPromise and altsvc throw for bad arguments", async () => {
   await using proc = Bun.spawn({
     cmd: [

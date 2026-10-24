@@ -12,6 +12,9 @@
  *   END_STREAM on a DATA frame    -> the same, and an empty readable emits 'end' at once
  *   both halves closed            -> a server stream nobody read is dumped, any other stream is read
  *
+ * A request made in the tick of connect(), on a transport that createConnection() returns connected, counts as
+ * sent: close() waits for it. close() only rejects a request that waits for the socket to connect.
+ *
  * Works with both:
  *   bun bd test test/js/node/http2/node-http2-client-close.test.ts
  *   node --test test/js/node/http2/node-http2-client-close.test.ts
@@ -25,6 +28,7 @@ import http2 from "node:http2";
 import net from "node:net";
 import { type Duplex, duplexPair, pipeline, Writable } from "node:stream";
 import { after, before, describe, test } from "node:test";
+import tls from "node:tls";
 import { promisify } from "node:util";
 
 const { NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR, NGHTTP2_ENHANCE_YOUR_CALM } = http2.constants;
@@ -1341,6 +1345,301 @@ describe("close(code) on a duplexPair() whose server answers END_STREAM right aw
         server.close();
       }
     });
+  }
+});
+
+// A raw HTTP/2 peer on one end of a transport. It sends its SETTINGS at once (`settingsFirst`) or one turn of
+// the loop after the client preface, and it answers each request with a 200 that ends the stream. It holds the
+// answers until it has the client's GOAWAY, so when a request has its response, the returned array has every
+// frame up to both: "SETTINGS", "GOAWAY", "HEADERS#1", "DATA#1:hello" (a whole body). With `oneStreamAtATime`
+// it announces that limit, and refuses a request that comes while another one is open.
+function answeringPeer(socket: Duplex, { settingsFirst = false, oneStreamAtATime = false } = {}): string[] {
+  const frames: string[] = [];
+  const bodies = new Map<number, string>();
+  const waiting: number[] = [];
+  const settings = frame(F.SETTINGS, 0, 0, oneStreamAtATime ? Buffer.from([0, 3, 0, 0, 0, 1]) : undefined);
+  let buf = Buffer.alloc(0);
+  let preface = false;
+  let sentSettings = false;
+  let goaway = false;
+  let open = 0;
+  const sendSettings = () => {
+    socket.write(settings);
+    sentSettings = true;
+    readFrames();
+  };
+  const answer = (id: number) => {
+    if (oneStreamAtATime && open > 0) return void socket.write(frame(F.RST_STREAM, 0, id, Buffer.from([0, 0, 0, 7])));
+    open++;
+    // In the next turn of the loop, so the requests of one read count as open together.
+    setImmediate(() => {
+      open--;
+      socket.write(frame(F.HEADERS, END_STREAM | END_HEADERS, id, Buffer.from([0x88])));
+    });
+  };
+  // An answer to a client that's gone fails with EPIPE.
+  socket.on("error", () => {});
+  socket.on("end", () => socket.end());
+  socket.on("data", (d: Buffer) => {
+    buf = Buffer.concat([buf, d]);
+    if (!preface) {
+      if (buf.length < PREFACE.length) return;
+      preface = true;
+      buf = buf.subarray(PREFACE.length);
+      if (!settingsFirst) setImmediate(sendSettings);
+    }
+    readFrames();
+  });
+  function readFrames() {
+    // SETTINGS has to be the peer's first frame.
+    while (preface && sentSettings && buf.length >= 9) {
+      const len = buf.readUIntBE(0, 3);
+      if (buf.length < 9 + len) break;
+      const type = buf[3];
+      // Flag 0x1 is END_STREAM on DATA and HEADERS, and ACK on SETTINGS.
+      const flagged = (buf[4] & 0x1) !== 0;
+      const id = buf.readUInt32BE(5) & 0x7fffffff;
+      const payload = buf.subarray(9, 9 + len);
+      buf = buf.subarray(9 + len);
+      if (type === F.DATA) {
+        bodies.set(id, (bodies.get(id) ?? "") + payload.toString("latin1"));
+        if (flagged) frames.push(`DATA#${id}:${bodies.get(id)}`);
+      } else if (type === F.HEADERS) frames.push(`HEADERS#${id}`);
+      else if (type === F.SETTINGS && !flagged) {
+        frames.push("SETTINGS");
+        socket.write(frame(F.SETTINGS, ACK, 0));
+      } else if (type === F.GOAWAY) {
+        frames.push("GOAWAY");
+        goaway = true;
+        for (const held of waiting.splice(0)) answer(held);
+      }
+      if ((type === F.DATA || type === F.HEADERS) && flagged) {
+        if (goaway) answer(id);
+        else waiting.push(id);
+      }
+    }
+  }
+  if (settingsFirst) sendSettings();
+  return frames;
+}
+// The first GOAWAY and the stream frames, in the order of the wire. node sends a second GOAWAY when its session ends.
+const fromClose = (frames: string[]) => frames.filter((f, i) => f.includes("#") || i === frames.indexOf("GOAWAY"));
+
+// Records what a request emits: "response:200", "end", "error:ERR_...", "close:<rstCode>".
+function watchRequest(req: http2.ClientHttp2Stream): string[] {
+  const events: string[] = [];
+  req.on("response", headers => events.push(`response:${headers[":status"]}`));
+  req.on("end", () => events.push("end"));
+  req.on("error", e => events.push(`error:${(e as NodeJS.ErrnoException).code}`));
+  req.on("close", () => events.push(`close:${req.rstCode}`));
+  req.resume();
+  return events;
+}
+const answered = ["response:200", "end", "close:0"];
+
+const connectedTransports = ["net.Socket", "tls.TLSSocket", "TLSSocket over duplexPair"] as const;
+const keys = new URL("../test/fixtures/keys/", import.meta.url);
+const tlsPeerOptions = () => ({
+  key: fs.readFileSync(new URL("agent1-key.pem", keys)),
+  cert: fs.readFileSync(new URL("agent1-cert.pem", keys)),
+  ALPNProtocols: ["h2"],
+});
+const tlsClientOptions = { ALPNProtocols: ["h2"], rejectUnauthorized: false };
+
+// Gives the client end of a transport that's connected already. An answeringPeer has the other end.
+async function connectedTransport(
+  transport: (typeof connectedTransports)[number],
+  peerOptions: Parameters<typeof answeringPeer>[1],
+): Promise<{ socket: Duplex; frames: Promise<string[]>; close: () => void }> {
+  if (transport === "TLSSocket over duplexPair") {
+    const [clientSide, peerSide] = duplexPair();
+    const frames = answeringPeer(new tls.TLSSocket(peerSide, { isServer: true, ...tlsPeerOptions() }), peerOptions);
+    const socket = tls.connect({ socket: clientSide, ...tlsClientOptions });
+    await EventEmitter.once(socket, "secureConnect");
+    return { socket, frames: Promise.resolve(frames), close() {} };
+  }
+  const peer = Promise.withResolvers<string[]>();
+  const onConnection = (peerSide: Duplex) => peer.resolve(answeringPeer(peerSide, peerOptions));
+  const server =
+    transport === "net.Socket" ? net.createServer(onConnection) : tls.createServer(tlsPeerOptions(), onConnection);
+  const port = await listen(server);
+  const socket =
+    transport === "net.Socket"
+      ? net.connect(port, "127.0.0.1")
+      : tls.connect({ port, host: "127.0.0.1", ...tlsClientOptions });
+  await EventEmitter.once(socket, transport === "net.Socket" ? "connect" : "secureConnect");
+  return { socket, frames: peer.promise, close: () => void server.close() };
+}
+
+// Makes a client session on a connected transport and runs `act` in the tick of connect(). Resolves when the
+// session has closed, with what `act` returned and with the frames that the answeringPeer got.
+async function inTheTickOfConnect<T>(
+  transport: (typeof connectedTransports)[number],
+  act: (session: http2.ClientHttp2Session) => T,
+  peerOptions: Parameters<typeof answeringPeer>[1] = {},
+): Promise<{ result: T; frames: string[] }> {
+  const { socket, frames, close } = await connectedTransport(transport, peerOptions);
+  try {
+    // With `settingsFirst`, the peer's SETTINGS is in the socket's read buffer when connect() runs.
+    while (peerOptions.settingsFirst && socket.readableLength === 0) await new Promise(setImmediate);
+    const closed = Promise.withResolvers<void>();
+    const session = http2.connect("http://localhost", { createConnection: () => socket });
+    session.on("error", closed.reject);
+    session.on("close", closed.resolve);
+    const result = act(session);
+    await closed.promise;
+    return { result, frames: await frames };
+  } finally {
+    close();
+  }
+}
+
+// The peer sends its SETTINGS after it has the client preface, so the client hasn't read it when the session connects.
+for (const transport of connectedTransports) {
+  describe(`a request made in the tick of connect() on a connected ${transport}`, () => {
+    test("is answered when close() follows it", async () => {
+      const { result: events, frames } = await inTheTickOfConnect(transport, session => {
+        const events = watchRequest(session.request({ ":path": "/" }));
+        session.close();
+        return events;
+      });
+      assert.deepStrictEqual({ events, sent: fromClose(frames) }, { events: answered, sent: ["GOAWAY", "HEADERS#1"] });
+    });
+
+    test("sends its body when close() follows it", async () => {
+      const { result: events, frames } = await inTheTickOfConnect(transport, session => {
+        const req = session.request({ ":path": "/", ":method": "POST" });
+        const events = watchRequest(req);
+        req.end("hello");
+        session.close();
+        return events;
+      });
+      assert.deepStrictEqual(
+        { events, sent: fromClose(frames) },
+        { events: answered, sent: ["GOAWAY", "HEADERS#1", "DATA#1:hello"] },
+      );
+    });
+
+    test("is answered along with a second one when close() follows them", async () => {
+      const { result, frames } = await inTheTickOfConnect(transport, session => {
+        const first = watchRequest(session.request({ ":path": "/first" }));
+        const second = watchRequest(session.request({ ":path": "/second" }));
+        session.close();
+        return { first, second };
+      });
+      assert.deepStrictEqual(
+        { ...result, sent: fromClose(frames) },
+        { first: answered, second: answered, sent: ["GOAWAY", "HEADERS#1", "HEADERS#3"] },
+      );
+    });
+
+    test("is sent before the 'connect' listeners run, so close() in one waits for it", async () => {
+      const { result, frames } = await inTheTickOfConnect(transport, session => {
+        const req = session.request({ ":path": "/" });
+        const result = { events: watchRequest(req), pendingAtConnect: true, idAtConnect: 0 };
+        session.on("connect", () => {
+          result.pendingAtConnect = req.pending;
+          result.idAtConnect = req.id!;
+          session.close();
+        });
+        return result;
+      });
+      assert.deepStrictEqual(
+        { ...result, sent: fromClose(frames) },
+        {
+          events: answered,
+          pendingAtConnect: false,
+          idAtConnect: 1,
+          // node's GOAWAY overtakes the HEADERS frame that it has queued.
+          sent: process.versions.bun ? ["HEADERS#1", "GOAWAY"] : ["GOAWAY", "HEADERS#1"],
+        },
+      );
+    });
+
+    test("keeps the code of its own close(code) when close() follows it", async () => {
+      const { result: events } = await inTheTickOfConnect(transport, session => {
+        const req = session.request({ ":path": "/" });
+        const events = watchRequest(req);
+        req.close(NGHTTP2_CANCEL);
+        session.close();
+        return events;
+      });
+      // node only emits 'end' when it read the peer's SETTINGS before the reset.
+      assert.deepStrictEqual(
+        events.filter(event => event !== "end"),
+        [`close:${NGHTTP2_CANCEL}`],
+      );
+    });
+  });
+}
+
+test("requests made in the tick of connect() keep to a stream limit that was read before it, when close() follows them", async () => {
+  const { result, frames } = await inTheTickOfConnect(
+    "net.Socket",
+    session => {
+      const requests = ["/first", "/second", "/third"].map(path => watchRequest(session.request({ ":path": path })));
+      session.close();
+      return requests;
+    },
+    { settingsFirst: true, oneStreamAtATime: true },
+  );
+  assert.deepStrictEqual(
+    { result, sent: fromClose(frames) },
+    { result: [answered, answered, answered], sent: ["GOAWAY", "HEADERS#1", "HEADERS#3", "HEADERS#5"] },
+  );
+});
+
+// http2.createServer() refuses a stream that opens after the client's GOAWAY, which is the order node sends them in.
+test(
+  "http2.createServer() answers a request made in the tick of connect() when the connect() listener calls close()",
+  { skip: !process.versions.bun },
+  async () => {
+    const server = http2.createServer((req, res) => res.end("ok"));
+    const port = await listen(server as unknown as net.Server);
+    try {
+      const socket = net.connect(port, "127.0.0.1");
+      await EventEmitter.once(socket, "connect");
+      const closed = Promise.withResolvers<void>();
+      const session = http2.connect(`http://127.0.0.1:${port}`, { createConnection: () => socket }, () =>
+        session.close(),
+      );
+      session.on("error", closed.reject);
+      session.on("close", closed.resolve);
+      const events = watchRequest(session.request({ ":path": "/" }));
+      await closed.promise;
+      assert.deepStrictEqual(events, answered);
+    } finally {
+      server.close();
+    }
+  },
+);
+
+// The contrast: this request waits for the socket to connect, so close() rejects it.
+test("close() rejects a request made while the socket of createConnection() is still connecting", async () => {
+  const peer = Promise.withResolvers<string[]>();
+  const server = net.createServer(peerSide => peer.resolve(answeringPeer(peerSide)));
+  const port = await listen(server);
+  try {
+    const closed = Promise.withResolvers<void>();
+    const session = http2.connect("http://localhost", { createConnection: () => net.connect(port, "127.0.0.1") });
+    session.on("error", closed.reject);
+    session.on("close", closed.resolve);
+    const req = session.request({ ":path": "/" });
+    const state = { connecting: session.connecting, pending: req.pending };
+    const events = watchRequest(req);
+    session.close();
+    await closed.promise;
+    assert.deepStrictEqual(
+      { state, events, sent: (await peer.promise).filter(f => f.includes("#")) },
+      {
+        state: { connecting: true, pending: true },
+        // node resets the stream with INTERNAL_ERROR, Bun with REFUSED_STREAM.
+        events: ["error:ERR_HTTP2_GOAWAY_SESSION", process.versions.bun ? "close:7" : "close:2"],
+        sent: [],
+      },
+    );
+  } finally {
+    server.close();
   }
 });
 

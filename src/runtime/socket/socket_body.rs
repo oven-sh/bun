@@ -1079,14 +1079,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         if this.waits_to_send_tail() {
             // `end(data)` in the handler is how a program drops a peer that stopped reading, so its tail doesn't wait another timeout.
-            this.buffered_data_for_node_net.with_mut(|b| {
-                if tail_timed_out {
-                    b.fail(sys::SystemErrno::ETIMEDOUT);
-                } else {
-                    b.clear();
-                }
-            });
-            this.close_if_flushed();
+            if tail_timed_out {
+                this.buffered_data_for_node_net
+                    .with_mut(|b| b.fail(sys::SystemErrno::ETIMEDOUT));
+            }
+            this.mark_inactive();
         }
         handled
     }
@@ -1095,6 +1092,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.flags.get().contains(Flags::END_AFTER_FLUSH)
             && self.buffered_data_for_node_net.get().len() > 0
             && !self.socket.get().is_detached()
+    }
+
+    /// The raw half of an `upgradeTLS` pair asks for its TLS half, which the events of the socket they share go to.
+    fn tls_half_waits_to_send_tail(&self) -> bool {
+        if !self.flags.get().contains(Flags::BYPASS_TLS) {
+            return false;
+        }
+        let uws::InternalSocket::Connected(socket) = self.socket.get().socket else {
+            return false;
+        };
+        let tls_half: Option<bun_ptr::ThisPtr<Self>> = *uws::us_socket_t::opaque_mut(socket).ext();
+        tls_half.is_some_and(|tls_half| tls_half.waits_to_send_tail())
     }
 
     /// Closes an ended socket once its tail is sent. Until then the socket's own timeout runs, from each send that moved bytes.
@@ -1395,6 +1404,14 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub(crate) fn close_and_detach(&self, code: uws::CloseCode) {
         let socket = self.socket.get();
+        // A graceful TLS close ends with a close_notify, which says that the stream is whole.
+        let queue = self.buffered_data_for_node_net.get();
+        let code = match code {
+            uws::CloseCode::Normal if queue.len() > 0 || queue.is_lost() => {
+                uws::CloseCode::FastShutdown
+            }
+            code => code,
+        };
         self.discard_queued_writes();
 
         self.socket.set(SocketHandler::<SSL>::DETACHED);
@@ -1421,13 +1438,20 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// `on_connecting_error` dispatch early-returns and no JS callback fires;
     /// `mark_inactive`/`deref` balance the refs the previous `connect_finish`
     /// took. Caller must hold an independent +1 across this call. Only
-    /// handles Connected/Connecting; Pipe/UpgradedDuplex back-pointers do
-    /// not live in the ext slot so those are left for the caller's existing
-    /// `debug_assert!` to catch.
-    pub(crate) fn detach_for_reconnect(&self) {
+    /// Connected / Connecting are this socket's to drop. False, with nothing changed, while another owner (uWS, a transport, an unfinished close) points at `self`.
+    #[must_use]
+    pub(crate) fn detach_for_reconnect(&self) -> bool {
+        if self.flags.get().contains(Flags::HELD_BY_SERVER) {
+            return false;
+        }
         let old = self.socket.get();
+        match old.socket {
+            uws::InternalSocket::Connected(_) | uws::InternalSocket::Connecting(_) => {}
+            uws::InternalSocket::Detached => return self.closing.get().is_detached(),
+            uws::InternalSocket::UwsHttp(_) | uws::InternalSocket::Transport(_) => return false,
+        }
         let Some(ext) = old.ext::<*mut c_void>() else {
-            return;
+            return false;
         };
         // SAFETY: ext slot is sized for `*mut c_void`; single-threaded.
         unsafe { *ext = core::ptr::null_mut() };
@@ -1446,6 +1470,19 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         }
         self.deref();
+        true
+    }
+
+    /// The established `us_socket_t` whose ext slot is this socket's, so that it can move to another group.
+    pub(crate) fn own_connected_socket(&self) -> Option<*mut uws::us_socket_t> {
+        match self.socket.get().socket {
+            uws::InternalSocket::Connected(s)
+                if !self.flags.get().contains(Flags::HELD_BY_SERVER) =>
+            {
+                Some(s)
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn mark_inactive(&self) {
@@ -2201,6 +2238,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         let failed_write = this.take_failed_write(send_error);
         let reset = this.buffered_data_for_node_net.get().completion() == Completion::Reset;
+        // node:net hears of it through the write's own callback.
+        let lost_tail = this.flags.get().contains(Flags::END_AFTER_FLUSH)
+            && this.buffered_data_for_node_net.get().len() > 0
+            && handlers.on_write_complete().is_empty();
         this.discard_queued_writes();
         // Declared first so it drops last: ticks drain ahead of the teardown.
         let _cleanup = CloseTeardown {
@@ -2275,6 +2316,10 @@ impl<const SSL: bool> NewSocket<SSL> {
                 sys::Tag::read,
             )),
             None if err > 2 => Some(read_error_from_close_code(err)),
+            None if lost_tail => Some(sys::Error::new(
+                sys::SystemErrno::ECANCELED,
+                sys::Tag::write,
+            )),
             None => None,
         };
         let js_error = error.map_or(JSValue::UNDEFINED, |error| {
@@ -2957,6 +3002,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             && flags.contains(Flags::END_AFTER_FLUSH)
             && !flags.contains(Flags::EMPTY_PACKET_PENDING)
             && self.buffered_data_for_node_net.get().len() == 0
+            && !self.tls_half_waits_to_send_tail()
     }
 
     /// Sends the queue, then closes a socket that `end()` is waiting to close. Returns false if a send failed for good.
@@ -3002,7 +3048,11 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub(crate) fn shutdown(&self, _: &mut JsScope<'_>, half_close: bool) {
         if half_close {
             self.socket.get().shutdown_read();
-        } else if !self.native_callback.get().defer_shutdown() {
+        } else if !self.native_callback.get().defer_shutdown()
+            && !self.waits_to_send_tail()
+            && !self.tls_half_waits_to_send_tail()
+        {
+            // Otherwise the parser sends the FIN after its output, or `end(data)` does once its tail is sent.
             self.socket.get().shutdown();
         }
     }
@@ -3194,7 +3244,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // adopt; the old `isDetached()/isNamedPipe()` guard let those
         // through and the `.connected` payload read below would then be
         // illegal-union-access on a `.connecting` socket.
-        if !matches!(self.socket.get().socket, uws::InternalSocket::Connected(_)) {
+        if self.own_connected_socket().is_none() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "upgradeTLS requires an established socket"
             )));
@@ -3203,11 +3253,17 @@ impl<const SSL: bool> NewSocket<SSL> {
         let is_server = options.is_server;
 
         // An option getter can close this socket, or re-enter upgradeTLS and adopt its fd.
-        let uws::InternalSocket::Connected(raw_socket) = self.socket.get().socket else {
+        let Some(raw_socket) = self.own_connected_socket() else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "upgradeTLS requires an established socket"
             )));
         };
+        // The TLS socket would start in the middle of the data that `end(data)` took.
+        if self.waits_to_send_tail() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "upgradeTLS requires a socket that has not ended"
+            )));
+        }
 
         let vm = options.handlers.vm;
         let verify = options.server_verify();
@@ -3506,6 +3562,8 @@ bitflags::bitflags! {
         const SENDING_QUEUE        = 1 << 17;
         /// node:net's `fdIsWriteOnly`: `do_connect` gives the descriptor to an `FdPipe`, not to uSockets.
         const WRITE_ONLY_FD        = 1 << 18;
+        /// C++ points at this socket for a node:http connection, or for the `ws` WebSocket made of it, until `Bun__NodeHTTPSocket__onClose`. The ext of the `us_socket_t` is uWS's.
+        const HELD_BY_SERVER       = 1 << 19;
         /// TCP_NODELAY is known to be on, so asking for it again costs no syscall. node:net asks for each connection of an http.Server, and the accept has set it.
         const NO_DELAY = 1 << 30;
         /// The `ws` package's WebSocket on this connection has closed, and the kernel had taken everything it queued.
@@ -3770,7 +3828,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
 ) -> JsResult<JSValue> {
     let global = cx.global();
     // The upgraded socket is the calling script's.
-    let context = global.bun_vm().context_of_caller_no_frame();
+    let context = global.bun_vm().context_of_caller();
     let options = UpgradeOptions::from_js(global, options.to_js(), false)?;
     // node:tls owns server-identity policy in its JS layer.
     let tls = options.new_socket(true);

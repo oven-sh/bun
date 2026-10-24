@@ -600,8 +600,8 @@ describe("HTMLRewriter", () => {
     });
 
     // A `type: 'direct'` source whose `pull()` throws synchronously leaves the
-    // JS controller's `m_sinkPtr` set after `readDirectStream` returns with an
-    // exception; `end_from_stream` must null it (via `JSSink::detach`) before
+    // JS controller attached to the pipe after `readDirectStream` returns with an
+    // exception; `end_from_stream` must detach it (via `SourceHandle::detach`) before
     // the pipe can be freed so the controller's destructor doesn't dispatch
     // into freed memory.
     it("a direct ReadableStream whose pull() throws synchronously rejects the body", async () => {
@@ -2130,13 +2130,13 @@ it.each([
     return new HTMLRewriter().transform(input);
   };
   await using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: transform });
-  const sent = (await fetch(server.url)).headers.get("content-type");
+  // A body without a type is sent with the default type if the rewrite is over, and with none if it is streamed, as a file is on Windows.
+  const sentWithoutAType = isWindows ? null : "application/octet-stream";
   expect({
     inHeaders: transform().headers.get("content-type"),
-    // A body without a type is sent with the default type if the rewrite was over, and with none if it is streamed.
-    sent: sent === "application/octet-stream" ? null : sent,
+    sent: (await fetch(server.url)).headers.get("content-type"),
     ofBlob: (await transform().blob()).type,
-  }).toEqual({ inHeaders: type, sent: type, ofBlob: type ?? "text/plain;charset=utf-8" });
+  }).toEqual({ inHeaders: type, sent: type ?? sentWithoutAType, ofBlob: type ?? "text/plain;charset=utf-8" });
 });
 
 it("#3489", async () => {

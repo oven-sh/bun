@@ -5424,19 +5424,15 @@ class ClientHttp2Session extends Http2Session {
   }
 
   // Requests made while connecting go out after the 'connect' listeners, which can still destroy() or close() the session.
-  #emitConnect(socket) {
+  #emitConnect(socket, wasConnecting: boolean) {
+    // On a transport that was already connected, Node sends a request from inside request(). So it goes out first, and close() waits for it.
+    if (!wasConnecting) this.#flushPendingRequests();
     this.emit("connect", this, socket);
-    if (this.#closed) {
-      // close() was called while the socket was still connecting: requests made in the meantime
-      // never reached the peer, so node rejects them with ERR_HTTP2_GOAWAY_SESSION once the
-      // connect completes and then lets the session finish closing.
-      this.#rejectPendingRequests();
-      // A 'connect' listener can open a request and then close(). That request still completes.
-      if (this.#isClosedAndIdle()) destroySessionInternally(this);
-      return;
-    }
-    // Requests made while the socket was still connecting were queued; submit them now.
-    this.#flushPendingRequests();
+    // Like Node, close() rejects the requests that waited for the socket to connect.
+    if (this.#closed && wasConnecting) this.#rejectPendingRequests();
+    else this.#flushPendingRequests();
+    // A 'connect' listener can open a request and then close(). That request still completes.
+    if (this.#isClosedAndIdle()) destroySessionInternally(this);
   }
 
   #onClose() {
@@ -5695,8 +5691,8 @@ class ClientHttp2Session extends Http2Session {
         this.destroy(e);
       }
       // Outside the try, so a listener that throws doesn't destroy the session.
-      if (connectOnNextTick) this.#emitConnect(socket);
-      else process.nextTick(() => this.#emitConnect(socket));
+      if (connectOnNextTick) this.#emitConnect(socket, false);
+      else process.nextTick(() => this.#emitConnect(socket, true));
     }
 
     // h2 with ALPNProtocols

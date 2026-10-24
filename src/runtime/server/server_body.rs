@@ -12,6 +12,7 @@ use crate::generated_bindgen::server_body::{
     BunServe__onRejectPlugins, BunServe__onResolvePlugins,
 };
 use crate::node::types::PathLikeExt as _;
+use crate::socket::listener::Connections;
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
@@ -1778,7 +1779,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 method,
             ))
         } else if let Some(request_) = request_arg {
-            request_.clone(&global.js_thread_of_caller_no_frame())?
+            request_.clone(&global.js_thread_of_caller())?
         } else {
             let fetch_error = Fetch::fetch_type_error_string(input);
             let err = jsc::ErrorCode::INVALID_ARG_TYPE.fmt(global, format_args!("{}", fetch_error));
@@ -1855,7 +1856,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     fn stop_from_js(&self, abrupt: bool) {
         // Under `phase_held`, an outer `stop()` or `closeIdleConnections()` is walking the sockets an abrupt stop would close.
         if self.has_listener() || (abrupt && !self.terminated.get() && !self.phase_held.get()) {
-            self.stop(abrupt);
+            self.stop(if abrupt {
+                Connections::Close
+            } else {
+                Connections::Keep
+            });
         }
     }
 

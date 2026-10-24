@@ -642,7 +642,7 @@ struct Http2Context {
     }
 
     void free() {
-        closeAll();
+        closeAll(0);
         if (parent && detachFromParent) detachFromParent(parent, this);
         for (Http2Connection *conn : sweepList) { conn->inSweepList = false; if (--conn->busy == 0 && conn->closed) delete conn; }
         sweepList.clear();
@@ -747,11 +747,11 @@ struct Http2Context {
 
     /* GOAWAY every connection and close it. Streams still in flight get
      * onAborted, as TemplatedApp::close() does for HTTP/1 sockets. */
-    void closeAll() {
-        forEachConnection([](Http2Connection *conn) {
+    void closeAll(int thread_ends) {
+        forEachConnection([thread_ends](Http2Connection *conn) {
             if (!conn->goawaySent) conn->writeGoaway(http2::ERR_NO_ERROR);
             conn->flush();
-            us_socket_close_now(conn->s);
+            thread_ends ? us_socket_close(conn->s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr) : us_socket_close_now(conn->s);
         });
     }
 

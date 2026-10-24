@@ -37,7 +37,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.protos.set(config.protos.clone());
         this.update_flags(|f| {
             f.set(SocketFlags::REJECT_UNAUTHORIZED, reject_unauthorized);
-            f.insert(SocketFlags::NO_DELAY);
+            f.insert(SocketFlags::NO_DELAY | SocketFlags::HELD_BY_SERVER);
         });
         this.ref_();
         let global = config.handlers.global_object;
@@ -94,6 +94,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 unsafe { (*owner).socket.set(socket) }
             });
         debug_assert!(adopted, "the caller checks that the socket is open");
+        this.update_flags(|f| f.remove(SocketFlags::HELD_BY_SERVER));
         if this.ref_pollref_on_connect.get() {
             this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         }
@@ -150,17 +151,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             (Some(own), Some(servers)) if Rc::ptr_eq(own, servers)
         );
         let socket = self.socket.get();
-        match socket.socket {
-            uws::InternalSocket::Connected(s)
-                if accepted_by_server
-                    && !socket.is_closed()
-                    && !socket.is_shutdown()
-                    && self.buffered_data_for_node_net.get().len() == 0 =>
-            {
-                Some(s)
-            }
-            _ => None,
-        }
+        self.own_connected_socket().filter(|_| {
+            accepted_by_server
+                && !socket.is_closed()
+                && !socket.is_shutdown()
+                && self.buffered_data_for_node_net.get().len() == 0
+        })
     }
 
     /// Makes the connection a WebSocket of `server` for the `ws` package. Returns the `ServerWebSocket`, or `None` with nothing written.
@@ -185,6 +181,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let Some(ws) = adopted else {
             return Ok(None);
         };
+        self.update_flags(|f| f.insert(SocketFlags::HELD_BY_SERVER));
         self.bytes_written
             .set(self.bytes_written.get() + upgrade.handshake.len() as u64);
         // The server holds the event loop for its WebSockets.
@@ -392,6 +389,7 @@ pub(crate) unsafe extern "C" fn Bun__NodeHTTPSocket__onClose(
     run_script: bool,
 ) {
     with_handle!(ssl, handle, |this| {
+        this.update_flags(|f| f.remove(SocketFlags::HELD_BY_SERVER));
         if !run_script {
             this.update_flags(|f| f.insert(SocketFlags::FINALIZING));
         }

@@ -1074,7 +1074,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             } else if (res === undefined) {
               state.outgoing.push(kNoResponse);
               if (socket._httpMessage == null) process.nextTick(sendNextResponseIfIdle, socket);
-            } else if (res.socket === null) {
+            } else if (res !== socket._httpMessage) {
               // It threw. Bun answers that with a close, at the response's turn unless it's complete by then.
               res[kDispatchThrew] = true;
             } else if (!res.finished) {

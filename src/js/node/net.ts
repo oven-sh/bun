@@ -1507,7 +1507,7 @@ function kConnectPipe(self, req, address) {
     pauseOnConnect: req.pauseOnConnect,
   });
   // libuv returns EINVAL for a name it can't use and reports a failed connect(2) from the loop.
-  if (errno === 0 || errno === uv().UV_EINVAL) return errno;
+  if (errno === 0 || errno === uv().UV_EINVAL || errno === uv().UV_EISCONN) return errno;
   setImmediate(afterPipeConnectFailed, self, handle, req, errno);
   return 0;
 }
@@ -1528,6 +1528,11 @@ function kConnectDispatch(self, req, opts) {
   req.dispatching = true;
   const promise = doConnect(handle, opts);
   req.dispatching = false;
+  // The handle has a connection that isn't its own to drop, like that of an http server.
+  if (promise === undefined) {
+    traceConnectEnd(req);
+    return uv().UV_EISCONN;
+  }
   promise.catch(_reason => {
     // eat this so there's no unhandledRejection
     // we already catch this in connectError and error
@@ -3578,7 +3583,7 @@ Server.prototype[kRealListen] = function (
     exclusive = false;
   }
   const serverOptions = this[bunSocketServerOptions];
-  const listenOptions = {
+  const listenOptions: any = {
     tls,
     allowHalfOpen: true,
     reusePort: reusePort || serverOptions?.reusePort || false,
@@ -3587,11 +3592,10 @@ Server.prototype[kRealListen] = function (
     socket: serverHandlersFor(this),
     data: this,
     pauseOnConnect: this.pauseOnConnect,
-    defaultTimeout: false,
+    ...(path ? { unix: path } : fd != null ? { fd, hostname } : { port, hostname }),
   };
-  if (path) this._handle = Bun.listen({ unix: path, ...listenOptions });
-  else if (fd != null) this._handle = Bun.listen({ fd, hostname, ...listenOptions });
-  else this._handle = Bun.listen({ port, hostname, ...listenOptions });
+  $putByIdDirectPrivate(listenOptions, "defaultTimeout", false);
+  this._handle = Bun.listen(listenOptions);
   if (path) {
     // Mirror libuv uv_pipe_chmod: readableAll/writableAll relax the unix socket
     // file's group/other permission bits. Skipped on Windows and abstract

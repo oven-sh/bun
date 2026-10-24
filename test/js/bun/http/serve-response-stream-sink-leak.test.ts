@@ -14,7 +14,7 @@ const leaksanSupp = join(import.meta.dir, "..", "..", "..", "leaksan.supp");
 // leaks on every such request.
 test("HTTPResponseSink is destroyed after a sync pull() that ends later", async () => {
   if (isASAN) {
-    // LeakSanitizer reports the unfreed Box<ResponseStreamJSSink> directly. RSS needs ~60k requests to
+    // LeakSanitizer reports the unfreed Box<ResponseStream> directly. RSS needs ~60k requests to
     // settle under ASAN's quarantine. Comparing two run sizes cancels one-time leaks at exit.
     async function run(iterations: number) {
       await using proc = Bun.spawn({
@@ -41,7 +41,7 @@ test("HTTPResponseSink is destroyed after a sync pull() that ends later", async 
     const [small, large] = await Promise.all([run(10), run(100)]);
     const perRequestLeak = large.bytes - small.bytes;
     console.log({ small: small.bytes, large: large.bytes, perRequestLeak });
-    // A leaked ResponseStreamJSSink is ~176 B, so 90 extra requests would leak ~15840 B.
+    // A leaked ResponseStream is ~176 B, so 90 extra requests would leak ~15840 B.
     expect(perRequestLeak, large.stderr).toBeLessThan(2000);
     return;
   }

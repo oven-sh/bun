@@ -652,14 +652,17 @@ impl SocketGroups {
     ///
     /// # Safety
     /// `this` is a live, boxed set.
-    pub(crate) unsafe fn close_all(this: *mut Self) {
+    pub(crate) unsafe fn close_all(this: *mut Self, reason: crate::StopReason) {
         for i in 0..Self::COUNT {
             // SAFETY: fn contract; the borrow ends before `close_all` dispatches.
             let group: *mut SocketGroup = unsafe { &mut *this }.each()[i];
             // SAFETY: `group` is embedded in the live set.
             unsafe {
                 if !(*group).loop_.is_null() {
-                    (*group).close_all();
+                    match reason {
+                        crate::StopReason::VmTeardown => (*group).close_all_as_thread_ends(),
+                        crate::StopReason::Disposed => (*group).close_all(),
+                    }
                 }
             }
         }

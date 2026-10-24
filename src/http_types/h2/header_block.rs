@@ -1,6 +1,7 @@
 //! Reassembly of a header block from HEADERS or PUSH_PROMISE and its CONTINUATION frames (RFC 9113 §4.3, §6.10).
 
 use super::frame::{FrameHeader, FrameType};
+use super::settings::DEFAULT_MAX_FRAME_SIZE;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum HeaderBlockError {
@@ -8,7 +9,7 @@ pub enum HeaderBlockError {
     TooLarge,
 }
 
-/// At most one block is open per connection. The buffer keeps its capacity between blocks.
+/// At most one block is open per connection. A small buffer keeps its capacity between blocks.
 #[derive(Default)]
 pub struct HeaderBlockAssembler {
     block: Vec<u8>,
@@ -65,15 +66,22 @@ impl HeaderBlockAssembler {
         Ok(end_headers)
     }
 
+    pub fn capacity(&self) -> usize {
+        self.block.capacity()
+    }
+
     /// Takes the complete block. Hand the buffer back with `recycle`.
     pub fn take(&mut self) -> Vec<u8> {
         debug_assert_eq!(self.open_on, 0);
         core::mem::take(&mut self.block)
     }
 
+    /// Drops a buffer that outgrew one frame of the default size, so a large block doesn't keep its size for the life of the connection.
     pub fn recycle(&mut self, mut block: Vec<u8>) {
-        block.clear();
-        self.block = block;
+        if block.capacity() <= DEFAULT_MAX_FRAME_SIZE as usize {
+            block.clear();
+            self.block = block;
+        }
     }
 }
 
@@ -107,6 +115,19 @@ mod tests {
         assert_eq!(assembler.push(b"e", true, 8, 100), Ok(true));
         assert!(!assembler.admits(&header(FrameType::Continuation, 1)));
         assert_eq!(assembler.take(), b"abcde");
+    }
+
+    #[test]
+    fn only_a_small_buffer_is_kept() {
+        let mut assembler = HeaderBlockAssembler::default();
+        assembler.begin(1, &[0; 100], true);
+        let block = assembler.take();
+        assembler.recycle(block);
+        assert!(assembler.capacity() >= 100);
+        assembler.begin(3, &[0; DEFAULT_MAX_FRAME_SIZE as usize + 1], true);
+        let block = assembler.take();
+        assembler.recycle(block);
+        assert_eq!(assembler.capacity(), 0);
     }
 
     #[test]

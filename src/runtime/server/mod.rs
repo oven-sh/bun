@@ -12,6 +12,8 @@ use bun_uws_sys::app::c as uws_app_c;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult};
 use bun_ptr::AsCtxPtr;
 
+use crate::socket::listener::Connections;
+
 // ─── server-local jsc re-export ──────────────────────────────────────────────
 // `bun_jsc` is now a dep; forward to it. `AsyncTaskTracker` lives under
 // `bun_jsc::debugger`, surfaced flat here for the server drafts that import it.
@@ -178,9 +180,15 @@ const N_HTTP_METHODS: usize = 36;
 bun_jsc::impl_abort_handle_owner!(
     [const SSL: bool, const DEBUG: bool] NewServer<SSL, DEBUG>,
     abort_handle,
-    |this, _cause| {
+    |this, cause| {
+        let connections = match cause {
+            bun_jsc::AbortCause::ContextStopped(bun_jsc::StopReason::VmTeardown) => {
+                Connections::CloseAsThreadEnds
+            }
+            _ => Connections::Close,
+        };
         // SAFETY: trait contract — `this` is live (armed ⇒ not deinit'd).
-        unsafe { &*this }.stop(true)
+        unsafe { &*this }.stop(connections)
     }
 );
 
@@ -1174,21 +1182,29 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         });
     }
 
-    /// Closes the listener, every connection and every WebSocket now.
-    fn terminate(&self) {
+    /// Closes the listener, every connection and every WebSocket now. `thread_ends`: see `thread_ends` in libusockets.h.
+    fn terminate(&self, thread_ends: bool) {
         if self.terminated.replace(true) {
             return;
         }
         self.with_websocket_handler(|handler| handler.app = None);
         if let Some(app) = self.app.get() {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-            self.while_closing(|| bun_opaque::opaque_deref_mut(app).close());
+            let app = bun_opaque::opaque_deref_mut(app);
+            self.while_closing(|| {
+                if thread_ends {
+                    app.close_as_thread_ends()
+                } else {
+                    app.close()
+                }
+            });
         }
         // Not before the close: `on_close` reaches `on_websocket_closed` through `handler.server`.
         self.with_websocket_handler(|handler| handler.server = None);
     }
 
-    fn stop_listening(&self, abrupt: bool) {
+    fn stop_listening(&self, connections: Connections) {
+        let abrupt = connections != Connections::Keep;
         // A graceful stop leaves connections open, and this handle is how their context's stop reaches them.
         if abrupt {
             self.abort_handle.leave();
@@ -1240,7 +1256,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         if abrupt {
-            self.terminate();
+            self.terminate(connections == Connections::CloseAsThreadEnds);
         } else if let Some(listener) = listener {
             // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             bun_opaque::opaque_deref_mut(listener).close();
@@ -1256,7 +1272,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    pub(crate) fn stop(&self, abrupt: bool) {
+    /// `CloseAsThreadEnds`: the abrupt stop of a server whose thread ends (see `thread_ends` in libusockets.h).
+    pub(crate) fn stop(&self, connections: Connections) {
         if self.config.get().allow_hot && !self.config.get().id.is_empty() {
             // SAFETY: `vm_mut()` is the non-null process-static VM pointer.
             unsafe {
@@ -1266,7 +1283,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
-        self.stop_listening(abrupt);
+        self.stop_listening(connections);
         self.apply_phase();
     }
 
@@ -1426,7 +1443,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(super) fn deinit(this: *mut Self) {
         // SAFETY: `this` is live and uniquely owned. `NewApp::destroy` closes nothing, and close
         // callbacks re-derive `&Self` from `this`, so close before the Box is reclaimed.
-        unsafe { &*this }.terminate();
+        unsafe { &*this }.terminate(false);
         // SAFETY: paired with heap::alloc in `init()`; `this` is uniquely
         // owned here, so reclaim the Box up front and let it drive
         // the teardown (dropped — and freed — at scope exit).
@@ -2738,12 +2755,14 @@ mod ffi {
     }
 }
 
-/// Servers with the same options share a context. `None` leaves BoringSSL's error queued for `throw_ssl_error_if_necessary`.
+/// Servers with the same options share a context, unless it reads files. `None` leaves BoringSSL's error queued for `throw_ssl_error_if_necessary`.
 fn create_ssl_ctx(
     options: &uws_sys::BunSocketContextOptions,
 ) -> Option<bun_boringssl_sys::OwnedSslCtx> {
     let mut err = uws::create_bun_socket_error_t::none;
-    crate::api::SSLContextCache::SSLContextCache::get_or_create_opts(options, &mut err)
+    // A context from the cache builds nothing, so an error that another call left queued would pass for this one's.
+    bun_boringssl_sys::ERR_clear_error();
+    crate::api::SSLContextCache::SSLContextCache::get_or_create_for_server(options, &mut err)
 }
 
 /// Drain the BoringSSL error queue; if non-empty, throw the top error on

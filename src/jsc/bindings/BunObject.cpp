@@ -64,6 +64,7 @@
 #include "GeneratedPasswordObject.h"
 #include "GeneratedS3Client.h"
 #include "GeneratedSemverObject.h"
+#include "GeneratedSink.h"
 #include "GeneratedTOMLObject.h"
 #include "GeneratedTerminal.h"
 #include "GeneratedTranspiler.h"
@@ -102,11 +103,6 @@ using namespace WebCore;
 namespace Bun {
 
 extern "C" bool has_bun_garbage_collector_flag_enabled;
-
-static JSValue BunObject_lazyPropCb_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject)
-{
-    return uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject())->ArrayBufferSink();
-}
 
 static JSValue constructCookieObject(VM& vm, JSObject* bunObject);
 static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject);
@@ -941,7 +937,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 @begin bunObjectTable
     $                                              constructBunShell                                                   DontDelete|PropertyCallback
     Archive                                        Bun::Bindgen::Generated::Archive::getArchiveConstructor             DontDelete|PropertyCallback
-    ArrayBufferSink                                BunObject_lazyPropCb_wrap_ArrayBufferSink                           DontDelete|PropertyCallback
+    ArrayBufferSink                                Bun::Bindgen::Generated::Sink::getArrayBufferSinkConstructor        DontDelete|PropertyCallback
     Cookie                                         constructCookieObject                                               DontDelete|ReadOnly|PropertyCallback
     CookieMap                                      constructCookieMapObject                                            DontDelete|ReadOnly|PropertyCallback
     CryptoHasher                                   Bun::Bindgen::Generated::CryptoHasher::getCryptoHasherConstructor   DontDelete|PropertyCallback

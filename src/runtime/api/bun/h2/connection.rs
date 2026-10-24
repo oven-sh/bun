@@ -328,6 +328,10 @@ impl Connection {
         self.streams.insert(stream)
     }
 
+    pub(crate) fn header_block_capacity(&self) -> usize {
+        self.header_block.get().capacity()
+    }
+
     /// node's IsAvailableSessionMemory. New streams are refused while this returns true.
     pub(crate) fn is_over_memory_limit(&self, sink: &impl Sink) -> bool {
         sink.buffered_output() + self.streams.len() * STREAM_MEMORY_COST

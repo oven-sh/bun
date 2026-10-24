@@ -4,7 +4,7 @@ import { parseArgs } from "node:util";
 import { columns, rows, type Column, type Row } from "./rows";
 
 const here = import.meta.dir;
-const typedVersions = resolve(here, "../../../../packages/bun-sound");
+const typedVersions = resolve(here, "../../../../packages/full-types");
 
 const { values: options } = parseArgs({
   options: {
@@ -88,9 +88,9 @@ function link(target: string, path: string): void {
 
 function withoutTypedFiles(folder: string): void {
   const described = join(folder, "package.json");
-  const text = JSON.parse(readFileSync(described, "utf8"), (key, value) => (key === "bun-aot" ? undefined : value));
+  const text = JSON.parse(readFileSync(described, "utf8"), (key, value) => (key === "full-types" ? undefined : value));
   writeFileSync(described, JSON.stringify(text, null, 2));
-  for (const name of readdirSync(folder, { recursive: true }) as string[]) if (name.endsWith(".aot.ts")) rmSync(join(folder, name));
+  for (const name of readdirSync(folder, { recursive: true }) as string[]) if (name.endsWith(".full.ts")) rmSync(join(folder, name));
 }
 
 function sourcesOf(name: string): string {
@@ -153,7 +153,7 @@ function layFolder(row: Row, variant: Variant, libraries: Map<string, string>): 
     for (const name of row.typedVersions ?? []) {
       const version = JSON.parse(readFileSync(join(findInstalled(name), "package.json"), "utf8")).version;
       const from = [join(here, "typed-versions"), typedVersions].map(folder => join(folder, name, version)).find(folder => existsSync(join(folder, "sound.json")));
-      if (!from) throw new Error(`neither typed-versions nor packages/bun-sound has a typed version of ${name} ${version}`);
+      if (!from) throw new Error(`neither typed-versions nor packages/full-types has full types of ${name} ${version}`);
       for (const part of ["sound.json", "lay"]) cpSync(join(from, part), join(folder, ".sound", name, part), { recursive: true });
     }
   }
@@ -214,10 +214,10 @@ function build(row: Row, column: Column, folders: Record<string, string>): void 
   const log = built.stdout.toString() + built.stderr.toString();
   writeFileSync(`${executable}.build.txt`, log);
   if (built.exitCode !== 0) throw new Error(`${row.name} ${column.name}: the build ended with ${built.exitCode}\n${log.slice(-2000)}`);
-  const notes = log.split("\n").filter(line => /^note: .* typed version|^warn: .* without types|^Dependencies:|^STB:/.test(line));
+  const notes = log.split("\n").filter(line => /^note: .* full types|^warn: .* without types|^Dependencies:|^STB:/.test(line));
   console.log(`built ${row.name} ${column.name}: ${statSync(executable).size} B${notes.map(note => `\n    ${note.slice(0, 200)}`).join("")}`);
   if (column.typed && !row.typedSources && !notes.some(note => note.startsWith("note:")))
-    throw new Error(`${row.name} ${column.name}: no package was compiled from its typed version`);
+    throw new Error(`${row.name} ${column.name}: no package was compiled from its full types`);
 }
 
 function busyTicks(core: number): number {

@@ -95,7 +95,7 @@ fn with_shapes_package(
             r#"{
                 "name": "shapes",
                 "version": "1.0.0",
-                "exports": { ".": { "bun-aot": "./index.sound.ts", "default": "./index.js" } }
+                "exports": { ".": { "full-types": "./index.sound.ts", "default": "./index.js" } }
             }"#,
         ),
         ("node_modules/shapes/index.js", installed_text),

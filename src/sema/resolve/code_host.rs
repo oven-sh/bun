@@ -52,7 +52,7 @@ pub trait CodeHost: Host {
         None
     }
 
-    /// A typed version that counts only if the package ships none.
+    /// Full types that counts only if the package ships none.
     fn installed_typed_version(
         &self,
         _path: &[u8],

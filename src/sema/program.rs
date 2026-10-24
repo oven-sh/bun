@@ -7113,7 +7113,7 @@ impl<'s> Files<'s> {
         let (Ok(Parse { hir, bound, .. }) | Err(Parse { hir, bound, .. })) = &parsed;
         let role = FileRole::of_tree(hir);
         let (build, mut code) = BuildFile::into_parts(build);
-        // What a typed version writes relative to itself is relative to where its text is.
+        // What full types writes relative to itself is relative to where its text is.
         let typed_source_path = code
             .as_deref()
             .and_then(|code| code.analyzed.typed_source_path);
@@ -7321,7 +7321,7 @@ impl<'s> Files<'s> {
                 let program = is_governed.then_some(program_resolver)?;
                 program.resolve_module_name(text, from, mode)
             });
-            // A typed version stands for the installed file: what is not beside its text is beside that file.
+            // Full types stands for the installed file: what is not beside its text is beside that file.
             let resolved = resolved.or_else(|| {
                 typed_source_path?;
                 resolver.resolve_module_name(text, path, mode)
@@ -7402,7 +7402,7 @@ impl<'s> Files<'s> {
                 let span = first.map(|u| (u.pos, end_of_string_literal(&hir.text, u.pos)));
                 UnsupportedExtension { code, span }
             });
-            // The file that runs stands for its typed version and for its other names.
+            // The file that runs stands for its full types and for its other names.
             let in_program = match (code.as_deref(), redirect) {
                 (Some(code), None) => code.program_path(host, key, found),
                 _ => found,

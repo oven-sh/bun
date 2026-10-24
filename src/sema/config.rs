@@ -23,7 +23,8 @@ use bun_paths::resolve_path::dirname;
 mod build_options;
 
 pub use self::build_options::{
-    compile_build_overrides, load_for_build, load_for_build_with_unlisted_files,
+    compile_build_overrides, default_options_of_full_types, find_manifest_of_full_types,
+    load_for_build, load_for_build_with_unlisted_files, load_for_full_types,
     load_options_for_build, load_referenced_projects_for_build,
 };
 
@@ -367,7 +368,7 @@ pub fn find_config(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
     find_config_below(host, dir, |_| false)
 }
 
-/// `find_config`, no further up than the directory that has the `package.json`, or the `sound.json` of a typed version.
+/// `find_config`, no further up than the directory that has the `package.json`, or the `sound.json` of full types.
 /// What's above it configures another project, which the package is published without.
 pub fn find_config_of_package(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
     let has = |dir: &[u8], name: &[u8]| host.is_file(&join(dir, name));

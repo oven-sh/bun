@@ -38,8 +38,8 @@ const SHAPES: &[(&str, &str)] = &[
         "node_modules/shapes/package.json",
         concat!(
             r#"{"name":"shapes","version":"1.2.3","type":"module","exports":{"#,
-            r#"".":{"bun-aot":"./index.aot.ts","default":"./index.js"},"#,
-            r#""./more":{"bun-aot":"./more.aot.ts","default":"./more.js"}}}"#,
+            r#"".":{"full-types":"./index.full.ts","default":"./index.js"},"#,
+            r#""./more":{"full-types":"./more.full.ts","default":"./more.js"}}}"#,
         ),
     ),
     (
@@ -47,12 +47,12 @@ const SHAPES: &[(&str, &str)] = &[
         "export const area = 2 * 3;\n",
     ),
     (
-        "node_modules/shapes/index.aot.ts",
+        "node_modules/shapes/index.full.ts",
         "export const area: number = 2 * 3;\n",
     ),
     ("node_modules/shapes/more.js", "export const sides = 4;\n"),
     (
-        "node_modules/shapes/more.aot.ts",
+        "node_modules/shapes/more.full.ts",
         "export const sides: number = 4;\n",
     ),
 ];
@@ -116,17 +116,16 @@ const TYPED_CAST_BEFORE_MISMATCH: &str = concat!(
     "export const area: number = 3;\n",
 );
 
-const SHAPES_USED: &str =
-    "\"shapes\" 1.2.3 is compiled from its typed version in node_modules/shapes";
-const PROJECT_VERSION_USED: &str = "\"p\" 1.0.0 is compiled from its typed version in .sound/p";
+const SHAPES_USED: &str = "\"shapes\" 1.2.3 is compiled from its full types in node_modules/shapes";
+const PROJECT_VERSION_USED: &str = "\"p\" 1.0.0 is compiled from its full types in .sound/p";
 const IS_FOR_OTHER_VERSION: &str = "it is for version 2.0.0, but 1.0.0 is installed. \
-                                    Replace it with the typed version for 1.0.0, or remove it";
+                                    Replace it with the full types for 1.0.0, or remove it";
 const NEEDS_PRODUCTION: &str = "it needs process.env.NODE_ENV to be defined as \"production\". \
                                 Pass --define 'process.env.NODE_ENV=\"production\"'";
 const SHIPPED_VERSION_DIFFERS: &str =
-    "index.aot.ts without its types doesn't match index.js. Was the package patched?";
+    "index.full.ts without its types doesn't match index.js. Was the package patched?";
 const SHIPPED_VERSION_EMITS_CODE: &str =
-    "in index.aot.ts, TypeScript syntax that emits code can't be erased";
+    "in index.full.ts, TypeScript syntax that emits code can't be erased";
 const TYPE_ERROR: &str = "TS2322: Type 'string' is not assignable to type 'number'.";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -172,7 +171,7 @@ fn package_warning(name: &str, errors: &str, first: &str, files: (u32, u32)) -> 
 
 fn shipped_version_text(sentence: &str) -> String {
     format!(
-        "\"shapes\" is compiled without types, because its typed version in node_modules/shapes \
+        "\"shapes\" is compiled without types, because its full types in node_modules/shapes \
          can't be used: {sentence}"
     )
 }
@@ -185,7 +184,7 @@ fn shipped_version_not_used(position: &str, sentence: &str) -> Printed {
 }
 
 fn project_version_text(sentence: &str) -> String {
-    format!("TS100056: The typed version of \"p\" in .sound/p can't be used: {sentence}")
+    format!("TS100056: The full types of \"p\" in .sound/p can't be used: {sentence}")
 }
 
 fn load_with_messages(lines: &[String]) -> String {
@@ -240,7 +239,7 @@ fn shipped_index_files<'a>(installed: &'a str, typed: &'a str) -> Vec<(&'a str, 
     for (path, text) in &mut files {
         match *path {
             "node_modules/shapes/index.js" => *text = installed,
-            "node_modules/shapes/index.aot.ts" => *text = typed,
+            "node_modules/shapes/index.full.ts" => *text = typed,
             _ => {}
         }
     }
@@ -607,7 +606,7 @@ fn typed_version_error_stops_build() {
         let error = || type_error(packages, x, Effect::StopsBuild);
         report(packages, vec![error(), error()], &[])
     });
-    let text = "TS100021: The typed version of 'p' in .sound/p has type errors (2), \
+    let text = "TS100021: The full types of 'p' in .sound/p has type errors (2), \
                 the first at /project/.sound/p/lay/x.js:1:7";
     let error = message_with_type_error(Kind::Err, text);
     assert_eq!(
@@ -648,7 +647,7 @@ fn demoted_typed_version_only_warns() {
         let checked = vec![withdraws_trust(packages, index)];
         report(packages, checked, &with_type_errors(&[index]))
     });
-    let first = "/project/node_modules/shapes/index.aot.ts:1:7";
+    let first = "/project/node_modules/shapes/index.full.ts:1:7";
     assert_eq!(
         outcome.printed,
         [package_warning("shapes", "1 type error", first, (1, 2))]
@@ -749,7 +748,7 @@ fn accepted_project_version_is_named_by_sound_folder() {
 #[test]
 fn rejected_project_version_is_reported_and_names_both_files() {
     let files = project_version_files(TYPED_PACKAGE_SOUND_JSON, TYPED_FILE_WITH_OTHER_CODE);
-    let expected = "loaded: /project/node_modules/p/x.js:1:18: TS100056: The typed version of \"p\" \
+    let expected = "loaded: /project/node_modules/p/x.js:1:18: TS100056: The full types of \"p\" \
                     in .sound/p can't be used: lay/x.js without its types doesn't match x.js. \
                     Was the package patched?\n";
     assert_eq!(describe_load(&files), expected);
@@ -804,7 +803,7 @@ fn each_installed_copy_is_compared_with_manifest() {
     ]
     .concat();
     let sentence = "it is for version 1.0.0, but 2.0.0 is installed. \
-                    Replace it with the typed version for 2.0.0, or remove it";
+                    Replace it with the full types for 2.0.0, or remove it";
     let expected = load_with_messages(&[project_version_text(sentence)]);
     assert_eq!(describe_load(&files), expected);
 }

@@ -228,7 +228,7 @@ note: fix: validate it where it enters typed code (JSON.parse<T>, validate<T>), 
 note: https://bun.com/docs/bundler/aot-explain#unknown-object
 ```
 
-A JavaScript package isn't untyped because it's JavaScript. The compiler tracks its objects as it tracks yours. So look first at what your code passes to the package: an object that comes from `JSON.parse`, as here, is unknown inside the package too. For the rest, [a typed version of the package](/bundler/aot-libraries#add-types-to-a-package-you-dont-maintain) adds types to its files and leaves its code as it is.
+A JavaScript package isn't untyped because it's JavaScript. The compiler tracks its objects as it tracks yours. So look first at what your code passes to the package: an object that comes from `JSON.parse`, as here, is unknown inside the package too. For the rest, [full types of the package](/bundler/aot-libraries#add-types-to-a-package-you-dont-maintain) adds types to its files and leaves its code as it is.
 
 **A guard fails in hot code.** A value that doesn't match its declared type sends the function to its slow path, every time. Nothing is printed, because nothing goes wrong. [Find the guards that fail](/bundler/aot-debugging#find-the-guards-that-fail) shows how to list them and how to log them.
 

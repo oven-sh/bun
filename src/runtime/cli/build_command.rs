@@ -171,7 +171,7 @@ impl BuildCommand {
             );
             Global::exit(1);
         }
-        // The typed file is the bundle with the types of its sources put back, by way of its source map.
+        // The full-types file is the bundle with the types of its sources put back, by way of its source map.
         let has_typescript_entry_point =
             (this_transpiler.options.entry_points.iter()).any(|path| {
                 !matches!(
@@ -823,6 +823,7 @@ impl BuildCommand {
             }
         }
 
+        let mut compiler_options = Vec::new();
         if writes_typed_files {
             let request = super::compile_command::TypedOutputs {
                 working_directory: bun_resolver::fs::FileSystem::instance().top_level_dir(),
@@ -831,14 +832,17 @@ impl BuildCommand {
                 conditions: &ctx.args.conditions,
                 loaders: &opt_loaders,
                 drops_source_maps,
+                writes_package_json: ctx.bundler_options.library,
             };
-            super::compile_command::add_typed_files(&request, log_ref, &mut output_files);
+            compiler_options =
+                super::compile_command::add_typed_files(&request, log_ref, &mut output_files);
         }
 
         if ctx.bundler_options.library {
             super::compile_command::add_package_files(
                 ctx,
                 src_root_dir,
+                &compiler_options,
                 log_ref,
                 &mut output_files,
             );

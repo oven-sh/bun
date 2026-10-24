@@ -1,0 +1,8 @@
+{
+  "name": "full-types-trees-seroval",
+  "private": true,
+  "dependencies": {
+    "@types/node": "22.20.5",
+    "seroval": "1.6.9"
+  }
+}

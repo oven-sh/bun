@@ -19,7 +19,7 @@ const SOUND_DIRECTORY: &[u8] = b".sound";
 const SOUND_MANIFEST: &[u8] = b"sound.json";
 const PACKAGE_MANIFEST: &[u8] = b"package.json";
 const NODE_MODULES: &[u8] = b"node_modules";
-/// What the name of a package that holds the typed version of another package starts with.
+/// What the name of a package that holds the full types of another package starts with.
 const INSTALLED_PREFIX: (&[u8], &[u8]) = (b"@oven", b"sound-");
 /// `@oven/sound-scope__name` is for `@scope/name`.
 const SCOPE_SEPARATOR: &[u8] = b"__";
@@ -32,7 +32,7 @@ pub(crate) struct TypedPackages<'a> {
     packages: Vec<TypedPackage>,
 }
 
-/// Where a typed version lies. One in the project counts before the one that the package ships, an installed one after it.
+/// Where full types lies. One in the project counts before the one that the package ships, an installed one after it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum TypedPackagePlace {
     Project,
@@ -279,12 +279,12 @@ impl ManifestMismatch {
                 format_sentence("\"lay\" in its sound.json is empty", &[])
             }
             ManifestMismatch::AddsFile { path } => format_sentence(
-                "it adds {0}, and a typed version can only replace installed files",
+                "it adds {0}, and full types can only replace installed files",
                 &[path],
             ),
             ManifestMismatch::VersionDiffers { typed, installed } => format_sentence(
                 "it is for version {0}, but {1} is installed. \
-                 Replace it with the typed version for {1}, or remove it",
+                 Replace it with the full types for {1}, or remove it",
                 &[typed, installed],
             ),
             ManifestMismatch::DefineMissing { name, value } => format_sentence(
@@ -295,7 +295,7 @@ impl ManifestMismatch {
                 format_sentence("lay/{0} is missing", &[path])
             }
             ManifestMismatch::NeedsPackage { name } => format_sentence(
-                "it needs the typed version of \"{0}\", which is not used",
+                "it needs the full types of \"{0}\", which is not used",
                 &[name],
             ),
         }
@@ -308,7 +308,7 @@ fn format_sentence(template: &str, arguments: &[&[u8]]) -> Vec<u8> {
     sentence
 }
 
-/// One typed version for each name: the project's, else the one in the nearest `node_modules`.
+/// One full types for each name: the project's, else the one in the nearest `node_modules`.
 fn find_typed_packages(disk: &Disk, project_root: &[u8]) -> Vec<TypedPackage> {
     let has_manifest = |directory: &[u8]| disk.is_file(&inside(directory, SOUND_MANIFEST));
     let mut candidates = find_project_packages(disk, &inside(project_root, SOUND_DIRECTORY));

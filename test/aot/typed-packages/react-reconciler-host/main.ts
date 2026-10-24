@@ -1,4 +1,4 @@
-// A small host for the typed react-reconciler of packages/bun-sound: it mounts a tree with state, a reducer, a context, memoized values and effects, updates it, and prints what the host was told.
+// A small host for the typed react-reconciler of packages/full-types: it mounts a tree with state, a reducer, a context, memoized values and effects, updates it, and prints what the host was told.
 import createReconciler from "react-reconciler";
 import { createContext, createElement as h, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { flush } from "scheduler";

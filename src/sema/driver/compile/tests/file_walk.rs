@@ -168,13 +168,13 @@ fn numbers_do_not_depend_on_threads() {
 const ACCEPTED_MANIFEST: &str = r#"{
     "name": "accepted",
     "version": "1.0.0",
-    "exports": { ".": { "bun-aot": "./index.sound.ts", "default": "./index.js" } }
+    "exports": { ".": { "full-types": "./index.sound.ts", "default": "./index.js" } }
 }"#;
 
 const REJECTED_MANIFEST: &str = r#"{
     "name": "rejected",
     "version": "1.0.0",
-    "exports": { ".": { "bun-aot": "./index.sound.ts", "default": "./index.js" } }
+    "exports": { ".": { "full-types": "./index.sound.ts", "default": "./index.js" } }
 }"#;
 
 const DEP_MANIFEST: &str = r#"{ "name": "dep", "version": "1.0.0", "main": "./index.js" }"#;

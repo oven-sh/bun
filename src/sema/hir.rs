@@ -2404,7 +2404,7 @@ pub struct FileIn<S: Storage> {
     /// `.js`, `.jsx`, `.mjs`, `.cjs`. Parsed like `.tsx`: TypeScript-only syntax is accepted and reported as an error
     /// afterwards.
     pub is_js: bool,
-    /// A typed version of a JavaScript file: TypeScript syntax that runs by the rules of that file. Set by the loader.
+    /// Full types of a JavaScript file: TypeScript syntax that runs by the rules of that file. Set by the loader.
     pub is_typed_version: bool,
     /// The file is parsed as Flow (`Dialect::flow`). Flow syntax that TypeScript lacks is represented with TypeScript's
     /// nodes. `bun_sema_parser`'s `flow.rs` explains how. Only a formatter gets such a file.

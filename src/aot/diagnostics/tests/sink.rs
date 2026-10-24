@@ -75,7 +75,7 @@ fn notes_without_location_print_after_located_messages() {
         describe(&written(diagnostics)),
         [
             "/project/a.ts:1:5 Err TS2322: wrong type",
-            "Note \"p\" 1.0.0 is compiled from its typed version in .sound/p",
+            "Note \"p\" 1.0.0 is compiled from its full types in .sound/p",
         ]
     );
 }
@@ -145,7 +145,7 @@ fn log_diagnostic_prints_number_and_counts() {
         &[b"shapes", b"1.0.0", b".sound/shapes"],
     );
     let unsupported = "TS100050: --aot does not support --splitting".to_string();
-    let typed = "\"shapes\" 1.0.0 is compiled from its typed version in .sound/shapes";
+    let typed = "\"shapes\" 1.0.0 is compiled from its full types in .sound/shapes";
     assert_eq!(
         kinds_and_texts(&log),
         [(Kind::Err, unsupported), (Kind::Note, typed.to_string())]

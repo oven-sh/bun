@@ -1,0 +1,15 @@
+{
+  "name": "@oven/sound-parseurl",
+  "version": "1.3.3",
+  "description": "Full types for parseurl 1.3.3: npm's own code with types added and nothing else changed, for `bun build --compile --aot`.",
+  "license": "MIT",
+  "peerDependencies": {
+    "parseurl": "1.3.3"
+  },
+  "files": [
+    "sound.json",
+    "lay",
+    "LICENSE",
+    "NOTICE"
+  ]
+}

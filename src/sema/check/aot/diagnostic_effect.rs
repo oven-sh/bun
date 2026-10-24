@@ -100,9 +100,9 @@ fn effect_of_error(origin: FileOrigin, class: DiagnosticClass) -> Effect {
             | FileOrigin::Declarations,
         ) => Effect::StopsBuild,
         (DiagnosticClass::EarlyError, FileOrigin::EvaluatedText) => Effect::WithdrawsTrust,
-        // What the program's `lib` and `types` declare does not count against the typed version of a package.
+        // What the program's `lib` and `types` declare does not count against the full types of a package.
         (DiagnosticClass::MissingDeclaration, FileOrigin::ProjectTypedVersion) => Effect::Dropped,
-        // A typed version that does not check costs the package its types, never the build.
+        // Full types that does not check costs the package its types, never the build.
         (
             DiagnosticClass::TypeScriptGrammar | DiagnosticClass::Semantic,
             FileOrigin::ProjectTypedVersion,

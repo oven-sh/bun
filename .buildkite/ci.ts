@@ -934,7 +934,7 @@ const aotSources = [
   "src/jsc/bindings/BunCompilers.cpp",
   "src/jsc/bindings/RemovableFeatures.h",
   "src/jsc/bindings/RemovedFeature.cpp",
-  "packages/bun-sound/",
+  "packages/full-types/",
   ...aotTests.map(group => `test/${group}`),
   "scripts/build/aot",
   "scripts/build/trim/",

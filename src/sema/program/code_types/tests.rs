@@ -495,7 +495,7 @@ fn typed_version_asks_from_own_path() {
         assert_eq!(question.from, TYPED.as_bytes());
         let project = question
             .project
-            .expect("the typed version has a configuration file");
+            .expect("the full types have a configuration file");
         assert_eq!(project.target, ScriptTarget::ES2015);
         assert!(std::ptr::eq(question.resolver.options(), project));
 

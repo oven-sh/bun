@@ -4556,9 +4556,9 @@ impl<'a> Transfer<'_, 'a, '_> {
 }
 
 const TYPED_EXTENSIONS: [(&[u8], &[u8]); 3] = [
-    (b".js", b".aot.ts"),
-    (b".mjs", b".aot.mts"),
-    (b".cjs", b".aot.cts"),
+    (b".js", b".full.ts"),
+    (b".mjs", b".full.mts"),
+    (b".cjs", b".full.cts"),
 ];
 
 pub fn typed_path_beside(javascript: &[u8]) -> Option<Vec<u8>> {
@@ -5138,7 +5138,7 @@ pub fn typed_outputs(
                 .position(|(erased, written)| erased != written)
                 .unwrap_or_else(|| erased.len().min(output.javascript.len()));
             return Err(format!(
-                "{shown}: with its types erased the typed file differs from the JavaScript at offset {at}"
+                "{shown}: with its types erased the full-types file differs from the JavaScript at offset {at}"
             ));
         }
         found.push((typed_path, typed));
@@ -5146,7 +5146,7 @@ pub fn typed_outputs(
     Ok(found)
 }
 
-/// Why a program that installs the package would compile the JavaScript and leave the typed file unused. It is the
+/// Why a program that installs the package would compile the JavaScript and leave the full-types file unused. It is the
 /// program's own question, asked of the same two trees.
 pub fn why_programs_refuse(
     (typed_path, typed): (&[u8], &[u8]),

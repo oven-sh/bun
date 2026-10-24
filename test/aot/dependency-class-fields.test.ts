@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-test("the typed version of a package defines its fields, as the JavaScript it stands for does", async () => {
+test("the full types of a package defines its fields, as the JavaScript it stands for does", async () => {
   const javascript = `class Base { set z(v) { this.seen = v; } }\nexport class A extends Base { x; y = 1; }\nexport class B extends Base { z = 2; }\nexport function keys() { return Object.keys(new A()).join(",") + " " + Object.keys(new B()).join(","); }\n`;
   using dir = tempDir("aot-fields-of-a-typed-version", {
     "package.json": JSON.stringify({ name: "app" }),
@@ -48,7 +48,7 @@ test("the typed version of a package defines its fields, as the JavaScript it st
     exitCode: built,
   } = await run([bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", outfile], String(dir));
   expect({ errors: built ? errors : "", built }).toEqual({ errors: "", built: 0 });
-  expect(printed + errors).toContain("typed version");
+  expect(printed + errors).toContain("full types");
   const { stdout, exitCode } = await run([outfile], String(dir));
   expect({ stdout, exitCode }).toEqual({ stdout: "x,y z\n", exitCode: 0 });
 }, 120_000);

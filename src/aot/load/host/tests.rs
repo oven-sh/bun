@@ -763,7 +763,7 @@ fn typed_file_is_typescript_and_hidden_from_plugins() {
         };
         assert_eq!(host.typed_version(&installed, None), None);
         let typed = host.typed_version(&installed, Some(package));
-        let typed = typed.expect("a typed version");
+        let typed = typed.expect("full types");
         assert!(typed.ends_with(b"/.sound/p/lay/x.js"));
         assert_eq!(host.script_kind(&typed), Some(ScriptKind::Ts));
         assert_eq!(loader_of(host, &typed, None), BY_NAME);

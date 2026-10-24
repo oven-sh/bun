@@ -9,7 +9,7 @@ type Row = (&'static str, &'static str);
 
 const CHAIN_LENGTH: usize = 100_000;
 const NESTING_DEPTH: usize = 100_000;
-const PACKAGES_ROOT: &str = "packages/bun-sound";
+const PACKAGES_ROOT: &str = "packages/full-types";
 const SDK_VERSIONS: [&str; 2] = ["0.128.0", "0.112.1"];
 const SDK_FILES: [&str; 4] = [
     "core/streaming.mjs",
@@ -757,7 +757,7 @@ fn typed_packages() {
                 continue;
             };
             let typed_text = read_file(&root.join(typed_path))
-                .unwrap_or_else(|| panic!("{typed_path}: the typed version is missing"));
+                .unwrap_or_else(|| panic!("{typed_path}: the full types are missing"));
             let typed = parse_typed_version(w, &typescript_name(typed_path), &typed_text);
             let installed = w.parse(&source(&installed_path, &installed_text, false));
             let result = check_erasure(&typed, &installed);

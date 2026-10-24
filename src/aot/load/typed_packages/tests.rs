@@ -248,7 +248,7 @@ fn other_version_still_has_typed_files() {
         assert_eq!(found, Some(typed));
         let mismatch = fixture.packages.find_manifest_mismatch(package, &|_| None);
         let expected = b"it is for version 1.0.0, but 9.9.9 is installed. \
-                         Replace it with the typed version for 9.9.9, or remove it";
+                         Replace it with the full types for 9.9.9, or remove it";
         assert_eq!(mismatch.as_deref(), Some(&expected[..]));
     });
 }
@@ -370,14 +370,14 @@ fn shipped_version_directory_is_relative_to_project() {
     let project = Project::new("shipped_version");
     with_packages(&project, |fixture| {
         let packages = fixture.packages;
-        let typed = project.path("node_modules/s/dist/index.aot.ts");
+        let typed = project.path("node_modules/s/dist/index.full.ts");
         assert_eq!(packages.display_directory(&typed), b"node_modules/s/dist");
-        assert_eq!(packages.display_relative_path(&typed), b"index.aot.ts");
-        let outside_project = b"/other/s/index.aot.ts";
+        assert_eq!(packages.display_relative_path(&typed), b"index.full.ts");
+        let outside_project = b"/other/s/index.full.ts";
         assert_eq!(packages.display_directory(outside_project), b"/other/s");
         assert_eq!(
             packages.display_relative_path(outside_project),
-            b"index.aot.ts"
+            b"index.full.ts"
         );
     });
 }

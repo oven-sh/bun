@@ -66,9 +66,9 @@ decoder validates by itself. They are built with `go build` and `cargo build --r
 GOMAXPROCS=1 and SERVER_THREADS=1 in the environment make them run on one thread, like the JavaScript of the other servers.
 TanStack Start has two extra routes, the pages / ("static") and /items ("list"). The expected page is whatever the first process
 returned, with timestamps removed; under load only the length of a page is compared.
-`tanstack-typed` is the same program with `.sound/` beside it: the typed versions from packages/bun-sound of the packages it has
+`tanstack-typed` is the same program with `.sound/` beside it: the full types from packages/full-types of the packages it has
 installed (react, react-dom, seroval). Only an --aot build reads them. As a column it is held to the same pages as the plain one:
-`koa-typed`, `express-typed` and `fastify-typed` are those servers with the typed versions installed as packages, `node_modules/@oven/sound-<name>`, as `bun add -d` would.
+`koa-typed`, `express-typed` and `fastify-typed` are those servers with the full types installed as packages, `node_modules/@oven/sound-<name>`, as `bun add -d` would.
 
     python3 measure.py --servers tanstack --column aot=/path/to/bun:--aot --column typed=/path/to/bun:--aot@tanstack-typed --out rows.jsonl
 
@@ -681,8 +681,8 @@ def run_checked(command, **more):
 
 
 def add_typed_versions(folder, installed_as_packages=False):
-    """Copies the typed versions under packages/bun-sound that are for the installed versions to <folder>/.sound, or to <folder>/node_modules/@oven/sound-<name> as npm would install them. An --aot build finds them in both."""
-    typed_versions = os.path.join(HERE, "..", "..", "..", "..", "packages", "bun-sound")
+    """Copies the full types under packages/full-types that are for the installed versions to <folder>/.sound, or to <folder>/node_modules/@oven/sound-<name> as npm would install them. An --aot build finds them in both."""
+    typed_versions = os.path.join(HERE, "..", "..", "..", "..", "packages", "full-types")
     added = []
     for described in sorted(glob.glob(os.path.join(typed_versions, "*", "*", "sound.json")) + glob.glob(os.path.join(typed_versions, "@*", "*", "*", "sound.json"))):
         name, version = os.path.split(os.path.relpath(os.path.dirname(described), typed_versions))
@@ -695,8 +695,8 @@ def add_typed_versions(folder, installed_as_packages=False):
                 shutil.copy(os.path.join(os.path.dirname(described), "package.json"), target)
             added.append("%s %s" % (name, version))
     if not added:
-        sys.exit("no typed version under %s is for a version installed in %s" % (os.path.normpath(typed_versions), folder))
-    print("typed versions: " + ", ".join(added), flush=True)
+        sys.exit("no full types under %s is for a version installed in %s" % (os.path.normpath(typed_versions), folder))
+    print("full types: " + ", ".join(added), flush=True)
 
 
 @functools.lru_cache(maxsize=None)

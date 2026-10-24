@@ -405,6 +405,7 @@ mod written_files {
             root_directory: b"/project/src",
             entry_point_kind: OutputKind::EntryPoint,
             is_commonjs,
+            compiler_options: &Vec::new(),
         };
         let package_json = write_package_json(&request, &output_files, &mut log).expect("written");
         Written {

@@ -76,5 +76,5 @@ src/cli/init/tsconfig.default.json linguist-language=JSON-with-Comments
 
 # Every byte of these files is part of a CI image's name (scripts/build/ci-images/spec.ts).
 scripts/build/ci-images/** text eol=lf
-# Every byte of a typed version is pinned by a sha256.
-packages/bun-sound/** -text
+# Every byte of full types are pinned by a sha256.
+packages/full-types/** -text

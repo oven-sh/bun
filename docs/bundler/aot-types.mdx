@@ -257,7 +257,7 @@ number Ada
 TypeError: id: expected number, received string
 ```
 
-These two do throw. That's what they're for, and they throw under `bun run` too. If the data matches, the compiler trusts the result: `user.id` is one load from a known offset, with no guard.
+These two do throw. That's what they're for. Only the type checker knows what `T` expands to, so they work where it runs: `bun compile`, `bun run --aot` and `bun test --aot`. Under plain `bun run` the type argument is erased: see [Where it works](/bundler/validate#where-it-works). If the data matches, the compiler trusts the result: `user.id` is one load from a known offset, with no guard.
 
 [Validate data by its type](/bundler/validate) has the types they can check, the shape of the error, and rules such as a minimum length.
 
@@ -354,4 +354,4 @@ You rarely need `int32` for a local variable. The compiler infers the range of a
 ## See also
 
 - [Get more of your program typed](/bundler/aot-explain) explains the typed percentage and every cause that `--explain` reports.
-- [Typed versions of packages](/bundler/aot-libraries#add-types-to-a-package-you-dont-maintain) give a JavaScript package its types back, without changing its code.
+- [Full types of packages](/bundler/aot-libraries#add-types-to-a-package-you-dont-maintain) give a JavaScript package its types back, without changing its code.

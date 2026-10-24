@@ -6203,7 +6203,7 @@
     "windows": 4220,
     "windows-aarch64": 10020
   },
-  "bundler/compile-aot-bun-sound.test.ts": {
+  "bundler/compile-aot-full-types.test.ts": {
     "default": 166,
     "asan": 3260,
     "windows": 369,

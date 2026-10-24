@@ -141,7 +141,7 @@ async function add(dir: string, tarball: string) {
 
 const conditions = (stem: string) => ({
   types: `./${stem}.d.ts`,
-  "bun-aot": `./${stem}.aot.ts`,
+  "full-types": `./${stem}.full.ts`,
   default: `./${stem}.js`,
 });
 
@@ -171,6 +171,7 @@ const makers = {
             "./version": conditions("dist/version"),
             "./package.json": "./package.json",
           },
+          compilerOptions: { strict: true, lib: ["esnext", "dom"] },
           files: ["dist"],
         }),
       );
@@ -209,9 +210,9 @@ function problemsOf(folder: string) {
     if (keys.includes("types") && keys[0] !== "types") problems.push(`${where}: "types" is not the first condition`);
     if (keys.includes("default") && keys.at(-1) !== "default")
       problems.push(`${where}: "default" is not the last condition`);
-    const typed = keys.indexOf("bun-aot");
+    const typed = keys.indexOf("full-types");
     for (const key of typed < 0 ? [] : keys.slice(0, typed))
-      if (JAVASCRIPT_CONDITIONS.includes(key)) problems.push(`${where}: "bun-aot" comes after "${key}"`);
+      if (JAVASCRIPT_CONDITIONS.includes(key)) problems.push(`${where}: "full-types" comes after "${key}"`);
     for (const key of keys) visit((value as Record<string, unknown>)[key], `${where} > ${key}`);
   };
   for (const [subpath, value] of Object.entries(manifest.exports ?? {})) visit(value, subpath);
@@ -268,23 +269,23 @@ test("the rules find what is wrong with a package", () => {
       type: "commonjs",
       main: "./gone.js",
       exports: {
-        ".": { default: "./index.js", "bun-aot": "./index.aot.ts", types: "./index.d.ts" },
+        ".": { default: "./index.js", "full-types": "./index.full.ts", types: "./index.d.ts" },
         "./other": "other.js",
       },
       files: ["index.js", "index.d.ts", "other.js", "old.js"],
     }),
     "index.js": "export {};\n",
-    "index.aot.ts": "export {};\n",
+    "index.full.ts": "export {};\n",
     "index.d.ts": `export * from "./other";\nexport type Gone = import("./gone.js").Gone;\n`,
     "other.js": "",
   });
   expect(problemsOf(String(dir))).toEqual([
     `.: "types" is not the first condition`,
     `.: "default" is not the last condition`,
-    `.: "bun-aot" comes after "default"`,
+    `.: "full-types" comes after "default"`,
     `./other: other.js does not start with ./`,
     `./gone.js does not exist`,
-    `./index.aot.ts is not in "files"`,
+    `./index.full.ts is not in "files"`,
     `"files" lists old.js, which does not exist`,
     `index.d.ts imports ./other, which has no file extension`,
     `index.d.ts imports ./gone.js, which has no declaration file`,
@@ -303,14 +304,13 @@ describe.each(Object.entries(makers))("a package from %s", (_, maker) => {
   const readByBundlers = inPackage("index.js", "version.js");
   const written = [
     "area.d.ts",
-    "index.aot.ts",
     "index.d.ts",
+    "index.full.ts",
     "index.js",
     "point.d.ts",
     "tools/index.d.ts",
-    "tsconfig.json",
-    "version.aot.ts",
     "version.d.ts",
+    "version.full.ts",
     "version.js",
   ];
   const published = ["README.md", "package.json", ...written.map(path => maker.folder + path)].sort();
@@ -466,6 +466,7 @@ describe.concurrent("a package with ES modules and CommonJS, from two runs of bu
             require: { types: "./dist/cjs/version.d.ts", default: "./dist/cjs/version.js" },
           },
         },
+        compilerOptions: { strict: true, lib: ["esnext", "dom"] },
         files: ["dist"],
       }),
     );
@@ -476,7 +477,7 @@ describe.concurrent("a package with ES modules and CommonJS, from two runs of bu
     });
     expect(await bun(library, "build", ...entryPoints, "--outdir", "dist/cjs", "--dts", "--format=cjs")).toMatchObject({
       stderr:
-        "warn: the typed JavaScript that bun compile compiles a package from is left out: it does not support --format other than esm yet\n",
+        "warn: the full types that bun compile compiles a package from are left out: it does not support --format other than esm yet\n",
       exitCode: 0,
     });
     writeFileSync(join(library, "dist/cjs/package.json"), JSON.stringify({ type: "commonjs" }));
@@ -576,17 +577,17 @@ describe.concurrent("a package from bun compile --library --format=cjs", () => {
   });
 });
 
-describe.concurrent("the file under the bun-aot condition", () => {
+describe.concurrent("the file under the full-types condition", () => {
   const files = {
     "package.json": JSON.stringify({ name: "app", private: true, type: "module" }),
     "node_modules/tells/package.json": JSON.stringify({
       name: "tells",
       version: "1.0.0",
       type: "module",
-      exports: { ".": { types: "./index.d.ts", "bun-aot": "./index.aot.ts", default: "./index.js" } },
+      exports: { ".": { types: "./index.d.ts", "full-types": "./index.full.ts", default: "./index.js" } },
     }),
     "node_modules/tells/index.js": `export const read = "index.js";\n`,
-    "node_modules/tells/index.aot.ts": `export const read: string = "index.aot.ts";\n`,
+    "node_modules/tells/index.full.ts": `export const read: string = "index.full.ts";\n`,
     "node_modules/tells/index.d.ts": `export declare const read: string;\n`,
     "app.ts": `import { read } from "tells";\nconsole.log(read);\n`,
     "app.mjs": `import { read } from "tells";\nconsole.log(read);\n`,
@@ -635,11 +636,11 @@ describe.concurrent("the file under the bun-aot condition", () => {
     expect(await bun(String(dir), "out.js")).toEqual(javascript);
   });
 
-  test("is what --conditions=bun-aot asks for", async () => {
+  test("is what --conditions=full-types asks for", async () => {
     using dir = tempDir("library-condition-asked-for", files);
-    expect(await bun(String(dir), "--conditions=bun-aot", "app.ts")).toEqual({
+    expect(await bun(String(dir), "--conditions=full-types", "app.ts")).toEqual({
       ...javascript,
-      stdout: "index.aot.ts\n",
+      stdout: "index.full.ts\n",
     });
   });
 });

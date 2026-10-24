@@ -1,4 +1,4 @@
-// A program like a terminal application on the typed react-reconciler of packages/bun-sound: a transcript of memoized messages, a status line that reads a context, and a spinner deep in the tree.
+// A program like a terminal application on the typed react-reconciler of packages/full-types: a transcript of memoized messages, a status line that reads a context, and a spinner deep in the tree.
 // A turn is what such an application does many times a second: one state update deep in the tree, rendered and committed. Every fifth turn a message arrives and the oldest leaves.
 // The arguments behind the first are numbers of turns. After each of them the program marks the place for ../instruction-counts/count-instructions.ts.
 import createReconciler from "react-reconciler";

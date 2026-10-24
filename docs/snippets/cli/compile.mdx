@@ -75,10 +75,10 @@ Builds a package to publish instead of an executable. It writes into `--outdir`:
 
 - the JavaScript (ES modules), which any runtime or bundler can use
 - `.d.ts` files, for `tsc` and `bun check`
-- each JavaScript file once more with its types kept (`index.aot.ts`), which `bun compile` compiles in place of the
+- each JavaScript file once more with its types kept (`index.full.ts`), which `bun compile` compiles in place of the
   JavaScript
 - a `package.json` made from the project's own: `main`, `module`, `types`, `exports` and `files` name what was written,
-  the `"bun-aot"` condition names the typed files, and `scripts`, `devDependencies`, `private` and `workspaces` are
+  the `"full-types"` condition names the full-types files, and `scripts`, `devDependencies`, `private` and `workspaces` are
   left out
 - the project's `README` and `LICENSE`
 
@@ -88,7 +88,7 @@ Without an entry point, it builds the TypeScript files that `"exports"` in `pack
 `"main"` if that is a TypeScript file, then `index.ts` or `src/index.ts`.
 
 The sources can be plain JavaScript. The `.d.ts` files are then inferred from the code and its JSDoc comments, one for
-each source file, and there is no typed file.
+each source file, and there is no full-types file.
 
 <ParamField path="--library" type="boolean">
   Build a package to publish instead of an executable

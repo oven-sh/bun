@@ -483,7 +483,7 @@ fn on_disk_project_compiles_typed_version() {
         })
     });
     let [typed_path] = typed_paths.as_slice() else {
-        panic!("{} files have a typed version", typed_paths.len());
+        panic!("{} files have full types", typed_paths.len());
     };
     assert!(typed_path.ends_with(b"/.sound/p/lay/x.js"));
 }

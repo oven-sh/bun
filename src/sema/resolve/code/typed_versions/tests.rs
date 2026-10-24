@@ -41,27 +41,27 @@ fn subpaths_of(exports: &str, file: &str) -> String {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn condition_is_found_at_any_depth() {
-    let has = |json| with_exports(json, |exports| has_condition(exports, b"bun-aot"));
-    assert!(has(r#"{"bun-aot": "./a.ts"}"#));
-    assert!(has(r#"{"./a": [{"node": {"bun-aot": null}}]}"#));
-    assert!(!has(r#""bun-aot""#));
+    let has = |json| with_exports(json, |exports| has_condition(exports, b"full-types"));
+    assert!(has(r#"{"full-types": "./a.ts"}"#));
+    assert!(has(r#"{"./a": [{"node": {"full-types": null}}]}"#));
+    assert!(!has(r#""full-types""#));
     assert!(!has(
-        r#"{"./bun-aot": ["bun-aot"], "./a": {"default": "./bun-aot"}}"#
+        r#"{"./full-types": ["full-types"], "./a": {"default": "./full-types"}}"#
     ));
-    assert!(!has(r#"{"bun-aot": "./a.ts", "./a": "./a.js"}"#));
+    assert!(!has(r#"{"full-types": "./a.ts", "./a": "./a.js"}"#));
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
 fn condition_is_compared_with_whole_key() {
     let has = |condition: &[u8]| {
-        with_exports(r#"{"bun-aot": "./a.ts"}"#, |exports| {
+        with_exports(r#"{"full-types": "./a.ts"}"#, |exports| {
             has_condition(exports, condition)
         })
     };
-    assert!(has(b"bun-aot"));
+    assert!(has(b"full-types"));
     assert!(!has(b"bun"));
-    assert!(!has(b"bun-aot-2"));
+    assert!(!has(b"full-types-2"));
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn exported_subpaths_start_at_package_root() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn expansion_key_names_subpath_of_matching_file() {
-    let pattern = r#"{"./f/*.js": {"bun-aot": "./typed/*.ts", "default": "./dist/*.js"}}"#;
+    let pattern = r#"{"./f/*.js": {"full-types": "./typed/*.ts", "default": "./dist/*.js"}}"#;
     assert_eq!(subpaths_of(pattern, "dist/a/b.js"), ". ./f/a/b.js");
     assert_eq!(subpaths_of(pattern, "typed/a/b.ts"), ". ./f/a/b.js");
     assert_eq!(subpaths_of(pattern, "src/a/b.js"), ".");
@@ -164,8 +164,8 @@ fn package_exports_are_searched_up_to_node_modules() {
 fn typed_export_is_other_file_of_same_subpath() {
     let manifest = r#"{
         "exports": {
-            ".": {"bun-aot": "./typed.ts", "default": "./index.js"},
-            "./same": {"bun-aot": "./same.js", "default": "./same.js"},
+            ".": {"full-types": "./typed.ts", "default": "./index.js"},
+            "./same": {"full-types": "./same.js", "default": "./same.js"},
             "./untyped": "./untyped.js"
         }
     }"#;
@@ -177,7 +177,7 @@ fn typed_export_is_other_file_of_same_subpath() {
         ("/p/node_modules/pkg/untyped.js", ""),
     ]);
     with_resolver(&host, |resolver| {
-        let find = |path: &[u8]| resolver.find_typed_export(path, b"bun-aot");
+        let find = |path: &[u8]| resolver.find_typed_export(path, b"full-types");
         let index: &[u8] = b"/p/node_modules/pkg/index.js";
         let typed = TypedExport::File(b"/p/node_modules/pkg/typed.ts".to_vec());
         assert_eq!(find(index), Some(typed));

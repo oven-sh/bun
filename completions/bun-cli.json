@@ -4663,7 +4663,7 @@
         },
         {
           "name": "dts",
-          "description": "Write declaration files (.d.ts), and each output file with its types kept (.aot.ts), to --outdir. Implies --check",
+          "description": "Write declaration files (.d.ts), and each output file with its types kept (.full.ts), to --outdir. Implies --check",
           "hasValue": false,
           "required": false,
           "multiple": false

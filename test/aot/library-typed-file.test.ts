@@ -46,7 +46,7 @@ console.log(total([{ kind: "square", size: 2 }, { kind: "circle", size: 1 }]), v
 };
 
 const env = { ...bunEnv, NO_COLOR: "1" };
-const USED = 'note: "shapes" 1.2.3 is compiled from its typed version in node_modules/shapes';
+const USED = 'note: "shapes" 1.2.3 is compiled from its full types in node_modules/shapes';
 
 async function install(root: string) {
   const built = await spawned(
@@ -68,7 +68,7 @@ async function compile(root: string) {
 
 describe.concurrent("a program compiled against a package that bun compile --library wrote", () => {
   test(
-    "uses the typed files of every entry point, without any setup",
+    "uses the full-types files of every entry point, without any setup",
     () =>
       slot(async () => {
         using dir = tempDir("aot-library-typed-file", library);
@@ -86,7 +86,7 @@ describe.concurrent("a program compiled against a package that bun compile --lib
     ["is not strict", { strict: false, skipLibCheck: true, target: "es2017", lib: ["es2017", "dom"] }],
     ["asks for more than strict", { strict: true, noUncheckedIndexedAccess: true, noImplicitOverride: true }],
   ])(
-    "an application whose tsconfig.json %s gets the same typed files",
+    "an application whose tsconfig.json %s gets the same full-types files",
     (_, compilerOptions) =>
       slot(async () => {
         using dir = tempDir("aot-library-typed-file-options", {
@@ -119,7 +119,7 @@ describe.concurrent("a program compiled against a package that bun compile --lib
       'const other: { shape?: { size: unknown } } = { shape };\n  if ((other.shape?.size as number | undefined)?.toFixed() === "") return 0;\n  return shape',
     ],
   ])(
-    "%s keeps the typed files in use",
+    "%s keeps the full-types files in use",
     (_, replacement) =>
       slot(async () => {
         using dir = tempDir("aot-library-typed-file-printed-otherwise", {
@@ -133,7 +133,7 @@ describe.concurrent("a program compiled against a package that bun compile --lib
   );
 
   test(
-    "a namespace that holds nothing but types keeps the typed files in use",
+    "a namespace that holds nothing but types keeps the full-types files in use",
     () =>
       slot(async () => {
         using dir = tempDir("aot-library-typed-file-namespace-of-types", {
@@ -170,7 +170,7 @@ export function area(shape: Shape): Sizes.Size {
         writeFileSync(path, readFileSync(path, "utf8").replace("3 * shape.size", "4 * shape.size"));
         expect(await compile(String(dir))).toEqual({
           said: [
-            `warn: "shapes" is compiled without types, because its typed version in node_modules/shapes can't be used: index.aot.ts without its types doesn't match index.js. Was the package patched?`,
+            `warn: "shapes" is compiled without types, because its full types in node_modules/shapes can't be used: index.full.ts without its types doesn't match index.js. Was the package patched?`,
           ],
           exitCode: 0,
           signal: null,

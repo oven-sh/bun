@@ -337,7 +337,7 @@ test.each([
     "typed",
   ],
 ])(
-  "bun check --aot says of a typed version %s what the build says",
+  "bun check --aot says of full types %s what the build says",
   async (_, javascript, typed, expected, outcome) => {
     using dir = tempDir("aot-dependency-typed-version", {
       "package.json": JSON.stringify({ name: "app" }),
@@ -372,7 +372,7 @@ test.each([
       build: outcome !== "stops",
       check: outcome !== "stops",
     });
-    expect(checked.said.includes(`"shapes" 1.0.0 is compiled from its typed version in .sound/shapes`)).toBe(
+    expect(checked.said.includes(`"shapes" 1.0.0 is compiled from its full types in .sound/shapes`)).toBe(
       outcome !== "untyped",
     );
   },
@@ -383,7 +383,7 @@ test.each([
   ["for a build with a define", { "process.env.NODE_ENV": "production" }, "index.d.ts"],
   ["of a package whose declarations are in @types", {}, "../@types/shapes/index.d.ts"],
 ])(
-  "bun check --aot reads a typed version %s",
+  "bun check --aot reads full types %s",
   async (_, when, declarations) => {
     using dir = tempDir("aot-dependency-typed-version", {
       "package.json": JSON.stringify({ name: "app" }),

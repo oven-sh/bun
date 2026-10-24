@@ -361,6 +361,7 @@ impl JSBundleCompletionTask {
                     conditions: config.conditions.keys(),
                     loaders: &declarations.loaders,
                     drops_source_maps: declarations.drops_source_maps,
+                    writes_package_json: false,
                 };
                 compile_command::add_typed_files(&request, &mut self.log, output_files);
             } else {

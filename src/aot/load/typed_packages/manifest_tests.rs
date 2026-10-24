@@ -11,12 +11,12 @@ const UNSUPPORTED_FORMAT: &str =
     "this version of Bun doesn't support the \"sound\" version in its sound.json";
 const INVALID_NEEDS: &str = "\"needs\" in its sound.json must be a list of package names";
 const EMPTY_LAY: &str = "\"lay\" in its sound.json is empty";
-const ADDS_FILE: &str = "it adds y.ts, and a typed version can only replace installed files";
+const ADDS_FILE: &str = "it adds y.ts, and full types can only replace installed files";
 const OTHER_VERSION: &str = "it is for version 1.0.0, but 1.0.1 is installed. \
-                             Replace it with the typed version for 1.0.1, or remove it";
+                             Replace it with the full types for 1.0.1, or remove it";
 const NEEDS_PRODUCTION: &str = "it needs process.env.NODE_ENV to be defined as \"production\". \
                                 Pass --define 'process.env.NODE_ENV=\"production\"'";
-const NEEDS_Q: &str = "it needs the typed version of \"q\", which is not used";
+const NEEDS_Q: &str = "it needs the full types of \"q\", which is not used";
 
 struct Project {
     directory: TemporaryDirectory,
@@ -300,7 +300,7 @@ fn need_of_needed_package_counts() {
     project.install("node_modules/q", "q", "1.0.0");
     project.add_typed_version("p", &manifest("p", r#","needs":["q"]"#));
     project.add_typed_version("q", &manifest("q", r#","needs":["r"]"#));
-    let needs_r = "it needs the typed version of \"r\", which is not used";
+    let needs_r = "it needs the full types of \"r\", which is not used";
     assert_eq!(project.find_mismatch(P, &[]).as_deref(), Some(needs_r));
     project.install("node_modules/r", "r", "1.0.0");
     project.add_typed_version("r", &manifest("r", ""));

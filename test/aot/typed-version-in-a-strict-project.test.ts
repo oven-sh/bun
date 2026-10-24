@@ -42,7 +42,7 @@ async function build(folder: string) {
   return { errors, exitCode, signal };
 }
 
-describe("a typed version of a package without declarations, in a strict project", () => {
+describe("full types of a package without declarations, in a strict project", () => {
   test(
     "the importer needs no declaration file",
     () =>
@@ -70,7 +70,7 @@ describe("a typed version of a package without declarations, in a strict project
   );
 
   test(
-    "a typed version that is rejected declares nothing",
+    "full types that is rejected declares nothing",
     () =>
       slot(async () => {
         using dir = project(`import { add } from "adder";\nconsole.log(add(1, 2));\n`, typed.replace("a + b", "a - b"));

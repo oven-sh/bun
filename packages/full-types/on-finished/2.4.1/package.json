@@ -1,0 +1,15 @@
+{
+  "name": "@oven/sound-on-finished",
+  "version": "2.4.1",
+  "description": "Full types for on-finished 2.4.1: npm's own code with types added and nothing else changed, for `bun build --compile --aot`.",
+  "license": "MIT",
+  "peerDependencies": {
+    "on-finished": "2.4.1"
+  },
+  "files": [
+    "sound.json",
+    "lay",
+    "LICENSE",
+    "NOTICE"
+  ]
+}

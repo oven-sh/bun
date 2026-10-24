@@ -135,10 +135,10 @@ const setManifest = (overrides: object) => (folder: string) =>
 
 const runProject = (folder: string, flags: string[] = []) => run(folder, "main.ts", flags, "6");
 
-// The argument is a string where the typed version declares a number. The call takes the slow path, so both versions print the same.
+// The argument is a string where the full types declares a number. The call takes the slow path, so both versions print the same.
 const PRINTED = "42 26\n";
-const USED = '"shapes" 1.2.3 is compiled from its typed version in .sound/shapes';
-const unused = (reason: string) => `TS100056: The typed version of "shapes" in .sound/shapes can't be used: ${reason}`;
+const USED = '"shapes" 1.2.3 is compiled from its full types in .sound/shapes';
+const unused = (reason: string) => `TS100056: The full types of "shapes" in .sound/shapes can't be used: ${reason}`;
 
 const usesTypedVersion = { errors: [], warnings: [], notes: [USED], exitCode: 0, stdout: PRINTED };
 const compilesAsInstalled = { errors: [], warnings: [], notes: [], exitCode: 0, stdout: PRINTED };
@@ -148,7 +148,7 @@ const PRODUCTION_ONLY = { when: { "process.env.NODE_ENV": "production" } };
 const defineNodeEnv = (value: string) => ["--define", `process.env.NODE_ENV="${value}"`];
 
 const NEEDS_PRODUCTION = `it needs process.env.NODE_ENV to be defined as "production". Pass --define 'process.env.NODE_ENV="production"'`;
-const NEEDS_OTHER = 'it needs the typed version of "other", which is not used';
+const NEEDS_OTHER = 'it needs the full types of "other", which is not used';
 const UNSUPPORTED_FORMAT = `this version of Bun doesn't support the "sound" version in its sound.json`;
 const ERASURE_DIFFERS = "lay/perimeter.js without its types doesn't match perimeter.js. Was the package patched?";
 const EMITS_CODE = "in lay/perimeter.js, TypeScript syntax that emits code can't be erased";
@@ -159,11 +159,11 @@ const mismatches: Mismatch[] = [
   [
     "a different version is installed",
     folder => write(folder, "node_modules/shapes/package.json", installed["package.json"].replace("1.2.3", "1.2.4")),
-    "it is for version 1.2.3, but 1.2.4 is installed. Replace it with the typed version for 1.2.4, or remove it",
+    "it is for version 1.2.3, but 1.2.4 is installed. Replace it with the full types for 1.2.4, or remove it",
   ],
   ["the required define is missing", setManifest(PRODUCTION_ONLY), NEEDS_PRODUCTION],
   ["the required define has another value", setManifest(PRODUCTION_ONLY), NEEDS_PRODUCTION, defineNodeEnv("staging")],
-  ["a needed typed version is missing", setManifest({ needs: ["other"] }), NEEDS_OTHER],
+  ["a needed full types are missing", setManifest({ needs: ["other"] }), NEEDS_OTHER],
   ["format 1", setManifest({ sound: 1 }), UNSUPPORTED_FORMAT],
   ["an unknown format", setManifest({ sound: 99 }), UNSUPPORTED_FORMAT],
   [
@@ -172,10 +172,10 @@ const mismatches: Mismatch[] = [
       setManifest({ lay: { ...manifest().lay, "extra.ts": "new" } })(folder);
       write(folder, ".sound/shapes/lay/extra.ts", "export {};\n");
     },
-    "it adds extra.ts, and a typed version can only replace installed files",
+    "it adds extra.ts, and full types can only replace installed files",
   ],
   [
-    "a typed file is missing",
+    "a full-types file is missing",
     folder => rmSync(join(folder, ".sound/shapes/lay/perimeter.js")),
     "lay/perimeter.js is missing",
   ],
@@ -223,7 +223,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   );
 
   test(
-    "no typed version",
+    "no full types",
     () =>
       slot(async () => {
         using dir = tempDir("aot-typed-packages", project(null));
@@ -233,7 +233,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   );
 
   test(
-    "a typed version of a package the program never loads is ignored",
+    "full types of a package the program never loads is ignored",
     () =>
       slot(async () => {
         using dir = tempDir("aot-typed-packages", { ...project(), ".sound/unused/sound.json": "{" });
@@ -288,7 +288,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   );
 
   const INSTALLED_FOLDER = "node_modules/@oven/sound-shapes";
-  const USED_INSTALLED = `"shapes" 1.2.3 is compiled from its typed version in ${INSTALLED_FOLDER}`;
+  const USED_INSTALLED = `"shapes" 1.2.3 is compiled from its full types in ${INSTALLED_FOLDER}`;
   const installedTypedVersion = (sound: object = manifest()): Files => ({
     [`${INSTALLED_FOLDER}/package.json`]: JSON.stringify({
       name: "@oven/sound-shapes",
@@ -301,7 +301,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   });
 
   test(
-    "a typed version that is installed as a package of its own is used",
+    "full types that is installed as a package of its own is used",
     () =>
       slot(async () => {
         using dir = tempDir("aot-typed-packages", { ...project(null), ...installedTypedVersion() });
@@ -316,7 +316,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   );
 
   test(
-    "an installed typed version is found from a folder below the one that has node_modules",
+    "installed full types are found from a folder below the one that has node_modules",
     () =>
       slot(async () => {
         const { "main.ts": main, "tsconfig.json": config, ...rest } = project(null);
@@ -330,14 +330,14 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
         const result = await runProject(join(String(dir), "packages", "app"));
         expect(result).toMatchObject({ errors: [], warnings: [], exitCode: 0, stdout: PRINTED });
         expect(result.notes).toEqual([
-          expect.stringMatching(/^"shapes" 1\.2\.3 is compiled from its typed version in .*@oven.sound-shapes$/),
+          expect.stringMatching(/^"shapes" 1\.2\.3 is compiled from its full types in .*@oven.sound-shapes$/),
         ]);
       }),
     600_000,
   );
 
   test(
-    "the installed typed version of a scoped package",
+    "the installed full types of a scoped package",
     () =>
       slot(async () => {
         const text = "export function twice(n) {\n  return n * 2;\n}\n";
@@ -365,7 +365,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
         expect(await runProject(String(dir))).toMatchObject({
           errors: [],
           warnings: [],
-          notes: ['"@forms/double" 2.0.0 is compiled from its typed version in node_modules/@oven/sound-forms__double'],
+          notes: ['"@forms/double" 2.0.0 is compiled from its full types in node_modules/@oven/sound-forms__double'],
           exitCode: 0,
           stdout: "12\n",
         });
@@ -374,10 +374,10 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   );
 
   const unusedInstalled = (reason: string) =>
-    `TS100056: The typed version of "shapes" in ${INSTALLED_FOLDER} can't be used: ${reason}`;
+    `TS100056: The full types of "shapes" in ${INSTALLED_FOLDER} can't be used: ${reason}`;
 
   test(
-    "an installed typed version for another version of the package is not used",
+    "installed full types for another version of the package is not used",
     () =>
       slot(async () => {
         using dir = tempDir("aot-typed-packages", {
@@ -385,7 +385,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
           ...installedTypedVersion(manifest({ version: "1.2.2" })),
         });
         const reason =
-          "it is for version 1.2.2, but 1.2.3 is installed. Replace it with the typed version for 1.2.3, or remove it";
+          "it is for version 1.2.2, but 1.2.3 is installed. Replace it with the full types for 1.2.3, or remove it";
         expect(await runProject(String(dir))).toMatchObject({
           ...compilesAsInstalled,
           warnings: [unusedInstalled(reason)],
@@ -395,7 +395,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   );
 
   test.each(rejectedFiles)(
-    "erasure rejects one file of an installed typed version: %s",
+    "erasure rejects one file of installed full types: %s",
     (_, text, reason) =>
       slot(async () => {
         using dir = tempDir("aot-typed-packages", {
@@ -412,7 +412,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   );
 
   test(
-    "an installed typed version with a type error costs the package its types, not the build",
+    "installed full types with a type error costs the package its types, not the build",
     () =>
       slot(async () => {
         using dir = tempDir("aot-typed-packages", {
@@ -428,7 +428,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   );
 
   test(
-    "the project's typed version counts before an installed one",
+    "the project's full types counts before an installed one",
     () =>
       slot(async () => {
         using dir = tempDir("aot-typed-packages", { ...project(), ...installedTypedVersion({}) });
@@ -438,26 +438,26 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   );
 
   test(
-    "the typed file that a package ships counts before an installed typed version",
+    "the full-types file that a package ships counts before installed full types",
     () =>
       slot(async () => {
         const shipped = JSON.stringify({
           ...JSON.parse(installed["package.json"]),
           exports: {
             ".": { types: "./index.d.ts", default: "./index.js" },
-            "./area.js": { "bun-aot": "./area.aot.ts", default: "./area.js" },
+            "./area.js": { "full-types": "./area.full.ts", default: "./area.js" },
           },
         });
         using dir = tempDir("aot-typed-packages", {
           ...project(null),
           ...installedTypedVersion(),
           "node_modules/shapes/package.json": shipped,
-          "node_modules/shapes/area.aot.ts": typed["area.js"],
+          "node_modules/shapes/area.full.ts": typed["area.js"],
           [`${INSTALLED_FOLDER}/lay/area.js`]: "enum Kind { A }\n",
         });
         expect(await runProject(String(dir))).toMatchObject({
           ...usesTypedVersion,
-          notes: [USED_INSTALLED, '"shapes" 1.2.3 is compiled from its typed version in node_modules/shapes'],
+          notes: [USED_INSTALLED, '"shapes" 1.2.3 is compiled from its full types in node_modules/shapes'],
         });
       }),
     600_000,
@@ -475,7 +475,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   );
 
   test(
-    "a typed file imports a file of the package that has no typed version",
+    "a full-types file imports a file of the package that has no full types",
     () =>
       slot(async () => {
         const area = 'import { scale } from "./scale.js";\n' + installed["area.js"].replace("w * h", "w * h * scale");
@@ -492,7 +492,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   );
 
   test(
-    "the text of a function of a typed version is the installed file's",
+    "the text of a function of full types are the installed file's",
     () =>
       slot(async () => {
         const texts = "\nexport const texts = () => [area, texts, class Box { get() {} }].map(String);\n";
@@ -547,7 +547,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   });
 
   test(
-    "what the project asks of its own text beyond strict is not asked of a typed version",
+    "what the project asks of its own text beyond strict is not asked of full types",
     () =>
       slot(async () => {
         using dir = tempDir("aot-typed-packages", withElementReads({}, stricterThanStrict));
@@ -557,7 +557,7 @@ describe.concurrent("compile/aot/load/typed-packages", () => {
   );
 
   test(
-    "a typed version is checked under the options that its sound.json states",
+    "full types are checked under the options that its sound.json states",
     () =>
       slot(async () => {
         const sound = { compilerOptions: { strict: true, noUncheckedIndexedAccess: true } };

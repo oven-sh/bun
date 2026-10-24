@@ -1,5 +1,5 @@
-// The typed versions of public packages under packages/bun-sound (react-dom, react-reconciler, seroval ..) are compiled
-// into large programs and compared with the original packages: packages/bun-sound/run.py, whose top says what it checks. Beside the
+// The full types of public packages under packages/full-types (react-dom, react-reconciler, seroval ..) are compiled
+// into large programs and compared with the original packages: packages/full-types/run.py, whose top says what it checks. Beside the
 // answers it checks that a typed package is still compiled as typed: a change in the compiler can make one fall back to untyped
 // code with every answer right, and nothing else notices.
 //
@@ -36,7 +36,7 @@ else {
           cmd: [
             python!,
             "-B",
-            join(import.meta.dir, "..", "..", "packages", "bun-sound", "run.py"),
+            join(import.meta.dir, "..", "..", "packages", "full-types", "run.py"),
             step,
             bunExe(),
             modules!,

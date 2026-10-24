@@ -37,7 +37,7 @@ fn rejection_by(host: &StatementsHost, typed_path: &str) -> (ErasureMismatchKind
             Some(TypedVersionOrigin::Host)
         );
         let rejected = analyzed.rejected_typed_version;
-        let rejected = rejected.expect("the typed version is rejected");
+        let rejected = rejected.expect("the full types are rejected");
         assert_eq!(rejected.path, typed_path.as_bytes());
         (rejected.kind, rejected.installed_range)
     })

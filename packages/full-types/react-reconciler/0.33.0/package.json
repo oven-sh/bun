@@ -1,0 +1,15 @@
+{
+  "name": "@oven/sound-react-reconciler",
+  "version": "0.33.0",
+  "description": "Full types for react-reconciler 0.33.0: npm's own code with types added and nothing else changed, for `bun build --compile --aot`.",
+  "license": "MIT",
+  "peerDependencies": {
+    "react-reconciler": "0.33.0"
+  },
+  "files": [
+    "sound.json",
+    "lay",
+    "LICENSE",
+    "NOTICE"
+  ]
+}

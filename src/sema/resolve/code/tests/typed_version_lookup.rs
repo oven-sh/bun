@@ -4,15 +4,15 @@ use super::*;
 const TYPED: &str = "/p/node_modules/pkg/typed.ts";
 const DIST_MANIFEST: &str = "/p/node_modules/pkg/dist/package.json";
 const DIST_FILE: &str = "/p/node_modules/pkg/dist/index.js";
-const DIST_TYPED_FILE: &str = "/p/node_modules/pkg/dist/index.aot.ts";
+const DIST_TYPED_FILE: &str = "/p/node_modules/pkg/dist/index.full.ts";
 const DIST_OTHER_FILE: &str = "/p/node_modules/pkg/dist/other.js";
 const MAIN_IN_DIST: &str = r#"{"name": "pkg", "version": "1.0.0", "main": "dist/index.js"}"#;
 const DIST_TYPED_EXPORTS: &str =
-    r#"{"exports": {".": {"bun-aot": "./index.aot.ts", "default": "./index.js"}}}"#;
+    r#"{"exports": {".": {"full-types": "./index.full.ts", "default": "./index.js"}}}"#;
 const TYPED_EXPORTS: &str = r#"{
     "name": "pkg", "version": "1.0.0",
     "exports": {
-        ".": {"bun-aot": "./typed.ts", "default": "./index.js"},
+        ".": {"full-types": "./typed.ts", "default": "./index.js"},
         "./index.js": "./index.js"
     }
 }"#;
@@ -177,18 +177,18 @@ fn nearest_manifest_with_exports_names_typed_version() {
     let typed = by(FromPackage, DIST_TYPED_FILE);
     let exports_in_dist = r#"{"exports": {".": {"import": "./dist/index.js"}}}"#;
     let other_typed_version =
-        r#"{"exports": {".": {"bun-aot": "./dist/other.js", "default": "./dist/index.js"}}}"#;
+        r#"{"exports": {".": {"full-types": "./dist/other.js", "default": "./dist/index.js"}}}"#;
     for manifest in [MAIN_IN_DIST, exports_in_dist, other_typed_version] {
         let found = dist_typed_version(manifest, DIST_TYPED_EXPORTS);
         assert_eq!(found, typed, "{manifest}");
     }
     let dist_manifests = [
-        r#"{"exports": {"bun-aot": "./index.aot.ts", "default": "./index.js"}}"#,
-        r#"{"exports": [{"bun-aot": "./index.aot.ts"}, "./index.js"]}"#,
-        r#"{"exports": {".": [{"node": {"bun-aot": "./index.aot.ts"}}, "./index.js"]}}"#,
+        r#"{"exports": {"full-types": "./index.full.ts", "default": "./index.js"}}"#,
+        r#"{"exports": [{"full-types": "./index.full.ts"}, "./index.js"]}"#,
+        r#"{"exports": {".": [{"node": {"full-types": "./index.full.ts"}}, "./index.js"]}}"#,
         r#"{"exports": {
             "./other": "./other.js",
-            "./main": {"bun-aot": "./index.aot.ts", "default": "./index.js"}
+            "./main": {"full-types": "./index.full.ts", "default": "./index.js"}
         }}"#,
     ];
     for dist_manifest in dist_manifests {
@@ -201,7 +201,7 @@ fn nearest_manifest_with_exports_names_typed_version() {
 #[cfg_attr(miri, ignore)]
 fn manifest_without_exports_does_not_hide_package_exports() {
     let manifest = r#"{
-        "exports": {".": {"bun-aot": "./dist/index.aot.ts", "default": "./dist/index.js"}}
+        "exports": {".": {"full-types": "./dist/index.full.ts", "default": "./dist/index.js"}}
     }"#;
     let found = dist_typed_version(manifest, r#"{"type": "module"}"#);
     assert_eq!(found, by(FromPackage, DIST_TYPED_FILE));
@@ -213,10 +213,10 @@ fn manifest_must_export_file_and_other_typed_file() {
     let dist_manifests = [
         r#"{"name": "dist"}"#,
         r#"{"exports": {".": "./index.js"}}"#,
-        r#"{"exports": {".": {"bun-aot": "./index.aot.ts", "default": "./other.js"}}}"#,
-        r#"{"exports": {".": {"bun-aot": "./index.js", "default": "./index.js"}}}"#,
-        r#"{"exports": {".": {"bun-aot": null, "default": "./index.js"}}}"#,
-        r#"{"exports": {"./bun-aot": "./index.aot.ts", ".": {"default": "./index.js"}}}"#,
+        r#"{"exports": {".": {"full-types": "./index.full.ts", "default": "./other.js"}}}"#,
+        r#"{"exports": {".": {"full-types": "./index.js", "default": "./index.js"}}}"#,
+        r#"{"exports": {".": {"full-types": null, "default": "./index.js"}}}"#,
+        r#"{"exports": {"./full-types": "./index.full.ts", ".": {"default": "./index.js"}}}"#,
     ];
     for dist_manifest in dist_manifests {
         let found = dist_typed_version(MAIN_IN_DIST, dist_manifest);
@@ -228,11 +228,11 @@ fn manifest_must_export_file_and_other_typed_file() {
 #[cfg_attr(miri, ignore)]
 fn typed_file_that_condition_names_can_be_missing() {
     let dist_manifest =
-        r#"{"exports": {".": {"bun-aot": "./missing.aot.ts", "default": "./index.js"}}}"#;
+        r#"{"exports": {".": {"full-types": "./missing.full.ts", "default": "./index.js"}}}"#;
     let host = package_with_dist(MAIN_IN_DIST, dist_manifest);
     with_resolver(&host, &bun_run(), |resolver| {
         let typed = resolver.typed_version_of(DIST_FILE.as_bytes()).unwrap();
-        assert_eq!(text(typed.path), "/p/node_modules/pkg/dist/missing.aot.ts");
+        assert_eq!(text(typed.path), "/p/node_modules/pkg/dist/missing.full.ts");
         assert!(typed.is_missing);
     });
     let host = package_with_dist(MAIN_IN_DIST, DIST_TYPED_EXPORTS);
@@ -257,7 +257,7 @@ fn unexported_file_has_no_typed_version() {
 #[cfg_attr(miri, ignore)]
 fn pattern_key_names_typed_version() {
     let manifest = r#"{
-        "exports": {"./*": {"bun-aot": "./typed/*.ts", "default": "./dist/*.js"}}
+        "exports": {"./*": {"full-types": "./typed/*.ts", "default": "./dist/*.js"}}
     }"#;
     let names = [
         "dist/a/b.js",
@@ -279,7 +279,7 @@ fn pattern_key_names_typed_version() {
 #[cfg_attr(miri, ignore)]
 fn directory_key_names_typed_version() {
     let manifest = r#"{
-        "exports": {"./lib/": {"bun-aot": "./typed/", "default": "./dist/"}}
+        "exports": {"./lib/": {"full-types": "./typed/", "default": "./dist/"}}
     }"#;
     let host = package_files(manifest, &["dist/x.js", "typed/x.ts", "dist/untyped.js"]);
     let typed = typed_version(&host, "/p/node_modules/pkg/dist/x.js");
@@ -297,7 +297,7 @@ fn file_exported_for_require_only_has_typed_version() {
         "exports": {
             ".": {
                 "import": "./index.mjs",
-                "require": {"bun-aot": "./index.cts", "default": "./index.cjs"}
+                "require": {"full-types": "./index.cts", "default": "./index.cjs"}
             }
         }
     }"#;
@@ -312,7 +312,7 @@ fn file_exported_for_require_only_has_typed_version() {
 fn application_exports_name_typed_version_of_own_file() {
     let application = r#"{
         "name": "app", "version": "1.0.0",
-        "exports": {"./*": {"bun-aot": "./typed/*.ts", "default": "./*.js"}}
+        "exports": {"./*": {"full-types": "./typed/*.ts", "default": "./*.js"}}
     }"#;
     let host = MemoryHost::new(&[
         ("/p/package.json", application),

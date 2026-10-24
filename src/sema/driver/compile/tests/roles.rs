@@ -471,7 +471,7 @@ fn shipped_typed_version_is_demoted() {
     let manifest = r#"{
         "name": "shapes",
         "version": "1.0.0",
-        "exports": { ".": { "bun-aot": "./index.sound.ts", "default": "./index.js" } }
+        "exports": { ".": { "full-types": "./index.sound.ts", "default": "./index.js" } }
     }"#;
     let files = [
         ("main.ts", r#"import "shapes";"#),
@@ -487,7 +487,7 @@ fn shipped_typed_version_outside_nearest_manifest_is_demoted() {
     let manifest = r#"{
         "name": "shapes",
         "version": "1.0.0",
-        "exports": { ".": { "bun-aot": "./src/index.ts", "default": "./dist/esm/index.js" } }
+        "exports": { ".": { "full-types": "./src/index.ts", "default": "./dist/esm/index.js" } }
     }"#;
     let files = [
         ("main.ts", r#"import "shapes";"#),

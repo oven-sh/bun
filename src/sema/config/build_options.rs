@@ -209,9 +209,22 @@ fn load(
 ) -> Result<Project, Vec<ConfigError>> {
     let mut errors = Vec::new();
     let raw = parse_config(host, session, path, &mut errors);
-    let Some(mut raw) = raw.or_else(|| host.read(path).map(|_| Raw::default())) else {
+    let Some(raw) = raw.or_else(|| host.read(path).map(|_| Raw::default())) else {
         return Err(errors);
     };
+    Ok(project_for_build(
+        host, session, path, raw, errors, root_files,
+    ))
+}
+
+fn project_for_build(
+    host: &dyn Host,
+    session: &Session,
+    path: &[u8],
+    mut raw: Raw,
+    mut errors: Vec<ConfigError>,
+    root_files: RootFiles,
+) -> Project {
     let base = dirname::<Posix>(path);
     merge_compiler_options(&mut raw.compiler, compile_build_overrides(), &[]);
     exclude_output_directories(&mut raw, base);
@@ -245,7 +258,77 @@ fn load(
         project.options.paths_base_dir.clone_from(&base_url);
         project.options.base_url = base_url;
     }
-    Ok(project)
+    project
+}
+
+pub fn default_options_of_full_types() -> Vec<(Vec<u8>, Json)> {
+    let text = |value: &[u8]| Json::String(value.to_vec());
+    let options: [(&[u8], Json); 6] = [
+        (b"target", text(b"esnext")),
+        (b"module", text(b"preserve")),
+        (b"moduleResolution", text(b"bundler")),
+        (b"noEmit", Json::Bool(true)),
+        (b"skipLibCheck", Json::Bool(true)),
+        (b"strict", Json::Bool(true)),
+    ];
+    options.map(|(name, value)| (name.to_vec(), value)).into()
+}
+
+pub fn find_manifest_of_full_types(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
+    for dir in ancestors(dir) {
+        if host.is_file(&join(dir, b"sound.json")) {
+            return None;
+        }
+        let path = join(dir, b"package.json");
+        let text = host.is_file(&path).then(|| host.read(&path)).flatten();
+        let session = Session::new();
+        if let Some(file) = text.and_then(|text| TsConfigSourceFile::parse(host, &session, text))
+            && let Some(root) = file.root
+            && (file.property(root, b"compilerOptions", Some(b"name"))).is_some()
+        {
+            return Some(path);
+        }
+        if dir.ends_with(b"/node_modules") {
+            return None;
+        }
+    }
+    None
+}
+
+pub fn load_for_full_types(host: &dyn Host, session: &Session, manifest_path: &[u8]) -> Project {
+    let mut errors = Vec::new();
+    let stated = parse_config(host, session, manifest_path, &mut errors).unwrap_or_default();
+    let mut compiler = default_options_of_full_types();
+    merge_compiler_options(&mut compiler, stated.compiler, &[]);
+    let raw = Raw {
+        compiler,
+        ..Raw::default()
+    };
+    project_for_build(
+        host,
+        session,
+        manifest_path,
+        raw,
+        errors,
+        RootFiles::Skipped,
+    )
+}
+
+impl Project {
+    pub fn key_of_full_types(&self) -> Vec<u8> {
+        let mut options: Vec<&(Vec<u8>, Json)> = self.raw_compiler_options.iter().collect();
+        options.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        let mut key = self.options.base_url.clone();
+        for (name, value) in options {
+            key.push(b'\n');
+            key.extend_from_slice(name);
+            value.stringify(&mut key);
+            if name == b"types" {
+                key.extend_from_slice(&self.config_path);
+            }
+        }
+        key
+    }
 }
 
 // Emitted files aren't read back in as input. `project_from_raw` no longer sees where they were written.

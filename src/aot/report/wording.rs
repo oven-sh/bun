@@ -391,7 +391,7 @@ pub(super) fn decline_sentence(kind: DeclineKind) -> &'static str {
             "an allocation couldn't be removed or moved to the stack (see --explain=allocations)"
         }
         DeclineKind::TypedResultNotSelected => {
-            "a built-in call returns a boxed value even though a typed version exists"
+            "a built-in call returns a boxed value even though full types exists"
         }
         DeclineKind::IterationNotExpandedByClass => {
             "a loop uses the iterator protocol because the type of the iterable isn't known"

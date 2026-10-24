@@ -1,0 +1,15 @@
+{
+  "name": "@oven/sound-anthropic-ai__sdk",
+  "version": "0.112.1",
+  "description": "Full types for @anthropic-ai/sdk 0.112.1: npm's own code with types added and nothing else changed, for `bun build --compile --aot`.",
+  "license": "MIT",
+  "peerDependencies": {
+    "@anthropic-ai/sdk": "0.112.1"
+  },
+  "files": [
+    "sound.json",
+    "lay",
+    "LICENSE",
+    "NOTICE"
+  ]
+}

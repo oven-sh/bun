@@ -8,11 +8,13 @@ use bun_core::{Global, Output, UnwrapOrOom};
 use bun_options_types::Format;
 use bun_options_types::context::ContextData;
 use bun_paths::resolve_path::platform_to_posix_in_place;
+use bun_sema::json::Json;
 use bun_sema_driver::sound_files::typed_path_beside;
 
 use super::declarations::{declaration_path, is_declaration_file};
 use super::typed_files::is_typed_file;
 use super::{Project, absolute_path};
+use crate::cli::check_command::CompilerOptions;
 use crate::cli::compile_command::build::asset_output_file;
 
 const FIELDS_COPIED_FIRST: [&[u8]; 11] = [
@@ -40,7 +42,7 @@ const FIELDS_COPIED_LAST: [&[u8]; 8] = [
 ];
 const DOCUMENT_NAMES: [&[u8]; 3] = [b"README", b"LICENSE", b"LICENCE"];
 const MAX_PACKAGE_NAME_LENGTH: usize = 214;
-const TYPED_CONDITION: &[u8] = b"bun-aot";
+const TYPED_CONDITION: &[u8] = b"full-types";
 
 pub(super) struct PackageRequest<'a> {
     pub(super) project: &'a Project,
@@ -49,12 +51,14 @@ pub(super) struct PackageRequest<'a> {
     pub(super) root_directory: &'a [u8],
     pub(super) entry_point_kind: OutputKind,
     pub(super) is_commonjs: bool,
+    pub(super) compiler_options: &'a CompilerOptions,
 }
 
 #[cold]
 pub(crate) fn add_package_files(
     ctx: &ContextData,
     root_directory: &[u8],
+    compiler_options: &CompilerOptions,
     log: &mut Log,
     output_files: &mut Vec<OutputFile>,
 ) {
@@ -72,6 +76,7 @@ pub(crate) fn add_package_files(
             false => OutputKind::EntryPoint,
         },
         is_commonjs: ctx.bundler_options.output_format == Format::Cjs,
+        compiler_options,
     };
     match write_package_json(&request, output_files, log) {
         Ok(text) => output_files.push(asset_output_file(b"package.json".to_vec(), text)),
@@ -183,6 +188,21 @@ impl JsonBuilder<'_> {
 
     fn object(self, object: E::Object) -> Expr {
         Expr::init(object, Loc::EMPTY)
+    }
+
+    fn compiler_option(self, value: &Json) -> Expr {
+        match value {
+            Json::Bool(value) => Expr::init(E::Boolean { value: *value }, Loc::EMPTY),
+            Json::Array(items) => {
+                let mut array = E::Array::default();
+                for item in items {
+                    let item = self.compiler_option(item);
+                    array.push(self.arena, item).unwrap_or_oom();
+                }
+                Expr::init(array, Loc::EMPTY)
+            }
+            _ => self.string(value.as_str().unwrap_or_default()),
+        }
     }
 
     fn put(self, object: &mut E::Object, key: &[u8], value: Expr) {
@@ -538,6 +558,14 @@ pub(super) fn write_package_json(
         }
     }
     json.put(&mut package, b"exports", json.object(exports));
+    if !request.compiler_options.is_empty() {
+        let mut compiler_options = E::Object::default();
+        for (name, value) in request.compiler_options {
+            json.put(&mut compiler_options, name, json.compiler_option(value));
+        }
+        let compiler_options = json.object(compiler_options);
+        json.put(&mut package, b"compilerOptions", compiler_options);
+    }
     if let Some(existing) = &existing {
         written.write_executables(existing, &mut package, &mut warnings);
     }

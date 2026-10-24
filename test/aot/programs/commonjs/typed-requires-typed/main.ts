@@ -1,4 +1,4 @@
-// A typed file reaches another typed file by require(): once looked at as the module's own type, once as it comes.
+// A full-types file reaches another full-types file by require(): once looked at as the module's own type, once as it comes.
 import { Owner, type Root } from "./state";
 function lazily(): typeof import("./state") { return require("./state.ts") as typeof import("./state"); }
 function loosely(): any { return require("./state.ts"); }

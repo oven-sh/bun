@@ -30,10 +30,10 @@ function lay(root: string, typed: boolean) {
     writeFileSync(
       described,
       JSON.stringify(
-        JSON.parse(readFileSync(described, "utf8"), (key, value) => (key === "bun-aot" ? undefined : value)),
+        JSON.parse(readFileSync(described, "utf8"), (key, value) => (key === "full-types" ? undefined : value)),
       ),
     );
-    rmSync(join(folder, "node_modules", "orders", "index.aot.ts"));
+    rmSync(join(folder, "node_modules", "orders", "index.full.ts"));
   }
   return folder;
 }
@@ -46,7 +46,7 @@ async function answerOf(folder: string) {
   );
   const said = (built.stdout + built.stderr)
     .split(/\r?\n/)
-    .filter(line => /typed version|without (its |their )?types/.test(line));
+    .filter(line => /full types|without (its |their )?types/.test(line));
   const ran = await spawned(
     [join(folder, isWindows ? "orders.exe" : "orders"), "1000", "0", "3", "2", "0"],
     folder,
@@ -67,7 +67,7 @@ async function answerOf(folder: string) {
 
 describe("the programs of typed-packages/measure", () => {
   test(
-    "answer alike with a package as installed and with its typed file",
+    "answer alike with a package as installed and with its full-types file",
     () =>
       slot(async () => {
         using dir = tempDir("aot-typed-packages", {});
@@ -82,7 +82,7 @@ describe("the programs of typed-packages/measure", () => {
         });
         expect(typed).toEqual({
           ...asInstalled,
-          said: ['note: "orders" 1.0.0 is compiled from its typed version in node_modules/orders'],
+          said: ['note: "orders" 1.0.0 is compiled from its full types in node_modules/orders'],
         });
       }),
     600_000,

@@ -101,7 +101,7 @@ pub(crate) fn describe_checker_queries(
     // Printed paths are the loader's, which are real paths.
     let mut root = host.realpath(directory);
     let mut code = code_options_with_limits(&root, &limits);
-    code.typed_condition = Some(b"bun-aot".to_vec());
+    code.typed_condition = Some(b"full-types".to_vec());
     if !root.ends_with(b"/") {
         root.push(b'/');
     }

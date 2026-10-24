@@ -4,7 +4,11 @@ use bun_paths::platform::Auto;
 use bun_paths::resolve_path::join_abs_string;
 use bun_sema::check::Checker;
 use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
-use bun_sema::config::load_options_for_build;
+use bun_sema::config::{
+    self, Project, default_options_of_full_types, find_manifest_of_full_types, load_for_full_types,
+    load_options_for_build,
+};
+use bun_sema::json::Json;
 use bun_sema::program::FileId;
 use bun_sema::session::Session;
 use bun_sema_driver::host::{Disk, Provided, from_native};
@@ -19,7 +23,7 @@ use super::declarations::{LIBS_WITHOUT_CONFIGURATION, bundler_path};
 use super::{Entries, Paths, already_read, request, script_kinds_by_extension, with_pages};
 
 const SKIPPED_TYPED_FILES: &str =
-    "the typed JavaScript that bun compile compiles a package from is left out";
+    "the full types that bun compile compiles a package from are left out";
 
 pub(crate) struct WrittenJavaScript<'a> {
     pub(crate) path: &'a [u8],
@@ -41,6 +45,14 @@ pub(crate) struct TypedFilesRequest<'a> {
 pub(crate) struct TypedFile {
     pub(crate) path: Vec<u8>,
     pub(crate) text: Vec<u8>,
+}
+
+pub(crate) type CompilerOptions = Vec<(Vec<u8>, Json)>;
+
+#[derive(Default)]
+pub(crate) struct TypedFiles {
+    pub(crate) files: Vec<TypedFile>,
+    pub(crate) compiler_options: CompilerOptions,
 }
 
 pub(crate) fn warn_about_skipped_typed_files(option: &str, log: &mut bun_ast::Log) {
@@ -94,73 +106,113 @@ fn first_error(report: &Report) -> Option<&Diagnostic> {
 
 type Texts = Vec<(Vec<u8>, Vec<u8>)>;
 
-/// The options of the sources' project that decide which errors a type checker reports, as lines of a tsconfig.json.
-fn strictness_of(cwd: &[u8], tsconfig: Option<&[u8]>) -> String {
-    let session = Session::new();
-    let options = tsconfig.and_then(|tsconfig| {
-        let path = from_native(join_abs_string::<Auto>(cwd, &[tsconfig]));
-        let disk = Disk::with_already_read(1, Default::default(), &path);
-        Some(load_options_for_build(&disk, &session, &path).ok()?.options)
-    });
-    let Some(options) = options else {
-        return "    \"strict\": true\n".to_owned();
-    };
-    let stated = [
-        ("strictNullChecks", options.strict_null_checks),
-        ("noImplicitAny", options.no_implicit_any),
-        ("noImplicitThis", options.no_implicit_this),
-        ("strictFunctionTypes", options.strict_function_types),
-        ("strictBindCallApply", options.strict_bind_call_apply),
+const STATED_AS_THE_SOURCES_STATE_THEM: [&[u8]; 7] = [
+    b"jsx",
+    b"jsxFactory",
+    b"jsxFragmentFactory",
+    b"jsxImportSource",
+    b"experimentalDecorators",
+    b"emitDecoratorMetadata",
+    b"useDefineForClassFields",
+];
+
+fn options_that_types_depend_on(project: &Project) -> CompilerOptions {
+    let options = &project.options;
+    let under_strict: [(&[u8], bool); 8] = [
+        (b"strictNullChecks", options.strict_null_checks),
+        (b"noImplicitAny", options.no_implicit_any),
+        (b"noImplicitThis", options.no_implicit_this),
+        (b"strictFunctionTypes", options.strict_function_types),
+        (b"strictBindCallApply", options.strict_bind_call_apply),
         (
-            "strictBuiltinIteratorReturn",
+            b"strictBuiltinIteratorReturn",
             options.strict_builtin_iterator_return,
         ),
         (
-            "strictPropertyInitialization",
+            b"strictPropertyInitialization",
             options.strict_property_initialization,
         ),
         (
-            "useUnknownInCatchVariables",
+            b"useUnknownInCatchVariables",
             options.use_unknown_in_catch_variables,
         ),
+    ];
+    let beyond_strict: [(&[u8], bool); 2] = [
         (
-            "exactOptionalPropertyTypes",
+            b"exactOptionalPropertyTypes",
             options.exact_optional_property_types,
         ),
         (
-            "noUncheckedIndexedAccess",
+            b"noUncheckedIndexedAccess",
             options.no_unchecked_indexed_access,
         ),
-        (
-            "noPropertyAccessFromIndexSignature",
-            options.no_property_access_from_index_signature,
-        ),
-        ("noImplicitReturns", options.no_implicit_returns),
-        ("noImplicitOverride", options.no_implicit_override),
-        (
-            "noFallthroughCasesInSwitch",
-            options.no_fallthrough_cases_in_switch,
-        ),
     ];
-    let lines = stated.map(|(name, is_on)| format!("    \"{name}\": {is_on}"));
+    let is_strict = under_strict.iter().any(|flag| flag.1);
+    let differing = (under_strict.iter().filter(|flag| is_strict && !flag.1))
+        .chain(beyond_strict.iter().filter(|flag| flag.1));
+    let mut stated = vec![(b"strict".to_vec(), Json::Bool(is_strict))];
+    stated.extend(differing.map(|&(name, is_on)| (name.to_vec(), Json::Bool(is_on))));
     // Without `lib`, a target has a library of its own, which no `lib` can name.
     let is_default = options.libs.iter().any(|lib| lib.ends_with(b".full"));
-    let libs = options
-        .libs
-        .iter()
-        .map(|lib| format!("{:?}", BStr::new(lib).to_string()));
-    let libs = libs.collect::<Vec<String>>().join(", ");
-    let lib_line = match is_default || options.libs.is_empty() {
-        true => String::new(),
-        false => format!("    \"lib\": [{libs}],\n"),
+    if !is_default && !options.libs.is_empty() {
+        let libs = options.libs.iter().map(|lib| Json::String(lib.clone()));
+        stated.push((b"lib".to_vec(), Json::Array(libs.collect())));
+    }
+    let written = project.raw_compiler_options.iter();
+    stated.extend(
+        written
+            .filter(|option| STATED_AS_THE_SOURCES_STATE_THEM.contains(&&option.0[..]))
+            .cloned(),
+    );
+    stated
+}
+
+fn options_of_sources(cwd: &[u8], tsconfig: Option<&[u8]>) -> CompilerOptions {
+    let session = Session::new();
+    let project = tsconfig.and_then(|tsconfig| {
+        let path = from_native(join_abs_string::<Auto>(cwd, &[tsconfig]));
+        let disk = Disk::with_already_read(1, Default::default(), &path);
+        load_options_for_build(&disk, &session, &path).ok()
+    });
+    match project {
+        Some(project) => options_that_types_depend_on(&project),
+        None => vec![(b"strict".to_vec(), Json::Bool(true))],
+    }
+}
+
+pub(crate) fn warn_unless_package_states(
+    outdir: &[u8],
+    compiler_options: &CompilerOptions,
+    log: &mut bun_ast::Log,
+) {
+    let outdir = from_native(outdir);
+    let disk = Disk::with_already_read(1, Default::default(), &outdir);
+    let manifest_path = find_manifest_of_full_types(&disk, &outdir);
+    let stated = match &manifest_path {
+        Some(path) => {
+            options_that_types_depend_on(&load_for_full_types(&disk, &Session::new(), path))
+        }
+        None => vec![(b"strict".to_vec(), Json::Bool(true))],
     };
-    lib_line + &lines.join(",\n") + "\n"
+    if stated == *compiler_options {
+        return;
+    }
+    let mut wanted = Vec::new();
+    Json::Object(compiler_options.clone()).stringify(&mut wanted);
+    log.add_warning_fmt(
+        None,
+        bun_ast::Loc::EMPTY,
+        format_args!(
+            "package.json needs \"compilerOptions\": {}: bun compile type checks a package's full types under them, and as strict without them",
+            BStr::new(&wanted),
+        ),
+    );
 }
 
 pub(crate) fn typed_files_for_build(
     asked: &TypedFilesRequest<'_>,
     log: &mut bun_ast::Log,
-) -> Vec<TypedFile> {
+) -> TypedFiles {
     let &TypedFilesRequest {
         cwd,
         tsconfig,
@@ -197,25 +249,25 @@ pub(crate) fn typed_files_for_build(
         .concat(),
         b"/// <reference lib=\"esnext\" />\n".to_vec(),
     )];
-    // The typed files are judged as a project that installs the package judges them: without the sources, under the
-    // tsconfig.json that is written beside them. It states how strict the sources are, so what the application's own
-    // tsconfig.json asks for does not count.
+    // The full-types files are judged as a project that installs the package judges them: without the sources, under what the
+    // package.json says of them. What the application's own tsconfig.json asks for does not count.
+    let outdir_without_slash = outdir.strip_suffix(b"/").unwrap_or(outdir);
     let typed_names = paths.iter().filter_map(|(path, _)| {
         let typed = typed_path_beside(path)?;
-        let inside = typed.strip_prefix(outdir.strip_suffix(b"/").unwrap_or(outdir))?;
-        Some(format!("{:?}", format!(".{}", BStr::new(inside))))
+        let inside = typed.strip_prefix(outdir_without_slash)?;
+        Some(Json::String([b".", inside].concat()))
     });
-    let typed_names = typed_names.collect::<Vec<String>>().join(", ");
-    let config_text = format!(
-        "{{\n  \"compilerOptions\": {{\n    \"target\": \"esnext\",\n    \"module\": \"preserve\",\n    \"moduleResolution\": \"bundler\",\n    \"noEmit\": true,\n    \"skipLibCheck\": true,\n{}  }},\n  \"files\": [{typed_names}]\n}}\n",
-        strictness_of(cwd, tsconfig),
-    );
-    let config_path = [
-        outdir.strip_suffix(b"/").unwrap_or(outdir),
-        b"/tsconfig.json",
-    ]
-    .concat();
-    let without_sources = Some((config_path, config_text.into_bytes()));
+    let compiler_options = options_of_sources(cwd, tsconfig);
+    let mut all_options = default_options_of_full_types();
+    config::merge_compiler_options(&mut all_options, compiler_options.clone(), &[]);
+    let mut config_text = Vec::new();
+    Json::Object(vec![
+        (b"compilerOptions".to_vec(), Json::Object(all_options)),
+        (b"files".to_vec(), Json::Array(typed_names.collect())),
+    ])
+    .stringify(&mut config_text);
+    let config_path = [outdir_without_slash, b"/tsconfig.full.json"].concat();
+    let without_sources = Some((config_path, config_text));
     let sources_tsconfig = tsconfig;
     let tsconfig_path = without_sources.as_ref().map(|file| bundler_path(&file.0));
     let tsconfig = tsconfig_path.as_deref();
@@ -297,7 +349,7 @@ pub(crate) fn typed_files_for_build(
             bun_ast::Loc::EMPTY,
             format_args!("{SKIPPED_TYPED_FILES}: {why}"),
         );
-        Vec::new()
+        TypedFiles::default()
     };
     let mut found = match found {
         Ok(found) => found,
@@ -348,10 +400,12 @@ pub(crate) fn typed_files_for_build(
     if let Some(why) = refusal {
         return warn(format_args!("{why}"));
     }
-    let typed_files = found.typed.into_iter().chain(without_sources);
-    let typed_files = typed_files.map(|(path, text)| TypedFile {
+    let typed_files = found.typed.into_iter().map(|(path, text)| TypedFile {
         path: bundler_path(&path),
         text,
     });
-    typed_files.collect()
+    TypedFiles {
+        files: typed_files.collect(),
+        compiler_options,
+    }
 }

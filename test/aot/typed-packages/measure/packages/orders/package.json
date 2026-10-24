@@ -4,7 +4,7 @@
   "type": "module",
   "exports": {
     ".": {
-      "bun-aot": "./index.aot.ts",
+      "full-types": "./index.full.ts",
       "types": "./index.d.ts",
       "default": "./index.js"
     }

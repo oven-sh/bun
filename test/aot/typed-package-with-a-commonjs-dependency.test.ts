@@ -23,10 +23,10 @@ const typedPackage = (name: string, code: string, typed: string, declarations: s
     name,
     version: "1.0.0",
     type: "module",
-    exports: { ".": { types: "./index.d.ts", "bun-aot": "./index.aot.ts", default: "./index.js" } },
+    exports: { ".": { types: "./index.d.ts", "full-types": "./index.full.ts", default: "./index.js" } },
   }),
   [`node_modules/${name}/index.js`]: code,
-  [`node_modules/${name}/index.aot.ts`]: typed,
+  [`node_modules/${name}/index.full.ts`]: typed,
   [`node_modules/${name}/index.d.ts`]: declarations,
 });
 
@@ -101,11 +101,11 @@ describe.concurrent("a typed package answers as under plain Bun", () => {
             const built = await spawned([bunExe(), "compile", "./app.ts"], root, env);
             const said = (built.stdout + built.stderr)
               .split(/\r?\n/)
-              .filter(line => /typed version|^error|^warn/.test(line));
+              .filter(line => /full types|^error|^warn/.test(line));
             const ran = await spawned([join(root, isWindows ? "app.exe" : "app")], root, env);
             const plain = await spawned([bunExe(), "app.ts"], root, env);
             expect({ said, stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
-              said: [`note: "${name}" 1.0.0 is compiled from its typed version in node_modules/${name}`],
+              said: [`note: "${name}" 1.0.0 is compiled from its full types in node_modules/${name}`],
               stdout: plain.stdout,
               exitCode: 0,
             });
@@ -134,10 +134,10 @@ test(
       });
       const root = String(dir);
       const built = await spawned([bunExe(), "compile", "./app.ts"], root, env);
-      const said = (built.stdout + built.stderr).split(/\r?\n/).filter(line => /typed version|^error|^warn/.test(line));
+      const said = (built.stdout + built.stderr).split(/\r?\n/).filter(line => /full types|^error|^warn/.test(line));
       const ran = await spawned([join(root, isWindows ? "app.exe" : "app")], root, env);
       expect({ said, stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
-        said: [`note: "tool" 1.0.0 is compiled from its typed version in node_modules/tool`],
+        said: [`note: "tool" 1.0.0 is compiled from its full types in node_modules/tool`],
         stdout: "false true\n",
         exitCode: 0,
       });

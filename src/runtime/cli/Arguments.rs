@@ -803,7 +803,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--check                          Type check the entry points and what they import. Nothing is bundled if there are type errors"
         ),
         parse_param!(
-            "--dts                            Write declaration files (.d.ts), and each output file with its types kept (.aot.ts), to --outdir. Implies --check"
+            "--dts                            Write declaration files (.d.ts), and each output file with its types kept (.full.ts), to --outdir. Implies --check"
         ),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."

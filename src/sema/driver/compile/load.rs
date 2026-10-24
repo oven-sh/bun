@@ -221,7 +221,11 @@ fn find_project(
 ) -> Result<config::Project, LoadFailure> {
     let code = request.code;
     let config_path = match (request.entry_points, &code.tsconfig_override) {
-        (EntryPoints::Configured(_, config_path), _) => config_path.map(<[u8]>::to_vec),
+        (EntryPoints::Configured(_, Some(manifest_path)), _) => {
+            let session = Session::new();
+            return Ok(config::load_for_full_types(host, &session, manifest_path));
+        }
+        (EntryPoints::Configured(_, None), _) => None,
         (_, Some(path)) if host.is_dir(path) => Some(join(path, b"tsconfig.json")),
         (_, Some(path)) => Some(path.clone()),
         (_, None) => {

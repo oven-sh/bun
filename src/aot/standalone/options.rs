@@ -212,7 +212,7 @@ mod tests {
         assert_eq!(options.code.conditions, defaults.conditions);
         assert_eq!(
             options.code.typed_condition.as_deref(),
-            Some(&b"bun-aot"[..])
+            Some(&b"full-types"[..])
         );
         assert!(!options.code.preserves_symlinks);
         assert!(options.code.node_paths.is_empty());

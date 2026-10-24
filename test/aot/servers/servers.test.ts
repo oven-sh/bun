@@ -145,9 +145,9 @@ if (!requestedServers)
 describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers", () => {
   const app = String(tempDir("aot-servers", {}));
   const tanstack = String(tempDir("aot-servers-tanstack", {}));
-  // The typed versions are installed as packages of their own. The packages themselves are found in the folder above.
+  // The full types are installed as packages of their own. The packages themselves are found in the folder above.
   const typedApp = join(app, "with-typed-versions");
-  const typedVersions = join(import.meta.dir, "..", "..", "..", "packages", "bun-sound");
+  const typedVersions = join(import.meta.dir, "..", "..", "..", "packages", "full-types");
   const typedPackages = [
     "koa",
     "@koa/router",
@@ -211,11 +211,9 @@ describe.skipIf(!requestedServers || !!unsupported)("compile/aot/servers", () =>
       built(build);
     }, 120_000);
 
-    test.skipIf(!name.endsWith("-typed"))("is compiled from the typed versions of its packages", () => {
+    test.skipIf(!name.endsWith("-typed"))("is compiled from the full types of its packages", () => {
       expect(buildOutput).not.toMatch(/can't be used|type errors?\b/);
-      expect(buildOutput).toMatch(
-        /^note: "[^"]+" \S+ is compiled from its typed version in node_modules\/@oven\/sound-/m,
-      );
+      expect(buildOutput).toMatch(/^note: "[^"]+" \S+ is compiled from its full types in node_modules\/@oven\/sound-/m);
       expect(buildOutput).toContain(`note: "${name.replace(/-typed$/, "")}" `);
     });
 

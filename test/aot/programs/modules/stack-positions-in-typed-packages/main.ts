@@ -1,4 +1,4 @@
-// A stack frame in a package that is compiled from its typed version has the line and column of the installed JavaScript file, as in plain Bun.
+// A stack frame in a package that is compiled from its full types have the line and column of the installed JavaScript file, as in plain Bun.
 // STATISTIC: TypedVersionsUsed = 2
 import { afterText, callMissing, chained, construct, later, mapped, pagesOf, Shelf, tagged, take, where } from "shelf";
 import { pay } from "ledger";

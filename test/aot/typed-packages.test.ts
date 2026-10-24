@@ -200,7 +200,7 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
   );
 
   test(
-    "a package of TypeScript files that has no typed version falls back to untyped, says why, and the compile line counts it",
+    "a package of TypeScript files that has no full types falls back to untyped, says why, and the compile line counts it",
     () =>
       slot(async () => {
         const folder = project("aot-typed-reconciler-falls");

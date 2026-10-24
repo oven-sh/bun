@@ -3651,14 +3651,14 @@ declare module "bun" {
 
     /**
      * Write a TypeScript declaration file (`.d.ts`) for each source file, and each
-     * JavaScript output file once more with its types kept (`index.js` and `index.aot.ts`).
+     * JavaScript output file once more with its types kept (`index.js` and `index.full.ts`).
      * The entrypoints and everything they import are type checked first, as with `check`.
      * Equivalent to `--dts` in the CLI.
      *
-     * `bun compile` compiles a package from its `.aot.ts` files where the `"bun-aot"`
+     * `bun compile` compiles a package from its `.full.ts` files where the `"full-types"`
      * condition in the `"exports"` of its `package.json` names them. Every other tool reads
-     * `index.js` and `index.d.ts`. A `tsconfig.json` beside the `.aot.ts` files says how strict
-     * they are.
+     * `index.js` and `index.d.ts`. `"compilerOptions"` in the `package.json` says how strict they
+     * are. Without it they are checked as `strict`.
      *
      * The files are in `outputs` with `kind: "asset"`. They are written to `outdir` if there is one.
      * Can't be used with `compile`.
@@ -3672,7 +3672,7 @@ declare module "bun" {
      *   outdir: './dist',
      *   dts: true,
      * });
-     * // dist/index.js, dist/index.d.ts, dist/index.aot.ts, dist/tsconfig.json
+     * // dist/index.js, dist/index.d.ts, dist/index.full.ts
      * ```
      */
     dts?: boolean;

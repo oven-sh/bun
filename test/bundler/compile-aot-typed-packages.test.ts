@@ -87,33 +87,33 @@ const compiled = (folder: string, flags: string[] = ["--aot"]) =>
 const ran = (folder: string) => spawned([join(folder, "app"), "6"], folder);
 async function built(folder: string, flags?: string[]) {
   const build = await compiled(folder, flags);
-  const said = (build.stdout + build.stderr).split("\n").filter(line => /typed version/.test(line));
+  const said = (build.stdout + build.stderr).split("\n").filter(line => /full types/.test(line));
   expect(build.stderr).not.toContain("error");
   expect(build.exitCode).toBe(0);
   const run = await ran(folder);
   return { said, stdout: run.stdout, exitCode: run.exitCode };
 }
-const used = (directory: string) => [`note: "shapes" 1.2.3 is compiled from its typed version in ${directory}`];
+const used = (directory: string) => [`note: "shapes" 1.2.3 is compiled from its full types in ${directory}`];
 const unused = (directory: string, why: string) => [
-  `warn: TS100056: The typed version of "shapes" in ${directory} can't be used: ${why}`,
+  `warn: TS100056: The full types of "shapes" in ${directory} can't be used: ${why}`,
 ];
 async function builtWithout(folder: string, flags?: string[]) {
   const build = await compiled(folder, flags);
-  const said = (build.stdout + build.stderr).split("\n").filter(line => /typed version/.test(line));
+  const said = (build.stdout + build.stderr).split("\n").filter(line => /full types/.test(line));
   return { said, exitCode: build.exitCode, wroteExecutable: existsSync(join(folder, isWindows ? "app.exe" : "app")) };
 }
-// A typed version is only used if everything matches. Otherwise the build goes on as if it were not there, and says what did not match.
+// Full types are only used if everything matches. Otherwise the build goes on as if it were not there, and says what did not match.
 const warned = (directory: string, why: string, alsoSaid: string[] = []) => ({
   said: [...unused(directory, why), ...alsoSaid],
   exitCode: 0,
   wroteExecutable: true,
 });
 const shippedUnused = (why: string) => [
-  `warn: "shapes" is compiled without types, because its typed version in node_modules/shapes can't be used: ${why}`,
+  `warn: "shapes" is compiled without types, because its full types in node_modules/shapes can't be used: ${why}`,
 ];
 
 describe("compile/aot/TypedPackages", () => {
-  test("without a typed version the package is compiled as installed", async () => {
+  test("without full types the package is compiled as installed", async () => {
     expect(await built(project("aot-typed-none"))).toEqual({ said: [], stdout: output, exitCode: 0 });
   });
 
@@ -169,18 +169,18 @@ describe("compile/aot/TypedPackages", () => {
     expect(await built(folder)).toEqual({ said: [], stdout: output, exitCode: 0 });
   });
 
-  const withCondition = (typedFile: string | null = "./index.aot.ts", folder = ".") =>
+  const withCondition = (typedFile: string | null = "./index.full.ts", folder = ".") =>
     JSON.stringify({
       name: "shapes",
       version: "1.2.3",
       type: "module",
-      exports: { ".": { types: `${folder}/index.d.ts`, "bun-aot": typedFile, default: `${folder}/index.js` } },
+      exports: { ".": { types: `${folder}/index.d.ts`, "full-types": typedFile, default: `${folder}/index.js` } },
     });
   function shipped(folder: string, packageJson = withCondition()) {
-    write(join(folder, "node_modules", "shapes"), { "package.json": packageJson, "index.aot.ts": typed });
+    write(join(folder, "node_modules", "shapes"), { "package.json": packageJson, "index.full.ts": typed });
   }
 
-  test("the typed version that the package ships", async () => {
+  test("the full types that the package ships", async () => {
     const folder = project("aot-typed-shipped");
     shipped(folder);
     expect(await built(folder)).toEqual({ said: used("node_modules/shapes"), stdout: output, exitCode: 0 });
@@ -200,7 +200,7 @@ describe("compile/aot/TypedPackages", () => {
     expect(build.exitCode).toBe(1);
   });
 
-  test("a typed file that has no type for one of its exports: the program keeps the declaration file", async () => {
+  test("a full-types file that has no type for one of its exports: the program keeps the declaration file", async () => {
     const folder = project("aot-typed-shipped-untyped-export");
     const javascript =
       installed["index.js"] +
@@ -211,7 +211,7 @@ describe("compile/aot/TypedPackages", () => {
       "index.d.ts":
         installed["index.d.ts"] +
         "export declare const tools: { each(list: number[], callback: (n: number) => number): number[] };\n",
-      "index.aot.ts":
+      "index.full.ts":
         typed +
         "var tools: any = {};\ntools.each = (list: number[], callback: (n: number) => number): number[] => list.map(callback);\nexport { tools };\n",
     });
@@ -229,7 +229,7 @@ describe("compile/aot/TypedPackages", () => {
     expect(await built(folder)).toEqual({ said: used(".sound/shapes"), stdout: output, exitCode: 0 });
   });
 
-  test("a broken typed version in the project is as if it were not there: what the package ships is used", async () => {
+  test("a broken full types in the project is as if it were not there: what the package ships is used", async () => {
     const folder = project("aot-typed-fallback");
     shipped(folder);
     write(join(folder, ".sound", "shapes"), { "sound.json": "{" });
@@ -239,7 +239,7 @@ describe("compile/aot/TypedPackages", () => {
   });
 
   test.each([
-    ["its own package.json", { "package.json": withCondition("./dist/index.aot.ts", "./dist") }],
+    ["its own package.json", { "package.json": withCondition("./dist/index.full.ts", "./dist") }],
     [
       "the package.json beside what main names",
       {
@@ -265,7 +265,7 @@ describe("compile/aot/TypedPackages", () => {
         "dist/package.json": withCondition(),
       },
     ],
-  ])("the typed file may lie in a folder, and %s names it", async (_, packageJsons) => {
+  ])("the full-types file may lie in a folder, and %s names it", async (_, packageJsons) => {
     const folder = project("aot-typed-shipped-folder");
     const at = join(folder, "node_modules", "shapes");
     rmSync(join(at, "index.js"));
@@ -274,7 +274,7 @@ describe("compile/aot/TypedPackages", () => {
       ...packageJsons,
       "dist/index.js": installed["index.js"],
       "dist/index.d.ts": installed["index.d.ts"],
-      "dist/index.aot.ts": typed,
+      "dist/index.full.ts": typed,
     });
     expect(await built(folder)).toEqual({ said: used("node_modules/shapes/dist"), stdout: output, exitCode: 0 });
   });
@@ -299,7 +299,7 @@ describe("compile/aot/TypedPackages", () => {
       "package.json": withCondition(),
       "index.js": javascript,
       "index.d.ts": installed["index.d.ts"] + "export default function twice(n: number): number;\n",
-      "index.aot.ts": typed + "export default function twice(n: number): number {\n  return n * 2;\n}\n",
+      "index.full.ts": typed + "export default function twice(n: number): number {\n  return n * 2;\n}\n",
     });
     write(folder, {
       "app.ts": `import twice, { area, where } from "shapes";\nconsole.log(twice(area(3, 7)), /index(\\.aot)?\\.[jt]s/.exec(where())![0]);\n`,
@@ -311,22 +311,22 @@ describe("compile/aot/TypedPackages", () => {
     [
       "the JavaScript has different code",
       folder => appendFileSync(join(folder, "node_modules", "shapes", "index.js"), "export const patched = true;\n"),
-      "index.aot.ts without its types doesn't match index.js. Was the package patched?",
+      "index.full.ts without its types doesn't match index.js. Was the package patched?",
     ],
     [
-      "the typed file has different code",
-      folder => write(join(folder, "node_modules", "shapes"), { "index.aot.ts": typedWithOtherCode }),
-      "index.aot.ts without its types doesn't match index.js. Was the package patched?",
+      "the full-types file has different code",
+      folder => write(join(folder, "node_modules", "shapes"), { "index.full.ts": typedWithOtherCode }),
+      "index.full.ts without its types doesn't match index.js. Was the package patched?",
     ],
     [
-      "the typed file has syntax that emits code",
-      folder => write(join(folder, "node_modules", "shapes"), { "index.aot.ts": typed + "enum Kind { A }\n" }),
-      "in index.aot.ts, TypeScript syntax that emits code can't be erased",
+      "the full-types file has syntax that emits code",
+      folder => write(join(folder, "node_modules", "shapes"), { "index.full.ts": typed + "enum Kind { A }\n" }),
+      "in index.full.ts, TypeScript syntax that emits code can't be erased",
     ],
     [
       "the file that the condition names is missing",
-      folder => shipped(folder, withCondition("./other.aot.ts")),
-      "other.aot.ts is missing",
+      folder => shipped(folder, withCondition("./other.full.ts")),
+      "other.full.ts is missing",
     ],
   ];
   test.each(shippedMismatches)(
@@ -345,7 +345,7 @@ describe("compile/aot/TypedPackages", () => {
     write(join(folder, "node_modules", "shapes"), {
       "package.json": withCondition(),
       "index.js": castBefore + installed["index.js"],
-      "index.aot.ts": castBefore + typedWithOtherCode,
+      "index.full.ts": castBefore + typedWithOtherCode,
     });
     const build = await compiled(folder);
     expect(build.stdout + build.stderr).toMatch(
@@ -357,13 +357,13 @@ describe("compile/aot/TypedPackages", () => {
   test("a type error in what the package ships is a warning, and the package is compiled without types", async () => {
     const folder = project("aot-typed-shipped-lie");
     shipped(folder);
-    write(join(folder, "node_modules", "shapes"), { "index.aot.ts": typedWithTypeError });
+    write(join(folder, "node_modules", "shapes"), { "index.full.ts": typedWithTypeError });
     const build = await compiled(folder);
     const said = build.stdout + build.stderr;
     expect(said).toMatch(
-      /TS100009: 'shapes' has 1 type error \(the first at \S*node_modules[\\/]shapes[\\/]index\.aot\.ts:\d+:\d+\), so \d+ of its \d+ files are compiled without their types\./,
+      /TS100009: 'shapes' has 1 type error \(the first at \S*node_modules[\\/]shapes[\\/]index\.full\.ts:\d+:\d+\), so \d+ of its \d+ files are compiled without their types\./,
     );
-    expect(said).not.toContain("is compiled from its typed version");
+    expect(said).not.toContain("is compiled from its full types");
     expect(said).not.toContain("TS100021");
     expect(said).not.toContain("error:");
     expect(build.exitCode).toBe(0);
@@ -387,7 +387,7 @@ describe("compile/aot/TypedPackages", () => {
     symlinkSync(join(".store", "linked@1.2.3", "node_modules", "linked"), join(folder, "node_modules", "linked"));
     write(folder, { "app.ts": app("linked") });
     expect(await built(folder)).toEqual({
-      said: [`note: "linked" 1.2.3 is compiled from its typed version in .sound/linked`],
+      said: [`note: "linked" 1.2.3 is compiled from its full types in .sound/linked`],
       stdout: output,
       exitCode: 0,
     });
@@ -400,12 +400,12 @@ describe("compile/aot/TypedPackages", () => {
         write(join(folder, "node_modules", "shapes"), {
           "package.json": installed["package.json"].replace("1.2.3", "1.2.4"),
         }),
-      "it is for version 1.2.3, but 1.2.4 is installed. Replace it with the typed version for 1.2.4, or remove it",
+      "it is for version 1.2.3, but 1.2.4 is installed. Replace it with the full types for 1.2.4, or remove it",
     ],
     [
       "it adds a file",
       folder => typedVersion(join(folder, ".sound", "shapes"), { lay: { ...manifest().lay, "more.ts": "new" } }),
-      "it adds more.ts, and a typed version can only replace installed files",
+      "it adds more.ts, and full types can only replace installed files",
     ],
     [
       "a path leaves the package",
@@ -439,9 +439,9 @@ describe("compile/aot/TypedPackages", () => {
       `it needs process.env.NODE_ENV to be defined as "production". Pass --define 'process.env.NODE_ENV="production"'`,
     ],
     [
-      "a needed typed version is not in use",
+      "a needed full types are not in use",
       folder => typedVersion(join(folder, ".sound", "shapes"), { needs: ["other"] }),
-      `it needs the typed version of "other", which is not used`,
+      `it needs the full types of "other", which is not used`,
     ],
     [
       "what it needs is no package",
@@ -487,12 +487,12 @@ describe("compile/aot/TypedPackages", () => {
     expect((await builtWithout(folder)).said).toEqual(
       unused(
         ".sound/shapes",
-        "it is for version 1.2?[31m.3, but 1.2.3 is installed. Replace it with the typed version for 1.2.3, or remove it",
+        "it is for version 1.2?[31m.3, but 1.2.3 is installed. Replace it with the full types for 1.2.3, or remove it",
       ),
     );
   });
 
-  test("a typed version that does not type check: the package is compiled without its types, and the build warns with the first error", async () => {
+  test("full types that does not type check: the package is compiled without its types, and the build warns with the first error", async () => {
     const folder = project("aot-typed-lie");
     typedVersion(join(folder, ".sound", "shapes"));
     write(join(folder, ".sound", "shapes", "lay"), { "index.js": typedWithTypeError });
@@ -567,7 +567,7 @@ describe("compile/aot/TypedPackages", () => {
         JSON.stringify(
           unused(
             ".sound/shapes",
-            "it is for version 1.2.3, but 1.2.4 is installed. Replace it with the typed version for 1.2.4, or remove it",
+            "it is for version 1.2.3, but 1.2.4 is installed. Replace it with the full types for 1.2.4, or remove it",
           ),
         ) + "\n",
       stderr: "",

@@ -4,14 +4,14 @@ import { test } from "../supported";
 import { describeTree, type TreeGraph } from "./describe";
 
 const installed = "node_modules/pkg/index.js";
-const typedVersion = "node_modules/pkg/index.aot.ts";
+const typedVersion = "node_modules/pkg/index.full.ts";
 
 const javascript = "export function add(a, b) {\n  return a + b + 1;\n}\n";
 const typescript = "export function add(a: number, b: number): number {\n  return a + b + 1;\n}\n";
 const pairImport = 'import type { Pair } from "./shapes.ts";\n';
 const pairDeclaration = "export type Pair = [number, number];";
 
-function createTree(packageFiles: DirectoryTree, typedCondition: string | null = "./index.aot.ts"): DirectoryTree {
+function createTree(packageFiles: DirectoryTree, typedCondition: string | null = "./index.full.ts"): DirectoryTree {
   const conditions = { types: "./index.d.ts", default: "./index.js" };
   return {
     "main.ts": 'import { add } from "pkg";\nconsole.log(add(1, 2));',
@@ -19,7 +19,7 @@ function createTree(packageFiles: DirectoryTree, typedCondition: string | null =
       "package.json": JSON.stringify({
         name: "pkg",
         version: "1.0.0",
-        exports: { ".": typedCondition === null ? conditions : { "bun-aot": typedCondition, ...conditions } },
+        exports: { ".": typedCondition === null ? conditions : { "full-types": typedCondition, ...conditions } },
       }),
       "index.d.ts": "export declare function add(a: number, b: number): number;",
       "index.js": javascript,
@@ -52,7 +52,7 @@ function expectInferred(graph: TreeGraph, erasureMismatch: unknown) {
 }
 
 test("accepted", () => {
-  using graph = describeTree(createTree({ "index.aot.ts": typescript }), ["main.ts"]);
+  using graph = describeTree(createTree({ "index.full.ts": typescript }), ["main.ts"]);
   expectChecked(graph, typedVersion);
   expect(graph.compiledFiles).toEqual([installed, "main.ts"]);
 });
@@ -67,17 +67,17 @@ const rejectedVersions: [name: string, typedText: string, erasureMismatch: unkno
 ];
 
 test.each(rejectedVersions)("rejected: %s", (_, typedText, erasureMismatch) => {
-  using graph = describeTree(createTree({ "index.aot.ts": typedText }), ["main.ts"]);
+  using graph = describeTree(createTree({ "index.full.ts": typedText }), ["main.ts"]);
   expectInferred(graph, erasureMismatch);
 });
 
-test("a typed version with a syntax error", () => {
-  using graph = describeTree(createTree({ "index.aot.ts": "export function add(a: number {" }), ["main.ts"]);
+test("full types with a syntax error", () => {
+  using graph = describeTree(createTree({ "index.full.ts": "export function add(a: number {" }), ["main.ts"]);
   expectInferred(graph, expect.any(String));
 });
 
-test("no condition, no typed version", () => {
-  using graph = describeTree(createTree({ "index.aot.ts": typescript }, null), ["main.ts"]);
+test("no condition, no full types", () => {
+  using graph = describeTree(createTree({ "index.full.ts": typescript }, null), ["main.ts"]);
   expectInferred(graph, null);
 });
 
@@ -91,7 +91,7 @@ test("type-only syntax is skipped", () => {
     pairImport +
     "interface Local { n: number }\n" +
     typescript.replace("return a + b + 1;", "return (a as number) + b! + 1;");
-  using graph = describeTree(createTree({ "index.aot.ts": typedText, "shapes.ts": pairDeclaration }), ["main.ts"]);
+  using graph = describeTree(createTree({ "index.full.ts": typedText, "shapes.ts": pairDeclaration }), ["main.ts"]);
   expectChecked(graph, typedVersion);
   expect(graph.compiledFiles).toEqual([installed, "main.ts"]);
   expect(graph.file(installed).typeEdges).toEqual(["node_modules/pkg/shapes.ts"]);

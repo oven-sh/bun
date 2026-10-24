@@ -53,7 +53,7 @@ impl CodeOptions {
             working_directory: working_directory.to_vec(),
             conditions: byte_strings(&["bun", "node", "node-addons"]),
             custom_conditions: Vec::new(),
-            typed_condition: Some(b"bun-aot".to_vec()),
+            typed_condition: Some(b"full-types".to_vec()),
             main_fields: byte_strings(&["module", "main", "jsnext:main"]),
             has_default_main_fields: true,
             prefers_module_field: false,
@@ -175,11 +175,11 @@ mod tests {
             for condition in ["default", "bun", "node", "node-addons"] {
                 assert!(is_match(&options, condition, kind), "{condition}");
             }
-            for condition in ["browser", "module", "types", "bun-aot"] {
+            for condition in ["browser", "module", "types", "full-types"] {
                 assert!(!is_match(&options, condition, kind), "{condition}");
             }
-            assert!(options.matches_condition(b"bun-aot", search(kind, true)));
-            assert!(!untyped.matches_condition(b"bun-aot", search(kind, true)));
+            assert!(options.matches_condition(b"full-types", search(kind, true)));
+            assert!(!untyped.matches_condition(b"full-types", search(kind, true)));
         }
     }
 

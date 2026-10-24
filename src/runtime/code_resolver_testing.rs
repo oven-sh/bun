@@ -960,7 +960,7 @@ pub(crate) fn describe_code_graph(
     let host = DiskWithBuiltinModules::new(threads, &working_directory);
     let limits = LimitValues::for_host();
     let mut code = code_options_with_limits(&working_directory, &limits);
-    code.typed_condition = Some(b"bun-aot".to_vec());
+    code.typed_condition = Some(b"full-types".to_vec());
     for condition in strings::tokenize(conditions_argument, b"\n") {
         code.add_custom_condition(condition);
     }

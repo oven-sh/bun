@@ -2,7 +2,7 @@
 const log: string[] = [];
 const say = (...parts: unknown[]) => void log.push(parts.join(" "));
 
-// The typed version names `twice`. The argument that does not fit sends the call to the untyped copy, which has the closure as a value only.
+// The full types names `twice`. The argument that does not fit sends the call to the untyped copy, which has the closure as a value only.
 interface Job { run: (n: number) => number; times: number }
 function twice(n: number): number { return n * 2; }
 function perform(job: Job, start: number): number {

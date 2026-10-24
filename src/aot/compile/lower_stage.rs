@@ -15,7 +15,6 @@ use crate::modules::{Library, LinkedProject, ModuleGraph, ModuleKind, ModuleRef,
 use crate::package_diagnostics::{PackageView, report_package_errors, report_used_versions};
 use crate::report;
 use crate::statistics::{Counters, Stage, StatisticId};
-use bun_core::strings;
 use bun_sema::atom::known;
 use bun_sema::check::aot::{
     DiagnosticClass, FileOrigin, FunctionRef, LeftOutBodies, QueryStatistics,
@@ -64,29 +63,6 @@ struct Worlds {
     units: Vec<LinkUnit>,
     demoted: Vec<Demotion>,
     demoted_directories: Vec<Vec<u8>>,
-}
-
-// Two configuration files with the same text but for `files` make the same program, unless they name paths, which count from where the file is.
-fn world_key(text: &[u8], config_path: &[u8]) -> Vec<u8> {
-    const NAMES_OF_PATHS: [&[u8]; 9] = [
-        b"\"extends\"",
-        b"\"paths\"",
-        b"\"baseUrl\"",
-        b"\"typeRoots\"",
-        b"\"types\"",
-        b"\"rootDirs\"",
-        b"\"include\"",
-        b"\"references\"",
-        b"${configDir}",
-    ];
-    if NAMES_OF_PATHS
-        .into_iter()
-        .any(|name| strings::contains(text, name))
-    {
-        return config_path.to_vec();
-    }
-    let end = strings::last_index_of(text, b"\"files\"");
-    text[..end.unwrap_or(text.len())].to_vec()
 }
 
 fn find_files_that_reach_commonjs_files(graph: &ModuleGraph) -> FxHashSet<FileId> {
@@ -293,15 +269,16 @@ impl Build<'_> {
         units
     }
 
-    /// A typed package is checked and lowered by a program of its own: the `tsconfig.json` beside its typed files, its
-    /// `lib`, its globals. Nothing of the application's configuration reaches it. Packages that say the same share one,
-    /// and so do those that have no `tsconfig.json`. What a CommonJS file exports into is decided by everybody who
-    /// uses it, so it stays in the application's program, and so does every file that leads to one.
+    /// A typed package is checked and lowered by a program of its own, under the `compilerOptions` of its `package.json`.
+    /// Nothing of the application's configuration reaches it. Packages that say the same share one. What a CommonJS file
+    /// exports into is decided by everybody who uses it, so it stays in the application's program, and so does every
+    /// file that leads to one.
     fn lower_worlds(&mut self, loaded: &LoadedBuild<'_, '_>, bound: &BoundProject<'_>) -> Worlds {
         let left_out = &bound.left_out;
         let application = loaded.project(ProjectId::Application);
         let (files, host) = (application.loaded.files(), application.host);
         let mut groups: BTreeMap<Vec<u8>, (Option<Vec<u8>>, Vec<FileId>)> = BTreeMap::new();
+        let mut by_directory: FxHashMap<Vec<u8>, (Vec<u8>, Option<Vec<u8>>)> = FxHashMap::default();
         let reaches_commonjs_files = find_files_that_reach_commonjs_files(&bound.graph);
         for &file in files.compiled_files() {
             let Some(typed) = (files.compiled(file)).and_then(|it| it.typed_source_path) else {
@@ -315,10 +292,17 @@ impl Build<'_> {
             {
                 continue;
             }
-            let config_path = config::find_config_of_package(host, &host.directory_of(typed));
-            let key = (config_path.as_ref()).map(|path| world_key(&host.read_source(path), path));
-            let group = groups.entry(key.unwrap_or_default());
-            group.or_insert((config_path, Vec::new())).1.push(file);
+            let directory = host.directory_of(typed).into_owned();
+            let (key, manifest_path) = by_directory.entry(directory).or_insert_with_key(|it| {
+                let manifest_path = config::find_manifest_of_full_types(host, it);
+                let project = (manifest_path.as_ref())
+                    .map(|path| config::load_for_full_types(host, &Session::new(), path));
+                let key = project.map(|project| project.key_of_full_types());
+                (key.unwrap_or_default(), manifest_path)
+            });
+            let group = groups.entry(key.clone());
+            let group = group.or_insert_with(|| (manifest_path.clone(), Vec::new()));
+            group.1.push(file);
         }
         let mut worlds = Worlds::default();
         for (index, (config_path, group)) in groups.into_values().enumerate() {

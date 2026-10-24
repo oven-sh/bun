@@ -33,7 +33,7 @@ diagnostic_codes! {
     Legacy 100001..=100049 {
         PackageCompiledWithoutTypes = 100009, Warning, "'{0}' has {1} (the first at {2}), so {3} of its {4} files are compiled without their types. They still work, but run slower.";
         FileCompiledWithoutTypes = 100010, Warning, "'{0}' has {1} (the first at {2}), so it is compiled without its types. It still works, but runs slower.";
-        TypedVersionHasTypeErrors = 100021, Error, "The typed version of '{0}' in {1} has type errors ({2}), the first at {3}";
+        TypedVersionHasTypeErrors = 100021, Error, "The full types of '{0}' in {1} has type errors ({2}), the first at {3}";
     }
     LegacyValidation 100107..=100107 {
         UnsupportedValidationType = 100107, Error, "{0}<{1}>() cannot validate '{2}'. Only types that JSON can represent can be validated.";
@@ -45,11 +45,11 @@ diagnostic_codes! {
         MacrosDisabled = 100053, Error, "Macros are disabled";
         EmbeddedFileNameCollision = 100054, Error, "Two files with different contents would be embedded as \"{0}\": \"{1}\" and \"{2}\"";
         ProgramTooLarge = 100055, Error, "The program is too large to compile: its IR is {0} bytes, and the limit is 4 GB";
-        TypedPackageNotUsed = 100056, Warning, "The typed version of \"{0}\" in {1} can't be used: {2}";
+        TypedPackageNotUsed = 100056, Warning, "The full types of \"{0}\" in {1} can't be used: {2}";
         FileNestedTooDeeply = 100060, Error, "The code in \"{0}\" is nested too deeply to be compiled";
         OutputNotWritten = 100061, Error, "Cannot write \"{0}\": {1}";
-        TypedPackageUsed = 100062, Note, "\"{0}\" {1} is compiled from its typed version in {2}";
-        ShippedTypedVersionNotUsed = 100065, Warning, "\"{0}\" is compiled without types, because its typed version in {1} can't be used: {2}";
+        TypedPackageUsed = 100062, Note, "\"{0}\" {1} is compiled from its full types in {2}";
+        ShippedTypedVersionNotUsed = 100065, Warning, "\"{0}\" is compiled without types, because its full types in {1} can't be used: {2}";
     }
     Fold 100100..=100149 {
         FeatureArgumentCount = 100100, Error, "feature() requires exactly one string argument";

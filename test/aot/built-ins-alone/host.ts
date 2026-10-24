@@ -557,7 +557,7 @@ const programs: [string, string[], string[]][] = [
       "process.getActiveResourcesInfo",
     ],
     [
-      "console.log(typeof process.cwd(), typeof process.uptime(), typeof process.umask(), typeof process.getuid(), typeof process.getgid(), typeof process.geteuid(), typeof process.getegid(), Array.isArray(process.getgroups()), typeof process.availableMemory(), typeof process.constrainedMemory(), typeof process.resourceUsage().maxRSS, Array.isArray(process.getActiveResourcesInfo()));",
+      "console.log(typeof process.cwd(), typeof process.uptime(), typeof process.umask(), typeof process.getuid?.(), typeof process.getgid?.(), typeof process.geteuid?.(), typeof process.getegid?.(), Array.isArray(process.getgroups?.()), typeof process.availableMemory(), typeof process.constrainedMemory(), typeof process.resourceUsage().maxRSS, Array.isArray(process.getActiveResourcesInfo()));",
     ],
   ],
   [

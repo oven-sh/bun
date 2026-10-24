@@ -1,4 +1,4 @@
-// The typed version of characters-ordered-against-literals.js: one character of a string against a one-character literal, with every operator, from both sides,
+// The full types of characters-ordered-against-literals.js: one character of a string against a one-character literal, with every operator, from both sides,
 // at positions inside and outside the string. Outside it s[i] is undefined, for which no relation holds, and s.charAt(i) is the empty string.
 function element_lt(s: string, i: number): boolean {
   return s[i | 0] < 'm'

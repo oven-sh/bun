@@ -1,0 +1,15 @@
+{
+  "name": "@oven/sound-koa",
+  "version": "3.2.1",
+  "description": "Full types for koa 3.2.1: npm's own code with types added and nothing else changed, for `bun build --compile --aot`.",
+  "license": "MIT",
+  "peerDependencies": {
+    "koa": "3.2.1"
+  },
+  "files": [
+    "sound.json",
+    "lay",
+    "LICENSE",
+    "NOTICE"
+  ]
+}

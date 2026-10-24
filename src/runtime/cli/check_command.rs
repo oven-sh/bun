@@ -28,7 +28,8 @@ pub(crate) use declarations::{
     DeclarationFile, check_and_emit_declarations, take_declaration_files, take_module_types,
 };
 pub(crate) use typed_files::{
-    TypedFilesRequest, WrittenJavaScript, typed_files_for_build, warn_about_skipped_typed_files,
+    CompilerOptions, TypedFilesRequest, WrittenJavaScript, typed_files_for_build,
+    warn_about_skipped_typed_files, warn_unless_package_states,
 };
 
 pub(crate) struct CheckCommand;

@@ -1,4 +1,4 @@
-// One program, one compiler, one source text: ./typed-react-costs-no-more-than-erased/terminal.ts on the typed react-reconciler of packages/bun-sound, built as it is written and
+// One program, one compiler, one source text: ./typed-react-costs-no-more-than-erased/terminal.ts on the typed react-reconciler of packages/full-types, built as it is written and
 // built again with --aot-erase-types. A type is knowledge. Code that has it may not cost more than the same code without it: not in instructions a turn, not in bytes.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
@@ -14,7 +14,7 @@ const typedReconciler = join(
   "..",
   "..",
   "packages",
-  "bun-sound",
+  "full-types",
   "react-reconciler",
   "0.33.0",
   "lay",

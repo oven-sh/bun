@@ -1,4 +1,4 @@
-// An untyped file imports functions of a typed file and is handed the typed file's own objects: it reads them, stores to them what fits, adds to them, and hands them back.
+// An untyped file imports functions of a full-types file and is handed the full-types file's own objects: it reads them, stores to them what fits, adds to them, and hands them back.
 import { rows } from "./reader.js";
 import { currentRoot, describe, labels, topOf } from "./state";
 let sum = 0;

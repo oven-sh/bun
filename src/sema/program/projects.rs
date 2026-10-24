@@ -10,6 +10,7 @@ pub(super) struct Projects<'s> {
     lenient_by_package: ShardedMap<Vec<u8>, &'s Options>,
     lenient_template: OnceLock<Options>,
     by_typed_version_manifest: ShardedMap<Vec<u8>, &'s Options>,
+    full_types_by_directory: ShardedMap<Vec<u8>, Option<ConfigAnswer<'s>>>,
     naming_types: Guarded<Vec<&'s Options>>,
 }
 
@@ -58,6 +59,7 @@ impl<'s> Projects<'s> {
             lenient_by_package: ShardedMap::default(),
             lenient_template: OnceLock::new(),
             by_typed_version_manifest: ShardedMap::default(),
+            full_types_by_directory: ShardedMap::default(),
             naming_types: Guarded::new(Vec::new()),
         }
     }
@@ -75,14 +77,62 @@ impl<'s> Projects<'s> {
         context: &CodeLoadContext<'_, 's, '_>,
         path: &[u8],
     ) -> Option<&'s Options> {
-        let project = self.governing(context, path)?;
+        Some(self.note_types(self.governing(context, path)?))
+    }
+
+    fn note_types(&self, project: &'s Options) -> &'s Options {
         if project.types.as_ref().is_some_and(|it| !it.is_empty()) {
             let mut naming_types = self.naming_types.lock();
             if !naming_types.iter().any(|&it| std::ptr::eq(it, project)) {
                 naming_types.push(project);
             }
         }
-        Some(project)
+        project
+    }
+
+    pub(super) fn governing_full_types(
+        &self,
+        context: &CodeLoadContext<'_, 's, '_>,
+        path: &[u8],
+    ) -> Option<&'s Options> {
+        let directory = dirname::<Posix>(path);
+        let stated = match self.full_types_by_directory.get_ref(directory) {
+            Some(&known) => known,
+            None => {
+                let found = self.find_full_types(context, directory);
+                *(self.full_types_by_directory).insert_ref(directory.to_vec(), found)
+            }
+        };
+        match stated {
+            Some(ConfigAnswer::Program) => None,
+            Some(ConfigAnswer::Project(options)) => Some(self.note_types(options)),
+            _ => self.governing_code(context, path),
+        }
+    }
+
+    fn find_full_types(
+        &self,
+        context: &CodeLoadContext<'_, 's, '_>,
+        directory: &[u8],
+    ) -> Option<ConfigAnswer<'s>> {
+        if context.resolver.is_under_tsconfig_override(directory) {
+            return None;
+        }
+        let manifest_path = config::find_manifest_of_full_types(context.host, directory)?;
+        if let Some(&known) = self.by_config_path.get_ref(&manifest_path) {
+            return Some(known);
+        }
+        let program = &context.options.config_path;
+        let answer = match is_same_path(&manifest_path, program, context.is_case_sensitive) {
+            true => ConfigAnswer::Program,
+            false => {
+                let scratch = Session::new();
+                let project = config::load_for_full_types(context.host, &scratch, &manifest_path);
+                let options = governing_options(context, project.options);
+                ConfigAnswer::Project(self.session.keep(options))
+            }
+        };
+        Some(*self.by_config_path.insert_ref(manifest_path, answer))
     }
 
     pub(super) fn governing(

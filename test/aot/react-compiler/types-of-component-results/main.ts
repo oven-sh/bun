@@ -1,4 +1,4 @@
-// A component file holds objects of typed files in what it makes: in the properties of its elements, in its literals, in what it hands to typed functions. The types of what is held stay what the typed files say.
+// A component file holds objects of full-types files in what it makes: in the properties of its elements, in its literals, in what it hands to typed functions. The types of what is held stay what the full-types files say.
 import { View } from "./View";
 import { currentRoot, describe, items, keptChoice, topOf } from "./state";
 

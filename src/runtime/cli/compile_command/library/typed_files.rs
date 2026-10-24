@@ -6,7 +6,8 @@ use bun_paths::resolve_path::{join_abs_string, platform_to_posix_in_place, relat
 use bun_sema_driver::sound_files::javascript_path_beside;
 
 use crate::cli::check_command::{
-    TypedFilesRequest, WrittenJavaScript, take_module_types, typed_files_for_build,
+    CompilerOptions, TypedFilesRequest, WrittenJavaScript, take_module_types,
+    typed_files_for_build, warn_unless_package_states,
 };
 
 pub(crate) struct TypedOutputs<'a> {
@@ -17,9 +18,10 @@ pub(crate) struct TypedOutputs<'a> {
     pub(crate) loaders: &'a bun_ast::LoaderHashTable,
     /// The build only made source maps for this. They are not part of its output.
     pub(crate) drops_source_maps: bool,
+    pub(crate) writes_package_json: bool,
 }
 
-/// `index.aot.ts`: `index.js` with its types, which `bun compile` compiles in its place.
+/// `index.full.ts`: `index.js` with its types, which `bun compile` compiles in its place.
 pub(crate) fn is_typed_file(file: &OutputFile) -> bool {
     file.output_kind == OutputKind::Asset
         && file.loader == Loader::Ts
@@ -30,7 +32,7 @@ pub(crate) fn add_typed_files(
     request: &TypedOutputs<'_>,
     log: &mut Log,
     output_files: &mut Vec<OutputFile>,
-) {
+) -> CompilerOptions {
     let outdir = join_abs_string::<Auto>(request.working_directory, &[request.outdir]).to_vec();
     let path_of = |file: &OutputFile| join_abs_string::<Auto>(&outdir, &[&file.dest_path]).to_vec();
     let text_of = |file: &OutputFile| match &file.value {
@@ -97,16 +99,15 @@ pub(crate) fn add_typed_files(
     if request.drops_source_maps {
         drop_source_maps(&outdir, output_files);
     }
-    for typed in typed_files {
+    if !request.writes_package_json && !typed_files.files.is_empty() {
+        warn_unless_package_states(&outdir, &typed_files.compiler_options, log);
+    }
+    for typed in typed_files.files {
         let mut path = relative_platform::<Auto, false>(&outdir, &typed.path).to_vec();
         platform_to_posix_in_place::<u8>(&mut path);
-        let loader = match path.ends_with(b".json") {
-            true => Loader::Json,
-            false => Loader::Ts,
-        };
         output_files.push(OutputFile {
-            loader,
-            input_loader: loader,
+            loader: Loader::Ts,
+            input_loader: Loader::Ts,
             output_kind: OutputKind::Asset,
             dest_path: path.into_boxed_slice(),
             size: typed.text.len(),
@@ -117,6 +118,7 @@ pub(crate) fn add_typed_files(
             ..OutputFile::zero_value()
         });
     }
+    typed_files.compiler_options
 }
 
 fn without_debug_id(text: &[u8]) -> Option<&[u8]> {

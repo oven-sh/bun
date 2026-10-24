@@ -546,7 +546,7 @@ fn rejected_typed_version_is_recorded() {
             Some(TypedVersionOrigin::Host)
         );
         let rejected = compiled.rejected_typed_version;
-        let rejected = rejected.expect("the typed version has another literal");
+        let rejected = rejected.expect("the full types have another literal");
         assert_eq!(rejected.path, b"/project/a.sound.ts");
         assert_eq!(rejected.kind, ErasureMismatchKind::Literal);
         assert_eq!(

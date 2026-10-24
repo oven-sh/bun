@@ -183,6 +183,26 @@ fn arena_ref<T>(p: NonNull<T>) -> &'static T {
 }
 
 impl DirInfo {
+    pub fn package_json_for_node_scope(&self) -> Option<&'static PackageJSON> {
+        if self.is_node_modules() {
+            return None;
+        }
+        if let Some(pkg) = self.package_json() {
+            return Some(pkg.for_node());
+        }
+        let mut parent = self.get_parent();
+        while let Some(dir) = parent {
+            if dir.is_node_modules() {
+                break;
+            }
+            if let Some(pkg) = dir.package_json() {
+                return Some(pkg.for_node());
+            }
+            parent = dir.get_parent();
+        }
+        None
+    }
+
     /// Is there a "node_modules" subdirectory?
     #[inline]
     pub(crate) fn has_node_modules(&self) -> bool {

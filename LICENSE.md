@@ -111,3 +111,4 @@ For compatibility reasons, the following packages are embedded into Bun's binary
 
 - Bun's JS transpiler, CSS lexer, and Node.js module resolver source code is a port of [@evanw](https://github.com/evanw)’s [esbuild](https://github.com/evanw/esbuild) project.
 - Credit to [@kipply](https://github.com/kipply) for the name "Bun"!
+- Package-map JSON diagnostics use [V8](https://v8.dev/) diagnostic templates and formatting rules under the [BSD-3-Clause license](src/parsers/node_json_diagnostic.LICENSE).

@@ -6,6 +6,7 @@
 pub mod format;
 pub mod host;
 pub mod outline;
+mod pages;
 
 pub use bun_sema::check::explain::MessageChain;
 pub use bun_sema::messages::Category;
@@ -856,6 +857,15 @@ pub trait ListedProjects: Sync {
     fn of(&self, path: &[u8], is_case_sensitive: bool) -> &[Vec<u8>];
 }
 
+/// `Request::pages`
+#[derive(Clone, Copy)]
+pub struct PageRules<'a> {
+    /// The loader of each extension, as `--loader` sets it (`bun_ast::Loader::of_extension`).
+    pub loaders: &'a bun_ast::LoaderHashTable,
+    /// The files that an import asks for as a page and that a bundle loads in another way. In the checker's format.
+    pub not_pages: &'a [Vec<u8>],
+}
+
 #[derive(Clone, Copy)]
 pub struct Request<'a> {
     /// The working directory, as a native path.
@@ -883,6 +893,8 @@ pub struct Request<'a> {
     pub script_kinds_by_extension: &'a [(Vec<u8>, ScriptKind)],
     /// `--conditions` of what is run or bundled, besides `customConditions`.
     pub conditions: &'a [Box<[u8]>],
+    /// How Bun loads files, which says what import is an HTML page to follow. `None`: follow none.
+    pub pages: Option<PageRules<'a>>,
     /// Compiler options given on the command line. They override the configuration file, including those of referenced
     /// projects.
     pub compiler_options: &'a [CompilerOption],
@@ -3926,6 +3938,8 @@ fn check_named_files(
     let mut scripts_elsewhere = Vec::new();
     let is_reached = named.map(|named| {
         let modules = &program.files.modules;
+        let of_program = |rules| pages::Pages::new(host, program.files, rules);
+        let pages = request.pages.map(of_program);
         let mut is_reached = vec![false; modules.len()];
         let mut to_follow: Vec<usize> = (0..modules.len())
             .filter(|&i| is_among(named, modules[i].path.text))
@@ -3935,11 +3949,9 @@ fn check_named_files(
         }
         while let Some(i) = to_follow.pop() {
             // A page represents its scripts.
-            let specifiers = modules[i].bound.specifiers.iter();
-            let specifiers = specifiers.map(|&it| program.files.atoms.bytes(it));
-            let pages = specifiers.filter(|it| it.ends_with(b".html") && is_relative(it));
-            let directory = dirname::<Posix>(modules[i].file_name());
-            let scripts = pages.flat_map(|page| host.scripts_of_page(&join(directory, page)));
+            let importer = FileId(i as u32);
+            let imported = pages.iter().flat_map(|pages| pages.imported_by(importer));
+            let scripts = imported.flat_map(|page| host.scripts_of_page(&page));
             let scripts = scripts.filter_map(|script| {
                 let here = program.files.by_path.get(&script);
                 if here.is_none() {

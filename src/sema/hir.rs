@@ -3239,6 +3239,18 @@ pub fn start_inside_parentheses(hir: &File, e: ExprId) -> u32 {
     }
 }
 
+/// `SkipOuterExpressions(e, OEKAssertions | OEKParentheses)`
+pub fn skip_assertions(hir: &File, mut e: ExprId) -> ExprId {
+    while let ExprKind::As { expr, .. }
+    | ExprKind::Satisfies { expr, .. }
+    | ExprKind::AsConst(expr)
+    | ExprKind::NonNull(expr) = hir[e].kind
+    {
+        e = expr;
+    }
+    e
+}
+
 /// `IsPrivateIdentifier` for the name at `pos`.
 #[inline]
 pub fn is_private_name_at(hir: &File, pos: u32) -> bool {

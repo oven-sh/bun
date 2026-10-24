@@ -2581,6 +2581,31 @@ pub mod bv2_impl {
                     loaders[index].is_javascript_like() && sources[index].path.is_file()
                 })
                 .map(|index| sources[index].path.text);
+            // A plugin read the file, or the first import of it named another loader.
+            let by_name = &self.transpiler.options.loaders;
+            let has_name_of_page =
+                |index: usize| sources[index].path.loader(by_name) == Some(Loader::Html);
+            let named_as_a_page = (0..sources.len())
+                .filter(|&index| loaders[index] != Loader::Html && has_name_of_page(index))
+                .map(|index| index as u32);
+            let asks_for_a_page = |record: &&ImportRecord| {
+                record.loader == Some(Loader::Html) && record.source_index.is_valid()
+            };
+            let asked_for_as_a_page = (import_records.iter())
+                .flat_map(|records| records.as_slice())
+                .filter(asks_for_a_page)
+                .map(|record| record.source_index.get());
+            let stands_for_a_page = &self.graph.html_imports.server_source_indices;
+            let of_client = &self.graph.build_graphs[options::Target::Browser];
+            let mut not_pages = (named_as_a_page.chain(asked_for_as_a_page))
+                // A server's import of a page gets a stub. The graph of the client has the page.
+                .filter_map(|index| match stands_for_a_page.contains(&index) {
+                    true => of_client.get(sources[index as usize].path.text),
+                    false => Some(index),
+                })
+                .map(|index| index as usize)
+                .filter(|&index| loaders[index] != Loader::Html && sources[index].path.is_file())
+                .map(|index| sources[index].path.text);
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
             // of it. What only a plugin provides is written nowhere else.
             let mut sources = (sources.iter().zip(loaders).zip(flags))
@@ -2598,6 +2623,7 @@ pub mod bv2_impl {
                 loaders: &self.transpiler.options.loaders,
                 entry_points: &mut entry_points,
                 sources: &mut sources,
+                not_pages: &mut not_pages,
             };
             if type_check(checked, self.transpiler.log_mut()) {
                 return Ok(());

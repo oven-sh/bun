@@ -700,18 +700,21 @@ devTest("a hot update gives each importer of a CommonJS module the default impor
       import * as untyped from "./untyped/importer.js";
       import * as typed from "./type-module/importer.js";
       globalThis.read = () => ({ untyped: untyped.read(), typed: typed.read() });
+      globalThis.keys = () => ({ untyped: untyped.keys(), typed: typed.keys() });
       console.log("loaded");
       import.meta.hot.accept();
     `,
     // The importers do not accept the update. The runtime patches their import binding.
     "untyped/importer.js": `
-      import d from "../dep.js";
+      import d, * as ns from "../dep.js";
       export const read = () => d;
+      export const keys = () => Object.keys(ns).sort();
     `,
     "type-module/package.json": `{ "type": "module" }`,
     "type-module/importer.js": `
-      import d from "../dep.js";
+      import d, * as ns from "../dep.js";
       export const read = () => d;
+      export const keys = () => Object.keys(ns).sort();
     `,
     "dep.js": `module.exports = { value: 1 };`,
   },
@@ -752,6 +755,9 @@ devTest("a hot update gives each importer of a CommonJS module the default impor
     // An empty file is a lazy export. A module that follows it is not one.
     // The newline makes the save a write(2): kqueue does not report a truncation alone.
     expect(await update("\n", { dedent: false })).toEqual({ untyped: {}, typed: [{}] });
+    // The next module writes to the object that was the lazy export. Both kinds of importer get a new namespace of it.
+    expect(await update(`exports.x = 1;`)).toEqual({ untyped: { x: 1 }, typed: [{ x: 1 }] });
+    expect(await c.js`keys()`).toEqual({ untyped: ["default", "x"], typed: ["default", "x"] });
     step = flagged("after empty");
     expect(await update(step.source)).toEqual({ untyped: step.untyped, typed: [step.typed] });
   },

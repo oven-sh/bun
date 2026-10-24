@@ -622,6 +622,8 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
 function runCommonJS(mod: HMRModule, record: UnloadedModule) {
   const isTuple = typeof record !== "function";
   mod.nodeMode = isTuple && (record[ESMProps.flags] & RecordFlags.nodeMode) !== 0;
+  // The namespace of a lazy export is not the one of a CommonJS module, also for the same `module.exports`.
+  if (mod.lazy) mod.exports = mod.interop = null;
   mod.lazy = false;
   const cjs = mod.cjs;
   (isTuple ? record[ESMProps.load] : record)(mod, cjs, cjs.exports);

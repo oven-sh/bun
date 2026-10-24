@@ -887,7 +887,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     // Out-param init pattern.
     let mut this_transpiler_slot =
         ::core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
-    let _ = RunCommand::configure_env_for_run(
+    let root_dir_info = RunCommand::configure_env_for_run(
         ctx,
         &mut this_transpiler_slot,
         None,
@@ -1051,7 +1051,6 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         };
 
         let package_json = (*root_dir_info).enclosing_package_json;
-        RunCommand::check_bun_version(package_json, ctx.debug.silent);
         let scripts_map: Option<&ScriptsMap> = package_json.and_then(|pkg| pkg.scripts.as_deref());
 
         for raw_name in &script_names {
@@ -1112,6 +1111,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     if configs.is_empty() {
         bun_core::pretty_errorln!("<r><red>error<r>: No scripts to run");
         Global::exit(1);
+    }
+    // Only a package.json script is checked, not a raw command.
+    if configs.iter().any(|config| !config.name.is_empty()) {
+        RunCommand::check_bun_version(root_dir_info.enclosing_package_json, ctx.debug.silent);
     }
 
     // Compute max label width

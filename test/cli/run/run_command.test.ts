@@ -207,6 +207,7 @@ describe.concurrent("bun version check", () => {
       [["run", "hi"], "packages/b", "0.0.2"],
       [["run", "--filter", "*", "hi"], ".", "0.0.1"],
       [["run", "--workspaces", "hi"], ".", "0.0.1"],
+      [["run", "--parallel", "--filter", "*", "hi"], ".", "0.0.1"],
     ])("bun %j from %s warns once with %s", async (cmd, cwd, range) => {
       using dir = workspace();
       const { stderr, exitCode } = await run(join(String(dir), cwd), cmd);
@@ -226,6 +227,17 @@ describe.concurrent("bun version check", () => {
         expect(exitCode).toBe(0);
       },
     );
+
+    // No script runs, so nothing is checked.
+    test.each([
+      [["run", "--filter", "*", "--if-present", "nope"]],
+      [["run", "--parallel", "--filter", "*", "--if-present", "nope"]],
+    ])("bun %j is silent", async cmd => {
+      using dir = workspace();
+      const { stderr, exitCode } = await run(String(dir), cmd);
+      expect(count(stderr)).toBe(0);
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

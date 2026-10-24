@@ -1811,9 +1811,9 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: bun_jsc::StopReason) -> 
             unsafe { (*all).fake_timers.reset_for_isolation(global) };
         }
         if !all.is_null() {
-            // SAFETY: as above; `disable` borrows only `event_loop_delay` and
+            // SAFETY: as above; `disable_all` borrows only `event_loop_delay` and
             // reaches the heap through `timer_all()` (disjoint-field access).
-            unsafe { (*all).event_loop_delay.disable() };
+            unsafe { (*all).event_loop_delay.disable_all() };
         }
     }
     vm.stop_context_handles(reason)

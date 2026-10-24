@@ -113,12 +113,17 @@ impl Histogram {
         false
     }
 
-    /// Counts everything `other` counted, each value as the lowest of its slot in `other`.
+    /// Counts everything `other` counted, each value as the lowest of its slot in `other`. All of it is refused if the
+    /// count could overflow: adding a part would change the shape of the distribution.
     pub fn add(&mut self, other: &Self) {
+        self.exceeds = self.exceeds.saturating_add(other.exceeds);
+        if self.count.checked_add(other.count).is_none() {
+            self.exceeds = self.exceeds.saturating_add(other.count);
+            return;
+        }
         for (slot, n) in other.slots() {
             self.record_n(slot.lowest, n);
         }
-        self.exceeds = self.exceeds.saturating_add(other.exceeds);
     }
 
     pub fn reset(&mut self) {

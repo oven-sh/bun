@@ -191,6 +191,31 @@ mod tests {
     }
 
     #[test]
+    fn memory_stays_bounded() {
+        let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
+        // The table holds about ten of these, so it turns over many times. One does not fit at all.
+        for i in 0..160 {
+            let len = if i == 80 { 60_000 } else { 300 + i % 100 };
+            let block = encode(
+                &mut encoder,
+                &format!("x-{i}"),
+                &"~".repeat(len),
+                Indexing::Add,
+            );
+            assert!(decode(&mut decoder, &block).is_ok());
+            assert_eq!(decoder.table_size(), encoder.table_size());
+            // What the large field took is given back with the next one.
+            if i != 80 {
+                let heap_sizes = (encoder.heap_size(), decoder.heap_size());
+                assert!(
+                    heap_sizes.0 < 24 * 1024 && heap_sizes.1 < 24 * 1024,
+                    "{i}: {heap_sizes:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn malformed_blocks() {
         for block in [
             "80",                // index 0

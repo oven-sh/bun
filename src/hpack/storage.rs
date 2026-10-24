@@ -43,6 +43,11 @@ impl Storage {
         self.bytes.len()
     }
 
+    #[cfg(test)]
+    pub(crate) fn heap_size(&self) -> usize {
+        self.bytes.capacity()
+    }
+
     pub(crate) fn append_copy_of(&mut self, range: Range<usize>) {
         if range.start <= range.end && range.end <= self.bytes.len() {
             self.bytes.extend_from_within(range);

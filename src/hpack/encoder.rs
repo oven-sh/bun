@@ -136,6 +136,13 @@ impl Encoder {
         self.size
     }
 
+    #[cfg(test)]
+    pub(crate) fn heap_size(&self) -> usize {
+        self.storage.heap_size()
+            + self.entries.capacity() * size_of::<Entry>()
+            + self.buckets.capacity() * size_of::<Bucket>()
+    }
+
     /// Takes the peer's SETTINGS_HEADER_TABLE_SIZE. The next block tells its decoder what was made of it.
     pub fn set_max_capacity(&mut self, max_capacity: u32) {
         // A peer that allows for more does not get to decide how much memory this side spends.

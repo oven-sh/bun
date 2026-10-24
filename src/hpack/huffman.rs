@@ -226,8 +226,6 @@ impl Decoder<'_> {
         }
         let (count, used) = if whole_prefix || first + second <= self.pending {
             (1 + usize::from(second != 0), first + second)
-        } else if first <= self.pending {
-            (1, first)
         } else {
             return Ok(false);
         };

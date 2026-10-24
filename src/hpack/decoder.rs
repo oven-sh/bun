@@ -62,6 +62,11 @@ impl Decoder {
         self.size
     }
 
+    #[cfg(test)]
+    pub(crate) fn heap_size(&self) -> usize {
+        self.storage.heap_size() + self.entries.capacity() * size_of::<Entry>()
+    }
+
     /// The field at `*pos`, 0 at first, of a whole header block. `None` at its end. An error is fatal to the connection.
     pub fn next(&mut self, block: &[u8], pos: &mut usize) -> Option<Result<Field<'_>>> {
         if *pos == 0

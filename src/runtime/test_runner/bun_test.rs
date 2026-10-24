@@ -461,7 +461,7 @@ pub(crate) mod js_fns {
         second: CallbackOrOptions<'a>,
         third: CallbackOrOptions<'a>,
     ) -> JsResult<()> {
-        let flavor = if hook % 2 == 0 { Flavor::Jest } else { Flavor::Vitest };
+        let flavor = if hook.is_multiple_of(2) { Flavor::Jest } else { Flavor::Vitest };
         generic_hook_impl(TAGS[usize::from(hook / 2)], flavor, cx.global(), this_value, first, second, third)
     }
 }

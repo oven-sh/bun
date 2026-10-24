@@ -269,6 +269,26 @@ describe("a pipe at stdio index >= 3 of a sync spawn", () => {
       );
     });
   });
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1035-L1043
+  describe("an 'ipc' entry throws ERR_IPC_SYNC_FORK", () => {
+    const ipc: StdioOptions = ["ignore", "pipe", "pipe", "ipc"];
+    for (const [name, call] of [
+      ["spawnSync", () => spawnSync(exe, ["-e", ""], { stdio: ipc, env })],
+      ["spawnSync, at index 0", () => spawnSync(exe, ["-e", ""], { stdio: ["ipc", "pipe", "pipe"], env })],
+      ["spawnSync, more than one", () => spawnSync(exe, ["-e", ""], { stdio: ["ipc", "ipc", "pipe"], env })],
+      ["execFileSync", () => execFileSync(exe, ["-e", ""], { stdio: ipc, env })],
+      ["execSync", () => execSync("exit 0", { stdio: ipc, env })],
+    ] as const) {
+      test(name, () => {
+        assert.throws(call, {
+          name: "Error",
+          code: "ERR_IPC_SYNC_FORK",
+          message: "IPC cannot be used with synchronous forks",
+        });
+      });
+    }
+  });
 });
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.

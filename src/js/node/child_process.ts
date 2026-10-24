@@ -561,7 +561,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
   options.killSignal = sanitizeKillSignal(options.killSignal);
 
   const stdio = options.stdio || "pipe";
-  const bunStdio = getBunStdioFromOptions(stdio);
+  const bunStdio = getBunStdioFromOptions(stdio, true);
   const stdioLength = bunStdio.length;
   // One entry for each stdio slot above stderr. Bun.spawnSync puts what the child wrote to a pipe at the
   // pipe's index, and every other slot stays null.
@@ -1798,6 +1798,12 @@ function streamFdOf(item): number | undefined {
   return undefined;
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1035-L1043
+function nodeToBunSync(item: string, index: number): Bun.Spawn.NodeStdio[number] {
+  if (item === "ipc") throw $ERR_IPC_SYNC_FORK();
+  return nodeToBun(item, index);
+}
+
 function nodeToBun(item: string, index: number): Bun.Spawn.NodeStdio[number] {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
@@ -1865,9 +1871,9 @@ function fdToStdioName(fd: number) {
   }
 }
 
-function getBunStdioFromOptions(stdio) {
+function getBunStdioFromOptions(stdio, sync?: boolean) {
   const normalizedStdio = normalizeStdio(stdio);
-  if (normalizedStdio.filter(v => v === "ipc").length > 1) throw $ERR_IPC_ONE_PIPE();
+  if (!sync && normalizedStdio.filter(v => v === "ipc").length > 1) throw $ERR_IPC_ONE_PIPE();
   // Node options:
   // pipe: just a pipe
   // ipc = can only be one in array
@@ -1890,7 +1896,7 @@ function getBunStdioFromOptions(stdio) {
   // ignore -> null
   // inherit -> inherit (stdin/stdout/stderr)
   // Stream -> throw err for now
-  const bunStdio = normalizedStdio.map(nodeToBun);
+  const bunStdio = normalizedStdio.map(sync ? nodeToBunSync : nodeToBun);
   return bunStdio;
 }
 

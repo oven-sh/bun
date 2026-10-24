@@ -98,7 +98,8 @@ void CryptoAlgorithmAES_GCM::encrypt(const CryptoAlgorithmParameters& parameters
         return;
     }
 
-    dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
+    auto inputSize = plainText.size() + aesParameters.ivVector().size() + aesParameters.additionalDataVector().size();
+    dispatchOperation(s_identifier, inputSize, workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
         [parameters = crossThreadCopy(aesParameters), key = WTF::move(key), plainText = WTF::move(plainText)] {
             return platformEncrypt(parameters, downcast<CryptoKeyAES>(key.get()), plainText);
         });
@@ -131,7 +132,8 @@ void CryptoAlgorithmAES_GCM::decrypt(const CryptoAlgorithmParameters& parameters
     }
 #endif
 
-    dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
+    auto inputSize = cipherText.size() + aesParameters.ivVector().size() + aesParameters.additionalDataVector().size();
+    dispatchOperation(s_identifier, inputSize, workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
         [parameters = crossThreadCopy(aesParameters), key = WTF::move(key), cipherText = WTF::move(cipherText)] {
             return platformDecrypt(parameters, downcast<CryptoKeyAES>(key.get()), cipherText);
         });

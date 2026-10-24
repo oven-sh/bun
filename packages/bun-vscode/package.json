@@ -7,6 +7,9 @@
     "url": "https://github.com/oven-sh/bun"
   },
   "main": "dist/extension.js",
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
   "devDependencies": {
     "@types/bun": "^1.1.10",
     "@types/vscode": "^1.60.0",
@@ -33,7 +36,9 @@
   "categories": [
     "Programming Languages",
     "Debuggers",
-    "Testing"
+    "Testing",
+    "Formatters",
+    "Linters"
   ],
   "contributes": {
     "configuration": {
@@ -87,6 +92,12 @@
         "bun.test.enable": {
           "type": "boolean",
           "description": "If the test explorer should be enabled and integrated with your editor",
+          "scope": "window",
+          "default": true
+        },
+        "bun.lsp.enable": {
+          "type": "boolean",
+          "description": "If the extension should start Bun's language server (`bun fmt --lsp`) for formatting and lint fixes.",
           "scope": "window",
           "default": true
         }
@@ -344,7 +355,7 @@
   "description": "The Visual Studio Code extension for Bun.",
   "displayName": "Bun for Visual Studio Code",
   "engines": {
-    "vscode": "^1.60.0"
+    "vscode": "^1.82.0"
   },
   "extensionKind": [
     "workspace"

@@ -170,6 +170,11 @@ pub(crate) struct ExecutionSequence {
 }
 
 impl ExecutionSequence {
+    /// False for a failed attempt that a retry can still replace.
+    pub(crate) fn has_failed(&self) -> bool {
+        self.result.is_fail() && self.remaining_retry_count == 0
+    }
+
     pub(crate) fn init(
         first_entry: Option<NonNull<ExecutionEntry>>,
         test_entry: Option<NonNull<ExecutionEntry>>,
@@ -625,6 +630,31 @@ impl Execution {
         } else {
             group_log::log(format_args!("-> entry.timeout: 0"));
             entry.timespec = Timespec::EPOCH;
+        }
+    }
+
+    /// Steps the failed sequences that still run their hooks past the entries they have left, so `advance_sequence` reports them before the process exits.
+    #[cold]
+    pub(crate) fn end_failed_sequences_in_flight(buntest: NonNull<BunTest>) {
+        let (group, range) = {
+            // SAFETY: `buntest` is the live active file. This borrow of its `execution` ends with the block.
+            let Some(group) = unsafe { &mut *buntest.as_ptr() }.execution.active_group() else {
+                return;
+            };
+            let range = group.sequence_start..group.sequence_end;
+            (NonNull::from(group), range)
+        };
+        for index in range {
+            // SAFETY: as in `advance_sequence`: one element of `buntest.execution.sequences`, disjoint from `groups`.
+            let sequence = unsafe { &mut (*buntest.as_ptr()).execution.sequences[index] };
+            if !sequence.has_failed() {
+                continue;
+            }
+            while sequence.active_entry.is_some() {
+                // `advance_sequence` asserts that the entry it steps past was running.
+                sequence.executing = true;
+                Execution::advance_sequence(buntest, NonNull::from(&mut *sequence), group);
+            }
         }
     }
 

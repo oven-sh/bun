@@ -68,7 +68,11 @@ pub(crate) fn get_exec_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
 #[unsafe(export_name = "Bun__Process__exit")]
 pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
     let vm = global_object.bun_vm().as_mut();
-    vm.exit_handler.exit_code = code;
+    vm.exit_handler.exit_code = if code == 0 && vm.exit_handler.exits_nonzero {
+        1
+    } else {
+        code
+    };
     if let Some(worker) = vm.worker_ref() {
         // @190n: we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner
@@ -85,6 +89,12 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
             bun_jsc::node_compile_cache::persist_now();
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);
+        }
+        // The field: the method is also true on the debugger thread, which does not own the test runner.
+        if vm.is_main_thread
+            && let Some(runner) = crate::test_runner::jest::Jest::runner_ptr()
+        {
+            crate::cli::test_command::on_process_exit(runner, vm);
         }
         vm.exit_handler.requested = true;
         vm.on_exit();

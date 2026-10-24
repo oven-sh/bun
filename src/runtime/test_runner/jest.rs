@@ -147,6 +147,9 @@ pub(crate) struct TestRunner<'a> {
     /// `*mut` at the use site would launder shared provenance into a write (UB).
     pub(crate) filter_regex: Option<core::ptr::NonNull<RegularExpression>>,
 
+    /// Set while `TestCommand::run_all_tests` runs the test files in this process, unless the run drains the event loop as node does. An exit of the process then ends the run before the tail of `exec`.
+    pub(crate) reports_process_exit: bool,
+
     pub(crate) unhandled_errors_between_tests: u32,
     pub(crate) summary: Summary,
 
@@ -156,7 +159,72 @@ pub(crate) struct TestRunner<'a> {
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
 
+/// See [`TestRunner::on_stack`]. Displays as the clause that says when the process exits.
+pub(crate) enum OnStack<'a> {
+    Test(&'a [u8]),
+    HookOfTest(&'a [u8]),
+    Hook,
+    Nothing,
+}
+
+impl core::fmt::Display for OnStack<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            OnStack::Test(name) => {
+                write!(f, " while the test {} was running", bun_core::fmt::quote(name))
+            }
+            OnStack::HookOfTest(name) => write!(
+                f,
+                " while a hook of the test {} was running",
+                bun_core::fmt::quote(name)
+            ),
+            OnStack::Hook => f.write_str(" while a hook was running"),
+            OnStack::Nothing => f.write_str(" before the end of the test run"),
+        }
+    }
+}
+
 impl<'a> TestRunner<'a> {
+    /// Whether the run has failed so far. Counts a test that failed and still runs its hooks.
+    pub(crate) fn has_observed_failure(&self) -> bool {
+        if self.summary.fail > 0 || self.unhandled_errors_between_tests > 0 {
+            return true;
+        }
+        let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
+            return false;
+        };
+        active_file.execution.active_group_ref().is_some_and(|group| {
+            group
+                .sequences_const(&active_file.execution)
+                .iter()
+                .any(bun_test::Execution::ExecutionSequence::has_failed)
+        })
+    }
+
+    /// The test or hook whose callback is on the stack. It is not always the caller: a timer of another test can fire while it waits.
+    pub(crate) fn on_stack(&self) -> OnStack<'_> {
+        let Some(file) = self.bun_test_root.active_file.as_deref() else {
+            return OnStack::Nothing;
+        };
+        let execution = &file.execution;
+        let (Some(data), Some(group)) = (execution.on_stack_entry_data.get(), execution.active_group_ref()) else {
+            return OnStack::Nothing;
+        };
+        let Some(sequence) = group.sequences_const(execution).get(data.sequence_index) else {
+            return OnStack::Nothing;
+        };
+        let Some(test) = sequence.test_entry else {
+            return OnStack::Hook;
+        };
+        // SAFETY: arena-owned entry, alive for the lifetime of BunTest.
+        let name = unsafe { test.as_ref() }.base.name.as_deref().unwrap_or(b"(unnamed)");
+        if core::ptr::eq(test.as_ptr().cast_const().cast::<()>(), data.entry) {
+            OnStack::Test(name)
+        } else {
+            OnStack::HookOfTest(name)
+        }
+    }
+
     pub(crate) fn get_active_timeout(&self) -> bun_core::Timespec {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return bun_core::Timespec::EPOCH;

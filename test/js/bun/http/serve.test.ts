@@ -2329,30 +2329,62 @@ describe("response framing", () => {
     // would fail on the most common beginner mistake.
     it("the dev missing-response page is sent with exactly one Content-Length header", async () => {
       using server = Bun.serve({ port: 0, hostname: "127.0.0.1", development: true, fetch: () => undefined as any });
-      const contentLengthLines = (extraHeaders: string) =>
-        new Promise<string[]>((resolve, reject) => {
-          let raw = "";
-          const s = net.connect(server.port, "127.0.0.1", () => {
-            s.write(`GET / HTTP/1.1\r\nHost: x\r\n${extraHeaders}Connection: close\r\n\r\n`);
+      // `rawRequest` keeps one value per header name, so count the header lines here.
+      const request = (method: string, extraHeaders = "") =>
+        new Promise<{ lengths: string[]; encodings: string[]; body: Buffer }>((resolve, reject) => {
+          const chunks: Buffer[] = [];
+          const s = net.connect(server.port!, "127.0.0.1", () => {
+            s.write(`${method} / HTTP/1.1\r\nHost: x\r\n${extraHeaders}Connection: close\r\n\r\n`);
           });
-          s.on("data", d => (raw += d.toString("latin1")));
+          s.on("data", d => chunks.push(d));
           s.on("error", reject);
           s.on("close", () => {
+            const raw = Buffer.concat(chunks);
             const separator = raw.indexOf("\r\n\r\n");
             if (separator < 0) {
               reject(new Error("server closed before sending a complete HTTP header block"));
               return;
             }
-            const head = raw.slice(0, separator);
-            resolve(head.split("\r\n").filter(l => /^content-length:/i.test(l)));
+            const lines = raw.subarray(0, separator).toString("latin1").toLowerCase().split("\r\n");
+            resolve({
+              lengths: lines.filter(l => l.startsWith("content-length:")),
+              encodings: lines.filter(l => l.startsWith("content-encoding:")),
+              body: raw.subarray(separator + 4),
+            });
           });
         });
+      // A browser navigation gets the gzip HTML page, every other request the text.
+      const navigation = "Sec-Fetch-Dest: document\r\n";
+      const text = { get: await request("GET"), head: await request("HEAD") };
+      const page = { get: await request("GET", navigation), head: await request("HEAD", navigation) };
+      const pageLength = `content-length: ${page.get.body.length}`;
+      const html = Buffer.from(Bun.gunzipSync(page.get.body)).toString();
       expect({
-        text: await contentLengthLines(""),
-        browser: await contentLengthLines("Sec-Fetch-Dest: document\r\n"),
+        text: {
+          get: { lengths: text.get.lengths, body: text.get.body.toString() },
+          head: { lengths: text.head.lengths, body: text.head.body.toString() },
+        },
+        page: {
+          get: {
+            lengths: page.get.lengths,
+            encodings: page.get.encodings,
+            title: html.match(/<title>.*?<\/title>/)?.[0],
+          },
+          head: { lengths: page.head.lengths, encodings: page.head.encodings, body: page.head.body.toString() },
+        },
       }).toEqual({
-        text: ["Content-Length: 57"],
-        browser: [expect.stringMatching(/^Content-Length: \d+$/)],
+        text: {
+          get: { lengths: ["content-length: 57"], body: "Welcome to Bun! To get started, return a Response object." },
+          head: { lengths: ["content-length: 57"], body: "" },
+        },
+        page: {
+          get: {
+            lengths: [pageLength],
+            encodings: ["content-encoding: gzip"],
+            title: "<title>Welcome to Bun!</title>",
+          },
+          head: { lengths: [pageLength], encodings: ["content-encoding: gzip"], body: "" },
+        },
       });
     });
 

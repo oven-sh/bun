@@ -1178,12 +1178,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             _ => options::CompileTargetBuiltins::Host,
         };
 
-        if !transpiler.options.production {
-            transpiler
-                .options
-                .conditions
-                .append_slice(&[b"development"])?;
-        }
+        transpiler.options.append_development_condition()?;
         // `transpiler.env` is the dotenv loader installed by
         // `Transpiler::init`; non-null and valid for `'a`.
         transpiler.resolver.env_loader = NonNull::new(transpiler.env);

@@ -36,6 +36,7 @@ use bun_resolver::Resolver;
 
 use crate::Graph::Graph;
 use crate::options::{CompileMode, Format, Loader, SourceMapOption, Target};
+use crate::options_impl::TargetExt;
 use crate::{
     AdditionalFile, BundleV2, Chunk, CompileResultForSourceMap, ContentHasher, ImportTracker,
     LinkerGraph, MangledProps, PartRange, StableRef, WrapKind,
@@ -4104,6 +4105,15 @@ impl<'a> LinkerContext<'a> {
                         .alias
                         .expect("infallible: alias present")
                         .slice();
+                    let is_page = self.graph.ast.items_target()[prev_source_index as usize]
+                        .is_page_of_server_build(self.options.target, self.framework.is_some());
+                    let is_browser_build =
+                        is_page || self.resolver().opts.target == Target::Browser;
+                    let browser_build_note = if is_page {
+                        crate::options::PAGE_OF_SERVER_BUILD_NOTE
+                    } else {
+                        "Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the transpiler options."
+                    };
 
                     // Report mismatched imports and exports
                     if symbol.import_item_status == ImportItemStatus::Generated {
@@ -4120,7 +4130,7 @@ impl<'a> LinkerContext<'a> {
                         // at run time too, so there is nothing to say.
                         if self.is_call_record(prev_source_index, named_import.import_record_index)
                         {
-                        } else if self.resolver().opts.target == Target::Browser
+                        } else if is_browser_build
                             && bun_resolve_builtins::Alias::has(
                                 next_source.path.pretty,
                                 Target::Bun,
@@ -4134,7 +4144,7 @@ impl<'a> LinkerContext<'a> {
                                     bstr::BStr::new(&next_source.path.pretty),
                                     bstr::BStr::new(alias),
                                 ),
-                                format_args!("Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the transpiler options."),
+                                format_args!("{browser_build_note}"),
                                 r,
                             );
                         } else {
@@ -4147,7 +4157,7 @@ impl<'a> LinkerContext<'a> {
                                 ),
                             );
                         }
-                    } else if self.resolver().opts.target == Target::Browser
+                    } else if is_browser_build
                         && next_source
                             .path
                             .text
@@ -4160,7 +4170,7 @@ impl<'a> LinkerContext<'a> {
                                 bstr::BStr::new(&next_source.path.pretty),
                                 bstr::BStr::new(alias),
                             ),
-                            format_args!("Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the transpiler options."),
+                            format_args!("{browser_build_note}"),
                             r,
                         );
                     } else {

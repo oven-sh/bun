@@ -512,12 +512,7 @@ impl BuildCommand {
             options::CompileTargetBuiltins::Host
         };
 
-        if !this_transpiler.options.production {
-            this_transpiler
-                .options
-                .conditions
-                .append_slice(&[b"development" as &[u8]])?;
-        }
+        this_transpiler.options.append_development_condition()?;
 
         // Note: `resolver.opts` is the canonical
         // `bun_resolver::options::BundleOptions` subset, distinct from the

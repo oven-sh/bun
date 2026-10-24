@@ -44,9 +44,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // spread across sibling monomorphizations that fault-around drags in.
 
     #[inline]
-    fn t_semicolon(p: &mut Self) -> Result<Stmt> {
+    fn t_semicolon(p: &mut Self, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
-        Ok(Stmt::empty())
+        Ok(p.s(S::Empty {}, loc))
     }
 
     #[inline]
@@ -2001,7 +2001,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let loc = self.lexer.loc();
         match self.lexer.token {
-            T::TSemicolon => Self::t_semicolon(self),
+            T::TSemicolon => Self::t_semicolon(self, loc),
             T::TAt => Self::t_at(self, opts),
 
             T::TExport => Self::t_export(self, opts, loc),

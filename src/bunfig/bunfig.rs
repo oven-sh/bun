@@ -550,6 +550,12 @@ impl<'a> Parser<'a, '_> {
                                 lines.as_number().expect("infallible: type checked");
                             self.ctx.test_options.coverage.fail_on_low_coverage = true;
                         }
+                        if let Some(branches) = expr.get(b"branches") {
+                            self.expect(&branches, ExprTag::ENumber)?;
+                            self.ctx.test_options.coverage.fractions.branches =
+                                branches.as_number().expect("infallible: type checked");
+                            self.ctx.test_options.coverage.fail_on_low_coverage = true;
+                        }
                         if let Some(stmts) = expr.get(b"statements") {
                             self.expect(&stmts, ExprTag::ENumber)?;
                             self.ctx.test_options.coverage.fractions.stmts =

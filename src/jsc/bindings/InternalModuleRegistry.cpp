@@ -31,7 +31,7 @@ extern "C" bool Bun__standaloneInternalModuleBytecode(void* bunVM, uint32_t id, 
 namespace Bun {
 
 extern "C" bool BunTest__shouldGenerateCodeCoverage(const BunString* sourceURL);
-extern "C" void ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID, bool alreadyBundled);
+extern "C" bool ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID, bool alreadyBundled);
 
 static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 {

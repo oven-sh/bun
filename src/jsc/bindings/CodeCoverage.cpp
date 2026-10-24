@@ -8,7 +8,7 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
     JSC::VM* vmPtr,
     JSC::SourceID sourceID,
     void* ctx,
-    void (*blockCallback)(void* ctx, JSC::BasicBlockRange* range, size_t len, size_t functionOffset))
+    void (*blockCallback)(void* ctx, JSC::BasicBlockRange* range, size_t len, size_t functionOffset, const JSC::BranchRange* branches, size_t branchesLen))
 {
 
     VM& vm = *vmPtr;
@@ -17,7 +17,7 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
         sourceID, vm);
 
     if (basicBlocks.isEmpty()) {
-        blockCallback(ctx, nullptr, 0, 0);
+        blockCallback(ctx, nullptr, 0, 0, nullptr, 0);
         return true;
     }
 
@@ -42,6 +42,8 @@ extern "C" bool CodeCoverage__withBlocksAndFunctions(
         basicBlocks.append(range);
     }
 
-    blockCallback(ctx, basicBlocks.begin(), basicBlocks.size(), functionStartOffset);
+    auto branches = vm.controlFlowProfiler()->getBranchesForSourceID(sourceID);
+
+    blockCallback(ctx, basicBlocks.begin(), basicBlocks.size(), functionStartOffset, branches.span().data(), branches.size());
     return true;
 }

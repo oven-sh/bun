@@ -7,6 +7,7 @@
 pub struct Fraction {
     pub functions: f64,
     pub lines: f64,
+    pub branches: f64,
     /// This metric is less accurate right now
     pub stmts: f64,
     pub failing: bool,
@@ -17,6 +18,8 @@ impl Default for Fraction {
         Self {
             functions: 0.9,
             lines: 0.9,
+            // Checked only when `coverageThreshold` has `branches`.
+            branches: 0.0,
             stmts: 0.75,
             failing: false,
         }

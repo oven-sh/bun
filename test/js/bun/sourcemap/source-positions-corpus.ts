@@ -287,7 +287,7 @@ export const cases: Record<string, Case> = {
  1|};
 `,
   },
-  // Where a constant is inlined, its value has the position of its declaration.
+  // Where a constant is inlined, its value has the position of the name it replaces.
   "inlined.ts": {
     functions: "1/2",
     lines: `
@@ -298,10 +298,17 @@ export const cases: Record<string, Case> = {
  0|export function unused(x: number): number {
  0|  return x + B;
  -|}
- 1|export function used(x: number): number {
- 1|  return x + C;
+ 3|export function used(x: number): number {
+ 3|  const D = 4;
+ 3|  return x +
+ 3|    C +
+ 3|    D;
  -|}
  1|used(A);
+ 1|used(A);
+ 1|used(
+ 1|  A,
+ 1|);
 `,
   },
   // JSC's offsets count code units of a text that is Latin-1 here and UTF-16 below, never UTF-8 bytes.
@@ -453,6 +460,87 @@ export const cases: Record<string, Case> = {
  1|first([1]);
  1|first([1]);
  1|first([]);
+`,
+  },
+  // Each part of a loop header has its own count.
+  "loop-headers.ts": {
+    functions: "1/1",
+    lines: `
+10|function f() {
+10|  return true;
+ -|}
+ 1|let i = 0;
+ 1|while (
+ 4|  i < 3 &&
+ 3|  f()
+ -|) {
+ 3|  i++;
+ -|}
+ 1|for (
+ 1|  i = 0;
+ 4|  i < 3;
+ 3|  i++
+ -|) {
+ 3|  f();
+ -|}
+ 1|for (
+ 1|  i = 0;
+ 1|  i < 3;
+ 0|  i++
+ -|) {
+ 1|  break;
+ -|}
+ 1|for (const
+ 2|  item
+ 1|  of [1, 2]
+ -|) {
+ 2|  f();
+ -|}
+ 1|for (const
+ 0|  item
+ 1|  of []
+ -|) {
+ 0|  f();
+ -|}
+ 1|for (const
+ 2|  key
+ 1|  in { a: 1, b: 2 }
+ -|) {
+ 2|  f();
+ -|}
+`,
+  },
+  // An empty statement that is a body runs.
+  "empty-statements.ts": {
+    functions: "1/2",
+    lines: `
+ 3|function f(v: number, list: number[]) {
+ 3|  let r = 0;
+ 3|  if (v)
+ 2|    ;
+ 1|  else
+ 1|    ;
+ 6|  while (r++ < v)
+ 3|    ;
+ 3|  for (const x of list)
+ 3|    ;
+ 3|  for (const k in list)
+ 3|    ;
+ 6|  for (let i = 0; i < v; i++)
+ 3|    ;
+ 3|  do
+ 3|    ;
+ 3|  while (r < 0);
+ 3|  label:
+ 3|    ;
+ -|}
+ 0|export function never(v: number) {
+ 0|  if (v)
+ 0|    ;
+ -|}
+ 1|f(1, [1, 2]);
+ 1|f(0, []);
+ 1|f(2, [3]);
 `,
   },
   // What is after a statement that control flow left did not run.

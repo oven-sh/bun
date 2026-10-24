@@ -1,7 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -1017,6 +1017,368 @@ for (const first of ["stylesheet", "text"]) {
     },
   });
 }
+// The dev server retires the stylesheet of a file when no module imports the file as a stylesheet
+// any more and a module imports it with another type. See "retires the module" in bundle.test.ts.
+devTest("the error of a stylesheet leaves the overlay when its import gets a type", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "x.css": `.box { color: red; }}`,
+    "app.ts": `
+      import "./x.css";
+      console.log("stylesheet");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { errors: ["x.css:1:22: error: Unexpected end of input"] });
+
+    await c.expectReload(async () => {
+      await dev.write(
+        "app.ts",
+        `
+          import text from "./x.css" with { type: "text" };
+          let value;
+          try {
+            value = text;
+          } catch (e) {
+            value = "throws " + e.name;
+          }
+          console.log("text: " + value);
+        `,
+      );
+    });
+    await c.expectMessage("text: .box { color: red; }}");
+    await c.style(".box").notFound();
+  },
+});
+// The observer page imports nothing of the stylesheet. It never reloads, so a build error stays in its overlay.
+const observerPage = {
+  "observer.html": emptyHtmlFile({ scripts: ["observer.ts"] }),
+  "observer.ts": `console.log("observer");`,
+};
+devTest("a save does not bundle the retired stylesheet of a file that a second script imports as text", {
+  files: {
+    ...observerPage,
+    "index.html": emptyHtmlFile({ scripts: ["a.ts", "b.ts"] }),
+    "x.css": `.box { color: red; }`,
+    "a.ts": `
+      import "./x.css";
+      console.log("a: stylesheet");
+    `,
+    "b.ts": `
+      import text from "./x.css" with { type: "text" };
+      let value;
+      try {
+        value = text;
+      } catch (e) {
+        value = "throws " + e.name;
+      }
+      console.log("b: " + value);
+    `,
+  },
+  async test(dev) {
+    await using observer = await dev.client("/observer");
+    await observer.expectMessage("observer");
+    await using c = await dev.client("/index");
+    await c.expectMessage("a: stylesheet", "b: .box { color: red; }");
+    await c.style(".box").color.expect.toBe("red");
+
+    await c.expectReload(async () => {
+      await dev.write("a.ts", `console.log("a: no stylesheet");`);
+    });
+    await c.expectMessage("a: no stylesheet", "b: .box { color: red; }");
+    await c.style(".box").notFound();
+
+    // A css parser rejects this content. The save bundles the text module only, so there is no error.
+    await c.expectReload(async () => {
+      await dev.write("x.css", `.box { color: blue; }}`);
+    });
+    await c.expectMessage("a: no stylesheet", "b: .box { color: blue; }}");
+    await c.style(".box").notFound();
+    await c.expectReload(async () => {
+      await dev.write("x.css", `.box { color: green; }`);
+    });
+    await c.expectMessage("a: no stylesheet", "b: .box { color: green; }");
+
+    // The stylesheet comes back from the file as it is now.
+    await c.expectReload(async () => {
+      await dev.write("a.ts", `import "./x.css";\nconsole.log("a: stylesheet again");`);
+    });
+    await c.expectMessage("a: stylesheet again", "b: .box { color: green; }");
+    await c.style(".box").color.expect.toBe("green");
+  },
+});
+// An `@import` adds an importer to the stylesheet of a file without a bundle of that stylesheet on its own.
+devTest("a retired stylesheet that a second stylesheet starts to @import follows each save", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["main.css"], scripts: ["app.ts"] }),
+    "main.css": `.main { color: green; }`,
+    "x.css": `.box { color: red; }`,
+    "app.ts": `
+      import "./x.css";
+      console.log("stylesheet");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("stylesheet");
+    await c.style(".box").color.expect.toBe("red");
+
+    await c.expectReload(async () => {
+      await dev.write(
+        "app.ts",
+        `
+          import text from "./x.css" with { type: "text" };
+          let value;
+          try {
+            value = text;
+          } catch (e) {
+            value = "throws " + e.name;
+          }
+          console.log("text: " + value);
+        `,
+      );
+    });
+    await c.expectMessage("text: .box { color: red; }");
+    await c.style(".box").notFound();
+
+    await dev.write("main.css", `@import "./x.css";\n.main { color: green; }`);
+    await c.style(".box").color.expect.toBe("red");
+
+    await c.expectReload(async () => {
+      await dev.write("x.css", `.box { color: blue; }`);
+    });
+    await c.expectMessage("text: .box { color: blue; }");
+    await c.style(".box").color.expect.toBe("#00f");
+  },
+});
+// The route gets the stylesheet through the server module that imports it, not through a browser module.
+devTest("a stylesheet that a route imports stays in the bundle when a client component imports it as text", {
+  framework: minimalFramework,
+  files: {
+    "x.css": `.box { color: red; }`,
+    "Widget.ts": `
+      "use client";
+      import "./x.css";
+      export const widget = "stylesheet";
+    `,
+    "routes/index.ts": `
+      import "../x.css";
+      import "../Widget.ts";
+      export default function (req, meta) {
+        return Response.json(meta.styles);
+      }
+    `,
+  },
+  async test(dev) {
+    const styles: string[] = await dev.fetch("/").json();
+    expect(styles).toHaveLength(1);
+    await dev.fetch(styles[0]).equals("/* x.css */\n.box {\n  color: red;\n}");
+
+    // No browser module imports "x.css" as a stylesheet now.
+    await dev.write(
+      "Widget.ts",
+      `
+        "use client";
+        import text from "./x.css" with { type: "text" };
+        export const widget = text;
+      `,
+    );
+    await dev.fetch("/").equals(styles);
+
+    await dev.write("x.css", `.box { color: blue; }`);
+    await dev.fetch("/").equals(styles);
+    await dev.fetch(styles[0]).equals("/* x.css */\n.box {\n  color: #00f;\n}");
+  },
+});
+devTest("a retired stylesheet follows each save again when a route that imports it is bundled", {
+  framework: minimalFramework,
+  files: {
+    "x.css": `.box { color: red; }`,
+    "Widget.ts": `
+      "use client";
+      import "./x.css";
+      export const widget = "stylesheet";
+    `,
+    "routes/index.ts": `
+      import "../Widget.ts";
+      export default function (req, meta) {
+        return Response.json(meta.styles);
+      }
+    `,
+    "routes/other.ts": `
+      import "../x.css";
+      export default function (req, meta) {
+        return Response.json(meta.styles);
+      }
+    `,
+  },
+  async test(dev) {
+    const styles: string[] = await dev.fetch("/").json();
+    expect(styles).toHaveLength(1);
+
+    // Only the client component imports "x.css" as a stylesheet: the dev server has not bundled "routes/other.ts" yet.
+    await dev.write(
+      "Widget.ts",
+      `
+        "use client";
+        import text from "./x.css" with { type: "text" };
+        export const widget = text;
+      `,
+    );
+    await dev.fetch("/").equals([]);
+
+    await dev.fetch("/other").equals(styles);
+    await dev.write("x.css", `.box { color: blue; }`);
+    await dev.fetch(styles[0]).equals("/* x.css */\n.box {\n  color: #00f;\n}");
+  },
+});
+// A client component is also bundled for the server graph, so both graphs have its stylesheet.
+devTest("the stylesheet of a client component is retired when the component imports it as text", {
+  framework: minimalFramework,
+  pluginFile: `
+    export default [
+      {
+        name: "count-css-loads",
+        setup(build) {
+          build.onLoad({ filter: /x\\.css$/ }, args => {
+            const loads = (globalThis.cssLoads ??= { server: 0, client: 0 });
+            loads[args.side]++;
+          });
+        },
+      },
+    ];
+  `,
+  files: {
+    "x.css": `.box { color: red; }`,
+    "Widget.ts": `
+      "use client";
+      import "./x.css";
+      export const widget = "stylesheet";
+    `,
+    "routes/index.ts": `
+      import "../Widget.ts";
+      export default function (req, meta) {
+        return Response.json({ styles: meta.styles.length, loads: globalThis.cssLoads });
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({ styles: 1, loads: { server: 1, client: 1 } });
+
+    await dev.write(
+      "Widget.ts",
+      `
+        "use client";
+        import text from "./x.css" with { type: "text" };
+        export const widget = text;
+      `,
+    );
+    await dev.fetch("/").equals({ styles: 0, loads: { server: 2, client: 2 } });
+
+    // The save bundles the text module of each graph, and no stylesheet.
+    await dev.write("x.css", `.box { color: blue; }`);
+    await dev.fetch("/").equals({ styles: 0, loads: { server: 3, client: 3 } });
+  },
+});
+// A server module takes a stylesheet from the dev server's cache if the stylesheet is not stale in
+// the server graph. Only a file past the first step of the stale bitset starts that way.
+devTest("a server module that starts to import a retired stylesheet bundles it again", {
+  framework: {
+    fileSystemRouterTypes: [
+      { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" },
+    ],
+  },
+  files: {
+    ...Object.fromEntries(modulesPastFirstBitsetStep.map(name => [`modules/${name}.ts`, `export default "${name}";`])),
+    "server.ts": [
+      ...modulesPastFirstBitsetStep.map(name => `import "./modules/${name}";`),
+      `import "./x.css";`,
+      `export function render(req, meta) {`,
+      `  return Response.json(meta.styles);`,
+      `}`,
+    ].join("\n"),
+    "client.ts": `
+      import "./x.css";
+      console.log("client entry");
+    `,
+    "x.css": `.box { color: red; }`,
+    "routes/index.ts": `export default function () {}`,
+  },
+  async test(dev) {
+    const styles: string[] = await dev.fetch("/").json();
+    expect(styles).toHaveLength(1);
+
+    // First no server module imports "x.css" as a stylesheet, then no browser module does.
+    await dev.patch("server.ts", { find: `import "./x.css";`, replace: `` });
+    await dev.write(
+      "client.ts",
+      `
+        import text from "./x.css" with { type: "text" };
+        console.log("client entry " + text);
+      `,
+    );
+
+    await dev.patch("server.ts", {
+      find: `export function render`,
+      replace: `import "./x.css";\nexport function render`,
+    });
+    await dev.write("x.css", `.box { color: blue; }`);
+    await dev.fetch(styles[0]).equals("/* x.css */\n.box {\n  color: #00f;\n}");
+  },
+});
+// With a plugin that has "tailwind" in its name, each hot update also bundles every stylesheet
+// whose css has the word "tailwind". A retired stylesheet is not one of them.
+devTest("a hot update does not bundle a retired stylesheet that looks like a Tailwind file", {
+  files: {
+    ...observerPage,
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./tailwind-plugin.ts"]
+    `,
+    "tailwind-plugin.ts": `
+      export default {
+        name: "tailwind-plugin",
+        setup() {},
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "styles.css": `.tailwind { color: red; }`,
+    "app.ts": `
+      import "./styles.css";
+      console.log("stylesheet");
+    `,
+  },
+  async test(dev) {
+    await using observer = await dev.client("/observer");
+    await observer.expectMessage("observer");
+    await using c = await dev.client("/index");
+    await c.expectMessage("stylesheet");
+    await c.style(".tailwind").color.expect.toBe("red");
+
+    await c.expectReload(async () => {
+      await dev.write(
+        "app.ts",
+        `
+          import text from "./styles.css" with { type: "text" };
+          let value;
+          try {
+            value = text;
+          } catch (e) {
+            value = "throws " + e.name;
+          }
+          console.log("text: " + value);
+        `,
+      );
+    });
+    await c.expectMessage("text: .tailwind { color: red; }");
+
+    // A css parser rejects this content. The save bundles the text module only, so there is no error.
+    await c.expectReload(async () => {
+      await dev.write("styles.css", `.tailwind { color: blue; }}`);
+    });
+    await c.expectMessage("text: .tailwind { color: blue; }}");
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

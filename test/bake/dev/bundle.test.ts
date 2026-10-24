@@ -4,7 +4,7 @@ import { MAX_PATH_BYTES } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { Client, Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -1409,6 +1409,378 @@ devTest("a route imports a json file and its text", {
   },
   async test(dev) {
     await dev.fetch("/").equals({ data: { version: 1 }, text: `{"version":1}` });
+  },
+});
+/** The ids of the modules of each hot update that `c` evaluates after this call. */
+function recordHotUpdates(c: Client) {
+  const updates: string[][] = [];
+  c.on("hmr-chunk", (code: string) => {
+    // The client also reports the scripts of each page load. Only a hot update starts with this call.
+    if (!code.startsWith(`self[Symbol.for("bun:hmr")]({`)) return;
+    updates.push(Array.from(code.matchAll(/^  "([^"]+)"(?:\(hmr\)|: \[)/gm), match => match[1]).sort());
+  });
+  return updates;
+}
+// An import names a module by its file and its `with { type }`. When the type changes, the module
+// that the import named before has no importer. The dev server retires that module: its build
+// error leaves the overlay, and a save of the file does not bundle it.
+for (const { change, file, before, after, contents, error, id } of [
+  {
+    change: "drops its type",
+    file: "data.txt",
+    before: ` with { type: "json" }`,
+    after: ``,
+    // The loader of the retired module rejects the first two and accepts the third.
+    contents: [`not json`, `still not json`, `{"json":true}`],
+    error: "data.txt:1:1: error: Unexpected not",
+    id: "data.txt",
+  },
+  {
+    change: "gets a type",
+    file: "broken.ts",
+    before: ``,
+    after: ` with { type: "text" }`,
+    contents: [`export const value = ;`, `export const value = ; // saved`, `export const value = 1;`],
+    error: "broken.ts:1:22: error: Unexpected ;",
+    id: "broken.ts with { type: 'text' }",
+  },
+  {
+    change: "changes its type",
+    file: "value.ts",
+    before: ` with { type: "json" }`,
+    after: ` with { type: "text" }`,
+    contents: [`export const value = 1;`, `export const value = 2;`, `{"json":true}`],
+    error: "value.ts:1:1: error: Unexpected export",
+    id: "value.ts with { type: 'text' }",
+  },
+]) {
+  devTest(`an import that ${change} retires the module it named before`, {
+    files: {
+      "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+      [file]: contents[0],
+      "app.ts": `
+        import text from "./${file}"${before};
+        let value;
+        try {
+          value = typeof text + " " + text;
+        } catch (e) {
+          value = "throws " + e.name;
+        }
+        console.log(value);
+      `,
+    },
+    async test(dev) {
+      await using c = await dev.client("/", { errors: [error], storeHotChunks: true });
+      const hotUpdates = recordHotUpdates(c);
+
+      // The import names the text module of the file now. The module that failed has no importer.
+      await c.expectReload(async () => {
+        await dev.patch("app.ts", { find: `"./${file}"${before}`, replace: `"./${file}"${after}` });
+      });
+      await c.expectMessage("string " + contents[0]);
+
+      // Each save bundles the text module and its importer, and nothing else.
+      for (const content of contents.slice(1)) {
+        await c.expectReload(async () => {
+          await dev.write(file, content);
+        });
+        await c.expectMessage("string " + content);
+      }
+      expect(hotUpdates).toEqual([
+        ["app.ts", id],
+        ["app.ts", id],
+      ]);
+    },
+  });
+}
+// A retired module comes back when an import names it again: the dev server parses it from the file as it is then.
+{
+  const files = (data: string) => ({
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "data.txt": data,
+    "app.ts": `
+      import data from "./data.txt" with { type: "json" };
+      let value;
+      try {
+        value = typeof data === "string" ? "text " + data : "json version " + data.version;
+      } catch (e) {
+        value = "throws " + e.name;
+      }
+      console.log(value);
+    `,
+  });
+  const withType = { find: `"./data.txt"`, replace: `"./data.txt" with { type: "json" }` };
+  const withoutType = { find: ` with { type: "json" }`, replace: `` };
+  devTest("a retired module that had an error has it again when an import names the module again", {
+    files: files(`not json`),
+    async test(dev) {
+      const error = "data.txt:1:1: error: Unexpected not";
+      await using c = await dev.client("/", { errors: [error] });
+
+      await c.expectReload(async () => {
+        await dev.patch("app.ts", withoutType);
+      });
+      await c.expectMessage("text not json");
+
+      await c.expectReload(async () => {
+        await dev.patch("app.ts", { ...withType, errors: [error] });
+      });
+      await c.expectReload(async () => {
+        await dev.write("data.txt", `{"version":1}`);
+      });
+      await c.expectMessage("json version 1");
+    },
+  });
+  devTest("a retired module follows a save of its file when an import names the module again", {
+    files: files(`{"version":1}`),
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("json version 1");
+
+      await c.expectReload(async () => {
+        await dev.patch("app.ts", withoutType);
+      });
+      await c.expectMessage(`text {"version":1}`);
+
+      // No import names the json module when the file changes.
+      await c.expectReload(async () => {
+        await dev.write("data.txt", `{"version":2}`);
+      });
+      await c.expectMessage(`text {"version":2}`);
+
+      await c.expectReload(async () => {
+        await dev.patch("app.ts", withType);
+      });
+      await c.expectMessage("json version 2");
+    },
+  });
+}
+devTest("a module that fails in the bundle that retires it leaves no error", {
+  files: {
+    // This page imports nothing of the other page. It never reloads, so a build error stays in its overlay.
+    "observer.html": emptyHtmlFile({ scripts: ["observer.ts"] }),
+    "observer.ts": `console.log("observer");`,
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "data.txt": `{"version":1}`,
+    "app.ts": `
+      import data from "./data.txt" with { type: "json" };
+      let value;
+      try {
+        value = typeof data === "string" ? "text " + data : "json version " + data.version;
+      } catch (e) {
+        value = "throws " + e.name;
+      }
+      console.log(value);
+    `,
+  },
+  async test(dev) {
+    await using observer = await dev.client("/observer");
+    await observer.expectMessage("observer");
+    await using c = await dev.client("/index");
+    await c.expectMessage("json version 1");
+
+    // One bundle parses the json module from the new content, and finds that no import names it.
+    await c.expectReload(async () => {
+      await using batch = await dev.batchChanges();
+      await dev.write("data.txt", `not json`);
+      await dev.patch("app.ts", { find: ` with { type: "json" }`, replace: `` });
+    });
+    await c.expectMessage("text not json");
+  },
+});
+devTest("a module is retired when the file of its only importer is deleted", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  files: {
+    // This page imports nothing of the other page. It never reloads, so a build error stays in its overlay.
+    "observer.html": emptyHtmlFile({ scripts: ["observer.ts"] }),
+    "observer.ts": `console.log("observer");`,
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"] }),
+    "data.txt": `{"version":1}`,
+    "app.ts": `
+      import "./json.ts";
+      import text from "./data.txt";
+      console.log(text);
+    `,
+    "json.ts": `
+      import data from "./data.txt" with { type: "json" };
+      console.log(data.version);
+    `,
+  },
+  async test(dev) {
+    await using observer = await dev.client("/observer");
+    await observer.expectMessage("observer");
+    await dev.fetch("/index").expect.toInclude("<script");
+
+    const error = `app.ts:1:8: error: Could not resolve: "./json.ts"`;
+    await dev.delete("json.ts", { errors: [error] });
+    // The save parses the text module only: a json parser rejects this content.
+    await dev.write("data.txt", `not json`, { errors: [error] });
+  },
+});
+devTest("the error of a module stays while a second importer names it", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["a.ts", "b.ts"] }),
+    "data.txt": `not json`,
+    "a.ts": `
+      import data from "./data.txt" with { type: "json" };
+      console.log("a: " + typeof data);
+    `,
+    "b.ts": `
+      import data from "./data.txt" with { type: "json" };
+      console.log("b: " + typeof data);
+    `,
+  },
+  async test(dev) {
+    const error = "data.txt:1:1: error: Unexpected not";
+    await using c = await dev.client("/", { errors: [error] });
+
+    // "b.ts" names the text module now. "a.ts" still names the json module.
+    await dev.patch("b.ts", { find: ` with { type: "json" }`, replace: ``, errors: [error] });
+  },
+});
+devTest("a save does not parse the module that a route's import named before it dropped its type", {
+  framework: minimalFramework,
+  pluginFile: countLoads("data[.]txt$"),
+  files: {
+    "data.txt": `{"version":1}`,
+    "routes/index.ts": `
+      import data from "../data.txt" with { type: "json" };
+      export default function (req, meta) {
+        return Response.json({ data: typeof data, loads: globalThis.loads });
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals({ data: "object", loads: { "data.txt": 1 } });
+
+    // The import names the text module of the file now, which is new.
+    await dev.patch("routes/index.ts", { find: ` with { type: "json" }`, replace: `` });
+    await dev.fetch("/").equals({ data: "string", loads: { "data.txt": 2 } });
+
+    // The save parses the text module only.
+    await dev.write("data.txt", `{"version":2}`);
+    await dev.fetch("/").equals({ data: "string", loads: { "data.txt": 3 } });
+  },
+});
+// A module without an importer is not retired when the dev server bundles it for another reason.
+devTest("the html file of a route stays in the bundle when its script stops importing it as text", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["app.ts"], body: `<h1>one</h1>` }),
+    "app.ts": `
+      import html from "./index.html" with { type: "text" };
+      let value;
+      try {
+        value = typeof html + " " + html.includes("<h1>one</h1>");
+      } catch (e) {
+        value = "throws " + e.name;
+      }
+      console.log(value);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("string true");
+
+    // The text module of "index.html" has no importer now. The route still needs the html file.
+    await c.expectReload(async () => {
+      await dev.write("app.ts", `console.log("no import");`);
+    });
+    await c.expectMessage("no import");
+    expect(await c.elemText("h1")).toBe("one");
+
+    await c.expectReload(async () => {
+      await dev.patch("index.html", { find: "<h1>one</h1>", replace: "<h1>two</h1>" });
+    });
+    await c.expectMessage("no import");
+    expect(await c.elemText("h1")).toBe("two");
+  },
+});
+devTest("a route stays in the bundle when the import of a second route that named it gets a type", {
+  framework: minimalFramework,
+  files: {
+    "routes/other.ts": `
+      export const version = 1;
+      export default function (req, meta) {
+        return new Response("other " + version);
+      }
+    `,
+    "routes/index.ts": `
+      import { version } from "./other.ts";
+      import source from "./other.ts" with { type: "text" };
+      export default function (req, meta) {
+        return new Response("index " + version + " " + typeof source);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index 1 string");
+    await dev.fetch("/other").equals("other 1");
+
+    // No module imports "routes/other.ts" as a module now, but it is still a route.
+    await dev.patch("routes/index.ts", {
+      find: `import { version } from "./other.ts";`,
+      replace: `const version = 0;`,
+    });
+    await dev.fetch("/").equals("index 0 string");
+
+    await dev.patch("routes/other.ts", { find: "version = 1", replace: "version = 2" });
+    await dev.fetch("/other").equals("other 2");
+  },
+});
+devTest("a page that also runs in the browser stays in the bundle when the import that named it gets a type", {
+  framework: {
+    fileSystemRouterTypes: [
+      {
+        root: "routes",
+        style: "nextjs-pages",
+        serverEntryPoint: "./server.ts",
+        clientEntryPoint: "./client.ts",
+        clientPages: true,
+      },
+    ],
+  },
+  files: {
+    "server.ts": `
+      export function render(req, meta) {
+        return meta.pageModule.default(req, meta);
+      }
+    `,
+    "client.ts": `console.log("client entry");`,
+    "routes/about.ts": `
+      export const version = "about version 1";
+      export default function (req, meta) {
+        return Response.json(meta.modules);
+      }
+    `,
+    "routes/index.ts": `
+      import { version } from "./about.ts";
+      import source from "./about.ts" with { type: "text" };
+      export default function (req, meta) {
+        return new Response(version + " " + typeof source);
+      }
+    `,
+  },
+  async test(dev) {
+    // The script that the browser loads for "/about" has the page.
+    const aboutVersions = async () => {
+      const scripts: string[] = await dev.fetch("/about").json();
+      expect(scripts).toHaveLength(1);
+      return (await dev.fetch(scripts[0]).text()).match(/"about version [^"]*"/g);
+    };
+    await dev.fetch("/").equals("about version 1 string");
+    expect(await aboutVersions()).toEqual([`"about version 1"`]);
+
+    // No module imports "routes/about.ts" as a module now, but it is still the page of a route.
+    await dev.patch("routes/index.ts", {
+      find: `import { version } from "./about.ts";`,
+      replace: `const version = "no import";`,
+    });
+    await dev.fetch("/").equals("no import string");
+
+    await dev.patch("routes/about.ts", { find: "version 1", replace: "version 2" });
+    expect(await aboutVersions()).toEqual([`"about version 2"`]);
   },
 });
 devTest("importing bun on the client", {

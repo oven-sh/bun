@@ -277,7 +277,7 @@ impl JSMySQLConnection {
         let vm = global_object.bun_vm().as_mut();
         let port = port as i32;
         // The connection is the calling script's.
-        let context = global_object.bun_vm().context_of_caller_no_frame();
+        let context = global_object.bun_vm().context_of_caller();
         let Some(args) = ConnectionCtorArgs::parse(
             global_object,
             &mut *vm,

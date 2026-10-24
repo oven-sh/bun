@@ -12,8 +12,8 @@ use crate::generated_bindgen::bindgen_test::{
     Bun__BindgenTest__doubled, TestAbsence, TestAnything, TestBare, TestBareOptions, TestBracket,
     TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag, TestHandle, TestNames,
     TestNodeOptions, TestObjectOrRest, TestOptions, TestOptionsEcho, TestOtherAsNullOptions,
-    TestOuter, TestTextOrBytes, TestValue, js_TestCounter, js_TestError, js_TestNonFinal,
-    js_TestNote, js_TestRefCounted, js_TestRefCountedNote,
+    TestOuter, TestTextOrBytes, TestValue, js_TestCounter, js_TestError, js_TestMemberFunctions,
+    js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote,
 };
 use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
@@ -60,6 +60,24 @@ pub(crate) fn utf8_owned(text: bun_core::Utf8Bytes<'static>) -> bun_core::Utf8By
 
 pub(crate) fn string_echo(text: &bun_core::String) -> bun_core::String {
     text.clone()
+}
+
+fn copy_of(text: &bun_core::String) -> bun_core::String {
+    if text.is_utf16() {
+        bun_core::String::clone_utf16(text.utf16())
+    } else {
+        bun_core::String::clone_latin1(text.latin1())
+    }
+}
+
+pub(crate) fn string_view_echo(text: &bun_core::StringView<'_>) -> bun_core::String {
+    copy_of(text)
+}
+
+pub(crate) fn string_or_object_view_echo(
+    text: Option<bun_core::StringView<'_>>,
+) -> Option<bun_core::String> {
+    text.map(|text| copy_of(&text))
 }
 
 pub(crate) fn string_length(text: &bun_core::String) -> usize {
@@ -1010,6 +1028,84 @@ pub(crate) fn finite_later(cx: &mut JsScope<'_>, value: f64) -> JsResult<JSValue
     ))
 }
 
+pub(crate) struct TestReadOnly;
+
+impl TestReadOnly {
+    pub(crate) fn constructor() -> Self {
+        Self
+    }
+
+    pub(crate) fn answer(&self) -> i32 {
+        42
+    }
+
+    pub(crate) fn dispose(&self) {}
+}
+
+#[derive(Default)]
+pub(crate) struct TestMemberFunctions {
+    call_count: Cell<u32>,
+}
+
+impl TestMemberFunctions {
+    pub(crate) fn constructor() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn twice(&self, n: i32) -> i32 {
+        self.call_count.set(self.call_count.get() + 1);
+        n * 2
+    }
+
+    pub(crate) fn run<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        n: JsLocal<'a>,
+        fail: bool,
+    ) -> JsResult<JSValue> {
+        js_TestMemberFunctions::run_in_cpp(this_value.to_js(), cx.global(), n.to_js(), fail)
+    }
+
+    pub(crate) fn set_note<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        _: &JsHeap<'a>,
+        value: JsLocal<'a>,
+    ) -> JSValue {
+        js_TestMemberFunctions::set_note_in_cpp(this_value.to_js(), value.to_js());
+        js_TestMemberFunctions::note_in_cpp(this_value.to_js())
+    }
+
+    pub(crate) fn fail<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+    ) -> JsResult<()> {
+        js_TestMemberFunctions::fail_in_cpp(this_value.to_js(), cx.global())
+    }
+
+    pub(crate) fn promise<'a>(
+        &self,
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+    ) -> JSValue {
+        js_TestMemberFunctions::promise_in_cpp(this_value.to_js(), cx.global())
+    }
+
+    pub(crate) fn call_count(&self) -> u32 {
+        self.call_count.get()
+    }
+
+    pub(crate) fn sum(&self, bytes: &[u8]) -> u32 {
+        bytes.iter().map(|&byte| u32::from(byte)).sum()
+    }
+
+    pub(crate) fn fail_in_rust<'a>(&self, heap: &JsHeap<'a>) -> Result<(), bindgen::Error<'a>> {
+        Err(heap.range_error(format_args!("thrown in Rust")))
+    }
+}
+
 pub(crate) struct TestError {
     code: i32,
 }
@@ -1031,6 +1127,10 @@ impl TestError {
     }
 
     pub(crate) fn get_non_configurable_code(&self) -> i32 {
+        self.code
+    }
+
+    pub(crate) fn get_enumerable_code(&self) -> i32 {
         self.code
     }
 

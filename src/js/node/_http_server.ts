@@ -44,6 +44,7 @@ const {
   headerStateSymbol,
   NodeHTTPHeaderState,
   kPendingCallbacks,
+  kNeedDrain,
   kRememberPeer,
   kRequest,
   kCloseCallback,
@@ -3597,7 +3598,9 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       headerState === NodeHTTPHeaderState.sent &&
       !(this._hasBody && willBeChunked(this))
     ) {
-      process.nextTick(finishResponse, this);
+      // Not while a write still waits for its drain: its bytes never left, and in Node.js it has failed the socket.
+      const unsent = this[kNeedDrain] ? (this[kSocket]?.errored ?? $ERR_STREAM_DESTROYED("write")) : undefined;
+      process.nextTick(finishResponse, this, unsent);
     }
     this.finished = true;
     process.nextTick(markResponseEndedNT, this);
@@ -3687,8 +3690,8 @@ function queueResponseFinished(res) {
   process.nextTick(finishResponse, res);
 }
 
-function finishResponse(res) {
-  onFinish(res);
+function finishResponse(res, err?) {
+  onFinish(res, err);
   if (res.writableFinished) return;
   // No 'finish': the 'close' of its socket ends the response, and #onClose does not find one that the dispatcher detached.
   res[kDetachedFrom]?.prependOnceListener("close", abortDetachedResponse.bind(undefined, res));
@@ -3823,6 +3826,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   }
 
   if (result < 0 && hasBody) {
+    this[kNeedDrain] = true;
     if (callback) {
       // The write was buffered due to backpressure.
       // We need to defer the callback until the write actually goes through.
@@ -3836,6 +3840,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     // A write callback reports that its bytes reached the socket: uncork them before the callback can destroy the response.
     handle.flushHeaders();
     if (hasBody && handle.bufferedAmount > 0) {
+      this[kNeedDrain] = true;
       this[kPendingCallbacks].push(callback);
       handle.onwritable = allowWritesToContinue.bind(this);
       return false;
@@ -3892,6 +3897,7 @@ function scheduleWriteAccountingFlush(res) {
 }
 
 ServerResponse.prototype._callPendingCallbacks = function () {
+  this[kNeedDrain] = false;
   const originalLength = this[kPendingCallbacks].length;
 
   for (let i = 0; i < originalLength; ++i) {

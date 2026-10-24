@@ -797,6 +797,44 @@ describe("backpressure", () => {
       },
     );
 
+    // end() has nothing left to write here, so only what became of the earlier write tells whether the body left.
+    it.each([
+      ["with written bytes unsent gets an error, and there is no 'finish'", false],
+      ["once its backlog has drained gets null, then 'finish'", true],
+    ])("end(cb) after the connection closed %s", async (_, drained) => {
+      const events: string[] = [];
+      const ended = Promise.withResolvers<void>();
+      let backlog = false;
+      await using server = http.createServer((req, res) => {
+        res.on("finish", () => events.push("finish"));
+        res.setHeader("Content-Length", BODY);
+        req.socket.on("close", () => {
+          res.end((err?: Error | null) => {
+            recordEnd(events)(err);
+            // 'finish' follows the callbacks in the same tick.
+            process.nextTick(ended.resolve);
+          });
+        });
+        const close = () =>
+          setImmediate(() => {
+            // What is still there a turn later is what the kernel did not take.
+            backlog = res.writableLength > 0;
+            // Without an error: nothing but the unsent bytes says that the flush failed.
+            req.socket.destroy();
+          });
+        if (res.write(Buffer.alloc(BODY, "a")) || !drained) close();
+        else res.once("drain", close);
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      using client = pausedClient((server.address() as AddressInfo).port, "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n", {
+        collect: false,
+      });
+      if (drained) client.resume();
+      await ended.promise;
+      if (drained) expect(backlog).toBe(false);
+      expect(events).toEqual(backlog ? ["end callback: error"] : ["end callback: null", "finish"]);
+    });
+
     it("a request pipelined behind the unfinished response is answered after it, intact", async () => {
       const events: string[] = [];
       let backlog = false;
@@ -1405,14 +1443,7 @@ describe("backpressure", () => {
           "-e",
           `const { readFileSync } = require("node:fs");
           const events = [];
-          const last = ["close first", "close second", "uncaughtException: from the end() callback"];
-          function record(event) {
-            events.push(event);
-            if (!last.every(event => events.includes(event))) return;
-            console.log(JSON.stringify(events));
-            process.exit(0);
-          }
-          process.on("uncaughtException", err => record("uncaughtException: " + err.message));
+          process.on("uncaughtException", err => events.push("uncaughtException: " + err.message));
           const options = {
             allowHTTP1: true,
             cert: readFileSync(${JSON.stringify(path.join(keysDir, "agent1-cert.pem"))}),
@@ -1420,7 +1451,15 @@ describe("backpressure", () => {
           };
           const server = require("node:http2").createSecureServer(options, (req, res) => {
             const name = req.url.slice(1);
-            res.on("close", () => record("close " + name));
+            res.on("close", () => {
+              events.push("close " + name);
+              if (!events.includes("close first") || !events.includes("close second")) return;
+              // A turn later: the exception from the end() callback is thrown again on a tick.
+              setImmediate(() => {
+                console.log(JSON.stringify(events));
+                process.exit(0);
+              });
+            });
             if (name === "second") {
               res.end("second");
               const socket = req.socket;

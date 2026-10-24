@@ -645,7 +645,13 @@ pub(crate) fn leaves_paragraph(above: Option<&[u8]>, line: &[u8], syntax: Syntax
         }
     };
     // The line above is paragraph text too, whatever it would start as a first line: `<img>` alone would start HTML.
-    let text = [b"a\n", first, b"\n", line, b"\n"].concat();
+    // But a delimiter row or `===` would make a table or a heading of a line of text above it.
+    let is_underline = first.trim_ascii_end().iter().all(|&byte| byte == b'=');
+    let text_above: &[u8] = match looks_like_delimiter_row(first) || is_underline {
+        true => b"",
+        false => b"a\n",
+    };
+    let text = [text_above, first, b"\n", line, b"\n"].concat();
     let mut tree = Tree::default();
     let Some(root) = parse_lines(&text, &mut tree, syntax, 0) else {
         return false;

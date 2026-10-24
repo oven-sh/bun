@@ -1310,8 +1310,9 @@ test(
 // to the end on a compiler thread (about 50 s for QuickJS), the worker thread waited for it in ~VM, and
 // the parent process could not exit until then. The compile now stops at its next phase or fixpoint
 // check once the plan is cancelled. The fixture builds one function whose OMG compile takes over 15 s
-// in a release build (4000 locals, a loop with a 1300-way br_table), calls it until the tier-up is
-// requested and the compile is running, and the parent then terminates the worker and exits.
+// in a release build (4000 locals, a loop with a 1300-way br_table) and calls it in a loop. JSC logs
+// "triggerOMGReplacement" when it queues that compile (BUN_JSC_verboseOSR=1); the test then tells the
+// parent to terminate the worker, and the parent exits.
 test(
   "worker terminate during a long Wasm tier-up compile does not keep the process alive",
   async () => {
@@ -1379,20 +1380,20 @@ test(
           uleb(body.length, code);
           code.push(...body);
           section(10, code);
-          return new Uint8Array(out);
+          return { bytes: new Uint8Array(out), bodySize: body.length };
         }
 
-        const { run } = new WebAssembly.Instance(new WebAssembly.Module(makeModule(4000, 1300, 5))).exports;
-        // Call until the loop back edges request the OMG tier-up, then keep the worker busy for a
-        // while longer so the compiler thread has picked the plan up before terminate() arrives.
-        const start = performance.now();
-        while (performance.now() - start < Number(process.env.WARMUP_MS)) run(100000);
-        postMessage("compiling");
+        const { bytes, bodySize } = makeModule(4000, 1300, 5);
+        // JSC never tiers a function above Options::maximumOMGCandidateCost (100000 bytes) up to OMG.
+        if (bodySize >= 100000) throw new Error("function body too large for OMG tier-up: " + bodySize);
+        const { run } = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+        for (;;) run(100000);
       `,
       "main.mjs": `
         const w = new Worker(new URL("./worker.mjs", import.meta.url));
         w.onerror = e => { console.error(e.message); process.exit(1); };
-        await new Promise(resolve => (w.onmessage = resolve));
+        // The test writes a byte once JSC has logged that the OMG compile was queued.
+        for await (const chunk of process.stdin) if (chunk.length) break;
         w.terminate();
         console.log("terminated");
       `,
@@ -1400,26 +1401,49 @@ test(
     const proc = Bun.spawn({
       cmd: [bunExe(), "main.mjs"],
       cwd: String(dir),
-      env: { ...bunEnv, WARMUP_MS: String(slow ? 8000 : 2000) },
+      // verboseOSR logs every JIT decision. The DFG is off so its log (and a debug-only crash in the
+      // DFG's logging when the worker is torn down) stays out of the way; the Wasm tiers do not need it.
+      env: { ...bunEnv, BUN_JSC_verboseOSR: "1", BUN_JSC_useDFGJIT: "0" },
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
     const stdout = proc.stdout.text();
-    const stderr = proc.stderr.text();
+
+    // Terminate the worker as soon as the OMG compile of function 0 is queued. The compiler thread
+    // picks it up at once, and the compile takes far longer than the round trip through this test.
+    const trigger = "triggerOMGReplacement for 0";
+    const triggered = Promise.withResolvers<boolean>();
+    const stderrDone = (async () => {
+      const decoder = new TextDecoder();
+      let pending = "";
+      let sent = false;
+      for await (const chunk of proc.stderr) {
+        // The Wasm tiers keep logging after the trigger. Drain the pipe, but stop collecting.
+        if (sent) continue;
+        pending += decoder.decode(chunk, { stream: true });
+        if (pending.includes(trigger)) {
+          sent = true;
+          proc.stdin.write("go");
+          await proc.stdin.end();
+          triggered.resolve(true);
+        }
+      }
+      triggered.resolve(false);
+    })();
+    expect(await Promise.race([triggered.promise, proc.exited])).toBe(true);
+
+    // The process must exit soon after the terminate: the worker's ~VM waits only until the cancelled
+    // compile reaches its next check. Without the fix it waits for the whole compile.
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<"did not exit">(resolve => {
       timer = setTimeout(() => resolve("did not exit"), slow ? 60_000 : 10_000);
     });
-    // The process must exit soon after "terminated": the worker's ~VM waits only until the cancelled
-    // compile reaches its next check. Without the fix it waits for the whole compile.
     const exited = await Promise.race([proc.exited, deadline]);
     clearTimeout(timer);
     if (exited === "did not exit") proc.kill();
-    expect({ stdout: await stdout, stderr: await stderr, exited }).toEqual({
-      stdout: "terminated\n",
-      stderr: "",
-      exited: 0,
-    });
+    await stderrDone;
+    expect({ stdout: await stdout, exited }).toEqual({ stdout: "terminated\n", exited: 0 });
   },
   slow ? 120_000 : 40_000,
 );

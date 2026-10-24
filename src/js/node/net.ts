@@ -2484,6 +2484,11 @@ Socket.prototype.getTypeOfService = function getTypeOfService() {
   return res;
 };
 
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/stream_base_commons.js
+function onStreamTimeout(stream) {
+  stream._onTimeout();
+}
+
 Socket.prototype.setTimeout = {
   setTimeout(msecs, callback) {
     if (this.destroyed) return this;
@@ -2500,7 +2505,7 @@ Socket.prototype.setTimeout = {
         this.removeListener("timeout", callback);
       }
     } else {
-      this[kTimeout] = setTimeout(this._onTimeout.bind(this), msecs).unref();
+      this[kTimeout] = setTimeout(onStreamTimeout, msecs, this).unref();
 
       if (callback !== undefined) {
         validateFunction(callback, "callback");

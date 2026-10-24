@@ -1,9 +1,10 @@
-import { describe, expect, setSystemTime, test } from "bun:test";
+import { describe, expect, jest, setSystemTime, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import http from "node:http";
 import http2 from "node:http2";
+import https from "node:https";
 import net from "node:net";
 import { pipeline, Writable } from "node:stream";
 import { text } from "node:stream/consumers";
@@ -560,6 +561,135 @@ describe("node:http server timeout enforcement", () => {
       }
     },
   );
+
+  // The socket's timer is one of bun:test's fake timers here, so a gap of 40 s takes no time.
+  describe.each(["http", "https"])("%s, with a timeout of 60 s", scheme => {
+    async function exchange(
+      knob: string,
+      request: string,
+      run: (req: http.IncomingMessage, res: http.ServerResponse, client: net.Socket) => Promise<void>,
+    ) {
+      jest.useFakeTimers();
+      const { promise: dispatched, resolve: onRequest } =
+        Promise.withResolvers<[http.IncomingMessage, http.ServerResponse]>();
+      const server = scheme === "https" ? https.createServer(tlsCert) : http.createServer();
+      server.on("request", (req, res) => {
+        if (knob === "req.setTimeout()") req.setTimeout(60_000);
+        if (knob === "res.setTimeout()") res.setTimeout(60_000);
+        if (knob === "req.socket.setTimeout()") req.socket.setTimeout(60_000);
+        onRequest([req, res]);
+      });
+      if (knob === "server.timeout") server.timeout = 60_000;
+      if (knob === "server.setTimeout()") server.setTimeout(60_000);
+      if (knob === "socket.setTimeout() in a 'connection' listener") {
+        server.on("connection", socket => socket.setTimeout(60_000));
+      }
+      const port = await listen(server);
+      const client =
+        scheme === "https"
+          ? tls.connect({ port, host: "127.0.0.1", ca: tlsCert.cert })
+          : net.connect(port, "127.0.0.1");
+      try {
+        let received = "";
+        client.on("error", () => {});
+        client.on("data", chunk => {
+          received += chunk;
+        });
+        const closed = new Promise(resolve => client.on("close", resolve));
+        client.write(request);
+        const [req, res] = await dispatched;
+        await run(req, res, client);
+        await closed;
+        return received.match(/HTTP\/1\.1 \d+|tick;|END/g);
+      } finally {
+        jest.useRealTimers();
+        client.destroy();
+        server.closeAllConnections();
+        server.close();
+      }
+    }
+    // Resolves at the next event, or once the connection is gone, so that a cut connection fails the expectation and not the wait.
+    const next = (emitter: NodeJS.EventEmitter, event: string, client: net.Socket) =>
+      new Promise<void>(resolve => {
+        if (client.closed) return resolve();
+        emitter.once(event, () => resolve());
+        client.once("close", () => resolve());
+      });
+    const get = "GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n";
+
+    test.each([
+      "server.timeout",
+      "server.setTimeout()",
+      "socket.setTimeout() in a 'connection' listener",
+      "req.setTimeout()",
+      "res.setTimeout()",
+      "req.socket.setTimeout()",
+    ])("%s doesn't cut a response that writes every 40 s", async knob => {
+      const received = await exchange(knob, get, async (req, res, client) => {
+        for (let i = 0; i < 4; i++) {
+          res.write("tick;");
+          await next(client, "data", client);
+          jest.advanceTimersByTime(40_000);
+        }
+        res.end("END");
+      });
+      expect(received).toEqual(["HTTP/1.1 200", "tick;", "tick;", "tick;", "tick;", "END"]);
+    });
+
+    test("server.timeout doesn't cut a response that sends 102 Processing every 40 s", async () => {
+      const received = await exchange("server.timeout", get, async (req, res, client) => {
+        for (let i = 0; i < 4; i++) {
+          res.writeProcessing();
+          await next(client, "data", client);
+          jest.advanceTimersByTime(40_000);
+        }
+        res.end("END");
+      });
+      expect(received).toEqual([...Array(4).fill("HTTP/1.1 102"), "HTTP/1.1 200", "END"]);
+    });
+
+    test("server.timeout doesn't cut an upload that sends every 40 s", async () => {
+      const post = "POST / HTTP/1.1\r\nHost: a\r\nConnection: close\r\nContent-Length: 20\r\n\r\n";
+      const received = await exchange("server.timeout", post, async (req, res, client) => {
+        let body = "";
+        req.on("data", chunk => {
+          body += chunk;
+        });
+        req.on("end", () => res.end(body === "tick;tick;tick;tick;" ? "END" : body));
+        for (let i = 0; i < 4; i++) {
+          jest.advanceTimersByTime(40_000);
+          client.write("tick;");
+          await next(req, "data", client);
+        }
+      });
+      expect(received).toEqual(["HTTP/1.1 200", "END"]);
+    });
+
+    test("a connection that leaves HTTP at its second request gets no 'timeout' from the keep-alive timer", async () => {
+      let timeouts = 0;
+      const received = await exchange("", "GET / HTTP/1.1\r\nHost: a\r\n\r\n", async (req, res, client) => {
+        const upgraded = once((req.socket as any).server, "upgrade");
+        res.end("END");
+        await next(client, "data", client);
+        client.write("GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n");
+        const [, socket] = await upgraded;
+        socket.on("timeout", () => timeouts++);
+        jest.advanceTimersByTime(60_000);
+        socket.end("HTTP/1.1 101 Switching Protocols\r\n\r\n");
+      });
+      expect({ timeouts, received }).toEqual({ timeouts: 0, received: ["HTTP/1.1 200", "END", "HTTP/1.1 101"] });
+    });
+
+    test("server.timeout cuts a request that gets no answer, and not before the 60 s are over", async () => {
+      let openBefore: boolean | undefined;
+      const received = await exchange("server.timeout", get, async (req, res) => {
+        jest.advanceTimersByTime(59_999);
+        openBefore = !req.socket.destroyed;
+        jest.advanceTimersByTime(1);
+      });
+      expect({ openBefore, received }).toEqual({ openBefore: true, received: null });
+    });
+  });
 
   test("'timeout' fires again after a write when its listener kept the socket open", async () => {
     let timeouts = 0;

@@ -1541,6 +1541,8 @@ function detachFromHttp(socket, req) {
   socket.removeListener("resume", nativeSocketOnResume);
   socket.removeListener("data", noopOnData);
   delete socket._onTimeout;
+  // Only that function ignores the keep-alive timer, which stays armed while a request is in flight.
+  if (socket.timeout === 0) socket.setTimeout(0);
   delete socket._final;
   delete socket._destroy;
   const server = socket.server;
@@ -2220,13 +2222,7 @@ function onSocketTimeoutTimerExpired(this: any) {
   }
   // A fired keep-alive timer is dead: the next response finish arms a new one.
   if (socket[kKeepAliveTimeoutSet]) socket[kTimeout] = null;
-  const response = socket[kHandle]?.response;
-  // A write is in progress. Re-arm so the timeout still fires once it stalls.
-  if (response && response.writableLength > 0) {
-    socket._unrefTimer();
-    return;
-  }
-  socket.emit("timeout");
+  NetSocket.prototype._onTimeout.$call(socket);
 }
 
 let NetSocket;
@@ -3073,6 +3069,7 @@ ServerResponse.prototype._writeRaw = function (chunk, encoding, callback) {
   // writeHead/end) so 1xx lines share ordering with the final response bytes;
   // socket.write() would land in the socket handle's separate stream buffer.
   this[kHandle].writeInformational(chunk, encoding);
+  noteResponseWrite(this);
   if (typeof callback === "function") process.nextTick(callback);
   return true;
 };
@@ -3171,6 +3168,7 @@ ServerResponse.prototype.writeContinue = function (cb) {
     return;
   }
   this[kHandle].writeContinue();
+  noteResponseWrite(this);
   this._sent100 = true;
   if (typeof cb === "function") process.nextTick(cb);
 };

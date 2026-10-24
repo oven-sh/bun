@@ -140,4 +140,36 @@ describe.concurrent("cloning a shared WebAssembly.Memory keeps its address type"
       exitCode: 0,
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/45739
+  test("workerData preserves shared WebAssembly Memory64 address type", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const kind = memory => {
+           try { memory.grow(0n); return "i64"; }
+           catch { return "i32"; }
+         };
+         const memory = new WebAssembly.Memory({ initial: 1n, maximum: 2n, shared: true, address: "i64" });
+         console.log("main:", kind(memory));
+         new Worker(
+           "const { parentPort, workerData } = require('node:worker_threads'); " +
+             "try { workerData.memory.grow(0n); parentPort.postMessage('i64'); } " +
+             "catch { parentPort.postMessage('i32'); }",
+           { eval: true, workerData: { memory } },
+         ).once("message", message => console.log("worker:", message));`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "main: i64\nworker: i64",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

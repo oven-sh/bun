@@ -24533,7 +24533,7 @@ describe.concurrent("--check", () => {
       ]);
       expect(built.map(it => it.exitCode)).toEqual([0, 0]);
       const hasPage = entries.map(entry => existsSync(join(String(dir), `out-${entry}`, "page.html")));
-      expect(hasPage).toContain(true);
+      expect(hasPage).toEqual([false, true]);
       expect(checked.map(it => [errorsOf(`${it.stdout}\n${it.stderr}`), it.exitCode])).toEqual(
         hasPage.map(has => (has ? [["main.ts(1,14) TS2322"], 1] : [[], 0])),
       );
@@ -24588,12 +24588,13 @@ describe.concurrent("--check", () => {
     test("Bun.build({ check: true }) follows the pages of its bundle", async () => {
       using dir = project({
         "html.d.ts": pattern("*.html"),
+        "tmpl.d.ts": pattern("*.tmpl"),
         "build.mjs": buildScript,
         "with-plugin.mjs": `
           const asText = {
-            name: "html as text",
+            name: "pages as text",
             setup(build) {
-              build.onLoad({ filter: /\\.html$/ }, async args => ({ contents: await Bun.file(args.path).text(), loader: "text" }));
+              build.onLoad({ filter: /\\.(html|tmpl)$/ }, async args => ({ contents: await Bun.file(args.path).text(), loader: "text" }));
             },
           };
           const [entry] = process.argv.slice(2);
@@ -24605,12 +24606,15 @@ describe.concurrent("--check", () => {
         "plain.ts": server(`import it from "./template.html";`),
         // Where the file system ignores case, the bundle has the file under the name that the disk has.
         "other-case.ts": server(`import it from "./TEMPLATE.html";`),
+        // Only the import says that this file is a page. The plugin loads it as text all the same.
+        "template.tmpl": template,
+        "by-type.ts": server(`import it from "./template.tmpl" with { type: "html" };`),
         "index.html": page("./main.ts"),
         // `run` turns a backslash into a slash, so the line that a log quotes has no double quote.
         "main.ts": `export const c: number = '1';\n`,
         "page.ts": server(`import it from "./index.html";`),
       });
-      const [text, byLoader, aPage, external, byPlugin, inOtherCase] = await Promise.all([
+      const [text, byLoader, aPage, external, byPlugin, byType, inOtherCase] = await Promise.all([
         build(dir, { entrypoints: ["text.ts"], outdir: "out-text", target: "bun", throw: false }),
         build(dir, {
           entrypoints: ["plain.ts"],
@@ -24628,6 +24632,7 @@ describe.concurrent("--check", () => {
           throw: false,
         }),
         run(String(dir), ["with-plugin.mjs", "plain.ts"]),
+        run(String(dir), ["with-plugin.mjs", "by-type.ts"]),
         isCaseInsensitive ? run(String(dir), ["with-plugin.mjs", "other-case.ts"]) : undefined,
       ]);
       expect(text.result).toEqual({ success: true, outputs: 1, logs: [] });
@@ -24639,6 +24644,7 @@ describe.concurrent("--check", () => {
       });
       expect(external.result).toEqual(aPage.result);
       expect(JSON.parse(byPlugin.stdout)).toEqual({ success: true, logs: [] });
+      expect(JSON.parse(byType.stdout)).toEqual({ success: true, logs: [] });
       if (inOtherCase) expect(JSON.parse(inOtherCase.stdout)).toEqual({ success: true, logs: [] });
     });
 

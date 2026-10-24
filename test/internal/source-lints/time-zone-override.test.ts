@@ -2,10 +2,7 @@ import { Glob } from "bun";
 import { expect, test } from "bun:test";
 import path from "node:path";
 
-// WTF::setTimeZoneOverride() takes only what ICU reads, and tells a miss with a `false` that is easy to drop: a caller
-// that drops it keeps the previous zone in silence. Two of its six call sites did. Every writer of the time zone (the
-// start of the process, process.env.TZ, bun:jsc setTimeZone, `bun test --isolate`) now goes through the two functions
-// below, which also reset the Date caches.
+// A caller that drops the `false` of WTF::setTimeZoneOverride() keeps the previous time zone in silence.
 test("only setProcessTimeZone() and clearProcessTimeZone() call WTF::setTimeZoneOverride()", async () => {
   const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
   const home = "src/jsc/bindings/JSEnvironmentVariableMap.cpp";

@@ -180,7 +180,7 @@ describe("process.env.TZ = value", () => {
         console.log(JSON.stringify({
           host,
           exact: ${JSON.stringify([...exact, ...posixEdges, ...icuNames].map(([value]) => value))}.map(after),
-          // One more character than the runtime setter used to take.
+          // The longest zone name: 32 characters.
           longName: after("America/Argentina/ComodRivadavia").slice(0, 2),
           forHost: ${JSON.stringify(forHost)}.map(after),
           notAZone: ${JSON.stringify(notAZone)}.map(after),

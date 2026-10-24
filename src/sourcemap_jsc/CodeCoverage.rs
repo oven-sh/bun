@@ -32,13 +32,13 @@ pub struct Report<'a> {
 
 /// One of the ways control goes from a decision, such as an `if` or an `&&`.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Branch {
+pub(crate) struct Branch {
     /// The same in every process that loaded the same file. The block of an lcov `BRDA`.
-    pub decision: u32,
-    /// Among the branches of `decision`.
-    pub index: u32,
-    /// Of `decision`, from zero.
-    pub line: u32,
+    pub(crate) decision: u32,
+    /// Position among the branches of `decision`.
+    pub(crate) index: u32,
+    /// Zero-based line where `decision` starts.
+    pub(crate) line: u32,
 }
 
 impl<'a> Report<'a> {
@@ -141,15 +141,6 @@ impl<'a> Report<'a> {
             };
             if !ok {
                 return None;
-            }
-            // SAFETY: as above.
-            unsafe {
-                CodeCoverage__withBranches(
-                    vm,
-                    source_id,
-                    (&raw mut generator).cast::<c_void>(),
-                    Generator::add_branches,
-                );
             }
         }
 
@@ -325,7 +316,7 @@ pub struct MergedReport {
     /// Every report's ranges with their executed bit; deduplicated in `finish`.
     functions: Vec<(ByteRange, bool)>,
     stmts: Vec<(ByteRange, bool)>,
-    /// Every report's; added up in `finish`.
+    /// Every report's branches with their hits; summed in `finish`.
     branches: Vec<(Branch, u32)>,
 }
 
@@ -363,13 +354,7 @@ impl MergedReport {
     fn dedupe(
         mut all: Vec<(ByteRange, bool)>,
     ) -> Result<(Vec<ByteRange>, Bitset), bun_alloc::AllocError> {
-        all.sort_unstable_by_key(|e| e.0);
-        all.dedup_by(|next, kept| {
-            next.0 == kept.0 && {
-                kept.1 |= next.1;
-                true
-            }
-        });
+        merge_by_key(&mut all, |e| e.0, |kept, next| kept.1 |= next.1);
         let mut executed = Bitset::init_empty(all.len())?;
         let mut ranges = Vec::with_capacity(all.len());
         for (i, (r, hit)) in all.into_iter().enumerate() {
@@ -385,13 +370,11 @@ impl MergedReport {
         let (functions, functions_which_have_executed) = Self::dedupe(self.functions)?;
         let (stmts, stmts_which_have_executed) = Self::dedupe(self.stmts)?;
         let mut branches = self.branches;
-        branches.sort_unstable_by_key(|&(branch, _)| branch);
-        branches.dedup_by(|next, kept| {
-            next.0 == kept.0 && {
-                kept.1 = kept.1.saturating_add(next.1);
-                true
-            }
-        });
+        merge_by_key(
+            &mut branches,
+            |e| e.0,
+            |kept, next| kept.1 = kept.1.saturating_add(next.1),
+        );
         Ok(Report {
             source_url: Cow::Owned(self.source_url),
             executable_lines: self.executable_lines,
@@ -631,14 +614,15 @@ unsafe extern "C" {
         vm: *mut VM,
         source_id: i32,
         ctx: *mut c_void,
-        cb: extern "C" fn(&mut Generator, *const BasicBlockRange, usize, usize),
+        cb: extern "C" fn(
+            &mut Generator,
+            *const BasicBlockRange,
+            usize,
+            usize,
+            *const BranchRange,
+            usize,
+        ),
     ) -> bool;
-    fn CodeCoverage__withBranches(
-        vm: *mut VM,
-        source_id: i32,
-        ctx: *mut c_void,
-        cb: extern "C" fn(&mut Generator, *const BranchRange, usize),
-    );
 }
 
 /// What JSC recorded for one file, under each of its SourceIDs.
@@ -657,6 +641,8 @@ impl Generator {
         blocks_ptr: *const BasicBlockRange,
         blocks_len: usize,
         function_start_offset: usize,
+        branches_ptr: *const BranchRange,
+        branches_len: usize,
     ) {
         // The C++ side (CodeCoverage.cpp) invokes this callback with `(nullptr, 0, 0)` when
         // basicBlocks is empty. `core::slice::from_raw_parts` requires a non-null, aligned
@@ -676,39 +662,47 @@ impl Generator {
 
         this.blocks.extend_from_slice(blocks);
         this.function_blocks.extend_from_slice(function_blocks);
+        if branches_len != 0 {
+            // SAFETY: as for the blocks.
+            let branches = unsafe { core::slice::from_raw_parts(branches_ptr, branches_len) };
+            this.branches.extend_from_slice(branches);
+        }
         this.loads += 1;
     }
+}
 
-    extern "C" fn add_branches(this: &mut Generator, branches: *const BranchRange, len: usize) {
-        if len != 0 {
-            // SAFETY: a C array of `len` elements that lives until this returns.
-            this.branches
-                .extend_from_slice(unsafe { core::slice::from_raw_parts(branches, len) });
+/// Sorts by `key`, and merges the elements of one key into the first of them.
+fn merge_by_key<T, K: Ord>(all: &mut Vec<T>, key: impl Fn(&T) -> K, merge: impl Fn(&mut T, &T)) {
+    all.sort_unstable_by_key(&key);
+    all.dedup_by(|next, kept| {
+        key(next) == key(kept) && {
+            merge(kept, next);
+            true
         }
-    }
+    });
 }
 
 /// One range per `[start, end)`, executed if it executed under any SourceID.
 fn fold(ranges: &mut Vec<BasicBlockRange>) {
-    ranges.sort_unstable_by_key(|r| (r.start_offset, r.end_offset));
-    ranges.dedup_by(|next, kept| {
-        (next.start_offset, next.end_offset) == (kept.start_offset, kept.end_offset) && {
+    merge_by_key(
+        ranges,
+        |r| (r.start_offset, r.end_offset),
+        |kept, next| {
             kept.has_executed |= next.has_executed;
             kept.execution_count = kept.execution_count.saturating_add(next.execution_count);
-            true
-        }
-    });
+        },
+    );
 }
 
-/// One of each branch, sorted by decision, with what it ran under every SourceID.
+/// One entry per branch, sorted by decision, with its counts under every SourceID added up.
 fn fold_branches(branches: &mut Vec<BranchRange>) {
-    branches.sort_unstable_by_key(BranchRange::key);
-    branches.dedup_by(|next, kept| {
-        next.key() == kept.key() && {
+    merge_by_key(
+        branches,
+        |branch| (branch.decision(), branch.index),
+        |kept, next| {
             kept.execution_count = kept.execution_count.saturating_add(next.execution_count);
-            true
-        }
-    });
+        },
+    );
 }
 
 /// Zero-based line and column in the file.
@@ -717,7 +711,7 @@ type OriginalPosition = (i32, i32);
 /// `JSC::BranchRange`. The offsets are in the text JSC compiled.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct BranchRange {
+pub(crate) struct BranchRange {
     decision_start_offset: c_int,
     decision_end_offset: c_int,
     index: u32,
@@ -727,14 +721,6 @@ pub struct BranchRange {
 impl BranchRange {
     fn decision(&self) -> (c_int, c_int) {
         (self.decision_start_offset, self.decision_end_offset)
-    }
-
-    fn key(&self) -> (c_int, c_int, u32) {
-        (
-            self.decision_start_offset,
-            self.decision_end_offset,
-            self.index,
-        )
     }
 }
 
@@ -962,26 +948,26 @@ impl ByteRangeMapping {
     ) -> Option<u32> {
         let (start, end) = (u32::try_from(start).ok()?, u32::try_from(end).ok()?);
         let Some(mappings) = mappings else {
-            return u32::try_from(self.line_and_column_of(start).0.zero_based()).ok();
+            let first = (start..=end).find(|&at| self.executable_units.is_set(at as usize))?;
+            return u32::try_from(self.line_and_column_of(first).0.zero_based()).ok();
         };
         let first = mappings.partition_point(|&(offset, _)| offset < start);
         let last = mappings
             .partition_point(|&(offset, _)| offset <= end)
             .checked_sub(1)?;
-        // Code the transpiler adds has the position of the code it adds it for, so often no mapping.
+        // Code the transpiler adds usually has no mapping of its own.
         if last < first {
             return None;
         }
-        let at_or_before = if mappings[first].0 == start {
-            Some(first)
+        // When it has, its mappings do not move forward in the file.
+        let moves_forward_from = |from: usize| mappings[last].1 > mappings[from].1;
+        let is_added = if mappings[first].0 == start {
+            first != last && !moves_forward_from(first)
         } else {
-            first.checked_sub(1)
+            // What an `&&` skips can be one mapping, which then follows that of the left side.
+            !moves_forward_from(first) && first > 0 && !moves_forward_from(first - 1)
         };
-        // Or its mappings do not go forward in the file.
-        if let Some(at_or_before) = at_or_before
-            && at_or_before != last
-            && mappings[last].1 <= mappings[at_or_before].1
-        {
+        if is_added {
             return None;
         }
         u32::try_from(mappings[first].1.0).ok()

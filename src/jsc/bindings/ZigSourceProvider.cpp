@@ -45,10 +45,11 @@ SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
 extern "C" bool ByteRangeMapping__generate(const BunString* sourceURL, const BunString* code, int sourceID, bool alreadyBundled);
 extern "C" void ByteRangeMapping__addSourceID(const BunString* sourceURL, const BunString* code, int sourceID);
 
-void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider)
+void addCodeCoverageSourceID(JSC::VM& vm, JSC::SourceProvider& provider, JSC::SourceProvider& wrapped)
 {
     if (!vm.controlFlowProfiler())
         return;
+    vm.controlFlowProfiler()->didReplaceSource(wrapped.asID(), provider.asID());
     BunString sourceURL = Bun::toString(provider.sourceURL());
     WTF::String sourceString = provider.source().toStringWithoutCopying();
     BunString source = Bun::toString(sourceString);

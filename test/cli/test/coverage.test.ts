@@ -813,6 +813,31 @@ test("ran", () => {
   expect(exitCode).toBe(0);
 });
 
+type Row = { functions: string; lines: string; branches: string; uncovered: string };
+async function run(fixture: Record<string, string>, args: string[], env: Record<string, string> = {}) {
+  using dir = tempDir("cov-loaded-twice", fixture);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", ...args],
+    env: { ...bunEnv, ...env },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) throw new Error(stderr);
+  const rows: Record<string, Row> = {};
+  for (const line of stderr.split("\n")) {
+    const [file, functions, lines, branches, uncovered] = line.split("|").map(column => column.trim());
+    if (uncovered !== undefined) rows[file] = { functions, lines, branches, uncovered };
+  }
+  const lcov: Record<string, string> = {};
+  for (const record of readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8").split("end_of_record")) {
+    const file = record.match(/^SF:(.+)$/m)?.[1];
+    if (file) lcov[file] = record;
+  }
+  return { rows, lcov, stdout };
+}
+
 describe("a file loaded more than once counts every load", () => {
   const esm = `export function covered(n: number): number {
   if (n > 5) {
@@ -862,7 +887,7 @@ export function third() {
   return 3;
 }
 `,
-    "cjs-graph-alone.cjs": cjs,
+    "cjs-graph-alone.cjs": cjs + "exports.never = v => (v ? 1 : 2);\n",
     "compile-target.cjs": cjs,
     "compile.cjs": `
 const Module = require("node:module");
@@ -1018,33 +1043,6 @@ test("b", () => {
 });
 `,
   };
-
-  type Row = { functions: string; lines: string; branches: string; uncovered: string };
-  async function run(fixture: Record<string, string>, args: string[], env: Record<string, string> = {}) {
-    using dir = tempDir("cov-loaded-twice", fixture);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", ...args],
-      env: { ...bunEnv, ...env },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    if (exitCode !== 0) throw new Error(stderr);
-    const rows: Record<string, Row> = {};
-    for (const line of stderr.split("\n")) {
-      const [file, functions, lines, branches, uncovered] = line.split("|").map(column => column.trim());
-      if (uncovered !== undefined) rows[file] = { functions, lines, branches, uncovered };
-    }
-    const lcov: Record<string, string> = {};
-    for (const record of readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8").split(
-      "end_of_record",
-    )) {
-      const file = record.match(/^SF:(.+)$/m)?.[1];
-      if (file) lcov[file] = record;
-    }
-    return { rows, lcov, stdout };
-  }
 
   let loaded: Awaited<ReturnType<typeof run>>;
   let oneLoad: Awaited<ReturnType<typeof run>>;
@@ -1476,6 +1474,9 @@ export function never(v) {
 ) {
   return a;
 }
+export const afterBrace = function () {
+}
+|| 2;
 `,
       `
         import { test } from "bun:test";
@@ -1486,12 +1487,13 @@ export function never(v) {
         });
       `,
     );
-    expect(decisionsOf(record)).toEqual([
+    const decisions = decisionsOf(record);
+    expect(decisions).toEqual([
       [3 + above, [1, 1]],
       [4 + above, [1, 1]],
+      [10 + above, [0, 1]],
     ]);
-    expect(record).toContain(`\nDA:${3 + above},`);
-    expect(record).toContain(`\nDA:${4 + above},`);
+    for (const [line] of decisions) expect(record).toContain(`\nDA:${line},`);
     expect(exitCode).toBe(0);
   });
 
@@ -1553,36 +1555,37 @@ export function inlined(v, o, t = M) { // [3,0]
   });
 
   test.concurrent("a function that is called before its module runs does not hide the others", async () => {
-    using dir = tempDir("cov-branches-cycle", {
-      "lib.ts": `import "./early.ts";
+    const { lcov } = await run(
+      {
+        "lib.ts": `import "./early.ts";
 export function hoisted(v: unknown) { return v ? 1 : 2; }
 export function never(v: unknown) { return v && 3; }
 `,
-      "early.ts": `import { hoisted } from "./lib.ts"; hoisted(1);`,
-      "lib.test.ts": `
+        "early.ts": `import { hoisted } from "./lib.ts"; hoisted(1);`,
+        "lib.test.ts": `
         import { test } from "bun:test";
         import "./lib.ts";
         test("lib", () => {});
       `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "ignore",
-      stderr: "inherit",
-    });
-    const exitCode = await proc.exited;
-    expect(decisionsOf(recordOf(String(dir), "lib.ts"))).toEqual([
+      },
+      [],
+    );
+    expect(decisionsOf(lcov["lib.ts"])).toEqual([
       [2, [1, 0]],
       [3, [0, 0]],
     ]);
-    expect(exitCode).toBe(0);
   });
 
+  const react = {
+    "node_modules/react/package.json": `{ "name": "react", "version": "0.0.0" }`,
+    "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = () => ({}); export const Fragment = 1;`,
+  };
+
   test.concurrent("code that the transpiler generates adds no branches", async () => {
-    using dir = tempDir("cov-branches-ts", {
-      "lib.tsx": `enum Color { Red, Green = "g" }
+    const { lcov } = await run(
+      {
+        ...react,
+        "lib.tsx": `enum Color { Red, Green = "g" }
 export namespace Outer { export const a = Color.Red; export namespace Inner { export const b = 2; } }
 function decorate(value: any, context: any) { return value; }
 class Base { x = 1; static s = 2; constructor(public q: number, readonly r?: number) {} }
@@ -1592,26 +1595,47 @@ export function element(props: any) { return <div a={props.a} {...props}>{props.
 export function* generator() { yield 1; yield* [2]; }
 export const derived = new Derived(1);
 `,
-      "node_modules/react/package.json": `{ "name": "react", "version": "0.0.0" }`,
-      "node_modules/react/jsx-dev-runtime.js": `export const jsxDEV = () => ({}); export const Fragment = 1;`,
-      "lib.test.ts": `
+        "lib.test.ts": `
         import { test } from "bun:test";
         import * as lib from "./lib.tsx";
         test("lib", async () => { await lib.dispose(); lib.element({}); });
       `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "ignore",
-      stderr: "inherit",
-    });
-    const exitCode = await proc.exited;
-    const record = recordOf(String(dir), "lib.tsx");
-    expect(decisionsOf(record)).toEqual([]);
-    expect(record).toContain("BRF:0\nBRH:0\n");
-    expect(exitCode).toBe(0);
+      },
+      [],
+    );
+    expect(decisionsOf(lcov["lib.tsx"])).toEqual([]);
+    expect(lcov["lib.tsx"]).toContain("BRF:0\nBRH:0\n");
+  });
+
+  test.concurrent("a decision is listed where the transpiler moves code from later in the file before it", async () => {
+    const { lcov } = await run(
+      {
+        ...react,
+        "lib.tsx": `export const Children = ({ a, b, t }: any) => (
+  <p>
+    {(a || b).length ? "some" : "none"}
+    {t}
+  </p>
+);
+export const Key = ({ i, t }: any) => <li key={(i + 1) % 2 ? "odd" : "even"} title={t} />;
+const decorate = (value: any) => value;
+@((decorate, decorate) ? decorate : decorate)
+class Decorated {}
+`,
+        "lib.test.ts": `
+        import { test } from "bun:test";
+        import { Children, Key } from "./lib.tsx";
+        test("lib", () => { Children({ a: "a" }); Key({ i: 0 }); });
+      `,
+      },
+      [],
+    );
+    expect(decisionsOf(lcov["lib.tsx"])).toEqual([
+      [3, [1, 0]],
+      [3, [0, 1]],
+      [7, [1, 0]],
+      [9, [1, 0]],
+    ]);
   });
 
   test.concurrent.each([
@@ -1649,34 +1673,29 @@ export const derived = new Derived(1);
   });
 
   test.concurrent("--parallel adds up branch hits across workers", async () => {
-    using dir = tempDir("cov-branches-parallel", {
-      "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = { branches = 1.0 }\n`,
-      "lib.ts": `export const pick = (v: number) => (v ? 1 : 2);\nexport const both = (v: number) => v && 1;\n`,
-      "first.test.ts": `${rendezvous("first", "second")}
+    const { rows, lcov } = await run(
+      {
+        "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = { branches = 1.0 }\n`,
+        "lib.ts": `export const pick = (v: number) => (v ? 1 : 2);\nexport const both = (v: number) => v && 1;\n`,
+        "first.test.ts": `${rendezvous("first", "second")}
 import { test } from "bun:test";
 import { both, pick } from "./lib.ts";
 test("first", () => { pick(1); both(1); both(0); });
 `,
-      "second.test.ts": `${rendezvous("second", "first")}
+        "second.test.ts": `${rendezvous("second", "first")}
 import { test } from "bun:test";
 import { both, pick } from "./lib.ts";
 test("second", () => { pick(0); pick(0); both(1); });
 `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov", "--parallel=2"],
-      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
-      cwd: String(dir),
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    expect(stderr).toMatch(/ lib\.ts +\| +100\.00 +\| +100\.00 +\| +100\.00 +\| +\n/);
-    expect(decisionsOf(recordOf(String(dir), "lib.ts"))).toEqual([
+      },
+      ["--parallel=2"],
+      { BUN_TEST_PARALLEL_SCALE_MS: "0" },
+    );
+    expect(rows["lib.ts"]).toEqual({ functions: "100.00", lines: "100.00", branches: "100.00", uncovered: "" });
+    expect(decisionsOf(lcov["lib.ts"])).toEqual([
       [1, [1, 2]],
       [2, [2, 1]],
     ]);
-    expect(exitCode).toBe(0);
   });
 });
 

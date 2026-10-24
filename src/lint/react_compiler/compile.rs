@@ -50,6 +50,8 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         captured_targets_with_keys_force_temporaries: is_oxlint,
         unreachable_code_is_reported_at_its_function: is_oxlint,
         tagged_templates_are_always_called: is_oxlint,
+        caught_throws_are_branches: false,
+        reactive_control_is_inherited: false,
         react_is_known_by_its_module: false,
         dependencies_are_sorted_by_bytes: is_oxlint,
         validate_no_set_state_in_render: true,

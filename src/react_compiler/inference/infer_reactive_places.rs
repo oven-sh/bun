@@ -16,7 +16,7 @@
 
 use crate::diagnostics::CompilerDiagnostic;
 use crate::hir::dominator::{PostDominatorFrontiers, post_dominator_frontiers};
-use crate::hir::environment::{Environment, OutputMode};
+use crate::hir::environment::Environment;
 use crate::hir::object_shape::HookKind;
 use crate::hir::visitors;
 use crate::hir::{
@@ -27,7 +27,6 @@ use crate::hir::{
 use crate::utils::DisjointSet;
 
 use crate::inference::infer_reactive_scope_variables::find_disjoint_mutable_values;
-use crate::optimization::dead_code_elimination::is_caught;
 use crate::optimization::prune_maybe_throws::value_may_throw;
 
 // =============================================================================
@@ -58,10 +57,12 @@ pub(crate) fn infer_reactive_places(
         crate::hir::dominator::compute_post_dominator_tree(func, env.next_block_id().0, false)?;
     let frontiers = post_dominator_frontiers(func, &post_dominators)?;
 
-    // Not in upstream, which reads only the tests in the frontier of a block. A throw into a
-    // handler is a branch with no test, and a branch that runs under a reactive one decides
-    // reactively whatever its own test is. `bun lint` reads as upstream does.
-    let is_transitive = env.output_mode != OutputMode::Lint;
+    // Not in upstream, which reads only the tests in the frontier of a block. A block that can
+    // throw into a handler is a branch with no test. In a function that has one, a branch that
+    // runs under a reactive one decides reactively whatever its own test is.
+    let throws_are_branches = env.config.caught_throws_are_branches;
+    let mut is_control_inherited = false;
+    let mut has_skipped_control = false;
 
     // Fixpoint iteration — compute reactive set
     let mut is_settled = false;
@@ -95,6 +96,11 @@ pub(crate) fn infer_reactive_places(
                 }
             }
 
+            let handler = match &block.terminal {
+                Terminal::MaybeThrow { handler, .. } => *handler,
+                _ => None,
+            };
+
             // Process instructions
             let mut throws_reactively = false;
             for instr_id in &block.instructions {
@@ -104,24 +110,6 @@ pub(crate) fn infer_reactive_places(
                 stable_sidemap.handle_instruction(instr, env);
 
                 let value = &instr.value;
-
-                // Not in upstream: what is caught depends on which block threw it.
-                if is_transitive
-                    && let InstructionValue::StoreLocal {
-                        lvalue,
-                        value: caught,
-                        ..
-                    }
-                    | InstructionValue::StoreContext {
-                        lvalue,
-                        value: caught,
-                        ..
-                    } = value
-                    && lvalue.kind == InstructionKind::Catch
-                    && block.preds.iter().any(|pred| reactive_map.is_decider(*pred))
-                {
-                    reactive_map.mark_reactive(caught.identifier);
-                }
 
                 // Check if any operand is reactive
                 let mut has_reactive_input = false;
@@ -155,9 +143,18 @@ pub(crate) fn infer_reactive_places(
                             has_reactive_input = true;
                         }
                     }
+                    // Not in upstream: what a `catch` clause binds depends on which block threw it.
+                    InstructionValue::StoreLocal { lvalue, .. }
+                        if lvalue.kind == InstructionKind::Catch
+                            && reactive_map.catches_reactive_throw(*block_id) =>
+                    {
+                        has_reactive_input = true;
+                    }
                     _ => {}
                 }
-                throws_reactively |= has_reactive_input && value_may_throw(value);
+                if throws_are_branches && handler.is_some() {
+                    throws_reactively |= has_reactive_input && value_may_throw(value);
+                }
 
                 if has_reactive_input {
                     // Mark lvalues reactive (unless stable)
@@ -200,16 +197,29 @@ pub(crate) fn infer_reactive_places(
                 }
             }
 
-            let decides = match &block.terminal {
-                Terminal::If { .. } | Terminal::Branch { .. } | Terminal::Switch { .. } => {
-                    (is_transitive && has_reactive_control)
-                        || visitors::terminal_operands(&block.terminal)
-                            .any(|test| reactive_map.is_reactive(test.identifier))
+            let decides = if let Some(handler) = handler {
+                if !is_control_inherited && env.config.reactive_control_is_inherited {
+                    is_control_inherited = true;
+                    // The branches ahead of this block read that control is not inherited.
+                    if has_skipped_control {
+                        reactive_map.changed_what_was_read();
+                    }
                 }
-                terminal if is_caught(terminal) => {
-                    is_transitive && (throws_reactively || has_reactive_control)
+                if throws_reactively {
+                    reactive_map.mark_reactive_throw(func, handler);
                 }
-                _ => false,
+                throws_are_branches
+                    && (throws_reactively || (is_control_inherited && has_reactive_control))
+            } else if matches!(
+                block.terminal,
+                Terminal::If { .. } | Terminal::Branch { .. } | Terminal::Switch { .. }
+            ) {
+                has_skipped_control |= has_reactive_control && !is_control_inherited;
+                (is_control_inherited && has_reactive_control)
+                    || visitors::terminal_operands(&block.terminal)
+                        .any(|test| reactive_map.is_reactive(test.identifier))
+            } else {
+                false
             };
             if decides {
                 reactive_map.mark_decider(*block_id);
@@ -236,6 +246,30 @@ pub(crate) fn infer_reactive_places(
     Ok(())
 }
 
+/// Not in upstream. Indexed by `BlockId.0`: the handler of the innermost `try` block that the block
+/// is in, or `NO_HANDLER`.
+fn enclosing_handlers(func: &HirFunction, block_count: usize) -> Vec<u32> {
+    const UNKNOWN: u32 = u32::MAX;
+    let mut enclosing = vec![UNKNOWN; block_count];
+    // A statement names the blocks that follow it ahead of the jumps to them from inside it, so
+    // the first answer for a block is that of the statement.
+    for (block_id, block) in &func.body.blocks {
+        let outer = enclosing[block_id.0 as usize].min(NO_HANDLER);
+        if let Terminal::Try { block, handler, .. } = &block.terminal {
+            enclosing[block.0 as usize] = handler.0;
+        }
+        visitors::for_each_terminal_all_successor(&block.terminal, &mut |successor| {
+            let slot = &mut enclosing[successor.0 as usize];
+            if *slot == UNKNOWN {
+                *slot = outer;
+            }
+        });
+    }
+    enclosing
+}
+
+const NO_HANDLER: u32 = u32::MAX - 1;
+
 // =============================================================================
 // ReactivityMap
 // =============================================================================
@@ -249,6 +283,10 @@ struct ReactivityMap {
     /// Indexed by `BlockId.0`: `REACTIVE` for a block where what is reactive decides which block
     /// runs next, or the last round that has found it not to be one.
     deciders: Vec<u32>,
+    /// The handlers of the `try` statements in which a block throws with a reactive operand.
+    reactive_handlers: Vec<BlockId>,
+    /// Indexed by `BlockId.0`, for `reactive_handlers`: see `enclosing_handlers`.
+    enclosing_handlers: Vec<u32>,
     /// Indexed by `IdentifierId.0`: what `aliased_identifiers` finds, or the identifier itself.
     canonical: Vec<IdentifierId>,
     aliased_identifiers: DisjointSet<IdentifierId>,
@@ -271,6 +309,8 @@ impl ReactivityMap {
             round: 0,
             reactive: vec![0; identifier_count],
             deciders: vec![0; block_count],
+            reactive_handlers: Vec::new(),
+            enclosing_handlers: Vec::new(),
             canonical,
             aliased_identifiers,
         }
@@ -331,6 +371,34 @@ impl ReactivityMap {
             *slot = REACTIVE;
             self.has_changes = true;
         }
+    }
+
+    /// A block that throws into `handler` has a reactive operand. What a `catch` clause binds is
+    /// reactive for that `try` statement and for each one around it.
+    fn mark_reactive_throw(&mut self, func: &HirFunction, handler: BlockId) {
+        if self.reactive_handlers.contains(&handler) {
+            return;
+        }
+        if self.enclosing_handlers.is_empty() {
+            self.enclosing_handlers = enclosing_handlers(func, self.deciders.len());
+        }
+        let mut next = handler.0;
+        while next < NO_HANDLER && !self.reactive_handlers.contains(&BlockId(next)) {
+            self.reactive_handlers.push(BlockId(next));
+            next = self.enclosing_handlers[next as usize];
+        }
+        // A handler can be ahead of a block that is in its `try` statement.
+        self.changed_what_was_read();
+    }
+
+    #[inline]
+    fn catches_reactive_throw(&self, handler: BlockId) -> bool {
+        self.reactive_handlers.contains(&handler)
+    }
+
+    fn changed_what_was_read(&mut self) {
+        self.has_changes = true;
+        self.has_changed_what_was_read = true;
     }
 
     /// Whether a block in the post-dominator frontier of this one is a decider: the blocks from

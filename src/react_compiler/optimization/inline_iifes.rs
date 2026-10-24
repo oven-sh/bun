@@ -44,7 +44,7 @@ use crate::collections::{IdBitSet, IdMap};
 use crate::hir::cfg_utils::{
     create_temporary_place, mark_instruction_ids, mark_predecessors, reverse_postorder_blocks,
 };
-use crate::hir::environment::{Environment, OutputMode};
+use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::{
     AstAlloc, BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, GENERATED_SOURCE,
@@ -52,7 +52,6 @@ use crate::hir::{
     InstructionValue, LValue, Place, Terminal,
 };
 
-use crate::optimization::dead_code_elimination::is_caught;
 use crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks;
 
 /// Inline immediately invoked function expressions into the enclosing function's
@@ -118,12 +117,6 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
                     if !inner_func.params.is_empty() || inner_func.is_async || inner_func.generator
                     {
                         // Can't inline functions with params, or async/generator functions
-                        continue;
-                    }
-
-                    // Not in upstream: the blocks of the function would have no edge to the
-                    // handler of the `try` that the call is in. `bun lint` inlines as upstream does.
-                    if env.output_mode != OutputMode::Lint && is_caught(&block.terminal) {
                         continue;
                     }
 

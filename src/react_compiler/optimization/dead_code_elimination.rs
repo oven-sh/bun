@@ -178,7 +178,7 @@ fn reference_reassigned_variables(
 }
 
 /// What throws in a block that ends so goes to a handler.
-pub(crate) fn is_caught(terminal: &Terminal) -> bool {
+fn is_caught(terminal: &Terminal) -> bool {
     matches!(
         terminal,
         Terminal::MaybeThrow {

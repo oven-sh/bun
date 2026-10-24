@@ -153,6 +153,40 @@ export function InTheBody(props: { useThing?: () => number }) {
 }
 `;
 
+/**
+ * Upstream asks only the tests of the blocks right above a block whether what runs is reactive. A throw into a handler
+ * has no test, and the test of this `break` isn't reactive. So `doubled` isn't reactive, and needn't be listed.
+ * `bun build` reads more than that in a function that has a `catch`.
+ */
+const decided = `import { useMemo } from "react";
+
+export function AfterATry(props) {
+  let code = 1;
+  try {
+    JSON.parse(props.text);
+  } catch {
+    code = 2;
+  }
+  const doubled = code * 2;
+  const value = useMemo(() => [doubled], []);
+  return <div>{value}</div>;
+}
+
+export function BesideATry(props) {
+  let count = 0;
+  try {
+    globalThis.log();
+  } catch {}
+  for (const item of props.items) {
+    if (globalThis.stop) break;
+    count = count + 1;
+  }
+  const doubled = count * 2;
+  const value = useMemo(() => [doubled], []);
+  return <div>{value}</div>;
+}
+`;
+
 /** What's reported for `a = a + 1` depends on the order in which the compiler visits the loops' blocks. */
 const order = `export default function Component(props) {
   let a = props.a,
@@ -241,64 +275,6 @@ const writes = `export default function Component(props) {
   }
   a = 3;
   return element;
-}
-`;
-
-/**
- * Upstream asks only the tests of the blocks right above a block whether what runs is reactive. A throw into a handler
- * has no test, and the test of this `break` isn't reactive. So `doubled` isn't reactive, and needn't be listed.
- * `bun build` reads more than that.
- */
-const decided = `import { useMemo } from "react";
-
-export function AfterATry(props) {
-  let code = 1;
-  try {
-    JSON.parse(props.text);
-  } catch {
-    code = 2;
-  }
-  const doubled = code * 2;
-  const value = useMemo(() => [doubled], []);
-  return <div>{value}</div>;
-}
-
-export function AfterALoop(props) {
-  let count = 0;
-  for (const item of props.items) {
-    if (globalThis.stop) break;
-    count = count + 1;
-  }
-  const doubled = count * 2;
-  const value = useMemo(() => [doubled], []);
-  return <div>{value}</div>;
-}
-`;
-
-/** Upstream puts a function that's called in a `try` into the `try`, with its JSX. `bun build` leaves the call. */
-const calledInTry = `import { useMemo } from "react";
-
-export function Memo(props) {
-  let element = null;
-  try {
-    element = useMemo(() => <div>{props.a}</div>, [props.a]);
-  } catch {
-    element = null;
-  }
-  return element;
-}
-
-export function Called(props) {
-  let element = null;
-  try {
-    element = (() => {
-      if (props.a) return <b>{props.a}</b>;
-      return <i />;
-    })();
-  } catch {
-    element = null;
-  }
-  return <div>{element}</div>;
 }
 `;
 
@@ -691,12 +667,7 @@ function Component(props) {
       units => ["", `(\n    <div>\n      {bad}\n${units}\n    </div>\n  )`],
     ),
   },
-  order: {
-    ".oxlintrc.json": rc(),
-    "order.jsx": order,
-    "decided.jsx": decided,
-    "called-in-try.jsx": calledInTry,
-  },
+  order: { ".oxlintrc.json": rc(), "order.jsx": order },
   writes: { ".oxlintrc.json": rc(), "writes.jsx": writes },
   names: {
     ".oxlintrc.json": rc(),
@@ -706,7 +677,7 @@ function Component(props) {
     "fbt.jsx": duplicateFbtTags,
     "callback-of-map.jsx": callbackOfMap,
   },
-  lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
+  lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults, "decided.jsx": decided },
   node_modules: {
     ".oxlintrc.json": rc(),
     "a.jsx": impure,

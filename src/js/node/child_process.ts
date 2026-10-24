@@ -1568,9 +1568,7 @@ class ChildProcess extends EventEmitter {
     }
   }
 
-  // The channel delivers a message, or with `ask` it only asks who listens. No answer: a listener took the message,
-  // or would take it. A number: no 'message' listener is there, so the message stays in the channel. It is 1 when a
-  // 'disconnect' listener waits for the close of the channel.
+  // Answers the channel with a number when no 'message' listener is there (1 with a 'disconnect' listener): the message then stays in the channel. `ask` only asks.
   #emitIpcMessage(message, _, handle, ask?) {
     if (ask) {
       if (this.listenerCount("message") > 0) return;

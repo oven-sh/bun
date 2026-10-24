@@ -930,9 +930,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * lose the close. Error-flagged events keep the error path. A hangup
              * takes the write side down too, so a hangup_closes_unsent socket does
              * not wait when the write this event retried failed again. A TLS socket
-             * retries nothing after a rejected send. A paused IPC socket does not wait
-             * either: its owner holds what nobody listens for, and the close of the
-             * channel drops that. */
+             * retries nothing after a rejected send. Nor does a paused IPC socket wait:
+             * the close of the channel drops what its owner holds. */
             const int eof_deferrable = eof && s && !error && !us_socket_is_closed(s) && !s->read_eof;
             const int unsent_is_lost = hangup && s && s->hangup_closes_unsent &&
                                        (s->flags.last_write_failed || (s->ssl && s->ssl_send_rejected));

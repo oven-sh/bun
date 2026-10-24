@@ -382,8 +382,7 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                      * carries the error): the receive buffer survives, so
                      * defer like epoll's EPOLLHUP - resume() delivers the
                      * tail + end instead of an error close discarding it.
-                     * Not when a hangup_closes_unsent socket has bytes unsent,
-                     * and not for a paused IPC socket (see loop.c). */
+                     * Not when a hangup_closes_unsent socket has bytes unsent, nor for an IPC socket. */
                     eof = 1;
                 } else {
                     error = 1;

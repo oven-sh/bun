@@ -151,8 +151,7 @@ impl JSONLineBuffer {
         }
     }
 
-    /// Remove the line that `next` returned, after processing it.
-    /// With no held lines this just advances head offset - no copying until compaction threshold is reached.
+    /// Remove the line that `next` returned. With no held lines this just advances head offset - no copying until compaction threshold is reached.
     pub(crate) fn remove(&mut self, bytes: u32) {
         if self.held == 0 {
             self.head = self.head.saturating_add(bytes);

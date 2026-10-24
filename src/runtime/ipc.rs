@@ -144,16 +144,13 @@ bun_core::define_scoped_log!(log, IPC, visible);
 
 /// Union type that switches between simple Vec<u8> (for advanced mode)
 /// and JSONLineBuffer (for JSON mode with optimized newline tracking).
-///
-/// A 'message' that no listener takes stays at the read position, not decoded, and so does each one that arrives
-/// behind it. Every other frame behind them is delivered and removed.
 enum IncomingBuffer {
     /// For advanced mode - uses length-prefix, no scanning needed
     Advanced {
         data: Vec<u8>,
         /// Read position in `data`.
         head: usize,
-        /// Length of the frames at `head` that wait for a listener.
+        /// Length of the frames at `head` that wait, not decoded, for a 'message' listener. What arrives behind them is sorted there.
         held: usize,
     },
     /// For JSON mode - tracks newline positions to avoid O(n²) scanning
@@ -270,7 +267,12 @@ impl IncomingBuffer {
 
     /// Nothing more is complete: copy the remaining bytes to the start of the buffer.
     fn wait(&mut self) {
-        if let IncomingBuffer::Advanced { data, head, held: 0 } = self {
+        if let IncomingBuffer::Advanced {
+            data,
+            head,
+            held: 0,
+        } = self
+        {
             data.drain_front(*head);
             *head = 0;
         }
@@ -1046,8 +1048,7 @@ enum ContinueSendReason {
 /// The transport returns the number of bytes written as an `i32`.
 const MAX_WRITE_LEN: usize = i32::MAX as usize;
 
-/// Receive backpressure: the socket is paused once this many bytes of frames wait in `incoming` for a listener.
-/// The same mark as the body of a `fetch()` response (`bun_http::signals::BODY_HIGH_WATER_MARK`).
+/// Receive backpressure: the socket is paused once this many bytes of frames wait in `incoming` for a listener. The mark of a `fetch()` body (`BODY_HIGH_WATER_MARK`).
 const RECEIVE_HIGH_WATER_MARK: usize = 256 * 1024;
 
 /// node's prefix for the `cmd` of a message that is not a 'message'.
@@ -1278,7 +1279,10 @@ impl SendQueue {
     fn keeps_reading(&self) -> bool {
         self.waiting_for_ack.get().is_some()
             || self.internal_msg_queue.get().is_ready()
-            || self.owner.get().is_some_and(|owner| owner.listeners().close)
+            || self
+                .owner
+                .get()
+                .is_some_and(|owner| owner.listeners().close)
     }
 
     /// Receive backpressure: the socket is paused while `incoming` holds the mark's worth of frames that wait.
@@ -1336,7 +1340,9 @@ impl SendQueue {
     }
 
     fn drain_on_next_tick(&self) {
-        let Some(owner) = self.owner.get() else { return };
+        let Some(owner) = self.owner.get() else {
+            return;
+        };
         let target = match owner.kind() {
             SendQueueOwnerKind::Subprocess => owner.this_jsvalue(),
             SendQueueOwnerKind::VirtualMachine => JSValue::NULL,
@@ -1400,11 +1406,11 @@ impl SendQueue {
         Ok(fd)
     }
 
-    /// A 'message' with a handle. Its frame is acked when it is read, as in node, so its sender never waits for a listener.
-    /// `held`: the frame waited in `incoming`, and its descriptor with it.
+    /// A frame with a handle. It is acked when it is read, as in node, so its sender never waits for a listener. `held`: it waited in `incoming`.
     fn receive_handle(
         &self,
         msg_data: JSValue,
+        kind: Kind,
         held: bool,
         global_this: &JSGlobalObject,
     ) -> JsResult<Delivery> {
@@ -1423,7 +1429,7 @@ impl SendQueue {
             return Ok(Delivery::Taken);
         };
         // The handle is made once a listener is there for its message. Until then the descriptor waits with the frame.
-        if !owner.listeners().message {
+        if kind.waits() && !owner.listeners().message {
             if let Some(fd) = acked {
                 self.held_fds.with_mut(|fds| fds.push_back(fd));
             }
@@ -1437,20 +1443,14 @@ impl SendQueue {
             SendQueueOwnerKind::VirtualMachine => JSValue::NULL,
         };
 
-        // RAII: `enter()` now, `exit()` on drop — covers both the
-        // early-error return and the fall-through.
         let _scope = global_this.bun_vm().enter_event_loop_scope();
         let fd_js = received_fd_to_js(fd);
+        // `parseHandle` makes the handle, and then its `emit` gives the message to the owner.
         if let Err(e) = ipc_parse(global_this, target, msg_data, fd_js) {
             // ack written already, that's okay.
             let _ = fd.close_allowing_standard_io(None);
             return Err(e);
         }
-
-        // ipc_parse will call the callback which calls the owner's handle_ipc_message()
-        // we have sent the ack already so the next message could arrive at any time. maybe even before
-        // parseHandle calls emit(). however, node does this too and its messages don't end up out of order.
-        // so hopefully ours won't either.
         Ok(Delivery::Taken)
     }
 
@@ -1572,8 +1572,7 @@ impl SendQueue {
         }
     }
 
-    /// Advanced mode with nothing buffered: the frames are decoded from the chunk itself, and only what stays is copied.
-    /// Returns what stays, and the length of its first frame if that one waits for a listener.
+    /// Advanced mode with nothing buffered: decodes from the chunk itself. Returns what stays for `incoming`, and the length of its first frame if that one waits.
     fn deliver_chunk<'a>(
         &self,
         mut data: &'a [u8],
@@ -2602,6 +2601,8 @@ enum Kind {
     Nack,
     /// A 'message' that comes with a handle.
     Handle,
+    /// An 'internalMessage' that comes with a handle.
+    InternalHandle,
     /// An 'internalMessage'.
     NodeInternal,
     /// A 'message'.
@@ -2615,39 +2616,53 @@ impl Kind {
     }
 }
 
+/// The `cmd` of a message, when it is a string.
+fn cmd_of(message: JSValue, global_this: &JSGlobalObject) -> JsResult<Option<bun_core::String>> {
+    if !message.is_object() {
+        return Ok(None);
+    }
+    let Some(cmd) = message.fast_get(global_this, jsc::BuiltinName::cmd)? else {
+        return Ok(None);
+    };
+    if !cmd.is_string() {
+        return Ok(None);
+    }
+    Ok(Some(bun_core::String::from_js(cmd, global_this)?))
+}
+
+/// Whether `message` is for 'internalMessage' and not for 'message'.
+pub(crate) fn is_internal_message(
+    message: JSValue,
+    global_this: &JSGlobalObject,
+) -> JsResult<bool> {
+    Ok(cmd_of(message, global_this)?.is_some_and(|cmd| {
+        cmd.length() > INTERNAL_CMD_PREFIX.len() && cmd.starts_with_ascii(INTERNAL_CMD_PREFIX)
+    }))
+}
+
 fn kind_of(message: &DecodedIPCMessage, global_this: &JSGlobalObject) -> JsResult<Kind> {
     let msg_data = match message {
         DecodedIPCMessage::Version(_) => return Ok(Kind::Version),
         DecodedIPCMessage::Internal(_) => return Ok(Kind::Cluster),
         DecodedIPCMessage::Data(msg_data) => *msg_data,
     };
-    if !msg_data.is_object() {
-        return Ok(Kind::User);
-    }
-    let Some(cmd) = msg_data.fast_get(global_this, jsc::BuiltinName::cmd)? else {
+    let Some(cmd) = cmd_of(msg_data, global_this)? else {
         return Ok(Kind::User);
     };
-    if !cmd.is_string() {
-        return Ok(Kind::User);
-    }
-    let cmd = bun_core::String::from_js(cmd, global_this)?;
     Ok(if cmd.eq_ascii(b"NODE_HANDLE") {
-        Kind::Handle
+        match msg_data.get(global_this, "msg")? {
+            Some(msg) if is_internal_message(msg, global_this)? => Kind::InternalHandle,
+            _ => Kind::Handle,
+        }
     } else if cmd.eq_ascii(b"NODE_HANDLE_ACK") {
         Kind::Ack
     } else if cmd.eq_ascii(b"NODE_HANDLE_NACK") {
         Kind::Nack
-    } else if cmd.length() > INTERNAL_CMD_PREFIX.len() && cmd.starts_with_ascii(INTERNAL_CMD_PREFIX)
-    {
+    } else if is_internal_message(msg_data, global_this)? {
         Kind::NodeInternal
     } else {
         Kind::User
     })
-}
-
-/// Whether `message` is for 'internalMessage' and not for 'message'.
-pub(crate) fn is_internal_message(message: JSValue, global_this: &JSGlobalObject) -> JsResult<bool> {
-    Ok(kind_of(&DecodedIPCMessage::Data(message), global_this)? != Kind::User)
 }
 
 /// Whether the frame is a 'message' for sure, by its bytes.
@@ -2658,8 +2673,7 @@ fn is_user_frame(mode: Mode, frame: &[u8]) -> bool {
     }
 }
 
-/// A JS exception raised while inspecting or delivering a message is that message's failure: it is reported
-/// as uncaught, the message is gone, and the next one is delivered.
+/// A JS exception raised while inspecting or delivering a message is that message's failure: reported as uncaught, and the message is gone.
 fn delivered(delivery: JsResult<Delivery>) -> Delivery {
     delivery.unwrap_or_else(|err| {
         crate::dispatch::fold(Err(err));
@@ -2703,8 +2717,8 @@ fn deliver(
             send_queue.on_ack_nack(global_this, AckNack::Nack);
             return Ok(Delivery::Taken);
         }
-        (Kind::Handle, DecodedIPCMessage::Data(msg_data)) => {
-            return send_queue.receive_handle(*msg_data, held, global_this);
+        (Kind::Handle | Kind::InternalHandle, DecodedIPCMessage::Data(msg_data)) => {
+            return send_queue.receive_handle(*msg_data, kind, held, global_this);
         }
         _ => {}
     }
@@ -2727,9 +2741,7 @@ fn deliver(
         }
     }
     let delivery = match send_queue.owner.get() {
-        Some(owner) => {
-            owner.handle_ipc_message(&message, handle_js, kind == Kind::NodeInternal)?
-        }
+        Some(owner) => owner.handle_ipc_message(&message, handle_js, kind == Kind::NodeInternal)?,
         // Owner already torn down: nobody will adopt the descriptor we just acked.
         None => {
             if let Some(fd) = received_fd {

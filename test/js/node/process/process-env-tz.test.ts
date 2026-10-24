@@ -115,6 +115,9 @@ describe("process.env.TZ = value", () => {
       ["XYZ+0", [0, 0, "UTC"]],
       ["XYZ-0:00:00", [0, 0, "UTC"]],
       ["<-03>3", [180, 180, "Etc/GMT+3"]],
+      // The C library reads every digit of the hours.
+      ["XYZ-003", [-180, -180, "Etc/GMT-3"]],
+      ["GMT+0000", [0, 0, "UTC"]],
       // glibc reads a POSIX value after ":" when no tzfile has that name.
       [":MSK-3", [-180, -180, "Etc/GMT-3"]],
       // "GMT" in any case is a name as any other here. ICU reads the sign after it the other way.
@@ -128,7 +131,7 @@ describe("process.env.TZ = value", () => {
     if (!isMacOS || isMacOSVersionAtLeast(26)) icuNames.push(["EST5EDT", [300, 240, "America/New_York"]]);
     // Only the C library reads the tzfile at a path, and what follows `std offset` in a POSIX value. It reads the
     // environment and not an assignment, so those values give the zone of the host. So does a value with no zone
-    // name: 7:15, 13, 15 or 24 hours from UTC. POSIX has two digits for the hours: "XYZ-003" is "XYZ-00", then "3".
+    // name: 7:15, 13, 15 or 24 hours from UTC.
     // Node gives UTC for "", and the zone of the value for "XYZ-15", "XYZ+13", "XYZ-24", "GMT+13" and a path.
     const forHost = [
       "XYZ-7:15XYS,M3.5.0,M10.5.0/3",
@@ -137,7 +140,6 @@ describe("process.env.TZ = value", () => {
       "XYZ-15",
       "XYZ+13",
       "XYZ-24",
-      "XYZ-003",
       "XYZ-3x",
       "GMT+5:30",
       "GMT+13",
@@ -147,7 +149,7 @@ describe("process.env.TZ = value", () => {
     ];
     // Not a zone name and not a POSIX value: UTC. Node writes the C environment and ICU reads the zone again
     // (https://github.com/nodejs/node/blob/v26.3.0/src/node_env_var.cc#L78-L105). That is UTC for these values too,
-    // but not for "XYZ-25" (24 hours east) and "XYZ-3:60" (the zone of /etc/localtime).
+    // but not for "XYZ-25" (24 hours east), and "XYZ-3:60" and "XYZ-4294967299" (the zone of /etc/localtime).
     const notAZone = [
       "Not/AZone",
       "undefined",
@@ -160,6 +162,8 @@ describe("process.env.TZ = value", () => {
       "AB-3",
       "<XY>-3",
       "XYZ-25",
+      // 2 ** 32 + 3 hours: the number must not wrap to 3.
+      "XYZ-4294967299",
       "XYZ-3:60",
       Buffer.alloc(4096, "A").toString(),
     ];

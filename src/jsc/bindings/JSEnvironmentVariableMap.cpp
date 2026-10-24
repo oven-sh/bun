@@ -93,11 +93,12 @@ static std::optional<PosixStandardTime> parsePosixStandardTime(StringView text)
 {
     unsigned position = 0;
     auto peek = [&]() -> char16_t { return position < text.length() ? text[position] : 0; };
+    // The C library reads every digit of a field: "XYZ-003" is three hours, and "GMT+0000" is UTC.
     auto consumeNumber = [&](int32_t max) -> std::optional<int32_t> {
         unsigned start = position;
         int32_t value = 0;
-        while (isASCIIDigit(peek()) && position - start < 2)
-            value = value * 10 + (text[position++] - '0');
+        for (; isASCIIDigit(peek()); ++position)
+            value = std::min(value * 10 + (text[position] - '0'), max + 1);
         if (position == start || value > max)
             return std::nullopt;
         return value;

@@ -433,6 +433,69 @@ macro_rules! bufs {
     };
 }
 
+/// The loader's rule for the real path of a directory entry. `finalize_result`, `dir_info_uncached` and `loader_key_of_existing_file` share it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RealPath {
+    /// The entry is a link, or the loader stored its real path at the entry before.
+    LinkTarget,
+    /// The entry keeps its name below the real path of its directory.
+    BelowLink,
+    AsGiven,
+}
+
+impl RealPath {
+    #[inline(always)]
+    fn of_entry(link_target: &[u8], dir_real_path: &[u8]) -> RealPath {
+        if !link_target.is_empty() {
+            RealPath::LinkTarget
+        } else if !dir_real_path.is_empty() {
+            RealPath::BelowLink
+        } else {
+            RealPath::AsGiven
+        }
+    }
+
+    /// The entry `base` below the real path of its directory.
+    #[inline]
+    fn below_link<'b>(
+        dir_real_path: &[u8],
+        base: &[u8],
+        buf: &'b mut [u8],
+    ) -> Option<&'b bun_core::ZStr> {
+        ::bun_paths::resolve_path::join_abs_string_buf_z_checked::<::bun_paths::platform::Loose>(
+            bun_core::top_level_dir(),
+            buf,
+            &[dir_real_path, base],
+        )
+        .map(|joined| &*joined)
+    }
+}
+
+/// What `Resolver::loader_key_of_existing_file` found.
+pub enum LoaderKey<'b> {
+    /// Not an existing file, a directory, or a path that the loader does not follow.
+    NotAFile,
+    /// The loader keys the module by the path as given.
+    Same,
+    Real(&'b [u8]),
+}
+
+/// A directory listing in the loader's cache, by its slot or by its directory.
+#[derive(Clone, Copy)]
+enum CachedListing<'a> {
+    At(allocators::IndexType),
+    Of(&'a [u8]),
+}
+
+/// What a cached listing knows about a name.
+enum CachedEntry {
+    /// No listing is cached, or the listing does not have this name in this spelling.
+    Unlisted,
+    /// The loader did not stat the entry yet.
+    NotStatted,
+    Known(Fs::file_system::EntryKind, &'static [u8]),
+}
+
 // This is a global so even if multiple resolvers are created, the mutex will still work
 // `pub(crate)` so the `fs::EntriesMap::inner` debug-assert can verify it is held
 // (the resolver mutex is one of the two documented guards for the entries singleton).
@@ -1645,7 +1708,8 @@ impl<'a> Resolver<'a> {
                 // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                 // rewrite inside `symlink()` is serialized on the per-entry mutex.
                 let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
-                if !symlink_path.is_empty() {
+                let real_path = RealPath::of_entry(symlink_path, dir.abs_real_path);
+                if real_path == RealPath::LinkTarget {
                     path.set_realpath(symlink_path);
                     if !result.file_fd.is_valid() {
                         result.file_fd = query.entry().cache().fd;
@@ -1658,18 +1722,12 @@ impl<'a> Resolver<'a> {
                             bstr::BStr::new(symlink_path)
                         ));
                     }
-                } else if !dir.abs_real_path.is_empty()
+                } else if real_path == RealPath::BelowLink
                     // When the directory is a symlink, we don't need to call getFdPath.
                     && let mut buf = bun_paths::path_buffer_pool::get()
                     && let Some(out_len) =
-                        ::bun_paths::resolve_path::join_abs_string_buf_z_checked::<
-                            ::bun_paths::platform::Loose,
-                        >(
-                            self.fs_ref().top_level_dir(),
-                            &mut buf[..],
-                            &[dir.abs_real_path, query.entry().base()],
-                        )
-                        .map(|joined| joined.len())
+                        RealPath::below_link(dir.abs_real_path, query.entry().base(), &mut buf[..])
+                            .map(|joined| joined.len())
                 {
                     let store_fd = self.store_fd;
 
@@ -1747,50 +1805,147 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
-    /// Whether a symlink is on the way to the directory `dir`, without a read of any listing.
-    fn has_symlink_on_the_way(&mut self, dir: &[u8]) -> bool {
+    /// The loader's caches for the directory `dir`: whether it has a `DirInfo`, its real path and its listing.
+    fn peek_dir_info(
+        &mut self,
+        dir: &[u8],
+    ) -> (allocators::ItemStatus, &'static [u8], allocators::IndexType) {
+        let _unlock = self.mutex.lock_guard();
+        let found = self.dir_cache_mut().lookup(dir);
+        match self.dir_cache_mut().at_index(found.index) {
+            Some(info) => (found.status, info.abs_real_path, info.entries),
+            None => (found.status, b"", allocators::NOT_FOUND),
+        }
+    }
+
+    /// What a cached listing has for `name` in exactly this spelling. It makes no system call and writes nothing.
+    fn peek_entry(&mut self, listing: CachedListing<'_>, name: &[u8]) -> CachedEntry {
+        // SAFETY: `rfs` points at the process-global RealFS. The listing is read under `entries_mutex`.
+        let rfs = unsafe { &mut *self.rfs_ptr() };
+        let entry: *const Fs::file_system::Entry = {
+            let _lock = rfs.entries_mutex.lock_guard();
+            let cached = match listing {
+                CachedListing::At(index) => rfs.entries.at_index(index),
+                CachedListing::Of(dir) => rfs.entries.get(dir),
+            };
+            let Some(Fs::file_system::real_fs::EntriesOption::Entries(entries)) = cached else {
+                return CachedEntry::Unlisted;
+            };
+            // The loader reads such a listing again before it uses it.
+            if entries.generation < self.generation {
+                return CachedEntry::Unlisted;
+            }
+            match entries.get(name) {
+                Some(lookup) if lookup.entry().base() == name => lookup.entry,
+                _ => return CachedEntry::Unlisted,
+            }
+        };
+        // SAFETY: the entry is a slot of the process-lifetime EntryStore, which is never freed.
+        let entry = unsafe { &*entry };
+        let _guard = entry.mutex.lock_guard();
+        if entry.need_stat.load(core::sync::atomic::Ordering::Relaxed) {
+            return CachedEntry::NotStatted;
+        }
+        let cache = entry.cache();
+        CachedEntry::Known(cache.kind, cache.symlink.as_bytes())
+    }
+
+    /// The real path that `dir_info_cached_miss` gives the directory `dir`, which has no `DirInfo` yet. Empty: the path as given.
+    fn real_path_of_unread_dir<'b>(&mut self, dir: &[u8], buf: &'b mut PathBuffer) -> &'b [u8] {
         #[cfg(windows)]
         let root_len = ResolvePath::windows_filesystem_root(dir).len();
         #[cfg(not(windows))]
         let root_len = 1;
-        let mut scratch = bun_paths::path_buffer_pool::get();
-        let mut dir = dir;
-        while dir.len() > root_len && dir.len() < scratch.len() {
-            {
-                let _unlock = self.mutex.lock_guard();
-                if let Some(info) = self.dir_cache_mut().get(dir) {
-                    return !info.abs_real_path.is_empty();
-                }
-            }
-            scratch[..dir.len()].copy_from_slice(dir);
-            scratch[dir.len()] = 0;
-            let dir_z = bun_core::ZStr::from_buf(&scratch[..], dir.len());
-            #[cfg(windows)]
-            let is_link = bun_sys::get_file_attributes(dir_z)
-                .is_some_and(|attributes| attributes.is_reparse_point);
-            #[cfg(not(windows))]
-            let is_link = bun_sys::lstat(dir_z).is_ok_and(|stat| {
-                bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) == bun_sys::FileKind::SymLink
-            });
-            if is_link {
-                return true;
-            }
-            let Some(parent) = bun_paths::dirname(dir) else {
-                break;
+
+        // The walk of the loader goes up to the first directory that it asked for before.
+        let mut anchor = dir;
+        let (mut parent_listing, mut has_parent, mut real_len) = loop {
+            let Some(parent) = bun_paths::dirname(anchor).filter(|_| anchor.len() > root_len)
+            else {
+                // The walk is at the root, which has no parent.
+                break (CachedListing::Of(anchor), true, 0);
             };
-            dir = parent;
+            anchor = parent;
+            let (status, real_path, listing) = self.peek_dir_info(anchor);
+            match status {
+                allocators::ItemStatus::Unknown => {}
+                allocators::ItemStatus::Exists => {
+                    buf[..real_path.len()].copy_from_slice(real_path);
+                    break (CachedListing::At(listing), true, real_path.len());
+                }
+                // The loader gives the directory below such a mark no parent.
+                allocators::ItemStatus::NotFound => break (CachedListing::Of(anchor), false, 0),
+            }
+        };
+
+        let mut link_target = bun_paths::path_buffer_pool::get();
+        let mut joined = bun_paths::path_buffer_pool::get();
+        let mut parent = anchor;
+        while parent.len() < dir.len() {
+            // The next directory below `parent` on the way to `dir`.
+            let rest = &dir[parent.len()..];
+            let skip = rest
+                .iter()
+                .take_while(|c| ResolvePath::is_sep_any(**c))
+                .count();
+            let base_len = rest[skip..]
+                .iter()
+                .take_while(|c| !ResolvePath::is_sep_any(**c))
+                .count();
+            let base = &rest[skip..skip + base_len];
+            let child = &dir[..parent.len() + skip + base_len];
+            if base.is_empty() {
+                break;
+            }
+
+            if has_parent {
+                let target: &[u8] = match self.peek_entry(parent_listing, base) {
+                    CachedEntry::Known(_, symlink) => symlink,
+                    // SAFETY: `rfs_ptr` points at the process-global RealFS. `stat_entry` only makes system calls.
+                    _ => match unsafe { &mut *self.rfs_ptr() }.stat_entry(
+                        parent,
+                        base,
+                        FD::INVALID,
+                        false,
+                        &mut link_target,
+                    ) {
+                        Ok((_, _, target)) => target,
+                        Err(_) => b"",
+                    },
+                };
+                real_len = match RealPath::of_entry(target, &buf[..real_len]) {
+                    RealPath::LinkTarget => {
+                        buf[..target.len()].copy_from_slice(target);
+                        target.len()
+                    }
+                    RealPath::BelowLink => {
+                        match RealPath::below_link(&buf[..real_len], base, &mut joined[..]) {
+                            Some(below) => {
+                                let below = below.as_bytes();
+                                buf[..below.len()].copy_from_slice(below);
+                                below.len()
+                            }
+                            None => 0,
+                        }
+                    }
+                    RealPath::AsGiven => 0,
+                };
+            }
+            has_parent = true;
+            parent_listing = CachedListing::Of(child);
+            parent = child;
         }
-        false
+        &buf[..real_len]
     }
 
-    /// The path the module loader loads the existing file `path` under, for `import.meta.resolve`.
-    pub fn real_path_of_file<'b>(
+    /// The path that the module loader loads the existing file `path` under, for `import.meta.resolve`.
+    pub fn loader_key_of_existing_file<'b>(
         &mut self,
         path: &[u8],
+        must_confirm: bool,
         buf: &'b mut PathBuffer,
-    ) -> Option<&'b [u8]> {
-        use bun_sys::FileKind;
-        let kind_of = |stat: bun_sys::Stat| bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
+    ) -> LoaderKey<'b> {
+        use Fs::file_system::EntryKind;
 
         if self.opts.preserve_symlinks
             || !bun_paths::is_absolute(path)
@@ -1802,45 +1957,99 @@ impl<'a> Resolver<'a> {
             || (cfg!(not(windows)) && strings::contains_char(path, b'\\'))
             || ::bun_options_types::standalone_path::is_bun_standalone_file_path(path)
         {
-            return None;
+            return LoaderKey::NotAFile;
         }
 
         let mut abs_buf = bun_paths::path_buffer_pool::get();
-        let capacity = abs_buf.len() - 1;
-        let abs_len = self
-            .fs_ref()
-            .abs_buf_checked(&[path], &mut abs_buf[..capacity])?
-            .len();
-        abs_buf[abs_len] = 0;
-        let abs_path = bun_core::ZStr::from_buf(&abs_buf[..], abs_len);
-
-        let file_kind = kind_of(bun_sys::lstat(abs_path).ok()?);
-        let is_link = file_kind == FileKind::SymLink;
-        // A dangling link fails here.
-        let target_kind = if is_link {
-            kind_of(bun_sys::stat(abs_path).ok()?)
-        } else {
-            file_kind
+        let Some(abs_path) = self.fs_ref().abs_buf_checked(&[path], &mut abs_buf[..]) else {
+            return LoaderKey::NotAFile;
         };
-        if target_kind == FileKind::Directory {
-            return None;
-        }
-        if is_link {
-            return bun_sys::realpath(abs_path, buf).ok();
+        let (Some(dir), name) = (bun_paths::dirname(abs_path), bun_paths::basename(abs_path))
+        else {
+            return LoaderKey::NotAFile;
+        };
+
+        let (status, cached_real_path, listing) = self.peek_dir_info(dir);
+        let has_dir_info = status == allocators::ItemStatus::Exists;
+        let cached = self.peek_entry(
+            if has_dir_info {
+                CachedListing::At(listing)
+            } else {
+                CachedListing::Of(dir)
+            },
+            name,
+        );
+
+        // The loader stats an entry that it did not stat yet, and reads a listing again that does not have the file.
+        let mut link_buf = bun_paths::path_buffer_pool::get();
+        let (kind, link_target, from_cache): (EntryKind, &[u8], bool) = match cached {
+            CachedEntry::Known(kind, symlink) => (kind, symlink, true),
+            // SAFETY: `rfs_ptr` points at the process-global RealFS. `stat_entry` only makes system calls.
+            _ => match unsafe { &mut *self.rfs_ptr() }.stat_entry(
+                dir,
+                name,
+                FD::INVALID,
+                false,
+                &mut link_buf,
+            ) {
+                Ok((kind, _, target)) => (kind, target, false),
+                Err(_) => return LoaderKey::NotAFile,
+            },
+        };
+        if kind != EntryKind::File {
+            return LoaderKey::NotAFile;
         }
 
-        let dir = bun_paths::dirname(abs_path.as_bytes())?;
-        if !self.has_symlink_on_the_way(dir) {
-            let out = buf.get_mut(..abs_len)?;
-            out.copy_from_slice(abs_path.as_bytes());
-            return Some(out);
+        let mut dir_buf = bun_paths::path_buffer_pool::get();
+        let dir_real_path: &[u8] = if !link_target.is_empty() || has_dir_info {
+            cached_real_path
+        } else {
+            self.real_path_of_unread_dir(dir, &mut dir_buf)
+        };
+
+        let (key, is_fresh_target): (&[u8], bool) =
+            match RealPath::of_entry(link_target, dir_real_path) {
+                RealPath::LinkTarget => {
+                    let out = &mut buf[..link_target.len()];
+                    out.copy_from_slice(link_target);
+                    (out, !from_cache)
+                }
+                RealPath::BelowLink => {
+                    match RealPath::below_link(dir_real_path, name, &mut buf[..]) {
+                        Some(below) => (below.as_bytes(), false),
+                        None => return LoaderKey::NotAFile,
+                    }
+                }
+                RealPath::AsGiven => {
+                    if from_cache && must_confirm && !Self::is_existing_file(abs_path) {
+                        return LoaderKey::NotAFile;
+                    }
+                    return LoaderKey::Same;
+                }
+            };
+        // A cache can be out of date. The loader cannot load a path that is not there any more.
+        if !is_fresh_target && !Self::is_existing_file(key) {
+            return LoaderKey::NotAFile;
         }
-        // The file system gives the directory. The file is not a link, so its name stays as given.
-        let mut real_buf = bun_paths::path_buffer_pool::get();
-        let real = bun_sys::realpath(abs_path, &mut real_buf).ok()?;
-        let name = bun_paths::basename(abs_path.as_bytes());
-        self.fs_ref()
-            .abs_buf_checked(&[bun_paths::dirname(real)?, name], &mut buf[..])
+        LoaderKey::Real(key)
+    }
+
+    /// Whether `path` is there and is not a directory. The last segment is not followed.
+    fn is_existing_file(path: &[u8]) -> bool {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if path.len() >= buf.len() {
+            return false;
+        }
+        buf[..path.len()].copy_from_slice(path);
+        buf[path.len()] = 0;
+        let path_z = bun_core::ZStr::from_buf(&buf[..], path.len());
+        #[cfg(windows)]
+        return bun_sys::get_file_attributes(path_z)
+            .is_some_and(|attributes| !attributes.is_directory || attributes.is_reparse_point);
+        #[cfg(not(windows))]
+        return bun_sys::lstat(path_z).is_ok_and(|stat| {
+            bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) != bun_sys::FileKind::Directory
+        });
     }
 
     pub(crate) fn resolve_without_symlinks(
@@ -6464,7 +6673,8 @@ impl<'a> Resolver<'a> {
                         // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
                         // rewrite inside `symlink()` is serialized on `Entry.mutex`.
                         let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
-                        if !symlink.is_empty() {
+                        let real_path = RealPath::of_entry(symlink, parent_.abs_real_path);
+                        if real_path == RealPath::LinkTarget {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
                                 let _ = write!(
@@ -6476,9 +6686,10 @@ impl<'a> Resolver<'a> {
                                 logs.add_note(buf);
                             }
                             info.abs_real_path = symlink;
-                        } else if !parent_.abs_real_path.is_empty()
-                            && let Some(joined) = self.fs_ref().abs_buf_checked(
-                                &[parent_.abs_real_path, base],
+                        } else if real_path == RealPath::BelowLink
+                            && let Some(joined) = RealPath::below_link(
+                                parent_.abs_real_path,
+                                base,
                                 bufs!(dir_info_uncached_filename),
                             )
                         {
@@ -6486,7 +6697,7 @@ impl<'a> Resolver<'a> {
                             symlink = self
                                 .fs_ref()
                                 .dirname_store
-                                .append_slice(joined)
+                                .append_slice(joined.as_bytes())
                                 .expect("unreachable");
 
                             if let Some(logs) = self.debug_logs.as_mut() {
@@ -6507,6 +6718,36 @@ impl<'a> Resolver<'a> {
                                     .set_cache_symlink(Interned::from_static(symlink));
                             }
                             info.abs_real_path = symlink;
+                        }
+                    } else {
+                        // The parent listing does not have this directory, so the file system tells what it is.
+                        let entries_fd = entries!().fd;
+                        // SAFETY: `rfs_ptr` points at the process-global RealFS; `kind` only does syscalls and string interning.
+                        let symlink: &'static [u8] = match unsafe { &mut *rfs_ptr }.kind(
+                            parent_.abs_path,
+                            base,
+                            entries_fd,
+                            self.store_fd && entries_fd.is_valid(),
+                        ) {
+                            Ok(cache) => cache.symlink.as_bytes(),
+                            Err(_) => b"",
+                        };
+                        match RealPath::of_entry(symlink, parent_.abs_real_path) {
+                            RealPath::LinkTarget => info.abs_real_path = symlink,
+                            RealPath::BelowLink => {
+                                if let Some(joined) = RealPath::below_link(
+                                    parent_.abs_real_path,
+                                    base,
+                                    bufs!(dir_info_uncached_filename),
+                                ) {
+                                    info.abs_real_path = self
+                                        .fs_ref()
+                                        .dirname_store
+                                        .append_slice(joined.as_bytes())
+                                        .expect("unreachable");
+                                }
+                            }
+                            RealPath::AsGiven => {}
                         }
                     }
                 }

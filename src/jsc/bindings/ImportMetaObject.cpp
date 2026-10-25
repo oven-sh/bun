@@ -351,32 +351,54 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     return result;
 }
 
-// `fileURLToPath` rejects a host and an encoded `/` or `\`. `fileSystemPath()` drops the one and decodes the other.
-static bool hasHostOrEncodedSeparator(const WTF::URL& url)
-{
-    if (!url.host().isEmpty())
-        return true;
-    auto path = url.path();
-    for (size_t i = path.find('%'); i != notFound && i + 2 < path.length(); i = path.find('%', i + 1)) {
-        auto high = path[i + 1];
-        auto low = toASCIILower(path[i + 2]);
-        if ((high == '2' && low == 'f') || (high == '5' && low == 'c'))
-            return true;
-    }
-    return false;
-}
-
 // The URL that the module at `url` loads under, which is its `import.meta.url`, like `finalizeResolution` in Node.js.
 static WTF::String urlOfLoadedModule(Zig::GlobalObject* globalObject, const WTF::URL& url)
 {
-    if (url.protocolIsFile() && !hasHostOrEncodedSeparator(url)) {
-        auto path = url.fileSystemPath();
-        auto pathString = Bun::toString(path);
-        auto loadedPath = Bun__importMetaResolveRealPath(globalObject, &pathString).transferToWTFString();
-        if (!loadedPath.isEmpty())
-            return makeString(WTF::URL::fileURLWithFileSystemPath(loadedPath).string(), url.queryWithLeadingQuestionMark(), url.fragmentIdentifierWithLeadingNumberSign());
+    // `fileURLToPath` rejects a host. `fileSystemPath()` drops it.
+    if (!url.protocolIsFile() || !url.host().isEmpty())
+        return url.string();
+
+    auto urlPath = url.path();
+    bool hasEscape = false;
+    // A file URL made from the path can differ from `url`, so the result depends on whether the file exists.
+    bool mustConfirm = false;
+    for (unsigned i = 0; i < urlPath.length(); i++) {
+        switch (urlPath[i]) {
+        case '%':
+            if (i + 2 < urlPath.length()) {
+                auto high = urlPath[i + 1];
+                auto low = toASCIILower(urlPath[i + 2]);
+                // `fileURLToPath` rejects an encoded `/` or `\`. `fileSystemPath()` decodes it.
+                if ((high == '2' && low == 'f') || (high == '5' && low == 'c'))
+                    return url.string();
+            }
+            hasEscape = true;
+            [[fallthrough]];
+        case '[':
+        case ']':
+        case '^':
+        case '|':
+        case '~':
+            mustConfirm = true;
+            break;
+        default:
+            break;
+        }
     }
-    return url.string();
+
+#if OS(WINDOWS)
+    hasEscape = true;
+#endif
+    auto decodedPath = hasEscape ? url.fileSystemPath() : WTF::String();
+    auto path = hasEscape ? WTF::StringView(decodedPath) : urlPath;
+    auto pathString = Bun::toStringView(path);
+    auto key = Bun__importMetaResolveLoaderKey(globalObject, &pathString, mustConfirm);
+    if (key.isDead())
+        return url.string();
+    auto loadedPath = key.transferToWTFString();
+    if (loadedPath.isEmpty() && !mustConfirm)
+        return url.string();
+    return makeString(WTF::URL::fileURLWithFileSystemPath(loadedPath.isEmpty() ? path : WTF::StringView(loadedPath)).string(), url.queryWithLeadingQuestionMark(), url.fragmentIdentifierWithLeadingNumberSign());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,

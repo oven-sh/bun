@@ -14,7 +14,8 @@ extern "C" JSC::EncodedJSValue Bun__resolveSync(JSC::JSGlobalObject* global, JSC
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithPaths(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve, const BunString* paths, size_t paths_len);
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSourceIfExists(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm);
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithStrings(JSC::JSGlobalObject* global, BunString* specifier, BunString* from, bool is_esm);
-extern "C" BunString Bun__importMetaResolveRealPath(JSC::JSGlobalObject* global, const BunString* path);
+// Dead: `path` is not an existing file. Empty: the module loader loads it under `path`. Else: the path it loads under.
+extern "C" BunString Bun__importMetaResolveLoaderKey(JSC::JSGlobalObject* global, const BunString* path, bool mustConfirm);
 
 namespace Bun {
 class JSModuleGraph;

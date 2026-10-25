@@ -49,7 +49,7 @@ pub use tsconfig_json::TSConfigJSON;
 /// Re-export so dependents can spell `bun_resolver::install_types::AutoInstaller`.
 pub use ::bun_install_types::resolver_hooks as install_types;
 pub use resolver::{
-    AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, Resolver, module_type_from_ext,
+    AnyResolveWatcher, BrowserMapPathKind, Bufs, Dirname, LoaderKey, Resolver, module_type_from_ext,
 };
 pub use result::{
     DebugLogs, DirEntryResolveQueueItem, ExternalKind, FlushMode, LoadResult, MatchResult,
@@ -1211,22 +1211,17 @@ pub mod fs {
         /// readlink to populate an `EntryCache`. Windows: `GetFileAttributesW` +
         /// (if reparse point) `CreateFileW`-follow + `GetFinalPathNameByHandle`
         /// realpath.
-        pub(crate) fn kind(
+        pub(crate) fn stat_entry<'b>(
             &mut self,
             dir_: &[u8],
             base: &[u8],
             existing_fd: Fd,
             store_fd: bool,
-        ) -> crate::CrateResult<EntryCache> {
+            link_target: &'b mut bun_paths::PathBuffer,
+        ) -> crate::CrateResult<(EntryKind, Fd, &'b [u8])> {
             use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
             #[cfg(not(windows))]
             use bun_sys::{FileKind, kind_from_mode};
-
-            let mut cache = EntryCache {
-                kind: EntryKind::File,
-                symlink: Interned::EMPTY,
-                fd: Fd::INVALID,
-            };
 
             let combo: [&[u8]; 2] = [dir_, base];
             let mut outpath = bun_paths::path_buffer_pool::get();
@@ -1255,13 +1250,13 @@ pub mod fs {
                 // do iff created with SYMBOLIC_LINK_FLAG_DIRECTORY; AppExec
                 // links and file symlinks don't), so this is already the
                 // correct `Entry.Kind` without following the chain.
-                cache.kind = if file.is_directory {
+                let mut kind = if file.is_directory {
                     EntryKind::Dir
                 } else {
                     EntryKind::File
                 };
                 if !file.is_reparse_point {
-                    return Ok(cache);
+                    return Ok((kind, Fd::INVALID, &b""[..]));
                 }
 
                 // For the realpath, open the path and let the kernel follow
@@ -1301,10 +1296,10 @@ pub mod fs {
                 };
                 if handle == w::INVALID_HANDLE_VALUE {
                     if is_dangling_link_error(w::last_system_errno().to_e()) {
-                        cache.kind = EntryKind::Dangling;
+                        kind = EntryKind::Dangling;
                     }
                     // anything else keeps the kind from the link's own directory bit
-                    return Ok(cache);
+                    return Ok((kind, Fd::INVALID, &b""[..]));
                 }
                 scopeguard::defer! {
                     // SAFETY: `handle` is a valid HANDLE from CreateFileW above.
@@ -1314,19 +1309,19 @@ pub mod fs {
                 let mut info: w::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
                 // SAFETY: `handle` is valid; `info` is a valid out-param.
                 if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
-                    cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
+                    kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
                         EntryKind::Dir
                     } else {
                         EntryKind::File
                     };
                 }
 
-                let mut buf2 = bun_paths::path_buffer_pool::get();
-                if let Ok(real) = bun_sys::get_fd_path(Fd::from_system(handle), &mut buf2) {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(real)?);
-                }
-                return Ok(cache);
+                return Ok(
+                    match bun_sys::get_fd_path(Fd::from_system(handle), link_target) {
+                        Ok(real) => (kind, Fd::INVALID, &*real),
+                        Err(_) => (kind, Fd::INVALID, &b""[..]),
+                    },
+                );
             }
 
             #[cfg(not(windows))]
@@ -1336,6 +1331,7 @@ pub mod fs {
                     kind_from_mode(stat_.st_mode as bun_sys::Mode) == FileKind::SymLink;
                 let mut file_kind = kind_from_mode(stat_.st_mode as bun_sys::Mode);
 
+                let mut fd = Fd::INVALID;
                 let mut symlink: &[u8] = b"";
 
                 if is_symlink {
@@ -1353,15 +1349,18 @@ pub mod fs {
                         // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
                         #[cfg(any(target_os = "linux", target_os = "android"))]
                         let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
+                        // O_NONBLOCK: an open of a pipe with no writer must not block.
                         #[cfg(not(any(target_os = "linux", target_os = "android")))]
-                        let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
+                        let flags = bun_sys::O::RDONLY
+                            | bun_sys::O::NONBLOCK
+                            | bun_sys::O::CLOEXEC
+                            | bun_sys::O::NOCTTY;
                         bun_sys::open(absolute_path_c, flags, 0)
                     };
                     let file: Fd = match opened {
                         Ok(file) => file,
                         Err(err) if is_dangling_link_error(err.get_errno()) => {
-                            cache.kind = EntryKind::Dangling;
-                            return Ok(cache);
+                            return Ok((EntryKind::Dangling, Fd::INVALID, &b""[..]));
                         }
                         Err(err) => return Err(err.into()),
                     };
@@ -1371,35 +1370,52 @@ pub mod fs {
                     // BOTH success and error paths — use scopeguard so close-or-store happens even if
                     // fstat()/get_fd_path() return early with `?`.
                     let need_to_close_files = self.need_to_close_files();
-                    let cache_ptr: *mut EntryCache = &raw mut cache;
+                    let fd_ptr: *mut Fd = &raw mut fd;
                     let _guard = scopeguard::guard(file, move |file| {
                         if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
                             let _ = bun_sys::close(file);
                         } else if bun_core::feature_flags::STORE_FILE_DESCRIPTORS {
-                            // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
-                            unsafe { (*cache_ptr).fd = file };
+                            // SAFETY: `fd_ptr` points into a stack local that outlives this guard.
+                            unsafe { *fd_ptr = file };
                         }
                     });
 
                     let file_stat = bun_sys::fstat(*_guard)?;
-                    symlink = bun_sys::get_fd_path(*_guard, &mut outpath)?;
+                    symlink = bun_sys::get_fd_path(*_guard, link_target)?;
                     file_kind = kind_from_mode(file_stat.st_mode as bun_sys::Mode);
                 }
 
                 debug_assert!(file_kind != FileKind::SymLink);
 
-                cache.kind = if file_kind == FileKind::Directory {
+                let kind = if file_kind == FileKind::Directory {
                     EntryKind::Dir
                 } else {
                     EntryKind::File
                 };
-                if !symlink.is_empty() {
-                    cache.symlink =
-                        Interned::from_static(FilenameStore::instance().append_slice(symlink)?);
-                }
-
-                Ok(cache)
+                Ok((kind, fd, symlink))
             }
+        }
+
+        /// `stat_entry`, with the link target interned into an `EntryCache`.
+        pub(crate) fn kind(
+            &mut self,
+            dir_: &[u8],
+            base: &[u8],
+            existing_fd: Fd,
+            store_fd: bool,
+        ) -> crate::CrateResult<EntryCache> {
+            let mut link_target = bun_paths::path_buffer_pool::get();
+            let (kind, fd, symlink) =
+                self.stat_entry(dir_, base, existing_fd, store_fd, &mut link_target)?;
+            Ok(EntryCache {
+                kind,
+                fd,
+                symlink: if symlink.is_empty() {
+                    Interned::EMPTY
+                } else {
+                    Interned::from_static(FilenameStore::instance().append_slice(symlink)?)
+                },
+            })
         }
     }
 

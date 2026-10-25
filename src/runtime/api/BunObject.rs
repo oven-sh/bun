@@ -1032,17 +1032,21 @@ pub(crate) fn bun_resolve_sync_with_strings(
     })
 }
 
-// HOST_EXPORT(Bun__importMetaResolveRealPath, c)
-pub(crate) fn bun_import_meta_resolve_real_path(
+// HOST_EXPORT(Bun__importMetaResolveLoaderKey, c)
+pub(crate) fn bun_import_meta_resolve_loader_key(
     global: &JSGlobalObject,
     path: &BunString,
+    must_confirm: bool,
 ) -> BunString {
+    use bun_resolver::LoaderKey;
+
     let path = path.to_utf8();
     let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
     let mut buf = bun_paths::path_buffer_pool::get();
-    match resolver.real_path_of_file(path.slice(), &mut buf) {
-        Some(real) => BunString::clone_utf8(real),
-        None => BunString::DEAD,
+    match resolver.loader_key_of_existing_file(path.slice(), must_confirm, &mut buf) {
+        LoaderKey::NotAFile => BunString::DEAD,
+        LoaderKey::Same => BunString::EMPTY,
+        LoaderKey::Real(real) => BunString::clone_utf8(real),
     }
 }
 

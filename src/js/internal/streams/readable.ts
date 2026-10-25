@@ -1775,8 +1775,6 @@ const promiseOperatorKeys = ObjectKeys(promiseOperatorLengths);
 for (let i = 0; i < promiseOperatorKeys.length; i++) {
   const key = promiseOperatorKeys[i];
   let op;
-  // Each of these is an async function. A call attaches to the stream before it returns, as in Node,
-  // so a destroy() right after the call rejects the promise instead of emitting an unhandled 'error'.
   installOperator(key, promiseOperatorLengths[key], function (args) {
     op ??= (operators ??= require("internal/streams/operators")).promiseReturningOperators[key];
     return op.$apply(this, args);

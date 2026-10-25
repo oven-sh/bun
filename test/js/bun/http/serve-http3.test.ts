@@ -8,7 +8,7 @@ import type { SocketAddress } from "node:net";
 import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
 import { connect as connectTLS } from "node:tls";
 import { join } from "path";
-import { F, RawH2, T, baseHeaders, frame, hpackLiteral } from "./serve-http2-helpers";
+import { baseHeaders, F, frame, hpackLiteral, RawH2, T } from "./serve-http2-helpers";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
 // `protocol: "http3"` so a regression that silently falls back to TCP

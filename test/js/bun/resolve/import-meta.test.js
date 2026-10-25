@@ -396,9 +396,15 @@ describe.concurrent("import.meta.resolve of an existing file", () => {
           directorySlash: import.meta.resolve("./ldir/"),
           noExtension: import.meta.resolve("./ldir/m"),
           otherCase: import.meta.resolve("./ldir/M.MJS"),
+          encodedSlash: import.meta.resolve("./ldir%2Fm.mjs"),
+          encodedSlashLowerCase: import.meta.resolve("./ldir%2fm.mjs"),
           encodedBackslash: import.meta.resolve("./ldir%5Cm.mjs"),
           beforeMkdir: import.meta.resolve("./gen/a/x.mjs"),
         };
+        if (process.platform !== "win32") {
+          resolved.host = import.meta.resolve("file://otherhost" + linked.pathname);
+          resolved.schemeRelativeHost = import.meta.resolve("//otherhost" + linked.pathname);
+        }
 
         // The resolver has the listing of ldir cached by now, without this file.
         writeFileSync(new URL("./real/late.mjs", import.meta.url), "");
@@ -454,12 +460,13 @@ describe.concurrent("import.meta.resolve of an existing file", () => {
       result: { resolved, stderr, exitCode },
       url: (...parts) => pathToFileURL(join(root, ...parts)).href,
       joined: specifier => new URL(specifier, pathToFileURL(join(root, "main.mjs"))).href,
+      withHost: isWindows ? undefined : "file://otherhost" + pathToFileURL(join(root, "ldir", "m.mjs")).pathname,
       ignoresCase: existsSync(join(root, "REAL", "m.mjs")),
     };
   }
 
   it("returns the URL the module loads under", async () => {
-    const { result, url, joined, ignoresCase } = await resolveAll();
+    const { result, url, joined, withHost, ignoresCase } = await resolveAll();
     expect(result).toEqual({
       resolved: {
         relative: url("real", "m.mjs"),
@@ -484,8 +491,12 @@ describe.concurrent("import.meta.resolve of an existing file", () => {
         noExtension: joined("./ldir/m"),
         // The file name keeps its spelling, like in Node.js. The file exists only where the file system ignores case.
         otherCase: ignoresCase ? url("real", "M.MJS") : joined("./ldir/M.MJS"),
-        // A backslash is a separator only on Windows.
-        encodedBackslash: isWindows ? url("real", "m.mjs") : joined("./ldir%5Cm.mjs"),
+        // `fileURLToPath` rejects an encoded separator and a host. Such a URL must not become a local path.
+        encodedSlash: joined("./ldir%2Fm.mjs"),
+        encodedSlashLowerCase: joined("./ldir%2fm.mjs"),
+        encodedBackslash: joined("./ldir%5Cm.mjs"),
+        host: withHost,
+        schemeRelativeHost: withHost,
         beforeMkdir: joined("./gen/a/x.mjs"),
         createdLate: url("real", "late.mjs"),
         inLateDirectory: url("real", "sub", "[x].mjs"),
@@ -498,7 +509,7 @@ describe.concurrent("import.meta.resolve of an existing file", () => {
   });
 
   it("keeps the joined URL with --preserve-symlinks", async () => {
-    const { result, url, joined } = await resolveAll("--preserve-symlinks");
+    const { result, url, joined, withHost } = await resolveAll("--preserve-symlinks");
     expect(result).toEqual({
       resolved: {
         relative: joined("./ldir/m.mjs"),
@@ -521,7 +532,11 @@ describe.concurrent("import.meta.resolve of an existing file", () => {
         directorySlash: joined("./ldir/"),
         noExtension: joined("./ldir/m"),
         otherCase: joined("./ldir/M.MJS"),
+        encodedSlash: joined("./ldir%2Fm.mjs"),
+        encodedSlashLowerCase: joined("./ldir%2fm.mjs"),
         encodedBackslash: joined("./ldir%5Cm.mjs"),
+        host: withHost,
+        schemeRelativeHost: withHost,
         beforeMkdir: joined("./gen/a/x.mjs"),
         createdLate: joined("./ldir/late.mjs"),
         inLateDirectory: joined("./ldir/sub/[x].mjs"),

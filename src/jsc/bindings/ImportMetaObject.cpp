@@ -351,10 +351,25 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     return result;
 }
 
+// `fileURLToPath` rejects a host and an encoded `/` or `\`. `fileSystemPath()` drops the one and decodes the other.
+static bool hasHostOrEncodedSeparator(const WTF::URL& url)
+{
+    if (!url.host().isEmpty())
+        return true;
+    auto path = url.path();
+    for (size_t i = path.find('%'); i != notFound && i + 2 < path.length(); i = path.find('%', i + 1)) {
+        auto high = path[i + 1];
+        auto low = toASCIILower(path[i + 2]);
+        if ((high == '2' && low == 'f') || (high == '5' && low == 'c'))
+            return true;
+    }
+    return false;
+}
+
 // The URL that the module at `url` loads under, which is its `import.meta.url`, like `finalizeResolution` in Node.js.
 static WTF::String urlOfLoadedModule(Zig::GlobalObject* globalObject, const WTF::URL& url)
 {
-    if (url.protocolIsFile()) {
+    if (url.protocolIsFile() && !hasHostOrEncodedSeparator(url)) {
         auto path = url.fileSystemPath();
         auto pathString = Bun::toString(path);
         auto loadedPath = Bun__importMetaResolveRealPath(globalObject, &pathString).transferToWTFString();

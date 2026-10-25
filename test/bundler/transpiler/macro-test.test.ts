@@ -1330,6 +1330,8 @@ describe("a macro import resolves for the macro environment", () => {
       "gate.macrots": `
         import { existsSync, writeFileSync } from "node:fs";
         export function first() {
+          // The wait can only end when another thread runs main.ts.
+          if (Bun.isMainThread) return "the import was transpiled on the main thread";
           writeFileSync(import.meta.dir + "/started", "");
           while (!existsSync(import.meta.dir + "/replaced")) {}
           return "first";
@@ -1346,13 +1348,17 @@ describe("a macro import resolves for the macro environment", () => {
         import { existsSync, writeFileSync } from "node:fs";
         require.extensions[".macrots"] = require.extensions[".ts"];
         const imported = import("./imported.ts");
-        while (!existsSync(import.meta.dir + "/started")) await new Promise(resolve => setImmediate(resolve));
+        let settled = false;
+        imported.finally(() => (settled = true)).catch(() => {});
+        while (!settled && !existsSync(import.meta.dir + "/started")) await new Promise(resolve => setImmediate(resolve));
         require.extensions[".other"] = require.extensions[".ts"];
         writeFileSync(import.meta.dir + "/replaced", "");
         console.log(JSON.stringify((await imported).results));
       `,
     });
-    const { result, stderr, exitCode } = await run(String(dir), "run", "--loader=.macrots:ts", "main.ts");
+    // Two settings keep the transpiler on the main thread. They are off for this child.
+    const env = { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: undefined, NODE_COMPILE_CACHE: undefined };
+    const { result, stderr, exitCode } = await runWith(env, String(dir), "run", "--loader=.macrots:ts", "main.ts");
     expect({ result, stderr, exitCode }).toEqual({ result: ["first", "second"], stderr: "", exitCode: 0 });
   });
 

@@ -126,7 +126,8 @@ const annotated: Order = await new Response(${good}).json();
 use(annotated);
 use((await Response.json(JSON.parse(${good})).json()) as Order);
 `,
-  "a chain of types": count => `import { JSON } from "bun";${show}${many(count, at => `interface N${at} { v: number; next?: N${at + 1} }`)}
+  "a chain of types":
+    count => `import { JSON } from "bun";${show}${many(count, at => `interface N${at} { v: number; next?: N${at + 1} }`)}
 interface N${count} { v: number }
 const head = JSON.parse<N0>('{"v":0,"next":{"v":1,"next":{"v":2,"next":{"v":3}}}}');
 console.log(head.v + head.next!.v + head.next!.next!.v + head.next!.next!.next!.v, head.next!.next!.next!.next);
@@ -183,14 +184,16 @@ lists.p1!.push({ a1: 4 });
 console.log(JSON.stringify(lists));
 attempt("wrong in a list", () => JSON.parse<Lists>('{"p1":[{"a1":null}]}'));
 `,
-  "as many types, each with a call of its own": count => `import { JSON } from "bun"; import { validate } from "bun:bundle";
+  "as many types, each with a call of its own":
+    count => `import { JSON } from "bun"; import { validate } from "bun:bundle";
 ${many(count, at => `interface T${at} { a${at}: number; inner: { b${at}: number } }`)}
 let sum = 0;
 ${many(count, at => `sum += JSON.parse<T${at}>('{"a${at}":1,"inner":{"b${at}":1}}').inner.b${at} + validate<T${at}>({ a${at}: 1, inner: { b${at}: 1 } }).a${at};`)}
 console.log(sum === ${2 * count});
 `,
   // The objects that the small type's parser makes are known one by one. Those of the same type that come out of the large one's are changed here in every way.
-  "an object type that a small type reaches too": count => `import { JSON } from "bun"; interface Inner { x: number; y: number }
+  "an object type that a small type reaches too":
+    count => `import { JSON } from "bun"; interface Inner { x: number; y: number }
 interface Small { inner: Inner }
 interface Large {
   inner: Inner;
@@ -219,7 +222,8 @@ function first<T>(list: T[]): T { return list[0]; }
 const orders = JSON.parse<Order[]>('[' + ${good} + ']');
 console.log(first(orders).lines[1].count, first<Order>(orders).p0!.a0, orders.length);
 `,
-  "a parse in a worker": count => `import { JSON } from "bun"; import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+  "a parse in a worker":
+    count => `import { JSON } from "bun"; import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 ${order(count)}
 function sumOf(text: string): number {
   const order = JSON.parse<Order>(text);

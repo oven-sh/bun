@@ -52,4 +52,3 @@ declare module "bun:bundle" {
 
   function validate<T>(value: unknown): T;
 }
-

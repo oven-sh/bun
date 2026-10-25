@@ -1463,6 +1463,17 @@ impl S3CredentialsWithOptions {
                 .or_else(|| inherited.and_then(|d| d.tagging.as_deref())),
         }
     }
+
+    /// The headers of a write whose data is another S3 file. The read of that file decodes its `Content-Encoding`, so only the call can name one.
+    pub fn put_headers_of_s3_source<'a>(
+        &'a self,
+        content_type: Option<&'a [u8]>,
+    ) -> PutHeaders<'a> {
+        PutHeaders {
+            content_encoding: self.content_encoding.as_deref(),
+            ..self.put_headers(content_type)
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -341,7 +341,8 @@ declare module "bun" {
      * A value given to `s3.file()` or to `new S3Client()` is the default of
      * every upload of that file or client. The upload call overrides it. An
      * empty string sends no header. The value labels the bytes that you pass:
-     * Bun does not compress them.
+     * Bun does not compress them. An upload from another S3 file takes this
+     * option from the upload call only.
      *
      * @example
      * ```ts

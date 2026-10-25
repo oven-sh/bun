@@ -433,8 +433,12 @@ describe("s3 header defaults of a file or a client", () => {
         };
       });
   }
-  const expected = (only: readonly Name[]) => [
-    { status: 200, ...Object.fromEntries(only.map(name => [name, headerOptions[name][2]])), signed: [...only] },
+  const expected = (only: readonly Name[], sent: readonly Name[] = only) => [
+    {
+      status: 200,
+      ...Object.fromEntries(only.map(name => [name, sent.includes(name) ? headerOptions[name][2] : null])),
+      signed: [...sent],
+    },
   ];
 
   const streamOf = (text: string) =>
@@ -519,26 +523,32 @@ describe("s3 header defaults of a file or a client", () => {
       ).text()),
   };
 
+  // A copy from another S3 file takes no contentEncoding default: Bun decodes that file when it reads it.
+  const fromS3File = names.filter(name => name !== "contentEncoding");
+
   type Upload = (key: string, o: S3Options) => unknown;
-  const rows: [row: string, sent: readonly Name[], upload: Upload][] = [
+  type Row = [title: string, given: readonly Name[], sent: readonly Name[], upload: Upload];
+  const rows: Row[] = [
     ...Object.entries(files).flatMap(([place, file]) =>
-      Object.entries(uploads).map(
-        ([name, upload]) =>
-          [`${place} > ${name}`, names, (key: string, o: S3Options) => upload(file(key, o))] as [
-            string,
-            Name[],
-            Upload,
-          ],
-      ),
+      Object.entries(uploads).map(([name, upload]): Row => {
+        const sent = name === "write(another S3 file)" ? fromS3File : names;
+        const what = sent === names ? "every option" : "every option but contentEncoding";
+        return [`${place} > ${name} sends ${what}`, names, sent, (key, o) => upload(file(key, o))];
+      }),
     ),
-    ...Object.entries(calls).map(([name, upload]) => [name, names, upload] as [string, Name[], Upload]),
-    ...Object.entries(fetches).map(([name, upload]) => [name, fetchNames, upload] as [string, Name[], Upload]),
+    ...Object.entries(calls).map(([name, upload]): Row => [`${name} sends every option`, names, names, upload]),
+    ...Object.entries(fetches).map(([name, upload]): Row => [
+      `${name} sends every option`,
+      fetchNames,
+      fetchNames,
+      upload,
+    ]),
   ];
 
-  test.each(rows)("%s sends every option", async (_, sent, upload) => {
+  test.each(rows)("%s", async (_, givenNames, sent, upload) => {
     const key = randomUUIDv7();
-    await upload(key, given(sent));
-    expect(uploaded(key, sent)).toEqual(expected(sent));
+    await upload(key, given(givenNames));
+    expect(uploaded(key, givenNames)).toEqual(expected(givenNames, sent));
   });
 
   // One option at a time: a default that is alone is kept and merged alone.
@@ -753,6 +763,7 @@ describe("s3 header defaults of a file or a client", () => {
   );
 
   // The destination decides. The header defaults of a source that is an S3 file are not copied.
+  // Only the call can give a contentEncoding: Bun decodes the source when it reads it.
   const ofSource = { contentDisposition: "inline", contentEncoding: "x-source", tagging: { owner: "source" } } as const;
   const sources: [string, (client: S3Client, key: string) => Blob][] = [
     ["a file of a client with values", (_, key) => new S3Client({ ...options, ...ofSource }).file(key)],
@@ -769,14 +780,18 @@ describe("s3 header defaults of a file or a client", () => {
     await client.file(a).write(sourceOf(client, from) as S3File);
     const b = randomUUIDv7();
     await client.write(b, sourceOf(client, from) as S3File);
-    // The destination has its own values: they win for each key.
+    // The destination has its own values: they win for each key, but for contentEncoding.
     const c = randomUUIDv7();
     await client.file(c, { ...content, tagging: { owner: "destination" } }).write(sourceOf(client, from) as S3File);
+    // The call gives the contentEncoding.
+    const d = randomUUIDv7();
+    await client.file(d, content).write(sourceOf(client, from) as S3File, { contentEncoding: "identity" });
 
-    expect({ a: sentFor(a), b: sentFor(b), c: sentFor(c) }).toEqual({
+    expect({ a: sentFor(a), b: sentFor(b), c: sentFor(c), d: sentFor(d) }).toEqual({
       a: [sent("PutObject", null, null)],
       b: [sent("PutObject", null, null)],
-      c: [sent("PutObject")],
+      c: [sent("PutObject", content.contentDisposition, null)],
+      d: [sent("PutObject")],
     });
     expect({ a: storedTags(a), b: storedTags(b), c: storedTags(c) }).toEqual({
       a: {},
@@ -796,7 +811,59 @@ describe("s3 header defaults of a file or a client", () => {
       [null, null, null],
       [null, null, null],
       [null, null, null],
+      [null, null, null],
     ]);
+  });
+
+  // A contentEncoding default must not label the bytes of a copy: they are what a read of the source gives.
+  const gzipDefault = { contentEncoding: "gzip" } as const;
+  const copies: [string, (from: string, to: string) => Promise<unknown>][] = [
+    [
+      "client.file(to).write(client.file(from))",
+      (from, to) => {
+        const client = new S3Client({ ...options, ...gzipDefault });
+        return client.file(to).write(client.file(from));
+      },
+    ],
+    [
+      "client.write(to, client.file(from))",
+      (from, to) => {
+        const client = new S3Client({ ...options, ...gzipDefault });
+        return client.write(to, client.file(from));
+      },
+    ],
+    [
+      "Bun.write(client.file(to), client.file(from))",
+      (from, to) => {
+        const client = new S3Client({ ...options, ...gzipDefault });
+        return Bun.write(client.file(to), client.file(from));
+      },
+    ],
+    [
+      "client.file(to, o).write(client.file(from))",
+      (from, to) => {
+        const client = new S3Client(options);
+        return client.file(to, gzipDefault).write(client.file(from));
+      },
+    ],
+  ];
+  test.each(copies)("%s under a contentEncoding default stores a copy that reads as its source", async (_, copy) => {
+    const text = "hello hello hello hello";
+    const plain = new S3Client(options);
+    const from = randomUUIDv7();
+    const to = randomUUIDv7();
+    await plain.write(from, Bun.gzipSync(text), gzipDefault);
+
+    await copy(from, to);
+
+    const stored = server.buckets.get(bucket)!.current(to)!;
+    const bytes = stored.data.bytes();
+    const isGzip = bytes[0] === 0x1f && bytes[1] === 0x8b;
+    expect({ contentEncoding: stored.contentEncoding ?? null, text: await plain.file(to).text() }).toEqual({
+      // The stored label says gzip only when the stored bytes are gzip.
+      contentEncoding: isGzip ? "gzip" : null,
+      text: await plain.file(from).text(),
+    });
   });
 
   test("only uploads use the values of file() and of the client", async () => {

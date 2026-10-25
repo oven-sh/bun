@@ -4464,6 +4464,11 @@ pub(crate) fn write_file_with_source_destination(
                     )?,
                     cx.global(),
                 )? {
+                    let content_type = destination_blob.content_type_or_mime_type();
+                    let headers = match &source_store.data {
+                        store::Data::S3(_) => aws_options.put_headers_of_s3_source(content_type),
+                        _ => aws_options.put_headers(content_type),
+                    };
                     return s3_client::upload_stream(
                         if options.extra_options.is_some() {
                             aws_options.credentials.dupe()
@@ -4474,7 +4479,7 @@ pub(crate) fn write_file_with_source_destination(
                         stream,
                         cx,
                         aws_options.options,
-                        &aws_options.put_headers(destination_blob.content_type_or_mime_type()),
+                        &headers,
                         None,
                         None,
                         core::ptr::null_mut(),

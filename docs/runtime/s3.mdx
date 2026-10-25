@@ -170,7 +170,7 @@ await client.write("report.pdf", pdfData);
 await client.write("preview.png", imageData, { contentDisposition: "" });
 ```
 
-`contentEncoding` labels the bytes that you pass. Bun does not compress them.
+`contentEncoding` labels the bytes that you pass. Bun does not compress them. When the data is another S3 file, Bun sends `contentEncoding` only if the upload call passes it.
 
 #### Object tags
 

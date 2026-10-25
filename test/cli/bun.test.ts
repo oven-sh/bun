@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { dlopen, FFIType } from "bun:ffi";
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -257,6 +257,22 @@ describe("bun", () => {
   describe.skipIf(isWindows)("completions", () => {
     const bunxName = isDebug ? "bunx-debug" : "bunx";
 
+    // A file system can limit the target of a symlink to less than a path (XFS: 1024 bytes).
+    const linksLongTargets =
+      !isWindows &&
+      (() => {
+        using dir = tempDir("completions-symlink-probe", {});
+        try {
+          fs.symlinkSync(Buffer.alloc(MAX_PATH_BYTES - 1, "a").toString(), join(String(dir), "probe"));
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+
+    let copyOfBunExe: ReturnType<typeof tempDir> | undefined;
+    afterAll(() => copyOfBunExe?.[Symbol.dispose]());
+
     // Puts a private copy of the executable at `exe`, so that the first candidate location, the
     // executable's own directory, is inside the temporary directory.
     function bunxInstaller(dir: string, exe: string | Buffer = join(dir, "bin", "bun")) {
@@ -267,12 +283,15 @@ describe("bun", () => {
         // and costs nothing on APFS.
         fs.copyFileSync(bunExe(), exe, fs.constants.COPYFILE_FICLONE);
       } else {
-        // A hardlink avoids copying the binary; fall back to a copy when the temporary directory is
-        // on another filesystem.
+        // A hardlink avoids copying the binary. When the temporary directory is on another file
+        // system, the tests that run together link to one copy there.
         try {
           fs.linkSync(fs.realpathSync(bunExe()), exe);
         } catch {
-          fs.copyFileSync(bunExe(), exe);
+          copyOfBunExe ??= tempDir("completions-bun-copy", {});
+          const copy = join(String(copyOfBunExe), "bun");
+          if (!fs.existsSync(copy)) fs.copyFileSync(bunExe(), copy);
+          fs.linkSync(copy, exe);
         }
       }
 
@@ -353,7 +372,7 @@ describe("bun", () => {
       expect(fs.readlinkSync(join(String(dir), "home-local", ".local", "bin", bunxName))).toBe(exeRealpath);
     });
 
-    test("skips a bunx symlink location that is too long for a path", async () => {
+    test.concurrent("skips a bunx symlink location that is too long for a path", async () => {
       using dir = tempDir("completions-bunx-long", {
         "bin": {},
         "empty-path": {},
@@ -372,7 +391,7 @@ describe("bun", () => {
     });
 
     // A path and its NUL fit in MAX_PATH_BYTES: 4095 bytes on Linux, 1023 on macOS.
-    test("installs the bunx symlink at the longest path, and skips a longer one", async () => {
+    test.concurrent("installs the bunx symlink at the longest path, and skips a longer one", async () => {
       using dir = tempDir("completions-bunx-limit", { "bin": {}, "empty-path": {} });
       const installBunx = bunxInstaller(String(dir));
       const exeRealpath = fs.realpathSync(join(String(dir), "bin", "bun"));
@@ -391,8 +410,9 @@ describe("bun", () => {
       expect(fs.readdirSync(join(tooLong, ".local", "bin"))).toEqual([]);
     });
 
-    // This location needs no environment variable: the path is the executable's directory.
-    test.each([
+    // This location needs no environment variable: the path is the executable's directory. The
+    // target of the symlink, the executable's own path, is then as long as a path can be.
+    test.concurrent.skipIf(!linksLongTargets).each([
       ["is made when its path fits", 0],
       ["is skipped when its path is one byte too long", 1],
     ])("the bunx symlink beside the executable %s", async (_, extra) => {
@@ -416,7 +436,7 @@ describe("bun", () => {
     });
 
     // Linux accepts any bytes in a file name. macOS refuses a name that is not UTF-8.
-    test.skipIf(!isLinux)("installs the bunx symlink in directories whose names are not valid UTF-8", async () => {
+    test.concurrent.skipIf(!isLinux)("installs the bunx symlink in directories whose names are not UTF-8", async () => {
       using dir = tempDir("completions-bunx-raw", { "empty-path": {} });
       const under = (base: Buffer, path: string) => Buffer.concat([base, Buffer.from(path)]);
       const home = Buffer.concat([Buffer.from(join(String(dir), "jos")), Buffer.from([0xe9])]);

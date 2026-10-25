@@ -458,7 +458,36 @@ pub fn find_exported_requires(
         let path = declarations.find_map(|&declaration| path_of(declaration))?;
         Some(ExportedRequire { export, path })
     });
-    exported.collect()
+    let mut found: Vec<ExportedRequire> = exported.collect();
+    // `export * from` passes on what the file does not export itself.
+    for statement in hir.ids(hir.body) {
+        let StmtKind::ExportStar {
+            spec,
+            alias,
+            type_only: false,
+            ..
+        } = hir[statement].kind
+        else {
+            continue;
+        };
+        if alias.is_some() {
+            continue;
+        }
+        for imported in hir
+            .imported_requires
+            .iter()
+            .filter(|it| it.specifier == spec)
+        {
+            let is_own = exports.iter().any(|&(export, _)| export == imported.export);
+            if !is_own && !found.iter().any(|it| it.export == imported.export) {
+                found.push(ExportedRequire {
+                    export: imported.export,
+                    path: Some(imported.path),
+                });
+            }
+        }
+    }
+    found
 }
 
 fn settled_initializer(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<ExprId> {

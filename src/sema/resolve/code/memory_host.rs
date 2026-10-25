@@ -18,6 +18,7 @@ pub(crate) struct MemoryHost {
     claims: Vec<Claim>,
     required: Vec<(Vec<u8>, Vec<u8>)>,
     node_paths: Vec<Vec<u8>>,
+    found: Vec<(Vec<u8>, Vec<u8>)>,
     reads: bun_threading::Guarded<FxHashMap<Vec<u8>, usize>>,
 }
 
@@ -40,6 +41,12 @@ impl MemoryHost {
     /// `imported` is what "module" names in a package, `required` what "main" names.
     pub(crate) fn required_in_place_of(mut self, imported: &str, required: &str) -> MemoryHost {
         self.required.push((imported.into(), required.into()));
+        self
+    }
+
+    /// The host finds `specifier` by itself, and the module runs under `path`.
+    pub(crate) fn finds(mut self, specifier: &str, path: &str) -> MemoryHost {
+        self.found.push((specifier.into(), path.into()));
         self
     }
 
@@ -223,6 +230,14 @@ impl CodeHost for MemoryHost {
     }
 
     fn find_code_file(&self, search: &FileSearch<'_>) -> FoundCode {
+        let mut found = self.found.iter();
+        if let Some((_, path)) = found.find(|(specifier, _)| specifier == search.specifier) {
+            return FoundCode::File {
+                path: path.clone(),
+                required: None,
+                links_followed: true,
+            };
+        }
         let in_node_paths = || {
             let files = self.node_paths.iter().map(|directory| {
                 let specifier = &join(directory, search.specifier);
@@ -247,10 +262,18 @@ impl CodeHost for MemoryHost {
             false => in_node_paths().unwrap_or(found),
         };
         match found {
-            FoundCode::File { path, .. } if search.prefers_module_field => {
+            FoundCode::File {
+                path,
+                links_followed,
+                ..
+            } if search.prefers_module_field => {
                 let mut pairs = self.required.iter();
                 let required = pairs.find(|pair| pair.0 == path).map(|pair| pair.1.clone());
-                FoundCode::File { path, required }
+                FoundCode::File {
+                    path,
+                    required,
+                    links_followed,
+                }
             }
             found => found,
         }

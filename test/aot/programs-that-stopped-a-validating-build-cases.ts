@@ -85,6 +85,7 @@ const stopped: Record<string, string[]> = {
     "stores-shadow-methods-whose-names-look-like-numbers/minus-one-called-in-a-function",
     "stores-shadow-methods-whose-names-look-like-numbers/the-largest-index-a-leading-zero-and-an-exponent",
     "stores-shadow-methods-whose-names-look-like-numbers/through-a-box",
+    "unread-field-is-stored-below-a-replaced-parent",
   ],
   "classes-below-functions": [
     "a-plain-function-is-put-above-a-class-and-no-constructor-above-the-class-runs",

@@ -146,6 +146,7 @@ impl FileFinder {
             Some(path) => FoundCode::File {
                 path: from_native(path.text),
                 required: (result.path_pair.secondary.as_ref()).map(|it| from_native(it.text)),
+                links_followed: true,
             },
         }
     }

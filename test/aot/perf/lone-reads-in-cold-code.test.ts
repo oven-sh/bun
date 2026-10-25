@@ -15,10 +15,10 @@ const root = join(import.meta.dir, "lone-reads-in-cold-code");
 const slack = process.platform === "linux" && process.arch === "x64" ? 0 : 6;
 const rows: [reader: string, allowance: number][] = [
   ["readInteger", 9],
-  ["readDouble", 20],
-  ["readString", 8],
+  ["readDouble", 18],
+  ["readString", 9],
   ["readObject", 8],
-  ["readBoolean", 11],
+  ["readBoolean", 7],
   ["readUntyped", 8],
 ];
 const iterations = 2_000_000;

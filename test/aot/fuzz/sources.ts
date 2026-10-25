@@ -52,6 +52,8 @@
 //   sorts-with-hostile-comparators sort and toSorted of arrays and typed arrays of every kind of element, order and length, with a comparator that answers at random, NaN, one thing always or no number at all, and at one call throws, changes the array, its length or its kind of storage, or sorts it again
 //   bind-spread-flatmap-and-boolean-arithmetic bind in a constructor, spreads, flatMap, arithmetic on booleans and getters under computed keys, each many times at one place, with something unusual arriving in the middle
 //   prototype-chains-linked-by-hand constructor functions and classes linked by Object.setPrototypeOf, Object.create, __extends or util.inherits, often in a factory that takes the base; in the middle the chain or a method changes
+//   built-ins-called-often-through-unknown-values one to five built-ins in one program, each called 1 to 400 times through a value the compiler cannot follow; in the middle that value, the receiver or an operand changes
+//   order-of-promise-jobs handlers of then, catch and finally on promises of every state, awaits, microtasks and ticks, some under a store of AsyncLocalStorage: each step writes down its number, and the program prints every order it saw
 //   a-full-heap-is-let-go-and-built-ins-make-things objects are kept until no more fit, all or half of them are let go, and at once one built-in that makes things is called thousands of times: there is room again, so no call may fail (a-full-heap-is-let-go-and-built-ins-make-things.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
@@ -284,6 +286,15 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       return bed.accepts(program) && bed.allows(program.text) ? { source: "sorts-with-hostile-comparators", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
     };
   }
+  if (existsSync(join(import.meta.dir, "order-of-promise-jobs.ts"))) {
+    const { generate } = await import("./order-of-promise-jobs.ts");
+    sources["order-of-promise-jobs"] = (seed, bed) => {
+      if (bed.name !== "product") return;
+      const typed = seed % 2 === 1;
+      const program: Program = { text: generate(new Random(seed), typed), extension: typed ? "ts" : "js" };
+      return bed.accepts(program) && bed.allows(program.text) ? { source: "order-of-promise-jobs", seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
+    };
+  }
   if (existsSync(join(import.meta.dir, "unsound-types.ts"))) {
     const { draw } = await import("./unsound-types.ts");
     sources["unsound-types"] = (seed, bed) => {
@@ -294,6 +305,6 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
   }
   for (const name of ["grammar", "protocols", "new-targets", "object-mutations", "typed-object-mutations", "held-across-suspensions", "where-the-stack-ends", "many-of-one-thing", "changing-buffers", "many-live-values", "a-throw-at-every-call", "values-across-joins", "operators-at-the-edges", "objects-across-awaits", "every-kind-of-job", "work-on-the-way-up", "text-beside-compiled-code", "several-changes-one-behind-the-other"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = generated(name, (await import(`./${name}.ts`)).generate);
   for (const name of ["when-the-heap-is-full", "held-by-one-thing-alone", "errors-nobody-catches", "shapes-that-die-and-come-again", "workers-ended-in-the-middle", "calls-with-very-many-arguments", "strings-still-in-pieces", "changed-while-it-is-walked", "left-half-way", "numbers-across-their-borders", "at-the-border-of-a-representation", "patterns-made-at-run-time", "lists-read-where-they-are-made", "numbers-however-they-are-kept", "objects-read-where-they-are-made", "patterns-that-go-back-for-millions-of-turns", "errors-of-values-nobody-uses", "constant-lists-changed-by-every-road", "new-objects-kept-through-built-ins", "typed-instances-changed-through-built-ins", "several-changes-behind-a-declared-type", "two-names-where-ways-meet", "objects-with-very-many-fields", "one-name-for-many-kinds-of-things", "objects-that-the-host-keeps-and-hands-back", "closures-read-through-array-methods", "objects-that-live-for-one-turn-of-a-loop", "patterns-with-subjects-made-from-them", "bodies-in-every-encoding-read-as-json", "read-by-the-last-holder-while-others-are-made", "instances-below-built-in-classes-frozen-closed-and-redefined", "code-the-build-never-saw-changes-what-it-is-handed", "lists-of-numbers-through-one-map-or-filter", "loops-whose-tests-are-settled-on-the-first-turn", "counters-handed-to-the-one-call-in-a-loop", "strangers-where-a-type-names-a-class", "names-asked-of-full-tables-and-texts-converted-again", "a-full-heap-is-let-go-and-built-ins-make-things"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = typedForTheProduct(name, (await import(`./${name}.ts`)).generate);
-  for (const name of ["what-a-callback-declares-however-it-reaches-a-built-in", "tests-that-ask-which-runtime-this-is", "what-a-function-declares-however-often-call-and-apply-enter-it", "makers-of-makers-each-with-a-prototype-of-its-own"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = untypedForTheProduct(name, (await import(`./${name}.ts`)).generate);
+  for (const name of ["what-a-callback-declares-however-it-reaches-a-built-in", "tests-that-ask-which-runtime-this-is", "what-a-function-declares-however-often-call-and-apply-enter-it", "makers-of-makers-each-with-a-prototype-of-its-own", "built-ins-called-often-through-unknown-values"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = untypedForTheProduct(name, (await import(`./${name}.ts`)).generate);
   return sources;
 }

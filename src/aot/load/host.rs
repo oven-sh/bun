@@ -516,10 +516,11 @@ impl CodeHost for LoadHost<'_> {
         let options = self.input.options;
         let in_memory_files = &options.load.in_memory_files;
         if !in_memory_files.is_empty()
-            && let FoundCode::File { path, required } = options.code.find_file_plainly(self, search)
-            && (in_memory_files.iter()).any(|(file, _)| file.as_slice() == to_native(&path))
+            && let found = options.code.find_file_plainly(self, search)
+            && let FoundCode::File { path, .. } = &found
+            && (in_memory_files.iter()).any(|(file, _)| file.as_slice() == to_native(path))
         {
-            return FoundCode::File { path, required };
+            return found;
         }
         self.input.provider.find_file(self, search)
     }

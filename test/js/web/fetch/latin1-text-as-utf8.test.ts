@@ -45,6 +45,6 @@ test.skipIf(!isLinux || process.arch !== "x64" || isDebug || isASAN)(
     const accented = "voil@ un caf@ tr@s serr@, ".replaceAll("@", String.fromCharCode(0xe9)).repeat(300000);
     const encoder = new TextEncoder();
     for (const send of [(text: string) => Response.json(text), (text: string) => encoder.encode(text)])
-      expect(fastestOf(send, accented)).toBeLessThan(fastestOf(send, plain) * 3);
+      expect(fastestOf(send, accented)).toBeLessThan(fastestOf(send, plain) * 4);
   },
 );

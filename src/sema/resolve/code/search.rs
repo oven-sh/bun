@@ -52,6 +52,7 @@ impl<'h> Resolver<'h> {
             found @ (FoundCode::File {
                 path: _,
                 required: _,
+                links_followed: _,
             }
             | FoundCode::NotFound(_)) => self.answer_search(&search, found),
         };
@@ -60,9 +61,17 @@ impl<'h> Resolver<'h> {
 
     fn answer_search(&self, search: &FileSearch<'_>, found: FoundCode) -> CodeResolution<'h> {
         let failure = match found {
-            FoundCode::File { path, required } => {
-                let path = self.module_path(&path);
-                let required = required.map(|required| self.module_path(&required));
+            FoundCode::File {
+                path,
+                required,
+                links_followed,
+            } => {
+                let module_path = |found: Vec<u8>| match links_followed {
+                    true => found,
+                    false => self.module_path(&found),
+                };
+                let path = module_path(path);
+                let required = required.map(module_path);
                 if let Some(required) = required.filter(|required| *required != path) {
                     let required_files = &self.code_state().required_files;
                     required_files.insert_ref(self.keep(&path), self.keep(&required));
@@ -101,6 +110,7 @@ impl<'h> Resolver<'h> {
             file @ FoundCode::File {
                 path: _,
                 required: _,
+                links_followed: _,
             } => return file,
             found @ (FoundCode::External(_) | FoundCode::NotFound(_)) => found,
         };
@@ -112,6 +122,7 @@ impl<'h> Resolver<'h> {
             file @ FoundCode::File {
                 path: _,
                 required: _,
+                links_followed: _,
             } => file,
             FoundCode::External(_) | FoundCode::NotFound(_) => found,
         }
@@ -628,6 +639,7 @@ impl<H: Host + ?Sized> PlainSearch<'_, H> {
                 false => FoundCode::File {
                     path: found,
                     required: main,
+                    links_followed: false,
                 },
             });
         }
@@ -685,6 +697,7 @@ fn found_file(path: Vec<u8>) -> FoundCode {
     FoundCode::File {
         path,
         required: None,
+        links_followed: false,
     }
 }
 

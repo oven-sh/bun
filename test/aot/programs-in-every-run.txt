@@ -25,6 +25,7 @@ arrays/arrays-of-the-greatest-length-are-read-and-stored-into
 arrays/concat-called-on-a-primitive-wraps-it-in-an-object
 arrays/element-reads-with-double-keys
 arrays/elements-of-frozen-arrays-that-fit-are-not-coerced
+arrays/empty-array-literals-adapt-their-capacity
 arrays/every-array-method-on-the-strings-of-a-tagged-template
 arrays/frozen-and-sparse-array-stores
 arrays/frozen-array-error-messages
@@ -221,6 +222,7 @@ classes-and-closures/a-closure-made-anew-on-every-turn-is-called-by-a-function-t
 classes-and-closures/a-closure-made-anew-on-every-turn-is-read-on-that-turn
 classes-and-closures/a-closure-made-anew-on-every-turn-is-read-on-that-turn-in-module-code
 classes-and-closures/a-closure-made-anew-on-the-way-a-test-always-takes-is-read-on-that-turn
+classes-and-closures/a-closure-over-another-object-is-stored-by-name-into-a-field
 classes-and-closures/a-name-is-looked-for-in-an-object-behind-a-read-of-it-in-a-loop
 classes-and-closures/a-setter-without-a-getter-hides-a-member-of-object-prototype
 classes-and-closures/accessors-under-names-that-a-class-has-from-its-creation
@@ -293,6 +295,7 @@ classes/the-constructor-above-lets-the-object-out-before-the-fields-below-are-de
 classes/the-name-of-a-class-is-read-while-its-decorators-run
 classes/the-prototype-object-of-a-class-is-no-instance-of-it
 classes/twenty-subclasses-override-a-method-beside-an-entry-point-that-requires-a-computed-name
+classes/unread-field-is-stored-below-a-replaced-parent
 classes/what-a-loop-reads-is-changed-inside-the-loop-without-naming-it
 closed-world/a-name-asked-of-an-instance-and-of-primitives
 closed-world/a-name-asked-of-process-and-of-other-things
@@ -762,6 +765,7 @@ modules/graphs-with-a-cycle-in-which-a-module-throws
 modules/import-meta-require-held-by-a-binding
 modules/imported-require-helper-called-before-its-file-ran
 modules/imported-require-helper-loads-files-and-packages
+modules/imported-require-helper-passed-on-by-export-star
 modules/imported-require-helper-reached-in-other-ways
 modules/imported-require-helper-replaced-later
 modules/imported-require-helper-resolves-from-its-own-folder
@@ -869,10 +873,14 @@ objects/object-constructed-or-called-without-arguments-makes-what-an-empty-liter
 objects/objects-given-names-by-key-are-as-if-each-name-were-written-out
 objects/objects-with-many-names-across-collections
 objects/objects-with-many-optional-numbers-are-filled-in-two-arms-of-a-switch
+objects/optional-number-fields-box-every-value
 objects/own-accessors-whose-getters-nobody-can-list
 objects/own-property-that-holds-undefined-hides-a-method
 objects/property-descriptors-only-taken-apart
 objects/the-list-of-own-keys-is-the-same-however-it-is-used
+objects/unread-own-property-hides-a-read-only-property-on-the-prototype
+objects/unread-own-property-hides-a-setter-on-the-prototype
+objects/unread-own-property-hides-a-setter-that-nothing-calls-on-the-prototype
 objects/very-many-added-keys-however-the-object-was-made
 objects/warm-reads-of-crowded-receivers-then-the-prototype-object-of-a-class-is-written
 own-containers/maps-and-sets-with-live-iterators-against-a-model
@@ -1160,6 +1168,7 @@ untyped-code/named-literal-as-any-given-fewer-properties
 untyped-code/names-and-symbols-are-found-above-objects-met-for-the-first-time
 untyped-code/names-born-undefined-are-filled-under-computed-keys
 untyped-code/object-filled-from-other-keys-keeps-structure
+untyped-code/thenable-check-among-records-with-a-then-field
 untyped-code/two-reads-one-call
 untyped-code/what-an-object-gets-after-it-was-first-read
 untyped-code/what-inherits-from-another-realm-follows-its-index-accessors

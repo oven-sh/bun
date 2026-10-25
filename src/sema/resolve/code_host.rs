@@ -217,6 +217,8 @@ pub enum FoundCode {
         path: Vec<u8>,
         /// The file that `require` of the same package finds, where "module" named `path`.
         required: Option<Vec<u8>>,
+        /// Whether both paths are the ones the modules run under. Otherwise the resolver follows the links in them.
+        links_followed: bool,
     },
     External(Vec<u8>),
     NotFound(CodeFailure),

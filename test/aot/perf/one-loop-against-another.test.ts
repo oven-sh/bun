@@ -45,6 +45,8 @@ const rows: Row[] = [
     8.9,
   ],
   ["imported-by-default/main.mjs", [], "out of a module", "out of a CommonJS file", 3],
+  ["a-list-that-is-emptied-now-and-then.ts", [], "kept to the end", "emptied every 256 turns", 3],
+  ["a-list-that-is-emptied-now-and-then.ts", erased, "kept to the end", "emptied every 256 turns", 3],
 ];
 const [few, many] = [100_000, 400_000];
 

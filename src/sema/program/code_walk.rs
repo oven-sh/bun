@@ -648,6 +648,11 @@ fn names_export(hir: &hir::File<'_>, site: ImportSiteKind, export: Atom) -> bool
             let mut items = hir[statement].items.iter();
             items.any(|it| hir[it].local == export)
         }
+        // `export * from` passes on every name but `default`.
+        ImportSiteKind::ExportStar(statement) => {
+            let passes_names_on = matches!(hir[statement].kind, StmtKind::ExportStar { alias, .. } if alias.is_none());
+            passes_names_on && export != known::default
+        }
         _ => false,
     }
 }

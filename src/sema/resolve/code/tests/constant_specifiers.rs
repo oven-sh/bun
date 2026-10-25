@@ -336,6 +336,17 @@ fn symlinks_resolve_to_real_paths() {
     assert_eq!(import(&host, "./a.ts"), "/p/a.ts");
 }
 
+// Where letter case does not count, the real path of `Foo.ts` is `foo.ts`, and `bun run` runs the module as `Foo.ts`.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn path_from_resolver_of_host_is_kept() {
+    let host = empty_files(&["/p/foo.ts"])
+        .link("/p/Foo.ts", "/p/foo.ts")
+        .finds("./Foo", "/p/Foo.ts");
+    assert_eq!(import(&host, "./Foo"), "/p/Foo.ts");
+    assert_eq!(import(&host, "./Foo.ts"), "/p/foo.ts");
+}
+
 #[test]
 #[cfg_attr(miri, ignore)]
 fn preserved_symlinks_keep_directory_links_only() {

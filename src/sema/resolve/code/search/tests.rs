@@ -520,6 +520,7 @@ fn module_is_taken_where_search_prefers_it() {
     let module = FoundCode::File {
         path: in_package("esm.js"),
         required: Some(in_package("cjs.js")),
+        links_followed: false,
     };
     assert_eq!(find(Import, true), module);
     assert_eq!(find(Require, true), found_file(in_package("cjs.js")));

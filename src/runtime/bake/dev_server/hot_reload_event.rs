@@ -3,14 +3,14 @@
 use super::*;
 
 /// `DevServer.HotReloadEvent` — produced by the watcher thread.
-// Note: cache-line alignment makes each inline `WatcherAtomics.events: [3]`
+// Note: cache-line alignment makes each inline `WatcherAtomics.events`
 // element occupy its own cache line, avoiding false sharing on
 // `contention_indicator` between watcher and dev-server threads. 128 matches
 // the cache line on x86_64/aarch64 (Bun's tier-1 targets) and absorbs Intel
 // adjacent-line prefetch.
 #[repr(align(128))]
 pub(crate) struct HotReloadEvent {
-    /// BACKREF (LIFETIMES.tsv): element of `WatcherAtomics.events: [3]`.
+    /// BACKREF (LIFETIMES.tsv): element of `WatcherAtomics.events`.
     /// Nulled by `Drop for DevServer` when an event is still queued; `run`
     /// checks for null before dereferencing.
     pub(crate) owner: *mut DevServer,

@@ -724,12 +724,16 @@ devTest("every save that arrives while a bundle runs reaches the next bundle", {
       import { a } from "./a";
       import { b } from "./b";
       import { c } from "./c";
-      console.log(held, a, b, c);
+      import { d } from "./d";
+      import { e } from "./e";
+      console.log(held, a, b, c, d, e);
     `,
     "held.ts": `export const held = "held-0";`,
     "a.ts": `export const a = "a-0";`,
     "b.ts": `export const b = "b-0";`,
     "c.ts": `export const c = "c-0";`,
+    "d.ts": `export const d = "d-0";`,
+    "e.ts": `export const e = "e-0";`,
   },
   async test(dev) {
     const served = async () => {
@@ -753,7 +757,7 @@ devTest("every save that arrives while a bundle runs reaches the next bundle", {
     // Each save has to reach the dev server as a watcher batch of its own. The
     // watcher gives no signal, so space them by far more than the window in
     // which it merges events.
-    const saved = ["a", "b", "c"];
+    const saved = ["a", "b", "c", "d", "e"];
     for (const name of saved) {
       writeFileSync(dev.join(name + ".ts"), `export const ${name} = "${name}-1";`);
       await Bun.sleep(100);
@@ -762,7 +766,7 @@ devTest("every save that arrives while a bundle runs reaches the next bundle", {
 
     // One bundle follows the held one. The last save is in it.
     let text = "";
-    await until("the bundle after the held one", async () => (text = await served()).includes('"c-1"'));
+    await until("the bundle after the held one", async () => (text = await served()).includes('"e-1"'));
     expect(saved.filter(name => !text.includes(`"${name}-1"`))).toEqual([]);
   },
 });

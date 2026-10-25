@@ -2,11 +2,10 @@
 
 use super::*;
 
-/// `DevServer.WatcherAtomics` — three pre-allocated `HotReloadEvent`s
-/// rotated between the watcher thread and the main thread.
+/// Two pre-allocated `HotReloadEvent`s. The dev server thread holds at most one of them at a time.
 pub(crate) struct WatcherAtomics {
-    pub(crate) events: [HotReloadEvent; 3],
-    /// Atomically encodes a `NextEvent`: values 0..3 are an index into
+    pub(crate) events: [HotReloadEvent; 2],
+    /// Atomically encodes a `NextEvent`: values 0..2 are an index into
     /// `events`, plus the `WAITING`/`DONE` sentinels.
     // Rust cannot align individual fields, so this field is not cache-line
     // aligned. Wrap in a `#[repr(align(128))]` newtype (init site:
@@ -129,37 +128,27 @@ impl WatcherAtomics {
         // SAFETY: caller contract — `this` is live; every `(*this)` / `(*ev)`
         // below is a field access on the heap `WatcherAtomics` allocation.
         unsafe {
-            // Take the queued event back, so that this batch joins it. A second
-            // queued event would replace it, and the dev server would never see
-            // the files of the first one.
-            let mut withdrawn: Option<u8> = None;
-            if let Some(pending) = (*this).pending_event.take() {
-                if (*this)
-                    .next_event
-                    .compare_exchange(
-                        pending,
-                        NextEvent::WAITING.0,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    )
-                    .is_ok()
-                {
-                    withdrawn = Some(pending);
-                } else {
+            let index: usize = 'find: {
+                if let Some(pending) = (*this).pending_event.take() {
+                    // Take the queued event back so that this batch joins it.
+                    if (*this)
+                        .next_event
+                        .compare_exchange(
+                            pending,
+                            NextEvent::WAITING.0,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        )
+                        .is_ok()
+                    {
+                        break 'find pending as usize;
+                    }
                     // The dev server took it, which means it is done with `current_event`.
                     (*this).current_event = Some(pending);
                 }
-            }
-
-            let index = match withdrawn {
-                Some(pending) => pending as usize,
-                None => 'find: {
-                    for i in 0..(*this).events.len() {
-                        if (*this).current_event != Some(i as u8) {
-                            break 'find i;
-                        }
-                    }
-                    unreachable!()
+                match (*this).current_event {
+                    Some(0) => 1,
+                    _ => 0,
                 }
             };
             let ev: *mut HotReloadEvent = &raw mut (*this).events[index];
@@ -173,8 +162,7 @@ impl WatcherAtomics {
                 (*this).dbg_watcher_event = Some(ev);
             }
 
-            // `ev` points into `(*this).events[index]`, which the watcher thread
-            // has exclusive access to (neither `current_event` nor `pending_event`).
+            // Only this thread can reach `ev`: it is not `current_event`, and no index is queued.
             let ev_ref = &mut *ev;
 
             // Initialize the timer if it is empty.
@@ -248,7 +236,6 @@ impl WatcherAtomics {
                 NextEvent::DONE => {
                     // Dev server is done running events. We need to schedule the event directly.
                     (*this).current_event = Some(ev_index);
-                    (*this).pending_event = None;
                     // Relaxed because the dev server is not running events right now.
                     // (could technically be made non-atomic)
                     (*this)
@@ -277,20 +264,10 @@ impl WatcherAtomics {
                     );
                 }
 
-                NextEvent::WAITING => {
-                    // The dev server runs an event. `watcher_acquire_event` left nothing queued.
-                    (*this).pending_event = Some(ev_index);
-                }
+                NextEvent::WAITING => (*this).pending_event = Some(ev_index),
 
-                _ => {
-                    // Only this thread queues an event, and `watcher_acquire_event` withdraws it.
-                    debug_assert!(
-                        false,
-                        "watcher_release_and_submit_event: event {} was still queued",
-                        old_next.0,
-                    );
-                    (*this).pending_event = Some(ev_index);
-                }
+                // Only this thread stores an index, and `watcher_acquire_event` took it back.
+                _ => unreachable!(),
             }
         }
     }
@@ -300,7 +277,7 @@ impl WatcherAtomics {
     pub(crate) fn init(owner: *mut DevServer) -> core::ptr::NonNull<Self> {
         let mk_event = || HotReloadEvent::init_empty(owner);
         let atomics: *mut WatcherAtomics = bun_core::heap::into_raw(Box::new(WatcherAtomics {
-            events: [mk_event(), mk_event(), mk_event()],
+            events: [mk_event(), mk_event()],
             next_event: core::sync::atomic::AtomicU8::new(NextEvent::DONE.0),
             current_event: None,
             pending_event: None,
